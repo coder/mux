@@ -1,14 +1,63 @@
 import * as http from "node:http";
 import * as net from "node:net";
-import { describe, expect, mock, test } from "bun:test";
+import { describe, expect, mock, spyOn, test } from "bun:test";
 import { WebSocket, type RawData } from "ws";
 import { DesktopBridgeServer } from "./DesktopBridgeServer";
+
+const VALID_TOKEN = "valid-token";
+const VALID_WORKSPACE_ID = "workspace-1";
+const VALID_SESSION_ID = "desktop:workspace-1";
 
 interface TcpHarness {
   server: net.Server;
   port: number;
   connectionPromise: Promise<net.Socket>;
   close: () => Promise<void>;
+}
+
+interface UpgradeHarness {
+  port: number;
+  close: () => Promise<void>;
+}
+
+interface Deferred<T> {
+  promise: Promise<T>;
+  reject: (reason?: unknown) => void;
+}
+
+function createDeferred<T>(): Deferred<T> {
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((_innerResolve, innerReject) => {
+    reject = innerReject;
+  });
+  void promise.catch(() => undefined);
+  return { promise, reject };
+}
+
+function createBridgeServer(options: {
+  validate?: (token: string) => { workspaceId: string; sessionId: string } | null;
+  getLiveSessionConnection?:
+    | ((workspaceId: string) => { sessionId: string; vncPort: number } | null)
+    | (() => { sessionId: string; vncPort: number } | null);
+}): DesktopBridgeServer {
+  return new DesktopBridgeServer({
+    desktopTokenManager: {
+      validate:
+        options.validate ??
+        mock((token: string) =>
+          token === VALID_TOKEN
+            ? { workspaceId: VALID_WORKSPACE_ID, sessionId: VALID_SESSION_ID }
+            : null
+        ),
+    },
+    desktopSessionManager: {
+      getLiveSessionConnection:
+        options.getLiveSessionConnection ??
+        mock((workspaceId: string) =>
+          workspaceId === VALID_WORKSPACE_ID ? { sessionId: VALID_SESSION_ID, vncPort: 5900 } : null
+        ),
+    },
+  });
 }
 
 async function listenTcpServer(): Promise<TcpHarness> {
@@ -61,6 +110,55 @@ async function closeTcpServer(server: net.Server): Promise<void> {
   await new Promise<void>((resolve) => {
     server.close(() => resolve());
   });
+}
+
+async function listenUpgradeServer(bridgeServer: DesktopBridgeServer): Promise<UpgradeHarness> {
+  const sockets = new Set<net.Socket>();
+  const server = http.createServer();
+
+  server.on("connection", (socket) => {
+    sockets.add(socket);
+    socket.once("close", () => {
+      sockets.delete(socket);
+    });
+  });
+  server.on("upgrade", (request, socket, head) => {
+    bridgeServer.handleUpgrade(request, socket, head);
+  });
+  server.on("clientError", (_error, socket) => {
+    socket.destroy();
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    const onError = (error: Error) => {
+      server.off("error", onError);
+      reject(error);
+    };
+
+    server.once("error", onError);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", onError);
+      resolve();
+    });
+  });
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected upgrade test server to expose a numeric port");
+  }
+
+  return {
+    port: address.port,
+    close: async () => {
+      server.close();
+      for (const socket of sockets) {
+        socket.destroy();
+      }
+      await new Promise<void>((resolve) => {
+        setImmediate(resolve);
+      });
+    },
+  };
 }
 
 async function waitForWebSocketOpen(ws: WebSocket): Promise<void> {
@@ -206,88 +304,20 @@ async function waitForTcpData(socket: net.Socket, timeoutMs = 2_000): Promise<Bu
 }
 
 describe("DesktopBridgeServer", () => {
-  test("start is idempotent across concurrent calls", async () => {
-    const bridgeServer = new DesktopBridgeServer({
-      desktopTokenManager: {
-        validate: mock(() => null),
-      },
-      desktopSessionManager: {
-        getLiveSessionConnection: mock(() => null),
-      },
-    });
-
-    try {
-      const [firstPort, secondPort, thirdPort] = await Promise.all([
-        bridgeServer.start(),
-        bridgeServer.start(),
-        bridgeServer.start(),
-      ]);
-
-      expect(firstPort).toBeGreaterThan(0);
-      expect(firstPort).toBe(secondPort);
-      expect(firstPort).toBe(thirdPort);
-
-      const probe = net.createConnection({ host: "127.0.0.1", port: firstPort });
-      await new Promise<void>((resolve, reject) => {
-        probe.once("connect", () => {
-          probe.destroy();
-          resolve();
-        });
-        probe.once("error", reject);
-      });
-    } finally {
-      await bridgeServer.stop();
-    }
-  });
-
   test("handleUpgrade bridges binary traffic when mounted on an external HTTP server", async () => {
     const tcpHarness = await listenTcpServer();
-    const bridgeServer = new DesktopBridgeServer({
-      desktopTokenManager: {
-        validate: mock((token: string) =>
-          token === "valid-token"
-            ? { workspaceId: "workspace-1", sessionId: "desktop:workspace-1" }
-            : null
-        ),
-      },
-      desktopSessionManager: {
-        getLiveSessionConnection: mock((workspaceId: string) =>
-          workspaceId === "workspace-1"
-            ? { sessionId: "desktop:workspace-1", vncPort: tcpHarness.port }
-            : null
-        ),
-      },
+    const bridgeServer = createBridgeServer({
+      getLiveSessionConnection: mock((workspaceId: string) =>
+        workspaceId === VALID_WORKSPACE_ID
+          ? { sessionId: VALID_SESSION_ID, vncPort: tcpHarness.port }
+          : null
+      ),
     });
-    const httpServer = http.createServer();
-
-    httpServer.on("upgrade", (request, socket, head) => {
-      bridgeServer.handleUpgrade(request, socket, head);
-    });
-    httpServer.on("clientError", (_error, socket) => {
-      socket.destroy();
-    });
+    const upgradeHarness = await listenUpgradeServer(bridgeServer);
 
     let ws: WebSocket | null = null;
     try {
-      await new Promise<void>((resolve, reject) => {
-        const onError = (error: Error) => {
-          httpServer.off("error", onError);
-          reject(error);
-        };
-
-        httpServer.once("error", onError);
-        httpServer.listen(0, "127.0.0.1", () => {
-          httpServer.off("error", onError);
-          resolve();
-        });
-      });
-
-      const address = httpServer.address();
-      if (!address || typeof address === "string") {
-        throw new Error("Expected upgrade test server to expose a numeric port");
-      }
-
-      ws = new WebSocket(`ws://127.0.0.1:${address.port}/?token=valid-token`);
+      ws = new WebSocket(`ws://127.0.0.1:${upgradeHarness.port}/?token=${VALID_TOKEN}`);
       await waitForWebSocketOpen(ws);
 
       const tcpSocket = await tcpHarness.connectionPromise;
@@ -301,9 +331,7 @@ describe("DesktopBridgeServer", () => {
       if (ws) {
         await closeWebSocket(ws);
       }
-      await new Promise<void>((resolve) => {
-        httpServer.close(() => resolve());
-      });
+      await upgradeHarness.close();
       await bridgeServer.stop();
       await tcpHarness.close();
     }
@@ -311,27 +339,18 @@ describe("DesktopBridgeServer", () => {
 
   test("bridges binary traffic in both directions for a valid token", async () => {
     const tcpHarness = await listenTcpServer();
-    const bridgeServer = new DesktopBridgeServer({
-      desktopTokenManager: {
-        validate: mock((token: string) =>
-          token === "valid-token"
-            ? { workspaceId: "workspace-1", sessionId: "desktop:workspace-1" }
-            : null
-        ),
-      },
-      desktopSessionManager: {
-        getLiveSessionConnection: mock((workspaceId: string) =>
-          workspaceId === "workspace-1"
-            ? { sessionId: "desktop:workspace-1", vncPort: tcpHarness.port }
-            : null
-        ),
-      },
+    const bridgeServer = createBridgeServer({
+      getLiveSessionConnection: mock((workspaceId: string) =>
+        workspaceId === VALID_WORKSPACE_ID
+          ? { sessionId: VALID_SESSION_ID, vncPort: tcpHarness.port }
+          : null
+      ),
     });
+    const upgradeHarness = await listenUpgradeServer(bridgeServer);
 
     let ws: WebSocket | null = null;
     try {
-      const port = await bridgeServer.start();
-      ws = new WebSocket(`ws://127.0.0.1:${port}/?token=valid-token`);
+      ws = new WebSocket(`ws://127.0.0.1:${upgradeHarness.port}/?token=${VALID_TOKEN}`);
       await waitForWebSocketOpen(ws);
 
       const tcpSocket = await tcpHarness.connectionPromise;
@@ -345,31 +364,28 @@ describe("DesktopBridgeServer", () => {
       if (ws) {
         await closeWebSocket(ws);
       }
+      await upgradeHarness.close();
       await bridgeServer.stop();
       await tcpHarness.close();
     }
   });
 
   test("closes with 4001 for invalid or missing tokens", async () => {
-    const bridgeServer = new DesktopBridgeServer({
-      desktopTokenManager: {
-        validate: mock(() => null),
-      },
-      desktopSessionManager: {
-        getLiveSessionConnection: mock(() => null),
-      },
+    const bridgeServer = createBridgeServer({
+      validate: mock(() => null),
+      getLiveSessionConnection: mock(() => null),
     });
+    const upgradeHarness = await listenUpgradeServer(bridgeServer);
 
     try {
-      const port = await bridgeServer.start();
-
       for (const suffix of ["", "/?token=bad-token"]) {
-        const ws = new WebSocket(`ws://127.0.0.1:${port}${suffix}`);
+        const ws = new WebSocket(`ws://127.0.0.1:${upgradeHarness.port}${suffix}`);
         const closeEvent = await waitForWebSocketClose(ws);
         expect(closeEvent.code).toBe(4001);
         expect(closeEvent.reason).toBe("invalid token");
       }
     } finally {
+      await upgradeHarness.close();
       await bridgeServer.stop();
     }
   });
@@ -384,22 +400,19 @@ describe("DesktopBridgeServer", () => {
     ];
 
     for (const scenario of scenarios) {
-      const bridgeServer = new DesktopBridgeServer({
-        desktopTokenManager: {
-          validate: mock(() => ({ workspaceId: "workspace-1", sessionId: "desktop:workspace-1" })),
-        },
-        desktopSessionManager: {
-          getLiveSessionConnection: mock(() => scenario.liveSession),
-        },
+      const bridgeServer = createBridgeServer({
+        validate: mock(() => ({ workspaceId: VALID_WORKSPACE_ID, sessionId: VALID_SESSION_ID })),
+        getLiveSessionConnection: mock(() => scenario.liveSession),
       });
+      const upgradeHarness = await listenUpgradeServer(bridgeServer);
 
       try {
-        const port = await bridgeServer.start();
-        const ws = new WebSocket(`ws://127.0.0.1:${port}/?token=valid-token`);
+        const ws = new WebSocket(`ws://127.0.0.1:${upgradeHarness.port}/?token=${VALID_TOKEN}`);
         const closeEvent = await waitForWebSocketClose(ws);
         expect(closeEvent.code).toBe(4002);
         expect(closeEvent.reason).toBe("session unavailable");
       } finally {
+        await upgradeHarness.close();
         await bridgeServer.stop();
       }
     }
@@ -410,60 +423,81 @@ describe("DesktopBridgeServer", () => {
     const deadPort = deadServer.port;
     await deadServer.close();
 
-    const bridgeServer = new DesktopBridgeServer({
-      desktopTokenManager: {
-        validate: mock(() => ({ workspaceId: "workspace-1", sessionId: "desktop:workspace-1" })),
-      },
-      desktopSessionManager: {
-        getLiveSessionConnection: mock(() => ({
-          sessionId: "desktop:workspace-1",
-          vncPort: deadPort,
-        })),
-      },
+    const bridgeServer = createBridgeServer({
+      validate: mock(() => ({ workspaceId: VALID_WORKSPACE_ID, sessionId: VALID_SESSION_ID })),
+      getLiveSessionConnection: mock(() => ({
+        sessionId: VALID_SESSION_ID,
+        vncPort: deadPort,
+      })),
     });
+    const upgradeHarness = await listenUpgradeServer(bridgeServer);
 
     try {
-      const port = await bridgeServer.start();
-      const ws = new WebSocket(`ws://127.0.0.1:${port}/?token=valid-token`);
+      const ws = new WebSocket(`ws://127.0.0.1:${upgradeHarness.port}/?token=${VALID_TOKEN}`);
       const closeEvent = await waitForWebSocketClose(ws);
       expect(closeEvent.code).toBe(4003);
       expect(closeEvent.reason).toBe("vnc connect failed");
     } finally {
+      await upgradeHarness.close();
       await bridgeServer.stop();
     }
   });
 
   test("stop closes active connections and is idempotent", async () => {
     const tcpHarness = await listenTcpServer();
-    const bridgeServer = new DesktopBridgeServer({
-      desktopTokenManager: {
-        validate: mock(() => ({ workspaceId: "workspace-1", sessionId: "desktop:workspace-1" })),
-      },
-      desktopSessionManager: {
-        getLiveSessionConnection: mock(() => ({
-          sessionId: "desktop:workspace-1",
-          vncPort: tcpHarness.port,
-        })),
-      },
+    const bridgeServer = createBridgeServer({
+      validate: mock(() => ({ workspaceId: VALID_WORKSPACE_ID, sessionId: VALID_SESSION_ID })),
+      getLiveSessionConnection: mock(() => ({
+        sessionId: VALID_SESSION_ID,
+        vncPort: tcpHarness.port,
+      })),
     });
+    const upgradeHarness = await listenUpgradeServer(bridgeServer);
+    const hangingConnect = createDeferred<net.Socket>();
 
-    let ws: WebSocket | null = null;
+    interface PrivateBridgeServer {
+      connectToVnc: (port: number) => Promise<net.Socket>;
+    }
+
+    let activeWs: WebSocket | null = null;
+    let orphanWs: WebSocket | null = null;
+    const connectToVncSpy = spyOn(bridgeServer as unknown as PrivateBridgeServer, "connectToVnc");
+
     try {
-      const port = await bridgeServer.start();
-      ws = new WebSocket(`ws://127.0.0.1:${port}/?token=valid-token`);
-      await waitForWebSocketOpen(ws);
+      connectToVncSpy.mockRestore();
+
+      activeWs = new WebSocket(`ws://127.0.0.1:${upgradeHarness.port}/?token=${VALID_TOKEN}`);
+      await waitForWebSocketOpen(activeWs);
       await tcpHarness.connectionPromise;
 
-      const closePromise = waitForWebSocketClose(ws);
-      await bridgeServer.stop();
-      const closeEvent = await closePromise;
-      expect([1000, 1001]).toContain(closeEvent.code);
+      connectToVncSpy.mockImplementation(() => hangingConnect.promise);
+      orphanWs = new WebSocket(`ws://127.0.0.1:${upgradeHarness.port}/?token=${VALID_TOKEN}`);
+      await waitForWebSocketOpen(orphanWs);
 
+      const activeClosePromise = waitForWebSocketClose(activeWs);
+      const orphanClosePromise = waitForWebSocketClose(orphanWs);
+      await bridgeServer.stop();
+
+      const activeCloseEvent = await activeClosePromise;
+      expect([1000, 1001]).toContain(activeCloseEvent.code);
+      expect(activeCloseEvent.reason).toBe("server stopping");
+
+      const orphanCloseEvent = await orphanClosePromise;
+      expect([1000, 1001]).toContain(orphanCloseEvent.code);
+      expect(orphanCloseEvent.reason).toBe("server stopping");
+
+      hangingConnect.reject(new Error("stop test cleanup"));
       await bridgeServer.stop();
     } finally {
-      if (ws && ws.readyState !== WebSocket.CLOSED) {
-        await closeWebSocket(ws);
+      hangingConnect.reject(new Error("stop test cleanup"));
+      connectToVncSpy.mockRestore();
+      if (activeWs && activeWs.readyState !== WebSocket.CLOSED) {
+        await closeWebSocket(activeWs);
       }
+      if (orphanWs && orphanWs.readyState !== WebSocket.CLOSED) {
+        await closeWebSocket(orphanWs);
+      }
+      await upgradeHarness.close();
       await bridgeServer.stop();
       await tcpHarness.close();
     }
@@ -471,22 +505,18 @@ describe("DesktopBridgeServer", () => {
 
   test("ignores text frames without breaking later binary traffic", async () => {
     const tcpHarness = await listenTcpServer();
-    const bridgeServer = new DesktopBridgeServer({
-      desktopTokenManager: {
-        validate: mock(() => ({ workspaceId: "workspace-1", sessionId: "desktop:workspace-1" })),
-      },
-      desktopSessionManager: {
-        getLiveSessionConnection: mock(() => ({
-          sessionId: "desktop:workspace-1",
-          vncPort: tcpHarness.port,
-        })),
-      },
+    const bridgeServer = createBridgeServer({
+      validate: mock(() => ({ workspaceId: VALID_WORKSPACE_ID, sessionId: VALID_SESSION_ID })),
+      getLiveSessionConnection: mock(() => ({
+        sessionId: VALID_SESSION_ID,
+        vncPort: tcpHarness.port,
+      })),
     });
+    const upgradeHarness = await listenUpgradeServer(bridgeServer);
 
     let ws: WebSocket | null = null;
     try {
-      const port = await bridgeServer.start();
-      ws = new WebSocket(`ws://127.0.0.1:${port}/?token=valid-token`);
+      ws = new WebSocket(`ws://127.0.0.1:${upgradeHarness.port}/?token=${VALID_TOKEN}`);
       await waitForWebSocketOpen(ws);
 
       const tcpSocket = await tcpHarness.connectionPromise;
@@ -499,6 +529,7 @@ describe("DesktopBridgeServer", () => {
       if (ws) {
         await closeWebSocket(ws);
       }
+      await upgradeHarness.close();
       await bridgeServer.stop();
       await tcpHarness.close();
     }

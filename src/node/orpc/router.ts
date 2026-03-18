@@ -4440,13 +4440,6 @@ export const router = (authToken?: string) => {
           try {
             const session = await context.desktopSessionManager.ensureStarted(input.workspaceId);
             const sessionInfo = session.getSessionInfo();
-            // Reuse the API server bind host so browser clients can reach the desktop bridge over
-            // the same interface they used for the main backend instead of a loopback-only socket.
-            const bridgeBindHost =
-              context.serverService.getServerInfo()?.bindHost ??
-              context.config.loadConfigOrDefault().apiServerBindHost ??
-              "127.0.0.1";
-            const bridgePort = await context.desktopBridgeServer.start(bridgeBindHost);
             const startedCapability = {
               available: true as const,
               width: sessionInfo.width,
@@ -4460,7 +4453,6 @@ export const router = (authToken?: string) => {
             return {
               capability: startedCapability,
               bridgePath: DESKTOP_WS_PATH,
-              bridgePort,
               token,
             };
           } catch (error) {
