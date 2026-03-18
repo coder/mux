@@ -203,12 +203,14 @@ describe("BranchSelector", () => {
 
     expect(view.getByRole("button", { name: "scratch-workspace" })).toBeDefined();
     expect(view.queryByLabelText("Copy branch name")).toBeNull();
+    expect(view.container.querySelector(".lucide-git-branch")).toBeNull();
 
     fireEvent.click(view.getByRole("button", { name: "scratch-workspace" }));
 
     await waitFor(() => {
       expect(view.getByLabelText("Copy branch name")).toBeDefined();
     });
+    expect(view.container.querySelector(".lucide-git-branch")).toBeTruthy();
     expect(view.getAllByText("feature/lazy-start").length).toBeGreaterThan(0);
     const executedScripts = executeBash.mock.calls.map(([input]) => input.script);
     expect(

@@ -347,8 +347,10 @@ export function BranchSelector({ workspaceId, workspaceName, className }: Branch
     }
   };
 
-  // Display name: actual git branch if available, otherwise workspace name
-  const displayName = typeof currentBranch === "string" ? currentBranch : workspaceName;
+  // Only show branch-specific affordances when we know the actual git branch.
+  // Unknown branch state still uses the workspace name as an interactive fallback.
+  const hasResolvedBranch = typeof currentBranch === "string";
+  const displayName = hasResolvedBranch ? currentBranch : workspaceName;
 
   const toggleRemote = (remote: string) => {
     setExpandedRemotes((prev) => {
@@ -404,7 +406,7 @@ export function BranchSelector({ workspaceId, workspaceName, className }: Branch
               isRefreshing && "animate-pulse" // Show pulse during switch instead of replacing content
             )}
           >
-            <GitBranch className="h-3 w-3 shrink-0 opacity-70" />
+            {hasResolvedBranch && <GitBranch className="h-3 w-3 shrink-0 opacity-70" />}
             <span className="truncate">{displayName}</span>
           </button>
         </PopoverTrigger>
