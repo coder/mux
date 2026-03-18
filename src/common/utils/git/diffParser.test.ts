@@ -142,6 +142,87 @@ describe("git diff parser (real repository)", () => {
     expect(allHunks[0].content).toContain("+new line");
   });
 
+  it("should preserve nested paths in --no-prefix diffs", () => {
+    execSync("git reset --hard HEAD && git clean -fd", { cwd: testRepoPath });
+    execSync("mkdir -p src/common", { cwd: testRepoPath });
+    writeFileSync(join(testRepoPath, "src", "common", "no-prefix.ts"), "old line\n");
+    execSync("git add src/common/no-prefix.ts && git commit -m 'Add nested no-prefix file'", {
+      cwd: testRepoPath,
+    });
+
+    writeFileSync(join(testRepoPath, "src", "common", "no-prefix.ts"), "new line\n");
+
+    const diff = execSync("git diff --no-prefix HEAD", { cwd: testRepoPath, encoding: "utf-8" });
+    const fileDiffs = parseDiff(diff);
+
+    expect(fileDiffs).toHaveLength(1);
+    expect(fileDiffs[0].filePath).toBe("src/common/no-prefix.ts");
+    expect(fileDiffs[0].oldPath).toBeUndefined();
+    expect(fileDiffs[0].hunks).toHaveLength(1);
+    expect(fileDiffs[0].hunks[0].content).toContain("+new line");
+  });
+
+  it("should parse real mnemonic-prefix diffs", () => {
+    execSync("git reset --hard HEAD && git clean -fd", { cwd: testRepoPath });
+    execSync("mkdir -p src/mnemonic", { cwd: testRepoPath });
+    writeFileSync(join(testRepoPath, "src", "mnemonic", "real.ts"), "before\n");
+    execSync("git add src/mnemonic/real.ts && git commit -m 'Add mnemonic test file'", {
+      cwd: testRepoPath,
+    });
+
+    writeFileSync(join(testRepoPath, "src", "mnemonic", "real.ts"), "after\n");
+
+    const diff = execSync("git -c diff.mnemonicPrefix=true diff HEAD", {
+      cwd: testRepoPath,
+      encoding: "utf-8",
+    });
+    const fileDiffs = parseDiff(diff);
+
+    expect(fileDiffs).toHaveLength(1);
+    expect(fileDiffs[0].filePath).toBe("src/mnemonic/real.ts");
+    expect(fileDiffs[0].oldPath).toBeUndefined();
+    expect(fileDiffs[0].hunks[0].content).toContain("+after");
+  });
+
+  it("should parse --no-prefix additions that use /dev/null", () => {
+    execSync("git reset --hard HEAD && git clean -fd", { cwd: testRepoPath });
+    execSync("mkdir -p nested/dir", { cwd: testRepoPath });
+    writeFileSync(join(testRepoPath, "nested", "dir", "added-no-prefix.ts"), "added\n");
+    execSync("git add nested/dir/added-no-prefix.ts", { cwd: testRepoPath });
+
+    const diff = execSync("git diff --cached --no-prefix", {
+      cwd: testRepoPath,
+      encoding: "utf-8",
+    });
+    const fileDiffs = parseDiff(diff);
+
+    expect(fileDiffs).toHaveLength(1);
+    expect(fileDiffs[0].changeType).toBe("added");
+    expect(fileDiffs[0].filePath).toBe("nested/dir/added-no-prefix.ts");
+    expect(fileDiffs[0].oldPath).toBeUndefined();
+    expect(fileDiffs[0].hunks[0].header).toMatch(/^@@ -0,0 \+1(?:,1)? @@/);
+  });
+
+  it("should parse --no-prefix deletions that use /dev/null", () => {
+    execSync("git reset --hard HEAD && git clean -fd", { cwd: testRepoPath });
+    execSync("mkdir -p deleted/nested", { cwd: testRepoPath });
+    writeFileSync(join(testRepoPath, "deleted", "nested", "gone.ts"), "gone\n");
+    execSync("git add deleted/nested/gone.ts && git commit -m 'Add nested deleted file'", {
+      cwd: testRepoPath,
+    });
+
+    execSync("rm deleted/nested/gone.ts", { cwd: testRepoPath });
+
+    const diff = execSync("git diff --no-prefix HEAD", { cwd: testRepoPath, encoding: "utf-8" });
+    const fileDiffs = parseDiff(diff);
+
+    expect(fileDiffs).toHaveLength(1);
+    expect(fileDiffs[0].changeType).toBe("deleted");
+    expect(fileDiffs[0].filePath).toBe("deleted/nested/gone.ts");
+    expect(fileDiffs[0].oldPath).toBe("deleted/nested/gone.ts");
+    expect(fileDiffs[0].hunks[0].content).toContain("-gone");
+  });
+
   it("should normalize CRLF diff output (no \\r in hunk content)", () => {
     const diffOutput =
       [
@@ -175,10 +256,10 @@ describe("git diff parser (real repository)", () => {
   });
 
   it("should parse file deletion", () => {
-    // Reset and commit newfile
-    execSync("git add . && git commit -m 'Add newfile'", { cwd: testRepoPath });
+    execSync("git reset --hard HEAD && git clean -fd", { cwd: testRepoPath });
+    writeFileSync(join(testRepoPath, "newfile.md"), "# New File\n\nContent here\n");
+    execSync("git add newfile.md && git commit -m 'Add newfile'", { cwd: testRepoPath });
 
-    // Delete file
     execSync("rm newfile.md", { cwd: testRepoPath });
 
     const diff = execSync("git diff HEAD", { cwd: testRepoPath, encoding: "utf-8" });

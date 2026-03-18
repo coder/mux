@@ -48,6 +48,70 @@ function parseHunkHeader(line: string): {
   };
 }
 
+type ParsedDiffPathLabel = {
+  raw: string;
+  prefix: string | null;
+  path: string | null;
+};
+
+function parseDiffPathLabel(label: string | undefined): ParsedDiffPathLabel | null {
+  if (label == null) {
+    return null;
+  }
+
+  if (label === "/dev/null") {
+    return {
+      raw: label,
+      prefix: null,
+      path: null,
+    };
+  }
+
+  const slashIndex = label.indexOf("/");
+  if (slashIndex === -1) {
+    return {
+      raw: label,
+      prefix: null,
+      path: label,
+    };
+  }
+
+  return {
+    raw: label,
+    prefix: label.slice(0, slashIndex),
+    path: label.slice(slashIndex + 1),
+  };
+}
+
+function choosePairedDiffLabel(
+  primaryLabel: string | undefined,
+  fallbackLabel: string | undefined
+): string | undefined {
+  return primaryLabel != null && primaryLabel !== "/dev/null" ? primaryLabel : fallbackLabel;
+}
+
+function canonicalizeDiffPathLabel(
+  label: string | undefined,
+  pairedLabel: string | undefined
+): string | undefined {
+  const parsedLabel = parseDiffPathLabel(label);
+  if (!parsedLabel || parsedLabel.path == null) {
+    return undefined;
+  }
+
+  const parsedPair = parseDiffPathLabel(pairedLabel);
+  if (
+    parsedLabel.prefix &&
+    parsedPair?.prefix &&
+    parsedLabel.prefix !== parsedPair.prefix &&
+    parsedLabel.path === parsedPair.path
+  ) {
+    return parsedLabel.path;
+  }
+
+  return parsedLabel.raw;
+}
+
 /**
  * Parse unified diff output into structured file diffs with hunks
  * Supports standard git diff format with file headers and hunk markers
@@ -63,6 +127,52 @@ export function parseDiff(diffOutput: string): FileDiff[] {
   let currentFile: FileDiff | null = null;
   let currentHunk: Partial<DiffHunk> | null = null;
   let hunkLines: string[] = [];
+  let currentHeaderOldLabel: string | undefined;
+  let currentHeaderNewLabel: string | undefined;
+  let currentPatchOldLabel: string | undefined;
+  let currentPatchNewLabel: string | undefined;
+  let currentRenameFrom: string | undefined;
+  let currentRenameTo: string | undefined;
+
+  const syncCurrentFilePaths = () => {
+    if (!currentFile) {
+      return;
+    }
+
+    const resolvedOldPath =
+      currentRenameFrom ??
+      canonicalizeDiffPathLabel(
+        currentPatchOldLabel ?? currentHeaderOldLabel,
+        choosePairedDiffLabel(currentPatchNewLabel, currentHeaderNewLabel)
+      );
+    const resolvedNewPath =
+      currentRenameTo ??
+      canonicalizeDiffPathLabel(
+        currentPatchNewLabel ?? currentHeaderNewLabel,
+        choosePairedDiffLabel(currentPatchOldLabel, currentHeaderOldLabel)
+      );
+    const filePath = resolvedNewPath ?? resolvedOldPath;
+    if (filePath) {
+      currentFile.filePath = filePath;
+    }
+
+    currentFile.oldPath =
+      resolvedOldPath &&
+      (currentFile.changeType === "deleted" ||
+        currentFile.changeType === "renamed" ||
+        (resolvedNewPath != null && resolvedOldPath !== resolvedNewPath))
+        ? resolvedOldPath
+        : undefined;
+  };
+
+  const resetCurrentFileLabels = () => {
+    currentHeaderOldLabel = undefined;
+    currentHeaderNewLabel = undefined;
+    currentPatchOldLabel = undefined;
+    currentPatchNewLabel = undefined;
+    currentRenameFrom = undefined;
+    currentRenameTo = undefined;
+  };
 
   const finishHunk = () => {
     if (currentHunk && currentFile && hunkLines.length > 0) {
@@ -89,9 +199,11 @@ export function parseDiff(diffOutput: string): FileDiff[] {
   const finishFile = () => {
     finishHunk();
     if (currentFile) {
+      syncCurrentFilePaths();
       files.push(currentFile);
       currentFile = null;
     }
+    resetCurrentFileLabels();
   };
 
   for (const line of lines) {
@@ -102,17 +214,16 @@ export function parseDiff(diffOutput: string): FileDiff[] {
       // assuming specific labels. Review diffs can use other prefixes (for example c/ and w/).
       const parts = line.split(" ");
       if (parts.length >= 4) {
-        const oldPathWithLabel = parts[2];
-        const newPathWithLabel = parts[3];
-        const oldPath = oldPathWithLabel.replace(/^[^/]+\//, "");
-        const newPath = newPathWithLabel.replace(/^[^/]+\//, "");
+        currentHeaderOldLabel = parts[2];
+        currentHeaderNewLabel = parts[3];
         currentFile = {
-          filePath: newPath,
-          oldPath: oldPath !== newPath ? oldPath : undefined,
+          filePath: "",
+          oldPath: undefined,
           changeType: "modified",
           isBinary: false,
           hunks: [],
         };
+        syncCurrentFilePaths();
       }
       continue;
     }
@@ -128,18 +239,40 @@ export function parseDiff(diffOutput: string): FileDiff[] {
     // New file mode
     if (line.startsWith("new file mode ")) {
       currentFile.changeType = "added";
+      syncCurrentFilePaths();
       continue;
     }
 
     // Deleted file mode
     if (line.startsWith("deleted file mode ")) {
       currentFile.changeType = "deleted";
+      syncCurrentFilePaths();
       continue;
     }
 
-    // Rename marker
-    if (line.startsWith("rename from ") || line.startsWith("rename to ")) {
+    if (!currentHunk && line.startsWith("--- ")) {
+      currentPatchOldLabel = line.slice(4);
+      syncCurrentFilePaths();
+      continue;
+    }
+
+    if (!currentHunk && line.startsWith("+++ ")) {
+      currentPatchNewLabel = line.slice(4);
+      syncCurrentFilePaths();
+      continue;
+    }
+
+    if (line.startsWith("rename from ")) {
       currentFile.changeType = "renamed";
+      currentRenameFrom = line.slice("rename from ".length);
+      syncCurrentFilePaths();
+      continue;
+    }
+
+    if (line.startsWith("rename to ")) {
+      currentFile.changeType = "renamed";
+      currentRenameTo = line.slice("rename to ".length);
+      syncCurrentFilePaths();
       continue;
     }
 
