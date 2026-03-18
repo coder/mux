@@ -570,7 +570,14 @@ export class GitStatusStore {
           )
         );
       }
-      return { kind: "single", workspaceId: metadata.id, status: null };
+      // Passive runtime gating means we have no fresh snapshot, not that the last known
+      // git status became invalid. Preserve cached branch/status data until an explicit
+      // user action or a running runtime produces a newer result.
+      return {
+        kind: "single",
+        workspaceId: metadata.id,
+        status: this.statusCache.get(metadata.id) ?? null,
+      };
     }
 
     try {
