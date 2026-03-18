@@ -179,7 +179,13 @@ export const BROWSER_VIEWPORT_ATTR = "data-browser-viewport";
  */
 export const ESCAPE_INTERRUPTS_STREAM_ATTR = "data-escape-interrupts-stream";
 
-export function allowsEscapeToInterruptStream(target: EventTarget | null): boolean {
+/**
+ * Check whether the event target (or an ancestor) carries the given data attribute.
+ * Shared guard for isTerminalFocused, isBrowserViewportFocused, and
+ * allowsEscapeToInterruptStream — all three previously duplicated the same
+ * null → HTMLElement → closest() boilerplate.
+ */
+function hasClosestWithAttr(target: EventTarget | null, attr: string): boolean {
   if (!target) {
     return false;
   }
@@ -187,7 +193,11 @@ export function allowsEscapeToInterruptStream(target: EventTarget | null): boole
   if (typeof HTMLElement === "undefined" || !(target instanceof HTMLElement)) {
     return false;
   }
-  return target.closest(`[${ESCAPE_INTERRUPTS_STREAM_ATTR}]`) !== null;
+  return target.closest(`[${attr}]`) !== null;
+}
+
+export function allowsEscapeToInterruptStream(target: EventTarget | null): boolean {
+  return hasClosestWithAttr(target, ESCAPE_INTERRUPTS_STREAM_ATTR);
 }
 
 /**
@@ -196,14 +206,7 @@ export function allowsEscapeToInterruptStream(target: EventTarget | null): boole
  * (like Ctrl+C for SIGINT) instead of intercepting them globally.
  */
 export function isTerminalFocused(target: EventTarget | null): boolean {
-  if (!target) {
-    return false;
-  }
-  // Check if HTMLElement exists (not available in non-DOM test environments)
-  if (typeof HTMLElement === "undefined" || !(target instanceof HTMLElement)) {
-    return false;
-  }
-  return target.closest(`[${TERMINAL_CONTAINER_ATTR}]`) !== null;
+  return hasClosestWithAttr(target, TERMINAL_CONTAINER_ATTR);
 }
 
 /**
@@ -211,14 +214,7 @@ export function isTerminalFocused(target: EventTarget | null): boolean {
  * Used by global keyboard handlers to avoid stealing keystrokes from live browser sessions.
  */
 export function isBrowserViewportFocused(target: EventTarget | null): boolean {
-  if (!target) {
-    return false;
-  }
-  // Check if HTMLElement exists (not available in non-DOM test environments)
-  if (typeof HTMLElement === "undefined" || !(target instanceof HTMLElement)) {
-    return false;
-  }
-  return target.closest(`[${BROWSER_VIEWPORT_ATTR}]`) !== null;
+  return hasClosestWithAttr(target, BROWSER_VIEWPORT_ATTR);
 }
 
 /**
