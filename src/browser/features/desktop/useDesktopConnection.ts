@@ -42,45 +42,17 @@ function assertDesktop(condition: unknown, message: string): asserts condition {
   }
 }
 
-function getDesktopBridgeBaseUrl(): URL {
-  if (typeof window !== "undefined") {
-    try {
-      // User rationale: the desktop bridge reuses the backend bind host, so the renderer should
-      // derive the bridge host from the same backend origin instead of assuming loopback.
-      const backendBaseUrl = new URL(getBrowserBackendBaseUrl());
-      if (backendBaseUrl.hostname.length > 0) {
-        return backendBaseUrl;
-      }
-    } catch {
-      // Fall through to window.location-derived fallbacks below.
-    }
-
-    if (window.location.hostname.length > 0) {
-      return new URL(`http://${window.location.hostname}`);
-    }
-
-    if (window.location.protocol === "http:" || window.location.protocol === "https:") {
-      return new URL(window.location.origin);
-    }
-  }
-
-  return new URL("http://localhost");
-}
-
-function buildDesktopBridgeUrl(bridgePort: number, token: string): string {
-  assertDesktop(
-    Number.isInteger(bridgePort) && bridgePort > 0,
-    "Desktop bootstrap response is missing a valid bridgePort."
-  );
+function buildDesktopBridgeUrl(bridgePath: string, token: string): string {
+  assertDesktop(bridgePath.length > 0, "Desktop bootstrap response is missing a valid bridgePath.");
   assertDesktop(token.length > 0, "Desktop bootstrap response is missing a valid token.");
 
-  const wsUrl = new URL(getDesktopBridgeBaseUrl().origin);
+  // User rationale: routed deployments only expose the main backend origin, so reuse that
+  // origin with the server-provided bridge path instead of mutating to a separate bridge port.
+  const baseUrl = getBrowserBackendBaseUrl();
+  const wsUrl = new URL(bridgePath, baseUrl);
   // Derive ws/wss from page protocol — in HTTPS deployments, a reverse proxy handles TLS
   // termination for the bridge.
   wsUrl.protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  wsUrl.port = String(bridgePort);
-  wsUrl.pathname = "/";
-  wsUrl.search = "";
   wsUrl.searchParams.set("token", token);
   return wsUrl.toString();
 }
@@ -201,17 +173,17 @@ export function useDesktopConnection(workspaceId: string): UseDesktopConnectionR
           return;
         }
 
-        const bridgePort = result.bridgePort;
+        const bridgePath = result.bridgePath;
         assertDesktop(
-          bridgePort != null,
-          "Desktop bootstrap response is missing a valid bridgePort."
+          typeof bridgePath === "string" && bridgePath.length > 0,
+          "Desktop bootstrap response is missing a valid bridgePath."
         );
         const token = result.token;
         assertDesktop(
           typeof token === "string" && token.length > 0,
           "Desktop bootstrap response is missing a valid token."
         );
-        const wsUrl = buildDesktopBridgeUrl(bridgePort, token);
+        const wsUrl = buildDesktopBridgeUrl(bridgePath, token);
         setWidth(result.capability.width);
         setHeight(result.capability.height);
 
