@@ -84,8 +84,27 @@ export function BranchSelector({ workspaceId, workspaceName, className }: Branch
     setIsLoading(true);
 
     try {
-      // Explicit opens can wake the runtime, so resolve the active branch with an
-      // untruncated command and keep the branch list separately capped for the popover.
+      // Explicit opens are allowed to wake the runtime, so determine whether the
+      // workspace is a git repo first and only then load branch/remotes data.
+      const repoProbeResult = await api.workspace.executeBash({
+        workspaceId,
+        script: `git rev-parse --is-inside-work-tree 2>/dev/null`,
+        options: repoRootBashOptions(5),
+      });
+      const isGitRepo =
+        repoProbeResult.success &&
+        repoProbeResult.data.success &&
+        repoProbeResult.data.output?.trim() === "true";
+      if (!isGitRepo) {
+        setCurrentBranch(false);
+        setLocalBranches([]);
+        setLocalBranchesTruncated(false);
+        setRemotes([]);
+        return;
+      }
+
+      // Once we know the repo exists, resolve the active branch with an untruncated
+      // command and keep the branch list separately capped for the popover.
       const [currentBranchResult, branchResult, remoteResult] = await Promise.all([
         api.workspace.executeBash({
           workspaceId,

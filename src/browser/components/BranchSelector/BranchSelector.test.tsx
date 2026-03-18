@@ -165,6 +165,9 @@ describe("BranchSelector", () => {
 
   test("resolves and shows the active branch even when the recent branch list does not include it", async () => {
     const executeBash = mock((input: ExecuteBashInput) => {
+      if (input.script.includes("git rev-parse --is-inside-work-tree")) {
+        return Promise.resolve(bashSuccess("true"));
+      }
       if (input.script.includes("git branch --show-current")) {
         return Promise.resolve(bashSuccess("feature/lazy-start"));
       }
@@ -194,12 +197,54 @@ describe("BranchSelector", () => {
     fireEvent.click(view.getByRole("button", { name: "scratch-workspace" }));
 
     await waitFor(() => {
-      expect(executeBash.mock.calls).toHaveLength(3);
-    });
-    await waitFor(() => {
       expect(view.getByLabelText("Copy branch name")).toBeDefined();
     });
     expect(view.getAllByText("feature/lazy-start").length).toBeGreaterThan(0);
-    expect(executeBash.mock.calls[0]?.[0].script).toContain("git branch --show-current");
+    const executedScripts = executeBash.mock.calls.map(([input]) => input.script);
+    expect(
+      executedScripts.some((script) => script.includes("git rev-parse --is-inside-work-tree"))
+    ).toBe(true);
+    expect(executedScripts.some((script) => script.includes("git branch --show-current"))).toBe(
+      true
+    );
+    expect(executedScripts.some((script) => script.includes("%(refname:short)"))).toBe(true);
+    expect(executedScripts.some((script) => script.includes("git remote"))).toBe(true);
+  });
+
+  test("switches to the non-git fallback after an explicit open confirms the workspace is not a repo", async () => {
+    const executeBash = mock((input: ExecuteBashInput) => {
+      if (input.script.includes("git rev-parse --is-inside-work-tree")) {
+        return Promise.resolve({
+          success: true,
+          data: {
+            success: false,
+            error: "fatal: not a git repository",
+            exitCode: 128,
+            wall_duration_ms: 0,
+          },
+        } satisfies ExecuteBashResult);
+      }
+      throw new Error(`Unexpected script: ${input.script}`);
+    });
+    mockApi = {
+      workspace: {
+        executeBash,
+      },
+    };
+
+    const view = render(<BranchSelector workspaceId="ws-2" workspaceName="plain-workspace" />);
+
+    expect(view.getByRole("button", { name: "plain-workspace" })).toBeDefined();
+
+    fireEvent.click(view.getByRole("button", { name: "plain-workspace" }));
+
+    await waitFor(() => {
+      expect(executeBash.mock.calls).toHaveLength(1);
+    });
+    await waitFor(() => {
+      expect(view.queryByRole("button", { name: "plain-workspace" })).toBeNull();
+    });
+    expect(view.getByText("plain-workspace")).toBeDefined();
+    expect(executeBash.mock.calls[0]?.[0].script).toContain("git rev-parse --is-inside-work-tree");
   });
 });
