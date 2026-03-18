@@ -88,7 +88,9 @@ export function BranchSelector({ workspaceId, workspaceName, className }: Branch
       // workspace is a git repo first and only then load branch/remotes data.
       const repoProbeResult = await api.workspace.executeBash({
         workspaceId,
-        script: `git rev-parse --is-inside-work-tree 2>/dev/null`,
+        // Keep stderr intact here so explicit opens can distinguish a definitive
+        // "not a git repository" result from transient runtime/IPC failures.
+        script: `git rev-parse --is-inside-work-tree`,
         options: repoRootBashOptions(5),
       });
       const repoProbeOutput =
