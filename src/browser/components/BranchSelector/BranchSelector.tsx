@@ -96,6 +96,7 @@ export function BranchSelector({ workspaceId, workspaceName, className }: Branch
         repoProbeResult.data.success &&
         repoProbeResult.data.output?.trim() === "true";
       if (!isGitRepo) {
+        branchCache.remove(workspaceId);
         setCurrentBranch(false);
         setLocalBranches([]);
         setLocalBranchesTruncated(false);

@@ -238,12 +238,17 @@ describe("BranchSelector", () => {
         executeBash,
       },
     };
+    localStorage.setItem(
+      "branch:ws-2",
+      JSON.stringify({ data: "stale-branch", cachedAt: Date.now() })
+    );
+    localStorage.setItem("branchIndex", JSON.stringify(["branch:ws-2"]));
 
     const view = render(<BranchSelector workspaceId="ws-2" workspaceName="plain-workspace" />);
 
-    expect(view.getByRole("button", { name: "plain-workspace" })).toBeDefined();
+    expect(view.getByRole("button", { name: "stale-branch" })).toBeDefined();
 
-    fireEvent.click(view.getByRole("button", { name: "plain-workspace" }));
+    fireEvent.click(view.getByRole("button", { name: "stale-branch" }));
 
     await waitFor(() => {
       expect(executeBash.mock.calls).toHaveLength(1);
@@ -252,6 +257,8 @@ describe("BranchSelector", () => {
       expect(view.queryByRole("button", { name: "plain-workspace" })).toBeNull();
     });
     expect(view.getByText("plain-workspace")).toBeDefined();
+    expect(localStorage.getItem("branch:ws-2")).toBeNull();
+    expect(localStorage.getItem("branchIndex")).toBe(JSON.stringify([]));
     expect(executeBash.mock.calls[0]?.[0].script).toContain("git rev-parse --is-inside-work-tree");
   });
 });
