@@ -203,14 +203,13 @@ describe("BranchSelector", () => {
 
     expect(view.getByRole("button", { name: "scratch-workspace" })).toBeDefined();
     expect(view.queryByLabelText("Copy branch name")).toBeNull();
-    expect(view.container.querySelector(".lucide-git-branch")).toBeNull();
+    expect(view.container.querySelector(".lucide-git-branch")).toBeTruthy();
 
     fireEvent.click(view.getByRole("button", { name: "scratch-workspace" }));
 
     await waitFor(() => {
       expect(view.getByLabelText("Copy branch name")).toBeDefined();
     });
-    expect(view.container.querySelector(".lucide-git-branch")).toBeTruthy();
     expect(view.getAllByText("feature/lazy-start").length).toBeGreaterThan(0);
     const executedScripts = executeBash.mock.calls.map(([input]) => input.script);
     expect(
@@ -221,6 +220,36 @@ describe("BranchSelector", () => {
     );
     expect(executedScripts.some((script) => script.includes("%(refname:short)"))).toBe(true);
     expect(executedScripts.some((script) => script.includes("git remote"))).toBe(true);
+  });
+
+  test("resets stale branch state when the component remounts for a different workspace", async () => {
+    mockGitStatus = {
+      branch: "feature/lazy-start",
+      ahead: 1,
+      behind: 0,
+      dirty: false,
+      outgoingAdditions: 0,
+      outgoingDeletions: 0,
+      incomingAdditions: 0,
+      incomingDeletions: 0,
+    };
+
+    const view = render(
+      <BranchSelector key="ws-1" workspaceId="ws-1" workspaceName="first-workspace" />
+    );
+
+    await waitFor(() => {
+      expect(view.getByRole("button", { name: "feature/lazy-start" })).toBeDefined();
+    });
+
+    mockGitStatus = null;
+    view.rerender(
+      <BranchSelector key="ws-2" workspaceId="ws-2" workspaceName="second-workspace" />
+    );
+
+    expect(view.getByRole("button", { name: "second-workspace" })).toBeDefined();
+    expect(view.queryByRole("button", { name: "feature/lazy-start" })).toBeNull();
+    expect(view.queryByLabelText("Copy branch name")).toBeNull();
   });
 
   test("switches to the non-git fallback after an explicit open confirms the workspace is not a repo", async () => {
