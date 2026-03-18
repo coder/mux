@@ -19,6 +19,7 @@ import { log } from "@/node/services/log";
 
 const MAX_RECENT_ACTIONS = 50;
 const MAX_IGNORABLE_SCROLL_DELTA = 1;
+const MAX_CONSECUTIVE_NAVIGATE_MERGE_WINDOW_MS = 2_000;
 const USER_INPUT_ACTION_SOURCE = "user-input";
 
 type ScrollDirection = "up" | "down" | "left" | "right";
@@ -28,6 +29,14 @@ interface UserInputScrollActionMetadata extends Record<string, unknown> {
   inputKind: "scroll";
   scrollDirection: ScrollDirection;
   scrollCount: number;
+}
+
+interface NavigateActionMetadata {
+  previousUrl: string | null;
+  currentUrl: string | null;
+  previousTitle: string | null;
+  title: string | null;
+  navigateCount: number;
 }
 
 type BrowserSessionServiceStreamPortRegistry = Pick<
@@ -250,7 +259,10 @@ export class BrowserSessionService extends EventEmitter {
 
     const previousAction = actions.at(-1);
     const mergedAction =
-      previousAction == null ? null : mergeConsecutiveScrollActions(previousAction, action);
+      previousAction == null
+        ? null
+        : (mergeConsecutiveScrollActions(previousAction, action) ??
+          mergeConsecutiveNavigateActions(previousAction, action));
     if (mergedAction != null) {
       actions[actions.length - 1] = mergedAction;
       return mergedAction;
@@ -418,6 +430,117 @@ function mergeConsecutiveScrollActions(
   };
 }
 
+// Browser backends can emit several identical route-change notifications in quick succession
+// (redirect chains, SPA retries). Merge those bursts so Recent actions keeps the latest state
+// without burning through its fixed budget on near-duplicate navigate rows.
+function mergeConsecutiveNavigateActions(
+  previousAction: BrowserAction,
+  nextAction: BrowserAction
+): BrowserAction | null {
+  const previousNavigateMetadata = getNavigateActionMetadata(previousAction);
+  const nextNavigateMetadata = getNavigateActionMetadata(nextAction);
+  if (previousNavigateMetadata == null || nextNavigateMetadata == null) {
+    return null;
+  }
+
+  if (
+    previousNavigateMetadata.currentUrl == null ||
+    nextNavigateMetadata.currentUrl == null ||
+    previousNavigateMetadata.currentUrl !== nextNavigateMetadata.currentUrl
+  ) {
+    return null;
+  }
+
+  const previousTimestampMs = parseActionTimestampMs(previousAction);
+  const nextTimestampMs = parseActionTimestampMs(nextAction);
+  if (Math.abs(nextTimestampMs - previousTimestampMs) > MAX_CONSECUTIVE_NAVIGATE_MERGE_WINDOW_MS) {
+    return null;
+  }
+
+  const navigateCount = previousNavigateMetadata.navigateCount + nextNavigateMetadata.navigateCount;
+
+  return {
+    ...previousAction,
+    description: nextAction.description,
+    timestamp: nextAction.timestamp,
+    metadata: {
+      ...(previousAction.metadata ?? {}),
+      ...(nextAction.metadata ?? {}),
+      navigateCount,
+    },
+  };
+}
+
+function getNavigateActionMetadata(action: BrowserAction): NavigateActionMetadata | null {
+  if (action.type !== "navigate") {
+    return null;
+  }
+
+  const metadata = action.metadata;
+  if (metadata == null) {
+    return {
+      previousUrl: null,
+      currentUrl: null,
+      previousTitle: null,
+      title: null,
+      navigateCount: 1,
+    };
+  }
+
+  assert(
+    isRecord(metadata),
+    "BrowserSessionService expected navigate metadata to be a record before merging actions"
+  );
+
+  return {
+    previousUrl: readOptionalNavigateMetadataString(metadata, "previousUrl"),
+    currentUrl: readOptionalNavigateMetadataString(metadata, "currentUrl"),
+    previousTitle: readOptionalNavigateMetadataString(metadata, "previousTitle"),
+    title: readOptionalNavigateMetadataString(metadata, "title"),
+    navigateCount: readNavigateCount(metadata),
+  };
+}
+
+function readOptionalNavigateMetadataString(
+  metadata: Record<string, unknown>,
+  key: keyof Omit<NavigateActionMetadata, "navigateCount">
+): string | null {
+  const value = metadata[key];
+  assert(
+    value == null || typeof value === "string",
+    `BrowserSessionService expected navigate metadata.${key} to be a string or nullish`
+  );
+
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmedValue = value.trim();
+  return trimmedValue.length > 0 ? trimmedValue : null;
+}
+
+function readNavigateCount(metadata: Record<string, unknown>): number {
+  const navigateCount = metadata.navigateCount;
+  if (navigateCount == null) {
+    return 1;
+  }
+
+  assert(
+    typeof navigateCount === "number" && Number.isInteger(navigateCount) && navigateCount >= 1,
+    "BrowserSessionService expected navigate metadata.navigateCount to be a positive integer"
+  );
+  return navigateCount;
+}
+
+function parseActionTimestampMs(action: BrowserAction): number {
+  const timestampMs = Date.parse(action.timestamp);
+  assert(
+    Number.isFinite(timestampMs),
+    `BrowserSessionService expected ${action.type} action timestamps to be valid ISO strings`
+  );
+  return timestampMs;
+}
+
 function getUserInputScrollActionMetadata(
   action: BrowserAction
 ): UserInputScrollActionMetadata | null {
@@ -464,4 +587,8 @@ function formatScrollActionDescription(direction: ScrollDirection, count: number
 
 function isScrollDirection(value: unknown): value is ScrollDirection {
   return value === "up" || value === "down" || value === "left" || value === "right";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }

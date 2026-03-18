@@ -24,6 +24,7 @@ import type {
 } from "@/common/types/browserSession";
 import { normalizeBrowserUrl } from "@/common/utils/browserUrl";
 import { BrowserViewport } from "./BrowserViewport";
+import { getActionDisplayInfo } from "./browserActionDisplay";
 import { useBrowserSessionSubscription } from "./useBrowserSessionSubscription";
 
 interface BrowserTabProps {
@@ -597,22 +598,28 @@ function BrowserActionRow(props: { action: BrowserAction }) {
     ? formatRelativeTime(actionTimestamp)
     : "Unknown time";
   const absoluteTimestampLabel = hasValidTimestamp ? formatTimestamp(actionTimestamp) : null;
+  const displayInfo = getActionDisplayInfo(props.action);
 
   return (
     <div className="border-border-light bg-background-secondary flex items-start gap-2 rounded border px-2 py-1.5">
       <Icon className="text-muted mt-0.5 h-3.5 w-3.5 shrink-0" />
       <div className="min-w-0 flex-1">
-        <p className="text-foreground truncate text-xs">{props.action.description}</p>
-        <div className="text-muted flex items-center gap-2 text-[10px]">
-          <span className="capitalize">{getBrowserActionTypeLabel(props.action)}</span>
+        <p className="text-foreground truncate text-xs">{displayInfo.primaryText}</p>
+        <div className="text-muted flex min-w-0 items-center gap-2 text-[10px]">
+          <span className="shrink-0 capitalize">{displayInfo.typeLabel}</span>
+          {displayInfo.secondaryText != null && (
+            <span className="truncate">{displayInfo.secondaryText}</span>
+          )}
           {absoluteTimestampLabel == null ? (
-            <span className="counter-nums">{relativeTimestampLabel}</span>
+            <span className="counter-nums shrink-0">{relativeTimestampLabel}</span>
           ) : (
             <Tooltip>
               {/* Use the shared portal-backed tooltip so the embedded browser surface does not
                   stack a native title tooltip on top of the app tooltip. */}
               <TooltipTrigger asChild>
-                <span className="counter-nums cursor-default">{relativeTimestampLabel}</span>
+                <span className="counter-nums shrink-0 cursor-default">
+                  {relativeTimestampLabel}
+                </span>
               </TooltipTrigger>
               <TooltipContent align="center" side="top">
                 {absoluteTimestampLabel}
@@ -623,14 +630,6 @@ function BrowserActionRow(props: { action: BrowserAction }) {
       </div>
     </div>
   );
-}
-
-function getBrowserActionTypeLabel(action: BrowserAction): BrowserAction["type"] | "scroll" {
-  if (action.type !== "custom" || action.metadata?.inputKind !== "scroll") {
-    return action.type;
-  }
-
-  return "scroll";
 }
 function getViewerContent(
   session: BrowserSession | null,

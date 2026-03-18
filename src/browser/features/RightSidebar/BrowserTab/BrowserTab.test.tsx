@@ -48,6 +48,7 @@ void mock.module("./useBrowserSessionSubscription", () => ({
 }));
 
 import { BrowserTab } from "./BrowserTab";
+import { getActionDisplayInfo } from "./browserActionDisplay";
 
 function createSession(overrides: Partial<BrowserSession> = {}): BrowserSession {
   return {
@@ -118,6 +119,326 @@ afterEach(() => {
   mockBrowserSessionApi = null;
   globalThis.window = originalWindow;
   globalThis.document = originalDocument;
+});
+
+function createAction(overrides: Partial<BrowserAction> = {}): BrowserAction {
+  return {
+    id: "action-1",
+    type: "navigate",
+    description: "Browser page changed",
+    timestamp: new Date("2026-03-16T00:00:00.000Z").toISOString(),
+    ...overrides,
+  };
+}
+
+describe("getActionDisplayInfo", () => {
+  test("prefers navigate titles and adds hostname context when a URL is available", () => {
+    expect(
+      getActionDisplayInfo(
+        createAction({
+          metadata: {
+            title: "Project dashboard",
+            currentUrl: "https://example.com/projects/alpha?tab=overview",
+          },
+        })
+      )
+    ).toEqual({
+      primaryText: "Project dashboard",
+      secondaryText: "example.com",
+      typeLabel: "navigate",
+    });
+  });
+
+  test("appends navigate merge counts to title-based display text", () => {
+    expect(
+      getActionDisplayInfo(
+        createAction({
+          metadata: {
+            title: "Project dashboard",
+            currentUrl: "https://example.com/projects/alpha?tab=overview",
+            navigateCount: 3,
+          },
+        })
+      )
+    ).toEqual({
+      primaryText: "Project dashboard ×3",
+      secondaryText: "example.com",
+      typeLabel: "navigate",
+    });
+  });
+
+  test("omits navigate count suffixes when the count is missing or 1", () => {
+    expect(
+      getActionDisplayInfo(
+        createAction({
+          metadata: {
+            title: "Release notes",
+            currentUrl: "https://example.com/releases/latest",
+          },
+        })
+      )
+    ).toEqual({
+      primaryText: "Release notes",
+      secondaryText: "example.com",
+      typeLabel: "navigate",
+    });
+
+    expect(
+      getActionDisplayInfo(
+        createAction({
+          metadata: {
+            title: "Release notes",
+            currentUrl: "https://example.com/releases/latest",
+            navigateCount: 1,
+          },
+        })
+      )
+    ).toEqual({
+      primaryText: "Release notes",
+      secondaryText: "example.com",
+      typeLabel: "navigate",
+    });
+  });
+
+  test("keeps navigate titles without adding secondary text when no URL is available", () => {
+    expect(
+      getActionDisplayInfo(
+        createAction({
+          metadata: {
+            title: "Release notes",
+            currentUrl: null,
+          },
+        })
+      )
+    ).toEqual({
+      primaryText: "Release notes",
+      typeLabel: "navigate",
+    });
+  });
+
+  test("formats navigate URLs into compact host and pathname text when titles are missing", () => {
+    expect(
+      getActionDisplayInfo(
+        createAction({
+          metadata: {
+            title: "",
+            currentUrl: "https://example.com/docs/getting-started?ref=sidebar",
+          },
+        })
+      )
+    ).toEqual({
+      primaryText: "example.com/docs/getting-started",
+      typeLabel: "navigate",
+    });
+  });
+
+  test("ignores URL-like navigate titles and still formats the current URL", () => {
+    expect(
+      getActionDisplayInfo(
+        createAction({
+          metadata: {
+            title: "https://example.com/docs/getting-started?ref=title",
+            currentUrl: "https://example.com/docs/getting-started?ref=current-url",
+          },
+        })
+      )
+    ).toEqual({
+      primaryText: "example.com/docs/getting-started",
+      typeLabel: "navigate",
+    });
+  });
+
+  test("keeps colon-delimited navigate titles as primary text", () => {
+    expect(
+      getActionDisplayInfo(
+        createAction({
+          metadata: {
+            title: "Release notes: March 2026",
+            currentUrl: "https://example.com/releases/march-2026",
+          },
+        })
+      )
+    ).toEqual({
+      primaryText: "Release notes: March 2026",
+      secondaryText: "example.com",
+      typeLabel: "navigate",
+    });
+
+    expect(
+      getActionDisplayInfo(
+        createAction({
+          metadata: {
+            title: "Error: something went wrong",
+            currentUrl: null,
+          },
+        })
+      )
+    ).toEqual({
+      primaryText: "Error: something went wrong",
+      typeLabel: "navigate",
+    });
+  });
+
+  test("still treats http and https navigate titles as URL-like", () => {
+    expect(
+      getActionDisplayInfo(
+        createAction({
+          metadata: {
+            title: "https://example.com",
+            currentUrl: "https://example.com",
+          },
+        })
+      )
+    ).toEqual({
+      primaryText: "example.com",
+      typeLabel: "navigate",
+    });
+
+    expect(
+      getActionDisplayInfo(
+        createAction({
+          metadata: {
+            title: "http://localhost:3000",
+            currentUrl: "http://localhost:3000",
+          },
+        })
+      )
+    ).toEqual({
+      primaryText: "localhost:3000",
+      typeLabel: "navigate",
+    });
+  });
+
+  test("falls back to the action description when navigate metadata is empty", () => {
+    expect(
+      getActionDisplayInfo(
+        createAction({
+          description: "Fallback description",
+          metadata: {
+            title: null,
+            currentUrl: null,
+          },
+        })
+      )
+    ).toEqual({
+      primaryText: "Fallback description",
+      typeLabel: "navigate",
+    });
+  });
+
+  test("falls back gracefully when navigate URLs are malformed", () => {
+    expect(
+      getActionDisplayInfo(
+        createAction({
+          description: "Malformed fallback",
+          metadata: {
+            title: null,
+            currentUrl: "not a real url",
+          },
+        })
+      )
+    ).toEqual({
+      primaryText: "Malformed fallback",
+      typeLabel: "navigate",
+    });
+  });
+
+  test("falls back gracefully when navigate metadata fields have unexpected types", () => {
+    expect(
+      getActionDisplayInfo(
+        createAction({
+          metadata: {
+            title: { label: "Project dashboard" },
+            currentUrl: "https://example.com/projects/alpha",
+            navigateCount: "3",
+          },
+        })
+      )
+    ).toEqual({
+      primaryText: "example.com/projects/alpha",
+      typeLabel: "navigate",
+    });
+  });
+
+  test("falls back gracefully when navigate metadata is not a record", () => {
+    expect(
+      getActionDisplayInfo(
+        createAction({
+          description: "Corrupted fallback",
+          metadata: "corrupted" as unknown as Record<string, unknown>,
+        })
+      )
+    ).toEqual({
+      primaryText: "Corrupted fallback",
+      typeLabel: "navigate",
+    });
+  });
+
+  test("keeps localhost ports in formatted navigate URLs", () => {
+    expect(
+      getActionDisplayInfo(
+        createAction({
+          metadata: {
+            title: "",
+            currentUrl: "http://localhost:3000/foo?ref=sidebar",
+          },
+        })
+      )
+    ).toEqual({
+      primaryText: "localhost:3000/foo",
+      typeLabel: "navigate",
+    });
+
+    expect(
+      getActionDisplayInfo(
+        createAction({
+          metadata: {
+            title: "",
+            currentUrl: "http://localhost:5173/foo?ref=sidebar",
+          },
+        })
+      )
+    ).toEqual({
+      primaryText: "localhost:5173/foo",
+      typeLabel: "navigate",
+    });
+  });
+
+  test("leaves non-navigate actions unchanged", () => {
+    expect(
+      getActionDisplayInfo(
+        createAction({
+          type: "click",
+          description: "Clicked submit",
+          metadata: {
+            selector: "button[type=submit]",
+          },
+        })
+      )
+    ).toEqual({
+      primaryText: "Clicked submit",
+      typeLabel: "click",
+    });
+  });
+
+  test("keeps scroll actions on the existing shared display path", () => {
+    expect(
+      getActionDisplayInfo(
+        createAction({
+          type: "custom",
+          description: "Scrolled down ×3",
+          metadata: {
+            inputKind: "scroll",
+            scrollDirection: "down",
+            scrollCount: 3,
+          },
+        })
+      )
+    ).toEqual({
+      primaryText: "Scrolled down ×3",
+      typeLabel: "scroll",
+    });
+  });
 });
 
 describe("BrowserTab recent action timestamps", () => {
@@ -210,6 +531,33 @@ describe("BrowserTab recent action timestamps", () => {
     expect(view.getByText("Scrolled down ×3")).toBeTruthy();
     expect(view.getByText("scroll")).toBeTruthy();
     expect(view.queryByText("custom")).toBeNull();
+  });
+
+  test("shows host context for consecutive navigate actions with the same title", () => {
+    mockRecentActions = [
+      createAction({
+        id: "action-1",
+        description: "Shared title",
+        metadata: {
+          title: "Shared title",
+          currentUrl: "http://localhost:3000/projects/alpha",
+        },
+      }),
+      createAction({
+        id: "action-2",
+        description: "Shared title",
+        metadata: {
+          title: "Shared title",
+          currentUrl: "http://localhost:5173/projects/beta",
+        },
+      }),
+    ];
+
+    const view = renderBrowserTab();
+
+    expect(view.getAllByText("Shared title")).toHaveLength(2);
+    expect(view.getByText("localhost:3000")).toBeTruthy();
+    expect(view.getByText("localhost:5173")).toBeTruthy();
   });
 
   test("uses the custom tooltip instead of a native title attribute for valid timestamps", () => {
