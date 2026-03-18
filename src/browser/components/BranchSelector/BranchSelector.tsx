@@ -91,17 +91,32 @@ export function BranchSelector({ workspaceId, workspaceName, className }: Branch
         script: `git rev-parse --is-inside-work-tree 2>/dev/null`,
         options: repoRootBashOptions(5),
       });
-      const isGitRepo =
-        repoProbeResult.success &&
-        repoProbeResult.data.success &&
-        repoProbeResult.data.output?.trim() === "true";
-      if (!isGitRepo) {
+      const repoProbeOutput =
+        repoProbeResult.success && repoProbeResult.data.success
+          ? (repoProbeResult.data.output?.trim() ?? "")
+          : "";
+      let repoProbeError = "";
+      if (!repoProbeResult.success) {
+        repoProbeError = repoProbeResult.error ?? "";
+      } else if (!repoProbeResult.data.success) {
+        repoProbeError = `${repoProbeResult.data.error ?? ""}\n${repoProbeResult.data.output ?? ""}`;
+      }
+      const repoState =
+        repoProbeOutput === "true"
+          ? "git"
+          : /not a git repository/i.test(repoProbeError)
+            ? "non-git"
+            : "unknown";
+      if (repoState === "non-git") {
         branchCache.remove(workspaceId);
         clearGitStatus(workspaceId);
         setCurrentBranch(false);
         setLocalBranches([]);
         setLocalBranchesTruncated(false);
         setRemotes([]);
+        return;
+      }
+      if (repoState !== "git") {
         return;
       }
 

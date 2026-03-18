@@ -275,4 +275,47 @@ describe("BranchSelector", () => {
     expect(clearGitStatusMock).toHaveBeenCalledWith("ws-2");
     expect(executeBash.mock.calls[0]?.[0].script).toContain("git rev-parse --is-inside-work-tree");
   });
+
+  test("keeps the selector interactive when the repo probe fails inconclusively", async () => {
+    const executeBash = mock((input: ExecuteBashInput) => {
+      if (input.script.includes("git rev-parse --is-inside-work-tree")) {
+        return Promise.resolve({
+          success: false,
+          error: "runtime not ready",
+        } satisfies ExecuteBashResult);
+      }
+      throw new Error(`Unexpected script: ${input.script}`);
+    });
+    mockApi = {
+      workspace: {
+        executeBash,
+      },
+    };
+    mockGitStatus = {
+      branch: "stale-branch",
+      ahead: 1,
+      behind: 0,
+      dirty: false,
+      outgoingAdditions: 0,
+      outgoingDeletions: 0,
+      incomingAdditions: 0,
+      incomingDeletions: 0,
+    };
+    localStorage.setItem(
+      "branch:ws-3",
+      JSON.stringify({ data: "stale-branch", cachedAt: Date.now() })
+    );
+    localStorage.setItem("branchIndex", JSON.stringify(["branch:ws-3"]));
+
+    const view = render(<BranchSelector workspaceId="ws-3" workspaceName="plain-workspace" />);
+
+    fireEvent.click(view.getByRole("button", { name: "stale-branch" }));
+
+    await waitFor(() => {
+      expect(executeBash.mock.calls).toHaveLength(1);
+    });
+    expect(view.getByRole("button", { name: "stale-branch" })).toBeDefined();
+    expect(localStorage.getItem("branch:ws-3")).not.toBeNull();
+    expect(clearGitStatusMock).not.toHaveBeenCalled();
+  });
 });
