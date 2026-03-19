@@ -532,6 +532,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     resolveProjectPath,
     resolveNewChatProjectPath,
     userProjects,
+    getProjectConfig,
     hasAnyProject,
     refreshProjects,
     loading: projectsLoading,
@@ -905,10 +906,14 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   // and provides currentWorkspaceId/currentProjectId that we derive state from.
 
   // Launch-project should only affect a true first launch. Ignore seeded system
-  // projects here so fresh desktop installs can still honor CLI/server startup
-  // intent, but once the user has a real project or any workspace, preserve the
-  // user's normal persisted startup behavior instead.
-  const hasExistingProjectsOrWorkspaces = userProjects.size > 0 || workspaceMetadata.size > 0;
+  // projects and their seeded workspaces here so fresh installs can still honor
+  // CLI/server startup intent, but once the user has a real project or any
+  // non-system workspace, preserve the user's normal persisted startup behavior
+  // instead.
+  const hasNonSystemWorkspace = Array.from(workspaceMetadata.values()).some((metadata) => {
+    return getProjectConfig(metadata.projectPath)?.projectKind !== "system";
+  });
+  const hasExistingProjectsOrWorkspaces = userProjects.size > 0 || hasNonSystemWorkspace;
 
   // Check for launch project from server (for --add-project flag).
   // This is explicit startup intent from the CLI/server, so it can still win

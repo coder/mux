@@ -925,10 +925,19 @@ describe("WorkspaceContext", () => {
     expect(ctx().selectedWorkspace).toBeNull();
   });
 
-  test("launch-project ignores seeded system projects on true first launch", async () => {
+  test("launch-project ignores seeded system projects and workspaces on true first launch", async () => {
     createMockAPI({
       workspace: {
-        list: () => Promise.resolve([]),
+        list: () =>
+          Promise.resolve([
+            createWorkspaceMetadata({
+              id: "mux-chat",
+              projectPath: "/system/chat-with-mux",
+              projectName: "chat-with-mux",
+              name: "main",
+              namedWorkspacePath: "/system/chat-with-mux-main",
+            }),
+          ]),
       },
       projects: {
         list: () =>
@@ -974,11 +983,18 @@ describe("WorkspaceContext", () => {
     expect(ctx().selectedWorkspace).toBeNull();
   });
 
-  test("launch-project is skipped once any workspace already exists", async () => {
+  test("launch-project is skipped once any non-system workspace already exists", async () => {
     createMockAPI({
       workspace: {
         list: () =>
           Promise.resolve([
+            createWorkspaceMetadata({
+              id: "mux-chat",
+              projectPath: "/system/chat-with-mux",
+              projectName: "chat-with-mux",
+              name: "main",
+              namedWorkspacePath: "/system/chat-with-mux-main",
+            }),
             createWorkspaceMetadata({
               id: "ws-existing",
               projectPath: "/existing-project",
@@ -989,7 +1005,11 @@ describe("WorkspaceContext", () => {
           ]),
       },
       projects: {
-        list: () => Promise.resolve([]),
+        list: () =>
+          Promise.resolve([
+            ["/system/chat-with-mux", { workspaces: [], projectKind: "system" }],
+            ["/existing-project", { workspaces: [] }],
+          ]),
       },
       server: {
         getLaunchProject: () => Promise.resolve("/launch-project"),
