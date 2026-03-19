@@ -56,15 +56,32 @@ describe("SSHRuntime.ensureReady repository checks", () => {
   it("accepts worktrees where .git is a file", async () => {
     execBufferedSpy = spyOn(runtimeHelpers, "execBuffered")
       .mockResolvedValueOnce({ stdout: "", stderr: "", exitCode: 0, duration: 0 })
-      .mockResolvedValueOnce({ stdout: ".git", stderr: "", exitCode: 0, duration: 0 });
+      .mockResolvedValueOnce({ stdout: ".git", stderr: "", exitCode: 0, duration: 0 })
+      .mockResolvedValueOnce({ stdout: "true\n", stderr: "", exitCode: 0, duration: 0 });
 
     const result = await runtime.ensureReady();
 
-    expect(execBufferedSpy).toHaveBeenCalledTimes(2);
+    expect(execBufferedSpy).toHaveBeenCalledTimes(3);
     const firstCommand = execBufferedSpy?.mock.calls[0]?.[1];
     expect(firstCommand).toContain("test -d");
     expect(firstCommand).toContain("test -f");
+    const thirdCommand = execBufferedSpy?.mock.calls[2]?.[1];
+    expect(thirdCommand).toContain("rev-parse --is-inside-work-tree");
     expect(result).toEqual({ ready: true });
+  });
+
+  it("returns runtime_not_ready when git reports the workspace is not inside a work tree", async () => {
+    execBufferedSpy = spyOn(runtimeHelpers, "execBuffered")
+      .mockResolvedValueOnce({ stdout: "", stderr: "", exitCode: 0, duration: 0 })
+      .mockResolvedValueOnce({ stdout: ".git", stderr: "", exitCode: 0, duration: 0 })
+      .mockResolvedValueOnce({ stdout: "false\n", stderr: "", exitCode: 0, duration: 0 });
+
+    const result = await runtime.ensureReady();
+
+    expect(result.ready).toBe(false);
+    if (!result.ready) {
+      expect(result.errorType).toBe("runtime_not_ready");
+    }
   });
 
   it("returns runtime_not_ready when the repo is missing", async () => {

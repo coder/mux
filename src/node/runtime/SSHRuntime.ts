@@ -385,7 +385,62 @@ export class SSHRuntime extends RemoteRuntime {
       }
     }
 
+    const normalizedConfig = await this.normalizeBaseRepoSharedConfig(baseRepoPathArg, abortSignal);
+    if (normalizedConfig) {
+      initLogger.logStep("Normalized shared base repository config for worktrees");
+    }
+
     return baseRepoPathArg;
+  }
+
+  /**
+   * Keep the shared SSH base repo bare by layout instead of by sharing `core.bare`
+   * through the common config. Linked worktrees consult that shared config too, so
+   * leaving `core.bare=true` there leaks bare-repo metadata into normal workspace
+   * checkouts even though Git can infer the host repo is bare from its directory
+   * layout alone.
+   */
+  private async normalizeBaseRepoSharedConfig(
+    baseRepoPathArg: string,
+    abortSignal?: AbortSignal
+  ): Promise<boolean> {
+    const coreBareResult = await execBuffered(
+      this,
+      `git -C ${baseRepoPathArg} config --get core.bare`,
+      {
+        cwd: "/tmp",
+        timeout: 10,
+        abortSignal,
+      }
+    );
+
+    if (coreBareResult.exitCode === 1) {
+      return false;
+    }
+
+    if (coreBareResult.exitCode !== 0) {
+      throw new Error(
+        `Failed to inspect base repo config: ${coreBareResult.stderr || coreBareResult.stdout}`
+      );
+    }
+
+    const unsetResult = await execBuffered(
+      this,
+      `git -C ${baseRepoPathArg} config --unset-all core.bare`,
+      {
+        cwd: "/tmp",
+        timeout: 10,
+        abortSignal,
+      }
+    );
+
+    if (unsetResult.exitCode !== 0) {
+      throw new Error(
+        `Failed to normalize base repo config: ${unsetResult.stderr || unsetResult.stdout}`
+      );
+    }
+
+    return true;
   }
 
   /**
@@ -555,6 +610,57 @@ export class SSHRuntime extends RemoteRuntime {
         };
       }
 
+      return {
+        ready: false,
+        error: WORKSPACE_REPO_MISSING_ERROR,
+        errorType: "runtime_not_ready",
+      };
+    }
+
+    let worktreeResult: { exitCode: number; stderr: string; stdout: string };
+    try {
+      worktreeResult = await execBuffered(
+        this,
+        `git -C ${this.quoteForRemote(workspacePath)} rev-parse --is-inside-work-tree`,
+        {
+          cwd: "~",
+          timeout: 10,
+          abortSignal: options?.signal,
+        }
+      );
+    } catch (error) {
+      return {
+        ready: false,
+        error: `Failed to verify worktree: ${getErrorMessage(error)}`,
+        errorType: "runtime_start_failed",
+      };
+    }
+
+    if (worktreeResult.exitCode !== 0) {
+      const stderr = worktreeResult.stderr.trim();
+      const stdout = worktreeResult.stdout.trim();
+      const errorDetail = stderr || stdout || "git unavailable";
+      const isCommandMissing =
+        worktreeResult.exitCode === 127 || /command not found/i.test(stderr || stdout);
+      if (
+        isCommandMissing ||
+        this.transport.isConnectionFailure(worktreeResult.exitCode, worktreeResult.stderr)
+      ) {
+        return {
+          ready: false,
+          error: `Failed to verify worktree: ${errorDetail}`,
+          errorType: "runtime_start_failed",
+        };
+      }
+
+      return {
+        ready: false,
+        error: WORKSPACE_REPO_MISSING_ERROR,
+        errorType: "runtime_not_ready",
+      };
+    }
+
+    if (worktreeResult.stdout.trim() !== "true") {
       return {
         ready: false,
         error: WORKSPACE_REPO_MISSING_ERROR,

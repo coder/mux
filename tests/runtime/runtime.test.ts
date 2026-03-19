@@ -1751,6 +1751,85 @@ describeIntegration("Runtime integration tests", () => {
         execSync(`rm -rf "${localProjectPath}"`);
       }
     }, 120000);
+
+    test("initWorkspace strips shared core.bare from pre-existing base repos before checkout", async () => {
+      const runtime = createSSHRuntime();
+
+      const projectName = `sync-heal-bare-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+      const tmpDir = await import("os").then((os) => os.tmpdir());
+      const localProjectPath = `${tmpDir}/${projectName}`;
+      const branchName = "worktree-heal";
+      const workspacePath = `${srcBaseDir}/${projectName}/${branchName}`;
+      const baseRepoPath = `${srcBaseDir}/${projectName}/.mux-base.git`;
+
+      const { execSync } = await import("child_process");
+      try {
+        execSync(
+          [
+            `mkdir -p "${localProjectPath}"`,
+            `cd "${localProjectPath}"`,
+            `git init -b main`,
+            `git config user.email "test@test.com"`,
+            `git config user.name "Test"`,
+            `echo "content" > file.txt`,
+            `git add file.txt`,
+            `git commit -m "initial"`,
+          ].join(" && "),
+          { stdio: "pipe" }
+        );
+
+        await execBuffered(
+          runtime,
+          `mkdir -p "${srcBaseDir}/${projectName}" && git init --bare "${baseRepoPath}"`,
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+
+        const beforeCheck = await execBuffered(
+          runtime,
+          `git -C "${baseRepoPath}" config --get core.bare`,
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+        expect(beforeCheck.stdout.trim()).toBe("true");
+
+        const initResult = await runtime.initWorkspace({
+          projectPath: localProjectPath,
+          branchName,
+          trunkBranch: "main",
+          workspacePath,
+          initLogger: noopInitLogger,
+        });
+        if (!initResult.success) {
+          throw new Error(`initWorkspace failed: ${initResult.error}`);
+        }
+
+        const baseRepoCoreBareCheck = await execBuffered(
+          runtime,
+          `git -C "${baseRepoPath}" config --get core.bare`,
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+        expect(baseRepoCoreBareCheck.exitCode).toBe(1);
+
+        const insideWorkTreeCheck = await execBuffered(
+          runtime,
+          `git -C "${workspacePath}" rev-parse --is-inside-work-tree`,
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+        expect(insideWorkTreeCheck.stdout.trim()).toBe("true");
+
+        const workspaceCoreBareCheck = await execBuffered(
+          runtime,
+          `git -C "${workspacePath}" config --get core.bare`,
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+        expect(workspaceCoreBareCheck.exitCode).toBe(1);
+      } finally {
+        execSync(`rm -rf "${localProjectPath}"`);
+        await execBuffered(runtime, `rm -rf "${srcBaseDir}/${projectName}"`, {
+          cwd: "/home/testuser",
+          timeout: 30,
+        });
+      }
+    }, 120000);
   });
 
   /**
@@ -1798,6 +1877,36 @@ describeIntegration("Runtime integration tests", () => {
           { stdio: "pipe" }
         );
 
+        const expectHealthyWorktree = async (workspacePath: string, branchName: string) => {
+          const checkoutCheck = await execBuffered(
+            runtime,
+            `test -f "${workspacePath}/.git" && git -C "${workspacePath}" branch --show-current`,
+            { cwd: "/home/testuser", timeout: 30 }
+          );
+          expect(checkoutCheck.stdout.trim()).toBe(branchName);
+
+          const insideWorkTreeCheck = await execBuffered(
+            runtime,
+            `git -C "${workspacePath}" rev-parse --is-inside-work-tree`,
+            { cwd: "/home/testuser", timeout: 30 }
+          );
+          expect(insideWorkTreeCheck.stdout.trim()).toBe("true");
+
+          const statusCheck = await execBuffered(
+            runtime,
+            `git -C "${workspacePath}" status --porcelain`,
+            { cwd: "/home/testuser", timeout: 30 }
+          );
+          expect(statusCheck.exitCode).toBe(0);
+
+          const coreBareCheck = await execBuffered(
+            runtime,
+            `git -C "${workspacePath}" config --get core.bare`,
+            { cwd: "/home/testuser", timeout: 30 }
+          );
+          expect(coreBareCheck.exitCode).toBe(1);
+        };
+
         // 1. Init workspace A — creates the base repo, syncs bundle, creates worktree.
         const initA = await runtime.initWorkspace({
           projectPath: localProjectPath,
@@ -1809,14 +1918,21 @@ describeIntegration("Runtime integration tests", () => {
         if (!initA.success) {
           throw new Error(`initWorkspace A failed: ${initA.error}`);
         }
+        await expectHealthyWorktree(wsAPath, wsAName);
 
-        // Verify workspace A exists as a worktree with ws-a checked out.
-        const wsACheck = await execBuffered(
+        const baseRepoBareCheck = await execBuffered(
           runtime,
-          `test -f "${wsAPath}/.git" && git -C "${wsAPath}" branch --show-current`,
+          `git -C "${baseRepoPath}" rev-parse --is-bare-repository`,
           { cwd: "/home/testuser", timeout: 30 }
         );
-        expect(wsACheck.stdout.trim()).toBe(wsAName);
+        expect(baseRepoBareCheck.stdout.trim()).toBe("true");
+
+        const baseRepoCoreBareConfigCheck = await execBuffered(
+          runtime,
+          `git -C "${baseRepoPath}" config --get core.bare`,
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+        expect(baseRepoCoreBareConfigCheck.exitCode).toBe(1);
 
         // 2. Init workspace B — re-syncs the bundle (which includes refs/heads/ws-a).
         //    Before the staging namespace fix, this failed with:
@@ -1831,14 +1947,7 @@ describeIntegration("Runtime integration tests", () => {
         if (!initB.success) {
           throw new Error(`initWorkspace B failed: ${initB.error}`);
         }
-
-        // Verify workspace B exists as a worktree with ws-b checked out.
-        const wsBCheck = await execBuffered(
-          runtime,
-          `test -f "${wsBPath}/.git" && git -C "${wsBPath}" branch --show-current`,
-          { cwd: "/home/testuser", timeout: 30 }
-        );
-        expect(wsBCheck.stdout.trim()).toBe(wsBName);
+        await expectHealthyWorktree(wsBPath, wsBName);
 
         // Both worktrees should be tracked in the base repo.
         const worktreeList = await execBuffered(runtime, `git -C "${baseRepoPath}" worktree list`, {
