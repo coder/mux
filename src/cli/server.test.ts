@@ -26,13 +26,7 @@ import { ServiceContainer } from "@/node/services/serviceContainer";
 import type { RouterClient } from "@orpc/server";
 import { createOrpcServer, type OrpcServer } from "@/node/orpc/server";
 import type { ProjectConfig } from "@/common/types/project";
-
-let shouldExposeLaunchProject: (projects: Array<[string, ProjectConfig]>) => boolean;
-
-beforeAll(async () => {
-  await Bun.$`./scripts/generate-version.sh`.quiet();
-  ({ shouldExposeLaunchProject } = require("@/cli/server") as typeof import("@/cli/server"));
-});
+import { shouldExposeLaunchProject } from "@/cli/server";
 
 // --- Test Server Factory ---
 
