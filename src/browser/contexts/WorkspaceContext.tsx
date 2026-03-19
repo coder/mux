@@ -927,6 +927,10 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     // Skip if user is in the middle of creating a workspace
     if (pendingNewWorkspaceProject) return;
 
+    // Launch-project is only meaningful for desktop/Electron (--add-project CLI flag).
+    // Browser/PWA startup should remain on the dashboard.
+    if (window.location.protocol !== "file:") return;
+
     let cancelled = false;
 
     const checkLaunchProject = async () => {
@@ -1525,12 +1529,15 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     let cancelled = false;
 
     const autoCreate = async () => {
-      // In server mode with --add-project, defer startup routing to the launch-project effect.
-      try {
-        const launchProject = await api?.server.getLaunchProject(undefined);
-        if (cancelled || launchProject) return;
-      } catch {
-        // Ignore backend capability errors and continue with local auto-create fallback.
+      // In desktop/Electron mode, defer to the launch-project effect if a launch project exists.
+      // Browser/PWA should always proceed to local draft creation.
+      if (window.location.protocol === "file:") {
+        try {
+          const launchProject = await api?.server.getLaunchProject(undefined);
+          if (cancelled || launchProject) return;
+        } catch {
+          // Ignore backend capability errors and continue with local auto-create fallback.
+        }
       }
 
       if (cancelled) return;
