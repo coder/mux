@@ -22,6 +22,8 @@ import { ImmersiveReviewView } from "./ImmersiveReviewView";
 
 const LINE_HEIGHT_DEBUG_WORKSPACE_ID = "ws-review-immersive-line-height";
 
+const IMMERSIVE_REVIEW_COMPLETE_WORKSPACE_ID = "ws-review-immersive-complete";
+
 // Includes highlighted TypeScript lines and neutral/context lines so row-height
 // differences are easy to compare while debugging immersive review rendering.
 const IMMERSIVE_LINE_HEIGHT_DIFF = `diff --git a/src/utils/formatPrice.ts b/src/utils/formatPrice.ts
@@ -175,6 +177,10 @@ function parseImmersiveFixture(
   };
 }
 
+function getDiffHunkIds(diffOutput: string): string[] {
+  return extractAllHunks(parseDiff(diffOutput)).map((hunk) => hunk.id);
+}
+
 function buildImmersiveFixture(options: {
   diffOutput: string;
   numstatOutput: string;
@@ -220,6 +226,16 @@ const LINE_HEIGHT_FIXTURE = buildImmersiveFixture({
   diffOutput: IMMERSIVE_LINE_HEIGHT_DIFF,
   numstatOutput: IMMERSIVE_LINE_HEIGHT_NUMSTAT,
 });
+
+const IMMERSIVE_REVIEW_COMPLETE_FIXTURE: ImmersiveStoryFixture = {
+  ...buildImmersiveFixture({
+    diffOutput: IMMERSIVE_LINE_HEIGHT_DIFF,
+    numstatOutput: IMMERSIVE_LINE_HEIGHT_NUMSTAT,
+  }),
+  hunks: [],
+};
+
+const IMMERSIVE_REVIEW_COMPLETE_HUNK_IDS = getDiffHunkIds(IMMERSIVE_LINE_HEIGHT_DIFF);
 
 const IMMERSIVE_NOTES_FIXTURE = buildImmersiveFixture({
   diffOutput: IMMERSIVE_LINE_HEIGHT_DIFF,
@@ -268,6 +284,7 @@ interface ImmersiveReviewStoryProps {
   workspaceId: string;
   fixture: ImmersiveStoryFixture;
   reviewActions?: ComponentProps<typeof ImmersiveReviewView>["reviewActions"];
+  initialReadHunkIds?: string[];
 }
 
 function ImmersiveReviewStory(props: ImmersiveReviewStoryProps) {
@@ -275,7 +292,9 @@ function ImmersiveReviewStory(props: ImmersiveReviewStoryProps) {
   const [selectedHunkId, setSelectedHunkId] = useState<string | null>(
     props.fixture.hunks[0]?.id ?? null
   );
-  const [readHunkIds, setReadHunkIds] = useState<Set<string>>(() => new Set());
+  const [readHunkIds, setReadHunkIds] = useState<Set<string>>(
+    () => new Set(props.initialReadHunkIds ?? [])
+  );
 
   return (
     <ImmersiveStoryShell client={client}>
@@ -361,6 +380,33 @@ export const ReviewTabImmersiveLineHeightDebug: Story = {
       () => {
         canvas.getByTestId("immersive-review-view");
         canvas.getByRole("button", { name: /exit immersive review/i });
+      },
+      { timeout: 10_000 }
+    );
+  },
+};
+
+export const ImmersiveReviewComplete: Story = {
+  render: () => (
+    <ImmersiveReviewStory
+      workspaceId={IMMERSIVE_REVIEW_COMPLETE_WORKSPACE_ID}
+      fixture={IMMERSIVE_REVIEW_COMPLETE_FIXTURE}
+      initialReadHunkIds={IMMERSIVE_REVIEW_COMPLETE_HUNK_IDS}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    await waitFor(
+      () => {
+        canvas.getByTestId("immersive-review-complete");
+        canvas.getByRole("heading", { name: /Review complete/i });
+        canvas.getByRole("button", { name: /Return to chat/i });
+        if (canvas.queryByText(/No hunks for this file/i)) {
+          throw new Error(
+            "Expected the immersive review completion state instead of the empty-file copy."
+          );
+        }
       },
       { timeout: 10_000 }
     );
