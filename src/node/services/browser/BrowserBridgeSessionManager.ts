@@ -260,10 +260,11 @@ export class BrowserBridgeSessionManager {
       return;
     }
 
-    if (!this.startupTokens.has(workspaceId)) {
+    const hasReplacementStartup = this.startupTokens.has(workspaceId);
+    if (!hasReplacementStartup) {
       await this.closeAgentBrowserSessionFn(sessionId, undefined, this.cliOptions);
+      this.streamPortRegistry.releasePort(workspaceId);
     }
-    this.streamPortRegistry.releasePort(workspaceId);
     throw new Error(`Browser bridge startup for workspace ${workspaceId} was cancelled`);
   }
 

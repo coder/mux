@@ -130,6 +130,7 @@ describe("BrowserBridgeSessionManager", () => {
       sessionId: "mux-workspace-1",
       streamPort: 9333,
     });
+    expect(streamPortRegistry.getKnownPort("workspace-1")).toBe(9333);
   });
 
   test("stop closes a daemon session that started before cancellation", async () => {
