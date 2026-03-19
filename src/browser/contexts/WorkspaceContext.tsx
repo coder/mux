@@ -531,6 +531,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   const {
     resolveProjectPath,
     resolveNewChatProjectPath,
+    userProjects,
     hasAnyProject,
     refreshProjects,
     loading: projectsLoading,
@@ -903,10 +904,11 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   // URL restoration is now handled by RouterContext which parses the URL on load
   // and provides currentWorkspaceId/currentProjectId that we derive state from.
 
-  // Launch-project should only affect a true first launch. Once the user already
-  // has any known project or workspace, their normal persisted startup behavior
-  // should win instead of being hijacked by one-time CLI/server intent.
-  const hasExistingProjectsOrWorkspaces = hasAnyProject || workspaceMetadata.size > 0;
+  // Launch-project should only affect a true first launch. Ignore seeded system
+  // projects here so fresh desktop installs can still honor CLI/server startup
+  // intent, but once the user has a real project or any workspace, preserve the
+  // user's normal persisted startup behavior instead.
+  const hasExistingProjectsOrWorkspaces = userProjects.size > 0 || workspaceMetadata.size > 0;
 
   // Check for launch project from server (for --add-project flag).
   // This is explicit startup intent from the CLI/server, so it can still win

@@ -925,13 +925,71 @@ describe("WorkspaceContext", () => {
     expect(ctx().selectedWorkspace).toBeNull();
   });
 
-  test("launch-project is skipped once any project already exists", async () => {
+  test("launch-project ignores seeded system projects on true first launch", async () => {
+    createMockAPI({
+      workspace: {
+        list: () => Promise.resolve([]),
+      },
+      projects: {
+        list: () =>
+          Promise.resolve([["/system/chat-with-mux", { workspaces: [], projectKind: "system" }]]),
+      },
+      server: {
+        getLaunchProject: () => Promise.resolve("/launch-project"),
+      },
+      localStorage: {
+        [LAUNCH_BEHAVIOR_KEY]: JSON.stringify("dashboard"),
+      },
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().loading).toBe(false));
+    await waitFor(() => {
+      expect(ctx().pendingNewWorkspaceProject).toBe("/launch-project");
+    });
+    expect(ctx().selectedWorkspace).toBeNull();
+  });
+
+  test("launch-project is skipped once any user project already exists", async () => {
     createMockAPI({
       workspace: {
         list: () => Promise.resolve([]),
       },
       projects: {
         list: () => Promise.resolve([["/existing-project", { workspaces: [] }]]),
+      },
+      server: {
+        getLaunchProject: () => Promise.resolve("/launch-project"),
+      },
+      localStorage: {
+        [LAUNCH_BEHAVIOR_KEY]: JSON.stringify("dashboard"),
+      },
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().loading).toBe(false));
+    expect(ctx().pendingNewWorkspaceProject).toBeFalsy();
+    expect(ctx().selectedWorkspace).toBeNull();
+  });
+
+  test("launch-project is skipped once any workspace already exists", async () => {
+    createMockAPI({
+      workspace: {
+        list: () =>
+          Promise.resolve([
+            createWorkspaceMetadata({
+              id: "ws-existing",
+              projectPath: "/existing-project",
+              projectName: "existing-project",
+              name: "main",
+              namedWorkspacePath: "/existing-project-main",
+            }),
+          ]),
+      },
+      projects: {
+        list: () => Promise.resolve([]),
       },
       server: {
         getLaunchProject: () => Promise.resolve("/launch-project"),
