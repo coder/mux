@@ -36,7 +36,7 @@ function isRetryableBrowserError(error: string | null): boolean {
     return false;
   }
 
-  return /disconnected|session unavailable|stream connect failed|timed out waiting for browser preview stream/i.test(
+  return /disconnected|session unavailable|stream connect failed|timed out waiting for browser preview stream|invalid token/i.test(
     error
   );
 }

@@ -129,6 +129,23 @@ describe("BrowserTab", () => {
     expect(connectMock).toHaveBeenCalledTimes(1);
   });
 
+  test("retries invalid-token bridge errors", () => {
+    mockSession = createSession({
+      status: "error",
+      streamState: "error",
+      lastError: "invalid token",
+    });
+
+    render(<BrowserTab workspaceId="workspace-1" />);
+
+    expect(connectMock).toHaveBeenCalledTimes(0);
+    expect(intervalCallbacks).toHaveLength(1);
+
+    intervalCallbacks[0]();
+
+    expect(connectMock).toHaveBeenCalledTimes(1);
+  });
+
   test("does not keep retrying fatal startup errors", () => {
     mockSession = createSession({
       status: "error",
