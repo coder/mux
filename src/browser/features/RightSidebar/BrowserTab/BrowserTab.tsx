@@ -29,27 +29,6 @@ const STATUS_BADGES: Record<BrowserSessionStatus, { label: string; className: st
   },
 };
 
-interface AutoStartGateState {
-  attempted: boolean;
-  autoStartPending: boolean;
-}
-
-const autoStartStateByWorkspace = new Map<string, AutoStartGateState>();
-
-function getAutoStartState(workspaceId: string): AutoStartGateState {
-  const existingState = autoStartStateByWorkspace.get(workspaceId);
-  if (existingState != null) {
-    return existingState;
-  }
-
-  const initialState: AutoStartGateState = {
-    attempted: false,
-    autoStartPending: false,
-  };
-  autoStartStateByWorkspace.set(workspaceId, initialState);
-  return initialState;
-}
-
 export function BrowserTab(props: BrowserTabProps) {
   if (props.workspaceId.trim().length === 0) {
     throw new Error("Browser tab requires a workspaceId");
@@ -57,9 +36,8 @@ export function BrowserTab(props: BrowserTabProps) {
 
   const { api } = useAPI();
   const { session, connect, sendInput } = useBrowserBridgeConnection(props.workspaceId);
-  const autoStartState = getAutoStartState(props.workspaceId);
 
-  const isStarting = autoStartState.autoStartPending || session?.status === "starting";
+  const isStarting = session?.status === "starting";
   const visibleError = session?.lastError ?? session?.streamErrorMessage ?? null;
   const screenshotSrc =
     session?.frameBase64 != null ? `data:image/jpeg;base64,${session.frameBase64}` : null;
@@ -67,22 +45,16 @@ export function BrowserTab(props: BrowserTabProps) {
   const headerTitle = "Browser preview";
 
   useEffect(() => {
-    if (
-      api == null ||
-      session != null ||
-      autoStartState.attempted ||
-      autoStartState.autoStartPending
-    ) {
+    if (api == null) {
       return;
     }
 
-    autoStartState.attempted = true;
-    autoStartState.autoStartPending = true;
+    if (session?.status === "starting" || session?.status === "live") {
+      return;
+    }
+
     connect();
-    queueMicrotask(() => {
-      autoStartState.autoStartPending = false;
-    });
-  }, [api, autoStartState, connect, session]);
+  }, [api, connect, session?.status]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">

@@ -613,7 +613,7 @@ export class ServiceContainer {
     this.idleCompactionService.stop();
     await this.browserBridgeServer.stop();
     this.browserBridgeTokenManager.dispose();
-    this.browserBridgeSessionManager.dispose();
+    await this.browserBridgeSessionManager.dispose();
     this.streamPortRegistry.dispose();
     await this.analyticsService.dispose();
     await this.telemetryService.shutdown();
@@ -638,7 +638,7 @@ export class ServiceContainer {
     await this.desktopSessionManager.closeAll();
     await this.browserBridgeServer.stop();
     this.browserBridgeTokenManager.dispose();
-    this.browserBridgeSessionManager.dispose();
+    await this.browserBridgeSessionManager.dispose();
     this.streamPortRegistry.dispose();
     await this.analyticsService.dispose();
     this.policyService.dispose();

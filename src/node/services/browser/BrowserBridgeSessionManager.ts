@@ -130,12 +130,14 @@ async function waitForStreamPort(
 }
 
 export class BrowserBridgeSessionManager {
+  private readonly activeWorkspaceIds = new Set<string>();
   private readonly hasAgentBrowserSessionFn: typeof hasAgentBrowserSession;
   private readonly openAgentBrowserSessionFn: typeof openAgentBrowserSession;
   private readonly closeAgentBrowserSessionFn: typeof closeAgentBrowserSession;
   private readonly waitForStreamPortFn: typeof waitForStreamPort;
   private readonly streamPortRegistry: BrowserBridgeSessionManagerOptions["streamPortRegistry"];
   private readonly cliOptions: AgentBrowserCliCommandOptions | undefined;
+  private readonly startupTokens = new Map<string, symbol>();
   private readonly startupPromises = new Map<string, Promise<BrowserBridgeSessionConnection>>();
   private disposed = false;
 
@@ -165,7 +167,9 @@ export class BrowserBridgeSessionManager {
       return existingPromise;
     }
 
-    const startupPromise = this.ensureStartedInternal(workspaceId, options, true);
+    const startupToken = Symbol(`browser-startup:${workspaceId}`);
+    this.startupTokens.set(workspaceId, startupToken);
+    const startupPromise = this.ensureStartedInternal(workspaceId, options, true, startupToken);
     this.startupPromises.set(workspaceId, startupPromise);
 
     try {
@@ -174,11 +178,21 @@ export class BrowserBridgeSessionManager {
       if (this.startupPromises.get(workspaceId) === startupPromise) {
         this.startupPromises.delete(workspaceId);
       }
+      if (this.startupTokens.get(workspaceId) === startupToken) {
+        this.startupTokens.delete(workspaceId);
+      }
     }
   }
 
-  async stop(workspaceId: string): Promise<void> {
-    assert(workspaceId.trim().length > 0, "BrowserBridgeSessionManager.stop requires workspaceId");
+  private async closeWorkspaceSession(
+    workspaceId: string,
+    options?: { invalidateStartup?: boolean }
+  ): Promise<void> {
+    if (options?.invalidateStartup !== false) {
+      this.startupTokens.delete(workspaceId);
+      this.startupPromises.delete(workspaceId);
+    }
+    this.activeWorkspaceIds.delete(workspaceId);
 
     const sessionId = getMuxBrowserSessionId(workspaceId);
     try {
@@ -193,6 +207,11 @@ export class BrowserBridgeSessionManager {
     } finally {
       this.streamPortRegistry.releasePort(workspaceId);
     }
+  }
+
+  async stop(workspaceId: string): Promise<void> {
+    assert(workspaceId.trim().length > 0, "BrowserBridgeSessionManager.stop requires workspaceId");
+    await this.closeWorkspaceSession(workspaceId);
   }
 
   async getLiveSessionConnection(
@@ -217,15 +236,40 @@ export class BrowserBridgeSessionManager {
     return { workspaceId, sessionId, streamPort };
   }
 
-  dispose(): void {
+  async dispose(): Promise<void> {
     this.disposed = true;
+    const workspaceIds = new Set([...this.activeWorkspaceIds, ...this.startupPromises.keys()]);
+    await Promise.allSettled(
+      Array.from(workspaceIds, async (workspaceId) => await this.stop(workspaceId))
+    );
     this.startupPromises.clear();
+    this.startupTokens.clear();
+    this.activeWorkspaceIds.clear();
+  }
+
+  private isCurrentStartupToken(workspaceId: string, startupToken: symbol): boolean {
+    return this.startupTokens.get(workspaceId) === startupToken && !this.disposed;
+  }
+
+  private async throwIfStartupCancelled(
+    workspaceId: string,
+    sessionId: string,
+    startupToken: symbol
+  ): Promise<void> {
+    if (this.isCurrentStartupToken(workspaceId, startupToken)) {
+      return;
+    }
+
+    await this.closeAgentBrowserSessionFn(sessionId, undefined, this.cliOptions);
+    this.streamPortRegistry.releasePort(workspaceId);
+    throw new Error(`Browser bridge startup for workspace ${workspaceId} was cancelled`);
   }
 
   private async ensureStartedInternal(
     workspaceId: string,
     options: { initialUrl?: string | null } | undefined,
-    allowRestart: boolean
+    allowRestart: boolean,
+    startupToken: symbol
   ): Promise<BrowserBridgeSessionConnection> {
     const sessionId = getMuxBrowserSessionId(workspaceId);
     const initialUrl = options?.initialUrl ?? DEFAULT_INITIAL_URL;
@@ -240,6 +284,7 @@ export class BrowserBridgeSessionManager {
       undefined,
       this.cliOptions
     );
+    await this.throwIfStartupCancelled(workspaceId, sessionId, startupToken);
     if (!sessionAlreadyExists) {
       const openResult = await this.openAgentBrowserSessionFn(sessionId, initialUrl, {
         ...this.cliOptions,
@@ -249,15 +294,18 @@ export class BrowserBridgeSessionManager {
         this.streamPortRegistry.releasePort(workspaceId);
         throw new Error(openResult.error);
       }
+      await this.throwIfStartupCancelled(workspaceId, sessionId, startupToken);
     }
 
     const streamResult = await this.waitForStreamPortFn(streamPort);
+    await this.throwIfStartupCancelled(workspaceId, sessionId, startupToken);
     if (streamResult.ok) {
+      this.activeWorkspaceIds.add(workspaceId);
       return { workspaceId, sessionId, streamPort };
     }
 
     if (!allowRestart) {
-      await this.stop(workspaceId);
+      await this.closeWorkspaceSession(workspaceId, { invalidateStartup: false });
       throw new Error(streamResult.error);
     }
 
@@ -269,7 +317,7 @@ export class BrowserBridgeSessionManager {
       error: streamResult.error,
     });
 
-    await this.stop(workspaceId);
-    return await this.ensureStartedInternal(workspaceId, options, false);
+    await this.closeWorkspaceSession(workspaceId, { invalidateStartup: false });
+    return await this.ensureStartedInternal(workspaceId, options, false, startupToken);
   }
 }

@@ -67,6 +67,18 @@ describe("BrowserTab", () => {
     expect(connectMock).toHaveBeenCalledTimes(1);
   });
 
+  test("reconnects automatically when the browser session is unavailable", () => {
+    mockSession = createSession({
+      status: "error",
+      streamState: "error",
+      lastError: "disconnected",
+    });
+
+    render(<BrowserTab workspaceId="workspace-1" />);
+
+    expect(connectMock).toHaveBeenCalledTimes(1);
+  });
+
   test("does not render manual start or stop controls", () => {
     mockSession = createSession();
     const view = render(<BrowserTab workspaceId="workspace-1" />);
