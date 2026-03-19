@@ -36,7 +36,9 @@ function isRetryableBrowserError(error: string | null): boolean {
     return false;
   }
 
-  return /disconnected|session unavailable|stream connect failed/i.test(error);
+  return /disconnected|session unavailable|stream connect failed|timed out waiting for browser preview stream/i.test(
+    error
+  );
 }
 
 export function BrowserTab(props: BrowserTabProps) {

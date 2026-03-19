@@ -112,6 +112,23 @@ describe("BrowserTab", () => {
     expect(connectMock).toHaveBeenCalledTimes(1);
   });
 
+  test("retries transient bootstrap timeout errors", () => {
+    mockSession = createSession({
+      status: "error",
+      streamState: "error",
+      lastError: "Timed out waiting for browser preview stream on ws://127.0.0.1:43045",
+    });
+
+    render(<BrowserTab workspaceId="workspace-1" />);
+
+    expect(connectMock).toHaveBeenCalledTimes(0);
+    expect(intervalCallbacks).toHaveLength(1);
+
+    intervalCallbacks[0]();
+
+    expect(connectMock).toHaveBeenCalledTimes(1);
+  });
+
   test("does not keep retrying fatal startup errors", () => {
     mockSession = createSession({
       status: "error",
