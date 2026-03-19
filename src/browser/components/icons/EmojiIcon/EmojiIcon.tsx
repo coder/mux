@@ -84,11 +84,6 @@ const SPINNING_EMOJI = new Set([
   "🔄",
 ]);
 
-export function getIconForEmoji(emoji: string): LucideIcon | undefined {
-  const normalized = normalizeEmoji(emoji);
-  return EMOJI_TO_ICON[normalized];
-}
-
 export function EmojiIcon(props: {
   emoji: string | null | undefined;
   className?: string;
