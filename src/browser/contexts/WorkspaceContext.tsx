@@ -531,8 +531,6 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   const {
     resolveProjectPath,
     resolveNewChatProjectPath,
-    userProjects,
-    getProjectConfig,
     hasAnyProject,
     refreshProjects,
     loading: projectsLoading,
@@ -905,19 +903,9 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   // URL restoration is now handled by RouterContext which parses the URL on load
   // and provides currentWorkspaceId/currentProjectId that we derive state from.
 
-  // Launch-project should only affect a true first launch. Ignore seeded system
-  // projects and their seeded workspaces here so fresh installs can still honor
-  // CLI/server startup intent, but once the user has a real project or any
-  // non-system workspace, preserve the user's normal persisted startup behavior
-  // instead.
-  const hasNonSystemWorkspace = Array.from(workspaceMetadata.values()).some((metadata) => {
-    return getProjectConfig(metadata.projectPath)?.projectKind !== "system";
-  });
-  const hasExistingProjectsOrWorkspaces = userProjects.size > 0 || hasNonSystemWorkspace;
-
   // Check for launch project from server (for --add-project flag).
-  // This is explicit startup intent from the CLI/server, so it can still win
-  // over passive route restoration on a true first launch, regardless of runtime.
+  // The backend decides when launch-project applies, so the frontend should
+  // trust any returned path as explicit startup intent.
   useEffect(() => {
     if (loading || !api) return;
 
@@ -937,10 +925,6 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
     // Skip if user is in the middle of creating a workspace
     if (pendingNewWorkspaceProject) return;
-
-    // Launch-project is first-launch-only. Once any project or workspace exists,
-    // let the user's normal startup route win in both browser/PWA and desktop.
-    if (hasExistingProjectsOrWorkspaces) return;
 
     let cancelled = false;
 
@@ -996,7 +980,6 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     workspaceMetadata,
     setSelectedWorkspace,
     navigateToProject,
-    hasExistingProjectsOrWorkspaces,
   ]);
 
   // Self-heal: if the initial route targets a workspace that no longer exists
@@ -1541,16 +1524,13 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     let cancelled = false;
 
     const autoCreate = async () => {
-      // On a true first launch, defer to launch-project in any runtime so server intent can
-      // drive the first destination. Once projects/workspaces already exist, new-chat should
-      // use the user's normal startup behavior instead.
-      if (!hasExistingProjectsOrWorkspaces) {
-        try {
-          const launchProject = await api?.server.getLaunchProject(undefined);
-          if (cancelled || launchProject) return;
-        } catch {
-          // Ignore backend capability errors and continue with local auto-create fallback.
-        }
+      // Defer to launch-project whenever the backend reports one so explicit startup
+      // intent can win before local new-chat auto-create fallback runs.
+      try {
+        const launchProject = await api?.server.getLaunchProject(undefined);
+        if (cancelled || launchProject) return;
+      } catch {
+        // Ignore backend capability errors and continue with local auto-create fallback.
       }
 
       if (cancelled) return;
@@ -1582,7 +1562,6 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     workspaceMetadata,
     workspaceStore,
     createWorkspaceDraft,
-    hasExistingProjectsOrWorkspaces,
   ]);
 
   const openWorkspaceDraft = useCallback(

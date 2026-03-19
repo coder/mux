@@ -960,73 +960,7 @@ describe("WorkspaceContext", () => {
     expect(ctx().selectedWorkspace).toBeNull();
   });
 
-  test("launch-project is skipped once any user project already exists", async () => {
-    createMockAPI({
-      workspace: {
-        list: () => Promise.resolve([]),
-      },
-      projects: {
-        list: () => Promise.resolve([["/existing-project", { workspaces: [] }]]),
-      },
-      server: {
-        getLaunchProject: () => Promise.resolve("/launch-project"),
-      },
-      localStorage: {
-        [LAUNCH_BEHAVIOR_KEY]: JSON.stringify("dashboard"),
-      },
-    });
-
-    const ctx = await setup();
-
-    await waitFor(() => expect(ctx().loading).toBe(false));
-    expect(ctx().pendingNewWorkspaceProject).toBeFalsy();
-    expect(ctx().selectedWorkspace).toBeNull();
-  });
-
-  test("launch-project is skipped once any non-system workspace already exists", async () => {
-    createMockAPI({
-      workspace: {
-        list: () =>
-          Promise.resolve([
-            createWorkspaceMetadata({
-              id: "mux-chat",
-              projectPath: "/system/chat-with-mux",
-              projectName: "chat-with-mux",
-              name: "main",
-              namedWorkspacePath: "/system/chat-with-mux-main",
-            }),
-            createWorkspaceMetadata({
-              id: "ws-existing",
-              projectPath: "/existing-project",
-              projectName: "existing-project",
-              name: "main",
-              namedWorkspacePath: "/existing-project-main",
-            }),
-          ]),
-      },
-      projects: {
-        list: () =>
-          Promise.resolve([
-            ["/system/chat-with-mux", { workspaces: [], projectKind: "system" }],
-            ["/existing-project", { workspaces: [] }],
-          ]),
-      },
-      server: {
-        getLaunchProject: () => Promise.resolve("/launch-project"),
-      },
-      localStorage: {
-        [LAUNCH_BEHAVIOR_KEY]: JSON.stringify("dashboard"),
-      },
-    });
-
-    const ctx = await setup();
-
-    await waitFor(() => expect(ctx().loading).toBe(false));
-    expect(ctx().pendingNewWorkspaceProject).toBeFalsy();
-    expect(ctx().selectedWorkspace).toBeNull();
-  });
-
-  test("browser: new-chat mode uses the recent workspace instead of launch-project after first launch", async () => {
+  test("browser: new-chat mode defers to backend launch-project when provided", async () => {
     createMockAPI({
       workspace: {
         list: () =>
@@ -1055,12 +989,12 @@ describe("WorkspaceContext", () => {
 
     await waitFor(() => expect(ctx().loading).toBe(false));
     await waitFor(() => {
-      expect(ctx().pendingNewWorkspaceProject).toBe("/existing-project");
+      expect(ctx().pendingNewWorkspaceProject).toBe("/launch-project");
     });
     expect(ctx().selectedWorkspace).toBeNull();
   });
 
-  test("desktop: new-chat mode uses the recent workspace instead of launch-project after first launch", async () => {
+  test("desktop: new-chat mode uses the recent workspace when backend has no launch-project", async () => {
     createMockAPI({
       workspace: {
         list: () =>
@@ -1078,7 +1012,7 @@ describe("WorkspaceContext", () => {
         list: () => Promise.resolve([]),
       },
       server: {
-        getLaunchProject: () => Promise.resolve("/launch-project"),
+        getLaunchProject: () => Promise.resolve(null),
       },
       localStorage: {
         [LAUNCH_BEHAVIOR_KEY]: JSON.stringify("new-chat"),
