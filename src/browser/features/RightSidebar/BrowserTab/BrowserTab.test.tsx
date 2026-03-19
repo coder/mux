@@ -1,21 +1,15 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { act, cleanup, fireEvent, render } from "@testing-library/react";
+import { cleanup, render } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
 import type { BrowserSession } from "./browserBridgeTypes";
 
 let mockSession: BrowserSession | null = null;
 const connectMock = mock();
-const disconnectMock = mock();
 const sendInputMock = mock();
-const stopMock = mock(() => Promise.resolve({ success: true }));
 
 void mock.module("@/browser/contexts/API", () => ({
   useAPI: () => ({
-    api: {
-      browser: {
-        stop: stopMock,
-      },
-    },
+    api: {},
     status: "connected" as const,
     error: null,
     authenticate: () => undefined,
@@ -27,7 +21,6 @@ void mock.module("./useBrowserBridgeConnection", () => ({
   useBrowserBridgeConnection: () => ({
     session: mockSession,
     connect: connectMock,
-    disconnect: disconnectMock,
     sendInput: sendInputMock,
   }),
 }));
@@ -60,10 +53,7 @@ describe("BrowserTab", () => {
     globalThis.document = globalThis.window.document;
     mockSession = null;
     connectMock.mockReset();
-    disconnectMock.mockReset();
     sendInputMock.mockReset();
-    stopMock.mockReset();
-    stopMock.mockImplementation(() => Promise.resolve({ success: true }));
   });
 
   afterEach(() => {
@@ -77,17 +67,13 @@ describe("BrowserTab", () => {
     expect(connectMock).toHaveBeenCalledTimes(1);
   });
 
-  test("stops the browser preview through the control plane", async () => {
+  test("does not render manual start or stop controls", () => {
     mockSession = createSession();
     const view = render(<BrowserTab workspaceId="workspace-1" />);
 
-    await act(async () => {
-      fireEvent.click(view.getByRole("button", { name: "Stop" }));
-      await Promise.resolve();
-    });
-
-    expect(disconnectMock).toHaveBeenCalledTimes(1);
-    expect(stopMock).toHaveBeenCalledWith({ workspaceId: "workspace-1" });
+    expect(view.queryByRole("button", { name: "Start" })).toBeNull();
+    expect(view.queryByRole("button", { name: "Stop" })).toBeNull();
+    expect(view.queryByRole("button", { name: "Restart" })).toBeNull();
   });
 
   test("shows a visible error when the bridge session fails", () => {

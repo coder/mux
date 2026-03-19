@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Loader2, Play, RefreshCw, Square, TriangleAlert } from "lucide-react";
+import { useEffect } from "react";
+import { Play, TriangleAlert } from "lucide-react";
 import { useAPI } from "@/browser/contexts/API";
 import { cn } from "@/common/lib/utils";
 import type { BrowserSessionStatus } from "./browserBridgeTypes";
@@ -32,7 +32,6 @@ const STATUS_BADGES: Record<BrowserSessionStatus, { label: string; className: st
 interface AutoStartGateState {
   attempted: boolean;
   autoStartPending: boolean;
-  manuallyStopped: boolean;
 }
 
 const autoStartStateByWorkspace = new Map<string, AutoStartGateState>();
@@ -46,14 +45,9 @@ function getAutoStartState(workspaceId: string): AutoStartGateState {
   const initialState: AutoStartGateState = {
     attempted: false,
     autoStartPending: false,
-    manuallyStopped: false,
   };
   autoStartStateByWorkspace.set(workspaceId, initialState);
   return initialState;
-}
-
-function getErrorMessage(error: unknown, fallbackMessage: string): string {
-  return error instanceof Error ? error.message : fallbackMessage;
 }
 
 export function BrowserTab(props: BrowserTabProps) {
@@ -62,19 +56,14 @@ export function BrowserTab(props: BrowserTabProps) {
   }
 
   const { api } = useAPI();
-  const { session, connect, disconnect, sendInput } = useBrowserBridgeConnection(props.workspaceId);
-  const [commandError, setCommandError] = useState<string | null>(null);
-  const [stoppingSession, setStoppingSession] = useState(false);
+  const { session, connect, sendInput } = useBrowserBridgeConnection(props.workspaceId);
   const autoStartState = getAutoStartState(props.workspaceId);
 
   const isStarting = autoStartState.autoStartPending || session?.status === "starting";
-  const sessionIsActive = session?.status === "live" || session?.status === "starting";
-  const visibleError = commandError ?? session?.lastError ?? session?.streamErrorMessage ?? null;
+  const visibleError = session?.lastError ?? session?.streamErrorMessage ?? null;
   const screenshotSrc =
     session?.frameBase64 != null ? `data:image/jpeg;base64,${session.frameBase64}` : null;
   const headerBadge = session == null ? null : STATUS_BADGES[session.status];
-  const showStopButton = stoppingSession || sessionIsActive;
-  const showStartButton = !showStopButton;
   const headerTitle = "Browser preview";
 
   useEffect(() => {
@@ -82,50 +71,18 @@ export function BrowserTab(props: BrowserTabProps) {
       api == null ||
       session != null ||
       autoStartState.attempted ||
-      autoStartState.autoStartPending ||
-      autoStartState.manuallyStopped
+      autoStartState.autoStartPending
     ) {
       return;
     }
 
     autoStartState.attempted = true;
     autoStartState.autoStartPending = true;
-    setCommandError(null);
     connect();
     queueMicrotask(() => {
       autoStartState.autoStartPending = false;
     });
   }, [api, autoStartState, connect, session]);
-
-  const handleStart = () => {
-    if (api == null || stoppingSession || autoStartState.autoStartPending) {
-      return;
-    }
-
-    autoStartState.manuallyStopped = false;
-    setCommandError(null);
-    connect();
-  };
-
-  const handleStop = () => {
-    if (api == null || stoppingSession) {
-      return;
-    }
-
-    autoStartState.manuallyStopped = true;
-    setStoppingSession(true);
-    setCommandError(null);
-    disconnect();
-
-    api.browser
-      .stop({ workspaceId: props.workspaceId })
-      .catch((error: unknown) => {
-        setCommandError(getErrorMessage(error, "Failed to stop browser preview"));
-      })
-      .finally(() => {
-        setStoppingSession(false);
-      });
-  };
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -138,38 +95,6 @@ export function BrowserTab(props: BrowserTabProps) {
             {headerBadge && <BrowserHeaderBadge badge={headerBadge} />}
           </div>
         </div>
-        {showStartButton && (
-          <button
-            type="button"
-            onClick={handleStart}
-            disabled={!api || isStarting}
-            className="bg-accent hover:bg-accent/80 text-accent-foreground inline-flex max-w-full items-center gap-1.5 self-start rounded-md px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {isStarting ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : session?.status === "error" || session?.status === "ended" ? (
-              <RefreshCw className="h-3.5 w-3.5" />
-            ) : (
-              <Play className="h-3.5 w-3.5" />
-            )}
-            {session?.status === "error" || session?.status === "ended" ? "Restart" : "Start"}
-          </button>
-        )}
-        {showStopButton && (
-          <button
-            type="button"
-            onClick={handleStop}
-            disabled={!api || stoppingSession}
-            className="bg-destructive/10 hover:bg-destructive/20 text-destructive border-destructive/20 inline-flex max-w-full items-center gap-1.5 self-start rounded-md border px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {stoppingSession ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Square className="h-3.5 w-3.5" />
-            )}
-            {stoppingSession ? "Stopping..." : "Stop"}
-          </button>
-        )}
       </div>
 
       {visibleError && !screenshotSrc && (
@@ -190,7 +115,6 @@ export function BrowserTab(props: BrowserTabProps) {
           session={session}
           screenshotSrc={screenshotSrc}
           visibleError={visibleError}
-          onRestart={handleStart}
           sendInput={sendInput}
           placeholder={
             <BrowserViewerState sessionStatus={session?.status ?? null} isStarting={isStarting} />
@@ -228,15 +152,16 @@ function BrowserViewerState(props: {
 
     if (props.sessionStatus === "error") {
       return {
-        title: "Browser preview stopped",
-        description: "Restart the preview to reconnect to the workspace browser session.",
+        title: "Browser preview unavailable",
+        description:
+          "Mux will reconnect automatically when the workspace browser session is available again.",
       };
     }
 
     return {
-      title: "No browser preview running",
+      title: "Waiting for browser preview",
       description:
-        "Start the browser preview to open the mux-managed browser session for this workspace.",
+        "Mux connects to the workspace browser session automatically when one is available.",
     };
   })();
 
