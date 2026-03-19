@@ -151,7 +151,11 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
   // Electron's MessageChannel is near-instant so this gate is unnecessary there.
   if (workspaceState.isHydratingTranscript && !window.api) {
     return (
-      <WorkspacePlaceholder title="Catching up with the agent..." className={props.className} />
+      <WorkspacePlaceholder
+        title="Catching up with the agent..."
+        showAnimation
+        className={props.className}
+      />
     );
   }
 
