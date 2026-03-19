@@ -112,6 +112,19 @@ describe("BrowserTab", () => {
     expect(connectMock).toHaveBeenCalledTimes(1);
   });
 
+  test("does not keep retrying fatal startup errors", () => {
+    mockSession = createSession({
+      status: "error",
+      streamState: "error",
+      lastError: "Vendored agent-browser binary not found",
+    });
+
+    render(<BrowserTab workspaceId="workspace-1" />);
+
+    expect(connectMock).toHaveBeenCalledTimes(0);
+    expect(intervalCallbacks).toHaveLength(0);
+  });
+
   test("does not render manual start or stop controls", () => {
     mockSession = createSession();
     const view = render(<BrowserTab workspaceId="workspace-1" />);

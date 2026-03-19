@@ -31,6 +31,14 @@ const STATUS_BADGES: Record<BrowserSessionStatus, { label: string; className: st
 
 const BROWSER_PREVIEW_RETRY_INTERVAL_MS = 2_000;
 
+function isRetryableBrowserError(error: string | null): boolean {
+  if (error == null) {
+    return false;
+  }
+
+  return /disconnected|session unavailable|stream connect failed/i.test(error);
+}
+
 export function BrowserTab(props: BrowserTabProps) {
   if (props.workspaceId.trim().length === 0) {
     throw new Error("Browser tab requires a workspaceId");
@@ -55,6 +63,12 @@ export function BrowserTab(props: BrowserTabProps) {
       return;
     }
 
+    const shouldPollForSession =
+      session == null || (session.status === "error" && isRetryableBrowserError(visibleError));
+    if (!shouldPollForSession) {
+      return;
+    }
+
     if (session == null) {
       connect();
     }
@@ -67,7 +81,7 @@ export function BrowserTab(props: BrowserTabProps) {
     return () => {
       clearInterval(retryTimer);
     };
-  }, [api, connect, session]);
+  }, [api, connect, session, visibleError]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
