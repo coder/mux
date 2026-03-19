@@ -26,7 +26,7 @@ import { ServiceContainer } from "@/node/services/serviceContainer";
 import type { RouterClient } from "@orpc/server";
 import { createOrpcServer, type OrpcServer } from "@/node/orpc/server";
 import type { ProjectConfig } from "@/common/types/project";
-import { shouldExposeLaunchProject } from "@/cli/server";
+import { shouldExposeLaunchProject } from "@/cli/launchProject";
 
 // --- Test Server Factory ---
 

@@ -10,7 +10,6 @@ import { getMuxHome, migrateLegacyMuxHome } from "@/common/constants/paths";
 import { ServerLockfile } from "@/node/services/serverLockfile";
 import { log } from "@/node/services/log";
 import { materializeVendoredAgentBrowserWrapper } from "@/node/services/agentBrowserLauncher";
-import type { ProjectConfig } from "@/common/types/project";
 import type { BrowserWindow } from "electron";
 import { Command } from "commander";
 import { validateProjectPath } from "@/node/utils/pathUtils";
@@ -18,6 +17,7 @@ import { VERSION } from "@/version";
 import { getParseOptions } from "./argv";
 import { resolveServerAuthToken } from "./serverAuthToken";
 import { appendServerCrashLogSync } from "./serverCrashLogging";
+import { shouldExposeLaunchProject } from "./launchProject";
 
 // Server-mode crashes can terminate the process before the async logger flushes,
 // so these top-level hooks mirror fatal details into mux.log synchronously.
@@ -46,17 +46,6 @@ process.on("beforeExit", (code) => {
 
 // Track the launch project path for initial navigation
 let launchProjectPath: string | null = null;
-
-export function shouldExposeLaunchProject(
-  projects: Array<[string, ProjectConfig]> | null | undefined
-): boolean {
-  if (!Array.isArray(projects)) {
-    return false;
-  }
-
-  // Keep first-user-project detection in the backend so clients can trust getLaunchProject().
-  return !projects.some(([, config]) => config.projectKind !== "system");
-}
 
 // Minimal BrowserWindow stub for services that expect one
 const mockWindow: BrowserWindow = {
@@ -270,16 +259,14 @@ async function main(): Promise<void> {
   process.on("SIGTERM", () => void cleanup());
 }
 
-if (require.main === module) {
-  void main().catch((error) => {
-    appendServerCrashLogSync({
-      event: "Failed to initialize server",
-      detail: error,
-    });
-    console.error("Failed to initialize server:", error);
-    process.exit(1);
+void main().catch((error) => {
+  appendServerCrashLogSync({
+    event: "Failed to initialize server",
+    detail: error,
   });
-}
+  console.error("Failed to initialize server:", error);
+  process.exit(1);
+});
 
 async function initializeProjectDirect(
   projectPath: string,
