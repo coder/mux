@@ -97,6 +97,55 @@ describe("SSHRuntime base repo config normalization", () => {
 
     expect(await normalizeBaseRepoSharedConfig()).toBe(false);
   });
+
+  it("treats lock conflicts as a no-op when another writer already removed core.bare", async () => {
+    execBufferedSpy = spyOn(runtimeHelpers, "execBuffered")
+      .mockResolvedValueOnce({
+        stdout: "",
+        stderr: "error: could not lock config file config: File exists",
+        exitCode: 255,
+        duration: 0,
+      })
+      .mockResolvedValueOnce({
+        stdout: "",
+        stderr: "",
+        exitCode: 1,
+        duration: 0,
+      });
+
+    expect(await normalizeBaseRepoSharedConfig()).toBe(false);
+    expect(execBufferedSpy).toHaveBeenNthCalledWith(
+      2,
+      runtime,
+      expect.stringContaining("config --local --get core.bare"),
+      expect.objectContaining({ cwd: "/tmp", timeout: 10 })
+    );
+  });
+
+  it("retries lock conflicts while the shared core.bare entry still exists", async () => {
+    execBufferedSpy = spyOn(runtimeHelpers, "execBuffered")
+      .mockResolvedValueOnce({
+        stdout: "",
+        stderr: "error: could not lock config file config: File exists",
+        exitCode: 255,
+        duration: 0,
+      })
+      .mockResolvedValueOnce({
+        stdout: "true\n",
+        stderr: "",
+        exitCode: 0,
+        duration: 0,
+      })
+      .mockResolvedValueOnce({
+        stdout: "",
+        stderr: "",
+        exitCode: 0,
+        duration: 0,
+      });
+
+    expect(await normalizeBaseRepoSharedConfig()).toBe(true);
+    expect(execBufferedSpy).toHaveBeenCalledTimes(3);
+  });
 });
 
 describe("SSHRuntime.ensureReady repository checks", () => {

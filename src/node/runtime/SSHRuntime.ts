@@ -55,6 +55,13 @@ const BASE_REPO_DIR = ".mux-base.git";
  *  of refs/heads/* so they don't collide with branches checked out in worktrees. */
 const BUNDLE_REF_PREFIX = "refs/mux-bundle/";
 
+/** Small backoff for concurrent writers healing the same shared base repo config. */
+const BASE_REPO_CONFIG_LOCK_RETRY_DELAYS_MS = [50, 100, 200];
+
+function isGitConfigLockConflict(message: string): boolean {
+  return /could not lock config file/i.test(message);
+}
+
 function logSSHBackoffWait(initLogger: InitLogger, waitMs: number): void {
   const secs = Math.max(1, Math.ceil(waitMs / 1000));
   initLogger.logStep(`SSH unavailable; retrying in ${secs}s...`);
@@ -404,27 +411,62 @@ export class SSHRuntime extends RemoteRuntime {
     baseRepoPathArg: string,
     abortSignal?: AbortSignal
   ): Promise<boolean> {
-    const unsetResult = await execBuffered(
-      this,
-      `git -C ${baseRepoPathArg} config --local --unset-all core.bare`,
-      {
-        cwd: "/tmp",
-        timeout: 10,
-        abortSignal,
+    for (let attempt = 0; attempt <= BASE_REPO_CONFIG_LOCK_RETRY_DELAYS_MS.length; attempt++) {
+      const unsetResult = await execBuffered(
+        this,
+        `git -C ${baseRepoPathArg} config --local --unset-all core.bare`,
+        {
+          cwd: "/tmp",
+          timeout: 10,
+          abortSignal,
+        }
+      );
+
+      if (unsetResult.exitCode === 0) {
+        return true;
       }
-    );
 
-    if (unsetResult.exitCode === 0) {
-      return true;
+      if (unsetResult.exitCode === 5) {
+        return false;
+      }
+
+      const errorDetail = unsetResult.stderr || unsetResult.stdout;
+      if (!isGitConfigLockConflict(errorDetail)) {
+        throw new Error(`Failed to normalize base repo config: ${errorDetail}`);
+      }
+
+      const inspectResult = await execBuffered(
+        this,
+        `git -C ${baseRepoPathArg} config --local --get core.bare`,
+        {
+          cwd: "/tmp",
+          timeout: 10,
+          abortSignal,
+        }
+      );
+
+      if (inspectResult.exitCode === 1) {
+        return false;
+      }
+
+      if (inspectResult.exitCode !== 0) {
+        throw new Error(
+          `Failed to inspect base repo config after lock conflict: ${inspectResult.stderr || inspectResult.stdout}`
+        );
+      }
+
+      if (attempt === BASE_REPO_CONFIG_LOCK_RETRY_DELAYS_MS.length) {
+        throw new Error(`Failed to normalize base repo config: ${errorDetail}`);
+      }
+
+      // Another initWorkspace may be healing the same shared base repo; if the
+      // local key still exists, wait briefly and retry the idempotent unset.
+      await new Promise((resolve) =>
+        setTimeout(resolve, BASE_REPO_CONFIG_LOCK_RETRY_DELAYS_MS[attempt])
+      );
     }
 
-    if (unsetResult.exitCode === 5) {
-      return false;
-    }
-
-    throw new Error(
-      `Failed to normalize base repo config: ${unsetResult.stderr || unsetResult.stdout}`
-    );
+    return false;
   }
 
   /**
