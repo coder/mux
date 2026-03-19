@@ -4,7 +4,8 @@ import * as fs from "fs/promises";
 
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import type { ProvidersConfigMap, SendMessageOptions } from "@/common/orpc/types";
-import { Ok } from "@/common/types/result";
+import type { SendMessageError } from "@/common/types/errors";
+import { Err, Ok, type Result } from "@/common/types/result";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import type { Config } from "@/node/config";
 
@@ -30,13 +31,20 @@ interface SessionInternals {
     message: string,
     options?: SendMessageOptions,
     internal?: { synthetic?: boolean; agentInitiated?: boolean }
-  ) => Promise<{ success: boolean }>;
+  ) => Promise<Result<void, SendMessageError>>;
   dispatchAgentSwitch: (
     switchResult: { agentId: string; reason?: string; followUp?: string },
     currentOptions: SendMessageOptions | undefined,
     fallbackModel: string
   ) => Promise<boolean>;
+  dispatchTodoNudgeIfNeeded: (
+    currentOptions: SendMessageOptions | undefined,
+    fallbackModel: string,
+    fallbackAgentId?: string
+  ) => Promise<boolean>;
 }
+
+type SendMessageMock = ReturnType<typeof mock> & SessionInternals["sendMessage"];
 
 interface SessionHarness {
   session: AgentSession;
@@ -171,6 +179,43 @@ function emitStreamEnd(aiEmitter: EventEmitter, parts: Array<Record<string, unkn
       providerMetadata: {},
     },
   });
+}
+
+async function completeRealUserTurn(
+  session: AgentSession,
+  aiEmitter: EventEmitter,
+  streamMessageMock: ReturnType<typeof mock>,
+  message: string
+): Promise<void> {
+  const internals = session as unknown as SessionInternals;
+  streamMessageMock.mockImplementationOnce(() => {
+    emitStreamStart(aiEmitter);
+    return Promise.resolve(Ok(undefined));
+  });
+
+  const sendResult = await session.sendMessage(message, {
+    model: MODEL,
+    agentId: "exec",
+  });
+  expect(sendResult.success).toBe(true);
+
+  emitStreamEnd(aiEmitter);
+  await waitForCondition(() => internals.turnPhase === "idle");
+}
+
+function createTodoNudgeSendMessageMock(
+  implementation?: (
+    message: string,
+    options?: SendMessageOptions,
+    internal?: { synthetic?: boolean; agentInitiated?: boolean }
+  ) => Promise<Result<void, SendMessageError>>
+): SendMessageMock {
+  return mock(
+    implementation ??
+      (() => {
+        return Promise.resolve(Ok(undefined));
+      })
+  ) as unknown as SendMessageMock;
 }
 
 describe("AgentSession TODO nudge", () => {
@@ -450,6 +495,240 @@ describe("AgentSession TODO nudge", () => {
 
     await waitForCondition(() => internals.turnPhase === "idle");
 
+    expect(sendMessageSpy).not.toHaveBeenCalled();
+    expect(internals.todoNudgeSentForRealUserTurnOrdinal).toBe(0);
+  });
+
+  test("dispatchTodoNudgeIfNeeded only nudges once for the same real user turn", async () => {
+    using projectDir = new DisposableTempDir("agent-session-todo-nudge-single-budget");
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+
+    const { session, aiEmitter, streamMessageMock } = createSessionHarness(
+      historyService,
+      projectDir.path,
+      projectDir.path
+    );
+    activeSession = session;
+
+    await completeRealUserTurn(
+      session,
+      aiEmitter,
+      streamMessageMock,
+      "Finish the remaining TODO work."
+    );
+
+    await seedTodos(projectDir.path, [{ content: "Still pending", status: "pending" }]);
+
+    const internals = session as unknown as SessionInternals;
+    const sendMessageSpy = createTodoNudgeSendMessageMock();
+    internals.sendMessage = sendMessageSpy;
+
+    const firstDispatch = await internals.dispatchTodoNudgeIfNeeded(
+      { model: MODEL, agentId: "exec" },
+      MODEL
+    );
+    expect(firstDispatch).toBe(true);
+    expect(sendMessageSpy).toHaveBeenCalledTimes(1);
+    expect(sendMessageSpy.mock.calls[0]?.[0]).toBe(TODO_NUDGE_TEXT);
+    expect(sendMessageSpy.mock.calls[0]?.[2]).toMatchObject({ synthetic: true });
+    expect(internals.todoNudgeSentForRealUserTurnOrdinal).toBe(1);
+
+    sendMessageSpy.mockClear();
+
+    const secondDispatch = await internals.dispatchTodoNudgeIfNeeded(
+      { model: MODEL, agentId: "exec" },
+      MODEL
+    );
+    expect(secondDispatch).toBe(false);
+    expect(sendMessageSpy).not.toHaveBeenCalled();
+    expect(internals.todoNudgeSentForRealUserTurnOrdinal).toBe(1);
+  });
+
+  test("a new real user turn resets the TODO nudge budget", async () => {
+    using projectDir = new DisposableTempDir("agent-session-todo-nudge-next-turn");
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+
+    const { session, aiEmitter, streamMessageMock } = createSessionHarness(
+      historyService,
+      projectDir.path,
+      projectDir.path
+    );
+    activeSession = session;
+
+    await completeRealUserTurn(session, aiEmitter, streamMessageMock, "Do the pending work.");
+    await seedTodos(projectDir.path, [{ content: "Still pending", status: "pending" }]);
+
+    const internals = session as unknown as SessionInternals;
+    const originalSendMessage = session.sendMessage.bind(session);
+    const sendMessageSpy = createTodoNudgeSendMessageMock();
+    internals.sendMessage = sendMessageSpy;
+
+    const firstDispatch = await internals.dispatchTodoNudgeIfNeeded(
+      { model: MODEL, agentId: "exec" },
+      MODEL
+    );
+    expect(firstDispatch).toBe(true);
+    expect(internals.todoNudgeSentForRealUserTurnOrdinal).toBe(1);
+
+    await seedTodos(projectDir.path, []);
+    internals.sendMessage = originalSendMessage as SessionInternals["sendMessage"];
+    await completeRealUserTurn(
+      session,
+      aiEmitter,
+      streamMessageMock,
+      "Try again with the remaining work."
+    );
+    expect(internals.currentRealUserTurnOrdinal).toBe(2);
+    expect(internals.todoNudgeSentForRealUserTurnOrdinal).toBe(1);
+
+    await seedTodos(projectDir.path, [{ content: "Still pending", status: "pending" }]);
+    internals.sendMessage = sendMessageSpy;
+    sendMessageSpy.mockClear();
+
+    const secondDispatch = await internals.dispatchTodoNudgeIfNeeded(
+      { model: MODEL, agentId: "exec" },
+      MODEL
+    );
+    expect(secondDispatch).toBe(true);
+    expect(sendMessageSpy).toHaveBeenCalledTimes(1);
+    expect(internals.todoNudgeSentForRealUserTurnOrdinal).toBe(2);
+  });
+
+  test("failed TODO nudge dispatch reverts the reserved budget and the next real turn can nudge", async () => {
+    using projectDir = new DisposableTempDir("agent-session-todo-nudge-failure-recovery");
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+
+    const { session, aiEmitter, streamMessageMock } = createSessionHarness(
+      historyService,
+      projectDir.path,
+      projectDir.path
+    );
+    activeSession = session;
+
+    await completeRealUserTurn(
+      session,
+      aiEmitter,
+      streamMessageMock,
+      "Work through the pending tasks."
+    );
+    await seedTodos(projectDir.path, [{ content: "Still pending", status: "pending" }]);
+
+    const internals = session as unknown as SessionInternals;
+    const originalSendMessage = session.sendMessage.bind(session);
+    const failingSendMessageSpy = createTodoNudgeSendMessageMock(() => {
+      return Promise.resolve(Err({ type: "unknown", raw: "nudge failed" }));
+    });
+    internals.sendMessage = failingSendMessageSpy;
+
+    const failedDispatch = await internals.dispatchTodoNudgeIfNeeded(
+      { model: MODEL, agentId: "exec" },
+      MODEL
+    );
+    expect(failedDispatch).toBe(false);
+    expect(failingSendMessageSpy).toHaveBeenCalledTimes(1);
+    expect(internals.todoNudgeSentForRealUserTurnOrdinal).toBe(0);
+
+    await seedTodos(projectDir.path, []);
+    internals.sendMessage = originalSendMessage as SessionInternals["sendMessage"];
+    await completeRealUserTurn(
+      session,
+      aiEmitter,
+      streamMessageMock,
+      "Continue the unfinished work."
+    );
+    expect(internals.currentRealUserTurnOrdinal).toBe(2);
+
+    await seedTodos(projectDir.path, [{ content: "Still pending", status: "pending" }]);
+    const recoveredSendMessageSpy = createTodoNudgeSendMessageMock();
+    internals.sendMessage = recoveredSendMessageSpy;
+
+    const recoveredDispatch = await internals.dispatchTodoNudgeIfNeeded(
+      { model: MODEL, agentId: "exec" },
+      MODEL
+    );
+    expect(recoveredDispatch).toBe(true);
+    expect(recoveredSendMessageSpy).toHaveBeenCalledTimes(1);
+    expect(internals.todoNudgeSentForRealUserTurnOrdinal).toBe(2);
+  });
+
+  test("disposed sessions skip TODO nudges", async () => {
+    using projectDir = new DisposableTempDir("agent-session-todo-nudge-disposed");
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+
+    const { session, aiEmitter, streamMessageMock } = createSessionHarness(
+      historyService,
+      projectDir.path,
+      projectDir.path
+    );
+    activeSession = session;
+
+    await completeRealUserTurn(session, aiEmitter, streamMessageMock, "Finish the TODO list.");
+    await seedTodos(projectDir.path, [{ content: "Still pending", status: "pending" }]);
+
+    const internals = session as unknown as SessionInternals;
+    const sendMessageSpy = createTodoNudgeSendMessageMock();
+    internals.sendMessage = sendMessageSpy;
+
+    session.dispose();
+
+    const dispatchResult = await internals.dispatchTodoNudgeIfNeeded(
+      { model: MODEL, agentId: "exec" },
+      MODEL
+    );
+    expect(dispatchResult).toBe(false);
+    expect(sendMessageSpy).not.toHaveBeenCalled();
+  });
+
+  test("missing fallback model skips the TODO nudge without throwing", async () => {
+    using projectDir = new DisposableTempDir("agent-session-todo-nudge-empty-model");
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+
+    const { session, aiEmitter, streamMessageMock } = createSessionHarness(
+      historyService,
+      projectDir.path,
+      projectDir.path
+    );
+    activeSession = session;
+
+    await completeRealUserTurn(session, aiEmitter, streamMessageMock, "Work the remaining TODOs.");
+    await seedTodos(projectDir.path, [{ content: "Still pending", status: "pending" }]);
+
+    const internals = session as unknown as SessionInternals;
+    const sendMessageSpy = createTodoNudgeSendMessageMock();
+    internals.sendMessage = sendMessageSpy;
+
+    const dispatchResult = await internals.dispatchTodoNudgeIfNeeded(undefined, "", "exec");
+    expect(dispatchResult).toBe(false);
+    expect(sendMessageSpy).not.toHaveBeenCalled();
+    expect(internals.todoNudgeSentForRealUserTurnOrdinal).toBe(0);
+  });
+
+  test("missing agentId skips the TODO nudge without throwing", async () => {
+    using projectDir = new DisposableTempDir("agent-session-todo-nudge-missing-agent");
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+
+    const { session, aiEmitter, streamMessageMock } = createSessionHarness(
+      historyService,
+      projectDir.path,
+      projectDir.path
+    );
+    activeSession = session;
+
+    await completeRealUserTurn(session, aiEmitter, streamMessageMock, "Work the remaining TODOs.");
+    await seedTodos(projectDir.path, [{ content: "Still pending", status: "pending" }]);
+
+    const internals = session as unknown as SessionInternals;
+    const sendMessageSpy = createTodoNudgeSendMessageMock();
+    internals.sendMessage = sendMessageSpy;
+
+    const dispatchResult = await internals.dispatchTodoNudgeIfNeeded(undefined, MODEL);
+    expect(dispatchResult).toBe(false);
     expect(sendMessageSpy).not.toHaveBeenCalled();
     expect(internals.todoNudgeSentForRealUserTurnOrdinal).toBe(0);
   });
