@@ -395,8 +395,8 @@ export class SSHRuntime extends RemoteRuntime {
 
   /**
    * Keep the shared SSH base repo bare by layout instead of by sharing `core.bare`
-   * through the common config. Linked worktrees consult that shared config too, so
-   * leaving `core.bare=true` there leaks bare-repo metadata into normal workspace
+   * through the repo's common config. Linked worktrees consult that local config too,
+   * so leaving `core.bare=true` there leaks bare-repo metadata into normal workspace
    * checkouts even though Git can infer the host repo is bare from its directory
    * layout alone.
    */
@@ -404,9 +404,9 @@ export class SSHRuntime extends RemoteRuntime {
     baseRepoPathArg: string,
     abortSignal?: AbortSignal
   ): Promise<boolean> {
-    const coreBareResult = await execBuffered(
+    const unsetResult = await execBuffered(
       this,
-      `git -C ${baseRepoPathArg} config --get core.bare`,
+      `git -C ${baseRepoPathArg} config --local --unset-all core.bare`,
       {
         cwd: "/tmp",
         timeout: 10,
@@ -414,33 +414,17 @@ export class SSHRuntime extends RemoteRuntime {
       }
     );
 
-    if (coreBareResult.exitCode === 1) {
+    if (unsetResult.exitCode === 0) {
+      return true;
+    }
+
+    if (unsetResult.exitCode === 5) {
       return false;
     }
 
-    if (coreBareResult.exitCode !== 0) {
-      throw new Error(
-        `Failed to inspect base repo config: ${coreBareResult.stderr || coreBareResult.stdout}`
-      );
-    }
-
-    const unsetResult = await execBuffered(
-      this,
-      `git -C ${baseRepoPathArg} config --unset-all core.bare`,
-      {
-        cwd: "/tmp",
-        timeout: 10,
-        abortSignal,
-      }
+    throw new Error(
+      `Failed to normalize base repo config: ${unsetResult.stderr || unsetResult.stdout}`
     );
-
-    if (unsetResult.exitCode !== 0) {
-      throw new Error(
-        `Failed to normalize base repo config: ${unsetResult.stderr || unsetResult.stdout}`
-      );
-    }
-
-    return true;
   }
 
   /**

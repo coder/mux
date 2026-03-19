@@ -35,6 +35,70 @@ describe("SSHRuntime constructor", () => {
   });
 });
 
+describe("SSHRuntime base repo config normalization", () => {
+  type NormalizeBaseRepoSharedConfig = (
+    baseRepoPathArg: string,
+    abortSignal?: AbortSignal
+  ) => Promise<boolean>;
+
+  let execBufferedSpy: ReturnType<typeof spyOn<typeof runtimeHelpers, "execBuffered">> | null =
+    null;
+  let runtime: SSHRuntime;
+
+  beforeEach(() => {
+    const config = { host: "example.com", srcBaseDir: "/home/user/src" };
+    runtime = new SSHRuntime(config, createSSHTransport(config, false));
+  });
+
+  afterEach(() => {
+    execBufferedSpy?.mockRestore();
+    execBufferedSpy = null;
+  });
+
+  function getNormalizeBaseRepoSharedConfig(): NormalizeBaseRepoSharedConfig {
+    const normalizeUnknown: unknown = Reflect.get(runtime, "normalizeBaseRepoSharedConfig");
+    if (typeof normalizeUnknown !== "function") {
+      throw new Error("normalizeBaseRepoSharedConfig is unavailable");
+    }
+
+    return normalizeUnknown as NormalizeBaseRepoSharedConfig;
+  }
+
+  function normalizeBaseRepoSharedConfig(): Promise<boolean> {
+    return getNormalizeBaseRepoSharedConfig().call(
+      runtime,
+      '"/home/user/src/project/.mux-base.git"'
+    );
+  }
+
+  it("removes a local core.bare entry from the shared base repo config", async () => {
+    execBufferedSpy = spyOn(runtimeHelpers, "execBuffered").mockResolvedValue({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+      duration: 0,
+    });
+
+    expect(await normalizeBaseRepoSharedConfig()).toBe(true);
+    expect(execBufferedSpy).toHaveBeenCalledWith(
+      runtime,
+      expect.stringContaining("config --local --unset-all core.bare"),
+      expect.objectContaining({ cwd: "/tmp", timeout: 10 })
+    );
+  });
+
+  it("treats missing local core.bare config as already normalized", async () => {
+    execBufferedSpy = spyOn(runtimeHelpers, "execBuffered").mockResolvedValue({
+      stdout: "",
+      stderr: "",
+      exitCode: 5,
+      duration: 0,
+    });
+
+    expect(await normalizeBaseRepoSharedConfig()).toBe(false);
+  });
+});
+
 describe("SSHRuntime.ensureReady repository checks", () => {
   let execBufferedSpy: ReturnType<typeof spyOn<typeof runtimeHelpers, "execBuffered">> | null =
     null;
