@@ -182,7 +182,13 @@ export class BrowserBridgeServer {
     }
 
     this.wss.handleUpgrade(request, socket, head, (ws) => {
-      void this.handleUpgradedConnection(ws, request);
+      this.handleUpgradedConnection(ws, request).catch((error: unknown) => {
+        log.error("BrowserBridgeServer: bridge setup failed", {
+          url: request.url,
+          error,
+        });
+        closeWebSocket(ws, MISSING_SESSION_CLOSE_CODE, "session unavailable");
+      });
     });
   }
 

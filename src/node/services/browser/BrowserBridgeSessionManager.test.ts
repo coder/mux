@@ -88,6 +88,52 @@ describe("BrowserBridgeSessionManager", () => {
     expect(connection.streamPort).toBe(9333);
   });
 
+  test("stop cancels in-flight startup without closing a newer replacement session", async () => {
+    const streamPortRegistry = createStreamPortRegistry([9222, 9333]);
+    let waitCallCount = 0;
+    let resolveSecondWait: (() => void) | null = null;
+    let notifySecondWaitStarted: (() => void) | null = null;
+    const secondWaitStarted = new Promise<void>((resolve) => {
+      notifySecondWaitStarted = resolve;
+    });
+    const waitForStreamPort = mock(() => {
+      waitCallCount += 1;
+      if (waitCallCount === 1) {
+        return Promise.resolve({ ok: true as const });
+      }
+
+      notifySecondWaitStarted?.();
+      return new Promise<{ ok: true }>((resolve) => {
+        resolveSecondWait = () => resolve({ ok: true as const });
+      });
+    });
+    const manager = new BrowserBridgeSessionManager({
+      streamPortRegistry,
+      hasAgentBrowserSessionFn: mock(() => Promise.resolve(false)),
+      openAgentBrowserSessionFn: mock(() => Promise.resolve({ success: true as const })),
+      closeAgentBrowserSessionFn: mock(() => Promise.resolve({ success: true })),
+      waitForStreamPortFn: waitForStreamPort,
+    });
+
+    await manager.ensureStarted("workspace-1");
+    await manager.stop("workspace-1");
+
+    const secondStart = manager.ensureStarted("workspace-1");
+    await secondWaitStarted;
+    if (resolveSecondWait == null) {
+      throw new Error("Expected second wait promise resolver to be registered");
+    }
+    resolveSecondWait();
+
+    const secondConnection = await secondStart;
+
+    expect(secondConnection).toEqual({
+      workspaceId: "workspace-1",
+      sessionId: "mux-workspace-1",
+      streamPort: 9333,
+    });
+  });
+
   test("getLiveSessionConnection returns null without a known port or live session", async () => {
     const streamPortRegistry = createStreamPortRegistry([9222]);
     const manager = new BrowserBridgeSessionManager({

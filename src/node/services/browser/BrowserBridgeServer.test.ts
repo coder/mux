@@ -287,6 +287,39 @@ describe("BrowserBridgeServer", () => {
     }
   });
 
+  test("closes the client socket when bridge setup rejects", async () => {
+    const bridgeServer = createBridgeServer({
+      getLiveSessionConnection: mock(() => Promise.reject(new Error("boom"))),
+    });
+    const ws = createMockClientSocket();
+    const internalBridgeServer = bridgeServer as unknown as {
+      wss: {
+        handleUpgrade: (
+          request: IncomingMessage,
+          socket: unknown,
+          head: Buffer,
+          callback: (ws: WebSocket) => void
+        ) => void;
+      };
+    };
+    internalBridgeServer.wss.handleUpgrade = (_request, _socket, _head, callback) => {
+      callback(ws as unknown as WebSocket);
+    };
+
+    try {
+      bridgeServer.handleUpgrade(
+        { url: `/?token=${VALID_TOKEN}` } as IncomingMessage,
+        {} as never,
+        Buffer.alloc(0)
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(ws.close).toHaveBeenCalledWith(4002, "session unavailable");
+    } finally {
+      await bridgeServer.stop();
+    }
+  });
+
   test("closes with 4003 when the upstream stream cannot be reached", async () => {
     const bridgeServer = createBridgeServer();
 
