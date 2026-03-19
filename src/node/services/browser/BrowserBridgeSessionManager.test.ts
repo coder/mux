@@ -91,10 +91,13 @@ describe("BrowserBridgeSessionManager", () => {
   test("stop cancels in-flight startup without closing a newer replacement session", async () => {
     const streamPortRegistry = createStreamPortRegistry([9222, 9333]);
     let waitCallCount = 0;
-    let resolveSecondWait: (() => void) | null = null;
     let notifySecondWaitStarted: (() => void) | null = null;
     const secondWaitStarted = new Promise<void>((resolve) => {
       notifySecondWaitStarted = resolve;
+    });
+    let secondWaitResolve!: (value: { ok: true }) => void;
+    const secondWaitPromise = new Promise<{ ok: true }>((resolve) => {
+      secondWaitResolve = resolve;
     });
     const waitForStreamPort = mock(() => {
       waitCallCount += 1;
@@ -103,9 +106,7 @@ describe("BrowserBridgeSessionManager", () => {
       }
 
       notifySecondWaitStarted?.();
-      return new Promise<{ ok: true }>((resolve) => {
-        resolveSecondWait = () => resolve({ ok: true as const });
-      });
+      return secondWaitPromise;
     });
     const manager = new BrowserBridgeSessionManager({
       streamPortRegistry,
@@ -120,10 +121,7 @@ describe("BrowserBridgeSessionManager", () => {
 
     const secondStart = manager.ensureStarted("workspace-1");
     await secondWaitStarted;
-    if (resolveSecondWait == null) {
-      throw new Error("Expected second wait promise resolver to be registered");
-    }
-    resolveSecondWait();
+    secondWaitResolve({ ok: true as const });
 
     const secondConnection = await secondStart;
 
