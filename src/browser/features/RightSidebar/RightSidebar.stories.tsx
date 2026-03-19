@@ -399,6 +399,8 @@ export const ExplorerTab: Story = {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("explorer"));
         localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "350");
         localStorage.removeItem(getRightSidebarLayoutKey("ws-explorer"));
+        localStorage.removeItem(`explorer:entries:ws-explorer`);
+        localStorage.removeItem(`explorer:expanded:ws-explorer`);
 
         const client = setupSimpleChatStory({
           workspaceId: "ws-explorer",
@@ -448,6 +450,8 @@ export const ExplorerTabExpanded: Story = {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("explorer"));
         localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "350");
         localStorage.removeItem(getRightSidebarLayoutKey("ws-explorer-expanded"));
+        localStorage.removeItem(`explorer:entries:ws-explorer-expanded`);
+        localStorage.removeItem(`explorer:expanded:ws-explorer-expanded`);
 
         const client = setupSimpleChatStory({
           workspaceId: "ws-explorer-expanded",
@@ -509,6 +513,8 @@ export const ExplorerTabSelected: Story = {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("explorer"));
         localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "350");
         localStorage.removeItem(getRightSidebarLayoutKey("ws-explorer-selected"));
+        localStorage.removeItem(`explorer:entries:ws-explorer-selected`);
+        localStorage.removeItem(`explorer:expanded:ws-explorer-selected`);
 
         const client = setupSimpleChatStory({
           workspaceId: "ws-explorer-selected",
