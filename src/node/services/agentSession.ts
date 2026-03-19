@@ -3937,6 +3937,9 @@ export class AgentSession {
         if (this.deferQueuedFlushUntilAfterEdit) {
           // Clear the queued message flag so the next turn's tools don't early-return.
           this.backgroundProcessManager.setMessageQueued(this.workspaceId, false);
+          // Do not dispatch stream-end follow-ups while the edit flow is waiting
+          // for IDLE; truncation must run before any synthetic turn resumes.
+          followUpDispatched = true;
         } else {
           followUpDispatched = !this.messageQueue.isEmpty();
           this.sendQueuedMessages();

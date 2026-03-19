@@ -26,6 +26,7 @@ const TODO_NUDGE_TEXT =
 interface SessionInternals {
   currentRealUserTurnOrdinal: number;
   todoNudgeSentForRealUserTurnOrdinal: number;
+  deferQueuedFlushUntilAfterEdit: boolean;
   turnPhase: "idle" | "preparing" | "streaming" | "completing";
   sendMessage: (
     message: string,
@@ -492,6 +493,56 @@ describe("AgentSession TODO nudge", () => {
         output: { ok: true, agentId: "plan", followUp: "Continue." },
       },
     ]);
+
+    await waitForCondition(() => internals.turnPhase === "idle");
+
+    expect(sendMessageSpy).not.toHaveBeenCalled();
+    expect(internals.todoNudgeSentForRealUserTurnOrdinal).toBe(0);
+  });
+
+  test("TODO nudge is suppressed when deferQueuedFlushUntilAfterEdit is true", async () => {
+    using projectDir = new DisposableTempDir("agent-session-todo-nudge-deferred-edit");
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+
+    const { session, aiEmitter, streamMessageMock } = createSessionHarness(
+      historyService,
+      projectDir.path,
+      projectDir.path
+    );
+    activeSession = session;
+
+    let streamMessageCallCount = 0;
+    streamMessageMock.mockImplementation(() => {
+      streamMessageCallCount += 1;
+      if (streamMessageCallCount === 1) {
+        emitStreamStart(aiEmitter);
+      }
+      return Promise.resolve(Ok(undefined));
+    });
+
+    const initialSendResult = await session.sendMessage("Please finish the remaining work.", {
+      model: MODEL,
+      agentId: "exec",
+    });
+    expect(initialSendResult.success).toBe(true);
+
+    await seedTodos(projectDir.path, [{ content: "Still pending", status: "pending" }]);
+
+    const internals = session as unknown as SessionInternals;
+    internals.deferQueuedFlushUntilAfterEdit = true;
+
+    const originalSendMessage = session.sendMessage.bind(session);
+    const sendMessageSpy = mock(
+      (
+        message: string,
+        options?: SendMessageOptions,
+        internal?: { synthetic?: boolean; agentInitiated?: boolean }
+      ) => originalSendMessage(message, options, internal)
+    );
+    internals.sendMessage = sendMessageSpy as unknown as SessionInternals["sendMessage"];
+
+    emitStreamEnd(aiEmitter);
 
     await waitForCondition(() => internals.turnPhase === "idle");
 
