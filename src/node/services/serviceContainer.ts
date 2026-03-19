@@ -40,6 +40,7 @@ import type {
 } from "@/common/types/stream";
 import { BrowserSessionService } from "@/node/services/browserSessionService";
 import { BrowserSessionStreamPortRegistry } from "@/node/services/browserSessionStreamPortRegistry";
+import { BrowserSessionAttachmentStore } from "@/node/services/browserSessionAttachmentStore";
 import { DevToolsService } from "@/node/services/devToolsService";
 import { SessionTimingService } from "@/node/services/sessionTimingService";
 import { AnalyticsService } from "@/node/services/analytics/analyticsService";
@@ -151,7 +152,10 @@ export class ServiceContainer {
     this.sessionTimingService = new SessionTimingService(config, this.telemetryService);
     this.analyticsService = new AnalyticsService(config);
     this.devToolsService = new DevToolsService(config);
-    this.streamPortRegistry = new BrowserSessionStreamPortRegistry();
+    const browserSessionAttachmentStore = new BrowserSessionAttachmentStore(config.rootDir);
+    this.streamPortRegistry = new BrowserSessionStreamPortRegistry({
+      attachmentStore: browserSessionAttachmentStore,
+    });
     this.browserSessionService = new BrowserSessionService({
       streamPortRegistry: this.streamPortRegistry,
     });
@@ -245,7 +249,12 @@ export class ServiceContainer {
     this.copilotOauthService = new CopilotOauthService(this.providerService, this.windowService);
     // Terminal services - PTYService is cross-platform
     this.ptyService = new PTYService();
-    this.terminalService = new TerminalService(config, this.ptyService, opResolver);
+    this.terminalService = new TerminalService(
+      config,
+      this.ptyService,
+      opResolver,
+      this.streamPortRegistry
+    );
     // Wire terminal service to workspace service for cleanup on removal
     this.workspaceService.setTerminalService(this.terminalService);
     this.workspaceService.setDesktopSessionManager(this.desktopSessionManager);

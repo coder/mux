@@ -211,16 +211,17 @@ export function BrowserTab(props: BrowserTabProps) {
     session?.lastFrameMetadata != null;
   const headerTitle = session?.title ?? session?.currentUrl ?? "Browser session";
 
-  // This effect syncs the Browser tab with the external browser-session service by
-  // issuing a single attach/start request when no session exists yet.
   useEffect(() => {
+    const shouldAutoStart =
+      session == null
+        ? !autoStartState.attempted
+        : session.status === "ended" && session.endReason === "agent_closed";
     if (
       browserSessionApi == null ||
-      session != null ||
+      !shouldAutoStart ||
       error != null ||
       startError != null ||
       stoppingSession ||
-      autoStartState.attempted ||
       autoStartState.autoStartPending ||
       autoStartState.manuallyStopped
     ) {

@@ -441,6 +441,56 @@ describe("getActionDisplayInfo", () => {
   });
 });
 
+describe("BrowserTab auto-start", () => {
+  test("re-attaches automatically when the last visible session was agent-closed", async () => {
+    mockSession = createSession({
+      workspaceId: "workspace-ended-auto-start",
+      status: "ended",
+      streamState: null,
+      endReason: "agent_closed",
+    });
+
+    render(<BrowserTab workspaceId="workspace-ended-auto-start" />);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(mockBrowserSessionApi?.start).toHaveBeenCalledTimes(1);
+    expect(mockBrowserSessionApi?.start).toHaveBeenCalledWith({
+      workspaceId: "workspace-ended-auto-start",
+    });
+  });
+
+  test("does not auto-start when the last visible session is error", async () => {
+    mockSession = createSession({
+      workspaceId: "workspace-error-session",
+      status: "error",
+      streamState: "error",
+      lastError: "missing agent-browser binary",
+    });
+
+    render(<BrowserTab workspaceId="workspace-error-session" />);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(mockBrowserSessionApi?.start).not.toHaveBeenCalled();
+  });
+
+  test("does not auto-start when the last visible session was closed outside Mux", async () => {
+    mockSession = createSession({
+      workspaceId: "workspace-external-close",
+      status: "ended",
+      streamState: null,
+      endReason: "external_closed",
+    });
+
+    render(<BrowserTab workspaceId="workspace-external-close" />);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(mockBrowserSessionApi?.start).not.toHaveBeenCalled();
+  });
+});
+
 describe("BrowserTab recent action timestamps", () => {
   test("shows a single combined header badge", () => {
     mockSession = createSession();

@@ -41,7 +41,7 @@ interface NavigateActionMetadata {
 
 type BrowserSessionServiceStreamPortRegistry = Pick<
   BrowserSessionStreamPortRegistry,
-  "reservePort" | "releasePort" | "isReservedPort"
+  "reservePort" | "releasePort" | "isReservedPort" | "getKnownPort"
 >;
 
 interface BrowserSessionServiceOptions {
@@ -101,7 +101,8 @@ export class BrowserSessionService extends EventEmitter {
 
   private async startSessionInternal(
     workspaceId: string,
-    options?: { initialUrl?: string | null }
+    options?: { initialUrl?: string | null },
+    allowAttachRecovery = true
   ): Promise<BrowserSession> {
     const existing = this.activeSessions.get(workspaceId);
     if (existing && (existing.status === "starting" || existing.status === "live")) {
@@ -163,6 +164,25 @@ export class BrowserSessionService extends EventEmitter {
     this.activeBackends.set(workspaceId, backend);
     const session = await backend.start();
     this.activeSessions.set(workspaceId, session);
+
+    if (
+      // Retry once when attach succeeds but streaming does not.
+      allowAttachRecovery &&
+      session.status === "live" &&
+      session.streamState === "restart_required"
+    ) {
+      const recoveryUrl =
+        session.currentUrl != null && session.currentUrl !== "about:blank"
+          ? session.currentUrl
+          : (options?.initialUrl ?? "about:blank");
+      log.debug("BrowserSessionService restarting workspace browser after stale attach metadata", {
+        workspaceId,
+        recoveryUrl,
+      });
+      await this.cleanupWorkspace(workspaceId);
+      return await this.startSessionInternal(workspaceId, { initialUrl: recoveryUrl }, false);
+    }
+
     return session;
   }
 

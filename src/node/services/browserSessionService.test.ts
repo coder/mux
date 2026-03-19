@@ -101,6 +101,89 @@ describe("BrowserSessionService.startSession", () => {
     expect(createdOptions[0].initialUrl).toBe("https://example.com");
     expect(createdOptions[0]).not.toHaveProperty("ownership");
   });
+
+  test("retries once with a clean relaunch when stale attach metadata leaves the stream restart_required", async () => {
+    const workspaceId = "workspace-reattach";
+    let reservedPort: number | null = null;
+    let knownPort: number | null = 9223;
+    const streamPortRegistry = {
+      reservePort: mock(() => {
+        reservedPort = knownPort ?? 9333;
+        return Promise.resolve(reservedPort);
+      }),
+      releasePort: mock(() => {
+        reservedPort = null;
+        knownPort = null;
+      }),
+      isReservedPort: mock((_workspaceId: string, port: number) => reservedPort === port),
+      getKnownPort: mock(() => reservedPort ?? knownPort),
+    };
+    const createdOptions: browserSessionBackendModule.BrowserSessionBackendOptions[] = [];
+    const stopMocks: Array<ReturnType<typeof mock>> = [];
+    let startCount = 0;
+
+    const service = new BrowserSessionService({
+      streamPortRegistry,
+      createBackend: (options) => {
+        createdOptions.push(options);
+        startCount += 1;
+        if (startCount === 1) {
+          const stop = mock(() => {
+            options.onEnded(workspaceId);
+            return Promise.resolve();
+          });
+          stopMocks.push(stop);
+          return {
+            start: mock(() => {
+              const session = {
+                ...createLiveSession(workspaceId),
+                currentUrl: "https://attached.example.com",
+                title: "Attached page",
+                streamState: "restart_required" as const,
+                streamErrorMessage: "connect ECONNREFUSED 127.0.0.1:9223",
+                lastError: "connect ECONNREFUSED 127.0.0.1:9223",
+              };
+              options.onSessionUpdate(session);
+              return Promise.resolve(session);
+            }),
+            stop,
+          } as unknown as browserSessionBackendModule.BrowserSessionBackend;
+        }
+
+        return {
+          start: mock(() => {
+            const session = {
+              ...createLiveSession(workspaceId),
+              currentUrl: "https://attached.example.com",
+              title: "Attached page",
+              streamState: "live" as const,
+              streamErrorMessage: null,
+              lastError: null,
+            };
+            options.onSessionUpdate(session);
+            return Promise.resolve(session);
+          }),
+          stop: mock(() => {
+            options.onEnded(workspaceId);
+            return Promise.resolve();
+          }),
+        } as unknown as browserSessionBackendModule.BrowserSessionBackend;
+      },
+    });
+
+    const session = await service.startSession(workspaceId, {
+      initialUrl: "https://start.example.com",
+    });
+
+    expect(createdOptions).toHaveLength(2);
+    expect(createdOptions[0]?.streamPort).toBe(9223);
+    expect(createdOptions[0]?.initialUrl).toBe("https://start.example.com");
+    expect(createdOptions[1]?.streamPort).toBe(9333);
+    expect(createdOptions[1]?.initialUrl).toBe("https://attached.example.com");
+    expect(stopMocks[0]).toHaveBeenCalledTimes(1);
+    expect(session.streamState).toBe("live");
+    expect(session.currentUrl).toBe("https://attached.example.com");
+  });
 });
 
 describe("BrowserSessionService.stopSession", () => {

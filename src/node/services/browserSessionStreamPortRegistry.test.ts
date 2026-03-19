@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 import * as net from "node:net";
+import * as os from "node:os";
+import * as path from "node:path";
+import { mkdtemp, rm } from "node:fs/promises";
+import { BrowserSessionAttachmentStore } from "@/node/services/browserSessionAttachmentStore";
 import { BrowserSessionStreamPortRegistry } from "@/node/services/browserSessionStreamPortRegistry";
 
 describe("BrowserSessionStreamPortRegistry", () => {
@@ -47,5 +51,43 @@ describe("BrowserSessionStreamPortRegistry", () => {
       "Port reservation for workspace workspace-1 was cancelled"
     );
     expect(registry.getReservedPort("workspace-1")).toBeNull();
+  });
+
+  test("keeps in-memory reservations when attachment persistence fails", async () => {
+    const attachmentStore = {
+      getAttachment: mock(() => null),
+      writeAttachment: mock(() => {
+        throw new Error("disk full");
+      }),
+      deleteAttachment: mock(() => undefined),
+    };
+    const registry = new BrowserSessionStreamPortRegistry({ attachmentStore });
+
+    const reservedPort = await registry.reservePort("workspace-persist-failure");
+
+    expect(reservedPort).toBeGreaterThan(0);
+    expect(registry.isReservedPort("workspace-persist-failure", reservedPort)).toBe(true);
+  });
+
+  test("loads persisted stream ports after a Mux restart and clears them on release", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "mux-browser-port-registry-"));
+    try {
+      const attachmentStore = new BrowserSessionAttachmentStore(tempDir);
+      attachmentStore.writeAttachment("workspace-persisted", 45678);
+      const registry = new BrowserSessionStreamPortRegistry({ attachmentStore });
+
+      expect(registry.getReservedPort("workspace-persisted")).toBeNull();
+      expect(registry.getKnownPort("workspace-persisted")).toBe(45678);
+
+      const reservedPort = await registry.reservePort("workspace-persisted");
+
+      expect(reservedPort).toBe(45678);
+      expect(registry.isReservedPort("workspace-persisted", 45678)).toBe(true);
+
+      registry.releasePort("workspace-persisted");
+      expect(attachmentStore.getAttachment("workspace-persisted")).toBeNull();
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 });

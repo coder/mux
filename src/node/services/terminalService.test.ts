@@ -7,6 +7,8 @@ import type { TerminalCreateParams } from "@/common/types/terminal";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import * as childProcess from "child_process";
 import * as fs from "fs/promises";
+import { getMuxBrowserSessionId } from "@/common/utils/browserSession";
+import { BrowserSessionStreamPortRegistry } from "@/node/services/browserSessionStreamPortRegistry";
 
 const getEffectiveSecretsMock = mock(() => [{ key: "TEST_SECRET", value: "secret-value" }]);
 
@@ -109,13 +111,15 @@ const mockWindowManager = {
 
 describe("TerminalService", () => {
   let service: TerminalService;
+  let streamPortRegistry: BrowserSessionStreamPortRegistry;
 
   beforeEach(() => {
     // Some tests temporarily replace createSession to capture callbacks.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (mockPTYService.createSession as any) = createSessionMock;
 
-    service = new TerminalService(mockConfig, mockPTYService, undefined);
+    streamPortRegistry = new BrowserSessionStreamPortRegistry();
+    service = new TerminalService(mockConfig, mockPTYService, undefined, streamPortRegistry);
     service.setTerminalWindowManager(mockWindowManager);
     createSessionMock.mockClear();
     closeSessionMock.mockClear();
@@ -213,6 +217,12 @@ describe("TerminalService", () => {
     expect(env.MUX_PROJECT_PATH).toBe("/tmp/project");
     expect(env.MUX_RUNTIME).toBe("worktree");
     expect(env.MUX_WORKSPACE_NAME).toBe("main");
+    expect(env.MUX_WORKSPACE_ID).toBe("ws-1");
+    expect(env.AGENT_BROWSER_SESSION).toBe(getMuxBrowserSessionId("ws-1"));
+    expect(env.AGENT_BROWSER_STREAM_PORT).toBeDefined();
+    expect(streamPortRegistry.isReservedPort("ws-1", Number(env.AGENT_BROWSER_STREAM_PORT))).toBe(
+      true
+    );
     expect(env.TEST_SECRET).toBe("secret-value");
   });
 
@@ -226,7 +236,8 @@ describe("TerminalService", () => {
         runtimeConfig: { type: "worktree", srcBaseDir: "/tmp/runtime-src" },
       }),
       mockPTYService,
-      undefined
+      undefined,
+      streamPortRegistry
     );
 
     await service.create({ workspaceId: "ws-persisted", cols: 80, rows: 24 });
@@ -244,7 +255,8 @@ describe("TerminalService", () => {
         runtimeConfig: { type: "docker", image: "node:20" },
       }),
       mockPTYService,
-      undefined
+      undefined,
+      streamPortRegistry
     );
 
     await service.create({ workspaceId: "ws-docker", cols: 80, rows: 24 });
@@ -1005,7 +1017,10 @@ describe("TerminalService.openNative", () => {
     srcDir: "/tmp",
   } as unknown as Config;
 
+  let streamPortRegistry: BrowserSessionStreamPortRegistry;
+
   beforeEach(() => {
+    streamPortRegistry = new BrowserSessionStreamPortRegistry();
     // Store original platform
     originalPlatform = process.platform;
 
@@ -1055,7 +1070,12 @@ describe("TerminalService.openNative", () => {
         return { status: 0 }; // other commands available
       });
 
-      service = new TerminalService(configWithLocalWorkspace, mockPTYService, undefined);
+      service = new TerminalService(
+        configWithLocalWorkspace,
+        mockPTYService,
+        undefined,
+        streamPortRegistry
+      );
 
       await service.openNative("ws-local");
 
@@ -1077,7 +1097,12 @@ describe("TerminalService.openNative", () => {
         return Promise.reject(new Error("ENOENT"));
       });
 
-      service = new TerminalService(configWithLocalWorkspace, mockPTYService, undefined);
+      service = new TerminalService(
+        configWithLocalWorkspace,
+        mockPTYService,
+        undefined,
+        streamPortRegistry
+      );
 
       await service.openNative("ws-local");
 
@@ -1098,7 +1123,12 @@ describe("TerminalService.openNative", () => {
         return { status: 0 };
       });
 
-      service = new TerminalService(configWithSSHWorkspace, mockPTYService, undefined);
+      service = new TerminalService(
+        configWithSSHWorkspace,
+        mockPTYService,
+        undefined,
+        streamPortRegistry
+      );
 
       await service.openNative("ws-ssh");
 
@@ -1122,7 +1152,12 @@ describe("TerminalService.openNative", () => {
     });
 
     it("should open cmd for local workspace", async () => {
-      service = new TerminalService(configWithLocalWorkspace, mockPTYService, undefined);
+      service = new TerminalService(
+        configWithLocalWorkspace,
+        mockPTYService,
+        undefined,
+        streamPortRegistry
+      );
 
       await service.openNative("ws-local");
 
@@ -1134,7 +1169,12 @@ describe("TerminalService.openNative", () => {
     });
 
     it("should open cmd with SSH for SSH workspace", async () => {
-      service = new TerminalService(configWithSSHWorkspace, mockPTYService, undefined);
+      service = new TerminalService(
+        configWithSSHWorkspace,
+        mockPTYService,
+        undefined,
+        streamPortRegistry
+      );
 
       await service.openNative("ws-ssh");
 
@@ -1193,7 +1233,12 @@ describe("TerminalService.openNative", () => {
         return { status: 0 };
       });
 
-      service = new TerminalService(configWithLocalWorkspace, mockPTYService, undefined);
+      service = new TerminalService(
+        configWithLocalWorkspace,
+        mockPTYService,
+        undefined,
+        streamPortRegistry
+      );
 
       await service.openNative("ws-local");
 
@@ -1208,7 +1253,12 @@ describe("TerminalService.openNative", () => {
       // All terminals not found
       spawnSyncSpy.mockImplementation(() => ({ status: 1 }));
 
-      service = new TerminalService(configWithLocalWorkspace, mockPTYService, undefined);
+      service = new TerminalService(
+        configWithLocalWorkspace,
+        mockPTYService,
+        undefined,
+        streamPortRegistry
+      );
 
       // eslint-disable-next-line @typescript-eslint/await-thenable
       await expect(service.openNative("ws-local")).rejects.toThrow("No terminal emulator found");
@@ -1223,7 +1273,12 @@ describe("TerminalService.openNative", () => {
         return { status: 1 };
       });
 
-      service = new TerminalService(configWithSSHWorkspace, mockPTYService, undefined);
+      service = new TerminalService(
+        configWithSSHWorkspace,
+        mockPTYService,
+        undefined,
+        streamPortRegistry
+      );
 
       await service.openNative("ws-ssh");
 
@@ -1245,7 +1300,12 @@ describe("TerminalService.openNative", () => {
         return { status: 1 };
       });
 
-      service = new TerminalService(configWithDevcontainerWorkspace, mockPTYService, undefined);
+      service = new TerminalService(
+        configWithDevcontainerWorkspace,
+        mockPTYService,
+        undefined,
+        streamPortRegistry
+      );
 
       await service.openNative("ws-devcontainer");
 
@@ -1267,7 +1327,12 @@ describe("TerminalService.openNative", () => {
     });
 
     it("should throw error for non-existent workspace", async () => {
-      service = new TerminalService(configWithLocalWorkspace, mockPTYService, undefined);
+      service = new TerminalService(
+        configWithLocalWorkspace,
+        mockPTYService,
+        undefined,
+        streamPortRegistry
+      );
 
       // eslint-disable-next-line @typescript-eslint/await-thenable
       await expect(service.openNative("non-existent")).rejects.toThrow(
