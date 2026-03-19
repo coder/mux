@@ -29,6 +29,8 @@ const STATUS_BADGES: Record<BrowserSessionStatus, { label: string; className: st
   },
 };
 
+const BROWSER_PREVIEW_RETRY_INTERVAL_MS = 2_000;
+
 export function BrowserTab(props: BrowserTabProps) {
   if (props.workspaceId.trim().length === 0) {
     throw new Error("Browser tab requires a workspaceId");
@@ -54,6 +56,14 @@ export function BrowserTab(props: BrowserTabProps) {
     }
 
     connect();
+    const retryTimer = setInterval(() => {
+      connect();
+    }, BROWSER_PREVIEW_RETRY_INTERVAL_MS);
+    retryTimer.unref?.();
+
+    return () => {
+      clearInterval(retryTimer);
+    };
   }, [api, connect, session?.status]);
 
   return (

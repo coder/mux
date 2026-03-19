@@ -41,6 +41,10 @@ function createSession(overrides: Partial<BrowserSession> = {}): BrowserSession 
   };
 }
 
+const intervalCallbacks: Array<() => void> = [];
+let originalSetInterval: typeof globalThis.setInterval;
+let originalClearInterval: typeof globalThis.clearInterval;
+
 describe("BrowserTab", () => {
   let originalWindow: typeof globalThis.window;
   let originalDocument: typeof globalThis.document;
@@ -48,9 +52,20 @@ describe("BrowserTab", () => {
   beforeEach(() => {
     originalWindow = globalThis.window;
     originalDocument = globalThis.document;
+    originalSetInterval = globalThis.setInterval;
+    originalClearInterval = globalThis.clearInterval;
     globalThis.window = new GlobalWindow({ url: "http://localhost" }) as unknown as Window &
       typeof globalThis;
     globalThis.document = globalThis.window.document;
+    intervalCallbacks.length = 0;
+    globalThis.setInterval = ((callback: TimerHandler) => {
+      if (typeof callback !== "function") {
+        throw new TypeError("Tests only support function callbacks for setInterval()");
+      }
+      intervalCallbacks.push(callback as () => void);
+      return { unref: () => undefined } as unknown as ReturnType<typeof setInterval>;
+    }) as unknown as typeof globalThis.setInterval;
+    globalThis.clearInterval = (() => undefined) as typeof globalThis.clearInterval;
     mockSession = null;
     connectMock.mockReset();
     sendInputMock.mockReset();
@@ -60,11 +75,24 @@ describe("BrowserTab", () => {
     cleanup();
     globalThis.window = originalWindow;
     globalThis.document = originalDocument;
+    globalThis.setInterval = originalSetInterval;
+    globalThis.clearInterval = originalClearInterval;
   });
 
   test("auto-starts the browser preview on first mount", () => {
     render(<BrowserTab workspaceId="workspace-1" />);
     expect(connectMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("keeps polling while waiting for a browser session to appear", () => {
+    render(<BrowserTab workspaceId="workspace-1" />);
+
+    expect(connectMock).toHaveBeenCalledTimes(1);
+    expect(intervalCallbacks).toHaveLength(1);
+
+    intervalCallbacks[0]();
+
+    expect(connectMock).toHaveBeenCalledTimes(2);
   });
 
   test("reconnects automatically when the browser session is unavailable", () => {
