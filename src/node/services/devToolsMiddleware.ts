@@ -167,7 +167,7 @@ function extractGenerateToolCalls(result: LanguageModelV3GenerateResult): unknow
   return Array.isArray(dynamicToolCalls) ? dynamicToolCalls : undefined;
 }
 
-export function extractInput(
+function extractInput(
   params: LanguageModelV3CallOptions | null | undefined
 ): DevToolsStepInput | null {
   if (!params) {
@@ -184,7 +184,7 @@ export function extractInput(
   };
 }
 
-export function extractGenerateOutput(result: LanguageModelV3GenerateResult): DevToolsStepOutput {
+function extractGenerateOutput(result: LanguageModelV3GenerateResult): DevToolsStepOutput {
   return {
     content: result.content ?? undefined,
     finishReason: extractFinishReason(result.finishReason),
