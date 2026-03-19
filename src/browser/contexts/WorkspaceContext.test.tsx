@@ -874,19 +874,10 @@ describe("WorkspaceContext", () => {
     expect(ctx().pendingNewWorkspaceProject).toBe(systemProjectPath);
   });
 
-  test("browser: dashboard mode ignores launch-project", async () => {
+  test("browser: launch-project opens project creation on true first launch", async () => {
     createMockAPI({
       workspace: {
-        list: () =>
-          Promise.resolve([
-            createWorkspaceMetadata({
-              id: "ws-launch",
-              projectPath: "/launch-project",
-              projectName: "launch-project",
-              name: "main",
-              namedWorkspacePath: "/launch-project-main",
-            }),
-          ]),
+        list: () => Promise.resolve([]),
       },
       projects: {
         list: () => Promise.resolve([]),
@@ -902,109 +893,45 @@ describe("WorkspaceContext", () => {
     const ctx = await setup();
 
     await waitFor(() => expect(ctx().loading).toBe(false));
-    expect(ctx().selectedWorkspace).toBeNull();
-  });
-
-  test("browser: default launch behavior ignores launch-project", async () => {
-    createMockAPI({
-      workspace: {
-        list: () =>
-          Promise.resolve([
-            createWorkspaceMetadata({
-              id: "ws-launch",
-              projectPath: "/launch-project",
-              projectName: "launch-project",
-              name: "main",
-              namedWorkspacePath: "/launch-project-main",
-            }),
-          ]),
-      },
-      projects: {
-        list: () => Promise.resolve([]),
-      },
-      server: {
-        getLaunchProject: () => Promise.resolve("/launch-project"),
-      },
-    });
-
-    const ctx = await setup();
-
-    await waitFor(() => expect(ctx().loading).toBe(false));
-    expect(ctx().selectedWorkspace).toBeNull();
-  });
-
-  test("browser: last-workspace mode ignores launch-project", async () => {
-    createMockAPI({
-      workspace: {
-        list: () =>
-          Promise.resolve([
-            createWorkspaceMetadata({
-              id: "ws-launch",
-              projectPath: "/launch-project",
-              projectName: "launch-project",
-              name: "main",
-              namedWorkspacePath: "/launch-project-main",
-            }),
-          ]),
-      },
-      projects: {
-        list: () => Promise.resolve([]),
-      },
-      server: {
-        getLaunchProject: () => Promise.resolve("/launch-project"),
-      },
-      localStorage: {
-        [LAUNCH_BEHAVIOR_KEY]: JSON.stringify("last-workspace"),
-      },
-    });
-
-    const ctx = await setup();
-
-    await waitFor(() => expect(ctx().loading).toBe(false));
-    expect(ctx().selectedWorkspace).toBeNull();
-  });
-
-  test("browser: new-chat mode proceeds to local draft instead of deferring to launch-project", async () => {
-    createMockAPI({
-      workspace: {
-        list: () =>
-          Promise.resolve([
-            createWorkspaceMetadata({
-              id: "ws-launch",
-              projectPath: "/launch-project",
-              projectName: "launch-project",
-              name: "main",
-              namedWorkspacePath: "/launch-project-main",
-            }),
-          ]),
-      },
-      projects: {
-        list: () => Promise.resolve([]),
-      },
-      server: {
-        getLaunchProject: () => Promise.resolve("/launch-project"),
-      },
-      localStorage: {
-        [LAUNCH_BEHAVIOR_KEY]: JSON.stringify("new-chat"),
-      },
-    });
-
-    const ctx = await setup();
-
-    await waitFor(() => expect(ctx().loading).toBe(false));
-
     await waitFor(() => {
       expect(ctx().pendingNewWorkspaceProject).toBe("/launch-project");
     });
+    expect(ctx().selectedWorkspace).toBeNull();
   });
 
-  test("browser: launch project does not open project creation in browser mode", async () => {
+  test("desktop: launch-project opens project creation on true first launch", async () => {
     createMockAPI({
       workspace: {
         list: () => Promise.resolve([]),
       },
       projects: {
-        list: () => Promise.resolve([["/launch-project", { workspaces: [] }]]),
+        list: () => Promise.resolve([]),
+      },
+      server: {
+        getLaunchProject: () => Promise.resolve("/launch-project"),
+      },
+      localStorage: {
+        [LAUNCH_BEHAVIOR_KEY]: JSON.stringify("dashboard"),
+      },
+      desktopMode: true,
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().loading).toBe(false));
+    await waitFor(() => {
+      expect(ctx().pendingNewWorkspaceProject).toBe("/launch-project");
+    });
+    expect(ctx().selectedWorkspace).toBeNull();
+  });
+
+  test("launch-project is skipped once any project already exists", async () => {
+    createMockAPI({
+      workspace: {
+        list: () => Promise.resolve([]),
+      },
+      projects: {
+        list: () => Promise.resolve([["/existing-project", { workspaces: [] }]]),
       },
       server: {
         getLaunchProject: () => Promise.resolve("/launch-project"),
@@ -1021,17 +948,17 @@ describe("WorkspaceContext", () => {
     expect(ctx().selectedWorkspace).toBeNull();
   });
 
-  test("desktop: dashboard mode honors launch-project selection", async () => {
+  test("browser: new-chat mode uses the recent workspace instead of launch-project after first launch", async () => {
     createMockAPI({
       workspace: {
         list: () =>
           Promise.resolve([
             createWorkspaceMetadata({
-              id: "ws-launch",
-              projectPath: "/launch-project",
-              projectName: "launch-project",
+              id: "ws-existing",
+              projectPath: "/existing-project",
+              projectName: "existing-project",
               name: "main",
-              namedWorkspacePath: "/launch-project-main",
+              namedWorkspacePath: "/existing-project-main",
             }),
           ]),
       },
@@ -1042,29 +969,30 @@ describe("WorkspaceContext", () => {
         getLaunchProject: () => Promise.resolve("/launch-project"),
       },
       localStorage: {
-        [LAUNCH_BEHAVIOR_KEY]: JSON.stringify("dashboard"),
+        [LAUNCH_BEHAVIOR_KEY]: JSON.stringify("new-chat"),
       },
-      desktopMode: true,
     });
 
     const ctx = await setup();
+
     await waitFor(() => expect(ctx().loading).toBe(false));
     await waitFor(() => {
-      expect(ctx().selectedWorkspace?.workspaceId).toBe("ws-launch");
+      expect(ctx().pendingNewWorkspaceProject).toBe("/existing-project");
     });
+    expect(ctx().selectedWorkspace).toBeNull();
   });
 
-  test("desktop: new-chat mode defers to launch-project", async () => {
+  test("desktop: new-chat mode uses the recent workspace instead of launch-project after first launch", async () => {
     createMockAPI({
       workspace: {
         list: () =>
           Promise.resolve([
             createWorkspaceMetadata({
-              id: "ws-launch",
-              projectPath: "/launch-project",
-              projectName: "launch-project",
+              id: "ws-existing",
+              projectPath: "/existing-project",
+              projectName: "existing-project",
               name: "main",
-              namedWorkspacePath: "/launch-project-main",
+              namedWorkspacePath: "/existing-project-main",
             }),
           ]),
       },
@@ -1081,10 +1009,12 @@ describe("WorkspaceContext", () => {
     });
 
     const ctx = await setup();
+
     await waitFor(() => expect(ctx().loading).toBe(false));
     await waitFor(() => {
-      expect(ctx().selectedWorkspace?.projectPath).toBe("/launch-project");
+      expect(ctx().pendingNewWorkspaceProject).toBe("/existing-project");
     });
+    expect(ctx().selectedWorkspace).toBeNull();
   });
 
   test("browser: launch project does not override existing selection", async () => {

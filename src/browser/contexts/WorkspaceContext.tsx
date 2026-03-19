@@ -903,10 +903,14 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   // URL restoration is now handled by RouterContext which parses the URL on load
   // and provides currentWorkspaceId/currentProjectId that we derive state from.
 
+  // Launch-project should only affect a true first launch. Once the user already
+  // has any known project or workspace, their normal persisted startup behavior
+  // should win instead of being hijacked by one-time CLI/server intent.
+  const hasExistingProjectsOrWorkspaces = hasAnyProject || workspaceMetadata.size > 0;
+
   // Check for launch project from server (for --add-project flag).
-  // This is explicit startup intent from the CLI/server, so it should still win
-  // even when RouterContext suppresses passive /workspace URL restores in dashboard mode.
-  // This only applies in server mode, runs after metadata loads.
+  // This is explicit startup intent from the CLI/server, so it can still win
+  // over passive route restoration on a true first launch, regardless of runtime.
   useEffect(() => {
     if (loading || !api) return;
 
@@ -927,9 +931,9 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     // Skip if user is in the middle of creating a workspace
     if (pendingNewWorkspaceProject) return;
 
-    // Launch-project is only meaningful for desktop/Electron (--add-project CLI flag).
-    // Browser/PWA startup should remain on the dashboard.
-    if (window.location.protocol !== "file:") return;
+    // Launch-project is first-launch-only. Once any project or workspace exists,
+    // let the user's normal startup route win in both browser/PWA and desktop.
+    if (hasExistingProjectsOrWorkspaces) return;
 
     let cancelled = false;
 
@@ -985,6 +989,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     workspaceMetadata,
     setSelectedWorkspace,
     navigateToProject,
+    hasExistingProjectsOrWorkspaces,
   ]);
 
   // Self-heal: if the initial route targets a workspace that no longer exists
@@ -1529,9 +1534,10 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     let cancelled = false;
 
     const autoCreate = async () => {
-      // In desktop/Electron mode, defer to the launch-project effect if a launch project exists.
-      // Browser/PWA should always proceed to local draft creation.
-      if (window.location.protocol === "file:") {
+      // On a true first launch, defer to launch-project in any runtime so server intent can
+      // drive the first destination. Once projects/workspaces already exist, new-chat should
+      // use the user's normal startup behavior instead.
+      if (!hasExistingProjectsOrWorkspaces) {
         try {
           const launchProject = await api?.server.getLaunchProject(undefined);
           if (cancelled || launchProject) return;
@@ -1569,6 +1575,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     workspaceMetadata,
     workspaceStore,
     createWorkspaceDraft,
+    hasExistingProjectsOrWorkspaces,
   ]);
 
   const openWorkspaceDraft = useCallback(
