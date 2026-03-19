@@ -4,6 +4,7 @@
  * Uses wide viewport (1600px) to ensure RightSidebar tabs are visible.
  */
 
+import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar/ProjectSidebar";
 import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 import { APIProvider, type APIClient } from "@/browser/contexts/API";
 import { AboutDialogProvider } from "@/browser/contexts/AboutDialogContext";
@@ -136,8 +137,11 @@ function RightSidebarStoryShell(props: { setup: () => APIClient; children: React
     };
   }, [client, workspaceStore]);
 
-  const selectedWorkspaceId = readPersistedState<string | null>(SELECTED_WORKSPACE_KEY, null);
-  const workspaceId = selectedWorkspaceId ?? "ws-story";
+  const selectedWorkspace = readPersistedState<WorkspaceSelection | null>(
+    SELECTED_WORKSPACE_KEY,
+    null
+  );
+  const workspaceId = selectedWorkspace?.workspaceId ?? "ws-story";
 
   return (
     <ThemeProvider>
