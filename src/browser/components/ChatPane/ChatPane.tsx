@@ -347,6 +347,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     handleScroll,
     markUserInteraction,
   } = useAutoScroll();
+  const lastTranscriptViewportHeightRef = useRef<number | null>(null);
 
   // Handler to navigate (scroll) to a specific message by historyId
   const handleNavigateToMessage = useCallback(
@@ -547,6 +548,35 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   const handleOpenInEditor = useCallback(() => {
     void openInEditor(workspaceId, namedWorkspacePath, runtimeConfig);
   }, [workspaceId, namedWorkspacePath, openInEditor, runtimeConfig]);
+
+  useEffect(() => {
+    const transcriptViewport = contentRef.current;
+    if (!transcriptViewport) {
+      return;
+    }
+
+    lastTranscriptViewportHeightRef.current = transcriptViewport.clientHeight;
+
+    // Sending can immediately shrink the composer below the transcript before the
+    // matching user row/streaming UI is appended. Keep the transcript pinned to the
+    // bottom when that sibling resize changes the viewport height so users don't see
+    // the tail jump between the composer collapse and the later message/tail updates.
+    const observer = new ResizeObserver((entries) => {
+      const nextHeight = entries[0]?.contentRect.height ?? transcriptViewport.clientHeight;
+      const previousHeight = lastTranscriptViewportHeightRef.current;
+      lastTranscriptViewportHeightRef.current = nextHeight;
+      if (previousHeight === null || previousHeight === nextHeight || !autoScroll) {
+        return;
+      }
+
+      transcriptViewport.scrollTop = transcriptViewport.scrollHeight;
+    });
+
+    observer.observe(transcriptViewport);
+    return () => {
+      observer.disconnect();
+    };
+  }, [autoScroll, contentRef]);
 
   // Auto-scroll when messages or todos update (during streaming)
   useEffect(() => {

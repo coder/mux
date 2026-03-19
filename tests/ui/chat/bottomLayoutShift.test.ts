@@ -19,6 +19,105 @@ describe("Chat bottom layout stability", () => {
     await preloadTestModules();
   });
 
+  test("keeps the transcript pinned when the composer resize changes the viewport", async () => {
+    const originalResizeObserver = globalThis.ResizeObserver;
+    const resizeCallbacks = new Map<Element, ResizeObserverCallback[]>();
+
+    class ResizeObserverMock {
+      private readonly callback: ResizeObserverCallback;
+
+      constructor(callback: ResizeObserverCallback) {
+        this.callback = callback;
+      }
+
+      observe(target: Element) {
+        resizeCallbacks.set(target, [...(resizeCallbacks.get(target) ?? []), this.callback]);
+      }
+
+      unobserve(target: Element) {
+        const remainingCallbacks = (resizeCallbacks.get(target) ?? []).filter(
+          (callback) => callback !== this.callback
+        );
+        if (remainingCallbacks.length === 0) {
+          resizeCallbacks.delete(target);
+          return;
+        }
+        resizeCallbacks.set(target, remainingCallbacks);
+      }
+
+      disconnect() {
+        for (const [target, callbacks] of resizeCallbacks) {
+          const remainingCallbacks = callbacks.filter((callback) => callback !== this.callback);
+          if (remainingCallbacks.length === 0) {
+            resizeCallbacks.delete(target);
+            continue;
+          }
+          resizeCallbacks.set(target, remainingCallbacks);
+        }
+      }
+
+      takeRecords(): ResizeObserverEntry[] {
+        return [];
+      }
+    }
+
+    (globalThis as unknown as { ResizeObserver: typeof ResizeObserver }).ResizeObserver =
+      ResizeObserverMock as unknown as typeof ResizeObserver;
+
+    const app = await createAppHarness({ branchPrefix: "viewport-resize-pin" });
+
+    try {
+      await app.chat.send("Seed transcript before testing viewport resize pinning");
+      await app.chat.expectStreamComplete();
+      const messageWindow = getMessageWindow(app.view.container);
+      let scrollTop = 920;
+      let scrollHeight = 1120;
+      let clientHeight = 400;
+
+      Object.defineProperty(messageWindow, "scrollTop", {
+        configurable: true,
+        get: () => scrollTop,
+        set: (nextValue: number) => {
+          scrollTop = nextValue;
+        },
+      });
+      Object.defineProperty(messageWindow, "scrollHeight", {
+        configurable: true,
+        get: () => scrollHeight,
+      });
+      Object.defineProperty(messageWindow, "clientHeight", {
+        configurable: true,
+        get: () => clientHeight,
+      });
+
+      await waitFor(() => {
+        const callbacks = resizeCallbacks.get(messageWindow);
+        if (!callbacks || callbacks.length === 0) {
+          throw new Error("Transcript viewport resize observer is not attached yet");
+        }
+      });
+
+      clientHeight = 520;
+      for (const callback of resizeCallbacks.get(messageWindow) ?? []) {
+        callback(
+          [
+            {
+              target: messageWindow,
+              contentRect: { height: clientHeight } as DOMRectReadOnly,
+            } as unknown as ResizeObserverEntry,
+          ],
+          {} as ResizeObserver
+        );
+      }
+
+      expect(scrollTop).toBe(scrollHeight);
+    } finally {
+      (globalThis as unknown as { ResizeObserver: typeof ResizeObserver }).ResizeObserver =
+        originalResizeObserver;
+      await app.dispose();
+    }
+  }, 60_000);
+
   test("keeps the transcript pinned when send-time footer UI appears", async () => {
     const app = await createAppHarness({ branchPrefix: "bottom-layout-shift" });
 
