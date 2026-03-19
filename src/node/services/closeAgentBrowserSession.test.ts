@@ -6,7 +6,7 @@ import { AgentBrowserBinaryNotFoundError } from "@/node/services/agentBrowserLau
 import {
   closeAgentBrowserSession,
   hasAgentBrowserSession,
-} from "@/node/services/browserSessionBackend";
+} from "@/node/services/browser/agentBrowserCli";
 
 const mockResolveAgentBrowserBinary = mock(() => "/fake/agent-browser-binary");
 const mockSpawn = mock();

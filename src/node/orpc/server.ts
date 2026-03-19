@@ -21,7 +21,7 @@ import type { ORPCContext } from "@/node/orpc/context";
 import { extractCookieValues, extractWsHeaders, safeEq } from "@/node/orpc/authMiddleware";
 import { VERSION } from "@/version";
 import { formatOrpcError } from "@/node/orpc/formatOrpcError";
-import { DESKTOP_WS_PATH, ORPC_WS_PATH } from "@/node/orpc/wsPaths";
+import { BROWSER_BRIDGE_WS_PATH, DESKTOP_WS_PATH, ORPC_WS_PATH } from "@/node/orpc/wsPaths";
 import { log } from "@/node/services/log";
 import {
   SERVER_AUTH_SESSION_COOKIE_NAME,
@@ -34,7 +34,7 @@ import { assert } from "@/common/utils/assert";
 
 type AliveWebSocket = WebSocket & { isAlive?: boolean };
 
-export { DESKTOP_WS_PATH, ORPC_WS_PATH };
+export { BROWSER_BRIDGE_WS_PATH, DESKTOP_WS_PATH, ORPC_WS_PATH };
 
 const WS_HEARTBEAT_INTERVAL_MS = 30_000;
 
@@ -59,6 +59,8 @@ export interface OrpcServerOptions {
   router?: AppRouter;
   /** Desktop bridge upgrade/shutdown hooks for /desktop/ws */
   desktopBridgeServer?: Pick<ORPCContext["desktopBridgeServer"], "handleUpgrade" | "stop">;
+  /** Browser bridge upgrade/shutdown hooks for /browser/ws */
+  browserBridgeServer?: Pick<ORPCContext["browserBridgeServer"], "handleUpgrade" | "stop">;
   /**
    * Allow HTTPS browser origins when reverse proxies forward X-Forwarded-Proto=http.
    * Keep disabled by default and only enable when TLS is terminated before mux.
@@ -452,6 +454,7 @@ function shouldEnforceOriginValidation(req: Pick<express.Request, "path">): bool
  * HTTP endpoint: /orpc
  * WebSocket endpoint: /orpc/ws
  * Desktop relay WebSocket endpoint: /desktop/ws
+ * Browser relay WebSocket endpoint: /browser/ws
  * Health check: /health
  * Version: /version
  */
@@ -483,6 +486,7 @@ export async function createOrpcServer({
   },
   router: existingRouter,
   desktopBridgeServer = context.desktopBridgeServer,
+  browserBridgeServer = context.browserBridgeServer,
 }: OrpcServerOptions): Promise<OrpcServer> {
   // Express app setup
   const app = express();
@@ -1415,6 +1419,19 @@ export async function createOrpcServer({
       return;
     }
 
+    if (pathname === BROWSER_BRIDGE_WS_PATH) {
+      assert(
+        pathname === BROWSER_BRIDGE_WS_PATH,
+        "Browser relay upgrades must use BROWSER_BRIDGE_WS_PATH"
+      );
+      assert(
+        browserBridgeServer,
+        "createOrpcServer requires browserBridgeServer for browser relay upgrades"
+      );
+      browserBridgeServer.handleUpgrade(req, socket, head);
+      return;
+    }
+
     if (pathname === DESKTOP_WS_PATH) {
       assert(pathname === DESKTOP_WS_PATH, "Desktop relay upgrades must use DESKTOP_WS_PATH");
       assert(
@@ -1539,6 +1556,9 @@ export async function createOrpcServer({
       // before awaiting httpServer.close() to avoid shutdown hanging on upgraded sockets.
       if (desktopBridgeServer) {
         await desktopBridgeServer.stop();
+      }
+      if (browserBridgeServer) {
+        await browserBridgeServer.stop();
       }
 
       // Then close HTTP server.

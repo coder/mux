@@ -113,7 +113,7 @@ import type {
 } from "@/common/types/stream";
 import type { TerminalService } from "@/node/services/terminalService";
 import type { DesktopSessionManager } from "@/node/services/desktop/DesktopSessionManager";
-import type { BrowserSessionService } from "@/node/services/browserSessionService";
+import type { BrowserBridgeSessionManager } from "@/node/services/browser/BrowserBridgeSessionManager";
 import type { WorkspaceAISettingsSchema } from "@/common/orpc/schemas";
 import type { SessionTimingService } from "@/node/services/sessionTimingService";
 import type { SessionUsageService } from "@/node/services/sessionUsageService";
@@ -1110,7 +1110,7 @@ export class WorkspaceService extends EventEmitter {
   private terminalService?: TerminalService;
   private desktopSessionManager?: DesktopSessionManager;
   // Optional browser session service for cleanup on workspace archive/removal.
-  private browserSessionService?: BrowserSessionService;
+  private browserBridgeSessionManager?: BrowserBridgeSessionManager;
   private readonly sessionTimingService?: SessionTimingService;
   private workspaceLifecycleHooks?: WorkspaceLifecycleHooks;
   private taskService?: TaskService;
@@ -1147,8 +1147,8 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
-  setBrowserSessionService(browserSessionService: BrowserSessionService): void {
-    this.browserSessionService = browserSessionService;
+  setBrowserBridgeSessionManager(browserBridgeSessionManager: BrowserBridgeSessionManager): void {
+    this.browserBridgeSessionManager = browserBridgeSessionManager;
   }
 
   setWorkspaceLifecycleHooks(hooks: WorkspaceLifecycleHooks): void {
@@ -2714,7 +2714,7 @@ export class WorkspaceService extends EventEmitter {
 
       // Close any browser sessions (tracked or raw CLI-started) for this workspace.
       // Best-effort: failure logs internally but does not block removal.
-      await this.browserSessionService?.stopSession(workspaceId);
+      await this.browserBridgeSessionManager?.stop(workspaceId);
 
       // Remove from config
       await this.config.removeWorkspace(workspaceId);
@@ -3382,7 +3382,7 @@ export class WorkspaceService extends EventEmitter {
 
       // Close any browser sessions (tracked or raw CLI-started) for this workspace.
       // Best-effort: failure logs internally but does not block archive.
-      await this.browserSessionService?.stopSession(workspaceId);
+      await this.browserBridgeSessionManager?.stop(workspaceId);
 
       await this.config.editConfig((config) => {
         const projectConfig = config.projects.get(projectPath);

@@ -7,35 +7,33 @@ import {
   type ReactNode,
   type WheelEvent,
 } from "react";
-import { Info, TriangleAlert } from "lucide-react";
-import { useAPI } from "@/browser/contexts/API";
+import { TriangleAlert } from "lucide-react";
 import { BROWSER_VIEWPORT_ATTR } from "@/browser/utils/ui/keybinds";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { cn } from "@/common/lib/utils";
 import { clamp } from "@/common/utils/clamp";
+import assert from "@/common/utils/assert";
 import type {
-  BrowserFrameMetadata,
+  BrowserViewportMetadata,
   BrowserInputEvent,
   BrowserKeyboardInput,
   BrowserMouseInput,
   BrowserSession,
-} from "@/common/types/browserSession";
-import assert from "@/common/utils/assert";
+} from "./browserBridgeTypes";
 
 interface BrowserViewportProps {
   workspaceId: string;
   session: BrowserSession | null;
   screenshotSrc: string | null;
   visibleError: string | null;
-  visibleInfoNotice: string | null;
   placeholder: ReactNode;
   onRestart?: () => void;
+  sendInput: (input: BrowserInputEvent) => void;
 }
 
 interface ViewportInteractionState {
   canInteract: boolean;
   blockingMessage: string | null;
-  showRestartCta?: boolean;
 }
 
 interface MeasuredViewportRect {
@@ -66,7 +64,6 @@ interface QueuedPointerMove {
 export function BrowserViewport(props: BrowserViewportProps) {
   assert(props.workspaceId.trim().length > 0, "BrowserViewport requires a workspaceId");
 
-  const { api } = useAPI();
   const [hasFocus, setHasFocus] = useState(false);
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const mountedRef = useRef(true);
@@ -80,7 +77,6 @@ export function BrowserViewport(props: BrowserViewportProps) {
   const lastPointerButtonRef = useRef<BrowserMouseInput["button"]>("none");
   const latestMoveRef = useRef<QueuedPointerMove | null>(null);
   const moveAnimationFrameRef = useRef<number | null>(null);
-  const browserSessionApi = api?.browserSession ?? null;
   const interactionState = getViewportInteractionState(props.session);
   const currentSessionId = props.session?.id ?? null;
 
@@ -129,7 +125,6 @@ export function BrowserViewport(props: BrowserViewportProps) {
   const sendInput = (input: BrowserInputEvent, expectedSessionId: string): void => {
     const currentSessionSnapshot = sessionSnapshotRef.current;
     if (
-      browserSessionApi == null ||
       !mountedRef.current ||
       !currentSessionSnapshot.canInteract ||
       currentSessionSnapshot.sessionId !== expectedSessionId
@@ -137,15 +132,7 @@ export function BrowserViewport(props: BrowserViewportProps) {
       return;
     }
 
-    const sendPromise = browserSessionApi.sendInput({
-      workspaceId: props.workspaceId,
-      input,
-    });
-    sendPromise.catch(() => {
-      // Browser session churn is expected during sidebar remounts and session restarts; the
-      // surrounding status UI already surfaces durable backend failures, so dropped input sends
-      // should fail closed here instead of throwing in the event loop.
-    });
+    props.sendInput(input);
   };
 
   const flushQueuedPointerMove = () => {
@@ -173,7 +160,7 @@ export function BrowserViewport(props: BrowserViewportProps) {
       queuedMove.clientX,
       queuedMove.clientY,
       currentSurface.getBoundingClientRect(),
-      session.lastFrameMetadata,
+      session.frameMetadata,
       { clampOutsideContent: true }
     );
     if (mappedPoint == null) {
@@ -182,7 +169,7 @@ export function BrowserViewport(props: BrowserViewportProps) {
 
     sendInput(
       {
-        kind: "mouse",
+        type: "input_mouse",
         eventType: "mouseMoved",
         x: mappedPoint.x,
         y: mappedPoint.y,
@@ -267,7 +254,7 @@ export function BrowserViewport(props: BrowserViewportProps) {
       event.clientX,
       event.clientY,
       event.currentTarget.getBoundingClientRect(),
-      props.session.lastFrameMetadata
+      props.session.frameMetadata
     );
     if (mappedPoint == null) {
       return;
@@ -287,7 +274,7 @@ export function BrowserViewport(props: BrowserViewportProps) {
 
     sendInput(
       {
-        kind: "mouse",
+        type: "input_mouse",
         eventType: "mousePressed",
         x: mappedPoint.x,
         y: mappedPoint.y,
@@ -343,13 +330,13 @@ export function BrowserViewport(props: BrowserViewportProps) {
       event.clientX,
       event.clientY,
       event.currentTarget.getBoundingClientRect(),
-      props.session.lastFrameMetadata,
+      props.session.frameMetadata,
       { clampOutsideContent: true }
     );
     if (mappedPoint != null) {
       sendInput(
         {
-          kind: "mouse",
+          type: "input_mouse",
           eventType: "mouseReleased",
           x: mappedPoint.x,
           y: mappedPoint.y,
@@ -379,7 +366,7 @@ export function BrowserViewport(props: BrowserViewportProps) {
       event.clientX,
       event.clientY,
       event.currentTarget.getBoundingClientRect(),
-      props.session.lastFrameMetadata
+      props.session.frameMetadata
     );
     if (mappedPoint == null) {
       return;
@@ -388,7 +375,7 @@ export function BrowserViewport(props: BrowserViewportProps) {
     event.preventDefault();
     sendInput(
       {
-        kind: "mouse",
+        type: "input_mouse",
         eventType: "mouseWheel",
         x: mappedPoint.x,
         y: mappedPoint.y,
@@ -412,9 +399,6 @@ export function BrowserViewport(props: BrowserViewportProps) {
     event.preventDefault();
     stopKeyboardPropagation(event);
 
-    // agent-browser's stream bridge only materializes DOM keyboard events when the
-    // key payload carries its text on the keyDown/keyUp messages themselves. Sending a
-    // separate char event is insufficient for Enter and modified shortcuts like Ctrl+C.
     const keyEventText = getKeyEventText(event);
     const sharedKeyboardFields = {
       key: event.key,
@@ -424,7 +408,7 @@ export function BrowserViewport(props: BrowserViewportProps) {
     } satisfies Pick<BrowserKeyboardInput, "key" | "code" | "modifiers" | "text">;
     sendInput(
       {
-        kind: "keyboard",
+        type: "input_keyboard",
         eventType: "keyDown",
         ...sharedKeyboardFields,
       },
@@ -435,7 +419,7 @@ export function BrowserViewport(props: BrowserViewportProps) {
     if (printableText != null) {
       sendInput(
         {
-          kind: "keyboard",
+          type: "input_keyboard",
           eventType: "char",
           ...sharedKeyboardFields,
           text: printableText,
@@ -459,7 +443,7 @@ export function BrowserViewport(props: BrowserViewportProps) {
     const keyEventText = getKeyEventText(event);
     sendInput(
       {
-        kind: "keyboard",
+        type: "input_keyboard",
         eventType: "keyUp",
         key: event.key,
         code: event.code,
@@ -475,7 +459,7 @@ export function BrowserViewport(props: BrowserViewportProps) {
       <div className="absolute inset-0 flex items-center justify-center p-6">
         <div className="border-border-light bg-background/90 flex max-w-xs flex-col items-center gap-3 rounded-md border px-4 py-3 text-center shadow-lg backdrop-blur-sm">
           <p className="text-foreground text-xs font-medium">{interactionState.blockingMessage}</p>
-          {interactionState.showRestartCta && props.onRestart != null && (
+          {props.session?.status === "error" && props.onRestart != null && (
             <button
               type="button"
               onClick={props.onRestart}
@@ -493,7 +477,7 @@ export function BrowserViewport(props: BrowserViewportProps) {
       <>
         <img
           src={props.screenshotSrc}
-          alt={props.session?.title ?? props.session?.currentUrl ?? "Browser session screenshot"}
+          alt="Browser session screenshot"
           className="pointer-events-none h-full w-full object-contain select-none"
           draggable={false}
         />
@@ -550,17 +534,6 @@ export function BrowserViewport(props: BrowserViewportProps) {
           </div>
         </div>
       )}
-      {props.visibleInfoNotice && props.screenshotSrc && (
-        <div className="pointer-events-none absolute inset-x-3 top-3">
-          <div
-            role="status"
-            className="bg-background-secondary border-border-light text-muted flex items-start gap-2 rounded-md border px-3 py-2 text-xs shadow-md"
-          >
-            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            <span>{props.visibleInfoNotice}</span>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -573,49 +546,38 @@ function getViewportInteractionState(session: BrowserSession | null): ViewportIn
     };
   }
 
-  if (session.status !== "live") {
+  if (session.status === "starting" || session.streamState === "connecting") {
+    return {
+      canInteract: false,
+      blockingMessage: "Connecting to browser preview...",
+    };
+  }
+
+  if (session.status === "error" || session.streamState === "error") {
+    return {
+      canInteract: false,
+      blockingMessage: session.streamErrorMessage ?? session.lastError ?? "Browser preview failed.",
+    };
+  }
+
+  if (session.status !== "live" || session.streamState !== "live") {
     return {
       canInteract: false,
       blockingMessage: null,
     };
   }
 
-  switch (session.streamState) {
-    case "restart_required":
-      return {
-        canInteract: false,
-        blockingMessage: "Restart browser to enable live control",
-        showRestartCta: true,
-      };
-    case "connecting":
-      return {
-        canInteract: false,
-        blockingMessage: "Connecting to browser stream...",
-      };
-    case "error":
-      return {
-        canInteract: false,
-        blockingMessage: `Stream error: ${session.streamErrorMessage ?? "unknown"}`,
-      };
-    case "disconnected":
-    case null:
-      return {
-        canInteract: false,
-        blockingMessage: null,
-      };
-    case "live":
-      if (session.lastFrameMetadata == null) {
-        return {
-          canInteract: false,
-          blockingMessage: "Waiting for first frame...",
-        };
-      }
-
-      return {
-        canInteract: true,
-        blockingMessage: null,
-      };
+  if (session.frameMetadata == null) {
+    return {
+      canInteract: false,
+      blockingMessage: "Waiting for first frame...",
+    };
   }
+
+  return {
+    canInteract: true,
+    blockingMessage: null,
+  };
 }
 
 function shouldHandleKeyboardEvent(event: KeyboardEvent<HTMLDivElement>): boolean {
@@ -651,8 +613,6 @@ function getKeyEventText(event: KeyboardEvent<HTMLDivElement>): string | null {
     return event.key;
   }
 
-  // agent-browser needs text on Ctrl/Cmd+C to surface the copy chord in the live viewport,
-  // but other modified keys should stay pure shortcuts instead of inserting characters.
   return event.key.toLowerCase() === "c" ? event.key : null;
 }
 
@@ -708,7 +668,7 @@ export function mapDomPointToViewport(
   clientX: number,
   clientY: number,
   surfaceRect: MeasuredViewportRect,
-  metadata: BrowserFrameMetadata | null,
+  metadata: BrowserViewportMetadata | null,
   options?: { clampOutsideContent?: boolean }
 ): ViewportPoint | null {
   assert(metadata != null, "BrowserViewport requires frame metadata to map viewport coordinates");

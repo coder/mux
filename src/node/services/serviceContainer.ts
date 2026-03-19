@@ -38,7 +38,9 @@ import type {
   ToolCallEndEvent,
   ToolCallStartEvent,
 } from "@/common/types/stream";
-import { BrowserSessionService } from "@/node/services/browserSessionService";
+import { BrowserBridgeServer } from "@/node/services/browser/BrowserBridgeServer";
+import { BrowserBridgeSessionManager } from "@/node/services/browser/BrowserBridgeSessionManager";
+import { BrowserBridgeTokenManager } from "@/node/services/browser/BrowserBridgeTokenManager";
 import { BrowserSessionStreamPortRegistry } from "@/node/services/browserSessionStreamPortRegistry";
 import { BrowserSessionAttachmentStore } from "@/node/services/browserSessionAttachmentStore";
 import { DevToolsService } from "@/node/services/devToolsService";
@@ -123,7 +125,9 @@ export class ServiceContainer {
   public readonly telemetryService: TelemetryService;
   public readonly sessionTimingService: SessionTimingService;
   public readonly devToolsService: DevToolsService;
-  public readonly browserSessionService: BrowserSessionService;
+  public readonly browserBridgeSessionManager: BrowserBridgeSessionManager;
+  public readonly browserBridgeTokenManager: BrowserBridgeTokenManager;
+  public readonly browserBridgeServer: BrowserBridgeServer;
   public readonly streamPortRegistry: BrowserSessionStreamPortRegistry;
   public readonly analyticsService: AnalyticsService;
   public readonly experimentsService: ExperimentsService;
@@ -156,8 +160,13 @@ export class ServiceContainer {
     this.streamPortRegistry = new BrowserSessionStreamPortRegistry({
       attachmentStore: browserSessionAttachmentStore,
     });
-    this.browserSessionService = new BrowserSessionService({
+    this.browserBridgeSessionManager = new BrowserBridgeSessionManager({
       streamPortRegistry: this.streamPortRegistry,
+    });
+    this.browserBridgeTokenManager = new BrowserBridgeTokenManager();
+    this.browserBridgeServer = new BrowserBridgeServer({
+      browserBridgeSessionManager: this.browserBridgeSessionManager,
+      browserBridgeTokenManager: this.browserBridgeTokenManager,
     });
 
     // Desktop passes WorkspaceMcpOverridesService explicitly so AIService uses
@@ -258,7 +267,7 @@ export class ServiceContainer {
     // Wire terminal service to workspace service for cleanup on removal
     this.workspaceService.setTerminalService(this.terminalService);
     this.workspaceService.setDesktopSessionManager(this.desktopSessionManager);
-    this.workspaceService.setBrowserSessionService(this.browserSessionService);
+    this.workspaceService.setBrowserBridgeSessionManager(this.browserBridgeSessionManager);
     // Editor service for opening workspaces in code editors
     this.editorService = new EditorService(config);
     this.updateService = new UpdateService(this.config);
@@ -578,7 +587,9 @@ export class ServiceContainer {
       experimentsService: this.experimentsService,
       sessionUsageService: this.sessionUsageService,
       devToolsService: this.devToolsService,
-      browserSessionService: this.browserSessionService,
+      browserBridgeSessionManager: this.browserBridgeSessionManager,
+      browserBridgeTokenManager: this.browserBridgeTokenManager,
+      browserBridgeServer: this.browserBridgeServer,
       policyService: this.policyService,
       signingService: this.signingService,
       coderService: this.coderService,
@@ -600,7 +611,9 @@ export class ServiceContainer {
     this.desktopTokenManager.dispose();
     await this.desktopSessionManager.closeAll();
     this.idleCompactionService.stop();
-    this.browserSessionService.dispose();
+    await this.browserBridgeServer.stop();
+    this.browserBridgeTokenManager.dispose();
+    this.browserBridgeSessionManager.dispose();
     this.streamPortRegistry.dispose();
     await this.analyticsService.dispose();
     await this.telemetryService.shutdown();
@@ -623,7 +636,9 @@ export class ServiceContainer {
     await this.desktopBridgeServer.stop();
     this.desktopTokenManager.dispose();
     await this.desktopSessionManager.closeAll();
-    this.browserSessionService.dispose();
+    await this.browserBridgeServer.stop();
+    this.browserBridgeTokenManager.dispose();
+    this.browserBridgeSessionManager.dispose();
     this.streamPortRegistry.dispose();
     await this.analyticsService.dispose();
     this.policyService.dispose();

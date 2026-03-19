@@ -1,5 +1,5 @@
 declare module "*?test-isolation=static" {
-  import type { useBrowserSessionSubscription } from "@/browser/features/RightSidebar/BrowserTab/useBrowserSessionSubscription";
+  import type { useBrowserBridgeConnection } from "@/browser/features/RightSidebar/BrowserTab/useBrowserBridgeConnection";
 
-  export const useBrowserSessionSubscription: typeof useBrowserSessionSubscription;
+  export const useBrowserBridgeConnection: typeof useBrowserBridgeConnection;
 }

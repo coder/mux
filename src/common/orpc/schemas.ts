@@ -212,7 +212,7 @@ export {
   CoderWorkspaceSchema,
   CoderWorkspaceStatusSchema,
   config,
-  browserSession,
+  browser,
   devtools,
   uiLayouts,
   debug,

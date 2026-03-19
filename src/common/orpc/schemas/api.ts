@@ -1930,136 +1930,19 @@ export const devtools = {
   },
 };
 
-const BrowserSessionStatusSchema = z.enum(["starting", "live", "paused", "error", "ended"]);
-const BrowserSessionEndReasonSchema = z.enum(["agent_closed", "external_closed"]);
-const BrowserStreamStateSchema = z.enum([
-  "disconnected",
-  "connecting",
-  "live",
-  "restart_required",
-  "error",
-]);
-const BrowserFrameMetadataSchema = z.object({
-  deviceWidth: z.number().finite().positive(),
-  deviceHeight: z.number().finite().positive(),
-  pageScaleFactor: z.number().finite().positive(),
-  offsetTop: z.number().finite().nonnegative(),
-  scrollOffsetX: z.number().finite(),
-  scrollOffsetY: z.number().finite(),
-});
-const BrowserInputEventSchema = z.discriminatedUnion("kind", [
-  z
-    .object({
-      kind: z.literal("mouse"),
-      eventType: z.enum(["mousePressed", "mouseReleased", "mouseMoved", "mouseWheel"]),
-      x: z.number().finite(),
-      y: z.number().finite(),
-      button: z.enum(["left", "right", "middle", "none"]).optional(),
-      clickCount: z.number().int().nonnegative().optional(),
-      deltaX: z.number().finite().optional(),
-      deltaY: z.number().finite().optional(),
-      modifiers: z.number().int().nonnegative().optional(),
-    })
-    .strict(),
-  z
-    .object({
-      kind: z.literal("keyboard"),
-      eventType: z.enum(["keyDown", "keyUp", "char"]),
-      key: z.string().optional(),
-      code: z.string().optional(),
-      text: z.string().optional(),
-      modifiers: z.number().int().nonnegative().optional(),
-    })
-    .strict(),
-  z
-    .object({
-      kind: z.literal("touch"),
-      eventType: z.enum(["touchStart", "touchEnd", "touchMove", "touchCancel"]),
-      touchPoints: z
-        .array(
-          z
-            .object({
-              x: z.number().finite(),
-              y: z.number().finite(),
-              id: z.number().int().nonnegative().optional(),
-            })
-            .strict()
-        )
-        .min(1),
-      modifiers: z.number().int().nonnegative().optional(),
-    })
-    .strict(),
-]);
-
-const BrowserActionSchema = z.object({
-  id: z.string(),
-  type: z.enum(["navigate", "click", "fill", "screenshot", "custom"]),
-  description: z.string(),
-  timestamp: z.string(),
-  metadata: z.record(z.string(), z.unknown()).optional(),
-});
-
-const BrowserSessionSchema = z.object({
-  id: z.string(),
-  workspaceId: z.string(),
-  status: BrowserSessionStatusSchema,
-  currentUrl: z.string().nullable(),
-  title: z.string().nullable(),
-  lastScreenshotBase64: z.string().nullable(),
-  lastError: z.string().nullable(),
-  streamState: BrowserStreamStateSchema.nullable(),
-  lastFrameMetadata: BrowserFrameMetadataSchema.nullable(),
-  streamErrorMessage: z.string().nullable(),
-  endReason: BrowserSessionEndReasonSchema.nullable(),
-  startedAt: z.string(),
-  updatedAt: z.string(),
-});
-
-const BrowserSessionEventSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("snapshot"),
-    session: BrowserSessionSchema.nullable(),
-    recentActions: z.array(BrowserActionSchema),
-  }),
-  z.object({
-    type: z.literal("session-updated"),
-    session: BrowserSessionSchema,
-  }),
-  z.object({
-    type: z.literal("action"),
-    action: BrowserActionSchema,
-  }),
-  z.object({
-    type: z.literal("heartbeat"),
-  }),
-  z.object({
-    type: z.literal("session-ended"),
-    workspaceId: z.string(),
-  }),
-  z.object({
-    type: z.literal("error"),
-    workspaceId: z.string(),
-    error: z.string(),
-  }),
-]);
-
-export const browserSession = {
-  getActive: {
-    input: z
-      .object({
-        workspaceId: z.string(),
-      })
-      .strict(),
-    output: BrowserSessionSchema.nullable(),
-  },
-  start: {
+export const browser = {
+  getBootstrap: {
     input: z
       .object({
         workspaceId: z.string(),
         initialUrl: z.string().nullish(),
       })
       .strict(),
-    output: BrowserSessionSchema,
+    output: z.object({
+      bridgePath: z.string(),
+      token: z.string(),
+      localBridgeBaseUrl: z.string().optional(),
+    }),
   },
   stop: {
     input: z
@@ -2069,38 +1952,6 @@ export const browserSession = {
       .strict(),
     output: z.object({
       success: z.boolean(),
-    }),
-  },
-  sendInput: {
-    input: z
-      .object({
-        workspaceId: z.string(),
-        input: BrowserInputEventSchema,
-      })
-      .strict(),
-    output: z.object({
-      success: z.boolean(),
-      error: z.string().nullish(),
-    }),
-  },
-  subscribe: {
-    input: z
-      .object({
-        workspaceId: z.string(),
-      })
-      .strict(),
-    output: eventIterator(BrowserSessionEventSchema),
-  },
-  navigate: {
-    input: z
-      .object({
-        workspaceId: z.string(),
-        url: z.string(),
-      })
-      .strict(),
-    output: z.object({
-      success: z.boolean(),
-      error: z.string().nullish(),
     }),
   },
 };

@@ -25,7 +25,7 @@ import type { TaskService } from "./taskService";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
 import type { TerminalService } from "@/node/services/terminalService";
 import type { DesktopSessionManager } from "@/node/services/desktop/DesktopSessionManager";
-import type { BrowserSessionService } from "@/node/services/browserSessionService";
+import type { BrowserBridgeSessionManager } from "@/node/services/browser/BrowserBridgeSessionManager";
 import type { BashToolResult } from "@/common/types/tools";
 import { createMuxMessage } from "@/common/types/message";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
@@ -2687,17 +2687,17 @@ describe("WorkspaceService archive lifecycle hooks", () => {
   });
 
   test("archive() stops workspace browser sessions on success", async () => {
-    const stopSession = mock((_workspaceId: string) => Promise.resolve());
-    const browserSessionService = {
-      stopSession,
-    } as unknown as BrowserSessionService;
-    workspaceService.setBrowserSessionService(browserSessionService);
+    const stop = mock((_workspaceId: string) => Promise.resolve());
+    const browserBridgeSessionManager = {
+      stop,
+    } as unknown as BrowserBridgeSessionManager;
+    workspaceService.setBrowserBridgeSessionManager(browserBridgeSessionManager);
 
     const result = await workspaceService.archive(workspaceId);
 
     expect(result.success).toBe(true);
-    expect(stopSession).toHaveBeenCalledTimes(1);
-    expect(stopSession).toHaveBeenCalledWith(workspaceId);
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(stop).toHaveBeenCalledWith(workspaceId);
   });
 
   test("archive() does not close terminal sessions when beforeArchive hook fails", async () => {
@@ -2753,33 +2753,33 @@ describe("WorkspaceService archive lifecycle hooks", () => {
     hooks.registerBeforeArchive(() => Promise.resolve(Err("hook failed")));
     workspaceService.setWorkspaceLifecycleHooks(hooks);
 
-    const stopSession = mock((_workspaceId: string) => Promise.resolve());
-    const browserSessionService = {
-      stopSession,
-    } as unknown as BrowserSessionService;
-    workspaceService.setBrowserSessionService(browserSessionService);
+    const stop = mock((_workspaceId: string) => Promise.resolve());
+    const browserBridgeSessionManager = {
+      stop,
+    } as unknown as BrowserBridgeSessionManager;
+    workspaceService.setBrowserBridgeSessionManager(browserBridgeSessionManager);
 
     const result = await workspaceService.archive(workspaceId);
 
     expect(result.success).toBe(false);
-    expect(stopSession).not.toHaveBeenCalled();
+    expect(stop).not.toHaveBeenCalled();
   });
 
   test("archive() can stop browser sessions repeatedly without error", async () => {
-    const stopSession = mock((_workspaceId: string) => Promise.resolve());
-    const browserSessionService = {
-      stopSession,
-    } as unknown as BrowserSessionService;
-    workspaceService.setBrowserSessionService(browserSessionService);
+    const stop = mock((_workspaceId: string) => Promise.resolve());
+    const browserBridgeSessionManager = {
+      stop,
+    } as unknown as BrowserBridgeSessionManager;
+    workspaceService.setBrowserBridgeSessionManager(browserBridgeSessionManager);
 
     const firstResult = await workspaceService.archive(workspaceId);
     const secondResult = await workspaceService.archive(workspaceId);
 
     expect(firstResult.success).toBe(true);
     expect(secondResult.success).toBe(true);
-    expect(stopSession).toHaveBeenCalledTimes(2);
-    expect(stopSession).toHaveBeenNthCalledWith(1, workspaceId);
-    expect(stopSession).toHaveBeenNthCalledWith(2, workspaceId);
+    expect(stop).toHaveBeenCalledTimes(2);
+    expect(stop).toHaveBeenNthCalledWith(1, workspaceId);
+    expect(stop).toHaveBeenNthCalledWith(2, workspaceId);
   });
 
   test("persists archivedAt when beforeArchive hooks succeed", async () => {
@@ -3867,10 +3867,10 @@ describe("WorkspaceService init cancellation", () => {
 
     const tempRoot = await fsPromises.mkdtemp(path.join(tmpdir(), "mux-ws-remove-browser-"));
     try {
-      const stopSession = mock((_workspaceId: string) => Promise.resolve());
-      const browserSessionService = {
-        stopSession,
-      } as unknown as BrowserSessionService;
+      const stop = mock((_workspaceId: string) => Promise.resolve());
+      const browserBridgeSessionManager = {
+        stop,
+      } as unknown as BrowserBridgeSessionManager;
       const mockAIService = {
         isStreaming: mock(() => false),
         stopStream: mock(() => Promise.resolve({ success: true as const, data: undefined })),
@@ -3895,13 +3895,13 @@ describe("WorkspaceService init cancellation", () => {
         mockExtensionMetadataService as ExtensionMetadataService,
         mockBackgroundProcessManager as BackgroundProcessManager
       );
-      workspaceService.setBrowserSessionService(browserSessionService);
+      workspaceService.setBrowserBridgeSessionManager(browserBridgeSessionManager);
 
       const result = await workspaceService.remove(workspaceId, true);
 
       expect(result.success).toBe(true);
-      expect(stopSession).toHaveBeenCalledTimes(1);
-      expect(stopSession).toHaveBeenCalledWith(workspaceId);
+      expect(stop).toHaveBeenCalledTimes(1);
+      expect(stop).toHaveBeenCalledWith(workspaceId);
     } finally {
       await fsPromises.rm(tempRoot, { recursive: true, force: true });
     }

@@ -72,13 +72,12 @@ import assert from "node:assert/strict";
 import * as fsPromises from "fs/promises";
 import * as path from "node:path";
 
-import type { BrowserSessionEvent } from "@/common/types/browserSession";
 import type { DevToolsEvent } from "@/common/types/devtools";
 import type { MuxMessage } from "@/common/types/message";
 import { coerceThinkingLevel } from "@/common/types/thinking";
 import { normalizeLegacyMuxMetadata } from "@/node/utils/messages/legacy";
 import { log } from "@/node/services/log";
-import { DESKTOP_WS_PATH } from "@/node/orpc/wsPaths";
+import { BROWSER_BRIDGE_WS_PATH, DESKTOP_WS_PATH } from "@/node/orpc/wsPaths";
 import { SERVER_AUTH_SESSION_COOKIE_NAME } from "@/node/services/serverAuthService";
 import {
   readSubagentTranscriptArtifactsFile,
@@ -1077,79 +1076,40 @@ export const router = (authToken?: string) => {
           }
         }),
     },
-    browserSession: {
-      getActive: t
-        .input(schemas.browserSession.getActive.input)
-        .output(schemas.browserSession.getActive.output)
-        .handler(({ context, input }) => {
-          return context.browserSessionService.getActiveSession(input.workspaceId);
-        }),
-      start: t
-        .input(schemas.browserSession.start.input)
-        .output(schemas.browserSession.start.output)
+    browser: {
+      getBootstrap: t
+        .input(schemas.browser.getBootstrap.input)
+        .output(schemas.browser.getBootstrap.output)
         .handler(async ({ context, input }) => {
-          return context.browserSessionService.startSession(input.workspaceId, {
-            initialUrl: input.initialUrl,
-          });
+          const serverInfo = context.serverService.getServerInfo();
+          if (serverInfo == null) {
+            throw new Error("Browser bridge bootstrap failed: API server unavailable");
+          }
+
+          const connection = await context.browserBridgeSessionManager.ensureStarted(
+            input.workspaceId,
+            {
+              initialUrl: input.initialUrl,
+            }
+          );
+          const token = context.browserBridgeTokenManager.mint(
+            connection.workspaceId,
+            connection.sessionId,
+            connection.streamPort
+          );
+
+          return {
+            bridgePath: BROWSER_BRIDGE_WS_PATH,
+            token,
+            localBridgeBaseUrl: serverInfo.baseUrl,
+          };
         }),
       stop: t
-        .input(schemas.browserSession.stop.input)
-        .output(schemas.browserSession.stop.output)
+        .input(schemas.browser.stop.input)
+        .output(schemas.browser.stop.output)
         .handler(async ({ context, input }) => {
-          await context.browserSessionService.stopSession(input.workspaceId);
+          await context.browserBridgeSessionManager.stop(input.workspaceId);
           return { success: true };
-        }),
-      sendInput: t
-        .input(schemas.browserSession.sendInput.input)
-        .output(schemas.browserSession.sendInput.output)
-        .handler(({ context, input }) => {
-          return context.browserSessionService.sendInput(input.workspaceId, input.input);
-        }),
-      navigate: t
-        .input(schemas.browserSession.navigate.input)
-        .output(schemas.browserSession.navigate.output)
-        .handler(({ context, input }) => {
-          return context.browserSessionService.navigate(input.workspaceId, input.url);
-        }),
-      subscribe: t
-        .input(schemas.browserSession.subscribe.input)
-        .output(schemas.browserSession.subscribe.output)
-        .handler(async function* ({ context, input, signal }) {
-          const service = context.browserSessionService;
-          const queue = withQueueHeartbeat(createAsyncEventQueue<BrowserSessionEvent>(), {
-            type: "heartbeat" as const,
-          });
-
-          const eventName = `update:${input.workspaceId}`;
-          const onEvent = (event: BrowserSessionEvent) => {
-            queue.push(event);
-          };
-
-          service.on(eventName, onEvent);
-
-          const onAbort = () => {
-            queue.end();
-          };
-
-          if (signal) {
-            if (signal.aborted) {
-              onAbort();
-            } else {
-              signal.addEventListener("abort", onAbort, { once: true });
-            }
-          }
-
-          try {
-            const session = service.getActiveSession(input.workspaceId);
-            const recentActions = service.getRecentActions(input.workspaceId);
-            yield { type: "snapshot" as const, session, recentActions };
-
-            yield* queue.iterate();
-          } finally {
-            queue.end();
-            signal?.removeEventListener("abort", onAbort);
-            service.off(eventName, onEvent);
-          }
         }),
     },
     uiLayouts: {
