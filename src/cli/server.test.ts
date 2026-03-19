@@ -25,6 +25,14 @@ import { Config } from "@/node/config";
 import { ServiceContainer } from "@/node/services/serviceContainer";
 import type { RouterClient } from "@orpc/server";
 import { createOrpcServer, type OrpcServer } from "@/node/orpc/server";
+import type { ProjectConfig } from "@/common/types/project";
+
+let shouldExposeLaunchProject: (projects: Array<[string, ProjectConfig]>) => boolean;
+
+beforeAll(async () => {
+  await Bun.$`./scripts/generate-version.sh`.quiet();
+  ({ shouldExposeLaunchProject } = require("@/cli/server") as typeof import("@/cli/server"));
+});
 
 // --- Test Server Factory ---
 
@@ -114,6 +122,57 @@ async function createWebSocketClient(wsUrl: string): Promise<WebSocketClientHand
     close: () => ws.close(),
   };
 }
+
+function createProjectConfig(projectKind?: ProjectConfig["projectKind"]): ProjectConfig {
+  return {
+    workspaces: [],
+    ...(projectKind === undefined ? {} : { projectKind }),
+  };
+}
+
+describe("shouldExposeLaunchProject", () => {
+  test("returns true when only system projects exist", () => {
+    const projects: Array<[string, ProjectConfig]> = [
+      ["/system-a", createProjectConfig("system")],
+      ["/system-b", createProjectConfig("system")],
+    ];
+
+    expect(shouldExposeLaunchProject(projects)).toBe(true);
+  });
+
+  test("returns false when a user project already exists", () => {
+    const scenarios: Array<{ name: string; projects: Array<[string, ProjectConfig]> }> = [
+      {
+        name: "legacy projects without projectKind still count as user projects",
+        projects: [
+          ["/system-a", createProjectConfig("system")],
+          ["/legacy-user", createProjectConfig()],
+        ],
+      },
+      {
+        name: 'explicit "user" projects count as user projects',
+        projects: [
+          ["/system-a", createProjectConfig("system")],
+          ["/user-project", createProjectConfig("user")],
+        ],
+      },
+    ];
+
+    for (const scenario of scenarios) {
+      expect(shouldExposeLaunchProject(scenario.projects)).toBe(false);
+    }
+  });
+
+  test("returns true when re-adding an existing project into a system-only seed", () => {
+    const targetPath = "/existing-system-project";
+    const projects: Array<[string, ProjectConfig]> = [
+      [targetPath, createProjectConfig("system")],
+      ["/system-b", createProjectConfig("system")],
+    ];
+
+    expect(shouldExposeLaunchProject(projects)).toBe(true);
+  });
+});
 
 // --- Tests ---
 
