@@ -55,7 +55,10 @@ export function BrowserTab(props: BrowserTabProps) {
       return;
     }
 
-    connect();
+    if (session == null) {
+      connect();
+    }
+
     const retryTimer = setInterval(() => {
       connect();
     }, BROWSER_PREVIEW_RETRY_INTERVAL_MS);
@@ -64,7 +67,7 @@ export function BrowserTab(props: BrowserTabProps) {
     return () => {
       clearInterval(retryTimer);
     };
-  }, [api, connect, session?.status]);
+  }, [api, connect, session]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">

@@ -104,6 +104,11 @@ describe("BrowserTab", () => {
 
     render(<BrowserTab workspaceId="workspace-1" />);
 
+    expect(connectMock).toHaveBeenCalledTimes(0);
+    expect(intervalCallbacks).toHaveLength(1);
+
+    intervalCallbacks[0]();
+
     expect(connectMock).toHaveBeenCalledTimes(1);
   });
 
