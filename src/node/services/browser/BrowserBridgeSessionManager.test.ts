@@ -132,6 +132,45 @@ describe("BrowserBridgeSessionManager", () => {
     });
   });
 
+  test("stop closes a daemon session that started before cancellation", async () => {
+    const streamPortRegistry = createStreamPortRegistry([9222]);
+    let notifyWaitStarted: (() => void) | null = null;
+    const waitStarted = new Promise<void>((resolve) => {
+      notifyWaitStarted = resolve;
+    });
+    let resolveWaitForStreamPort!: (value: { ok: true }) => void;
+    const waitForStreamPortPromise = new Promise<{ ok: true }>((resolve) => {
+      resolveWaitForStreamPort = resolve;
+    });
+    const waitForStreamPort = mock(() => {
+      notifyWaitStarted?.();
+      return waitForStreamPortPromise;
+    });
+    const closeSession = mock(() => Promise.resolve({ success: true }));
+    const manager = new BrowserBridgeSessionManager({
+      streamPortRegistry,
+      hasAgentBrowserSessionFn: mock(() => Promise.resolve(false)),
+      openAgentBrowserSessionFn: mock(() => Promise.resolve({ success: true as const })),
+      closeAgentBrowserSessionFn: closeSession,
+      waitForStreamPortFn: waitForStreamPort,
+    });
+
+    const startup = manager.ensureStarted("workspace-1");
+    await waitStarted;
+    await manager.stop("workspace-1");
+    resolveWaitForStreamPort({ ok: true as const });
+
+    let startupError: unknown = null;
+    try {
+      await startup;
+    } catch (error) {
+      startupError = error;
+    }
+    expect(startupError).toBeInstanceOf(Error);
+    expect((startupError as Error).message).toContain("cancelled");
+    expect(closeSession).toHaveBeenCalledWith("mux-workspace-1", undefined, undefined);
+  });
+
   test("getLiveSessionConnection returns null without a known port or live session", async () => {
     const streamPortRegistry = createStreamPortRegistry([9222]);
     const manager = new BrowserBridgeSessionManager({

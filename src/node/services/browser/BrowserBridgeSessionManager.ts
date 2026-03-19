@@ -251,11 +251,18 @@ export class BrowserBridgeSessionManager {
     return this.startupTokens.get(workspaceId) === startupToken && !this.disposed;
   }
 
-  private throwIfStartupCancelled(workspaceId: string, startupToken: symbol): void {
+  private async throwIfStartupCancelled(
+    workspaceId: string,
+    sessionId: string,
+    startupToken: symbol
+  ): Promise<void> {
     if (this.isCurrentStartupToken(workspaceId, startupToken)) {
       return;
     }
 
+    if (!this.startupTokens.has(workspaceId)) {
+      await this.closeAgentBrowserSessionFn(sessionId, undefined, this.cliOptions);
+    }
     this.streamPortRegistry.releasePort(workspaceId);
     throw new Error(`Browser bridge startup for workspace ${workspaceId} was cancelled`);
   }
@@ -279,7 +286,7 @@ export class BrowserBridgeSessionManager {
       undefined,
       this.cliOptions
     );
-    this.throwIfStartupCancelled(workspaceId, startupToken);
+    await this.throwIfStartupCancelled(workspaceId, sessionId, startupToken);
     if (!sessionAlreadyExists) {
       const openResult = await this.openAgentBrowserSessionFn(sessionId, initialUrl, {
         ...this.cliOptions,
@@ -289,11 +296,11 @@ export class BrowserBridgeSessionManager {
         this.streamPortRegistry.releasePort(workspaceId);
         throw new Error(openResult.error);
       }
-      this.throwIfStartupCancelled(workspaceId, startupToken);
+      await this.throwIfStartupCancelled(workspaceId, sessionId, startupToken);
     }
 
     const streamResult = await this.waitForStreamPortFn(streamPort);
-    this.throwIfStartupCancelled(workspaceId, startupToken);
+    await this.throwIfStartupCancelled(workspaceId, sessionId, startupToken);
     if (streamResult.ok) {
       this.activeWorkspaceIds.add(workspaceId);
       return { workspaceId, sessionId, streamPort };
