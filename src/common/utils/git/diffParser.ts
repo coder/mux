@@ -48,11 +48,11 @@ function parseHunkHeader(line: string): {
   };
 }
 
-type ParsedDiffPathLabel = {
+interface ParsedDiffPathLabel {
   raw: string;
   prefix: string | null;
   path: string | null;
-};
+}
 
 function parseDiffPathLabel(label: string | undefined): ParsedDiffPathLabel | null {
   if (label == null) {
@@ -95,7 +95,7 @@ function canonicalizeDiffPathLabel(
   pairedLabel: string | undefined
 ): string | undefined {
   const parsedLabel = parseDiffPathLabel(label);
-  if (!parsedLabel || parsedLabel.path == null) {
+  if (parsedLabel?.path == null) {
     return undefined;
   }
 
