@@ -42,16 +42,23 @@ export function cleanupObsoleteMuxBinArtifacts(rootDir?: string): void {
 
   for (const artifactName of OBSOLETE_MUX_BIN_ARTIFACTS) {
     const artifactPath = join(binDir, artifactName);
-    if (!existsSync(artifactPath)) {
+
+    try {
+      if (!existsSync(artifactPath)) {
+        continue;
+      }
+
+      const stats = lstatSync(artifactPath);
+      if (stats.isDirectory()) {
+        continue;
+      }
+
+      rmSync(artifactPath, { force: true });
+    } catch {
+      // Startup cleanup is best-effort; permission drift on a stale wrapper should not
+      // abort app launch or prevent the remaining artifacts from being cleaned up.
       continue;
     }
-
-    const stats = lstatSync(artifactPath);
-    if (stats.isDirectory()) {
-      continue;
-    }
-
-    rmSync(artifactPath, { force: true });
   }
 }
 

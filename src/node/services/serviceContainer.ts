@@ -192,14 +192,16 @@ export class ServiceContainer {
     this.aiService.setAnalyticsService(this.analyticsService);
     this.browserSessionDiscoveryService = new AgentBrowserSessionDiscoveryService({
       resolveWorkspaceCandidatePathsFn: async (workspaceId: string) => {
-        const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
-        if (!metadataResult.success) {
+        const allWorkspaceMetadata = await config.getAllWorkspaceMetadata();
+        const workspaceMetadata =
+          allWorkspaceMetadata.find((candidate) => candidate.id === workspaceId) ?? null;
+        if (workspaceMetadata == null) {
           return [];
         }
 
-        const runtime = createRuntimeForWorkspace(metadataResult.data);
-        const workspacePath = resolveWorkspaceExecutionPath(metadataResult.data, runtime);
-        return [metadataResult.data.projectPath, workspacePath].filter(
+        const runtime = createRuntimeForWorkspace(workspaceMetadata);
+        const workspacePath = resolveWorkspaceExecutionPath(workspaceMetadata, runtime);
+        return [workspaceMetadata.projectPath, workspacePath].filter(
           (candidatePath): candidatePath is string => candidatePath.trim().length > 0
         );
       },
