@@ -1,8 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-  BROWSER_PREVIEW_RETRY_INTERVAL_MS,
-  shouldBackOffBrowserReconnect,
-} from "./BrowserTab";
+import { BROWSER_PREVIEW_RETRY_INTERVAL_MS, shouldBackOffBrowserReconnect } from "./BrowserTab";
 import type { BrowserSession } from "./browserBridgeTypes";
 
 function createSession(overrides: Partial<BrowserSession> = {}): BrowserSession {
