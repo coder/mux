@@ -87,6 +87,7 @@ export function BrowserTab(props: BrowserTabProps) {
     throw new Error("Browser tab requires a workspaceId");
   }
 
+  const discoveryRefreshInFlightRef = useRef(false);
   const { api } = useAPI();
   const [discoveredSessions, setDiscoveredSessions] = useState<BrowserDiscoveredSession[]>([]);
   const [selectedSessionName, setSelectedSessionName] = usePersistedState<string | null>(
@@ -131,6 +132,11 @@ export function BrowserTab(props: BrowserTabProps) {
     let cancelled = false;
 
     const refreshSessions = async (): Promise<void> => {
+      if (discoveryRefreshInFlightRef.current) {
+        return;
+      }
+      discoveryRefreshInFlightRef.current = true;
+
       try {
         const result = await api.browser.listSessions({ workspaceId: props.workspaceId });
         if (cancelled) {
@@ -152,6 +158,8 @@ export function BrowserTab(props: BrowserTabProps) {
         setDiscoveryError(
           error instanceof Error ? error.message : "Failed to discover browser sessions."
         );
+      } finally {
+        discoveryRefreshInFlightRef.current = false;
       }
     };
 

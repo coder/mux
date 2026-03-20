@@ -233,7 +233,37 @@ describe("BrowserTab", () => {
     await flushAsyncWork();
 
     expect(disconnectMock).not.toHaveBeenCalled();
-    expect(view.getByRole("alert").textContent).toContain("discovery exploded");
+    expect(view.getByRole("button", { name: /alpha/i })).toBeTruthy();
+  });
+
+  test("does not overlap discovery refresh requests", async () => {
+    let resolveFirstRequest: ((value: { sessions: BrowserDiscoveredSession[] }) => void) | null =
+      null;
+    listSessionsMock.mockReset();
+    listSessionsMock.mockImplementation(
+      () =>
+        new Promise<{ sessions: BrowserDiscoveredSession[] }>((resolve) => {
+          resolveFirstRequest = resolve;
+        })
+    );
+
+    render(<BrowserTab workspaceId="workspace-1" projectPath="/tmp/project" />);
+    await Promise.resolve();
+
+    expect(listSessionsMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      intervalCallbacks[0]?.();
+      await Promise.resolve();
+    });
+
+    expect(listSessionsMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveFirstRequest?.({ sessions: [] });
+      await Promise.resolve();
+    });
+    await flushAsyncWork();
   });
 
   test("does not render manual start or stop controls", async () => {
