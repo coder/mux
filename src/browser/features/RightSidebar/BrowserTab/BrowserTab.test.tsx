@@ -64,6 +64,7 @@ async function flushAsyncWork() {
 describe("BrowserTab", () => {
   let originalWindow: typeof globalThis.window;
   let originalDocument: typeof globalThis.document;
+  let projectPath: string;
 
   beforeEach(() => {
     originalWindow = globalThis.window;
@@ -73,6 +74,7 @@ describe("BrowserTab", () => {
     globalThis.window = new GlobalWindow({ url: "http://localhost" }) as unknown as Window &
       typeof globalThis;
     globalThis.document = globalThis.window.document;
+    projectPath = `/tmp/project-${Math.random().toString(36).slice(2)}`;
     intervalCallbacks.length = 0;
     globalThis.setInterval = ((callback: TimerHandler) => {
       if (typeof callback !== "function") {
@@ -102,7 +104,7 @@ describe("BrowserTab", () => {
   });
 
   test("shows a passive waiting state when no sessions are discovered", async () => {
-    const view = render(<BrowserTab workspaceId="workspace-1" projectPath="/tmp/project" />);
+    const view = render(<BrowserTab workspaceId="workspace-1" projectPath={projectPath} />);
     await flushAsyncWork();
 
     expect(connectMock).not.toHaveBeenCalled();
@@ -113,7 +115,7 @@ describe("BrowserTab", () => {
   test("auto-selects and attaches to the only attachable session", async () => {
     mockDiscoveredSessions = [{ sessionName: "alpha", status: "attachable" }];
 
-    render(<BrowserTab workspaceId="workspace-1" projectPath="/tmp/project" />);
+    render(<BrowserTab workspaceId="workspace-1" projectPath={projectPath} />);
     await flushAsyncWork();
 
     expect(connectMock).toHaveBeenCalledWith("alpha");
@@ -122,7 +124,7 @@ describe("BrowserTab", () => {
   test("surfaces missing-stream sessions without attempting to connect", async () => {
     mockDiscoveredSessions = [{ sessionName: "testing", status: "missing_stream" }];
 
-    const view = render(<BrowserTab workspaceId="workspace-1" projectPath="/tmp/project" />);
+    const view = render(<BrowserTab workspaceId="workspace-1" projectPath={projectPath} />);
     await flushAsyncWork();
 
     expect(connectMock).not.toHaveBeenCalled();
@@ -137,7 +139,7 @@ describe("BrowserTab", () => {
       { sessionName: "beta", status: "attachable" },
     ];
 
-    const view = render(<BrowserTab workspaceId="workspace-1" projectPath="/tmp/project" />);
+    const view = render(<BrowserTab workspaceId="workspace-1" projectPath={projectPath} />);
     await flushAsyncWork();
 
     expect(connectMock).toHaveBeenCalledWith("alpha");
@@ -156,7 +158,7 @@ describe("BrowserTab", () => {
     ];
     mockSession = createSession({ sessionName: "alpha" });
 
-    const view = render(<BrowserTab workspaceId="workspace-1" projectPath="/tmp/project" />);
+    const view = render(<BrowserTab workspaceId="workspace-1" projectPath={projectPath} />);
     await flushAsyncWork();
 
     fireEvent.click(view.getByRole("button", { name: /alpha/i }));
@@ -174,7 +176,7 @@ describe("BrowserTab", () => {
       { sessionName: "beta", status: "attachable" },
     ];
 
-    const firstRender = render(<BrowserTab workspaceId="workspace-1" projectPath="/tmp/project" />);
+    const firstRender = render(<BrowserTab workspaceId="workspace-1" projectPath={projectPath} />);
     await flushAsyncWork();
 
     fireEvent.click(firstRender.getByRole("button", { name: /alpha/i }));
@@ -186,7 +188,7 @@ describe("BrowserTab", () => {
     connectMock.mockReset();
     disconnectMock.mockReset();
 
-    render(<BrowserTab workspaceId="workspace-1" projectPath="/tmp/project" />);
+    render(<BrowserTab workspaceId="workspace-1" projectPath={projectPath} />);
     await flushAsyncWork();
 
     expect(connectMock).toHaveBeenCalledWith("beta");
@@ -201,7 +203,7 @@ describe("BrowserTab", () => {
       lastError: "disconnected",
     });
 
-    render(<BrowserTab workspaceId="workspace-1" projectPath="/tmp/project" />);
+    render(<BrowserTab workspaceId="workspace-1" projectPath={projectPath} />);
     await flushAsyncWork();
 
     expect(connectMock).toHaveBeenCalledWith("alpha");
@@ -220,7 +222,7 @@ describe("BrowserTab", () => {
       return Promise.reject(new Error("discovery exploded"));
     });
 
-    const view = render(<BrowserTab workspaceId="workspace-1" projectPath="/tmp/project" />);
+    const view = render(<BrowserTab workspaceId="workspace-1" projectPath={projectPath} />);
     await flushAsyncWork();
 
     expect(connectMock).toHaveBeenCalledWith("alpha");
@@ -247,7 +249,7 @@ describe("BrowserTab", () => {
         })
     );
 
-    render(<BrowserTab workspaceId="workspace-1" projectPath="/tmp/project" />);
+    render(<BrowserTab workspaceId="workspace-1" projectPath={projectPath} />);
     await Promise.resolve();
 
     expect(listSessionsMock).toHaveBeenCalledTimes(1);
@@ -269,7 +271,7 @@ describe("BrowserTab", () => {
   test("does not render manual start or stop controls", async () => {
     mockDiscoveredSessions = [{ sessionName: "alpha", status: "attachable" }];
     mockSession = createSession();
-    const view = render(<BrowserTab workspaceId="workspace-1" projectPath="/tmp/project" />);
+    const view = render(<BrowserTab workspaceId="workspace-1" projectPath={projectPath} />);
     await flushAsyncWork();
 
     expect(view.queryByRole("button", { name: "Start" })).toBeNull();
@@ -284,7 +286,7 @@ describe("BrowserTab", () => {
       lastError: "bridge exploded",
       streamState: "error",
     });
-    const view = render(<BrowserTab workspaceId="workspace-1" projectPath="/tmp/project" />);
+    const view = render(<BrowserTab workspaceId="workspace-1" projectPath={projectPath} />);
     await flushAsyncWork();
 
     expect(view.getByRole("alert").textContent).toContain("bridge exploded");
