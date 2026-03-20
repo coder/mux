@@ -8,6 +8,178 @@ import { log } from "@/node/services/log";
 import { DisposableProcess } from "@/node/utils/disposableExec";
 
 const CLI_TIMEOUT_MS = 30_000;
+const PROCESS_CWD_TIMEOUT_MS = 5_000;
+
+const WINDOWS_PROCESS_CWD_SCRIPT = String.raw`
+$ErrorActionPreference = 'Stop'
+$targetPid = [int]$args[0]
+Add-Type -TypeDefinition @"
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Text;
+
+public static class ProcessCurrentDirectoryReader {
+    [StructLayout(LayoutKind.Sequential)]
+    private struct PROCESS_BASIC_INFORMATION {
+        public IntPtr Reserved1;
+        public IntPtr PebBaseAddress;
+        public IntPtr Reserved2_0;
+        public IntPtr Reserved2_1;
+        public IntPtr UniqueProcessId;
+        public IntPtr InheritedFromUniqueProcessId;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct PEB_PARTIAL {
+        public byte InheritedAddressSpace;
+        public byte ReadImageFileExecOptions;
+        public byte BeingDebugged;
+        public byte BitField;
+        public IntPtr Mutant;
+        public IntPtr ImageBaseAddress;
+        public IntPtr Ldr;
+        public IntPtr ProcessParameters;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct UNICODE_STRING {
+        public ushort Length;
+        public ushort MaximumLength;
+        public IntPtr Buffer;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct CURDIR {
+        public UNICODE_STRING DosPath;
+        public IntPtr Handle;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RTL_USER_PROCESS_PARAMETERS {
+        public uint MaximumLength;
+        public uint Length;
+        public uint Flags;
+        public uint DebugFlags;
+        public IntPtr ConsoleHandle;
+        public uint ConsoleFlags;
+        public IntPtr StandardInput;
+        public IntPtr StandardOutput;
+        public IntPtr StandardError;
+        public CURDIR CurrentDirectory;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenProcess(uint desiredAccess, bool inheritHandle, int processId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ReadProcessMemory(
+        IntPtr processHandle,
+        IntPtr baseAddress,
+        byte[] buffer,
+        int size,
+        out IntPtr bytesRead
+    );
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CloseHandle(IntPtr handle);
+
+    [DllImport("ntdll.dll")]
+    private static extern int NtQueryInformationProcess(
+        IntPtr processHandle,
+        int processInformationClass,
+        ref PROCESS_BASIC_INFORMATION processInformation,
+        int processInformationLength,
+        out int returnLength
+    );
+
+    private const uint PROCESS_QUERY_INFORMATION = 0x0400;
+    private const uint PROCESS_VM_READ = 0x0010;
+
+    public static string TryGetCurrentDirectory(int pid) {
+        IntPtr processHandle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid);
+        if (processHandle == IntPtr.Zero) {
+            return null;
+        }
+
+        try {
+            PROCESS_BASIC_INFORMATION processInfo = new PROCESS_BASIC_INFORMATION();
+            int returnLength;
+            int status = NtQueryInformationProcess(
+                processHandle,
+                0,
+                ref processInfo,
+                Marshal.SizeOf(typeof(PROCESS_BASIC_INFORMATION)),
+                out returnLength
+            );
+            if (status != 0) {
+                return null;
+            }
+
+            PEB_PARTIAL peb = ReadStruct<PEB_PARTIAL>(processHandle, processInfo.PebBaseAddress);
+            if (peb.ProcessParameters == IntPtr.Zero) {
+                return null;
+            }
+
+            RTL_USER_PROCESS_PARAMETERS parameters = ReadStruct<RTL_USER_PROCESS_PARAMETERS>(
+                processHandle,
+                peb.ProcessParameters
+            );
+            if (parameters.CurrentDirectory.DosPath.Length == 0 ||
+                parameters.CurrentDirectory.DosPath.Buffer == IntPtr.Zero) {
+                return null;
+            }
+
+            return ReadUnicodeString(processHandle, parameters.CurrentDirectory.DosPath);
+        } catch {
+            return null;
+        } finally {
+            CloseHandle(processHandle);
+        }
+    }
+
+    private static T ReadStruct<T>(IntPtr processHandle, IntPtr address) where T : struct {
+        int size = Marshal.SizeOf(typeof(T));
+        byte[] buffer = new byte[size];
+        IntPtr bytesRead;
+        if (!ReadProcessMemory(processHandle, address, buffer, size, out bytesRead) ||
+            bytesRead.ToInt64() < size) {
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
+
+        GCHandle pinned = GCHandle.Alloc(buffer, GCHandleType.Pinned);
+        try {
+            return (T)Marshal.PtrToStructure(pinned.AddrOfPinnedObject(), typeof(T));
+        } finally {
+            pinned.Free();
+        }
+    }
+
+    private static string ReadUnicodeString(IntPtr processHandle, UNICODE_STRING unicodeString) {
+        byte[] buffer = new byte[unicodeString.Length];
+        IntPtr bytesRead;
+        if (!ReadProcessMemory(
+            processHandle,
+            unicodeString.Buffer,
+            buffer,
+            buffer.Length,
+            out bytesRead
+        )) {
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
+
+        return Encoding.Unicode.GetString(buffer);
+    }
+}
+"@
+
+$result = [ProcessCurrentDirectoryReader]::TryGetCurrentDirectory($targetPid)
+if ($null -ne $result) {
+    [Console]::Out.Write($result)
+}
+`;
 
 export type AgentBrowserDiscoveredSessionStatus = "attachable" | "missing_stream";
 
@@ -148,6 +320,91 @@ async function listAgentBrowserSessionNames(env: NodeJS.ProcessEnv): Promise<str
   });
 }
 
+async function runCommandForSinglePath(
+  command: string,
+  args: string[],
+  timeoutMs: number
+): Promise<string | null> {
+  return await new Promise<string | null>((resolve) => {
+    const childProcess: ChildProcess = spawn(command, args, {
+      stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true,
+    });
+    const disposableProcess = new DisposableProcess(childProcess);
+    let settled = false;
+    let stdout = "";
+
+    const finish = (value: string | null): void => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      clearTimeout(timeoutId);
+      disposableProcess[Symbol.dispose]();
+      resolve(value);
+    };
+
+    const timeoutId = setTimeout(() => {
+      finish(null);
+    }, timeoutMs);
+    timeoutId.unref?.();
+
+    childProcess.stdout?.setEncoding("utf8");
+    childProcess.stdout?.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+
+    childProcess.once("error", () => {
+      finish(null);
+    });
+
+    childProcess.once("close", (code) => {
+      if (code !== 0) {
+        finish(null);
+        return;
+      }
+
+      const trimmedOutput = stdout.trim();
+      finish(trimmedOutput.length > 0 ? trimmedOutput : null);
+    });
+  });
+}
+
+async function resolveDarwinProcessCwd(pid: number): Promise<string | null> {
+  const stdout = await runCommandForSinglePath(
+    "lsof",
+    ["-a", "-p", String(pid), "-d", "cwd", "-Fn"],
+    PROCESS_CWD_TIMEOUT_MS
+  );
+  if (stdout == null) {
+    return null;
+  }
+
+  const cwdLine = stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.startsWith("n"));
+  return cwdLine ? cwdLine.slice(1) : null;
+}
+
+async function resolveWindowsProcessCwd(pid: number): Promise<string | null> {
+  return await runCommandForSinglePath(
+    "powershell.exe",
+    [
+      "-NoLogo",
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-Command",
+      WINDOWS_PROCESS_CWD_SCRIPT,
+      String(pid),
+    ],
+    PROCESS_CWD_TIMEOUT_MS
+  );
+}
+
 async function resolveProcessCwd(pid: number): Promise<string | null> {
   assert(Number.isInteger(pid) && pid > 0, "resolveProcessCwd requires a positive integer pid");
 
@@ -157,42 +414,11 @@ async function resolveProcessCwd(pid: number): Promise<string | null> {
     }
 
     if (process.platform === "darwin") {
-      return await new Promise<string | null>((resolve) => {
-        const childProcess: ChildProcess = spawn(
-          "lsof",
-          ["-a", "-p", String(pid), "-d", "cwd", "-Fn"],
-          {
-            stdio: ["ignore", "pipe", "pipe"],
-            windowsHide: true,
-          }
-        );
-        const disposableProcess = new DisposableProcess(childProcess);
-        let stdout = "";
+      return await resolveDarwinProcessCwd(pid);
+    }
 
-        childProcess.stdout?.setEncoding("utf8");
-        childProcess.stdout?.on("data", (chunk: string) => {
-          stdout += chunk;
-        });
-
-        childProcess.once("error", () => {
-          disposableProcess[Symbol.dispose]();
-          resolve(null);
-        });
-
-        childProcess.once("close", (code) => {
-          disposableProcess[Symbol.dispose]();
-          if (code !== 0) {
-            resolve(null);
-            return;
-          }
-
-          const cwdLine = stdout
-            .split("\n")
-            .map((line) => line.trim())
-            .find((line) => line.startsWith("n"));
-          resolve(cwdLine ? cwdLine.slice(1) : null);
-        });
-      });
+    if (process.platform === "win32") {
+      return await resolveWindowsProcessCwd(pid);
     }
   } catch {
     return null;
