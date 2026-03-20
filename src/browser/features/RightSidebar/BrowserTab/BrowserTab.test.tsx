@@ -1,6 +1,15 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
+const browserBridgeHookMock = () => ({
+  useBrowserBridgeConnection: () => ({
+    session: mockSession,
+    connect: connectMock,
+    disconnect: disconnectMock,
+    sendInput: sendInputMock,
+  }),
+});
+
 import type {
   BrowserTab as BrowserTabComponent,
   BROWSER_PREVIEW_RETRY_INTERVAL_MS as BrowserPreviewRetryIntervalMs,
@@ -29,14 +38,8 @@ void mock.module("@/browser/contexts/API", () => ({
   }),
 }));
 
-void mock.module("./useBrowserBridgeConnection", () => ({
-  useBrowserBridgeConnection: () => ({
-    session: mockSession,
-    connect: connectMock,
-    disconnect: disconnectMock,
-    sendInput: sendInputMock,
-  }),
-}));
+void mock.module("./useBrowserBridgeConnection", browserBridgeHookMock);
+void mock.module("./useBrowserBridgeConnection.ts", browserBridgeHookMock);
 
 import {
   BrowserTab as untypedBrowserTab,
