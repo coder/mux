@@ -207,6 +207,35 @@ describe("BrowserTab", () => {
     expect(connectMock).toHaveBeenCalledWith("alpha");
   });
 
+  test("preserves the current browser attachment when discovery refreshes fail", async () => {
+    mockDiscoveredSessions = [{ sessionName: "alpha", status: "attachable" }];
+    let discoveryCallCount = 0;
+    listSessionsMock.mockReset();
+    listSessionsMock.mockImplementation(() => {
+      discoveryCallCount += 1;
+      if (discoveryCallCount === 1) {
+        return Promise.resolve({ sessions: mockDiscoveredSessions });
+      }
+
+      return Promise.reject(new Error("discovery exploded"));
+    });
+
+    const view = render(<BrowserTab workspaceId="workspace-1" projectPath="/tmp/project" />);
+    await flushAsyncWork();
+
+    expect(connectMock).toHaveBeenCalledWith("alpha");
+    disconnectMock.mockReset();
+
+    await act(async () => {
+      intervalCallbacks[0]?.();
+      await Promise.resolve();
+    });
+    await flushAsyncWork();
+
+    expect(disconnectMock).not.toHaveBeenCalled();
+    expect(view.getByRole("alert").textContent).toContain("discovery exploded");
+  });
+
   test("does not render manual start or stop controls", async () => {
     mockDiscoveredSessions = [{ sessionName: "alpha", status: "attachable" }];
     mockSession = createSession();

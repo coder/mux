@@ -147,11 +147,11 @@ export function BrowserTab(props: BrowserTabProps) {
           return;
         }
 
+        // Preserve the last known discovery result so transient refresh failures do not
+        // tear down an otherwise healthy browser bridge.
         setDiscoveryError(
           error instanceof Error ? error.message : "Failed to discover browser sessions."
         );
-        setDiscoveredSessions([]);
-        setSelectedSessionName(null);
       }
     };
 
