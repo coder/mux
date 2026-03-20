@@ -64,6 +64,8 @@ async function flushAsyncWork() {
   });
 }
 
+let nextProjectPathId = 0;
+
 describe("BrowserTab", () => {
   let originalWindow: typeof globalThis.window;
   let originalDocument: typeof globalThis.document;
@@ -77,7 +79,8 @@ describe("BrowserTab", () => {
     globalThis.window = new GlobalWindow({ url: "http://localhost" }) as unknown as Window &
       typeof globalThis;
     globalThis.document = globalThis.window.document;
-    projectPath = `/tmp/project-${Math.random().toString(36).slice(2)}`;
+    projectPath = `/tmp/project-${nextProjectPathId}`;
+    nextProjectPathId += 1;
     intervalCallbacks.length = 0;
     globalThis.setInterval = ((callback: TimerHandler) => {
       if (typeof callback !== "function") {
