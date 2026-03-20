@@ -64,6 +64,25 @@ RUN git init && \
 # Thread RELEASE_TAG through to scripts/generate-version.sh when CI provides it.
 RUN RELEASE_TAG="${RELEASE_TAG}" make verify-docker-runtime-artifacts
 
+# Trace jsdom's full transitive dependency tree so the runtime stage can copy
+# exactly the packages it needs. jsdom is externalized from the esbuild bundle
+# because it reads browser/default-stylesheet.css from disk via __dirname.
+RUN node -e " \
+  const fs = require('fs'), path = require('path'); \
+  const seen = new Set(); \
+  function trace(name) { \
+    if (seen.has(name)) return; \
+    seen.add(name); \
+    try { \
+      const pkgPath = require.resolve(name + '/package.json'); \
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8')); \
+      for (const d of Object.keys(pkg.dependencies || {})) trace(d); \
+    } catch {} \
+  } \
+  trace('jsdom'); \
+  fs.writeFileSync('/tmp/jsdom-deps.txt', [...seen].join('\n')); \
+"
+
 # ==============================================================================
 # Stage 2: Runtime
 # ==============================================================================
@@ -100,6 +119,17 @@ COPY --from=builder /app/node_modules/bcrypt-pbkdf ./node_modules/bcrypt-pbkdf
 COPY --from=builder /app/node_modules/tweetnacl ./node_modules/tweetnacl
 # - @1password/sdk + sdk-core: externalized; contains native WASM for secret resolution
 COPY --from=builder /app/node_modules/@1password ./node_modules/@1password
+# - jsdom + transitive deps: externalized because it reads CSS from disk via __dirname.
+#   Copy the traced dependency tree built in the builder stage.
+COPY --from=builder /tmp/jsdom-deps.txt /tmp/jsdom-deps.txt
+RUN --mount=from=builder,source=/app/node_modules,target=/mnt/node_modules \
+    while IFS= read -r pkg; do \
+      src="/mnt/node_modules/$pkg"; \
+      if [ -d "$src" ]; then \
+        mkdir -p "node_modules/$pkg" && cp -a "$src/." "node_modules/$pkg/"; \
+      fi; \
+    done < /tmp/jsdom-deps.txt && \
+    rm /tmp/jsdom-deps.txt
 
 # Copy frontend/static assets from least to most volatile for better cache reuse.
 # Vite outputs JS/CSS/HTML directly to dist/ (assetsDir: ".").

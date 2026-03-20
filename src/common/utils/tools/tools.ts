@@ -334,9 +334,21 @@ export async function getToolsForModel(
   const wrap = <TParameters, TResult>(tool: Tool<TParameters, TResult>) =>
     wrapWithInitWait(tool, workspaceId, initStateManager);
 
-  // Lazy-load web_fetch to avoid loading jsdom (ESM-only) at Jest setup time
-  // This allows integration tests to run without transforming jsdom's dependencies
-  const { createWebFetchTool } = await import("@/node/services/tools/web_fetch");
+  // Lazy-load web_fetch to avoid loading jsdom (ESM-only) at Jest setup time.
+  // jsdom has filesystem dependencies (browser/default-stylesheet.css) that break
+  // when bundled with esbuild — the __dirname-relative path resolves incorrectly
+  // in the Docker runtime. Catch import failures so the rest of the toolset still
+  // works; Anthropic models already replace web_fetch with a provider-native tool.
+  let createWebFetchTool:
+    | typeof import("@/node/services/tools/web_fetch")["createWebFetchTool"]
+    | undefined;
+  try {
+    ({ createWebFetchTool } = await import("@/node/services/tools/web_fetch"));
+  } catch (error) {
+    log.warn("Failed to load web_fetch tool (jsdom dependency issue), skipping", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 
   // Runtime-dependent tools need to wait for workspace initialization
   // Wrap them to handle init waiting centrally instead of in each tool
@@ -367,7 +379,7 @@ export async function getToolsForModel(
     bash_background_list: wrap(createBashBackgroundListTool(config)),
     bash_background_terminate: wrap(createBashBackgroundTerminateTool(config)),
 
-    web_fetch: wrap(createWebFetchTool(config)),
+    ...(createWebFetchTool ? { web_fetch: wrap(createWebFetchTool(config)) } : {}),
   };
 
   // Non-runtime tools execute immediately (no init wait needed)
