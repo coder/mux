@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
+import {
+  BrowserTab,
+  BROWSER_PREVIEW_RETRY_INTERVAL_MS,
+  shouldBackOffBrowserReconnect,
+} from "./BrowserTab";
 import type { BrowserDiscoveredSession, BrowserSession } from "./browserBridgeTypes";
 
 let mockSession: BrowserSession | null = null;
@@ -32,8 +37,6 @@ void mock.module("./useBrowserBridgeConnection", () => ({
     sendInput: sendInputMock,
   }),
 }));
-
-import { BrowserTab } from "./BrowserTab";
 
 function createSession(overrides: Partial<BrowserSession> = {}): BrowserSession {
   return {
@@ -264,6 +267,44 @@ describe("BrowserTab", () => {
       expect(disconnectMock).not.toHaveBeenCalled();
       expect(view.getByRole("button", { name: /alpha/i })).toBeTruthy();
     });
+  });
+
+  test("backs off reconnect attempts after immediate bootstrap failures", () => {
+    expect(
+      shouldBackOffBrowserReconnect({
+        selectedSessionName: "alpha",
+        session: createSession({
+          sessionName: "alpha",
+          status: "error",
+          streamState: "error",
+          lastError: "disconnected",
+        }),
+        visibleError: "disconnected",
+        lastConnectAttempt: {
+          sessionName: "alpha",
+          attemptedAtMs: 10_000,
+        },
+        nowMs: 10_000 + BROWSER_PREVIEW_RETRY_INTERVAL_MS - 1,
+      })
+    ).toBe(true);
+
+    expect(
+      shouldBackOffBrowserReconnect({
+        selectedSessionName: "alpha",
+        session: createSession({
+          sessionName: "alpha",
+          status: "error",
+          streamState: "error",
+          lastError: "disconnected",
+        }),
+        visibleError: "disconnected",
+        lastConnectAttempt: {
+          sessionName: "alpha",
+          attemptedAtMs: 10_000,
+        },
+        nowMs: 10_000 + BROWSER_PREVIEW_RETRY_INTERVAL_MS,
+      })
+    ).toBe(false);
   });
 
   test("does not overlap discovery refresh requests", async () => {

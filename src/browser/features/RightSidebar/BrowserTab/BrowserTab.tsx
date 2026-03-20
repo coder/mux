@@ -7,6 +7,7 @@ import { cn } from "@/common/lib/utils";
 import type {
   BrowserDiscoveredSession,
   BrowserDiscoveredSessionStatus,
+  BrowserSession,
   BrowserSessionStatus,
 } from "./browserBridgeTypes";
 import { BrowserViewport } from "./BrowserViewport";
@@ -50,7 +51,7 @@ const DISCOVERY_BADGES: Record<
   },
 };
 
-const BROWSER_PREVIEW_RETRY_INTERVAL_MS = 2_000;
+export const BROWSER_PREVIEW_RETRY_INTERVAL_MS = 2_000;
 
 function isRetryableBrowserError(error: string | null): boolean {
   if (error == null) {
@@ -58,6 +59,27 @@ function isRetryableBrowserError(error: string | null): boolean {
   }
 
   return /disconnected|session unavailable|stream connect failed|invalid token/i.test(error);
+}
+
+export function shouldBackOffBrowserReconnect(params: {
+  selectedSessionName: string;
+  session: BrowserSession | null;
+  visibleError: string | null;
+  lastConnectAttempt: { sessionName: string; attemptedAtMs: number } | null;
+  nowMs: number;
+}): boolean {
+  const isSameSessionRetry =
+    params.session?.sessionName === params.selectedSessionName &&
+    (params.session.status === "ended" ||
+      (params.session.status === "error" && isRetryableBrowserError(params.visibleError)));
+  if (!isSameSessionRetry) {
+    return false;
+  }
+
+  return (
+    params.lastConnectAttempt?.sessionName === params.selectedSessionName &&
+    params.nowMs - params.lastConnectAttempt.attemptedAtMs < BROWSER_PREVIEW_RETRY_INTERVAL_MS
+  );
 }
 
 function chooseSelectedSession(
@@ -87,6 +109,7 @@ export function BrowserTab(props: BrowserTabProps) {
     throw new Error("Browser tab requires a workspaceId");
   }
 
+  const lastConnectAttemptRef = useRef<{ sessionName: string; attemptedAtMs: number } | null>(null);
   const discoveryRefreshInFlightRef = useRef(false);
   const { api } = useAPI();
   const [discoveredSessions, setDiscoveredSessions] = useState<BrowserDiscoveredSession[]>([]);
@@ -177,11 +200,13 @@ export function BrowserTab(props: BrowserTabProps) {
 
   useEffect(() => {
     if (api == null || selectedSessionName == null || selectedDiscoveredSession == null) {
+      lastConnectAttemptRef.current = null;
       disconnect();
       return;
     }
 
     if (selectedDiscoveredSession.status === "missing_stream") {
+      lastConnectAttemptRef.current = null;
       disconnect();
       return;
     }
@@ -198,18 +223,31 @@ export function BrowserTab(props: BrowserTabProps) {
       session?.status === "ended" ||
       (session?.status === "error" && isRetryableBrowserError(visibleError));
     if (!shouldRetryConnection) {
+      lastConnectAttemptRef.current = null;
       return;
     }
 
-    connect(selectedSessionName);
-    const retryTimer = setInterval(() => {
-      connect(selectedSessionName);
-    }, BROWSER_PREVIEW_RETRY_INTERVAL_MS);
-    retryTimer.unref?.();
+    const now = Date.now();
+    if (
+      shouldBackOffBrowserReconnect({
+        selectedSessionName,
+        session,
+        visibleError,
+        lastConnectAttempt: lastConnectAttemptRef.current,
+        nowMs: now,
+      })
+    ) {
+      return;
+    }
 
-    return () => {
-      clearInterval(retryTimer);
+    // Bootstrap failures can flip the bridge session into "error" almost immediately.
+    // Remember the most recent attempt so the next render waits for the normal discovery
+    // polling cadence instead of hammering browser.getBootstrap in a tight loop.
+    lastConnectAttemptRef.current = {
+      sessionName: selectedSessionName,
+      attemptedAtMs: now,
     };
+    connect(selectedSessionName);
   }, [
     api,
     connect,
