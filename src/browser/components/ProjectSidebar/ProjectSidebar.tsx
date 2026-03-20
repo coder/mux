@@ -356,7 +356,7 @@ const ProjectDragLayer: React.FC = () => {
       <div style={{ transform: `translate(${currentOffset.x + 10}px, ${currentOffset.y + 10}px)` }}>
         <div className={cn(PROJECT_ITEM_BASE_CLASS, "w-fit max-w-64 rounded-sm shadow-lg")}>
           <span className="text-secondary mr-2 flex h-5 w-5 shrink-0 items-center justify-center">
-            <ChevronRight size={12} />
+            <ChevronRight className="h-4 w-4 shrink-0" strokeWidth={1.8} />
           </span>
           <div className="flex min-w-0 flex-1 items-center pr-2">
             <span className="text-foreground truncate text-sm font-medium">{basename}</span>
@@ -1345,8 +1345,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                         className="text-secondary hover:bg-hover hover:border-border-light mr-1.5 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent p-0 transition-all duration-200"
                       >
                         <ChevronRight
-                          size={12}
-                          className="transition-transform duration-200"
+                          className="h-4 w-4 shrink-0 transition-transform duration-200"
+                          strokeWidth={1.8}
                           style={{
                             transform: isMultiProjectSectionExpanded
                               ? "rotate(90deg)"
@@ -1473,8 +1473,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             className="text-secondary hover:bg-hover hover:border-border-light mr-1.5 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent p-0 transition-all duration-200"
                           >
                             <ChevronRight
-                              size={12}
-                              className="transition-transform duration-200"
+                              className="h-4 w-4 shrink-0 transition-transform duration-200"
+                              strokeWidth={1.8}
                               style={{ transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)" }}
                             />
                           </button>
@@ -1544,7 +1544,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 data-project-path={projectPath}
                                 className="text-content-secondary hover:bg-hover hover:border-border-light mr-1 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent text-sm leading-none transition-all duration-200"
                               >
-                                <Plus />
+                                <Plus className="h-4 w-4 shrink-0" strokeWidth={1.8} />
                               </button>
                             </TooltipTrigger>
                             <TooltipContent>
@@ -1562,7 +1562,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 data-project-path={projectPath}
                                 className="text-content-secondary hover:bg-hover hover:border-border-light flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent transition-all duration-200"
                               >
-                                <EllipsisVertical />
+                                <EllipsisVertical className="h-4 w-4 shrink-0" strokeWidth={1.8} />
                               </button>
                             </TooltipTrigger>
                             <TooltipContent align="end">Project options</TooltipContent>
@@ -2177,7 +2177,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                               : "rotate(0deg)",
                                           }}
                                         >
-                                          <ChevronRight size={12} />
+                                          <ChevronRight className="h-4 w-4 shrink-0" strokeWidth={1.8} />
                                         </span>
                                       </button>
                                       {isTierExpanded && (
@@ -2419,7 +2419,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
             position={projectContextMenu.position}
           >
             <PositionedMenuItem
-              icon={<Pencil />}
+              icon={<Pencil className="h-4 w-4 shrink-0" strokeWidth={1.8} />}
               label="Edit name"
               disabled={!hasProjectMenuTarget}
               onClick={() => {
@@ -2427,7 +2427,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
               }}
             />
             <PositionedMenuItem
-              icon={<KeyRound />}
+              icon={<KeyRound className="h-4 w-4 shrink-0" strokeWidth={1.8} />}
               label="Manage secrets"
               disabled={!hasProjectMenuTarget}
               onClick={() => {
@@ -2436,7 +2436,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
             />
             <Separator />
             <PositionedMenuItem
-              icon={<Trash />}
+              icon={<Trash className="h-4 w-4 shrink-0" strokeWidth={1.8} />}
               label="Delete..."
               variant="destructive"
               disabled={!hasProjectMenuTarget}

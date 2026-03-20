@@ -307,6 +307,7 @@ function DraftAgentListItemInner(props: DraftAgentListItemProps) {
         <div className="flex min-w-0 items-center gap-1 text-[14px] leading-6">
           <PenLine
             className={cn("h-3 w-3 shrink-0", isSelected ? "text-content-primary" : "text-muted")}
+            strokeWidth={1.8}
           />
           <span
             className={cn(
@@ -336,7 +337,7 @@ function DraftAgentListItemInner(props: DraftAgentListItemProps) {
             <button
               type="button"
               className={cn(
-                "text-muted hover:text-foreground inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 opacity-0 transition-colors duration-200",
+                "text-muted hover:text-content-destructive inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 opacity-0 transition-colors duration-200",
                 // Keep long-press as the compact mobile affordance on narrow
                 // touch layouts, but show the button on wider touch screens so
                 // it never becomes an invisible tappable hotspot.
@@ -352,7 +353,7 @@ function DraftAgentListItemInner(props: DraftAgentListItemProps) {
               data-project-path={projectPath}
               data-draft-id={draft.draftId}
             >
-              <Trash />
+              <Trash className="h-3.5 w-3.5 shrink-0" strokeWidth={1.8} />
             </button>
           </TooltipTrigger>
           <TooltipContent align="start">Delete draft</TooltipContent>
@@ -366,7 +367,7 @@ function DraftAgentListItemInner(props: DraftAgentListItemProps) {
           className="w-[150px]"
         >
           <PositionedMenuItem
-            icon={<Trash />}
+            icon={<Trash className="h-4 w-4 shrink-0" strokeWidth={1.8} />}
             label="Delete draft"
             onClick={() => {
               ctxMenu.close();
@@ -781,7 +782,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                   }
                   data-workspace-id={workspaceId}
                 >
-                  {isRemoving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 />}
+                  {isRemoving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-4 w-4 shrink-0" strokeWidth={1.8} />}
                 </button>
               </TooltipTrigger>
               <TooltipContent align="start">
@@ -825,7 +826,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                     aria-label={`Workspace actions for ${displayTitle}`}
                     data-workspace-id={workspaceId}
                   >
-                    <EllipsisVertical />
+                    <EllipsisVertical className="h-4 w-4 shrink-0" strokeWidth={1.8} />
                   </button>
                 </PopoverTrigger>
 
@@ -863,7 +864,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                   />
                   {!isSelected && !isUnread && (
                     <PositionedMenuItem
-                      icon={<EyeOff />}
+                      icon={<EyeOff className="h-4 w-4 shrink-0" strokeWidth={1.8} />}
                       label="Mark unread"
                       onClick={() => {
                         // Reset the read marker to epoch so existing activity is treated as unseen.
@@ -874,7 +875,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                   )}
                   {canToggleCompletedChildren && (
                     <PositionedMenuItem
-                      icon={isCompletedChildrenExpanded ? <EyeOff /> : <Eye />}
+                      icon={isCompletedChildrenExpanded ? <EyeOff className="h-4 w-4 shrink-0" strokeWidth={1.8} /> : <Eye className="h-4 w-4 shrink-0" strokeWidth={1.8} />}
                       label={isCompletedChildrenExpanded ? "Hide sub-agents" : "Show sub-agents"}
                       onClick={() => {
                         toggleCompletedChildren();
@@ -991,7 +992,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                 </div>
               ) : awaitingUserQuestion ? (
                 <div className="text-muted flex min-w-0 items-center gap-1.5 text-xs leading-4">
-                  <MessageCircleQuestionMark className="h-3 w-3 shrink-0" />
+                  <MessageCircleQuestionMark className="h-3 w-3 shrink-0" strokeWidth={1.8} />
                   <span className="min-w-0 truncate">Mux has a few questions</span>
                 </div>
               ) : (
