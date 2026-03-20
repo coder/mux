@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
-import {
-  BrowserTab,
-  BROWSER_PREVIEW_RETRY_INTERVAL_MS,
-  shouldBackOffBrowserReconnect,
+import type {
+  BrowserTab as BrowserTabComponent,
+  BROWSER_PREVIEW_RETRY_INTERVAL_MS as BrowserPreviewRetryIntervalMs,
+  shouldBackOffBrowserReconnect as ShouldBackOffBrowserReconnect,
 } from "./BrowserTab";
 import type { BrowserDiscoveredSession, BrowserSession } from "./browserBridgeTypes";
 
@@ -37,6 +37,18 @@ void mock.module("./useBrowserBridgeConnection", () => ({
     sendInput: sendInputMock,
   }),
 }));
+
+import {
+  BrowserTab as untypedBrowserTab,
+  BROWSER_PREVIEW_RETRY_INTERVAL_MS as untypedBrowserPreviewRetryIntervalMs,
+  shouldBackOffBrowserReconnect as untypedShouldBackOffBrowserReconnect,
+} from "./BrowserTab.tsx?test-isolation=static";
+
+const BrowserTab = untypedBrowserTab as unknown as typeof BrowserTabComponent;
+const BROWSER_PREVIEW_RETRY_INTERVAL_MS =
+  untypedBrowserPreviewRetryIntervalMs as unknown as typeof BrowserPreviewRetryIntervalMs;
+const shouldBackOffBrowserReconnect =
+  untypedShouldBackOffBrowserReconnect as unknown as typeof ShouldBackOffBrowserReconnect;
 
 function createSession(overrides: Partial<BrowserSession> = {}): BrowserSession {
   return {
