@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { act, cleanup, fireEvent, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
 import type { BrowserDiscoveredSession, BrowserSession } from "./browserBridgeTypes";
 
@@ -118,7 +118,9 @@ describe("BrowserTab", () => {
     render(<BrowserTab workspaceId="workspace-1" projectPath={projectPath} />);
     await flushAsyncWork();
 
-    expect(connectMock).toHaveBeenCalledWith("alpha");
+    await waitFor(() => {
+      expect(connectMock).toHaveBeenCalledWith("alpha");
+    });
   });
 
   test("surfaces missing-stream sessions without attempting to connect", async () => {
@@ -128,9 +130,11 @@ describe("BrowserTab", () => {
     await flushAsyncWork();
 
     expect(connectMock).not.toHaveBeenCalled();
-    expect(view.getByText("Browser preview requires streaming")).toBeTruthy();
-    expect(view.getByRole("alert").textContent).toContain("AGENT_BROWSER_STREAM_PORT");
-    expect(view.getByRole("button", { name: /testing/i })).toBeTruthy();
+    await waitFor(() => {
+      expect(view.getByText("Browser preview requires streaming")).toBeTruthy();
+      expect(view.getByRole("alert").textContent).toContain("AGENT_BROWSER_STREAM_PORT");
+      expect(view.getByRole("button", { name: /testing/i })).toBeTruthy();
+    });
   });
 
   test("renders a session picker when multiple sessions are discovered", async () => {
@@ -142,13 +146,17 @@ describe("BrowserTab", () => {
     const view = render(<BrowserTab workspaceId="workspace-1" projectPath={projectPath} />);
     await flushAsyncWork();
 
-    expect(connectMock).toHaveBeenCalledWith("alpha");
+    await waitFor(() => {
+      expect(connectMock).toHaveBeenCalledWith("alpha");
+    });
 
     fireEvent.click(view.getByRole("button", { name: /alpha/i }));
     fireEvent.click(view.getByTestId("browser-session-beta"));
     await flushAsyncWork();
 
-    expect(connectMock).toHaveBeenLastCalledWith("beta");
+    await waitFor(() => {
+      expect(connectMock).toHaveBeenLastCalledWith("beta");
+    });
   });
 
   test("lets the user select a missing-stream session from the picker", async () => {
@@ -161,13 +169,19 @@ describe("BrowserTab", () => {
     const view = render(<BrowserTab workspaceId="workspace-1" projectPath={projectPath} />);
     await flushAsyncWork();
 
+    await waitFor(() => {
+      expect(view.getByRole("button", { name: /alpha/i })).toBeTruthy();
+    });
+
     fireEvent.click(view.getByRole("button", { name: /alpha/i }));
     fireEvent.click(view.getByTestId("browser-session-testing"));
     await flushAsyncWork();
 
-    expect(disconnectMock).toHaveBeenCalled();
-    expect(view.getByRole("alert").textContent).toContain('Session "testing"');
-    expect(view.getByText("Browser preview requires streaming")).toBeTruthy();
+    await waitFor(() => {
+      expect(disconnectMock).toHaveBeenCalled();
+      expect(view.getByRole("alert").textContent).toContain('Session "testing"');
+      expect(view.getByText("Browser preview requires streaming")).toBeTruthy();
+    });
   });
 
   test("remembers the last selected browser session across remounts", async () => {
@@ -179,10 +193,16 @@ describe("BrowserTab", () => {
     const firstRender = render(<BrowserTab workspaceId="workspace-1" projectPath={projectPath} />);
     await flushAsyncWork();
 
+    await waitFor(() => {
+      expect(firstRender.getByRole("button", { name: /alpha/i })).toBeTruthy();
+    });
+
     fireEvent.click(firstRender.getByRole("button", { name: /alpha/i }));
     fireEvent.click(firstRender.getByTestId("browser-session-beta"));
     await flushAsyncWork();
-    expect(connectMock).toHaveBeenLastCalledWith("beta");
+    await waitFor(() => {
+      expect(connectMock).toHaveBeenLastCalledWith("beta");
+    });
 
     firstRender.unmount();
     connectMock.mockReset();
@@ -191,7 +211,9 @@ describe("BrowserTab", () => {
     render(<BrowserTab workspaceId="workspace-1" projectPath={projectPath} />);
     await flushAsyncWork();
 
-    expect(connectMock).toHaveBeenCalledWith("beta");
+    await waitFor(() => {
+      expect(connectMock).toHaveBeenCalledWith("beta");
+    });
   });
 
   test("retries the selected discovered session after disconnect errors", async () => {
@@ -206,7 +228,9 @@ describe("BrowserTab", () => {
     render(<BrowserTab workspaceId="workspace-1" projectPath={projectPath} />);
     await flushAsyncWork();
 
-    expect(connectMock).toHaveBeenCalledWith("alpha");
+    await waitFor(() => {
+      expect(connectMock).toHaveBeenCalledWith("alpha");
+    });
   });
 
   test("preserves the current browser attachment when discovery refreshes fail", async () => {
@@ -225,7 +249,9 @@ describe("BrowserTab", () => {
     const view = render(<BrowserTab workspaceId="workspace-1" projectPath={projectPath} />);
     await flushAsyncWork();
 
-    expect(connectMock).toHaveBeenCalledWith("alpha");
+    await waitFor(() => {
+      expect(connectMock).toHaveBeenCalledWith("alpha");
+    });
     disconnectMock.mockReset();
 
     await act(async () => {
@@ -234,8 +260,10 @@ describe("BrowserTab", () => {
     });
     await flushAsyncWork();
 
-    expect(disconnectMock).not.toHaveBeenCalled();
-    expect(view.getByRole("button", { name: /alpha/i })).toBeTruthy();
+    await waitFor(() => {
+      expect(disconnectMock).not.toHaveBeenCalled();
+      expect(view.getByRole("button", { name: /alpha/i })).toBeTruthy();
+    });
   });
 
   test("does not overlap discovery refresh requests", async () => {
