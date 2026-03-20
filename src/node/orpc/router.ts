@@ -9,7 +9,7 @@ import {
 } from "@/common/constants/muxGatewayOAuth";
 import { Err, Ok } from "@/common/types/result";
 import { resolveProviderCredentials } from "@/node/utils/providerRequirements";
-import { stripTrailingSlashes } from "@/node/utils/pathUtils";
+import { isPathInsideDir, stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { generateWorkspaceIdentity } from "@/node/services/workspaceTitleGenerator";
 import type {
   UpdateStatus,
@@ -146,14 +146,6 @@ async function resolveAgentDiscoveryContext(
 
 function isErrnoWithCode(error: unknown, code: string): boolean {
   return Boolean(error && typeof error === "object" && "code" in error && error.code === code);
-}
-
-function isPathInsideDir(dirPath: string, filePath: string): boolean {
-  const resolvedDir = path.resolve(dirPath);
-  const resolvedFile = path.resolve(filePath);
-  const relative = path.relative(resolvedDir, resolvedFile);
-
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
 function isTrustedProjectPath(context: ORPCContext, projectPath?: string | null): boolean {

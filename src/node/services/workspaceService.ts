@@ -12,6 +12,7 @@ import { Ok, Err } from "@/common/types/result";
 import { askUserQuestionManager } from "@/node/services/askUserQuestionManager";
 import { delegatedToolCallManager } from "@/node/services/delegatedToolCallManager";
 import { log } from "@/node/services/log";
+import { isPathInsideDir } from "@/node/utils/pathUtils";
 import { AgentSession } from "@/node/services/agentSession";
 import type { HistoryService } from "@/node/services/historyService";
 import type { AIService } from "@/node/services/aiService";
@@ -399,14 +400,6 @@ async function resetForkedSessionUsage(
     path.join(sessionDir, "session-usage.json"),
     JSON.stringify({ byModel: {}, version: 1 }, null, 2)
   );
-}
-
-function isPathInsideDir(dirPath: string, filePath: string): boolean {
-  const resolvedDir = path.resolve(dirPath);
-  const resolvedFile = path.resolve(filePath);
-  const relative = path.relative(resolvedDir, resolvedFile);
-
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
 function isPositiveInteger(value: unknown): value is number {

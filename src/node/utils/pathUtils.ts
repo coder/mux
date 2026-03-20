@@ -106,3 +106,21 @@ export async function isGitRepository(projectPath: string): Promise<boolean> {
     return false;
   }
 }
+
+/**
+ * Check whether `filePath` is equal to or nested inside `dirPath`.
+ *
+ * Both paths are resolved to absolute form first, so relative segments
+ * and missing trailing slashes are handled automatically.
+ *
+ * @example
+ * isPathInsideDir("/home/user/project", "/home/user/project/src/index.ts") // true
+ * isPathInsideDir("/home/user/project", "/home/user/other/file.ts")        // false
+ */
+export function isPathInsideDir(dirPath: string, filePath: string): boolean {
+  const resolvedDir = path.resolve(dirPath);
+  const resolvedFile = path.resolve(filePath);
+  const relative = path.relative(resolvedDir, resolvedFile);
+
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}

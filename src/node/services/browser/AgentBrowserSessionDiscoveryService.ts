@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { getErrorMessage } from "@/common/utils/errors";
 import { log } from "@/node/services/log";
 import { DisposableProcess } from "@/node/utils/disposableExec";
+import { isPathInsideDir } from "@/node/utils/pathUtils";
 
 const CLI_TIMEOUT_MS = 30_000;
 const PROCESS_CWD_TIMEOUT_MS = 5_000;
@@ -430,11 +431,6 @@ async function resolveProcessCwd(pid: number): Promise<string | null> {
 function normalizeComparablePath(filePath: string): string {
   const normalized = path.resolve(filePath);
   return process.platform === "win32" ? normalized.toLowerCase() : normalized;
-}
-
-function isPathInsideDir(dirPath: string, filePath: string): boolean {
-  const relative = path.relative(dirPath, filePath);
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
 async function readPositiveIntegerFile(

@@ -12,6 +12,7 @@ import {
 import { shellQuote } from "@/common/utils/shell";
 import { execBuffered } from "@/node/utils/runtime/helpers";
 import { gitNoHooksPrefix } from "@/node/utils/gitNoHooksEnv";
+import { isPathInsideDir } from "@/node/utils/pathUtils";
 import {
   getSubagentGitPatchMboxPath,
   markSubagentGitPatchArtifactApplied,
@@ -75,14 +76,6 @@ function mergeNotes(...notes: Array<string | undefined>): string | undefined {
     .filter((note) => note.length > 0);
 
   return parts.length > 0 ? parts.join("\n") : undefined;
-}
-
-function isPathInsideDir(dirPath: string, filePath: string): boolean {
-  const resolvedDir = path.resolve(dirPath);
-  const resolvedFile = path.resolve(filePath);
-  const relative = path.relative(resolvedDir, resolvedFile);
-
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
 async function tryRevParseHead(params: {
