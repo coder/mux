@@ -417,6 +417,28 @@ describe("git diff parser (real repository)", () => {
     expect(allHunks.every((h) => h.id && h.id.length > 0)).toBe(true);
   });
 
+  it("should normalize quoted rename metadata paths", () => {
+    execSync("git reset --hard HEAD && git clean -fd", { cwd: testRepoPath });
+
+    const originalFileName = 'tab\tquote"name.txt';
+    const renamedFileName = 'tab\tquote"renamed.txt';
+    writeFileSync(join(testRepoPath, originalFileName), "before\n");
+    execSync("git add . && git commit -m 'Add quoted rename source file'", { cwd: testRepoPath });
+
+    execSync(`git mv '${originalFileName}' '${renamedFileName}'`, {
+      cwd: testRepoPath,
+    });
+
+    const diff = execSync("git diff --cached -M", { cwd: testRepoPath, encoding: "utf-8" });
+    const fileDiffs = parseDiff(diff);
+
+    expect(fileDiffs).toHaveLength(1);
+    expect(fileDiffs[0].changeType).toBe("renamed");
+    expect(fileDiffs[0].filePath).toBe(renamedFileName);
+    expect(fileDiffs[0].oldPath).toBe(originalFileName);
+    expect(fileDiffs[0].hunks).toHaveLength(0);
+  });
+
   it("should handle pure file rename (no content changes)", () => {
     // Reset
     execSync("git reset --hard HEAD", { cwd: testRepoPath });

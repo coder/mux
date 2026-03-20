@@ -431,14 +431,14 @@ export function parseDiff(diffOutput: string): FileDiff[] {
 
     if (line.startsWith("rename from ")) {
       currentFile.changeType = "renamed";
-      currentRenameFrom = line.slice("rename from ".length);
+      currentRenameFrom = normalizeDiffPathLabel(line.slice("rename from ".length));
       syncCurrentFilePaths();
       continue;
     }
 
     if (line.startsWith("rename to ")) {
       currentFile.changeType = "renamed";
-      currentRenameTo = line.slice("rename to ".length);
+      currentRenameTo = normalizeDiffPathLabel(line.slice("rename to ".length));
       syncCurrentFilePaths();
       continue;
     }
