@@ -142,6 +142,47 @@ describe("git diff parser (real repository)", () => {
     expect(allHunks[0].content).toContain("+new line");
   });
 
+  it("should parse real diffs for paths with spaces", () => {
+    execSync("git reset --hard HEAD && git clean -fd", { cwd: testRepoPath });
+
+    const spacedFileName = "file with space.txt";
+    writeFileSync(join(testRepoPath, spacedFileName), "before\n");
+    execSync("git add . && git commit -m 'Add spaced file'", { cwd: testRepoPath });
+
+    writeFileSync(join(testRepoPath, spacedFileName), "after\n");
+
+    const diff = execSync("git diff HEAD", { cwd: testRepoPath, encoding: "utf-8" });
+    const fileDiffs = parseDiff(diff);
+
+    expect(fileDiffs).toHaveLength(1);
+    expect(fileDiffs[0].filePath).toBe(spacedFileName);
+    expect(fileDiffs[0].oldPath).toBeUndefined();
+    expect(fileDiffs[0].hunks).toHaveLength(1);
+    expect(fileDiffs[0].hunks[0].filePath).toBe(spacedFileName);
+    expect(fileDiffs[0].hunks[0].content).toContain("+after");
+  });
+
+  it("should normalize quoted patch labels for escaped file names", () => {
+    execSync("git reset --hard HEAD && git clean -fd", { cwd: testRepoPath });
+
+    const escapedFileName = 'tab\tquote"file.txt';
+    writeFileSync(join(testRepoPath, escapedFileName), "before\n");
+    execSync("git add . && git commit -m 'Add escaped path file'", { cwd: testRepoPath });
+
+    rmSync(join(testRepoPath, escapedFileName));
+
+    const diff = execSync("git diff HEAD", { cwd: testRepoPath, encoding: "utf-8" });
+    const fileDiffs = parseDiff(diff);
+
+    expect(fileDiffs).toHaveLength(1);
+    expect(fileDiffs[0].changeType).toBe("deleted");
+    expect(fileDiffs[0].filePath).toBe(escapedFileName);
+    expect(fileDiffs[0].oldPath).toBe(escapedFileName);
+    expect(fileDiffs[0].hunks).toHaveLength(1);
+    expect(fileDiffs[0].hunks[0].oldPath).toBe(escapedFileName);
+    expect(fileDiffs[0].hunks[0].content).toContain("-before");
+  });
+
   it("should preserve nested paths in --no-prefix diffs", () => {
     execSync("git reset --hard HEAD && git clean -fd", { cwd: testRepoPath });
     execSync("mkdir -p src/common", { cwd: testRepoPath });

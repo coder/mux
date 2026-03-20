@@ -54,32 +54,202 @@ interface ParsedDiffPathLabel {
   path: string | null;
 }
 
-function parseDiffPathLabel(label: string | undefined): ParsedDiffPathLabel | null {
-  if (label == null) {
+function decodeGitCString(value: string): string {
+  const bytes: number[] = [];
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+
+  for (let index = 0; index < value.length; index++) {
+    const char = value[index];
+    if (char !== "\\") {
+      bytes.push(...encoder.encode(char));
+      continue;
+    }
+
+    index += 1;
+    if (index >= value.length) {
+      bytes.push(0x5c);
+      break;
+    }
+
+    const escape = value[index];
+    if (/[0-7]/.test(escape)) {
+      let octal = escape;
+      while (index + 1 < value.length && octal.length < 3 && /[0-7]/.test(value[index + 1])) {
+        index += 1;
+        octal += value[index];
+      }
+      bytes.push(parseInt(octal, 8));
+      continue;
+    }
+
+    switch (escape) {
+      case "a":
+        bytes.push(0x07);
+        break;
+      case "b":
+        bytes.push(0x08);
+        break;
+      case "t":
+        bytes.push(0x09);
+        break;
+      case "n":
+        bytes.push(0x0a);
+        break;
+      case "v":
+        bytes.push(0x0b);
+        break;
+      case "f":
+        bytes.push(0x0c);
+        break;
+      case "r":
+        bytes.push(0x0d);
+        break;
+      case '"':
+        bytes.push(0x22);
+        break;
+      case "\\":
+        bytes.push(0x5c);
+        break;
+      default:
+        bytes.push(...encoder.encode(escape));
+        break;
+    }
+  }
+
+  return decoder.decode(new Uint8Array(bytes));
+}
+
+function parseQuotedDiffLabel(
+  value: string,
+  startIndex = 0
+): { rawLabel: string; label: string; nextIndex: number } | null {
+  if (value[startIndex] !== '"') {
     return null;
   }
 
-  if (label === "/dev/null") {
+  let escaped = false;
+  for (let index = startIndex + 1; index < value.length; index++) {
+    const char = value[index];
+    if (!escaped && char === '"') {
+      return {
+        rawLabel: value.slice(startIndex, index + 1),
+        label: decodeGitCString(value.slice(startIndex + 1, index)),
+        nextIndex: index + 1,
+      };
+    }
+
+    escaped = !escaped && char === "\\";
+  }
+
+  return null;
+}
+
+function normalizeDiffPathLabel(label: string | undefined): string | undefined {
+  if (label == null) {
+    return undefined;
+  }
+
+  const trimmedLabel = label.trimEnd();
+  if (trimmedLabel.length === 0) {
+    return undefined;
+  }
+
+  const quotedLabel = parseQuotedDiffLabel(trimmedLabel);
+  if (quotedLabel) {
+    return quotedLabel.label;
+  }
+
+  const tabIndex = trimmedLabel.indexOf("\t");
+  return tabIndex === -1 ? trimmedLabel : trimmedLabel.slice(0, tabIndex);
+}
+
+function parseDiffPathLabel(label: string | undefined): ParsedDiffPathLabel | null {
+  const normalizedLabel = normalizeDiffPathLabel(label);
+  if (normalizedLabel == null) {
+    return null;
+  }
+
+  if (normalizedLabel === "/dev/null") {
     return {
-      raw: label,
+      raw: normalizedLabel,
       prefix: null,
       path: null,
     };
   }
 
-  const slashIndex = label.indexOf("/");
+  const slashIndex = normalizedLabel.indexOf("/");
   if (slashIndex === -1) {
     return {
-      raw: label,
+      raw: normalizedLabel,
       prefix: null,
-      path: label,
+      path: normalizedLabel,
     };
   }
 
   return {
-    raw: label,
-    prefix: label.slice(0, slashIndex),
-    path: label.slice(slashIndex + 1),
+    raw: normalizedLabel,
+    prefix: normalizedLabel.slice(0, slashIndex),
+    path: normalizedLabel.slice(slashIndex + 1),
+  };
+}
+
+function parseDiffGitHeaderLabels(line: string): {
+  oldLabel: string | undefined;
+  newLabel: string | undefined;
+} {
+  const labelSection = line.slice("diff --git ".length);
+  const quotedOldLabel = parseQuotedDiffLabel(labelSection);
+  if (quotedOldLabel) {
+    const separatorMatch = /\s+/.exec(labelSection.slice(quotedOldLabel.nextIndex));
+    if (separatorMatch) {
+      const quotedNewLabel = parseQuotedDiffLabel(
+        labelSection,
+        quotedOldLabel.nextIndex + separatorMatch.index + separatorMatch[0].length
+      );
+      if (quotedNewLabel) {
+        return {
+          oldLabel: quotedOldLabel.rawLabel,
+          newLabel: quotedNewLabel.rawLabel,
+        };
+      }
+    }
+  }
+
+  const simpleLabels = labelSection.split(" ");
+  if (simpleLabels.length === 2) {
+    return {
+      oldLabel: simpleLabels[0],
+      newLabel: simpleLabels[1],
+    };
+  }
+
+  // Git can emit unquoted `diff --git` headers for paths with spaces, so look for the split
+  // that preserves the paired path on both sides instead of tokenizing on every space.
+  for (let index = 0; index < labelSection.length; index++) {
+    if (labelSection[index] !== " ") {
+      continue;
+    }
+
+    const oldLabel = labelSection.slice(0, index);
+    const newLabel = labelSection.slice(index + 1);
+    const parsedOldLabel = parseDiffPathLabel(oldLabel);
+    const parsedNewLabel = parseDiffPathLabel(newLabel);
+    if (
+      parsedOldLabel?.path != null &&
+      parsedNewLabel?.path != null &&
+      parsedOldLabel.path === parsedNewLabel.path
+    ) {
+      return {
+        oldLabel,
+        newLabel,
+      };
+    }
+  }
+
+  return {
+    oldLabel: undefined,
+    newLabel: undefined,
   };
 }
 
@@ -210,21 +380,18 @@ export function parseDiff(diffOutput: string): FileDiff[] {
     // File header: git emits path labels here, but they are not guaranteed to be literal a/ and b/.
     if (line.startsWith("diff --git ")) {
       finishFile();
-      // Extract the trailing paths from "diff --git <label>/path <label>/path" without
-      // assuming specific labels. Review diffs can use other prefixes (for example c/ and w/).
-      const parts = line.split(" ");
-      if (parts.length >= 4) {
-        currentHeaderOldLabel = parts[2];
-        currentHeaderNewLabel = parts[3];
-        currentFile = {
-          filePath: "",
-          oldPath: undefined,
-          changeType: "modified",
-          isBinary: false,
-          hunks: [],
-        };
-        syncCurrentFilePaths();
-      }
+      // Extract the paired labels without assuming literal a/ and b/ prefixes or space-free paths.
+      const parsedHeaderLabels = parseDiffGitHeaderLabels(line);
+      currentHeaderOldLabel = parsedHeaderLabels.oldLabel;
+      currentHeaderNewLabel = parsedHeaderLabels.newLabel;
+      currentFile = {
+        filePath: "",
+        oldPath: undefined,
+        changeType: "modified",
+        isBinary: false,
+        hunks: [],
+      };
+      syncCurrentFilePaths();
       continue;
     }
 
