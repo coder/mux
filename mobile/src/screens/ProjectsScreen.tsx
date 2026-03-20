@@ -342,7 +342,6 @@ export function ProjectsScreen(): JSX.Element {
 
   const renderWorkspaceRow = (item: WorkspaceListItem) => {
     const { metadata, lastActive, isOld } = item;
-    const accentWidth = 3;
     const formattedTimestamp = lastActive ? formatRelativeTime(lastActive) : "Unknown";
     const activity = activityMap[metadata.id];
 
@@ -384,8 +383,8 @@ export function ProjectsScreen(): JSX.Element {
         style={({ pressed }) => [
           {
             flexDirection: "row",
-            alignItems: "center",
-            paddingVertical: spacing.sm,
+            alignItems: "stretch",
+            paddingVertical: spacing.sm - 2,
             paddingHorizontal: spacing.md,
             borderRadius: theme.radii.sm,
             backgroundColor: pressed ? theme.colors.surfaceElevated : theme.colors.surface,
@@ -395,23 +394,22 @@ export function ProjectsScreen(): JSX.Element {
       >
         <View
           style={{
-            width: accentWidth,
-            height: "100%",
+            width: 2,
             marginRight: spacing.md,
             borderRadius: theme.radii.xs,
             backgroundColor: isOld ? theme.colors.borderSubtle : theme.colors.accent,
           }}
         />
-        <View style={{ flex: 1 }}>
-          <ThemedText variant="titleSmall" weight="semibold">
+        <View style={{ flex: 1, gap: spacing.xxs }}>
+          <ThemedText variant="body" weight="semibold" numberOfLines={1}>
             {metadata.name}
           </ThemedText>
-          <ThemedText variant="caption" numberOfLines={1}>
-            {metadata.namedWorkspacePath}
-          </ThemedText>
-        </View>
-        <View style={{ marginLeft: spacing.md }}>
-          <WorkspaceActivityIndicator activity={activity} fallbackLabel={formattedTimestamp} />
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+            <ThemedText variant="caption" numberOfLines={1} style={{ flex: 1 }}>
+              {metadata.namedWorkspacePath}
+            </ThemedText>
+            <WorkspaceActivityIndicator activity={activity} fallbackLabel={formattedTimestamp} />
+          </View>
         </View>
       </Pressable>
     );
@@ -434,7 +432,7 @@ export function ProjectsScreen(): JSX.Element {
         }
         keyboardShouldPersistTaps="handled"
       >
-        <View style={{ paddingHorizontal: spacing.lg, gap: spacing.lg }}>
+        <View style={{ paddingHorizontal: spacing.lg, gap: spacing.md }}>
           <View
             style={{
               backgroundColor: theme.colors.surface,
@@ -514,9 +512,9 @@ export function ProjectsScreen(): JSX.Element {
             </Surface>
           ) : (
             groupedProjects.map((group) => (
-              <Surface key={group.path} variant="plain" style={{ padding: spacing.lg }}>
+              <Surface key={group.path} variant="plain" style={{ padding: spacing.md }}>
                 <View
-                  style={{ flexDirection: "row", alignItems: "center", marginBottom: spacing.md }}
+                  style={{ flexDirection: "row", alignItems: "center", marginBottom: spacing.sm }}
                 >
                   <View style={{ flex: 1 }}>
                     <ThemedText variant="titleSmall" weight="semibold">
