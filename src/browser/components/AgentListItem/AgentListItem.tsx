@@ -782,7 +782,11 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                   }
                   data-workspace-id={workspaceId}
                 >
-                  {isRemoving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-4 w-4 shrink-0" strokeWidth={1.8} />}
+                  {isRemoving ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-4 w-4 shrink-0" strokeWidth={1.8} />
+                  )}
                 </button>
               </TooltipTrigger>
               <TooltipContent align="start">
@@ -875,7 +879,13 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                   )}
                   {canToggleCompletedChildren && (
                     <PositionedMenuItem
-                      icon={isCompletedChildrenExpanded ? <EyeOff className="h-4 w-4 shrink-0" strokeWidth={1.8} /> : <Eye className="h-4 w-4 shrink-0" strokeWidth={1.8} />}
+                      icon={
+                        isCompletedChildrenExpanded ? (
+                          <EyeOff className="h-4 w-4 shrink-0" strokeWidth={1.8} />
+                        ) : (
+                          <Eye className="h-4 w-4 shrink-0" strokeWidth={1.8} />
+                        )
+                      }
                       label={isCompletedChildrenExpanded ? "Hide sub-agents" : "Show sub-agents"}
                       onClick={() => {
                         toggleCompletedChildren();

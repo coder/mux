@@ -2177,7 +2177,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                               : "rotate(0deg)",
                                           }}
                                         >
-                                          <ChevronRight className="h-4 w-4 shrink-0" strokeWidth={1.8} />
+                                          <ChevronRight
+                                            className="h-4 w-4 shrink-0"
+                                            strokeWidth={1.8}
+                                          />
                                         </span>
                                       </button>
                                       {isTierExpanded && (
