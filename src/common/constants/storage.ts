@@ -143,6 +143,14 @@ export function getMCPServersKey(projectPath: string): string {
 }
 
 /**
+ * Get the localStorage key for the last selected Browser-tab session for a project.
+ * Format: "browserSelectedSession:{projectPath}"
+ */
+export function getBrowserSelectedSessionKey(projectPath: string): string {
+  return `browserSelectedSession:${projectPath}`;
+}
+
+/**
  * Get the localStorage key for thinking level preference per scope (workspace/project).
  * Format: "thinkingLevel:{scopeId}"
  */

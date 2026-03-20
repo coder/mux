@@ -1,15 +1,22 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { cleanup, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
-import type { BrowserSession } from "./browserBridgeTypes";
+import type { BrowserDiscoveredSession, BrowserSession } from "./browserBridgeTypes";
 
 let mockSession: BrowserSession | null = null;
+let mockDiscoveredSessions: BrowserDiscoveredSession[] = [];
 const connectMock = mock();
+const disconnectMock = mock();
 const sendInputMock = mock();
+const listSessionsMock = mock(() => Promise.resolve({ sessions: mockDiscoveredSessions }));
 
 void mock.module("@/browser/contexts/API", () => ({
   useAPI: () => ({
-    api: {},
+    api: {
+      browser: {
+        listSessions: listSessionsMock,
+      },
+    },
     status: "connected" as const,
     error: null,
     authenticate: () => undefined,
@@ -21,6 +28,7 @@ void mock.module("./useBrowserBridgeConnection", () => ({
   useBrowserBridgeConnection: () => ({
     session: mockSession,
     connect: connectMock,
+    disconnect: disconnectMock,
     sendInput: sendInputMock,
   }),
 }));
@@ -31,6 +39,7 @@ function createSession(overrides: Partial<BrowserSession> = {}): BrowserSession 
   return {
     id: "session-1",
     workspaceId: "workspace-1",
+    sessionName: "alpha",
     status: "live",
     frameBase64: null,
     lastError: null,
@@ -44,6 +53,13 @@ function createSession(overrides: Partial<BrowserSession> = {}): BrowserSession 
 const intervalCallbacks: Array<() => void> = [];
 let originalSetInterval: typeof globalThis.setInterval;
 let originalClearInterval: typeof globalThis.clearInterval;
+
+async function flushAsyncWork() {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
 
 describe("BrowserTab", () => {
   let originalWindow: typeof globalThis.window;
@@ -67,8 +83,14 @@ describe("BrowserTab", () => {
     }) as unknown as typeof globalThis.setInterval;
     globalThis.clearInterval = (() => undefined) as typeof globalThis.clearInterval;
     mockSession = null;
+    mockDiscoveredSessions = [];
     connectMock.mockReset();
+    disconnectMock.mockReset();
     sendInputMock.mockReset();
+    listSessionsMock.mockReset();
+    listSessionsMock.mockImplementation(() =>
+      Promise.resolve({ sessions: mockDiscoveredSessions })
+    );
   });
 
   afterEach(() => {
@@ -79,102 +101,133 @@ describe("BrowserTab", () => {
     globalThis.clearInterval = originalClearInterval;
   });
 
-  test("auto-starts the browser preview on first mount", () => {
-    render(<BrowserTab workspaceId="workspace-1" />);
-    expect(connectMock).toHaveBeenCalledTimes(1);
+  test("shows a passive waiting state when no sessions are discovered", async () => {
+    const view = render(<BrowserTab workspaceId="workspace-1" projectPath="/tmp/project" />);
+    await flushAsyncWork();
+
+    expect(connectMock).not.toHaveBeenCalled();
+    expect(view.getByText("Waiting for browser preview")).toBeTruthy();
+    expect(view.getByText(/agent-owned browser session/i)).toBeTruthy();
   });
 
-  test("keeps polling while waiting for a browser session to appear", () => {
-    render(<BrowserTab workspaceId="workspace-1" />);
+  test("auto-selects and attaches to the only attachable session", async () => {
+    mockDiscoveredSessions = [{ sessionName: "alpha", status: "attachable" }];
 
-    expect(connectMock).toHaveBeenCalledTimes(1);
-    expect(intervalCallbacks).toHaveLength(1);
+    render(<BrowserTab workspaceId="workspace-1" projectPath="/tmp/project" />);
+    await flushAsyncWork();
 
-    intervalCallbacks[0]();
-
-    expect(connectMock).toHaveBeenCalledTimes(2);
+    expect(connectMock).toHaveBeenCalledWith("alpha");
   });
 
-  test("reconnects automatically when the browser session is unavailable", () => {
+  test("surfaces missing-stream sessions without attempting to connect", async () => {
+    mockDiscoveredSessions = [{ sessionName: "testing", status: "missing_stream" }];
+
+    const view = render(<BrowserTab workspaceId="workspace-1" projectPath="/tmp/project" />);
+    await flushAsyncWork();
+
+    expect(connectMock).not.toHaveBeenCalled();
+    expect(view.getByText("Browser preview requires streaming")).toBeTruthy();
+    expect(view.getByRole("alert").textContent).toContain("AGENT_BROWSER_STREAM_PORT");
+    expect(view.getByRole("button", { name: /testing/i })).toBeTruthy();
+  });
+
+  test("renders a session picker when multiple sessions are discovered", async () => {
+    mockDiscoveredSessions = [
+      { sessionName: "alpha", status: "attachable" },
+      { sessionName: "beta", status: "attachable" },
+    ];
+
+    const view = render(<BrowserTab workspaceId="workspace-1" projectPath="/tmp/project" />);
+    await flushAsyncWork();
+
+    expect(connectMock).toHaveBeenCalledWith("alpha");
+
+    fireEvent.click(view.getByRole("button", { name: /alpha/i }));
+    fireEvent.click(view.getByTestId("browser-session-beta"));
+    await flushAsyncWork();
+
+    expect(connectMock).toHaveBeenLastCalledWith("beta");
+  });
+
+  test("lets the user select a missing-stream session from the picker", async () => {
+    mockDiscoveredSessions = [
+      { sessionName: "alpha", status: "attachable" },
+      { sessionName: "testing", status: "missing_stream" },
+    ];
+    mockSession = createSession({ sessionName: "alpha" });
+
+    const view = render(<BrowserTab workspaceId="workspace-1" projectPath="/tmp/project" />);
+    await flushAsyncWork();
+
+    fireEvent.click(view.getByRole("button", { name: /alpha/i }));
+    fireEvent.click(view.getByTestId("browser-session-testing"));
+    await flushAsyncWork();
+
+    expect(disconnectMock).toHaveBeenCalled();
+    expect(view.getByRole("alert").textContent).toContain('Session "testing"');
+    expect(view.getByText("Browser preview requires streaming")).toBeTruthy();
+  });
+
+  test("remembers the last selected browser session across remounts", async () => {
+    mockDiscoveredSessions = [
+      { sessionName: "alpha", status: "attachable" },
+      { sessionName: "beta", status: "attachable" },
+    ];
+
+    const firstRender = render(<BrowserTab workspaceId="workspace-1" projectPath="/tmp/project" />);
+    await flushAsyncWork();
+
+    fireEvent.click(firstRender.getByRole("button", { name: /alpha/i }));
+    fireEvent.click(firstRender.getByTestId("browser-session-beta"));
+    await flushAsyncWork();
+    expect(connectMock).toHaveBeenLastCalledWith("beta");
+
+    firstRender.unmount();
+    connectMock.mockReset();
+    disconnectMock.mockReset();
+
+    render(<BrowserTab workspaceId="workspace-1" projectPath="/tmp/project" />);
+    await flushAsyncWork();
+
+    expect(connectMock).toHaveBeenCalledWith("beta");
+  });
+
+  test("retries the selected discovered session after disconnect errors", async () => {
+    mockDiscoveredSessions = [{ sessionName: "alpha", status: "attachable" }];
     mockSession = createSession({
+      sessionName: "alpha",
       status: "error",
       streamState: "error",
       lastError: "disconnected",
     });
 
-    render(<BrowserTab workspaceId="workspace-1" />);
+    render(<BrowserTab workspaceId="workspace-1" projectPath="/tmp/project" />);
+    await flushAsyncWork();
 
-    expect(connectMock).toHaveBeenCalledTimes(0);
-    expect(intervalCallbacks).toHaveLength(1);
-
-    intervalCallbacks[0]();
-
-    expect(connectMock).toHaveBeenCalledTimes(1);
+    expect(connectMock).toHaveBeenCalledWith("alpha");
   });
 
-  test("retries transient bootstrap timeout errors", () => {
-    mockSession = createSession({
-      status: "error",
-      streamState: "error",
-      lastError: "Timed out waiting for browser preview stream on ws://127.0.0.1:43045",
-    });
-
-    render(<BrowserTab workspaceId="workspace-1" />);
-
-    expect(connectMock).toHaveBeenCalledTimes(0);
-    expect(intervalCallbacks).toHaveLength(1);
-
-    intervalCallbacks[0]();
-
-    expect(connectMock).toHaveBeenCalledTimes(1);
-  });
-
-  test("retries invalid-token bridge errors", () => {
-    mockSession = createSession({
-      status: "error",
-      streamState: "error",
-      lastError: "invalid token",
-    });
-
-    render(<BrowserTab workspaceId="workspace-1" />);
-
-    expect(connectMock).toHaveBeenCalledTimes(0);
-    expect(intervalCallbacks).toHaveLength(1);
-
-    intervalCallbacks[0]();
-
-    expect(connectMock).toHaveBeenCalledTimes(1);
-  });
-
-  test("does not keep retrying fatal startup errors", () => {
-    mockSession = createSession({
-      status: "error",
-      streamState: "error",
-      lastError: "Vendored agent-browser binary not found",
-    });
-
-    render(<BrowserTab workspaceId="workspace-1" />);
-
-    expect(connectMock).toHaveBeenCalledTimes(0);
-    expect(intervalCallbacks).toHaveLength(0);
-  });
-
-  test("does not render manual start or stop controls", () => {
+  test("does not render manual start or stop controls", async () => {
+    mockDiscoveredSessions = [{ sessionName: "alpha", status: "attachable" }];
     mockSession = createSession();
-    const view = render(<BrowserTab workspaceId="workspace-1" />);
+    const view = render(<BrowserTab workspaceId="workspace-1" projectPath="/tmp/project" />);
+    await flushAsyncWork();
 
     expect(view.queryByRole("button", { name: "Start" })).toBeNull();
     expect(view.queryByRole("button", { name: "Stop" })).toBeNull();
     expect(view.queryByRole("button", { name: "Restart" })).toBeNull();
   });
 
-  test("shows a visible error when the bridge session fails", () => {
+  test("shows a visible error when the bridge session fails", async () => {
+    mockDiscoveredSessions = [{ sessionName: "alpha", status: "attachable" }];
     mockSession = createSession({
       status: "error",
       lastError: "bridge exploded",
       streamState: "error",
     });
-    const view = render(<BrowserTab workspaceId="workspace-1" />);
+    const view = render(<BrowserTab workspaceId="workspace-1" projectPath="/tmp/project" />);
+    await flushAsyncWork();
+
     expect(view.getByRole("alert").textContent).toContain("bridge exploded");
   });
 });

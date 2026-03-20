@@ -10,9 +10,17 @@ export interface BrowserViewportMetadata {
   scrollOffsetY: number;
 }
 
+export type BrowserDiscoveredSessionStatus = "attachable" | "missing_stream";
+
+export interface BrowserDiscoveredSession {
+  sessionName: string;
+  status: BrowserDiscoveredSessionStatus;
+}
+
 export interface BrowserSession {
   id: string;
   workspaceId: string;
+  sessionName: string;
   status: BrowserSessionStatus;
   frameBase64: string | null;
   lastError: string | null;

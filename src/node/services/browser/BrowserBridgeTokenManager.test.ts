@@ -14,7 +14,7 @@ describe("BrowserBridgeTokenManager", () => {
     const manager = new BrowserBridgeTokenManager();
 
     try {
-      const token = manager.mint("workspace-1", "session-1", 9222);
+      const token = manager.mint("workspace-1", "session-a", 9222);
       expect(token).toMatch(/^[0-9a-f]{64}$/);
     } finally {
       manager.dispose();
@@ -25,7 +25,7 @@ describe("BrowserBridgeTokenManager", () => {
     const manager = new BrowserBridgeTokenManager();
 
     try {
-      expect(() => manager.mint("", "session-1", 9222)).toThrow(AssertionError);
+      expect(() => manager.mint("", "session-a", 9222)).toThrow(AssertionError);
       expect(() => manager.mint("workspace-1", "", 9222)).toThrow(AssertionError);
       expect(() => manager.mint("workspace-1", "session-1", 0)).toThrow(AssertionError);
     } finally {
@@ -37,10 +37,10 @@ describe("BrowserBridgeTokenManager", () => {
     const manager = new BrowserBridgeTokenManager();
 
     try {
-      const token = manager.mint("workspace-1", "session-1", 9222);
+      const token = manager.mint("workspace-1", "session-a", 9222);
       expect(manager.validate(token)).toEqual({
         workspaceId: "workspace-1",
-        sessionId: "session-1",
+        sessionName: "session-a",
         streamPort: 9222,
       });
       expect(manager.validate(token)).toBeNull();
@@ -54,7 +54,7 @@ describe("BrowserBridgeTokenManager", () => {
 
     const manager = new BrowserBridgeTokenManager();
     try {
-      const token = manager.mint("workspace-1", "session-1", 9222);
+      const token = manager.mint("workspace-1", "session-a", 9222);
       setSystemTime(Date.now() + TOKEN_TTL_MS + 1);
       expect(manager.validate(token)).toBeNull();
     } finally {

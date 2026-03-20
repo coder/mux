@@ -3,7 +3,7 @@ import { spawn } from "child_process";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { secretsToRecord, type ExternalSecretResolver } from "@/common/types/secrets";
 import type { Config } from "@/node/config";
-import { getRuntimeType } from "@/node/runtime/initHook";
+import { getMuxEnv, getRuntimeType } from "@/node/runtime/initHook";
 import type { PTYService } from "@/node/services/ptyService";
 import type { TerminalWindowManager } from "@/desktop/terminalWindowManager";
 import type {
@@ -24,8 +24,6 @@ import { SerializeAddon } from "@xterm/addon-serialize";
 import { NO_OSC_IDLE_FALLBACK_MS } from "@/constants/terminalActivity";
 import { getErrorMessage } from "@/common/utils/errors";
 import { shellQuote } from "@/common/utils/shell";
-import type { BrowserSessionStreamPortRegistry } from "@/node/services/browserSessionStreamPortRegistry";
-import { buildWorkspaceBrowserEnv } from "@/node/services/workspaceBrowserEnv";
 
 function quoteForNativeTerminalCommandArg(value: string): string {
   if (process.platform === "win32") {
@@ -76,11 +74,7 @@ export class TerminalService {
   constructor(
     config: Config,
     ptyService: PTYService,
-    private readonly opResolver?: ExternalSecretResolver,
-    private readonly browserSessionStreamPortRegistry?: Pick<
-      BrowserSessionStreamPortRegistry,
-      "reservePort" | "isReservedPort"
-    >
+    private readonly opResolver?: ExternalSecretResolver
   ) {
     this.config = config;
     this.ptyService = ptyService;
@@ -151,12 +145,8 @@ export class TerminalService {
       const runtimeType = getRuntimeType(workspaceMetadata.runtimeConfig);
       const shouldInjectLocalEnv = runtimeType === "local" || runtimeType === "worktree";
       const muxEnv = shouldInjectLocalEnv
-        ? await buildWorkspaceBrowserEnv({
-            projectPath: workspaceMetadata.projectPath,
-            runtime: runtimeType,
-            workspaceName: workspaceMetadata.name,
+        ? getMuxEnv(workspaceMetadata.projectPath, runtimeType, workspaceMetadata.name, {
             workspaceId: workspaceMetadata.id,
-            streamPortRegistry: this.browserSessionStreamPortRegistry,
           })
         : undefined;
 

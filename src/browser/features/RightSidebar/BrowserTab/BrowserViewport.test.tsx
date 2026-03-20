@@ -19,6 +19,7 @@ function createSession(overrides: Partial<BrowserSession> = {}): BrowserSession 
   return {
     id: "session-1",
     workspaceId: "workspace-1",
+    sessionName: "alpha",
     status: "live",
     frameBase64: "frame-data",
     lastError: null,

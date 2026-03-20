@@ -14,7 +14,6 @@ import {
 import { log } from "@/node/services/log";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import { assert } from "@/common/utils/assert";
-import { getMuxBrowserSessionId } from "@/common/utils/browserSession";
 
 /**
  * Check whether the init hook should be skipped and log the reason.
@@ -82,8 +81,6 @@ export function getMuxEnv(
     /** Cumulative session costs in USD (if available) */
     costsUsd?: number;
     workspaceId?: string;
-    /** Workspace-scoped stream port for agent-browser. */
-    streamPort?: number;
   }
 ): Record<string, string> {
   if (!projectPath) {
@@ -102,17 +99,6 @@ export function getMuxEnv(
   if (options?.workspaceId != null) {
     assert(options.workspaceId.trim().length > 0, "workspaceId must not be empty");
     env.MUX_WORKSPACE_ID = options.workspaceId;
-    // The vendored agent-browser CLI natively reads AGENT_BROWSER_SESSION,
-    // so Mux can export the upstream env var directly without wrapper indirection.
-    env.AGENT_BROWSER_SESSION = getMuxBrowserSessionId(options.workspaceId);
-  }
-
-  if (options?.streamPort != null) {
-    assert(
-      Number.isFinite(options.streamPort) && options.streamPort > 0,
-      "streamPort must be a positive finite number"
-    );
-    env.AGENT_BROWSER_STREAM_PORT = String(options.streamPort);
   }
 
   if (options?.modelString) {

@@ -152,12 +152,14 @@ function extractMessageError(payload: Record<string, unknown>): string | null {
 
 function createSession(
   workspaceId: string,
+  sessionName: string,
   sessionId: string,
   status: BrowserSession["status"]
 ): BrowserSession {
   return {
     id: sessionId,
     workspaceId,
+    sessionName,
     status,
     frameBase64: null,
     lastError: null,
@@ -169,7 +171,7 @@ function createSession(
 
 export function useBrowserBridgeConnection(workspaceId: string): {
   session: BrowserSession | null;
-  connect: (options?: { initialUrl?: string | null }) => void;
+  connect: (sessionName: string) => void;
   disconnect: () => void;
   sendInput: (input: BrowserInputEvent) => void;
 } {
@@ -210,14 +212,18 @@ export function useBrowserBridgeConnection(workspaceId: string): {
     disconnectSocket(null, { intentionalCloseGeneration: generation });
   };
 
-  const connect = (options?: { initialUrl?: string | null }) => {
+  const connect = (sessionName: string) => {
+    if (sessionName.trim().length === 0) {
+      throw new Error("Browser bridge connection requires a non-empty sessionName");
+    }
+
     void (async () => {
       const generation = generationRef.current + 1;
       generationRef.current = generation;
       intentionalCloseGenerationRef.current = null;
 
-      const sessionId = `browser-${workspaceId}-${generation}`;
-      disconnectSocket(createSession(workspaceId, sessionId, "starting"));
+      const sessionId = `browser-${workspaceId}-${sessionName}-${generation}`;
+      disconnectSocket(createSession(workspaceId, sessionName, sessionId, "starting"));
 
       if (!api) {
         setSession((previousSession) =>
@@ -237,7 +243,7 @@ export function useBrowserBridgeConnection(workspaceId: string): {
       try {
         const bootstrap = await api.browser.getBootstrap({
           workspaceId,
-          initialUrl: options?.initialUrl,
+          sessionName,
         });
         if (generationRef.current !== generation) {
           return;

@@ -551,7 +551,7 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
             className="h-full"
           >
             <ErrorBoundary workspaceInfo="Browser tab">
-              <BrowserTab workspaceId={props.workspaceId} />
+              <BrowserTab workspaceId={props.workspaceId} projectPath={props.projectPath} />
             </ErrorBoundary>
           </div>
         )}

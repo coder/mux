@@ -1930,28 +1930,33 @@ export const devtools = {
   },
 };
 
+const BrowserDiscoveredSessionSchema = z.object({
+  sessionName: z.string(),
+  status: z.enum(["attachable", "missing_stream"]),
+});
+
 export const browser = {
+  listSessions: {
+    input: z
+      .object({
+        workspaceId: z.string(),
+      })
+      .strict(),
+    output: z.object({
+      sessions: z.array(BrowserDiscoveredSessionSchema),
+    }),
+  },
   getBootstrap: {
     input: z
       .object({
         workspaceId: z.string(),
-        initialUrl: z.string().nullish(),
+        sessionName: z.string(),
       })
       .strict(),
     output: z.object({
       bridgePath: z.string(),
       token: z.string(),
       localBridgeBaseUrl: z.string().optional(),
-    }),
-  },
-  stop: {
-    input: z
-      .object({
-        workspaceId: z.string(),
-      })
-      .strict(),
-    output: z.object({
-      success: z.boolean(),
     }),
   },
 };

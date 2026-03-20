@@ -6,15 +6,11 @@ process.umask(0o077);
 import "source-map-support/register";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { getMuxHome, migrateLegacyMuxHome } from "@/common/constants/paths";
-
-interface AgentBrowserLauncherModule {
-  generateAgentBrowserWrapper: () => {
-    dir: string;
-    posixContent: string;
-    windowsContent: string;
-  };
-}
+import {
+  cleanupObsoleteMuxBinArtifacts,
+  getMuxHome,
+  migrateLegacyMuxHome,
+} from "@/common/constants/paths";
 
 // Fix PATH on macOS when launched from Finder (not terminal).
 // GUI apps inherit minimal PATH from launchd, missing Homebrew tools like git-lfs.
@@ -29,43 +25,14 @@ if (process.platform === "darwin") {
   }
 }
 
-function materializeVendoredBinWrappers(): void {
-  try {
-    const { generateAgentBrowserWrapper } =
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      require("@/node/services/agentBrowserLauncher") as AgentBrowserLauncherModule;
-    const { dir, posixContent, windowsContent } = generateAgentBrowserWrapper();
-
-    fs.mkdirSync(dir, { recursive: true });
-
-    const wrapperPath =
-      process.platform === "win32"
-        ? path.join(dir, "agent-browser.cmd")
-        : path.join(dir, "agent-browser");
-    fs.writeFileSync(wrapperPath, process.platform === "win32" ? windowsContent : posixContent);
-
-    if (process.platform !== "win32") {
-      fs.chmodSync(wrapperPath, 0o755);
-    }
-
-    process.env.MUX_VENDORED_BIN_DIR = dir;
-    process.env.PATH = process.env.PATH ? `${dir}${path.delimiter}${process.env.PATH}` : dir;
-  } catch (error) {
-    // Startup initialization must never crash the app.
-    console.debug("[vendored-bin] Failed to materialize agent-browser wrapper:", error);
-  }
-}
-
-// Migrate ~/.cmux before wrapper materialization because the wrappers resolve getMuxHome(),
-// which creates ~/.mux/bin and would make the migration incorrectly treat the new home as existing.
+// Migrate ~/.cmux and clean obsolete mux-managed bin artifacts before startup uses mux home paths.
 try {
   migrateLegacyMuxHome();
+  cleanupObsoleteMuxBinArtifacts();
 } catch (error) {
   // Startup initialization must never crash the app.
-  console.debug("[mux-home] Failed to migrate legacy mux home:", error);
+  console.debug("[mux-home] Failed mux home startup migrations:", error);
 }
-
-materializeVendoredBinWrappers();
 
 import { randomBytes } from "crypto";
 import { RPCHandler } from "@orpc/server/message-port";
@@ -1112,8 +1079,9 @@ if (gotTheLock) {
 
       registerMuxProtocolClient();
 
-      // Safe to retry after ready: migrateLegacyMuxHome() is idempotent and returns once ~/.mux exists.
+      // Safe to retry after ready: mux home migrations are idempotent.
       migrateLegacyMuxHome();
+      cleanupObsoleteMuxBinArtifacts();
 
       // Install React DevTools in development
       if (!app.isPackaged) {

@@ -1,13 +1,20 @@
-import { useEffect } from "react";
-import { Play, TriangleAlert } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Check, ChevronDown, Play, TriangleAlert } from "lucide-react";
 import { useAPI } from "@/browser/contexts/API";
+import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import { getBrowserSelectedSessionKey } from "@/common/constants/storage";
 import { cn } from "@/common/lib/utils";
-import type { BrowserSessionStatus } from "./browserBridgeTypes";
+import type {
+  BrowserDiscoveredSession,
+  BrowserDiscoveredSessionStatus,
+  BrowserSessionStatus,
+} from "./browserBridgeTypes";
 import { BrowserViewport } from "./BrowserViewport";
 import { useBrowserBridgeConnection } from "./useBrowserBridgeConnection";
 
 interface BrowserTabProps {
   workspaceId: string;
+  projectPath: string;
 }
 
 const STATUS_BADGES: Record<BrowserSessionStatus, { label: string; className: string }> = {
@@ -20,12 +27,26 @@ const STATUS_BADGES: Record<BrowserSessionStatus, { label: string; className: st
     className: "bg-success/20 text-success",
   },
   error: {
-    label: "Error",
+    label: "Unavailable",
     className: "border-destructive/20 bg-destructive/10 text-destructive",
   },
   ended: {
     label: "Stopped",
     className: "border-border-light bg-background-secondary text-muted",
+  },
+};
+
+const DISCOVERY_BADGES: Record<
+  BrowserDiscoveredSessionStatus,
+  { label: string; className: string }
+> = {
+  attachable: {
+    label: "Ready",
+    className: "border-accent/30 bg-accent/10 text-accent",
+  },
+  missing_stream: {
+    label: "Needs streaming",
+    className: "border-warning/30 bg-warning/10 text-warning",
   },
 };
 
@@ -36,9 +57,29 @@ function isRetryableBrowserError(error: string | null): boolean {
     return false;
   }
 
-  return /disconnected|session unavailable|stream connect failed|timed out waiting for browser preview stream|invalid token/i.test(
-    error
-  );
+  return /disconnected|session unavailable|stream connect failed|invalid token/i.test(error);
+}
+
+function chooseSelectedSession(
+  currentSessionName: string | null,
+  sessions: BrowserDiscoveredSession[]
+): string | null {
+  if (
+    currentSessionName != null &&
+    sessions.some((session) => session.sessionName === currentSessionName)
+  ) {
+    return currentSessionName;
+  }
+
+  if (currentSessionName != null && sessions.length === 0) {
+    return currentSessionName;
+  }
+
+  return sessions[0]?.sessionName ?? null;
+}
+
+function getMissingStreamMessage(sessionName: string): string {
+  return `Session "${sessionName}" was found for this workspace, but it was started without AGENT_BROWSER_STREAM_PORT, so Mux can't attach a live preview.`;
 }
 
 export function BrowserTab(props: BrowserTabProps) {
@@ -47,43 +88,129 @@ export function BrowserTab(props: BrowserTabProps) {
   }
 
   const { api } = useAPI();
-  const { session, connect, sendInput } = useBrowserBridgeConnection(props.workspaceId);
+  const [discoveredSessions, setDiscoveredSessions] = useState<BrowserDiscoveredSession[]>([]);
+  const [selectedSessionName, setSelectedSessionName] = usePersistedState<string | null>(
+    getBrowserSelectedSessionKey(props.projectPath),
+    null,
+    { listener: true }
+  );
+  const [discoveryError, setDiscoveryError] = useState<string | null>(null);
+  const { session, connect, disconnect, sendInput } = useBrowserBridgeConnection(props.workspaceId);
+
+  const selectedDiscoveredSession =
+    discoveredSessions.find((candidate) => candidate.sessionName === selectedSessionName) ?? null;
+  const missingStreamError =
+    selectedDiscoveredSession?.status === "missing_stream"
+      ? getMissingStreamMessage(selectedDiscoveredSession.sessionName)
+      : null;
 
   const isStarting = session?.status === "starting";
-  const visibleError = session?.lastError ?? session?.streamErrorMessage ?? null;
   const screenshotSrc =
     session?.frameBase64 != null ? `data:image/jpeg;base64,${session.frameBase64}` : null;
-  const headerBadge = session == null ? null : STATUS_BADGES[session.status];
+  const visibleError =
+    missingStreamError ??
+    session?.lastError ??
+    session?.streamErrorMessage ??
+    discoveryError ??
+    null;
+  const headerBadge =
+    session != null
+      ? STATUS_BADGES[session.status]
+      : selectedDiscoveredSession != null
+        ? DISCOVERY_BADGES[selectedDiscoveredSession.status]
+        : null;
   const headerTitle = "Browser preview";
 
   useEffect(() => {
     if (api == null) {
+      setDiscoveryError("Browser API client is unavailable.");
+      setDiscoveredSessions([]);
       return;
     }
 
-    if (session?.status === "starting" || session?.status === "live") {
+    let cancelled = false;
+
+    const refreshSessions = async (): Promise<void> => {
+      try {
+        const result = await api.browser.listSessions({ workspaceId: props.workspaceId });
+        if (cancelled) {
+          return;
+        }
+
+        setDiscoveryError(null);
+        setDiscoveredSessions(result.sessions);
+        setSelectedSessionName((currentSessionName) =>
+          chooseSelectedSession(currentSessionName, result.sessions)
+        );
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+
+        setDiscoveryError(
+          error instanceof Error ? error.message : "Failed to discover browser sessions."
+        );
+        setDiscoveredSessions([]);
+        setSelectedSessionName(null);
+      }
+    };
+
+    void refreshSessions();
+    const refreshTimer = setInterval(() => {
+      void refreshSessions();
+    }, BROWSER_PREVIEW_RETRY_INTERVAL_MS);
+    refreshTimer.unref?.();
+
+    return () => {
+      cancelled = true;
+      clearInterval(refreshTimer);
+    };
+  }, [api, props.workspaceId, setSelectedSessionName]);
+
+  useEffect(() => {
+    if (api == null || selectedSessionName == null || selectedDiscoveredSession == null) {
+      disconnect();
       return;
     }
 
-    const shouldPollForSession =
-      session == null || (session.status === "error" && isRetryableBrowserError(visibleError));
-    if (!shouldPollForSession) {
+    if (selectedDiscoveredSession.status === "missing_stream") {
+      disconnect();
       return;
     }
 
-    if (session == null) {
-      connect();
+    if (
+      session?.sessionName === selectedSessionName &&
+      (session.status === "starting" || session.status === "live")
+    ) {
+      return;
     }
 
+    const shouldRetryConnection =
+      session?.sessionName !== selectedSessionName ||
+      session?.status === "ended" ||
+      (session?.status === "error" && isRetryableBrowserError(visibleError));
+    if (!shouldRetryConnection) {
+      return;
+    }
+
+    connect(selectedSessionName);
     const retryTimer = setInterval(() => {
-      connect();
+      connect(selectedSessionName);
     }, BROWSER_PREVIEW_RETRY_INTERVAL_MS);
     retryTimer.unref?.();
 
     return () => {
       clearInterval(retryTimer);
     };
-  }, [api, connect, session, visibleError]);
+  }, [
+    api,
+    connect,
+    disconnect,
+    selectedDiscoveredSession,
+    selectedSessionName,
+    session,
+    visibleError,
+  ]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -96,6 +223,13 @@ export function BrowserTab(props: BrowserTabProps) {
             {headerBadge && <BrowserHeaderBadge badge={headerBadge} />}
           </div>
         </div>
+        {discoveredSessions.length > 0 && selectedSessionName != null && (
+          <BrowserSessionPicker
+            sessions={discoveredSessions}
+            selectedSessionName={selectedSessionName}
+            onChange={setSelectedSessionName}
+          />
+        )}
       </div>
 
       {visibleError && !screenshotSrc && (
@@ -118,7 +252,12 @@ export function BrowserTab(props: BrowserTabProps) {
           visibleError={visibleError}
           sendInput={sendInput}
           placeholder={
-            <BrowserViewerState sessionStatus={session?.status ?? null} isStarting={isStarting} />
+            <BrowserViewerState
+              sessionStatus={session?.status ?? null}
+              isStarting={isStarting}
+              selectedSession={selectedDiscoveredSession}
+              hasDiscoveredSessions={discoveredSessions.length > 0}
+            />
           }
         />
       </div>
@@ -139,15 +278,102 @@ function BrowserHeaderBadge(props: { badge: { label: string; className: string }
   );
 }
 
+function BrowserSessionPicker(props: {
+  sessions: BrowserDiscoveredSession[];
+  selectedSessionName: string;
+  onChange: (sessionName: string) => void;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [isOpen]);
+
+  return (
+    <div ref={containerRef} className="relative shrink-0">
+      <button
+        type="button"
+        className="border-border-light bg-background-secondary text-foreground hover:bg-hover inline-flex max-w-[16rem] items-center gap-1 rounded-md border px-2 py-1 text-[11px]"
+        aria-expanded={isOpen}
+        aria-haspopup="listbox"
+        onClick={() => setIsOpen((current) => !current)}
+      >
+        <span className="truncate">{props.selectedSessionName}</span>
+        <ChevronDown className="h-3 w-3 shrink-0" />
+      </button>
+
+      {isOpen && (
+        <div className="bg-dark border-border absolute top-full right-0 z-[10001] mt-1 min-w-[16rem] overflow-hidden rounded-md border shadow-md">
+          <div
+            role="listbox"
+            aria-label="Browser sessions"
+            className="max-h-[240px] overflow-y-auto p-1"
+          >
+            {props.sessions.map((session) => (
+              <button
+                key={session.sessionName}
+                type="button"
+                role="option"
+                aria-selected={session.sessionName === props.selectedSessionName}
+                data-testid={`browser-session-${session.sessionName}`}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  props.onChange(session.sessionName);
+                  setIsOpen(false);
+                }}
+                className="hover:bg-hover flex w-full items-center gap-1.5 rounded-sm px-2 py-1 text-left text-[11px]"
+              >
+                <Check
+                  className={cn(
+                    "h-3 w-3 shrink-0",
+                    session.sessionName === props.selectedSessionName ? "opacity-100" : "opacity-0"
+                  )}
+                />
+                <span className="min-w-0 flex-1 truncate">{session.sessionName}</span>
+                {session.status === "missing_stream" && (
+                  <span className="text-warning shrink-0 text-[10px]">Needs streaming</span>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function BrowserViewerState(props: {
   sessionStatus: BrowserSessionStatus | null;
   isStarting: boolean;
+  selectedSession: BrowserDiscoveredSession | null;
+  hasDiscoveredSessions: boolean;
 }) {
   const content = (() => {
+    if (props.selectedSession?.status === "missing_stream") {
+      return {
+        title: "Browser preview requires streaming",
+        description: `Session "${props.selectedSession.sessionName}" was found, but it needs AGENT_BROWSER_STREAM_PORT set before Mux can attach a live preview.`,
+      };
+    }
+
     if (props.isStarting || props.sessionStatus === "starting") {
       return {
-        title: "Starting browser preview",
-        description: "Mux is waiting for the browser bridge to publish its first live frame.",
+        title: "Connecting to browser preview",
+        description: "Mux is attaching to the selected agent-owned browser session.",
       };
     }
 
@@ -155,14 +381,21 @@ function BrowserViewerState(props: {
       return {
         title: "Browser preview unavailable",
         description:
-          "Mux will reconnect automatically when the workspace browser session is available again.",
+          "Mux will keep retrying while a discovered browser session is available for this project.",
+      };
+    }
+
+    if (props.hasDiscoveredSessions) {
+      return {
+        title: "Waiting for browser frames",
+        description: "Mux found a browser session and is waiting for live preview frames.",
       };
     }
 
     return {
       title: "Waiting for browser preview",
       description:
-        "Mux connects to the workspace browser session automatically when one is available.",
+        "Mux will attach automatically when an agent-owned browser session is available for this project.",
     };
   })();
 

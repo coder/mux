@@ -104,35 +104,50 @@ describe("LocalBaseRuntime.resolvePath", () => {
 });
 
 describe("LocalBaseRuntime.exec PATH handling", () => {
-  it("prepends mux's vendored bin dir even when the caller supplies PATH", async () => {
+  it("strips mux browser shims and leaked browser env from child shells", async () => {
     const runtime = new TestLocalRuntime();
+    const tempBinDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-path-probe-"));
     const vendoredBinDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-vendored-bin-"));
-    const vendoredCommandPath = path.join(vendoredBinDir, "mux-vendored-probe");
+    const commandPath = path.join(tempBinDir, "mux-path-probe");
+    const vendoredCommandPath = path.join(vendoredBinDir, "mux-path-probe");
     const originalVendoredBinDir = process.env.MUX_VENDORED_BIN_DIR;
+    const originalAgentBrowserSession = process.env.AGENT_BROWSER_SESSION;
 
     try {
+      await fs.writeFile(commandPath, "#!/bin/sh\necho caller-path\n", "utf8");
+      await fs.chmod(commandPath, 0o755);
       await fs.writeFile(vendoredCommandPath, "#!/bin/sh\necho vendored-path\n", "utf8");
       await fs.chmod(vendoredCommandPath, 0o755);
       process.env.MUX_VENDORED_BIN_DIR = vendoredBinDir;
+      process.env.AGENT_BROWSER_SESSION = "mux-leaked-session";
 
-      const stream = await runtime.exec("mux-vendored-probe", {
-        cwd: os.tmpdir(),
-        timeout: 5,
-        env: { PATH: "/usr/bin:/bin" },
-      });
+      const stream = await runtime.exec(
+        'printf "%s\\n" "${AGENT_BROWSER_SESSION-unset}" && mux-path-probe',
+        {
+          cwd: os.tmpdir(),
+          timeout: 5,
+          env: { PATH: `${vendoredBinDir}:${tempBinDir}:/usr/bin:/bin` },
+        }
+      );
       const [stdout, exitCode] = await Promise.all([
         readStreamAsString(stream.stdout),
         stream.exitCode,
       ]);
 
       expect(exitCode).toBe(0);
-      expect(stdout.trim()).toBe("vendored-path");
+      expect(stdout.trim()).toBe("unset\ncaller-path");
     } finally {
       if (originalVendoredBinDir == null) {
         delete process.env.MUX_VENDORED_BIN_DIR;
       } else {
         process.env.MUX_VENDORED_BIN_DIR = originalVendoredBinDir;
       }
+      if (originalAgentBrowserSession == null) {
+        delete process.env.AGENT_BROWSER_SESSION;
+      } else {
+        process.env.AGENT_BROWSER_SESSION = originalAgentBrowserSession;
+      }
+      await fs.rm(tempBinDir, { recursive: true, force: true });
       await fs.rm(vendoredBinDir, { recursive: true, force: true });
     }
   });

@@ -113,7 +113,6 @@ import type {
 } from "@/common/types/stream";
 import type { TerminalService } from "@/node/services/terminalService";
 import type { DesktopSessionManager } from "@/node/services/desktop/DesktopSessionManager";
-import type { BrowserBridgeSessionManager } from "@/node/services/browser/BrowserBridgeSessionManager";
 import type { WorkspaceAISettingsSchema } from "@/common/orpc/schemas";
 import type { SessionTimingService } from "@/node/services/sessionTimingService";
 import type { SessionUsageService } from "@/node/services/sessionUsageService";
@@ -1109,8 +1108,6 @@ export class WorkspaceService extends EventEmitter {
   // Optional services for workspace cleanup during archive/remove lifecycle operations.
   private terminalService?: TerminalService;
   private desktopSessionManager?: DesktopSessionManager;
-  // Optional browser session service for cleanup on workspace archive/removal.
-  private browserBridgeSessionManager?: BrowserBridgeSessionManager;
   private readonly sessionTimingService?: SessionTimingService;
   private workspaceLifecycleHooks?: WorkspaceLifecycleHooks;
   private taskService?: TaskService;
@@ -1145,10 +1142,6 @@ export class WorkspaceService extends EventEmitter {
         `Failed to close desktop session during ${reason} for workspace ${workspaceId}: ${getErrorMessage(error)}`
       );
     }
-  }
-
-  setBrowserBridgeSessionManager(browserBridgeSessionManager: BrowserBridgeSessionManager): void {
-    this.browserBridgeSessionManager = browserBridgeSessionManager;
   }
 
   setWorkspaceLifecycleHooks(hooks: WorkspaceLifecycleHooks): void {
@@ -2712,10 +2705,6 @@ export class WorkspaceService extends EventEmitter {
       this.terminalService?.closeWorkspaceSessions(workspaceId);
       await this.closeDesktopSessionBestEffort(workspaceId, "remove");
 
-      // Close any browser sessions (tracked or raw CLI-started) for this workspace.
-      // Best-effort: failure logs internally but does not block removal.
-      await this.browserBridgeSessionManager?.stop(workspaceId);
-
       // Remove from config
       await this.config.removeWorkspace(workspaceId);
 
@@ -3379,10 +3368,6 @@ export class WorkspaceService extends EventEmitter {
       // Archiving hides workspace UI; do not leave terminal PTYs running headless.
       this.terminalService?.closeWorkspaceSessions(workspaceId);
       await this.closeDesktopSessionBestEffort(workspaceId, "archive");
-
-      // Close any browser sessions (tracked or raw CLI-started) for this workspace.
-      // Best-effort: failure logs internally but does not block archive.
-      await this.browserBridgeSessionManager?.stop(workspaceId);
 
       await this.config.editConfig((config) => {
         const projectConfig = config.projects.get(projectPath);

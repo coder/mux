@@ -28,7 +28,7 @@ import { expandTilde } from "./tildeExpansion";
 import { getInitHookPath, createLineBufferedLoggers } from "./initHook";
 import { getErrorMessage } from "@/common/utils/errors";
 import { getAtomicWriteTempPath } from "./atomicWriteTempPath";
-import { prependVendoredBinDirToPath } from "@/node/services/agentBrowserLauncher";
+import { sanitizeMuxChildEnv } from "./childProcessEnv";
 
 /**
  * Abstract base class for local runtimes (both WorktreeRuntime and LocalRuntime).
@@ -83,12 +83,12 @@ export abstract class LocalBaseRuntime implements Runtime {
     const spawnArgs = ["-c", `${nonInteractivePrelude}\n${command}`];
 
     const defaultPath = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
-    const mergedEnv = { ...process.env, ...(options.env ?? {}) };
+    const mergedEnv = sanitizeMuxChildEnv({ ...process.env, ...(options.env ?? {}) });
     const basePath =
       (options.env?.PATH && options.env.PATH.length > 0
-        ? options.env.PATH
+        ? mergedEnv.PATH
         : (mergedEnv.PATH ?? mergedEnv.Path)) ?? defaultPath;
-    const effectivePath = prependVendoredBinDirToPath(basePath, mergedEnv) ?? basePath;
+    const effectivePath = basePath;
 
     const childProcess = spawn(spawnCommand, spawnArgs, {
       cwd,

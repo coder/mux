@@ -3,7 +3,7 @@ import type { Duplex } from "node:stream";
 import { WebSocketServer, WebSocket, type RawData } from "ws";
 import { assert } from "@/common/utils/assert";
 import { log } from "@/node/services/log";
-import type { BrowserBridgeSessionManager } from "./BrowserBridgeSessionManager";
+import type { AgentBrowserSessionDiscoveryService } from "./AgentBrowserSessionDiscoveryService";
 import type { BrowserBridgeTokenManager } from "./BrowserBridgeTokenManager";
 
 const INVALID_TOKEN_CLOSE_CODE = 4001;
@@ -19,7 +19,7 @@ interface BridgePair {
 }
 
 export interface BrowserBridgeServerOptions {
-  browserBridgeSessionManager: Pick<BrowserBridgeSessionManager, "getLiveSessionConnection">;
+  browserSessionDiscoveryService: Pick<AgentBrowserSessionDiscoveryService, "getSessionConnection">;
   browserBridgeTokenManager: Pick<BrowserBridgeTokenManager, "validate">;
 }
 
@@ -147,7 +147,7 @@ async function connectToStream(port: number): Promise<WebSocket> {
 }
 
 export class BrowserBridgeServer {
-  private readonly browserBridgeSessionManager: BrowserBridgeServerOptions["browserBridgeSessionManager"];
+  private readonly browserSessionDiscoveryService: BrowserBridgeServerOptions["browserSessionDiscoveryService"];
   private readonly browserBridgeTokenManager: BrowserBridgeServerOptions["browserBridgeTokenManager"];
   private readonly wss: WebSocketServer;
   private readonly activePairs = new Set<BridgePair>();
@@ -156,15 +156,15 @@ export class BrowserBridgeServer {
 
   constructor(options: BrowserBridgeServerOptions) {
     assert(
-      options.browserBridgeSessionManager,
-      "BrowserBridgeServer requires a BrowserBridgeSessionManager"
+      options.browserSessionDiscoveryService,
+      "BrowserBridgeServer requires a browserSessionDiscoveryService"
     );
     assert(
       options.browserBridgeTokenManager,
       "BrowserBridgeServer requires a BrowserBridgeTokenManager"
     );
 
-    this.browserBridgeSessionManager = options.browserBridgeSessionManager;
+    this.browserSessionDiscoveryService = options.browserSessionDiscoveryService;
     this.browserBridgeTokenManager = options.browserBridgeTokenManager;
     this.wss = new WebSocketServer({ noServer: true });
   }
@@ -264,18 +264,19 @@ export class BrowserBridgeServer {
       return;
     }
 
-    const liveSession = await this.browserBridgeSessionManager.getLiveSessionConnection(
-      payload.workspaceId
+    const liveSession = await this.browserSessionDiscoveryService.getSessionConnection(
+      payload.workspaceId,
+      payload.sessionName
     );
     if (
       !liveSession ||
-      liveSession.sessionId !== payload.sessionId ||
+      liveSession.sessionName !== payload.sessionName ||
       liveSession.streamPort !== payload.streamPort
     ) {
       log.warn("BrowserBridgeServer: rejecting upgrade with missing or mismatched session", {
         workspaceId: payload.workspaceId,
-        expectedSessionId: payload.sessionId,
-        actualSessionId: liveSession?.sessionId,
+        expectedSessionName: payload.sessionName,
+        actualSessionName: liveSession?.sessionName,
         expectedStreamPort: payload.streamPort,
         actualStreamPort: liveSession?.streamPort,
       });
@@ -286,7 +287,7 @@ export class BrowserBridgeServer {
     try {
       const upstream = await connectToStream(liveSession.streamPort);
       const pair: BridgePair = { client: ws, upstream, closed: false };
-      this.attachBridgeListeners(pair, payload.workspaceId, liveSession.sessionId);
+      this.attachBridgeListeners(pair, payload.workspaceId, liveSession.sessionName);
       this.activePairs.add(pair);
       if (ws.readyState !== WebSocket.OPEN) {
         this.cleanupPair(pair, { closeReason: "websocket closed before bridge finished" });
@@ -294,7 +295,7 @@ export class BrowserBridgeServer {
     } catch (error) {
       log.warn("BrowserBridgeServer: failed to connect to stream endpoint", {
         workspaceId: payload.workspaceId,
-        sessionId: payload.sessionId,
+        sessionName: payload.sessionName,
         streamPort: payload.streamPort,
         error,
       });

@@ -47,7 +47,6 @@
         "@radix-ui/react-visually-hidden": "^1.2.4",
         "@xterm/addon-serialize": "^0.14.0",
         "@xterm/headless": "^6.0.0",
-        "agent-browser": "^0.20.14",
         "ai": "^6.0.72",
         "ai-tokenizer": "^1.0.6",
         "chalk": "^5.6.2",
@@ -199,17 +198,16 @@
     },
   },
   "trustedDependencies": [
-    "agent-browser",
-    "ssh2",
-    "@swc/core",
-    "cpu-features",
-    "core-js",
-    "unrs-resolver",
     "esbuild",
     "sharp",
     "node-pty",
-    "lzma-native",
+    "ssh2",
+    "@swc/core",
     "electron",
+    "lzma-native",
+    "core-js",
+    "cpu-features",
+    "unrs-resolver",
   ],
   "packages": {
     "7zip-bin": ["7zip-bin@5.2.0", "", {}, "sha512-ukTPVhqG4jNzMro2qA9HSCSSVJN3aN7tlb+hfqYCt3ER0yWroeA2VR38MNrOHLQ/cVj+DaIMad0kFCtWWowh/A=="],
@@ -1627,8 +1625,6 @@
     "acorn-jsx": ["acorn-jsx@5.3.2", "", { "peerDependencies": { "acorn": "^6.0.0 || ^7.0.0 || ^8.0.0" } }, "sha512-rq9s+JNhf0IChjtDXxllJ7g41oZk5SlXtp0LHwyA5cejwn7vKmKp4pPri6YEePv2PU65sAsegbXtIinmDFDXgQ=="],
 
     "agent-base": ["agent-base@7.1.4", "", {}, "sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ=="],
-
-    "agent-browser": ["agent-browser@0.20.14", "", { "bin": { "agent-browser": "bin/agent-browser.js" } }, "sha512-Z/6uCtDJXsKpr7XkY+ljHbz7QGjorFDQR54v30AMPgs0ocTWT9noId2k3Lwj0XHCZIVpbri3PE7XGOmmJSv6Rg=="],
 
     "agentkeepalive": ["agentkeepalive@4.6.0", "", { "dependencies": { "humanize-ms": "^1.2.1" } }, "sha512-kja8j7PjmncONqaTsB8fQ+wE2mSU2DJ9D4XKoJ5PFWIdRMa6SLSN1ff4mOr4jCbfRSsxR4keIiySJU0N9T5hIQ=="],
 

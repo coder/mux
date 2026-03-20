@@ -1077,6 +1077,20 @@ export const router = (authToken?: string) => {
         }),
     },
     browser: {
+      listSessions: t
+        .input(schemas.browser.listSessions.input)
+        .output(schemas.browser.listSessions.output)
+        .handler(async ({ context, input }) => {
+          const sessions = await context.browserSessionDiscoveryService.listSessions(
+            input.workspaceId
+          );
+          return {
+            sessions: sessions.map((session) => ({
+              sessionName: session.sessionName,
+              status: session.status,
+            })),
+          };
+        }),
       getBootstrap: t
         .input(schemas.browser.getBootstrap.input)
         .output(schemas.browser.getBootstrap.output)
@@ -1086,15 +1100,17 @@ export const router = (authToken?: string) => {
             throw new Error("Browser bridge bootstrap failed: API server unavailable");
           }
 
-          const connection = await context.browserBridgeSessionManager.ensureStarted(
+          const connection = await context.browserSessionDiscoveryService.getSessionConnection(
             input.workspaceId,
-            {
-              initialUrl: input.initialUrl,
-            }
+            input.sessionName
           );
+          if (connection == null) {
+            throw new Error(`Browser session ${input.sessionName} is unavailable.`);
+          }
+
           const token = context.browserBridgeTokenManager.mint(
-            connection.workspaceId,
-            connection.sessionId,
+            input.workspaceId,
+            connection.sessionName,
             connection.streamPort
           );
 
@@ -1103,13 +1119,6 @@ export const router = (authToken?: string) => {
             token,
             localBridgeBaseUrl: serverInfo.baseUrl,
           };
-        }),
-      stop: t
-        .input(schemas.browser.stop.input)
-        .output(schemas.browser.stop.output)
-        .handler(async ({ context, input }) => {
-          await context.browserBridgeSessionManager.stop(input.workspaceId);
-          return { success: true };
         }),
     },
     uiLayouts: {

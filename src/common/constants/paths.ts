@@ -1,4 +1,4 @@
-import { existsSync, renameSync, symlinkSync } from "fs";
+import { existsSync, lstatSync, renameSync, rmSync, symlinkSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 
@@ -29,6 +29,30 @@ export function migrateLegacyMuxHome(): void {
   }
 
   // If neither exists, nothing to do (will be created on first use)
+}
+
+const OBSOLETE_MUX_BIN_ARTIFACTS = ["agent-browser", "agent-browser.cmd"] as const;
+
+/**
+ * Remove obsolete mux-managed bin wrappers that are no longer created at startup.
+ * Keep this startup migration narrow so we don't delete unrelated user-managed files.
+ */
+export function cleanupObsoleteMuxBinArtifacts(rootDir?: string): void {
+  const binDir = join(rootDir ?? getMuxHome(), "bin");
+
+  for (const artifactName of OBSOLETE_MUX_BIN_ARTIFACTS) {
+    const artifactPath = join(binDir, artifactName);
+    if (!existsSync(artifactPath)) {
+      continue;
+    }
+
+    const stats = lstatSync(artifactPath);
+    if (stats.isDirectory()) {
+      continue;
+    }
+
+    rmSync(artifactPath, { force: true });
+  }
 }
 
 /**

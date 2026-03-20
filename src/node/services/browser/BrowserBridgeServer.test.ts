@@ -6,7 +6,7 @@ import { BrowserBridgeServer } from "./BrowserBridgeServer";
 
 const VALID_TOKEN = "valid-token";
 const VALID_WORKSPACE_ID = "workspace-1";
-const VALID_SESSION_ID = "mux-workspace-1";
+const VALID_SESSION_NAME = "session-a";
 const VALID_STREAM_PORT = 9222;
 
 interface UpgradeHarness {
@@ -36,14 +36,31 @@ function normalizeMessage(data: RawData): string {
   return Buffer.from(data).toString("utf8");
 }
 
+function createAttachableConnection(sessionName: string, streamPort: number) {
+  return {
+    sessionName,
+    pid: 101,
+    cwd: "/tmp/project",
+    status: "attachable" as const,
+    streamPort,
+  };
+}
+
 function createBridgeServer(
   options: {
     validate?: (
       token: string
-    ) => { workspaceId: string; sessionId: string; streamPort: number } | null;
-    getLiveSessionConnection?: (
-      workspaceId: string
-    ) => Promise<{ workspaceId: string; sessionId: string; streamPort: number } | null>;
+    ) => { workspaceId: string; sessionName: string; streamPort: number } | null;
+    getSessionConnection?: (
+      workspaceId: string,
+      sessionName: string
+    ) => Promise<{
+      sessionName: string;
+      pid: number;
+      cwd: string;
+      status: "attachable";
+      streamPort: number;
+    } | null>;
   } = {}
 ): BrowserBridgeServer {
   return new BrowserBridgeServer({
@@ -54,19 +71,19 @@ function createBridgeServer(
           token === VALID_TOKEN
             ? {
                 workspaceId: VALID_WORKSPACE_ID,
-                sessionId: VALID_SESSION_ID,
+                sessionName: VALID_SESSION_NAME,
                 streamPort: VALID_STREAM_PORT,
               }
             : null
         ),
     },
-    browserBridgeSessionManager: {
-      getLiveSessionConnection:
-        options.getLiveSessionConnection ??
-        mock((workspaceId: string) =>
+    browserSessionDiscoveryService: {
+      getSessionConnection:
+        options.getSessionConnection ??
+        mock((workspaceId: string, sessionName: string) =>
           Promise.resolve(
-            workspaceId === VALID_WORKSPACE_ID
-              ? { workspaceId, sessionId: VALID_SESSION_ID, streamPort: VALID_STREAM_PORT }
+            workspaceId === VALID_WORKSPACE_ID && sessionName === VALID_SESSION_NAME
+              ? createAttachableConnection(sessionName, VALID_STREAM_PORT)
               : null
           )
         ),
@@ -199,10 +216,10 @@ describe("BrowserBridgeServer", () => {
   test("bridges raw WebSocket messages in both directions for a valid token", async () => {
     const upstreamHarness = await listenUpstreamServer();
     const bridgeServer = createBridgeServer({
-      getLiveSessionConnection: mock((workspaceId: string) =>
+      getSessionConnection: mock((workspaceId: string, sessionName: string) =>
         Promise.resolve(
-          workspaceId === VALID_WORKSPACE_ID
-            ? { workspaceId, sessionId: VALID_SESSION_ID, streamPort: upstreamHarness.port }
+          workspaceId === VALID_WORKSPACE_ID && sessionName === VALID_SESSION_NAME
+            ? createAttachableConnection(sessionName, upstreamHarness.port)
             : null
         )
       ),
@@ -210,7 +227,7 @@ describe("BrowserBridgeServer", () => {
         token === VALID_TOKEN
           ? {
               workspaceId: VALID_WORKSPACE_ID,
-              sessionId: VALID_SESSION_ID,
+              sessionName: VALID_SESSION_NAME,
               streamPort: upstreamHarness.port,
             }
           : null
@@ -241,7 +258,7 @@ describe("BrowserBridgeServer", () => {
   test("closes with 4001 for invalid or missing tokens", async () => {
     const bridgeServer = createBridgeServer({
       validate: mock(() => null),
-      getLiveSessionConnection: mock(() => Promise.resolve(null)),
+      getSessionConnection: mock(() => Promise.resolve(null)),
     });
 
     try {
@@ -260,17 +277,14 @@ describe("BrowserBridgeServer", () => {
   });
 
   test("closes with 4002 when the live session is missing or mismatched", async () => {
-    for (const liveSession of [
-      null,
-      { workspaceId: VALID_WORKSPACE_ID, sessionId: VALID_SESSION_ID, streamPort: 9999 },
-    ]) {
+    for (const liveSession of [null, createAttachableConnection(VALID_SESSION_NAME, 9999)]) {
       const bridgeServer = createBridgeServer({
         validate: mock(() => ({
           workspaceId: VALID_WORKSPACE_ID,
-          sessionId: VALID_SESSION_ID,
+          sessionName: VALID_SESSION_NAME,
           streamPort: VALID_STREAM_PORT,
         })),
-        getLiveSessionConnection: mock(() => Promise.resolve(liveSession)),
+        getSessionConnection: mock(() => Promise.resolve(liveSession)),
       });
 
       try {
@@ -289,7 +303,7 @@ describe("BrowserBridgeServer", () => {
 
   test("closes the client socket when bridge setup rejects", async () => {
     const bridgeServer = createBridgeServer({
-      getLiveSessionConnection: mock(() => Promise.reject(new Error("boom"))),
+      getSessionConnection: mock(() => Promise.reject(new Error("boom"))),
     });
     const ws = createMockClientSocket();
     const internalBridgeServer = bridgeServer as unknown as {

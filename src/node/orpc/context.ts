@@ -28,7 +28,7 @@ import type { SessionTimingService } from "@/node/services/sessionTimingService"
 import type { SessionUsageService } from "@/node/services/sessionUsageService";
 import type { TaskService } from "@/node/services/taskService";
 import type { BrowserBridgeServer } from "@/node/services/browser/BrowserBridgeServer";
-import type { BrowserBridgeSessionManager } from "@/node/services/browser/BrowserBridgeSessionManager";
+import type { AgentBrowserSessionDiscoveryService } from "@/node/services/browser/AgentBrowserSessionDiscoveryService";
 import type { BrowserBridgeTokenManager } from "@/node/services/browser/BrowserBridgeTokenManager";
 import type { DevToolsService } from "@/node/services/devToolsService";
 import type { PolicyService } from "@/node/services/policyService";
@@ -69,7 +69,7 @@ export interface ORPCContext {
   experimentsService: ExperimentsService;
   sessionUsageService: SessionUsageService;
   devToolsService: DevToolsService;
-  browserBridgeSessionManager: BrowserBridgeSessionManager;
+  browserSessionDiscoveryService: AgentBrowserSessionDiscoveryService;
   browserBridgeTokenManager: BrowserBridgeTokenManager;
   browserBridgeServer: BrowserBridgeServer;
   policyService: PolicyService;

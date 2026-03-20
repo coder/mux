@@ -132,11 +132,15 @@ describe("useBrowserBridgeConnection", () => {
     const { result } = renderHook(() => useBrowserBridgeConnection("workspace-1"));
 
     act(() => {
-      result.current.connect();
+      result.current.connect("session-a");
     });
     await flushAsyncWork();
 
     const socket = FakeWebSocket.instances.at(-1)!;
+    expect(getBootstrapMock).toHaveBeenCalledWith({
+      workspaceId: "workspace-1",
+      sessionName: "session-a",
+    });
     expect(socket.url).toBe("ws://localhost/browser/ws?token=token-1");
 
     act(() => {
@@ -157,6 +161,7 @@ describe("useBrowserBridgeConnection", () => {
     await flushAsyncWork();
 
     expect(result.current.session?.status).toBe("live");
+    expect(result.current.session?.sessionName).toBe("session-a");
     expect(result.current.session?.frameBase64).toBe("abc123");
     expect(result.current.session?.frameMetadata?.deviceWidth).toBe(1280);
   });
@@ -165,7 +170,7 @@ describe("useBrowserBridgeConnection", () => {
     const { result } = renderHook(() => useBrowserBridgeConnection("workspace-1"));
 
     act(() => {
-      result.current.connect();
+      result.current.connect("session-a");
     });
     await flushAsyncWork();
 
@@ -181,7 +186,7 @@ describe("useBrowserBridgeConnection", () => {
     const { result } = renderHook(() => useBrowserBridgeConnection("workspace-1"));
 
     act(() => {
-      result.current.connect();
+      result.current.connect("session-a");
     });
     await flushAsyncWork();
 

@@ -4,7 +4,7 @@ import { log } from "@/node/services/log";
 
 interface TokenRecord {
   workspaceId: string;
-  sessionId: string;
+  sessionName: string;
   streamPort: number;
   expiresAtMs: number;
 }
@@ -21,9 +21,9 @@ export class BrowserBridgeTokenManager {
     this.cleanupTimer.unref?.();
   }
 
-  mint(workspaceId: string, sessionId: string, streamPort: number): string {
+  mint(workspaceId: string, sessionName: string, streamPort: number): string {
     assert(workspaceId.length > 0, "BrowserBridgeTokenManager.mint requires non-empty workspaceId");
-    assert(sessionId.length > 0, "BrowserBridgeTokenManager.mint requires non-empty sessionId");
+    assert(sessionName.length > 0, "BrowserBridgeTokenManager.mint requires non-empty sessionName");
     assert(
       Number.isInteger(streamPort),
       "BrowserBridgeTokenManager.mint requires integer streamPort"
@@ -37,7 +37,7 @@ export class BrowserBridgeTokenManager {
 
     this.tokens.set(token, {
       workspaceId,
-      sessionId,
+      sessionName,
       streamPort,
       expiresAtMs: Date.now() + BROWSER_BRIDGE_TOKEN_TTL_MS,
     });
@@ -45,7 +45,7 @@ export class BrowserBridgeTokenManager {
     return token;
   }
 
-  validate(token: string): { workspaceId: string; sessionId: string; streamPort: number } | null {
+  validate(token: string): { workspaceId: string; sessionName: string; streamPort: number } | null {
     const record = this.tokens.get(token);
     if (!record) {
       return null;
@@ -60,7 +60,7 @@ export class BrowserBridgeTokenManager {
 
     return {
       workspaceId: record.workspaceId,
-      sessionId: record.sessionId,
+      sessionName: record.sessionName,
       streamPort: record.streamPort,
     };
   }

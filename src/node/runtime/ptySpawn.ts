@@ -1,7 +1,7 @@
 import type { IPty } from "node-pty";
 import { log } from "@/node/services/log";
 import { getErrorMessage } from "@/common/utils/errors";
-import { prependVendoredBinDirToPath } from "@/node/services/agentBrowserLauncher";
+import { sanitizeMuxChildEnv, sanitizeMuxChildPath } from "./childProcessEnv";
 
 interface PtySpawnRequest {
   runtimeLabel: string;
@@ -55,12 +55,12 @@ export function resolvePathEnv(
     env.Path ??
     (process.platform === "win32" ? undefined : "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin");
 
-  return prependVendoredBinDirToPath(basePath, env);
+  return sanitizeMuxChildPath(basePath, env);
 }
 
 export function spawnPtyProcess(request: PtySpawnRequest): IPty {
   const pty = loadNodePty(request.runtimeLabel, request.preferElectronBuild);
-  const mergedEnv: NodeJS.ProcessEnv = { ...process.env, ...request.env };
+  const mergedEnv = sanitizeMuxChildEnv({ ...process.env, ...request.env });
   const pathEnv = resolvePathEnv(mergedEnv, request.pathEnv);
 
   const env: NodeJS.ProcessEnv = {

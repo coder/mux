@@ -6,10 +6,13 @@ import "source-map-support/register";
 import { Config } from "@/node/config";
 import { ServiceContainer } from "@/node/services/serviceContainer";
 import { setOpenSSHHostKeyPolicyMode } from "@/node/runtime/sshConnectionPool";
-import { getMuxHome, migrateLegacyMuxHome } from "@/common/constants/paths";
+import {
+  cleanupObsoleteMuxBinArtifacts,
+  getMuxHome,
+  migrateLegacyMuxHome,
+} from "@/common/constants/paths";
 import { ServerLockfile } from "@/node/services/serverLockfile";
 import { log } from "@/node/services/log";
-import { materializeVendoredAgentBrowserWrapper } from "@/node/services/agentBrowserLauncher";
 import type { BrowserWindow } from "electron";
 import { Command } from "commander";
 import { validateProjectPath } from "@/node/utils/pathUtils";
@@ -101,7 +104,13 @@ async function main(): Promise<void> {
     // Intentionally empty - keeps event loop alive during startup
   }, 1000);
 
-  migrateLegacyMuxHome();
+  try {
+    migrateLegacyMuxHome();
+    cleanupObsoleteMuxBinArtifacts();
+  } catch (error) {
+    // Server startup should remain resilient even if mux-home migrations cannot run.
+    log.debug("[mux-home] Failed server startup migrations", error);
+  }
 
   // Early lockfile check: detect an existing server BEFORE initializing services.
   // serviceContainer.initialize() resumes queued/running tasks (via TaskService),
@@ -114,13 +123,6 @@ async function main(): Promise<void> {
     console.error(`Error: mux API server is already running at ${existing.baseUrl}`);
     console.error(`Use 'mux api' commands to interact with the running instance.`);
     process.exit(1);
-  }
-
-  try {
-    materializeVendoredAgentBrowserWrapper();
-  } catch (error) {
-    // Server startup must stay resilient even if the optional browser wrapper cannot be created.
-    log.debug("[vendored-bin] Failed to materialize agent-browser wrapper", error);
   }
 
   const config = new Config();

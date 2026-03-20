@@ -24,7 +24,7 @@ import { getToolsForModel } from "@/common/utils/tools/tools";
 import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { MultiProjectRuntime } from "@/node/runtime/multiProjectRuntime";
-import { getRuntimeType } from "@/node/runtime/initHook";
+import { getMuxEnv, getRuntimeType } from "@/node/runtime/initHook";
 import { MUX_HELP_CHAT_AGENT_ID, MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { getSrcBaseDir } from "@/common/types/runtime";
 import { ContainerManager } from "@/node/multiProject/containerManager";
@@ -55,8 +55,6 @@ import type { TelemetryService } from "@/node/services/telemetryService";
 import type { DevToolsService } from "@/node/services/devToolsService";
 import type { ExperimentsService } from "@/node/services/experimentsService";
 import type { DesktopSessionManager } from "@/node/services/desktop/DesktopSessionManager";
-import type { BrowserSessionStreamPortRegistry } from "@/node/services/browserSessionStreamPortRegistry";
-import { buildWorkspaceBrowserEnv } from "@/node/services/workspaceBrowserEnv";
 
 import type { WorkspaceMCPOverrides } from "@/common/types/mcp";
 import type { MCPServerManager, MCPWorkspaceStats } from "@/node/services/mcpServerManager";
@@ -253,7 +251,6 @@ export class AIService extends EventEmitter {
   private extraTools?: Record<string, Tool>;
   private analyticsService?: { executeRawQuery(sql: string): Promise<unknown> };
   private desktopSessionManager?: DesktopSessionManager;
-  private browserSessionStreamPortRegistry?: BrowserSessionStreamPortRegistry;
 
   constructor(
     config: Config,
@@ -325,12 +322,6 @@ export class AIService extends EventEmitter {
 
   setDesktopSessionManager(desktopSessionManager: DesktopSessionManager): void {
     this.desktopSessionManager = desktopSessionManager;
-  }
-
-  setBrowserSessionStreamPortRegistry(
-    browserSessionStreamPortRegistry: BrowserSessionStreamPortRegistry
-  ): void {
-    this.browserSessionStreamPortRegistry = browserSessionStreamPortRegistry;
   }
 
   getProvidersConfig(): ProvidersConfigMap | null {
@@ -1175,16 +1166,17 @@ export class AIService extends EventEmitter {
         workspaceId.trim().length > 0,
         "AIService.streamMessage requires a non-empty workspaceId"
       );
-      const muxEnv = await buildWorkspaceBrowserEnv({
-        projectPath: metadata.projectPath,
-        runtime: getRuntimeType(metadata.runtimeConfig),
-        workspaceName: metadata.name,
-        workspaceId,
-        streamPortRegistry: this.browserSessionStreamPortRegistry,
-        modelString,
-        thinkingLevel: thinkingLevel ?? "off",
-        costsUsd: sessionCostsUsd,
-      });
+      const muxEnv = getMuxEnv(
+        metadata.projectPath,
+        getRuntimeType(metadata.runtimeConfig),
+        metadata.name,
+        {
+          workspaceId,
+          modelString,
+          thinkingLevel: thinkingLevel ?? "off",
+          costsUsd: sessionCostsUsd,
+        }
+      );
       const allTools = await getToolsForModel(
         modelString,
         {
