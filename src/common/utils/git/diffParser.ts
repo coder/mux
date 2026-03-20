@@ -150,18 +150,16 @@ function normalizeDiffPathLabel(label: string | undefined): string | undefined {
     return undefined;
   }
 
-  const trimmedLabel = label.trimEnd();
-  if (trimmedLabel.length === 0) {
-    return undefined;
-  }
-
-  const quotedLabel = parseQuotedDiffLabel(trimmedLabel);
+  const quotedLabel = parseQuotedDiffLabel(label);
   if (quotedLabel) {
     return quotedLabel.label;
   }
 
-  const tabIndex = trimmedLabel.indexOf("\t");
-  return tabIndex === -1 ? trimmedLabel : trimmedLabel.slice(0, tabIndex);
+  // Preserve literal trailing spaces in file names while still stripping the tab separator
+  // Git appends to unquoted patch labels before any optional timestamp metadata.
+  const tabIndex = label.indexOf("\t");
+  const normalizedLabel = tabIndex === -1 ? label : label.slice(0, tabIndex);
+  return normalizedLabel.length === 0 ? undefined : normalizedLabel;
 }
 
 function parseDiffPathLabel(label: string | undefined): ParsedDiffPathLabel | null {

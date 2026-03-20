@@ -162,6 +162,28 @@ describe("git diff parser (real repository)", () => {
     expect(fileDiffs[0].hunks[0].content).toContain("+after");
   });
 
+  it("should preserve literal trailing spaces in diff path labels", () => {
+    execSync("git reset --hard HEAD && git clean -fd", { cwd: testRepoPath });
+
+    const trailingSpaceFileName = "trailing-space.txt ";
+    writeFileSync(join(testRepoPath, trailingSpaceFileName), "before\n");
+    execSync("git add . && git commit -m 'Add trailing space file'", { cwd: testRepoPath });
+
+    rmSync(join(testRepoPath, trailingSpaceFileName));
+
+    const diff = execSync("git diff HEAD", { cwd: testRepoPath, encoding: "utf-8" });
+    const fileDiffs = parseDiff(diff);
+
+    expect(fileDiffs).toHaveLength(1);
+    expect(fileDiffs[0].changeType).toBe("deleted");
+    expect(fileDiffs[0].filePath).toBe(trailingSpaceFileName);
+    expect(fileDiffs[0].oldPath).toBe(trailingSpaceFileName);
+    expect(fileDiffs[0].hunks).toHaveLength(1);
+    expect(fileDiffs[0].hunks[0].filePath).toBe(trailingSpaceFileName);
+    expect(fileDiffs[0].hunks[0].oldPath).toBe(trailingSpaceFileName);
+    expect(fileDiffs[0].hunks[0].content).toContain("-before");
+  });
+
   it("should normalize quoted patch labels for escaped file names", () => {
     execSync("git reset --hard HEAD && git clean -fd", { cwd: testRepoPath });
 
