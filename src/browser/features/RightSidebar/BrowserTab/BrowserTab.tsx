@@ -58,7 +58,9 @@ function isRetryableBrowserError(error: string | null): boolean {
     return false;
   }
 
-  return /disconnected|session unavailable|stream connect failed|invalid token/i.test(error);
+  return /disconnected|session unavailable|is unavailable|stream connect failed|invalid token/i.test(
+    error
+  );
 }
 
 export function shouldBackOffBrowserReconnect(params: {

@@ -323,6 +323,24 @@ describe("BrowserTab", () => {
         nowMs: 10_000 + BROWSER_PREVIEW_RETRY_INTERVAL_MS,
       })
     ).toBe(false);
+
+    expect(
+      shouldBackOffBrowserReconnect({
+        selectedSessionName: "alpha",
+        session: createSession({
+          sessionName: "alpha",
+          status: "error",
+          streamState: "error",
+          lastError: "Browser session alpha is unavailable.",
+        }),
+        visibleError: "Browser session alpha is unavailable.",
+        lastConnectAttempt: {
+          sessionName: "alpha",
+          attemptedAtMs: 10_000,
+        },
+        nowMs: 10_000 + BROWSER_PREVIEW_RETRY_INTERVAL_MS - 1,
+      })
+    ).toBe(true);
   });
 
   test("does not overlap discovery refresh requests", async () => {
