@@ -2,6 +2,8 @@
  * Formatting utilities for model display names
  */
 
+import { capitalize } from "../capitalize";
+
 /**
  * Format a model name for display with proper capitalization and spacing.
  *
@@ -168,14 +170,6 @@ export function formatModelDisplayName(modelName: string): string {
 
   // Fallback: capitalize first letter of each dash-separated part
   return modelName.split("-").map(capitalize).join(" ");
-}
-
-/**
- * Capitalize the first letter of a string
- */
-function capitalize(str: string): string {
-  if (!str) return str;
-  return str.charAt(0).toUpperCase() + str.slice(1);
 }
 
 /**

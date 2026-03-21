@@ -8,7 +8,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import assert from "@/common/utils/assert";
+import { capitalize } from "@/common/utils/capitalize";
 import { Skeleton } from "@/browser/components/Skeleton/Skeleton";
 import type { DelegationSummary } from "@/browser/hooks/useAnalytics";
 import {
@@ -50,14 +50,6 @@ const DELEGATION_TOKEN_CATEGORIES: Array<{
   { key: "outputTokens", label: "Output", color: TOKEN_CATEGORY_COLORS.outputTokens },
   { key: "reasoningTokens", label: "Reasoning", color: TOKEN_CATEGORY_COLORS.reasoningTokens },
 ];
-
-function capitalize(s: string): string {
-  assert(typeof s === "string", "capitalize expects a string");
-  if (s.length === 0) {
-    return s;
-  }
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
 
 function formatCompressionRatio(compressionRatio: number): string {
   if (!Number.isFinite(compressionRatio) || compressionRatio <= 0) {
