@@ -1,7 +1,4 @@
-import type {
-  PlanSubagentExecutorRouting,
-  TaskSettings as TaskSettingsOnDisk,
-} from "@/common/config/schemas/taskSettings";
+import type { TaskSettings as TaskSettingsOnDisk } from "@/common/config/schemas/taskSettings";
 import {
   SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS,
   TASK_SETTINGS_LIMITS,
@@ -13,7 +10,7 @@ import type {
 import assert from "@/common/utils/assert";
 import { coerceThinkingLevel, type ThinkingLevel } from "./thinking";
 
-export type { PlanSubagentExecutorRouting, SubagentAiDefaults, SubagentAiDefaultsEntry };
+export type { SubagentAiDefaults, SubagentAiDefaultsEntry };
 export {
   SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS,
   TASK_SETTINGS_LIMITS,
@@ -29,8 +26,6 @@ export const DEFAULT_TASK_SETTINGS: TaskSettings = {
   maxParallelAgentTasks: TASK_SETTINGS_LIMITS.maxParallelAgentTasks.default,
   maxTaskNestingDepth: TASK_SETTINGS_LIMITS.maxTaskNestingDepth.default,
   proposePlanImplementReplacesChatHistory: false,
-  planSubagentExecutorRouting: "auto",
-  planSubagentDefaultsToOrchestrator: false,
 
   bashOutputCompactionMinLines:
     SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinLines.default,
@@ -84,12 +79,6 @@ function clampInt(value: unknown, fallback: number, min: number, max: number): n
   return rounded;
 }
 
-export function isPlanSubagentExecutorRouting(
-  value: unknown
-): value is PlanSubagentExecutorRouting {
-  return value === "exec" || value === "orchestrator" || value === "auto";
-}
-
 export function normalizeTaskSettings(raw: unknown): TaskSettings {
   const record = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : ({} as const);
 
@@ -110,28 +99,6 @@ export function normalizeTaskSettings(raw: unknown): TaskSettings {
     typeof record.proposePlanImplementReplacesChatHistory === "boolean"
       ? record.proposePlanImplementReplacesChatHistory
       : (DEFAULT_TASK_SETTINGS.proposePlanImplementReplacesChatHistory ?? false);
-
-  const normalizedPlanSubagentExecutorRouting = isPlanSubagentExecutorRouting(
-    record.planSubagentExecutorRouting
-  )
-    ? record.planSubagentExecutorRouting
-    : undefined;
-
-  const migratedPlanSubagentExecutorRouting =
-    normalizedPlanSubagentExecutorRouting ??
-    (typeof record.planSubagentDefaultsToOrchestrator === "boolean"
-      ? record.planSubagentDefaultsToOrchestrator
-        ? "orchestrator"
-        : "exec"
-      : undefined);
-
-  const planSubagentExecutorRouting =
-    migratedPlanSubagentExecutorRouting ??
-    DEFAULT_TASK_SETTINGS.planSubagentExecutorRouting ??
-    "exec";
-
-  // Keep the deprecated boolean in sync for downgrade compatibility.
-  const planSubagentDefaultsToOrchestrator = planSubagentExecutorRouting === "orchestrator";
 
   const bashOutputCompactionMinLines = clampInt(
     record.bashOutputCompactionMinLines,
@@ -168,8 +135,6 @@ export function normalizeTaskSettings(raw: unknown): TaskSettings {
     maxParallelAgentTasks,
     maxTaskNestingDepth,
     proposePlanImplementReplacesChatHistory,
-    planSubagentExecutorRouting,
-    planSubagentDefaultsToOrchestrator,
     bashOutputCompactionMinLines,
     bashOutputCompactionMinTotalBytes,
     bashOutputCompactionMaxKeptLines,
@@ -189,16 +154,6 @@ export function normalizeTaskSettings(raw: unknown): TaskSettings {
   assert(
     typeof proposePlanImplementReplacesChatHistory === "boolean",
     "normalizeTaskSettings: proposePlanImplementReplacesChatHistory must be a boolean"
-  );
-
-  assert(
-    isPlanSubagentExecutorRouting(planSubagentExecutorRouting),
-    "normalizeTaskSettings: planSubagentExecutorRouting must be exec, orchestrator, or auto"
-  );
-
-  assert(
-    typeof planSubagentDefaultsToOrchestrator === "boolean",
-    "normalizeTaskSettings: planSubagentDefaultsToOrchestrator must be a boolean"
   );
 
   assert(

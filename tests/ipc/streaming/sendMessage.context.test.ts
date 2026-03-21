@@ -178,87 +178,83 @@ describeIntegration("sendMessage context handling tests", () => {
   });
 
   describe("tool calls", () => {
-    test.concurrent(
-      "should execute bash tool when requested",
-      async () => {
-        await withSharedWorkspace("anthropic", async ({ env, workspaceId, collector }) => {
-          const repoPath = getSharedRepoPath();
+    test("should execute bash tool when requested", async () => {
+      // OpenAI has been more reliable than Anthropic here under full-suite CI load, and these
+      // assertions are about tool-policy plumbing rather than provider-specific tool behavior.
+      await withSharedWorkspace("openai", async ({ env, workspaceId, collector }) => {
+        const repoPath = getSharedRepoPath();
 
-          // Create a test file in the workspace
-          const testFilePath = path.join(repoPath, "test-tool-file.txt");
-          await fs.writeFile(testFilePath, "Hello from test file!");
+        // Create a test file in the workspace
+        const testFilePath = path.join(repoPath, "test-tool-file.txt");
+        await fs.writeFile(testFilePath, "Hello from test file!");
 
-          try {
-            // Ask to read the file using bash
-            const result = await sendMessageWithModel(
-              env,
-              workspaceId,
-              `Use bash to run: cat ${testFilePath}. Set display_name="read-file" and timeout_secs=30. Do not spawn a sub-agent.`,
-              modelString("anthropic", KNOWN_MODELS.HAIKU.providerModelId),
-              {
-                toolPolicy: [{ regex_match: "bash", action: "require" }],
-              }
-            );
-
-            expect(result.success).toBe(true);
-
-            // Wait for completion (tool calls take longer)
-            await collector.waitForEvent("stream-end", 45000);
-
-            // Check for tool call events
-            const events = collector.getEvents();
-            const toolCallStarts = events.filter(
-              (e) => "type" in e && (e as { type: string }).type === "tool-call-start"
-            );
-
-            // Should have at least one bash tool call
-            const bashCall = toolCallStarts.find((e) => {
-              if (!("toolName" in e) || e.toolName !== "bash") return false;
-              return true;
-            });
-            expect(bashCall).toBeDefined();
-          } finally {
-            // Cleanup test file
-            try {
-              await fs.unlink(testFilePath);
-            } catch {
-              // Ignore cleanup errors
-            }
-          }
-        });
-      },
-      60000
-    );
-
-    test.concurrent(
-      "should respect tool policy 'none'",
-      async () => {
-        await withSharedWorkspace("anthropic", async ({ env, workspaceId, collector }) => {
-          // Ask for something that would normally use tools
-          // Policy to disable all tools: match any tool name and disable
+        try {
+          // Ask to read the file using bash
           const result = await sendMessageWithModel(
             env,
             workspaceId,
-            "Run the command 'echo test' using bash.",
-            modelString("anthropic", KNOWN_MODELS.HAIKU.providerModelId),
+            `Use bash to run: cat ${testFilePath}. Set display_name="read-file" and timeout_secs=30. Do not spawn a sub-agent.`,
+            modelString("openai", KNOWN_MODELS.GPT.providerModelId),
             {
-              toolPolicy: [{ regex_match: ".*", action: "disable" }],
+              toolPolicy: [{ regex_match: "bash", action: "require" }],
             }
           );
 
           expect(result.success).toBe(true);
-          await collector.waitForEvent("stream-end", 15000);
 
-          // Should NOT have tool calls when policy is 'none'
+          // Wait for completion (tool calls take longer)
+          await collector.waitForEvent("stream-end", 45000);
+
+          // Check for tool call events
           const events = collector.getEvents();
           const toolCallStarts = events.filter(
             (e) => "type" in e && (e as { type: string }).type === "tool-call-start"
           );
-          expect(toolCallStarts.length).toBe(0);
-        });
-      },
-      25000
-    );
+
+          // Should have at least one bash tool call
+          const bashCall = toolCallStarts.find((e) => {
+            if (!("toolName" in e) || e.toolName !== "bash") return false;
+            return true;
+          });
+          expect(bashCall).toBeDefined();
+        } finally {
+          // Cleanup test file
+          try {
+            await fs.unlink(testFilePath);
+          } catch {
+            // Ignore cleanup errors
+          }
+        }
+      });
+    }, 60000);
+
+    test("should respect tool policy 'none'", async () => {
+      // OpenAI has been more reliable than Anthropic here under full-suite CI load, and these
+      // assertions are about tool-policy plumbing rather than provider-specific tool behavior.
+      await withSharedWorkspace("openai", async ({ env, workspaceId, collector }) => {
+        // Ask for something that would normally use tools
+        // Policy to disable all tools: match any tool name and disable
+        const result = await sendMessageWithModel(
+          env,
+          workspaceId,
+          "Run the command 'echo test' using bash.",
+          modelString("openai", KNOWN_MODELS.GPT.providerModelId),
+          {
+            toolPolicy: [{ regex_match: ".*", action: "disable" }],
+          }
+        );
+
+        expect(result.success).toBe(true);
+        await collector.waitForEvent("stream-end", 15000);
+
+        // Should NOT have tool calls when policy is 'none'
+        const events = collector.getEvents();
+        const toolCallStarts = events.filter(
+          (e) => "type" in e && (e as { type: string }).type === "tool-call-start"
+        );
+        expect(toolCallStarts.length).toBe(0);
+      });
+    }, 25000);
   });
 
   describe("history truncation", () => {

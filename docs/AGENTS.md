@@ -59,6 +59,7 @@ description: Agent instructions for AI assistants working on the Mux codebase
 Use `agent-browser` for web automation. Run `agent-browser --help` for all commands.
 
 Core workflow:
+
 1. `agent-browser open <url>` - Navigate to page
 2. `agent-browser snapshot -i` - Get interactive elements with refs (@e1, @e2)
 3. `agent-browser click @e1` / `fill @e2 "text"` - Interact using refs
@@ -68,8 +69,8 @@ Core workflow:
 
 - If a PR has Codex review comments, address + resolve them, then re-request review by commenting `@codex review` on the PR.
 - Prefer `gh` CLI for GitHub interactions over manual web/curl flows.
-- In Orchestrator mode, delegate implementation/verification commands to `exec` or `explore` sub-agents and integrate their patches; do not bypass delegation with direct local edits.
-- In Orchestrator mode, route higher-complexity implementation tasks to `plan` sub-agents so they can research and produce a precise plan before auto-handoff to implementation.
+- When delegation is required by the active mode, use `exec` or `explore` sub-agents as directed and integrate their patches; do not bypass delegation with direct local edits.
+- Keep implementation tasks on `exec` sub-agents; use a top-level plan workspace when you need a separate planning phase before delegation.
 
 - User preference: when work is already on an open PR, push branch updates at the end of each completed change set so the PR stays current.
 - **PR creation gate:** Do **not** open/create a pull request unless the user explicitly asks (e.g., "open a PR", "create PR", "submit this"). By default, complete local validation, commit/push branch updates as requested, and let the user review before deciding whether to open a PR.
@@ -81,11 +82,11 @@ Core workflow:
 When a PR exists, you MUST remain in this loop until the PR is fully ready:
 
 1. Push your latest fixes.
-2. Run local validation (`make static-check` and targeted tests as needed); in Orchestrator mode, delegate command execution to sub-agents.
+2. Run local validation (`make static-check` and targeted tests as needed); delegate command execution to sub-agents when the active mode requires it.
 3. Request review with `@codex review`.
 4. Run `./scripts/wait_pr_ready.sh <pr_number>` (which must execute `./scripts/wait_pr_checks.sh <pr_number> --once` while checks are pending).
-5. If Codex leaves comments, address them (delegate fixes in Orchestrator mode), resolve threads with `./scripts/resolve_pr_comment.sh <thread_id>`, push, and repeat.
-6. If checks/mergeability fail, fix issues locally (delegate fixes in Orchestrator mode), push, and repeat.
+5. If Codex leaves comments, address them (delegating fixes when required by the active mode), resolve threads with `./scripts/resolve_pr_comment.sh <thread_id>`, push, and repeat.
+6. If checks/mergeability fail, fix issues locally (delegating fixes when required by the active mode), push, and repeat.
 
 The only early-stop exception is when the reviewer is clearly misunderstanding the intended change and further churn would be counterproductive. In that case, leave a clarifying PR comment and pause for human direction.
 

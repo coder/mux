@@ -12,10 +12,6 @@ export const SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS = {
   bashOutputCompactionTimeoutMs: { min: 1_000, max: 120_000, default: 5_000 },
 } as const;
 
-export const PlanSubagentExecutorRoutingSchema = z.enum(["exec", "orchestrator", "auto"]);
-
-export type PlanSubagentExecutorRouting = z.infer<typeof PlanSubagentExecutorRoutingSchema>;
-
 export const TaskSettingsSchema = z.object({
   maxParallelAgentTasks: z
     .number()
@@ -30,8 +26,6 @@ export const TaskSettingsSchema = z.object({
     .max(TASK_SETTINGS_LIMITS.maxTaskNestingDepth.max)
     .optional(),
   proposePlanImplementReplacesChatHistory: z.boolean().optional(),
-  planSubagentExecutorRouting: PlanSubagentExecutorRoutingSchema.optional(),
-  planSubagentDefaultsToOrchestrator: z.boolean().optional(),
   bashOutputCompactionMinLines: z
     .number()
     .int()

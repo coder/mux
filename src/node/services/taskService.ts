@@ -23,8 +23,6 @@ import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
 import { MultiProjectRuntime } from "@/node/runtime/multiProjectRuntime";
 import { runBackgroundInit } from "@/node/runtime/runtimeFactory";
 import type { InitLogger, Runtime } from "@/node/runtime/Runtime";
-import { readPlanFile } from "@/node/utils/runtime/helpers";
-import { routePlanToExecutor } from "@/node/services/planExecutorRouter";
 import {
   coerceNonEmptyString,
   tryReadGitHeadCommitSha,
@@ -40,17 +38,10 @@ import {
 } from "@/common/utils/tools/taskGroups";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { Ok, Err, type Result } from "@/common/types/result";
-import {
-  DEFAULT_TASK_SETTINGS,
-  type PlanSubagentExecutorRouting,
-  type TaskSettings,
-} from "@/common/types/tasks";
+import { DEFAULT_TASK_SETTINGS, type TaskSettings } from "@/common/types/tasks";
 
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
-import {
-  createCompactionSummaryMessageId,
-  createTaskReportMessageId,
-} from "@/node/services/utils/messageIds";
+import { createTaskReportMessageId } from "@/node/services/utils/messageIds";
 import { defaultModel, normalizeToCanonical } from "@/common/utils/ai/models";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
@@ -67,13 +58,9 @@ import {
   TaskToolResultSchema,
   TaskToolArgsSchema,
 } from "@/common/utils/tools/toolDefinitions";
-import { isPlanLikeInResolvedChain, isToolEnabledInResolvedChain } from "@/common/utils/agentTools";
+import { isPlanLikeInResolvedChain } from "@/common/utils/agentTools";
 import { formatSendMessageError } from "@/node/services/utils/sendMessageError";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
-import {
-  PLAN_AUTO_ROUTING_STATUS_EMOJI,
-  PLAN_AUTO_ROUTING_STATUS_MESSAGE,
-} from "@/common/constants/planAutoRoutingStatus";
 import { taskQueueDebug } from "@/node/services/taskQueueDebug";
 import { readSubagentGitPatchArtifact } from "@/node/services/subagentGitPatchArtifacts";
 import {
@@ -318,7 +305,6 @@ export class TaskService {
   // Bounded by max entries; disk persistence is the source of truth for restart-safety.
   private readonly completedReportsByTaskId = new Map<string, CompletedAgentReportCacheEntry>();
   private readonly gitPatchArtifactService: GitPatchArtifactService;
-  private readonly handoffInProgress = new Set<string>();
   /**
    * Hard-interrupted parent workspaces must not auto-resume until the next user message.
    * This closes races where descendants could report between parent interrupt and cascade cleanup.
@@ -500,267 +486,6 @@ export class TaskService {
     }
   }
 
-  private getTaskWorkspaceAgentResolutionContext(args: {
-    projectPath: string;
-    workspace: Pick<WorkspaceConfigEntry, "id" | "name" | "path" | "runtimeConfig">;
-  }): {
-    workspaceName: string;
-    runtime: Runtime;
-    workspacePath: string;
-  } | null {
-    assert(
-      args.projectPath.length > 0,
-      "getTaskWorkspaceAgentResolutionContext: projectPath must be non-empty"
-    );
-
-    const workspaceName = coerceNonEmptyString(args.workspace.name) ?? args.workspace.id;
-    if (!workspaceName) {
-      return null;
-    }
-
-    const runtimeConfig = args.workspace.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG;
-    const runtime = createRuntimeForWorkspace({
-      runtimeConfig,
-      projectPath: args.projectPath,
-      name: workspaceName,
-    });
-    const workspacePath =
-      coerceNonEmptyString(args.workspace.path) ??
-      runtime.getWorkspacePath(args.projectPath, workspaceName);
-    if (!workspacePath) {
-      return null;
-    }
-
-    return {
-      workspaceName,
-      runtime,
-      workspacePath,
-    };
-  }
-
-  private async isAgentEnabledForTaskWorkspace(args: {
-    workspaceId: string;
-    projectPath: string;
-    workspace: Pick<WorkspaceConfigEntry, "id" | "name" | "path" | "runtimeConfig">;
-    agentId: "exec" | "orchestrator";
-  }): Promise<boolean> {
-    assert(
-      args.workspaceId.length > 0,
-      "isAgentEnabledForTaskWorkspace: workspaceId must be non-empty"
-    );
-    assert(
-      args.projectPath.length > 0,
-      "isAgentEnabledForTaskWorkspace: projectPath must be non-empty"
-    );
-
-    const resolutionContext = this.getTaskWorkspaceAgentResolutionContext({
-      projectPath: args.projectPath,
-      workspace: args.workspace,
-    });
-    if (!resolutionContext) {
-      return false;
-    }
-
-    try {
-      const resolvedFrontmatter = await resolveAgentFrontmatter(
-        resolutionContext.runtime,
-        resolutionContext.workspacePath,
-        args.agentId
-      );
-      const cfg = this.config.loadConfigOrDefault();
-      const effectivelyDisabled = isAgentEffectivelyDisabled({
-        cfg,
-        agentId: args.agentId,
-        resolvedFrontmatter,
-      });
-      return !effectivelyDisabled;
-    } catch (error: unknown) {
-      log.warn("Failed to resolve task handoff target agent availability", {
-        workspaceId: args.workspaceId,
-        agentId: args.agentId,
-        error: getErrorMessage(error),
-      });
-      return false;
-    }
-  }
-
-  private async canAgentSpawnTasksInWorkspace(args: {
-    workspaceId: string;
-    projectPath: string;
-    workspace: Pick<WorkspaceConfigEntry, "id" | "name" | "path" | "runtimeConfig">;
-    agentId: "orchestrator";
-  }): Promise<boolean> {
-    assert(
-      args.workspaceId.length > 0,
-      "canAgentSpawnTasksInWorkspace: workspaceId must be non-empty"
-    );
-    assert(
-      args.projectPath.length > 0,
-      "canAgentSpawnTasksInWorkspace: projectPath must be non-empty"
-    );
-
-    const resolutionContext = this.getTaskWorkspaceAgentResolutionContext({
-      projectPath: args.projectPath,
-      workspace: args.workspace,
-    });
-    if (!resolutionContext) {
-      return false;
-    }
-
-    try {
-      const cfg = this.config.loadConfigOrDefault();
-      const resolvedFrontmatter = await resolveAgentFrontmatter(
-        resolutionContext.runtime,
-        resolutionContext.workspacePath,
-        args.agentId
-      );
-      const effectivelyDisabled = isAgentEffectivelyDisabled({
-        cfg,
-        agentId: args.agentId,
-        resolvedFrontmatter,
-      });
-      if (effectivelyDisabled) {
-        return false;
-      }
-
-      const agentDefinition = await readAgentDefinition(
-        resolutionContext.runtime,
-        resolutionContext.workspacePath,
-        args.agentId
-      );
-      const chain = await resolveAgentInheritanceChain({
-        runtime: resolutionContext.runtime,
-        workspacePath: resolutionContext.workspacePath,
-        agentId: agentDefinition.id,
-        agentDefinition,
-        workspaceId: args.workspaceId,
-      });
-      const taskSettings = cfg.taskSettings ?? DEFAULT_TASK_SETTINGS;
-      const taskDepth = this.getTaskDepth(cfg, args.workspaceId);
-      const disableTaskToolsForDepth = taskDepth >= taskSettings.maxTaskNestingDepth;
-
-      return !disableTaskToolsForDepth && isToolEnabledInResolvedChain("task", chain);
-    } catch (error: unknown) {
-      log.warn("Failed to resolve task handoff target task-spawning capability", {
-        workspaceId: args.workspaceId,
-        agentId: args.agentId,
-        error: getErrorMessage(error),
-      });
-      return false;
-    }
-  }
-
-  private async resolvePlanAutoHandoffTargetAgentId(args: {
-    workspaceId: string;
-    entry: {
-      projectPath: string;
-      workspace: Pick<
-        WorkspaceConfigEntry,
-        "id" | "name" | "path" | "runtimeConfig" | "taskModelString"
-      >;
-    };
-    routing: PlanSubagentExecutorRouting;
-    planContent: string | null;
-  }): Promise<"exec" | "orchestrator"> {
-    assert(
-      args.workspaceId.length > 0,
-      "resolvePlanAutoHandoffTargetAgentId: workspaceId must be non-empty"
-    );
-    assert(
-      args.routing === "exec" || args.routing === "orchestrator" || args.routing === "auto",
-      "resolvePlanAutoHandoffTargetAgentId: routing must be exec, orchestrator, or auto"
-    );
-
-    const resolveOrchestratorAvailability = async (): Promise<"exec" | "orchestrator"> => {
-      const orchestratorEnabled = await this.isAgentEnabledForTaskWorkspace({
-        workspaceId: args.workspaceId,
-        projectPath: args.entry.projectPath,
-        workspace: args.entry.workspace,
-        agentId: "orchestrator",
-      });
-      if (orchestratorEnabled) {
-        return "orchestrator";
-      }
-
-      // If orchestrator is disabled/unavailable, fall back to exec before mutating
-      // workspace agent state so the handoff stream can still proceed.
-      log.warn("Plan-task auto-handoff falling back to exec because orchestrator is unavailable", {
-        workspaceId: args.workspaceId,
-      });
-      return "exec";
-    };
-
-    if (args.routing === "exec") {
-      return "exec";
-    }
-
-    if (args.routing === "orchestrator") {
-      return resolveOrchestratorAvailability();
-    }
-
-    if (!args.planContent || args.planContent.trim().length === 0) {
-      log.warn("Plan-task auto-handoff auto-routing has no plan content; defaulting to exec", {
-        workspaceId: args.workspaceId,
-      });
-      return "exec";
-    }
-
-    const orchestratorCanSpawnTasks = await this.canAgentSpawnTasksInWorkspace({
-      workspaceId: args.workspaceId,
-      projectPath: args.entry.projectPath,
-      workspace: args.entry.workspace,
-      agentId: "orchestrator",
-    });
-    if (!orchestratorCanSpawnTasks) {
-      log.warn(
-        "Plan-task auto-handoff auto-routing defaulting to exec because orchestrator cannot orchestrate in this workspace",
-        {
-          workspaceId: args.workspaceId,
-        }
-      );
-      return "exec";
-    }
-
-    const modelString = normalizeToCanonical(
-      coerceNonEmptyString(args.entry.workspace.taskModelString) ?? defaultModel
-    );
-    assert(
-      modelString.trim().length > 0,
-      "resolvePlanAutoHandoffTargetAgentId: modelString must be non-empty"
-    );
-
-    const modelResult = await this.aiService.createModel(modelString, undefined, {
-      agentInitiated: true,
-      workspaceId: args.workspaceId,
-    });
-    if (!modelResult.success) {
-      log.warn("Plan-task auto-handoff auto-routing failed to create model; defaulting to exec", {
-        workspaceId: args.workspaceId,
-        model: modelString,
-        error: modelResult.error,
-      });
-      return "exec";
-    }
-
-    const decision = await routePlanToExecutor({
-      model: modelResult.data,
-      planContent: args.planContent,
-    });
-
-    log.info("Plan-task auto-handoff routing decision", {
-      workspaceId: args.workspaceId,
-      target: decision.target,
-      reasoning: decision.reasoning,
-      model: modelString,
-    });
-
-    if (decision.target === "orchestrator") {
-      return resolveOrchestratorAvailability();
-    }
-
-    return "exec";
-  }
-
   private async emitWorkspaceMetadata(workspaceId: string): Promise<void> {
     assert(workspaceId.length > 0, "emitWorkspaceMetadata: workspaceId must be non-empty");
 
@@ -848,6 +573,16 @@ export class TaskService {
     for (const task of awaitingReportTasks) {
       if (!task.id) continue;
 
+      const isPlanLike = await this.isPlanLikeTaskWorkspace({
+        projectPath: task.projectPath,
+        workspace: task,
+      });
+      if (isPlanLike) {
+        await this.interruptLegacyPlanLikeTask(task, "startup-awaiting_report");
+        failedAwaitingReportCount += 1;
+        continue;
+      }
+
       // Avoid resuming a task while it still has active descendants (it shouldn't report yet).
       const hasActiveDescendants = this.hasActiveDescendantAgentTasks(config, task.id);
       if (hasActiveDescendants) {
@@ -884,6 +619,12 @@ export class TaskService {
         projectPath: task.projectPath,
         workspace: task,
       });
+
+      if (isPlanLike) {
+        await this.interruptLegacyPlanLikeTask(task, "startup-running");
+        failedRunningCount += 1;
+        continue;
+      }
 
       const model = task.taskModelString ?? defaultModel;
       const agentId = task.agentId ?? TASK_RECOVERY_FALLBACK_AGENT_ID;
@@ -1239,6 +980,22 @@ export class TaskService {
         const hint = await getRunnableHint();
         return Err(`Task.create: agentId is disabled (${agentId}). ${hint}`);
       }
+
+      const agentDefinition = await readAgentDefinition(runtime, parentWorkspacePath, agentId);
+      const chain = await resolveAgentInheritanceChain({
+        runtime,
+        workspacePath: parentWorkspacePath,
+        agentId: agentDefinition.id,
+        agentDefinition,
+        workspaceId: parentWorkspaceId,
+      });
+      if (isPlanLikeInResolvedChain(chain)) {
+        return Err(
+          `Task.create: plan-mode agents are not supported as sub-agents (${agentId}). ` +
+            "Use a top-level plan workspace instead."
+        );
+      }
+
       skipInitHook = frontmatter.subagent?.skip_init_hook === true;
     } catch {
       const hint = await getRunnableHint();
@@ -2564,6 +2321,18 @@ export class TaskService {
         continue;
       }
 
+      const isParentInPlace = taskEntry.projectPath === parentWorkspaceName;
+      const parentWorkspacePath =
+        coerceNonEmptyString(parentEntry.workspace.path) ??
+        (isParentInPlace
+          ? taskEntry.projectPath
+          : createRuntimeForWorkspace({
+              runtimeConfig:
+                parentEntry.workspace.runtimeConfig ?? task.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG,
+              projectPath: taskEntry.projectPath,
+              name: parentWorkspaceName,
+            }).getWorkspacePath(taskEntry.projectPath, parentWorkspaceName));
+
       const taskRuntimeConfig = task.runtimeConfig ?? parentEntry.workspace.runtimeConfig;
       if (!taskRuntimeConfig) {
         log.error("Queued task missing runtimeConfig; cannot start", { taskId });
@@ -2577,6 +2346,59 @@ export class TaskService {
         projectPath: taskEntry.projectPath,
         name: workspaceName,
       });
+
+      const agentIdRaw = coerceNonEmptyString(task.agentId ?? task.agentType);
+      if (agentIdRaw && parentWorkspacePath) {
+        const parsedAgentId = AgentIdSchema.safeParse(agentIdRaw.trim().toLowerCase());
+        const isLegacyPlanLikeQueuedTask = await (async (): Promise<boolean> => {
+          if (!parsedAgentId.success) {
+            return agentIdRaw.trim().toLowerCase() === "plan";
+          }
+          try {
+            const agentDefinition = await readAgentDefinition(
+              runtime,
+              parentWorkspacePath,
+              parsedAgentId.data
+            );
+            const chain = await resolveAgentInheritanceChain({
+              runtime,
+              workspacePath: parentWorkspacePath,
+              agentId: agentDefinition.id,
+              agentDefinition,
+              workspaceId: taskId,
+            });
+            return isPlanLikeInResolvedChain(chain);
+          } catch (error: unknown) {
+            log.debug(
+              "Queued task: failed to resolve agent mode while checking legacy plan-task support",
+              {
+                taskId,
+                agentId: agentIdRaw,
+                error: error instanceof Error ? error.message : String(error),
+              }
+            );
+            return parsedAgentId.data === "plan";
+          }
+        })();
+
+        if (isLegacyPlanLikeQueuedTask) {
+          log.warn(
+            "Skipping queued legacy plan-like subagent task after plan-task support removal",
+            {
+              taskId,
+              taskName: task.name,
+              projectPath: taskEntry.projectPath,
+              agentId: agentIdRaw,
+            }
+          );
+          await this.setTaskStatus(taskId, "interrupted");
+          this.rejectWaiters(
+            taskId,
+            new Error("Task skipped: legacy plan-mode subagents are no longer supported")
+          );
+          continue;
+        }
+      }
       let runtimeForTaskWorkspace = runtime;
       let forkedRuntimeConfig = taskRuntimeConfig;
 
@@ -2851,7 +2673,6 @@ export class TaskService {
           this.opResolver
         );
         let skipInitHook = false;
-        const agentIdRaw = coerceNonEmptyString(task.agentId ?? task.agentType);
         if (agentIdRaw) {
           const parsedAgentId = AgentIdSchema.safeParse(agentIdRaw.trim().toLowerCase());
           if (parsedAgentId.success) {
@@ -3113,6 +2934,34 @@ export class TaskService {
     }
   }
 
+  private async interruptLegacyPlanLikeTask(
+    task: WorkspaceConfigEntry & { projectPath: string },
+    reason: "startup-awaiting_report" | "startup-running" | "stream_end"
+  ): Promise<void> {
+    const workspaceId = task.id;
+    if (!workspaceId) {
+      return;
+    }
+
+    log.warn("Interrupting legacy plan-like subagent task after plan-task support removal", {
+      workspaceId,
+      taskName: task.name,
+      projectPath: task.projectPath,
+      reason,
+    });
+
+    await this.setTaskStatus(workspaceId, "interrupted");
+    await this.settleInterruptedTaskAtStreamEnd(
+      workspaceId,
+      { projectPath: task.projectPath, workspace: task },
+      null
+    );
+
+    // Interrupting a legacy plan-like task frees a parallel slot. Kick queue processing now so
+    // unrelated queued tasks do not stay blocked until some later event happens to re-run it.
+    await this.maybeStartQueuedTasks();
+  }
+
   private async promptTaskForRequiredCompletionTool(
     workspaceId: string,
     options?: {
@@ -3320,22 +3169,18 @@ export class TaskService {
       return;
     }
 
-    const proposePlanResult = this.findProposePlanSuccessInParts(event.parts);
-    if (isPlanLike && proposePlanResult) {
-      await this.handleSuccessfulProposePlanAutoHandoff({
-        workspaceId,
-        entry,
-        proposePlanResult,
-        planSubagentExecutorRouting:
-          (cfg.taskSettings ?? DEFAULT_TASK_SETTINGS).planSubagentExecutorRouting ?? "exec",
-      });
+    if (isPlanLike) {
+      await this.interruptLegacyPlanLikeTask(
+        { ...entry.workspace, projectPath: entry.projectPath },
+        "stream_end"
+      );
       return;
     }
 
     // Only infer an implicit report from a clean natural stop. Length-truncated or other
     // provider finish reasons still go through explicit completion-tool recovery so partial
     // assistant text cannot prematurely finalize the task.
-    if (!isPlanLike && status !== "awaiting_report" && event.metadata.finishReason === "stop") {
+    if (status !== "awaiting_report" && event.metadata.finishReason === "stop") {
       const implicitReportArgs = this.findImplicitAgentReportArgsInParts(event.parts);
       if (implicitReportArgs) {
         await this.finalizeAgentTaskReport(workspaceId, entry, implicitReportArgs);
@@ -3426,213 +3271,6 @@ export class TaskService {
         groupId: bestOf.groupId,
         total: bestOf.total,
       });
-    }
-  }
-
-  private async handleSuccessfulProposePlanAutoHandoff(args: {
-    workspaceId: string;
-    entry: { projectPath: string; workspace: WorkspaceConfigEntry };
-    proposePlanResult: { planPath: string };
-    planSubagentExecutorRouting: PlanSubagentExecutorRouting;
-  }): Promise<void> {
-    assert(
-      args.workspaceId.length > 0,
-      "handleSuccessfulProposePlanAutoHandoff: workspaceId must be non-empty"
-    );
-    assert(
-      args.proposePlanResult.planPath.length > 0,
-      "handleSuccessfulProposePlanAutoHandoff: planPath must be non-empty"
-    );
-
-    if (this.handoffInProgress.has(args.workspaceId)) {
-      log.debug("Skipping duplicate plan-task auto-handoff", { workspaceId: args.workspaceId });
-      return;
-    }
-
-    this.handoffInProgress.add(args.workspaceId);
-
-    try {
-      let planSummary: { content: string; path: string } | null = null;
-
-      try {
-        const info = await this.workspaceService.getInfo(args.workspaceId);
-        if (!info) {
-          log.error("Plan-task auto-handoff could not read workspace metadata", {
-            workspaceId: args.workspaceId,
-          });
-        } else {
-          const runtime = createRuntimeForWorkspace(info);
-          const planResult = await readPlanFile(
-            runtime,
-            info.name,
-            info.projectName,
-            args.workspaceId
-          );
-          if (planResult.exists) {
-            planSummary = { content: planResult.content, path: planResult.path };
-          } else {
-            log.error("Plan-task auto-handoff did not find plan file content", {
-              workspaceId: args.workspaceId,
-              planPath: args.proposePlanResult.planPath,
-            });
-          }
-        }
-      } catch (error: unknown) {
-        log.error("Plan-task auto-handoff failed to read plan file", {
-          workspaceId: args.workspaceId,
-          planPath: args.proposePlanResult.planPath,
-          error,
-        });
-      }
-
-      const targetAgentId = await (async () => {
-        const shouldShowRoutingStatus = args.planSubagentExecutorRouting === "auto";
-        if (shouldShowRoutingStatus) {
-          // Auto routing can pause for up to the LLM timeout; surface progress in the sidebar.
-          await this.workspaceService.updateAgentStatus(args.workspaceId, {
-            emoji: PLAN_AUTO_ROUTING_STATUS_EMOJI,
-            message: PLAN_AUTO_ROUTING_STATUS_MESSAGE,
-            // ExtensionMetadataService carries forward the previous status URL when url is omitted.
-            // Use an explicit empty string sentinel to clear stale links for this transient status.
-            url: "",
-          });
-        }
-
-        try {
-          return await this.resolvePlanAutoHandoffTargetAgentId({
-            workspaceId: args.workspaceId,
-            entry: {
-              projectPath: args.entry.projectPath,
-              workspace: {
-                id: args.entry.workspace.id,
-                name: args.entry.workspace.name,
-                path: args.entry.workspace.path,
-                runtimeConfig: args.entry.workspace.runtimeConfig,
-                taskModelString: args.entry.workspace.taskModelString,
-              },
-            },
-            routing: args.planSubagentExecutorRouting,
-            planContent: planSummary?.content ?? null,
-          });
-        } finally {
-          if (shouldShowRoutingStatus) {
-            await this.workspaceService.updateAgentStatus(args.workspaceId, null);
-          }
-        }
-      })();
-
-      const summaryContent = planSummary
-        ? `# Plan\n\n${planSummary.content}\n\nNote: This chat already contains the full plan; no need to re-open the plan file.\n\n---\n\n*Plan file preserved at:* \`${planSummary.path}\``
-        : `A plan was proposed at ${args.proposePlanResult.planPath}. Read the plan file and implement it.`;
-
-      const summaryMessage = createMuxMessage(
-        createCompactionSummaryMessageId(),
-        "assistant",
-        summaryContent,
-        {
-          timestamp: Date.now(),
-          compacted: "user",
-          agentId: "plan",
-        }
-      );
-
-      const replaceHistoryResult = await this.workspaceService.replaceHistory(
-        args.workspaceId,
-        summaryMessage,
-        {
-          mode: "append-compaction-boundary",
-          deletePlanFile: false,
-        }
-      );
-      if (!replaceHistoryResult.success) {
-        log.error("Plan-task auto-handoff failed to compact history", {
-          workspaceId: args.workspaceId,
-          error: replaceHistoryResult.error,
-        });
-      }
-
-      // Handoff resolution follows the same precedence as Task.create:
-      // global per-agent defaults, else inherit the plan task's active model.
-      const latestCfg = this.config.loadConfigOrDefault();
-      const globalDefault = latestCfg.agentAiDefaults?.[targetAgentId];
-      const parentActiveModelCandidate =
-        typeof args.entry.workspace.taskModelString === "string"
-          ? args.entry.workspace.taskModelString.trim()
-          : "";
-      const parentActiveModel =
-        parentActiveModelCandidate.length > 0 ? parentActiveModelCandidate : defaultModel;
-
-      const configuredModel = globalDefault?.modelString?.trim();
-      const preferredModel =
-        configuredModel && configuredModel.length > 0 ? configuredModel : parentActiveModel;
-      const resolvedModel = normalizeToCanonical(
-        preferredModel.length > 0 ? preferredModel : defaultModel
-      );
-      assert(
-        resolvedModel.trim().length > 0,
-        "handleSuccessfulProposePlanAutoHandoff: resolved model must be non-empty"
-      );
-      const requestedThinking: ThinkingLevel =
-        globalDefault?.thinkingLevel ?? args.entry.workspace.taskThinkingLevel ?? "off";
-      const resolvedThinking = enforceThinkingPolicy(resolvedModel, requestedThinking);
-
-      await this.editWorkspaceEntry(args.workspaceId, (workspace) => {
-        workspace.agentId = targetAgentId;
-        workspace.agentType = targetAgentId;
-        workspace.taskModelString = resolvedModel;
-        workspace.taskThinkingLevel = resolvedThinking;
-      });
-
-      await this.setTaskStatus(args.workspaceId, "running");
-
-      const kickoffMsg =
-        targetAgentId === "orchestrator"
-          ? "Start orchestrating the implementation of this plan."
-          : "Implement the plan.";
-      try {
-        const sendKickoffResult = await this.workspaceService.sendMessage(
-          args.workspaceId,
-          kickoffMsg,
-          {
-            model: resolvedModel,
-            agentId: targetAgentId,
-            thinkingLevel: resolvedThinking,
-            experiments: args.entry.workspace.taskExperiments,
-          },
-          { synthetic: true, agentInitiated: true }
-        );
-        if (!sendKickoffResult.success) {
-          // Keep status as "running" so the restart handler in initialize() can
-          // re-attempt the kickoff on next startup, rather than moving to
-          // "awaiting_report" which could finalize the task prematurely.
-          log.error(
-            "Plan-task auto-handoff failed to send kickoff message; task stays running for retry on restart",
-            {
-              workspaceId: args.workspaceId,
-              targetAgentId,
-              error: sendKickoffResult.error,
-            }
-          );
-        }
-      } catch (error: unknown) {
-        // Same as above: leave status as "running" for restart recovery.
-        log.error(
-          "Plan-task auto-handoff failed to send kickoff message; task stays running for retry on restart",
-          {
-            workspaceId: args.workspaceId,
-            targetAgentId,
-            error,
-          }
-        );
-      }
-    } catch (error: unknown) {
-      log.error("Plan-task auto-handoff failed", {
-        workspaceId: args.workspaceId,
-        planPath: args.proposePlanResult.planPath,
-        error,
-      });
-    } finally {
-      this.handoffInProgress.delete(args.workspaceId);
     }
   }
 
@@ -4152,28 +3790,6 @@ export class TaskService {
         log.error("Task waiter reject callback failed", { taskId, error: rejectError });
       }
     }
-  }
-
-  private findProposePlanSuccessInParts(parts: readonly unknown[]): { planPath: string } | null {
-    for (let i = parts.length - 1; i >= 0; i--) {
-      const part = parts[i];
-      if (!isDynamicToolPart(part)) continue;
-      if (part.toolName !== "propose_plan") continue;
-      if (part.state !== "output-available") continue;
-      if (!isSuccessfulToolResult(part.output)) continue;
-
-      const planPath =
-        typeof part.output === "object" &&
-        part.output !== null &&
-        "planPath" in part.output &&
-        typeof (part.output as { planPath?: unknown }).planPath === "string"
-          ? (part.output as { planPath: string }).planPath.trim()
-          : "";
-      if (!planPath) continue;
-
-      return { planPath };
-    }
-    return null;
   }
 
   private findImplicitAgentReportArgsInParts(

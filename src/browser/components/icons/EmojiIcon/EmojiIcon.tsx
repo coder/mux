@@ -48,7 +48,6 @@ const EMOJI_TO_ICON: Record<string, LucideIcon> = {
   "🔗": Link,
   "🔄": RefreshCw,
   "🧪": Beaker,
-  // Used by auto-handoff routing status while selecting the executor.
   "🤔": CircleHelp,
 
   // Directions
