@@ -1,4 +1,5 @@
 import { within, waitFor } from "@storybook/test";
+import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useRef, useState } from "react";
 import type { ComponentProps, ComponentType, FC, ReactNode } from "react";
 
@@ -6,7 +7,6 @@ import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 import { APIProvider, type APIClient } from "@/browser/contexts/API";
 import { ExperimentsProvider } from "@/browser/contexts/ExperimentsContext";
 import { ThemeProvider } from "@/browser/contexts/ThemeContext";
-import { appMeta, type AppStory } from "@/browser/stories/meta.js";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import { createReview } from "@/browser/stories/storyHelpers.js";
 import type { DiffHunk, Review } from "@/common/types/review";
@@ -339,8 +339,7 @@ function ImmersiveReviewStory(props: ImmersiveReviewStoryProps) {
   );
 }
 
-const meta = {
-  ...appMeta,
+const meta: Meta<typeof ImmersiveReviewView> = {
   title: "Features/RightSidebar/CodeReview/ImmersiveReviewView",
   component: ImmersiveReviewView,
   decorators: [
@@ -351,9 +350,9 @@ const meta = {
     ),
   ],
   parameters: {
-    ...appMeta.parameters,
+    layout: "fullscreen",
     chromatic: {
-      ...(appMeta.parameters?.chromatic ?? {}),
+      delay: 500,
       modes: {
         dark: { theme: "dark", viewport: 1600 },
         light: { theme: "light", viewport: 1600 },
@@ -364,7 +363,7 @@ const meta = {
 
 export default meta;
 
-type Story = AppStory;
+type Story = StoryObj<typeof meta>;
 
 export const ReviewTabImmersiveLineHeightDebug: Story = {
   render: () => (
