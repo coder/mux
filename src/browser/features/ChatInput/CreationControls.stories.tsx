@@ -1,6 +1,11 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, within } from "@storybook/test";
 import { lightweightMeta } from "@/browser/stories/meta.js";
+import {
+  mockCoderInfoAvailable,
+  mockCoderInfoMissing,
+  mockCoderInfoOutdated,
+} from "@/browser/stories/mocks/coder";
 import { RUNTIME_MODE } from "@/common/types/runtime";
 import { RuntimeButtonGroup, type RuntimeButtonGroupProps } from "./CreationControls";
 
@@ -48,12 +53,7 @@ async function openWorkspaceTypeMenu(storyRoot: HTMLElement): Promise<void> {
 export const CoderAvailable: Story = {
   args: {
     ...BASE_ARGS,
-    coderInfo: {
-      state: "available",
-      version: "2.28.0",
-      username: "coder-user",
-      url: "https://coder.example.com",
-    },
+    coderInfo: mockCoderInfoAvailable,
   },
   play: async ({ canvasElement }) => {
     const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
@@ -68,10 +68,7 @@ export const CoderAvailable: Story = {
 export const CoderNotAvailable: Story = {
   args: {
     ...BASE_ARGS,
-    coderInfo: {
-      state: "unavailable",
-      reason: "missing",
-    },
+    coderInfo: mockCoderInfoMissing,
   },
   play: async ({ canvasElement }) => {
     const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
@@ -87,11 +84,7 @@ export const CoderNotAvailable: Story = {
 export const CoderOutdated: Story = {
   args: {
     ...BASE_ARGS,
-    coderInfo: {
-      state: "outdated",
-      version: "2.20.0",
-      minVersion: "2.25.0",
-    },
+    coderInfo: mockCoderInfoOutdated,
   },
   play: async ({ canvasElement }) => {
     const storyRoot = document.getElementById("storybook-root") ?? canvasElement;

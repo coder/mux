@@ -3,12 +3,14 @@ import { waitFor, within } from "@storybook/test";
 import { useState } from "react";
 
 import { lightweightMeta } from "@/browser/stories/meta.js";
-import type {
-  CoderInfo,
-  CoderPreset,
-  CoderTemplate,
-  CoderWorkspace,
-} from "@/common/orpc/schemas/coder";
+import {
+  mockCoderInfoOutdated,
+  mockCoderParseError,
+  mockCoderPresetsCoderOnCoder,
+  mockCoderTemplates,
+  mockCoderWorkspaces,
+} from "@/browser/stories/mocks/coder";
+import type { CoderInfo } from "@/common/orpc/schemas/coder";
 import type { CoderWorkspaceConfig } from "@/common/types/runtime";
 
 import {
@@ -23,55 +25,6 @@ interface CoderAvailabilityMessageStoryProps {
   coderInfo: CoderInfo | null;
 }
 
-const mockTemplates: CoderTemplate[] = [
-  { name: "coder-on-coder", displayName: "Coder on Coder", organizationName: "default" },
-  { name: "kubernetes-dev", displayName: "Kubernetes Development", organizationName: "default" },
-  { name: "aws-windows", displayName: "AWS Windows Instance", organizationName: "default" },
-];
-
-const mockPresetsCoderOnCoder: CoderPreset[] = [
-  {
-    id: "preset-sydney",
-    name: "Sydney",
-    description: "Australia region",
-    isDefault: false,
-  },
-  {
-    id: "preset-helsinki",
-    name: "Helsinki",
-    description: "Europe region",
-    isDefault: false,
-  },
-  {
-    id: "preset-pittsburgh",
-    name: "Pittsburgh",
-    description: "US East region",
-    isDefault: true,
-  },
-];
-
-const mockWorkspaces: CoderWorkspace[] = [
-  {
-    name: "mux-dev",
-    templateName: "coder-on-coder",
-    templateDisplayName: "Coder on Coder",
-    status: "running",
-  },
-  {
-    name: "api-testing",
-    templateName: "kubernetes-dev",
-    templateDisplayName: "Kubernetes Dev",
-    status: "running",
-  },
-  {
-    name: "frontend-v2",
-    templateName: "coder-on-coder",
-    templateDisplayName: "Coder on Coder",
-    status: "running",
-  },
-];
-
-const mockParseError = "Unexpected token u in JSON at position 0";
 const notLoggedInMessage = "Run `coder login <url>` first.";
 
 const NEW_WORKSPACE_CONFIG: CoderWorkspaceConfig = {
@@ -87,11 +40,11 @@ const EXISTING_WORKSPACE_CONFIG: CoderWorkspaceConfig = {
 
 const baseCoderWorkspaceFormProps: CoderWorkspaceFormStoryProps = {
   coderConfig: NEW_WORKSPACE_CONFIG,
-  templates: mockTemplates,
+  templates: mockCoderTemplates,
   templatesError: null,
-  presets: mockPresetsCoderOnCoder,
+  presets: mockCoderPresetsCoderOnCoder,
   presetsError: null,
-  existingWorkspaces: mockWorkspaces,
+  existingWorkspaces: mockCoderWorkspaces,
   workspacesError: null,
   loadingTemplates: false,
   loadingPresets: false,
@@ -171,7 +124,7 @@ export const TemplatesParseError: Story = {
     <CoderWorkspaceFormStory
       {...getCoderWorkspaceFormProps({
         templates: [],
-        templatesError: mockParseError,
+        templatesError: mockCoderParseError,
         presets: [],
       })}
     />
@@ -179,7 +132,7 @@ export const TemplatesParseError: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
-    await canvas.findByText(mockParseError);
+    await canvas.findByText(mockCoderParseError);
     await waitFor(() => {
       const templateSelect = canvas.queryByTestId("coder-template-select");
       if (!templateSelect?.hasAttribute("data-disabled")) {
@@ -194,14 +147,14 @@ export const PresetsParseError: Story = {
     <CoderWorkspaceFormStory
       {...getCoderWorkspaceFormProps({
         presets: [],
-        presetsError: mockParseError,
+        presetsError: mockCoderParseError,
       })}
     />
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
-    await canvas.findByText(mockParseError);
+    await canvas.findByText(mockCoderParseError);
   },
 };
 
@@ -211,14 +164,14 @@ export const ExistingWorkspaceParseError: Story = {
       {...getCoderWorkspaceFormProps({
         coderConfig: EXISTING_WORKSPACE_CONFIG,
         existingWorkspaces: [],
-        workspacesError: mockParseError,
+        workspacesError: mockCoderParseError,
       })}
     />
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
-    await canvas.findByText(mockParseError);
+    await canvas.findByText(mockCoderParseError);
   },
 };
 
@@ -226,7 +179,7 @@ export const NoPresets: Story = {
   render: () => (
     <CoderWorkspaceFormStory
       {...getCoderWorkspaceFormProps({
-        templates: [mockTemplates[0]],
+        templates: [mockCoderTemplates[0]],
         presets: [],
       })}
     />
@@ -298,15 +251,7 @@ export const AvailabilityLoading: Story = {
 };
 
 export const AvailabilityOutdated: Story = {
-  render: () => (
-    <CoderAvailabilityMessageStory
-      coderInfo={{
-        state: "outdated",
-        version: "2.20.0",
-        minVersion: "2.25.0",
-      }}
-    />
-  ),
+  render: () => <CoderAvailabilityMessageStory coderInfo={mockCoderInfoOutdated} />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
