@@ -5734,7 +5734,7 @@ export const BUILTIN_SKILL_FILES: Record<string, Record<string, string>> = {
       "",
       "- `src/browser/stories/App.sidebar.stories.tsx`",
       "- `src/browser/stories/App.chat.stories.tsx`",
-      "- `src/browser/stories/App.settings.stories.tsx`",
+      "- `src/browser/features/Settings/Sections/<SectionName>.stories.tsx`",
       "",
       "## Configuration",
       "",
