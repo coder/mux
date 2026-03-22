@@ -152,7 +152,7 @@ interface CreationControlsProps {
 }
 
 /** Runtime type button group with icons and colors */
-interface RuntimeButtonGroupProps {
+export interface RuntimeButtonGroupProps {
   value: RuntimeChoice;
   onChange: (mode: RuntimeChoice) => void;
   defaultMode: RuntimeChoice;
@@ -428,7 +428,7 @@ function SectionPicker(props: SectionPickerProps) {
   );
 }
 
-function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
+export function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
   const state = props.runtimeAvailabilityState;
   const availabilityMap = state?.status === "loaded" ? state.data : null;
   const coderInfo = props.coderInfo ?? null;
