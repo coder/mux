@@ -20,7 +20,7 @@ export function CreationCenterContent(props: CreationCenterContentProps) {
       {props.isSending && (
         <div
           className={
-            "bg-surface-primary absolute inset-0 z-10 flex flex-col items-center justify-center"
+            "bg-surface-primary absolute inset-0 z-10 flex flex-col items-center justify-center pb-[30vh]"
           }
         >
           <LoadingAnimation />
