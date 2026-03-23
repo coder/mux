@@ -95,8 +95,6 @@ export const SECTION_COLOR_PALETTE = [
   ["Pink", "#d465a5"],
 ] as const;
 
-export type SectionColorName = (typeof SECTION_COLOR_PALETTE)[number][0];
-
 /**
  * Default color for new sections (neutral gray)
  */
