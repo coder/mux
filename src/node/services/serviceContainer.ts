@@ -7,6 +7,7 @@ import {
   MUX_HELP_CHAT_WORKSPACE_TITLE,
 } from "@/common/constants/muxChat";
 import { getMuxHelpChatProjectPath } from "@/node/constants/muxChat";
+import { DEFAULT_CODER_ARCHIVE_BEHAVIOR } from "@/common/config/coderArchiveBehavior";
 import { createMuxMessage } from "@/common/types/message";
 import { log } from "@/node/services/log";
 import type { Config } from "@/node/config";
@@ -53,8 +54,8 @@ import { coderService, type CoderService } from "@/node/services/coderService";
 import { SshPromptService } from "@/node/services/sshPromptService";
 import { WorkspaceLifecycleHooks } from "@/node/services/workspaceLifecycleHooks";
 import {
-  createStartCoderOnUnarchiveHook,
-  createStopCoderOnArchiveHook,
+  createCoderArchiveHook,
+  createCoderUnarchiveHook,
 } from "@/node/runtime/coderLifecycleHooks";
 import { setGlobalCoderService } from "@/node/runtime/runtimeFactory";
 import { setSshPromptService } from "@/node/runtime/sshConnectionPool";
@@ -289,18 +290,19 @@ export class ServiceContainer {
     this.serverAuthService = new ServerAuthService(config);
 
     const workspaceLifecycleHooks = new WorkspaceLifecycleHooks();
+    const getArchiveBehavior = () =>
+      this.config.loadConfigOrDefault().coderWorkspaceArchiveBehavior ??
+      DEFAULT_CODER_ARCHIVE_BEHAVIOR;
     workspaceLifecycleHooks.registerBeforeArchive(
-      createStopCoderOnArchiveHook({
+      createCoderArchiveHook({
         coderService: this.coderService,
-        shouldStopOnArchive: () =>
-          this.config.loadConfigOrDefault().stopCoderWorkspaceOnArchive !== false,
+        getArchiveBehavior,
       })
     );
     workspaceLifecycleHooks.registerAfterUnarchive(
-      createStartCoderOnUnarchiveHook({
+      createCoderUnarchiveHook({
         coderService: this.coderService,
-        shouldStopOnArchive: () =>
-          this.config.loadConfigOrDefault().stopCoderWorkspaceOnArchive !== false,
+        getArchiveBehavior,
       })
     );
     this.workspaceService.setWorkspaceLifecycleHooks(workspaceLifecycleHooks);

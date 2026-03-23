@@ -1,5 +1,9 @@
+import type {
+  CoderWorkspaceArchiveBehavior,
+} from "@/common/config/coderArchiveBehavior";
 import { isSSHRuntime } from "@/common/types/runtime";
 import { Err, Ok, type Result } from "@/common/types/result";
+import { getErrorMessage } from "@/common/utils/errors";
 import type { CoderService, WorkspaceStatusResult } from "@/node/services/coderService";
 import { log } from "@/node/services/log";
 import type {
@@ -49,19 +53,14 @@ function isAlreadyRunningOrStarting(status: WorkspaceStatusResult): boolean {
   return status.status === "running" || status.status === "starting";
 }
 
-export function createStopCoderOnArchiveHook(options: {
+export function createCoderArchiveHook(options: {
   coderService: CoderService;
-  shouldStopOnArchive: () => boolean;
+  getArchiveBehavior: () => CoderWorkspaceArchiveBehavior;
   timeoutMs?: number;
 }): BeforeArchiveHook {
   const timeoutMs = options.timeoutMs ?? DEFAULT_STOP_TIMEOUT_MS;
 
   return async ({ workspaceId, workspaceMetadata }): Promise<Result<void>> => {
-    // Config default is ON (undefined behaves true).
-    if (!options.shouldStopOnArchive()) {
-      return Ok(undefined);
-    }
-
     const runtimeConfig = workspaceMetadata.runtimeConfig;
     if (!isSSHRuntime(runtimeConfig) || !runtimeConfig.coder) {
       return Ok(undefined);
@@ -70,8 +69,9 @@ export function createStopCoderOnArchiveHook(options: {
     const coder = runtimeConfig.coder;
 
     // Important safety invariant:
-    // Only stop Coder workspaces that mux created (dedicated workspaces). If the user connected
-    // mux to an existing Coder workspace, archiving in mux should *not* stop their environment.
+    // Only stop/delete Coder workspaces that mux created (dedicated workspaces). If the user
+    // connected mux to an existing Coder workspace, archiving in mux should *not* manage their
+    // environment.
     if (coder.existingWorkspace === true) {
       return Ok(undefined);
     }
@@ -79,6 +79,27 @@ export function createStopCoderOnArchiveHook(options: {
     const workspaceName = coder.workspaceName?.trim();
     if (!workspaceName) {
       return Ok(undefined);
+    }
+
+    const archiveBehavior = options.getArchiveBehavior();
+    if (archiveBehavior === "keep") {
+      return Ok(undefined);
+    }
+
+    if (archiveBehavior === "delete") {
+      log.debug("Deleting Coder workspace before mux archive", {
+        workspaceId,
+        coderWorkspaceName: workspaceName,
+      });
+
+      try {
+        await options.coderService.deleteWorkspace(workspaceName);
+        return Ok(undefined);
+      } catch (error) {
+        return Err(
+          `Failed to delete Coder workspace "${workspaceName}": ${getErrorMessage(error)}`
+        );
+      }
     }
 
     // Best-effort: skip the stop call if the control-plane already thinks the workspace is down.
@@ -106,9 +127,9 @@ export function createStopCoderOnArchiveHook(options: {
   };
 }
 
-export function createStartCoderOnUnarchiveHook(options: {
+export function createCoderUnarchiveHook(options: {
   coderService: CoderService;
-  shouldStopOnArchive: () => boolean;
+  getArchiveBehavior: () => CoderWorkspaceArchiveBehavior;
   timeoutMs?: number;
   stoppingWaitTimeoutMs?: number;
   stoppingPollIntervalMs?: number;
@@ -116,11 +137,6 @@ export function createStartCoderOnUnarchiveHook(options: {
   const timeoutMs = options.timeoutMs ?? DEFAULT_START_TIMEOUT_MS;
 
   return async ({ workspaceId, workspaceMetadata }): Promise<Result<void>> => {
-    // Config default is ON (undefined behaves true).
-    if (!options.shouldStopOnArchive()) {
-      return Ok(undefined);
-    }
-
     const runtimeConfig = workspaceMetadata.runtimeConfig;
     if (!isSSHRuntime(runtimeConfig) || !runtimeConfig.coder) {
       return Ok(undefined);
@@ -137,6 +153,10 @@ export function createStartCoderOnUnarchiveHook(options: {
 
     const workspaceName = coder.workspaceName?.trim();
     if (!workspaceName) {
+      return Ok(undefined);
+    }
+
+    if (options.getArchiveBehavior() !== "stop") {
       return Ok(undefined);
     }
 

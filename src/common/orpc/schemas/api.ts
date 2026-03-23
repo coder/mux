@@ -1,6 +1,7 @@
 import { eventIterator } from "@orpc/server";
 import { UIModeSchema } from "../../types/mode";
 import { z } from "zod";
+import { CODER_ARCHIVE_BEHAVIORS } from "@/common/config/coderArchiveBehavior";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { ChatStatsSchema, SessionUsageFileSchema } from "./chatStats";
 import {
@@ -1696,7 +1697,7 @@ export const config = {
       routeOverrides: z.record(z.string(), z.string()).optional(),
       defaultModel: z.string().optional(),
       hiddenModels: z.array(z.string()).optional(),
-      stopCoderWorkspaceOnArchive: z.boolean(),
+      coderWorkspaceArchiveBehavior: z.enum(CODER_ARCHIVE_BEHAVIORS),
       runtimeEnablement: z.record(z.string(), z.boolean()),
       defaultRuntime: z.string().nullable(),
       agentAiDefaults: AgentAiDefaultsSchema,
@@ -1752,7 +1753,7 @@ export const config = {
   updateCoderPrefs: {
     input: z
       .object({
-        stopCoderWorkspaceOnArchive: z.boolean(),
+        coderWorkspaceArchiveBehavior: z.enum(CODER_ARCHIVE_BEHAVIORS),
       })
       .strict(),
     output: z.void(),
