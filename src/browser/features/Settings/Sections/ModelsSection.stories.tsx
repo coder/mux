@@ -6,7 +6,7 @@
  */
 import { lightweightMeta } from "@/browser/stories/meta.js";
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { within } from "@storybook/test";
+import { waitFor, within } from "@storybook/test";
 import { ModelsSection } from "./ModelsSection.js";
 import { SettingsSectionStory, setupSettingsStory } from "./settingsStoryUtils.js";
 
@@ -49,7 +49,14 @@ export const ModelsEmpty: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
-    await canvas.findByText(/Built-in Models/i, {}, { timeout: 5000 });
+    await waitFor(
+      () => {
+        if (canvas.queryAllByText(/Built-in Models/i).length === 0) {
+          throw new Error("Expected Built-in Models to render");
+        }
+      },
+      { timeout: 5000 }
+    );
   },
 };
 
@@ -95,7 +102,22 @@ export const ModelsConfigured: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
-    await canvas.findByText(/claude-sonnet-4-20250514/i, {}, { timeout: 5000 });
-    await canvas.findByText(/gpt-4o/i, {}, { timeout: 5000 });
+    await waitFor(
+      () => {
+        if (canvas.queryAllByText(/claude-sonnet-4-20250514/i).length === 0) {
+          throw new Error("Expected claude-sonnet-4-20250514 to render");
+        }
+      },
+      { timeout: 5000 }
+    );
+
+    await waitFor(
+      () => {
+        if (canvas.queryAllByText(/^gpt-4o$/i).length === 0) {
+          throw new Error("Expected gpt-4o to render");
+        }
+      },
+      { timeout: 5000 }
+    );
   },
 };

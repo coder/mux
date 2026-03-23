@@ -1,6 +1,6 @@
 import { lightweightMeta } from "@/browser/stories/meta.js";
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { userEvent, within } from "@storybook/test";
+import { userEvent, waitFor, within } from "@storybook/test";
 import { ProvidersSection } from "./ProvidersSection.js";
 import { SettingsSectionStory, setupSettingsStory } from "./settingsStoryUtils.js";
 
@@ -22,7 +22,14 @@ export const ProvidersEmpty: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
-    await canvas.findByText(/No providers are currently enabled\./i, {}, { timeout: 5000 });
+    await waitFor(
+      () => {
+        if (canvas.queryAllByText(/No providers are currently enabled\./i).length === 0) {
+          throw new Error("Expected empty providers message to render");
+        }
+      },
+      { timeout: 5000 }
+    );
   },
 };
 
