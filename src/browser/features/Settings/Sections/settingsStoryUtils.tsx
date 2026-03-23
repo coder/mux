@@ -14,10 +14,7 @@ import { createWorkspace, groupWorkspacesByProject } from "@/browser/stories/moc
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import { selectWorkspace } from "@/browser/stories/storyHelpers";
 import { getExperimentKey, type ExperimentId } from "@/common/constants/experiments";
-import {
-  SELECTED_WORKSPACE_KEY,
-  UI_THEME_KEY,
-} from "@/common/constants/storage";
+import { SELECTED_WORKSPACE_KEY, UI_THEME_KEY } from "@/common/constants/storage";
 import type { ServerAuthSession } from "@/common/orpc/types";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import type { ProjectConfig } from "@/common/types/project";
