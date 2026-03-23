@@ -406,6 +406,8 @@ export class ServiceContainer {
     await recordStep("policyService.initialize", () => this.policyService.initialize());
 
     await recordStep("experimentsService.initialize", () => this.experimentsService.initialize());
+    // Kick off non-task chat restart recovery eagerly; task workspaces recover in TaskService.initialize().
+    await recordStep("workspaceService.initialize", () => this.workspaceService.initialize());
     await recordStep("taskService.initialize", () => this.taskService.initialize());
 
     const idleCompactionStartedAt = Date.now();

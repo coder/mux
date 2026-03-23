@@ -1037,6 +1037,9 @@ export declare interface WorkspaceService {
 // eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
 export class WorkspaceService extends EventEmitter {
   private readonly sessions = new Map<string, AgentSession>();
+  // Startup recovery may need a short-lived session even before the workspace is opened.
+  // Promote only sessions that keep retry/stream activity alive after the initial check.
+  private readonly transientStartupRecoverySessions = new Map<string, AgentSession>();
   private readonly sessionSubscriptions = new Map<
     string,
     { chat: () => void; metadata: () => void }
@@ -1158,6 +1161,48 @@ export class WorkspaceService extends EventEmitter {
    */
   setTaskService(taskService: TaskService): void {
     this.taskService = taskService;
+  }
+
+  /**
+   * Best-effort startup recovery for non-task chats so restart auto-retry can resume
+   * interrupted turns before the user explicitly opens each workspace.
+   */
+  async initialize(): Promise<void> {
+    const startupStartedAt = Date.now();
+
+    try {
+      const allMetadata = await this.config.getAllWorkspaceMetadata();
+      let scheduledCount = 0;
+      let skippedTaskCount = 0;
+      let skippedArchivedCount = 0;
+
+      for (const metadata of allMetadata) {
+        if (metadata.taskStatus) {
+          skippedTaskCount += 1;
+          continue;
+        }
+
+        if (isWorkspaceArchived(metadata.archivedAt, metadata.unarchivedAt)) {
+          skippedArchivedCount += 1;
+          continue;
+        }
+
+        this.startStartupRecovery(metadata.id);
+        scheduledCount += 1;
+      }
+
+      log.info("[startup] WorkspaceService.initialize completed", {
+        totalMs: Date.now() - startupStartedAt,
+        scheduledCount,
+        skippedTaskCount,
+        skippedArchivedCount,
+      });
+    } catch (error) {
+      log.warn("[startup] WorkspaceService.initialize failed", {
+        totalMs: Date.now() - startupStartedAt,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   isExperimentEnabled(experimentId: (typeof EXPERIMENT_IDS)[keyof typeof EXPERIMENT_IDS]): boolean {
@@ -1449,6 +1494,72 @@ export class WorkspaceService extends EventEmitter {
     );
   }
 
+  /**
+   * Run startup recovery without permanently caching a session for every workspace.
+   * Only promote the temporary session if recovery leaves background activity alive.
+   */
+  private startStartupRecovery(workspaceId: string): void {
+    const trimmed = workspaceId.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    const existingSession =
+      this.sessions.get(trimmed) ?? this.transientStartupRecoverySessions.get(trimmed);
+    if (existingSession) {
+      existingSession.scheduleStartupRecovery();
+      return;
+    }
+
+    const session = this.createSession(trimmed);
+    this.transientStartupRecoverySessions.set(trimmed, session);
+
+    void session
+      .runStartupRecovery()
+      .then(() => {
+        if (this.transientStartupRecoverySessions.get(trimmed) !== session) {
+          return;
+        }
+
+        this.transientStartupRecoverySessions.delete(trimmed);
+        if (session.shouldRetainAfterStartupRecovery()) {
+          this.registerSession(trimmed, session);
+          return;
+        }
+
+        session.dispose();
+      })
+      .catch((error) => {
+        if (this.transientStartupRecoverySessions.get(trimmed) === session) {
+          this.transientStartupRecoverySessions.delete(trimmed);
+          session.dispose();
+        }
+
+        log.warn("Failed to run startup recovery for workspace", {
+          workspaceId: trimmed,
+          error: getErrorMessage(error),
+        });
+      });
+  }
+
+  private createSession(workspaceId: string): AgentSession {
+    return new AgentSession({
+      workspaceId,
+      config: this.config,
+      historyService: this.historyService,
+      aiService: this.aiService,
+      telemetryService: this.telemetryService,
+      initStateManager: this.initStateManager,
+      backgroundProcessManager: this.backgroundProcessManager,
+      onCompactionComplete: () => {
+        this.schedulePostCompactionMetadataRefresh(workspaceId);
+      },
+      onPostCompactionStateChange: () => {
+        this.schedulePostCompactionMetadataRefresh(workspaceId);
+      },
+    });
+  }
+
   private attachSessionSubscriptions(workspaceId: string, session: AgentSession): void {
     const chatUnsubscribe = session.onChatEvent((event) => {
       this.emit("chat", { workspaceId: event.workspaceId, message: event.message });
@@ -1480,22 +1591,15 @@ export class WorkspaceService extends EventEmitter {
       return session;
     }
 
-    session = new AgentSession({
-      workspaceId: trimmed,
-      config: this.config,
-      historyService: this.historyService,
-      aiService: this.aiService,
-      telemetryService: this.telemetryService,
-      initStateManager: this.initStateManager,
-      backgroundProcessManager: this.backgroundProcessManager,
-      onCompactionComplete: () => {
-        this.schedulePostCompactionMetadataRefresh(trimmed);
-      },
-      onPostCompactionStateChange: () => {
-        this.schedulePostCompactionMetadataRefresh(trimmed);
-      },
-    });
+    session = this.transientStartupRecoverySessions.get(trimmed);
+    if (session) {
+      this.transientStartupRecoverySessions.delete(trimmed);
+      this.sessions.set(trimmed, session);
+      this.attachSessionSubscriptions(trimmed, session);
+      return session;
+    }
 
+    session = this.createSession(trimmed);
     this.sessions.set(trimmed, session);
     this.attachSessionSubscriptions(trimmed, session);
 
@@ -1512,6 +1616,9 @@ export class WorkspaceService extends EventEmitter {
     workspaceId = workspaceId.trim();
     assert(workspaceId.length > 0, "workspaceId must not be empty");
     assert(!this.sessions.has(workspaceId), `session already registered for ${workspaceId}`);
+    if (this.transientStartupRecoverySessions.get(workspaceId) === session) {
+      this.transientStartupRecoverySessions.delete(workspaceId);
+    }
 
     this.sessions.set(workspaceId, session);
     this.attachSessionSubscriptions(workspaceId, session);
@@ -1519,6 +1626,12 @@ export class WorkspaceService extends EventEmitter {
 
   public disposeSession(workspaceId: string): void {
     const trimmed = workspaceId.trim();
+    const transientSession = this.transientStartupRecoverySessions.get(trimmed);
+    if (transientSession) {
+      transientSession.dispose();
+      this.transientStartupRecoverySessions.delete(trimmed);
+    }
+
     const session = this.sessions.get(trimmed);
     const refreshTimer = this.postCompactionRefreshTimers.get(trimmed);
     if (refreshTimer) {

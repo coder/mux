@@ -237,6 +237,7 @@ const MAX_AGENT_SKILL_SNAPSHOT_CHARS = 50_000;
 const AUTO_RETRY_PREFERENCE_FILE = "auto-retry-preference.json";
 const STARTUP_AUTO_RETRY_HISTORY_FAILURE_BASE_DELAY_MS = 1_000;
 const STARTUP_AUTO_RETRY_HISTORY_FAILURE_MAX_DELAY_MS = 30_000;
+const MAX_STARTUP_RECOVERY_DEFERRED_ATTEMPTS = 4;
 
 export interface AgentSessionChatEvent {
   workspaceId: string;
@@ -1409,30 +1410,96 @@ export class AgentSession {
       });
   }
 
+  async runStartupRecovery(): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
+
+    if (!this.startupRecoveryScheduled && !this.startupRecoveryPromise) {
+      // Crash recovery: check if the last message is a compaction summary with
+      // a pending follow-up that was never dispatched. If so, dispatch it now.
+      // This handles the case where the app crashed after compaction completed
+      // but before the follow-up was sent.
+      this.startupRecoveryPromise = this.dispatchPendingFollowUp()
+        .then(() => {
+          this.startupRecoveryScheduled = true;
+        })
+        .catch((error) => {
+          this.startupRecoveryScheduled = false;
+          log.warn("Failed to dispatch pending follow-up during startup recovery", {
+            workspaceId: this.workspaceId,
+            error: getErrorMessage(error),
+          });
+        })
+        .finally(() => {
+          this.startupRecoveryPromise = null;
+        });
+    }
+
+    if (this.startupRecoveryPromise) {
+      await this.startupRecoveryPromise;
+    }
+
+    let deferredAttempts = 0;
+    while (!this.disposed) {
+      let outcome: StartupAutoRetryCheckOutcome;
+      try {
+        outcome = await this.scheduleStartupAutoRetryIfNeeded();
+      } catch (error) {
+        this.startupAutoRetryCheckScheduled = true;
+        log.warn("Startup auto-retry check failed", {
+          workspaceId: this.workspaceId,
+          error: getErrorMessage(error),
+        });
+        return;
+      }
+
+      if (outcome === "completed") {
+        this.startupAutoRetryCheckScheduled = true;
+        return;
+      }
+
+      this.startupAutoRetryCheckScheduled = false;
+      if (
+        this.isBusy() ||
+        this.aiService.isStreaming(this.workspaceId) ||
+        this.retryManager.isRetryPending
+      ) {
+        return;
+      }
+
+      deferredAttempts += 1;
+      if (deferredAttempts >= MAX_STARTUP_RECOVERY_DEFERRED_ATTEMPTS) {
+        this.startupRecoveryScheduled = false;
+        this.startupAutoRetryCheckScheduled = true;
+        log.warn("Startup recovery abandoned after repeated deferred auto-retry checks", {
+          workspaceId: this.workspaceId,
+          deferredAttempts,
+          historyReadFailures: this.startupAutoRetryHistoryReadFailureCount,
+        });
+        return;
+      }
+
+      const rerunDelayMs = this.startupAutoRetryDeferredRetryDelayMs;
+      this.startupAutoRetryDeferredRetryDelayMs = 0;
+      await this.waitForStartupAutoRetryRerunWindow(rerunDelayMs);
+    }
+  }
+
+  shouldRetainAfterStartupRecovery(): boolean {
+    return (
+      this.isBusy() ||
+      this.aiService.isStreaming(this.workspaceId) ||
+      this.retryManager.isRetryPending
+    );
+  }
+
   scheduleStartupRecovery(): void {
     if (this.disposed || this.startupRecoveryScheduled || this.startupRecoveryPromise) {
       return;
     }
 
-    // Crash recovery: check if the last message is a compaction summary with
-    // a pending follow-up that was never dispatched. If so, dispatch it now.
-    // This handles the case where the app crashed after compaction completed
-    // but before the follow-up was sent.
-    this.startupRecoveryPromise = this.dispatchPendingFollowUp()
-      .then(() => {
-        this.startupRecoveryScheduled = true;
-      })
-      .catch((error) => {
-        this.startupRecoveryScheduled = false;
-        log.warn("Failed to dispatch pending follow-up during startup recovery", {
-          workspaceId: this.workspaceId,
-          error: getErrorMessage(error),
-        });
-      })
-      .finally(() => {
-        this.startupRecoveryPromise = null;
-        this.ensureStartupAutoRetryCheck();
-      });
+    void this.runStartupRecovery();
   }
 
   private async emitHistoricalEvents(

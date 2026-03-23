@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { EventEmitter } from "events";
 import { AgentSession } from "./agentSession";
 import { createTestHistoryService } from "./testHistoryService";
@@ -294,6 +294,48 @@ describe("AgentSession startup auto-retry recovery", () => {
     }
 
     expect(getLastMessagesCalls).toBeGreaterThanOrEqual(2);
+
+    session.dispose();
+  });
+
+  test("runStartupRecovery gives up after repeated deferred history-read failures", async () => {
+    const workspaceId = "startup-recovery-deferred-cap";
+    const { session, historyService, cleanup } = await createSessionBundle(workspaceId);
+    cleanups.push(cleanup);
+
+    const appendResult = await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("user-1", "user", "Interrupted while history keeps failing", {
+        timestamp: Date.now(),
+      })
+    );
+    expect(appendResult.success).toBe(true);
+
+    let getLastMessagesCalls = 0;
+    historyService.getLastMessages = mock(() => {
+      getLastMessagesCalls += 1;
+      return Promise.resolve({
+        success: false as const,
+        error: "persistent history read failure",
+      });
+    }) as unknown as HistoryService["getLastMessages"];
+
+    const privateSession = session as unknown as {
+      runStartupRecovery: () => Promise<void>;
+      waitForStartupAutoRetryRerunWindow: (retryDelayMs?: number) => Promise<void>;
+      startupRecoveryScheduled: boolean;
+      startupAutoRetryCheckScheduled: boolean;
+    };
+    const waitSpy = spyOn(privateSession, "waitForStartupAutoRetryRerunWindow").mockResolvedValue(
+      undefined
+    );
+
+    await privateSession.runStartupRecovery();
+
+    expect(getLastMessagesCalls).toBe(5);
+    expect(waitSpy).toHaveBeenCalledTimes(3);
+    expect(privateSession.startupRecoveryScheduled).toBe(false);
+    expect(privateSession.startupAutoRetryCheckScheduled).toBe(true);
 
     session.dispose();
   });

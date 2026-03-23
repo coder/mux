@@ -615,6 +615,9 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     !workspaceState.canInterrupt &&
     !workspaceState.isStreamStarting &&
     hasInterruptedStream;
+  const isAutoRetryActive =
+    workspaceState.autoRetryStatus?.type === "auto-retry-scheduled" ||
+    workspaceState.autoRetryStatus?.type === "auto-retry-starting";
 
   const lastActionableMessage = getLastNonDecorativeMessage(workspaceState.messages);
   const suppressRetryBarrier =
@@ -890,7 +893,10 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                               />
                             )}
                             {isAtCutoff && <EditCutoffBarrier />}
-                            {shouldShowInterruptedBarrier(msg) && <InterruptedBarrier />}
+                            {shouldShowInterruptedBarrier(msg, {
+                              isHydratingTranscript,
+                              isAutoRetryActive,
+                            }) && <InterruptedBarrier />}
                           </React.Fragment>
                         );
                       })}

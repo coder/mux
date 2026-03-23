@@ -65,14 +65,25 @@ export interface BashOutputGroupInfo {
   firstIndex: number;
 }
 
+interface InterruptedBarrierVisibilityOptions {
+  isHydratingTranscript?: boolean;
+  isAutoRetryActive?: boolean;
+}
+
 /**
  * Determines if the interrupted barrier should be shown for a DisplayedMessage.
  *
  * The barrier should show when:
  * - Message was interrupted (isPartial) AND not currently streaming
  * - For multi-part messages, only show on the last part
+ *
+ * Recovery-in-progress states intentionally suppress the barrier so restart-driven
+ * auto-resume does not briefly look like a user-visible failure.
  */
-export function shouldShowInterruptedBarrier(msg: DisplayedMessage): boolean {
+export function shouldShowInterruptedBarrier(
+  msg: DisplayedMessage,
+  options?: InterruptedBarrierVisibilityOptions
+): boolean {
   if (
     msg.type === "user" ||
     msg.type === "stream-error" ||
@@ -82,6 +93,10 @@ export function shouldShowInterruptedBarrier(msg: DisplayedMessage): boolean {
     msg.type === "plan-display"
   )
     return false;
+
+  if (options?.isHydratingTranscript || options?.isAutoRetryActive) {
+    return false;
+  }
 
   // ask_user_question is intentionally a "waiting for input" state. Even if the
   // underlying message is a persisted partial (e.g. after app restart), we keep

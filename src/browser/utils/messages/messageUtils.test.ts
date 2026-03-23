@@ -56,6 +56,42 @@ describe("shouldShowInterruptedBarrier", () => {
 
     expect(shouldShowInterruptedBarrier(msg)).toBe(true);
   });
+
+  it("suppresses interrupted barrier while transcript hydration is rebuilding state", () => {
+    const msg: DisplayedMessage = {
+      type: "tool",
+      id: "tool-1",
+      historyId: "assistant-1",
+      toolName: "bash",
+      toolCallId: "call-1",
+      args: { script: "echo hi", timeout_secs: 1, display_name: "test" },
+      status: "interrupted",
+      isPartial: true,
+      historySequence: 2,
+      streamSequence: 0,
+      isLastPartOfMessage: true,
+    };
+
+    expect(shouldShowInterruptedBarrier(msg, { isHydratingTranscript: true })).toBe(false);
+  });
+
+  it("suppresses interrupted barrier while auto-retry is already underway", () => {
+    const msg: DisplayedMessage = {
+      type: "tool",
+      id: "tool-1",
+      historyId: "assistant-1",
+      toolName: "bash",
+      toolCallId: "call-1",
+      args: { script: "echo hi", timeout_secs: 1, display_name: "test" },
+      status: "interrupted",
+      isPartial: true,
+      historySequence: 2,
+      streamSequence: 0,
+      isLastPartOfMessage: true,
+    };
+
+    expect(shouldShowInterruptedBarrier(msg, { isAutoRetryActive: true })).toBe(false);
+  });
 });
 describe("shouldBypassDeferredMessages", () => {
   const executingBash: DisplayedMessage = {

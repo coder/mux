@@ -100,6 +100,174 @@ const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
   cleanup: mock(() => Promise.resolve()),
 };
 
+function createFrontendWorkspaceMetadata(
+  overrides: Partial<FrontendWorkspaceMetadata> & Pick<FrontendWorkspaceMetadata, "id" | "name">
+): FrontendWorkspaceMetadata {
+  return {
+    ...overrides,
+    id: overrides.id,
+    name: overrides.name,
+    projectName: overrides.projectName ?? "project",
+    projectPath: overrides.projectPath ?? "/tmp/project",
+    createdAt: overrides.createdAt ?? new Date().toISOString(),
+    runtimeConfig: overrides.runtimeConfig ?? { type: "local" },
+    namedWorkspacePath: overrides.namedWorkspacePath ?? `/tmp/${overrides.id}`,
+  };
+}
+
+describe("WorkspaceService initialize", () => {
+  let workspaceService: WorkspaceService;
+  let config: Config;
+
+  beforeEach(() => {
+    config = {
+      getAllWorkspaceMetadata: mock(() => Promise.resolve([])),
+    } as unknown as Config;
+
+    const aiService = {
+      on: mock(() => undefined),
+      off: mock(() => undefined),
+    } as unknown as AIService;
+
+    workspaceService = new WorkspaceService(
+      config,
+      {} as HistoryService,
+      aiService,
+      mockInitStateManager as InitStateManager,
+      mockExtensionMetadataService as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+  });
+
+  test("schedules startup recovery for non-task, non-archived chats", async () => {
+    const liveWorkspace = createFrontendWorkspaceMetadata({
+      id: "live-ws",
+      name: "Live Workspace",
+    });
+    const taskWorkspace = createFrontendWorkspaceMetadata({
+      id: "task-ws",
+      name: "Task Workspace",
+      taskStatus: "running",
+    });
+    const archivedWorkspace = createFrontendWorkspaceMetadata({
+      id: "archived-ws",
+      name: "Archived Workspace",
+      archivedAt: "2026-03-20T00:00:00.000Z",
+    });
+
+    config.getAllWorkspaceMetadata = mock(() =>
+      Promise.resolve([liveWorkspace, taskWorkspace, archivedWorkspace])
+    ) as unknown as Config["getAllWorkspaceMetadata"];
+
+    const startupAccess = workspaceService as unknown as {
+      startStartupRecovery: (workspaceId: string) => void;
+    };
+    const startStartupRecoverySpy = spyOn(startupAccess, "startStartupRecovery").mockImplementation(
+      () => undefined
+    );
+
+    await workspaceService.initialize();
+
+    expect(startStartupRecoverySpy).toHaveBeenCalledTimes(1);
+    expect(startStartupRecoverySpy).toHaveBeenCalledWith("live-ws");
+  });
+
+  test("swallows startup metadata lookup failures", async () => {
+    config.getAllWorkspaceMetadata = mock(() =>
+      Promise.reject(new Error("config unavailable"))
+    ) as unknown as Config["getAllWorkspaceMetadata"];
+
+    const startupAccess = workspaceService as unknown as {
+      startStartupRecovery: (workspaceId: string) => void;
+    };
+    const startStartupRecoverySpy = spyOn(startupAccess, "startStartupRecovery");
+
+    await workspaceService.initialize();
+
+    expect(startStartupRecoverySpy).not.toHaveBeenCalled();
+  });
+
+  test("disposes transient startup-recovery sessions that go idle", async () => {
+    const dispose = mock(() => undefined);
+    const fakeSession = {
+      runStartupRecovery: mock(() => Promise.resolve()),
+      shouldRetainAfterStartupRecovery: mock(() => false),
+      scheduleStartupRecovery: mock(() => undefined),
+      dispose,
+    } as unknown as AgentSession;
+
+    const startupAccess = workspaceService as unknown as {
+      startStartupRecovery: (workspaceId: string) => void;
+      createSession: (workspaceId: string) => AgentSession;
+      sessions: Map<string, AgentSession>;
+    };
+    const createSessionSpy = spyOn(startupAccess, "createSession").mockImplementation(
+      () => fakeSession
+    );
+
+    startupAccess.startStartupRecovery("live-ws");
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(createSessionSpy).toHaveBeenCalledWith("live-ws");
+    expect(dispose).toHaveBeenCalledTimes(1);
+    expect(startupAccess.sessions.has("live-ws")).toBe(false);
+  });
+
+  test("retains transient startup-recovery sessions when recovery stays active", async () => {
+    const dispose = mock(() => undefined);
+    const onChatEvent = mock(() => () => undefined);
+    const onMetadataEvent = mock(() => () => undefined);
+    const fakeSession = {
+      runStartupRecovery: mock(() => Promise.resolve()),
+      shouldRetainAfterStartupRecovery: mock(() => true),
+      scheduleStartupRecovery: mock(() => undefined),
+      onChatEvent,
+      onMetadataEvent,
+      dispose,
+    } as unknown as AgentSession;
+
+    const startupAccess = workspaceService as unknown as {
+      startStartupRecovery: (workspaceId: string) => void;
+      createSession: (workspaceId: string) => AgentSession;
+      sessions: Map<string, AgentSession>;
+    };
+    spyOn(startupAccess, "createSession").mockImplementation(() => fakeSession);
+
+    startupAccess.startStartupRecovery("live-ws");
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(dispose).not.toHaveBeenCalled();
+    expect(startupAccess.sessions.get("live-ws")).toBe(fakeSession);
+  });
+
+  test("claims transient startup-recovery sessions instead of creating duplicates", () => {
+    const onChatEvent = mock(() => () => undefined);
+    const onMetadataEvent = mock(() => () => undefined);
+    const fakeSession = {
+      onChatEvent,
+      onMetadataEvent,
+    } as unknown as AgentSession;
+
+    const startupAccess = workspaceService as unknown as {
+      transientStartupRecoverySessions: Map<string, AgentSession>;
+      sessions: Map<string, AgentSession>;
+      getOrCreateSession: (workspaceId: string) => AgentSession;
+      createSession: (workspaceId: string) => AgentSession;
+    };
+    startupAccess.transientStartupRecoverySessions.set("live-ws", fakeSession);
+    const createSessionSpy = spyOn(startupAccess, "createSession");
+
+    const claimedSession = startupAccess.getOrCreateSession("live-ws");
+
+    expect(claimedSession).toBe(fakeSession);
+    expect(startupAccess.transientStartupRecoverySessions.has("live-ws")).toBe(false);
+    expect(startupAccess.sessions.get("live-ws")).toBe(fakeSession);
+    expect(createSessionSpy).not.toHaveBeenCalled();
+  });
+});
+
 describe("WorkspaceService rename lock", () => {
   let workspaceService: WorkspaceService;
   let mockAIService: AIService;
