@@ -15,13 +15,21 @@ const config: StorybookConfig = {
   },
   viteFinal: async (config) => {
     return mergeConfig(config, {
-      // Inherit project aliases
+      // Inherit project aliases. Storybook also needs a stable VERSION module so
+      // stories that render chrome-only components (for example the landing-page
+      // PR badge path through TitleBar/AboutDialog) do not depend on generated
+      // src/version.ts existing in the local workspace.
       resolve: {
-        alias: {
-          "@": path.join(process.cwd(), "src"),
-          // Note: VERSION mocking for stable visual testing is handled by overwriting
-          // src/version.ts in the Chromatic CI workflow, not via alias here
-        },
+        alias: [
+          {
+            find: "@/version",
+            replacement: path.join(process.cwd(), "src/browser/stories/mocks/version.ts"),
+          },
+          {
+            find: "@",
+            replacement: path.join(process.cwd(), "src"),
+          },
+        ],
       },
       // Prevent Vite from discovering new deps mid-test and forcing a full reload (test-storybook
       // interprets reloads as navigations and flakes). Keep this list minimal.
