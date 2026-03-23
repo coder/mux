@@ -15,82 +15,18 @@ import {
   createStaticChatHandler,
   groupWorkspacesByProject,
 } from "./mockFactory";
-import { createOnChatAdapter, selectWorkspace as selectWorkspaceHelper } from "./storyHelpers";
+import {
+  createOnChatAdapter,
+  createPRStatusExecutor,
+  type PRStatusFixture,
+  selectWorkspace as selectWorkspaceHelper,
+} from "./storyHelpers";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 
 export default {
   ...appMeta,
   title: "App/Links",
 };
-
-/**
- * PR status fixture for mocking gh pr view output
- */
-interface PRStatusFixture {
-  number: number;
-  url: string;
-  state: "OPEN" | "CLOSED" | "MERGED";
-  mergeable: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
-  mergeStateStatus:
-    | "CLEAN"
-    | "BLOCKED"
-    | "BEHIND"
-    | "DIRTY"
-    | "UNSTABLE"
-    | "HAS_HOOKS"
-    | "DRAFT"
-    | "UNKNOWN";
-  title: string;
-  isDraft: boolean;
-  headRefName: string;
-  baseRefName: string;
-  statusCheckRollup?: Array<{ status?: string; conclusion?: string | null }>;
-}
-
-/**
- * Creates an executeBash function that returns PR status for gh pr view commands.
- */
-function createPRStatusExecutor(prStatuses: Map<string, PRStatusFixture | "no_pr" | "error">) {
-  return (workspaceId: string, script: string) => {
-    // Handle gh pr view commands
-    if (script.includes("gh pr view")) {
-      const status = prStatuses.get(workspaceId);
-
-      if (!status || status === "error") {
-        return Promise.resolve({
-          success: true as const,
-          output: '{"no_pr":true}',
-          exitCode: 0,
-          wall_duration_ms: 50,
-        });
-      }
-
-      if (status === "no_pr") {
-        return Promise.resolve({
-          success: true as const,
-          output: '{"no_pr":true}',
-          exitCode: 0,
-          wall_duration_ms: 50,
-        });
-      }
-
-      return Promise.resolve({
-        success: true as const,
-        output: JSON.stringify(status),
-        exitCode: 0,
-        wall_duration_ms: 50,
-      });
-    }
-
-    // Default: return empty success
-    return Promise.resolve({
-      success: true as const,
-      output: "",
-      exitCode: 0,
-      wall_duration_ms: 50,
-    });
-  };
-}
 
 /**
  * Shows all PR status badge variants:

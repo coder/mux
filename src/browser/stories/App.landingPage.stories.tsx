@@ -10,7 +10,7 @@ import type { Summary } from "@/browser/hooks/useAnalytics";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import { createWorkspace, groupWorkspacesByProject } from "./mockFactory";
-import { expandProjects } from "./storyHelpers";
+import { createPRStatusExecutor, expandProjects } from "./storyHelpers";
 import { LEFT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
 
 export default {
@@ -53,6 +53,31 @@ const WORKSPACES = [
   }),
 ];
 
+const WORKSPACES_WITH_PR_BADGE = WORKSPACES.map((workspace) => ({
+  ...workspace,
+  // Use distinct story-only ids so PR store cache from this badge scenario never
+  // bleeds into the default landing-page stories when Storybook remounts.
+  id: `${workspace.id}-pr-badge`,
+}));
+
+const RECENT_WORKSPACE_PR_STATUSES = new Map([
+  [
+    WORKSPACES_WITH_PR_BADGE[0].id,
+    {
+      number: 482,
+      url: "https://github.com/muxinc/atlas-api/pull/482",
+      state: "OPEN" as const,
+      mergeable: "MERGEABLE" as const,
+      mergeStateStatus: "CLEAN" as const,
+      title: "Implement OAuth2 auth flow",
+      isDraft: false,
+      headRefName: "feat/auth-flow",
+      baseRefName: "main",
+      statusCheckRollup: [{ status: "COMPLETED", conclusion: "SUCCESS" }],
+    },
+  ],
+]);
+
 const MOCK_SUMMARY: Summary = {
   totalSpendUsd: 47.82,
   todaySpendUsd: 6.13,
@@ -86,6 +111,23 @@ export const Default: AppStory = {
         const client = createMockORPCClient({
           projects: groupWorkspacesByProject(WORKSPACES),
           workspaces: WORKSPACES,
+        });
+        return withAnalytics(client);
+      }}
+    />
+  ),
+};
+
+/** Landing page with a recent workspace card that shows the shared PR badge. */
+export const RecentWorkspacePRBadge: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        expandProjects([PROJECT_PATH]);
+        const client = createMockORPCClient({
+          projects: groupWorkspacesByProject(WORKSPACES_WITH_PR_BADGE),
+          workspaces: WORKSPACES_WITH_PR_BADGE,
+          executeBash: createPRStatusExecutor(RECENT_WORKSPACE_PR_STATUSES),
         });
         return withAnalytics(client);
       }}
