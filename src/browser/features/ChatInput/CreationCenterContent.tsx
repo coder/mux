@@ -1,4 +1,3 @@
-import { useTheme } from "@/browser/contexts/ThemeContext";
 import { Shimmer } from "@/browser/features/AIElements/Shimmer";
 import { LoadingAnimation } from "@/browser/components/LoadingAnimation/LoadingAnimation";
 
@@ -16,14 +15,11 @@ interface CreationCenterContentProps {
  * Shown as an overlay when isSending is true.
  */
 export function CreationCenterContent(props: CreationCenterContentProps) {
-  const { theme } = useTheme();
-  const isDark = theme === "dark" || theme.endsWith("-dark");
-
   return (
     <>
       {props.isSending && (
         <div
-          className={`absolute inset-0 z-10 flex flex-col items-center justify-center pb-[30vh] ${isDark ? "bg-sidebar" : "bg-white"}`}
+          className={"bg-surface-primary absolute inset-0 z-10 flex flex-col items-center justify-center"}
         >
           <LoadingAnimation />
           <div className="mt-8 max-w-xl px-8 text-center">
