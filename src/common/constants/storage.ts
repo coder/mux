@@ -478,8 +478,9 @@ export function getFileTreeExpandStateKey(workspaceId: string): string {
 export const REVIEW_FILE_TREE_VIEW_MODE_KEY = "reviewFileTreeViewMode";
 
 /**
- * Get the localStorage key for persisted agent status for a workspace
+ * Get the localStorage key for persisted legacy agent status for a workspace.
  * Stores the most recent successful status_set payload (emoji, message, url)
+ * so historical status rows and older sessions can still be reconstructed.
  * Format: "statusState:{workspaceId}"
  */
 

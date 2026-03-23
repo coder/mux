@@ -20,7 +20,11 @@ import type {
   ExtensionMetadataService,
   ExtensionMetadataStreamingUpdate,
 } from "./ExtensionMetadataService";
-import type { FrontendWorkspaceMetadata, WorkspaceMetadata } from "@/common/types/workspace";
+import type {
+  FrontendWorkspaceMetadata,
+  WorkspaceActivitySnapshot,
+  WorkspaceMetadata,
+} from "@/common/types/workspace";
 import type { TaskService } from "./taskService";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
 import type { TerminalService } from "@/node/services/terminalService";
@@ -1613,7 +1617,10 @@ describe("WorkspaceService idle compaction dispatch", () => {
     await internals.updateStreamingStatus(workspaceId, false);
 
     expect(internals.idleCompactingWorkspaces.has(workspaceId)).toBe(false);
-    expect(setStreaming).toHaveBeenCalledWith(workspaceId, false, { hasTodos: false });
+    expect(setStreaming).toHaveBeenCalledWith(workspaceId, false, {
+      hasTodos: false,
+      todoStatus: null,
+    });
   });
 });
 
@@ -1716,6 +1723,81 @@ describe("WorkspaceService streaming generation guard", () => {
 
     expect(setStreaming).toHaveBeenCalledTimes(1);
     expect(setStreaming).toHaveBeenCalledWith(workspaceId, true, { model: "openai:gpt-4o" });
+  });
+
+  test("todo snapshot refreshes run in call order for consecutive updates", async () => {
+    const workspaceId = "ws-todo-refresh-order";
+    const firstWriteDeferred = createDeferred<WorkspaceActivitySnapshot>();
+    const setTodoStatus = mock(
+      (
+        _workspaceId: string,
+        todoStatus: { emoji: string; message: string } | null,
+        hasTodos: boolean
+      ) => {
+        if (todoStatus?.message === "First task") {
+          return firstWriteDeferred.promise;
+        }
+        return Promise.resolve({
+          recency: Date.now(),
+          streaming: false,
+          lastModel: null,
+          lastThinkingLevel: null,
+          todoStatus,
+          hasTodos,
+        });
+      }
+    );
+
+    let readCount = 0;
+    readTodosSpy = spyOn(todoStorageModule, "readTodosForSessionDir").mockImplementation(() => {
+      readCount += 1;
+      if (readCount === 1) {
+        return Promise.resolve([{ content: "First task", status: "in_progress" }]);
+      }
+      return Promise.resolve([{ content: "Second task", status: "in_progress" }]);
+    });
+
+    (
+      workspaceService as unknown as {
+        extensionMetadata: ExtensionMetadataService;
+      }
+    ).extensionMetadata = {
+      setTodoStatus,
+    } as unknown as ExtensionMetadataService;
+
+    const internals = workspaceService as unknown as {
+      updateTodoStatusFromStorage: (workspaceId: string) => Promise<void>;
+    };
+
+    const firstRefresh = internals.updateTodoStatusFromStorage(workspaceId);
+    const secondRefresh = internals.updateTodoStatusFromStorage(workspaceId);
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(setTodoStatus).toHaveBeenCalledTimes(1);
+    expect(readCount).toBe(1);
+
+    firstWriteDeferred.resolve({
+      recency: Date.now(),
+      streaming: false,
+      lastModel: null,
+      lastThinkingLevel: null,
+      todoStatus: { emoji: "🔄", message: "First task" },
+      hasTodos: true,
+    });
+
+    await Promise.all([firstRefresh, secondRefresh]);
+
+    expect(setTodoStatus).toHaveBeenCalledTimes(2);
+    expect(setTodoStatus.mock.calls[0]).toEqual([
+      workspaceId,
+      { emoji: "🔄", message: "First task" },
+      true,
+    ]);
+    expect(setTodoStatus.mock.calls[1]).toEqual([
+      workspaceId,
+      { emoji: "🔄", message: "Second task" },
+      true,
+    ]);
   });
 
   test("handleStreamCompletion captures generation before awaiting recency updates", async () => {
@@ -3019,8 +3101,74 @@ describe("WorkspaceService metadata listeners", () => {
     expect(setStreaming).toHaveBeenCalledTimes(1);
     expect(setStreaming).toHaveBeenCalledWith(workspaceId, false, {
       hasTodos: false,
+      todoStatus: null,
       generation: 0,
     });
+  });
+
+  test("todo_write events publish todo-derived sidebar status", async () => {
+    const workspaceId = "ws-todo-status";
+    const setTodoStatus = mock(() =>
+      Promise.resolve({
+        recency: Date.now(),
+        streaming: true,
+        lastModel: null,
+        lastThinkingLevel: null,
+        agentStatus: null,
+      })
+    );
+    const readTodosSpy = spyOn(todoStorageModule, "readTodosForSessionDir").mockResolvedValue([
+      { content: "Run typecheck", status: "in_progress" },
+      { content: "Add tests", status: "pending" },
+    ]);
+
+    class FakeAIService extends EventEmitter {
+      isStreaming = mock(() => false);
+      getWorkspaceMetadata = mock(() =>
+        Promise.resolve({ success: false as const, error: "not found" })
+      );
+    }
+
+    const aiService = new FakeAIService() as unknown as AIService;
+    const mockConfig: Partial<Config> = {
+      srcDir: "/tmp/src",
+      getSessionDir: mock(() => "/tmp/test/sessions"),
+      findWorkspace: mock(() => null),
+      loadConfigOrDefault: mock(() => ({ projects: new Map() })),
+    };
+    const mockExtensionMetadata: Partial<ExtensionMetadataService> = { setTodoStatus };
+
+    new WorkspaceService(
+      mockConfig as Config,
+      historyService,
+      aiService,
+      mockInitStateManager as InitStateManager,
+      mockExtensionMetadata as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+
+    try {
+      aiService.emit("tool-call-end", {
+        type: "tool-call-end",
+        workspaceId,
+        messageId: "msg-1",
+        toolCallId: "tool-1",
+        toolName: "todo_write",
+        result: { success: true, count: 2 },
+        timestamp: Date.now(),
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(readTodosSpy).toHaveBeenCalledWith("/tmp/test/sessions");
+      expect(setTodoStatus).toHaveBeenCalledWith(
+        workspaceId,
+        { emoji: "🔄", message: "Run typecheck" },
+        true
+      );
+    } finally {
+      readTodosSpy.mockRestore();
+    }
   });
 });
 

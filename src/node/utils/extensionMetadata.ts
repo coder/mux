@@ -22,9 +22,11 @@ export interface ExtensionMetadata {
   lastModel: string | null;
   lastThinkingLevel: ThinkingLevel | null;
   agentStatus: ExtensionAgentStatus | null;
+  displayStatus?: ExtensionAgentStatus | null;
+  todoStatus?: ExtensionAgentStatus | null;
   hasTodos?: boolean;
-  // Persists the latest status_set URL so later status_set calls without a URL
-  // can still carry the last deep link even after agentStatus is cleared.
+  // Persists the latest display-status URL so later updates without a URL
+  // can still carry the last deep link even after displayStatus is cleared.
   lastStatusUrl?: string | null;
 }
 
@@ -78,6 +80,19 @@ export function coerceExtensionMetadata(value: unknown): ExtensionMetadata | nul
     return null;
   }
 
+  const displayStatus =
+    "displayStatus" in record
+      ? record.displayStatus === null
+        ? null
+        : (coerceAgentStatus(record.displayStatus) ?? undefined)
+      : undefined;
+  const todoStatus =
+    "todoStatus" in record
+      ? record.todoStatus === null
+        ? null
+        : (coerceAgentStatus(record.todoStatus) ?? undefined)
+      : undefined;
+
   return {
     recency: record.recency,
     streaming: record.streaming,
@@ -87,6 +102,8 @@ export function coerceExtensionMetadata(value: unknown): ExtensionMetadata | nul
     lastModel: typeof record.lastModel === "string" ? record.lastModel : null,
     lastThinkingLevel: isThinkingLevel(record.lastThinkingLevel) ? record.lastThinkingLevel : null,
     agentStatus: coerceAgentStatus(record.agentStatus),
+    ...(displayStatus !== undefined ? { displayStatus } : {}),
+    ...(todoStatus !== undefined ? { todoStatus } : {}),
     ...(typeof record.hasTodos === "boolean" ? { hasTodos: record.hasTodos } : {}),
     lastStatusUrl: coerceStatusUrl(record.lastStatusUrl),
   };
@@ -95,6 +112,17 @@ export function coerceExtensionMetadata(value: unknown): ExtensionMetadata | nul
 export function toWorkspaceActivitySnapshot(
   metadata: ExtensionMetadata
 ): WorkspaceActivitySnapshot {
+  const displayStatus = metadata.displayStatus !== undefined ? metadata.displayStatus : null;
+  const todoStatus =
+    metadata.todoStatus !== undefined
+      ? metadata.todoStatus
+      : metadata.hasTodos === false
+        ? null
+        : // Upgrade bridge: existing extensionMetadata.json entries may only have the old
+          // agentStatus field. Project that forward into todoStatus until a fresh todo_write
+          // or stream-stop snapshot rewrites the workspace metadata.
+          coerceAgentStatus(metadata.agentStatus);
+
   return {
     recency: metadata.recency,
     streaming: metadata.streaming,
@@ -103,7 +131,8 @@ export function toWorkspaceActivitySnapshot(
       : {}),
     lastModel: metadata.lastModel ?? null,
     lastThinkingLevel: metadata.lastThinkingLevel ?? null,
-    agentStatus: coerceAgentStatus(metadata.agentStatus),
+    ...(displayStatus ? { displayStatus } : {}),
+    ...(todoStatus ? { todoStatus } : {}),
     ...(typeof metadata.hasTodos === "boolean" ? { hasTodos: metadata.hasTodos } : {}),
   };
 }

@@ -51,6 +51,7 @@ import { detectDefaultTrunkBranch, listLocalBranches } from "@/node/git";
 import { shellQuote } from "@/node/runtime/backgroundCommands";
 import { extractEditedFilePaths } from "@/common/utils/messages/extractEditedFiles";
 import { buildCompactionMessageText } from "@/common/utils/compaction/compactionPrompt";
+import { deriveTodoStatus } from "@/common/utils/todoList";
 import { fileExists } from "@/node/utils/runtime/fileExists";
 import { orchestrateFork } from "@/node/services/utils/forkOrchestrator";
 import { generateWorkspaceIdentity } from "@/node/services/workspaceTitleGenerator";
@@ -165,7 +166,11 @@ const MAX_WORKSPACE_NAME_COLLISION_RETRIES = 3;
 
 // Shared type for workspace-scoped AI settings (model + thinking)
 type WorkspaceAISettings = z.infer<typeof WorkspaceAISettingsSchema>;
-type WorkspaceAgentStatus = NonNullable<WorkspaceActivitySnapshot["agentStatus"]>;
+interface WorkspaceAgentStatus {
+  emoji: string;
+  message: string;
+  url?: string;
+}
 type WorkspaceRuntimeStatus = "running" | "stopped" | "unknown" | "unsupported";
 const POST_COMPACTION_METADATA_REFRESH_DEBOUNCE_MS = 100;
 
@@ -1081,6 +1086,10 @@ export class WorkspaceService extends EventEmitter {
   // from older streams from clobbering a newer streaming=true snapshot after async awaits.
   private readonly streamingGenerations = new Map<string, number>();
 
+  // Serialize todo snapshot refreshes so back-to-back todo_write/propose_plan updates cannot
+  // finish out of order and briefly restore stale progress in workspace activity metadata.
+  private readonly todoStatusUpdateQueue = new Map<string, Promise<void>>();
+
   // AbortControllers for in-progress workspace initialization (postCreateSetup + initWorkspace).
   //
   // Why this lives here: archive/remove are the user-facing lifecycle operations that should
@@ -1251,6 +1260,8 @@ export class WorkspaceService extends EventEmitter {
       "result" in v;
     const extractStatusSetResult = (result: unknown): WorkspaceAgentStatus | null =>
       isObj(result) && result.success === true ? coerceAgentStatus(result) : null;
+    const isSuccessfulToolResult = (result: unknown): result is { success: true } =>
+      isObj(result) && result.success === true;
     // Update streaming status and recency on stream start
     this.aiService.on("stream-start", (data: unknown) => {
       if (isStreamStartEvent(data)) {
@@ -1283,16 +1294,26 @@ export class WorkspaceService extends EventEmitter {
     });
 
     this.aiService.on("tool-call-end", (data: unknown) => {
-      if (!isToolCallEndEvent(data) || data.replay === true || data.toolName !== "status_set") {
+      if (!isToolCallEndEvent(data) || data.replay === true) {
         return;
       }
 
-      const agentStatus = extractStatusSetResult(data.result);
-      if (!agentStatus) {
+      if (data.toolName === "status_set") {
+        const agentStatus = extractStatusSetResult(data.result);
+        if (!agentStatus) {
+          return;
+        }
+
+        void this.updateAgentStatus(data.workspaceId, agentStatus);
         return;
       }
 
-      void this.updateAgentStatus(data.workspaceId, agentStatus);
+      if (
+        (data.toolName === "todo_write" || data.toolName === "propose_plan") &&
+        isSuccessfulToolResult(data.result)
+      ) {
+        void this.updateTodoStatusFromStorage(data.workspaceId);
+      }
     });
   }
 
@@ -1345,19 +1366,44 @@ export class WorkspaceService extends EventEmitter {
     );
   }
 
+  private async updateTodoStatusFromStorage(workspaceId: string): Promise<void> {
+    const previousUpdate = this.todoStatusUpdateQueue.get(workspaceId) ?? Promise.resolve();
+    const nextUpdate = previousUpdate
+      .catch(() => undefined)
+      .then(async () => {
+        const sessionDir = this.config.getSessionDir(workspaceId);
+        const todos = await readTodosForSessionDir(sessionDir);
+        const todoStatus = deriveTodoStatus(todos) ?? null;
+
+        await this.emitWorkspaceActivityUpdate(workspaceId, "update workspace todo status", () =>
+          this.extensionMetadata.setTodoStatus(workspaceId, todoStatus, todos.length > 0)
+        );
+      });
+
+    this.todoStatusUpdateQueue.set(workspaceId, nextUpdate);
+    try {
+      await nextUpdate;
+    } finally {
+      if (this.todoStatusUpdateQueue.get(workspaceId) === nextUpdate) {
+        this.todoStatusUpdateQueue.delete(workspaceId);
+      }
+    }
+  }
+
   private async updateStreamingStatus(
     workspaceId: string,
     streaming: boolean,
     update: ExtensionMetadataStreamingUpdate = {}
   ): Promise<void> {
     try {
-      let { hasTodos } = update;
-      if (!streaming && hasTodos === undefined) {
-        // Stop snapshots need an authoritative todo bit even for background workspaces,
+      let { hasTodos, todoStatus } = update;
+      if (!streaming && (hasTodos === undefined || todoStatus === undefined)) {
+        // Stop snapshots need an authoritative todo summary even for background workspaces,
         // and centralizing the read here preserves the fire-and-forget abort/error handlers.
         const sessionDir = this.config.getSessionDir(workspaceId);
         const todos = await readTodosForSessionDir(sessionDir);
-        hasTodos = todos.length > 0;
+        hasTodos ??= todos.length > 0;
+        todoStatus ??= deriveTodoStatus(todos) ?? null;
       }
       if (
         !streaming &&
@@ -1371,6 +1417,7 @@ export class WorkspaceService extends EventEmitter {
 
       const snapshot = await this.extensionMetadata.setStreaming(workspaceId, streaming, {
         ...update,
+        ...(todoStatus !== undefined ? { todoStatus } : {}),
         ...(hasTodos !== undefined ? { hasTodos } : {}),
       });
       // Idle compaction tagging is stop-snapshot only. Never tag streaming=true updates,

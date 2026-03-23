@@ -44,6 +44,7 @@ import {
 } from "@/common/types/stream";
 import { MapStore } from "./MapStore";
 import { createDisplayUsage, recomputeUsageCosts } from "@/common/utils/tokens/displayUsage";
+import { deriveTodoStatus } from "@/common/utils/todoList";
 import { getModelStats } from "@/common/utils/tokens/modelStats";
 import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import { computeProvidersConfigFingerprint } from "@/common/utils/providers/configFingerprint";
@@ -317,8 +318,8 @@ function collapsePinnedTodoOnStreamStop(workspaceId: string, hasTodos: boolean):
 }
 
 function areAgentStatusesEqual(
-  a: WorkspaceActivitySnapshot["agentStatus"] | undefined,
-  b: WorkspaceActivitySnapshot["agentStatus"] | undefined
+  a: { emoji: string; message: string; url?: string } | undefined | null,
+  b: { emoji: string; message: string; url?: string } | undefined | null
 ): boolean {
   if (a === b) {
     return true;
@@ -1566,11 +1567,14 @@ export class WorkspaceStore {
         !canInterrupt;
       const isHydratingTranscript =
         isActiveWorkspace && transient.isHydratingTranscript && !transient.caughtUp;
-      const agentStatus = useAggregatorState
-        ? aggregator.getAgentStatus()
-        : activity
-          ? (activity.agentStatus ?? undefined)
-          : aggregator.getAgentStatus();
+      const aggregatorTodos = aggregator.getCurrentTodos();
+      const displayStatus = useAggregatorState ? undefined : (activity?.displayStatus ?? undefined);
+      const todoStatus = useAggregatorState
+        ? (deriveTodoStatus(aggregatorTodos) ?? activity?.todoStatus ?? undefined)
+        : (activity?.todoStatus ??
+          (activity?.hasTodos === false ? undefined : deriveTodoStatus(aggregatorTodos)));
+      const fallbackAgentStatus = useAggregatorState ? aggregator.getAgentStatus() : undefined;
+      const agentStatus = displayStatus ?? todoStatus ?? fallbackAgentStatus;
 
       // Live streaming stats
       const activeStreamMessageId = aggregator.getActiveStreamMessageId();
@@ -1597,7 +1601,7 @@ export class WorkspaceStore {
         currentModel,
         currentThinkingLevel,
         recencyTimestamp,
-        todos: aggregator.getCurrentTodos(),
+        todos: aggregatorTodos,
         loadedSkills: aggregator.getLoadedSkills(),
         skillLoadErrors: aggregator.getSkillLoadErrors(),
         lastAbortReason: aggregator.getLastAbortReason(),
@@ -2275,7 +2279,9 @@ export class WorkspaceStore {
       previous?.lastModel !== snapshot?.lastModel ||
       previous?.lastThinkingLevel !== snapshot?.lastThinkingLevel ||
       previous?.recency !== snapshot?.recency ||
-      !areAgentStatusesEqual(previous?.agentStatus, snapshot?.agentStatus);
+      previous?.hasTodos !== snapshot?.hasTodos ||
+      !areAgentStatusesEqual(previous?.displayStatus, snapshot?.displayStatus) ||
+      !areAgentStatusesEqual(previous?.todoStatus, snapshot?.todoStatus);
 
     if (!changed) {
       return;

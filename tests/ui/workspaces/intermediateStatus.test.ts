@@ -1,7 +1,7 @@
 /**
- * UI integration test for the “working but no status_set yet” intermediate status.
+ * UI integration test for the “working but no todo-derived status yet” intermediate state.
  *
- * Expectation: While a stream is starting and no status_set tool has been received,
+ * Expectation: While a stream is starting and the agent has not written a todo list yet,
  * the workspace sidebar row should show provider icon + model name + starting label.
  */
 
@@ -27,7 +27,7 @@ describe("Workspace intermediate status (mock AI router)", () => {
     await preloadTestModules();
   });
 
-  test("shows model + starting while stream is starting and before status_set", async () => {
+  test("shows model + starting while stream is starting and before todos appear", async () => {
     const app = await createAppHarness({ branchPrefix: "status-intermediate" });
 
     const collector = createStreamCollector(app.env.orpc, app.workspaceId);

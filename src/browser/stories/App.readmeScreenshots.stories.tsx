@@ -16,7 +16,7 @@ import {
   createUserMessage,
   createAssistantMessage,
   createProposePlanTool,
-  createStatusTool,
+  createTodoWriteTool,
   createFileReadTool,
   createFileEditTool,
   createBashTool,
@@ -42,10 +42,11 @@ import {
   getModelKey,
   getProjectScopeId,
   getRightSidebarLayoutKey,
-  getStatusStateKey,
   getThinkingLevelKey,
 } from "@/common/constants/storage";
 import { DEFAULT_MODEL } from "@/common/constants/knownModels";
+import type { TodoItem } from "@/common/types/tools";
+import { deriveTodoStatus } from "@/common/utils/todoList";
 
 export default {
   ...appMeta,
@@ -80,6 +81,25 @@ const IPHONE_17_PRO_MAX = {
   width: 440,
   height: 956,
 } as const;
+
+function buildStoryTodos(message: string, status: TodoItem["status"] = "in_progress"): TodoItem[] {
+  switch (status) {
+    case "completed":
+      return [{ content: message, status: "completed" }];
+    case "pending":
+      return [
+        { content: "Captured current context", status: "completed" },
+        { content: message, status: "pending" },
+      ];
+    case "in_progress":
+    default:
+      return [
+        { content: "Captured current context", status: "completed" },
+        { content: message, status: "in_progress" },
+        { content: "Share a final update", status: "pending" },
+      ];
+  }
+}
 
 function createMultiModelSessionUsage(totalUsd: number): MockSessionUsage {
   // Split cost into model rows to make the Costs tab look realistic (cached + cacheCreate present).
@@ -450,12 +470,7 @@ index 0000000..def5678
                         "bun test -- layout",
                         "PASS  tests/ui/layout.test.tsx (4 tests)\n\nTests: 4 passed, 4 total\nTime: 0.42s"
                       ),
-                      createStatusTool(
-                        "call-status-1",
-                        "🚀",
-                        "PR ready",
-                        "https://github.com/coder/mux/pull/2035"
-                      ),
+                      createTodoWriteTool("call-status-1", "PR ready", "completed"),
                     ],
                   }),
                 ]),
@@ -489,8 +504,8 @@ index 0000000..def5678
 };
 
 // README: docs/img/agent-status.webp
-// This story keeps the left sidebar expanded and seeds varied status_set tool calls
-// so workspace rows show realistic in-progress agent activity.
+// This story keeps the left sidebar expanded and seeds varied todo lists
+// so workspace rows show realistic todo-derived agent activity.
 export const AgentStatusSidebar: AppStory = {
   render: () => (
     <AppWithMocks
@@ -504,37 +519,31 @@ export const AgentStatusSidebar: AppStory = {
             name: "feature/docs",
             assistantText:
               "Capture run is active. I widened the viewport and I am checking the git divergence + agent status stories for regressions.",
-            statusEmoji: "🔍",
-            statusMessage: "Comparing refreshed screenshots",
-            statusUrl: "https://github.com/coder/mux/pull/2035",
+            todos: buildStoryTodos("Comparing refreshed screenshots"),
           },
           {
             id: "ws-status-2",
             name: "feature/sidebar",
             assistantText: "Profiling workspace row rendering and hover interactions.",
-            statusEmoji: "🔍",
-            statusMessage: "Profiling sidebar rendering",
+            todos: buildStoryTodos("Profiling sidebar rendering"),
           },
           {
             id: "ws-status-3",
             name: "bugfix/stream",
             assistantText: "Collecting crash traces from interrupted stream retries.",
-            statusEmoji: "🔍",
-            statusMessage: "Reading stream crash logs",
+            todos: buildStoryTodos("Reading stream crash logs"),
           },
           {
             id: "ws-status-4",
             name: "feature/auth",
             assistantText: "Wiring shared auth checks into task launch paths.",
-            statusEmoji: "🔧",
-            statusMessage: "Implementing auth middleware",
+            todos: buildStoryTodos("Implement auth middleware", "pending"),
           },
           {
             id: "ws-status-5",
             name: "tests/sidebar-regression",
-            assistantText: "Expanding status indicator coverage with visual assertions.",
-            statusEmoji: "🧪",
-            statusMessage: "Running sidebar regression tests",
+            assistantText: "Expanding todo preview coverage with visual assertions.",
+            todos: buildStoryTodos("Sidebar regression tests passed", "completed"),
           },
           {
             id: "ws-status-ssh",
@@ -542,73 +551,70 @@ export const AgentStatusSidebar: AppStory = {
             runtime: "ssh" as const,
             host: "prod.example.com",
             assistantText: "Deploying staged patch to production canary nodes.",
-            statusEmoji: "⏳",
-            statusMessage: "Waiting for deploy health checks",
+            todos: buildStoryTodos("Waiting for deploy health checks", "pending"),
           },
           {
             id: "ws-status-6",
             name: "feature/web-research",
             assistantText: "Comparing provider docs for tool schema strictness changes.",
-            statusEmoji: "🔍",
-            statusMessage: "Searching web for API notes",
+            todos: buildStoryTodos("Searching web for API notes"),
           },
           {
             id: "ws-status-7",
             name: "release/v1.0.0",
             assistantText: "Preparing release summary for this screenshot refresh.",
-            statusEmoji: "📝",
-            statusMessage: "Drafting release notes",
+            todos: buildStoryTodos("Drafting release notes"),
           },
           {
             id: "ws-status-8",
             name: "chore/static-check",
             assistantText: "Running formatter + static checks before posting updates.",
-            statusEmoji: "🧪",
-            statusMessage: "Running make static-check",
+            todos: buildStoryTodos("Running make static-check"),
           },
           {
             id: "ws-status-9",
             name: "feature/costs-tab",
             assistantText: "Comparing token breakdown rows across models.",
-            statusEmoji: "🔄",
-            statusMessage: "Refreshing costs snapshots",
+            todos: buildStoryTodos("Refreshed costs snapshots", "completed"),
           },
           {
             id: "ws-status-10",
             name: "docs/readme",
             assistantText: "Regenerating docs assets and linking updated images.",
-            statusEmoji: "📝",
-            statusMessage: "Updating README screenshots",
+            todos: buildStoryTodos("Updating README screenshots"),
           },
           {
             id: "ws-status-11",
             name: "refactor/task-runner",
             assistantText: "Splitting task lifecycle updates into smaller reducers.",
-            statusEmoji: "🔧",
-            statusMessage: "Refactoring task status flow",
+            todos: buildStoryTodos("Refactoring task status flow"),
           },
           {
             id: "ws-status-12",
             name: "main",
             assistantText: "Monitoring queue health while waiting for follow-up tasks.",
-            statusEmoji: "⏳",
-            statusMessage: "Waiting for next screenshot task",
+            todos: buildStoryTodos("Waiting for next screenshot task", "pending"),
           },
         ];
 
-        // Seed persisted statusState for every workspace so the sidebar can show
-        // many status examples without requiring each workspace's onChat stream
-        // to be actively subscribed.
-        for (const fixture of workspaceFixtures) {
-          window.localStorage.setItem(
-            getStatusStateKey(fixture.id),
-            JSON.stringify({
-              emoji: fixture.statusEmoji,
-              message: fixture.statusMessage,
-              ...(fixture.statusUrl ? { url: fixture.statusUrl } : {}),
-            })
-          );
-        }
+        // Background rows are not onChat-subscribed in this screenshot, so seed
+        // sidebar activity from todo-derived workspace snapshots instead.
+        const workspaceActivitySnapshots = Object.fromEntries(
+          workspaceFixtures.map((fixture, index) => {
+            const recency = NOW - (index + 1) * 60_000;
+            return [
+              fixture.id,
+              {
+                recency,
+                streaming: false,
+                lastModel: null,
+                lastThinkingLevel: null,
+                todoStatus: deriveTodoStatus(fixture.todos) ?? null,
+                hasTodos: fixture.todos.length > 0,
+              },
+            ];
+          })
+        );
 
         const workspaces = workspaceFixtures.map((fixture, index) => {
           const createdAt = new Date(NOW - (index + 1) * 60_000).toISOString();
@@ -649,25 +655,18 @@ export const AgentStatusSidebar: AppStory = {
                 historySequence: 2,
                 timestamp: STABLE_TIMESTAMP - 110_000,
                 toolCalls: [
-                  createStatusTool(
+                  createTodoWriteTool(
                     "call-1",
-                    "🔧",
-                    "Regenerating README screenshots and validating Chromatic diffs",
-                    primaryWorkspace.statusUrl
+                    buildStoryTodos(
+                      "Regenerating README screenshots and validating Chromatic diffs"
+                    )
                   ),
                 ],
               }),
               createAssistantMessage("msg-3", primaryWorkspace.assistantText, {
                 historySequence: 3,
                 timestamp: STABLE_TIMESTAMP - 100_000,
-                toolCalls: [
-                  createStatusTool(
-                    "call-2",
-                    primaryWorkspace.statusEmoji,
-                    primaryWorkspace.statusMessage,
-                    primaryWorkspace.statusUrl
-                  ),
-                ],
+                toolCalls: [createTodoWriteTool("call-2", primaryWorkspace.todos)],
               }),
             ]),
           ],
@@ -678,14 +677,7 @@ export const AgentStatusSidebar: AppStory = {
                 createAssistantMessage("msg-1", fixture.assistantText, {
                   historySequence: 1,
                   timestamp: STABLE_TIMESTAMP - (95_000 - index * 4_000),
-                  toolCalls: [
-                    createStatusTool(
-                      "call-1",
-                      fixture.statusEmoji,
-                      fixture.statusMessage,
-                      fixture.statusUrl
-                    ),
-                  ],
+                  toolCalls: [createTodoWriteTool("call-1", fixture.todos)],
                 }),
               ]),
             ] as const;
@@ -699,6 +691,7 @@ export const AgentStatusSidebar: AppStory = {
         return createMockORPCClient({
           projects: groupWorkspacesByProject(workspaces),
           workspaces,
+          workspaceActivitySnapshots,
           onChat: createOnChatAdapter(chatHandlers),
         });
       }}
@@ -791,9 +784,8 @@ export const GitStatusPopover: AppStory = {
                 historySequence: 2,
                 timestamp: STABLE_TIMESTAMP - 130_000,
                 toolCalls: [
-                  createStatusTool(
+                  createTodoWriteTool(
                     "call-status-1",
-                    "🔍",
                     "Inspecting local vs origin commits to prepare a safe rebase plan"
                   ),
                 ],
@@ -966,7 +958,7 @@ graph TD
                     historySequence: 5,
                     timestamp: STABLE_TIMESTAMP - 5_000,
                     toolCalls: [
-                      createStatusTool("call-status-1", "📝", "Building README screenshot stories"),
+                      createTodoWriteTool("call-status-1", "Building README screenshot stories"),
                     ],
                   }),
                 ]),
@@ -1152,12 +1144,7 @@ export const CostsTabRich: AppStory = {
                     historySequence: 6,
                     timestamp: STABLE_TIMESTAMP - 5_000,
                     toolCalls: [
-                      createStatusTool(
-                        "call-status-1",
-                        "🚀",
-                        "PR #427 opened",
-                        "https://github.com/mux/mux/pull/427"
-                      ),
+                      createTodoWriteTool("call-status-1", "PR #427 opened", "completed"),
                     ],
                   }),
                 ]),
@@ -1218,9 +1205,8 @@ export const ContextManagementDialog: AppStory = {
                         totalTokens: 118_000,
                       },
                       toolCalls: [
-                        createStatusTool(
+                        createTodoWriteTool(
                           "call-status-1",
-                          "🔧",
                           "Reviewing context usage and idle compaction settings"
                         ),
                       ],
@@ -1307,9 +1293,8 @@ export const MobileServerMode: AppStory = {
                       historySequence: 2,
                       timestamp: STABLE_TIMESTAMP - 30_000,
                       toolCalls: [
-                        createStatusTool(
+                        createTodoWriteTool(
                           "call-status-1",
-                          "🔧",
                           "Adapting the layout for mobile-sized viewport constraints"
                         ),
                       ],
@@ -1335,7 +1320,7 @@ export const MobileServerMode: AppStory = {
 
 // README: docs/img/orchestrate-agents.webp
 // Parent workspace is selected in plan mode while six running child workspaces
-// show nested status indicators in the expanded left sidebar.
+// show nested todo-derived progress in the expanded left sidebar.
 export const OrchestrateAgents: AppStory = {
   // Override the module-level 1900px decorator so the app itself renders at 1200px,
   // matching the narrower capture viewport for a tighter orchestrator screenshot.
@@ -1364,8 +1349,7 @@ export const OrchestrateAgents: AppStory = {
             name: "auth-middleware",
             agentType: "exec" as const,
             title: "Implement auth middleware",
-            statusEmoji: "🔧",
-            statusMessage: "Implementing auth middleware",
+            todos: buildStoryTodos("Implementing auth middleware"),
             assistantMessage: "Wiring auth middleware into each service entrypoint.",
           },
           {
@@ -1373,8 +1357,7 @@ export const OrchestrateAgents: AppStory = {
             name: "token-service",
             agentType: "exec" as const,
             title: "Build token refresh service",
-            statusEmoji: "🔍",
-            statusMessage: "Reading token validation logic",
+            todos: buildStoryTodos("Reading token validation logic"),
             assistantMessage: "Auditing refresh token validation before implementing rotation.",
           },
           {
@@ -1382,8 +1365,7 @@ export const OrchestrateAgents: AppStory = {
             name: "rbac-policies",
             agentType: "exec" as const,
             title: "Add RBAC policy engine",
-            statusEmoji: "📝",
-            statusMessage: "Writing policy evaluation tests",
+            todos: buildStoryTodos("Writing policy evaluation tests"),
             assistantMessage: "Building RBAC fixtures and policy matching assertions.",
           },
           {
@@ -1391,8 +1373,7 @@ export const OrchestrateAgents: AppStory = {
             name: "session-store",
             agentType: "exec" as const,
             title: "Migrate session storage to Redis",
-            statusEmoji: "🚀",
-            statusMessage: "Running integration tests",
+            todos: buildStoryTodos("Running integration tests"),
             assistantMessage: "Running Redis-backed session integration coverage now.",
           },
           {
@@ -1400,8 +1381,7 @@ export const OrchestrateAgents: AppStory = {
             name: "api-gateway",
             agentType: "exec" as const,
             title: "Configure API gateway routes",
-            statusEmoji: "🔧",
-            statusMessage: "Wiring up rate limiting",
+            todos: buildStoryTodos("Wiring up rate limiting"),
             assistantMessage: "Updating gateway route config with auth + throttling guards.",
           },
           {
@@ -1409,8 +1389,7 @@ export const OrchestrateAgents: AppStory = {
             name: "audit-logging",
             agentType: "explore" as const,
             title: "Investigate audit log schema",
-            statusEmoji: "🔍",
-            statusMessage: "Reviewing existing log entries",
+            todos: buildStoryTodos("Reviewing existing log entries"),
             assistantMessage: "Inspecting current audit log rows to document schema constraints.",
           },
         ];
@@ -1462,6 +1441,23 @@ Configure gateway auth guards, rate limits, and protected route wiring.
 Document and validate audit log schema requirements before rollout.
 `;
 
+        const workspaceActivitySnapshots = Object.fromEntries(
+          subtaskFixtures.map((fixture, index) => {
+            const recency = NOW - (index + 1) * 2_000;
+            return [
+              fixture.id,
+              {
+                recency,
+                streaming: false,
+                lastModel: null,
+                lastThinkingLevel: null,
+                todoStatus: deriveTodoStatus(fixture.todos) ?? null,
+                hasTodos: fixture.todos.length > 0,
+              },
+            ];
+          })
+        );
+
         const chatHandlers = new Map<string, ReturnType<typeof createStaticChatHandler>>([
           [
             workspaceId,
@@ -1495,13 +1491,7 @@ Document and validate audit log schema requirements before rollout.
                   createAssistantMessage(`msg-sub-${index + 1}`, fixture.assistantMessage, {
                     historySequence: 1,
                     timestamp: STABLE_TIMESTAMP - 45_000 + index * 1_000,
-                    toolCalls: [
-                      createStatusTool(
-                        `call-status-sub-${index + 1}`,
-                        fixture.statusEmoji,
-                        fixture.statusMessage
-                      ),
-                    ],
+                    toolCalls: [createTodoWriteTool(`call-status-sub-${index + 1}`, fixture.todos)],
                   }),
                 ]),
               ] as const
@@ -1511,6 +1501,7 @@ Document and validate audit log schema requirements before rollout.
         return createMockORPCClient({
           projects: groupWorkspacesByProject(workspaces),
           workspaces,
+          workspaceActivitySnapshots,
           onChat: createOnChatAdapter(chatHandlers),
         });
       }}

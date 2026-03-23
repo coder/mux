@@ -171,9 +171,13 @@ export const WorkspaceActivitySnapshotSchema = z.object({
   lastThinkingLevel: ThinkingLevelSchema.nullable().meta({
     description: "Last thinking/reasoning level used in this workspace",
   }),
-  agentStatus: WorkspaceAgentStatusSchema.nullable().optional().meta({
+  displayStatus: WorkspaceAgentStatusSchema.nullable().optional().meta({
     description:
-      "Most recent status_set value for this workspace (used to surface background progress in sidebar).",
+      "Transient non-todo status for system-driven background progress (for example executor routing).",
+  }),
+  todoStatus: WorkspaceAgentStatusSchema.nullable().optional().meta({
+    description:
+      "Status derived from the current todo list (preferred background progress surface in the sidebar).",
   }),
   hasTodos: z.boolean().optional().meta({
     description: "Whether the workspace still had todos when streaming last stopped",

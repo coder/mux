@@ -8,6 +8,7 @@ import {
   getAutoCompactionThresholdKey,
   getAutoRetryKey,
   getPinnedTodoExpandedKey,
+  getStatusStateKey,
 } from "@/common/constants/storage";
 import type { TodoItem } from "@/common/types/tools";
 import { WorkspaceStore } from "./WorkspaceStore";
@@ -1783,7 +1784,8 @@ describe("WorkspaceStore", () => {
         streaming: true,
         lastModel: "claude-sonnet-4",
         lastThinkingLevel: "high",
-        agentStatus: { emoji: "🔧", message: "Running checks", url: "https://example.com" },
+        todoStatus: { emoji: "🔄", message: "Run checks" },
+        hasTodos: true,
       };
 
       // Recreate the store so the first activity.list call uses this test snapshot.
@@ -1809,8 +1811,120 @@ describe("WorkspaceStore", () => {
       expect(state.canInterrupt).toBe(true);
       expect(state.currentModel).toBe(activitySnapshot.lastModel);
       expect(state.currentThinkingLevel).toBe(activitySnapshot.lastThinkingLevel);
-      expect(state.agentStatus).toEqual(activitySnapshot.agentStatus ?? undefined);
+      expect(state.agentStatus).toEqual(activitySnapshot.todoStatus ?? undefined);
       expect(state.recencyTimestamp).toBe(activitySnapshot.recency);
+    });
+
+    it("falls back to persisted activity todoStatus for active workspaces when replayed todos are absent", async () => {
+      const workspaceId = "active-activity-todo-fallback";
+      const activitySnapshot: WorkspaceActivitySnapshot = {
+        recency: new Date("2024-01-04T09:00:00.000Z").getTime(),
+        streaming: true,
+        lastModel: "claude-sonnet-4",
+        lastThinkingLevel: null,
+        todoStatus: { emoji: "🔄", message: "Persisted todo snapshot" },
+        hasTodos: true,
+      };
+
+      store.dispose();
+      store = new WorkspaceStore(mockOnModelUsed);
+      mockActivityList.mockResolvedValue({ [workspaceId]: activitySnapshot });
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+      store.setClient(mockClient as any);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      createAndAddWorkspace(store, workspaceId);
+      const state = store.getWorkspaceState(workspaceId);
+      expect(state.agentStatus).toEqual(activitySnapshot.todoStatus ?? undefined);
+    });
+
+    it("derives active workspace status from the current todo list", () => {
+      const workspaceId = "active-todo-status-workspace";
+      createAndAddWorkspace(store, workspaceId);
+      seedPinnedTodos(store, workspaceId, [
+        { content: "Run typecheck", status: "in_progress" },
+        { content: "Add regression test", status: "pending" },
+      ]);
+
+      const state = store.getWorkspaceState(workspaceId);
+      expect(state.agentStatus).toEqual({ emoji: "🔄", message: "Run typecheck" });
+    });
+
+    it("prefers todo-derived activity status for inactive workspaces", async () => {
+      const workspaceId = "activity-fallback-todo-status-workspace";
+      const activitySnapshot: WorkspaceActivitySnapshot = {
+        recency: new Date("2024-01-04T12:00:00.000Z").getTime(),
+        streaming: true,
+        lastModel: "claude-sonnet-4",
+        lastThinkingLevel: "high",
+        todoStatus: { emoji: "🔄", message: "Run typecheck" },
+        hasTodos: true,
+      };
+
+      store.dispose();
+      store = new WorkspaceStore(mockOnModelUsed);
+      mockActivityList.mockResolvedValue({ [workspaceId]: activitySnapshot });
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+      store.setClient(mockClient as any);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      createAndAddWorkspace(store, workspaceId, { createdAt: "2020-01-01T00:00:00.000Z" }, false);
+
+      const state = store.getWorkspaceState(workspaceId);
+      expect(state.agentStatus).toEqual(activitySnapshot.todoStatus ?? undefined);
+    });
+
+    it("prefers transient displayStatus over todo-derived status for inactive workspaces", async () => {
+      const workspaceId = "activity-fallback-display-status-workspace";
+      const activitySnapshot: WorkspaceActivitySnapshot = {
+        recency: new Date("2024-01-04T15:00:00.000Z").getTime(),
+        streaming: false,
+        lastModel: "claude-sonnet-4",
+        lastThinkingLevel: null,
+        displayStatus: { emoji: "🤔", message: "Deciding execution strategy" },
+        todoStatus: { emoji: "🔄", message: "Run typecheck" },
+        hasTodos: true,
+      };
+
+      store.dispose();
+      store = new WorkspaceStore(mockOnModelUsed);
+      mockActivityList.mockResolvedValue({ [workspaceId]: activitySnapshot });
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+      store.setClient(mockClient as any);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      createAndAddWorkspace(store, workspaceId, { createdAt: "2020-01-01T00:00:00.000Z" }, false);
+
+      const state = store.getWorkspaceState(workspaceId);
+      expect(state.agentStatus).toEqual(activitySnapshot.displayStatus ?? undefined);
+    });
+
+    it("suppresses stale legacy status fallback when activity says the todo list is empty", async () => {
+      const workspaceId = "activity-fallback-empty-todo-status";
+      const activitySnapshot: WorkspaceActivitySnapshot = {
+        recency: new Date("2024-01-04T18:00:00.000Z").getTime(),
+        streaming: false,
+        lastModel: "claude-sonnet-4",
+        lastThinkingLevel: null,
+        hasTodos: false,
+      };
+
+      localStorageBacking.set(
+        getStatusStateKey(workspaceId),
+        JSON.stringify({ emoji: "🔍", message: "Old persisted status" })
+      );
+
+      store.dispose();
+      store = new WorkspaceStore(mockOnModelUsed);
+      mockActivityList.mockResolvedValue({ [workspaceId]: activitySnapshot });
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+      store.setClient(mockClient as any);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      createAndAddWorkspace(store, workspaceId, { createdAt: "2020-01-01T00:00:00.000Z" }, false);
+
+      const state = store.getWorkspaceState(workspaceId);
+      expect(state.agentStatus).toBeUndefined();
     });
 
     it("fires response-complete callback when a background workspace stops streaming", async () => {

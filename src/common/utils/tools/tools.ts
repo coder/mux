@@ -12,7 +12,6 @@ import { createFileEditInsertTool } from "@/node/services/tools/file_edit_insert
 import { createAskUserQuestionTool } from "@/node/services/tools/ask_user_question";
 import { createProposePlanTool } from "@/node/services/tools/propose_plan";
 import { createTodoWriteTool, createTodoReadTool } from "@/node/services/tools/todo";
-import { createStatusSetTool } from "@/node/services/tools/status_set";
 import { createNotifyTool } from "@/node/services/tools/notify";
 import { createAnalyticsQueryTool } from "@/node/services/tools/analyticsQuery";
 import { createDesktopTools } from "@/node/services/tools/desktopTools";
@@ -393,7 +392,6 @@ export async function getToolsForModel(
     system1_keep_ranges: createSystem1KeepRangesTool(config),
     todo_write: createTodoWriteTool(config),
     todo_read: createTodoReadTool(config),
-    status_set: createStatusSetTool(config),
     notify: createNotifyTool(config),
     ...(config.analyticsService
       ? {

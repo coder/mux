@@ -59,6 +59,7 @@ description: Agent instructions for AI assistants working on the Mux codebase
 Use `agent-browser` for web automation. Run `agent-browser --help` for all commands.
 
 Core workflow:
+
 1. `agent-browser open <url>` - Navigate to page
 2. `agent-browser snapshot -i` - Get interactive elements with refs (@e1, @e2)
 3. `agent-browser click @e1` / `fill @e2 "text"` - Interact using refs
@@ -128,7 +129,7 @@ Mobile app tests live in `mobile/src/**/*.test.ts` and use Bun's built-in test r
 - Never use emoji characters as UI icons or status indicators; emoji rendering varies across platforms and fonts.
 - Prefer SVG icons (usually from `lucide-react`) or shared icon components under `src/browser/components/icons/`.
 - For tool call headers, use `ToolIcon` from `src/browser/components/tools/shared/ToolPrimitives.tsx`.
-- If a tool/agent provides an emoji string (e.g., `status_set` or `displayStatus`), render via `EmojiIcon` (`src/browser/components/icons/EmojiIcon.tsx`) instead of rendering the emoji.
+- If a tool/agent provides an emoji string (e.g., todo-derived status or `displayStatus`), render via `EmojiIcon` (`src/browser/components/icons/EmojiIcon.tsx`) instead of rendering the emoji.
 - If a new emoji appears in tool output, extend `EmojiIcon` to map it to an SVG icon.
 - Colors defined in `src/browser/styles/globals.css` (`:root @theme` block). Reference via CSS variables (e.g., `var(--color-plan-mode)`), never hardcode hex values.
 - For incrementing numeric UI (costs, timers, token counts, percentages), use semantic numeric typography utilities (`counter-nums` / `counter-nums-mono`) to prevent width jitter.
@@ -229,9 +230,9 @@ Freely make breaking changes, and reorganize / cleanup IPC as needed.
 - E2E tests (tests/e2e) work with Radix but are slow (~2min startup); reserve for scenarios that truly need real Electron.
 - Only use `validateApiKeys()` in tests that actually make AI API calls.
 
-## Tool: status_set
+## Tool: todo_write
 
-- Set status url to the Pull Request once opened
+- Keep the TODO list current during multi-step work; sidebar progress is derived from it.
 
 ## GitHub
 

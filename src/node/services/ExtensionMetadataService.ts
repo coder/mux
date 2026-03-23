@@ -24,7 +24,8 @@ import { log } from "@/node/services/log";
  * - streamingGeneration: Monotonic stream counter used to detect newer background turns
  * - lastModel: Last model used in this workspace
  * - lastThinkingLevel: Last thinking/reasoning level used in this workspace
- * - agentStatus: Most recent status_set payload (for sidebar progress in background workspaces)
+ * - displayStatus: Current non-todo status payload for transient system-driven progress
+ * - todoStatus: Status derived from the current todo list (preferred sidebar progress surface)
  * - hasTodos: Whether the workspace still had todos when streaming last stopped
  *
  * File location: ~/.mux/extensionMetadata.json
@@ -38,6 +39,7 @@ import { log } from "@/node/services/log";
 export interface ExtensionMetadataStreamingUpdate {
   model?: string;
   thinkingLevel?: ExtensionMetadata["lastThinkingLevel"];
+  todoStatus?: ExtensionAgentStatus | null;
   hasTodos?: boolean;
   generation?: number;
 }
@@ -80,6 +82,7 @@ export class ExtensionMetadataService {
       lastModel: null,
       lastThinkingLevel: null,
       agentStatus: null,
+      displayStatus: null,
       lastStatusUrl: null,
     };
     data.workspaces[workspaceId] = created;
@@ -192,6 +195,13 @@ export class ExtensionMetadataService {
       if (update.thinkingLevel !== undefined) {
         workspace.lastThinkingLevel = update.thinkingLevel;
       }
+      if (update.todoStatus !== undefined) {
+        if (update.todoStatus) {
+          workspace.todoStatus = update.todoStatus;
+        } else {
+          delete workspace.todoStatus;
+        }
+      }
       if (update.hasTodos !== undefined) {
         workspace.hasTodos = update.hasTodos;
       }
@@ -199,7 +209,25 @@ export class ExtensionMetadataService {
   }
 
   /**
-   * Update the latest status_set payload for a workspace.
+   * Update the todo-derived status payload for a workspace.
+   */
+  async setTodoStatus(
+    workspaceId: string,
+    todoStatus: ExtensionAgentStatus | null,
+    hasTodos: boolean
+  ): Promise<WorkspaceActivitySnapshot> {
+    return this.mutateWorkspaceSnapshot(workspaceId, Date.now(), (workspace) => {
+      if (todoStatus) {
+        workspace.todoStatus = todoStatus;
+      } else {
+        delete workspace.todoStatus;
+      }
+      workspace.hasTodos = hasTodos;
+    });
+  }
+
+  /**
+   * Update the latest transient non-todo status payload for a workspace.
    */
   async setAgentStatus(
     workspaceId: string,
@@ -207,13 +235,13 @@ export class ExtensionMetadataService {
   ): Promise<WorkspaceActivitySnapshot> {
     return this.mutateWorkspaceSnapshot(workspaceId, Date.now(), (workspace) => {
       const previousUrl =
-        coerceAgentStatus(workspace.agentStatus)?.url ??
+        coerceAgentStatus(workspace.displayStatus)?.url ??
         coerceStatusUrl(workspace.lastStatusUrl) ??
         null;
 
       if (agentStatus) {
         const carriedUrl = agentStatus.url ?? previousUrl ?? undefined;
-        workspace.agentStatus =
+        workspace.displayStatus =
           carriedUrl !== undefined
             ? {
                 ...agentStatus,
@@ -222,8 +250,11 @@ export class ExtensionMetadataService {
             : agentStatus;
         workspace.lastStatusUrl = carriedUrl ?? null;
       } else {
+        workspace.displayStatus = null;
+        // Once a transient display status clears, also clear any legacy status payload so
+        // upgraded workspaces do not resurface stale pre-todo progress on the next snapshot.
         workspace.agentStatus = null;
-        // Keep lastStatusUrl across clears so the next status_set without `url`
+        // Keep lastStatusUrl across clears so the next transient status without `url`
         // can still reuse the previous deep link.
         workspace.lastStatusUrl = previousUrl;
       }

@@ -314,8 +314,11 @@ export interface TodoWriteToolResult {
   count: number;
 }
 
-// Status Set Tool Types — derived from schema (avoid drift)
-export type StatusSetToolArgs = z.infer<typeof TOOL_DEFINITIONS.status_set.schema>;
+export interface StatusSetToolArgs {
+  emoji: string;
+  message: string;
+  url?: string | null;
+}
 
 // Bash Output Tool Types — derived from schema (avoid drift)
 export type BashOutputToolArgs = z.infer<typeof TOOL_DEFINITIONS.bash_output.schema>;

@@ -22,7 +22,6 @@ tools:
     - ask_user_question
     - todo_read
     - todo_write
-    - status_set
     - notify
     - analytics_query
 ---

@@ -6,12 +6,9 @@ import {
   createUserMessage,
   createAssistantMessage,
   createProposePlanTool,
-  createStatusTool,
+  createTodoWriteTool,
 } from "@/browser/stories/mockFactory";
-import {
-  PLAN_AUTO_ROUTING_STATUS_EMOJI,
-  PLAN_AUTO_ROUTING_STATUS_MESSAGE,
-} from "@/common/constants/planAutoRoutingStatus";
+import { PLAN_AUTO_ROUTING_STATUS_MESSAGE } from "@/common/constants/planAutoRoutingStatus";
 
 const meta = { ...appMeta, title: "App/Chat/Tools/ProposePlan" };
 export default meta;
@@ -221,13 +218,7 @@ export const ProposePlanAutoRoutingDecisionGap: AppStory = {
             createAssistantMessage("msg-3", "Selecting the right executor for this plan.", {
               historySequence: 3,
               timestamp: STABLE_TIMESTAMP - 220000,
-              toolCalls: [
-                createStatusTool(
-                  "call-status-1",
-                  PLAN_AUTO_ROUTING_STATUS_EMOJI,
-                  PLAN_AUTO_ROUTING_STATUS_MESSAGE
-                ),
-              ],
+              toolCalls: [createTodoWriteTool("call-status-1", PLAN_AUTO_ROUTING_STATUS_MESSAGE)],
             }),
           ],
         })

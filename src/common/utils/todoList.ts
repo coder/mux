@@ -6,6 +6,11 @@ interface TodoLikeItem {
   status: TodoLikeStatus;
 }
 
+export interface TodoStatusSummary {
+  emoji: "✓" | "🔄" | "○";
+  message: string;
+}
+
 export function renderTodoItemsAsMarkdownList(todos: TodoItem[]): string {
   return todos
     .map((todo) => {
@@ -14,6 +19,32 @@ export function renderTodoItemsAsMarkdownList(todos: TodoItem[]): string {
       return `- ${statusMarker} ${todo.content}`;
     })
     .join("\n");
+}
+
+/**
+ * Sidebar and landing-card status should reflect the most actionable todo item,
+ * so we surface in-progress work first, then the next pending task, and finally
+ * the most recent completion while the finished list is still visible.
+ */
+export function deriveTodoStatus(todos: readonly TodoItem[]): TodoStatusSummary | undefined {
+  const inProgressTodo = todos.find((todo) => todo.status === "in_progress");
+  if (inProgressTodo) {
+    return { emoji: "🔄", message: inProgressTodo.content };
+  }
+
+  const pendingTodo = todos.find((todo) => todo.status === "pending");
+  if (pendingTodo) {
+    return { emoji: "○", message: pendingTodo.content };
+  }
+
+  for (let index = todos.length - 1; index >= 0; index--) {
+    const todo = todos[index];
+    if (todo.status === "completed") {
+      return { emoji: "✓", message: todo.content };
+    }
+  }
+
+  return undefined;
 }
 
 /**

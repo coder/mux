@@ -69,7 +69,7 @@ Be terse and to the point.
 
 ## Model: openai:.\*codex
 
-Use status reporting tools every few minutes.
+Keep the todo list current every few minutes while a task is in flight.
 ```
 
 ### Tool Prompts
@@ -92,12 +92,12 @@ Customize how the AI uses specific tools by appending instructions to their desc
 
 - Run `prettier --write` after editing files
 
-## Tool: status_set
+## Tool: todo_write
 
-- Set status URL to the Pull Request once opened
+- Keep the TODO list current during multi-step work; sidebar progress is derived from it.
 ```
 
-**Common tools** (varies by model/provider): `bash`, `file_read`, `file_edit_replace_string`, `file_edit_insert`, `propose_plan`, `ask_user_question`, `todo_write`, `todo_read`, `status_set`, `web_fetch`, `web_search`.
+**Common tools** (varies by model/provider): `bash`, `file_read`, `file_edit_replace_string`, `file_edit_insert`, `propose_plan`, `ask_user_question`, `todo_write`, `todo_read`, `web_fetch`, `web_search`.
 
 ## Practical layout
 

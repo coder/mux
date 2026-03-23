@@ -53,44 +53,63 @@ describe("ExtensionMetadataService", () => {
     expect(snapshot.streaming).toBe(false);
     expect(snapshot.lastModel).toBeNull();
     expect(snapshot.lastThinkingLevel).toBeNull();
-    expect(snapshot.agentStatus).toBeNull();
 
     const snapshots = await service.getAllSnapshots();
     expect(snapshots.get("workspace-1")).toEqual(snapshot);
   });
 
-  test("setAgentStatus persists status_set payload", async () => {
-    const status = { emoji: "🔧", message: "Applying patch", url: "https://example.com/pr/123" };
+  test("setAgentStatus persists transient display status payload", async () => {
+    const displayStatus = { emoji: "🤔", message: "Deciding execution strategy" };
 
-    const snapshot = await service.setAgentStatus("workspace-3", status);
-    expect(snapshot.agentStatus).toEqual(status);
+    const snapshot = await service.setAgentStatus("workspace-display-status", displayStatus);
+    expect(snapshot.displayStatus).toEqual(displayStatus);
 
-    const withoutUrl = await service.setAgentStatus("workspace-3", {
-      emoji: "✅",
-      message: "Checks passed",
+    const cleared = await service.setAgentStatus("workspace-display-status", null);
+    expect(cleared.displayStatus).toBeUndefined();
+  });
+
+  test("clearing transient display status also clears legacy carried-over status", async () => {
+    await writeFile(
+      filePath,
+      JSON.stringify({
+        version: 1,
+        workspaces: {
+          "workspace-display-status-clear": {
+            recency: 123,
+            streaming: false,
+            lastModel: null,
+            lastThinkingLevel: null,
+            agentStatus: { emoji: "🔧", message: "Legacy background status" },
+          },
+        },
+      }),
+      "utf-8"
+    );
+
+    await service.setAgentStatus("workspace-display-status-clear", {
+      emoji: "🤔",
+      message: "Deciding execution strategy",
     });
-    // status_set often omits url after the first call; keep the last known URL.
-    expect(withoutUrl.agentStatus).toEqual({
-      emoji: "✅",
-      message: "Checks passed",
-      url: status.url,
-    });
+    const cleared = await service.setAgentStatus("workspace-display-status-clear", null);
+
+    expect(cleared.displayStatus).toBeUndefined();
+    expect(cleared.todoStatus).toBeUndefined();
+  });
+
+  test("setTodoStatus persists todo-derived progress and clears it when the list empties", async () => {
+    const todoStatus = { emoji: "🔄", message: "Running checks" };
+
+    const withTodos = await service.setTodoStatus("workspace-todos", todoStatus, true);
+    expect(withTodos.todoStatus).toEqual(todoStatus);
+    expect(withTodos.hasTodos).toBe(true);
+
+    const cleared = await service.setTodoStatus("workspace-todos", null, false);
+    expect(cleared.todoStatus).toBeUndefined();
+    expect(cleared.hasTodos).toBe(false);
 
     const snapshots = await service.getAllSnapshots();
-    expect(snapshots.get("workspace-3")?.agentStatus).toEqual(withoutUrl.agentStatus);
-
-    const cleared = await service.setAgentStatus("workspace-3", null);
-    expect(cleared.agentStatus).toBeNull();
-
-    const afterClearWithoutUrl = await service.setAgentStatus("workspace-3", {
-      emoji: "🧪",
-      message: "Re-running",
-    });
-    expect(afterClearWithoutUrl.agentStatus).toEqual({
-      emoji: "🧪",
-      message: "Re-running",
-      url: status.url,
-    });
+    expect(snapshots.get("workspace-todos")?.todoStatus).toBeUndefined();
+    expect(snapshots.get("workspace-todos")?.hasTodos).toBe(false);
   });
 
   test("concurrent cross-workspace mutations preserve both workspace entries", async () => {
@@ -128,10 +147,10 @@ describe("ExtensionMetadataService", () => {
       await Promise.all([
         service.updateRecency("ws-1", 101),
         service.setStreaming("ws-2", true, { model: "anthropic/sonnet" }),
-        service.setAgentStatus("ws-3", { emoji: "⚙️", message: "Working" }),
+        service.setTodoStatus("ws-3", { emoji: "🔄", message: "Working" }, true),
         service.updateRecency("ws-4", 404),
         service.setStreaming("ws-5", false),
-        service.setAgentStatus("ws-6", null),
+        service.setTodoStatus("ws-6", null, false),
         service.updateRecency("ws-7", 707),
         service.setStreaming("ws-8", true, {
           model: "openai/gpt-5",
@@ -146,12 +165,87 @@ describe("ExtensionMetadataService", () => {
     expect(snapshots.size).toBe(8);
     expect(snapshots.get("ws-1")?.recency).toBe(101);
     expect(snapshots.get("ws-2")?.lastModel).toBe("anthropic/sonnet");
-    expect(snapshots.get("ws-3")?.agentStatus).toEqual({ emoji: "⚙️", message: "Working" });
+    expect(snapshots.get("ws-3")?.todoStatus).toEqual({ emoji: "🔄", message: "Working" });
     expect(snapshots.get("ws-4")?.recency).toBe(404);
     expect(snapshots.get("ws-5")?.streaming).toBe(false);
-    expect(snapshots.get("ws-6")?.agentStatus).toBeNull();
+    expect(snapshots.get("ws-6")?.todoStatus).toBeUndefined();
     expect(snapshots.get("ws-7")?.recency).toBe(707);
     expect(snapshots.get("ws-8")?.lastThinkingLevel).toBe("high");
+  });
+
+  test("legacy agentStatus is projected into todoStatus when todoStatus is absent", async () => {
+    await writeFile(
+      filePath,
+      JSON.stringify({
+        version: 1,
+        workspaces: {
+          "workspace-legacy-status": {
+            recency: 123,
+            streaming: false,
+            lastModel: null,
+            lastThinkingLevel: null,
+            agentStatus: { emoji: "🔧", message: "Legacy background status" },
+          },
+        },
+      }),
+      "utf-8"
+    );
+
+    const snapshots = await service.getAllSnapshots();
+    expect(snapshots.get("workspace-legacy-status")?.todoStatus).toEqual({
+      emoji: "🔧",
+      message: "Legacy background status",
+    });
+  });
+
+  test("malformed todoStatus falls back to legacy agentStatus when todos were never explicitly cleared", async () => {
+    await writeFile(
+      filePath,
+      JSON.stringify({
+        version: 1,
+        workspaces: {
+          "workspace-malformed-todo-status": {
+            recency: 123,
+            streaming: false,
+            lastModel: null,
+            lastThinkingLevel: null,
+            todoStatus: { nope: true },
+            agentStatus: { emoji: "🔧", message: "Legacy background status" },
+          },
+        },
+      }),
+      "utf-8"
+    );
+
+    const snapshots = await service.getAllSnapshots();
+    expect(snapshots.get("workspace-malformed-todo-status")?.todoStatus).toEqual({
+      emoji: "🔧",
+      message: "Legacy background status",
+    });
+  });
+
+  test("legacy agentStatus does not repopulate todoStatus after an explicit empty todo snapshot", async () => {
+    await writeFile(
+      filePath,
+      JSON.stringify({
+        version: 1,
+        workspaces: {
+          "workspace-cleared-legacy-status": {
+            recency: 123,
+            streaming: false,
+            lastModel: null,
+            lastThinkingLevel: null,
+            agentStatus: { emoji: "🔧", message: "Legacy background status" },
+            hasTodos: false,
+          },
+        },
+      }),
+      "utf-8"
+    );
+
+    const snapshots = await service.getAllSnapshots();
+    expect(snapshots.get("workspace-cleared-legacy-status")?.todoStatus).toBeUndefined();
+    expect(snapshots.get("workspace-cleared-legacy-status")?.hasTodos).toBe(false);
   });
 
   test("toSnapshot coerces malformed hasTodos to undefined", async () => {
@@ -195,7 +289,6 @@ describe("ExtensionMetadataService", () => {
       streaming: false,
       lastModel: null,
       lastThinkingLevel: null,
-      agentStatus: null,
     });
 
     const snapshots = await service.getAllSnapshots();
@@ -226,13 +319,11 @@ describe("ExtensionMetadataService", () => {
     expect(streaming.streaming).toBe(true);
     expect(streaming.lastModel).toBe("anthropic/sonnet");
     expect(streaming.lastThinkingLevel).toBe("high");
-    expect(streaming.agentStatus).toBeNull();
 
     const cleared = await service.setStreaming("workspace-2", false);
     expect(cleared.streaming).toBe(false);
     expect(cleared.lastModel).toBe("anthropic/sonnet");
     expect(cleared.lastThinkingLevel).toBe("high");
-    expect(cleared.agentStatus).toBeNull();
 
     const snapshots = await service.getAllSnapshots();
     expect(snapshots.get("workspace-2")).toEqual(cleared);

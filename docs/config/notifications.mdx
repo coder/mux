@@ -43,7 +43,7 @@ The recommended way to configure the `notify` tool is via a `Tool: notify` scope
 - Notify on CI failures or deployment issues
 - Notify when waiting for user input longer than 30 seconds
 - Do not notify for routine status updates
-- Use status_set for progress updates instead
+- Use `todo_write` for routine progress updates instead
 ```
 
 See [Instruction Files](/agents/instruction-files) for more on scoped instructions.
@@ -94,7 +94,7 @@ notify: {
     description:
       "Send a system notification to the user. Use this to alert the user about important events that require their attention, such as long-running task completion, errors requiring intervention, or questions. " +
       "Notifications appear as OS-native notifications (macOS Notification Center, Windows Toast, Linux). " +
-      "Infer whether to send notifications from user instructions. If no instructions provided, reserve notifications for major wins or blocking issues. Do not use for routine status updates (use status_set instead).",
+      "Infer whether to send notifications from user instructions. If no instructions provided, reserve notifications for major wins or blocking issues. Do not use for routine progress updates — keep the todo list current instead.",
     schema: z
       .object({
         title: z

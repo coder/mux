@@ -9,7 +9,10 @@ import type {
   AgentDefinitionPackage,
 } from "@/common/types/agentDefinition";
 import type { AgentSkillDescriptor, AgentSkillIssue } from "@/common/types/agentSkill";
-import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import type {
+  FrontendWorkspaceMetadata,
+  WorkspaceActivitySnapshot,
+} from "@/common/types/workspace";
 import type { ProjectConfig } from "@/node/config";
 import {
   DEFAULT_LAYOUT_PRESETS_CONFIG,
@@ -115,6 +118,8 @@ export interface MockORPCClientOptions {
   workspaces?: FrontendWorkspaceMetadata[];
   /** Pre-seeded multi-project git status rows keyed by workspace ID. */
   projectGitStatusesByWorkspace?: Map<string, ApiProjectGitStatusResult[]>;
+  /** Pre-seeded workspace activity snapshots for sidebar status/streaming stories. */
+  workspaceActivitySnapshots?: Record<string, WorkspaceActivitySnapshot>;
   /** Initial task settings for config.getConfig (e.g., Settings → Tasks section) */
   taskSettings?: Partial<TaskSettings>;
   /** Initial unified AI defaults for agents (plan/exec/compact + subagents) */
@@ -315,6 +320,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     projects: providedProjects = new Map<string, ProjectConfig>(),
     workspaces: inputWorkspaces = [],
     projectGitStatusesByWorkspace = new Map<string, ApiProjectGitStatusResult[]>(),
+    workspaceActivitySnapshots = {},
     onChat,
     executeBash,
     providersConfig = { anthropic: { apiKeySet: true, isEnabled: true, isConfigured: true } },
@@ -1549,7 +1555,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         await new Promise<void>(() => undefined);
       },
       activity: {
-        list: () => Promise.resolve({}),
+        list: () => Promise.resolve(workspaceActivitySnapshots),
         subscribe: async function* () {
           yield* [];
           await new Promise<void>(() => undefined);

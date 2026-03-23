@@ -33,7 +33,6 @@ import {
   BASH_HARD_MAX_LINES,
   BASH_MAX_LINE_BYTES,
   BASH_MAX_TOTAL_BYTES,
-  STATUS_MESSAGE_MAX_LENGTH,
   WEB_FETCH_MAX_OUTPUT_BYTES,
 } from "@/common/constants/toolLimits";
 import {
@@ -1449,42 +1448,6 @@ export const TOOL_DEFINITIONS = {
     description: "Read the current todo list",
     schema: z.object({}),
   },
-  status_set: {
-    description:
-      "Set a status indicator to show what Assistant is currently doing. The status is set IMMEDIATELY \n" +
-      "when this tool is called, even before other tool calls complete.\n" +
-      "\n" +
-      "WHEN TO SET STATUS:\n" +
-      "- Set status when beginning concrete work (file edits, running tests, executing commands)\n" +
-      "- Update status as work progresses through distinct phases\n" +
-      "- Set a final status after completion, only claim success when certain (e.g., after confirming checks passed)\n" +
-      "- DO NOT set status during initial exploration, file reading, or planning phases\n" +
-      "\n" +
-      "The status is cleared when a new user message comes in. Validate your approach is feasible \n" +
-      "before setting status - failed tool calls after setting status indicate premature commitment.\n" +
-      "\n" +
-      "URL PARAMETER:\n" +
-      "- Optional 'url' parameter links to external resources (e.g., PR URL: 'https://github.com/owner/repo/pull/123')\n" +
-      "- Prefer stable URLs that don't change often - saving the same URL twice is a no-op\n" +
-      "- URL persists until replaced by a new status with a different URL",
-    schema: z
-      .object({
-        emoji: z.string().describe("A single emoji character representing the current activity"),
-        message: z
-          .string()
-          .describe(
-            `A brief description of the current activity (auto-truncated to ${STATUS_MESSAGE_MAX_LENGTH} chars with ellipsis if needed)`
-          ),
-        url: z
-          .string()
-          .url()
-          .nullish()
-          .describe(
-            "Optional URL to external resource with more details (e.g., Pull Request URL). The URL persists and is displayed to the user for easy access."
-          ),
-      })
-      .strict(),
-  },
   bash_output: {
     description:
       'DEPRECATED: use task_await instead (pass bash-prefixed taskId like "bash:<processId>"). ' +
@@ -1645,7 +1608,7 @@ CREATE TABLE IF NOT EXISTS delegation_rollups (
     description:
       "Send a system notification to the user. Use this to alert the user about important events that require their attention, such as long-running task completion, errors requiring intervention, or questions. " +
       "Notifications appear as OS-native notifications (macOS Notification Center, Windows Toast, Linux). " +
-      "Infer whether to send notifications from user instructions. If no instructions provided, reserve notifications for major wins or blocking issues. Do not use for routine status updates (use status_set instead).",
+      "Infer whether to send notifications from user instructions. If no instructions provided, reserve notifications for major wins or blocking issues. Do not use for routine progress updates — keep the todo list current instead.",
     schema: z
       .object({
         title: z
@@ -2118,7 +2081,6 @@ export function getAvailableTools(
     "system1_keep_ranges",
     "todo_write",
     "todo_read",
-    "status_set",
     "notify",
     ...(enableAnalyticsQuery ? ["analytics_query"] : []),
     "web_fetch",

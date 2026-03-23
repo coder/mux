@@ -10,6 +10,7 @@
 import type { ProjectConfig } from "@/node/config";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { WorkspaceChatMessage, ChatMuxMessage } from "@/common/orpc/types";
+import type { TodoItem } from "@/common/types/tools";
 import type {
   MuxMessageMetadata,
   MuxTextPart,
@@ -383,19 +384,21 @@ export function createTerminalTool(
   };
 }
 
-export function createStatusTool(
+export function createTodoWriteTool(
   toolCallId: string,
-  emoji: string,
-  message: string,
-  url?: string
+  todosOrMessage: TodoItem[] | string,
+  status: TodoItem["status"] = "in_progress"
 ): MuxPart {
+  const todos =
+    typeof todosOrMessage === "string" ? [{ content: todosOrMessage, status }] : todosOrMessage;
+
   return {
     type: "dynamic-tool",
     toolCallId,
-    toolName: "status_set",
+    toolName: "todo_write",
     state: "output-available",
-    input: { emoji, message, url },
-    output: { success: true, emoji, message, url },
+    input: { todos },
+    output: { success: true, count: todos.length },
   };
 }
 

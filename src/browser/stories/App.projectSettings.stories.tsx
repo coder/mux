@@ -38,7 +38,6 @@ const MOCK_TOOLS = [
   "web_fetch",
   "todo_write",
   "todo_read",
-  "status_set",
 ];
 
 const POSTHOG_TOOLS = [
@@ -504,8 +503,8 @@ export const ProjectSettingsWithToolAllowlist: AppStory = {
     const body = within(canvasElement.ownerDocument.body);
     await body.findByText("mux");
 
-    // Should show "3/8" tools indicator (3 allowed out of 8 total)
-    await body.findByText(/3\/8/);
+    // Should show "3/N" tools indicator where N tracks the mocked tool catalog.
+    await body.findByText(new RegExp(`3/${MOCK_TOOLS.length}`));
   },
 };
 

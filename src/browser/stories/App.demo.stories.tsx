@@ -14,7 +14,7 @@ import {
   createFileReadTool,
   createFileEditTool,
   createTerminalTool,
-  createStatusTool,
+  createTodoWriteTool,
   createStaticChatHandler,
   createStreamingChatHandler,
   type GitStatusFixture,
@@ -41,9 +41,9 @@ export default {
  * - SSH and local runtime badges
  * - Active workspace with full chat history
  * - Streaming workspace showing working state
- * - All tool types: read_file, file_edit, terminal, status_set
+ * - All tool types: read_file, file_edit, terminal, todo_write
  * - Reasoning blocks
- * - Agent status indicator
+ * - Todo-derived workspace status indicator
  */
 export const Comprehensive: AppStory = {
   render: () => (
@@ -168,12 +168,11 @@ export const Comprehensive: AppStory = {
             timestamp: STABLE_TIMESTAMP - 200000,
             reasoning: "All tests pass. Time to create a PR for review.",
             toolCalls: [
-              createStatusTool(
-                "call-4",
-                "🚀",
-                "PR #1234 waiting for CI",
-                "https://github.com/example/repo/pull/1234"
-              ),
+              createTodoWriteTool("call-4", [
+                { content: "Updated auth endpoint and opened PR #1234", status: "completed" },
+                { content: "PR #1234 waiting for CI", status: "in_progress" },
+                { content: "Respond to review feedback", status: "pending" },
+              ]),
             ],
           }),
         ];
