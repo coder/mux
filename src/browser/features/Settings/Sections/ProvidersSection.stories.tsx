@@ -19,6 +19,11 @@ export const ProvidersEmpty: Story = {
       <ProvidersSection />
     </SettingsSectionStory>
   ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    await canvas.findByText(/No providers are currently enabled\./i, {}, { timeout: 5000 });
+  },
 };
 
 export const ProvidersConfigured: Story = {
@@ -42,6 +47,11 @@ export const ProvidersConfigured: Story = {
       <ProvidersSection />
     </SettingsSectionStory>
   ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    await canvas.findAllByTitle(/^Configured$/i, {}, { timeout: 5000 });
+  },
 };
 
 export const ProvidersExpanded: Story = {

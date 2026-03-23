@@ -6,6 +6,7 @@
  */
 import { lightweightMeta } from "@/browser/stories/meta.js";
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import { within } from "@storybook/test";
 import { ModelsSection } from "./ModelsSection.js";
 import { SettingsSectionStory, setupSettingsStory } from "./settingsStoryUtils.js";
 
@@ -45,6 +46,11 @@ export const ModelsEmpty: Story = {
       <ModelsSection />
     </SettingsSectionStory>
   ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    await canvas.findByText(/Built-in Models/i, {}, { timeout: 5000 });
+  },
 };
 
 export const ModelsConfigured: Story = {
@@ -86,4 +92,10 @@ export const ModelsConfigured: Story = {
       <ModelsSection />
     </SettingsSectionStory>
   ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    await canvas.findByText(/claude-sonnet-4-20250514/i, {}, { timeout: 5000 });
+    await canvas.findByText(/gpt-4o/i, {}, { timeout: 5000 });
+  },
 };
