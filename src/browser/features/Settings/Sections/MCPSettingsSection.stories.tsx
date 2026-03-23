@@ -98,8 +98,12 @@ const MCPSettingsSectionStoryShell: FC<{ setup: () => APIClient; children: React
   setup,
   children,
 }) => {
+  const setupRef = useRef(setup);
   const clientRef = useRef<APIClient | null>(null);
-  clientRef.current ??= setup();
+  if (clientRef.current === null || setupRef.current !== setup) {
+    setupRef.current = setup;
+    clientRef.current = setup();
+  }
 
   return (
     <ThemeProvider>
