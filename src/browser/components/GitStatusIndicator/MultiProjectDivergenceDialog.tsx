@@ -10,16 +10,13 @@ import { cn } from "@/common/lib/utils";
 import assert from "@/common/utils/assert";
 import type { GitStatus } from "@/common/types/workspace";
 import type { MultiProjectGitSummary } from "@/browser/stores/GitStatusStore";
+import { formatRepoCount } from "./gitStatusFormatters";
 
 interface MultiProjectDivergenceDialogProps {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   summary: MultiProjectGitSummary | null;
   isRefreshing: boolean;
-}
-
-function formatRepoCount(count: number): string {
-  return `${count} ${count === 1 ? "repo" : "repos"}`;
 }
 
 function formatLineDelta(additions: number, deletions: number): React.ReactNode {

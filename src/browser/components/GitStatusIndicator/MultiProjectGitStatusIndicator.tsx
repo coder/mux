@@ -10,6 +10,7 @@ import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { cn } from "@/common/lib/utils";
 import assert from "@/common/utils/assert";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../Tooltip/Tooltip";
+import { formatRepoCount } from "./gitStatusFormatters";
 
 interface MultiProjectGitStatusIndicatorProps {
   workspaceId: string;
@@ -22,10 +23,6 @@ interface ChipPresentation {
   primaryLabel: string;
   secondaryLabels: string[];
   className: string;
-}
-
-function formatRepoCount(count: number): string {
-  return `${count} ${count === 1 ? "repo" : "repos"}`;
 }
 
 function formatCategoryCount(count: number, noun: string): string {
