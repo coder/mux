@@ -4640,6 +4640,10 @@ describe("WorkspaceService fork", () => {
     try {
       const result = await workspaceService.fork(sourceWorkspaceId, "fork-child");
       expect(result.success).toBe(true);
+      if (!result.success) {
+        throw new Error(`Expected success result, got error: ${result.error}`);
+      }
+      expect(result.data.metadata.forkFamilyBaseName).toBeUndefined();
 
       const forkedUsage = await sessionUsageService.getSessionUsage(newWorkspaceId);
       expect(forkedUsage).toEqual({ byModel: {}, version: 1 });
@@ -4663,20 +4667,20 @@ describe("WorkspaceService fork", () => {
       generateStableIdSpy.mockRestore();
     }
   });
-  test("auto-generated fork names increment existing fork suffixes instead of nesting them", async () => {
+  test("auto-generated fork names normalize legacy fork families before the validation fallback", async () => {
     const sourceWorkspaceId = "source-workspace";
     const newWorkspaceId = "forked-workspace";
     const sourceProjectPath = path.join(tempDir, "project");
     const sourceMetadata: FrontendWorkspaceMetadata = {
       id: sourceWorkspaceId,
-      name: "source-branch-fork-2",
-      title: "Source branch (2)",
+      name: "Feature-fork-2",
+      title: "Feature branch",
       projectPath: sourceProjectPath,
       projectName: "project",
       runtimeConfig: { type: "local" },
-      namedWorkspacePath: path.join(sourceProjectPath, "source-branch-fork-2"),
+      namedWorkspacePath: path.join(sourceProjectPath, "Feature-fork-2"),
     };
-    const forkedWorkspacePath = path.join(sourceProjectPath, "source-branch-fork-3");
+    const forkedWorkspacePath = path.join(sourceProjectPath, "feature-1");
 
     await fsPromises.mkdir(sourceProjectPath, { recursive: true });
     await config.addWorkspace(sourceProjectPath, sourceMetadata);
@@ -4750,7 +4754,7 @@ describe("WorkspaceService fork", () => {
       expect(orchestrateForkSpy).toHaveBeenCalledWith(
         expect.objectContaining({
           sourceWorkspaceName: sourceMetadata.name,
-          newWorkspaceName: "source-branch-fork-3",
+          newWorkspaceName: "feature-1",
         })
       );
 
@@ -4759,8 +4763,119 @@ describe("WorkspaceService fork", () => {
         throw new Error(`Expected success result, got error: ${result.error}`);
       }
 
-      expect(result.data.metadata.name).toBe("source-branch-fork-3");
+      expect(result.data.metadata.name).toBe("feature-1");
+      expect(result.data.metadata.forkFamilyBaseName).toBe("Feature");
+      expect(result.data.metadata.namedWorkspacePath).toBe(forkedWorkspacePath);
+    } finally {
+      orchestrateForkSpy.mockRestore();
+      copyPlanSpy.mockRestore();
+      runBackgroundInitSpy.mockRestore();
+      createRuntimeSpy.mockRestore();
+      getOrCreateSessionSpy.mockRestore();
+      generateStableIdSpy.mockRestore();
+    }
+  });
+
+  test("auto-generated fork names increment existing fork suffixes instead of nesting them", async () => {
+    const sourceWorkspaceId = "source-workspace";
+    const newWorkspaceId = "forked-workspace";
+    const sourceProjectPath = path.join(tempDir, "project");
+    const sourceMetadata: FrontendWorkspaceMetadata = {
+      id: sourceWorkspaceId,
+      name: "source-branch-2",
+      title: "Source branch (2)",
+      forkFamilyBaseName: "source-branch",
+      projectPath: sourceProjectPath,
+      projectName: "project",
+      runtimeConfig: { type: "local" },
+      namedWorkspacePath: path.join(sourceProjectPath, "source-branch-2"),
+    };
+    const forkedWorkspacePath = path.join(sourceProjectPath, "source-branch-3");
+
+    await fsPromises.mkdir(sourceProjectPath, { recursive: true });
+    await config.addWorkspace(sourceProjectPath, sourceMetadata);
+    await config.editConfig((current) => {
+      const project = current.projects.get(sourceProjectPath);
+      if (!project) {
+        throw new Error("Expected test project config to exist");
+      }
+      project.trusted = true;
+      return current;
+    });
+
+    const mockAIService = {
+      isStreaming: mock(() => false),
+      getWorkspaceMetadata: mock(() => Promise.resolve(Ok(sourceMetadata))),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      on: mock(() => {}),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      off: mock(() => {}),
+    } as unknown as AIService;
+
+    const mockInitStateManager: Partial<InitStateManager> = {
+      on: mock(() => undefined as unknown as InitStateManager),
+      getInitState: mock(() => ({ status: "running" }) as unknown as InitStatus),
+      startInit: mock(() => undefined),
+      endInit: mock(() => Promise.resolve()),
+      appendOutput: mock(() => undefined),
+      enterHookPhase: mock(() => undefined),
+    };
+
+    const workspaceService = new WorkspaceService(
+      config,
+      historyService,
+      mockAIService,
+      mockInitStateManager as InitStateManager,
+      mockExtensionMetadataService as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+
+    const targetRuntime = {
+      getWorkspacePath: mock(() => forkedWorkspacePath),
+    } as unknown as ReturnType<typeof runtimeFactory.createRuntime>;
+
+    const generateStableIdSpy = spyOn(config, "generateStableId").mockReturnValue(newWorkspaceId);
+    const getOrCreateSessionSpy = spyOn(workspaceService, "getOrCreateSession").mockReturnValue({
+      emitMetadata: mock(() => undefined),
+    } as unknown as AgentSession);
+    const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockReturnValue(
+      {} as ReturnType<typeof runtimeFactory.createRuntime>
+    );
+    const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(
+      () => undefined
+    );
+    const copyPlanSpy = spyOn(runtimeExecHelpers, "copyPlanFileAcrossRuntimes").mockResolvedValue(
+      undefined
+    );
+    const orchestrateForkSpy = spyOn(forkOrchestratorModule, "orchestrateFork").mockResolvedValue(
+      Ok({
+        workspacePath: forkedWorkspacePath,
+        trunkBranch: "main",
+        forkedRuntimeConfig: { type: "local" },
+        targetRuntime,
+        forkedFromSource: true,
+        sourceRuntimeConfigUpdated: false,
+      })
+    );
+
+    try {
+      const result = await workspaceService.fork(sourceWorkspaceId);
+
+      expect(orchestrateForkSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sourceWorkspaceName: sourceMetadata.name,
+          newWorkspaceName: "source-branch-3",
+        })
+      );
+
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        throw new Error(`Expected success result, got error: ${result.error}`);
+      }
+
+      expect(result.data.metadata.name).toBe("source-branch-3");
       expect(result.data.metadata.title).toBe("Source branch (3)");
+      expect(result.data.metadata.forkFamilyBaseName).toBe("source-branch");
       expect(result.data.metadata.namedWorkspacePath).toBe(forkedWorkspacePath);
     } finally {
       orchestrateForkSpy.mockRestore();
@@ -4784,7 +4899,7 @@ describe("WorkspaceService fork", () => {
       runtimeConfig: { type: "local" },
       namedWorkspacePath: path.join(sourceProjectPath, "source-branch"),
     };
-    const forkedWorkspacePath = path.join(sourceProjectPath, "source-branch-fork-1");
+    const forkedWorkspacePath = path.join(sourceProjectPath, "source-branch-1");
 
     await fsPromises.mkdir(sourceProjectPath, { recursive: true });
     await config.addWorkspace(sourceProjectPath, sourceMetadata);
@@ -4957,46 +5072,48 @@ describe("WorkspaceService interruptStream", () => {
 // --- Pure helper tests (no mocks needed) ---
 
 describe("generateForkBranchName", () => {
-  test("returns -fork-1 when no existing forks", () => {
-    expect(generateForkBranchName("sidebar-a1b2", [])).toBe("sidebar-a1b2-fork-1");
+  test("returns -1 when no existing forks", () => {
+    expect(generateForkBranchName("sidebar-a1b2", [])).toBe("sidebar-a1b2-1");
   });
 
   test("increments past the highest existing fork number", () => {
     expect(
       generateForkBranchName("sidebar-a1b2", [
-        "sidebar-a1b2-fork-1",
-        "sidebar-a1b2-fork-3",
+        "sidebar-a1b2-1",
+        "sidebar-a1b2-3",
         "other-workspace",
       ])
-    ).toBe("sidebar-a1b2-fork-4");
+    ).toBe("sidebar-a1b2-4");
   });
 
-  test("strips an existing fork suffix from the parent before incrementing", () => {
-    expect(generateForkBranchName("ws-fork-2", ["ws-fork-1", "ws-fork-2"])).toBe("ws-fork-3");
+  test("continues numbering for generated forks when given the stable family base name", () => {
+    expect(generateForkBranchName("ws", ["ws-1", "ws-2"])).toBe("ws-3");
+  });
+
+  test("preserves numeric suffixes for non-fork names", () => {
+    expect(generateForkBranchName("release-2024", ["release-1"])).toBe("release-2024-1");
+  });
+
+  test("continues numbering across legacy and new fork name patterns", () => {
+    expect(generateForkBranchName("ws", ["ws-fork-1", "ws-2", "ws-fork-3"])).toBe("ws-4");
   });
 
   test("ignores non-matching workspace names", () => {
-    expect(
-      generateForkBranchName("feature", ["feature-branch", "feature-impl", "other-fork-1"])
-    ).toBe("feature-fork-1");
+    expect(generateForkBranchName("feature", ["feature-branch", "feature-impl", "other-1"])).toBe(
+      "feature-1"
+    );
   });
 
   test("handles gaps in numbering", () => {
-    expect(generateForkBranchName("ws", ["ws-fork-1", "ws-fork-5"])).toBe("ws-fork-6");
-  });
-
-  test("treats stale branch names as collisions when choosing next fork name", () => {
-    expect(generateForkBranchName("ws", ["ws-fork-1", "ws-fork-2"])).toBe("ws-fork-3");
+    expect(generateForkBranchName("ws", ["ws-1", "ws-5"])).toBe("ws-6");
   });
 
   test("ignores non-numeric suffixes", () => {
-    expect(generateForkBranchName("ws", ["ws-fork-abc", "ws-fork-"])).toBe("ws-fork-1");
+    expect(generateForkBranchName("ws", ["ws-abc", "ws-fork-"])).toBe("ws-1");
   });
 
   test("ignores partially numeric suffixes", () => {
-    expect(generateForkBranchName("ws", ["ws-fork-1abc", "ws-fork-02x", "ws-fork-3"])).toBe(
-      "ws-fork-4"
-    );
+    expect(generateForkBranchName("ws", ["ws-1abc", "ws-fork-02x", "ws-3"])).toBe("ws-4");
   });
 });
 

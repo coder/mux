@@ -1116,6 +1116,7 @@ export class Config {
               name: workspace.name,
               title: workspace.title,
               pendingAutoTitle: workspace.pendingAutoTitle,
+              forkFamilyBaseName: workspace.forkFamilyBaseName,
               projectName: resolvedProjectName,
               projectPath: resolvedProjectPath,
               // GUARANTEE: All workspaces must have createdAt (assign now if missing)
@@ -1241,6 +1242,7 @@ export class Config {
             metadata.unarchivedAt ??= workspace.unarchivedAt;
             // Preserve section assignment from config
             metadata.sectionId ??= workspace.sectionId;
+            metadata.forkFamilyBaseName ??= workspace.forkFamilyBaseName;
 
             if (!workspace.aiSettingsByAgent && metadata.aiSettingsByAgent) {
               workspace.aiSettingsByAgent = metadata.aiSettingsByAgent;
@@ -1252,6 +1254,7 @@ export class Config {
             workspace.name = metadata.name;
             workspace.createdAt = metadata.createdAt;
             workspace.runtimeConfig = metadata.runtimeConfig;
+            workspace.forkFamilyBaseName = metadata.forkFamilyBaseName;
             configModified = true;
 
             if (!workspace.projects && metadata.projects) {
@@ -1391,6 +1394,7 @@ export class Config {
         name: metadata.name,
         title: metadata.title,
         pendingAutoTitle: metadata.pendingAutoTitle,
+        forkFamilyBaseName: metadata.forkFamilyBaseName,
         createdAt: metadata.createdAt,
         aiSettingsByAgent: metadata.aiSettingsByAgent,
         runtimeConfig: metadata.runtimeConfig,

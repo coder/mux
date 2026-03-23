@@ -48,6 +48,10 @@ export const WorkspaceConfigSchema = z.object({
     description:
       "True when a forked workspace is waiting to generate a title from its first accepted continue message.",
   }),
+  forkFamilyBaseName: z.string().optional().meta({
+    description:
+      "Stable base workspace name used to continue auto-generated fork numbering without relying on title heuristics.",
+  }),
   createdAt: z
     .string()
     .optional()

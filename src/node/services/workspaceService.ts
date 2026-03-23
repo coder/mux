@@ -345,17 +345,33 @@ function findMaxSequentialNumber(items: string[], prefix: string, trailingSuffix
   return max;
 }
 
+function deriveForkFamilyBaseName(metadata: { name: string; forkFamilyBaseName?: string }): string {
+  if (metadata.forkFamilyBaseName) {
+    return metadata.forkFamilyBaseName;
+  }
+
+  const legacyForkMatch = /^(.*)-fork-\d+$/.exec(metadata.name);
+  if (legacyForkMatch) {
+    return legacyForkMatch[1];
+  }
+
+  return metadata.name;
+}
+
 /**
- * Generate a unique fork branch name from the parent workspace name.
- * Scans existing workspace names for the parent fork family pattern and picks N+1,
- * guaranteeing a valid git-safe branch name.
+ * Generate a unique fork branch name from a stable fork family base name.
+ * Scans existing workspace names for both the new `{base}-{N}` pattern and the legacy
+ * `{base}-fork-{N}` pattern so numbering continues cleanly across upgrades.
  */
-export function generateForkBranchName(parentName: string, existingNames: string[]): string {
-  // Forking an existing fork should stay in the same numbered family.
-  // e.g. `feature-fork-2` -> `feature-fork-3`, not `feature-fork-2-fork-1`.
-  const base = parentName.replace(/-fork-\d+$/, "");
-  const prefix = `${base}-fork-`;
-  return `${prefix}${findMaxSequentialNumber(existingNames, prefix) + 1}`;
+export function generateForkBranchName(
+  forkFamilyBaseName: string,
+  existingNames: string[]
+): string {
+  const nextForkNumber = Math.max(
+    findMaxSequentialNumber(existingNames, `${forkFamilyBaseName}-`),
+    findMaxSequentialNumber(existingNames, `${forkFamilyBaseName}-fork-`)
+  );
+  return `${forkFamilyBaseName}-${nextForkNumber + 1}`;
 }
 
 /**
@@ -4205,7 +4221,7 @@ export class WorkspaceService extends EventEmitter {
       }
 
       // Auto-generate branch name (and title) when user omits one (seamless fork).
-      // Uses pattern: {parentName}-fork-{N} for branch, "{parentTitle} (N)" for title.
+      // Uses pattern: {parentName}-{N} for branch, "{parentTitle} (N)" for title.
       const isAutoName = newName == null;
       // Fetch all metadata upfront for both branch name and title collision checks.
       const allMetadata = isAutoName ? await this.config.getAllWorkspaceMetadata() : [];
@@ -4228,13 +4244,14 @@ export class WorkspaceService extends EventEmitter {
         }
 
         const existingNames = [...existingNamesSet];
-        resolvedName = generateForkBranchName(sourceMetadata.name, existingNames);
+        const forkFamilyBaseName = deriveForkFamilyBaseName(sourceMetadata);
+        resolvedName = generateForkBranchName(forkFamilyBaseName, existingNames);
 
         if (!validateWorkspaceName(resolvedName).valid) {
           // Legacy workspace names can violate current naming rules (invalid
           // chars / length). Normalize and shrink the parent base until the
           // generated fork name satisfies current invariants.
-          let normalizedParent = sourceMetadata.name
+          let normalizedParent = forkFamilyBaseName
             .toLowerCase()
             .replace(/[^a-z0-9_-]+/g, "-")
             .replace(/-+/g, "-")
@@ -4472,9 +4489,12 @@ export class WorkspaceService extends EventEmitter {
         // Forks with a continue message stay pending until the first accepted user send
         // can generate a more specific title, unless the user edits the title first.
         pendingAutoTitle: pendingAutoTitle === true ? true : undefined,
-        // Seamless fork: generate a numbered title like "Parent Title (1)".
         ...(isAutoName
           ? {
+              // Preserve the original base name only for auto-generated forks so future
+              // auto-forks can keep the same numbered family without affecting manual names.
+              forkFamilyBaseName: deriveForkFamilyBaseName(sourceMetadata),
+              // Seamless fork: generate a numbered title like "Parent Title (1)".
               title: generateForkTitle(
                 sourceMetadata.title ?? sourceMetadata.name,
                 allMetadata
