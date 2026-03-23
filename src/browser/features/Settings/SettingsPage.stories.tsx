@@ -1,4 +1,5 @@
 import { appMeta, AppWithMocks, type AppStory } from "@/browser/stories/meta.js";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { waitFor, within, userEvent } from "@storybook/test";
 import { setupSettingsStory } from "./Sections/settingsStoryUtils.js";
 
@@ -23,6 +24,7 @@ const BASE_SECTION_LABELS = [
 ] as const;
 
 type BaseSectionLabel = (typeof BASE_SECTION_LABELS)[number];
+type SectionNavLabel = BaseSectionLabel | "System 1";
 
 const SECTION_CONTENT_MATCHERS: Record<BaseSectionLabel, RegExp> = {
   General: /Theme/i,
@@ -48,7 +50,7 @@ async function openSettings(canvasElement: HTMLElement): Promise<void> {
 
 async function clickSectionButton(
   canvasElement: HTMLElement,
-  sectionLabel: BaseSectionLabel
+  sectionLabel: SectionNavLabel
 ): Promise<void> {
   const canvas = within(canvasElement);
 
@@ -90,5 +92,40 @@ export const SectionsSmoke: AppStory = {
       await clickSectionButton(canvasElement, sectionLabel);
       await assertSectionBodyRendered(canvasElement, sectionLabel);
     }
+  },
+};
+
+export const System1SectionSmoke: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSettingsStory({
+          experiments: { [EXPERIMENT_IDS.SYSTEM_1]: true },
+          providersConfig: {
+            anthropic: {
+              apiKeySet: true,
+              isEnabled: true,
+              isConfigured: true,
+              baseUrl: "",
+              models: ["claude-sonnet-4-20250514", "claude-opus-4-20250514"],
+            },
+            openai: {
+              apiKeySet: true,
+              isEnabled: true,
+              isConfigured: true,
+              baseUrl: "",
+              models: ["gpt-4o", "gpt-4o-mini", "o1-preview"],
+            },
+          },
+        })
+      }
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    const canvas = within(canvasElement);
+
+    await openSettings(canvasElement);
+    await clickSectionButton(canvasElement, "System 1");
+    await canvas.findByText(/System 1 Model/i);
   },
 };

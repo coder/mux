@@ -27,13 +27,14 @@ bun run storybook:build
 
 The output will be in `storybook-static/`.
 
-## Writing Stories (full app only)
+## Writing Stories
 
-Mux intentionally uses **full-app** stories (no isolated component stories).
+Mux uses two Storybook patterns:
 
-Stories live in `src/browser/stories/` and must be named `App.*.stories.tsx`.
+- **Full-app stories** for integration/routing coverage (for example `src/browser/stories/App.*.stories.tsx`)
+- **Colocated isolated stories** for Settings section-level testing (for example `src/browser/features/Settings/Sections/*.stories.tsx`)
 
-Storybook is configured to load `src/browser/stories/**/*.stories.@(ts|tsx)` (see `.storybook/main.ts`).
+Storybook loads stories from `src/browser/stories/**/*.stories.@(ts|tsx)`, `src/browser/components/**/*.stories.@(ts|tsx)`, and `src/browser/features/**/*.stories.@(ts|tsx)` (see `.storybook/main.ts`).
 
 ### Basic App story structure
 
