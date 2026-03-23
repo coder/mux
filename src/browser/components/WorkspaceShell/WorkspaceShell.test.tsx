@@ -71,6 +71,7 @@ describe("WorkspaceShell loading placeholders", () => {
 
   afterEach(() => {
     cleanup();
+    mock.restore();
     cleanupDom?.();
     cleanupDom = null;
     workspaceState = undefined;
