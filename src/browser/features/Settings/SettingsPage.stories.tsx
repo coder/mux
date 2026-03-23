@@ -73,7 +73,7 @@ async function assertSectionBodyRendered(
 
   await waitFor(
     () => {
-      if (!canvas.queryByText(sectionContentMatcher)) {
+      if (canvas.queryAllByText(sectionContentMatcher).length === 0) {
         throw new Error(`Expected ${sectionLabel} section content to render.`);
       }
     },
