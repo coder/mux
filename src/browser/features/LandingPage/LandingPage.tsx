@@ -4,6 +4,7 @@ import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxi
 
 import { cn } from "@/common/lib/utils";
 import { Button } from "@/browser/components/Button/Button";
+import { PRLinkBadge } from "@/browser/components/PRLinkBadge/PRLinkBadge";
 import { Skeleton } from "@/browser/components/Skeleton/Skeleton";
 import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 import { useRouter } from "@/browser/contexts/RouterContext";
@@ -459,7 +460,7 @@ function WorkspaceCard(props: { workspaceId: string; title: string; onClick: () 
       )}
 
       {/* Row 3: Git diff + PR badge */}
-      <div className="mt-2 flex flex-wrap items-center gap-x-2 text-[11px]">
+      <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px]">
         {hasChanges && (
           <>
             <span className="text-green-400">+{gitStatus.outgoingAdditions}</span>
@@ -467,49 +468,12 @@ function WorkspaceCard(props: { workspaceId: string; title: string; onClick: () 
           </>
         )}
         {prStatus && (
-          <>
-            {hasChanges && <span className="text-muted">·</span>}
-            <PRBadge pr={prStatus} />
-          </>
+          <span onClickCapture={(e) => e.stopPropagation()}>
+            {/* Reuse the workspace-header badge so recent cards stay visually aligned. */}
+            <PRLinkBadge prLink={prStatus} />
+          </span>
         )}
       </div>
     </div>
-  );
-}
-
-// ─── PR status badge ─────────────────────────────────────────────────────
-function PRBadge(props: {
-  pr: {
-    url: string;
-    number: number;
-    status?: { state: string; hasPendingChecks?: boolean; hasFailedChecks?: boolean };
-  };
-}) {
-  const state = props.pr.status?.state;
-  const stateColor =
-    state === "MERGED" ? "text-purple-400" : state === "CLOSED" ? "text-red-400" : "text-green-400"; // OPEN or unknown
-
-  return (
-    <a
-      href={props.pr.url}
-      target="_blank"
-      rel="noopener noreferrer"
-      className={cn("hover:underline", stateColor)}
-      onClick={(e) => e.stopPropagation()}
-    >
-      #{props.pr.number}
-      {props.pr.status?.hasPendingChecks && (
-        <span className="text-yellow-400" title="Checks pending">
-          {" "}
-          ●
-        </span>
-      )}
-      {props.pr.status?.hasFailedChecks && (
-        <span className="text-red-400" title="Checks failed">
-          {" "}
-          ●
-        </span>
-      )}
-    </a>
   );
 }
