@@ -63,6 +63,7 @@ import type {
   CoderTemplate,
   CoderWorkspace,
 } from "@/common/orpc/schemas/coder";
+import type { CoderWorkspaceArchiveBehavior } from "@/common/config/coderArchiveBehavior";
 import type { z } from "zod";
 import type { ProjectRemoveErrorSchema } from "@/common/orpc/schemas/errors";
 import { isWorkspaceArchived } from "@/common/utils/archive";
@@ -124,7 +125,7 @@ export interface MockORPCClientOptions {
   /** Initial per-subagent AI defaults for config.getConfig (e.g., Settings → Tasks section) */
   subagentAiDefaults?: SubagentAiDefaults;
   /** Coder lifecycle preferences for config.getConfig (e.g., Settings → Coder section) */
-  stopCoderWorkspaceOnArchive?: boolean;
+  coderWorkspaceArchiveBehavior?: CoderWorkspaceArchiveBehavior;
   /** Initial runtime enablement for config.getConfig */
   runtimeEnablement?: Record<string, boolean>;
   /** Initial default runtime for config.getConfig (global) */
@@ -341,7 +342,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     taskSettings: initialTaskSettings,
     subagentAiDefaults: initialSubagentAiDefaults,
     agentAiDefaults: initialAgentAiDefaults,
-    stopCoderWorkspaceOnArchive: initialStopCoderWorkspaceOnArchive = true,
+    coderWorkspaceArchiveBehavior: initialCoderWorkspaceArchiveBehavior = "stop",
     runtimeEnablement: initialRuntimeEnablement,
     defaultRuntime: initialDefaultRuntime,
     onePasswordAccountName: initialOnePasswordAccountName = null,
@@ -543,7 +544,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
 
   let muxGatewayEnabled: boolean | undefined = undefined;
   let muxGatewayModels: string[] | undefined = undefined;
-  let stopCoderWorkspaceOnArchive = initialStopCoderWorkspaceOnArchive;
+  let coderWorkspaceArchiveBehavior = initialCoderWorkspaceArchiveBehavior;
   let runtimeEnablement: Record<string, boolean> = initialRuntimeEnablement ?? {
     local: true,
     worktree: true,
@@ -737,7 +738,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           muxGatewayModels,
           routePriority,
           routeOverrides,
-          stopCoderWorkspaceOnArchive,
+          coderWorkspaceArchiveBehavior,
           runtimeEnablement,
           defaultRuntime,
           agentAiDefaults,
@@ -814,8 +815,10 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         notifyConfigChanged();
         return Promise.resolve(undefined);
       },
-      updateCoderPrefs: (input: { stopCoderWorkspaceOnArchive: boolean }) => {
-        stopCoderWorkspaceOnArchive = input.stopCoderWorkspaceOnArchive;
+      updateCoderPrefs: (input: {
+        coderWorkspaceArchiveBehavior: CoderWorkspaceArchiveBehavior;
+      }) => {
+        coderWorkspaceArchiveBehavior = input.coderWorkspaceArchiveBehavior;
         notifyConfigChanged();
         return Promise.resolve(undefined);
       },

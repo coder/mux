@@ -29,6 +29,11 @@ import {
   isFontFamilyAvailableInBrowser,
   isGenericFontFamily,
 } from "@/browser/terminal/terminalFontFamily";
+import {
+  CODER_ARCHIVE_BEHAVIORS,
+  DEFAULT_CODER_ARCHIVE_BEHAVIOR,
+  type CoderWorkspaceArchiveBehavior,
+} from "@/common/config/coderArchiveBehavior";
 
 // Guard against corrupted/old persisted settings (e.g. from a downgraded build).
 const ALLOWED_EDITOR_TYPES: ReadonlySet<EditorType> = new Set([
@@ -130,6 +135,18 @@ const LAUNCH_BEHAVIOR_OPTIONS = [
   { value: "new-chat", label: "New chat on recent project" },
   { value: "last-workspace", label: "Last visited workspace" },
 ] as const;
+const ARCHIVE_BEHAVIOR_OPTIONS = [
+  { value: "keep", label: "Keep running" },
+  { value: "stop", label: "Stop workspace" },
+  { value: "delete", label: "Delete workspace" },
+] as const;
+
+function isCoderWorkspaceArchiveBehavior(value: unknown): value is CoderWorkspaceArchiveBehavior {
+  return (
+    typeof value === "string" &&
+    CODER_ARCHIVE_BEHAVIORS.includes(value as CoderWorkspaceArchiveBehavior)
+  );
+}
 
 // Browser mode: window.api is not set (only exists in Electron via preload)
 const isBrowserMode = typeof window !== "undefined" && !window.api;
@@ -171,33 +188,41 @@ export function GeneralSection() {
   // (which would clear the config) when the initial fetch failed.
   const [cloneDirLoadedOk, setCloneDirLoadedOk] = useState(false);
 
-  // Backend config: default to ON so archiving is safest even before async load completes.
-  const [stopCoderWorkspaceOnArchive, setStopCoderWorkspaceOnArchive] = useState(true);
+  // Backend config: default to stop so archiving is safest even before async load completes.
+  const [archiveBehavior, setArchiveBehavior] = useState<CoderWorkspaceArchiveBehavior>(
+    DEFAULT_CODER_ARCHIVE_BEHAVIOR
+  );
   const [llmDebugLogs, setLlmDebugLogs] = useState(false);
-  const stopCoderWorkspaceOnArchiveLoadNonceRef = useRef(0);
+  const archiveBehaviorLoadNonceRef = useRef(0);
 
   const llmDebugLogsLoadNonceRef = useRef(0);
 
   // updateCoderPrefs writes config.json on the backend. Serialize (and coalesce) updates so rapid
-  // toggles can't race and persist a stale value via out-of-order writes.
-  const stopCoderWorkspaceOnArchiveUpdateChainRef = useRef<Promise<void>>(Promise.resolve());
+  // selections can't race and persist a stale value via out-of-order writes.
+  const archiveBehaviorUpdateChainRef = useRef<Promise<void>>(Promise.resolve());
   const llmDebugLogsUpdateChainRef = useRef<Promise<void>>(Promise.resolve());
-  const stopCoderWorkspaceOnArchivePendingUpdateRef = useRef<boolean | undefined>(undefined);
+  const archiveBehaviorPendingUpdateRef = useRef<CoderWorkspaceArchiveBehavior | undefined>(
+    undefined
+  );
 
   useEffect(() => {
     if (!api) {
       return;
     }
 
-    const stopCoderWorkspaceOnArchiveNonce = ++stopCoderWorkspaceOnArchiveLoadNonceRef.current;
+    const archiveBehaviorNonce = ++archiveBehaviorLoadNonceRef.current;
     const llmDebugLogsNonce = ++llmDebugLogsLoadNonceRef.current;
 
     void api.config
       .getConfig()
       .then((cfg) => {
-        // If the user toggled the setting while this request was in flight, keep the UI selection.
-        if (stopCoderWorkspaceOnArchiveNonce === stopCoderWorkspaceOnArchiveLoadNonceRef.current) {
-          setStopCoderWorkspaceOnArchive(cfg.stopCoderWorkspaceOnArchive);
+        // If the user changed the setting while this request was in flight, keep the UI selection.
+        if (archiveBehaviorNonce === archiveBehaviorLoadNonceRef.current) {
+          setArchiveBehavior(
+            isCoderWorkspaceArchiveBehavior(cfg.coderWorkspaceArchiveBehavior)
+              ? cfg.coderWorkspaceArchiveBehavior
+              : DEFAULT_CODER_ARCHIVE_BEHAVIOR
+          );
         }
 
         // Use an independent nonce so debug-log toggles do not discard archive-setting updates.
@@ -206,46 +231,45 @@ export function GeneralSection() {
         }
       })
       .catch(() => {
-        // Best-effort only. Keep the default (ON) if config fails to load.
+        // Best-effort only. Keep the default (stop) if config fails to load.
       });
   }, [api]);
 
-  const handleStopCoderWorkspaceOnArchiveChange = useCallback(
-    (checked: boolean) => {
+  const handleArchiveBehaviorChange = useCallback(
+    (behavior: CoderWorkspaceArchiveBehavior) => {
       // Invalidate any in-flight initial load so it doesn't overwrite the user's selection.
-      stopCoderWorkspaceOnArchiveLoadNonceRef.current++;
-      setStopCoderWorkspaceOnArchive(checked);
+      archiveBehaviorLoadNonceRef.current++;
+      setArchiveBehavior(behavior);
 
       if (!api?.config?.updateCoderPrefs) {
         return;
       }
 
-      stopCoderWorkspaceOnArchivePendingUpdateRef.current = checked;
+      archiveBehaviorPendingUpdateRef.current = behavior;
 
-      stopCoderWorkspaceOnArchiveUpdateChainRef.current =
-        stopCoderWorkspaceOnArchiveUpdateChainRef.current
-          .then(async () => {
-            // Drain the pending ref so a toggle that happens while updateCoderPrefs is in-flight
-            // doesn't get stranded without a subsequent write scheduled.
-            for (;;) {
-              const pending = stopCoderWorkspaceOnArchivePendingUpdateRef.current;
-              if (pending === undefined) {
-                return;
-              }
-
-              // Clear before awaiting so rapid toggles coalesce into a new pending value.
-              stopCoderWorkspaceOnArchivePendingUpdateRef.current = undefined;
-
-              try {
-                await api.config.updateCoderPrefs({ stopCoderWorkspaceOnArchive: pending });
-              } catch {
-                // Best-effort only. Swallow errors so the queue doesn't get stuck.
-              }
+      archiveBehaviorUpdateChainRef.current = archiveBehaviorUpdateChainRef.current
+        .then(async () => {
+          // Drain the pending ref so a change that happens while updateCoderPrefs is in-flight
+          // doesn't get stranded without a subsequent write scheduled.
+          for (;;) {
+            const pending = archiveBehaviorPendingUpdateRef.current;
+            if (pending === undefined) {
+              return;
             }
-          })
-          .catch(() => {
-            // Best-effort only.
-          });
+
+            // Clear before awaiting so rapid changes coalesce into a new pending value.
+            archiveBehaviorPendingUpdateRef.current = undefined;
+
+            try {
+              await api.config.updateCoderPrefs({ coderWorkspaceArchiveBehavior: pending });
+            } catch {
+              // Best-effort only. Swallow errors so the queue doesn't get stuck.
+            }
+          }
+        })
+        .catch(() => {
+          // Best-effort only.
+        });
     },
     [api]
   );
@@ -518,17 +542,29 @@ export function GeneralSection() {
 
       <div className="flex items-center justify-between gap-4">
         <div className="flex-1">
-          <div className="text-foreground text-sm">Stop Coder workspace when archiving</div>
+          <div className="text-foreground text-sm">Coder workspace on archive</div>
           <div className="text-muted text-xs">
-            When enabled, archiving a Mux workspace will stop its dedicated Coder workspace first.
+            Action to take on dedicated Coder workspaces when archiving a chat. Delete is permanent.
           </div>
         </div>
-        <Switch
-          checked={stopCoderWorkspaceOnArchive}
-          onCheckedChange={handleStopCoderWorkspaceOnArchiveChange}
+        <Select
+          value={archiveBehavior}
+          onValueChange={(value) =>
+            handleArchiveBehaviorChange(value as CoderWorkspaceArchiveBehavior)
+          }
           disabled={!api?.config?.updateCoderPrefs}
-          aria-label="Toggle stopping the dedicated Coder workspace when archiving a Mux workspace"
-        />
+        >
+          <SelectTrigger className="border-border-medium bg-background-secondary hover:bg-hover h-9 w-auto cursor-pointer rounded-md border px-3 text-sm transition-colors">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {ARCHIVE_BEHAVIOR_OPTIONS.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       {isBrowserMode && sshHostLoaded && (
