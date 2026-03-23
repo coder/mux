@@ -53,6 +53,7 @@ import {
 import { normalizeModelInput } from "@/browser/utils/models/normalizeModelInput";
 import { resolveDevcontainerSelection } from "@/browser/utils/devcontainerSelection";
 import { getErrorMessage } from "@/common/utils/errors";
+import { normalizeAgentId } from "@/common/utils/agentIds";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 export type CreationSendResult = { success: true } | { success: false; error?: SendMessageError };
@@ -90,10 +91,8 @@ function syncCreationPreferences(projectPath: string, workspaceId: string): void
   );
   const effectiveAgentId =
     typeof projectAgentId === "string" && projectAgentId.trim().length > 0
-      ? projectAgentId.trim().toLowerCase()
-      : typeof globalDefaultAgentId === "string" && globalDefaultAgentId.trim().length > 0
-        ? globalDefaultAgentId.trim().toLowerCase()
-        : WORKSPACE_DEFAULTS.agentId;
+      ? normalizeAgentId(projectAgentId, WORKSPACE_DEFAULTS.agentId)
+      : normalizeAgentId(globalDefaultAgentId, WORKSPACE_DEFAULTS.agentId);
   updatePersistedState(getAgentIdKey(workspaceId), effectiveAgentId);
 
   const projectThinkingLevel = readPersistedState<ThinkingLevel | null>(

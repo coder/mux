@@ -126,13 +126,21 @@ export async function resolveAgentForStream(
   try {
     agentDefinition = await readAgentDefinition(runtime, agentDiscoveryPath, effectiveAgentId);
   } catch (error) {
-    workspaceLog.warn("Failed to load agent definition; falling back to exec", {
+    workspaceLog.warn("Failed to load agent definition; falling back", {
       effectiveAgentId,
       agentDiscoveryPath,
       disableWorkspaceAgents,
       error: getErrorMessage(error),
     });
-    agentDefinition = await readAgentDefinition(runtime, agentDiscoveryPath, "exec");
+    if (effectiveAgentId === "ask") {
+      try {
+        agentDefinition = await readAgentDefinition(runtime, agentDiscoveryPath, "auto");
+      } catch {
+        agentDefinition = await readAgentDefinition(runtime, agentDiscoveryPath, "exec");
+      }
+    } else {
+      agentDefinition = await readAgentDefinition(runtime, agentDiscoveryPath, "exec");
+    }
   }
 
   // Keep agent ID aligned with the actual definition used (may fall back to exec).

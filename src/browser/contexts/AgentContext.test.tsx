@@ -283,8 +283,9 @@ describe("AgentContext", () => {
     renderAgentHarness({ projectPath, onChange: (value) => (contextValue = value) });
 
     await waitFor(() => {
-      expect(contextValue?.agentId).toBe("ask");
+      expect(contextValue?.agentId).toBe("auto");
     });
+    expect(window.localStorage.getItem(getAgentIdKey(getProjectScopeId(projectPath)))).toBeNull();
   });
 
   test("project-scoped preference takes precedence over global default", async () => {

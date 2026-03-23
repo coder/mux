@@ -25,6 +25,7 @@ import {
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 import { sortAgentsStable } from "@/browser/utils/agents";
+import { normalizeAgentId, resolveRemovedBuiltinAgentId } from "@/common/utils/agentIds";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 export interface AgentContextValue {
@@ -64,9 +65,7 @@ function getScopeId(workspaceId: string | undefined, projectPath: string | undef
 }
 
 function coerceAgentId(value: unknown): string {
-  return typeof value === "string" && value.trim().length > 0
-    ? value.trim().toLowerCase()
-    : WORKSPACE_DEFAULTS.agentId;
+  return normalizeAgentId(value, WORKSPACE_DEFAULTS.agentId);
 }
 
 export function AgentProvider(props: AgentProviderProps) {
@@ -104,6 +103,8 @@ function AgentProviderWithState(props: {
       listener: true,
     }
   );
+  const explicitScopedAgentId =
+    typeof scopedAgentId === "string" && scopedAgentId.trim().length > 0 ? scopedAgentId : null;
 
   const [disableWorkspaceAgents, setDisableWorkspaceAgents] = usePersistedState<boolean>(
     getDisableWorkspaceAgentsKey(scopeId),
@@ -123,9 +124,9 @@ function AgentProviderWithState(props: {
   const setAgentId: Dispatch<SetStateAction<string>> = useCallback(
     (value) => {
       setAgentIdRaw((prev) => {
-        const previousAgentId = coerceAgentId(
-          isProjectScope ? (prev ?? globalDefaultAgentId) : prev
-        );
+        const explicitPrevAgentId =
+          typeof prev === "string" && prev.trim().length > 0 ? prev : globalDefaultAgentId;
+        const previousAgentId = coerceAgentId(isProjectScope ? explicitPrevAgentId : prev);
         const next = typeof value === "function" ? value(previousAgentId) : value;
         return coerceAgentId(next);
       });
@@ -243,8 +244,37 @@ function AgentProviderWithState(props: {
   const normalizedAgentId =
     isCurrentAgentLocked && currentMeta?.agentId
       ? currentMeta.agentId
-      : coerceAgentId(isProjectScope ? (scopedAgentId ?? globalDefaultAgentId) : scopedAgentId);
-  const currentAgent = loaded ? agents.find((a) => a.id === normalizedAgentId) : undefined;
+      : coerceAgentId(
+          isProjectScope ? (explicitScopedAgentId ?? globalDefaultAgentId) : scopedAgentId
+        );
+  const canResolveRemovedBuiltinAgentId = loaded && !loadFailed;
+  const effectiveAgentId = canResolveRemovedBuiltinAgentId
+    ? resolveRemovedBuiltinAgentId(
+        normalizedAgentId,
+        agents.map((agent) => agent.id),
+        WORKSPACE_DEFAULTS.agentId
+      )
+    : normalizedAgentId;
+  const currentAgent = loaded ? agents.find((a) => a.id === effectiveAgentId) : undefined;
+
+  useEffect(() => {
+    if (
+      !canResolveRemovedBuiltinAgentId ||
+      effectiveAgentId === normalizedAgentId ||
+      (isProjectScope && explicitScopedAgentId == null)
+    ) {
+      return;
+    }
+
+    setAgentIdRaw(effectiveAgentId);
+  }, [
+    canResolveRemovedBuiltinAgentId,
+    effectiveAgentId,
+    isProjectScope,
+    normalizedAgentId,
+    explicitScopedAgentId,
+    setAgentIdRaw,
+  ]);
 
   const selectableAgents = useMemo(
     () => sortAgentsStable(agents.filter((a) => a.uiSelectable)),
@@ -256,7 +286,7 @@ function AgentProviderWithState(props: {
       return;
     }
 
-    const activeAgentId = normalizedAgentId;
+    const activeAgentId = effectiveAgentId;
 
     // Never cycle into "auto" — it's toggled explicitly via the picker switch.
     // When auto is currently active, the same shortcut should still provide a way
@@ -277,14 +307,14 @@ function AgentProviderWithState(props: {
     if (nextAgent) {
       setAgentId(nextAgent.id);
     }
-  }, [isCurrentAgentLocked, normalizedAgentId, selectableAgents, setAgentId]);
+  }, [effectiveAgentId, isCurrentAgentLocked, selectableAgents, setAgentId]);
 
   const toggleAutoAgent = useCallback(() => {
     if (isCurrentAgentLocked) {
       return;
     }
 
-    const activeAgentId = normalizedAgentId;
+    const activeAgentId = effectiveAgentId;
     const autoAvailable = selectableAgents.some((agent) => agent.id === "auto");
     if (!autoAvailable) return;
 
@@ -296,7 +326,7 @@ function AgentProviderWithState(props: {
     }
 
     setAgentId("auto");
-  }, [isCurrentAgentLocked, normalizedAgentId, selectableAgents, setAgentId]);
+  }, [effectiveAgentId, isCurrentAgentLocked, selectableAgents, setAgentId]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -337,7 +367,7 @@ function AgentProviderWithState(props: {
 
   const agentContextValue = useMemo(
     () => ({
-      agentId: normalizedAgentId,
+      agentId: effectiveAgentId,
       setAgentId,
       currentAgent,
       agents,
@@ -350,7 +380,7 @@ function AgentProviderWithState(props: {
       isAgentSelectionLocked: isCurrentAgentLocked,
     }),
     [
-      normalizedAgentId,
+      effectiveAgentId,
       setAgentId,
       currentAgent,
       agents,

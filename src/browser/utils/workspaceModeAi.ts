@@ -1,14 +1,13 @@
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
+import { normalizeAgentId as normalizeWorkspaceAgentId } from "@/common/utils/agentIds";
 
 export type WorkspaceAISettingsCache = Partial<
   Record<string, { model: string; thinkingLevel: ThinkingLevel }>
 >;
 
 function normalizeAgentId(agentId: string): string {
-  return typeof agentId === "string" && agentId.trim().length > 0
-    ? agentId.trim().toLowerCase()
-    : "exec";
+  return normalizeWorkspaceAgentId(agentId, "exec");
 }
 
 // Keep agent -> model/thinking precedence in one place so mode switches that send immediately

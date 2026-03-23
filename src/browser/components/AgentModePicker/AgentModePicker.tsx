@@ -1,18 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  Bot,
-  ChevronDown,
-  MessageCircleQuestionMark,
-  Route,
-  Sparkles,
-  SquareCode,
-  Workflow,
-} from "lucide-react";
+import { Bot, ChevronDown, Route, Sparkles, SquareCode, Workflow } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 import { useAgent } from "@/browser/contexts/AgentContext";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
+import { normalizeAgentId as normalizeStoredAgentId } from "@/common/utils/agentIds";
 import { cn } from "@/common/lib/utils";
 import { DocsLink } from "@/browser/components/DocsLink/DocsLink";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/Tooltip/Tooltip";
@@ -53,7 +46,6 @@ interface AgentOption {
 
 /** Maps well-known agent IDs to lucide icons for the dropdown */
 const AGENT_ICONS: Record<string, LucideIcon> = {
-  ask: MessageCircleQuestionMark,
   plan: Route,
   exec: SquareCode,
   orchestrator: Workflow,
@@ -82,7 +74,7 @@ export function formatAgentIdLabel(agentId: string): string {
 }
 
 function normalizeAgentId(value: unknown): string {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim().toLowerCase() : "";
+  return normalizeStoredAgentId(value, "");
 }
 
 function resolveAgentOptions(agents: AgentDefinitionDescriptor[]): AgentOption[] {

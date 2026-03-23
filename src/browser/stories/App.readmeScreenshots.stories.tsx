@@ -1023,17 +1023,6 @@ export const AutoModeAgentSwitching: AppStory = {
               uiColor: "var(--color-plan-mode)",
             },
             {
-              id: "ask",
-              scope: "built-in",
-              name: "Ask",
-              description: "Delegate questions to Explore sub-agents and synthesize an answer.",
-              uiSelectable: true,
-              uiRoutable: true,
-              subagentRunnable: false,
-              base: "exec",
-              uiColor: "var(--color-ask-mode)",
-            },
-            {
               id: "auto",
               scope: "built-in",
               name: "Auto",

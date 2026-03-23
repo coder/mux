@@ -143,6 +143,7 @@ import {
   filePartsToChatAttachments,
   type SkillResolutionTarget,
 } from "./utils";
+import { normalizeAgentId } from "@/common/utils/agentIds";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 // localStorage quotas are environment-dependent and relatively small.
@@ -511,10 +512,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const { agentId, currentAgent, agents } = useAgent();
 
   // Keep auto-mode checks aligned with AgentModePicker behavior.
-  const normalizedAgentId =
-    typeof agentId === "string" && agentId.trim().length > 0
-      ? agentId.trim().toLowerCase()
-      : WORKSPACE_DEFAULTS.agentId;
+  const normalizedAgentId = normalizeAgentId(agentId, WORKSPACE_DEFAULTS.agentId);
   const autoAvailable = agents.some((entry) => entry.uiSelectable && entry.id === "auto");
   const isAutoAgent = normalizedAgentId === "auto" && autoAvailable;
 
@@ -654,10 +652,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         return;
       }
 
-      const normalizedAgentId =
-        typeof agentId === "string" && agentId.trim().length > 0
-          ? agentId.trim().toLowerCase()
-          : "exec";
+      const normalizedAgentId = normalizeAgentId(agentId, "exec");
 
       updatePersistedState<WorkspaceAISettingsByAgentCache>(
         getWorkspaceAISettingsByAgentKey(workspaceId),
@@ -1025,10 +1020,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
     const fallbackModel = defaultModel;
 
-    const normalizedAgentId =
-      typeof agentId === "string" && agentId.trim().length > 0
-        ? agentId.trim().toLowerCase()
-        : "exec";
+    const normalizedAgentId = normalizeAgentId(agentId, "exec");
 
     const isExplicitAgentSwitch =
       prevCreationAgentIdRef.current !== null &&

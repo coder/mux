@@ -463,17 +463,6 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         uiColor: "var(--color-auto-mode)",
       },
       {
-        id: "ask",
-        scope: "built-in",
-        name: "Ask",
-        description: "Delegate questions to Explore sub-agents and synthesize an answer.",
-        uiSelectable: true,
-        uiRoutable: true,
-        subagentRunnable: false,
-        base: "exec",
-        uiColor: "var(--color-ask-mode)",
-      },
-      {
         id: "plan",
         scope: "built-in",
         name: "Plan",

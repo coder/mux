@@ -30,6 +30,7 @@ import type {
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type { SendMessageError } from "@/common/types/errors";
 import { AgentIdSchema, SkillNameSchema } from "@/common/orpc/schemas";
+import { normalizeAgentId } from "@/common/utils/agentIds";
 import {
   buildStreamErrorEventData,
   createStreamErrorMessage,
@@ -154,7 +155,7 @@ interface SwitchAgentResult {
 
 const MAX_CONSECUTIVE_AGENT_SWITCHES = 3;
 
-const SAFE_AGENT_SWITCH_FALLBACK_CANDIDATES = ["exec", "ask", "plan"] as const;
+const SAFE_AGENT_SWITCH_FALLBACK_CANDIDATES = ["exec", "plan"] as const;
 const SWITCH_AGENT_TARGET_UNAVAILABLE_ERROR =
   "Agent handoff failed because the requested target is unavailable. Please retry or choose a different mode.";
 
@@ -936,7 +937,7 @@ export class AgentSession {
       return undefined;
     }
 
-    const normalized = agentId.trim().toLowerCase();
+    const normalized = normalizeAgentId(agentId, "");
     if (normalized.length === 0) {
       return undefined;
     }

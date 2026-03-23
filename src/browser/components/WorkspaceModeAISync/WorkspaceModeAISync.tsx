@@ -19,6 +19,7 @@ import {
 } from "@/browser/utils/workspaceModeAi";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
+import { normalizeAgentId } from "@/common/utils/agentIds";
 
 export function WorkspaceModeAISync(props: { workspaceId: string }): null {
   const workspaceId = props.workspaceId;
@@ -46,10 +47,7 @@ export function WorkspaceModeAISync(props: { workspaceId: string }): null {
     const modelKey = getModelKey(workspaceId);
     const thinkingKey = getThinkingLevelKey(workspaceId);
 
-    const normalizedAgentId =
-      typeof agentId === "string" && agentId.trim().length > 0
-        ? agentId.trim().toLowerCase()
-        : "exec";
+    const normalizedAgentId = normalizeAgentId(agentId, "exec");
 
     const isExplicitAgentSwitch =
       prevAgentIdRef.current !== null &&

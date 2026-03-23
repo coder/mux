@@ -56,6 +56,40 @@ describe("workspace.updateAgentAISettings", () => {
     }
   }, 60000);
 
+  test("keeps ask-scoped settings separate from auto when persisting agent settings", async () => {
+    const env: TestEnvironment = await createTestEnvironment();
+    const tempGitRepo = await createTempGitRepo();
+
+    try {
+      const branchName = generateBranchName("ai-settings-ask");
+      const createResult = await createWorkspace(env, tempGitRepo, branchName);
+      if (!createResult.success) {
+        throw new Error(`Workspace creation failed: ${createResult.error}`);
+      }
+
+      const workspaceId = createResult.metadata.id;
+      expect(workspaceId).toBeTruthy();
+
+      const client = resolveOrpcClient(env);
+      const updateResult = await client.workspace.updateAgentAISettings({
+        workspaceId: workspaceId!,
+        agentId: "ask",
+        aiSettings: { model: "anthropic:claude-opus-4-6", thinkingLevel: "low" },
+      });
+      expect(updateResult.success).toBe(true);
+
+      const info = await client.workspace.getInfo({ workspaceId: workspaceId! });
+      expect(info?.aiSettingsByAgent?.ask).toEqual({
+        model: "anthropic:claude-opus-4-6",
+        thinkingLevel: "low",
+      });
+      expect(info?.aiSettingsByAgent?.auto).toBeUndefined();
+    } finally {
+      await cleanupTestEnvironment(env);
+      await cleanupTempGitRepo(tempGitRepo);
+    }
+  }, 60000);
+
   test("preserves explicit gateway model IDs when persisting agent settings", async () => {
     const env: TestEnvironment = await createTestEnvironment();
     const tempGitRepo = await createTempGitRepo();

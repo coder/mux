@@ -41,15 +41,6 @@ const DEFAULT_AGENT_DESCRIPTORS: Awaited<ReturnType<ORPCClient["agents"]["list"]
     subagentRunnable: true,
   },
   {
-    id: "ask",
-    scope: "built-in",
-    name: "Ask",
-    description: "Delegate questions to Explore sub-agents and synthesize an answer.",
-    uiSelectable: true,
-    uiRoutable: true,
-    subagentRunnable: false,
-  },
-  {
     id: "auto",
     scope: "built-in",
     name: "Auto",
@@ -214,16 +205,13 @@ describe("ACP config options", () => {
     expect(agentModeEntries.find((entry) => entry.value === "exec")?.description).toBe(
       "Implement changes in the repository"
     );
-    expect(agentModeEntries.find((entry) => entry.value === "ask")?.description).toBe(
-      "Delegate questions to Explore sub-agents and synthesize an answer."
-    );
     expect(agentModeEntries.find((entry) => entry.value === "plan")?.description).toBe(
       "Create a plan before coding"
     );
     expect(agentModeEntries.find((entry) => entry.value === "auto")?.description).toBe(
       "Automatically selects the best agent for your task"
     );
-    expect(agentModeEntries.map((entry) => entry.value)).toEqual(["exec", "plan", "ask", "auto"]);
+    expect(agentModeEntries.map((entry) => entry.value)).toEqual(["exec", "plan", "auto"]);
 
     const thinkingOption = getSelectConfigOption(options, "thinkingLevel");
     const thinkingEntries = flattenSelectOptions(thinkingOption);
@@ -313,5 +301,104 @@ describe("ACP config options", () => {
       model: "openai:gpt-5-pro",
       thinkingLevel: "high",
     });
+  });
+
+  it("maps legacy ask mode to auto when ask is no longer selectable", async () => {
+    const harness = createHarness({
+      agentId: "ask",
+      aiSettings: {
+        model: "anthropic:claude-sonnet-4-5",
+        thinkingLevel: "high",
+      },
+      aiSettingsByAgent: {
+        ask: {
+          model: "anthropic:claude-opus-4-6",
+          thinkingLevel: "low",
+        },
+        auto: {
+          model: "anthropic:claude-sonnet-4-5",
+          thinkingLevel: "high",
+        },
+      },
+    });
+
+    const options = await buildConfigOptions(harness.client, "ws-1");
+    const agentModeOption = getSelectConfigOption(options, AGENT_MODE_CONFIG_ID);
+    expect(agentModeOption.currentValue).toBe("auto");
+
+    const updated = await handleSetConfigOption(harness.client, "ws-1", "thinkingLevel", "off");
+
+    expect(harness.updateAgentCalls).toHaveLength(1);
+    expect(harness.updateAgentCalls[0]?.agentId).toBe("auto");
+
+    const updatedThinkingOption = getSelectConfigOption(updated, "thinkingLevel");
+    expect(updatedThinkingOption.currentValue).toBe("off");
+  });
+
+  it("preserves hidden custom ask agents when resolving the active ACP mode", async () => {
+    const harness = createHarness(
+      {
+        agentId: "ask",
+        aiSettings: {
+          model: "anthropic:claude-sonnet-4-5",
+          thinkingLevel: "high",
+        },
+        aiSettingsByAgent: {
+          ask: {
+            model: "anthropic:claude-sonnet-4-5",
+            thinkingLevel: "high",
+          },
+        },
+      },
+      {
+        agents: [
+          ...DEFAULT_AGENT_DESCRIPTORS,
+          {
+            id: "ask",
+            scope: "project",
+            name: "Ask",
+            description: "Custom hidden ask agent",
+            uiSelectable: false,
+            uiRoutable: true,
+            subagentRunnable: false,
+          },
+        ],
+      }
+    );
+
+    const options = await buildConfigOptions(harness.client, "ws-1");
+    const agentModeOption = getSelectConfigOption(options, AGENT_MODE_CONFIG_ID);
+    expect(agentModeOption.currentValue).toBe("ask");
+
+    const updated = await handleSetConfigOption(harness.client, "ws-1", "thinkingLevel", "off");
+
+    expect(harness.updateAgentCalls).toHaveLength(1);
+    expect(harness.updateAgentCalls[0]?.agentId).toBe("ask");
+
+    const updatedThinkingOption = getSelectConfigOption(updated, "thinkingLevel");
+    expect(updatedThinkingOption.currentValue).toBe("off");
+  });
+
+  it("ignores legacy ask AI settings when legacy ask mode remaps to auto", async () => {
+    const harness = createHarness({
+      agentId: "ask",
+      aiSettings: {
+        model: "anthropic:claude-sonnet-4-5",
+        thinkingLevel: "high",
+      },
+      aiSettingsByAgent: {
+        ask: {
+          model: "anthropic:claude-opus-4-6",
+          thinkingLevel: "low",
+        },
+      },
+    });
+
+    const options = await buildConfigOptions(harness.client, "ws-1");
+    const modelOption = getSelectConfigOption(options, "model");
+    const thinkingOption = getSelectConfigOption(options, "thinkingLevel");
+
+    expect(modelOption.currentValue).toBe("anthropic:claude-sonnet-4-5");
+    expect(thinkingOption.currentValue).toBe("high");
   });
 });

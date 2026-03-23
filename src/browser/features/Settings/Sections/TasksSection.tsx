@@ -42,6 +42,7 @@ import {
 import { getThinkingOptionLabel, type ThinkingLevel } from "@/common/types/thinking";
 import { getErrorMessage } from "@/common/utils/errors";
 import { enforceThinkingPolicy, getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
+import { normalizeAgentId } from "@/common/utils/agentIds";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { FALLBACK_AGENTS, deriveTasksSectionAgentGroups } from "./TasksSection.agents";
 
@@ -63,7 +64,7 @@ function updateAgentDefaultEntry(
   agentId: string,
   update: (entry: AgentAiDefaultsEntry) => void
 ): AgentAiDefaults {
-  const normalizedId = agentId.trim().toLowerCase();
+  const normalizedId = normalizeAgentId(agentId, WORKSPACE_DEFAULTS.agentId);
 
   const next = { ...previous };
   const existing = next[normalizedId] ?? {};
@@ -215,9 +216,7 @@ function areAgentAiDefaultsEqual(a: AgentAiDefaults, b: AgentAiDefaults): boolea
   return true;
 }
 function coerceAgentId(value: unknown): string {
-  return typeof value === "string" && value.trim().length > 0
-    ? value.trim().toLowerCase()
-    : WORKSPACE_DEFAULTS.agentId;
+  return normalizeAgentId(value, WORKSPACE_DEFAULTS.agentId);
 }
 
 export function TasksSection() {

@@ -35,13 +35,13 @@ describe("resolveAgentAiSettings", () => {
           modelString: "anthropic:claude-opus-4-6",
           thinkingLevel: "high",
         },
-        ask: {
+        review: {
           modelString: "openai:gpt-5",
         },
       },
       agents: [
         {
-          id: "ask",
+          id: "review",
           base: "exec",
           aiDefaults: {
             model: "google:gemini-2.5-pro",
@@ -58,7 +58,7 @@ describe("resolveAgentAiSettings", () => {
       ],
     });
 
-    const resolved = await resolveAgentAiSettings(client, "ask", "ws-1");
+    const resolved = await resolveAgentAiSettings(client, "review", "ws-1");
 
     expect(resolved).toEqual({
       model: "openai:gpt-5",
@@ -73,13 +73,13 @@ describe("resolveAgentAiSettings", () => {
           modelString: "anthropic:claude-opus-4-6",
           thinkingLevel: "high",
         },
-        ask: {
+        review: {
           thinkingLevel: "low",
         },
       },
       agents: [
         {
-          id: "ask",
+          id: "review",
           base: "exec",
           aiDefaults: {
             model: "google:gemini-2.5-pro",
@@ -96,7 +96,7 @@ describe("resolveAgentAiSettings", () => {
       ],
     });
 
-    const resolved = await resolveAgentAiSettings(client, "ask", "ws-1");
+    const resolved = await resolveAgentAiSettings(client, "review", "ws-1");
 
     expect(resolved).toEqual({
       model: "anthropic:claude-opus-4-6",
@@ -107,7 +107,7 @@ describe("resolveAgentAiSettings", () => {
   it("traverses multiple base levels to fill missing inherited fields", async () => {
     const client = createClient({
       agentAiDefaults: {
-        ask: {
+        review: {
           modelString: "openai:gpt-5",
         },
         exec: {
@@ -116,15 +116,15 @@ describe("resolveAgentAiSettings", () => {
       },
       agents: [
         {
-          id: "review",
-          base: "ask",
+          id: "audit",
+          base: "review",
           aiDefaults: {
             model: "google:gemini-2.5-pro",
             thinkingLevel: "off",
           },
         },
         {
-          id: "ask",
+          id: "review",
           base: "exec",
           aiDefaults: {
             model: "anthropic:claude-sonnet-4-5",
@@ -141,7 +141,7 @@ describe("resolveAgentAiSettings", () => {
       ],
     });
 
-    const resolved = await resolveAgentAiSettings(client, "review", "ws-1");
+    const resolved = await resolveAgentAiSettings(client, "audit", "ws-1");
 
     expect(resolved).toEqual({
       model: "openai:gpt-5",

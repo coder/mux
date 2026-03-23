@@ -57,6 +57,7 @@ import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { AgentIdSchema } from "@/common/orpc/schemas";
+import { normalizeAgentId } from "@/common/utils/agentIds";
 import { GitPatchArtifactService } from "@/node/services/gitPatchArtifactService";
 import { getWorkspaceProjectRepos } from "@/node/services/workspaceProjectRepos";
 import type { ThinkingLevel } from "@/common/types/thinking";
@@ -385,7 +386,7 @@ export class TaskService {
   ): { model: string; thinkingLevel?: ThinkingLevel } | undefined {
     const normalizedAgentId =
       typeof agentId === "string" && agentId.trim().length > 0
-        ? agentId.trim().toLowerCase()
+        ? normalizeAgentId(agentId, "")
         : undefined;
     return (
       (normalizedAgentId ? workspace.aiSettingsByAgent?.[normalizedAgentId] : undefined) ??
@@ -1047,7 +1048,7 @@ export class TaskService {
       return Err("Task.create: agentId is required");
     }
 
-    const normalizedAgentId = agentIdRaw.trim().toLowerCase();
+    const normalizedAgentId = normalizeAgentId(agentIdRaw, "");
     const parsedAgentId = AgentIdSchema.safeParse(normalizedAgentId);
     if (!parsedAgentId.success) {
       return Err(`Task.create: invalid agentId (${normalizedAgentId})`);
@@ -2853,7 +2854,7 @@ export class TaskService {
         let skipInitHook = false;
         const agentIdRaw = coerceNonEmptyString(task.agentId ?? task.agentType);
         if (agentIdRaw) {
-          const parsedAgentId = AgentIdSchema.safeParse(agentIdRaw.trim().toLowerCase());
+          const parsedAgentId = AgentIdSchema.safeParse(normalizeAgentId(agentIdRaw, ""));
           if (parsedAgentId.success) {
             const isInPlace = taskEntry.projectPath === parentWorkspaceName;
             const parentWorkspacePath =

@@ -4,6 +4,7 @@ import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import type { AgentDefinitionFrontmatter } from "@/common/types/agentDefinition";
 import { getThinkingOptionLabel, isThinkingLevel } from "@/common/types/thinking";
 import { enforceThinkingPolicy, getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
+import { resolveRemovedBuiltinAgentId } from "@/common/utils/agentIds";
 import { getBuiltInAgentDefinitions } from "@/node/services/agentDefinitions/builtInAgentDefinitions";
 import type { ORPCClient } from "./serverConnection";
 import { resolveAgentAiSettings, type ResolvedAiSettings } from "./resolveAgentAiSettings";
@@ -14,7 +15,6 @@ const THINKING_LEVEL_CONFIG_ID = "thinkingLevel";
 
 const DEFAULT_AGENT_MODE_DESCRIPTIONS: Readonly<Record<string, string>> = {
   exec: "Implement changes in the repository",
-  ask: "Delegate questions to Explore sub-agents and synthesize an answer.",
   plan: "Create a plan before coding",
   auto: "Automatically selects the best agent for your task",
 };
@@ -124,6 +124,17 @@ async function resolveExposedAgentModes(
   }
 }
 
+async function resolveAvailableAgentIds(
+  client: ORPCClient,
+  workspaceId: string
+): Promise<string[]> {
+  try {
+    return (await client.agents.list({ workspaceId })).map((agent) => agent.id);
+  } catch {
+    return [];
+  }
+}
+
 type WorkspaceInfo = NonNullable<Awaited<ReturnType<ORPCClient["workspace"]["getInfo"]>>>;
 type UpdateAgentAiSettingsResult = Awaited<
   ReturnType<ORPCClient["workspace"]["updateAgentAISettings"]>
@@ -164,6 +175,10 @@ function getCurrentAgentId(workspace: WorkspaceInfo): string {
   return workspace.agentId ?? "exec";
 }
 
+function resolveCurrentAgentId(agentId: string, availableAgentIds: Iterable<string>): string {
+  return resolveRemovedBuiltinAgentId(agentId, availableAgentIds);
+}
+
 async function resolveCurrentAiSettings(
   client: ORPCClient,
   workspace: WorkspaceInfo,
@@ -188,14 +203,11 @@ async function resolveCurrentAiSettings(
   };
 }
 
-async function buildAgentModeSelectOptions(
-  client: ORPCClient,
-  workspaceId: string,
+function buildAgentModeSelectOptions(
+  modes: ExposedAgentMode[],
   currentAgentId: string
-): Promise<SessionConfigSelectOption[]> {
-  const options: SessionConfigSelectOption[] = (
-    await resolveExposedAgentModes(client, workspaceId)
-  ).map((mode) => ({
+): SessionConfigSelectOption[] {
+  const options: SessionConfigSelectOption[] = modes.map((mode) => ({
     value: mode.value,
     name: mode.label,
     description: mode.description,
@@ -263,14 +275,23 @@ export async function buildConfigOptions(
 
   const workspace = await getWorkspaceInfoOrThrow(client, workspaceId);
   const overrideAgentId = args?.activeAgentId?.trim();
-  const currentAgentId =
+  const [exposedAgentModes, availableAgentIds] = await Promise.all([
+    resolveExposedAgentModes(client, workspaceId),
+    resolveAvailableAgentIds(client, workspaceId),
+  ]);
+  const currentAgentId = resolveCurrentAgentId(
     typeof overrideAgentId === "string" && overrideAgentId.length > 0
       ? overrideAgentId
-      : getCurrentAgentId(workspace);
-  const [currentAiSettings, agentModeOptions] = await Promise.all([
-    resolveCurrentAiSettings(client, workspace, workspaceId, currentAgentId),
-    buildAgentModeSelectOptions(client, workspaceId, currentAgentId),
-  ]);
+      : getCurrentAgentId(workspace),
+    availableAgentIds.length > 0 ? availableAgentIds : exposedAgentModes.map((mode) => mode.value)
+  );
+  const currentAiSettings = await resolveCurrentAiSettings(
+    client,
+    workspace,
+    workspaceId,
+    currentAgentId
+  );
+  const agentModeOptions = buildAgentModeSelectOptions(exposedAgentModes, currentAgentId);
 
   const effectiveThinkingLevel = enforceThinkingPolicy(
     currentAiSettings.model,
@@ -324,13 +345,21 @@ export async function handleSetConfigOption(
 
   const workspace = await getWorkspaceInfoOrThrow(client, trimmedWorkspaceId);
   const overrideAgentId = args?.activeAgentId?.trim();
-  const currentAgentId =
+  const [exposedAgentModes, availableAgentIds] = await Promise.all([
+    resolveExposedAgentModes(client, trimmedWorkspaceId),
+    resolveAvailableAgentIds(client, trimmedWorkspaceId),
+  ]);
+  const knownAgentIds =
+    availableAgentIds.length > 0 ? availableAgentIds : exposedAgentModes.map((mode) => mode.value);
+  const currentAgentId = resolveCurrentAgentId(
     typeof overrideAgentId === "string" && overrideAgentId.length > 0
       ? overrideAgentId
-      : getCurrentAgentId(workspace);
+      : getCurrentAgentId(workspace),
+    knownAgentIds
+  );
 
   if (trimmedConfigId === AGENT_MODE_CONFIG_ID) {
-    const nextAgentId = trimmedValue;
+    const nextAgentId = resolveCurrentAgentId(trimmedValue, knownAgentIds);
 
     // Prefer workspace-specific settings already saved for the target agent
     // (e.g., user customized model/thinking for this mode).  Only fall back

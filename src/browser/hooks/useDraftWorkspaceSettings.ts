@@ -30,6 +30,7 @@ import {
   GLOBAL_SCOPE_ID,
 } from "@/common/constants/storage";
 import type { ThinkingLevel } from "@/common/types/thinking";
+import { normalizeAgentId } from "@/common/utils/agentIds";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 /**
@@ -75,9 +76,7 @@ interface RememberedRuntimeValues {
 /** Stable fallback for Coder config to avoid new object on every render */
 const DEFAULT_CODER_CONFIG: CoderWorkspaceConfig = { existingWorkspace: false };
 function coerceAgentId(value: unknown): string {
-  return typeof value === "string" && value.trim().length > 0
-    ? value.trim().toLowerCase()
-    : WORKSPACE_DEFAULTS.agentId;
+  return normalizeAgentId(value, WORKSPACE_DEFAULTS.agentId);
 }
 
 const buildRuntimeForMode = (
@@ -241,7 +240,10 @@ export function useDraftWorkspaceSettings(
   const [projectAgentId] = usePersistedState<string | null>(getAgentIdKey(projectScopeId), null, {
     listener: true,
   });
-  const agentId = coerceAgentId(projectAgentId ?? globalDefaultAgentId);
+  const agentId =
+    typeof projectAgentId === "string" && projectAgentId.trim().length > 0
+      ? coerceAgentId(projectAgentId)
+      : coerceAgentId(globalDefaultAgentId);
 
   // Subscribe to the global default model preference so backend-seeded values apply
   // immediately on fresh origins (e.g., when switching ports).

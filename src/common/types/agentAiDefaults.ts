@@ -3,6 +3,7 @@ import type {
   AgentAiDefaultsEntry,
 } from "@/common/config/schemas/appConfigOnDisk";
 import { AgentIdSchema } from "@/common/orpc/schemas";
+import { normalizeAgentId } from "@/common/utils/agentIds";
 import { coerceThinkingLevel, type ThinkingLevel } from "./thinking";
 
 export type { AgentAiDefaults, AgentAiDefaultsEntry };
@@ -13,10 +14,12 @@ export function normalizeAgentAiDefaults(raw: unknown): AgentAiDefaults {
   const result: AgentAiDefaults = {};
 
   for (const [agentIdRaw, entryRaw] of Object.entries(record)) {
-    const agentId = agentIdRaw.trim().toLowerCase();
+    const normalizedRawAgentId = agentIdRaw.trim().toLowerCase();
+    const agentId = normalizeAgentId(agentIdRaw, "");
     if (!agentId) continue;
     if (!AgentIdSchema.safeParse(agentId).success) continue;
     if (!entryRaw || typeof entryRaw !== "object") continue;
+    if (normalizedRawAgentId !== agentId && result[agentId] != null) continue;
 
     const entry = entryRaw as Record<string, unknown>;
 

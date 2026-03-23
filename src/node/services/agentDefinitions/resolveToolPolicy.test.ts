@@ -367,9 +367,9 @@ describe("resolveToolPolicyForAgent", () => {
   });
 
   test("inherits tools from base agent", () => {
-    // Chain: ask → exec (ordered child → base as returned by resolveAgentInheritanceChain)
+    // Chain: review → exec (ordered child → base as returned by resolveAgentInheritanceChain)
     const agents: AgentLikeForPolicy[] = [
-      { tools: { remove: ["file_edit_.*"] } }, // ask (child)
+      { tools: { remove: ["file_edit_.*"] } }, // review (child)
       { tools: { add: [".*"], remove: ["propose_plan"] } }, // exec (base)
     ];
     const policy = resolveToolPolicyForAgent({
@@ -379,7 +379,7 @@ describe("resolveToolPolicyForAgent", () => {
     });
 
     // exec: deny-all → enable .* → disable propose_plan
-    // ask: → disable file_edit_.*
+    // review: → disable file_edit_.*
     expect(policy).toEqual([
       { regex_match: ".*", action: "disable" },
       { regex_match: ".*", action: "enable" },
