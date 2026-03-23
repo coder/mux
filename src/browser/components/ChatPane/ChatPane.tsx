@@ -572,7 +572,8 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
         workspaceState.messages,
         workspaceState.pendingStreamStartTime,
         workspaceState.runtimeStatus,
-        workspaceState.lastAbortReason
+        workspaceState.lastAbortReason,
+        workspaceState.awaitingUserQuestion
       )
     : null;
 
@@ -860,7 +861,11 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                               />
                             )}
                             {isAtCutoff && <EditCutoffBarrier />}
-                            {shouldShowInterruptedBarrier(msg) && <InterruptedBarrier />}
+                            {shouldShowInterruptedBarrier(
+                              msg,
+                              deferredMessages,
+                              workspaceState.awaitingUserQuestion
+                            ) && <InterruptedBarrier />}
                           </React.Fragment>
                         );
                       })}

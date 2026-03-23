@@ -950,12 +950,54 @@ export class AgentSession {
       return false;
     }
 
-    return message.parts.some(
-      (part) =>
+    if (message.metadata?.error != null) {
+      return false;
+    }
+
+    let latestPendingQuestionIndex = -1;
+    for (let partIndex = 0; partIndex < message.parts.length; partIndex += 1) {
+      const part = message.parts[partIndex];
+      if (
         part.type === "dynamic-tool" &&
         part.toolName === "ask_user_question" &&
         part.state === "input-available"
+      ) {
+        latestPendingQuestionIndex = partIndex;
+      }
+    }
+
+    if (latestPendingQuestionIndex === -1) {
+      return false;
+    }
+
+    const hasLaterResolvedToolPart = message.parts.some(
+      (part, partIndex) =>
+        partIndex > latestPendingQuestionIndex &&
+        part.type === "dynamic-tool" &&
+        (part.state === "output-available" || part.state === "output-redacted")
     );
+    if (hasLaterResolvedToolPart) {
+      return false;
+    }
+
+    if (message.metadata?.partial === true) {
+      const hasLaterTextOrReasoning = message.parts.some((part, partIndex) => {
+        if (partIndex <= latestPendingQuestionIndex) {
+          return false;
+        }
+
+        return (
+          (part.type === "text" && part.text.length > 0) ||
+          (part.type === "reasoning" && part.text.length > 0)
+        );
+      });
+
+      if (hasLaterTextOrReasoning) {
+        return false;
+      }
+    }
+
+    return true;
   }
 
   private isSyntheticSnapshotUserMessage(message: MuxMessage): boolean {

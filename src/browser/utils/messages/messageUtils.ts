@@ -1,6 +1,10 @@
 import type { DisplayedMessage } from "@/common/types/message";
 import { formatReviewForModel } from "@/common/types/review";
 import type { BashOutputToolArgs } from "@/common/types/tools";
+import {
+  getLastNonDecorativeMessage,
+  hasExecutingAskUserQuestionInLatestTurn,
+} from "@/common/utils/messages/retryEligibility";
 
 /**
  * Returns the text that should be placed into the ChatInput when editing a user message.
@@ -72,7 +76,11 @@ export interface BashOutputGroupInfo {
  * - Message was interrupted (isPartial) AND not currently streaming
  * - For multi-part messages, only show on the last part
  */
-export function shouldShowInterruptedBarrier(msg: DisplayedMessage): boolean {
+export function shouldShowInterruptedBarrier(
+  msg: DisplayedMessage,
+  allMessages: DisplayedMessage[] = [msg],
+  awaitingUserQuestion = false
+): boolean {
   if (
     msg.type === "user" ||
     msg.type === "stream-error" ||
@@ -83,9 +91,53 @@ export function shouldShowInterruptedBarrier(msg: DisplayedMessage): boolean {
   )
     return false;
 
+  const lastMessage = (() => {
+    const latest = getLastNonDecorativeMessage(allMessages);
+    if (latest?.type !== "plan-display") {
+      return latest;
+    }
+
+    // /plan previews are ephemeral transcript rows and should not redefine the
+    // latest actionable assistant turn for interruption UI.
+    for (let i = allMessages.length - 1; i >= 0; i--) {
+      const candidate = allMessages[i];
+      if (
+        candidate.type === "plan-display" ||
+        candidate.type === "history-hidden" ||
+        candidate.type === "workspace-init" ||
+        candidate.type === "compaction-boundary"
+      ) {
+        continue;
+      }
+      return candidate;
+    }
+
+    return undefined;
+  })();
+
+  const isLatestTurnRow =
+    lastMessage != null &&
+    "historyId" in msg &&
+    "historyId" in lastMessage &&
+    msg.historyId === lastMessage.historyId;
+
   // ask_user_question is intentionally a "waiting for input" state. Even if the
-  // underlying message is a persisted partial (e.g. after app restart), we keep
-  // it answerable instead of showing "Interrupted".
+  // question row is truncated in the displayed transcript, the authoritative
+  // awaitingUserQuestion workspace state should still suppress interrupted UI for
+  // the latest turn.
+  if (isLatestTurnRow && awaitingUserQuestion) {
+    return false;
+  }
+
+  // Fallback for callers that don't provide the authoritative awaiting flag:
+  // infer from displayed rows only.
+  if (isLatestTurnRow && hasExecutingAskUserQuestionInLatestTurn(allMessages)) {
+    return false;
+  }
+
+  // Keep executing ask_user_question rows free of interruption markers even when
+  // the same turn has a trailing stream-error row; those questions remain
+  // answerable and should not show contradictory "interrupted" affordances.
   if (msg.type === "tool" && msg.toolName === "ask_user_question" && msg.status === "executing") {
     return false;
   }

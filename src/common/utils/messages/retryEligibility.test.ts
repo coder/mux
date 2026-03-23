@@ -31,7 +31,6 @@ describe("getLastNonDecorativeMessage", () => {
     const lastMessage = getLastNonDecorativeMessage(messages);
     expect(lastMessage?.id).toBe("error-1");
   });
-
   it("returns undefined when all rows are decorative", () => {
     const messages: DisplayedMessage[] = [
       {
@@ -169,6 +168,208 @@ describe("hasInterruptedStream", () => {
     ];
 
     expect(hasInterruptedStream(messages)).toBe(false);
+  });
+
+  it("returns true when later unfinished parts follow executing ask_user_question", () => {
+    const messages: DisplayedMessage[] = [
+      {
+        type: "user",
+        id: "user-1",
+        historyId: "user-1",
+        content: "Hello",
+        historySequence: 1,
+      },
+      {
+        type: "tool",
+        id: "tool-ask",
+        historyId: "assistant-1",
+        toolName: "ask_user_question",
+        toolCallId: "call-ask",
+        args: { questions: [] },
+        status: "executing",
+        isPartial: true,
+        historySequence: 2,
+        streamSequence: 0,
+        isLastPartOfMessage: false,
+      },
+      {
+        type: "tool",
+        id: "tool-todo",
+        historyId: "assistant-1",
+        toolName: "todo_write",
+        toolCallId: "call-todo",
+        args: { todos: [] },
+        status: "completed",
+        isPartial: true,
+        historySequence: 2,
+        streamSequence: 1,
+        isLastPartOfMessage: false,
+      },
+      {
+        type: "assistant",
+        id: "assistant-tail",
+        historyId: "assistant-1",
+        content: "Please answer above.",
+        historySequence: 2,
+        streamSequence: 2,
+        isStreaming: false,
+        isPartial: true,
+        isLastPartOfMessage: true,
+        isCompacted: false,
+        isIdleCompacted: false,
+      },
+    ];
+
+    expect(hasInterruptedStream(messages)).toBe(true);
+  });
+
+  it("returns true when a failed tool follows executing ask_user_question", () => {
+    const messages: DisplayedMessage[] = [
+      {
+        type: "tool",
+        id: "tool-ask",
+        historyId: "assistant-1",
+        toolName: "ask_user_question",
+        toolCallId: "call-ask",
+        args: { questions: [] },
+        status: "executing",
+        isPartial: true,
+        historySequence: 2,
+        streamSequence: 0,
+        isLastPartOfMessage: false,
+      },
+      {
+        type: "tool",
+        id: "tool-todo",
+        historyId: "assistant-1",
+        toolName: "todo_write",
+        toolCallId: "call-todo",
+        args: { todos: [] },
+        result: { success: false, error: "write failed" },
+        status: "failed",
+        isPartial: true,
+        historySequence: 2,
+        streamSequence: 1,
+        isLastPartOfMessage: true,
+      },
+    ];
+
+    expect(hasInterruptedStream(messages)).toBe(true);
+  });
+
+  it("returns true when a redacted tool follows executing ask_user_question", () => {
+    const messages: DisplayedMessage[] = [
+      {
+        type: "tool",
+        id: "tool-ask",
+        historyId: "assistant-1",
+        toolName: "ask_user_question",
+        toolCallId: "call-ask",
+        args: { questions: [] },
+        status: "executing",
+        isPartial: true,
+        historySequence: 2,
+        streamSequence: 0,
+        isLastPartOfMessage: false,
+      },
+      {
+        type: "tool",
+        id: "tool-bash",
+        historyId: "assistant-1",
+        toolName: "bash",
+        toolCallId: "call-bash",
+        args: { script: "echo hi" },
+        status: "redacted",
+        isPartial: true,
+        historySequence: 2,
+        streamSequence: 1,
+        isLastPartOfMessage: true,
+      },
+    ];
+
+    expect(hasInterruptedStream(messages)).toBe(true);
+  });
+
+  it("returns true when completed tool output follows ask_user_question", () => {
+    const messages: DisplayedMessage[] = [
+      {
+        type: "tool",
+        id: "tool-ask",
+        historyId: "assistant-1",
+        toolName: "ask_user_question",
+        toolCallId: "call-ask",
+        args: { questions: [] },
+        status: "executing",
+        isPartial: true,
+        historySequence: 2,
+        streamSequence: 0,
+        isLastPartOfMessage: false,
+      },
+      {
+        type: "tool",
+        id: "tool-todo",
+        historyId: "assistant-1",
+        toolName: "todo_write",
+        toolCallId: "call-todo",
+        args: { todos: [] },
+        result: { success: true },
+        status: "completed",
+        isPartial: true,
+        historySequence: 2,
+        streamSequence: 1,
+        isLastPartOfMessage: true,
+      },
+    ];
+
+    expect(hasInterruptedStream(messages)).toBe(true);
+  });
+  it("returns true when latest row is stream-error even if turn includes executing ask_user_question", () => {
+    const messages: DisplayedMessage[] = [
+      {
+        type: "tool",
+        id: "tool-ask",
+        historyId: "assistant-1",
+        toolName: "ask_user_question",
+        toolCallId: "call-ask",
+        args: { questions: [] },
+        status: "executing",
+        isPartial: true,
+        historySequence: 2,
+        streamSequence: 0,
+        isLastPartOfMessage: false,
+      },
+      {
+        type: "stream-error",
+        id: "assistant-1-error",
+        historyId: "assistant-1",
+        error: "Connection dropped",
+        errorType: "network",
+        historySequence: 2,
+      },
+    ];
+
+    expect(hasInterruptedStream(messages)).toBe(true);
+  });
+
+  it("returns false when authoritative awaitingUserQuestion flag is true", () => {
+    const messages: DisplayedMessage[] = [
+      {
+        type: "assistant",
+        id: "assistant-tail",
+        historyId: "assistant-1",
+        content: "Please answer above.",
+        historySequence: 2,
+        streamSequence: 0,
+        isStreaming: false,
+        isPartial: true,
+        isLastPartOfMessage: true,
+        isCompacted: false,
+        isIdleCompacted: false,
+      },
+    ];
+
+    expect(hasInterruptedStream(messages, null, null, null, true)).toBe(false);
+    expect(isEligibleForAutoRetry(messages, null, null, null, true)).toBe(false);
   });
   it("returns true for partial tool message", () => {
     const messages: DisplayedMessage[] = [

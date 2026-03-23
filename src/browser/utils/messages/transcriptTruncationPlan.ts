@@ -30,6 +30,7 @@ export interface BuildTranscriptTruncationPlanArgs {
   displayedMessages: DisplayedMessage[];
   maxDisplayedMessages: number;
   alwaysKeepMessageTypes: Set<DisplayedMessage["type"]>;
+  alwaysKeepMessageIds?: Set<string>;
   maxHiddenSegments?: number;
 }
 
@@ -47,7 +48,8 @@ interface OmissionRunState {
 
 function collectOmissions(
   oldMessages: DisplayedMessage[],
-  alwaysKeepMessageTypes: Set<DisplayedMessage["type"]>
+  alwaysKeepMessageTypes: Set<DisplayedMessage["type"]>,
+  alwaysKeepMessageIds: Set<string>
 ): CollectedOmissions {
   const keptOldMessages: DisplayedMessage[] = [];
   const segments: OmissionSegment[] = [];
@@ -55,7 +57,7 @@ function collectOmissions(
   let activeRun: OmissionRunState | null = null;
 
   for (const message of oldMessages) {
-    if (alwaysKeepMessageTypes.has(message.type)) {
+    if (alwaysKeepMessageTypes.has(message.type) || alwaysKeepMessageIds.has(message.id)) {
       if (activeRun !== null) {
         segments.push(activeRun);
         activeRun = null;
@@ -192,7 +194,11 @@ export function buildTranscriptTruncationPlan(
   const recentMessages = args.displayedMessages.slice(-args.maxDisplayedMessages);
   const oldMessages = args.displayedMessages.slice(0, -args.maxDisplayedMessages);
 
-  const omissionCollection = collectOmissions(oldMessages, args.alwaysKeepMessageTypes);
+  const omissionCollection = collectOmissions(
+    oldMessages,
+    args.alwaysKeepMessageTypes,
+    args.alwaysKeepMessageIds ?? new Set<string>()
+  );
   if (omissionCollection.hiddenCount === 0) {
     return {
       rows: [...omissionCollection.keptOldMessages, ...recentMessages],

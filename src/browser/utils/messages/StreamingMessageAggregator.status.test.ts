@@ -93,6 +93,689 @@ describe("ask_user_question waiting state", () => {
 
     expect(aggregator.hasAwaitingUserQuestion()).toBe(true);
   });
+
+  it("keeps awaiting input when sibling input-available tools follow ask_user_question", () => {
+    const aggregator = new StreamingMessageAggregator("2024-01-01T00:00:00.000Z");
+
+    aggregator.loadHistoricalMessages([
+      {
+        id: "assistant-1",
+        role: "assistant" as const,
+        parts: [
+          {
+            type: "dynamic-tool" as const,
+            toolCallId: "call-ask-1",
+            toolName: "ask_user_question",
+            state: "input-available" as const,
+            input: {
+              questions: [
+                {
+                  header: "Approach",
+                  question: "Which approach should we take?",
+                  options: [
+                    { label: "A", description: "Approach A" },
+                    { label: "B", description: "Approach B" },
+                  ],
+                  multiSelect: false,
+                },
+              ],
+            },
+          },
+          {
+            type: "dynamic-tool" as const,
+            toolCallId: "call-todo-1",
+            toolName: "todo_write",
+            state: "input-available" as const,
+            input: { todos: [{ content: "Waiting for answers", status: "in_progress" }] },
+          },
+        ],
+        metadata: {
+          timestamp: 1000,
+          historySequence: 1,
+          partial: true,
+        },
+      },
+    ]);
+
+    expect(aggregator.hasAwaitingUserQuestion()).toBe(true);
+
+    const askRow = aggregator
+      .getDisplayedMessages()
+      .find((message) => message.type === "tool" && message.toolName === "ask_user_question");
+    if (askRow?.type !== "tool") {
+      throw new Error("Expected ask_user_question tool row");
+    }
+    expect(askRow.status).toBe("executing");
+
+    const todoRow = aggregator
+      .getDisplayedMessages()
+      .find((message) => message.type === "tool" && message.toolName === "todo_write");
+    if (todoRow?.type !== "tool") {
+      throw new Error("Expected todo_write tool row");
+    }
+    expect(todoRow.status).toBe("pending");
+  });
+
+  it("keeps every pending ask_user_question row answerable in the same turn", () => {
+    const aggregator = new StreamingMessageAggregator("2024-01-01T00:00:00.000Z");
+
+    aggregator.loadHistoricalMessages([
+      {
+        id: "assistant-1",
+        role: "assistant" as const,
+        parts: [
+          {
+            type: "dynamic-tool" as const,
+            toolCallId: "call-ask-1",
+            toolName: "ask_user_question",
+            state: "input-available" as const,
+            input: {
+              questions: [
+                {
+                  header: "Approach",
+                  question: "Which approach should we take first?",
+                  options: [
+                    { label: "A", description: "Approach A" },
+                    { label: "B", description: "Approach B" },
+                  ],
+                  multiSelect: false,
+                },
+              ],
+            },
+          },
+          {
+            type: "dynamic-tool" as const,
+            toolCallId: "call-ask-2",
+            toolName: "ask_user_question",
+            state: "input-available" as const,
+            input: {
+              questions: [
+                {
+                  header: "Verification",
+                  question: "Need anything else before we continue?",
+                  options: [
+                    { label: "No", description: "Continue" },
+                    { label: "Yes", description: "Add more checks" },
+                  ],
+                  multiSelect: false,
+                },
+              ],
+            },
+          },
+        ],
+        metadata: {
+          timestamp: 1000,
+          historySequence: 1,
+          partial: true,
+        },
+      },
+    ]);
+
+    expect(aggregator.hasAwaitingUserQuestion()).toBe(true);
+
+    const askRows = aggregator
+      .getDisplayedMessages()
+      .filter((message) => message.type === "tool" && message.toolName === "ask_user_question");
+
+    expect(askRows).toHaveLength(2);
+    for (const askRow of askRows) {
+      if (askRow.type !== "tool") {
+        throw new Error("Expected ask_user_question tool row");
+      }
+      expect(askRow.status).toBe("executing");
+    }
+  });
+
+  it("clears awaiting input when completed tool output follows ask_user_question", () => {
+    const aggregator = new StreamingMessageAggregator("2024-01-01T00:00:00.000Z");
+
+    aggregator.loadHistoricalMessages([
+      {
+        id: "assistant-1",
+        role: "assistant" as const,
+        parts: [
+          {
+            type: "dynamic-tool" as const,
+            toolCallId: "call-ask-1",
+            toolName: "ask_user_question",
+            state: "input-available" as const,
+            input: {
+              questions: [
+                {
+                  header: "Approach",
+                  question: "Which approach should we take?",
+                  options: [
+                    { label: "A", description: "Approach A" },
+                    { label: "B", description: "Approach B" },
+                  ],
+                  multiSelect: false,
+                },
+              ],
+            },
+          },
+          {
+            type: "dynamic-tool" as const,
+            toolCallId: "call-todo-1",
+            toolName: "todo_write",
+            state: "output-available" as const,
+            input: { todos: [{ content: "Waiting for answers", status: "in_progress" }] },
+            output: { success: true },
+          },
+        ],
+        metadata: {
+          timestamp: 1000,
+          historySequence: 1,
+          partial: true,
+        },
+      },
+    ]);
+
+    expect(aggregator.hasAwaitingUserQuestion()).toBe(false);
+
+    const askRow = aggregator
+      .getDisplayedMessages()
+      .find((message) => message.type === "tool" && message.toolName === "ask_user_question");
+    if (askRow?.type !== "tool") {
+      throw new Error("Expected ask_user_question tool row");
+    }
+    expect(askRow.status).toBe("executing");
+  });
+
+  it("clears awaiting input when a later tool result fails after the question", () => {
+    const aggregator = new StreamingMessageAggregator("2024-01-01T00:00:00.000Z");
+
+    aggregator.loadHistoricalMessages([
+      {
+        id: "assistant-1",
+        role: "assistant" as const,
+        parts: [
+          {
+            type: "dynamic-tool" as const,
+            toolCallId: "call-ask-1",
+            toolName: "ask_user_question",
+            state: "input-available" as const,
+            input: {
+              questions: [
+                {
+                  header: "Approach",
+                  question: "Which approach should we take?",
+                  options: [
+                    { label: "A", description: "Approach A" },
+                    { label: "B", description: "Approach B" },
+                  ],
+                  multiSelect: false,
+                },
+              ],
+            },
+          },
+          {
+            type: "dynamic-tool" as const,
+            toolCallId: "call-todo-1",
+            toolName: "todo_write",
+            state: "output-available" as const,
+            input: { todos: [{ content: "Waiting for answers", status: "in_progress" }] },
+            output: { success: false, error: "write failed" },
+          },
+        ],
+        metadata: {
+          timestamp: 1000,
+          historySequence: 1,
+          partial: true,
+        },
+      },
+    ]);
+
+    expect(aggregator.hasAwaitingUserQuestion()).toBe(false);
+
+    const askRow = aggregator
+      .getDisplayedMessages()
+      .find((message) => message.type === "tool" && message.toolName === "ask_user_question");
+    if (askRow?.type !== "tool") {
+      throw new Error("Expected ask_user_question tool row");
+    }
+    expect(askRow.status).toBe("executing");
+  });
+
+  it("clears awaiting input when a later failed redacted tool follows the question", () => {
+    const aggregator = new StreamingMessageAggregator("2024-01-01T00:00:00.000Z");
+
+    aggregator.loadHistoricalMessages([
+      {
+        id: "assistant-1",
+        role: "assistant" as const,
+        parts: [
+          {
+            type: "dynamic-tool" as const,
+            toolCallId: "call-ask-1",
+            toolName: "ask_user_question",
+            state: "input-available" as const,
+            input: {
+              questions: [
+                {
+                  header: "Approach",
+                  question: "Which approach should we take?",
+                  options: [
+                    { label: "A", description: "Approach A" },
+                    { label: "B", description: "Approach B" },
+                  ],
+                  multiSelect: false,
+                },
+              ],
+            },
+          },
+          {
+            type: "dynamic-tool" as const,
+            toolCallId: "call-bash-1",
+            toolName: "bash",
+            state: "output-redacted" as const,
+            input: { script: "exit 1" },
+            failed: true,
+          },
+        ],
+        metadata: {
+          timestamp: 1000,
+          historySequence: 1,
+          partial: true,
+        },
+      },
+    ]);
+
+    expect(aggregator.hasAwaitingUserQuestion()).toBe(false);
+
+    const askRow = aggregator
+      .getDisplayedMessages()
+      .find((message) => message.type === "tool" && message.toolName === "ask_user_question");
+    if (askRow?.type !== "tool") {
+      throw new Error("Expected ask_user_question tool row");
+    }
+    expect(askRow.status).toBe("executing");
+  });
+
+  it("clears awaiting input when a later partial text segment follows the question", () => {
+    const aggregator = new StreamingMessageAggregator("2024-01-01T00:00:00.000Z");
+
+    aggregator.loadHistoricalMessages([
+      {
+        id: "assistant-1",
+        role: "assistant" as const,
+        parts: [
+          {
+            type: "dynamic-tool" as const,
+            toolCallId: "call-ask-1",
+            toolName: "ask_user_question",
+            state: "input-available" as const,
+            input: {
+              questions: [
+                {
+                  header: "Approach",
+                  question: "Which approach should we take?",
+                  options: [
+                    { label: "A", description: "Approach A" },
+                    { label: "B", description: "Approach B" },
+                  ],
+                  multiSelect: false,
+                },
+              ],
+            },
+          },
+          { type: "text" as const, text: "Continuing with unrelated output..." },
+        ],
+        metadata: {
+          timestamp: 1000,
+          historySequence: 1,
+          partial: true,
+        },
+      },
+    ]);
+
+    expect(aggregator.hasAwaitingUserQuestion()).toBe(false);
+
+    const askRow = aggregator
+      .getDisplayedMessages()
+      .find((message) => message.type === "tool" && message.toolName === "ask_user_question");
+    if (askRow?.type !== "tool") {
+      throw new Error("Expected ask_user_question tool row");
+    }
+    expect(askRow.status).toBe("executing");
+  });
+  it("does not treat older question turns as awaiting after chat moves on", () => {
+    const aggregator = new StreamingMessageAggregator("2024-01-01T00:00:00.000Z");
+
+    aggregator.loadHistoricalMessages([
+      {
+        id: "assistant-1",
+        role: "assistant" as const,
+        parts: [
+          {
+            type: "dynamic-tool" as const,
+            toolCallId: "call-ask-1",
+            toolName: "ask_user_question",
+            state: "input-available" as const,
+            input: {
+              questions: [
+                {
+                  header: "Approach",
+                  question: "Which approach should we take?",
+                  options: [
+                    { label: "A", description: "Approach A" },
+                    { label: "B", description: "Approach B" },
+                  ],
+                  multiSelect: false,
+                },
+              ],
+            },
+          },
+        ],
+        metadata: {
+          timestamp: 1000,
+          historySequence: 1,
+          partial: true,
+        },
+      },
+      {
+        id: "user-2",
+        role: "user" as const,
+        parts: [{ type: "text" as const, text: "Skipping this and moving on" }],
+        metadata: {
+          timestamp: 2000,
+          historySequence: 2,
+        },
+      },
+    ]);
+
+    expect(aggregator.hasAwaitingUserQuestion()).toBe(false);
+  });
+
+  it("does not pin ask_user_question rows from older turns during truncation", () => {
+    const aggregator = new StreamingMessageAggregator("2024-01-01T00:00:00.000Z");
+
+    const trailingToolParts = Array.from({ length: 80 }, (_, index) => ({
+      type: "dynamic-tool" as const,
+      toolCallId: `call-todo-${index}`,
+      toolName: "todo_write",
+      state: "output-available" as const,
+      input: { todos: [{ content: `Task ${index}`, status: "in_progress" }] },
+      output: { success: true },
+    }));
+
+    aggregator.loadHistoricalMessages([
+      {
+        id: "assistant-1",
+        role: "assistant" as const,
+        parts: [
+          {
+            type: "dynamic-tool" as const,
+            toolCallId: "call-ask-1",
+            toolName: "ask_user_question",
+            state: "input-available" as const,
+            input: {
+              questions: [
+                {
+                  header: "Approach",
+                  question: "Which approach should we take?",
+                  options: [
+                    { label: "A", description: "Approach A" },
+                    { label: "B", description: "Approach B" },
+                  ],
+                  multiSelect: false,
+                },
+              ],
+            },
+          },
+        ],
+        metadata: {
+          timestamp: 1000,
+          historySequence: 1,
+          partial: true,
+        },
+      },
+      {
+        id: "user-2",
+        role: "user" as const,
+        parts: [{ type: "text" as const, text: "Move on" }],
+        metadata: {
+          timestamp: 2000,
+          historySequence: 2,
+        },
+      },
+      {
+        id: "assistant-3",
+        role: "assistant" as const,
+        parts: trailingToolParts,
+        metadata: {
+          timestamp: 3000,
+          historySequence: 3,
+          partial: true,
+        },
+      },
+    ]);
+
+    const displayed = aggregator.getDisplayedMessages();
+    expect(
+      displayed.some(
+        (message) => message.type === "tool" && message.toolName === "ask_user_question"
+      )
+    ).toBe(false);
+    expect(aggregator.hasAwaitingUserQuestion()).toBe(false);
+  });
+
+  it("keeps awaiting input and keeps ask_user_question visible with pending sibling tools", () => {
+    const aggregator = new StreamingMessageAggregator("2024-01-01T00:00:00.000Z");
+
+    const trailingToolParts = Array.from({ length: 80 }, (_, index) => ({
+      type: "dynamic-tool" as const,
+      toolCallId: `call-todo-${index}`,
+      toolName: "todo_write",
+      state: "input-available" as const,
+      input: { todos: [{ content: `Task ${index}`, status: "in_progress" }] },
+    }));
+
+    aggregator.loadHistoricalMessages([
+      {
+        id: "assistant-1",
+        role: "assistant" as const,
+        parts: [
+          {
+            type: "dynamic-tool" as const,
+            toolCallId: "call-ask-1",
+            toolName: "ask_user_question",
+            state: "input-available" as const,
+            input: {
+              questions: [
+                {
+                  header: "Approach",
+                  question: "Which approach should we take?",
+                  options: [
+                    { label: "A", description: "Approach A" },
+                    { label: "B", description: "Approach B" },
+                  ],
+                  multiSelect: false,
+                },
+              ],
+            },
+          },
+          ...trailingToolParts,
+        ],
+        metadata: {
+          timestamp: 1000,
+          historySequence: 1,
+          partial: true,
+        },
+      },
+    ]);
+
+    const displayed = aggregator.getDisplayedMessages();
+    const askRow = displayed.find(
+      (message) => message.type === "tool" && message.toolName === "ask_user_question"
+    );
+
+    expect(askRow).toBeDefined();
+    if (askRow?.type !== "tool") {
+      throw new Error("Expected ask_user_question tool row");
+    }
+    expect(askRow.status).toBe("executing");
+    expect(aggregator.hasAwaitingUserQuestion()).toBe(true);
+  });
+
+  it("clears awaiting input when truncation keeps ask_user_question visible behind resolved tool tails", () => {
+    const aggregator = new StreamingMessageAggregator("2024-01-01T00:00:00.000Z");
+
+    const trailingToolParts = Array.from({ length: 80 }, (_, index) => ({
+      type: "dynamic-tool" as const,
+      toolCallId: `call-todo-${index}`,
+      toolName: "todo_write",
+      state: "output-available" as const,
+      input: { todos: [{ content: `Task ${index}`, status: "in_progress" }] },
+      output: { success: true },
+    }));
+
+    aggregator.loadHistoricalMessages([
+      {
+        id: "assistant-1",
+        role: "assistant" as const,
+        parts: [
+          {
+            type: "dynamic-tool" as const,
+            toolCallId: "call-ask-1",
+            toolName: "ask_user_question",
+            state: "input-available" as const,
+            input: {
+              questions: [
+                {
+                  header: "Approach",
+                  question: "Which approach should we take?",
+                  options: [
+                    { label: "A", description: "Approach A" },
+                    { label: "B", description: "Approach B" },
+                  ],
+                  multiSelect: false,
+                },
+              ],
+            },
+          },
+          ...trailingToolParts,
+        ],
+        metadata: {
+          timestamp: 1000,
+          historySequence: 1,
+          partial: true,
+        },
+      },
+    ]);
+
+    const displayed = aggregator.getDisplayedMessages();
+    const askRow = displayed.find(
+      (message) => message.type === "tool" && message.toolName === "ask_user_question"
+    );
+
+    expect(askRow).toBeDefined();
+    if (askRow?.type !== "tool") {
+      throw new Error("Expected ask_user_question tool row");
+    }
+    expect(askRow.status).toBe("executing");
+    expect(aggregator.hasAwaitingUserQuestion()).toBe(false);
+  });
+
+  it("does not report awaiting input when latest assistant turn has stream error metadata", () => {
+    const aggregator = new StreamingMessageAggregator("2024-01-01T00:00:00.000Z");
+
+    aggregator.loadHistoricalMessages([
+      {
+        id: "assistant-1",
+        role: "assistant" as const,
+        parts: [
+          {
+            type: "dynamic-tool" as const,
+            toolCallId: "call-ask-1",
+            toolName: "ask_user_question",
+            state: "input-available" as const,
+            input: {
+              questions: [
+                {
+                  header: "Approach",
+                  question: "Which approach should we take?",
+                  options: [
+                    { label: "A", description: "Approach A" },
+                    { label: "B", description: "Approach B" },
+                  ],
+                  multiSelect: false,
+                },
+              ],
+            },
+          },
+        ],
+        metadata: {
+          timestamp: 1000,
+          historySequence: 1,
+          partial: true,
+          error: "Connection dropped",
+          errorType: "network",
+        },
+      },
+    ]);
+
+    expect(aggregator.hasAwaitingUserQuestion()).toBe(false);
+
+    const askRow = aggregator
+      .getDisplayedMessages()
+      .find((message) => message.type === "tool" && message.toolName === "ask_user_question");
+    if (askRow?.type !== "tool") {
+      throw new Error("Expected ask_user_question tool row");
+    }
+    expect(askRow.status).toBe("executing");
+  });
+
+  it("ignores plan-display rows when inferring awaiting input", () => {
+    const aggregator = new StreamingMessageAggregator("2024-01-01T00:00:00.000Z");
+
+    aggregator.loadHistoricalMessages([
+      {
+        id: "assistant-1",
+        role: "assistant" as const,
+        parts: [
+          {
+            type: "dynamic-tool" as const,
+            toolCallId: "call-ask-1",
+            toolName: "ask_user_question",
+            state: "input-available" as const,
+            input: {
+              questions: [
+                {
+                  header: "Approach",
+                  question: "Which approach should we take?",
+                  options: [
+                    { label: "A", description: "Approach A" },
+                    { label: "B", description: "Approach B" },
+                  ],
+                  multiSelect: false,
+                },
+              ],
+            },
+          },
+        ],
+        metadata: {
+          timestamp: 1000,
+          historySequence: 1,
+          partial: true,
+        },
+      },
+      {
+        id: "plan-display-1",
+        role: "assistant" as const,
+        parts: [{ type: "text" as const, text: "# Plan\n\n- Draft" }],
+        metadata: {
+          timestamp: 2000,
+          historySequence: Number.MAX_SAFE_INTEGER,
+          muxMetadata: {
+            type: "plan-display",
+            path: "/tmp/plan.md",
+          },
+        },
+      },
+    ]);
+
+    expect(aggregator.hasAwaitingUserQuestion()).toBe(true);
+  });
 });
 
 describe("StreamingMessageAggregator - Agent Status", () => {

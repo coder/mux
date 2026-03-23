@@ -28,6 +28,115 @@ describe("shouldShowInterruptedBarrier", () => {
     expect(shouldShowInterruptedBarrier(msg)).toBe(false);
   });
 
+  it("returns false for executing ask_user_question when the turn also has trailing stream-error", () => {
+    const askRow: DisplayedMessage = {
+      type: "tool",
+      id: "tool-ask",
+      historyId: "assistant-1",
+      toolName: "ask_user_question",
+      toolCallId: "call-ask",
+      args: { questions: [] },
+      status: "executing",
+      isPartial: true,
+      historySequence: 2,
+      streamSequence: 0,
+      isLastPartOfMessage: true,
+    };
+
+    const streamError: DisplayedMessage = {
+      type: "stream-error",
+      id: "stream-error-1",
+      historyId: "assistant-1",
+      error: "Connection dropped",
+      errorType: "network",
+      historySequence: 2,
+    };
+
+    expect(shouldShowInterruptedBarrier(askRow, [askRow, streamError])).toBe(false);
+  });
+
+  it("returns true for trailing partial rows when fallback inference sees later unfinished output", () => {
+    const questionTool: DisplayedMessage = {
+      type: "tool",
+      id: "tool-ask",
+      historyId: "assistant-1",
+      toolName: "ask_user_question",
+      toolCallId: "call-ask",
+      args: { questions: [] },
+      status: "executing",
+      isPartial: true,
+      historySequence: 2,
+      streamSequence: 0,
+      isLastPartOfMessage: false,
+    };
+
+    const trailingPartialText: DisplayedMessage = {
+      type: "assistant",
+      id: "assistant-tail",
+      historyId: "assistant-1",
+      content: "Please answer above.",
+      historySequence: 2,
+      streamSequence: 1,
+      isStreaming: false,
+      isPartial: true,
+      isLastPartOfMessage: true,
+      isCompacted: false,
+      isIdleCompacted: false,
+    };
+
+    const messages = [questionTool, trailingPartialText];
+
+    expect(shouldShowInterruptedBarrier(trailingPartialText, messages)).toBe(true);
+  });
+
+  it("returns false when authoritative awaitingUserQuestion flag is true", () => {
+    const trailingPartialText: DisplayedMessage = {
+      type: "assistant",
+      id: "assistant-tail",
+      historyId: "assistant-1",
+      content: "Please answer above.",
+      historySequence: 2,
+      streamSequence: 1,
+      isStreaming: false,
+      isPartial: true,
+      isLastPartOfMessage: true,
+      isCompacted: false,
+      isIdleCompacted: false,
+    };
+
+    expect(shouldShowInterruptedBarrier(trailingPartialText, [trailingPartialText], true)).toBe(
+      false
+    );
+  });
+
+  it("ignores trailing plan-display rows when awaitingUserQuestion is true", () => {
+    const trailingPartialText: DisplayedMessage = {
+      type: "assistant",
+      id: "assistant-tail",
+      historyId: "assistant-1",
+      content: "Please answer above.",
+      historySequence: 2,
+      streamSequence: 1,
+      isStreaming: false,
+      isPartial: true,
+      isLastPartOfMessage: true,
+      isCompacted: false,
+      isIdleCompacted: false,
+    };
+
+    const planDisplay: DisplayedMessage = {
+      type: "plan-display",
+      id: "plan-display-1",
+      historyId: "plan-display-1",
+      content: "# Plan",
+      path: "/tmp/plan.md",
+      historySequence: Number.MAX_SAFE_INTEGER,
+    };
+
+    expect(
+      shouldShowInterruptedBarrier(trailingPartialText, [trailingPartialText, planDisplay], true)
+    ).toBe(false);
+  });
   it("returns false for decorative compaction boundary rows", () => {
     const msg: DisplayedMessage = {
       type: "compaction-boundary",

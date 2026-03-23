@@ -168,6 +168,180 @@ function hasFailureResult(result: unknown): boolean {
   return false;
 }
 
+interface AskUserQuestionResolutionOptions {
+  suppressForMessageError: boolean;
+  suppressForLaterToolPart: boolean;
+  suppressForLaterTextOrReasoning: boolean;
+}
+
+/**
+ * Returns the toolCallId of the latest ask_user_question in this assistant turn
+ * that should remain answerable in the UI, or null when it should be treated as
+ * an interruption/retry tail.
+ */
+function resolveAskUserQuestionToolCallId(
+  message: MuxMessage,
+  options: AskUserQuestionResolutionOptions
+): string | null {
+  if (message.role !== "assistant") {
+    return null;
+  }
+
+  if (options.suppressForMessageError && message.metadata?.error != null) {
+    // Error metadata means this turn ended in failure; surface retry/error state
+    // instead of presenting the turn as awaiting user input.
+    return null;
+  }
+
+  let latestPendingQuestionIndex = -1;
+  let latestPendingQuestionToolCallId: string | null = null;
+  for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+    const part = message.parts[partIndex];
+    if (
+      isDynamicToolPart(part) &&
+      part.toolName === "ask_user_question" &&
+      part.state === "input-available"
+    ) {
+      latestPendingQuestionIndex = partIndex;
+      latestPendingQuestionToolCallId = part.toolCallId;
+    }
+  }
+
+  if (latestPendingQuestionIndex === -1 || latestPendingQuestionToolCallId === null) {
+    return null;
+  }
+
+  // Provider-planned sibling tools can remain input-available after the question;
+  // keep ask_user_question answerable in that case. Only resolved tool output
+  // tails should suppress the awaiting-input workspace signal.
+  const hasLaterResolvedToolPart = message.parts.some(
+    (part, partIndex) =>
+      partIndex > latestPendingQuestionIndex &&
+      isDynamicToolPart(part) &&
+      (part.state === "output-available" || part.state === "output-redacted")
+  );
+  if (options.suppressForLaterToolPart && hasLaterResolvedToolPart) {
+    return null;
+  }
+
+  if (options.suppressForLaterTextOrReasoning && message.metadata?.partial === true) {
+    const hasLaterTextOrReasoning = message.parts.some((part, partIndex) => {
+      if (partIndex <= latestPendingQuestionIndex) {
+        return false;
+      }
+
+      return (
+        (part.type === "text" && part.text.length > 0) ||
+        (part.type === "reasoning" && part.text.length > 0)
+      );
+    });
+
+    if (hasLaterTextOrReasoning) {
+      return null;
+    }
+  }
+
+  return latestPendingQuestionToolCallId;
+}
+
+/**
+ * Awaiting-input workspace state should clear when later failed tools appear so
+ * retry/interruption affordances can be shown.
+ */
+function getAwaitingAskUserQuestionToolCallId(message: MuxMessage): string | null {
+  return resolveAskUserQuestionToolCallId(message, {
+    suppressForMessageError: true,
+    suppressForLaterToolPart: true,
+    suppressForLaterTextOrReasoning: true,
+  });
+}
+
+/**
+ * Keep every pending ask_user_question row answerable after restart, even when
+ * later partial output exists. answerAskUserQuestion resolves by toolCallId,
+ * so each still-pending tool call must remain executable in replayed UI.
+ */
+function getAnswerableAskUserQuestionToolCallIds(message: MuxMessage): Set<string> {
+  const answerableToolCallIds = new Set<string>();
+
+  if (message.role !== "assistant") {
+    return answerableToolCallIds;
+  }
+
+  for (const part of message.parts) {
+    if (
+      isDynamicToolPart(part) &&
+      part.toolName === "ask_user_question" &&
+      part.state === "input-available"
+    ) {
+      answerableToolCallIds.add(part.toolCallId);
+    }
+  }
+
+  return answerableToolCallIds;
+}
+
+function getInputAvailableToolCallIdsBlockedByAwaitingQuestion(message: MuxMessage): Set<string> {
+  const blockedToolCallIds = new Set<string>();
+
+  if (message.role !== "assistant") {
+    return blockedToolCallIds;
+  }
+
+  const awaitingToolCallId = getAwaitingAskUserQuestionToolCallId(message);
+  if (awaitingToolCallId === null) {
+    return blockedToolCallIds;
+  }
+
+  let hasReachedAwaitingQuestion = false;
+  for (const part of message.parts) {
+    if (!hasReachedAwaitingQuestion) {
+      hasReachedAwaitingQuestion =
+        isDynamicToolPart(part) &&
+        part.toolName === "ask_user_question" &&
+        part.state === "input-available" &&
+        part.toolCallId === awaitingToolCallId;
+      continue;
+    }
+
+    if (
+      isDynamicToolPart(part) &&
+      part.state === "input-available" &&
+      part.toolName !== "ask_user_question"
+    ) {
+      blockedToolCallIds.add(part.toolCallId);
+    }
+  }
+
+  return blockedToolCallIds;
+}
+
+function getLatestAnswerableAskUserQuestionMessageId(
+  allMessages: MuxMessage[],
+  showSyntheticMessages: boolean
+): string | null {
+  for (let i = allMessages.length - 1; i >= 0; i--) {
+    const message = allMessages[i];
+    const isSynthetic = message.metadata?.synthetic === true;
+    const isUiVisibleSynthetic = message.metadata?.uiVisible === true;
+    if (isSynthetic && !showSyntheticMessages && !isUiVisibleSynthetic) {
+      continue;
+    }
+
+    if (message.metadata?.muxMetadata?.type === "plan-display") {
+      continue;
+    }
+
+    if (message.role !== "assistant") {
+      return null;
+    }
+
+    return getAnswerableAskUserQuestionToolCallIds(message).size > 0 ? message.id : null;
+  }
+
+  return null;
+}
+
 function resolveRouteProvider(
   routeProvider: string | undefined,
   routedThroughGateway: boolean | undefined
@@ -716,19 +890,35 @@ export class StreamingMessageAggregator {
    * Used to show "Awaiting your input" instead of "streaming..." in the UI.
    */
   hasAwaitingUserQuestion(): boolean {
-    // Only treat the workspace as "awaiting input" when the *latest* displayed
-    // message is an executing ask_user_question tool.
-    //
-    // This avoids false positives from stale historical partials if the user
-    // continued the chat after skipping/canceling the questions.
-    const displayed = this.getDisplayedMessages();
-    const last = displayed[displayed.length - 1];
+    const showSyntheticMessages =
+      typeof window !== "undefined" && window.api?.debugLlmRequest === true;
 
-    if (last?.type !== "tool") {
-      return false;
+    // Start from untruncated history so we identify the latest assistant turn
+    // even when recent transcript rows include structural markers.
+    const allMessages = this.getAllMessages();
+
+    for (let i = allMessages.length - 1; i >= 0; i--) {
+      const message = allMessages[i];
+      const isSynthetic = message.metadata?.synthetic === true;
+      const isUiVisibleSynthetic = message.metadata?.uiVisible === true;
+      if (isSynthetic && !showSyntheticMessages && !isUiVisibleSynthetic) {
+        continue;
+      }
+
+      // Ignore ephemeral /plan transcript rows when determining whether the
+      // underlying assistant turn is still waiting for ask_user_question input.
+      if (message.metadata?.muxMetadata?.type === "plan-display") {
+        continue;
+      }
+
+      if (message.role !== "assistant") {
+        return false;
+      }
+
+      return getAwaitingAskUserQuestionToolCallId(message) !== null;
     }
 
-    return last.toolName === "ask_user_question" && last.status === "executing";
+    return false;
   }
 
   /**
@@ -2636,6 +2826,10 @@ export class StreamingMessageAggregator {
       // Merge adjacent text/reasoning parts for display
       const mergedParts = mergeAdjacentParts(message.parts);
 
+      const answerableAskUserQuestionToolCallIds = getAnswerableAskUserQuestionToolCallIds(message);
+      const inputAvailableToolCallIdsBlockedByAwaitingQuestion =
+        getInputAvailableToolCallIdsBlockedByAwaitingQuestion(message);
+
       // Find the last part that will produce a DisplayedMessage
       // (reasoning, text parts with content, OR tool parts)
       let lastPartIndex = -1;
@@ -2720,7 +2914,16 @@ export class StreamingMessageAggregator {
             // so after restart we should keep it answerable ("executing") instead of
             // showing retry/auto-resume UX.
             if (part.toolName === "ask_user_question") {
-              status = "executing";
+              status = answerableAskUserQuestionToolCallIds.has(part.toolCallId)
+                ? "executing"
+                : isPartial
+                  ? "interrupted"
+                  : "executing";
+            } else if (
+              isPartial &&
+              inputAvailableToolCallIdsBlockedByAwaitingQuestion.has(part.toolCallId)
+            ) {
+              status = "pending";
             } else if (isPartial) {
               status = "interrupted";
             } else {
@@ -2843,6 +3046,11 @@ export class StreamingMessageAggregator {
       const showSyntheticMessages =
         typeof window !== "undefined" && window.api?.debugLlmRequest === true;
 
+      const latestAnswerableAskUserQuestionMessageId = getLatestAnswerableAskUserQuestionMessageId(
+        allMessages,
+        showSyntheticMessages
+      );
+
       // Synthetic agent-skill snapshot messages are hidden from the transcript unless
       // debugLlmRequest is enabled. We still want to surface their content in the UI by
       // attaching the resolved snapshot (frontmatterYaml + body) to the *subsequent*
@@ -2908,10 +3116,23 @@ export class StreamingMessageAggregator {
       // and materialize omission runs as explicit history-hidden marker rows.
       // Full history is still maintained internally for token counting.
       if (!this.showAllMessages && displayedMessages.length > MAX_DISPLAYED_MESSAGES) {
+        const alwaysKeepMessageIds = new Set(
+          displayedMessages
+            .filter(
+              (message) =>
+                message.type === "tool" &&
+                message.toolName === "ask_user_question" &&
+                message.status === "executing" &&
+                message.historyId === latestAnswerableAskUserQuestionMessageId
+            )
+            .map((message) => message.id)
+        );
+
         const truncationPlan = buildTranscriptTruncationPlan({
           displayedMessages,
           maxDisplayedMessages: MAX_DISPLAYED_MESSAGES,
           alwaysKeepMessageTypes: ALWAYS_KEEP_MESSAGE_TYPES,
+          alwaysKeepMessageIds,
         });
 
         resultMessages =

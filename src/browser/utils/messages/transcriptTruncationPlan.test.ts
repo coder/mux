@@ -133,6 +133,28 @@ describe("buildTranscriptTruncationPlan", () => {
     expect(plan.rows[trailingMarkerIndex + 1]?.id).toBe("a2");
   });
 
+  test("preserves explicitly pinned message IDs in truncated history", () => {
+    const displayedMessages: DisplayedMessage[] = [
+      user("u0", 0),
+      assistant("a0", 1),
+      user("u1", 2),
+      assistant("a1", 3),
+      tool("tool-1", 4),
+      assistant("a2", 5),
+      user("u2", 6),
+      assistant("a3", 7),
+    ];
+
+    const plan = buildTranscriptTruncationPlan({
+      displayedMessages,
+      maxDisplayedMessages: 3,
+      alwaysKeepMessageTypes: ALWAYS_KEEP_MESSAGE_TYPES,
+      alwaysKeepMessageIds: new Set(["a1"]),
+    });
+
+    expect(plan.rows.some((message) => message.id === "a1")).toBe(true);
+  });
+
   test("caps omission markers by merging older runs", () => {
     const displayedMessages: DisplayedMessage[] = [];
     for (let i = 0; i < 20; i++) {

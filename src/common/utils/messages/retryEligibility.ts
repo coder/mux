@@ -115,6 +115,105 @@ export function getLastNonDecorativeMessage(
 }
 
 /**
+ * Check whether the latest non-decorative turn is intentionally waiting on
+ * ask_user_question input.
+ *
+ * We scope this to the latest historyId turn so stale historical questions do
+ * not suppress interruption/retry UI once conversation has moved on.
+ */
+export function hasExecutingAskUserQuestionInLatestTurn(messages: DisplayedMessage[]): boolean {
+  const lastMessage = (() => {
+    const latest = getLastNonDecorativeMessage(messages);
+    if (latest?.type !== "plan-display") {
+      return latest;
+    }
+
+    // /plan previews are ephemeral transcript rows and should not redefine the
+    // latest actionable turn when inferring pending ask_user_question state.
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const candidate = messages[i];
+      if (
+        candidate.type === "plan-display" ||
+        candidate.type === "history-hidden" ||
+        candidate.type === "workspace-init" ||
+        candidate.type === "compaction-boundary"
+      ) {
+        continue;
+      }
+      return candidate;
+    }
+
+    return undefined;
+  })();
+
+  if (!lastMessage || !("historyId" in lastMessage)) {
+    return false;
+  }
+
+  // If the latest visible row is a stream error, preserve interruption/retry UX.
+  if (lastMessage.type === "stream-error") {
+    return false;
+  }
+
+  const latestHistoryId = lastMessage.historyId;
+  const isLatestTurnProgressRow = (message: DisplayedMessage): boolean => {
+    switch (message.type) {
+      case "tool":
+        return (
+          message.status === "executing" ||
+          message.status === "pending" ||
+          message.status === "interrupted" ||
+          message.status === "failed" ||
+          message.status === "completed" ||
+          message.status === "redacted"
+        );
+      case "assistant":
+      case "reasoning":
+        return message.isPartial === true;
+      default:
+        return false;
+    }
+  };
+
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (
+      message.type === "plan-display" ||
+      message.type === "history-hidden" ||
+      message.type === "workspace-init" ||
+      message.type === "compaction-boundary"
+    ) {
+      continue;
+    }
+
+    if (!("historyId" in message)) {
+      continue;
+    }
+
+    if (message.historyId !== latestHistoryId) {
+      break;
+    }
+
+    // Latest error should keep retry/interruption affordances visible.
+    if (message.type === "stream-error") {
+      return false;
+    }
+
+    if (!isLatestTurnProgressRow(message)) {
+      continue;
+    }
+
+    return (
+      message.type === "tool" &&
+      message.toolName === "ask_user_question" &&
+      message.status === "executing"
+    );
+  }
+
+  return false;
+}
+
+/**
  * Check if messages contain an interrupted stream
  *
  * Used by AIView to determine if RetryBarrier should be shown.
@@ -132,7 +231,8 @@ export function getLastNonDecorativeMessage(
 function computeHasInterruptedStream(
   messages: DisplayedMessage[],
   pendingStreamStartTime: number | null = null,
-  runtimeStatus: RuntimeStatusEvent | null = null
+  runtimeStatus: RuntimeStatusEvent | null = null,
+  awaitingUserQuestion = false
 ): boolean {
   if (messages.length === 0) return false;
 
@@ -166,16 +266,20 @@ function computeHasInterruptedStream(
     return false;
   }
 
+  // WorkspaceStore derives awaitingUserQuestion from untruncated history. When
+  // provided, trust that authoritative signal so display truncation cannot
+  // re-enable interruption/retry UI for intentionally pending questions.
+  if (awaitingUserQuestion) {
+    return false;
+  }
+
   // ask_user_question is a special case: an unfinished tool call represents an
   // intentional "waiting for user input" state, not a stream interruption.
   //
-  // Treating it as interrupted causes RetryBarrier + auto-resume to fire on app
-  // restart, which re-runs the LLM call and re-asks the questions.
-  if (
-    lastMessage.type === "tool" &&
-    lastMessage.toolName === "ask_user_question" &&
-    lastMessage.status === "executing"
-  ) {
+  // We suppress interruption/retry for the entire latest turn when it contains
+  // an executing ask_user_question call, including cases where later parts in
+  // the same turn were emitted after the question.
+  if (hasExecutingAskUserQuestionInLatestTurn(messages)) {
     return false;
   }
 
@@ -201,12 +305,14 @@ export function getInterruptionContext(
   messages: DisplayedMessage[],
   pendingStreamStartTime: number | null = null,
   runtimeStatus: RuntimeStatusEvent | null = null,
-  lastAbortReason: StreamAbortReasonSnapshot | null = null
+  lastAbortReason: StreamAbortReasonSnapshot | null = null,
+  awaitingUserQuestion = false
 ): InterruptionContext {
   const hasInterrupted = computeHasInterruptedStream(
     messages,
     pendingStreamStartTime,
-    runtimeStatus
+    runtimeStatus,
+    awaitingUserQuestion
   );
 
   if (!hasInterrupted) {
@@ -243,10 +349,16 @@ export function hasInterruptedStream(
   messages: DisplayedMessage[],
   pendingStreamStartTime: number | null = null,
   runtimeStatus: RuntimeStatusEvent | null = null,
-  lastAbortReason: StreamAbortReasonSnapshot | null = null
+  lastAbortReason: StreamAbortReasonSnapshot | null = null,
+  awaitingUserQuestion = false
 ): boolean {
-  return getInterruptionContext(messages, pendingStreamStartTime, runtimeStatus, lastAbortReason)
-    .hasInterruptedStream;
+  return getInterruptionContext(
+    messages,
+    pendingStreamStartTime,
+    runtimeStatus,
+    lastAbortReason,
+    awaitingUserQuestion
+  ).hasInterruptedStream;
 }
 
 /**
@@ -264,8 +376,14 @@ export function isEligibleForAutoRetry(
   messages: DisplayedMessage[],
   pendingStreamStartTime: number | null = null,
   runtimeStatus: RuntimeStatusEvent | null = null,
-  lastAbortReason: StreamAbortReasonSnapshot | null = null
+  lastAbortReason: StreamAbortReasonSnapshot | null = null,
+  awaitingUserQuestion = false
 ): boolean {
-  return getInterruptionContext(messages, pendingStreamStartTime, runtimeStatus, lastAbortReason)
-    .isEligibleForAutoRetry;
+  return getInterruptionContext(
+    messages,
+    pendingStreamStartTime,
+    runtimeStatus,
+    lastAbortReason,
+    awaitingUserQuestion
+  ).isEligibleForAutoRetry;
 }
