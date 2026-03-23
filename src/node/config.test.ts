@@ -276,6 +276,18 @@ describe("Config", () => {
       expect(loaded.terminalDefaultShell).toBe("zsh");
     });
 
+    it("enum field takes precedence over legacy boolean on save", async () => {
+      // Simulate: user had "keep" (legacy false), then switches to "stop" via the new enum.
+      await config.editConfig((c) => ({
+        ...c,
+        coderWorkspaceArchiveBehavior: "stop",
+        stopCoderWorkspaceOnArchive: false,
+      }));
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.coderWorkspaceArchiveBehavior).toBe("stop");
+    });
+
     it("round-trips each behavior with the enum field and legacy shim", async () => {
       for (const behavior of CODER_ARCHIVE_BEHAVIORS) {
         await config.editConfig((cfg) => {

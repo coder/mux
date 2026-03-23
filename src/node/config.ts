@@ -133,12 +133,15 @@ function resolveCoderWorkspaceArchiveBehaviorForSave(
   config: Pick<ProjectsConfig, "coderWorkspaceArchiveBehavior" | "stopCoderWorkspaceOnArchive">
 ): CoderWorkspaceArchiveBehavior {
   const parsedBehavior = parseCoderWorkspaceArchiveBehavior(config.coderWorkspaceArchiveBehavior);
-  if (config.stopCoderWorkspaceOnArchive === false && parsedBehavior !== "delete") {
-    // Keep legacy writers working until the router/settings UI starts sending the enum field.
+  if (parsedBehavior != null) {
+    return parsedBehavior;
+  }
+
+  if (config.stopCoderWorkspaceOnArchive === false) {
     return "keep";
   }
 
-  return parsedBehavior ?? DEFAULT_CODER_ARCHIVE_BEHAVIOR;
+  return DEFAULT_CODER_ARCHIVE_BEHAVIOR;
 }
 
 function parseOptionalStringArray(value: unknown): string[] | undefined {
