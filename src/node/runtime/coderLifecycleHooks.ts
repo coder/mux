@@ -1,6 +1,4 @@
-import type {
-  CoderWorkspaceArchiveBehavior,
-} from "@/common/config/coderArchiveBehavior";
+import type { CoderWorkspaceArchiveBehavior } from "@/common/config/coderArchiveBehavior";
 import { isSSHRuntime } from "@/common/types/runtime";
 import { Err, Ok, type Result } from "@/common/types/result";
 import { getErrorMessage } from "@/common/utils/errors";
