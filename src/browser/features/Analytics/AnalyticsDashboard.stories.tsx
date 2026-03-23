@@ -15,6 +15,7 @@ import type {
   TokensByModelItem,
 } from "@/browser/hooks/useAnalytics";
 import { lightweightMeta } from "@/browser/stories/meta.js";
+import { NOW } from "@/browser/stories/storyTime";
 import { createWorkspace, groupWorkspacesByProject } from "@/browser/stories/mockFactory";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import assert from "@/common/utils/assert";
@@ -40,6 +41,13 @@ const PROJECT_PATHS = {
 
 type AnalyticsProjectPath = (typeof PROJECT_PATHS)[keyof typeof PROJECT_PATHS];
 type TimingMetric = "ttft" | "duration" | "tps";
+
+/** Return a UTC ISO date string (YYYY-MM-DD) for N days ago. */
+function daysAgo(n: number): string {
+  const d = new Date(NOW);
+  d.setUTCDate(d.getUTCDate() - n);
+  return d.toISOString().split("T")[0];
+}
 
 interface StoryAnalyticsNamespace {
   getSummary: (input: { projectPath?: string | null }) => Promise<Summary>;
@@ -292,79 +300,79 @@ for (const row of TOKENS_BY_MODEL) {
 const SPEND_OVER_TIME_ROWS: ScopedSpendOverTimeRow[] = [
   {
     projectPath: PROJECT_PATHS.atlas,
-    bucket: "2026-02-14",
+    bucket: daysAgo(7),
     model: "openai:gpt-5-mini",
     costUsd: 6.2,
   },
   {
     projectPath: PROJECT_PATHS.atlas,
-    bucket: "2026-02-14",
+    bucket: daysAgo(7),
     model: "anthropic:claude-sonnet-4-20250514",
     costUsd: 3.8,
   },
   {
     projectPath: PROJECT_PATHS.atlas,
-    bucket: "2026-02-15",
+    bucket: daysAgo(6),
     model: "openai:gpt-5-mini",
     costUsd: 7.1,
   },
   {
     projectPath: PROJECT_PATHS.atlas,
-    bucket: "2026-02-15",
+    bucket: daysAgo(6),
     model: "anthropic:claude-sonnet-4-20250514",
     costUsd: 4.4,
   },
-  { projectPath: PROJECT_PATHS.atlas, bucket: "2026-02-16", model: "openai:gpt-4.1", costUsd: 2.1 },
+  { projectPath: PROJECT_PATHS.atlas, bucket: daysAgo(5), model: "openai:gpt-4.1", costUsd: 2.1 },
   {
     projectPath: PROJECT_PATHS.atlas,
-    bucket: "2026-02-17",
+    bucket: daysAgo(4),
     model: "openai:gpt-5-mini",
     costUsd: 6.8,
   },
   {
     projectPath: PROJECT_PATHS.orbit,
-    bucket: "2026-02-14",
+    bucket: daysAgo(7),
     model: "anthropic:claude-sonnet-4-20250514",
     costUsd: 4.2,
   },
   {
     projectPath: PROJECT_PATHS.orbit,
-    bucket: "2026-02-15",
+    bucket: daysAgo(6),
     model: "openai:gpt-5-mini",
     costUsd: 3.5,
   },
   {
     projectPath: PROJECT_PATHS.orbit,
-    bucket: "2026-02-16",
+    bucket: daysAgo(5),
     model: "xai:grok-4-fast",
     costUsd: 2.8,
   },
-  { projectPath: PROJECT_PATHS.orbit, bucket: "2026-02-18", model: "openai:gpt-4.1", costUsd: 2.4 },
+  { projectPath: PROJECT_PATHS.orbit, bucket: daysAgo(3), model: "openai:gpt-4.1", costUsd: 2.4 },
   {
     projectPath: PROJECT_PATHS.orbit,
-    bucket: "2026-02-20",
+    bucket: daysAgo(1),
     model: "openai:gpt-5-mini",
     costUsd: 3.9,
   },
-  { projectPath: PROJECT_PATHS.docs, bucket: "2026-02-14", model: "openai:gpt-4.1", costUsd: 1.4 },
-  { projectPath: PROJECT_PATHS.docs, bucket: "2026-02-15", model: "xai:grok-4-fast", costUsd: 1.1 },
+  { projectPath: PROJECT_PATHS.docs, bucket: daysAgo(7), model: "openai:gpt-4.1", costUsd: 1.4 },
+  { projectPath: PROJECT_PATHS.docs, bucket: daysAgo(6), model: "xai:grok-4-fast", costUsd: 1.1 },
   {
     projectPath: PROJECT_PATHS.docs,
-    bucket: "2026-02-16",
+    bucket: daysAgo(5),
     model: "anthropic:claude-sonnet-4-20250514",
     costUsd: 1.6,
   },
   {
     projectPath: PROJECT_PATHS.docs,
-    bucket: "2026-02-17",
+    bucket: daysAgo(4),
     model: "openai:gpt-5-mini",
     costUsd: 1.3,
   },
-  { projectPath: PROJECT_PATHS.docs, bucket: "2026-02-18", model: "openai:gpt-4.1", costUsd: 1.2 },
-  { projectPath: PROJECT_PATHS.docs, bucket: "2026-02-19", model: "xai:grok-4-fast", costUsd: 1.0 },
+  { projectPath: PROJECT_PATHS.docs, bucket: daysAgo(3), model: "openai:gpt-4.1", costUsd: 1.2 },
+  { projectPath: PROJECT_PATHS.docs, bucket: daysAgo(2), model: "xai:grok-4-fast", costUsd: 1.0 },
   {
     projectPath: PROJECT_PATHS.docs,
-    bucket: "2026-02-20",
+    bucket: daysAgo(1),
     model: "anthropic:claude-sonnet-4-20250514",
     costUsd: 1.5,
   },
@@ -679,23 +687,6 @@ function normalizeProjectPath(projectPath: string | null | undefined): Analytics
   return projectPath as AnalyticsProjectPath;
 }
 
-function isBucketInRange(bucket: string, from: Date | null, to: Date | null): boolean {
-  const bucketDate = new Date(bucket);
-  if (!Number.isFinite(bucketDate.getTime())) {
-    return true;
-  }
-
-  if (from && bucketDate < from) {
-    return false;
-  }
-
-  if (to && bucketDate > to) {
-    return false;
-  }
-
-  return true;
-}
-
 function getSpendOverTimeRows(input: {
   projectPath: AnalyticsProjectPath | null;
   from: Date | null;
@@ -707,11 +698,8 @@ function getSpendOverTimeRows(input: {
       : SPEND_OVER_TIME_ROWS.filter((row) => row.projectPath === input.projectPath);
 
   const aggregatedRows = new Map<string, SpendOverTimeItem>();
+  // Skip date-range filtering: story uses deterministic dates from storyTime.ts that predate the component's live 30-day window.
   for (const row of rows) {
-    if (!isBucketInRange(row.bucket, input.from, input.to)) {
-      continue;
-    }
-
     const key = `${row.bucket}|${row.model}`;
     const current = aggregatedRows.get(key);
     if (current) {
