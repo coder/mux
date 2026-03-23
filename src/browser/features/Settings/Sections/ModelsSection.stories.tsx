@@ -1,8 +1,8 @@
 /**
  * NOTE: ModelsSection contains an in-app CTA ("Go to Agent defaults") that calls
- * openSettings("tasks"). In isolated section stories this button is a no-op because
- * we do not render the full SettingsPage. The SettingsPage smoke story covers
- * cross-section navigation behavior.
+ * openSettings("tasks"). In isolated section stories the CTA navigates to the
+ * agents section via settings context, but the visual section swap is only
+ * exercised in the SettingsPage smoke story.
  */
 import { lightweightMeta } from "@/browser/stories/meta.js";
 import type { Meta, StoryObj } from "@storybook/react-vite";
