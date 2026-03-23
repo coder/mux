@@ -4,6 +4,7 @@ import { AgentIdSchema, RuntimeEnablementIdSchema } from "../../schemas/ids";
 import { ProjectConfigSchema } from "../../schemas/project";
 import { RuntimeEnablementOverridesSchema } from "../../schemas/runtimeEnablement";
 import { ThinkingLevelSchema } from "../../types/thinking";
+import { CODER_ARCHIVE_BEHAVIORS } from "../coderArchiveBehavior";
 import { TaskSettingsSchema } from "./taskSettings";
 
 export { RuntimeEnablementOverridesSchema } from "../../schemas/runtimeEnablement";
@@ -58,6 +59,7 @@ export const AppConfigOnDiskSchema = z
     useSSH2Transport: z.boolean().optional(),
     muxGovernorUrl: z.string().optional(),
     muxGovernorToken: z.string().optional(),
+    coderWorkspaceArchiveBehavior: z.enum(CODER_ARCHIVE_BEHAVIORS).optional(),
     stopCoderWorkspaceOnArchive: z.boolean().optional(),
     terminalDefaultShell: z.string().optional(),
     updateChannel: UpdateChannelSchema.optional(),

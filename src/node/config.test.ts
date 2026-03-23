@@ -2,6 +2,10 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { Config } from "./config";
+import {
+  CODER_ARCHIVE_BEHAVIORS,
+  DEFAULT_CODER_ARCHIVE_BEHAVIOR,
+} from "@/common/config/coderArchiveBehavior";
 import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import { type ExternalSecretResolver, secretsToRecord } from "@/common/types/secrets";
 
@@ -179,6 +183,115 @@ describe("Config", () => {
       expect(loaded.onePasswordAccountName).toBe("personal-account");
       expect(loaded.muxGovernorUrl).toBe("https://governor.example.com");
       expect(loaded.terminalDefaultShell).toBe("zsh");
+    });
+  });
+
+  describe("coderWorkspaceArchiveBehavior", () => {
+    const readRawArchiveConfig = () =>
+      JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
+        coderWorkspaceArchiveBehavior?: unknown;
+        stopCoderWorkspaceOnArchive?: unknown;
+        terminalDefaultShell?: unknown;
+      };
+
+    const legacyBooleanForBehavior = (behavior: string): false | undefined =>
+      behavior === "keep" ? false : undefined;
+
+    for (const behavior of CODER_ARCHIVE_BEHAVIORS) {
+      it(`loads the new enum value ${behavior}`, () => {
+        fs.writeFileSync(
+          path.join(tempDir, "config.json"),
+          JSON.stringify({
+            projects: [],
+            coderWorkspaceArchiveBehavior: behavior,
+          })
+        );
+
+        const loaded = config.loadConfigOrDefault();
+        expect(loaded.coderWorkspaceArchiveBehavior).toBe(behavior);
+        expect(loaded.stopCoderWorkspaceOnArchive).toBe(legacyBooleanForBehavior(behavior));
+      });
+    }
+
+    it("resolves legacy false to keep when the enum is missing", () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [],
+          stopCoderWorkspaceOnArchive: false,
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.coderWorkspaceArchiveBehavior).toBe("keep");
+      expect(loaded.stopCoderWorkspaceOnArchive).toBe(false);
+    });
+
+    it("resolves legacy true or undefined to stop when the enum is missing", () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [],
+          stopCoderWorkspaceOnArchive: true,
+        })
+      );
+      expect(config.loadConfigOrDefault().coderWorkspaceArchiveBehavior).toBe(
+        DEFAULT_CODER_ARCHIVE_BEHAVIOR
+      );
+
+      fs.writeFileSync(path.join(tempDir, "config.json"), JSON.stringify({ projects: [] }));
+      expect(config.loadConfigOrDefault().coderWorkspaceArchiveBehavior).toBe(
+        DEFAULT_CODER_ARCHIVE_BEHAVIOR
+      );
+    });
+
+    it("prefers the new enum when both fields are present", () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [],
+          coderWorkspaceArchiveBehavior: "delete",
+          stopCoderWorkspaceOnArchive: false,
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.coderWorkspaceArchiveBehavior).toBe("delete");
+      expect(loaded.stopCoderWorkspaceOnArchive).toBeUndefined();
+    });
+
+    it("falls back to stop when the enum value is invalid", () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [],
+          coderWorkspaceArchiveBehavior: "hibernate",
+          terminalDefaultShell: "zsh",
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.coderWorkspaceArchiveBehavior).toBe(DEFAULT_CODER_ARCHIVE_BEHAVIOR);
+      expect(loaded.stopCoderWorkspaceOnArchive).toBeUndefined();
+      expect(loaded.terminalDefaultShell).toBe("zsh");
+    });
+
+    it("round-trips each behavior with the enum field and legacy shim", async () => {
+      for (const behavior of CODER_ARCHIVE_BEHAVIORS) {
+        await config.editConfig((cfg) => {
+          cfg.coderWorkspaceArchiveBehavior = behavior;
+          cfg.stopCoderWorkspaceOnArchive = legacyBooleanForBehavior(behavior);
+          return cfg;
+        });
+
+        const raw = readRawArchiveConfig();
+        expect(raw.coderWorkspaceArchiveBehavior).toBe(behavior);
+        expect(raw.stopCoderWorkspaceOnArchive).toBe(legacyBooleanForBehavior(behavior));
+
+        const reloaded = new Config(tempDir).loadConfigOrDefault();
+        expect(reloaded.coderWorkspaceArchiveBehavior).toBe(behavior);
+        expect(reloaded.stopCoderWorkspaceOnArchive).toBe(legacyBooleanForBehavior(behavior));
+      }
     });
   });
 

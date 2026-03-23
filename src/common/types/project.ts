@@ -3,6 +3,7 @@
  * Kept lightweight for preload script usage.
  */
 
+import type { CoderWorkspaceArchiveBehavior } from "@/common/config/coderArchiveBehavior";
 import type { FeatureFlagOverride, UpdateChannel } from "@/common/config/schemas/appConfigOnDisk";
 import type { z } from "zod";
 import type {
@@ -112,8 +113,13 @@ export interface ProjectsConfig {
   muxGovernorToken?: string;
 
   /**
-   * When true (default), archiving a Mux workspace will stop its dedicated mux-created Coder
-   * workspace first, and unarchiving will attempt to start it again.
+   * What to do with a dedicated mux-created Coder workspace when its chat is archived.
+   * Defaults to `"stop"` to preserve existing behavior.
+   */
+  coderWorkspaceArchiveBehavior?: CoderWorkspaceArchiveBehavior;
+
+  /**
+   * Legacy boolean shim for downgrade compatibility.
    *
    * Stored as `false` only (undefined behaves as true) to keep config.json minimal.
    */
