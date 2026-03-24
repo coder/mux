@@ -429,7 +429,7 @@ export const KEYBINDS = {
   /** Mark selected hunk as read in Code Review panel */
   MARK_HUNK_READ: { key: "r" },
 
-  /** Mark selected hunk as unread in Code Review panel */
+  /** Mark selected hunk as unread in Code Review panel, or undo the last read hunk in immersive review */
   MARK_HUNK_UNREAD: { key: "u" },
 
   /** Mark entire file (all hunks) as read in Code Review panel */

@@ -4,7 +4,7 @@
  * Shows one file at a time with keyboard navigation for files, hunks, and lines.
  */
 
-import React, { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import React, { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import {
   ArrowLeft,
   Check,
@@ -665,6 +665,10 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   const [focusedPanel, setFocusedPanel] = useState<"diff" | "notes">("diff");
   const [focusedNoteIndex, setFocusedNoteIndex] = useState(0);
 
+  // Keep an immersive-local stack of single-hunk read actions so U can step back through
+  // hide-read auto-advance without changing the main review panel's unread shortcut semantics.
+  const readUndoStackRef = useRef<string[]>([]);
+
   useEffect(() => {
     if (revealAnimationFrameRef.current !== null) {
       cancelAnimationFrame(revealAnimationFrameRef.current);
@@ -784,6 +788,11 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   const activeLineIndexRef = useRef<number | null>(null);
   const selectedLineRangeRef = useRef<SelectedLineRange | null>(null);
   const selectedHunkIdRef = useRef<string | null>(selectedHunkId);
+  const isReadRef = useRef(props.isRead);
+  const onToggleReadRef = useRef(onToggleRead);
+  const onSelectHunkRef = useRef(onSelectHunk);
+  const allHunksRef = useRef(allHunks);
+  const hunkLineRangesRef = useRef(overlayData.hunkLineRanges);
   const highlightedLineElementRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -797,6 +806,26 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   useEffect(() => {
     selectedHunkIdRef.current = selectedHunkId;
   }, [selectedHunkId]);
+
+  useEffect(() => {
+    isReadRef.current = props.isRead;
+  }, [props.isRead]);
+
+  useEffect(() => {
+    onToggleReadRef.current = onToggleRead;
+  }, [onToggleRead]);
+
+  useEffect(() => {
+    onSelectHunkRef.current = onSelectHunk;
+  }, [onSelectHunk]);
+
+  useEffect(() => {
+    allHunksRef.current = allHunks;
+  }, [allHunks]);
+
+  useEffect(() => {
+    hunkLineRangesRef.current = overlayData.hunkLineRanges;
+  }, [overlayData.hunkLineRanges]);
 
   // Keep cursor and selection aligned to the selected hunk when hunk navigation changes.
   useEffect(() => {
@@ -1126,6 +1155,48 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     [overlayData.lineHunkIds, selectedHunkRange, onSelectHunk]
   );
 
+  const resetViewCursorForHunk = useCallback((hunkId: string) => {
+    pendingJumpSelectAllHunkIdRef.current = null;
+    hunkJumpRef.current = true;
+    setSelectedLineRange(null);
+
+    if (selectedHunkIdRef.current === hunkId) {
+      const hunkRange = hunkLineRangesRef.current.get(hunkId) ?? null;
+      setActiveLineIndex(hunkRange?.firstModifiedIndex ?? hunkRange?.startIndex ?? null);
+      setScrollNonce((previousNonce) => previousNonce + 1);
+    } else {
+      setActiveLineIndex(null);
+    }
+
+    onSelectHunkRef.current(hunkId);
+  }, []);
+
+  const handleToggleReadWithUndo = useCallback((hunkId: string) => {
+    const wasRead = isReadRef.current(hunkId);
+    readUndoStackRef.current = wasRead
+      ? readUndoStackRef.current.filter((trackedHunkId) => trackedHunkId !== hunkId)
+      : [...readUndoStackRef.current.filter((trackedHunkId) => trackedHunkId !== hunkId), hunkId];
+    onToggleReadRef.current(hunkId);
+  }, []);
+
+  const handleUndoLastRead = useCallback(() => {
+    while (readUndoStackRef.current.length > 0) {
+      const targetHunkId = readUndoStackRef.current[readUndoStackRef.current.length - 1];
+      readUndoStackRef.current = readUndoStackRef.current.slice(0, -1);
+
+      if (
+        !isReadRef.current(targetHunkId) ||
+        !allHunksRef.current.some((hunk) => hunk.id === targetHunkId)
+      ) {
+        continue;
+      }
+
+      onToggleReadRef.current(targetHunkId);
+      resetViewCursorForHunk(targetHunkId);
+      return;
+    }
+  }, [resetViewCursorForHunk]);
+
   const handleLineIndexSelect = useCallback(
     (lineIndex: number, shiftKey: boolean) => {
       const resolvedHunk = findHunkAtLine(lineIndex, overlayData, currentFileHunks);
@@ -1184,7 +1255,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   }, [isTouchExperience]);
 
   // --- Keyboard handler ---
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (isTouchExperience) {
       return;
     }
@@ -1369,7 +1440,15 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       // Toggle hunk read
       if (matchesKeybind(e, KEYBINDS.TOGGLE_HUNK_READ)) {
         e.preventDefault();
-        if (selectedHunkId) onToggleRead(selectedHunkId);
+        if (selectedHunkId) handleToggleReadWithUndo(selectedHunkId);
+        return;
+      }
+
+      // U: step back to the last hunk marked read in immersive review.
+      if (matchesKeybind(e, KEYBINDS.MARK_HUNK_UNREAD)) {
+        e.preventDefault();
+        handleUndoLastRead();
+        return;
       }
     };
 
@@ -1389,7 +1468,8 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     moveLineCursor,
     openComposer,
     selectedHunkId,
-    onToggleRead,
+    handleToggleReadWithUndo,
+    handleUndoLastRead,
     onMarkFileAsRead,
     isTouchExperience,
   ]);
@@ -1625,7 +1705,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
               "text-muted hover:text-read flex shrink-0 cursor-pointer items-center border-none bg-transparent p-0 transition-colors duration-150 sm:hidden",
               props.isRead(selectedHunk.id) && "text-read"
             )}
-            onClick={() => onToggleRead(selectedHunk.id)}
+            onClick={() => handleToggleReadWithUndo(selectedHunk.id)}
             aria-label={props.isRead(selectedHunk.id) ? "Mark hunk as unread" : "Mark hunk as read"}
           >
             {props.isRead(selectedHunk.id) ? (
@@ -1649,7 +1729,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
                       "text-muted hover:text-read flex cursor-pointer items-center border-none bg-transparent p-0 transition-colors duration-150",
                       props.isRead(selectedHunk.id) && "text-read"
                     )}
-                    onClick={() => onToggleRead(selectedHunk.id)}
+                    onClick={() => handleToggleReadWithUndo(selectedHunk.id)}
                     aria-label={
                       props.isRead(selectedHunk.id) ? "Mark hunk as unread" : "Mark hunk as read"
                     }
@@ -1916,6 +1996,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
             <KeycapGroup keys={["↑", "↓"]} label="line" />
             <KeycapGroup keys={["Shift", "↑↓"]} label="select" />
             <KeycapGroup keys={["m"]} label="read" />
+            <KeycapGroup keys={["u"]} label="undo" />
             <KeycapGroup keys={["⇧M"]} label="file read" />
             <KeycapGroup keys={["⇧C"]} label="comment" />
             <KeycapGroup keys={["⇧L", "⇧D"]} label="like / dislike" />

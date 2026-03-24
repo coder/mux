@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
 import type { ComponentProps } from "react";
 
+import { ThemeProvider } from "@/browser/contexts/ThemeContext";
 import type { FileTreeNode } from "@/common/utils/git/numstatParser";
 import type { DiffHunk } from "@/common/types/review";
 
@@ -79,22 +80,24 @@ function renderImmersiveReview(
   const hunk = createHunk();
 
   return render(
-    <ImmersiveReviewView
-      workspaceId="workspace-1"
-      fileTree={createFileTree(hunk.filePath)}
-      hunks={[hunk]}
-      allHunks={[hunk]}
-      isRead={() => false}
-      onToggleRead={mock(() => undefined)}
-      onMarkFileAsRead={mock(() => undefined)}
-      selectedHunkId={hunk.id}
-      onSelectHunk={mock(() => undefined)}
-      onExit={mock(() => undefined)}
-      isTouchImmersive={true}
-      reviewsByFilePath={new Map()}
-      firstSeenMap={{}}
-      {...overrides}
-    />
+    <ThemeProvider forcedTheme="dark">
+      <ImmersiveReviewView
+        workspaceId="workspace-1"
+        fileTree={createFileTree(hunk.filePath)}
+        hunks={[hunk]}
+        allHunks={[hunk]}
+        isRead={() => false}
+        onToggleRead={mock(() => undefined)}
+        onMarkFileAsRead={mock(() => undefined)}
+        selectedHunkId={hunk.id}
+        onSelectHunk={mock(() => undefined)}
+        onExit={mock(() => undefined)}
+        isTouchImmersive={true}
+        reviewsByFilePath={new Map()}
+        firstSeenMap={{}}
+        {...overrides}
+      />
+    </ThemeProvider>
   );
 }
 
