@@ -2,12 +2,6 @@ import type { RouterClient } from "@orpc/server";
 import type { AppRouter } from "@/node/orpc/router";
 import type { MuxDeepLinkPayload } from "@/common/types/deepLink";
 
-// Our simplified permission modes for UI
-export type UIPermissionMode = "plan" | "edit";
-
-// Claude SDK permission modes
-export type SDKPermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "plan";
-
 declare global {
   interface WindowApi {
     platform: NodeJS.Platform;
