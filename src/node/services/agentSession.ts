@@ -88,7 +88,6 @@ import type { BackgroundProcessManager } from "./backgroundProcessManager";
 
 import { AttachmentService } from "./attachmentService";
 import type { TodoItem } from "@/common/types/tools";
-import { readTodosForSessionDir } from "@/node/services/todos/todoStorage";
 import type { PostCompactionAttachment, PostCompactionExclusions } from "@/common/types/attachment";
 import { TURNS_BETWEEN_ATTACHMENTS } from "@/common/constants/attachments";
 
@@ -162,8 +161,6 @@ const SWITCH_AGENT_TARGET_UNAVAILABLE_ERROR =
 const PDF_MEDIA_TYPE = "application/pdf";
 const ACP_PROMPT_ID_METADATA_KEY = "acpPromptId";
 const ACP_DELEGATED_TOOLS_METADATA_KEY = "acpDelegatedTools";
-const TODO_NUDGE_TEXT =
-  "You still have unfinished items in your TODO list. Continue the remaining work now, or update the TODO list if it is stale, blocked, or no longer applicable before ending your turn.";
 
 function normalizeMediaType(mediaType: string): string {
   return mediaType.toLowerCase().trim().split(";")[0];
@@ -296,10 +293,6 @@ export class AgentSession {
   private deferQueuedFlushUntilAfterEdit = false;
   /** Guardrail against synthetic switch_agent ping-pong loops. */
   private consecutiveAgentSwitches = 0;
-  /** Monotonic counter for real user turns; synthetic follow-ups must not advance it. */
-  private currentRealUserTurnOrdinal = 0;
-  /** Tracks which real user turn already spent its single TODO nudge budget. */
-  private todoNudgeSentForRealUserTurnOrdinal = 0;
 
   private idleWaiters: Array<() => void> = [];
   private readonly messageQueue = new MessageQueue();
@@ -1954,10 +1947,8 @@ export class AgentSession {
     this.assertNotDisposed("sendMessage");
 
     assert(typeof message === "string", "sendMessage requires a string message");
-    // Real user sends break any synthetic switch chain and start a fresh TODO nudge budget.
     if (!internal?.synthetic) {
       this.consecutiveAgentSwitches = 0;
-      this.currentRealUserTurnOrdinal += 1;
     }
 
     const trimmedMessage = message.trim();
@@ -3922,7 +3913,6 @@ export class AgentSession {
 
       let emittedStreamEnd = false;
       let handoffFailureMessage: string | undefined;
-      let followUpDispatched = false;
       try {
         const completedCompactionRequest = this.activeCompactionRequest;
         this.activeCompactionRequest = undefined;
@@ -3979,7 +3969,7 @@ export class AgentSession {
 
         if (handled) {
           // Dispatch follow-up AFTER reset so it can set its own stream state.
-          followUpDispatched = await this.dispatchPendingFollowUp();
+          await this.dispatchPendingFollowUp();
         }
 
         const switchResult = this.extractSwitchAgentResult(streamEndPayload);
@@ -3991,7 +3981,6 @@ export class AgentSession {
               streamEndPayload.metadata.model
             );
             if (dispatchedSwitchFollowUp) {
-              followUpDispatched = true;
               return;
             }
           } catch (error) {
@@ -4007,18 +3996,8 @@ export class AgentSession {
           this.backgroundProcessManager.setMessageQueued(this.workspaceId, false);
           // Do not dispatch stream-end follow-ups while the edit flow is waiting
           // for IDLE; truncation must run before any synthetic turn resumes.
-          followUpDispatched = true;
         } else {
-          followUpDispatched = !this.messageQueue.isEmpty();
           this.sendQueuedMessages();
-        }
-
-        if (!followUpDispatched) {
-          await this.dispatchTodoNudgeIfNeeded(
-            activeStreamOptions,
-            streamEndPayload.metadata.model,
-            streamEndPayload.metadata.agentId
-          );
         }
       } catch (error) {
         const streamEndCleanupError = getErrorMessage(error);
@@ -4684,120 +4663,6 @@ export class AgentSession {
     }
 
     return true;
-  }
-
-  private async dispatchTodoNudgeIfNeeded(
-    currentOptions: SendMessageOptions | undefined,
-    fallbackModel: string,
-    fallbackAgentId?: string
-  ): Promise<boolean> {
-    assert(
-      Number.isInteger(this.currentRealUserTurnOrdinal) && this.currentRealUserTurnOrdinal >= 0,
-      "currentRealUserTurnOrdinal must stay a non-negative integer"
-    );
-    assert(
-      Number.isInteger(this.todoNudgeSentForRealUserTurnOrdinal) &&
-        this.todoNudgeSentForRealUserTurnOrdinal >= 0,
-      "todoNudgeSentForRealUserTurnOrdinal must stay a non-negative integer"
-    );
-
-    if (this.disposed) {
-      log.debug("Skipping TODO nudge because session is disposed", {
-        workspaceId: this.workspaceId,
-      });
-      return false;
-    }
-
-    if (this.currentRealUserTurnOrdinal === 0) {
-      log.debug("Skipping TODO nudge because no real user turn has started", {
-        workspaceId: this.workspaceId,
-      });
-      return false;
-    }
-
-    if (this.todoNudgeSentForRealUserTurnOrdinal === this.currentRealUserTurnOrdinal) {
-      log.debug("Skipping TODO nudge because this real user turn was already nudged", {
-        workspaceId: this.workspaceId,
-        turnOrdinal: this.currentRealUserTurnOrdinal,
-      });
-      return false;
-    }
-
-    const targetTurnOrdinal = this.currentRealUserTurnOrdinal;
-    const previousNudgedTurnOrdinal = this.todoNudgeSentForRealUserTurnOrdinal;
-    const effectiveAgentId = currentOptions?.agentId ?? fallbackAgentId;
-    let reservedTodoNudgeBudget = false;
-
-    if (fallbackModel.trim().length === 0) {
-      log.warn("Skipping TODO nudge because no fallback model was available", {
-        workspaceId: this.workspaceId,
-        turnOrdinal: targetTurnOrdinal,
-      });
-      return false;
-    }
-
-    if (!effectiveAgentId) {
-      log.warn("Skipping TODO nudge because no agentId was available", {
-        workspaceId: this.workspaceId,
-        turnOrdinal: targetTurnOrdinal,
-      });
-      return false;
-    }
-
-    try {
-      const todos = await readTodosForSessionDir(this.config.getSessionDir(this.workspaceId));
-      const hasUnfinished = todos.length > 0 && !todos.every((todo) => todo.status === "completed");
-      if (!hasUnfinished) {
-        log.debug("Skipping TODO nudge because there are no unfinished TODOs", {
-          workspaceId: this.workspaceId,
-          todoCount: todos.length,
-        });
-        return false;
-      }
-
-      // Reserve the turn's single nudge budget before awaiting sendMessage().
-      // Synthetic stream-end cleanup can run re-entrantly before sendMessage() resolves.
-      this.todoNudgeSentForRealUserTurnOrdinal = targetTurnOrdinal;
-      reservedTodoNudgeBudget = true;
-
-      const sendOptions: SendMessageOptions = {
-        ...(currentOptions ? pickPreservedSendOptions(currentOptions) : {}),
-        model: currentOptions?.model ?? fallbackModel,
-        agentId: effectiveAgentId,
-      };
-
-      const sendResult = await this.sendMessage(TODO_NUDGE_TEXT, sendOptions, {
-        synthetic: true,
-      });
-      if (!sendResult.success) {
-        this.todoNudgeSentForRealUserTurnOrdinal = previousNudgedTurnOrdinal;
-        reservedTodoNudgeBudget = false;
-        const message = this.extractRetryFailureMessage(sendResult.error) ?? sendResult.error.type;
-        log.warn("Failed to dispatch TODO nudge", {
-          workspaceId: this.workspaceId,
-          turnOrdinal: targetTurnOrdinal,
-          error: message,
-        });
-        return false;
-      }
-
-      log.debug("Dispatched TODO nudge for unfinished TODO list", {
-        workspaceId: this.workspaceId,
-        turnOrdinal: targetTurnOrdinal,
-        todoCount: todos.length,
-      });
-      return true;
-    } catch (error) {
-      if (reservedTodoNudgeBudget) {
-        this.todoNudgeSentForRealUserTurnOrdinal = previousNudgedTurnOrdinal;
-      }
-      log.warn("Failed to check or dispatch TODO nudge", {
-        workspaceId: this.workspaceId,
-        turnOrdinal: targetTurnOrdinal,
-        error: getErrorMessage(error),
-      });
-      return false;
-    }
   }
 
   /**
