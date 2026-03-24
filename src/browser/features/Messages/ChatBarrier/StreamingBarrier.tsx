@@ -105,7 +105,8 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({
   const statusText = (() => {
     switch (phase) {
       case "starting":
-        // Show a runtime-specific message if the workspace is still booting (e.g., Coder/devcontainers).
+        // Prefer any backend-provided startup breadcrumb so users can see whether
+        // we're still booting the runtime or doing later prep like loading tools.
         if (runtimeStatus?.phase === "starting" || runtimeStatus?.phase === "waiting") {
           return runtimeStatus.detail ?? "Starting workspace...";
         }

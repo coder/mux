@@ -279,6 +279,54 @@ describe("hasInterruptedStream", () => {
     expect(hasInterruptedStream(messages, null)).toBe(true);
   });
 
+  it("suppresses retry while runtime startup is still in progress", () => {
+    const messages: DisplayedMessage[] = [
+      {
+        type: "user",
+        id: "user-1",
+        historyId: "user-1",
+        content: "Hello",
+        historySequence: 1,
+      },
+    ];
+
+    const runtimeStatus = {
+      type: "runtime-status" as const,
+      workspaceId: "ws-1",
+      phase: "starting" as const,
+      runtimeType: "ssh" as const,
+      source: "runtime" as const,
+      detail: "Starting workspace...",
+    };
+
+    expect(hasInterruptedStream(messages, null, runtimeStatus)).toBe(false);
+    expect(isEligibleForAutoRetry(messages, null, runtimeStatus)).toBe(false);
+  });
+
+  it("keeps retry eligible for non-runtime startup breadcrumbs", () => {
+    const messages: DisplayedMessage[] = [
+      {
+        type: "user",
+        id: "user-1",
+        historyId: "user-1",
+        content: "Hello",
+        historySequence: 1,
+      },
+    ];
+
+    const runtimeStatus = {
+      type: "runtime-status" as const,
+      workspaceId: "ws-1",
+      phase: "starting" as const,
+      runtimeType: "ssh" as const,
+      source: "startup" as const,
+      detail: "Loading tools...",
+    };
+
+    expect(hasInterruptedStream(messages, null, runtimeStatus)).toBe(true);
+    expect(isEligibleForAutoRetry(messages, null, runtimeStatus)).toBe(true);
+  });
+
   it("returns false when message was sent very recently (within grace period)", () => {
     const messages: DisplayedMessage[] = [
       {

@@ -38,7 +38,12 @@ import type { MuxMessage } from "@/common/types/message";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { uniqueSuffix } from "@/common/utils/hasher";
 import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
-import type { ErrorEvent, StreamAbortEvent, StreamEndEvent } from "@/common/types/stream";
+import type {
+  ErrorEvent,
+  RuntimeStatusEvent,
+  StreamAbortEvent,
+  StreamEndEvent,
+} from "@/common/types/stream";
 import type { StreamManager } from "./streamManager";
 import { ExperimentsService } from "./experimentsService";
 import type { DevToolsService } from "./devToolsService";
@@ -1379,6 +1384,78 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
 
   afterEach(() => {
     mock.restore();
+  });
+
+  it("emits startup breadcrumbs as runtime-status events before stream start", async () => {
+    using muxHome = new DisposableTempDir("ai-service-startup-breadcrumbs");
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "workspace-startup-breadcrumbs";
+    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const harness = createHarness(muxHome.path, metadata);
+    const runtimeStatusEvents: RuntimeStatusEvent[] = [];
+
+    harness.service.on("runtime-status", (event) => {
+      runtimeStatusEvents.push(event as RuntimeStatusEvent);
+    });
+
+    const result = await harness.service.streamMessage({
+      messages: [createMuxMessage("latest-user", "user", "hello")],
+      workspaceId,
+      modelString: "openai:gpt-5.2",
+      thinkingLevel: "off",
+    });
+
+    expect(result.success).toBe(true);
+    expect(
+      runtimeStatusEvents.map((event) => ({
+        phase: event.phase,
+        detail: event.detail,
+        runtimeType: event.runtimeType,
+      }))
+    ).toEqual([
+      {
+        phase: "waiting",
+        detail: "Waiting for workspace initialization...",
+        runtimeType: "local",
+      },
+      {
+        phase: "starting",
+        detail: "Checking workspace runtime...",
+        runtimeType: "local",
+      },
+      {
+        phase: "checking",
+        detail: "Checking repository...",
+        runtimeType: "local",
+      },
+      {
+        phase: "ready",
+        detail: undefined,
+        runtimeType: "local",
+      },
+      {
+        phase: "starting",
+        detail: "Loading workspace context...",
+        runtimeType: "local",
+      },
+      {
+        phase: "starting",
+        detail: "Loading tools...",
+        runtimeType: "local",
+      },
+      {
+        phase: "starting",
+        detail: "Preparing model request...",
+        runtimeType: "local",
+      },
+      {
+        phase: "starting",
+        detail: "Starting model stream...",
+        runtimeType: "local",
+      },
+    ]);
   });
 
   it("uses the latest durable boundary slice for provider payload and OpenAI derivations", async () => {

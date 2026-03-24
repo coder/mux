@@ -433,8 +433,9 @@ export class StreamingMessageAggregator {
   // Last observed stream-abort reason (used to gate auto-retry).
   private lastAbortReason: StreamAbortReasonSnapshot | null = null;
 
-  // Current runtime status (set during ensureReady for Coder workspaces)
-  // Used to show "Starting Coder workspace..." in StreamingBarrier
+  // Current pre-stream startup status.
+  // This begins with runtime readiness for Coder, but also carries generic
+  // startup breadcrumbs like "Loading tools..." while the request is preparing.
   private runtimeStatus: RuntimeStatusEvent | null = null;
 
   // Pending compaction request metadata for the next stream (set when user message arrives).
@@ -1178,8 +1179,8 @@ export class StreamingMessageAggregator {
   }
 
   /**
-   * Get the current runtime status (for Coder workspace starting UX).
-   * Returns null if no runtime status is active.
+   * Get the current pre-stream startup status.
+   * Returns null if no startup breadcrumb is active.
    */
   getRuntimeStatus(): RuntimeStatusEvent | null {
     return this.runtimeStatus;
@@ -1210,8 +1211,8 @@ export class StreamingMessageAggregator {
   }
 
   /**
-   * Handle runtime-status event (emitted during ensureReady for Coder workspaces).
-   * Used to show "Starting Coder workspace..." in StreamingBarrier.
+   * Handle runtime-status event.
+   * Used to show both runtime readiness and generic startup breadcrumbs in StreamingBarrier.
    */
   handleRuntimeStatus(status: RuntimeStatusEvent): void {
     // Keep stream lifecycle code focused on when runtime status becomes irrelevant.

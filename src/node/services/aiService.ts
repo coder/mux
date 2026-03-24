@@ -839,6 +839,62 @@ export class AIService extends EventEmitter {
         });
       };
 
+      const emitStartupBreadcrumb = (
+        startupStage:
+          | "waiting_for_init"
+          | "checking_runtime"
+          | "loading_workspace_context"
+          | "loading_tools"
+          | "preparing_request"
+          | "starting_stream"
+      ): void => {
+        const breadcrumb =
+          startupStage === "waiting_for_init"
+            ? {
+                phase: "waiting" as const,
+                detail: "Waiting for workspace initialization...",
+              }
+            : startupStage === "checking_runtime"
+              ? {
+                  phase: "starting" as const,
+                  detail: "Checking workspace runtime...",
+                }
+              : startupStage === "loading_workspace_context"
+                ? {
+                    phase: "starting" as const,
+                    detail: "Loading workspace context...",
+                  }
+                : startupStage === "loading_tools"
+                  ? {
+                      phase: "starting" as const,
+                      detail: "Loading tools...",
+                    }
+                  : startupStage === "preparing_request"
+                    ? {
+                        phase: "starting" as const,
+                        detail: "Preparing model request...",
+                      }
+                    : {
+                        phase: "starting" as const,
+                        detail: "Starting model stream...",
+                      };
+
+        workspaceLog.info("[stream-startup] Breadcrumb", {
+          startupStage,
+          phase: breadcrumb.phase,
+          detail: breadcrumb.detail,
+          elapsedMs: Date.now() - startTime,
+        });
+        this.emit("runtime-status", {
+          type: "runtime-status",
+          workspaceId,
+          phase: breadcrumb.phase,
+          runtimeType: metadata.runtimeConfig.type,
+          source: "startup",
+          detail: breadcrumb.detail,
+        });
+      };
+
       if (!this.config.findWorkspace(workspaceId)) {
         return Err({ type: "unknown", raw: `Workspace ${workspaceId} not found in config` });
       }
@@ -878,6 +934,7 @@ export class AIService extends EventEmitter {
 
       // Wait for init to complete before any runtime I/O operations
       // (SSH/devcontainer may not be ready until init finishes pulling the container)
+      emitStartupBreadcrumb("waiting_for_init");
       const waitForInitStartedAt = Date.now();
       await this.initStateManager.waitForInit(workspaceId, combinedAbortSignal);
       recordStartupPhaseTiming("waitForInitMs", waitForInitStartedAt);
@@ -889,6 +946,7 @@ export class AIService extends EventEmitter {
       // For Docker workspaces, this checks the container exists and starts it if stopped.
       // For Coder workspaces, this may start a stopped workspace and wait for it.
       // If init failed during container creation, ensureReady() will return an error.
+      emitStartupBreadcrumb("checking_runtime");
       const ensureReadyStartedAt = Date.now();
       const readyResult = await runtime.ensureReady({
         signal: combinedAbortSignal,
@@ -899,6 +957,7 @@ export class AIService extends EventEmitter {
             workspaceId,
             phase: status.phase,
             runtimeType: status.runtimeType,
+            source: "runtime",
             detail: status.detail,
           });
         },
@@ -943,6 +1002,7 @@ export class AIService extends EventEmitter {
 
       // Resolve agent definition, compute effective mode & tool policy.
       const cfg = this.config.loadConfigOrDefault();
+      emitStartupBreadcrumb("loading_workspace_context");
       const resolveAgentForStreamStartedAt = Date.now();
       const agentResult = await resolveAgentForStream({
         workspaceId,
@@ -1161,6 +1221,7 @@ export class AIService extends EventEmitter {
       recordStartupPhaseTiming("loadSessionUsageMs", loadSessionUsageStartedAt);
 
       // Get model-specific tools with workspace path (correct for local or remote)
+      emitStartupBreadcrumb("loading_tools");
       const getToolsForModelStartedAt = Date.now();
       assert(
         workspaceId.trim().length > 0,
@@ -1260,6 +1321,7 @@ export class AIService extends EventEmitter {
 
       // Run the full message preparation pipeline (inject context, transform, validate).
       // This is a purely functional pipeline with no service dependencies.
+      emitStartupBreadcrumb("preparing_request");
       const prepareMessagesForProviderStartedAt = Date.now();
       const finalMessages = await prepareMessagesForProvider({
         messagesWithSentinel,
@@ -1535,6 +1597,7 @@ export class AIService extends EventEmitter {
         };
       }
 
+      emitStartupBreadcrumb("starting_stream");
       const startStreamStartedAt = Date.now();
       const streamResult = await this.streamManager.startStream(
         workspaceId,

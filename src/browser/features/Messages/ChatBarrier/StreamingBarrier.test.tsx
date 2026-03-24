@@ -158,6 +158,19 @@ describe("StreamingBarrier", () => {
     expect(interruptStream).toHaveBeenCalledWith({ workspaceId: "ws-1" });
   });
 
+  test("shows backend startup breadcrumb text while the stream is starting", () => {
+    currentWorkspaceState = createWorkspaceState({
+      canInterrupt: false,
+      pendingStreamStartTime: Date.now(),
+      pendingStreamModel: "openai:gpt-4o-mini",
+      runtimeStatus: { phase: "starting", detail: "Loading tools..." },
+    });
+
+    const view = render(<StreamingBarrier workspaceId="ws-1" />);
+
+    expect(view.getByText("Loading tools...")).toBeTruthy();
+  });
+
   test("shows vim interrupt shortcut when vim mode is enabled", () => {
     currentWorkspaceState = createWorkspaceState({
       canInterrupt: false,

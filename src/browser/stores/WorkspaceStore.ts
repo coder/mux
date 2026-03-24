@@ -102,7 +102,7 @@ export interface WorkspaceState {
   pendingStreamStartTime: number | null;
   // Model used for the pending send (used during "starting" phase)
   pendingStreamModel: string | null;
-  // Runtime status from ensureReady (for Coder workspace starting UX)
+  // Current pre-stream startup breadcrumb (runtime readiness, tool loading, etc.)
   runtimeStatus: RuntimeStatusEvent | null;
   autoRetryStatus: AutoRetryStatus | null;
   // Live streaming stats (updated on each stream-delta)

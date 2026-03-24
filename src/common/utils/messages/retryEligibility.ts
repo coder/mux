@@ -159,10 +159,14 @@ function computeHasInterruptedStream(
     return false;
   }
 
-  // Don't show retry barrier if runtime is still starting (e.g., Coder workspace waiting for startup scripts).
-  // The backend's ensureReady() is still running - this happens when reconnecting to a stopped workspace.
-  // runtimeStatus is set during ensureReady() and cleared when ready/error.
-  if (runtimeStatus !== null && lastMessage.type !== "stream-error") {
+  // Don't show retry barrier if runtime bring-up is still in progress (for example a stopped
+  // Coder workspace that is still starting). Generic post-runtime startup breadcrumbs must not
+  // suppress retry UI, or a later stall in tool loading/request prep would hide the interruption.
+  if (
+    runtimeStatus?.source !== "startup" &&
+    runtimeStatus !== null &&
+    lastMessage.type !== "stream-error"
+  ) {
     return false;
   }
 

@@ -75,15 +75,18 @@ export const CaughtUpMessageSchema = z.object({
 });
 
 /**
- * Progress event for runtime readiness checks.
- * Used by Coder workspaces to show "Starting Coder workspace..." while ensureReady() blocks.
- * Not used by Docker (start is near-instant) or local runtimes.
+ * Progress event for pre-stream startup work.
+ *
+ * Initially introduced for runtime readiness checks, but now also carries generic
+ * pre-stream breadcrumbs (for example tool loading or request preparation) so the
+ * user can see where startup is currently blocked.
  */
 export const RuntimeStatusEventSchema = z.object({
   type: z.literal("runtime-status"),
   workspaceId: z.string(),
   phase: z.enum(["checking", "starting", "waiting", "ready", "error"]),
   runtimeType: RuntimeModeSchema,
+  source: z.enum(["runtime", "startup"]).optional(),
   detail: z.string().optional(), // Human-readable status like "Starting Coder workspace..."
 });
 

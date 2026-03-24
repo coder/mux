@@ -229,7 +229,7 @@ export function applyWorkspaceChatEventToAggregator(
     return "immediate";
   }
 
-  // runtime-status events are used for Coder workspace starting UX
+  // runtime-status events drive pre-stream startup breadcrumbs in the barrier UI
   if (isRuntimeStatus(event)) {
     aggregator.handleRuntimeStatus(event);
     return "immediate";

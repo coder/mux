@@ -85,7 +85,7 @@ export type AutoRetryStartingEvent = z.infer<typeof AutoRetryStartingEventSchema
 export type AutoRetryAbandonedEvent = z.infer<typeof AutoRetryAbandonedEventSchema>;
 
 /**
- * Progress event for runtime readiness checks.
- * Used by Coder workspaces to show "Starting Coder workspace..." while ensureReady() blocks.
+ * Progress event for pre-stream startup work.
+ * Used for both runtime readiness and generic startup breadcrumbs in the barrier UI.
  */
 export type RuntimeStatusEvent = z.infer<typeof RuntimeStatusEventSchema>;
