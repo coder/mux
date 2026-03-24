@@ -25,10 +25,20 @@ export const WorkspaceStatusIndicator = memo<{
     );
   }
 
+  // Todo-derived status can outlive the stream that produced it. Once the turn is idle,
+  // keep refresh-style status icons static so unfinished work does not look actively running.
+  const agentStatusSpinOverride = canInterrupt || isStarting || isCreating ? undefined : false;
+
   if (agentStatus) {
     return (
       <div className="text-muted flex min-w-0 items-center gap-1.5 text-xs">
-        {agentStatus.emoji && <EmojiIcon emoji={agentStatus.emoji} className="h-3 w-3 shrink-0" />}
+        {agentStatus.emoji && (
+          <EmojiIcon
+            emoji={agentStatus.emoji}
+            spin={agentStatusSpinOverride}
+            className="h-3 w-3 shrink-0"
+          />
+        )}
         <span className="min-w-0 truncate">{agentStatus.message}</span>
         {agentStatus.url && (
           <Tooltip>
