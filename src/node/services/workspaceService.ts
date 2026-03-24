@@ -1403,14 +1403,23 @@ export class WorkspaceService extends EventEmitter {
   }
 
   private async handleStreamCompletion(workspaceId: string): Promise<void> {
-    // Always use Date.now() for stream-completion recency.
-    // extractTimestamp() returns the message-creation timestamp from stream
-    // metadata, which is effectively the same as the sendMessage recency and
-    // can lose the race against the frontend's lastRead (set via Date.now()
-    // after the IPC round-trip). Using a fresh timestamp here ensures the
-    // completion recency is strictly after any earlier lastRead write.
     const generation = this.streamingGenerations.get(workspaceId) ?? 0;
-    await this.updateRecencyTimestamp(workspaceId, Date.now());
+    const isIdleCompaction = this.idleCompactingWorkspaces.has(workspaceId);
+
+    // Idle compaction is maintenance work, so preserve the pre-existing recency.
+    // That keeps the workspace from jumping to the top of the sidebar and also
+    // prevents the background activity path from treating compaction as a fresh response.
+
+    if (!isIdleCompaction) {
+      // Always use Date.now() for stream-completion recency.
+      // extractTimestamp() returns the message-creation timestamp from stream
+      // metadata, which is effectively the same as the sendMessage recency and
+      // can lose the race against the frontend's lastRead (set via Date.now()
+      // after the IPC round-trip). Using a fresh timestamp here ensures the
+      // completion recency is strictly after any earlier lastRead write.
+      await this.updateRecencyTimestamp(workspaceId, Date.now());
+    }
+
     await this.stopStreamingStatus(workspaceId, generation);
   }
 

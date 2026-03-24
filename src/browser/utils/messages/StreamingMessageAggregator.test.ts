@@ -1,5 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { createMuxMessage, type DisplayedMessage } from "@/common/types/message";
+import { shouldNotifyOnResponseComplete } from "./responseCompletionMetadata";
 import { MAX_HISTORY_HIDDEN_SEGMENTS } from "./transcriptTruncationPlan";
 import { StreamingMessageAggregator } from "./StreamingMessageAggregator";
 
@@ -1377,6 +1378,58 @@ describe("StreamingMessageAggregator", () => {
       // even after compaction, preventing false unread indicators.
       expect(callbackCompletedAt).not.toBeNull();
       expect(callbackCompletedAt).toBeGreaterThanOrEqual(beforeEnd);
+    });
+
+    test("marks idle compaction completions as non-notifying", () => {
+      const workspaceId = "test-workspace-recency-idle-compaction";
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT, workspaceId);
+      let completion: Parameters<typeof shouldNotifyOnResponseComplete>[0];
+      aggregator.onResponseComplete = (event) => {
+        completion = event.completion;
+      };
+
+      aggregator.handleMessage({
+        ...createMuxMessage("idle-compaction-request", "user", "/compact", {
+          historySequence: 1,
+          timestamp: Date.now(),
+          muxMetadata: {
+            type: "compaction-request",
+            rawCommand: "/compact",
+            parsed: { model: "claude-3-5-sonnet-20241022" },
+            source: "idle-compaction",
+          },
+        }),
+        type: "message",
+      });
+
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId,
+        messageId: "idle-compaction-stream",
+        historySequence: 2,
+        model: "claude-3-5-sonnet-20241022",
+        startTime: Date.now(),
+        mode: "compact",
+      });
+
+      aggregator.handleStreamEnd({
+        type: "stream-end",
+        workspaceId,
+        messageId: "idle-compaction-stream",
+        metadata: {
+          historySequence: 2,
+          timestamp: Date.now(),
+          model: "claude-3-5-sonnet-20241022",
+        },
+        parts: [],
+      });
+
+      expect(completion).toEqual({
+        kind: "compaction",
+        hasAutoFollowUp: false,
+        isIdle: true,
+      });
+      expect(shouldNotifyOnResponseComplete(completion)).toBe(false);
     });
 
     test("does not bump on non-final stream end", () => {

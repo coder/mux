@@ -27,6 +27,9 @@ export interface ResponseCompletionState {
   isCompacting: boolean;
   hasCompactionContinue: boolean;
   hasQueuedFollowUp: boolean;
+  // Idle compaction is maintenance work, so downstream notification policy must
+  // be able to suppress the final completion even when the workspace is selected.
+  isIdleCompaction?: boolean;
 }
 
 export function buildResponseCompleteMetadata(
@@ -37,8 +40,16 @@ export function buildResponseCompleteMetadata(
     return undefined;
   }
 
+  if (state.isCompacting) {
+    return {
+      kind: "compaction",
+      hasAutoFollowUp,
+      ...(state.isIdleCompaction ? { isIdle: true } : {}),
+    };
+  }
+
   return {
-    kind: state.isCompacting ? "compaction" : "response",
+    kind: "response",
     hasAutoFollowUp,
   };
 }
@@ -49,17 +60,20 @@ export function buildAggregateResponseCompleteMetadata(
   let isCompacting = false;
   let hasCompactionContinue = false;
   let hasQueuedFollowUp = false;
+  let isIdleCompaction = false;
 
   for (const state of states) {
     isCompacting ||= state.isCompacting;
     hasCompactionContinue ||= state.hasCompactionContinue;
     hasQueuedFollowUp ||= state.hasQueuedFollowUp;
+    isIdleCompaction ||= state.isIdleCompaction === true;
   }
 
   return buildResponseCompleteMetadata({
     isCompacting,
     hasCompactionContinue,
     hasQueuedFollowUp,
+    isIdleCompaction,
   });
 }
 

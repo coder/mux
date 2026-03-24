@@ -121,6 +121,9 @@ interface StreamingContext {
 
   isComplete: boolean;
   isCompacting: boolean;
+  // Idle compaction is background maintenance, not a user-visible completion, so
+  // completion notifications must stay suppressed even for the currently selected workspace.
+  isIdleCompaction: boolean;
   hasCompactionContinue: boolean;
   // Track the last known queued-follow-up state on the active stream itself so
   // background activity completion can still suppress intermediate notifications
@@ -144,6 +147,11 @@ interface StreamingContext {
 
   /** Effective thinking level after model policy clamping */
   thinkingLevel?: string;
+}
+
+interface PendingCompactionRequest {
+  parsed: CompactionRequestData;
+  source?: "idle-compaction" | "auto-compaction";
 }
 
 /**
@@ -439,7 +447,7 @@ export class StreamingMessageAggregator {
 
   // Pending compaction request metadata for the next stream (set when user message arrives).
   // Used to infer compaction state before stream-start arrives.
-  private pendingCompactionRequest: CompactionRequestData | null = null;
+  private pendingCompactionRequest: PendingCompactionRequest | null = null;
 
   // Model used for the pending send (set on user message) so the "starting" UI
   // reflects one-shot/compaction overrides instead of stale localStorage values.
@@ -1237,7 +1245,7 @@ export class StreamingMessageAggregator {
     return this.pendingStreamModel;
   }
 
-  private getLatestHistoricalCompactionRequest(): CompactionRequestData | null {
+  private getLatestHistoricalCompactionRequest(): PendingCompactionRequest | null {
     let sawCompletedCompaction = false;
     const messages = this.getAllMessages();
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -1251,7 +1259,12 @@ export class StreamingMessageAggregator {
       if (message.role !== "user") continue;
       const muxMetadata = message.metadata?.muxMetadata;
       if (muxMetadata?.type === "compaction-request") {
-        return sawCompletedCompaction ? null : muxMetadata.parsed;
+        return sawCompletedCompaction
+          ? null
+          : {
+              parsed: muxMetadata.parsed,
+              source: muxMetadata.source,
+            };
       }
       return null;
     }
@@ -1259,25 +1272,27 @@ export class StreamingMessageAggregator {
     return null;
   }
 
-  private getLatestUnresolvedCompactionRequest(): CompactionRequestData | null {
+  private getLatestUnresolvedCompactionRequest(): PendingCompactionRequest | null {
     return this.pendingCompactionRequest ?? this.getLatestHistoricalCompactionRequest();
   }
 
   private resolveStreamStartCompaction(data: StreamStartEvent): {
     isCompacting: boolean;
+    isIdleCompaction: boolean;
     hasCompactionContinue: boolean;
   } {
     // Keep stream classification separate from stream context construction so
     // continue turns after /compact do not inherit stale UI state from history.
     const streamSignalsCompaction = data.agentId === "compact" || data.mode === "compact";
     if (!streamSignalsCompaction && data.agentId != null) {
-      return { isCompacting: false, hasCompactionContinue: false };
+      return { isCompacting: false, isIdleCompaction: false, hasCompactionContinue: false };
     }
 
     const compactionRequest = this.getLatestUnresolvedCompactionRequest();
     return {
       isCompacting: streamSignalsCompaction || compactionRequest !== null,
-      hasCompactionContinue: Boolean(compactionRequest?.followUpContent),
+      isIdleCompaction: compactionRequest?.source === "idle-compaction",
+      hasCompactionContinue: Boolean(compactionRequest?.parsed.followUpContent),
     };
   }
 
@@ -1617,7 +1632,8 @@ export class StreamingMessageAggregator {
 
   // Unified event handlers that encapsulate all complex logic
   handleStreamStart(data: StreamStartEvent): void {
-    const { isCompacting, hasCompactionContinue } = this.resolveStreamStartCompaction(data);
+    const { isCompacting, isIdleCompaction, hasCompactionContinue } =
+      this.resolveStreamStartCompaction(data);
 
     // Clear pending "starting..." UI now that the assistant turn is live.
     this.clearPendingStreamLifecycleState();
@@ -1641,6 +1657,7 @@ export class StreamingMessageAggregator {
       lastServerTimestamp: data.startTime,
       isComplete: false,
       isCompacting,
+      isIdleCompaction,
       hasCompactionContinue,
       hasQueuedFollowUp: false,
       isReplay: data.replay === true,
@@ -2431,7 +2448,12 @@ export class StreamingMessageAggregator {
         // Capture pending compaction metadata for pre-stream UI ("starting" phase).
         const muxMetadata = incomingMessage.metadata?.muxMetadata;
         this.pendingCompactionRequest =
-          muxMetadata?.type === "compaction-request" ? muxMetadata.parsed : null;
+          muxMetadata?.type === "compaction-request"
+            ? {
+                parsed: muxMetadata.parsed,
+                source: muxMetadata.source,
+              }
+            : null;
 
         this.pendingStreamModel = muxMetadata?.requestedModel ?? null;
 

@@ -1765,6 +1765,48 @@ describe("WorkspaceService streaming generation guard", () => {
     expect(setStreaming).toHaveBeenCalledTimes(1);
     expect(setStreaming).toHaveBeenCalledWith(workspaceId, true, { model: "openai:gpt-4o-mini" });
   });
+  test("handleStreamCompletion skips recency updates for idle compaction", async () => {
+    const workspaceId = "ws-idle-stream-completion";
+    const setStreaming = mock(
+      (_workspaceId: string, streaming: boolean, update: ExtensionMetadataStreamingUpdate = {}) =>
+        Promise.resolve({
+          recency: Date.now(),
+          streaming,
+          lastModel: update.model ?? null,
+          lastThinkingLevel: update.thinkingLevel ?? null,
+          hasTodos: update.hasTodos,
+          agentStatus: null,
+        })
+    );
+
+    readTodosSpy = spyOn(todoStorageModule, "readTodosForSessionDir").mockResolvedValue([]);
+
+    const internals = workspaceService as unknown as {
+      extensionMetadata: ExtensionMetadataService;
+      streamingGenerations: Map<string, number>;
+      idleCompactingWorkspaces: Set<string>;
+      updateRecencyTimestamp: (workspaceId: string, timestamp?: number) => Promise<void>;
+      handleStreamCompletion: (workspaceId: string) => Promise<void>;
+    };
+
+    internals.extensionMetadata = {
+      setStreaming,
+    } as unknown as ExtensionMetadataService;
+    internals.updateRecencyTimestamp = mock(() => Promise.resolve());
+
+    internals.streamingGenerations.set(workspaceId, 7);
+    internals.idleCompactingWorkspaces.add(workspaceId);
+
+    await internals.handleStreamCompletion(workspaceId);
+
+    expect(internals.updateRecencyTimestamp).not.toHaveBeenCalled();
+    expect(setStreaming).toHaveBeenCalledTimes(1);
+    expect(setStreaming).toHaveBeenCalledWith(
+      workspaceId,
+      false,
+      expect.objectContaining({ generation: 7, hasTodos: false })
+    );
+  });
 });
 
 describe("WorkspaceService executeBash archive guards", () => {
