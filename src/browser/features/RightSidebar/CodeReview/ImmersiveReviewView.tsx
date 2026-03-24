@@ -20,7 +20,11 @@ import {
 import { cn } from "@/common/lib/utils";
 import { SelectableDiffRenderer } from "../../Shared/DiffRenderer";
 import { ImmersiveMinimap } from "./ImmersiveMinimap";
-import { buildNewLineNumberToIndexMap, buildOldLineNumberToIndexMap } from "./immersiveMinimapMath";
+import {
+  buildNewLineNumberToIndexMap,
+  buildOldLineNumberToIndexMap,
+  parseDiffLines,
+} from "./immersiveMinimapMath";
 import { KeycapGroup } from "@/browser/components/Keycap/Keycap";
 import { useAPI } from "@/browser/contexts/API";
 import { formatLineRangeCompact } from "@/browser/utils/review/lineRange";
@@ -122,6 +126,14 @@ const DISLIKE_NOTE_PREFIX = "I don't like this change";
 function getFileBaseName(filePath: string): string {
   const segments = filePath.split(/[\\/]/);
   return segments[segments.length - 1] || filePath;
+}
+
+function getChangedLineCount(hunk: DiffHunk): number {
+  // Reuse the shared diff-line parser so completion weighting matches the minimap's
+  // notion of which rows are actual changes instead of ad-hoc string checks here.
+  return parseDiffLines(hunk.content).reduce((count, lineCategory) => {
+    return lineCategory === "context" ? count : count + 1;
+  }, 0);
 }
 
 function getReviewStatusSidebarClasses(status: Review["status"]): {
@@ -387,6 +399,30 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   // Flatten file tree into ordered file list
   const fileList = useMemo(() => flattenFileTreeLeaves(fileTree), [fileTree]);
   const reviewedHunkCount = allHunks.filter((item) => props.isRead(item.id)).length;
+  // Weight immersive progress by changed LoC so a large hunk moves the bar more than a one-line nit.
+  const totalChangedLineCount = allHunks.reduce(
+    (count, hunk) => count + getChangedLineCount(hunk),
+    0
+  );
+  const reviewedChangedLineCount = allHunks.reduce((count, hunk) => {
+    if (!props.isRead(hunk.id)) {
+      return count;
+    }
+
+    return count + getChangedLineCount(hunk);
+  }, 0);
+  const reviewCompletionWidthPercent =
+    totalChangedLineCount === 0 ? 0 : (reviewedChangedLineCount / totalChangedLineCount) * 100;
+  const reviewCompletionPercent = Math.round(reviewCompletionWidthPercent);
+  const reviewCompletionSummary =
+    totalChangedLineCount === 0
+      ? "No changed lines to review"
+      : `${reviewCompletionPercent}% of changed lines reviewed`;
+  const reviewCompletionDetails =
+    totalChangedLineCount === 0
+      ? reviewCompletionSummary
+      : `${reviewCompletionSummary} (${reviewedChangedLineCount}/${totalChangedLineCount})`;
+  const reviewCompletionHunkDetails = `${reviewedHunkCount}/${allHunks.length} hunks marked read`;
   const isReviewComplete =
     allHunks.length > 0 && hunks.length === 0 && reviewedHunkCount === allHunks.length;
   const reviewedHunkLabel = `${reviewedHunkCount} ${reviewedHunkCount === 1 ? "hunk" : "hunks"}`;
@@ -1557,7 +1593,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       data-testid="immersive-review-view"
     >
       {/* Header */}
-      <div className="border-border-light bg-dark flex items-center gap-2 border-b px-3 py-2">
+      <div className="border-border-light bg-dark flex flex-wrap items-center gap-2 border-b px-3 py-2">
         {/* Back button */}
         <button
           onClick={onExit}
@@ -1674,6 +1710,44 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
                 )}
               </>
             )}
+          </div>
+        )}
+        {allHunks.length > 0 && (
+          <div className="w-full pt-0.5">
+            <TooltipIfPresent
+              tooltip={
+                <>
+                  <span>{reviewCompletionSummary}</span>
+                  <span className="text-muted block text-[10px]">
+                    {reviewedChangedLineCount}/{totalChangedLineCount} changed lines reviewed
+                  </span>
+                  <span className="text-muted block text-[10px]">
+                    {reviewCompletionHunkDetails}
+                  </span>
+                </>
+              }
+              side="bottom"
+              align="start"
+            >
+              <div
+                role="progressbar"
+                tabIndex={0}
+                aria-label="Review completion by changed lines"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={reviewCompletionPercent}
+                aria-valuetext={reviewCompletionDetails}
+                className="bg-border-light h-0.5 cursor-help overflow-hidden"
+              >
+                <div
+                  className="h-full"
+                  style={{
+                    width: `${reviewCompletionWidthPercent}%`,
+                    backgroundColor: "var(--color-read)",
+                  }}
+                />
+              </div>
+            </TooltipIfPresent>
           </div>
         )}
       </div>

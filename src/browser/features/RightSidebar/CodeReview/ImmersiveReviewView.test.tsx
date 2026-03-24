@@ -151,6 +151,35 @@ describe("ImmersiveReviewView", () => {
     globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
   });
 
+  test("weights completion by changed lines instead of hunk count", () => {
+    const smallHunk = createHunk({
+      id: "hunk-small",
+      header: "@@ -1,0 +1,1 @@",
+      oldLines: 0,
+      newLines: 1,
+      content: "+single added line",
+    });
+    const largeHunk = createHunk({
+      id: "hunk-large",
+      header: "@@ -3,0 +3,3 @@",
+      oldLines: 0,
+      newLines: 3,
+      content: "+first added line\n+second added line\n+third added line",
+    });
+    const view = renderImmersiveReview({
+      hunks: [smallHunk, largeHunk],
+      allHunks: [smallHunk, largeHunk],
+      selectedHunkId: smallHunk.id,
+      isRead: (hunkId) => hunkId === largeHunk.id,
+    });
+
+    const progressBar = view.getByRole("progressbar", {
+      name: "Review completion by changed lines",
+    });
+    expect(progressBar.getAttribute("aria-valuenow")).toBe("75");
+    expect(progressBar.getAttribute("aria-valuetext")).toContain("3/4");
+  });
+
   test("shows a completion state when all hunks are reviewed and hidden", () => {
     const hunk = createHunk();
     const onExit = mock(() => undefined);
@@ -164,6 +193,11 @@ describe("ImmersiveReviewView", () => {
 
     expect(view.getByTestId("immersive-review-complete")).toBeTruthy();
     expect(view.queryByText("No hunks for this file")).toBeNull();
+
+    const progressBar = view.getByRole("progressbar", {
+      name: "Review completion by changed lines",
+    });
+    expect(progressBar.getAttribute("aria-valuenow")).toBe("100");
 
     fireEvent.click(view.getByRole("button", { name: "Return to chat" }));
     expect(onExit).toHaveBeenCalledTimes(1);
