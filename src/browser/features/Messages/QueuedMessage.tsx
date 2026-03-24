@@ -82,12 +82,15 @@ export const QueuedMessage: React.FC<QueuedMessageProps> = ({
             className="border-border-medium bg-background-secondary/80 rounded-md border px-2.5 py-1.5"
             data-component="QueuedMessageCard"
           >
-            <UserMessageContent
-              content={preview.sanitizedText || preview.fallbackLabel}
-              reviews={message.reviews}
-              fileParts={message.fileParts}
-              variant="queued"
-            />
+            {/* Keep queued drafts bounded so long content never pushes the composer off-screen. */}
+            <div className="max-h-[40vh] overflow-y-auto">
+              <UserMessageContent
+                content={preview.sanitizedText || preview.fallbackLabel}
+                reviews={message.reviews}
+                fileParts={message.fileParts}
+                variant="queued"
+              />
+            </div>
 
             <div className="mt-1 flex flex-wrap items-center justify-end gap-x-2 gap-y-0.5">
               {onEdit && (
