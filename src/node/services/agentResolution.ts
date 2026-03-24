@@ -132,15 +132,7 @@ export async function resolveAgentForStream(
       disableWorkspaceAgents,
       error: getErrorMessage(error),
     });
-    if (effectiveAgentId === "ask") {
-      try {
-        agentDefinition = await readAgentDefinition(runtime, agentDiscoveryPath, "auto");
-      } catch {
-        agentDefinition = await readAgentDefinition(runtime, agentDiscoveryPath, "exec");
-      }
-    } else {
-      agentDefinition = await readAgentDefinition(runtime, agentDiscoveryPath, "exec");
-    }
+    agentDefinition = await readAgentDefinition(runtime, agentDiscoveryPath, "exec");
   }
 
   // Keep agent ID aligned with the actual definition used (may fall back to exec).
