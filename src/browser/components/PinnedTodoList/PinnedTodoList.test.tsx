@@ -92,9 +92,7 @@ function renderPinnedTodoList(workspaceId: string): RenderResult {
 }
 
 function getHeader(renderResult: RenderResult): HTMLElement {
-  const header = renderResult.container.querySelector(".cursor-pointer");
-  expect(header).toBeTruthy();
-  return header as HTMLElement;
+  return renderResult.getByRole("button", { name: /todo/i });
 }
 
 describe("PinnedTodoList", () => {

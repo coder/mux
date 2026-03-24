@@ -1,20 +1,21 @@
 import React, { useSyncExternalStore } from "react";
+import { List } from "lucide-react";
 import { TodoList } from "../TodoList/TodoList";
+import { ChatInputDecoration } from "../ChatPane/ChatInputDecoration";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { getPinnedTodoExpandedKey } from "@/common/constants/storage";
-import { cn } from "@/common/lib/utils";
 
 interface PinnedTodoListProps {
   workspaceId: string;
 }
 
 /**
- * Pinned TODO list displayed at bottom of chat (before StreamingBarrier).
- * Shows current TODOs — incomplete plans persist across streams until the agent updates them,
- * while fully completed plans clear when the final stream ends for this workspace.
- * The pinned panel expansion state persists separately in localStorage.
- * Reuses TodoList component for consistent styling.
+ * Pinned TODO list displayed in the composer-adjacent decoration stack beneath
+ * the stream barrier. Incomplete plans persist across streams until the agent
+ * updates them, while fully completed plans clear when the final stream ends
+ * for this workspace. The pinned panel expansion state persists separately in
+ * localStorage.
  *
  * Relies on natural reference stability from MapStore + Aggregator architecture:
  * - Aggregator.getCurrentTodos() returns direct reference (not a copy)
@@ -37,23 +38,40 @@ export const PinnedTodoList: React.FC<PinnedTodoListProps> = ({ workspaceId }) =
     return null;
   }
 
+  const inProgressCount = todos.filter((todo) => todo.status === "in_progress").length;
+  const pendingCount = todos.filter((todo) => todo.status === "pending").length;
+  const completedCount = todos.length - inProgressCount - pendingCount;
+  const summaryParts: string[] = [];
+  if (inProgressCount > 0) {
+    summaryParts.push(`${inProgressCount} in progress`);
+  }
+  if (pendingCount > 0) {
+    summaryParts.push(`${pendingCount} pending`);
+  }
+  if (summaryParts.length === 0) {
+    summaryParts.push(`${completedCount} completed`);
+  }
+
   return (
-    <div className="bg-panel-background mt-2 max-h-[300px] overflow-y-auto border-t border-dashed border-[hsl(0deg_0%_28.64%)]">
-      <div
-        className="text-secondary flex cursor-pointer items-center gap-1 px-2 pt-1 pb-0.5 font-mono text-[10px] font-semibold tracking-wider select-none hover:opacity-80"
-        onClick={() => setExpanded(!expanded)}
-      >
-        <span
-          className={cn(
-            "inline-block transition-transform duration-200 text-[8px]",
-            expanded ? "rotate-90" : "rotate-0"
-          )}
-        >
-          ▶
-        </span>
-        TODO{expanded ? ":" : ""}
-      </div>
-      {expanded && <TodoList todos={todos} />}
-    </div>
+    <ChatInputDecoration
+      expanded={expanded}
+      onToggle={() => setExpanded(!expanded)}
+      className="bg-surface-primary"
+      contentClassName="max-h-[300px] overflow-y-auto"
+      dataComponent="PinnedTodoList"
+      // Keep the pinned TODO banner on the same decoration primitive and top
+      // border styling as the other chat-input decorations so the stack reads
+      // as one consistent set.
+      summary={
+        <>
+          <List className="text-muted group-hover:text-secondary size-3.5 transition-colors" />
+          <span className="text-muted group-hover:text-secondary transition-colors">
+            <span className="font-medium">TODO</span>
+            {summaryParts.length > 0 && <> · {summaryParts.join(" · ")}</>}
+          </span>
+        </>
+      }
+      renderExpanded={() => <TodoList todos={todos} />}
+    />
   );
 };

@@ -907,12 +907,11 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                   {/*
                     Keep the dynamic transcript tail out of the browser's scroll-anchoring heuristics.
                     ChatPane explicitly pins the bottom when auto-scroll is enabled, so anchoring to
-                    the streaming barrier / pinned TODO stack causes a brief visible jump on send.
+                    the streaming/retry barrier chrome causes a brief visible jump on send.
                   */}
                   {shouldMountRetryBarrier && (
                     <RetryBarrier workspaceId={workspaceId} visible={showRetryBarrierUI} />
                   )}
-                  <PinnedTodoList workspaceId={workspaceId} />
                   <StreamingBarrier
                     workspaceId={workspaceId}
                     vimEnabled={vimEnabled}
@@ -1022,10 +1021,10 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
   const { reviews } = props;
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col">
       {/*
         Keep optional banners/warnings on one shared stack so spacing above the chat input
-        stays consistent as background bash, review, and queue UI appear or disappear.
+        stays consistent as background bash, review, queued-send, and TODO UI appear or disappear.
       */}
       {props.shouldShowCompactionWarning && (
         <CompactionWarning
@@ -1041,6 +1040,7 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
           onDismiss={props.onContextSwitchDismiss}
         />
       )}
+      <PinnedTodoList workspaceId={props.workspaceId} />
       <BackgroundProcessesBanner workspaceId={props.workspaceId} />
       <ReviewsBanner workspaceId={props.workspaceId} />
       {props.queuedMessage && (

@@ -1,8 +1,9 @@
 import React, { useState, useCallback, useEffect } from "react";
-import { Terminal, X, ChevronDown, ChevronRight, Loader2, FileText } from "lucide-react";
+import { Terminal, X, Loader2, FileText } from "lucide-react";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 import { cn } from "@/common/lib/utils";
 import { BackgroundBashOutputDialog } from "../BackgroundBashOutputDialog/BackgroundBashOutputDialog";
+import { ChatInputDecoration } from "../ChatPane/ChatInputDecoration";
 import { formatDuration } from "@/common/utils/formatDuration";
 import {
   useBackgroundBashTerminatingIds,
@@ -75,98 +76,84 @@ export const BackgroundProcessesBanner: React.FC<BackgroundProcessesBannerProps>
   return (
     <>
       {count > 0 && (
-        <div className="border-border bg-surface-primary border-t px-[15px]">
-          {/* Collapsed banner - thin stripe, content aligned with chat */}
-          <button
-            type="button"
-            onClick={handleToggle}
-            className="group mx-auto flex w-full max-w-4xl items-center gap-2 px-2 py-1.5 text-xs transition-colors"
-          >
-            <Terminal className="text-muted group-hover:text-secondary size-3.5 transition-colors" />
-            <span className="text-muted group-hover:text-secondary transition-colors">
-              <span className="font-medium">{count}</span>
-              {" background bash"}
-              {count !== 1 && "es"}
-            </span>
-            <div className="ml-auto">
-              {isExpanded ? (
-                <ChevronDown className="text-muted group-hover:text-secondary size-3.5 transition-colors" />
-              ) : (
-                <ChevronRight className="text-muted group-hover:text-secondary size-3.5 transition-colors" />
-              )}
-            </div>
-          </button>
-
-          {/* Expanded view - content aligned with chat */}
-          {isExpanded && (
-            <div className="border-border mx-auto max-h-48 max-w-4xl space-y-1.5 overflow-y-auto border-t py-2">
-              {runningProcesses.map((proc) => {
-                const isTerminating = terminatingIds.has(proc.id);
-                return (
-                  <div
-                    key={proc.id}
-                    className={cn(
-                      "hover:bg-hover flex items-center justify-between gap-3 rounded px-2 py-1.5",
-                      "transition-colors",
-                      isTerminating && "pointer-events-none opacity-50"
-                    )}
-                  >
-                    <div className="min-w-0 flex-1">
-                      <div
-                        className="text-foreground truncate font-mono text-xs"
-                        title={proc.script}
-                      >
-                        {proc.displayName ?? truncateScript(proc.script)}
-                      </div>
-                      <div className="text-muted font-mono text-[10px]">pid {proc.pid}</div>
+        <ChatInputDecoration
+          expanded={isExpanded}
+          onToggle={handleToggle}
+          contentClassName="max-h-48 space-y-1.5 overflow-y-auto py-2"
+          summary={
+            <>
+              <Terminal className="text-muted group-hover:text-secondary size-3.5 transition-colors" />
+              <span className="text-muted group-hover:text-secondary transition-colors">
+                <span className="font-medium">{count}</span>
+                {" background bash"}
+                {count !== 1 && "es"}
+              </span>
+            </>
+          }
+          renderExpanded={() =>
+            runningProcesses.map((proc) => {
+              const isTerminating = terminatingIds.has(proc.id);
+              return (
+                <div
+                  key={proc.id}
+                  className={cn(
+                    "hover:bg-hover flex items-center justify-between gap-3 rounded px-2 py-1.5",
+                    "transition-colors",
+                    isTerminating && "pointer-events-none opacity-50"
+                  )}
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="text-foreground truncate font-mono text-xs" title={proc.script}>
+                      {proc.displayName ?? truncateScript(proc.script)}
                     </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      <span className="text-muted text-[10px] tabular-nums">
-                        {formatDuration(Date.now() - proc.startTime)}
-                      </span>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            type="button"
-                            disabled={isTerminating}
-                            onClick={(e) => handleViewOutput(proc.id, e)}
-                            className={cn(
-                              "text-muted hover:text-secondary rounded p-1 transition-colors",
-                              isTerminating && "cursor-not-allowed"
-                            )}
-                          >
-                            <FileText size={14} />
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent>View output</TooltipContent>
-                      </Tooltip>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            type="button"
-                            disabled={isTerminating}
-                            onClick={(e) => handleTerminate(proc.id, e)}
-                            className={cn(
-                              "text-muted hover:text-error rounded p-1 transition-colors",
-                              isTerminating && "cursor-not-allowed"
-                            )}
-                          >
-                            {isTerminating ? (
-                              <Loader2 size={14} className="animate-spin" />
-                            ) : (
-                              <X size={14} />
-                            )}
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent>Terminate process</TooltipContent>
-                      </Tooltip>
-                    </div>
+                    <div className="text-muted font-mono text-[10px]">pid {proc.pid}</div>
                   </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <span className="text-muted text-[10px] tabular-nums">
+                      {formatDuration(Date.now() - proc.startTime)}
+                    </span>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          disabled={isTerminating}
+                          onClick={(e) => handleViewOutput(proc.id, e)}
+                          className={cn(
+                            "text-muted hover:text-secondary rounded p-1 transition-colors",
+                            isTerminating && "cursor-not-allowed"
+                          )}
+                        >
+                          <FileText size={14} />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>View output</TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          disabled={isTerminating}
+                          onClick={(e) => handleTerminate(proc.id, e)}
+                          className={cn(
+                            "text-muted hover:text-error rounded p-1 transition-colors",
+                            isTerminating && "cursor-not-allowed"
+                          )}
+                        >
+                          {isTerminating ? (
+                            <Loader2 size={14} className="animate-spin" />
+                          ) : (
+                            <X size={14} />
+                          )}
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>Terminate process</TooltipContent>
+                    </Tooltip>
+                  </div>
+                </div>
+              );
+            })
+          }
+        />
       )}
 
       {viewingProcessId && (

@@ -25,6 +25,7 @@ import {
 import { cn } from "@/common/lib/utils";
 import { Button } from "../Button/Button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
+import { ChatInputDecoration } from "@/browser/components/ChatPane/ChatInputDecoration";
 import type { Review } from "@/common/types/review";
 import { useReviews } from "@/browser/hooks/useReviews";
 import { formatRelativeTime } from "@/browser/utils/ui/dateTime";
@@ -374,47 +375,38 @@ const ReviewsBannerInner: React.FC<ReviewsBannerInnerProps> = ({ workspaceId }) 
   }
 
   return (
-    <div className="border-border bg-surface-primary border-t px-[15px]">
-      {/* Collapsed banner - thin stripe, content aligned with chat */}
-      <button
-        type="button"
-        onClick={handleToggle}
-        className="group mx-auto flex w-full max-w-4xl items-center gap-2 px-2 py-1.5 text-xs transition-colors"
-      >
-        <MessageSquare
-          className={cn(
-            "size-3.5 transition-colors",
-            reviewsHook.pendingCount > 0
-              ? "text-[var(--color-review-accent)]"
-              : "text-muted group-hover:text-secondary"
-          )}
-        />
-        <span className="text-muted group-hover:text-secondary transition-colors">
-          {reviewsHook.pendingCount > 0 ? (
-            <>
-              <span className="font-medium text-[var(--color-review-accent)]">
-                {reviewsHook.pendingCount}
-              </span>
-              {" pending review"}
-              {reviewsHook.pendingCount !== 1 && "s"}
-            </>
-          ) : (
-            <>No pending reviews</>
-          )}
-          {reviewsHook.checkedCount > 0 && <> · {reviewsHook.checkedCount} completed</>}
-        </span>
-        <div className="ml-auto">
-          {isExpanded ? (
-            <ChevronDown className="text-muted group-hover:text-secondary size-3.5 transition-colors" />
-          ) : (
-            <ChevronRight className="text-muted group-hover:text-secondary size-3.5 transition-colors" />
-          )}
-        </div>
-      </button>
-
-      {/* Expanded view - content aligned with chat */}
-      {isExpanded && (
-        <div className="border-border mx-auto max-h-80 max-w-4xl space-y-3 overflow-y-auto border-t py-2">
+    <ChatInputDecoration
+      expanded={isExpanded}
+      onToggle={handleToggle}
+      contentClassName="max-h-80 space-y-3 overflow-y-auto py-2"
+      summary={
+        <>
+          <MessageSquare
+            className={cn(
+              "size-3.5 transition-colors",
+              reviewsHook.pendingCount > 0
+                ? "text-[var(--color-review-accent)]"
+                : "text-muted group-hover:text-secondary"
+            )}
+          />
+          <span className="text-muted group-hover:text-secondary transition-colors">
+            {reviewsHook.pendingCount > 0 ? (
+              <>
+                <span className="font-medium text-[var(--color-review-accent)]">
+                  {reviewsHook.pendingCount}
+                </span>
+                {" pending review"}
+                {reviewsHook.pendingCount !== 1 && "s"}
+              </>
+            ) : (
+              <>No pending reviews</>
+            )}
+            {reviewsHook.checkedCount > 0 && <> · {reviewsHook.checkedCount} completed</>}
+          </span>
+        </>
+      }
+      renderExpanded={() => (
+        <>
           {/* Pending reviews section */}
           {pendingList.length > 0 && (
             <div className="space-y-1.5">
@@ -488,9 +480,9 @@ const ReviewsBannerInner: React.FC<ReviewsBannerInnerProps> = ({ workspaceId }) 
           {pendingList.length === 0 && completedList.length === 0 && (
             <div className="text-muted py-3 text-center text-xs">No reviews yet</div>
           )}
-        </div>
+        </>
       )}
-    </div>
+    />
   );
 };
 
