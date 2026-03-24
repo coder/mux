@@ -199,29 +199,6 @@ export function createUserMessage(
   };
 }
 
-/** Create a compaction request user message (triggers shimmer effect on streaming response) */
-export function createCompactionRequestMessage(
-  id: string,
-  opts: { historySequence: number; timestamp?: number; rawCommand?: string }
-): ChatMuxMessage {
-  const rawCommand = opts.rawCommand ?? "/compact";
-  return {
-    type: "message",
-    id,
-    role: "user",
-    parts: [{ type: "text", text: rawCommand }],
-    metadata: {
-      historySequence: opts.historySequence,
-      timestamp: opts.timestamp ?? STABLE_TIMESTAMP,
-      muxMetadata: {
-        type: "compaction-request",
-        rawCommand,
-        parsed: {},
-      },
-    },
-  };
-}
-
 export function createAssistantMessage(
   id: string,
   text: string,
@@ -291,37 +268,6 @@ export function createFileEditTool(toolCallId: string, filePath: string, diff: s
     state: "output-available",
     input: { path: filePath, old_string: "...", new_string: "..." },
     output: { success: true, diff, edits_applied: 1 },
-  };
-}
-
-export function createBashOverflowTool(
-  toolCallId: string,
-  script: string,
-  notice: string,
-  truncated: { reason: string; totalLines: number },
-  timeoutSecs = 3,
-  durationMs = 50,
-  displayName = "Bash"
-): MuxPart {
-  return {
-    type: "dynamic-tool",
-    toolCallId,
-    toolName: "bash",
-    state: "output-available",
-    input: {
-      script,
-      run_in_background: false,
-      timeout_secs: timeoutSecs,
-      display_name: displayName,
-    },
-    output: {
-      success: true,
-      output: "",
-      note: notice,
-      exitCode: 0,
-      wall_duration_ms: durationMs,
-      truncated,
-    },
   };
 }
 
