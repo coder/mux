@@ -182,6 +182,68 @@ describe("shouldBackOffBrowserReconnect", () => {
     ).toBe(true);
   });
 
+  test("treats failed streaming enablement as retryable", () => {
+    expect(
+      shouldBackOffBrowserReconnect({
+        selectedSessionName: "alpha",
+        session: createSession({
+          sessionName: "alpha",
+          status: "error",
+          streamState: "error",
+          lastError: 'Failed to enable streaming for session "test"',
+        }),
+        visibleError: 'Failed to enable streaming for session "test"',
+        lastConnectAttempt: {
+          sessionName: "alpha",
+          attemptedAtMs: 10_000,
+        },
+        nowMs: 10_000 + BROWSER_PREVIEW_RETRY_INTERVAL_MS - 1,
+      })
+    ).toBe(true);
+  });
+
+  test("treats failed streaming verification as retryable", () => {
+    expect(
+      shouldBackOffBrowserReconnect({
+        selectedSessionName: "alpha",
+        session: createSession({
+          sessionName: "alpha",
+          status: "error",
+          streamState: "error",
+          lastError:
+            'Failed to verify streaming for session "test" after enabling (requested port 12345)',
+        }),
+        visibleError:
+          'Failed to verify streaming for session "test" after enabling (requested port 12345)',
+        lastConnectAttempt: {
+          sessionName: "alpha",
+          attemptedAtMs: 10_000,
+        },
+        nowMs: 10_000 + BROWSER_PREVIEW_RETRY_INTERVAL_MS - 1,
+      })
+    ).toBe(true);
+  });
+
+  test("does not treat missing sessions as retryable", () => {
+    expect(
+      shouldBackOffBrowserReconnect({
+        selectedSessionName: "alpha",
+        session: createSession({
+          sessionName: "alpha",
+          status: "error",
+          streamState: "error",
+          lastError: 'Session "test" not found for workspace "ws"',
+        }),
+        visibleError: 'Session "test" not found for workspace "ws"',
+        lastConnectAttempt: {
+          sessionName: "alpha",
+          attemptedAtMs: 10_000,
+        },
+        nowMs: 10_000 + BROWSER_PREVIEW_RETRY_INTERVAL_MS - 1,
+      })
+    ).toBe(false);
+  });
+
   test("does not back off different sessions or non-retryable failures", () => {
     expect(
       shouldBackOffBrowserReconnect({

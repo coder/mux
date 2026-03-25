@@ -58,7 +58,7 @@ function isRetryableBrowserError(error: string | null): boolean {
     return false;
   }
 
-  return /disconnected|session unavailable|is unavailable|stream connect failed|invalid token/i.test(
+  return /disconnected|session unavailable|is unavailable|stream connect failed|invalid token|failed to enable streaming|failed to verify streaming/i.test(
     error
   );
 }
