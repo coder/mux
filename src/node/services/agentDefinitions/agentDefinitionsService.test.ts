@@ -31,12 +31,14 @@ class RemotePathMappedRuntime extends RemoteRuntime {
   private readonly localRuntime: LocalRuntime;
   private readonly localBase: string;
   private readonly remoteBase: string;
+  private readonly muxHomeOverride: string | null;
 
-  constructor(localBase: string, remoteBase: string) {
+  constructor(localBase: string, remoteBase: string, options?: { muxHome?: string }) {
     super();
     this.localRuntime = new LocalRuntime(localBase);
     this.localBase = path.resolve(localBase);
     this.remoteBase = remoteBase === "/" ? remoteBase : remoteBase.replace(/\/+$/u, "");
+    this.muxHomeOverride = options?.muxHome ?? null;
   }
 
   protected readonly commandPrefix = "TestRemoteRuntime";
@@ -89,6 +91,10 @@ class RemotePathMappedRuntime extends RemoteRuntime {
       ...options,
       cwd: this.toLocalPath(options.cwd),
     });
+  }
+
+  override getMuxHome(): string {
+    return this.muxHomeOverride ?? super.getMuxHome();
   }
 
   override normalizePath(targetPath: string, basePath: string): string {
@@ -290,6 +296,39 @@ describe("agentDefinitionsService", () => {
     const body = await resolveAgentBody(runtime, remoteWorkspacePath, "child", { roots });
     expect(body).toContain("Global instructions.");
     expect(body).toContain("Project instructions.");
+  });
+
+  test("docker-like remote runtimes keep global agent reads on the runtime filesystem", async () => {
+    using runtimeBase = new DisposableTempDir("agent-defs-docker-global-runtime");
+
+    const remoteRuntimeRoot = "/var";
+    const remoteWorkspacePath = "/var/workspace";
+    const runtimeWorkspaceRoot = path.join(runtimeBase.path, "workspace");
+    const runtimeGlobalAgentsRoot = path.join(runtimeBase.path, "global-agents");
+    await fs.mkdir(runtimeWorkspaceRoot, { recursive: true });
+    await writeAgent(runtimeGlobalAgentsRoot, "docker-global", "Docker Global");
+
+    const roots = {
+      projectRoot: path.posix.join(remoteWorkspacePath, ".mux", "agents"),
+      globalRoot: path.posix.join(remoteRuntimeRoot, "global-agents"),
+    };
+    const runtime = new RemotePathMappedRuntime(runtimeBase.path, remoteRuntimeRoot, {
+      muxHome: "/var/mux",
+    });
+
+    const agents = await discoverAgentDefinitions(runtime, remoteWorkspacePath, { roots });
+
+    expect(agents.find((agent) => agent.id === "docker-global")).toMatchObject({
+      id: "docker-global",
+      name: "Docker Global",
+      scope: "global",
+    });
+
+    const pkg = await readAgentDefinition(runtime, remoteWorkspacePath, "docker-global", {
+      roots,
+    });
+    expect(pkg.scope).toBe("global");
+    expect(pkg.frontmatter.name).toBe("Docker Global");
   });
 
   test("known global-scope resolution skips remote project probes during inheritance", async () => {

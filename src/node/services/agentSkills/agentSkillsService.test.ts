@@ -32,14 +32,16 @@ class RemotePathMappedRuntime extends RemoteRuntime {
   private readonly localRuntime: LocalRuntime;
   private readonly localBase: string;
   private readonly remoteBase: string;
+  private readonly muxHomeOverride: string | null;
 
   public execCallCount = 0;
 
-  constructor(localBase: string, remoteBase: string) {
+  constructor(localBase: string, remoteBase: string, options?: { muxHome?: string }) {
     super();
     this.localRuntime = new LocalRuntime(localBase);
     this.localBase = path.resolve(localBase);
     this.remoteBase = remoteBase === "/" ? remoteBase : remoteBase.replace(/\/+$/u, "");
+    this.muxHomeOverride = options?.muxHome ?? null;
   }
 
   protected readonly commandPrefix = "TestRemoteRuntime";
@@ -105,6 +107,10 @@ class RemotePathMappedRuntime extends RemoteRuntime {
       ...options,
       cwd: this.toLocalPath(options.cwd),
     });
+  }
+
+  override getMuxHome(): string {
+    return this.muxHomeOverride ?? super.getMuxHome();
   }
 
   override normalizePath(targetPath: string, basePath: string): string {
@@ -389,6 +395,40 @@ describe("agentSkillsService", () => {
       description: "from remote runtime",
       scope: "project",
     });
+  });
+
+  test("docker-like remote runtimes keep global skills on the runtime filesystem", async () => {
+    using runtimeBase = new DisposableTempDir("agent-skills-docker-global-runtime");
+
+    const remoteRuntimeRoot = "/var";
+    const remoteWorkspaceRoot = "/var/workspace";
+    const runtimeWorkspaceRoot = path.join(runtimeBase.path, "workspace");
+    const runtimeGlobalSkillsRoot = path.join(runtimeBase.path, "mux", "skills");
+    await fs.mkdir(runtimeWorkspaceRoot, { recursive: true });
+    await writeSkill(runtimeGlobalSkillsRoot, "docker-global-skill", "from runtime global");
+
+    const runtime = new RemotePathMappedRuntime(runtimeBase.path, remoteRuntimeRoot, {
+      muxHome: "/var/mux",
+    });
+    const roots = getDefaultAgentSkillsRoots(runtime, remoteWorkspaceRoot);
+
+    const skills = await discoverAgentSkills(runtime, remoteWorkspaceRoot, { roots });
+
+    expect(skills.find((skill) => skill.name === "docker-global-skill")).toMatchObject({
+      name: "docker-global-skill",
+      description: "from runtime global",
+      scope: "global",
+    });
+
+    const resolved = await readAgentSkill(
+      runtime,
+      remoteWorkspaceRoot,
+      SkillNameSchema.parse("docker-global-skill"),
+      { roots }
+    );
+
+    expect(resolved.package.scope).toBe("global");
+    expect(resolved.package.frontmatter.description).toBe("from runtime global");
   });
 
   test("scans universal root after mux global root", async () => {
