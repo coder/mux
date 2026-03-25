@@ -16,7 +16,7 @@ interface QueuedPreview {
   fallbackLabel: string;
 }
 
-export function deriveQueuedPreview(message: QueuedMessageType): QueuedPreview {
+function deriveQueuedPreview(message: QueuedMessageType): QueuedPreview {
   const hasReviews = (message.reviews?.length ?? 0) > 0;
   const sanitizedText = hasReviews
     ? message.content.replace(/<review>[\s\S]*?<\/review>\s*/g, "").trim()
