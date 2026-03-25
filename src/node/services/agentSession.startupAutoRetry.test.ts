@@ -8,11 +8,16 @@ import type { HistoryService } from "./historyService";
 import type { Config } from "@/node/config";
 import type { InitStateManager } from "./initStateManager";
 import type { WorkspaceChatMessage, SendMessageOptions } from "@/common/orpc/types";
-import { createMuxMessage, type StartupRetrySendOptions } from "@/common/types/message";
+import { createMuxMessage } from "@/common/types/message";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { Ok } from "@/common/types/result";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
+
+interface AutoRetryResumeRequest {
+  options: SendMessageOptions;
+  agentInitiated?: boolean;
+}
 
 interface SessionBundle {
   session: AgentSession;
@@ -144,17 +149,17 @@ describe("AgentSession startup auto-retry recovery", () => {
 
     const retryOptions = (
       session as unknown as {
-        lastAutoRetryRequest?: StartupRetrySendOptions;
+        lastAutoRetryResumeRequest?: AutoRetryResumeRequest;
       }
-    ).lastAutoRetryRequest;
+    ).lastAutoRetryResumeRequest;
     expect(retryOptions).toBeDefined();
     if (!retryOptions) {
       throw new Error("Expected startup auto-retry options to be captured");
     }
-    expect(retryOptions.model).toBe("anthropic:claude-sonnet-4-5");
-    expect(retryOptions.agentId).toBe(WORKSPACE_DEFAULTS.agentId);
-    expect(retryOptions.toolPolicy).toEqual([{ regex_match: ".*", action: "disable" }]);
-    expect(retryOptions.disableWorkspaceAgents).toBe(true);
+    expect(retryOptions.options.model).toBe("anthropic:claude-sonnet-4-5");
+    expect(retryOptions.options.agentId).toBe(WORKSPACE_DEFAULTS.agentId);
+    expect(retryOptions.options.toolPolicy).toEqual([{ regex_match: ".*", action: "disable" }]);
+    expect(retryOptions.options.disableWorkspaceAgents).toBe(true);
 
     session.dispose();
   });
@@ -459,25 +464,25 @@ describe("AgentSession startup auto-retry recovery", () => {
 
     const retryOptions = (
       session as unknown as {
-        lastAutoRetryRequest?: StartupRetrySendOptions;
+        lastAutoRetryResumeRequest?: AutoRetryResumeRequest;
       }
-    ).lastAutoRetryRequest;
+    ).lastAutoRetryResumeRequest;
     expect(retryOptions).toBeDefined();
     if (!retryOptions) {
       throw new Error("Expected startup retry options");
     }
 
-    expect(retryOptions.model).toBe("anthropic:claude-sonnet-4-5");
-    expect(retryOptions.agentId).toBe("exec");
-    expect(retryOptions.thinkingLevel).toBe("high");
-    expect(retryOptions.system1ThinkingLevel).toBe("low");
-    expect(retryOptions.system1Model).toBe("openai:gpt-4o-mini");
-    expect(retryOptions.additionalSystemInstructions).toBe("Use one sentence.");
-    expect(retryOptions.maxOutputTokens).toBe(2048);
-    expect(retryOptions.toolPolicy).toEqual([{ regex_match: "bash", action: "disable" }]);
-    expect(retryOptions.disableWorkspaceAgents).toBe(true);
-    expect(retryOptions.experiments?.system1).toBe(true);
-    expect(retryOptions.providerOptions?.anthropic?.use1MContext).toBe(true);
+    expect(retryOptions.options.model).toBe("anthropic:claude-sonnet-4-5");
+    expect(retryOptions.options.agentId).toBe("exec");
+    expect(retryOptions.options.thinkingLevel).toBe("high");
+    expect(retryOptions.options.system1ThinkingLevel).toBe("low");
+    expect(retryOptions.options.system1Model).toBe("openai:gpt-4o-mini");
+    expect(retryOptions.options.additionalSystemInstructions).toBe("Use one sentence.");
+    expect(retryOptions.options.maxOutputTokens).toBe(2048);
+    expect(retryOptions.options.toolPolicy).toEqual([{ regex_match: "bash", action: "disable" }]);
+    expect(retryOptions.options.disableWorkspaceAgents).toBe(true);
+    expect(retryOptions.options.experiments?.system1).toBe(true);
+    expect(retryOptions.options.providerOptions?.anthropic?.use1MContext).toBe(true);
 
     session.dispose();
   });
@@ -720,7 +725,7 @@ describe("AgentSession startup auto-retry recovery", () => {
       persistStartupAutoRetryAbandon: (reason: string, userMessageId?: string) => Promise<void>;
       retryActiveStream: () => Promise<void>;
       getAutoRetryPreferencePath: () => string;
-      lastAutoRetryRequest?: StartupRetrySendOptions;
+      lastAutoRetryResumeRequest?: AutoRetryResumeRequest;
       resumeStream: (
         options: SendMessageOptions
       ) => Promise<{ success: true; data: { started: boolean } }>;
@@ -732,9 +737,11 @@ describe("AgentSession startup auto-retry recovery", () => {
     const preferencePath = privateSession.getAutoRetryPreferencePath();
     expect(await Bun.file(preferencePath).exists()).toBe(true);
 
-    privateSession.lastAutoRetryRequest = {
-      model: "anthropic:claude-sonnet-4-5",
-      agentId: "exec",
+    privateSession.lastAutoRetryResumeRequest = {
+      options: {
+        model: "anthropic:claude-sonnet-4-5",
+        agentId: "exec",
+      },
     };
 
     const resumeStreamMock = mock((_options: SendMessageOptions) =>
@@ -758,15 +765,17 @@ describe("AgentSession startup auto-retry recovery", () => {
 
     const privateSession = session as unknown as {
       retryActiveStream: () => Promise<void>;
-      lastAutoRetryRequest?: StartupRetrySendOptions;
+      lastAutoRetryResumeRequest?: AutoRetryResumeRequest;
       resumeStream: (
         options: SendMessageOptions
       ) => Promise<{ success: true; data: { started: boolean } }>;
     };
 
-    privateSession.lastAutoRetryRequest = {
-      model: "anthropic:claude-sonnet-4-5",
-      agentId: "exec",
+    privateSession.lastAutoRetryResumeRequest = {
+      options: {
+        model: "anthropic:claude-sonnet-4-5",
+        agentId: "exec",
+      },
     };
 
     const resumeStreamMock = mock((_options: SendMessageOptions) =>
@@ -795,7 +804,7 @@ describe("AgentSession startup auto-retry recovery", () => {
 
     const privateSession = session as unknown as {
       retryActiveStream: () => Promise<void>;
-      lastAutoRetryRequest?: StartupRetrySendOptions;
+      lastAutoRetryResumeRequest?: AutoRetryResumeRequest;
       activeStreamFailureHandled: boolean;
       resumeStream: (
         options: SendMessageOptions
@@ -805,9 +814,11 @@ describe("AgentSession startup auto-retry recovery", () => {
       >;
     };
 
-    privateSession.lastAutoRetryRequest = {
-      model: "anthropic:claude-sonnet-4-5",
-      agentId: "exec",
+    privateSession.lastAutoRetryResumeRequest = {
+      options: {
+        model: "anthropic:claude-sonnet-4-5",
+        agentId: "exec",
+      },
     };
 
     privateSession.activeStreamFailureHandled = true;
@@ -840,7 +851,7 @@ describe("AgentSession startup auto-retry recovery", () => {
 
     const privateSession = session as unknown as {
       retryActiveStream: () => Promise<void>;
-      lastAutoRetryRequest?: StartupRetrySendOptions;
+      lastAutoRetryResumeRequest?: AutoRetryResumeRequest;
       activeStreamFailureHandled: boolean;
       resumeStream: (
         options: SendMessageOptions
@@ -850,9 +861,11 @@ describe("AgentSession startup auto-retry recovery", () => {
       >;
     };
 
-    privateSession.lastAutoRetryRequest = {
-      model: "anthropic:claude-sonnet-4-5",
-      agentId: "exec",
+    privateSession.lastAutoRetryResumeRequest = {
+      options: {
+        model: "anthropic:claude-sonnet-4-5",
+        agentId: "exec",
+      },
     };
 
     privateSession.activeStreamFailureHandled = false;
@@ -902,7 +915,7 @@ describe("AgentSession startup auto-retry recovery", () => {
     const privateSession = session as unknown as {
       dispatchPendingFollowUp: () => Promise<boolean>;
       retryActiveStream: () => Promise<void>;
-      lastAutoRetryRequest?: StartupRetrySendOptions;
+      lastAutoRetryResumeRequest?: AutoRetryResumeRequest;
       sendMessage: (
         message: string,
         options?: SendMessageOptions,
@@ -916,10 +929,12 @@ describe("AgentSession startup auto-retry recovery", () => {
       ) => Promise<{ success: true; data: { started: boolean } }>;
     };
 
-    privateSession.lastAutoRetryRequest = {
-      model: "anthropic:claude-sonnet-4-5",
-      agentId: "compact",
-      toolPolicy: [{ regex_match: ".*", action: "disable" }],
+    privateSession.lastAutoRetryResumeRequest = {
+      options: {
+        model: "anthropic:claude-sonnet-4-5",
+        agentId: "compact",
+        toolPolicy: [{ regex_match: ".*", action: "disable" }],
+      },
       agentInitiated: true,
     };
     privateSession.sendMessage = mock(() =>
@@ -966,6 +981,69 @@ describe("AgentSession startup auto-retry recovery", () => {
     session.dispose();
   });
 
+  test("same-session auto-retry preserves ACP correlation fields", async () => {
+    const workspaceId = "startup-retry-preserves-acp-fields";
+    const { session, aiService, cleanup } = await createSessionBundle(workspaceId);
+    cleanups.push(cleanup);
+
+    const acpPromptId = "acp-prompt-123";
+    const delegatedToolNames = ["bash", "task"];
+    const muxMetadata = {
+      source: "acp",
+      promptCorrelationId: "fallback-prompt-456",
+      delegatedToolNames: ["bash"],
+    };
+
+    let streamCallCount = 0;
+    const streamMessageMock = mock((_payload: Record<string, unknown>) => {
+      streamCallCount += 1;
+      if (streamCallCount === 1) {
+        return Promise.resolve({
+          success: false as const,
+          error: {
+            type: "runtime_start_failed" as const,
+            message: "startup failed",
+          },
+        });
+      }
+
+      return Promise.resolve(Ok(undefined));
+    });
+    aiService.streamMessage = streamMessageMock as unknown as AIService["streamMessage"];
+
+    const privateSession = session as unknown as {
+      retryActiveStream: () => Promise<void>;
+      lastAutoRetryResumeRequest?: AutoRetryResumeRequest;
+    };
+
+    const sendResult = await session.sendMessage("Retry the ACP request", {
+      model: "openai:gpt-4o",
+      agentId: "exec",
+      acpPromptId,
+      delegatedToolNames,
+      muxMetadata,
+    });
+
+    expect(sendResult.success).toBe(false);
+    expect(privateSession.lastAutoRetryResumeRequest?.options.acpPromptId).toBe(acpPromptId);
+    expect(privateSession.lastAutoRetryResumeRequest?.options.delegatedToolNames).toEqual(
+      delegatedToolNames
+    );
+    expect(privateSession.lastAutoRetryResumeRequest?.options.muxMetadata).toEqual(muxMetadata);
+
+    await privateSession.retryActiveStream();
+
+    expect(streamMessageMock).toHaveBeenCalledTimes(2);
+    const retryPayload = streamMessageMock.mock.calls[1]?.[0] as {
+      acpPromptId?: string;
+      delegatedToolNames?: string[];
+    };
+    expect(retryPayload.acpPromptId).toBe(acpPromptId);
+    expect(retryPayload.delegatedToolNames).toEqual(delegatedToolNames);
+
+    session.dispose();
+  });
+
   test("compaction retry failure preserves the adjusted 1M-context retry request", async () => {
     const workspaceId = "startup-retry-compaction-adjusted-request";
     const { session, cleanup } = await createSessionBundle(workspaceId);
@@ -990,7 +1068,7 @@ describe("AgentSession startup auto-retry recovery", () => {
         messageId: string;
         errorType?: string;
       }) => Promise<boolean>;
-      lastAutoRetryRequest?: StartupRetrySendOptions;
+      lastAutoRetryResumeRequest?: AutoRetryResumeRequest;
       activeCompactionRequest?: {
         id: string;
         modelString: string;
@@ -1027,9 +1105,11 @@ describe("AgentSession startup auto-retry recovery", () => {
       >;
     };
 
-    privateSession.lastAutoRetryRequest = {
-      model: "openai:gpt-4o-mini",
-      agentId: "compact",
+    privateSession.lastAutoRetryResumeRequest = {
+      options: {
+        model: "openai:gpt-4o-mini",
+        agentId: "compact",
+      },
       agentInitiated: true,
     };
     privateSession.activeCompactionRequest = {
@@ -1066,15 +1146,16 @@ describe("AgentSession startup auto-retry recovery", () => {
 
     expect(retried).toBe(false);
     expect(streamWithHistoryMock).toHaveBeenCalledTimes(1);
-    expect(privateSession.lastAutoRetryRequest?.model).toBe(baseOptions.model);
-    expect(privateSession.lastAutoRetryRequest?.agentId).toBe("compact");
-    expect(privateSession.lastAutoRetryRequest?.providerOptions?.anthropic?.use1MContext).toBe(
-      true
-    );
+    expect(privateSession.lastAutoRetryResumeRequest?.options.model).toBe(baseOptions.model);
+    expect(privateSession.lastAutoRetryResumeRequest?.options.agentId).toBe("compact");
     expect(
-      privateSession.lastAutoRetryRequest?.providerOptions?.anthropic?.use1MContextModels
+      privateSession.lastAutoRetryResumeRequest?.options.providerOptions?.anthropic?.use1MContext
+    ).toBe(true);
+    expect(
+      privateSession.lastAutoRetryResumeRequest?.options.providerOptions?.anthropic
+        ?.use1MContextModels
     ).toEqual([baseOptions.model]);
-    expect(privateSession.lastAutoRetryRequest?.agentInitiated).toBe(true);
+    expect(privateSession.lastAutoRetryResumeRequest?.agentInitiated).toBe(true);
 
     session.dispose();
   });
@@ -1185,7 +1266,7 @@ describe("AgentSession startup auto-retry recovery", () => {
         messageId: string;
         errorType?: string;
       }) => Promise<boolean>;
-      lastAutoRetryRequest?: StartupRetrySendOptions;
+      lastAutoRetryResumeRequest?: AutoRetryResumeRequest;
       activeStreamContext?: {
         modelString: string;
         options?: SendMessageOptions;
@@ -1206,9 +1287,11 @@ describe("AgentSession startup auto-retry recovery", () => {
       >;
     };
 
-    privateSession.lastAutoRetryRequest = {
-      model: "openai:gpt-4o-mini",
-      agentId: "exec",
+    privateSession.lastAutoRetryResumeRequest = {
+      options: {
+        model: "openai:gpt-4o-mini",
+        agentId: "exec",
+      },
       agentInitiated: true,
     };
     privateSession.activeStreamContext = {
@@ -1236,16 +1319,18 @@ describe("AgentSession startup auto-retry recovery", () => {
 
     expect(retried).toBe(false);
     expect(streamWithHistoryMock).toHaveBeenCalledTimes(1);
-    expect(privateSession.lastAutoRetryRequest?.model).toBe(baseOptions.model);
-    expect(privateSession.lastAutoRetryRequest?.agentId).toBe("exec");
-    expect(privateSession.lastAutoRetryRequest?.experiments?.execSubagentHardRestart).toBe(true);
-    expect(privateSession.lastAutoRetryRequest?.agentInitiated).toBe(true);
-    expect(privateSession.lastAutoRetryRequest?.additionalSystemInstructions).toContain(
-      "Context limit reached"
-    );
-    expect(privateSession.lastAutoRetryRequest?.additionalSystemInstructions).toContain(
-      "Follow the existing plan."
-    );
+    expect(privateSession.lastAutoRetryResumeRequest?.options.model).toBe(baseOptions.model);
+    expect(privateSession.lastAutoRetryResumeRequest?.options.agentId).toBe("exec");
+    expect(
+      privateSession.lastAutoRetryResumeRequest?.options.experiments?.execSubagentHardRestart
+    ).toBe(true);
+    expect(privateSession.lastAutoRetryResumeRequest?.agentInitiated).toBe(true);
+    expect(
+      privateSession.lastAutoRetryResumeRequest?.options.additionalSystemInstructions
+    ).toContain("Context limit reached");
+    expect(
+      privateSession.lastAutoRetryResumeRequest?.options.additionalSystemInstructions
+    ).toContain("Follow the existing plan.");
 
     session.dispose();
   });

@@ -1,5 +1,5 @@
 import { describe, expect, test, mock, afterEach } from "bun:test";
-import { buildContinueMessage, type StartupRetrySendOptions } from "@/common/types/message";
+import { buildContinueMessage } from "@/common/types/message";
 import type { FilePart, SendMessageOptions } from "@/common/orpc/types";
 import { AgentSession } from "./agentSession";
 import type { Config } from "@/node/config";
@@ -15,6 +15,11 @@ import { createTestHistoryService } from "./testHistoryService";
 
 type SendOptions = SendMessageOptions & { fileParts?: FilePart[] };
 
+interface AutoRetryResumeRequest {
+  options: SendMessageOptions;
+  agentInitiated?: boolean;
+}
+
 interface SessionInternals {
   dispatchPendingFollowUp: () => Promise<void>;
   sendMessage: (
@@ -25,7 +30,7 @@ interface SessionInternals {
   scheduleStartupRecovery: () => void;
   startupRecoveryPromise: Promise<void> | null;
   startupRecoveryScheduled: boolean;
-  lastAutoRetryRequest?: StartupRetrySendOptions;
+  lastAutoRetryResumeRequest?: AutoRetryResumeRequest;
 }
 
 describe("AgentSession continue-message agentId fallback", () => {
@@ -202,10 +207,12 @@ describe("AgentSession continue-message agentId fallback", () => {
     });
 
     const internals = session as unknown as SessionInternals;
-    internals.lastAutoRetryRequest = {
-      model: "openai:gpt-4o-mini",
-      agentId: "compact",
-      toolPolicy: [{ regex_match: ".*", action: "disable" }],
+    internals.lastAutoRetryResumeRequest = {
+      options: {
+        model: "openai:gpt-4o-mini",
+        agentId: "compact",
+        toolPolicy: [{ regex_match: ".*", action: "disable" }],
+      },
       agentInitiated: true,
     };
     internals.sendMessage = mock(() =>
@@ -227,15 +234,11 @@ describe("AgentSession continue-message agentId fallback", () => {
       throw new Error("Expected dispatchPendingFollowUp to throw when sendMessage fails");
     }
     expect(dispatchError.message).toContain("Failed to dispatch pending follow-up");
-    expect(internals.lastAutoRetryRequest).toEqual(
-      expect.objectContaining({
-        model: "openai:gpt-4o",
-        agentId: "plan",
-        thinkingLevel: "high",
-      }) as StartupRetrySendOptions
-    );
-    expect(internals.lastAutoRetryRequest?.toolPolicy).toBeUndefined();
-    expect(internals.lastAutoRetryRequest?.agentInitiated).toBeUndefined();
+    expect(internals.lastAutoRetryResumeRequest?.options.model).toBe("openai:gpt-4o");
+    expect(internals.lastAutoRetryResumeRequest?.options.agentId).toBe("plan");
+    expect(internals.lastAutoRetryResumeRequest?.options.thinkingLevel).toBe("high");
+    expect(internals.lastAutoRetryResumeRequest?.options.toolPolicy).toBeUndefined();
+    expect(internals.lastAutoRetryResumeRequest?.agentInitiated).toBeUndefined();
 
     session.dispose();
   });

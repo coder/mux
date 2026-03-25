@@ -148,6 +148,14 @@ interface CompactionRequestMetadata {
   };
 }
 
+interface AutoRetryResumeRequest {
+  // Same-session auto-retry must preserve the full normalized request because
+  // ACP correlation/delegation lives in transient send options that are
+  // intentionally omitted from durable startup-recovery snapshots.
+  options: SendMessageOptions;
+  agentInitiated?: boolean;
+}
+
 interface SwitchAgentResult {
   agentId: string;
   reason?: string;
@@ -308,7 +316,7 @@ export class AgentSession {
   private readonly compactionMonitor: CompactionMonitor;
 
   private readonly retryManager: RetryManager;
-  private lastAutoRetryRequest?: StartupRetrySendOptions;
+  private lastAutoRetryResumeRequest?: AutoRetryResumeRequest;
   /** Startup recovery should run once per session to avoid duplicate retry timers on reconnect. */
   private startupRecoveryScheduled = false;
   private startupRecoveryPromise: Promise<void> | null = null;
@@ -657,8 +665,19 @@ export class AgentSession {
     this.retryManager.handleStreamFailure(error);
   }
 
-  private setAutoRetryResumeState(request: StartupRetrySendOptions | undefined): void {
-    this.lastAutoRetryRequest = request;
+  private setAutoRetryResumeState(
+    options: SendMessageOptions | undefined,
+    agentInitiated?: boolean
+  ): void {
+    if (!options) {
+      this.lastAutoRetryResumeRequest = undefined;
+      return;
+    }
+
+    this.lastAutoRetryResumeRequest = {
+      options,
+      ...(agentInitiated === true ? { agentInitiated: true } : {}),
+    };
   }
 
   private extractRetryFailureMessage(error: SendMessageError): string | undefined {
@@ -674,15 +693,14 @@ export class AgentSession {
   }
 
   private async retryActiveStream(): Promise<void> {
-    const request = this.lastAutoRetryRequest;
+    const request = this.lastAutoRetryResumeRequest;
     if (!request) {
       this.emitRetryEvent({ type: "auto-retry-abandoned", reason: "missing_retry_options" });
       return;
     }
 
-    const { agentInitiated, ...resumeOptions } = request;
-    const result = await this.resumeStream(resumeOptions, {
-      agentInitiated: agentInitiated === true ? true : undefined,
+    const result = await this.resumeStream(request.options, {
+      agentInitiated: request.agentInitiated === true ? true : undefined,
     });
     if (result.success) {
       if (!result.data.started) {
@@ -1178,8 +1196,8 @@ export class AgentSession {
   async getStartupAutoRetryModelHint(): Promise<string | null> {
     this.assertNotDisposed("getStartupAutoRetryModelHint");
 
-    if (this.lastAutoRetryRequest?.model) {
-      return this.lastAutoRetryRequest.model;
+    if (this.lastAutoRetryResumeRequest?.options.model) {
+      return this.lastAutoRetryResumeRequest.options.model;
     }
 
     const [partial, historyResult] = await Promise.all([
@@ -1298,16 +1316,19 @@ export class AgentSession {
       }
     }
 
-    const retryRequest =
-      this.lastAutoRetryRequest ??
-      (await this.deriveStartupAutoRetryRequest({
+    if (!this.lastAutoRetryResumeRequest) {
+      const retryRequest = await this.deriveStartupAutoRetryRequest({
         partial,
         historyTail: historyResult.data,
-      }));
+      });
 
-    if (!retryRequest) {
-      this.emitRetryEvent({ type: "auto-retry-abandoned", reason: "missing_retry_options" });
-      return "completed";
+      if (!retryRequest) {
+        this.emitRetryEvent({ type: "auto-retry-abandoned", reason: "missing_retry_options" });
+        return "completed";
+      }
+
+      const { agentInitiated, ...resumeOptions } = retryRequest;
+      this.setAutoRetryResumeState(resumeOptions, agentInitiated);
     }
 
     // Disk reads above may race with user actions; retry once the current work settles
@@ -1316,8 +1337,6 @@ export class AgentSession {
       this.startupAutoRetryDeferredRetryDelayMs = 0;
       return "deferred";
     }
-
-    this.setAutoRetryResumeState(retryRequest);
     await this.handleStreamFailureForAutoRetry({
       type: "unknown",
       message: "startup_interrupted_stream",
@@ -2413,9 +2432,9 @@ export class AgentSession {
       await this.persistAutoRetryEnabledPreference(true);
     }
 
-    // Retry should resume the accepted turn we just finalized in history, even if
-    // runtime warmup fails before streamWithHistory() starts.
-    this.setAutoRetryResumeState(pickStartupRetrySendOptions(optionsForStream, agentInitiated));
+    // Same-session retry should resume the exact accepted request we just finalized
+    // in history, even if runtime warmup fails before streamWithHistory() starts.
+    this.setAutoRetryResumeState(optionsForStream, agentInitiated);
     this.setTurnPhase(TurnPhase.PREPARING);
 
     const startPreparedStream = async (): Promise<Result<void, SendMessageError>> => {
@@ -2500,11 +2519,9 @@ export class AgentSession {
       return Ok({ started: false });
     }
 
-    // A resumed attempt becomes the latest resumable work item as soon as we
+    // A resumed attempt becomes the latest live resume request as soon as we
     // accept its options, even if startup fails before the stream fully begins.
-    this.setAutoRetryResumeState(
-      pickStartupRetrySendOptions(optionsForStream, internal?.agentInitiated)
-    );
+    this.setAutoRetryResumeState(optionsForStream, internal?.agentInitiated);
     this.setTurnPhase(TurnPhase.PREPARING);
     try {
       // Must await here so the finally block runs after streaming completes,
@@ -3284,9 +3301,7 @@ export class AgentSession {
     };
 
     await this.finalizeCompactionRetry(data.messageId);
-    this.setAutoRetryResumeState(
-      pickStartupRetrySendOptions(retryOptionsForResume, retryAgentInitiated)
-    );
+    this.setAutoRetryResumeState(retryOptionsForResume, retryAgentInitiated);
     this.setTurnPhase(TurnPhase.PREPARING);
     let retryResult: Result<void, SendMessageError>;
     try {
@@ -3665,7 +3680,7 @@ export class AgentSession {
           },
         };
 
-    this.setAutoRetryResumeState(pickStartupRetrySendOptions(retryOptions, context.agentInitiated));
+    this.setAutoRetryResumeState(retryOptions, context.agentInitiated);
     this.setTurnPhase(TurnPhase.PREPARING);
     let retryResult: Result<void, SendMessageError>;
     try {
@@ -4910,10 +4925,10 @@ export class AgentSession {
       options.muxMetadata = metadata;
     }
 
-    // The compaction summary is now the source of truth for the next resumable
-    // work item. Pre-arm retry state from the reconstructed follow-up so failures
+    // The compaction summary is now the source of truth for the next live resume
+    // request. Pre-arm retry state from the reconstructed follow-up so failures
     // before stream startup do not fall back to the already-completed compact turn.
-    this.setAutoRetryResumeState(pickStartupRetrySendOptions(options));
+    this.setAutoRetryResumeState(options);
 
     // Await sendMessage to ensure the follow-up is persisted before returning.
     // This guarantees ordering: the follow-up message is written to history
