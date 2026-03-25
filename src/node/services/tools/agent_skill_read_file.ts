@@ -9,8 +9,10 @@ import { readAgentSkill } from "@/node/services/agentSkills/agentSkillsService";
 import { resolveSkillStorageContext } from "@/node/services/agentSkills/skillStorageContext";
 import { MAX_FILE_SIZE, validateFileSize } from "@/node/services/tools/fileCommon";
 import { readBuiltInSkillFile } from "@/node/services/agentSkills/builtInSkillDefinitions";
+import { RemoteRuntime } from "@/node/runtime/RemoteRuntime";
 import { RuntimeError } from "@/node/runtime/Runtime";
 import { readFileString } from "@/node/utils/runtime/helpers";
+import { resolveContainedSkillFilePath } from "./skillFileUtils";
 import { resolveContainedSkillFilePathOnRuntime } from "./runtimeSkillPathUtils";
 
 function readContentWithFileReadLimits(input: {
@@ -151,13 +153,31 @@ export const createAgentSkillReadFileTool: ToolFactory = (config: ToolConfigurat
           });
         }
 
+        const skillRuntime = resolvedSkill.sourceRuntime;
+        if (skillRuntime == null) {
+          throw new Error(
+            `Skill runtime missing for skill: ${resolvedSkill.package.directoryName}`
+          );
+        }
+
+        const shouldUseRuntimeContainment =
+          skillRuntime instanceof RemoteRuntime ||
+          (resolvedSkill.package.scope === "project" && skillCtx.containment.kind === "runtime");
+
         let targetPath: string;
         try {
-          ({ resolvedPath: targetPath } = await resolveContainedSkillFilePathOnRuntime(
-            skillCtx.runtime,
-            resolvedSkill.skillDir,
-            filePath
-          ));
+          if (shouldUseRuntimeContainment) {
+            ({ resolvedPath: targetPath } = await resolveContainedSkillFilePathOnRuntime(
+              skillRuntime,
+              resolvedSkill.skillDir,
+              filePath
+            ));
+          } else {
+            ({ resolvedPath: targetPath } = await resolveContainedSkillFilePath(
+              resolvedSkill.skillDir,
+              filePath
+            ));
+          }
         } catch (error) {
           const message = getErrorMessage(error);
 
@@ -183,7 +203,7 @@ export const createAgentSkillReadFileTool: ToolFactory = (config: ToolConfigurat
 
         let stat;
         try {
-          stat = await skillCtx.runtime.stat(targetPath);
+          stat = await skillRuntime.stat(targetPath);
         } catch (err) {
           if (err instanceof RuntimeError) {
             return {
@@ -211,7 +231,7 @@ export const createAgentSkillReadFileTool: ToolFactory = (config: ToolConfigurat
 
         let fullContent: string;
         try {
-          fullContent = await readFileString(skillCtx.runtime, targetPath);
+          fullContent = await readFileString(skillRuntime, targetPath);
         } catch (err) {
           if (err instanceof RuntimeError) {
             return {

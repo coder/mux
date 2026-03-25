@@ -9,6 +9,7 @@ import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import type { MuxToolScope } from "@/common/types/toolScope";
 import type { AgentSkillListToolResult } from "@/common/types/tools";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
+import { RemoteRuntime, type SpawnResult } from "@/node/runtime/RemoteRuntime";
 import { createAgentSkillListTool } from "./agent_skill_list";
 import { MAX_FILE_SIZE } from "./fileCommon";
 import { createTestToolConfig, TestTempDir } from "./testHelpers";
@@ -187,6 +188,117 @@ class RemotePathMappedRuntime extends LocalRuntime {
 
   override ensureDir(dirPath: string): ReturnType<LocalRuntime["ensureDir"]> {
     return super.ensureDir(this.toLocalPath(dirPath));
+  }
+}
+
+/**
+ * RemoteRuntime-based test helper for tests that need instanceof RemoteRuntime to be true.
+ * The existing RemotePathMappedRuntime above extends LocalRuntime (for the older split-root tests).
+ */
+class TrueRemotePathMappedRuntime extends RemoteRuntime {
+  private readonly localRuntime: LocalRuntime;
+  private readonly localBase: string;
+  private readonly remoteBase: string;
+
+  constructor(localBase: string, remoteBase: string) {
+    super();
+    this.localRuntime = new LocalRuntime(localBase);
+    this.localBase = path.resolve(localBase);
+    this.remoteBase = remoteBase === "/" ? remoteBase : remoteBase.replace(/\/+$/u, "");
+  }
+
+  protected readonly commandPrefix = "TestRemoteRuntime";
+
+  protected spawnRemoteProcess(): Promise<SpawnResult> {
+    throw new Error("spawnRemoteProcess should not be called");
+  }
+
+  protected getBasePath(): string {
+    return this.remoteBase;
+  }
+
+  protected quoteForRemote(targetPath: string): string {
+    return `'${targetPath.replaceAll("'", "'\\''")}'`;
+  }
+
+  protected cdCommand(cwd: string): string {
+    return `cd ${this.quoteForRemote(cwd)}`;
+  }
+
+  private toLocalPath(runtimePath: string): string {
+    const n = runtimePath.replaceAll("\\", "/");
+    if (n === "/" || n === this.remoteBase) return this.localBase;
+    if (n.startsWith(`${this.remoteBase}/`)) {
+      return path.join(this.localBase, ...n.slice(this.remoteBase.length + 1).split("/"));
+    }
+    return runtimePath;
+  }
+
+  private toRemotePath(localPath: string): string {
+    const r = path.resolve(localPath);
+    if (r === this.localBase) return this.remoteBase;
+    const pfx = `${this.localBase}${path.sep}`;
+    if (r.startsWith(pfx))
+      return `${this.remoteBase}/${r.slice(pfx.length).split(path.sep).join("/")}`;
+    return localPath.replaceAll("\\", "/");
+  }
+
+  override exec(
+    command: string,
+    options: Parameters<LocalRuntime["exec"]>[1]
+  ): ReturnType<LocalRuntime["exec"]> {
+    return this.localRuntime.exec(
+      command.split(this.remoteBase).join(this.localBase.replaceAll("\\", "/")),
+      { ...options, cwd: this.toLocalPath(options.cwd) }
+    );
+  }
+
+  override normalizePath(targetPath: string, basePath: string): string {
+    return path.posix.resolve(this.toRemotePath(basePath), targetPath.replaceAll("\\", "/"));
+  }
+
+  override async resolvePath(filePath: string): Promise<string> {
+    return this.toRemotePath(await this.localRuntime.resolvePath(this.toLocalPath(filePath)));
+  }
+
+  override getWorkspacePath(projectPath: string, workspaceName: string): string {
+    return path.posix.join(this.remoteBase, path.basename(projectPath), workspaceName);
+  }
+
+  override stat(fp: string, s?: AbortSignal): ReturnType<LocalRuntime["stat"]> {
+    return this.localRuntime.stat(this.toLocalPath(fp), s);
+  }
+
+  override readFile(fp: string, s?: AbortSignal): ReturnType<LocalRuntime["readFile"]> {
+    return this.localRuntime.readFile(this.toLocalPath(fp), s);
+  }
+
+  override writeFile(fp: string, s?: AbortSignal): ReturnType<LocalRuntime["writeFile"]> {
+    return this.localRuntime.writeFile(this.toLocalPath(fp), s);
+  }
+
+  override ensureDir(dp: string): ReturnType<LocalRuntime["ensureDir"]> {
+    return this.localRuntime.ensureDir(this.toLocalPath(dp));
+  }
+
+  override createWorkspace(_p: Parameters<LocalRuntime["createWorkspace"]>[0]) {
+    return Promise.resolve({ success: false as const, error: "not implemented" });
+  }
+
+  override initWorkspace(_p: Parameters<LocalRuntime["initWorkspace"]>[0]) {
+    return Promise.resolve({ success: false as const, error: "not implemented" });
+  }
+
+  override renameWorkspace(_a: string, _b: string, _c: string) {
+    return Promise.resolve({ success: false as const, error: "not implemented" });
+  }
+
+  override deleteWorkspace(_a: string, _b: string, _c: boolean) {
+    return Promise.resolve({ success: false as const, error: "not implemented" });
+  }
+
+  override forkWorkspace(_p: Parameters<LocalRuntime["forkWorkspace"]>[0]) {
+    return Promise.resolve({ success: false as const, error: "not implemented" });
   }
 }
 
@@ -502,6 +614,57 @@ describe("agent_skill_list", () => {
       if (result.success) {
         expect(Array.isArray(result.skills)).toBe(true);
       }
+    });
+
+    it("lists host-global skills in SSH project-runtime mode", async () => {
+      using project = new TestTempDir("test-agent-skill-list-ssh-host-global");
+      using muxHome = new TestTempDir("test-agent-skill-list-ssh-mux-home");
+
+      const remoteWorkspaceRoot = "/remote/workspace";
+
+      await withMuxRoot(muxHome.path, async () => {
+        await writeSkill(path.join(project.path, ".mux", "skills"), "project-remote", {
+          description: "from remote workspace",
+        });
+        await writeGlobalSkill(muxHome.path, "host-global", {
+          description: "from host mux home",
+        });
+
+        // Must use a RemoteRuntime subclass (not LocalRuntime) so the global-root
+        // fallback to host-local kicks in via instanceof RemoteRuntime.
+        const remoteRuntime = new TrueRemotePathMappedRuntime(project.path, remoteWorkspaceRoot);
+        const config = createTestToolConfig(project.path, {
+          workspaceId: "regular-workspace",
+          runtime: remoteRuntime,
+          muxScope: {
+            type: "project",
+            muxHome: muxHome.path,
+            projectRoot: project.path,
+            projectStorageAuthority: "runtime",
+          },
+        });
+
+        const tool = createAgentSkillListTool({
+          ...config,
+          cwd: remoteWorkspaceRoot,
+        });
+
+        const result = (await tool.execute!(
+          { includeUnadvertised: true },
+          mockToolCallOptions
+        )) as AgentSkillListToolResult;
+
+        expect(result.success).toBe(true);
+        if (!result.success) {
+          return;
+        }
+
+        expect(result.skills.map((skill) => skill.name)).toEqual(["host-global", "project-remote"]);
+        expect(result.skills.find((skill) => skill.name === "host-global")?.scope).toBe("global");
+        expect(result.skills.find((skill) => skill.name === "project-remote")?.scope).toBe(
+          "project"
+        );
+      });
     });
 
     it("uses runtime mux home for global roots in project-runtime mode", async () => {

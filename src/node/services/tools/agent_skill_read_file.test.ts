@@ -6,6 +6,7 @@ import type { ToolExecutionOptions } from "ai";
 
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
+import { RemoteRuntime, type SpawnResult } from "@/node/runtime/RemoteRuntime";
 import { AgentSkillReadFileToolResultSchema } from "@/common/utils/tools/toolDefinitions";
 import { createAgentSkillReadFileTool } from "./agent_skill_read_file";
 import { createTestToolConfig, TestTempDir } from "./testHelpers";
@@ -162,6 +163,92 @@ class RemotePathMappedRuntime extends LocalRuntime {
 
   override ensureDir(dirPath: string): ReturnType<LocalRuntime["ensureDir"]> {
     return super.ensureDir(this.toLocalPath(dirPath));
+  }
+}
+
+/** RemoteRuntime-based helper (instanceof RemoteRuntime is true). */
+class TrueRemoteRuntime extends RemoteRuntime {
+  private readonly lr: LocalRuntime;
+  private readonly lb: string;
+  private readonly rb: string;
+
+  constructor(localBase: string, remoteBase: string) {
+    super();
+    this.lr = new LocalRuntime(localBase);
+    this.lb = path.resolve(localBase);
+    this.rb = remoteBase === "/" ? remoteBase : remoteBase.replace(/\/+$/u, "");
+  }
+
+  protected readonly commandPrefix = "TestRemote";
+  protected spawnRemoteProcess(): Promise<SpawnResult> {
+    throw new Error("not implemented");
+  }
+  protected getBasePath(): string {
+    return this.rb;
+  }
+  protected quoteForRemote(p: string): string {
+    return `'${p.replaceAll("'", "'\\''")}'`;
+  }
+  protected cdCommand(cwd: string): string {
+    return `cd ${this.quoteForRemote(cwd)}`;
+  }
+
+  private toLocal(p: string): string {
+    const n = p.replaceAll("\\", "/");
+    if (n === "/" || n === this.rb) return this.lb;
+    if (n.startsWith(`${this.rb}/`))
+      return path.join(this.lb, ...n.slice(this.rb.length + 1).split("/"));
+    return p;
+  }
+  private toRemote(p: string): string {
+    const r = path.resolve(p);
+    if (r === this.lb) return this.rb;
+    const pfx = `${this.lb}${path.sep}`;
+    if (r.startsWith(pfx)) return `${this.rb}/${r.slice(pfx.length).split(path.sep).join("/")}`;
+    return p.replaceAll("\\", "/");
+  }
+
+  override exec(cmd: string, opts: Parameters<LocalRuntime["exec"]>[1]) {
+    return this.lr.exec(cmd.split(this.rb).join(this.lb.replaceAll("\\", "/")), {
+      ...opts,
+      cwd: this.toLocal(opts.cwd),
+    });
+  }
+  override normalizePath(t: string, b: string): string {
+    return path.posix.resolve(this.toRemote(b), t.replaceAll("\\", "/"));
+  }
+  override async resolvePath(fp: string): Promise<string> {
+    return this.toRemote(await this.lr.resolvePath(this.toLocal(fp)));
+  }
+  override getWorkspacePath(pp: string, wn: string): string {
+    return path.posix.join(this.rb, path.basename(pp), wn);
+  }
+  override stat(fp: string, s?: AbortSignal) {
+    return this.lr.stat(this.toLocal(fp), s);
+  }
+  override readFile(fp: string, s?: AbortSignal) {
+    return this.lr.readFile(this.toLocal(fp), s);
+  }
+  override writeFile(fp: string, s?: AbortSignal) {
+    return this.lr.writeFile(this.toLocal(fp), s);
+  }
+  override ensureDir(dp: string) {
+    return this.lr.ensureDir(this.toLocal(dp));
+  }
+  override createWorkspace(_p: Parameters<LocalRuntime["createWorkspace"]>[0]) {
+    return Promise.resolve({ success: false as const, error: "not implemented" });
+  }
+  override initWorkspace(_p: Parameters<LocalRuntime["initWorkspace"]>[0]) {
+    return Promise.resolve({ success: false as const, error: "not implemented" });
+  }
+  override renameWorkspace(_a: string, _b: string, _c: string) {
+    return Promise.resolve({ success: false as const, error: "not implemented" });
+  }
+  override deleteWorkspace(_a: string, _b: string, _c: boolean) {
+    return Promise.resolve({ success: false as const, error: "not implemented" });
+  }
+  override forkWorkspace(_p: Parameters<LocalRuntime["forkWorkspace"]>[0]) {
+    return Promise.resolve({ success: false as const, error: "not implemented" });
   }
 }
 
@@ -458,6 +545,61 @@ describe("agent_skill_read_file", () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.content).toContain("remote file content");
+    }
+  });
+
+  it("reads host-global skill files in SSH workspaces without syncing them to the remote", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-read-file-ssh-host-global");
+    const previousMuxRoot = process.env.MUX_ROOT;
+    process.env.MUX_ROOT = tempDir.path;
+
+    try {
+      await writeGlobalSkill(tempDir.path, "host-global", {
+        files: {
+          "references/data.txt": "hello from host-global skill",
+        },
+      });
+
+      // Must use a true RemoteRuntime subclass so instanceof RemoteRuntime triggers
+      // the host-global fallback in the skills service.
+      const remoteRuntime = new TrueRemoteRuntime(tempDir.path, REMOTE_WORKSPACE_ROOT);
+      const baseConfig = createTestToolConfig(tempDir.path, {
+        runtime: remoteRuntime,
+        muxScope: {
+          type: "project",
+          muxHome: tempDir.path,
+          projectRoot: tempDir.path,
+          projectStorageAuthority: "runtime",
+        },
+      });
+      const config = {
+        ...baseConfig,
+        cwd: REMOTE_WORKSPACE_ROOT,
+        workspaceSessionDir: REMOTE_WORKSPACE_ROOT,
+      };
+
+      const tool = createAgentSkillReadFileTool(config);
+
+      const raw: unknown = await Promise.resolve(
+        tool.execute!(
+          { name: "host-global", filePath: "references/data.txt", offset: 1, limit: 5 },
+          mockToolCallOptions
+        )
+      );
+
+      const parsed = AgentSkillReadFileToolResultSchema.safeParse(raw);
+      expect(parsed.success).toBe(true);
+      if (!parsed.success) {
+        throw new Error(parsed.error.message);
+      }
+
+      const result = parsed.data;
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.content).toContain("hello from host-global skill");
+      }
+    } finally {
+      restoreMuxRoot(previousMuxRoot);
     }
   });
 

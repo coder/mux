@@ -5,6 +5,7 @@ import { describe, expect, test } from "bun:test";
 
 import { AgentIdSchema } from "@/common/orpc/schemas";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
+import { RemoteRuntime, type SpawnResult } from "@/node/runtime/RemoteRuntime";
 import { DisposableTempDir } from "@/node/services/tempDir";
 import {
   discoverAgentDefinitions,
@@ -23,6 +24,143 @@ policy:
 Body
 `;
   await fs.writeFile(path.join(root, `${id}.md`), content, "utf-8");
+}
+
+class RemotePathMappedRuntime extends RemoteRuntime {
+  private readonly localRuntime: LocalRuntime;
+  private readonly localBase: string;
+  private readonly remoteBase: string;
+
+  constructor(localBase: string, remoteBase: string) {
+    super();
+    this.localRuntime = new LocalRuntime(localBase);
+    this.localBase = path.resolve(localBase);
+    this.remoteBase = remoteBase === "/" ? remoteBase : remoteBase.replace(/\/+$/u, "");
+  }
+
+  protected readonly commandPrefix = "TestRemoteRuntime";
+
+  protected spawnRemoteProcess(): Promise<SpawnResult> {
+    throw new Error("spawnRemoteProcess should not be called in RemotePathMappedRuntime tests");
+  }
+
+  protected getBasePath(): string {
+    return this.remoteBase;
+  }
+
+  protected quoteForRemote(targetPath: string): string {
+    return `'${targetPath.replaceAll("'", "'\\''")}'`;
+  }
+
+  protected cdCommand(cwd: string): string {
+    return `cd ${this.quoteForRemote(cwd)}`;
+  }
+
+  private toLocalPath(runtimePath: string): string {
+    const normalizedRuntimePath = runtimePath.replaceAll("\\", "/");
+    if (normalizedRuntimePath === this.remoteBase) return this.localBase;
+    if (normalizedRuntimePath.startsWith(`${this.remoteBase}/`)) {
+      const suffix = normalizedRuntimePath.slice(this.remoteBase.length + 1);
+      return path.join(this.localBase, ...suffix.split("/"));
+    }
+    return runtimePath;
+  }
+
+  private toRemotePath(localPath: string): string {
+    const resolvedLocalPath = path.resolve(localPath);
+    if (resolvedLocalPath === this.localBase) return this.remoteBase;
+    const localPrefix = `${this.localBase}${path.sep}`;
+    if (resolvedLocalPath.startsWith(localPrefix)) {
+      const suffix = resolvedLocalPath.slice(localPrefix.length).split(path.sep).join("/");
+      return `${this.remoteBase}/${suffix}`;
+    }
+    return localPath.replaceAll("\\", "/");
+  }
+
+  override exec(
+    command: string,
+    options: Parameters<LocalRuntime["exec"]>[1]
+  ): ReturnType<LocalRuntime["exec"]> {
+    const translatedCommand = command
+      .split(this.remoteBase)
+      .join(this.localBase.replaceAll("\\", "/"));
+    return this.localRuntime.exec(translatedCommand, {
+      ...options,
+      cwd: this.toLocalPath(options.cwd),
+    });
+  }
+
+  override normalizePath(targetPath: string, basePath: string): string {
+    const normalizedBasePath = this.toRemotePath(basePath);
+    return path.posix.resolve(normalizedBasePath, targetPath.replaceAll("\\", "/"));
+  }
+
+  override async resolvePath(filePath: string): Promise<string> {
+    const resolvedLocalPath = await this.localRuntime.resolvePath(this.toLocalPath(filePath));
+    return this.toRemotePath(resolvedLocalPath);
+  }
+
+  override getWorkspacePath(projectPath: string, workspaceName: string): string {
+    return path.posix.join(this.remoteBase, path.basename(projectPath), workspaceName);
+  }
+
+  override stat(filePath: string, abortSignal?: AbortSignal): ReturnType<LocalRuntime["stat"]> {
+    return this.localRuntime.stat(this.toLocalPath(filePath), abortSignal);
+  }
+
+  override readFile(
+    filePath: string,
+    abortSignal?: AbortSignal
+  ): ReturnType<LocalRuntime["readFile"]> {
+    return this.localRuntime.readFile(this.toLocalPath(filePath), abortSignal);
+  }
+
+  override writeFile(
+    filePath: string,
+    abortSignal?: AbortSignal
+  ): ReturnType<LocalRuntime["writeFile"]> {
+    return this.localRuntime.writeFile(this.toLocalPath(filePath), abortSignal);
+  }
+
+  override ensureDir(dirPath: string): ReturnType<LocalRuntime["ensureDir"]> {
+    return this.localRuntime.ensureDir(this.toLocalPath(dirPath));
+  }
+
+  override createWorkspace(
+    _params: Parameters<LocalRuntime["createWorkspace"]>[0]
+  ): ReturnType<LocalRuntime["createWorkspace"]> {
+    return Promise.resolve({ success: false, error: "not implemented in test runtime" });
+  }
+
+  override initWorkspace(
+    _params: Parameters<LocalRuntime["initWorkspace"]>[0]
+  ): ReturnType<LocalRuntime["initWorkspace"]> {
+    return Promise.resolve({ success: false, error: "not implemented in test runtime" });
+  }
+
+  override renameWorkspace(
+    _projectPath: string,
+    _oldName: string,
+    _newName: string,
+    _abortSignal?: AbortSignal
+  ): ReturnType<LocalRuntime["renameWorkspace"]> {
+    return Promise.resolve({ success: false, error: "not implemented in test runtime" });
+  }
+
+  override deleteWorkspace(
+    _projectPath: string,
+    _workspaceName: string,
+    _force: boolean,
+    _abortSignal?: AbortSignal
+  ): ReturnType<LocalRuntime["deleteWorkspace"]> {
+    return Promise.resolve({ success: false, error: "not implemented in test runtime" });
+  }
+
+  override forkWorkspace(
+    _params: Parameters<LocalRuntime["forkWorkspace"]>[0]
+  ): ReturnType<LocalRuntime["forkWorkspace"]> {
+    return Promise.resolve({ success: false, error: "not implemented in test runtime" });
+  }
 }
 
 describe("agentDefinitionsService", () => {
@@ -70,6 +208,75 @@ describe("agentDefinitionsService", () => {
 
     expect(pkg.scope).toBe("project");
     expect(pkg.frontmatter.name).toBe("Foo (project)");
+  });
+
+  test("SSH workspaces discover host-global agents while keeping project overrides on the remote workspace", async () => {
+    using project = new DisposableTempDir("agent-defs-ssh-project");
+    using global = new DisposableTempDir("agent-defs-ssh-global");
+
+    const remoteWorkspacePath = "/remote/workspace";
+    const projectAgentsRoot = path.join(project.path, ".mux", "agents");
+    const globalAgentsRoot = path.join(global.path, "agents");
+
+    await writeAgent(globalAgentsRoot, "host-only", "Host Only");
+    await writeAgent(globalAgentsRoot, "shared", "Shared (global)");
+    await writeAgent(projectAgentsRoot, "shared", "Shared (project)");
+
+    const roots = {
+      projectRoot: path.posix.join(remoteWorkspacePath, ".mux", "agents"),
+      globalRoot: globalAgentsRoot,
+    };
+    const runtime = new RemotePathMappedRuntime(project.path, remoteWorkspacePath);
+
+    const agents = await discoverAgentDefinitions(runtime, remoteWorkspacePath, { roots });
+
+    const hostOnly = agents.find((agent) => agent.id === "host-only");
+    expect(hostOnly).toBeDefined();
+    expect(hostOnly?.scope).toBe("global");
+    expect(hostOnly?.name).toBe("Host Only");
+
+    const shared = agents.find((agent) => agent.id === "shared");
+    expect(shared).toBeDefined();
+    expect(shared?.scope).toBe("project");
+    expect(shared?.name).toBe("Shared (project)");
+
+    const hostOnlyPkg = await readAgentDefinition(runtime, remoteWorkspacePath, "host-only", {
+      roots,
+    });
+    expect(hostOnlyPkg.scope).toBe("global");
+    expect(hostOnlyPkg.frontmatter.name).toBe("Host Only");
+  });
+
+  test("SSH workspaces resolve inherited agent bodies across host-global and remote project roots", async () => {
+    using project = new DisposableTempDir("agent-defs-ssh-body-project");
+    using global = new DisposableTempDir("agent-defs-ssh-body-global");
+
+    const remoteWorkspacePath = "/remote/workspace";
+    const projectAgentsRoot = path.join(project.path, ".mux", "agents");
+    const globalAgentsRoot = path.join(global.path, "agents");
+    await fs.mkdir(projectAgentsRoot, { recursive: true });
+    await fs.mkdir(globalAgentsRoot, { recursive: true });
+
+    await fs.writeFile(
+      path.join(globalAgentsRoot, "base.md"),
+      `---\nname: Base\n---\nGlobal instructions.\n`,
+      "utf-8"
+    );
+    await fs.writeFile(
+      path.join(projectAgentsRoot, "child.md"),
+      `---\nname: Child\nbase: base\n---\nProject instructions.\n`,
+      "utf-8"
+    );
+
+    const roots = {
+      projectRoot: path.posix.join(remoteWorkspacePath, ".mux", "agents"),
+      globalRoot: globalAgentsRoot,
+    };
+    const runtime = new RemotePathMappedRuntime(project.path, remoteWorkspacePath);
+
+    const body = await resolveAgentBody(runtime, remoteWorkspacePath, "child", { roots });
+    expect(body).toContain("Global instructions.");
+    expect(body).toContain("Project instructions.");
   });
 
   test("resolveAgentBody appends by default (new default), replaces when prompt.append is false", async () => {
