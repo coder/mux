@@ -63,6 +63,7 @@ import {
 } from "@/node/services/agentSkills/agentSkillsService";
 import {
   discoverAgentDefinitions,
+  getSkipScopesAboveForKnownScope,
   readAgentDefinition,
   resolveAgentFrontmatter,
 } from "@/node/services/agentDefinitions/agentDefinitionsService";
@@ -1175,7 +1176,10 @@ export const router = (authToken?: string) => {
                 const resolvedFrontmatter = await resolveAgentFrontmatter(
                   runtime,
                   discoveryPath,
-                  descriptor.id
+                  descriptor.id,
+                  {
+                    skipScopesAbove: getSkipScopesAboveForKnownScope(descriptor.scope),
+                  }
                 );
 
                 const effectivelyDisabled = isAgentEffectivelyDisabled({

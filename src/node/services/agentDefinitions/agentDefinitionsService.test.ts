@@ -9,6 +9,7 @@ import { RemoteRuntime, type SpawnResult } from "@/node/runtime/RemoteRuntime";
 import { DisposableTempDir } from "@/node/services/tempDir";
 import {
   discoverAgentDefinitions,
+  getSkipScopesAboveForKnownScope,
   readAgentDefinition,
   resolveAgentBody,
   resolveAgentFrontmatter,
@@ -163,6 +164,18 @@ class RemotePathMappedRuntime extends RemoteRuntime {
   }
 }
 
+class TrackingRemotePathMappedRuntime extends RemotePathMappedRuntime {
+  readonly statCalls: string[] = [];
+
+  override stat(
+    filePath: string,
+    abortSignal?: AbortSignal
+  ): ReturnType<RemotePathMappedRuntime["stat"]> {
+    this.statCalls.push(filePath);
+    return super.stat(filePath, abortSignal);
+  }
+}
+
 describe("agentDefinitionsService", () => {
   test("project agents override global agents", async () => {
     using project = new DisposableTempDir("agent-defs-project");
@@ -277,6 +290,44 @@ describe("agentDefinitionsService", () => {
     const body = await resolveAgentBody(runtime, remoteWorkspacePath, "child", { roots });
     expect(body).toContain("Global instructions.");
     expect(body).toContain("Project instructions.");
+  });
+
+  test("known global-scope resolution skips remote project probes during inheritance", async () => {
+    using project = new DisposableTempDir("agent-defs-ssh-frontmatter-project");
+    using global = new DisposableTempDir("agent-defs-ssh-frontmatter-global");
+
+    const remoteWorkspacePath = "/remote/workspace";
+    const projectAgentsRoot = path.join(project.path, ".mux", "agents");
+    const globalAgentsRoot = path.join(global.path, "agents");
+    await fs.mkdir(projectAgentsRoot, { recursive: true });
+    await fs.mkdir(globalAgentsRoot, { recursive: true });
+
+    await fs.writeFile(
+      path.join(globalAgentsRoot, "asklike.md"),
+      `---\nname: Ask Like\nbase: exec\n---\nAsk-like body.\n`,
+      "utf-8"
+    );
+
+    const roots = {
+      projectRoot: path.posix.join(remoteWorkspacePath, ".mux", "agents"),
+      globalRoot: globalAgentsRoot,
+    };
+    const runtime = new TrackingRemotePathMappedRuntime(project.path, remoteWorkspacePath);
+
+    const descriptors = await discoverAgentDefinitions(runtime, remoteWorkspacePath, { roots });
+    const askLike = descriptors.find((descriptor) => descriptor.id === "asklike");
+    expect(askLike).toBeDefined();
+    expect(askLike?.scope).toBe("global");
+
+    const frontmatter = await resolveAgentFrontmatter(runtime, remoteWorkspacePath, "asklike", {
+      roots,
+      skipScopesAbove: getSkipScopesAboveForKnownScope(askLike!.scope),
+    });
+
+    expect(frontmatter.name).toBe("Ask Like");
+    expect(runtime.statCalls.some((filePath) => filePath.endsWith("/.mux/agents/exec.md"))).toBe(
+      false
+    );
   });
 
   test("resolveAgentBody appends by default (new default), replaces when prompt.append is false", async () => {

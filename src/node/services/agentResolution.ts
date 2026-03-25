@@ -25,6 +25,7 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { type ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import type { Runtime } from "@/node/runtime/Runtime";
 import {
+  getSkipScopesAboveForKnownScope,
   readAgentDefinition,
   resolveAgentFrontmatter,
 } from "@/node/services/agentDefinitions/agentDefinitionsService";
@@ -147,7 +148,10 @@ export async function resolveAgentForStream(
       const resolvedFrontmatter = await resolveAgentFrontmatter(
         runtime,
         agentDiscoveryPath,
-        agentDefinition.id
+        agentDefinition.id,
+        {
+          skipScopesAbove: getSkipScopesAboveForKnownScope(agentDefinition.scope),
+        }
       );
 
       const effectivelyDisabled = isAgentEffectivelyDisabled({

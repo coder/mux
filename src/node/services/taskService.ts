@@ -13,6 +13,7 @@ import type { InitStateManager } from "@/node/services/initStateManager";
 import { log } from "@/node/services/log";
 import {
   discoverAgentDefinitions,
+  getSkipScopesAboveForKnownScope,
   readAgentDefinition,
   resolveAgentFrontmatter,
 } from "@/node/services/agentDefinitions/agentDefinitionsService";
@@ -1195,7 +1196,10 @@ export class TaskService {
                 const frontmatter = await resolveAgentFrontmatter(
                   runtime,
                   parentWorkspacePath,
-                  agent.id
+                  agent.id,
+                  {
+                    skipScopesAbove: getSkipScopesAboveForKnownScope(agent.scope),
+                  }
                 );
                 if (frontmatter.subagent?.runnable !== true) {
                   return null;

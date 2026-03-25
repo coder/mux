@@ -20,6 +20,7 @@ import type { MuxMessage } from "@/common/types/message";
 import type { DesktopCapability } from "@/common/types/desktop";
 import type { ProjectsConfig } from "@/common/types/project";
 import type { MuxToolScope } from "@/common/types/toolScope";
+import type { AgentDefinitionScope } from "@/common/types/agentDefinition";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import type { TaskSettings } from "@/common/types/tasks";
@@ -34,6 +35,7 @@ import {
   resolveAgentBody,
   resolveAgentFrontmatter,
   discoverAgentDefinitions,
+  getSkipScopesAboveForKnownScope,
   type AgentDefinitionsRoots,
 } from "@/node/services/agentDefinitions/agentDefinitionsService";
 import { isAgentEffectivelyDisabled } from "@/node/services/agentDefinitions/agentEnablement";
@@ -222,7 +224,7 @@ export interface BuildStreamSystemContextOptions {
   workspacePath: string;
   workspaceId: string;
   /** Agent definition (may have fallen back to exec). Use `.id` for resolution. */
-  agentDefinition: { id: string };
+  agentDefinition: { id: string; scope: AgentDefinitionScope };
   agentDiscoveryPath: string;
   isSubagentWorkspace: boolean;
   effectiveAdditionalInstructions: string | undefined;
@@ -453,7 +455,9 @@ export async function buildStreamSystemContext(
 
   // Resolve the body with inheritance (prompt.append merges with base).
   // Use agentDefinition.id (may have fallen back to exec) instead of effectiveAgentId.
-  const resolvedBody = await resolveAgentBody(runtime, agentDiscoveryPath, agentDefinition.id);
+  const resolvedBody = await resolveAgentBody(runtime, agentDiscoveryPath, agentDefinition.id, {
+    skipScopesAbove: getSkipScopesAboveForKnownScope(agentDefinition.scope),
+  });
 
   let subagentAppendPrompt: string | undefined;
   if (isSubagentWorkspace) {
@@ -461,7 +465,10 @@ export async function buildStreamSystemContext(
       const resolvedFrontmatter = await resolveAgentFrontmatter(
         runtime,
         agentDiscoveryPath,
-        agentDefinition.id
+        agentDefinition.id,
+        {
+          skipScopesAbove: getSkipScopesAboveForKnownScope(agentDefinition.scope),
+        }
       );
       subagentAppendPrompt = resolvedFrontmatter.subagent?.append_prompt;
     } catch (error: unknown) {
@@ -605,7 +612,10 @@ export async function discoverAvailableSubagentsForToolContext(args: {
           args.runtime,
           args.workspacePath,
           descriptor.id,
-          { roots: args.roots }
+          {
+            roots: args.roots,
+            skipScopesAbove: getSkipScopesAboveForKnownScope(descriptor.scope),
+          }
         );
 
         const effectivelyDisabled = isAgentEffectivelyDisabled({

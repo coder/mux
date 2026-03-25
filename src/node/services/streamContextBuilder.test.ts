@@ -87,7 +87,7 @@ async function buildSystemContextForTest(args: {
     metadata: args.metadata,
     workspacePath: args.workspacePath,
     workspaceId: args.metadata.id,
-    agentDefinition: { id: "exec" },
+    agentDefinition: { id: "exec", scope: "built-in" },
     agentDiscoveryPath: args.workspacePath,
     isSubagentWorkspace: args.isSubagentWorkspace,
     effectiveAdditionalInstructions: args.effectiveAdditionalInstructions,

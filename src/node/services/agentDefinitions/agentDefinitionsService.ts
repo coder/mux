@@ -40,16 +40,43 @@ export function agentVisitKey(id: AgentId, scope: AgentDefinitionScope): string 
 }
 
 /**
+ * When the caller already knows which scope supplied an agent definition, skip any higher-priority
+ * scopes so resolution stays anchored to that package instead of re-probing more specific roots.
+ *
+ * Examples:
+ * - Known global agent → skip project scope
+ * - Known built-in agent → skip project + global scopes
+ */
+export function getSkipScopesAboveForKnownScope(
+  scope: AgentDefinitionScope
+): AgentDefinitionScope | undefined {
+  switch (scope) {
+    case "project":
+      return undefined;
+    case "global":
+      return "project";
+    case "built-in":
+      return "global";
+  }
+}
+
+/**
  * Compute the skipScopesAbove value when resolving a base agent.
- * If the base has the same ID as the current agent, skip the current scope
- * to allow project/global agents to extend built-ins of the same name.
+ *
+ * Same-name inheritance (for example project/exec -> global|built-in exec) still skips the current
+ * scope entirely. Otherwise, keep the lookup anchored to the current package's scope so a known
+ * global or built-in agent does not widen back into project/global overrides during inheritance.
  */
 export function computeBaseSkipScope(
   baseId: AgentId,
   currentId: AgentId,
   currentScope: AgentDefinitionScope
 ): AgentDefinitionScope | undefined {
-  return baseId === currentId ? currentScope : undefined;
+  if (baseId === currentId) {
+    return currentScope;
+  }
+
+  return getSkipScopesAboveForKnownScope(currentScope);
 }
 
 const GLOBAL_AGENTS_ROOT = "~/.mux/agents";
