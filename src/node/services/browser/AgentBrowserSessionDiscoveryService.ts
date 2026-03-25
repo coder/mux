@@ -336,8 +336,8 @@ async function runAgentBrowserJsonCommand(
   env: NodeJS.ProcessEnv,
   args: string[],
   commandDescription: string
-): Promise<unknown | null> {
-  return await new Promise<unknown | null>((resolve) => {
+): Promise<unknown> {
+  return await new Promise<unknown>((resolve) => {
     const childProcess = spawn("agent-browser", args, {
       env,
       stdio: ["ignore", "pipe", "pipe"],
@@ -349,7 +349,7 @@ async function runAgentBrowserJsonCommand(
     let stdout = "";
     let stderr = "";
 
-    const finish = (result: unknown | null, error?: string): void => {
+    const finish = (result: unknown, error?: string): void => {
       if (settled) {
         return;
       }

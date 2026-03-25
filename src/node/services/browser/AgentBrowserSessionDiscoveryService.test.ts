@@ -250,6 +250,7 @@ describe("AgentBrowserSessionDiscoveryService", () => {
       resolveProcessCwdFn: () => Promise.resolve(projectPath),
     });
 
+    // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun's expect().rejects.toThrow() is thenable at runtime
     await expect(service.ensureSessionAttachable("workspace-1", "nostream")).rejects.toThrow(
       'Failed to enable streaming for session "nostream"'
     );
@@ -268,6 +269,7 @@ describe("AgentBrowserSessionDiscoveryService", () => {
       enableSessionStreamingFn,
     });
 
+    // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun's expect().rejects.toThrow() is thenable at runtime
     await expect(service.ensureSessionAttachable("workspace-1", "missing")).rejects.toThrow(
       'Session "missing" not found for workspace "workspace-1"'
     );
@@ -292,6 +294,7 @@ describe("AgentBrowserSessionDiscoveryService", () => {
       resolveProcessCwdFn: () => Promise.resolve(projectPath),
     });
 
+    // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun's expect().rejects.toThrow() is thenable at runtime
     await expect(service.ensureSessionAttachable("workspace-1", "nostream")).rejects.toThrow(
       'Failed to verify streaming for session "nostream" after enabling (requested port 12345)'
     );
