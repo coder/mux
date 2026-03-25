@@ -1,7 +1,7 @@
 import { cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 
 import type { BrowserDiscoveredSession, BrowserSession } from "./browserBridgeTypes";
 
@@ -38,12 +38,6 @@ void mock.module("./useBrowserBridgeConnection", () => ({
     disconnect: disconnectMock,
     sendInput: sendInputMock,
   }),
-}));
-
-void mock.module("./BrowserViewport", () => ({
-  BrowserViewport: (props: { placeholder: ReactNode }) => (
-    <div data-testid="browser-viewport">{props.placeholder}</div>
-  ),
 }));
 
 import {
