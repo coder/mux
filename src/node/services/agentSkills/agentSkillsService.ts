@@ -1,9 +1,8 @@
 import * as fs from "node:fs/promises";
 
 import type { Runtime } from "@/node/runtime/Runtime";
-import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import { RemoteRuntime } from "@/node/runtime/RemoteRuntime";
-import { shouldUseHostGlobalMuxFallback } from "@/node/runtime/hostGlobalMuxHome";
+import { resolveGlobalRuntime } from "@/node/runtime/hostGlobalMuxHome";
 import { shellQuote } from "@/node/runtime/backgroundCommands";
 import { getErrorMessage } from "@/common/utils/errors";
 import { execBuffered, readFileString } from "@/node/utils/runtime/helpers";
@@ -87,12 +86,7 @@ function buildScanCandidates(
   workspacePath: string,
   roots: AgentSkillsRoots
 ): AgentSkillScanCandidate[] {
-  // Remote runtimes whose global mux home semantically aliases the host's ~/.mux (for example
-  // SSH/Coder SSH) should read global skills from the host filesystem. Runtimes with their own
-  // mux home (for example Docker's /var/mux) keep global skill reads on the runtime/container.
-  const globalRuntime = shouldUseHostGlobalMuxFallback(runtime)
-    ? new LocalRuntime(workspacePath)
-    : runtime;
+  const globalRuntime = resolveGlobalRuntime(runtime, workspacePath);
 
   return buildScanOrder(roots).map((scan) => ({
     ...scan,

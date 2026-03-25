@@ -1,4 +1,5 @@
 import type { Runtime } from "./Runtime";
+import { LocalRuntime } from "./LocalRuntime";
 import { RemoteRuntime } from "./RemoteRuntime";
 
 /**
@@ -8,4 +9,15 @@ import { RemoteRuntime } from "./RemoteRuntime";
  */
 export function shouldUseHostGlobalMuxFallback(runtime: Runtime): boolean {
   return runtime instanceof RemoteRuntime && runtime.getMuxHome() === "~/.mux";
+}
+
+/**
+ * Return the runtime to use for reading global roots (`~/.mux/skills/`, `~/.mux/agents/`).
+ *
+ * SSH/Coder-SSH runtimes whose global mux home is the canonical `~/.mux` resolve global
+ * reads from the host filesystem (via a `LocalRuntime`). Runtimes with their own mux home
+ * (e.g. Docker's `/var/mux`) keep global reads on the runtime/container.
+ */
+export function resolveGlobalRuntime(runtime: Runtime, workspacePath: string): Runtime {
+  return shouldUseHostGlobalMuxFallback(runtime) ? new LocalRuntime(workspacePath) : runtime;
 }

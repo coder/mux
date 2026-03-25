@@ -2,9 +2,8 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
 import type { Runtime } from "@/node/runtime/Runtime";
-import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import { RemoteRuntime } from "@/node/runtime/RemoteRuntime";
-import { shouldUseHostGlobalMuxFallback } from "@/node/runtime/hostGlobalMuxHome";
+import { resolveGlobalRuntime } from "@/node/runtime/hostGlobalMuxHome";
 import { getErrorMessage } from "@/common/utils/errors";
 import { execBuffered, readFileString } from "@/node/utils/runtime/helpers";
 import { shellQuote } from "@/node/runtime/backgroundCommands";
@@ -166,13 +165,6 @@ interface AgentDefinitionScanCandidate {
   runtime: Runtime;
 }
 
-function getGlobalAgentRuntime(runtime: Runtime, workspacePath: string): Runtime {
-  // Remote runtimes whose global mux home semantically aliases the host's ~/.mux (for example
-  // SSH/Coder SSH) should read global agents from the host filesystem. Runtimes with their own
-  // mux home (for example Docker's /var/mux) keep global agent reads on the runtime/container.
-  return shouldUseHostGlobalMuxFallback(runtime) ? new LocalRuntime(workspacePath) : runtime;
-}
-
 function buildDiscoveryScans(
   runtime: Runtime,
   workspacePath: string,
@@ -182,7 +174,7 @@ function buildDiscoveryScans(
     {
       scope: "global",
       root: roots.globalRoot,
-      runtime: getGlobalAgentRuntime(runtime, workspacePath),
+      runtime: resolveGlobalRuntime(runtime, workspacePath),
     },
     { scope: "project", root: roots.projectRoot, runtime },
   ];
@@ -198,7 +190,7 @@ function buildReadCandidates(
     {
       scope: "global",
       root: roots.globalRoot,
-      runtime: getGlobalAgentRuntime(runtime, workspacePath),
+      runtime: resolveGlobalRuntime(runtime, workspacePath),
     },
   ];
 }
