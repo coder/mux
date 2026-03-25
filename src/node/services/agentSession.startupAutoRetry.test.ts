@@ -966,6 +966,290 @@ describe("AgentSession startup auto-retry recovery", () => {
     session.dispose();
   });
 
+  test("compaction retry failure preserves the adjusted 1M-context retry request", async () => {
+    const workspaceId = "startup-retry-compaction-adjusted-request";
+    const { session, cleanup } = await createSessionBundle(workspaceId);
+    cleanups.push(cleanup);
+
+    const baseOptions: SendMessageOptions = {
+      model: "anthropic:claude-sonnet-4-5",
+      agentId: "compact",
+    };
+    const retriedOptions: SendMessageOptions = {
+      ...baseOptions,
+      providerOptions: {
+        anthropic: {
+          use1MContext: true,
+          use1MContextModels: [baseOptions.model],
+        },
+      },
+    };
+
+    const privateSession = session as unknown as {
+      maybeRetryCompactionOnContextExceeded: (data: {
+        messageId: string;
+        errorType?: string;
+      }) => Promise<boolean>;
+      lastAutoRetryRequest?: StartupRetrySendOptions;
+      activeCompactionRequest?: {
+        id: string;
+        modelString: string;
+        options?: SendMessageOptions;
+        source?: "idle-compaction" | "auto-compaction";
+      };
+      activeStreamContext?: {
+        modelString: string;
+        options?: SendMessageOptions;
+        agentInitiated?: boolean;
+        openaiTruncationModeOverride?: "auto" | "disabled";
+        providersConfig: unknown;
+      };
+      supports1MContextRetry: (modelString: string) => boolean;
+      is1MContextEnabledForModel: (
+        modelString: string,
+        options?: SendMessageOptions,
+        providersConfig?: unknown
+      ) => boolean;
+      withAnthropic1MContext: (
+        modelString: string,
+        options?: SendMessageOptions
+      ) => SendMessageOptions | null;
+      finalizeCompactionRetry: (messageId: string) => Promise<void>;
+      streamWithHistory: (
+        modelString: string,
+        options?: SendMessageOptions,
+        openaiTruncationModeOverride?: "auto" | "disabled",
+        disablePostCompactionAttachments?: boolean,
+        agentInitiated?: boolean
+      ) => Promise<
+        | { success: true; data: undefined }
+        | { success: false; error: { type: "runtime_start_failed"; message: string } }
+      >;
+    };
+
+    privateSession.lastAutoRetryRequest = {
+      model: "openai:gpt-4o-mini",
+      agentId: "compact",
+      agentInitiated: true,
+    };
+    privateSession.activeCompactionRequest = {
+      id: "compaction-request-1",
+      modelString: baseOptions.model,
+      options: baseOptions,
+      source: "auto-compaction",
+    };
+    privateSession.activeStreamContext = {
+      modelString: baseOptions.model,
+      options: baseOptions,
+      agentInitiated: true,
+      providersConfig: null,
+    };
+    privateSession.supports1MContextRetry = mock(() => true);
+    privateSession.is1MContextEnabledForModel = mock(() => false);
+    privateSession.withAnthropic1MContext = mock(() => retriedOptions);
+    privateSession.finalizeCompactionRetry = mock(() => Promise.resolve());
+    const streamWithHistoryMock = mock(() =>
+      Promise.resolve({
+        success: false as const,
+        error: {
+          type: "runtime_start_failed" as const,
+          message: "retry startup failed",
+        },
+      })
+    );
+    privateSession.streamWithHistory = streamWithHistoryMock;
+
+    const retried = await privateSession.maybeRetryCompactionOnContextExceeded({
+      messageId: "assistant-retry-failure",
+      errorType: "context_exceeded",
+    });
+
+    expect(retried).toBe(false);
+    expect(streamWithHistoryMock).toHaveBeenCalledTimes(1);
+    expect(privateSession.lastAutoRetryRequest?.model).toBe(baseOptions.model);
+    expect(privateSession.lastAutoRetryRequest?.agentId).toBe("compact");
+    expect(privateSession.lastAutoRetryRequest?.providerOptions?.anthropic?.use1MContext).toBe(
+      true
+    );
+    expect(
+      privateSession.lastAutoRetryRequest?.providerOptions?.anthropic?.use1MContextModels
+    ).toEqual([baseOptions.model]);
+    expect(privateSession.lastAutoRetryRequest?.agentInitiated).toBe(true);
+
+    session.dispose();
+  });
+
+  test("exec-subagent hard-restart retry failure preserves the rebuilt continuation request", async () => {
+    const workspaceId = "startup-retry-hard-restart-request";
+    const { historyService, config, cleanup } = await createTestHistoryService();
+    cleanups.push(cleanup);
+
+    const appendSnapshotResult = await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("snapshot-1", "user", "<snapshot>", {
+        timestamp: Date.now(),
+        synthetic: true,
+        fileAtMentionSnapshot: ["token"],
+      })
+    );
+    expect(appendSnapshotResult.success).toBe(true);
+
+    const appendPromptResult = await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("user-1", "user", "Do the thing", {
+        timestamp: Date.now(),
+      })
+    );
+    expect(appendPromptResult.success).toBe(true);
+
+    const parentWorkspaceId = "startup-retry-hard-restart-parent";
+    const childWorkspaceMetadata: WorkspaceMetadata = {
+      id: workspaceId,
+      name: "child",
+      projectName: "project",
+      projectPath: "/tmp/project",
+      runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+      aiSettingsByAgent: {
+        [WORKSPACE_DEFAULTS.agentId]: {
+          model: "openai:gpt-4o",
+          thinkingLevel: "medium",
+        },
+      },
+      parentWorkspaceId,
+      agentId: "exec",
+    };
+    const parentWorkspaceMetadata: WorkspaceMetadata = {
+      ...childWorkspaceMetadata,
+      id: parentWorkspaceId,
+      name: "parent",
+      parentWorkspaceId: undefined,
+    };
+
+    const aiService: AIService = {
+      on(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+      off(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+      isStreaming: mock(() => false),
+      stopStream: mock(() => Promise.resolve(Ok(undefined))),
+      streamMessage: mock(() => Promise.resolve(Ok(undefined))),
+      getWorkspaceMetadata: mock((id: string) => {
+        if (id === workspaceId) {
+          return Promise.resolve(Ok(childWorkspaceMetadata));
+        }
+
+        if (id === parentWorkspaceId) {
+          return Promise.resolve(Ok(parentWorkspaceMetadata));
+        }
+
+        return Promise.resolve({ success: false as const, error: "unknown workspace" });
+      }),
+    } as unknown as AIService;
+
+    const initStateManager: InitStateManager = {
+      on() {
+        return this;
+      },
+      off() {
+        return this;
+      },
+    } as unknown as InitStateManager;
+
+    const backgroundProcessManager: BackgroundProcessManager = {
+      cleanup: mock(() => Promise.resolve()),
+      setMessageQueued: mock(() => undefined),
+    } as unknown as BackgroundProcessManager;
+
+    const session = new AgentSession({
+      workspaceId,
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+
+    const baseOptions: SendMessageOptions = {
+      model: "openai:gpt-4o",
+      agentId: "exec",
+      additionalSystemInstructions: "Follow the existing plan.",
+      experiments: {
+        execSubagentHardRestart: true,
+      },
+    };
+
+    const privateSession = session as unknown as {
+      maybeHardRestartExecSubagentOnContextExceeded: (data: {
+        messageId: string;
+        errorType?: string;
+      }) => Promise<boolean>;
+      lastAutoRetryRequest?: StartupRetrySendOptions;
+      activeStreamContext?: {
+        modelString: string;
+        options?: SendMessageOptions;
+        agentInitiated?: boolean;
+        openaiTruncationModeOverride?: "auto" | "disabled";
+        providersConfig: unknown;
+      };
+      activeStreamUserMessageId?: string;
+      streamWithHistory: (
+        modelString: string,
+        options?: SendMessageOptions,
+        openaiTruncationModeOverride?: "auto" | "disabled",
+        disablePostCompactionAttachments?: boolean,
+        agentInitiated?: boolean
+      ) => Promise<
+        | { success: true; data: undefined }
+        | { success: false; error: { type: "runtime_start_failed"; message: string } }
+      >;
+    };
+
+    privateSession.lastAutoRetryRequest = {
+      model: "openai:gpt-4o-mini",
+      agentId: "exec",
+      agentInitiated: true,
+    };
+    privateSession.activeStreamContext = {
+      modelString: baseOptions.model,
+      options: baseOptions,
+      agentInitiated: true,
+      providersConfig: null,
+    };
+    privateSession.activeStreamUserMessageId = "user-1";
+    const streamWithHistoryMock = mock(() =>
+      Promise.resolve({
+        success: false as const,
+        error: {
+          type: "runtime_start_failed" as const,
+          message: "hard restart startup failed",
+        },
+      })
+    );
+    privateSession.streamWithHistory = streamWithHistoryMock;
+
+    const retried = await privateSession.maybeHardRestartExecSubagentOnContextExceeded({
+      messageId: "assistant-hard-restart-failure",
+      errorType: "context_exceeded",
+    });
+
+    expect(retried).toBe(false);
+    expect(streamWithHistoryMock).toHaveBeenCalledTimes(1);
+    expect(privateSession.lastAutoRetryRequest?.model).toBe(baseOptions.model);
+    expect(privateSession.lastAutoRetryRequest?.agentId).toBe("exec");
+    expect(privateSession.lastAutoRetryRequest?.experiments?.execSubagentHardRestart).toBe(true);
+    expect(privateSession.lastAutoRetryRequest?.agentInitiated).toBe(true);
+    expect(privateSession.lastAutoRetryRequest?.additionalSystemInstructions).toContain(
+      "Context limit reached"
+    );
+    expect(privateSession.lastAutoRetryRequest?.additionalSystemInstructions).toContain(
+      "Follow the existing plan."
+    );
+
+    session.dispose();
+  });
+
   test("persists startup abandon marker for pre-stream user aborts", async () => {
     const workspaceId = "startup-retry-pre-stream-abort";
     const { historyService, config, cleanup } = await createTestHistoryService();

@@ -3278,8 +3278,15 @@ export class AgentSession {
 
     // Capture attribution before finalizeCompactionRetry() clears active stream state.
     const retryAgentInitiated = this.activeStreamContext?.agentInitiated;
+    const retryOptionsForResume = retryOptions ?? {
+      model: context.modelString,
+      agentId: WORKSPACE_DEFAULTS.agentId,
+    };
 
     await this.finalizeCompactionRetry(data.messageId);
+    this.setAutoRetryResumeState(
+      pickStartupRetrySendOptions(retryOptionsForResume, retryAgentInitiated)
+    );
     this.setTurnPhase(TurnPhase.PREPARING);
     let retryResult: Result<void, SendMessageError>;
     try {
@@ -3658,6 +3665,7 @@ export class AgentSession {
           },
         };
 
+    this.setAutoRetryResumeState(pickStartupRetrySendOptions(retryOptions, context.agentInitiated));
     this.setTurnPhase(TurnPhase.PREPARING);
     let retryResult: Result<void, SendMessageError>;
     try {
