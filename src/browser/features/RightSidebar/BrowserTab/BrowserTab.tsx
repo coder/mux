@@ -46,8 +46,8 @@ const DISCOVERY_BADGES: Record<
     className: "border-accent/30 bg-accent/10 text-accent",
   },
   missing_stream: {
-    label: "Needs streaming",
-    className: "border-warning/30 bg-warning/10 text-warning",
+    label: "Activating",
+    className: "border-accent/30 bg-accent/10 text-accent",
   },
 };
 
@@ -102,10 +102,6 @@ function chooseSelectedSession(
   return sessions[0]?.sessionName ?? null;
 }
 
-function getMissingStreamMessage(sessionName: string): string {
-  return `Session "${sessionName}" was found for this workspace, but it was started without AGENT_BROWSER_STREAM_PORT, so Mux can't attach a live preview.`;
-}
-
 export function BrowserTab(props: BrowserTabProps) {
   if (props.workspaceId.trim().length === 0) {
     throw new Error("Browser tab requires a workspaceId");
@@ -125,20 +121,11 @@ export function BrowserTab(props: BrowserTabProps) {
 
   const selectedDiscoveredSession =
     discoveredSessions.find((candidate) => candidate.sessionName === selectedSessionName) ?? null;
-  const missingStreamError =
-    selectedDiscoveredSession?.status === "missing_stream"
-      ? getMissingStreamMessage(selectedDiscoveredSession.sessionName)
-      : null;
 
   const isStarting = session?.status === "starting";
   const screenshotSrc =
     session?.frameBase64 != null ? `data:image/jpeg;base64,${session.frameBase64}` : null;
-  const visibleError =
-    missingStreamError ??
-    session?.lastError ??
-    session?.streamErrorMessage ??
-    discoveryError ??
-    null;
+  const visibleError = session?.lastError ?? session?.streamErrorMessage ?? discoveryError ?? null;
   const headerBadge =
     session != null
       ? STATUS_BADGES[session.status]
@@ -202,12 +189,6 @@ export function BrowserTab(props: BrowserTabProps) {
 
   useEffect(() => {
     if (api == null || selectedSessionName == null || selectedDiscoveredSession == null) {
-      lastConnectAttemptRef.current = null;
-      disconnect();
-      return;
-    }
-
-    if (selectedDiscoveredSession.status === "missing_stream") {
       lastConnectAttemptRef.current = null;
       disconnect();
       return;
@@ -393,7 +374,7 @@ function BrowserSessionPicker(props: {
                 />
                 <span className="min-w-0 flex-1 truncate">{session.sessionName}</span>
                 {session.status === "missing_stream" && (
-                  <span className="text-warning shrink-0 text-[10px]">Needs streaming</span>
+                  <span className="text-accent shrink-0 text-[10px]">Activating</span>
                 )}
               </button>
             ))}
@@ -413,8 +394,8 @@ function BrowserViewerState(props: {
   const content = (() => {
     if (props.selectedSession?.status === "missing_stream") {
       return {
-        title: "Browser preview requires streaming",
-        description: `Session "${props.selectedSession.sessionName}" was found, but it needs AGENT_BROWSER_STREAM_PORT set before Mux can attach a live preview.`,
+        title: "Starting live preview…",
+        description: `Enabling streaming for session "${props.selectedSession.sessionName}"…`,
       };
     }
 
