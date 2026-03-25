@@ -258,7 +258,7 @@ describe("AgentBrowserSessionDiscoveryService", () => {
     expect(enableSessionStreamingFn).toHaveBeenCalledTimes(1);
   });
 
-  test("ensureSessionAttachable throws when the session does not exist", async () => {
+  test("ensureSessionAttachable throws a retryable error when discovery returns no sessions", async () => {
     const getSessionStreamStatusFn = mock(() =>
       Promise.resolve<{ enabled: boolean; port: number | null } | null>(null)
     );
@@ -267,6 +267,31 @@ describe("AgentBrowserSessionDiscoveryService", () => {
       listSessionNamesFn: () => Promise.resolve([]),
       getSessionStreamStatusFn,
       enableSessionStreamingFn,
+    });
+
+    // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun's expect().rejects.toThrow() is thenable at runtime
+    await expect(service.ensureSessionAttachable("workspace-1", "missing")).rejects.toThrow(
+      'Session "missing" is unavailable (no sessions discovered for workspace "workspace-1")'
+    );
+    expect(getSessionStreamStatusFn).not.toHaveBeenCalled();
+    expect(enableSessionStreamingFn).not.toHaveBeenCalled();
+  });
+
+  test("ensureSessionAttachable throws a terminal not found error when other sessions were discovered", async () => {
+    const projectPath = path.join(tempDir, "project");
+    await mkdir(projectPath, { recursive: true });
+    await writeSessionFiles(socketDir, "other-session", { pid: "306", streamPort: "9306" });
+
+    const getSessionStreamStatusFn = mock(() =>
+      Promise.resolve<{ enabled: boolean; port: number | null } | null>(null)
+    );
+    const enableSessionStreamingFn = mock(() => Promise.resolve<{ port: number } | null>(null));
+    const service = createService({
+      listSessionNamesFn: () => Promise.resolve(["other-session"]),
+      getSessionStreamStatusFn,
+      enableSessionStreamingFn,
+      resolveCandidatePaths: () => Promise.resolve([projectPath]),
+      resolveProcessCwdFn: () => Promise.resolve(projectPath),
     });
 
     // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun's expect().rejects.toThrow() is thenable at runtime

@@ -658,6 +658,11 @@ export class AgentBrowserSessionDiscoveryService {
     const sessions = await this.discoverSessions(workspaceId);
     const session = sessions.find((candidate) => candidate.sessionName === sessionName) ?? null;
     if (session == null) {
+      if (sessions.length === 0) {
+        throw new Error(
+          `Session "${sessionName}" is unavailable (no sessions discovered for workspace "${workspaceId}")`
+        );
+      }
       throw new Error(`Session "${sessionName}" not found for workspace "${workspaceId}"`);
     }
 
