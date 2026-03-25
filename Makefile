@@ -108,14 +108,15 @@ all: build
 # Sentinel file to track when dependencies are installed
 # Depends on package.json and bun.lock - rebuilds if either changes
 node_modules/.installed: package.json bun.lock
-	@echo "Dependencies out of date or missing, running bun install..."
-	@bun install
+	@echo "Dependencies out of date or missing, running bun install --frozen-lockfile..."
+	@# Keep local validation from silently rewriting bun.lock when a different Bun version is installed.
+	@bun install --frozen-lockfile
 	@touch node_modules/.installed
 
 # Mobile dependencies - separate from main project
 mobile/node_modules/.installed: mobile/package.json mobile/bun.lock
-	@echo "Installing mobile dependencies..."
-	@cd mobile && bun install
+	@echo "Installing mobile dependencies with bun install --frozen-lockfile..."
+	@cd mobile && bun install --frozen-lockfile
 	@touch mobile/node_modules/.installed
 
 # Legacy target for backwards compatibility

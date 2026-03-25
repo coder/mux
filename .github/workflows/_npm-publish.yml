@@ -228,7 +228,7 @@ jobs:
 
       - name: Install chat-components deps
         working-directory: packages/chat-components
-        run: bun install
+        run: bun install --frozen-lockfile
 
       - name: Build chat-components package
         working-directory: packages/chat-components
