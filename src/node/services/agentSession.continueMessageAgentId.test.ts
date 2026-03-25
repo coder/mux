@@ -1,5 +1,5 @@
 import { describe, expect, test, mock, afterEach } from "bun:test";
-import { buildContinueMessage } from "@/common/types/message";
+import { buildContinueMessage, type StartupRetrySendOptions } from "@/common/types/message";
 import type { FilePart, SendMessageOptions } from "@/common/orpc/types";
 import { AgentSession } from "./agentSession";
 import type { Config } from "@/node/config";
@@ -25,6 +25,7 @@ interface SessionInternals {
   scheduleStartupRecovery: () => void;
   startupRecoveryPromise: Promise<void> | null;
   startupRecoveryScheduled: boolean;
+  lastAutoRetryRequest?: StartupRetrySendOptions;
 }
 
 describe("AgentSession continue-message agentId fallback", () => {
@@ -132,6 +133,109 @@ describe("AgentSession continue-message agentId fallback", () => {
     expect(dispatchedMessage).toBe("follow up");
     expect(dispatchedOptions?.agentId).toBe("plan");
     expect(dispatchedInternal?.synthetic).toBe(true);
+
+    session.dispose();
+  });
+
+  test("dispatchPendingFollowUp rewrites stale compact retry state to the reconstructed follow-up", async () => {
+    const aiService: AIService = {
+      on() {
+        return this;
+      },
+      off() {
+        return this;
+      },
+      isStreaming: () => false,
+      stopStream: mock(() => Promise.resolve({ success: true as const, data: undefined })),
+    } as unknown as AIService;
+
+    const legacyFollowUp = {
+      text: "follow up retry",
+      model: "openai:gpt-4o",
+      agentId: undefined as unknown as string,
+      mode: "plan" as const,
+      thinkingLevel: "high" as const,
+    };
+
+    const mockSummaryMessage = {
+      id: "summary-retry-state",
+      role: "assistant" as const,
+      parts: [{ type: "text" as const, text: "Compaction summary" }],
+      metadata: {
+        muxMetadata: {
+          type: "compaction-summary" as const,
+          pendingFollowUp: legacyFollowUp,
+        },
+      },
+    } satisfies MuxMessage;
+
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+    await historyService.appendToHistory("ws", mockSummaryMessage);
+
+    const initStateManager: InitStateManager = {
+      on() {
+        return this;
+      },
+      off() {
+        return this;
+      },
+    } as unknown as InitStateManager;
+
+    const backgroundProcessManager: BackgroundProcessManager = {
+      cleanup: mock(() => Promise.resolve()),
+      setMessageQueued: mock(() => undefined),
+    } as unknown as BackgroundProcessManager;
+
+    const config: Config = {
+      srcDir: "/tmp",
+      getSessionDir: mock(() => "/tmp"),
+    } as unknown as Config;
+
+    const session = new AgentSession({
+      workspaceId: "ws",
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+
+    const internals = session as unknown as SessionInternals;
+    internals.lastAutoRetryRequest = {
+      model: "openai:gpt-4o-mini",
+      agentId: "compact",
+      toolPolicy: [{ regex_match: ".*", action: "disable" }],
+      agentInitiated: true,
+    };
+    internals.sendMessage = mock(() =>
+      Promise.resolve({
+        success: false as const,
+        error: { type: "runtime_start_failed", message: "startup failed" },
+      })
+    );
+
+    let dispatchError: unknown;
+    try {
+      await internals.dispatchPendingFollowUp();
+    } catch (error) {
+      dispatchError = error;
+    }
+
+    expect(dispatchError).toBeInstanceOf(Error);
+    if (!(dispatchError instanceof Error)) {
+      throw new Error("Expected dispatchPendingFollowUp to throw when sendMessage fails");
+    }
+    expect(dispatchError.message).toContain("Failed to dispatch pending follow-up");
+    expect(internals.lastAutoRetryRequest).toEqual(
+      expect.objectContaining({
+        model: "openai:gpt-4o",
+        agentId: "plan",
+        thinkingLevel: "high",
+      }) as StartupRetrySendOptions
+    );
+    expect(internals.lastAutoRetryRequest?.toolPolicy).toBeUndefined();
+    expect(internals.lastAutoRetryRequest?.agentInitiated).toBeUndefined();
 
     session.dispose();
   });

@@ -8,7 +8,7 @@ import type { HistoryService } from "./historyService";
 import type { Config } from "@/node/config";
 import type { InitStateManager } from "./initStateManager";
 import type { WorkspaceChatMessage, SendMessageOptions } from "@/common/orpc/types";
-import { createMuxMessage } from "@/common/types/message";
+import { createMuxMessage, type StartupRetrySendOptions } from "@/common/types/message";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { Ok } from "@/common/types/result";
@@ -142,8 +142,11 @@ describe("AgentSession startup auto-retry recovery", () => {
     const scheduledEvent = events.find((event) => event.type === "auto-retry-scheduled");
     expect(scheduledEvent).toBeDefined();
 
-    const retryOptions = (session as unknown as { lastAutoRetryOptions?: SendMessageOptions })
-      .lastAutoRetryOptions;
+    const retryOptions = (
+      session as unknown as {
+        lastAutoRetryRequest?: StartupRetrySendOptions;
+      }
+    ).lastAutoRetryRequest;
     expect(retryOptions).toBeDefined();
     if (!retryOptions) {
       throw new Error("Expected startup auto-retry options to be captured");
@@ -454,8 +457,11 @@ describe("AgentSession startup auto-retry recovery", () => {
     ).startupAutoRetryCheckPromise;
     await startupCheckPromise;
 
-    const retryOptions = (session as unknown as { lastAutoRetryOptions?: SendMessageOptions })
-      .lastAutoRetryOptions;
+    const retryOptions = (
+      session as unknown as {
+        lastAutoRetryRequest?: StartupRetrySendOptions;
+      }
+    ).lastAutoRetryRequest;
     expect(retryOptions).toBeDefined();
     if (!retryOptions) {
       throw new Error("Expected startup retry options");
@@ -714,7 +720,7 @@ describe("AgentSession startup auto-retry recovery", () => {
       persistStartupAutoRetryAbandon: (reason: string, userMessageId?: string) => Promise<void>;
       retryActiveStream: () => Promise<void>;
       getAutoRetryPreferencePath: () => string;
-      lastAutoRetryOptions?: SendMessageOptions;
+      lastAutoRetryRequest?: StartupRetrySendOptions;
       resumeStream: (
         options: SendMessageOptions
       ) => Promise<{ success: true; data: { started: boolean } }>;
@@ -726,7 +732,7 @@ describe("AgentSession startup auto-retry recovery", () => {
     const preferencePath = privateSession.getAutoRetryPreferencePath();
     expect(await Bun.file(preferencePath).exists()).toBe(true);
 
-    privateSession.lastAutoRetryOptions = {
+    privateSession.lastAutoRetryRequest = {
       model: "anthropic:claude-sonnet-4-5",
       agentId: "exec",
     };
@@ -752,13 +758,13 @@ describe("AgentSession startup auto-retry recovery", () => {
 
     const privateSession = session as unknown as {
       retryActiveStream: () => Promise<void>;
-      lastAutoRetryOptions?: SendMessageOptions;
+      lastAutoRetryRequest?: StartupRetrySendOptions;
       resumeStream: (
         options: SendMessageOptions
       ) => Promise<{ success: true; data: { started: boolean } }>;
     };
 
-    privateSession.lastAutoRetryOptions = {
+    privateSession.lastAutoRetryRequest = {
       model: "anthropic:claude-sonnet-4-5",
       agentId: "exec",
     };
@@ -789,7 +795,7 @@ describe("AgentSession startup auto-retry recovery", () => {
 
     const privateSession = session as unknown as {
       retryActiveStream: () => Promise<void>;
-      lastAutoRetryOptions?: SendMessageOptions;
+      lastAutoRetryRequest?: StartupRetrySendOptions;
       activeStreamFailureHandled: boolean;
       resumeStream: (
         options: SendMessageOptions
@@ -799,7 +805,7 @@ describe("AgentSession startup auto-retry recovery", () => {
       >;
     };
 
-    privateSession.lastAutoRetryOptions = {
+    privateSession.lastAutoRetryRequest = {
       model: "anthropic:claude-sonnet-4-5",
       agentId: "exec",
     };
@@ -834,7 +840,7 @@ describe("AgentSession startup auto-retry recovery", () => {
 
     const privateSession = session as unknown as {
       retryActiveStream: () => Promise<void>;
-      lastAutoRetryOptions?: SendMessageOptions;
+      lastAutoRetryRequest?: StartupRetrySendOptions;
       activeStreamFailureHandled: boolean;
       resumeStream: (
         options: SendMessageOptions
@@ -844,7 +850,7 @@ describe("AgentSession startup auto-retry recovery", () => {
       >;
     };
 
-    privateSession.lastAutoRetryOptions = {
+    privateSession.lastAutoRetryRequest = {
       model: "anthropic:claude-sonnet-4-5",
       agentId: "exec",
     };
@@ -868,6 +874,94 @@ describe("AgentSession startup auto-retry recovery", () => {
     const scheduledAfter = events.filter((event) => event.type === "auto-retry-scheduled").length;
     expect(resumeStreamMock).toHaveBeenCalledTimes(1);
     expect(scheduledAfter).toBe(scheduledBefore + 1);
+
+    session.dispose();
+  });
+
+  test("retryActiveStream resumes the reconstructed follow-up after compaction handoff send fails", async () => {
+    const workspaceId = "startup-retry-follow-up-handoff";
+    const { session, historyService, cleanup } = await createSessionBundle(workspaceId);
+    cleanups.push(cleanup);
+
+    const appendResult = await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("summary-follow-up", "assistant", "Compaction summary", {
+        muxMetadata: {
+          type: "compaction-summary",
+          pendingFollowUp: {
+            text: "resume the original work",
+            model: "openai:gpt-4o",
+            agentId: "exec",
+            thinkingLevel: "high",
+          },
+        },
+      })
+    );
+    expect(appendResult.success).toBe(true);
+
+    const privateSession = session as unknown as {
+      dispatchPendingFollowUp: () => Promise<boolean>;
+      retryActiveStream: () => Promise<void>;
+      lastAutoRetryRequest?: StartupRetrySendOptions;
+      sendMessage: (
+        message: string,
+        options?: SendMessageOptions,
+        internal?: { synthetic?: boolean }
+      ) => Promise<
+        { success: true } | { success: false; error: { type: string; message?: string } }
+      >;
+      resumeStream: (
+        options: SendMessageOptions,
+        internal?: { agentInitiated?: boolean }
+      ) => Promise<{ success: true; data: { started: boolean } }>;
+    };
+
+    privateSession.lastAutoRetryRequest = {
+      model: "anthropic:claude-sonnet-4-5",
+      agentId: "compact",
+      toolPolicy: [{ regex_match: ".*", action: "disable" }],
+      agentInitiated: true,
+    };
+    privateSession.sendMessage = mock(() =>
+      Promise.resolve({
+        success: false as const,
+        error: { type: "runtime_start_failed", message: "startup failed" },
+      })
+    );
+
+    let dispatchError: unknown;
+    try {
+      await privateSession.dispatchPendingFollowUp();
+    } catch (error) {
+      dispatchError = error;
+    }
+    expect(dispatchError).toBeInstanceOf(Error);
+    expect((dispatchError as Error).message).toContain("Failed to dispatch pending follow-up");
+
+    const resumeStreamMock = mock(
+      (_options: SendMessageOptions, _internal?: { agentInitiated?: boolean }) =>
+        Promise.resolve({ success: true as const, data: { started: true } })
+    );
+    privateSession.resumeStream = resumeStreamMock;
+
+    await privateSession.retryActiveStream();
+
+    expect(resumeStreamMock).toHaveBeenCalledTimes(1);
+    const firstCall = resumeStreamMock.mock.calls[0];
+    expect(firstCall).toBeDefined();
+    const [optionsArg, internalArg] = firstCall as unknown as [
+      SendMessageOptions,
+      { agentInitiated?: boolean } | undefined,
+    ];
+    expect(optionsArg).toEqual(
+      expect.objectContaining({
+        model: "openai:gpt-4o",
+        agentId: "exec",
+        thinkingLevel: "high",
+      }) as SendMessageOptions
+    );
+    expect(optionsArg.toolPolicy).toBeUndefined();
+    expect(internalArg?.agentInitiated).toBeUndefined();
 
     session.dispose();
   });
