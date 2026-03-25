@@ -203,9 +203,16 @@ export type AgentBrowserDiscoveredSession =
   | AgentBrowserDiscoveredSessionConnection
   | AgentBrowserMissingStreamSession;
 
+interface StreamStatusResult {
+  enabled: boolean;
+  port: number | null;
+}
+
 interface AgentBrowserSessionDiscoveryServiceOptions {
   resolveWorkspaceCandidatePathsFn: (workspaceId: string) => Promise<string[]>;
   listSessionNamesFn?: () => Promise<string[]>;
+  getSessionStreamStatusFn?: (sessionName: string) => Promise<StreamStatusResult | null>;
+  enableSessionStreamingFn?: (sessionName: string) => Promise<{ port: number } | null>;
   readFileFn?: typeof fsPromises.readFile;
   realpathFn?: typeof fsPromises.realpath;
   resolveProcessCwdFn?: (pid: number) => Promise<string | null>;
@@ -319,6 +326,141 @@ async function listAgentBrowserSessionNames(env: NodeJS.ProcessEnv): Promise<str
       finish(extractSessionNames(payload));
     });
   });
+}
+
+function parsePositiveInteger(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
+}
+
+async function runAgentBrowserJsonCommand(
+  env: NodeJS.ProcessEnv,
+  args: string[],
+  commandDescription: string
+): Promise<unknown | null> {
+  return await new Promise<unknown | null>((resolve) => {
+    const childProcess = spawn("agent-browser", args, {
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    const disposableProcess = new DisposableProcess(childProcess);
+
+    let settled = false;
+    let stdout = "";
+    let stderr = "";
+
+    const finish = (result: unknown | null, error?: string): void => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      clearTimeout(timeoutId);
+      if (error) {
+        log.debug(commandDescription, { error });
+      }
+      disposableProcess[Symbol.dispose]();
+      resolve(result);
+    };
+
+    const timeoutId = setTimeout(() => {
+      finish(null, `${commandDescription} timed out after ${CLI_TIMEOUT_MS}ms`);
+    }, CLI_TIMEOUT_MS);
+    timeoutId.unref?.();
+
+    childProcess.stdout?.setEncoding("utf8");
+    childProcess.stderr?.setEncoding("utf8");
+    childProcess.stdout?.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    childProcess.stderr?.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+
+    childProcess.once("error", (error) => {
+      finish(null, getErrorMessage(error));
+    });
+
+    childProcess.once("close", (code, signal) => {
+      if (settled) {
+        return;
+      }
+
+      if (code !== 0 || signal !== null) {
+        finish(
+          null,
+          stderr.trim() || `${commandDescription} exited with ${String(signal ?? code)}`
+        );
+        return;
+      }
+
+      try {
+        finish(JSON.parse(stdout.trim()));
+      } catch (error) {
+        finish(null, `${commandDescription} returned invalid JSON: ${getErrorMessage(error)}`);
+      }
+    });
+  });
+}
+
+async function getSessionStreamStatus(
+  env: NodeJS.ProcessEnv,
+  sessionName: string
+): Promise<StreamStatusResult | null> {
+  assert(sessionName.trim().length > 0, "getSessionStreamStatus requires a non-empty sessionName");
+
+  const payload = await runAgentBrowserJsonCommand(
+    env,
+    ["--json", "--session", sessionName, "stream", "status"],
+    `agent-browser stream status for session ${sessionName}`
+  );
+  const data = isRecord(payload) && isRecord(payload.data) ? payload.data : null;
+  if (data == null || typeof data.enabled !== "boolean") {
+    return null;
+  }
+
+  const port = data.port == null ? null : parsePositiveInteger(data.port);
+  if (data.port != null && port == null) {
+    return null;
+  }
+
+  if (data.enabled && port == null) {
+    return null;
+  }
+
+  if (!data.enabled && port != null) {
+    return null;
+  }
+
+  return { enabled: data.enabled, port };
+}
+
+async function enableSessionStreaming(
+  env: NodeJS.ProcessEnv,
+  sessionName: string
+): Promise<{ port: number } | null> {
+  assert(sessionName.trim().length > 0, "enableSessionStreaming requires a non-empty sessionName");
+
+  const payload = await runAgentBrowserJsonCommand(
+    env,
+    ["--json", "--session", sessionName, "stream", "enable"],
+    `agent-browser stream enable for session ${sessionName}`
+  );
+  const data = isRecord(payload) && isRecord(payload.data) ? payload.data : null;
+  if (data == null) {
+    return null;
+  }
+
+  if (data.enabled != null && data.enabled !== true) {
+    return null;
+  }
+
+  const port = parsePositiveInteger(data.port);
+  if (port == null) {
+    return null;
+  }
+
+  return { port };
 }
 
 async function runCommandForSinglePath(
@@ -453,6 +595,12 @@ async function readPositiveIntegerFile(
 export class AgentBrowserSessionDiscoveryService {
   private readonly resolveWorkspaceCandidatePathsFn: AgentBrowserSessionDiscoveryServiceOptions["resolveWorkspaceCandidatePathsFn"];
   private readonly listSessionNamesFn: () => Promise<string[]>;
+  private readonly getSessionStreamStatusFn: (
+    sessionName: string
+  ) => Promise<StreamStatusResult | null>;
+  private readonly enableSessionStreamingFn: (
+    sessionName: string
+  ) => Promise<{ port: number } | null>;
   private readonly readFileFn: typeof fsPromises.readFile;
   private readonly realpathFn: typeof fsPromises.realpath;
   private readonly resolveProcessCwdFn: (pid: number) => Promise<string | null>;
@@ -467,6 +615,12 @@ export class AgentBrowserSessionDiscoveryService {
     this.env = options.env ?? process.env;
     this.listSessionNamesFn =
       options.listSessionNamesFn ?? (() => listAgentBrowserSessionNames(this.env));
+    this.getSessionStreamStatusFn =
+      options.getSessionStreamStatusFn ??
+      ((sessionName) => getSessionStreamStatus(this.env, sessionName));
+    this.enableSessionStreamingFn =
+      options.enableSessionStreamingFn ??
+      ((sessionName) => enableSessionStreaming(this.env, sessionName));
     this.readFileFn = options.readFileFn ?? fsPromises.readFile;
     this.realpathFn = options.realpathFn ?? fsPromises.realpath;
     this.resolveProcessCwdFn = options.resolveProcessCwdFn ?? resolveProcessCwd;
@@ -486,6 +640,71 @@ export class AgentBrowserSessionDiscoveryService {
     const sessions = await this.discoverSessions(workspaceId);
     const session = sessions.find((candidate) => candidate.sessionName === sessionName) ?? null;
     return session?.status === "attachable" ? session : null;
+  }
+
+  async ensureSessionAttachable(
+    workspaceId: string,
+    sessionName: string
+  ): Promise<AgentBrowserDiscoveredSessionConnection> {
+    assert(
+      workspaceId.trim().length > 0,
+      "ensureSessionAttachable requires a non-empty workspaceId"
+    );
+    assert(
+      sessionName.trim().length > 0,
+      "ensureSessionAttachable requires a non-empty sessionName"
+    );
+
+    const sessions = await this.discoverSessions(workspaceId);
+    const session = sessions.find((candidate) => candidate.sessionName === sessionName) ?? null;
+    if (session == null) {
+      throw new Error(`Session "${sessionName}" not found for workspace "${workspaceId}"`);
+    }
+
+    if (session.status === "attachable") {
+      return session;
+    }
+
+    assert(
+      session.status === "missing_stream",
+      "Expected missing_stream session when enabling streaming"
+    );
+
+    const existingStreamStatus = await this.getSessionStreamStatusFn(sessionName);
+    if (existingStreamStatus?.enabled === true) {
+      assert(
+        existingStreamStatus.port != null && existingStreamStatus.port > 0,
+        `Enabled stream status for session "${sessionName}" must include a positive port`
+      );
+      return {
+        ...session,
+        status: "attachable",
+        streamPort: existingStreamStatus.port,
+      };
+    }
+
+    const enabledStream = await this.enableSessionStreamingFn(sessionName);
+    if (enabledStream == null) {
+      throw new Error(`Failed to enable streaming for session "${sessionName}"`);
+    }
+
+    assert(
+      Number.isInteger(enabledStream.port) && enabledStream.port > 0,
+      `Enabled stream for session "${sessionName}" must return a positive port`
+    );
+
+    const verifiedStreamStatus = await this.getSessionStreamStatusFn(sessionName);
+    if (verifiedStreamStatus?.enabled !== true || verifiedStreamStatus.port == null) {
+      throw new Error(
+        `Failed to verify streaming for session "${sessionName}" after enabling (requested port ${enabledStream.port})`
+      );
+    }
+
+    return {
+      ...session,
+      status: "attachable",
+      streamPort: verifiedStreamStatus.port,
+    };
   }
 
   private async discoverSessions(workspaceId: string): Promise<AgentBrowserDiscoveredSession[]> {

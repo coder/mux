@@ -40,12 +40,20 @@ describe("AgentBrowserSessionDiscoveryService", () => {
 
   function createService(options?: {
     listSessionNamesFn?: () => Promise<string[]>;
+    getSessionStreamStatusFn?:
+      | ((sessionName: string) => Promise<{ enabled: boolean; port: number | null } | null>)
+      | undefined;
+    enableSessionStreamingFn?:
+      | ((sessionName: string) => Promise<{ port: number } | null>)
+      | undefined;
     resolveCandidatePaths?: (workspaceId: string) => Promise<string[]>;
     resolveProcessCwdFn?: (pid: number) => Promise<string | null>;
   }): AgentBrowserSessionDiscoveryService {
     return new AgentBrowserSessionDiscoveryService({
       env: { AGENT_BROWSER_SOCKET_DIR: socketDir },
       listSessionNamesFn: options?.listSessionNamesFn ?? (() => Promise.resolve([])),
+      getSessionStreamStatusFn: options?.getSessionStreamStatusFn,
+      enableSessionStreamingFn: options?.enableSessionStreamingFn,
       resolveWorkspaceCandidatePathsFn:
         options?.resolveCandidatePaths ?? (() => Promise.resolve([path.join(tempDir, "project")])),
       resolveProcessCwdFn: options?.resolveProcessCwdFn ?? (() => Promise.resolve(null)),
@@ -131,6 +139,164 @@ describe("AgentBrowserSessionDiscoveryService", () => {
       { sessionName: "nostream", pid: 300, cwd: projectPath, status: "missing_stream" },
     ]);
     expect(await service.getSessionConnection("workspace-1", "nostream")).toBeNull();
+  });
+
+  test("ensureSessionAttachable returns attachable sessions without calling stream commands", async () => {
+    const projectPath = path.join(tempDir, "project");
+    await mkdir(projectPath, { recursive: true });
+    await writeSessionFiles(socketDir, "attachable", { pid: "301", streamPort: "9301" });
+
+    const getSessionStreamStatusFn = mock(() =>
+      Promise.resolve<{ enabled: boolean; port: number | null } | null>(null)
+    );
+    const enableSessionStreamingFn = mock(() => Promise.resolve<{ port: number } | null>(null));
+    const service = createService({
+      listSessionNamesFn: () => Promise.resolve(["attachable"]),
+      getSessionStreamStatusFn,
+      enableSessionStreamingFn,
+      resolveCandidatePaths: () => Promise.resolve([projectPath]),
+      resolveProcessCwdFn: () => Promise.resolve(projectPath),
+    });
+
+    expect(await service.ensureSessionAttachable("workspace-1", "attachable")).toEqual({
+      sessionName: "attachable",
+      pid: 301,
+      cwd: projectPath,
+      status: "attachable",
+      streamPort: 9301,
+    });
+    expect(getSessionStreamStatusFn).not.toHaveBeenCalled();
+    expect(enableSessionStreamingFn).not.toHaveBeenCalled();
+  });
+
+  test("ensureSessionAttachable enables missing_stream sessions on demand", async () => {
+    const projectPath = path.join(tempDir, "project");
+    await mkdir(projectPath, { recursive: true });
+    await writeSessionFiles(socketDir, "nostream", { pid: "302" });
+
+    const statuses = [
+      { enabled: false, port: null },
+      { enabled: true, port: 12345 },
+    ];
+    const getSessionStreamStatusFn = mock(() => Promise.resolve(statuses.shift() ?? null));
+    const enableSessionStreamingFn = mock(() => Promise.resolve({ port: 12345 }));
+    const service = createService({
+      listSessionNamesFn: () => Promise.resolve(["nostream"]),
+      getSessionStreamStatusFn,
+      enableSessionStreamingFn,
+      resolveCandidatePaths: () => Promise.resolve([projectPath]),
+      resolveProcessCwdFn: () => Promise.resolve(projectPath),
+    });
+
+    expect(await service.ensureSessionAttachable("workspace-1", "nostream")).toEqual({
+      sessionName: "nostream",
+      pid: 302,
+      cwd: projectPath,
+      status: "attachable",
+      streamPort: 12345,
+    });
+    expect(getSessionStreamStatusFn).toHaveBeenCalledTimes(2);
+    expect(enableSessionStreamingFn).toHaveBeenCalledTimes(1);
+  });
+
+  test("ensureSessionAttachable reuses CLI-reported streaming without enabling again", async () => {
+    const projectPath = path.join(tempDir, "project");
+    await mkdir(projectPath, { recursive: true });
+    await writeSessionFiles(socketDir, "nostream", { pid: "303" });
+
+    const getSessionStreamStatusFn = mock(() =>
+      Promise.resolve<{ enabled: boolean; port: number | null } | null>({
+        enabled: true,
+        port: 9999,
+      })
+    );
+    const enableSessionStreamingFn = mock(() => Promise.resolve<{ port: number } | null>(null));
+    const service = createService({
+      listSessionNamesFn: () => Promise.resolve(["nostream"]),
+      getSessionStreamStatusFn,
+      enableSessionStreamingFn,
+      resolveCandidatePaths: () => Promise.resolve([projectPath]),
+      resolveProcessCwdFn: () => Promise.resolve(projectPath),
+    });
+
+    expect(await service.ensureSessionAttachable("workspace-1", "nostream")).toEqual({
+      sessionName: "nostream",
+      pid: 303,
+      cwd: projectPath,
+      status: "attachable",
+      streamPort: 9999,
+    });
+    expect(getSessionStreamStatusFn).toHaveBeenCalledTimes(1);
+    expect(enableSessionStreamingFn).not.toHaveBeenCalled();
+  });
+
+  test("ensureSessionAttachable throws when enabling streaming fails", async () => {
+    const projectPath = path.join(tempDir, "project");
+    await mkdir(projectPath, { recursive: true });
+    await writeSessionFiles(socketDir, "nostream", { pid: "304" });
+
+    const getSessionStreamStatusFn = mock(() =>
+      Promise.resolve<{ enabled: boolean; port: number | null } | null>({
+        enabled: false,
+        port: null,
+      })
+    );
+    const enableSessionStreamingFn = mock(() => Promise.resolve<{ port: number } | null>(null));
+    const service = createService({
+      listSessionNamesFn: () => Promise.resolve(["nostream"]),
+      getSessionStreamStatusFn,
+      enableSessionStreamingFn,
+      resolveCandidatePaths: () => Promise.resolve([projectPath]),
+      resolveProcessCwdFn: () => Promise.resolve(projectPath),
+    });
+
+    await expect(service.ensureSessionAttachable("workspace-1", "nostream")).rejects.toThrow(
+      'Failed to enable streaming for session "nostream"'
+    );
+    expect(getSessionStreamStatusFn).toHaveBeenCalledTimes(1);
+    expect(enableSessionStreamingFn).toHaveBeenCalledTimes(1);
+  });
+
+  test("ensureSessionAttachable throws when the session does not exist", async () => {
+    const getSessionStreamStatusFn = mock(() =>
+      Promise.resolve<{ enabled: boolean; port: number | null } | null>(null)
+    );
+    const enableSessionStreamingFn = mock(() => Promise.resolve<{ port: number } | null>(null));
+    const service = createService({
+      listSessionNamesFn: () => Promise.resolve([]),
+      getSessionStreamStatusFn,
+      enableSessionStreamingFn,
+    });
+
+    await expect(service.ensureSessionAttachable("workspace-1", "missing")).rejects.toThrow(
+      'Session "missing" not found for workspace "workspace-1"'
+    );
+    expect(getSessionStreamStatusFn).not.toHaveBeenCalled();
+    expect(enableSessionStreamingFn).not.toHaveBeenCalled();
+  });
+
+  test("ensureSessionAttachable throws when streaming cannot be verified after enabling", async () => {
+    const projectPath = path.join(tempDir, "project");
+    await mkdir(projectPath, { recursive: true });
+    await writeSessionFiles(socketDir, "nostream", { pid: "305" });
+
+    const getSessionStreamStatusFn = mock(() =>
+      Promise.resolve<{ enabled: boolean; port: number | null } | null>(null)
+    );
+    const enableSessionStreamingFn = mock(() => Promise.resolve({ port: 12345 }));
+    const service = createService({
+      listSessionNamesFn: () => Promise.resolve(["nostream"]),
+      getSessionStreamStatusFn,
+      enableSessionStreamingFn,
+      resolveCandidatePaths: () => Promise.resolve([projectPath]),
+      resolveProcessCwdFn: () => Promise.resolve(projectPath),
+    });
+
+    await expect(service.ensureSessionAttachable("workspace-1", "nostream")).rejects.toThrow(
+      'Failed to verify streaming for session "nostream" after enabling (requested port 12345)'
+    );
+    expect(getSessionStreamStatusFn).toHaveBeenCalledTimes(2);
+    expect(enableSessionStreamingFn).toHaveBeenCalledTimes(1);
   });
 
   test("returns no sessions when cwd does not match any candidate path", async () => {

@@ -1093,13 +1093,10 @@ export const router = (authToken?: string) => {
             throw new Error("Browser bridge bootstrap failed: API server unavailable");
           }
 
-          const connection = await context.browserSessionDiscoveryService.getSessionConnection(
+          const connection = await context.browserSessionDiscoveryService.ensureSessionAttachable(
             input.workspaceId,
             input.sessionName
           );
-          if (connection == null) {
-            throw new Error(`Browser session ${input.sessionName} is unavailable.`);
-          }
 
           const token = context.browserBridgeTokenManager.mint(
             input.workspaceId,
