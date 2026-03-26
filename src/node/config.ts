@@ -37,8 +37,8 @@ import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility
 import { getMuxHome } from "@/common/constants/paths";
 import { GATEWAY_PROVIDERS } from "@/common/constants/providers";
 import {
-  CODER_ARCHIVE_BEHAVIORS,
   DEFAULT_CODER_ARCHIVE_BEHAVIOR,
+  isCoderWorkspaceArchiveBehavior,
   type CoderWorkspaceArchiveBehavior,
 } from "@/common/config/coderArchiveBehavior";
 import { PlatformPaths } from "@/common/utils/paths";
@@ -100,13 +100,7 @@ function parseUpdateChannel(value: unknown): UpdateChannel | undefined {
 function parseCoderWorkspaceArchiveBehavior(
   value: unknown
 ): CoderWorkspaceArchiveBehavior | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-
-  return CODER_ARCHIVE_BEHAVIORS.includes(value as CoderWorkspaceArchiveBehavior)
-    ? (value as CoderWorkspaceArchiveBehavior)
-    : undefined;
+  return isCoderWorkspaceArchiveBehavior(value) ? value : undefined;
 }
 
 function resolveCoderWorkspaceArchiveBehavior(

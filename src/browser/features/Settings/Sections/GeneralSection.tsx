@@ -30,8 +30,8 @@ import {
   isGenericFontFamily,
 } from "@/browser/terminal/terminalFontFamily";
 import {
-  CODER_ARCHIVE_BEHAVIORS,
   DEFAULT_CODER_ARCHIVE_BEHAVIOR,
+  isCoderWorkspaceArchiveBehavior,
   type CoderWorkspaceArchiveBehavior,
 } from "@/common/config/coderArchiveBehavior";
 
@@ -140,13 +140,6 @@ const ARCHIVE_BEHAVIOR_OPTIONS = [
   { value: "stop", label: "Stop workspace" },
   { value: "delete", label: "Delete workspace" },
 ] as const;
-
-function isCoderWorkspaceArchiveBehavior(value: unknown): value is CoderWorkspaceArchiveBehavior {
-  return (
-    typeof value === "string" &&
-    CODER_ARCHIVE_BEHAVIORS.includes(value as CoderWorkspaceArchiveBehavior)
-  );
-}
 
 // Browser mode: window.api is not set (only exists in Electron via preload)
 const isBrowserMode = typeof window !== "undefined" && !window.api;
