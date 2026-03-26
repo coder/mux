@@ -254,78 +254,14 @@ function extractSessionNames(payload: unknown): string[] {
 }
 
 async function listAgentBrowserSessionNames(env: NodeJS.ProcessEnv): Promise<string[]> {
-  return await new Promise<string[]>((resolve) => {
-    const childProcess = spawn("agent-browser", ["--json", "session", "list"], {
-      env,
-      stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true,
-    });
-    const disposableProcess = new DisposableProcess(childProcess);
-
-    let settled = false;
-    let stdout = "";
-    let stderr = "";
-
-    const finish = (sessions: string[], error?: string): void => {
-      if (settled) {
-        return;
-      }
-
-      settled = true;
-      clearTimeout(timeoutId);
-      if (error) {
-        log.debug("Agent-browser session discovery failed", { error });
-      }
-      resolve(sessions);
-    };
-
-    const timeoutId = setTimeout(() => {
-      disposableProcess[Symbol.dispose]();
-      finish([], `agent-browser session list timed out after ${CLI_TIMEOUT_MS}ms`);
-    }, CLI_TIMEOUT_MS);
-    timeoutId.unref?.();
-
-    childProcess.stdout?.setEncoding("utf8");
-    childProcess.stderr?.setEncoding("utf8");
-    childProcess.stdout?.on("data", (chunk: string) => {
-      stdout += chunk;
-    });
-    childProcess.stderr?.on("data", (chunk: string) => {
-      stderr += chunk;
-    });
-
-    childProcess.once("error", (error) => {
-      disposableProcess[Symbol.dispose]();
-      finish([], getErrorMessage(error));
-    });
-
-    childProcess.once("close", (code, signal) => {
-      if (settled) {
-        return;
-      }
-
-      if (code !== 0 || signal !== null) {
-        disposableProcess[Symbol.dispose]();
-        finish(
-          [],
-          stderr.trim() || `agent-browser session list exited with ${String(signal ?? code)}`
-        );
-        return;
-      }
-
-      let payload: unknown;
-      try {
-        payload = JSON.parse(stdout.trim());
-      } catch (error) {
-        disposableProcess[Symbol.dispose]();
-        finish([], `agent-browser session list returned invalid JSON: ${getErrorMessage(error)}`);
-        return;
-      }
-
-      disposableProcess[Symbol.dispose]();
-      finish(extractSessionNames(payload));
-    });
-  });
+  // Reuse the generic CLI helper — the spawn+timeout+collect pattern was
+  // previously duplicated here before runAgentBrowserJsonCommand existed.
+  const payload = await runAgentBrowserJsonCommand(
+    env,
+    ["--json", "session", "list"],
+    "agent-browser session list"
+  );
+  return payload != null ? extractSessionNames(payload) : [];
 }
 
 function parsePositiveInteger(value: unknown): number | null {
