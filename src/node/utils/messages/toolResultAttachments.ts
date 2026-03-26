@@ -133,7 +133,7 @@ export function extractAttachmentsFromToolOutput(
   };
 }
 
-export type ProviderReadyToolAttachment =
+type ProviderReadyToolAttachment =
   | { type: "attachment"; attachment: ExtractedToolAttachment }
   | { type: "text"; text: string };
 
@@ -197,7 +197,7 @@ export function createDataUrlForExtractedAttachment(attachment: ExtractedToolAtt
   return `data:${attachment.mediaType};base64,${attachment.data}`;
 }
 
-export function createInlineSvgAttachmentText(attachment: ExtractedToolAttachment): string {
+function createInlineSvgAttachmentText(attachment: ExtractedToolAttachment): string {
   if (attachment.mediaType !== SVG_MEDIA_TYPE) {
     throw new Error(`Expected an SVG attachment, got '${attachment.mediaType}'`);
   }
