@@ -2,7 +2,8 @@ import { describe, expect, it } from "bun:test";
 import type { ToolExecutionOptions } from "ai";
 import * as fs from "fs/promises";
 import * as path from "path";
-import { MAX_SVG_TEXT_CHARS } from "@/common/constants/imageAttachments";
+import sharp from "sharp";
+import { MAX_IMAGE_DIMENSION, MAX_SVG_TEXT_CHARS } from "@/common/constants/imageAttachments";
 import type { AttachFileToolResult } from "@/common/types/tools";
 import { MAX_ATTACH_FILE_SIZE_BYTES } from "@/node/utils/attachments/readAttachmentFromPath";
 import { createAttachFileTool } from "./attach_file";
@@ -15,6 +16,19 @@ const mockToolCallOptions: ToolExecutionOptions = {
 
 function createTestAttachFileTool(cwd: string) {
   return createAttachFileTool(createTestToolConfig(cwd));
+}
+
+async function createTestPngBytes(): Promise<Buffer> {
+  return await sharp({
+    create: {
+      width: 10,
+      height: 10,
+      channels: 3,
+      background: { r: 255, g: 0, b: 0 },
+    },
+  })
+    .png()
+    .toBuffer();
 }
 
 function expectSuccessfulAttachFileResult(
@@ -36,7 +50,7 @@ describe("attach_file tool", () => {
     using workspaceDir = new TestTempDir("attach-file-workspace");
     const tool = createTestAttachFileTool(workspaceDir.path);
     const pngPath = path.join(workspaceDir.path, "fixtures", "screenshot.png");
-    const pngBytes = Buffer.from("png-bytes");
+    const pngBytes = await createTestPngBytes();
     await fs.mkdir(path.dirname(pngPath), { recursive: true });
     await fs.writeFile(pngPath, pngBytes);
 
@@ -60,12 +74,91 @@ describe("attach_file tool", () => {
     });
   });
 
+  it("resizes oversized raster images before attaching them", async () => {
+    using workspaceDir = new TestTempDir("attach-file-workspace");
+    const tool = createTestAttachFileTool(workspaceDir.path);
+    const pngPath = path.join(workspaceDir.path, "fixtures", "oversized.png");
+    const pngBytes = await sharp({
+      create: {
+        width: 9001,
+        height: 10,
+        channels: 3,
+        background: { r: 255, g: 0, b: 0 },
+      },
+    })
+      .png()
+      .toBuffer();
+    await fs.mkdir(path.dirname(pngPath), { recursive: true });
+    await fs.writeFile(pngPath, pngBytes);
+
+    const result = expectSuccessfulAttachFileResult(
+      (await tool.execute!(
+        { path: "fixtures/oversized.png" },
+        mockToolCallOptions
+      )) as AttachFileToolResult
+    );
+
+    expect(result.value[1]).toMatchObject({
+      type: "media",
+      mediaType: "image/png",
+      filename: "oversized.png",
+    });
+    if (result.value[1]?.type !== "media") {
+      throw new Error("Expected a media part for resized image attachment");
+    }
+
+    const metadata = await sharp(Buffer.from(result.value[1].data, "base64")).metadata();
+    expect(metadata.width).toBe(MAX_IMAGE_DIMENSION);
+    expect(metadata.height).toBe(2);
+    expect(result.value[1].data).not.toBe(pngBytes.toString("base64"));
+  });
+
+  it("preserves EXIF orientation when resizing oversized JPEGs", async () => {
+    using workspaceDir = new TestTempDir("attach-file-workspace");
+    const tool = createTestAttachFileTool(workspaceDir.path);
+    const jpegPath = path.join(workspaceDir.path, "fixtures", "rotated.jpg");
+    const jpegBytes = await sharp({
+      create: {
+        width: 10,
+        height: 9001,
+        channels: 3,
+        background: { r: 255, g: 0, b: 0 },
+      },
+    })
+      .jpeg()
+      .withMetadata({ orientation: 6 })
+      .toBuffer();
+    await fs.mkdir(path.dirname(jpegPath), { recursive: true });
+    await fs.writeFile(jpegPath, jpegBytes);
+
+    const result = expectSuccessfulAttachFileResult(
+      (await tool.execute!(
+        { path: "fixtures/rotated.jpg" },
+        mockToolCallOptions
+      )) as AttachFileToolResult
+    );
+
+    expect(result.value[1]).toMatchObject({
+      type: "media",
+      mediaType: "image/jpeg",
+      filename: "rotated.jpg",
+    });
+    if (result.value[1]?.type !== "media") {
+      throw new Error("Expected a media part for rotated image attachment");
+    }
+
+    const metadata = await sharp(Buffer.from(result.value[1].data, "base64")).metadata();
+    expect(metadata.width).toBe(MAX_IMAGE_DIMENSION);
+    expect(metadata.height).toBe(2);
+    expect(metadata.orientation == null || metadata.orientation === 1).toBe(true);
+  });
+
   it("attaches an absolute PNG path outside the workspace", async () => {
     using workspaceDir = new TestTempDir("attach-file-workspace");
     using externalDir = new TestTempDir("attach-file-external");
     const tool = createTestAttachFileTool(workspaceDir.path);
     const pngPath = path.join(externalDir.path, "outside.png");
-    const pngBytes = Buffer.from("outside-png-bytes");
+    const pngBytes = await createTestPngBytes();
     await fs.writeFile(pngPath, pngBytes);
 
     const result = expectSuccessfulAttachFileResult(
@@ -115,7 +208,7 @@ describe("attach_file tool", () => {
     using workspaceDir = new TestTempDir("attach-file-workspace");
     const tool = createTestAttachFileTool(workspaceDir.path);
     const pngPath = path.join(workspaceDir.path, "chart.png");
-    const pngBytes = Buffer.from("chart-png-bytes");
+    const pngBytes = await createTestPngBytes();
     await fs.writeFile(pngPath, pngBytes);
 
     const result = expectSuccessfulAttachFileResult(

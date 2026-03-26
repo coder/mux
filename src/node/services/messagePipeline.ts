@@ -161,7 +161,8 @@ export async function prepareMessagesForProvider(
 
   // Rewrite supported tool-result attachments to small text placeholders + file parts.
   // Prevents providers from treating large base64 payloads as text/JSON context.
-  const messagesWithToolMediaExtracted = extractToolMediaAsUserMessages(messagesWithSanitizedPdf);
+  const messagesWithToolMediaExtracted =
+    await extractToolMediaAsUserMessages(messagesWithSanitizedPdf);
 
   // Rewrite user file-part data URIs to raw base64 payloads before SDK conversion.
   // convertToModelMessages maps FileUIPart.url -> FilePart.data; keeping data: URLs here

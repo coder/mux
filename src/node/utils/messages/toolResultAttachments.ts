@@ -3,6 +3,10 @@ import {
   isSupportedAttachmentMediaType,
   normalizeAttachmentMediaType,
 } from "@/common/utils/attachments/supportedAttachmentMediaTypes";
+import {
+  isRasterAttachmentMediaType,
+  resizeRasterImageAttachmentBase64IfNeeded,
+} from "@/node/utils/attachments/resizeRasterImageAttachment";
 
 export interface ExtractedToolAttachment {
   data: string;
@@ -129,6 +133,57 @@ export function extractAttachmentsFromToolOutput(
   };
 }
 
+export type ProviderReadyToolAttachment =
+  | { type: "attachment"; attachment: ExtractedToolAttachment }
+  | { type: "text"; text: string };
+
+// Historical tool outputs can already contain oversized raster images.
+// Normalize them at request time so retries do not keep failing on provider image limits.
+export async function prepareExtractedToolAttachmentForProvider(
+  attachment: ExtractedToolAttachment
+): Promise<ProviderReadyToolAttachment> {
+  if (attachment.mediaType === SVG_MEDIA_TYPE) {
+    try {
+      return {
+        type: "text",
+        text: createInlineSvgAttachmentText(attachment),
+      };
+    } catch (error) {
+      return {
+        type: "text",
+        text: `[SVG attachment omitted from provider request: ${error instanceof Error ? error.message : "Failed to inline SVG attachment."}]`,
+      };
+    }
+  }
+
+  if (!isRasterAttachmentMediaType(attachment.mediaType)) {
+    return {
+      type: "attachment",
+      attachment,
+    };
+  }
+
+  try {
+    const resizedAttachment = await resizeRasterImageAttachmentBase64IfNeeded(
+      attachment.data,
+      attachment.mediaType
+    );
+
+    return {
+      type: "attachment",
+      attachment: {
+        ...attachment,
+        data: resizedAttachment.data,
+        mediaType: resizedAttachment.mediaType,
+      },
+    };
+  } catch (error) {
+    return {
+      type: "text",
+      text: `[Image attachment omitted from provider request: ${error instanceof Error ? error.message : "Failed to resize image attachment."}]`,
+    };
+  }
+}
 export function createToolAttachmentSummaryText(count: number): string {
   return `[Attached ${count} attachment(s) from tool output]`;
 }

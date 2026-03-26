@@ -1,9 +1,11 @@
 import { MAX_IMAGE_DIMENSION } from "@/common/constants/imageAttachments";
+import {
+  computeResizedDimensions,
+  getResizedRasterOutputMediaType,
+  type ResizeDimensions,
+} from "@/common/utils/attachments/rasterImageResize";
 
-export interface ResizeDimensions {
-  width: number;
-  height: number;
-}
+export type { ResizeDimensions };
 
 export interface ResizeResult {
   dataUrl: string;
@@ -15,13 +17,6 @@ export interface ResizeResult {
   height: number;
 }
 
-function getOutputMediaType(mediaType: string): "image/jpeg" | "image/png" {
-  const normalizedMediaType = mediaType.toLowerCase().trim().split(";")[0];
-  return normalizedMediaType === "image/jpeg" || normalizedMediaType === "image/jpg"
-    ? "image/jpeg"
-    : "image/png";
-}
-
 function loadImage(dataUrl: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const image = new Image();
@@ -31,21 +26,7 @@ function loadImage(dataUrl: string): Promise<HTMLImageElement> {
   });
 }
 
-export function computeResizedDimensions(
-  width: number,
-  height: number,
-  maxDimension: number
-): ResizeDimensions | null {
-  if (width <= maxDimension && height <= maxDimension) {
-    return null;
-  }
-
-  const scale = Math.min(maxDimension / width, maxDimension / height);
-  return {
-    width: Math.max(1, Math.round(width * scale)),
-    height: Math.max(1, Math.round(height * scale)),
-  };
-}
+export { computeResizedDimensions };
 
 export async function resizeImageIfNeeded(
   dataUrl: string,
@@ -84,7 +65,7 @@ export async function resizeImageIfNeeded(
 
   context.drawImage(image, 0, 0, resizedDimensions.width, resizedDimensions.height);
 
-  const outputMediaType = getOutputMediaType(mediaType);
+  const outputMediaType = getResizedRasterOutputMediaType(mediaType);
   const resizedDataUrl =
     outputMediaType === "image/jpeg"
       ? canvas.toDataURL(outputMediaType, 0.9)

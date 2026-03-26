@@ -5,6 +5,10 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { getSupportedAttachmentMediaType } from "@/common/utils/attachments/supportedAttachmentMediaTypes";
 import type { Runtime } from "@/node/runtime/Runtime";
 import { resolvePathWithinCwd } from "@/node/services/tools/fileCommon";
+import {
+  isRasterAttachmentMediaType,
+  resizeRasterImageAttachmentBufferIfNeeded,
+} from "@/node/utils/attachments/resizeRasterImageAttachment";
 
 // Attachment payloads need a larger cap than text-oriented file tools because common
 // screenshots and PDFs regularly exceed 1MB before request-time rewriting runs.
@@ -125,11 +129,21 @@ export async function readAttachmentFromPath(
     }
   }
 
+  let attachmentBytes = bytes;
+  let attachmentMediaType = mediaType;
+  if (isRasterAttachmentMediaType(mediaType)) {
+    // Keep attach_file aligned with chat drag/drop attachments so oversized screenshots
+    // don't get persisted into history as impossible-to-send provider inputs.
+    const resizedAttachment = await resizeRasterImageAttachmentBufferIfNeeded(bytes, mediaType);
+    attachmentBytes = resizedAttachment.data;
+    attachmentMediaType = resizedAttachment.mediaType;
+  }
+
   return {
-    data: bytes.toString("base64"),
-    mediaType,
+    data: attachmentBytes.toString("base64"),
+    mediaType: attachmentMediaType,
     filename,
     resolvedPath,
-    size: bytes.length,
+    size: attachmentBytes.length,
   };
 }

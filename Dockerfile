@@ -98,6 +98,11 @@ COPY --from=builder /app/node_modules/asn1 ./node_modules/asn1
 COPY --from=builder /app/node_modules/safer-buffer ./node_modules/safer-buffer
 COPY --from=builder /app/node_modules/bcrypt-pbkdf ./node_modules/bcrypt-pbkdf
 COPY --from=builder /app/node_modules/tweetnacl ./node_modules/tweetnacl
+# - sharp + runtime deps: externalized for attach_file raster resizing in bundled server mode
+COPY --from=builder /app/node_modules/sharp ./node_modules/sharp
+COPY --from=builder /app/node_modules/@img ./node_modules/@img
+COPY --from=builder /app/node_modules/detect-libc ./node_modules/detect-libc
+COPY --from=builder /app/node_modules/semver ./node_modules/semver
 # - @1password/sdk + sdk-core: externalized; contains native WASM for secret resolution
 COPY --from=builder /app/node_modules/@1password ./node_modules/@1password
 

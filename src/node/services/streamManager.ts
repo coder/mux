@@ -1289,10 +1289,10 @@ export class StreamManager extends EventEmitter {
       messages: request.messages,
       system: request.system,
       abortSignal: abortController.signal,
-      prepareStep: ({ messages: stepMessages }) => {
+      prepareStep: async ({ messages: stepMessages }) => {
         // streamText runs multiple internal LLM calls (steps) when tools are enabled.
         // Extract supported attachments out of tool-result JSON so providers don't treat them as text.
-        const rewritten = extractToolMediaAsUserMessagesFromModelMessages(stepMessages);
+        const rewritten = await extractToolMediaAsUserMessagesFromModelMessages(stepMessages);
         const effectiveMessages = rewritten === stepMessages ? stepMessages : rewritten;
         if (stepTracker) {
           stepTracker.latestMessages = effectiveMessages;

@@ -1,10 +1,9 @@
 import type { FilePart, ImagePart, ModelMessage, TextPart, ToolResultPart } from "ai";
-import { SVG_MEDIA_TYPE } from "@/common/constants/imageAttachments";
 import { sanitizeAnthropicDocumentFilename } from "@/node/utils/messages/sanitizeAnthropicDocumentFilename";
 import {
-  createInlineSvgAttachmentText,
   createToolAttachmentSummaryText,
   extractAttachmentsFromToolOutput,
+  prepareExtractedToolAttachmentForProvider,
   type ExtractedToolAttachment,
 } from "@/node/utils/messages/toolResultAttachments";
 
@@ -24,9 +23,9 @@ type ToolResultOutput = ToolResultPart["output"];
  * This helper rewrites tool-result outputs to replace supported attachment payloads with small
  * text placeholders, and inserts a synthetic user message containing the extracted attachments.
  */
-export function extractToolMediaAsUserMessagesFromModelMessages(
+export async function extractToolMediaAsUserMessagesFromModelMessages(
   messages: ModelMessage[]
-): ModelMessage[] {
+): Promise<ModelMessage[]> {
   let didChange = false;
   const result: ModelMessage[] = [];
 
@@ -62,7 +61,7 @@ export function extractToolMediaAsUserMessagesFromModelMessages(
 
       result.push(changedMessage ? { ...message, content: newContent } : message);
       if (extractedAttachments.length > 0) {
-        result.push(createSyntheticUserMessage(extractedAttachments));
+        result.push(await createSyntheticUserMessage(extractedAttachments));
       }
       continue;
     }
@@ -94,14 +93,16 @@ export function extractToolMediaAsUserMessagesFromModelMessages(
 
     result.push(changedMessage ? { ...message, content: newContent } : message);
     if (extractedAttachments.length > 0) {
-      result.push(createSyntheticUserMessage(extractedAttachments));
+      result.push(await createSyntheticUserMessage(extractedAttachments));
     }
   }
 
   return didChange ? result : messages;
 }
 
-function createSyntheticUserMessage(attachments: ExtractedToolAttachment[]): ModelMessage {
+async function createSyntheticUserMessage(
+  attachments: ExtractedToolAttachment[]
+): Promise<ModelMessage> {
   const content: Array<TextPart | ImagePart | FilePart> = [
     {
       type: "text",
@@ -110,39 +111,32 @@ function createSyntheticUserMessage(attachments: ExtractedToolAttachment[]): Mod
   ];
 
   for (const attachment of attachments) {
-    if (attachment.mediaType === SVG_MEDIA_TYPE) {
-      try {
-        content.push({
-          type: "text",
-          text: createInlineSvgAttachmentText(attachment),
-        });
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : "Failed to inline SVG attachment.";
-        content.push({
-          type: "text",
-          text: `[SVG attachment omitted from provider request: ${errorMessage}]`,
-        });
-      }
+    const providerReadyAttachment = await prepareExtractedToolAttachmentForProvider(attachment);
+    if (providerReadyAttachment.type === "text") {
+      content.push({
+        type: "text",
+        text: providerReadyAttachment.text,
+      });
       continue;
     }
 
-    if (attachment.mediaType.startsWith("image/")) {
+    const preparedAttachment = providerReadyAttachment.attachment;
+    if (preparedAttachment.mediaType.startsWith("image/")) {
       content.push({
         type: "image",
-        image: attachment.data,
-        mediaType: attachment.mediaType,
+        image: preparedAttachment.data,
+        mediaType: preparedAttachment.mediaType,
       });
       continue;
     }
 
     content.push({
       type: "file",
-      data: attachment.data,
-      mediaType: attachment.mediaType,
-      ...(attachment.filename
+      data: preparedAttachment.data,
+      mediaType: preparedAttachment.mediaType,
+      ...(preparedAttachment.filename
         ? {
-            filename: sanitizeAnthropicDocumentFilename(attachment.filename),
+            filename: sanitizeAnthropicDocumentFilename(preparedAttachment.filename),
           }
         : {}),
     });

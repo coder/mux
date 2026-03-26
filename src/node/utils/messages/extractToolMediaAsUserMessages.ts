@@ -1,11 +1,10 @@
 import type { MuxMessage } from "@/common/types/message";
-import { SVG_MEDIA_TYPE } from "@/common/constants/imageAttachments";
 import { sanitizeAnthropicDocumentFilename } from "@/node/utils/messages/sanitizeAnthropicDocumentFilename";
 import {
   createDataUrlForExtractedAttachment,
-  createInlineSvgAttachmentText,
   createToolAttachmentSummaryText,
   extractAttachmentsFromToolOutput,
+  prepareExtractedToolAttachmentForProvider,
 } from "@/node/utils/messages/toolResultAttachments";
 
 /**
@@ -24,7 +23,9 @@ import {
  * NOTE: This is request-only: it should be applied to the in-memory message list right before
  * convertToModelMessages(...). Persisted history and UI still keep the original tool output.
  */
-export function extractToolMediaAsUserMessages(messages: MuxMessage[]): MuxMessage[] {
+export async function extractToolMediaAsUserMessages(
+  messages: MuxMessage[]
+): Promise<MuxMessage[]> {
   let didChangeAnyMessage = false;
   const result: MuxMessage[] = [];
 
@@ -38,14 +39,17 @@ export function extractToolMediaAsUserMessages(messages: MuxMessage[]): MuxMessa
     let extractedAttachmentCount = 0;
     let changedMessage = false;
 
-    const newParts = message.parts.map((part) => {
+    const newParts: MuxMessage["parts"] = [];
+    for (const part of message.parts) {
       if (part.type !== "dynamic-tool" || part.state !== "output-available") {
-        return part;
+        newParts.push(part);
+        continue;
       }
 
       const extracted = extractAttachmentsFromToolOutput(part.output);
       if (extracted == null) {
-        return part;
+        newParts.push(part);
+        continue;
       }
 
       changedMessage = true;
@@ -53,45 +57,37 @@ export function extractToolMediaAsUserMessages(messages: MuxMessage[]): MuxMessa
 
       const nextExtractedUserParts: MuxMessage["parts"] = [];
       for (const attachment of extracted.attachments) {
-        if (attachment.mediaType === SVG_MEDIA_TYPE) {
-          try {
-            nextExtractedUserParts.push({
-              type: "text",
-              text: createInlineSvgAttachmentText(attachment),
-            });
-          } catch (error) {
-            const errorMessage =
-              error instanceof Error ? error.message : "Failed to inline SVG attachment.";
-            nextExtractedUserParts.push({
-              type: "text",
-              text: `[SVG attachment omitted from provider request: ${errorMessage}]`,
-            });
-          }
+        const providerReadyAttachment = await prepareExtractedToolAttachmentForProvider(attachment);
+        if (providerReadyAttachment.type === "text") {
+          nextExtractedUserParts.push({
+            type: "text",
+            text: providerReadyAttachment.text,
+          });
           continue;
         }
 
+        const preparedAttachment = providerReadyAttachment.attachment;
         nextExtractedUserParts.push({
           type: "file",
-          mediaType: attachment.mediaType,
-          url: createDataUrlForExtractedAttachment(attachment),
-          ...(attachment.filename
+          mediaType: preparedAttachment.mediaType,
+          url: createDataUrlForExtractedAttachment(preparedAttachment),
+          ...(preparedAttachment.filename
             ? {
                 filename:
-                  attachment.mediaType === "application/pdf"
-                    ? sanitizeAnthropicDocumentFilename(attachment.filename)
-                    : attachment.filename,
+                  preparedAttachment.mediaType === "application/pdf"
+                    ? sanitizeAnthropicDocumentFilename(preparedAttachment.filename)
+                    : preparedAttachment.filename,
               }
             : {}),
         });
       }
 
       extractedUserParts = [...extractedUserParts, ...nextExtractedUserParts];
-
-      return {
+      newParts.push({
         ...part,
         output: extracted.newOutput,
-      };
-    });
+      });
+    }
 
     const rewrittenMessage = changedMessage
       ? ({ ...message, parts: newParts } satisfies MuxMessage)
