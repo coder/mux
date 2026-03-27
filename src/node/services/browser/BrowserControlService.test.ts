@@ -90,6 +90,27 @@ function createService(options?: {
   });
 }
 
+// CI saw occasional hangs when mocked child events were queued during spawn.
+// Waiting until the service has definitely spawned the child keeps the tests
+// independent of runtime-specific microtask ordering.
+function createSpawnHarness(child: MockChildProcess) {
+  const spawnCalls: Array<{ command: string; args: string[]; options: SpawnOptions }> = [];
+  let resolveSpawned: (() => void) | null = null;
+  const spawned = new Promise<void>((resolve) => {
+    resolveSpawned = resolve;
+  });
+
+  return {
+    spawnCalls,
+    spawnFn: mock((command: string, args: string[], options: SpawnOptions) => {
+      spawnCalls.push({ command, args, options });
+      resolveSpawned?.();
+      return child as unknown as ChildProcess;
+    }),
+    waitForSpawn: () => spawned,
+  };
+}
+
 async function expectRejectMessage<T>(promise: Promise<T>, message: string): Promise<void> {
   try {
     await promise;
@@ -132,12 +153,7 @@ describe("BrowserControlService", () => {
 
     for (const actionCase of actionCases) {
       const child = new MockChildProcess();
-      const spawnCalls: Array<{ command: string; args: string[]; options: SpawnOptions }> = [];
-      const spawnFn = mock((command: string, args: string[], options: SpawnOptions) => {
-        spawnCalls.push({ command, args, options });
-        queueMicrotask(() => child.close());
-        return child as unknown as ChildProcess;
-      });
+      const { spawnCalls, spawnFn, waitForSpawn } = createSpawnHarness(child);
       const resolveSessionEnvFn = mock(() => Promise.resolve({ TEST_ENV: "1" }));
       const service = createService({
         spawnFn,
@@ -151,7 +167,11 @@ describe("BrowserControlService", () => {
         url: actionCase.url,
       };
 
-      expect(await service.executeControl(params)).toEqual({ success: true });
+      const executionPromise = service.executeControl(params);
+      await waitForSpawn();
+      child.close();
+
+      expect(await executionPromise).toEqual({ success: true });
       expect(resolveSessionEnvFn).toHaveBeenCalledWith(WORKSPACE_ID);
       expect(spawnFn).toHaveBeenCalledTimes(1);
       expect(spawnCalls).toHaveLength(1);
@@ -237,18 +257,15 @@ describe("BrowserControlService", () => {
 
   test("getUrl parses stdout from the CLI", async () => {
     const child = new MockChildProcess();
-    const spawnCalls: Array<{ command: string; args: string[]; options: SpawnOptions }> = [];
-    const spawnFn = mock((command: string, args: string[], options: SpawnOptions) => {
-      spawnCalls.push({ command, args, options });
-      queueMicrotask(() => {
-        child.writeStdout("https://example.com/current\n");
-        child.close();
-      });
-      return child as unknown as ChildProcess;
-    });
+    const { spawnCalls, spawnFn, waitForSpawn } = createSpawnHarness(child);
     const service = createService({ spawnFn });
 
-    expect(await service.getUrl(WORKSPACE_ID, SESSION_NAME)).toEqual({
+    const resultPromise = service.getUrl(WORKSPACE_ID, SESSION_NAME);
+    await waitForSpawn();
+    child.writeStdout("https://example.com/current\n");
+    child.close();
+
+    expect(await resultPromise).toEqual({
       url: "https://example.com/current",
     });
     expect(spawnCalls[0]?.args).toEqual(["--session", SESSION_NAME, "get", "url"]);
@@ -275,23 +292,19 @@ describe("BrowserControlService", () => {
 
   test("executeControl surfaces stderr when the CLI exits with an error", async () => {
     const child = new MockChildProcess();
-    const service = createService({
-      spawnFn: mock(() => {
-        queueMicrotask(() => {
-          child.writeStderr("navigation failed\n");
-          child.close(1);
-        });
-        return child as unknown as ChildProcess;
-      }),
-    });
+    const { spawnFn, waitForSpawn } = createSpawnHarness(child);
+    const service = createService({ spawnFn });
 
-    expect(
-      await service.executeControl({
-        workspaceId: WORKSPACE_ID,
-        sessionName: SESSION_NAME,
-        action: "forward",
-      })
-    ).toEqual({
+    const executionPromise = service.executeControl({
+      workspaceId: WORKSPACE_ID,
+      sessionName: SESSION_NAME,
+      action: "forward",
+    });
+    await waitForSpawn();
+    child.writeStderr("navigation failed\n");
+    child.close(1);
+
+    expect(await executionPromise).toEqual({
       success: false,
       error: "navigation failed",
     });
