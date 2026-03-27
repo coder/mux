@@ -1,0 +1,55 @@
+import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import {
+  SELECTED_WORKSPACE_KEY,
+  EXPANDED_PROJECTS_KEY,
+  RIGHT_SIDEBAR_COLLAPSED_KEY,
+  getInputKey,
+  getModelKey,
+} from "@/common/constants/storage";
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// WORKSPACE SELECTION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** Set localStorage to select a workspace */
+export function selectWorkspace(workspace: FrontendWorkspaceMetadata): void {
+  localStorage.setItem(
+    SELECTED_WORKSPACE_KEY,
+    JSON.stringify({
+      workspaceId: workspace.id,
+      projectPath: workspace.projectPath,
+      projectName: workspace.projectName,
+      namedWorkspacePath: workspace.namedWorkspacePath,
+    })
+  );
+}
+
+/** Clear workspace selection from localStorage (for sidebar-focused stories) */
+export function clearWorkspaceSelection(): void {
+  localStorage.removeItem(SELECTED_WORKSPACE_KEY);
+}
+
+/** Set input text for a workspace */
+export function setWorkspaceInput(workspaceId: string, text: string): void {
+  localStorage.setItem(getInputKey(workspaceId), JSON.stringify(text));
+}
+
+/** Set model for a workspace */
+export function setWorkspaceModel(workspaceId: string, model: string): void {
+  localStorage.setItem(getModelKey(workspaceId), model);
+}
+
+/** Expand projects in the sidebar */
+export function expandProjects(projectPaths: string[]): void {
+  localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify(projectPaths));
+}
+
+/** Collapse the right sidebar (default for most stories) */
+export function collapseRightSidebar(): void {
+  localStorage.setItem(RIGHT_SIDEBAR_COLLAPSED_KEY, JSON.stringify(true));
+}
+
+/** Expand the right sidebar (for stories testing it) */
+export function expandRightSidebar(): void {
+  localStorage.setItem(RIGHT_SIDEBAR_COLLAPSED_KEY, JSON.stringify(false));
+}
