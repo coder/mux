@@ -45,7 +45,7 @@ export interface BrowserMouseInput {
 
 export interface BrowserKeyboardInput {
   type: "input_keyboard";
-  eventType: "keyDown" | "keyUp" | "char";
+  eventType: "keyDown" | "keyUp" | "rawKeyDown";
   key?: string;
   code?: string;
   text?: string;

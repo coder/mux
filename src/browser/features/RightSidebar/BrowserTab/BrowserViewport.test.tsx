@@ -154,7 +154,7 @@ describe("BrowserViewport", () => {
     });
   });
 
-  test("continues to emit char events for printable typing", () => {
+  test("sends printable typing without duplicating char events", () => {
     const view = renderViewport(createSession());
     const viewport = view.getByRole("region", { name: "Browser viewport" });
 
@@ -162,7 +162,7 @@ describe("BrowserViewport", () => {
     fireEvent.keyDown(viewport, { key: "a", code: "KeyA" });
     fireEvent.keyUp(viewport, { key: "a", code: "KeyA" });
 
-    expect(sendInputMock).toHaveBeenCalledTimes(3);
+    expect(sendInputMock).toHaveBeenCalledTimes(2);
     expect(sendInputMock).toHaveBeenNthCalledWith(1, {
       type: "input_keyboard",
       eventType: "keyDown",
@@ -173,18 +173,35 @@ describe("BrowserViewport", () => {
     });
     expect(sendInputMock).toHaveBeenNthCalledWith(2, {
       type: "input_keyboard",
-      eventType: "char",
+      eventType: "keyUp",
       key: "a",
       code: "KeyA",
       text: "a",
       modifiers: 0,
     });
-    expect(sendInputMock).toHaveBeenNthCalledWith(3, {
+  });
+
+  test("uses rawKeyDown for non-text editing keys like Backspace", () => {
+    const view = renderViewport(createSession());
+    const viewport = view.getByRole("region", { name: "Browser viewport" });
+
+    fireEvent.focus(viewport);
+    fireEvent.keyDown(viewport, { key: "Backspace", code: "Backspace" });
+    fireEvent.keyUp(viewport, { key: "Backspace", code: "Backspace" });
+
+    expect(sendInputMock).toHaveBeenCalledTimes(2);
+    expect(sendInputMock).toHaveBeenNthCalledWith(1, {
+      type: "input_keyboard",
+      eventType: "rawKeyDown",
+      key: "Backspace",
+      code: "Backspace",
+      modifiers: 0,
+    });
+    expect(sendInputMock).toHaveBeenNthCalledWith(2, {
       type: "input_keyboard",
       eventType: "keyUp",
-      key: "a",
-      code: "KeyA",
-      text: "a",
+      key: "Backspace",
+      code: "Backspace",
       modifiers: 0,
     });
   });

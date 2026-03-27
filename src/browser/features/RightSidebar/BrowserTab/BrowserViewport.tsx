@@ -409,24 +409,14 @@ export function BrowserViewport(props: BrowserViewportProps) {
     sendInput(
       {
         type: "input_keyboard",
-        eventType: "keyDown",
+        // The browser bridge now treats text on keyDown as actual text insertion, so emitting an
+        // extra char event duplicates printable input. Non-text keys still need rawKeyDown so the
+        // controlled page receives editing/navigation behavior like Backspace/Delete.
+        eventType: keyEventText != null ? "keyDown" : "rawKeyDown",
         ...sharedKeyboardFields,
       },
       props.session.id
     );
-
-    const printableText = getPrintableText(event);
-    if (printableText != null) {
-      sendInput(
-        {
-          type: "input_keyboard",
-          eventType: "char",
-          ...sharedKeyboardFields,
-          text: printableText,
-        },
-        props.session.id
-      );
-    }
   };
 
   const handleKeyUp = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -586,14 +576,6 @@ function shouldHandleKeyboardEvent(event: KeyboardEvent<HTMLDivElement>): boolea
   }
 
   return true;
-}
-
-function getPrintableText(event: KeyboardEvent<HTMLDivElement>): string | null {
-  if (event.ctrlKey || event.metaKey || event.altKey) {
-    return null;
-  }
-
-  return event.key.length === 1 ? event.key : null;
 }
 
 function getKeyEventText(event: KeyboardEvent<HTMLDivElement>): string | null {
