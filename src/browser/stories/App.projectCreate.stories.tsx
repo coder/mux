@@ -7,8 +7,8 @@
  */
 
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
-import { createWorkspace, groupWorkspacesByProject } from "./mockFactory";
-import { selectWorkspace, expandProjects } from "./storyHelpers";
+import { expandProjects, selectWorkspace } from "./helpers/uiState";
+import { createWorkspace, groupWorkspacesByProject } from "./mocks/workspaces";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import { within, userEvent, waitFor } from "@storybook/test";
 import type { APIClient } from "@/browser/contexts/API";

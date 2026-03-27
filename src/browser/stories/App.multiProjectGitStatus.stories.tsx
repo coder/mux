@@ -10,8 +10,8 @@ import type { ProjectGitStatusResult } from "@/common/orpc/schemas/api";
 import { getExperimentKey, EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
-import { createWorkspace, groupWorkspacesByProject } from "./mockFactory";
-import { collapseRightSidebar, expandProjects, selectWorkspace } from "./storyHelpers";
+import { collapseRightSidebar, expandProjects, selectWorkspace } from "./helpers/uiState";
+import { createWorkspace, groupWorkspacesByProject } from "./mocks/workspaces";
 import { userEvent, waitFor, within } from "@storybook/test";
 
 export default {

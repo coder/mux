@@ -14,8 +14,8 @@
 
 import type { APIClient } from "@/browser/contexts/API";
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
-import { createWorkspace, groupWorkspacesByProject } from "./mockFactory";
-import { selectWorkspace, expandProjects, collapseRightSidebar } from "./storyHelpers";
+import { collapseRightSidebar, expandProjects, selectWorkspace } from "./helpers/uiState";
+import { createWorkspace, groupWorkspacesByProject } from "./mocks/workspaces";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import { within, userEvent, waitFor } from "@storybook/test";
 import type { PolicyGetResponse, PolicySource, EffectivePolicy } from "@/common/orpc/types";

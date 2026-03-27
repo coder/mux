@@ -7,31 +7,33 @@
  */
 
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
+import { createOnChatAdapter } from "./helpers/chatSetup";
+import { createGitStatusExecutor } from "./helpers/git";
+import {
+  collapseRightSidebar,
+  expandProjects,
+  expandRightSidebar,
+  selectWorkspace,
+} from "./helpers/uiState";
+import { createStaticChatHandler } from "./mocks/chatHandlers";
+import type { GitStatusFixture } from "./mocks/git";
+import { createAssistantMessage, createUserMessage } from "./mocks/messages";
+import {
+  createBashTool,
+  createFileEditTool,
+  createFileReadTool,
+  createProposePlanTool,
+  createStatusTool,
+  createTodoWriteTool,
+  createWebSearchTool,
+} from "./mocks/tools";
 import {
   NOW,
   STABLE_TIMESTAMP,
-  createWorkspace,
   createSSHWorkspace,
+  createWorkspace,
   groupWorkspacesByProject,
-  createUserMessage,
-  createAssistantMessage,
-  createProposePlanTool,
-  createTodoWriteTool,
-  createFileReadTool,
-  createFileEditTool,
-  createBashTool,
-  createWebSearchTool,
-  createStaticChatHandler,
-  type GitStatusFixture,
-} from "./mockFactory";
-import {
-  createOnChatAdapter,
-  createGitStatusExecutor,
-  expandProjects,
-  selectWorkspace,
-  expandRightSidebar,
-  collapseRightSidebar,
-} from "./storyHelpers";
+} from "./mocks/workspaces";
 import { createMockORPCClient, type MockSessionUsage } from "./mocks/orpc";
 import {
   GIT_STATUS_INDICATOR_MODE_KEY,

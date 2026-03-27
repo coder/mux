@@ -6,8 +6,8 @@ import { within, userEvent, waitFor, expect } from "@storybook/test";
 
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import { createMockORPCClient, type MockSessionUsage } from "@/browser/stories/mocks/orpc";
-import { expandProjects } from "./storyHelpers";
-import { createArchivedWorkspace, NOW } from "./mockFactory";
+import { expandProjects } from "./helpers/uiState";
+import { createArchivedWorkspace, NOW } from "./mocks/workspaces";
 import type { ProjectConfig } from "@/node/config";
 import { LEFT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
 

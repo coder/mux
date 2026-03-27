@@ -3,9 +3,10 @@
  */
 
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
-import { setupSimpleChatStory, setReviews, createReview } from "./storyHelpers";
+import { setupSimpleChatStory } from "./helpers/chatSetup";
+import { createReview, setReviews } from "./helpers/reviews";
 import { blurActiveElement, waitForChatInputAutofocusDone } from "./storyPlayHelpers.js";
-import { createUserMessage, createAssistantMessage } from "./mockFactory";
+import { createAssistantMessage, createUserMessage } from "./mocks/messages";
 import { within, userEvent, waitFor } from "@storybook/test";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
 

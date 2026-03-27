@@ -6,23 +6,20 @@ import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import type { WorkspaceChatMessage, ChatMuxMessage } from "@/common/orpc/types";
 import type { DebugLlmRequestSnapshot } from "@/common/types/debugLlmRequest";
 import {
-  STABLE_TIMESTAMP,
-  createWorkspace,
-  createIncompatibleWorkspace,
-  groupWorkspacesByProject,
-  createUserMessage,
-  createAssistantMessage,
-  createFileEditTool,
-  createStaticChatHandler,
-} from "./mockFactory";
-import {
-  collapseRightSidebar,
   createOnChatAdapter,
-  expandProjects,
-  selectWorkspace,
   setupCustomChatStory,
   setupSimpleChatStory,
-} from "./storyHelpers";
+} from "./helpers/chatSetup";
+import { collapseRightSidebar, expandProjects, selectWorkspace } from "./helpers/uiState";
+import { createStaticChatHandler } from "./mocks/chatHandlers";
+import { createAssistantMessage, createUserMessage } from "./mocks/messages";
+import { createFileEditTool } from "./mocks/tools";
+import {
+  STABLE_TIMESTAMP,
+  createIncompatibleWorkspace,
+  createWorkspace,
+  groupWorkspacesByProject,
+} from "./mocks/workspaces";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import { userEvent, waitFor } from "@storybook/test";
 

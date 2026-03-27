@@ -7,7 +7,7 @@ import { within, userEvent, expect, waitFor } from "@storybook/test";
 
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import { createMockORPCClient, type MockORPCClientOptions } from "@/browser/stories/mocks/orpc";
-import { expandProjects } from "./storyHelpers";
+import { expandProjects } from "./helpers/uiState";
 import type { ProjectConfig } from "@/node/config";
 
 async function openProjectCreationView(storyRoot: HTMLElement, projectPath: string): Promise<void> {
