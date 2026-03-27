@@ -165,6 +165,9 @@ function createSession(
     lastError: null,
     streamState: status === "ended" ? null : "connecting",
     frameMetadata: null,
+    currentUrl: null,
+    isPageLoading: false,
+    pendingUrl: null,
     streamErrorMessage: null,
   };
 }
@@ -174,6 +177,7 @@ export function useBrowserBridgeConnection(workspaceId: string): {
   connect: (sessionName: string) => void;
   disconnect: () => void;
   sendInput: (input: BrowserInputEvent) => void;
+  setPendingUrl: (url: string) => void;
 } {
   if (workspaceId.trim().length === 0) {
     throw new Error("Browser bridge connection requires a workspaceId");
@@ -328,6 +332,28 @@ export function useBrowserBridgeConnection(workspaceId: string): {
               });
               return;
             }
+            case "page_state": {
+              const url = typeof payload.url === "string" ? payload.url : null;
+              const isLoading = typeof payload.isLoading === "boolean" ? payload.isLoading : false;
+
+              setSession((previousSession) => {
+                if (previousSession?.id !== sessionId) {
+                  return previousSession;
+                }
+
+                const shouldClearPendingUrl =
+                  !isLoading ||
+                  (previousSession.pendingUrl != null && previousSession.pendingUrl === url);
+
+                return {
+                  ...previousSession,
+                  currentUrl: url,
+                  isPageLoading: isLoading,
+                  pendingUrl: shouldClearPendingUrl ? null : previousSession.pendingUrl,
+                };
+              });
+              return;
+            }
             case "error": {
               const nextError = extractMessageError(payload) ?? "Browser preview stream failed.";
               setSession((previousSession) => {
@@ -421,6 +447,19 @@ export function useBrowserBridgeConnection(workspaceId: string): {
     }
   };
 
+  const setPendingUrl = (url: string) => {
+    setSession((previousSession) => {
+      if (previousSession == null) {
+        return previousSession;
+      }
+
+      return {
+        ...previousSession,
+        pendingUrl: url,
+      };
+    });
+  };
+
   useEffect(() => {
     return () => {
       const generation = generationRef.current + 1;
@@ -429,5 +468,5 @@ export function useBrowserBridgeConnection(workspaceId: string): {
     };
   }, []);
 
-  return { session, connect, disconnect, sendInput };
+  return { session, connect, disconnect, sendInput, setPendingUrl };
 }

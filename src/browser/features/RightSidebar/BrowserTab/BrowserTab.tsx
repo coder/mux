@@ -10,6 +10,7 @@ import type {
   BrowserSession,
   BrowserSessionStatus,
 } from "./browserBridgeTypes";
+import { BrowserToolbar } from "./BrowserToolbar";
 import { BrowserViewport } from "./BrowserViewport";
 import { useBrowserBridgeConnection } from "./useBrowserBridgeConnection";
 
@@ -117,7 +118,9 @@ export function BrowserTab(props: BrowserTabProps) {
     { listener: true }
   );
   const [discoveryError, setDiscoveryError] = useState<string | null>(null);
-  const { session, connect, disconnect, sendInput } = useBrowserBridgeConnection(props.workspaceId);
+  const { session, connect, disconnect, sendInput, setPendingUrl } = useBrowserBridgeConnection(
+    props.workspaceId
+  );
 
   const selectedDiscoveredSession =
     discoveredSessions.find((candidate) => candidate.sessionName === selectedSessionName) ?? null;
@@ -260,6 +263,16 @@ export function BrowserTab(props: BrowserTabProps) {
           />
         )}
       </div>
+
+      <BrowserToolbar
+        workspaceId={props.workspaceId}
+        sessionName={selectedSessionName}
+        currentUrl={session?.currentUrl ?? null}
+        pendingUrl={session?.pendingUrl ?? null}
+        isPageLoading={session?.isPageLoading ?? false}
+        isConnected={session?.status === "live"}
+        onSetPendingUrl={setPendingUrl}
+      />
 
       {visibleError && !screenshotSrc && (
         <div className="border-border-light border-b px-3 py-2">

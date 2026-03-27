@@ -1,4 +1,4 @@
-import { cleanup, render, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
 import { useState } from "react";
@@ -11,6 +11,7 @@ const listSessionsMock = mock(() =>
 const connectMock = mock(() => undefined);
 const disconnectMock = mock(() => undefined);
 const sendInputMock = mock(() => undefined);
+const setPendingUrlMock = mock(() => undefined);
 let mockSession: BrowserSession | null = null;
 
 void mock.module("@/browser/contexts/API", () => ({
@@ -37,6 +38,7 @@ void mock.module("./useBrowserBridgeConnection", () => ({
     connect: connectMock,
     disconnect: disconnectMock,
     sendInput: sendInputMock,
+    setPendingUrl: setPendingUrlMock,
   }),
 }));
 
@@ -56,6 +58,9 @@ function createSession(overrides: Partial<BrowserSession> = {}): BrowserSession 
     lastError: null,
     streamState: "live",
     frameMetadata: null,
+    currentUrl: null,
+    isPageLoading: false,
+    pendingUrl: null,
     streamErrorMessage: null,
     ...overrides,
   };
@@ -86,6 +91,7 @@ describe("BrowserTab", () => {
     listSessionsMock.mockResolvedValue({ sessions: [] });
     connectMock.mockReset();
     disconnectMock.mockReset();
+    setPendingUrlMock.mockReset();
     sendInputMock.mockReset();
     mockSession = null;
   });
@@ -112,6 +118,28 @@ describe("BrowserTab", () => {
     expect(view.getByText("Starting live preview…")).toBeTruthy();
     expect(view.getByText('Enabling streaming for session "alpha"…')).toBeTruthy();
     expect(view.queryByText(/AGENT_BROWSER_STREAM_PORT/)).toBeNull();
+  });
+
+  test("renders the navigation toolbar with the active session URL", async () => {
+    listSessionsMock.mockResolvedValue({
+      sessions: [createDiscoveredSession()],
+    });
+    mockSession = createSession({
+      currentUrl: "https://current.example.com",
+      pendingUrl: "https://pending.example.com",
+      isPageLoading: true,
+    });
+
+    render(<BrowserTab workspaceId="workspace-1" projectPath="/project" />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Browser URL").value).toBe("https://pending.example.com");
+    });
+
+    expect(screen.getByLabelText("Back").disabled).toBe(false);
+    expect(screen.getByLabelText("Forward").disabled).toBe(false);
+    expect(screen.getByLabelText("Reload").disabled).toBe(false);
+    expect(screen.getByTestId("browser-toolbar-loading-icon")).toBeTruthy();
   });
 });
 

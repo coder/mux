@@ -25,6 +25,9 @@ function createSession(overrides: Partial<BrowserSession> = {}): BrowserSession 
     lastError: null,
     streamState: "live",
     frameMetadata: { ...FRAME_METADATA },
+    currentUrl: null,
+    isPageLoading: false,
+    pendingUrl: null,
     streamErrorMessage: null,
     ...overrides,
   };

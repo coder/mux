@@ -17,6 +17,8 @@ export interface BrowserDiscoveredSession {
   status: BrowserDiscoveredSessionStatus;
 }
 
+export type PageStateSource = "bootstrap" | "command" | "poll";
+
 export interface BrowserSession {
   id: string;
   workspaceId: string;
@@ -26,6 +28,9 @@ export interface BrowserSession {
   lastError: string | null;
   streamState: BrowserStreamState | null;
   frameMetadata: BrowserViewportMetadata | null;
+  currentUrl: string | null;
+  isPageLoading: boolean;
+  pendingUrl: string | null;
   streamErrorMessage: string | null;
 }
 

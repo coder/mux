@@ -98,6 +98,19 @@ async function flushAsyncWork() {
   });
 }
 
+async function connectHook() {
+  const result = renderHook(() => useBrowserBridgeConnection("workspace-1"));
+
+  act(() => {
+    result.result.current.connect("session-a");
+  });
+  await flushAsyncWork();
+
+  const socket = FakeWebSocket.instances.at(-1);
+  expect(socket).toBeDefined();
+  return { result: result.result, socket: socket! };
+}
+
 describe("useBrowserBridgeConnection", () => {
   let originalWindow: typeof globalThis.window;
   let originalDocument: typeof globalThis.document;
@@ -129,14 +142,8 @@ describe("useBrowserBridgeConnection", () => {
   });
 
   test("bootstraps the mux bridge and surfaces live frame state", async () => {
-    const { result } = renderHook(() => useBrowserBridgeConnection("workspace-1"));
+    const { result, socket } = await connectHook();
 
-    act(() => {
-      result.current.connect("session-a");
-    });
-    await flushAsyncWork();
-
-    const socket = FakeWebSocket.instances.at(-1)!;
     expect(getBootstrapMock).toHaveBeenCalledWith({
       workspaceId: "workspace-1",
       sessionName: "session-a",
@@ -166,13 +173,90 @@ describe("useBrowserBridgeConnection", () => {
     expect(result.current.session?.frameMetadata?.deviceWidth).toBe(1280);
   });
 
-  test("disconnect resets the local session state", async () => {
-    const { result } = renderHook(() => useBrowserBridgeConnection("workspace-1"));
+  test("initializes new sessions with page state defaults", async () => {
+    const { result } = await connectHook();
+
+    expect(result.current.session).not.toBeNull();
+    expect(result.current.session?.currentUrl).toBeNull();
+    expect(result.current.session?.isPageLoading).toBe(false);
+    expect(result.current.session?.pendingUrl).toBeNull();
+  });
+
+  test("updates currentUrl and isPageLoading from page_state messages", async () => {
+    const { result, socket } = await connectHook();
 
     act(() => {
-      result.current.connect("session-a");
+      socket.emitMessage({
+        type: "page_state",
+        url: "https://example.com",
+        isLoading: true,
+        source: "poll",
+      });
     });
     await flushAsyncWork();
+
+    expect(result.current.session?.currentUrl).toBe("https://example.com");
+    expect(result.current.session?.isPageLoading).toBe(true);
+  });
+
+  test("clears pendingUrl after the confirmed page_state finishes loading", async () => {
+    const { result, socket } = await connectHook();
+
+    act(() => {
+      result.current.setPendingUrl("https://example.com/next");
+    });
+
+    expect(result.current.session?.pendingUrl).toBe("https://example.com/next");
+
+    act(() => {
+      socket.emitMessage({
+        type: "page_state",
+        url: "https://example.com/next",
+        isLoading: false,
+        source: "command",
+      });
+    });
+    await flushAsyncWork();
+
+    expect(result.current.session?.currentUrl).toBe("https://example.com/next");
+    expect(result.current.session?.isPageLoading).toBe(false);
+    expect(result.current.session?.pendingUrl).toBeNull();
+  });
+
+  test("preserves pendingUrl while a different page_state is still loading", async () => {
+    const { result, socket } = await connectHook();
+
+    act(() => {
+      result.current.setPendingUrl("https://next.example.com");
+    });
+
+    act(() => {
+      socket.emitMessage({
+        type: "page_state",
+        url: "https://current.example.com",
+        isLoading: true,
+        source: "poll",
+      });
+    });
+    await flushAsyncWork();
+
+    expect(result.current.session?.currentUrl).toBe("https://current.example.com");
+    expect(result.current.session?.isPageLoading).toBe(true);
+    expect(result.current.session?.pendingUrl).toBe("https://next.example.com");
+  });
+
+  test("setPendingUrl stores an optimistic navigation target", async () => {
+    const { result } = await connectHook();
+
+    act(() => {
+      result.current.setPendingUrl("https://pending.example.com");
+    });
+
+    expect(result.current.session?.pendingUrl).toBe("https://pending.example.com");
+  });
+
+  test("disconnect resets the local session state", async () => {
+    const { result } = await connectHook();
 
     act(() => {
       result.current.disconnect();
@@ -183,14 +267,8 @@ describe("useBrowserBridgeConnection", () => {
   });
 
   test("surfaces close errors from the bridged socket", async () => {
-    const { result } = renderHook(() => useBrowserBridgeConnection("workspace-1"));
+    const { result, socket } = await connectHook();
 
-    act(() => {
-      result.current.connect("session-a");
-    });
-    await flushAsyncWork();
-
-    const socket = FakeWebSocket.instances.at(-1)!;
     act(() => {
       socket.emitClose(1011, "bridge exploded");
     });
