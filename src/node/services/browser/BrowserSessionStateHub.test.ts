@@ -197,6 +197,123 @@ describe("BrowserSessionStateHub", () => {
     }
   });
 
+  test("throwing subscribers do not prevent later subscribers from receiving updates", async () => {
+    const bootstrap = createDeferred<{ url: string | null; error?: string }>();
+    const getUrl = mock(() => bootstrap.promise);
+    const warn = spyOn(log, "warn").mockImplementation(() => undefined);
+    const hub = new BrowserSessionStateHub({
+      browserControlService: { getUrl },
+      pollIntervalMs: POLL_INTERVAL_MS,
+    });
+    const throwingCallback = mock(() => {
+      throw new Error("subscriber failed");
+    });
+    const secondCallback = mock(() => undefined);
+
+    try {
+      hub.subscribe(WORKSPACE_ID, SESSION_NAME, throwingCallback);
+      hub.subscribe(WORKSPACE_ID, SESSION_NAME, secondCallback);
+
+      expect(() => {
+        hub.markLoaded(WORKSPACE_ID, SESSION_NAME, "https://example.com/loaded");
+      }).not.toThrow();
+
+      expect(throwingCallback).toHaveBeenCalledTimes(1);
+      expect(secondCallback).toHaveBeenCalledTimes(1);
+      expect(secondCallback).toHaveBeenCalledWith({
+        type: "page_state",
+        url: "https://example.com/loaded",
+        isLoading: false,
+        source: "command",
+      });
+      expect(warn).toHaveBeenCalledWith(
+        "BrowserSessionStateHub: subscriber callback failed",
+        expect.objectContaining({
+          sessionKey: `${WORKSPACE_ID}:${SESSION_NAME}`,
+        })
+      );
+
+      bootstrap.resolve({ url: "https://example.com/bootstrap" });
+      await flushMicrotasks();
+    } finally {
+      hub.dispose();
+    }
+  });
+
+  test("stalled polls are timed out so later polls can recover", async () => {
+    const stalePoll = createDeferred<{ url: string | null; error?: string }>();
+    const warn = spyOn(log, "warn").mockImplementation(() => undefined);
+    let callCount = 0;
+    const getUrl = mock(() => {
+      callCount += 1;
+      if (callCount === 1) {
+        return Promise.resolve({ url: "https://example.com/bootstrap" });
+      }
+      if (callCount === 2) {
+        return stalePoll.promise;
+      }
+      return Promise.resolve({ url: "https://example.com/recovered" });
+    });
+    const hub = new BrowserSessionStateHub({
+      browserControlService: { getUrl },
+      pollIntervalMs: POLL_INTERVAL_MS,
+    });
+    const states: PageState[] = [];
+
+    try {
+      hub.subscribe(WORKSPACE_ID, SESSION_NAME, (state) => {
+        states.push(state);
+      });
+      await flushMicrotasks();
+      await waitForCondition(() => callCount === 2);
+      await waitForCondition(() => callCount >= 3);
+      await waitForCondition(() => states.length === 2);
+
+      expect(states).toEqual([
+        {
+          type: "page_state",
+          url: "https://example.com/bootstrap",
+          isLoading: false,
+          source: "bootstrap",
+        },
+        {
+          type: "page_state",
+          url: "https://example.com/recovered",
+          isLoading: false,
+          source: "poll",
+        },
+      ]);
+      expect(warn).toHaveBeenCalledWith(
+        "BrowserSessionStateHub: poll timed out, clearing pollInFlight",
+        expect.objectContaining({
+          workspaceId: WORKSPACE_ID,
+          sessionName: SESSION_NAME,
+          sessionKey: `${WORKSPACE_ID}:${SESSION_NAME}`,
+        })
+      );
+
+      stalePoll.resolve({ url: "https://example.com/stale" });
+      await flushMicrotasks();
+
+      expect(states).toEqual([
+        {
+          type: "page_state",
+          url: "https://example.com/bootstrap",
+          isLoading: false,
+          source: "bootstrap",
+        },
+        {
+          type: "page_state",
+          url: "https://example.com/recovered",
+          isLoading: false,
+          source: "poll",
+        },
+      ]);
+    } finally {
+      hub.dispose();
+    }
+  });
+
   test("stale poll results are discarded after a newer command update", async () => {
     const stalePoll = createDeferred<{ url: string | null; error?: string }>();
     let callCount = 0;

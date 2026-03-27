@@ -403,14 +403,14 @@ export class BrowserBridgeServer {
       return;
     }
 
-    pair.closed = true;
-    this.activePairs.delete(pair);
-
     const unsubscribe = this.pairStateUnsubscribers.get(pair);
     if (unsubscribe) {
       unsubscribe();
       this.pairStateUnsubscribers.delete(pair);
     }
+
+    pair.closed = true;
+    this.activePairs.delete(pair);
 
     closeWebSocket(pair.upstream, options?.closeCode, options?.closeReason);
     closeWebSocket(pair.client, options?.closeCode, options?.closeReason);

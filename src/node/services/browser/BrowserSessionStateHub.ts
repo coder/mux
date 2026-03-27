@@ -14,6 +14,7 @@ type PageStateSubscriber = (state: PageState) => void;
 interface SessionEntry {
   state: PageState;
   generation: number;
+  refreshId: number;
   subscribers: Set<PageStateSubscriber>;
   pollTimer: ReturnType<typeof setInterval> | null;
   hasSnapshot: boolean;
@@ -157,6 +158,7 @@ export class BrowserSessionStateHub {
         source: "bootstrap",
       },
       generation: 0,
+      refreshId: 0,
       subscribers: new Set(),
       pollTimer: null,
       hasSnapshot: false,
@@ -184,7 +186,23 @@ export class BrowserSessionStateHub {
       }
 
       currentEntry.pollInFlight = true;
+      const pollTimeout = setTimeout(() => {
+        const stalledEntry = this.sessionEntries.get(sessionKey);
+        if (!stalledEntry?.pollInFlight) {
+          return;
+        }
+
+        log.warn("BrowserSessionStateHub: poll timed out, clearing pollInFlight", {
+          workspaceId,
+          sessionName,
+          sessionKey,
+        });
+        stalledEntry.pollInFlight = false;
+      }, this.pollIntervalMs * 2);
+      pollTimeout.unref?.();
+
       void this.fetchAndApplyUrl(sessionKey, workspaceId, sessionName, "poll").finally(() => {
+        clearTimeout(pollTimeout);
         const settledEntry = this.sessionEntries.get(sessionKey);
         if (settledEntry) {
           settledEntry.pollInFlight = false;
@@ -235,6 +253,8 @@ export class BrowserSessionStateHub {
     }
 
     const generationAtStart = startingEntry.generation;
+    const refreshId = startingEntry.refreshId + 1;
+    startingEntry.refreshId = refreshId;
     let urlResult: Awaited<ReturnType<BrowserControlService["getUrl"]>>;
     try {
       urlResult = await this.browserControlService.getUrl(workspaceId, sessionName);
@@ -259,7 +279,7 @@ export class BrowserSessionStateHub {
     }
 
     const currentEntry = this.sessionEntries.get(sessionKey);
-    if (currentEntry?.generation !== generationAtStart) {
+    if (currentEntry?.generation !== generationAtStart || currentEntry.refreshId !== refreshId) {
       return;
     }
 

@@ -1117,18 +1117,27 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           context.browserSessionStateHub.markLoading(input.workspaceId, input.sessionName);
 
-          const result = await context.browserControlService.executeControl(input);
-          if (result.success) {
-            const urlResult = await context.browserControlService.getUrl(
-              input.workspaceId,
-              input.sessionName
-            );
-            context.browserSessionStateHub.markLoaded(input.workspaceId, input.sessionName, urlResult.url);
-          } else {
-            context.browserSessionStateHub.markLoaded(input.workspaceId, input.sessionName, null);
-          }
+          try {
+            const result = await context.browserControlService.executeControl(input);
+            if (result.success) {
+              const urlResult = await context.browserControlService.getUrl(
+                input.workspaceId,
+                input.sessionName
+              );
+              context.browserSessionStateHub.markLoaded(
+                input.workspaceId,
+                input.sessionName,
+                urlResult.url
+              );
+            } else {
+              context.browserSessionStateHub.markLoaded(input.workspaceId, input.sessionName, null);
+            }
 
-          return result;
+            return result;
+          } catch (error) {
+            context.browserSessionStateHub.markLoaded(input.workspaceId, input.sessionName, null);
+            throw error;
+          }
         }),
       getUrl: t
         .input(schemas.browser.getUrl.input)
