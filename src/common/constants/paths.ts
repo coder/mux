@@ -109,12 +109,6 @@ export function getMuxSessionsDir(rootDir?: string): string {
 }
 
 /**
- * Get the directory where plan files are stored.
- * Example: ~/.mux/plans/workspace-id.md
- *
- * @param rootDir - Optional root directory (defaults to getMuxHome())
- */
-/**
  * Get the directory where mux backend logs are stored.
  * Example: ~/.mux/logs/mux.log
  *
