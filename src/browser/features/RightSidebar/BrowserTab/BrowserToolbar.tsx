@@ -44,15 +44,23 @@ export function BrowserToolbar(props: BrowserToolbarProps) {
   const { api } = useAPI();
   const [editingUrl, setEditingUrl] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [isCommandPending, setIsCommandPending] = useState(false);
+  // Session switches reuse the same toolbar instance, so pending state has to stay scoped to
+  // the session that started each command instead of leaking into the newly selected session.
+  const [pendingCommandSessions, setPendingCommandSessions] = useState<ReadonlySet<string>>(
+    () => new Set<string>()
+  );
   const errorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMountedRef = useRef(true);
-  const isCommandPendingRef = useRef(false);
+  const currentSessionNameRef = useRef(props.sessionName);
+  const pendingCommandSessionsRef = useRef<ReadonlySet<string>>(new Set<string>());
   const runControlCommandRef = useRef<
     (action: "back" | "forward" | "reload" | "open", url?: string) => Promise<void>
   >(() => Promise.resolve(undefined));
   const urlInputRef = useRef<HTMLInputElement>(null);
+  currentSessionNameRef.current = props.sessionName;
   const isDisabled = !props.isConnected || props.sessionName == null;
+  const isCommandPending =
+    props.sessionName != null && pendingCommandSessions.has(props.sessionName);
   const controlsDisabled = isDisabled || isCommandPending;
   const displayUrl = props.pendingUrl ?? props.currentUrl ?? "";
   const escapeInterruptProps = { [ESCAPE_INTERRUPTS_STREAM_ATTR]: "true" } as const;
@@ -78,29 +86,55 @@ export function BrowserToolbar(props: BrowserToolbarProps) {
     }, 3000);
   };
 
+  const addPendingCommandSession = (sessionName: string) => {
+    const nextPendingCommandSessions = new Set(pendingCommandSessionsRef.current);
+    nextPendingCommandSessions.add(sessionName);
+    pendingCommandSessionsRef.current = nextPendingCommandSessions;
+    if (isMountedRef.current) {
+      setPendingCommandSessions(nextPendingCommandSessions);
+    }
+  };
+
+  const removePendingCommandSession = (sessionName: string) => {
+    if (!pendingCommandSessionsRef.current.has(sessionName)) {
+      return;
+    }
+
+    const nextPendingCommandSessions = new Set(pendingCommandSessionsRef.current);
+    nextPendingCommandSessions.delete(sessionName);
+    pendingCommandSessionsRef.current = nextPendingCommandSessions;
+    if (isMountedRef.current) {
+      setPendingCommandSessions(nextPendingCommandSessions);
+    }
+  };
+
   const runControlCommand = async (
     action: "back" | "forward" | "reload" | "open",
     url?: string
   ) => {
-    if (isDisabled || isCommandPendingRef.current) {
+    const targetSession = props.sessionName;
+    if (
+      isDisabled ||
+      targetSession == null ||
+      pendingCommandSessionsRef.current.has(targetSession)
+    ) {
       return;
     }
 
-    isCommandPendingRef.current = true;
-    setIsCommandPending(true);
+    assert(targetSession.trim().length > 0, "Browser controls require an active session.");
+    addPendingCommandSession(targetSession);
 
     try {
       assert(api != null, "Browser API client is unavailable.");
-      assert(
-        props.sessionName != null && props.sessionName.trim().length > 0,
-        "Browser controls require an active session."
-      );
       const result = await api.browser.control({
         workspaceId: props.workspaceId,
-        sessionName: props.sessionName,
+        sessionName: targetSession,
         action,
         ...(url != null ? { url } : {}),
       });
+      if (currentSessionNameRef.current !== targetSession) {
+        return;
+      }
       if (!result.success) {
         if (action === "open") {
           props.onSetPendingUrl(null);
@@ -109,6 +143,9 @@ export function BrowserToolbar(props: BrowserToolbarProps) {
         return;
       }
     } catch (error) {
+      if (currentSessionNameRef.current !== targetSession) {
+        return;
+      }
       if (action === "open") {
         props.onSetPendingUrl(null);
       }
@@ -116,17 +153,17 @@ export function BrowserToolbar(props: BrowserToolbarProps) {
         error instanceof Error ? error.message : `Failed to ${action} the browser session.`
       );
     } finally {
-      isCommandPendingRef.current = false;
-      if (isMountedRef.current) {
-        setIsCommandPending(false);
-      }
+      removePendingCommandSession(targetSession);
     }
   };
 
   runControlCommandRef.current = runControlCommand;
 
   const submitOpenUrl = async (candidateUrl: string) => {
-    if (isDisabled || isCommandPendingRef.current) {
+    if (
+      isDisabled ||
+      (props.sessionName != null && pendingCommandSessionsRef.current.has(props.sessionName))
+    ) {
       return;
     }
 
