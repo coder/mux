@@ -76,6 +76,9 @@ export class BrowserSessionStateHub {
       currentEntry.subscribers.delete(callback);
       if (currentEntry.subscribers.size === 0) {
         this.stopPolling(currentEntry);
+        // Drop the cached snapshot so a later re-subscribe takes the same
+        // bootstrap path as a brand-new attachment instead of reusing stale state.
+        currentEntry.hasSnapshot = false;
       }
     };
   }
