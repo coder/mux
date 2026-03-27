@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
 import type { ComponentProps } from "react";
@@ -40,13 +40,25 @@ function renderToolbar(overrides: Partial<ComponentProps<typeof BrowserToolbar>>
   return { onSetPendingUrl, ...view };
 }
 
+function createDeferredPromise<T>() {
+  let resolvePromise!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolve) => {
+    resolvePromise = resolve;
+  });
+  return { promise, resolve: resolvePromise };
+}
+
 describe("BrowserToolbar", () => {
   let originalWindow: typeof globalThis.window;
   let originalDocument: typeof globalThis.document;
+  let originalSetTimeout: typeof globalThis.setTimeout;
+  let originalClearTimeout: typeof globalThis.clearTimeout;
 
   beforeEach(() => {
     originalWindow = globalThis.window;
     originalDocument = globalThis.document;
+    originalSetTimeout = globalThis.setTimeout;
+    originalClearTimeout = globalThis.clearTimeout;
     globalThis.window = new GlobalWindow({ url: "http://localhost" }) as unknown as Window &
       typeof globalThis;
     globalThis.document = globalThis.window.document;
@@ -58,6 +70,8 @@ describe("BrowserToolbar", () => {
     cleanup();
     globalThis.window = originalWindow;
     globalThis.document = originalDocument;
+    globalThis.setTimeout = originalSetTimeout;
+    globalThis.clearTimeout = originalClearTimeout;
   });
 
   test("disables all controls when the bridge is disconnected", () => {
@@ -118,25 +132,156 @@ describe("BrowserToolbar", () => {
     const view = renderToolbar();
 
     fireEvent.click(view.getByLabelText("Back"));
-    fireEvent.click(view.getByLabelText("Forward"));
-    fireEvent.click(view.getByLabelText("Reload"));
-
     await waitFor(() => {
       expect(controlMock).toHaveBeenNthCalledWith(1, {
         workspaceId: "workspace-1",
         sessionName: "session-a",
         action: "back",
       });
+    });
+
+    fireEvent.click(view.getByLabelText("Forward"));
+    await waitFor(() => {
       expect(controlMock).toHaveBeenNthCalledWith(2, {
         workspaceId: "workspace-1",
         sessionName: "session-a",
         action: "forward",
       });
+    });
+
+    fireEvent.click(view.getByLabelText("Reload"));
+    await waitFor(() => {
       expect(controlMock).toHaveBeenNthCalledWith(3, {
         workspaceId: "workspace-1",
         sessionName: "session-a",
         action: "reload",
       });
+    });
+  });
+
+  test("runs browser navigation shortcuts when the URL input is not focused", async () => {
+    let keyDownHandler: ((event: KeyboardEvent) => void) | null = null;
+    const originalAddEventListener = window.addEventListener.bind(window);
+    window.addEventListener = ((
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: boolean | AddEventListenerOptions
+    ) => {
+      if (type === "keydown" && typeof listener === "function") {
+        keyDownHandler = (event: KeyboardEvent) => {
+          listener(event);
+        };
+      }
+      return originalAddEventListener(type, listener, options);
+    }) as typeof window.addEventListener;
+
+    try {
+      renderToolbar();
+      expect(keyDownHandler).toBeTruthy();
+
+      await act(async () => {
+        keyDownHandler?.(new window.KeyboardEvent("keydown", { key: "ArrowLeft", altKey: true }));
+        await Promise.resolve();
+      });
+      await waitFor(() => {
+        expect(controlMock).toHaveBeenNthCalledWith(1, {
+          workspaceId: "workspace-1",
+          sessionName: "session-a",
+          action: "back",
+        });
+      });
+
+      await act(async () => {
+        keyDownHandler?.(new window.KeyboardEvent("keydown", { key: "ArrowRight", altKey: true }));
+        await Promise.resolve();
+      });
+      await waitFor(() => {
+        expect(controlMock).toHaveBeenNthCalledWith(2, {
+          workspaceId: "workspace-1",
+          sessionName: "session-a",
+          action: "forward",
+        });
+      });
+
+      await act(async () => {
+        keyDownHandler?.(new window.KeyboardEvent("keydown", { key: "r", ctrlKey: true }));
+        await Promise.resolve();
+      });
+      await waitFor(() => {
+        expect(controlMock).toHaveBeenNthCalledWith(3, {
+          workspaceId: "workspace-1",
+          sessionName: "session-a",
+          action: "reload",
+        });
+      });
+    } finally {
+      window.addEventListener = originalAddEventListener;
+    }
+  });
+
+  test("ignores browser navigation shortcuts while the URL input is focused", () => {
+    const view = renderToolbar();
+    const input = view.getByLabelText("Browser URL") as HTMLInputElement;
+
+    fireEvent.focus(input);
+    fireEvent.keyDown(input, { key: "r", ctrlKey: true });
+
+    expect(controlMock).not.toHaveBeenCalled();
+  });
+
+  test("disables controls while a command is pending", async () => {
+    const deferred = createDeferredPromise<undefined>();
+    controlMock.mockImplementation(() => deferred.promise);
+    const view = renderToolbar();
+    const reloadButton = view.getByLabelText("Reload") as HTMLButtonElement;
+    const input = view.getByLabelText("Browser URL") as HTMLInputElement;
+
+    fireEvent.click(reloadButton);
+
+    await waitFor(() => {
+      expect(reloadButton.disabled).toBe(true);
+      expect(input.disabled).toBe(true);
+    });
+
+    fireEvent.click(reloadButton);
+    expect(controlMock).toHaveBeenCalledTimes(1);
+
+    deferred.resolve(undefined);
+
+    await waitFor(() => {
+      expect(reloadButton.disabled).toBe(false);
+      expect(input.disabled).toBe(false);
+    });
+  });
+
+  test("shows control errors with an assertive alert and allows retry after clearing", async () => {
+    controlMock.mockRejectedValueOnce(new Error("Reload failed"));
+    const view = renderToolbar();
+
+    fireEvent.click(view.getByLabelText("Reload"));
+
+    await waitFor(() => {
+      expect(view.getByText("Reload failed")).toBeTruthy();
+    });
+
+    const alert = view.getByText("Reload failed");
+    expect(alert.getAttribute("role")).toBe("alert");
+    expect(alert.getAttribute("aria-live")).toBe("assertive");
+    expect(alert.getAttribute("aria-atomic")).toBe("true");
+    expect((view.getByLabelText("Browser URL") as HTMLInputElement).disabled).toBe(false);
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 3100));
+    });
+
+    await waitFor(() => {
+      expect(view.queryByText("Reload failed")).toBeNull();
+    });
+
+    fireEvent.click(view.getByLabelText("Reload"));
+
+    await waitFor(() => {
+      expect(controlMock).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -147,11 +292,14 @@ describe("BrowserToolbar", () => {
     expect(view.queryByTestId("browser-toolbar-reload-icon")).toBeNull();
   });
 
-  test("Escape blurs the URL input", () => {
+  test("Escape blurs the URL input and keeps stream interruption opt-in enabled", () => {
     const view = renderToolbar();
     const input = view.getByLabelText("Browser URL") as HTMLInputElement;
 
-    input.focus();
+    expect(input.getAttribute("data-escape-interrupts-stream")).toBe("true");
+    act(() => {
+      input.focus();
+    });
     expect(document.activeElement).toBe(input);
 
     fireEvent.keyDown(input, { key: "Escape" });

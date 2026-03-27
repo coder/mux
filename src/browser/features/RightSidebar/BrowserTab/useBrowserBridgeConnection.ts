@@ -344,12 +344,21 @@ export function useBrowserBridgeConnection(workspaceId: string): {
                 const shouldClearPendingUrl =
                   !isLoading ||
                   (previousSession.pendingUrl != null && previousSession.pendingUrl === url);
+                const nextPendingUrl = shouldClearPendingUrl ? null : previousSession.pendingUrl;
+
+                if (
+                  previousSession.currentUrl === url &&
+                  previousSession.isPageLoading === isLoading &&
+                  previousSession.pendingUrl === nextPendingUrl
+                ) {
+                  return previousSession;
+                }
 
                 return {
                   ...previousSession,
                   currentUrl: url,
                   isPageLoading: isLoading,
-                  pendingUrl: shouldClearPendingUrl ? null : previousSession.pendingUrl,
+                  pendingUrl: nextPendingUrl,
                 };
               });
               return;
