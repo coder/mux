@@ -1115,7 +1115,10 @@ export const router = (authToken?: string) => {
         .input(schemas.browser.control.input)
         .output(schemas.browser.control.output)
         .handler(async ({ context, input }) => {
-          context.browserSessionStateHub.markLoading(input.workspaceId, input.sessionName);
+          const commandToken = context.browserSessionStateHub.markLoading(
+            input.workspaceId,
+            input.sessionName
+          );
 
           try {
             const result = await context.browserControlService.executeControl(input);
@@ -1126,7 +1129,8 @@ export const router = (authToken?: string) => {
             context.browserSessionStateHub.markLoaded(
               input.workspaceId,
               input.sessionName,
-              urlResult.error == null ? urlResult.url : undefined
+              urlResult.error == null ? urlResult.url : undefined,
+              commandToken
             );
             return result;
           } catch (error) {
@@ -1138,13 +1142,15 @@ export const router = (authToken?: string) => {
               context.browserSessionStateHub.markLoaded(
                 input.workspaceId,
                 input.sessionName,
-                urlResult.error == null ? urlResult.url : undefined
+                urlResult.error == null ? urlResult.url : undefined,
+                commandToken
               );
             } catch {
               context.browserSessionStateHub.markLoaded(
                 input.workspaceId,
                 input.sessionName,
-                undefined
+                undefined,
+                commandToken
               );
             }
             throw error;

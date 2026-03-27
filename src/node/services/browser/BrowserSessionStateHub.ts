@@ -20,6 +20,8 @@ interface SessionEntry {
   hasSnapshot: boolean;
   bootstrapPromise: Promise<void> | null;
   pollInFlight: boolean;
+  activeCommandCount: number;
+  commandGeneration: number;
 }
 
 export interface BrowserSessionStateHubOptions {
@@ -86,11 +88,13 @@ export class BrowserSessionStateHub {
     };
   }
 
-  public markLoading(workspaceId: string, sessionName: string): void {
+  public markLoading(workspaceId: string, sessionName: string): number {
     this.assertValidSessionIdentifiers(workspaceId, sessionName);
 
     const sessionKey = this.createSessionKey(workspaceId, sessionName);
     const entry = this.getOrCreateEntry(sessionKey);
+    entry.activeCommandCount += 1;
+    entry.commandGeneration += 1;
     entry.generation += 1;
     this.publish(sessionKey, entry, {
       type: "page_state",
@@ -98,24 +102,49 @@ export class BrowserSessionStateHub {
       isLoading: true,
       source: "command",
     });
+    return entry.commandGeneration;
   }
 
   public markLoaded(
     workspaceId: string,
     sessionName: string,
-    url: string | null | undefined
+    url: string | null | undefined,
+    commandToken?: number
   ): void {
     this.assertValidSessionIdentifiers(workspaceId, sessionName);
     this.assertValidUrl(url);
+    assert(
+      commandToken === undefined || Number.isInteger(commandToken),
+      "BrowserSessionStateHub commandToken must be an integer when provided"
+    );
 
     const sessionKey = this.createSessionKey(workspaceId, sessionName);
     const entry = this.getOrCreateEntry(sessionKey);
+    entry.activeCommandCount = Math.max(0, entry.activeCommandCount - 1);
+
+    const isLatestCommand = commandToken === undefined || commandToken === entry.commandGeneration;
+    const isLoading = entry.activeCommandCount > 0;
+    if (!isLatestCommand) {
+      if (entry.state.isLoading === isLoading) {
+        return;
+      }
+
+      entry.generation += 1;
+      this.publish(sessionKey, entry, {
+        type: "page_state",
+        url: entry.state.url,
+        isLoading,
+        source: "command",
+      });
+      return;
+    }
+
     const resolvedUrl = url !== undefined ? url : entry.state.url;
     entry.generation += 1;
     this.publish(sessionKey, entry, {
       type: "page_state",
       url: resolvedUrl,
-      isLoading: false,
+      isLoading,
       source: "command",
     });
   }
@@ -175,6 +204,8 @@ export class BrowserSessionStateHub {
       hasSnapshot: false,
       bootstrapPromise: null,
       pollInFlight: false,
+      activeCommandCount: 0,
+      commandGeneration: 0,
     };
     this.sessionEntries.set(sessionKey, entry);
     return entry;
@@ -294,10 +325,11 @@ export class BrowserSessionStateHub {
       return;
     }
 
+    const isLoading = currentEntry.activeCommandCount > 0;
     const shouldPublish =
       !currentEntry.hasSnapshot ||
       currentEntry.state.url !== urlResult.url ||
-      currentEntry.state.isLoading;
+      currentEntry.state.isLoading !== isLoading;
     if (!shouldPublish) {
       return;
     }
@@ -305,7 +337,7 @@ export class BrowserSessionStateHub {
     this.publish(sessionKey, currentEntry, {
       type: "page_state",
       url: urlResult.url,
-      isLoading: false,
+      isLoading,
       source,
     });
   }
