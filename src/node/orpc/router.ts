@@ -1111,6 +1111,18 @@ export const router = (authToken?: string) => {
             localBridgeBaseUrl: serverInfo.baseUrl,
           };
         }),
+      control: t
+        .input(schemas.browser.control.input)
+        .output(schemas.browser.control.output)
+        .handler(async ({ context, input }) => {
+          return await context.browserControlService.executeControl(input);
+        }),
+      getUrl: t
+        .input(schemas.browser.getUrl.input)
+        .output(schemas.browser.getUrl.output)
+        .handler(async ({ context, input }) => {
+          return await context.browserControlService.getUrl(input.workspaceId, input.sessionName);
+        }),
     },
     uiLayouts: {
       getAll: t

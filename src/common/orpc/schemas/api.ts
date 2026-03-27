@@ -1937,6 +1937,8 @@ const BrowserDiscoveredSessionSchema = z.object({
   status: z.enum(["attachable", "missing_stream"]),
 });
 
+const BrowserControlActionSchema = z.enum(["open", "back", "forward", "reload"]);
+
 export const browser = {
   listSessions: {
     input: z
@@ -1959,6 +1961,32 @@ export const browser = {
       bridgePath: z.string(),
       token: z.string(),
       localBridgeBaseUrl: z.string().optional(),
+    }),
+  },
+  control: {
+    input: z
+      .object({
+        workspaceId: z.string(),
+        sessionName: z.string(),
+        action: BrowserControlActionSchema,
+        url: z.string().nullish(),
+      })
+      .strict(),
+    output: z.object({
+      success: z.boolean(),
+      error: z.string().nullish(),
+    }),
+  },
+  getUrl: {
+    input: z
+      .object({
+        workspaceId: z.string(),
+        sessionName: z.string(),
+      })
+      .strict(),
+    output: z.object({
+      url: z.string().nullable(),
+      error: z.string().nullish(),
     }),
   },
 };

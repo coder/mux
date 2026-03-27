@@ -42,6 +42,7 @@ import type {
 import { BrowserBridgeServer } from "@/node/services/browser/BrowserBridgeServer";
 import { AgentBrowserSessionDiscoveryService } from "@/node/services/browser/AgentBrowserSessionDiscoveryService";
 import { BrowserBridgeTokenManager } from "@/node/services/browser/BrowserBridgeTokenManager";
+import { BrowserControlService } from "@/node/services/browser/BrowserControlService";
 import { DevToolsService } from "@/node/services/devToolsService";
 import { SessionTimingService } from "@/node/services/sessionTimingService";
 import { AnalyticsService } from "@/node/services/analytics/analyticsService";
@@ -131,6 +132,7 @@ export class ServiceContainer {
   public readonly browserSessionDiscoveryService: AgentBrowserSessionDiscoveryService;
   public readonly browserBridgeTokenManager: BrowserBridgeTokenManager;
   public readonly browserBridgeServer: BrowserBridgeServer;
+  public readonly browserControlService: BrowserControlService;
   public readonly analyticsService: AnalyticsService;
   public readonly experimentsService: ExperimentsService;
   public readonly signingService: SigningService;
@@ -210,6 +212,10 @@ export class ServiceContainer {
     this.browserBridgeServer = new BrowserBridgeServer({
       browserSessionDiscoveryService: this.browserSessionDiscoveryService,
       browserBridgeTokenManager: this.browserBridgeTokenManager,
+    });
+    this.browserControlService = new BrowserControlService({
+      browserSessionDiscoveryService: this.browserSessionDiscoveryService,
+      resolveSessionEnvFn: () => Promise.resolve(process.env),
     });
     this.workspaceService = core.workspaceService;
     this.taskService = core.taskService;
@@ -597,6 +603,7 @@ export class ServiceContainer {
       browserSessionDiscoveryService: this.browserSessionDiscoveryService,
       browserBridgeTokenManager: this.browserBridgeTokenManager,
       browserBridgeServer: this.browserBridgeServer,
+      browserControlService: this.browserControlService,
       policyService: this.policyService,
       signingService: this.signingService,
       coderService: this.coderService,
