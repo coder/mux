@@ -43,6 +43,7 @@ import { BrowserBridgeServer } from "@/node/services/browser/BrowserBridgeServer
 import { AgentBrowserSessionDiscoveryService } from "@/node/services/browser/AgentBrowserSessionDiscoveryService";
 import { BrowserBridgeTokenManager } from "@/node/services/browser/BrowserBridgeTokenManager";
 import { BrowserControlService } from "@/node/services/browser/BrowserControlService";
+import { BrowserSessionStateHub } from "@/node/services/browser/BrowserSessionStateHub";
 import { DevToolsService } from "@/node/services/devToolsService";
 import { SessionTimingService } from "@/node/services/sessionTimingService";
 import { AnalyticsService } from "@/node/services/analytics/analyticsService";
@@ -133,6 +134,7 @@ export class ServiceContainer {
   public readonly browserBridgeTokenManager: BrowserBridgeTokenManager;
   public readonly browserBridgeServer: BrowserBridgeServer;
   public readonly browserControlService: BrowserControlService;
+  public readonly browserSessionStateHub: BrowserSessionStateHub;
   public readonly analyticsService: AnalyticsService;
   public readonly experimentsService: ExperimentsService;
   public readonly signingService: SigningService;
@@ -209,13 +211,17 @@ export class ServiceContainer {
         );
       },
     });
-    this.browserBridgeServer = new BrowserBridgeServer({
-      browserSessionDiscoveryService: this.browserSessionDiscoveryService,
-      browserBridgeTokenManager: this.browserBridgeTokenManager,
-    });
     this.browserControlService = new BrowserControlService({
       browserSessionDiscoveryService: this.browserSessionDiscoveryService,
       resolveSessionEnvFn: () => Promise.resolve(process.env),
+    });
+    this.browserSessionStateHub = new BrowserSessionStateHub({
+      browserControlService: this.browserControlService,
+    });
+    this.browserBridgeServer = new BrowserBridgeServer({
+      browserSessionDiscoveryService: this.browserSessionDiscoveryService,
+      browserBridgeTokenManager: this.browserBridgeTokenManager,
+      browserSessionStateHub: this.browserSessionStateHub,
     });
     this.workspaceService = core.workspaceService;
     this.taskService = core.taskService;
@@ -604,6 +610,7 @@ export class ServiceContainer {
       browserBridgeTokenManager: this.browserBridgeTokenManager,
       browserBridgeServer: this.browserBridgeServer,
       browserControlService: this.browserControlService,
+      browserSessionStateHub: this.browserSessionStateHub,
       policyService: this.policyService,
       signingService: this.signingService,
       coderService: this.coderService,
@@ -626,6 +633,7 @@ export class ServiceContainer {
     await this.desktopSessionManager.closeAll();
     this.idleCompactionService.stop();
     await this.browserBridgeServer.stop();
+    this.browserSessionStateHub.dispose();
     this.browserBridgeTokenManager.dispose();
     await this.analyticsService.dispose();
     await this.telemetryService.shutdown();
@@ -649,6 +657,7 @@ export class ServiceContainer {
     this.desktopTokenManager.dispose();
     await this.desktopSessionManager.closeAll();
     await this.browserBridgeServer.stop();
+    this.browserSessionStateHub.dispose();
     this.browserBridgeTokenManager.dispose();
     await this.analyticsService.dispose();
     this.policyService.dispose();

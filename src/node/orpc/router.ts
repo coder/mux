@@ -1115,7 +1115,20 @@ export const router = (authToken?: string) => {
         .input(schemas.browser.control.input)
         .output(schemas.browser.control.output)
         .handler(async ({ context, input }) => {
-          return await context.browserControlService.executeControl(input);
+          context.browserSessionStateHub.markLoading(input.workspaceId, input.sessionName);
+
+          const result = await context.browserControlService.executeControl(input);
+          if (result.success) {
+            const urlResult = await context.browserControlService.getUrl(
+              input.workspaceId,
+              input.sessionName
+            );
+            context.browserSessionStateHub.markLoaded(input.workspaceId, input.sessionName, urlResult.url);
+          } else {
+            context.browserSessionStateHub.markLoaded(input.workspaceId, input.sessionName, null);
+          }
+
+          return result;
         }),
       getUrl: t
         .input(schemas.browser.getUrl.input)

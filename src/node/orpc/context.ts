@@ -31,6 +31,7 @@ import type { BrowserBridgeServer } from "@/node/services/browser/BrowserBridgeS
 import type { AgentBrowserSessionDiscoveryService } from "@/node/services/browser/AgentBrowserSessionDiscoveryService";
 import type { BrowserBridgeTokenManager } from "@/node/services/browser/BrowserBridgeTokenManager";
 import type { BrowserControlService } from "@/node/services/browser/BrowserControlService";
+import type { BrowserSessionStateHub } from "@/node/services/browser/BrowserSessionStateHub";
 import type { DevToolsService } from "@/node/services/devToolsService";
 import type { PolicyService } from "@/node/services/policyService";
 import type { CoderService } from "@/node/services/coderService";
@@ -74,6 +75,7 @@ export interface ORPCContext {
   browserBridgeTokenManager: BrowserBridgeTokenManager;
   browserBridgeServer: BrowserBridgeServer;
   browserControlService: BrowserControlService;
+  browserSessionStateHub: BrowserSessionStateHub;
   policyService: PolicyService;
   signingService: SigningService;
   coderService: CoderService;

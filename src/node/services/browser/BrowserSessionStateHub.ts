@@ -1,0 +1,302 @@
+import { assert } from "@/common/utils/assert";
+import { log } from "@/node/services/log";
+import type { BrowserControlService } from "./BrowserControlService";
+
+export interface PageState {
+  type: "page_state";
+  url: string | null;
+  isLoading: boolean;
+  source: "bootstrap" | "command" | "poll";
+}
+
+type PageStateSubscriber = (state: PageState) => void;
+
+interface SessionEntry {
+  state: PageState;
+  generation: number;
+  subscribers: Set<PageStateSubscriber>;
+  pollTimer: ReturnType<typeof setInterval> | null;
+  hasSnapshot: boolean;
+  bootstrapPromise: Promise<void> | null;
+  pollInFlight: boolean;
+}
+
+export interface BrowserSessionStateHubOptions {
+  browserControlService: Pick<BrowserControlService, "getUrl">;
+  pollIntervalMs?: number;
+}
+
+const DEFAULT_POLL_INTERVAL_MS = 3_000;
+
+export class BrowserSessionStateHub {
+  private readonly browserControlService: Pick<BrowserControlService, "getUrl">;
+  private readonly pollIntervalMs: number;
+  private readonly sessionEntries = new Map<string, SessionEntry>();
+
+  constructor(options: BrowserSessionStateHubOptions) {
+    assert(
+      options.browserControlService,
+      "BrowserSessionStateHub requires a browserControlService"
+    );
+
+    this.browserControlService = options.browserControlService;
+    this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+    assert(this.pollIntervalMs > 0, "BrowserSessionStateHub pollIntervalMs must be positive");
+  }
+
+  public subscribe(
+    workspaceId: string,
+    sessionName: string,
+    callback: PageStateSubscriber
+  ): () => void {
+    this.assertValidSessionIdentifiers(workspaceId, sessionName);
+    assert(typeof callback === "function", "BrowserSessionStateHub subscriber must be a function");
+
+    const sessionKey = this.createSessionKey(workspaceId, sessionName);
+    const entry = this.getOrCreateEntry(sessionKey);
+    entry.subscribers.add(callback);
+
+    if (entry.subscribers.size === 1) {
+      this.startPolling(sessionKey, workspaceId, sessionName, entry);
+    }
+
+    if (entry.hasSnapshot) {
+      this.notifySubscriber(sessionKey, callback, entry.state);
+    } else {
+      this.ensureBootstrap(sessionKey, workspaceId, sessionName);
+    }
+
+    return () => {
+      const currentEntry = this.sessionEntries.get(sessionKey);
+      if (!currentEntry) {
+        return;
+      }
+
+      currentEntry.subscribers.delete(callback);
+      if (currentEntry.subscribers.size === 0) {
+        this.stopPolling(currentEntry);
+      }
+    };
+  }
+
+  public markLoading(workspaceId: string, sessionName: string): void {
+    this.assertValidSessionIdentifiers(workspaceId, sessionName);
+
+    const sessionKey = this.createSessionKey(workspaceId, sessionName);
+    const entry = this.getOrCreateEntry(sessionKey);
+    entry.generation += 1;
+    this.publish(sessionKey, entry, {
+      type: "page_state",
+      url: entry.hasSnapshot ? entry.state.url : null,
+      isLoading: true,
+      source: "command",
+    });
+  }
+
+  public markLoaded(workspaceId: string, sessionName: string, url: string | null): void {
+    this.assertValidSessionIdentifiers(workspaceId, sessionName);
+    this.assertValidUrl(url);
+
+    const sessionKey = this.createSessionKey(workspaceId, sessionName);
+    const entry = this.getOrCreateEntry(sessionKey);
+    entry.generation += 1;
+    this.publish(sessionKey, entry, {
+      type: "page_state",
+      url,
+      isLoading: false,
+      source: "command",
+    });
+  }
+
+  public dispose(): void {
+    for (const entry of this.sessionEntries.values()) {
+      this.stopPolling(entry);
+    }
+    this.sessionEntries.clear();
+  }
+
+  private assertValidSessionIdentifiers(workspaceId: string, sessionName: string): void {
+    assert(typeof workspaceId === "string", "BrowserSessionStateHub workspaceId must be a string");
+    assert(typeof sessionName === "string", "BrowserSessionStateHub sessionName must be a string");
+    assert(
+      workspaceId.trim().length > 0,
+      "BrowserSessionStateHub requires a non-empty workspaceId"
+    );
+    assert(
+      sessionName.trim().length > 0,
+      "BrowserSessionStateHub requires a non-empty sessionName"
+    );
+  }
+
+  private assertValidUrl(url: string | null): void {
+    assert(
+      url === null || typeof url === "string",
+      "BrowserSessionStateHub page state url must be a string or null"
+    );
+    if (typeof url === "string") {
+      assert(url.trim().length > 0, "BrowserSessionStateHub page state url must be non-empty");
+    }
+  }
+
+  private createSessionKey(workspaceId: string, sessionName: string): string {
+    this.assertValidSessionIdentifiers(workspaceId, sessionName);
+    return `${workspaceId}:${sessionName}`;
+  }
+
+  private getOrCreateEntry(sessionKey: string): SessionEntry {
+    const existingEntry = this.sessionEntries.get(sessionKey);
+    if (existingEntry) {
+      return existingEntry;
+    }
+
+    const entry: SessionEntry = {
+      state: {
+        type: "page_state",
+        url: null,
+        isLoading: false,
+        source: "bootstrap",
+      },
+      generation: 0,
+      subscribers: new Set(),
+      pollTimer: null,
+      hasSnapshot: false,
+      bootstrapPromise: null,
+      pollInFlight: false,
+    };
+    this.sessionEntries.set(sessionKey, entry);
+    return entry;
+  }
+
+  private startPolling(
+    sessionKey: string,
+    workspaceId: string,
+    sessionName: string,
+    entry: SessionEntry
+  ): void {
+    if (entry.pollTimer) {
+      return;
+    }
+
+    entry.pollTimer = setInterval(() => {
+      const currentEntry = this.sessionEntries.get(sessionKey);
+      if (!currentEntry || currentEntry.subscribers.size === 0 || currentEntry.pollInFlight) {
+        return;
+      }
+
+      currentEntry.pollInFlight = true;
+      void this.fetchAndApplyUrl(sessionKey, workspaceId, sessionName, "poll").finally(() => {
+        const settledEntry = this.sessionEntries.get(sessionKey);
+        if (settledEntry) {
+          settledEntry.pollInFlight = false;
+        }
+      });
+    }, this.pollIntervalMs);
+    entry.pollTimer.unref?.();
+  }
+
+  private stopPolling(entry: SessionEntry): void {
+    if (!entry.pollTimer) {
+      return;
+    }
+
+    clearInterval(entry.pollTimer);
+    entry.pollTimer = null;
+  }
+
+  private ensureBootstrap(sessionKey: string, workspaceId: string, sessionName: string): void {
+    const entry = this.sessionEntries.get(sessionKey);
+    if (!entry || entry.hasSnapshot || entry.bootstrapPromise) {
+      return;
+    }
+
+    const bootstrapPromise = this.fetchAndApplyUrl(
+      sessionKey,
+      workspaceId,
+      sessionName,
+      "bootstrap"
+    ).finally(() => {
+      const currentEntry = this.sessionEntries.get(sessionKey);
+      if (currentEntry?.bootstrapPromise === bootstrapPromise) {
+        currentEntry.bootstrapPromise = null;
+      }
+    });
+    entry.bootstrapPromise = bootstrapPromise;
+  }
+
+  private async fetchAndApplyUrl(
+    sessionKey: string,
+    workspaceId: string,
+    sessionName: string,
+    source: PageState["source"]
+  ): Promise<void> {
+    const startingEntry = this.sessionEntries.get(sessionKey);
+    if (!startingEntry) {
+      return;
+    }
+
+    const generationAtStart = startingEntry.generation;
+    let urlResult: Awaited<ReturnType<BrowserControlService["getUrl"]>>;
+    try {
+      urlResult = await this.browserControlService.getUrl(workspaceId, sessionName);
+    } catch (error) {
+      log.warn("BrowserSessionStateHub: getUrl threw while refreshing page state", {
+        workspaceId,
+        sessionName,
+        source,
+        error,
+      });
+      return;
+    }
+
+    if (urlResult.error) {
+      log.warn("BrowserSessionStateHub: getUrl failed while refreshing page state", {
+        workspaceId,
+        sessionName,
+        source,
+        error: urlResult.error,
+      });
+      return;
+    }
+
+    const currentEntry = this.sessionEntries.get(sessionKey);
+    if (currentEntry?.generation !== generationAtStart) {
+      return;
+    }
+
+    const shouldPublish =
+      !currentEntry.hasSnapshot ||
+      currentEntry.state.url !== urlResult.url ||
+      currentEntry.state.isLoading;
+    if (!shouldPublish) {
+      return;
+    }
+
+    this.publish(sessionKey, currentEntry, {
+      type: "page_state",
+      url: urlResult.url,
+      isLoading: false,
+      source,
+    });
+  }
+
+  private publish(sessionKey: string, entry: SessionEntry, state: PageState): void {
+    entry.state = state;
+    entry.hasSnapshot = true;
+
+    for (const subscriber of entry.subscribers) {
+      this.notifySubscriber(sessionKey, subscriber, state);
+    }
+  }
+
+  private notifySubscriber(
+    sessionKey: string,
+    subscriber: PageStateSubscriber,
+    state: PageState
+  ): void {
+    try {
+      subscriber(state);
+    } catch (error) {
+      log.warn("BrowserSessionStateHub: subscriber callback failed", { sessionKey, error });
+    }
+  }
+}

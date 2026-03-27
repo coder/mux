@@ -5,6 +5,7 @@ import { assert } from "@/common/utils/assert";
 import { log } from "@/node/services/log";
 import type { AgentBrowserSessionDiscoveryService } from "./AgentBrowserSessionDiscoveryService";
 import type { BrowserBridgeTokenManager } from "./BrowserBridgeTokenManager";
+import type { BrowserSessionStateHub } from "./BrowserSessionStateHub";
 
 const INVALID_TOKEN_CLOSE_CODE = 4001;
 const MISSING_SESSION_CLOSE_CODE = 4002;
@@ -21,6 +22,7 @@ interface BridgePair {
 export interface BrowserBridgeServerOptions {
   browserSessionDiscoveryService: Pick<AgentBrowserSessionDiscoveryService, "getSessionConnection">;
   browserBridgeTokenManager: Pick<BrowserBridgeTokenManager, "validate">;
+  browserSessionStateHub?: Pick<BrowserSessionStateHub, "subscribe">;
 }
 
 function normalizeBinaryMessage(data: RawData): Buffer {
@@ -149,8 +151,10 @@ async function connectToStream(port: number): Promise<WebSocket> {
 export class BrowserBridgeServer {
   private readonly browserSessionDiscoveryService: BrowserBridgeServerOptions["browserSessionDiscoveryService"];
   private readonly browserBridgeTokenManager: BrowserBridgeServerOptions["browserBridgeTokenManager"];
+  private readonly browserSessionStateHub: BrowserBridgeServerOptions["browserSessionStateHub"];
   private readonly wss: WebSocketServer;
   private readonly activePairs = new Set<BridgePair>();
+  private readonly pairStateUnsubscribers = new Map<BridgePair, () => void>();
   private isStopping = false;
   private stopPromise: Promise<void> | null = null;
 
@@ -166,6 +170,7 @@ export class BrowserBridgeServer {
 
     this.browserSessionDiscoveryService = options.browserSessionDiscoveryService;
     this.browserBridgeTokenManager = options.browserBridgeTokenManager;
+    this.browserSessionStateHub = options.browserSessionStateHub;
     this.wss = new WebSocketServer({ noServer: true });
   }
 
@@ -289,6 +294,24 @@ export class BrowserBridgeServer {
       const pair: BridgePair = { client: ws, upstream, closed: false };
       this.attachBridgeListeners(pair, payload.workspaceId, liveSession.sessionName);
       this.activePairs.add(pair);
+      if (this.browserSessionStateHub) {
+        const unsubscribe = this.browserSessionStateHub.subscribe(
+          payload.workspaceId,
+          liveSession.sessionName,
+          (state) => {
+            if (pair.closed) {
+              return;
+            }
+
+            try {
+              pair.client.send(JSON.stringify(state));
+            } catch {
+              // Best-effort page state delivery should never take down the bridge.
+            }
+          }
+        );
+        this.pairStateUnsubscribers.set(pair, unsubscribe);
+      }
       if (ws.readyState !== WebSocket.OPEN) {
         this.cleanupPair(pair, { closeReason: "websocket closed before bridge finished" });
       }
@@ -382,6 +405,12 @@ export class BrowserBridgeServer {
 
     pair.closed = true;
     this.activePairs.delete(pair);
+
+    const unsubscribe = this.pairStateUnsubscribers.get(pair);
+    if (unsubscribe) {
+      unsubscribe();
+      this.pairStateUnsubscribers.delete(pair);
+    }
 
     closeWebSocket(pair.upstream, options?.closeCode, options?.closeReason);
     closeWebSocket(pair.client, options?.closeCode, options?.closeReason);

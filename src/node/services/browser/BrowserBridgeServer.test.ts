@@ -1,8 +1,10 @@
 import * as http from "node:http";
 import type { IncomingMessage } from "node:http";
+import { EventEmitter } from "node:events";
 import { describe, expect, mock, test } from "bun:test";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import { BrowserBridgeServer } from "./BrowserBridgeServer";
+import type { PageState } from "./BrowserSessionStateHub";
 
 const VALID_TOKEN = "valid-token";
 const VALID_WORKSPACE_ID = "workspace-1";
@@ -61,6 +63,11 @@ function createBridgeServer(
       status: "attachable";
       streamPort: number;
     } | null>;
+    subscribe?: (
+      workspaceId: string,
+      sessionName: string,
+      callback: (state: PageState) => void
+    ) => () => void;
   } = {}
 ): BrowserBridgeServer {
   return new BrowserBridgeServer({
@@ -88,6 +95,12 @@ function createBridgeServer(
           )
         ),
     },
+    browserSessionStateHub:
+      options.subscribe == null
+        ? undefined
+        : {
+            subscribe: options.subscribe,
+          },
   });
 }
 
@@ -98,6 +111,13 @@ type MockClientSocket = Pick<WebSocket, "readyState" | "close" | "terminate"> & 
 
 interface BrowserBridgeServerPrivate {
   handleUpgradedConnection(ws: WebSocket, request: IncomingMessage): Promise<void>;
+}
+
+class MockBridgeClientSocket extends EventEmitter {
+  public readyState = WebSocket.OPEN;
+  public readonly close = mock();
+  public readonly terminate = mock();
+  public readonly send = mock();
 }
 
 function createMockClientSocket(): MockClientSocket {
@@ -184,6 +204,17 @@ async function waitForWebSocketOpen(ws: WebSocket): Promise<void> {
     ws.once("open", onOpen);
     ws.once("close", onClose);
     ws.once("error", onError);
+  });
+}
+
+async function closeClientWebSocket(ws: WebSocket): Promise<void> {
+  if (ws.readyState === WebSocket.CLOSED) {
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    ws.once("close", () => resolve());
+    ws.close();
   });
 }
 
@@ -298,6 +329,166 @@ describe("BrowserBridgeServer", () => {
       } finally {
         await bridgeServer.stop();
       }
+    }
+  });
+
+  test("sends the initial page_state snapshot from the session hub on connect", async () => {
+    const upstreamHarness = await listenUpstreamServer();
+    const initialState: PageState = {
+      type: "page_state",
+      url: "https://example.com/bootstrap",
+      isLoading: false,
+      source: "bootstrap",
+    };
+    const subscribe = mock(
+      (_workspaceId: string, _sessionName: string, callback: (state: PageState) => void) => {
+        callback(initialState);
+        return () => undefined;
+      }
+    );
+    const bridgeServer = createBridgeServer({
+      getSessionConnection: mock((workspaceId: string, sessionName: string) =>
+        Promise.resolve(
+          workspaceId === VALID_WORKSPACE_ID && sessionName === VALID_SESSION_NAME
+            ? createAttachableConnection(sessionName, upstreamHarness.port)
+            : null
+        )
+      ),
+      validate: mock((token: string) =>
+        token === VALID_TOKEN
+          ? {
+              workspaceId: VALID_WORKSPACE_ID,
+              sessionName: VALID_SESSION_NAME,
+              streamPort: upstreamHarness.port,
+            }
+          : null
+      ),
+      subscribe,
+    });
+    const upgradeHarness = await listenUpgradeServer(bridgeServer);
+
+    const ws = new WebSocket(`ws://127.0.0.1:${upgradeHarness.port}/?token=${VALID_TOKEN}`);
+    try {
+      await waitForWebSocketOpen(ws);
+      await upstreamHarness.connectionPromise;
+
+      expect(JSON.parse(await waitForMessage(ws))).toEqual(initialState);
+      expect(subscribe).toHaveBeenCalledWith(
+        VALID_WORKSPACE_ID,
+        VALID_SESSION_NAME,
+        expect.any(Function)
+      );
+    } finally {
+      ws.terminate();
+      await upgradeHarness.close();
+      await bridgeServer.stop();
+      await upstreamHarness.close();
+    }
+  });
+
+  test("forwards page_state updates from the session hub while the bridge is connected", async () => {
+    const upstreamHarness = await listenUpstreamServer();
+    const updatedState: PageState = {
+      type: "page_state",
+      url: "https://example.com/next",
+      isLoading: true,
+      source: "command",
+    };
+    let stateCallback: ((state: PageState) => void) | null = null;
+    const bridgeServer = createBridgeServer({
+      getSessionConnection: mock((workspaceId: string, sessionName: string) =>
+        Promise.resolve(
+          workspaceId === VALID_WORKSPACE_ID && sessionName === VALID_SESSION_NAME
+            ? createAttachableConnection(sessionName, upstreamHarness.port)
+            : null
+        )
+      ),
+      validate: mock((token: string) =>
+        token === VALID_TOKEN
+          ? {
+              workspaceId: VALID_WORKSPACE_ID,
+              sessionName: VALID_SESSION_NAME,
+              streamPort: upstreamHarness.port,
+            }
+          : null
+      ),
+      subscribe: (
+        _workspaceId: string,
+        _sessionName: string,
+        callback: (state: PageState) => void
+      ) => {
+        stateCallback = callback;
+        return () => undefined;
+      },
+    });
+    const clientSocket = new MockBridgeClientSocket();
+    const bridgeServerPrivate = bridgeServer as unknown as BrowserBridgeServerPrivate;
+
+    try {
+      await bridgeServerPrivate.handleUpgradedConnection(
+        clientSocket as unknown as WebSocket,
+        { url: `/?token=${VALID_TOKEN}` } as IncomingMessage
+      );
+      await upstreamHarness.connectionPromise;
+
+      if (stateCallback == null) {
+        throw new Error("Expected BrowserBridgeServer to subscribe to the session state hub");
+      }
+      const subscribedStateCallback = stateCallback as (state: PageState) => void;
+      subscribedStateCallback(updatedState);
+
+      expect(clientSocket.send).toHaveBeenCalledWith(JSON.stringify(updatedState));
+    } finally {
+      clientSocket.emit("close");
+      await bridgeServer.stop();
+      await upstreamHarness.close();
+    }
+  });
+
+  test("unsubscribes from the session hub when a bridge pair is cleaned up", async () => {
+    const upstreamHarness = await listenUpstreamServer();
+    let resolveUnsubscribe!: () => void;
+    const unsubscribePromise = new Promise<void>((resolve) => {
+      resolveUnsubscribe = resolve;
+    });
+    const unsubscribe = mock(() => {
+      resolveUnsubscribe();
+    });
+    const bridgeServer = createBridgeServer({
+      getSessionConnection: mock((workspaceId: string, sessionName: string) =>
+        Promise.resolve(
+          workspaceId === VALID_WORKSPACE_ID && sessionName === VALID_SESSION_NAME
+            ? createAttachableConnection(sessionName, upstreamHarness.port)
+            : null
+        )
+      ),
+      validate: mock((token: string) =>
+        token === VALID_TOKEN
+          ? {
+              workspaceId: VALID_WORKSPACE_ID,
+              sessionName: VALID_SESSION_NAME,
+              streamPort: upstreamHarness.port,
+            }
+          : null
+      ),
+      subscribe: () => unsubscribe,
+    });
+    const upgradeHarness = await listenUpgradeServer(bridgeServer);
+
+    const ws = new WebSocket(`ws://127.0.0.1:${upgradeHarness.port}/?token=${VALID_TOKEN}`);
+    try {
+      await waitForWebSocketOpen(ws);
+      await upstreamHarness.connectionPromise;
+
+      await closeClientWebSocket(ws);
+      await unsubscribePromise;
+
+      expect(unsubscribe).toHaveBeenCalledTimes(1);
+    } finally {
+      ws.terminate();
+      await upgradeHarness.close();
+      await bridgeServer.stop();
+      await upstreamHarness.close();
     }
   });
 
