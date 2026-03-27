@@ -9,7 +9,6 @@ import { type GitStatusFixture } from "./mocks/git";
 import {
   createFileEditTool,
   createFileReadTool,
-  createStatusTool,
   createTerminalTool,
   createTodoWriteTool,
 } from "./mocks/tools";

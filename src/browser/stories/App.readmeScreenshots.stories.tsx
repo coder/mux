@@ -23,7 +23,6 @@ import {
   createFileEditTool,
   createFileReadTool,
   createProposePlanTool,
-  createStatusTool,
   createTodoWriteTool,
   createWebSearchTool,
 } from "./mocks/tools";
