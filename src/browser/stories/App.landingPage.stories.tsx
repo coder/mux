@@ -9,8 +9,9 @@ import type { APIClient } from "@/browser/contexts/API";
 import type { Summary } from "@/browser/hooks/useAnalytics";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
-import { createWorkspace, groupWorkspacesByProject } from "./mockFactory";
-import { createPRStatusExecutor, expandProjects } from "./storyHelpers";
+import { createWorkspace, groupWorkspacesByProject } from "./mocks/workspaces";
+import { createPRStatusExecutor } from "./helpers/git";
+import { expandProjects } from "./helpers/uiState";
 import { LEFT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
 
 export default {

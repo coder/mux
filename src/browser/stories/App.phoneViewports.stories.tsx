@@ -13,19 +13,10 @@ import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { LEFT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
 
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
-import {
-  createAssistantMessage,
-  createUserMessage,
-  createWorkspace,
-  groupWorkspacesByProject,
-  STABLE_TIMESTAMP,
-} from "./mockFactory";
-import {
-  clearWorkspaceSelection,
-  collapseRightSidebar,
-  expandProjects,
-  setupSimpleChatStory,
-} from "./storyHelpers";
+import { createAssistantMessage, createUserMessage } from "./mocks/messages";
+import { STABLE_TIMESTAMP, createWorkspace, groupWorkspacesByProject } from "./mocks/workspaces";
+import { setupSimpleChatStory } from "./helpers/chatSetup";
+import { clearWorkspaceSelection, collapseRightSidebar, expandProjects } from "./helpers/uiState";
 import { createMockORPCClient } from "./mocks/orpc";
 import {
   blurActiveElement,

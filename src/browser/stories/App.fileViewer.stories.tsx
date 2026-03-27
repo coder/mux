@@ -5,14 +5,10 @@
  */
 
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
-import {
-  setupSimpleChatStory,
-  expandRightSidebar,
-  setReviews,
-  createReview,
-  type SimpleChatSetupOptions,
-} from "./storyHelpers";
-import { createUserMessage, createAssistantMessage } from "./mockFactory";
+import { createAssistantMessage, createUserMessage } from "./mocks/messages";
+import { setupSimpleChatStory, type SimpleChatSetupOptions } from "./helpers/chatSetup";
+import { createReview, setReviews } from "./helpers/reviews";
+import { expandRightSidebar } from "./helpers/uiState";
 import { within } from "@storybook/test";
 import { blurActiveElement } from "./storyPlayHelpers.js";
 import { RIGHT_SIDEBAR_WIDTH_KEY, getRightSidebarLayoutKey } from "@/common/constants/storage";

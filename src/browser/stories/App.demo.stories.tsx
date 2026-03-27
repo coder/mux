@@ -3,30 +3,26 @@
  */
 
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
+import { createStaticChatHandler, createStreamingChatHandler } from "./mocks/chatHandlers";
+import { createAssistantMessage, createUserMessage } from "./mocks/messages";
+import { type GitStatusFixture } from "./mocks/git";
+import {
+  createFileEditTool,
+  createFileReadTool,
+  createStatusTool,
+  createTerminalTool,
+  createTodoWriteTool,
+} from "./mocks/tools";
 import {
   NOW,
   STABLE_TIMESTAMP,
-  createWorkspace,
   createSSHWorkspace,
+  createWorkspace,
   groupWorkspacesByProject,
-  createUserMessage,
-  createAssistantMessage,
-  createFileReadTool,
-  createFileEditTool,
-  createTerminalTool,
-  createTodoWriteTool,
-  createStaticChatHandler,
-  createStreamingChatHandler,
-  type GitStatusFixture,
-} from "./mockFactory";
-import {
-  createGitStatusExecutor,
-  createOnChatAdapter,
-  type ChatHandler,
-  selectWorkspace,
-  setWorkspaceInput,
-  setWorkspaceModel,
-} from "./storyHelpers";
+} from "./mocks/workspaces";
+import { createOnChatAdapter, type ChatHandler } from "./helpers/chatSetup";
+import { createGitStatusExecutor } from "./helpers/git";
+import { selectWorkspace, setWorkspaceInput, setWorkspaceModel } from "./helpers/uiState";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 export default {
   ...appMeta,

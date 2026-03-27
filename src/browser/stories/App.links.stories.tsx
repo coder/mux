@@ -6,21 +6,17 @@
  */
 
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
+import { createStaticChatHandler } from "./mocks/chatHandlers";
+import { createAssistantMessage, createUserMessage } from "./mocks/messages";
 import {
   NOW,
   STABLE_TIMESTAMP,
   createWorkspace,
-  createUserMessage,
-  createAssistantMessage,
-  createStaticChatHandler,
   groupWorkspacesByProject,
-} from "./mockFactory";
-import {
-  createOnChatAdapter,
-  createPRStatusExecutor,
-  type PRStatusFixture,
-  selectWorkspace as selectWorkspaceHelper,
-} from "./storyHelpers";
+} from "./mocks/workspaces";
+import { createOnChatAdapter } from "./helpers/chatSetup";
+import { createPRStatusExecutor, type PRStatusFixture } from "./helpers/git";
+import { selectWorkspace as selectWorkspaceHelper } from "./helpers/uiState";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 
 export default {

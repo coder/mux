@@ -10,8 +10,8 @@ import type { Secret } from "@/common/types/secrets";
 import type { APIClient } from "@/browser/contexts/API";
 import { UI_THEME_KEY } from "@/common/constants/storage";
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
-import { createWorkspace, groupWorkspacesByProject } from "./mockFactory";
-import { selectWorkspace } from "./storyHelpers";
+import { createWorkspace, groupWorkspacesByProject } from "./mocks/workspaces";
+import { selectWorkspace } from "./helpers/uiState";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import { within, userEvent, waitFor } from "@storybook/test";
 

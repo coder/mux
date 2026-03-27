@@ -2,7 +2,7 @@ import { within, userEvent, waitFor } from "@storybook/test";
 
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
-import { expandProjects } from "./storyHelpers";
+import { expandProjects } from "./helpers/uiState";
 import type { NameGenerationError } from "@/common/types/errors";
 import { getLastRuntimeConfigKey, getRuntimeKey } from "@/common/constants/storage";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";

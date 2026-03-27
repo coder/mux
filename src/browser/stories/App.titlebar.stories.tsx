@@ -7,13 +7,9 @@
 
 import React from "react";
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
-import { createWorkspace, groupWorkspacesByProject } from "./mockFactory";
-import {
-  selectWorkspace,
-  expandProjects,
-  collapseRightSidebar,
-  createGitStatusExecutor,
-} from "./storyHelpers";
+import { createWorkspace, groupWorkspacesByProject } from "./mocks/workspaces";
+import { createGitStatusExecutor } from "./helpers/git";
+import { collapseRightSidebar, expandProjects, selectWorkspace } from "./helpers/uiState";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 
 export default {

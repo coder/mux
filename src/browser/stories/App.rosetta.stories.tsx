@@ -4,8 +4,9 @@
 
 import React from "react";
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
-import { setupSimpleChatStory } from "./storyHelpers";
-import { STABLE_TIMESTAMP, createUserMessage, createAssistantMessage } from "./mockFactory";
+import { createAssistantMessage, createUserMessage } from "./mocks/messages";
+import { STABLE_TIMESTAMP } from "./mocks/workspaces";
+import { setupSimpleChatStory } from "./helpers/chatSetup";
 
 export default {
   ...appMeta,
