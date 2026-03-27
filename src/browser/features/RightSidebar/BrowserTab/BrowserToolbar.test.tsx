@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
 import type { ComponentProps } from "react";
@@ -24,7 +24,7 @@ import { BrowserToolbar } from "./BrowserToolbar";
 function renderToolbar(overrides: Partial<ComponentProps<typeof BrowserToolbar>> = {}) {
   const onSetPendingUrl = mock(() => undefined);
 
-  render(
+  const view = render(
     <BrowserToolbar
       workspaceId="workspace-1"
       sessionName="session-a"
@@ -37,7 +37,7 @@ function renderToolbar(overrides: Partial<ComponentProps<typeof BrowserToolbar>>
     />
   );
 
-  return { onSetPendingUrl };
+  return { onSetPendingUrl, ...view };
 }
 
 describe("BrowserToolbar", () => {
@@ -61,41 +61,46 @@ describe("BrowserToolbar", () => {
   });
 
   test("disables all controls when the bridge is disconnected", () => {
-    renderToolbar({ isConnected: false });
+    const view = renderToolbar({ isConnected: false });
 
-    expect(screen.getByLabelText("Back").disabled).toBe(true);
-    expect(screen.getByLabelText("Forward").disabled).toBe(true);
-    expect(screen.getByLabelText("Reload").disabled).toBe(true);
-    expect(screen.getByLabelText("Browser URL").disabled).toBe(true);
+    expect((view.getByLabelText("Back") as HTMLButtonElement).disabled).toBe(true);
+    expect((view.getByLabelText("Forward") as HTMLButtonElement).disabled).toBe(true);
+    expect((view.getByLabelText("Reload") as HTMLButtonElement).disabled).toBe(true);
+    expect((view.getByLabelText("Browser URL") as HTMLInputElement).disabled).toBe(true);
   });
 
   test("disables all controls when no session is selected", () => {
-    renderToolbar({ sessionName: null });
+    const view = renderToolbar({ sessionName: null });
 
-    expect(screen.getByLabelText("Back").disabled).toBe(true);
-    expect(screen.getByLabelText("Forward").disabled).toBe(true);
-    expect(screen.getByLabelText("Reload").disabled).toBe(true);
-    expect(screen.getByLabelText("Browser URL").disabled).toBe(true);
+    expect((view.getByLabelText("Back") as HTMLButtonElement).disabled).toBe(true);
+    expect((view.getByLabelText("Forward") as HTMLButtonElement).disabled).toBe(true);
+    expect((view.getByLabelText("Reload") as HTMLButtonElement).disabled).toBe(true);
+    expect((view.getByLabelText("Browser URL") as HTMLInputElement).disabled).toBe(true);
   });
 
   test("shows the current URL when there is no pending navigation", () => {
-    renderToolbar({ currentUrl: "https://current.example.com" });
+    const view = renderToolbar({ currentUrl: "https://current.example.com" });
 
-    expect(screen.getByLabelText("Browser URL").value).toBe("https://current.example.com");
+    expect((view.getByLabelText("Browser URL") as HTMLInputElement).value).toBe(
+      "https://current.example.com"
+    );
   });
 
   test("shows the pending URL when optimistic navigation is active", () => {
-    renderToolbar({ pendingUrl: "https://pending.example.com" });
+    const view = renderToolbar({ pendingUrl: "https://pending.example.com" });
 
-    expect(screen.getByLabelText("Browser URL").value).toBe("https://pending.example.com");
+    expect((view.getByLabelText("Browser URL") as HTMLInputElement).value).toBe(
+      "https://pending.example.com"
+    );
   });
 
   test("submits URL navigation on Enter", async () => {
-    const { onSetPendingUrl } = renderToolbar();
-    const input = screen.getByLabelText("Browser URL");
+    const { onSetPendingUrl, getByLabelText } = renderToolbar({
+      pendingUrl: "https://next.example.com",
+    });
+    const input = getByLabelText("Browser URL") as HTMLInputElement;
 
-    fireEvent.focus(input);
-    fireEvent.change(input, { target: { value: "https://next.example.com" } });
+    input.focus();
     fireEvent.keyDown(input, { key: "Enter" });
 
     expect(onSetPendingUrl).toHaveBeenCalledWith("https://next.example.com");
@@ -110,11 +115,11 @@ describe("BrowserToolbar", () => {
   });
 
   test("sends back, forward, and reload commands", async () => {
-    renderToolbar();
+    const view = renderToolbar();
 
-    fireEvent.click(screen.getByLabelText("Back"));
-    fireEvent.click(screen.getByLabelText("Forward"));
-    fireEvent.click(screen.getByLabelText("Reload"));
+    fireEvent.click(view.getByLabelText("Back"));
+    fireEvent.click(view.getByLabelText("Forward"));
+    fireEvent.click(view.getByLabelText("Reload"));
 
     await waitFor(() => {
       expect(controlMock).toHaveBeenNthCalledWith(1, {
@@ -136,17 +141,17 @@ describe("BrowserToolbar", () => {
   });
 
   test("shows a spinning loading icon while the page is loading", () => {
-    renderToolbar({ isPageLoading: true });
+    const view = renderToolbar({ isPageLoading: true });
 
-    expect(screen.getByTestId("browser-toolbar-loading-icon")).toBeTruthy();
-    expect(screen.queryByTestId("browser-toolbar-reload-icon")).toBeNull();
+    expect(view.getByTestId("browser-toolbar-loading-icon")).toBeTruthy();
+    expect(view.queryByTestId("browser-toolbar-reload-icon")).toBeNull();
   });
 
   test("Escape blurs the URL input", () => {
-    renderToolbar();
-    const input = screen.getByLabelText("Browser URL");
+    const view = renderToolbar();
+    const input = view.getByLabelText("Browser URL") as HTMLInputElement;
 
-    fireEvent.focus(input);
+    input.focus();
     expect(document.activeElement).toBe(input);
 
     fireEvent.keyDown(input, { key: "Escape" });

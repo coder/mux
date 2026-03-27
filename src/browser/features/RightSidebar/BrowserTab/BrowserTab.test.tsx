@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
 import { useState } from "react";
@@ -130,16 +130,18 @@ describe("BrowserTab", () => {
       isPageLoading: true,
     });
 
-    render(<BrowserTab workspaceId="workspace-1" projectPath="/project" />);
+    const view = render(<BrowserTab workspaceId="workspace-1" projectPath="/project" />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText("Browser URL").value).toBe("https://pending.example.com");
+      expect((view.getByLabelText("Browser URL") as HTMLInputElement).value).toBe(
+        "https://pending.example.com"
+      );
     });
 
-    expect(screen.getByLabelText("Back").disabled).toBe(false);
-    expect(screen.getByLabelText("Forward").disabled).toBe(false);
-    expect(screen.getByLabelText("Reload").disabled).toBe(false);
-    expect(screen.getByTestId("browser-toolbar-loading-icon")).toBeTruthy();
+    expect((view.getByLabelText("Back") as HTMLButtonElement).disabled).toBe(false);
+    expect((view.getByLabelText("Forward") as HTMLButtonElement).disabled).toBe(false);
+    expect((view.getByLabelText("Reload") as HTMLButtonElement).disabled).toBe(false);
+    expect(view.getByTestId("browser-toolbar-loading-icon")).toBeTruthy();
   });
 });
 
