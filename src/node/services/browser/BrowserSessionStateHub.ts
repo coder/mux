@@ -76,6 +76,9 @@ export class BrowserSessionStateHub {
       currentEntry.subscribers.delete(callback);
       if (currentEntry.subscribers.size === 0) {
         this.stopPolling(currentEntry);
+        // Bump generation so any in-flight bootstrap/poll started before the
+        // disconnect cannot repopulate the snapshot after the last subscriber leaves.
+        currentEntry.generation += 1;
         // Drop the cached snapshot so a later re-subscribe takes the same
         // bootstrap path as a brand-new attachment instead of reusing stale state.
         currentEntry.hasSnapshot = false;
