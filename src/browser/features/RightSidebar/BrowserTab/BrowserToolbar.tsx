@@ -95,12 +95,16 @@ export function BrowserToolbar(props: BrowserToolbarProps) {
         props.sessionName != null && props.sessionName.trim().length > 0,
         "Browser controls require an active session."
       );
-      await api.browser.control({
+      const result = await api.browser.control({
         workspaceId: props.workspaceId,
         sessionName: props.sessionName,
         action,
         ...(url != null ? { url } : {}),
       });
+      if (!result.success) {
+        showTransientError(result.error ?? `Failed to ${action} the browser session.`);
+        return;
+      }
     } catch (error) {
       showTransientError(
         error instanceof Error ? error.message : `Failed to ${action} the browser session.`

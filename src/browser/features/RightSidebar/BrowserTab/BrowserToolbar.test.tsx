@@ -3,7 +3,14 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
 import type { ComponentProps } from "react";
 
-const controlMock = mock(() => Promise.resolve(undefined));
+interface BrowserControlResponse {
+  success: boolean;
+  error?: string;
+}
+
+const controlMock = mock<() => Promise<BrowserControlResponse>>(() =>
+  Promise.resolve({ success: true })
+);
 
 void mock.module("@/browser/contexts/API", () => ({
   useAPI: () => ({
@@ -63,7 +70,7 @@ describe("BrowserToolbar", () => {
       typeof globalThis;
     globalThis.document = globalThis.window.document;
     controlMock.mockReset();
-    controlMock.mockResolvedValue(undefined);
+    controlMock.mockResolvedValue({ success: true });
   });
 
   afterEach(() => {
@@ -126,6 +133,31 @@ describe("BrowserToolbar", () => {
         url: "https://next.example.com",
       });
     });
+  });
+
+  test("shows open command errors returned by the browser control API", async () => {
+    controlMock.mockResolvedValueOnce({ success: false, error: "Navigation failed" });
+    const { onSetPendingUrl, getByLabelText, getByText } = renderToolbar({
+      pendingUrl: "https://next.example.com",
+    });
+    const input = getByLabelText("Browser URL") as HTMLInputElement;
+
+    input.focus();
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(onSetPendingUrl).toHaveBeenCalledWith("https://next.example.com");
+    await waitFor(() => {
+      expect(controlMock).toHaveBeenCalledWith({
+        workspaceId: "workspace-1",
+        sessionName: "session-a",
+        action: "open",
+        url: "https://next.example.com",
+      });
+    });
+    await waitFor(() => {
+      expect(getByText("Navigation failed")).toBeTruthy();
+    });
+    expect((getByLabelText("Browser URL") as HTMLInputElement).disabled).toBe(false);
   });
 
   test("sends back, forward, and reload commands", async () => {
@@ -230,7 +262,7 @@ describe("BrowserToolbar", () => {
   });
 
   test("disables controls while a command is pending", async () => {
-    const deferred = createDeferredPromise<undefined>();
+    const deferred = createDeferredPromise<{ success: boolean }>();
     controlMock.mockImplementation(() => deferred.promise);
     const view = renderToolbar();
     const reloadButton = view.getByLabelText("Reload") as HTMLButtonElement;
@@ -246,7 +278,7 @@ describe("BrowserToolbar", () => {
     fireEvent.click(reloadButton);
     expect(controlMock).toHaveBeenCalledTimes(1);
 
-    deferred.resolve(undefined);
+    deferred.resolve({ success: true });
 
     await waitFor(() => {
       expect(reloadButton.disabled).toBe(false);

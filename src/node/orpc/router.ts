@@ -1119,7 +1119,18 @@ export const router = (authToken?: string) => {
 
           try {
             const result = await context.browserControlService.executeControl(input);
-            if (result.success) {
+            const urlResult = await context.browserControlService.getUrl(
+              input.workspaceId,
+              input.sessionName
+            );
+            context.browserSessionStateHub.markLoaded(
+              input.workspaceId,
+              input.sessionName,
+              urlResult.url
+            );
+            return result;
+          } catch (error) {
+            try {
               const urlResult = await context.browserControlService.getUrl(
                 input.workspaceId,
                 input.sessionName
@@ -1129,13 +1140,9 @@ export const router = (authToken?: string) => {
                 input.sessionName,
                 urlResult.url
               );
-            } else {
+            } catch {
               context.browserSessionStateHub.markLoaded(input.workspaceId, input.sessionName, null);
             }
-
-            return result;
-          } catch (error) {
-            context.browserSessionStateHub.markLoaded(input.workspaceId, input.sessionName, null);
             throw error;
           }
         }),
