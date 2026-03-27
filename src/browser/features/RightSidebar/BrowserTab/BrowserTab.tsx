@@ -270,7 +270,7 @@ export function BrowserTab(props: BrowserTabProps) {
         currentUrl={session?.currentUrl ?? null}
         pendingUrl={session?.pendingUrl ?? null}
         isPageLoading={session?.isPageLoading ?? false}
-        isConnected={session?.status === "live"}
+        isConnected={session?.status === "live" && session?.sessionName === selectedSessionName}
         onSetPendingUrl={setPendingUrl}
       />
 

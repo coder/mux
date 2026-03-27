@@ -75,6 +75,16 @@ export function BrowserToolbar(props: BrowserToolbarProps) {
     };
   }, []);
 
+  // Clear stale errors when the selected session changes so one session's failure does not
+  // linger after the user switches to a different bridge.
+  useEffect(() => {
+    setErrorMessage(null);
+    if (errorTimeoutRef.current != null) {
+      clearTimeout(errorTimeoutRef.current);
+      errorTimeoutRef.current = null;
+    }
+  }, [props.sessionName]);
+
   const showTransientError = (message: string) => {
     setErrorMessage(message);
     if (errorTimeoutRef.current != null) {
