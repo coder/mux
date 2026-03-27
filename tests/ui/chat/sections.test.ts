@@ -32,7 +32,7 @@ import { detectDefaultTrunkBranch } from "../../../src/node/git";
 import { installDom } from "../dom";
 import { renderApp } from "../renderReviewPanel";
 import { cleanupView, setupWorkspaceView } from "../helpers";
-import { expandProjects } from "@/browser/stories/storyHelpers";
+import { expandProjects } from "@/browser/stories/helpers/uiState";
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 

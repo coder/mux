@@ -16,7 +16,7 @@ import { renderApp } from "../renderReviewPanel";
 import { cleanupView, openProjectCreationView } from "../helpers";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import type { ProjectConfig } from "@/node/config";
-import { expandProjects } from "@/browser/stories/storyHelpers";
+import { expandProjects } from "@/browser/stories/helpers/uiState";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;

@@ -1,6 +1,6 @@
 import type { AppStory } from "@/browser/stories/meta.js";
 import { appMeta, AppWithMocks } from "@/browser/stories/meta.js";
-import { setupSimpleChatStory } from "@/browser/stories/storyHelpers.js";
+import { setupSimpleChatStory } from "@/browser/stories/helpers/chatSetup";
 import { within, userEvent, waitFor } from "@storybook/test";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getModelKey } from "@/common/constants/storage";

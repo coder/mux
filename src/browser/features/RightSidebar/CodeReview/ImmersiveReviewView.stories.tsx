@@ -8,7 +8,7 @@ import { APIProvider, type APIClient } from "@/browser/contexts/API";
 import { ExperimentsProvider } from "@/browser/contexts/ExperimentsContext";
 import { ThemeProvider } from "@/browser/contexts/ThemeContext";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
-import { createReview } from "@/browser/stories/storyHelpers.js";
+import { createReview } from "@/browser/stories/helpers/reviews";
 import type { DiffHunk, Review } from "@/common/types/review";
 import { extractAllHunks, parseDiff } from "@/common/utils/git/diffParser";
 import {

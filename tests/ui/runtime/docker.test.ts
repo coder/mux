@@ -15,7 +15,7 @@ import { installDom } from "../dom";
 import { renderApp } from "../renderReviewPanel";
 import { cleanupView, openProjectCreationView } from "../helpers";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
-import { expandProjects } from "@/browser/stories/storyHelpers";
+import { expandProjects } from "@/browser/stories/helpers/uiState";
 import type { ProjectConfig } from "@/node/config";
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
