@@ -1126,7 +1126,7 @@ export const router = (authToken?: string) => {
             context.browserSessionStateHub.markLoaded(
               input.workspaceId,
               input.sessionName,
-              urlResult.url
+              urlResult.error == null ? urlResult.url : undefined
             );
             return result;
           } catch (error) {
@@ -1138,10 +1138,14 @@ export const router = (authToken?: string) => {
               context.browserSessionStateHub.markLoaded(
                 input.workspaceId,
                 input.sessionName,
-                urlResult.url
+                urlResult.error == null ? urlResult.url : undefined
               );
             } catch {
-              context.browserSessionStateHub.markLoaded(input.workspaceId, input.sessionName, null);
+              context.browserSessionStateHub.markLoaded(
+                input.workspaceId,
+                input.sessionName,
+                undefined
+              );
             }
             throw error;
           }

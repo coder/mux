@@ -20,7 +20,7 @@ interface BrowserToolbarProps {
   pendingUrl: string | null;
   isPageLoading: boolean;
   isConnected: boolean;
-  onSetPendingUrl: (url: string) => void;
+  onSetPendingUrl: (url: string | null) => void;
 }
 
 const TOOLBAR_BUTTON_CLASS_NAME =
@@ -102,10 +102,16 @@ export function BrowserToolbar(props: BrowserToolbarProps) {
         ...(url != null ? { url } : {}),
       });
       if (!result.success) {
+        if (action === "open") {
+          props.onSetPendingUrl(null);
+        }
         showTransientError(result.error ?? `Failed to ${action} the browser session.`);
         return;
       }
     } catch (error) {
+      if (action === "open") {
+        props.onSetPendingUrl(null);
+      }
       showTransientError(
         error instanceof Error ? error.message : `Failed to ${action} the browser session.`
       );

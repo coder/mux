@@ -94,16 +94,21 @@ export class BrowserSessionStateHub {
     });
   }
 
-  public markLoaded(workspaceId: string, sessionName: string, url: string | null): void {
+  public markLoaded(
+    workspaceId: string,
+    sessionName: string,
+    url: string | null | undefined
+  ): void {
     this.assertValidSessionIdentifiers(workspaceId, sessionName);
     this.assertValidUrl(url);
 
     const sessionKey = this.createSessionKey(workspaceId, sessionName);
     const entry = this.getOrCreateEntry(sessionKey);
+    const resolvedUrl = url !== undefined ? url : entry.state.url;
     entry.generation += 1;
     this.publish(sessionKey, entry, {
       type: "page_state",
-      url,
+      url: resolvedUrl,
       isLoading: false,
       source: "command",
     });
@@ -129,10 +134,10 @@ export class BrowserSessionStateHub {
     );
   }
 
-  private assertValidUrl(url: string | null): void {
+  private assertValidUrl(url: string | null | undefined): void {
     assert(
-      url === null || typeof url === "string",
-      "BrowserSessionStateHub page state url must be a string or null"
+      url === undefined || url === null || typeof url === "string",
+      "BrowserSessionStateHub page state url must be a string, null, or undefined"
     );
     if (typeof url === "string") {
       assert(url.trim().length > 0, "BrowserSessionStateHub page state url must be non-empty");

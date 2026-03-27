@@ -177,7 +177,7 @@ export function useBrowserBridgeConnection(workspaceId: string): {
   connect: (sessionName: string) => void;
   disconnect: () => void;
   sendInput: (input: BrowserInputEvent) => void;
-  setPendingUrl: (url: string) => void;
+  setPendingUrl: (url: string | null) => void;
 } {
   if (workspaceId.trim().length === 0) {
     throw new Error("Browser bridge connection requires a workspaceId");
@@ -456,9 +456,9 @@ export function useBrowserBridgeConnection(workspaceId: string): {
     }
   };
 
-  const setPendingUrl = (url: string) => {
+  const setPendingUrl = (url: string | null) => {
     setSession((previousSession) => {
-      if (previousSession == null) {
+      if (previousSession == null || previousSession.pendingUrl === url) {
         return previousSession;
       }
 
