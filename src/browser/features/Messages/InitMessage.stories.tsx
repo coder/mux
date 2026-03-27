@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { InitMessage } from "@/browser/features/Messages/InitMessage";
-import { STABLE_TIMESTAMP } from "@/browser/stories/mockFactory";
+import { STABLE_TIMESTAMP } from "@/browser/stories/mocks/workspaces";
 import { lightweightMeta } from "@/browser/stories/meta.js";
 import type { DisplayedMessage } from "@/common/types/message";
 

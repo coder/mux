@@ -29,16 +29,12 @@ import { SplashScreenProvider } from "@/browser/features/SplashScreens/SplashScr
 import { TerminalRouterProvider } from "@/browser/terminal/TerminalRouterContext";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
-import { createAssistantMessage, createUserMessage } from "@/browser/stories/mockFactory";
+import { createAssistantMessage, createUserMessage } from "@/browser/stories/mocks/messages";
 import type { MockSessionUsage } from "@/browser/stories/mocks/orpc";
 import { blurActiveElement } from "@/browser/stories/storyPlayHelpers";
-import {
-  expandRightSidebar,
-  setHunkFirstSeen,
-  setReviewSortOrder,
-  setupSimpleChatStory,
-  setupStreamingChatStory,
-} from "@/browser/stories/storyHelpers";
+import { setupSimpleChatStory, setupStreamingChatStory } from "@/browser/stories/helpers/chatSetup";
+import { setHunkFirstSeen, setReviewSortOrder } from "@/browser/stories/helpers/reviews";
+import { expandRightSidebar } from "@/browser/stories/helpers/uiState";
 import {
   RIGHT_SIDEBAR_TAB_KEY,
   RIGHT_SIDEBAR_WIDTH_KEY,

@@ -1,14 +1,13 @@
 import type { AppStory } from "@/browser/stories/meta.js";
 import { appMeta, AppWithMocks } from "@/browser/stories/meta.js";
+import { setupSimpleChatStory, setupStreamingChatStory } from "@/browser/stories/helpers/chatSetup";
+import { createAssistantMessage, createUserMessage } from "@/browser/stories/mocks/messages";
 import {
-  STABLE_TIMESTAMP,
-  createUserMessage,
-  createAssistantMessage,
-  createWebSearchTool,
-  createFileReadTool,
   createFileEditTool,
-} from "@/browser/stories/mockFactory";
-import { setupSimpleChatStory, setupStreamingChatStory } from "@/browser/stories/storyHelpers.js";
+  createFileReadTool,
+  createWebSearchTool,
+} from "@/browser/stories/mocks/tools";
+import { STABLE_TIMESTAMP } from "@/browser/stories/mocks/workspaces";
 
 const meta = { ...appMeta, title: "App/Chat/Messages" };
 export default meta;

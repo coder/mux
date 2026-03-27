@@ -1,12 +1,10 @@
 import type { AppStory } from "@/browser/stories/meta.js";
 import { appMeta, AppWithMocks } from "@/browser/stories/meta.js";
-import {
-  STABLE_TIMESTAMP,
-  createUserMessage,
-  createAssistantMessage,
-  createFileReadTool,
-} from "@/browser/stories/mockFactory";
-import { setupSimpleChatStory, setWorkspaceInput } from "@/browser/stories/storyHelpers.js";
+import { setupSimpleChatStory } from "@/browser/stories/helpers/chatSetup";
+import { setWorkspaceInput } from "@/browser/stories/helpers/uiState";
+import { createAssistantMessage, createUserMessage } from "@/browser/stories/mocks/messages";
+import { createFileReadTool } from "@/browser/stories/mocks/tools";
+import { STABLE_TIMESTAMP } from "@/browser/stories/mocks/workspaces";
 import { within, userEvent, waitFor } from "@storybook/test";
 
 const meta = { ...appMeta, title: "App/Chat/Input" };

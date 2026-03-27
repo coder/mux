@@ -1,12 +1,9 @@
 import type { AppStory } from "@/browser/stories/meta.js";
 import { appMeta, AppWithMocks } from "@/browser/stories/meta.js";
-import {
-  STABLE_TIMESTAMP,
-  createAgentSkillReadTool,
-  createAssistantMessage,
-  createUserMessage,
-} from "@/browser/stories/mockFactory";
-import { setupSimpleChatStory } from "@/browser/stories/storyHelpers.js";
+import { setupSimpleChatStory } from "@/browser/stories/helpers/chatSetup";
+import { createAssistantMessage, createUserMessage } from "@/browser/stories/mocks/messages";
+import { createAgentSkillReadTool } from "@/browser/stories/mocks/tools";
+import { STABLE_TIMESTAMP } from "@/browser/stories/mocks/workspaces";
 
 const meta = { ...appMeta, title: "App/Chat/Tools/AgentSkillRead" };
 export default meta;

@@ -15,8 +15,7 @@ import type {
   TokensByModelItem,
 } from "@/browser/hooks/useAnalytics";
 import { lightweightMeta } from "@/browser/stories/meta.js";
-import { NOW } from "@/browser/stories/storyTime";
-import { createWorkspace, groupWorkspacesByProject } from "@/browser/stories/mockFactory";
+import { NOW, createWorkspace, groupWorkspacesByProject } from "@/browser/stories/mocks/workspaces";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import assert from "@/common/utils/assert";
 import type { Meta, StoryObj } from "@storybook/react-vite";

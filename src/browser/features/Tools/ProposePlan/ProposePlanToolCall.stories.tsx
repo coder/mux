@@ -1,13 +1,9 @@
 import type { AppStory } from "@/browser/stories/meta.js";
 import { appMeta, AppWithMocks } from "@/browser/stories/meta.js";
-import { setupSimpleChatStory } from "@/browser/stories/storyHelpers.js";
-import {
-  STABLE_TIMESTAMP,
-  createUserMessage,
-  createAssistantMessage,
-  createProposePlanTool,
-  createTodoWriteTool,
-} from "@/browser/stories/mockFactory";
+import { setupSimpleChatStory } from "@/browser/stories/helpers/chatSetup";
+import { createAssistantMessage, createUserMessage } from "@/browser/stories/mocks/messages";
+import { createProposePlanTool, createTodoWriteTool } from "@/browser/stories/mocks/tools";
+import { STABLE_TIMESTAMP } from "@/browser/stories/mocks/workspaces";
 import { PLAN_AUTO_ROUTING_STATUS_MESSAGE } from "@/common/constants/planAutoRoutingStatus";
 
 const meta = { ...appMeta, title: "App/Chat/Tools/ProposePlan" };
