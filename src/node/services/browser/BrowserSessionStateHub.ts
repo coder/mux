@@ -20,6 +20,7 @@ interface SessionEntry {
   hasSnapshot: boolean;
   bootstrapPromise: Promise<void> | null;
   pollInFlight: boolean;
+  pollRequestId: number;
   activeCommandCount: number;
   commandGeneration: number;
 }
@@ -35,6 +36,7 @@ export class BrowserSessionStateHub {
   private readonly browserControlService: Pick<BrowserControlService, "getUrl">;
   private readonly pollIntervalMs: number;
   private readonly sessionEntries = new Map<string, SessionEntry>();
+  private nextCommandToken = 1;
 
   constructor(options: BrowserSessionStateHubOptions) {
     assert(
@@ -95,7 +97,12 @@ export class BrowserSessionStateHub {
     }
 
     entry.activeCommandCount += 1;
-    entry.commandGeneration += 1;
+    const token = this.nextCommandToken++;
+    assert(
+      Number.isSafeInteger(token) && token > 0,
+      "BrowserSessionStateHub command token must stay a positive safe integer"
+    );
+    entry.commandGeneration = token;
     entry.generation += 1;
     this.publish(sessionKey, entry, {
       type: "page_state",
@@ -103,7 +110,7 @@ export class BrowserSessionStateHub {
       isLoading: true,
       source: "command",
     });
-    return entry.commandGeneration;
+    return token;
   }
 
   public markLoaded(
@@ -217,6 +224,7 @@ export class BrowserSessionStateHub {
       hasSnapshot: false,
       bootstrapPromise: null,
       pollInFlight: false,
+      pollRequestId: 0,
       activeCommandCount: 0,
       commandGeneration: 0,
     };
@@ -240,10 +248,12 @@ export class BrowserSessionStateHub {
         return;
       }
 
+      currentEntry.pollRequestId += 1;
+      const pollRequestId = currentEntry.pollRequestId;
       currentEntry.pollInFlight = true;
       const pollTimeout = setTimeout(() => {
         const stalledEntry = this.sessionEntries.get(sessionKey);
-        if (!stalledEntry?.pollInFlight) {
+        if (!stalledEntry?.pollInFlight || stalledEntry.pollRequestId !== pollRequestId) {
           return;
         }
 
@@ -252,6 +262,9 @@ export class BrowserSessionStateHub {
           sessionName,
           sessionKey,
         });
+        // Invalidate this request before clearing the flag so a late finally cannot
+        // release a newer poll that already reclaimed pollInFlight.
+        stalledEntry.pollRequestId += 1;
         stalledEntry.pollInFlight = false;
       }, this.pollIntervalMs * 2);
       pollTimeout.unref?.();
@@ -259,7 +272,7 @@ export class BrowserSessionStateHub {
       void this.fetchAndApplyUrl(sessionKey, workspaceId, sessionName, "poll").finally(() => {
         clearTimeout(pollTimeout);
         const settledEntry = this.sessionEntries.get(sessionKey);
-        if (settledEntry) {
+        if (settledEntry?.pollRequestId === pollRequestId) {
           settledEntry.pollInFlight = false;
         }
       });
