@@ -965,6 +965,10 @@ export const workspace = {
     input: z.object({ workspaceId: z.string() }),
     output: ResultSchema(z.void(), z.string()),
   },
+  deleteWorktree: {
+    input: z.object({ workspaceId: z.string() }),
+    output: ResultSchema(z.void(), z.string()),
+  },
   stopRuntime: {
     input: z.object({ workspaceId: z.string() }),
     output: ResultSchema(z.void(), z.string()),

@@ -1,12 +1,13 @@
 import React from "react";
 
 import { cn } from "@/common/lib/utils";
+import { isWorktreeRuntime } from "@/common/types/runtime";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { getArchivedWorkspacesExpandedKey } from "@/common/constants/storage";
 import { useAPI } from "@/browser/contexts/API";
-import { ChevronDown, ChevronRight, Loader2, Search, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, FolderX, Loader2, Search, Trash2 } from "lucide-react";
 import { ArchiveIcon, ArchiveRestoreIcon } from "../icons/ArchiveIcon/ArchiveIcon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 import { RuntimeBadge } from "../RuntimeBadge/RuntimeBadge";
@@ -239,6 +240,7 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
   const { api } = useAPI();
   const [searchQuery, setSearchQuery] = React.useState("");
   const [processingIds, setProcessingIds] = React.useState<Set<string>>(new Set());
+  const [deleteWorktreeIds, setDeleteWorktreeIds] = React.useState<Set<string>>(new Set());
   const [forceDeleteModal, setForceDeleteModal] = React.useState<{
     workspaceId: string;
     error: string;
@@ -515,6 +517,32 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
     }
   };
 
+  const handleDeleteWorktree = async (workspaceId: string) => {
+    if (!api) {
+      return;
+    }
+
+    setProcessingIds((prev) => new Set(prev).add(workspaceId));
+    setDeleteWorktreeIds((prev) => new Set(prev).add(workspaceId));
+    try {
+      const result = await api.workspace.deleteWorktree({ workspaceId });
+      if (result.success) {
+        onWorkspacesChanged?.();
+      }
+    } finally {
+      setDeleteWorktreeIds((prev) => {
+        const next = new Set(prev);
+        next.delete(workspaceId);
+        return next;
+      });
+      setProcessingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(workspaceId);
+        return next;
+      });
+    }
+  };
+
   const handleDelete = async (workspaceId: string, options?: { bypassForceConfirm?: boolean }) => {
     setProcessingIds((prev) => new Set(prev).add(workspaceId));
     try {
@@ -717,6 +745,10 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
                           ? workspace.name
                           : undefined;
                       const displayTitle = workspace.title ?? workspace.name;
+                      const canDeleteWorktree =
+                        isWorktreeRuntime(workspace.runtimeConfig) &&
+                        workspace.transcriptOnly !== true;
+                      const isDeletingWorktree = deleteWorktreeIds.has(workspace.id);
 
                       return (
                         <div
@@ -777,6 +809,25 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
                               </TooltipTrigger>
                               <TooltipContent>Restore to sidebar</TooltipContent>
                             </Tooltip>
+                            {canDeleteWorktree && (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <button
+                                    onClick={() => void handleDeleteWorktree(workspace.id)}
+                                    disabled={isProcessing}
+                                    className="text-muted rounded p-1.5 transition-colors hover:bg-white/10 hover:text-orange-300 disabled:opacity-50"
+                                    aria-label={`Delete worktree for workspace ${displayTitle}`}
+                                  >
+                                    {isDeletingWorktree ? (
+                                      <Loader2 className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                      <FolderX className="h-4 w-4" />
+                                    )}
+                                  </button>
+                                </TooltipTrigger>
+                                <TooltipContent>Delete managed worktree only</TooltipContent>
+                              </Tooltip>
+                            )}
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <button
@@ -789,11 +840,7 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
                                   className="text-muted rounded p-1.5 transition-colors hover:bg-white/10 hover:text-red-400 disabled:opacity-50"
                                   aria-label={`Delete workspace ${displayTitle}`}
                                 >
-                                  {isProcessing ? (
-                                    <Loader2 className="h-4 w-4 animate-spin" />
-                                  ) : (
-                                    <Trash2 className="h-4 w-4" />
-                                  )}
+                                  <Trash2 className="h-4 w-4" />
                                 </button>
                               </TooltipTrigger>
                               <TooltipContent>Delete permanently (local branch too)</TooltipContent>

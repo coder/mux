@@ -3713,6 +3713,161 @@ describe("WorkspaceService unarchive lifecycle hooks", () => {
   });
 });
 
+describe("WorkspaceService deleteWorktree", () => {
+  const workspaceId = "ws-delete-worktree";
+  const projectName = "proj";
+  const projectPath = "/tmp/project";
+  const workspaceName = "ws-delete-worktree";
+
+  let historyService: HistoryService;
+  let cleanupHistory: () => Promise<void>;
+  let tempSrcBaseDir: string;
+
+  beforeEach(async () => {
+    ({ historyService, cleanup: cleanupHistory } = await createTestHistoryService());
+    tempSrcBaseDir = await fsPromises.mkdtemp(path.join(tmpdir(), "mux-delete-worktree-"));
+  });
+
+  afterEach(async () => {
+    await cleanupHistory();
+    await fsPromises.rm(tempSrcBaseDir, { recursive: true, force: true });
+  });
+
+  function createHarness(options?: {
+    archivedAt?: string;
+    runtimeConfig?: FrontendWorkspaceMetadata["runtimeConfig"];
+  }): {
+    workspaceService: WorkspaceService;
+    metadataEvents: Array<FrontendWorkspaceMetadata | null>;
+    managedPath: string;
+  } {
+    const runtimeConfig = options?.runtimeConfig ?? {
+      type: "worktree",
+      srcBaseDir: tempSrcBaseDir,
+    };
+    const managedPath = path.join(tempSrcBaseDir, projectName, workspaceName);
+
+    const getCurrentMetadata = async (): Promise<FrontendWorkspaceMetadata> => {
+      const transcriptOnly = await fsPromises
+        .access(managedPath)
+        .then(() => false)
+        .catch(() => true);
+
+      return {
+        id: workspaceId,
+        name: workspaceName,
+        projectName,
+        projectPath,
+        runtimeConfig,
+        archivedAt: options?.archivedAt,
+        transcriptOnly,
+        namedWorkspacePath: managedPath,
+      };
+    };
+
+    const mockConfig: Partial<Config> = {
+      srcDir: tempSrcBaseDir,
+      getSessionDir: mock(() => "/tmp/test/sessions"),
+      generateStableId: mock(() => "test-id"),
+      getAllWorkspaceMetadata: mock(async () => [await getCurrentMetadata()]),
+    };
+
+    const aiService = {
+      on: mock(() => undefined),
+      off: mock(() => undefined),
+    } as unknown as AIService;
+
+    const workspaceService = new WorkspaceService(
+      mockConfig as Config,
+      historyService,
+      aiService,
+      mockInitStateManager as InitStateManager,
+      mockExtensionMetadataService as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+
+    const metadataEvents: Array<FrontendWorkspaceMetadata | null> = [];
+    workspaceService.on("metadata", (event: unknown) => {
+      if (!event || typeof event !== "object") {
+        return;
+      }
+      const parsed = event as { workspaceId: string; metadata: FrontendWorkspaceMetadata | null };
+      if (parsed.workspaceId === workspaceId) {
+        metadataEvents.push(parsed.metadata);
+      }
+    });
+
+    return { workspaceService, metadataEvents, managedPath };
+  }
+
+  test("deletes an archived managed worktree and emits transcript-only metadata", async () => {
+    const { workspaceService, metadataEvents, managedPath } = createHarness({
+      archivedAt: "2026-03-01T00:00:00.000Z",
+    });
+    await fsPromises.mkdir(managedPath, { recursive: true });
+
+    const result = await workspaceService.deleteWorktree(workspaceId);
+
+    expect(result).toEqual(Ok(undefined));
+    expect(
+      await fsPromises
+        .access(managedPath)
+        .then(() => true)
+        .catch(() => false)
+    ).toBe(false);
+    expect(metadataEvents.at(-1)?.transcriptOnly).toBe(true);
+  });
+
+  test("returns success when the managed worktree is already missing", async () => {
+    const { workspaceService, metadataEvents, managedPath } = createHarness({
+      archivedAt: "2026-03-01T00:00:00.000Z",
+    });
+    const rmSpy = spyOn(fsPromises, "rm");
+
+    const result = await workspaceService.deleteWorktree(workspaceId);
+
+    expect(result).toEqual(Ok(undefined));
+    expect(rmSpy).not.toHaveBeenCalledWith(managedPath, expect.anything());
+    expect(metadataEvents.at(-1)?.transcriptOnly).toBe(true);
+  });
+
+  test("rejects deleting a worktree for a non-archived workspace", async () => {
+    const { workspaceService, managedPath } = createHarness({
+      archivedAt: undefined,
+    });
+    await fsPromises.mkdir(managedPath, { recursive: true });
+
+    const result = await workspaceService.deleteWorktree(workspaceId);
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toBe("Only archived workspaces can delete their managed worktree");
+    }
+    expect(
+      await fsPromises
+        .access(managedPath)
+        .then(() => true)
+        .catch(() => false)
+    ).toBe(true);
+  });
+
+  test("rejects deleting a worktree for non-worktree runtimes", async () => {
+    const { workspaceService } = createHarness({
+      archivedAt: "2026-03-01T00:00:00.000Z",
+      runtimeConfig: { type: "local" },
+    });
+
+    const result = await workspaceService.deleteWorktree(workspaceId);
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toBe(
+        "Deleting a managed worktree is only supported for worktree runtimes"
+      );
+    }
+  });
+});
+
 describe("WorkspaceService archiveMergedInProject", () => {
   const TARGET_PROJECT_PATH = "/tmp/project";
 

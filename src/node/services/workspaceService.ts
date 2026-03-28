@@ -63,6 +63,7 @@ import {
   probeDevcontainerStatus,
   stopDevcontainer,
 } from "@/node/runtime/devcontainerCli";
+import { isWorktreeRuntime } from "@/node/runtime/worktreeLifecycleHooks";
 import { expandTilde, expandTildeForSSH } from "@/node/runtime/tildeExpansion";
 
 import { ContainerManager } from "@/node/multiProject/containerManager";
@@ -3777,6 +3778,46 @@ export class WorkspaceService extends EventEmitter {
     } catch (error) {
       const message = getErrorMessage(error);
       return Err(`Failed to unarchive workspace: ${message}`);
+    }
+  }
+
+  async deleteWorktree(workspaceId: string): Promise<Result<void>> {
+    try {
+      const allMetadata = await this.config.getAllWorkspaceMetadata();
+      const workspaceMetadata = allMetadata.find((metadata) => metadata.id === workspaceId);
+      if (!workspaceMetadata) {
+        return Err("Workspace not found");
+      }
+
+      if (!isWorkspaceArchived(workspaceMetadata.archivedAt, workspaceMetadata.unarchivedAt)) {
+        return Err("Only archived workspaces can delete their managed worktree");
+      }
+
+      if (!isWorktreeRuntime(workspaceMetadata.runtimeConfig)) {
+        return Err("Deleting a managed worktree is only supported for worktree runtimes");
+      }
+
+      const managedPath = path.join(
+        workspaceMetadata.runtimeConfig.srcBaseDir,
+        workspaceMetadata.projectName,
+        workspaceMetadata.name
+      );
+      const managedPathExists = await fsPromises
+        .access(managedPath)
+        .then(() => true)
+        .catch(() => false);
+
+      if (!managedPathExists) {
+        await this.emitCurrentWorkspaceMetadata(workspaceId);
+        return Ok(undefined);
+      }
+
+      await fsPromises.rm(managedPath, { recursive: true, force: true });
+      await this.emitCurrentWorkspaceMetadata(workspaceId);
+      return Ok(undefined);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return Err(`Failed to delete managed worktree: ${message}`);
     }
   }
 

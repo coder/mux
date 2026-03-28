@@ -1,9 +1,11 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { Ok, type Result } from "@/common/types/result";
-import { isWorktreeRuntime } from "@/common/types/runtime";
+import { isWorktreeRuntime as isCommonWorktreeRuntime } from "@/common/types/runtime";
 import type { BeforeArchiveHook } from "@/node/services/workspaceLifecycleHooks";
 import { log } from "@/node/services/log";
+
+export const isWorktreeRuntime = isCommonWorktreeRuntime;
 
 export function createWorktreeArchiveHook(options: {
   getDeleteWorktreeOnArchive: () => boolean;
