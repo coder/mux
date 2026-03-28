@@ -603,7 +603,7 @@ describe("AgentSession switch_agent target validation", () => {
     }
   });
 
-  test("falls back to exec when auto requests an unresolved switch target", async () => {
+  test("falls back to exec when caller requests an unresolved switch target", async () => {
     using projectDir = new DisposableTempDir("agent-session-switch-missing");
     const { historyService, cleanup } = await createTestHistoryService();
     historyCleanup = cleanup;
@@ -620,7 +620,7 @@ describe("AgentSession switch_agent target validation", () => {
           agentId: "missing-agent",
           followUp: "Should not send",
         },
-        { model: "openai:gpt-4o-mini", agentId: "auto" },
+        { model: "openai:gpt-4o-mini", agentId: "exec" },
         "openai:gpt-4o"
       );
 

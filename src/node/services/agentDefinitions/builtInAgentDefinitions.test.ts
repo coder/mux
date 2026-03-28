@@ -7,14 +7,13 @@ describe("built-in agent definitions", () => {
     clearBuiltInAgentCache();
   });
 
-  test("includes auto router built-in", () => {
+  test("does not include a built-in auto agent", () => {
     const pkgs = getBuiltInAgentDefinitions();
-    const byId = new Map(pkgs.map((pkg) => [pkg.id, pkg] as const));
+    const ids = pkgs.map((pkg) => pkg.id);
 
-    const auto = byId.get("auto");
-    expect(auto).toBeTruthy();
-    expect(auto?.frontmatter.base).toBeUndefined();
-    expect(auto?.frontmatter.tools?.require ?? []).toContain("switch_agent");
+    expect(ids).not.toContain("auto");
+    expect(ids).toContain("exec");
+    expect(ids).toContain("plan");
   });
 
   test("includes orchestrator with expected flags", () => {
