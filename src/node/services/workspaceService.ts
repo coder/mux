@@ -3706,6 +3706,7 @@ export class WorkspaceService extends EventEmitter {
             workspaceId,
             workspaceMetadata: hookMetadata,
           });
+          await this.emitCurrentWorkspaceMetadata(workspaceId);
         }
       }
 
