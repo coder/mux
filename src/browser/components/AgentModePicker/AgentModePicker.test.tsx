@@ -221,4 +221,38 @@ describe("AgentModePicker", () => {
       expect(getByTestId("agentId").textContent).toBe("review");
     });
   });
+
+  test("does not render auto agent affordances", async () => {
+    function Harness() {
+      const [agentId, setAgentId] = React.useState("exec");
+      return (
+        <AgentProvider
+          value={{
+            agentId,
+            setAgentId,
+            agents: [...BUILT_INS, CUSTOM_AGENT],
+            loaded: true,
+            loadFailed: false,
+            refresh: () => Promise.resolve(),
+            refreshing: false,
+            ...defaultContextProps,
+          }}
+        >
+          <TooltipProvider>
+            <AgentModePicker />
+          </TooltipProvider>
+        </AgentProvider>
+      );
+    }
+
+    const { getByLabelText, queryByLabelText, queryByText } = render(<Harness />);
+    const autoSelectLabel = ["Auto-select", "agent"].join(" ");
+
+    fireEvent.click(getByLabelText("Select agent"));
+
+    await waitFor(() => {
+      expect(queryByLabelText(autoSelectLabel)).toBeNull();
+      expect(queryByText("Mux chooses the best agent")).toBeNull();
+    });
+  });
 });

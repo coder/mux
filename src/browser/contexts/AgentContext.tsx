@@ -287,45 +287,21 @@ function AgentProviderWithState(props: {
     }
 
     const activeAgentId = effectiveAgentId;
-
-    // Never cycle into "auto" — it's toggled explicitly via the picker switch.
-    // When auto is currently active, the same shortcut should still provide a way
-    // out of auto mode so normal manual cycling becomes available again.
-    const cyclableAgents = selectableAgents.filter((a) => a.id !== "auto");
-    if (cyclableAgents.length === 0) return;
+    if (selectableAgents.length === 0) return;
 
     if (activeAgentId === "auto") {
-      setAgentId(cyclableAgents[0].id);
+      setAgentId(selectableAgents[0].id);
       return;
     }
 
-    if (cyclableAgents.length < 2) return;
+    if (selectableAgents.length < 2) return;
 
-    const currentIndex = cyclableAgents.findIndex((a) => a.id === activeAgentId);
-    const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % cyclableAgents.length;
-    const nextAgent = cyclableAgents[nextIndex];
+    const currentIndex = selectableAgents.findIndex((a) => a.id === activeAgentId);
+    const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % selectableAgents.length;
+    const nextAgent = selectableAgents[nextIndex];
     if (nextAgent) {
       setAgentId(nextAgent.id);
     }
-  }, [effectiveAgentId, isCurrentAgentLocked, selectableAgents, setAgentId]);
-
-  const toggleAutoAgent = useCallback(() => {
-    if (isCurrentAgentLocked) {
-      return;
-    }
-
-    const activeAgentId = effectiveAgentId;
-    const autoAvailable = selectableAgents.some((agent) => agent.id === "auto");
-    if (!autoAvailable) return;
-
-    if (activeAgentId === "auto") {
-      const firstManualAgent = selectableAgents.find((agent) => agent.id !== "auto");
-      if (!firstManualAgent) return;
-      setAgentId(firstManualAgent.id);
-      return;
-    }
-
-    setAgentId("auto");
   }, [effectiveAgentId, isCurrentAgentLocked, selectableAgents, setAgentId]);
 
   useEffect(() => {
@@ -343,17 +319,11 @@ function AgentProviderWithState(props: {
         cycleToNextAgent();
         return;
       }
-
-      if (matchesKeybind(e, KEYBINDS.TOGGLE_AUTO_AGENT)) {
-        e.preventDefault();
-        toggleAutoAgent();
-        return;
-      }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [cycleToNextAgent, isCurrentAgentLocked, toggleAutoAgent]);
+  }, [cycleToNextAgent, isCurrentAgentLocked]);
 
   useEffect(() => {
     const handleRefreshRequested = () => {

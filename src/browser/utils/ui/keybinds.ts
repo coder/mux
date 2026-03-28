@@ -288,9 +288,6 @@ export const KEYBINDS = {
   /** Cycle to next manual agent without opening picker */
   CYCLE_AGENT: { key: ".", ctrl: true },
 
-  /** Toggle auto agent mode on/off */
-  TOGGLE_AUTO_AGENT: { key: ".", code: "Period", ctrl: true, shift: true },
-
   /** Send message / Submit form */
   SEND_MESSAGE: { key: "Enter" },
 

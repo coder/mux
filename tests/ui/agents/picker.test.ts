@@ -5,7 +5,6 @@
  * - Built-in agents appear in dropdown
  * - Custom project agents appear alongside built-ins
  * - Selecting an agent updates the trigger
- * - Auto-select toggle behavior
  */
 
 import "../dom";

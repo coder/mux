@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bot, ChevronDown, Route, Sparkles, SquareCode, Workflow } from "lucide-react";
+import { Bot, ChevronDown, Route, SquareCode, Workflow } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 import { useAgent } from "@/browser/contexts/AgentContext";
@@ -10,7 +10,6 @@ import { cn } from "@/common/lib/utils";
 import { DocsLink } from "@/browser/components/DocsLink/DocsLink";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/Tooltip/Tooltip";
 import { Button } from "@/browser/components/Button/Button";
-import { Switch } from "@/browser/components/Switch/Switch";
 import {
   formatKeybind,
   formatNumberedKeybind,
@@ -49,7 +48,6 @@ const AGENT_ICONS: Record<string, LucideIcon> = {
   plan: Route,
   exec: SquareCode,
   orchestrator: Workflow,
-  auto: Sparkles,
 };
 const DEFAULT_AGENT_ICON: LucideIcon = Bot;
 
@@ -104,17 +102,6 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
 
   const options = useMemo(() => resolveAgentOptions(agents), [agents]);
 
-  // Non-auto options shown as selectable items in the dropdown
-  const selectableOptions = useMemo(() => options.filter((opt) => opt.id !== "auto"), [options]);
-
-  // Auto is only available when the backend discovers it in the agent list
-  const autoAvailable = useMemo(() => options.some((opt) => opt.id === "auto"), [options]);
-
-  // Only lock the list when auto is both selected AND available — if auto was
-  // persisted but later removed from the agent list, users must still be able
-  // to pick a different agent from the dropdown.
-  const isAuto = normalizedAgentId === "auto" && autoAvailable;
-
   const activeDescriptor =
     currentAgent?.id === normalizedAgentId
       ? currentAgent
@@ -158,7 +145,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
 
       // Pre-select the current agent (or specified) in the list.
       const targetId = opts?.highlightAgentId ?? normalizedAgentId;
-      const currentIndex = selectableOptions.findIndex((opt) => opt.id === targetId);
+      const currentIndex = options.findIndex((opt) => opt.id === targetId);
       setHighlightedIndex(currentIndex >= 0 ? currentIndex : 0);
 
       // Focus the dropdown container for keyboard navigation.
@@ -166,7 +153,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
         dropdownRef.current?.focus();
       });
     },
-    [isAgentLocked, normalizedAgentId, selectableOptions]
+    [isAgentLocked, normalizedAgentId, options]
   );
 
   const closePicker = useCallback(() => {
@@ -254,9 +241,8 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
       e.preventDefault();
       e.stopPropagation();
 
-      // Use selectableOptions so keybinds match the visible dropdown items
-      if (index < selectableOptions.length) {
-        const picked = selectableOptions[index];
+      if (index < options.length) {
+        const picked = options[index];
         if (picked) {
           handleSelectAgent(picked.id);
         }
@@ -266,7 +252,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
     // Use capture phase to intercept before other handlers
     window.addEventListener("keydown", handleGlobalKeyDown, true);
     return () => window.removeEventListener("keydown", handleGlobalKeyDown, true);
-  }, [isPickerVisible, selectableOptions, handleSelectAgent]);
+  }, [isPickerVisible, options, handleSelectAgent]);
 
   const handleDropdownKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (e.key === "Escape") {
@@ -279,16 +265,11 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
     }
 
     if (e.key === "Enter") {
-      // Only handle Enter for agent rows — don't intercept when focus is on
-      // the auto-select Switch (which has role="switch")
-      const target = e.target as HTMLElement;
-      if (target.getAttribute("role") === "switch") return;
-
       e.preventDefault();
-      if (selectableOptions.length === 0) return;
+      if (options.length === 0) return;
 
       const selectedIndex = highlightedIndex >= 0 ? highlightedIndex : 0;
-      const picked = selectableOptions[selectedIndex];
+      const picked = options[selectedIndex];
       if (picked) {
         handleSelectAgent(picked.id);
       }
@@ -297,7 +278,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
 
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setHighlightedIndex((prev) => Math.min(prev + 1, selectableOptions.length - 1));
+      setHighlightedIndex((prev) => Math.min(prev + 1, options.length - 1));
       return;
     }
 
@@ -368,8 +349,6 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
           <br />
           Cycle agents: {formatKeybind(KEYBINDS.CYCLE_AGENT)}
           <br />
-          Toggle auto: {formatKeybind(KEYBINDS.TOGGLE_AUTO_AGENT)}
-          <br />
           Quick select: {formatNumberedKeybind(0).replace("1", "1-9")} (when open)
           <br />
           <br />
@@ -386,16 +365,16 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
         >
           {/* Agent list — scrollable for long lists */}
           <div className="max-h-64 overflow-y-auto py-1">
-            {!loaded && selectableOptions.length === 0 ? (
+            {!loaded && options.length === 0 ? (
               <div className="text-muted-light px-2.5 py-2 text-[11px]">Loading agents…</div>
-            ) : selectableOptions.length === 0 ? (
+            ) : options.length === 0 ? (
               <div className="text-muted-light px-2.5 py-2 text-[11px]">No agents available</div>
             ) : (
-              selectableOptions.map((opt, index) => {
+              options.map((opt, index) => {
                 const isHighlighted = index === highlightedIndex;
                 const isSelected = opt.id === normalizedAgentId;
                 const Icon = getAgentIcon(opt.id);
-                // Keybind label matches the item's position in selectableOptions
+                // Keybind label matches the item's position in the dropdown.
                 const keybindLabel = formatNumberedKeybind(index);
 
                 return (
@@ -437,46 +416,6 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
               })
             )}
           </div>
-
-          {/* Divider + Auto toggle — only shown when auto agent is available */}
-          {autoAvailable && (
-            <div className="border-border border-t px-2.5 py-1.5">
-              <div
-                role="button"
-                tabIndex={-1}
-                className="flex cursor-pointer items-center gap-2"
-                onClick={() => {
-                  if (isAuto) {
-                    // Turn off auto → default to exec (first built-in)
-                    setAgentId("exec");
-                  } else {
-                    setAgentId("auto");
-                  }
-                  closePicker();
-                }}
-              >
-                {/* Wrapper stops propagation so the parent div's onClick
-                   doesn't double-fire when clicking the Switch directly */}
-                <span onClick={(e) => e.stopPropagation()}>
-                  <Switch
-                    checked={isAuto}
-                    size="sm"
-                    onCheckedChange={(checked) => {
-                      setAgentId(checked ? "auto" : "exec");
-                      closePicker();
-                    }}
-                    aria-label="Auto-select agent"
-                  />
-                </span>
-                <div className="flex flex-col">
-                  <span className="text-foreground text-[11px] font-medium">Auto</span>
-                  <span className="text-muted text-[10px] leading-tight">
-                    Mux chooses the best agent
-                  </span>
-                </div>
-              </div>
-            </div>
-          )}
         </div>
       )}
     </div>

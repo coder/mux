@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, test } from "bun:test";
 import { isMac, matchesKeybind, KEYBINDS } from "./keybinds";
 import type { Keybind } from "@/common/types/keybind";
 
@@ -71,18 +71,9 @@ describe("CYCLE_MODEL keybind (Ctrl+/)", () => {
   });
 });
 
-describe("TOGGLE_AUTO_AGENT keybind (Ctrl/Cmd+Shift+.)", () => {
-  it("matches shifted period via KeyboardEvent.code on macOS", () => {
-    globalThis.window = { api: { platform: "darwin" } } as unknown as Window & typeof globalThis;
-    const event = createEvent({ key: ">", code: "Period", metaKey: true, shiftKey: true });
-    expect(matchesKeybind(event, KEYBINDS.TOGGLE_AUTO_AGENT)).toBe(true);
-  });
-
-  it("does not match when the physical key code is different", () => {
-    globalThis.window = { api: { platform: "darwin" } } as unknown as Window & typeof globalThis;
-    const event = createEvent({ key: ">", code: "Slash", metaKey: true, shiftKey: true });
-    expect(matchesKeybind(event, KEYBINDS.TOGGLE_AUTO_AGENT)).toBe(false);
-  });
+test("removed auto agent toggle keybind", () => {
+  const removedKey = ["TOGGLE", "AUTO", "AGENT"].join("_");
+  expect(KEYBINDS).not.toHaveProperty(removedKey);
 });
 
 describe("SEND_MESSAGE_AFTER_TURN keybind (Ctrl/Cmd+Enter)", () => {
