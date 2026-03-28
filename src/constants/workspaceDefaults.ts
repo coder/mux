@@ -38,9 +38,15 @@ import { DEFAULT_MODEL } from "@/common/constants/knownModels";
  * Hard-coded default values for workspace settings.
  * Type assertions ensure proper typing while maintaining immutability.
  */
-export const WORKSPACE_DEFAULTS = {
-  /** Default agent id for new workspaces (built-in auto router agent). */
-  agentId: "auto" as const,
+export const WORKSPACE_DEFAULTS: {
+  readonly agentId: string;
+  readonly thinkingLevel: typeof THINKING_LEVEL_OFF;
+  readonly model: string;
+  readonly input: string;
+  readonly reviewBase: string;
+} = {
+  /** Default agent id for new workspaces (built-in exec agent). */
+  agentId: "exec" as const,
 
   /** Default thinking/reasoning level for new workspaces */
   thinkingLevel: THINKING_LEVEL_OFF,
