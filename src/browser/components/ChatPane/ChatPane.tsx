@@ -960,39 +960,56 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
           </div>
         </PerfRenderMarker>
         <PerfRenderMarker id="chat-pane.input">
-          <ChatInputPane
-            workspaceId={workspaceId}
-            projectName={projectName}
-            workspaceName={workspaceName}
-            isStreamStarting={isStreamStarting}
-            runtimeConfig={runtimeConfig}
-            transcriptOnly={transcriptOnly}
-            isQueuedAgentTask={isQueuedAgentTask}
-            isCompacting={isCompacting}
-            canInterrupt={canInterrupt}
-            autoCompactionResult={autoCompactionResult}
-            shouldShowCompactionWarning={shouldShowCompactionWarning}
-            contextSwitchWarning={contextSwitchWarning}
-            onContextSwitchCompact={handleContextSwitchCompact}
-            onContextSwitchDismiss={handleContextSwitchDismiss}
-            onModelChange={handleModelChange}
-            onMessageSent={handleMessageSent}
-            onTruncateHistory={handleClearHistory}
-            editingMessage={editingMessage}
-            onCancelEdit={handleCancelEdit}
-            onEditLastUserMessage={handleEditLastUserMessageClick}
-            onChatInputReady={handleChatInputReady}
-            queuedMessage={workspaceState?.queuedMessage ?? null}
-            onEditQueuedMessage={() => void handleEditQueuedMessage()}
-            onSendQueuedImmediately={
-              workspaceState?.canInterrupt ? handleSendQueuedImmediately : undefined
-            }
-            reviews={reviews}
-            onCheckReviews={handleCheckReviews}
-          />
+          {transcriptOnly ? (
+            // Transcript-only workspaces keep their historical transcript, but the whole
+            // composer surface is replaced with a single read-only notice.
+            <TranscriptOnlyNoticePane />
+          ) : (
+            <ChatInputPane
+              workspaceId={workspaceId}
+              projectName={projectName}
+              workspaceName={workspaceName}
+              isStreamStarting={isStreamStarting}
+              runtimeConfig={runtimeConfig}
+              isQueuedAgentTask={isQueuedAgentTask}
+              isCompacting={isCompacting}
+              canInterrupt={canInterrupt}
+              autoCompactionResult={autoCompactionResult}
+              shouldShowCompactionWarning={shouldShowCompactionWarning}
+              contextSwitchWarning={contextSwitchWarning}
+              onContextSwitchCompact={handleContextSwitchCompact}
+              onContextSwitchDismiss={handleContextSwitchDismiss}
+              onModelChange={handleModelChange}
+              onMessageSent={handleMessageSent}
+              onTruncateHistory={handleClearHistory}
+              editingMessage={editingMessage}
+              onCancelEdit={handleCancelEdit}
+              onEditLastUserMessage={handleEditLastUserMessageClick}
+              onChatInputReady={handleChatInputReady}
+              queuedMessage={workspaceState?.queuedMessage ?? null}
+              onEditQueuedMessage={() => void handleEditQueuedMessage()}
+              onSendQueuedImmediately={
+                workspaceState?.canInterrupt ? handleSendQueuedImmediately : undefined
+              }
+              reviews={reviews}
+              onCheckReviews={handleCheckReviews}
+            />
+          )}
         </PerfRenderMarker>
       </div>
     </PerfRenderMarker>
+  );
+};
+
+const TranscriptOnlyNoticePane: React.FC = () => {
+  return (
+    <div className="bg-surface-primary border-border-light mb-[calc(-1*min(env(safe-area-inset-bottom,0px),40px))] border-t px-4 pb-[max(8px,min(env(safe-area-inset-bottom,0px),40px))]">
+      <div className="mx-auto max-w-4xl py-4">
+        <p role="note" className="text-muted text-sm leading-6">
+          {TRANSCRIPT_ONLY_NOTICE}
+        </p>
+      </div>
+    </div>
   );
 };
 
@@ -1001,7 +1018,6 @@ interface ChatInputPaneProps {
   projectName: string;
   workspaceName: string;
   runtimeConfig?: RuntimeConfig;
-  transcriptOnly: boolean;
   isQueuedAgentTask: boolean;
   isCompacting: boolean;
   isStreamStarting: boolean;
@@ -1063,11 +1079,6 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
           This agent task is queued and will start automatically when a parallel slot is available.
         </div>
       )}
-      {props.transcriptOnly && (
-        <div className="border-border-medium bg-background-secondary text-muted rounded-md border px-3 py-2 text-xs">
-          {TRANSCRIPT_ONLY_NOTICE}
-        </div>
-      )}
       <ChatInput
         key={props.workspaceId}
         variant="workspace"
@@ -1076,18 +1087,11 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
         onMessageSent={props.onMessageSent}
         onTruncateHistory={props.onTruncateHistory}
         onModelChange={props.onModelChange}
-        disabled={
-          !props.projectName ||
-          !props.workspaceName ||
-          props.isQueuedAgentTask ||
-          props.transcriptOnly
-        }
+        disabled={!props.projectName || !props.workspaceName || props.isQueuedAgentTask}
         disabledReason={
-          props.transcriptOnly
-            ? TRANSCRIPT_ONLY_NOTICE
-            : props.isQueuedAgentTask
-              ? "Queued - waiting for an available parallel task slot. This will start automatically."
-              : undefined
+          props.isQueuedAgentTask
+            ? "Queued - waiting for an available parallel task slot. This will start automatically."
+            : undefined
         }
         isStreamStarting={props.isStreamStarting}
         isCompacting={props.isCompacting}

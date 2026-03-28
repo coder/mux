@@ -1,6 +1,6 @@
 /**
  * UI integration test for transcript-only workspaces.
- * Verifies the transcript stays visible while the composer becomes read-only.
+ * Verifies the transcript stays visible while the composer area becomes a single notice.
  */
 
 import "../dom";
@@ -18,24 +18,11 @@ import {
 } from "@/browser/stories/mockFactory";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 
-async function getTranscriptComposer(container: HTMLElement): Promise<HTMLTextAreaElement> {
-  return waitFor(
-    () => {
-      const textareas = Array.from(
-        container.querySelectorAll('textarea[aria-label="Message Claude"]')
-      ) as HTMLTextAreaElement[];
-      const composer = [...textareas].reverse()[0];
-      if (!composer) {
-        throw new Error("Chat textarea not found");
-      }
-      return composer;
-    },
-    { timeout: 10_000 }
-  );
-}
+const TRANSCRIPT_ONLY_NOTICE =
+  "This workspace's worktree is no longer available. This is a read-only chat transcript kept for historical and usage-tracking reasons.";
 
 describe("Transcript-only workspace UI", () => {
-  test("shows a read-only notice, disables the composer, and keeps transcript messages visible", async () => {
+  test("shows one notice instead of chat controls and keeps transcript messages visible", async () => {
     const cleanupDom = installDom();
     const metadata = createWorkspace({
       id: "ws-transcript-only",
@@ -64,27 +51,6 @@ describe("Transcript-only workspace UI", () => {
     try {
       await setupWorkspaceView(view, metadata, metadata.id);
 
-      const noticeBanner = await waitFor(
-        () => {
-          const banner = view.getByText(/worktree is no longer available/i);
-          if (!banner.textContent?.match(/read-only chat transcript/i)) {
-            throw new Error("Transcript-only notice did not render full copy");
-          }
-          return banner;
-        },
-        { timeout: 10_000 }
-      );
-
-      expect(noticeBanner.className).toContain("border-border-medium");
-      expect(noticeBanner.className).toContain("bg-background-secondary");
-      expect(noticeBanner.className).toContain("text-muted");
-      expect(noticeBanner.className).toContain("rounded-md");
-
-      const composer = await getTranscriptComposer(view.container);
-      expect(composer.disabled).toBe(true);
-      expect(composer.placeholder).toContain("worktree is no longer available");
-      expect(composer.placeholder).toContain("read-only chat transcript");
-
       await waitFor(
         () => {
           expect(view.getByText("Past user question")).toBeTruthy();
@@ -92,6 +58,18 @@ describe("Transcript-only workspace UI", () => {
         },
         { timeout: 10_000 }
       );
+
+      const notices = view.getAllByText(TRANSCRIPT_ONLY_NOTICE);
+      expect(notices).toHaveLength(1);
+      expect(notices[0].className).toContain("text-muted");
+      expect(notices[0].getAttribute("role")).toBe("note");
+
+      expect(view.container.querySelector('textarea[aria-label="Message Claude"]')).toBeNull();
+      expect(view.container.querySelector('[data-component="ChatInputControls"]')).toBeNull();
+      expect(view.container.querySelector('[data-component="ChatModeToggles"]')).toBeNull();
+      expect(view.container.querySelector('[data-component="ModelSelectorGroup"]')).toBeNull();
+      expect(view.queryByLabelText("Send message")).toBeNull();
+      expect(view.queryByText(/focus chat/i)).toBeNull();
     } finally {
       await cleanupView(view, cleanupDom);
     }
