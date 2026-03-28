@@ -3,7 +3,6 @@ import { WorkspaceService, generateForkBranchName, generateForkTitle } from "./w
 import type { AgentSession } from "./agentSession";
 import { WorkspaceLifecycleHooks } from "./workspaceLifecycleHooks";
 import { EventEmitter } from "events";
-import fs from "node:fs";
 import * as fsPromises from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
@@ -100,7 +99,17 @@ const mockInitStateManager: Partial<InitStateManager> = {
   waitForInit: mock(() => Promise.resolve()),
   clearInMemoryState: mock(() => undefined),
 };
-const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
+const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {
+  setStreaming: mock(() =>
+    Promise.resolve({
+      recency: Date.now(),
+      streaming: false,
+      lastModel: null,
+      lastThinkingLevel: null,
+      agentStatus: null,
+    })
+  ),
+};
 const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
   cleanup: mock(() => Promise.resolve()),
 };
@@ -3694,7 +3703,12 @@ describe("WorkspaceService unarchive lifecycle hooks", () => {
     expect(entry?.unarchivedAt).toBeTruthy();
     expect(entry?.unarchivedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
 
-    expect(fs.existsSync(workspacePath)).toBe(false);
+    expect(
+      await fsPromises
+        .access(workspacePath)
+        .then(() => true)
+        .catch(() => false)
+    ).toBe(false);
     expect(entry?.path).toBe(workspacePath);
   });
 });

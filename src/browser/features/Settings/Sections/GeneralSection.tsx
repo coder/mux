@@ -282,7 +282,7 @@ export function GeneralSection() {
     [api]
   );
 
-  const handleDeleteWorktreeOnArchiveChange = async (checked: boolean) => {
+  const handleDeleteWorktreeOnArchiveChange = (checked: boolean) => {
     setDeleteWorktreeOnArchive(checked);
     deleteWorktreeOnArchiveRef.current = checked;
 
@@ -290,14 +290,14 @@ export function GeneralSection() {
       return;
     }
 
-    try {
-      await api.config.updateCoderPrefs({
+    api.config
+      .updateCoderPrefs({
         coderWorkspaceArchiveBehavior: archiveBehavior,
         deleteWorktreeOnArchive: checked,
+      })
+      .catch(() => {
+        // Best-effort only.
       });
-    } catch {
-      // Best-effort only.
-    }
   };
 
   const handleLlmDebugLogsChange = (checked: boolean) => {

@@ -24,7 +24,11 @@ export function createWorktreeArchiveHook(options: {
       workspaceMetadata.name
     );
 
-    if (!fs.existsSync(managedPath)) {
+    const managedPathExists = await fs.promises
+      .access(managedPath)
+      .then(() => true)
+      .catch(() => false);
+    if (!managedPathExists) {
       return Ok(undefined);
     }
 

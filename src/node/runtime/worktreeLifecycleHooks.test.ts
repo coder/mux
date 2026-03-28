@@ -31,6 +31,13 @@ function getManagedPath(workspaceMetadata: WorkspaceMetadata): string {
   return path.join(runtimeConfig.srcBaseDir, workspaceMetadata.projectName, workspaceMetadata.name);
 }
 
+async function pathExists(targetPath: string): Promise<boolean> {
+  return fs.promises
+    .access(targetPath)
+    .then(() => true)
+    .catch(() => false);
+}
+
 describe("createWorktreeArchiveHook", () => {
   const tempDirs: string[] = [];
 
@@ -63,7 +70,7 @@ describe("createWorktreeArchiveHook", () => {
     const result = await hook({ workspaceId: workspaceMetadata.id, workspaceMetadata });
 
     expect(result).toEqual(Ok(undefined));
-    expect(fs.existsSync(managedPath)).toBe(true);
+    expect(await pathExists(managedPath)).toBe(true);
   });
 
   it("deletes the managed worktree for worktree runtimes when cleanup is enabled", async () => {
@@ -81,7 +88,7 @@ describe("createWorktreeArchiveHook", () => {
     const result = await hook({ workspaceId: workspaceMetadata.id, workspaceMetadata });
 
     expect(result).toEqual(Ok(undefined));
-    expect(fs.existsSync(managedPath)).toBe(false);
+    expect(await pathExists(managedPath)).toBe(false);
   });
 
   it("skips cleanup for non-worktree runtimes even when cleanup is enabled", async () => {
@@ -100,7 +107,7 @@ describe("createWorktreeArchiveHook", () => {
     const result = await hook({ workspaceId: workspaceMetadata.id, workspaceMetadata });
 
     expect(result).toEqual(Ok(undefined));
-    expect(fs.existsSync(untouchedPath)).toBe(true);
+    expect(await pathExists(untouchedPath)).toBe(true);
   });
 
   it("returns Ok when the managed worktree directory is already missing", async () => {
@@ -129,7 +136,14 @@ describe("createWorktreeArchiveHook", () => {
     const rmError = new Error("rm failed");
     await mkdir(managedPath, { recursive: true });
 
-    const rmSpy = spyOn(fs.promises, "rm").mockRejectedValueOnce(rmError);
+    const originalRm = fs.promises.rm.bind(fs.promises);
+    const rmSpy = spyOn(fs.promises, "rm").mockImplementation(async (targetPath, options) => {
+      if (targetPath === managedPath) {
+        throw rmError;
+      }
+
+      return originalRm(targetPath, options);
+    });
     const debugSpy = spyOn(log, "debug").mockImplementation(() => undefined);
     const hook = createWorktreeArchiveHook({
       getDeleteWorktreeOnArchive: () => true,
@@ -143,6 +157,6 @@ describe("createWorktreeArchiveHook", () => {
       "Failed to delete managed worktree during archive",
       expect.objectContaining({ managedPath, error: rmError })
     );
-    expect(fs.existsSync(managedPath)).toBe(true);
+    expect(await pathExists(managedPath)).toBe(true);
   });
 });

@@ -1023,11 +1023,11 @@ export class Config {
    * Add paths to WorkspaceMetadata to create FrontendWorkspaceMetadata.
    * Helper to avoid duplicating path computation logic.
    */
-  private addPathsToMetadata(
+  private async addPathsToMetadata(
     metadata: WorkspaceMetadata,
     workspacePath: string,
     _projectPath: string
-  ): FrontendWorkspaceMetadata {
+  ): Promise<FrontendWorkspaceMetadata> {
     const result: FrontendWorkspaceMetadata = {
       ...metadata,
       namedWorkspacePath: workspacePath,
@@ -1042,7 +1042,11 @@ export class Config {
 
     // Mark worktree workspaces with missing checkout directories as transcript-only.
     // This covers both archive-time cleanup and manual worktree deletion.
-    if (isWorktreeRuntime(metadata.runtimeConfig) && !fs.existsSync(workspacePath)) {
+    const workspacePathExists = await fs.promises
+      .access(workspacePath)
+      .then(() => true)
+      .catch(() => false);
+    if (isWorktreeRuntime(metadata.runtimeConfig) && !workspacePathExists) {
       result.transcriptOnly = true;
     }
 
@@ -1276,7 +1280,9 @@ export class Config {
               };
             }
 
-            workspaceMetadata.push(this.addPathsToMetadata(metadata, workspace.path, projectPath));
+            workspaceMetadata.push(
+              await this.addPathsToMetadata(metadata, workspace.path, projectPath)
+            );
             continue; // Skip metadata file lookup
           }
 
@@ -1349,7 +1355,9 @@ export class Config {
               configModified = true;
             }
 
-            workspaceMetadata.push(this.addPathsToMetadata(metadata, workspace.path, projectPath));
+            workspaceMetadata.push(
+              await this.addPathsToMetadata(metadata, workspace.path, projectPath)
+            );
             metadataFound = true;
           }
 
@@ -1397,7 +1405,9 @@ export class Config {
             workspace.runtimeConfig = metadata.runtimeConfig;
             configModified = true;
 
-            workspaceMetadata.push(this.addPathsToMetadata(metadata, workspace.path, projectPath));
+            workspaceMetadata.push(
+              await this.addPathsToMetadata(metadata, workspace.path, projectPath)
+            );
           }
         } catch (error) {
           log.error(`Failed to load/migrate workspace metadata:`, error);
@@ -1435,7 +1445,9 @@ export class Config {
             sectionId: workspace.sectionId,
           };
 
-          workspaceMetadata.push(this.addPathsToMetadata(metadata, workspace.path, projectPath));
+          workspaceMetadata.push(
+            await this.addPathsToMetadata(metadata, workspace.path, projectPath)
+          );
         }
       }
     }
