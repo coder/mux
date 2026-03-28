@@ -1,60 +1,134 @@
-import type { ReactNode } from "react";
-import { createContext, useContext } from "react";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
-import type { APIClient } from "@/browser/contexts/API";
 import { ThemeProvider } from "@/browser/contexts/ThemeContext";
 import {
   DEFAULT_CODER_ARCHIVE_BEHAVIOR,
   type CoderWorkspaceArchiveBehavior,
 } from "@/common/config/coderArchiveBehavior";
 
-interface MockAPIContextValue {
-  api: APIClient;
-  status: "connected";
-  error: null;
-  authenticate: () => void;
-  retry: () => void;
+interface MockConfig {
+  coderWorkspaceArchiveBehavior: CoderWorkspaceArchiveBehavior;
+  deleteWorktreeOnArchive: boolean;
+  llmDebugLogs: boolean;
 }
 
-const MockAPIContext = createContext<MockAPIContextValue | null>(null);
+interface MockAPIClient {
+  config: {
+    getConfig: () => Promise<MockConfig>;
+    updateCoderPrefs: (input: {
+      coderWorkspaceArchiveBehavior: CoderWorkspaceArchiveBehavior;
+      deleteWorktreeOnArchive: boolean;
+    }) => Promise<void>;
+    updateLlmDebugLogs: (input: { enabled: boolean }) => Promise<void>;
+  };
+  server: {
+    getSshHost: () => Promise<string | null>;
+    setSshHost: (input: { sshHost: string | null }) => Promise<void>;
+  };
+  projects: {
+    getDefaultProjectDir: () => Promise<string>;
+    setDefaultProjectDir: (input: { path: string }) => Promise<void>;
+  };
+}
+
+let mockApi: MockAPIClient;
 
 void mock.module("@/browser/contexts/API", () => ({
-  APIProvider: (props: { client?: APIClient; children: ReactNode }) => {
-    if (!props.client) {
-      throw new Error("GeneralSection tests require an API client");
-    }
-
-    return (
-      <MockAPIContext.Provider
-        value={{
-          api: props.client,
-          status: "connected",
-          error: null,
-          authenticate: () => undefined,
-          retry: () => undefined,
-        }}
-      >
-        {props.children}
-      </MockAPIContext.Provider>
-    );
-  },
-  useAPI: () => {
-    const context = useContext(MockAPIContext);
-    if (!context) {
-      throw new Error("useAPI must be used within the mocked APIProvider");
-    }
-    return context;
-  },
+  useAPI: () => ({
+    api: mockApi,
+    status: "connected" as const,
+    error: null,
+    authenticate: () => undefined,
+    retry: () => undefined,
+  }),
 }));
 
 import { GeneralSection } from "./GeneralSection";
-import { SettingsSectionStory, setupSettingsStory } from "./settingsStoryUtils";
 
 interface RenderGeneralSectionOptions {
   coderWorkspaceArchiveBehavior?: CoderWorkspaceArchiveBehavior;
   deleteWorktreeOnArchive?: boolean;
+}
+
+interface MockAPISetup {
+  api: MockAPIClient;
+  getConfigMock: ReturnType<typeof mock<() => Promise<MockConfig>>>;
+  updateCoderPrefsMock: ReturnType<
+    typeof mock<
+      (input: {
+        coderWorkspaceArchiveBehavior: CoderWorkspaceArchiveBehavior;
+        deleteWorktreeOnArchive: boolean;
+      }) => Promise<void>
+    >
+  >;
+}
+
+function createCustomEventPolyfill(
+  window: Window & typeof globalThis
+): typeof globalThis.CustomEvent {
+  class CustomEventPolyfill<T = unknown> extends window.Event implements CustomEvent<T> {
+    detail: T;
+
+    constructor(type: string, params?: CustomEventInit<T>) {
+      super(type, params);
+      this.detail = params?.detail as T;
+    }
+
+    initCustomEvent(
+      type: string,
+      bubbles?: boolean,
+      cancelable?: boolean,
+      detail?: T
+    ): void {
+      this.initEvent(type, bubbles ?? false, cancelable ?? false);
+      this.detail = detail as T;
+    }
+  }
+
+  return CustomEventPolyfill as unknown as typeof globalThis.CustomEvent;
+}
+
+function createMockAPI(configOverrides: Partial<MockConfig> = {}): MockAPISetup {
+  const config: MockConfig = {
+    coderWorkspaceArchiveBehavior: DEFAULT_CODER_ARCHIVE_BEHAVIOR,
+    deleteWorktreeOnArchive: false,
+    llmDebugLogs: false,
+    ...configOverrides,
+  };
+
+  const getConfigMock = mock(async () => ({ ...config }));
+  const updateCoderPrefsMock = mock(
+    async (input: {
+      coderWorkspaceArchiveBehavior: CoderWorkspaceArchiveBehavior;
+      deleteWorktreeOnArchive: boolean;
+    }) => {
+      config.coderWorkspaceArchiveBehavior = input.coderWorkspaceArchiveBehavior;
+      config.deleteWorktreeOnArchive = input.deleteWorktreeOnArchive;
+    }
+  );
+
+  return {
+    api: {
+      config: {
+        getConfig: getConfigMock,
+        updateCoderPrefs: updateCoderPrefsMock,
+        updateLlmDebugLogs: mock(async ({ enabled }: { enabled: boolean }) => {
+          config.llmDebugLogs = enabled;
+        }),
+      },
+      server: {
+        getSshHost: mock(async () => null),
+        setSshHost: mock(async (_input: { sshHost: string | null }) => undefined),
+      },
+      projects: {
+        getDefaultProjectDir: mock(async () => ""),
+        setDefaultProjectDir: mock(async (_input: { path: string }) => undefined),
+      },
+    },
+    getConfigMock,
+    updateCoderPrefsMock,
+  };
 }
 
 describe("GeneralSection", () => {
@@ -75,17 +149,25 @@ describe("GeneralSection", () => {
 
     const window = new GlobalWindow({ url: "http://localhost" }) as unknown as Window &
       typeof globalThis;
+    const customEvent = window.CustomEvent ?? createCustomEventPolyfill(window);
+
+    Object.defineProperty(window, "CustomEvent", {
+      value: customEvent,
+      configurable: true,
+      writable: true,
+    });
 
     globalThis.window = window;
     globalThis.document = window.document;
     globalThis.navigator = window.navigator;
     globalThis.localStorage = window.localStorage;
     globalThis.StorageEvent = window.StorageEvent as unknown as typeof StorageEvent;
-    globalThis.CustomEvent = window.CustomEvent as unknown as typeof CustomEvent;
+    globalThis.CustomEvent = customEvent;
   });
 
   afterEach(() => {
     cleanup();
+    mock.restore();
     globalThis.window = originalWindow;
     globalThis.document = originalDocument;
     globalThis.navigator = originalNavigator;
@@ -95,32 +177,15 @@ describe("GeneralSection", () => {
   });
 
   function renderGeneralSection(options: RenderGeneralSectionOptions = {}) {
-    const api = setupSettingsStory({});
-    const originalGetConfig = api.config.getConfig;
-    api.config.getConfig = async () => {
-      const config = await originalGetConfig();
-      return {
-        ...config,
-        coderWorkspaceArchiveBehavior:
-          options.coderWorkspaceArchiveBehavior ?? config.coderWorkspaceArchiveBehavior,
-        deleteWorktreeOnArchive: options.deleteWorktreeOnArchive ?? config.deleteWorktreeOnArchive,
-      };
-    };
-
-    const originalUpdateCoderPrefs = api.config.updateCoderPrefs;
-    const updateCoderPrefsMock = mock(
-      (input: {
-        coderWorkspaceArchiveBehavior: CoderWorkspaceArchiveBehavior;
-        deleteWorktreeOnArchive: boolean;
-      }) => originalUpdateCoderPrefs(input)
-    );
-    api.config.updateCoderPrefs = updateCoderPrefsMock;
+    const { api, updateCoderPrefsMock } = createMockAPI({
+      coderWorkspaceArchiveBehavior: options.coderWorkspaceArchiveBehavior,
+      deleteWorktreeOnArchive: options.deleteWorktreeOnArchive,
+    });
+    mockApi = api;
 
     const view = render(
       <ThemeProvider forcedTheme="dark">
-        <SettingsSectionStory setup={() => api}>
-          <GeneralSection />
-        </SettingsSectionStory>
+        <GeneralSection />
       </ThemeProvider>
     );
 
@@ -168,10 +233,11 @@ describe("GeneralSection", () => {
   });
 
   test("serializes rapid delete-worktree toggle writes so only the latest value is persisted", async () => {
-    const api = setupSettingsStory({});
+    const { api, updateCoderPrefsMock } = createMockAPI();
     let resolveFirstUpdate: (() => void) | undefined;
     let resolveSecondUpdate: (() => void) | undefined;
-    const updateCoderPrefsMock = mock(
+
+    api.config.updateCoderPrefs = updateCoderPrefsMock.mockImplementation(
       ({
         coderWorkspaceArchiveBehavior: _coderWorkspaceArchiveBehavior,
         deleteWorktreeOnArchive: _deleteWorktreeOnArchive,
@@ -188,13 +254,11 @@ describe("GeneralSection", () => {
           resolveSecondUpdate = resolve;
         })
     );
-    api.config.updateCoderPrefs = updateCoderPrefsMock;
+    mockApi = api;
 
     const view = render(
       <ThemeProvider forcedTheme="dark">
-        <SettingsSectionStory setup={() => api}>
-          <GeneralSection />
-        </SettingsSectionStory>
+        <GeneralSection />
       </ThemeProvider>
     );
 
@@ -234,31 +298,22 @@ describe("GeneralSection", () => {
   });
 
   test("disables archive settings until config finishes loading", async () => {
-    const api = setupSettingsStory({});
-    const originalGetConfig = api.config.getConfig;
-    const loadedConfig = await originalGetConfig();
-    let resolveGetConfig: ((value: typeof loadedConfig) => void) | undefined;
+    const { api, getConfigMock, updateCoderPrefsMock } = createMockAPI({
+      deleteWorktreeOnArchive: false,
+    });
+    const loadedConfig = await getConfigMock();
+    let resolveGetConfig: ((value: MockConfig) => void) | undefined;
     api.config.getConfig = mock(
       () =>
-        new Promise<typeof loadedConfig>((resolve) => {
+        new Promise<MockConfig>((resolve) => {
           resolveGetConfig = resolve;
         })
     );
-
-    const originalUpdateCoderPrefs = api.config.updateCoderPrefs;
-    const updateCoderPrefsMock = mock(
-      (input: {
-        coderWorkspaceArchiveBehavior: CoderWorkspaceArchiveBehavior;
-        deleteWorktreeOnArchive: boolean;
-      }) => originalUpdateCoderPrefs(input)
-    );
-    api.config.updateCoderPrefs = updateCoderPrefsMock;
+    mockApi = api;
 
     const view = render(
       <ThemeProvider forcedTheme="dark">
-        <SettingsSectionStory setup={() => api}>
-          <GeneralSection />
-        </SettingsSectionStory>
+        <GeneralSection />
       </ThemeProvider>
     );
 
