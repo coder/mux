@@ -43,11 +43,15 @@ interface ArchivedWorkspacesProps {
 }
 
 interface BulkOperationState {
-  type: "restore" | "delete";
+  type: "restore" | "delete" | "deleteWorktree";
   total: number;
   completed: number;
   current: string | null;
   errors: string[];
+}
+
+function canDeleteManagedWorktree(workspace: FrontendWorkspaceMetadata): boolean {
+  return isWorktreeRuntime(workspace.runtimeConfig) && workspace.transcriptOnly !== true;
 }
 
 /** Group workspaces by time period for timeline display */
@@ -164,18 +168,37 @@ const BulkProgressModal: React.FC<{
 }> = ({ operation, onClose }) => {
   const percentage = Math.round((operation.completed / operation.total) * 100);
   const isComplete = operation.completed === operation.total;
-  const actionVerb = operation.type === "restore" ? "Restoring" : "Deleting";
-  const actionPast = operation.type === "restore" ? "restored" : "deleted";
+  const actionLabels: Record<
+    BulkOperationState["type"],
+    { inProgressTitle: string; actionPast: string; itemLabel: string }
+  > = {
+    restore: {
+      inProgressTitle: "Restoring Workspaces",
+      actionPast: "restored",
+      itemLabel: "workspace",
+    },
+    delete: {
+      inProgressTitle: "Deleting Workspaces",
+      actionPast: "deleted",
+      itemLabel: "workspace",
+    },
+    deleteWorktree: {
+      inProgressTitle: "Deleting Managed Worktrees",
+      actionPast: "deleted",
+      itemLabel: "managed worktree",
+    },
+  };
+  const labels = actionLabels[operation.type];
 
   return (
     <Dialog open onOpenChange={(open) => !open && isComplete && onClose()}>
       <DialogContent maxWidth="400px" showCloseButton={isComplete}>
         <DialogHeader>
-          <DialogTitle>{isComplete ? "Complete" : `${actionVerb} Workspaces`}</DialogTitle>
+          <DialogTitle>{isComplete ? "Complete" : labels.inProgressTitle}</DialogTitle>
           <DialogDescription>
             {isComplete ? (
               <>
-                Successfully {actionPast} {operation.completed} workspace
+                Successfully {labels.actionPast} {operation.completed} {labels.itemLabel}
                 {operation.completed !== 1 && "s"}
                 {operation.errors.length > 0 && ` (${operation.errors.length} failed)`}
               </>
@@ -517,6 +540,75 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
     }
   };
 
+  const handleBulkDeleteWorktree = async () => {
+    if (!api) {
+      return;
+    }
+
+    const idsToDeleteWorktree = Array.from(selectedIds);
+    if (idsToDeleteWorktree.length === 0) {
+      return;
+    }
+
+    setBulkOperation({
+      type: "deleteWorktree",
+      total: idsToDeleteWorktree.length,
+      completed: 0,
+      current: null,
+      errors: [],
+    });
+
+    for (let i = 0; i < idsToDeleteWorktree.length; i++) {
+      const id = idsToDeleteWorktree[i];
+      const ws = workspaces.find((workspace) => workspace.id === id);
+      setBulkOperation((prev) => (prev ? { ...prev, current: ws?.title ?? ws?.name ?? id } : prev));
+      setProcessingIds((prev) => new Set(prev).add(id));
+      setDeleteWorktreeIds((prev) => new Set(prev).add(id));
+
+      try {
+        const result = await api.workspace.deleteWorktree({ workspaceId: id });
+        if (!result.success) {
+          setBulkOperation((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  errors: [
+                    ...prev.errors,
+                    `Failed to delete managed worktree for ${ws?.name ?? id}${result.error ? `: ${result.error}` : ""}`,
+                  ],
+                }
+              : prev
+          );
+        }
+      } catch {
+        setBulkOperation((prev) =>
+          prev
+            ? {
+                ...prev,
+                errors: [...prev.errors, `Failed to delete managed worktree for ${ws?.name ?? id}`],
+              }
+            : prev
+        );
+      } finally {
+        setDeleteWorktreeIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+        setProcessingIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      }
+
+      setBulkOperation((prev) => (prev ? { ...prev, completed: i + 1 } : prev));
+    }
+
+    setSelectedIds(new Set());
+    onWorkspacesChanged?.();
+  };
+
   const handleDeleteWorktree = async (workspaceId: string) => {
     if (!api) {
       return;
@@ -582,6 +674,9 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
   };
 
   const hasSelection = selectedIds.size > 0;
+  const hasBulkDeleteWorktreeSelection = workspaces.some(
+    (workspace) => selectedIds.has(workspace.id) && canDeleteManagedWorktree(workspace)
+  );
   const allFilteredSelected =
     filteredWorkspaces.length > 0 && filteredWorkspaces.every((w) => selectedIds.has(w.id));
 
@@ -664,6 +759,20 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
                     </TooltipTrigger>
                     <TooltipContent>Restore selected</TooltipContent>
                   </Tooltip>
+                  {hasBulkDeleteWorktreeSelection && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          onClick={() => void handleBulkDeleteWorktree()}
+                          className="text-muted rounded p-1 transition-colors hover:bg-white/10 hover:text-orange-300"
+                          aria-label="Delete managed worktrees for selected"
+                        >
+                          <FolderX className="h-4 w-4" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>Delete managed worktrees only</TooltipContent>
+                    </Tooltip>
+                  )}
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button
@@ -745,9 +854,7 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
                           ? workspace.name
                           : undefined;
                       const displayTitle = workspace.title ?? workspace.name;
-                      const canDeleteWorktree =
-                        isWorktreeRuntime(workspace.runtimeConfig) &&
-                        workspace.transcriptOnly !== true;
+                      const canDeleteWorktree = canDeleteManagedWorktree(workspace);
                       const isDeletingWorktree = deleteWorktreeIds.has(workspace.id);
 
                       return (
