@@ -1122,17 +1122,26 @@ export const router = (authToken?: string) => {
 
           try {
             const result = await context.browserControlService.executeControl(input);
-            const urlResult = await context.browserControlService.getUrl(
-              input.workspaceId,
-              input.sessionName,
-              { skipSessionValidation: true }
-            );
-            context.browserSessionStateHub.markLoaded(
-              input.workspaceId,
-              input.sessionName,
-              urlResult.error == null ? urlResult.url : undefined,
-              commandToken
-            );
+            if (result.success) {
+              const urlResult = await context.browserControlService.getUrl(
+                input.workspaceId,
+                input.sessionName,
+                { skipSessionValidation: true }
+              );
+              context.browserSessionStateHub.markLoaded(
+                input.workspaceId,
+                input.sessionName,
+                urlResult.error == null ? urlResult.url : undefined,
+                commandToken
+              );
+            } else {
+              context.browserSessionStateHub.markLoaded(
+                input.workspaceId,
+                input.sessionName,
+                undefined,
+                commandToken
+              );
+            }
             return result;
           } catch (error) {
             try {
