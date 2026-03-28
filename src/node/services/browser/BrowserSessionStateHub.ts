@@ -126,19 +126,32 @@ export class BrowserSessionStateHub {
       return;
     }
 
-    const isLatestCommand = commandToken === undefined || commandToken === entry.commandGeneration;
-    if (!isLatestCommand) {
-      // A recreated session entry may have a different command generation. Ignore stale completions
-      // entirely so they cannot decrement a later subscriber's loading state.
+    if (commandToken === -1) {
+      // markLoading returns -1 when the session entry disappeared before the command began.
+      // Ignore that sentinel so a recreated entry never has its count decremented by mistake.
       return;
     }
 
+    const isStaleCommand = commandToken !== undefined && commandToken !== entry.commandGeneration;
     if (commandToken !== undefined) {
       entry.activeCommandCount = Math.max(0, entry.activeCommandCount - 1);
     }
 
-    const isLoading = entry.activeCommandCount > 0;
+    if (isStaleCommand) {
+      // Stale completions still settle their in-flight counter, but must not overwrite the
+      // current page URL for a newer command generation.
+      if (entry.activeCommandCount === 0 && entry.state.isLoading) {
+        this.publish(sessionKey, entry, {
+          type: "page_state",
+          url: entry.state.url,
+          isLoading: false,
+          source: "command",
+        });
+      }
+      return;
+    }
 
+    const isLoading = entry.activeCommandCount > 0;
     const resolvedUrl = url !== undefined ? url : entry.state.url;
     entry.generation += 1;
     this.publish(sessionKey, entry, {
