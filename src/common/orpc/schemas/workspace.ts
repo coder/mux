@@ -124,10 +124,6 @@ export const WorkspaceMetadataSchema = z.object({
     description:
       "ISO 8601 timestamp when workspace was last unarchived. Used for recency calculation to bump restored workspaces to top.",
   }),
-  transcriptOnly: z.boolean().optional().meta({
-    description:
-      "True when the workspace worktree is unavailable and only transcript-backed metadata remains.",
-  }),
   projects: z
     .array(ProjectRefSchema)
     .optional()
@@ -156,6 +152,10 @@ export const FrontendWorkspaceMetadataSchema = WorkspaceMetadataSchema.extend({
   isInitializing: z.boolean().optional().meta({
     description:
       "True if this workspace is currently initializing (postCreateSetup or initWorkspace running).",
+  }),
+  transcriptOnly: z.boolean().optional().meta({
+    description:
+      "True if this workspace's checkout directory is missing (worktree deleted). Chat history is available but the workspace cannot run commands.",
   }),
 });
 

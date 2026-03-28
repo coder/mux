@@ -31,7 +31,11 @@ import {
 } from "@/common/types/tasks";
 import { isLayoutPresetsConfigEmpty, normalizeLayoutPresetsConfig } from "@/common/types/uiLayouts";
 import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
-import { RUNTIME_ENABLEMENT_IDS, type RuntimeEnablementId } from "@/common/types/runtime";
+import {
+  isWorktreeRuntime,
+  RUNTIME_ENABLEMENT_IDS,
+  type RuntimeEnablementId,
+} from "@/common/types/runtime";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility";
 import { getMuxHome } from "@/common/constants/paths";
@@ -1034,6 +1038,12 @@ export class Config {
       result.incompatibleRuntime =
         "This workspace was created with a newer version of mux. " +
         "Please upgrade mux to use this workspace.";
+    }
+
+    // Mark worktree workspaces with missing checkout directories as transcript-only.
+    // This covers both archive-time cleanup and manual worktree deletion.
+    if (isWorktreeRuntime(metadata.runtimeConfig) && !fs.existsSync(workspacePath)) {
+      result.transcriptOnly = true;
     }
 
     return result;
