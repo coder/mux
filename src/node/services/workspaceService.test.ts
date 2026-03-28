@@ -3,6 +3,7 @@ import { WorkspaceService, generateForkBranchName, generateForkTitle } from "./w
 import type { AgentSession } from "./agentSession";
 import { WorkspaceLifecycleHooks } from "./workspaceLifecycleHooks";
 import { EventEmitter } from "events";
+import fs from "node:fs";
 import * as fsPromises from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
@@ -3683,6 +3684,18 @@ describe("WorkspaceService unarchive lifecycle hooks", () => {
 
     expect(result.success).toBe(true);
     expect(afterHook).toHaveBeenCalledTimes(0);
+  });
+  test("unarchiving with missing managed worktree does not recreate the directory", async () => {
+    const result = await workspaceService.unarchive(workspaceId);
+
+    expect(result.success).toBe(true);
+
+    const entry = configState.projects.get(projectPath)?.workspaces[0];
+    expect(entry?.unarchivedAt).toBeTruthy();
+    expect(entry?.unarchivedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+
+    expect(fs.existsSync(workspacePath)).toBe(false);
+    expect(entry?.path).toBe(workspacePath);
   });
 });
 
