@@ -87,7 +87,13 @@ export class BrowserSessionStateHub {
     this.assertValidSessionIdentifiers(workspaceId, sessionName);
 
     const sessionKey = this.createSessionKey(workspaceId, sessionName);
-    const entry = this.getOrCreateEntry(sessionKey);
+    const entry = this.sessionEntries.get(sessionKey);
+    if (!entry) {
+      // The last subscriber may have disconnected while the command was being prepared.
+      // Do not recreate the session entry, or a later reconnect could observe a reset token state.
+      return -1;
+    }
+
     entry.activeCommandCount += 1;
     entry.commandGeneration += 1;
     entry.generation += 1;
@@ -114,7 +120,12 @@ export class BrowserSessionStateHub {
     );
 
     const sessionKey = this.createSessionKey(workspaceId, sessionName);
-    const entry = this.getOrCreateEntry(sessionKey);
+    const entry = this.sessionEntries.get(sessionKey);
+    if (!entry) {
+      // The session was cleaned up after the last subscriber left; ignore late command completion.
+      return;
+    }
+
     entry.activeCommandCount = Math.max(0, entry.activeCommandCount - 1);
 
     const isLatestCommand = commandToken === undefined || commandToken === entry.commandGeneration;
