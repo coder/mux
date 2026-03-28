@@ -100,15 +100,6 @@ async function importIsolatedAgentModules() {
   return tempDir;
 }
 
-const AUTO_AGENT: AgentDefinitionDescriptor = {
-  id: "auto",
-  scope: "built-in",
-  name: "Auto",
-  uiSelectable: true,
-  uiRoutable: true,
-  subagentRunnable: false,
-};
-
 const EXEC_AGENT: AgentDefinitionDescriptor = {
   id: "exec",
   scope: "built-in",
@@ -283,7 +274,7 @@ describe("AgentContext", () => {
     renderAgentHarness({ projectPath, onChange: (value) => (contextValue = value) });
 
     await waitFor(() => {
-      expect(contextValue?.agentId).toBe("auto");
+      expect(contextValue?.agentId).toBe("exec");
     });
     expect(window.localStorage.getItem(getAgentIdKey(getProjectScopeId(projectPath)))).toBeNull();
   });
@@ -305,18 +296,18 @@ describe("AgentContext", () => {
     });
   });
 
-  test("cycle shortcut switches from auto to exec", async () => {
+  test("cycle shortcut advances to next agent", async () => {
     const projectPath = "/tmp/project";
-    mockAgentDefinitions = [AUTO_AGENT, EXEC_AGENT, PLAN_AGENT];
-    window.localStorage.setItem(getAgentIdKey(GLOBAL_SCOPE_ID), JSON.stringify("auto"));
+    mockAgentDefinitions = [EXEC_AGENT, PLAN_AGENT];
+    window.localStorage.setItem(getAgentIdKey(GLOBAL_SCOPE_ID), JSON.stringify("exec"));
 
     let contextValue: AgentContextValue | undefined;
 
     renderAgentHarness({ projectPath, onChange: (value) => (contextValue = value) });
 
     await waitFor(() => {
-      expect(contextValue?.agentId).toBe("auto");
-      expect(contextValue?.agents.map((agent) => agent.id)).toEqual(["auto", "exec", "plan"]);
+      expect(contextValue?.agentId).toBe("exec");
+      expect(contextValue?.agents.map((agent) => agent.id)).toEqual(["exec", "plan"]);
     });
 
     window.api = { platform: "darwin", versions: {} };
@@ -328,40 +319,13 @@ describe("AgentContext", () => {
     });
 
     await waitFor(() => {
-      expect(contextValue?.agentId).toBe("exec");
-    });
-  });
-
-  test("cycle shortcut exits auto even when only one manual agent is available", async () => {
-    const projectPath = "/tmp/project";
-    mockAgentDefinitions = [AUTO_AGENT, EXEC_AGENT];
-    window.localStorage.setItem(getAgentIdKey(GLOBAL_SCOPE_ID), JSON.stringify("auto"));
-
-    let contextValue: AgentContextValue | undefined;
-
-    renderAgentHarness({ projectPath, onChange: (value) => (contextValue = value) });
-
-    await waitFor(() => {
-      expect(contextValue?.agentId).toBe("auto");
-      expect(contextValue?.agents.map((agent) => agent.id)).toEqual(["auto", "exec"]);
-    });
-
-    window.api = { platform: "darwin", versions: {} };
-
-    fireEvent.keyDown(window, {
-      key: ".",
-      ctrlKey: true,
-      metaKey: true,
-    });
-
-    await waitFor(() => {
-      expect(contextValue?.agentId).toBe("exec");
+      expect(contextValue?.agentId).toBe("plan");
     });
   });
 
   test("shortcut actions do not override a locked workspace agent", async () => {
     const projectPath = "/tmp/project";
-    mockAgentDefinitions = [AUTO_AGENT, EXEC_AGENT, PLAN_AGENT];
+    mockAgentDefinitions = [EXEC_AGENT, PLAN_AGENT];
     mockWorkspaceMetadata.set(MUX_HELP_CHAT_WORKSPACE_ID, { agentId: "mux" });
     window.localStorage.setItem(getAgentIdKey(MUX_HELP_CHAT_WORKSPACE_ID), JSON.stringify("exec"));
 
@@ -394,7 +358,7 @@ describe("AgentContext", () => {
         shiftKey: true,
       });
 
-      // Cycle + toggle-auto should no-op as well.
+      // Cycle and secondary shortcut actions should no-op as well.
       fireEvent.keyDown(window, {
         key: ".",
         ctrlKey: true,
@@ -422,7 +386,7 @@ describe("AgentContext", () => {
 
   test("non-selectable agent in mutable workspace does not block shortcut actions", async () => {
     const projectPath = "/tmp/project";
-    mockAgentDefinitions = [LOCKED_AGENT, AUTO_AGENT, EXEC_AGENT, PLAN_AGENT];
+    mockAgentDefinitions = [LOCKED_AGENT, EXEC_AGENT, PLAN_AGENT];
     window.localStorage.setItem(
       getAgentIdKey(getProjectScopeId(projectPath)),
       JSON.stringify("mux")
@@ -467,45 +431,5 @@ describe("AgentContext", () => {
         handleOpenPicker as EventListener
       );
     }
-  });
-
-  test("toggle auto shortcut switches between manual and auto", async () => {
-    const projectPath = "/tmp/project";
-    mockAgentDefinitions = [AUTO_AGENT, EXEC_AGENT, PLAN_AGENT];
-    window.localStorage.setItem(getAgentIdKey(GLOBAL_SCOPE_ID), JSON.stringify("exec"));
-
-    let contextValue: AgentContextValue | undefined;
-
-    renderAgentHarness({ projectPath, onChange: (value) => (contextValue = value) });
-
-    await waitFor(() => {
-      expect(contextValue?.agentId).toBe("exec");
-    });
-
-    window.api = { platform: "darwin", versions: {} };
-
-    fireEvent.keyDown(window, {
-      key: ">",
-      code: "Period",
-      ctrlKey: true,
-      metaKey: true,
-      shiftKey: true,
-    });
-
-    await waitFor(() => {
-      expect(contextValue?.agentId).toBe("auto");
-    });
-
-    fireEvent.keyDown(window, {
-      key: ">",
-      code: "Period",
-      ctrlKey: true,
-      metaKey: true,
-      shiftKey: true,
-    });
-
-    await waitFor(() => {
-      expect(contextValue?.agentId).toBe("exec");
-    });
   });
 });
