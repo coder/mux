@@ -225,7 +225,8 @@ export function BrowserToolbar(props: BrowserToolbarProps) {
 
   const handleUrlKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Escape") {
-      stopKeyboardPropagation(event);
+      // Let Escape bubble to the global stream interrupt handler, which checks the
+      // input's opt-in attribute before interrupting an active stream.
       event.preventDefault();
       event.currentTarget.blur();
       return;
