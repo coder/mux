@@ -89,7 +89,6 @@ If **any** of these fail:
 | `AgentStatusSidebar`      | `agent-status.webp`       | No                              |
 | `GitStatusPopover`        | `git-status.webp`         | Yes (open dialog + toggle mode) |
 | `PlanMermaidWithCosts`    | `plan-mermaid.webp`       | No                              |
-| `AutoModeAgentSwitching`  | `auto-mode.webp`          | Yes (open creation card)        |
 | `CostsTabRich`            | `costs-tab.webp`          | No                              |
 | `ContextManagementDialog` | `context-management.webp` | Yes (open settings dialog)      |
 | `MobileServerMode`        | `mobile-server-mode.webp` | No                              |
@@ -142,7 +141,7 @@ bun run scripts/capture-readme-screenshots.ts --storybook-url http://localhost:6
 
 The script:
 
-- Iterates all 9 stories sequentially
+- Iterates all 8 stories sequentially
 - Opens a fresh Playwright page per story
 - Waits for `networkidle` + 2s stabilization
 - Runs `playInteraction` if defined (with up to 3 retries for flaky interactions)
@@ -151,21 +150,21 @@ The script:
 
 ### 4. Handle Failures
 
-Stories with `playInteraction` (GitStatusPopover, AutoModeAgentSwitching,
-ContextManagementDialog) can be flaky under sequential load due to UI timing.
-The script retries each up to 3 times. If failures persist:
+Stories with `playInteraction` (GitStatusPopover, ContextManagementDialog)
+can be flaky under sequential load due to UI timing. The script retries each up to
+3 times. If failures persist:
 
 ```bash
 # Retry individual failed stories
 bun run scripts/capture-readme-screenshots.ts --story GitStatusPopover
-bun run scripts/capture-readme-screenshots.ts --story AutoModeAgentSwitching
+bun run scripts/capture-readme-screenshots.ts --story ContextManagementDialog
 ```
 
 ### 5. Verify & Commit
 
 ```bash
-# Check all 9 files are present and 3800px wide
-for f in code-review agent-status git-status plan-mermaid auto-mode costs-tab context-management mobile-server-mode orchestrate-agents; do
+# Check all 8 files are present and 3800px wide
+for f in code-review agent-status git-status plan-mermaid costs-tab context-management mobile-server-mode orchestrate-agents; do
   bun -e "const s = require('sharp'); const m = await s('docs/img/${f}.webp').metadata(); console.log('${f}:', m.width + 'x' + m.height)"
 done
 

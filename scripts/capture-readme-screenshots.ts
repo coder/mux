@@ -117,42 +117,6 @@ const STORIES: StoryDef[] = [
     outputFile: "plan-mermaid.webp",
   },
   {
-    exportName: "AutoModeAgentSwitching",
-    storyId: `${STORY_ID_PREFIX}auto-mode-agent-switching`,
-    outputFile: "auto-mode.webp",
-    // Center the workspace creation card in-frame while still including MCP context.
-    clip: { x: 534, y: 0, width: 1120, height: 710 },
-    playInteraction: async (page: Page) => {
-      // Enter project creation view from the sidebar row.
-      const projectRow = page
-        .locator('[data-project-path="/home/user/projects/mux"][aria-controls]')
-        .first();
-      await projectRow.waitFor({ timeout: 30_000 });
-      await projectRow.click();
-
-      // Wait until the creation card and requested defaults are visible.
-      const creationCard = page.locator('[data-component="ChatInputSection"]');
-      await creationCard.waitFor({ timeout: 10_000 });
-      await page
-        .getByPlaceholder("Type your first message to create a workspace...")
-        .waitFor({ timeout: 10_000 });
-      await creationCard.locator("[data-thinking-label]", { hasText: "MAX" }).waitFor({
-        timeout: 10_000,
-      });
-      await page
-        .getByRole("combobox")
-        .filter({ hasText: /Opus 4\.6/i })
-        .first()
-        .waitFor({
-          timeout: 10_000,
-        });
-      await creationCard
-        .getByRole("button", { name: "Select agent" })
-        .filter({ hasText: "Auto" })
-        .waitFor({ timeout: 10_000 });
-    },
-  },
-  {
     exportName: "CostsTabRich",
     storyId: `${STORY_ID_PREFIX}costs-tab-rich`,
     outputFile: "costs-tab.webp",

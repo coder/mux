@@ -29,8 +29,6 @@ function getAgentTextColorClass(agentId: string): string {
       return "text-plan-mode";
     case "exec":
       return "text-exec-mode";
-    case "auto":
-      return "text-auto-mode";
     case "ask":
       return "text-ask-mode";
     default:
