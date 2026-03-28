@@ -545,7 +545,10 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
       return;
     }
 
-    const idsToDeleteWorktree = Array.from(selectedIds);
+    const idsToDeleteWorktree = Array.from(selectedIds).filter((id) => {
+      const workspace = workspaces.find((candidate) => candidate.id === id);
+      return workspace ? canDeleteManagedWorktree(workspace) : false;
+    });
     if (idsToDeleteWorktree.length === 0) {
       return;
     }
