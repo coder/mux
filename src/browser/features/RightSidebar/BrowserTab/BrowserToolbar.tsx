@@ -224,9 +224,8 @@ export function BrowserToolbar(props: BrowserToolbarProps) {
   }, [controlsDisabled]);
 
   const handleUrlKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
-    stopKeyboardPropagation(event);
-
     if (event.key === "Escape") {
+      stopKeyboardPropagation(event);
       event.preventDefault();
       event.currentTarget.blur();
       return;
@@ -236,6 +235,7 @@ export function BrowserToolbar(props: BrowserToolbarProps) {
       return;
     }
 
+    stopKeyboardPropagation(event);
     event.preventDefault();
     const nextUrl = (editingUrl ?? displayUrl).trim();
     setEditingUrl(null);
