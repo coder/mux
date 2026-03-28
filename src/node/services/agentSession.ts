@@ -4492,8 +4492,8 @@ export class AgentSession {
     const disableWorkspaceAgents = currentOptions?.disableWorkspaceAgents;
 
     const candidates: string[] = [];
-    // Prefer returning to the caller's previous non-auto agent when possible.
-    if (preferredAgentId != null && preferredAgentId.length > 0 && preferredAgentId !== "auto") {
+    // Prefer returning to the caller's previous agent when possible.
+    if (preferredAgentId != null && preferredAgentId.length > 0) {
       candidates.push(preferredAgentId);
     }
 

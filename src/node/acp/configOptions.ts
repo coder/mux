@@ -16,7 +16,6 @@ const THINKING_LEVEL_CONFIG_ID = "thinkingLevel";
 const DEFAULT_AGENT_MODE_DESCRIPTIONS: Readonly<Record<string, string>> = {
   exec: "Implement changes in the repository",
   plan: "Create a plan before coding",
-  auto: "Automatically selects the best agent for your task",
 };
 
 interface ExposedAgentMode {

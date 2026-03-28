@@ -25,16 +25,6 @@ export const FALLBACK_AGENTS: AgentDefinitionDescriptor[] = [
     subagentRunnable: true,
   },
   {
-    id: "auto",
-    scope: "built-in",
-    name: "Auto",
-    description: "Automatically route to the best agent for the task",
-    uiSelectable: true,
-    uiRoutable: true,
-    subagentRunnable: false,
-    base: "exec",
-  },
-  {
     id: "compact",
     scope: "built-in",
     name: "Compact",
