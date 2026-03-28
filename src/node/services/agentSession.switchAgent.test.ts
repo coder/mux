@@ -637,6 +637,42 @@ describe("AgentSession switch_agent target validation", () => {
     }
   });
 
+  test("skips auto caller when unresolved switch target falls back", async () => {
+    using projectDir = new DisposableTempDir("agent-session-switch-auto-fallback");
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+
+    await writeAgentDefinition(projectDir.path, "auto", "");
+
+    const session = createSession(historyService, projectDir.path, projectDir.path);
+
+    try {
+      const internals = session as unknown as SessionInternals;
+      const sendMessageMock = mock(() => Promise.resolve({ success: true as const }));
+      internals.sendMessage = sendMessageMock as unknown as SessionInternals["sendMessage"];
+
+      const result = await internals.dispatchAgentSwitch(
+        {
+          agentId: "missing-agent",
+          followUp: "Should not send",
+        },
+        { model: "openai:gpt-4o-mini", agentId: "auto" },
+        "openai:gpt-4o"
+      );
+
+      expect(result).toBe(true);
+      expect(sendMessageMock).toHaveBeenCalledTimes(1);
+
+      const firstCall = sendMessageMock.mock.calls[0];
+      expect(firstCall).toBeDefined();
+      const [messageArg, optionsArg] = firstCall as unknown as [string, SendMessageOptions];
+      expect(messageArg).toContain('target "missing-agent" is unavailable');
+      expect(optionsArg.agentId).toBe("exec");
+    } finally {
+      session.dispose();
+    }
+  });
+
   test("emits stream-error when switch loop guard blocks synthetic follow-up", async () => {
     using projectDir = new DisposableTempDir("agent-session-switch-loop-guard");
     const { historyService, cleanup } = await createTestHistoryService();

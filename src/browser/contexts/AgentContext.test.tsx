@@ -118,6 +118,24 @@ const PLAN_AGENT: AgentDefinitionDescriptor = {
   subagentRunnable: false,
 };
 
+const AUTO_PROJECT_AGENT: AgentDefinitionDescriptor = {
+  id: "auto",
+  scope: "project",
+  name: "Auto",
+  uiSelectable: true,
+  uiRoutable: true,
+  subagentRunnable: false,
+};
+
+const REVIEW_PROJECT_AGENT: AgentDefinitionDescriptor = {
+  id: "review",
+  scope: "project",
+  name: "Review",
+  uiSelectable: true,
+  uiRoutable: true,
+  subagentRunnable: false,
+};
+
 const LOCKED_AGENT: AgentDefinitionDescriptor = {
   id: "mux",
   scope: "built-in",
@@ -320,6 +338,33 @@ describe("AgentContext", () => {
 
     await waitFor(() => {
       expect(contextValue?.agentId).toBe("plan");
+    });
+  });
+
+  test("cycle shortcut advances away from a custom auto agent", async () => {
+    const projectPath = "/tmp/project";
+    mockAgentDefinitions = [AUTO_PROJECT_AGENT, REVIEW_PROJECT_AGENT];
+    window.localStorage.setItem(getAgentIdKey(GLOBAL_SCOPE_ID), JSON.stringify("auto"));
+
+    let contextValue: AgentContextValue | undefined;
+
+    renderAgentHarness({ projectPath, onChange: (value) => (contextValue = value) });
+
+    await waitFor(() => {
+      expect(contextValue?.agentId).toBe("auto");
+      expect(contextValue?.agents.map((agent) => agent.id)).toEqual(["auto", "review"]);
+    });
+
+    window.api = { platform: "darwin", versions: {} };
+
+    fireEvent.keyDown(window, {
+      key: ".",
+      ctrlKey: true,
+      metaKey: true,
+    });
+
+    await waitFor(() => {
+      expect(contextValue?.agentId).toBe("review");
     });
   });
 

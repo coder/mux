@@ -289,11 +289,6 @@ function AgentProviderWithState(props: {
     const activeAgentId = effectiveAgentId;
     if (selectableAgents.length === 0) return;
 
-    if (activeAgentId === "auto") {
-      setAgentId(selectableAgents[0].id);
-      return;
-    }
-
     if (selectableAgents.length < 2) return;
 
     const currentIndex = selectableAgents.findIndex((a) => a.id === activeAgentId);

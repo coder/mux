@@ -4492,8 +4492,11 @@ export class AgentSession {
     const disableWorkspaceAgents = currentOptions?.disableWorkspaceAgents;
 
     const candidates: string[] = [];
-    // Prefer returning to the caller's previous agent when possible.
-    if (preferredAgentId != null && preferredAgentId.length > 0) {
+    // Prefer returning to the caller's previous non-auto agent when possible.
+    // Legacy sessions and custom project agents can still use the reserved
+    // `auto` id, and immediately falling back to that router risks re-entering
+    // the same switch loop instead of degrading to a safe built-in agent.
+    if (preferredAgentId != null && preferredAgentId.length > 0 && preferredAgentId !== "auto") {
       candidates.push(preferredAgentId);
     }
 
