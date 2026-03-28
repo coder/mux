@@ -235,10 +235,21 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     editingState.workspaceId === workspaceId ? editingState.message : undefined;
   const setEditingMessage = useCallback(
     (message: EditingMessageState | undefined) => {
-      setEditingState({ workspaceId, message });
+      setEditingState({
+        workspaceId,
+        message: transcriptOnly ? undefined : message,
+      });
     },
-    [workspaceId]
+    [workspaceId, transcriptOnly]
   );
+
+  // Transcript-only workspaces swap the composer for a read-only notice, so clear any
+  // stale edit state instead of leaving the transcript stuck at an edit cutoff.
+  useEffect(() => {
+    if (transcriptOnly && editingMessage) {
+      setEditingState({ workspaceId, message: undefined });
+    }
+  }, [editingMessage, transcriptOnly, workspaceId]);
 
   // Track which bash_output groups are expanded (keyed by first message ID)
   const [expandedBashGroups, setExpandedBashGroups] = useState<Set<string>>(new Set());
@@ -487,6 +498,8 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   }, [api, workspaceId, aggregator, setEditingMessage]);
 
   const handleEditLastUserMessage = useCallback(async () => {
+    if (transcriptOnly) return;
+
     const current = workspaceStateRef.current;
     if (!current) return;
 
@@ -515,7 +528,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
       );
       element?.scrollIntoView({ behavior: "smooth", block: "center" });
     });
-  }, [restoreQueuedDraft, contentRef, disableAutoScroll, setEditingMessage]);
+  }, [restoreQueuedDraft, contentRef, disableAutoScroll, setEditingMessage, transcriptOnly]);
 
   const handleEditLastUserMessageClick = useCallback(() => {
     void handleEditLastUserMessage();
@@ -863,7 +876,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                           <React.Fragment key={msg.id}>
                             <MessageRenderer
                               message={msg}
-                              onEditUserMessage={handleEditUserMessage}
+                              onEditUserMessage={transcriptOnly ? undefined : handleEditUserMessage}
                               workspaceId={workspaceId}
                               isCompacting={isCompacting}
                               onReviewNote={handleReviewNote}
