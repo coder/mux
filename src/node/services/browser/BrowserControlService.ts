@@ -28,6 +28,10 @@ export interface BrowserGetUrlResult {
   error?: string;
 }
 
+export interface BrowserGetUrlOptions {
+  skipSessionValidation?: boolean;
+}
+
 interface BrowserCommandExecutionResult {
   success: boolean;
   stdout: string;
@@ -101,25 +105,39 @@ export class BrowserControlService {
     }
   }
 
-  async getUrl(workspaceId: string, sessionName: string): Promise<BrowserGetUrlResult> {
+  async getUrl(
+    workspaceId: string,
+    sessionName: string,
+    options?: BrowserGetUrlOptions
+  ): Promise<BrowserGetUrlResult> {
     this.assertValidSessionIdentifiers(workspaceId, sessionName);
+    assert(
+      options == null || typeof options === "object",
+      "BrowserControlService getUrl options must be an object when provided"
+    );
+    assert(
+      options?.skipSessionValidation == null || typeof options.skipSessionValidation === "boolean",
+      "BrowserControlService getUrl skipSessionValidation must be a boolean when provided"
+    );
 
     try {
-      const connection = await this.browserSessionDiscoveryService.getSessionConnection(
-        workspaceId,
-        sessionName
-      );
-      if (connection == null) {
-        return {
-          url: null,
-          error: `Session "${sessionName}" not found for workspace "${workspaceId}"`,
-        };
-      }
+      if (!options?.skipSessionValidation) {
+        const connection = await this.browserSessionDiscoveryService.getSessionConnection(
+          workspaceId,
+          sessionName
+        );
+        if (connection == null) {
+          return {
+            url: null,
+            error: `Session "${sessionName}" not found for workspace "${workspaceId}"`,
+          };
+        }
 
-      assert(
-        connection.sessionName === sessionName,
-        "BrowserControlService resolved session must match the requested session name"
-      );
+        assert(
+          connection.sessionName === sessionName,
+          "BrowserControlService resolved session must match the requested session name"
+        );
+      }
 
       const execution = await this.runAgentBrowserCommand(
         workspaceId,

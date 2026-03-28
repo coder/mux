@@ -299,7 +299,9 @@ export class BrowserSessionStateHub {
     startingEntry.refreshId = refreshId;
     let urlResult: Awaited<ReturnType<BrowserControlService["getUrl"]>>;
     try {
-      urlResult = await this.browserControlService.getUrl(workspaceId, sessionName);
+      urlResult = await this.browserControlService.getUrl(workspaceId, sessionName, {
+        skipSessionValidation: true,
+      });
     } catch (error) {
       log.warn("BrowserSessionStateHub: getUrl threw while refreshing page state", {
         workspaceId,

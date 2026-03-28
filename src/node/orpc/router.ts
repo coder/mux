@@ -1124,7 +1124,8 @@ export const router = (authToken?: string) => {
             const result = await context.browserControlService.executeControl(input);
             const urlResult = await context.browserControlService.getUrl(
               input.workspaceId,
-              input.sessionName
+              input.sessionName,
+              { skipSessionValidation: true }
             );
             context.browserSessionStateHub.markLoaded(
               input.workspaceId,
@@ -1137,7 +1138,8 @@ export const router = (authToken?: string) => {
             try {
               const urlResult = await context.browserControlService.getUrl(
                 input.workspaceId,
-                input.sessionName
+                input.sessionName,
+                { skipSessionValidation: true }
               );
               context.browserSessionStateHub.markLoaded(
                 input.workspaceId,
