@@ -56,7 +56,7 @@ describe("workspace.updateAgentAISettings", () => {
     }
   }, 60000);
 
-  test("keeps ask-scoped settings separate from auto when persisting agent settings", async () => {
+  test("keeps ask-scoped settings separate from exec when persisting agent settings", async () => {
     const env: TestEnvironment = await createTestEnvironment();
     const tempGitRepo = await createTempGitRepo();
 
@@ -83,7 +83,7 @@ describe("workspace.updateAgentAISettings", () => {
         model: "anthropic:claude-opus-4-6",
         thinkingLevel: "low",
       });
-      expect(info?.aiSettingsByAgent?.auto).toBeUndefined();
+      expect(info?.aiSettingsByAgent?.exec).toBeUndefined();
     } finally {
       await cleanupTestEnvironment(env);
       await cleanupTempGitRepo(tempGitRepo);

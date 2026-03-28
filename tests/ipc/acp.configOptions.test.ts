@@ -41,15 +41,6 @@ const DEFAULT_AGENT_DESCRIPTORS: Awaited<ReturnType<ORPCClient["agents"]["list"]
     subagentRunnable: true,
   },
   {
-    id: "auto",
-    scope: "built-in",
-    name: "Auto",
-    description: "Automatically selects the best agent for your task",
-    uiSelectable: true,
-    uiRoutable: true,
-    subagentRunnable: false,
-  },
-  {
     id: "explore",
     scope: "built-in",
     name: "Explore",
@@ -208,10 +199,7 @@ describe("ACP config options", () => {
     expect(agentModeEntries.find((entry) => entry.value === "plan")?.description).toBe(
       "Create a plan before coding"
     );
-    expect(agentModeEntries.find((entry) => entry.value === "auto")?.description).toBe(
-      "Automatically selects the best agent for your task"
-    );
-    expect(agentModeEntries.map((entry) => entry.value)).toEqual(["exec", "plan", "auto"]);
+    expect(agentModeEntries.map((entry) => entry.value)).toEqual(["exec", "plan"]);
 
     const thinkingOption = getSelectConfigOption(options, "thinkingLevel");
     const thinkingEntries = flattenSelectOptions(thinkingOption);
@@ -303,7 +291,7 @@ describe("ACP config options", () => {
     });
   });
 
-  it("maps legacy ask mode to auto when ask is no longer selectable", async () => {
+  it("maps legacy ask mode to exec when ask is no longer selectable", async () => {
     const harness = createHarness({
       agentId: "ask",
       aiSettings: {
@@ -315,21 +303,17 @@ describe("ACP config options", () => {
           model: "anthropic:claude-opus-4-6",
           thinkingLevel: "low",
         },
-        auto: {
-          model: "anthropic:claude-sonnet-4-5",
-          thinkingLevel: "high",
-        },
       },
     });
 
     const options = await buildConfigOptions(harness.client, "ws-1");
     const agentModeOption = getSelectConfigOption(options, AGENT_MODE_CONFIG_ID);
-    expect(agentModeOption.currentValue).toBe("auto");
+    expect(agentModeOption.currentValue).toBe("exec");
 
     const updated = await handleSetConfigOption(harness.client, "ws-1", "thinkingLevel", "off");
 
-    expect(harness.updateAgentCalls).toHaveLength(1);
-    expect(harness.updateAgentCalls[0]?.agentId).toBe("auto");
+    expect(harness.updateModeCalls).toHaveLength(1);
+    expect(harness.updateModeCalls[0]?.mode).toBe("exec");
 
     const updatedThinkingOption = getSelectConfigOption(updated, "thinkingLevel");
     expect(updatedThinkingOption.currentValue).toBe("off");
@@ -379,7 +363,7 @@ describe("ACP config options", () => {
     expect(updatedThinkingOption.currentValue).toBe("off");
   });
 
-  it("ignores legacy ask AI settings when legacy ask mode remaps to auto", async () => {
+  it("ignores legacy ask AI settings when legacy ask mode remaps to exec", async () => {
     const harness = createHarness({
       agentId: "ask",
       aiSettings: {
