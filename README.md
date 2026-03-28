@@ -68,12 +68,8 @@ macOS and Linux.
 </td>
 </tr>
 <tr>
-<td align="center" width="50%">
-<img src="./docs/img/auto-mode.webp" alt="Screenshot of auto mode" width="100%" /><br>
-<sub>Auto mode intelligently switches agent types for the best results</sub>
-</td>
-<td align="center" width="50%">
-<img src="./docs/img/costs-tab.webp" alt="Screenshot of costs table" width="100%" /><br>
+<td align="center" colspan="2">
+<img src="./docs/img/costs-tab.webp" alt="Screenshot of costs table" width="50%" /><br>
 <sub>Stay looped in on costs and token consumption</sub>
 </td>
 </tr>

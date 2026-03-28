@@ -459,17 +459,6 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     initialAgentDefinitions ??
     ([
       {
-        id: "auto",
-        scope: "built-in",
-        name: "Auto",
-        description: "Intelligently switch agent types to provide the best results.",
-        uiSelectable: true,
-        uiRoutable: true,
-        subagentRunnable: false,
-        base: "exec",
-        uiColor: "var(--color-auto-mode)",
-      },
-      {
         id: "plan",
         scope: "built-in",
         name: "Plan",

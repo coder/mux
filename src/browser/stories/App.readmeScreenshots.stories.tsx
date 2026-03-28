@@ -38,13 +38,8 @@ import {
   LEFT_SIDEBAR_COLLAPSED_KEY,
   RIGHT_SIDEBAR_TAB_KEY,
   RIGHT_SIDEBAR_WIDTH_KEY,
-  getAgentIdKey,
-  getModelKey,
-  getProjectScopeId,
   getRightSidebarLayoutKey,
-  getThinkingLevelKey,
 } from "@/common/constants/storage";
-import { DEFAULT_MODEL } from "@/common/constants/knownModels";
 import type { TodoItem } from "@/common/types/tools";
 import { deriveTodoStatus } from "@/common/utils/todoList";
 
@@ -966,94 +961,6 @@ graph TD
             ])
           ),
           sessionUsage,
-        });
-      }}
-    />
-  ),
-};
-
-// README: docs/img/auto-mode.webp
-// Zoomed-in creation view that highlights project-scoped defaults before first send:
-// Auto agent mode, Claude Sonnet 4.6, and MAX thinking.
-export const AutoModeAgentSwitching: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() => {
-        const projectScopeId = getProjectScopeId(README_PROJECT_PATH);
-
-        // Seed creation-mode controls so the screenshot shows the exact requested defaults.
-        window.localStorage.setItem(getAgentIdKey(projectScopeId), JSON.stringify("auto"));
-        window.localStorage.setItem(getModelKey(projectScopeId), JSON.stringify(DEFAULT_MODEL));
-        window.localStorage.setItem(getThinkingLevelKey(projectScopeId), JSON.stringify("xhigh"));
-
-        expandProjects([README_PROJECT_PATH]);
-        collapseRightSidebar();
-
-        return createMockORPCClient({
-          projects: new Map([[README_PROJECT_PATH, { workspaces: [] }]]),
-          workspaces: [],
-          agentDefinitions: [
-            {
-              id: "exec",
-              scope: "built-in",
-              name: "Exec",
-              description: "Implement changes in the repository",
-              uiSelectable: true,
-              uiRoutable: true,
-              subagentRunnable: true,
-              uiColor: "var(--color-exec-mode)",
-            },
-            {
-              id: "plan",
-              scope: "built-in",
-              name: "Plan",
-              description: "Create a plan before coding",
-              uiSelectable: true,
-              uiRoutable: true,
-              subagentRunnable: false,
-              base: "plan",
-              uiColor: "var(--color-plan-mode)",
-            },
-            {
-              id: "auto",
-              scope: "built-in",
-              name: "Auto",
-              description: "Intelligently switch agent types to provide the best results.",
-              uiSelectable: true,
-              uiRoutable: true,
-              subagentRunnable: false,
-              base: "exec",
-              uiColor: "var(--color-auto-mode)",
-            },
-            {
-              id: "compact",
-              scope: "built-in",
-              name: "Compact",
-              description: "History compaction (internal)",
-              uiSelectable: false,
-              uiRoutable: false,
-              subagentRunnable: false,
-            },
-            {
-              id: "explore",
-              scope: "built-in",
-              name: "Explore",
-              description: "Read-only repository exploration",
-              uiSelectable: false,
-              uiRoutable: false,
-              subagentRunnable: true,
-              base: "exec",
-            },
-            {
-              id: "mux",
-              scope: "built-in",
-              name: "Chat With Mux",
-              description: "Configure global Mux settings",
-              uiSelectable: false,
-              uiRoutable: false,
-              subagentRunnable: false,
-            },
-          ],
         });
       }}
     />
