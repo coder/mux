@@ -37,6 +37,7 @@ import * as runtimeFactory from "@/node/runtime/runtimeFactory";
 import * as bashToolModule from "@/node/services/tools/bash";
 import * as forkOrchestratorModule from "@/node/services/utils/forkOrchestrator";
 import * as runtimeExecHelpers from "@/node/utils/runtime/helpers";
+import * as removeManagedGitWorktreeModule from "@/node/worktree/removeManagedGitWorktree";
 import * as workspaceTitleGenerator from "./workspaceTitleGenerator";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 
@@ -3729,6 +3730,7 @@ describe("WorkspaceService deleteWorktree", () => {
   });
 
   afterEach(async () => {
+    mock.restore();
     await cleanupHistory();
     await fsPromises.rm(tempSrcBaseDir, { recursive: true, force: true });
   });
@@ -3805,10 +3807,17 @@ describe("WorkspaceService deleteWorktree", () => {
       archivedAt: "2026-03-01T00:00:00.000Z",
     });
     await fsPromises.mkdir(managedPath, { recursive: true });
+    const removeManagedGitWorktreeSpy = spyOn(
+      removeManagedGitWorktreeModule,
+      "removeManagedGitWorktree"
+    ).mockImplementation(async (_projectPath, worktreePath) => {
+      await fsPromises.rm(worktreePath, { recursive: true, force: true });
+    });
 
     const result = await workspaceService.deleteWorktree(workspaceId);
 
     expect(result).toEqual(Ok(undefined));
+    expect(removeManagedGitWorktreeSpy).toHaveBeenCalledWith(projectPath, managedPath);
     expect(
       await fsPromises
         .access(managedPath)
@@ -3822,12 +3831,15 @@ describe("WorkspaceService deleteWorktree", () => {
     const { workspaceService, metadataEvents, managedPath } = createHarness({
       archivedAt: "2026-03-01T00:00:00.000Z",
     });
-    const rmSpy = spyOn(fsPromises, "rm");
+    const removeManagedGitWorktreeSpy = spyOn(
+      removeManagedGitWorktreeModule,
+      "removeManagedGitWorktree"
+    ).mockResolvedValue(undefined);
 
     const result = await workspaceService.deleteWorktree(workspaceId);
 
     expect(result).toEqual(Ok(undefined));
-    expect(rmSpy).not.toHaveBeenCalledWith(managedPath, expect.anything());
+    expect(removeManagedGitWorktreeSpy).toHaveBeenCalledWith(projectPath, managedPath);
     expect(metadataEvents.at(-1)?.transcriptOnly).toBe(true);
   });
 

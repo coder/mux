@@ -283,6 +283,8 @@ export function GeneralSection() {
   );
 
   const handleDeleteWorktreeOnArchiveChange = (checked: boolean) => {
+    // Invalidate any in-flight archive config load so it does not overwrite the user's toggle.
+    archiveBehaviorLoadNonceRef.current++;
     setDeleteWorktreeOnArchive(checked);
     deleteWorktreeOnArchiveRef.current = checked;
 

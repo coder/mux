@@ -5,7 +5,10 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
 import type { APIClient } from "@/browser/contexts/API";
 import { ThemeProvider } from "@/browser/contexts/ThemeContext";
-import type { CoderWorkspaceArchiveBehavior } from "@/common/config/coderArchiveBehavior";
+import {
+  DEFAULT_CODER_ARCHIVE_BEHAVIOR,
+  type CoderWorkspaceArchiveBehavior,
+} from "@/common/config/coderArchiveBehavior";
 
 interface MockAPIContextValue {
   api: APIClient;
@@ -162,5 +165,54 @@ describe("GeneralSection", () => {
     });
 
     expect(toggle.getAttribute("aria-checked")).toBe("true");
+  });
+
+  test("keeps the delete-worktree toggle after the user changes it before config finishes loading", async () => {
+    const api = setupSettingsStory({});
+    const originalGetConfig = api.config.getConfig;
+    const loadedConfig = await originalGetConfig();
+    let resolveGetConfig: ((value: typeof loadedConfig) => void) | undefined;
+    api.config.getConfig = mock(
+      () =>
+        new Promise<typeof loadedConfig>((resolve) => {
+          resolveGetConfig = resolve;
+        })
+    );
+
+    const originalUpdateCoderPrefs = api.config.updateCoderPrefs;
+    const updateCoderPrefsMock = mock(
+      (input: {
+        coderWorkspaceArchiveBehavior: CoderWorkspaceArchiveBehavior;
+        deleteWorktreeOnArchive: boolean;
+      }) => originalUpdateCoderPrefs(input)
+    );
+    api.config.updateCoderPrefs = updateCoderPrefsMock;
+
+    const view = render(
+      <ThemeProvider forcedTheme="dark">
+        <SettingsSectionStory setup={() => api}>
+          <GeneralSection />
+        </SettingsSectionStory>
+      </ThemeProvider>
+    );
+
+    const toggle = view.getByRole("switch", { name: "Toggle Delete worktree on archive" });
+    fireEvent.click(toggle);
+
+    await waitFor(() => {
+      expect(updateCoderPrefsMock).toHaveBeenCalledWith({
+        coderWorkspaceArchiveBehavior: DEFAULT_CODER_ARCHIVE_BEHAVIOR,
+        deleteWorktreeOnArchive: true,
+      });
+    });
+
+    resolveGetConfig?.({
+      ...loadedConfig,
+      deleteWorktreeOnArchive: false,
+    });
+
+    await waitFor(() => {
+      expect(toggle.getAttribute("aria-checked")).toBe("true");
+    });
   });
 });

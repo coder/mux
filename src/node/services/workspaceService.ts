@@ -65,6 +65,7 @@ import {
 } from "@/node/runtime/devcontainerCli";
 import { isWorktreeRuntime } from "@/node/runtime/worktreeLifecycleHooks";
 import { expandTilde, expandTildeForSSH } from "@/node/runtime/tildeExpansion";
+import { removeManagedGitWorktree } from "@/node/worktree/removeManagedGitWorktree";
 
 import { ContainerManager } from "@/node/multiProject/containerManager";
 
@@ -3802,17 +3803,7 @@ export class WorkspaceService extends EventEmitter {
         workspaceMetadata.projectName,
         workspaceMetadata.name
       );
-      const managedPathExists = await fsPromises
-        .access(managedPath)
-        .then(() => true)
-        .catch(() => false);
-
-      if (!managedPathExists) {
-        await this.emitCurrentWorkspaceMetadata(workspaceId);
-        return Ok(undefined);
-      }
-
-      await fsPromises.rm(managedPath, { recursive: true, force: true });
+      await removeManagedGitWorktree(workspaceMetadata.projectPath, managedPath);
       await this.emitCurrentWorkspaceMetadata(workspaceId);
       return Ok(undefined);
     } catch (error) {

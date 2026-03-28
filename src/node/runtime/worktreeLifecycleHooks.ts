@@ -1,9 +1,9 @@
-import * as fs from "node:fs";
 import * as path from "node:path";
 import { Ok, type Result } from "@/common/types/result";
 import { isWorktreeRuntime as isCommonWorktreeRuntime } from "@/common/types/runtime";
 import type { BeforeArchiveHook } from "@/node/services/workspaceLifecycleHooks";
 import { log } from "@/node/services/log";
+import { removeManagedGitWorktree } from "@/node/worktree/removeManagedGitWorktree";
 
 export const isWorktreeRuntime = isCommonWorktreeRuntime;
 
@@ -26,17 +26,9 @@ export function createWorktreeArchiveHook(options: {
       workspaceMetadata.name
     );
 
-    const managedPathExists = await fs.promises
-      .access(managedPath)
-      .then(() => true)
-      .catch(() => false);
-    if (!managedPathExists) {
-      return Ok(undefined);
-    }
-
     try {
       // Archive should stay non-blocking even if managed worktree cleanup fails.
-      await fs.promises.rm(managedPath, { recursive: true, force: true });
+      await removeManagedGitWorktree(workspaceMetadata.projectPath, managedPath);
     } catch (error) {
       log.debug("Failed to delete managed worktree during archive", {
         managedPath,
