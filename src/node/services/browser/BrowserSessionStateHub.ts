@@ -21,8 +21,11 @@ interface SessionEntry {
   bootstrapPromise: Promise<void> | null;
   pollInFlight: boolean;
   pollRequestId: number;
-  activeCommandCount: number;
   commandGeneration: number;
+  // Track every in-flight command token so late completions from the same entry can
+  // still clear loading state without allowing tokens from a deleted entry lifecycle
+  // to mutate the recreated entry.
+  outstandingTokens: Set<number>;
 }
 
 export interface BrowserSessionStateHubOptions {
@@ -96,13 +99,17 @@ export class BrowserSessionStateHub {
       return -1;
     }
 
-    entry.activeCommandCount += 1;
     const token = this.nextCommandToken++;
     assert(
       Number.isSafeInteger(token) && token > 0,
       "BrowserSessionStateHub command token must stay a positive safe integer"
     );
     entry.commandGeneration = token;
+    entry.outstandingTokens.add(token);
+    assert(
+      entry.outstandingTokens.has(token),
+      "BrowserSessionStateHub must track every in-flight command token"
+    );
     entry.generation += 1;
     this.publish(sessionKey, entry, {
       type: "page_state",
@@ -122,8 +129,10 @@ export class BrowserSessionStateHub {
     this.assertValidSessionIdentifiers(workspaceId, sessionName);
     this.assertValidUrl(url);
     assert(
-      commandToken === undefined || Number.isInteger(commandToken),
-      "BrowserSessionStateHub commandToken must be an integer when provided"
+      commandToken === undefined ||
+        commandToken === -1 ||
+        (Number.isSafeInteger(commandToken) && commandToken > 0),
+      "BrowserSessionStateHub commandToken must be -1 or a positive safe integer when provided"
     );
 
     const sessionKey = this.createSessionKey(workspaceId, sessionName);
@@ -139,19 +148,24 @@ export class BrowserSessionStateHub {
       return;
     }
 
-    // Stale tokens belong to a previous session entry lifecycle — reject entirely.
-    // With global monotonic command tokens, a stale token can never be from the same
-    // entry, only from a deleted-and-recreated entry whose count no longer exists.
-    if (commandToken !== undefined && commandToken !== entry.commandGeneration) {
+    // If a token is no longer outstanding, it belongs to an earlier deleted entry
+    // lifecycle and must not change the recreated entry's loading count or URL.
+    if (commandToken !== undefined && !entry.outstandingTokens.has(commandToken)) {
       return;
     }
 
     if (commandToken !== undefined) {
-      entry.activeCommandCount = Math.max(0, entry.activeCommandCount - 1);
+      entry.outstandingTokens.delete(commandToken);
     }
 
-    const isLoading = entry.activeCommandCount > 0;
-    const resolvedUrl = url !== undefined ? url : entry.state.url;
+    const isLatestCommand = commandToken !== undefined && commandToken === entry.commandGeneration;
+    const resolvedUrl =
+      commandToken === undefined
+        ? (url ?? entry.state.url)
+        : isLatestCommand && url !== undefined
+          ? url
+          : entry.state.url;
+    const isLoading = entry.outstandingTokens.size > 0;
     entry.generation += 1;
     this.publish(sessionKey, entry, {
       type: "page_state",
@@ -217,8 +231,8 @@ export class BrowserSessionStateHub {
       bootstrapPromise: null,
       pollInFlight: false,
       pollRequestId: 0,
-      activeCommandCount: 0,
       commandGeneration: 0,
+      outstandingTokens: new Set<number>(),
     };
     this.sessionEntries.set(sessionKey, entry);
     return entry;
@@ -345,7 +359,7 @@ export class BrowserSessionStateHub {
       return;
     }
 
-    const isLoading = currentEntry.activeCommandCount > 0;
+    const isLoading = currentEntry.outstandingTokens.size > 0;
     const shouldPublish =
       !currentEntry.hasSnapshot ||
       currentEntry.state.url !== urlResult.url ||
