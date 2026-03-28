@@ -1,7 +1,7 @@
 import type { FrontendWorkspaceMetadata, WorkspaceMetadata } from "@/common/types/workspace";
 import { Ok, type Result } from "@/common/types/result";
 import { isWorktreeRuntime as isCommonWorktreeRuntime } from "@/common/types/runtime";
-import type { BeforeArchiveHook } from "@/node/services/workspaceLifecycleHooks";
+import type { AfterArchiveHook } from "@/node/services/workspaceLifecycleHooks";
 import { log } from "@/node/services/log";
 import { removeManagedGitWorktree } from "@/node/worktree/removeManagedGitWorktree";
 
@@ -15,7 +15,7 @@ export const isWorktreeRuntime = isCommonWorktreeRuntime;
 
 export function createWorktreeArchiveHook(options: {
   getDeleteWorktreeOnArchive: () => boolean;
-}): BeforeArchiveHook {
+}): AfterArchiveHook {
   return async ({ workspaceMetadata }): Promise<Result<void>> => {
     const runtimeConfig = workspaceMetadata.runtimeConfig;
     if (!isWorktreeRuntime(runtimeConfig)) {

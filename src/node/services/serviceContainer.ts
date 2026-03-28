@@ -308,7 +308,7 @@ export class ServiceContainer {
     );
     const getDeleteWorktreeOnArchive = () =>
       this.config.loadConfigOrDefault().deleteWorktreeOnArchive === true;
-    workspaceLifecycleHooks.registerBeforeArchive(
+    workspaceLifecycleHooks.registerAfterArchive(
       createWorktreeArchiveHook({ getDeleteWorktreeOnArchive })
     );
     this.workspaceService.setWorkspaceLifecycleHooks(workspaceLifecycleHooks);

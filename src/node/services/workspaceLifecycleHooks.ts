@@ -11,6 +11,13 @@ export interface BeforeArchiveHookArgs {
 
 export type BeforeArchiveHook = (args: BeforeArchiveHookArgs) => Promise<Result<void>>;
 
+export interface AfterArchiveHookArgs {
+  workspaceId: string;
+  workspaceMetadata: WorkspaceMetadata;
+}
+
+export type AfterArchiveHook = (args: AfterArchiveHookArgs) => Promise<Result<void>>;
+
 export interface AfterUnarchiveHookArgs {
   workspaceId: string;
   workspaceMetadata: WorkspaceMetadata;
@@ -30,14 +37,20 @@ function sanitizeErrorMessage(error: unknown): string {
  *
  * Hooks run in-process (sequentially).
  * - beforeArchive hooks may block the operation if they return Err.
+ * - afterArchive hooks are best-effort and never block archive.
  * - afterUnarchive hooks are best-effort and never block unarchive.
  */
 export class WorkspaceLifecycleHooks {
   private readonly beforeArchiveHooks: BeforeArchiveHook[] = [];
+  private readonly afterArchiveHooks: AfterArchiveHook[] = [];
   private readonly afterUnarchiveHooks: AfterUnarchiveHook[] = [];
 
   registerBeforeArchive(hook: BeforeArchiveHook): void {
     this.beforeArchiveHooks.push(hook);
+  }
+
+  registerAfterArchive(hook: AfterArchiveHook): void {
+    this.afterArchiveHooks.push(hook);
   }
 
   registerAfterUnarchive(hook: AfterUnarchiveHook): void {
@@ -57,6 +70,25 @@ export class WorkspaceLifecycleHooks {
     }
 
     return Ok(undefined);
+  }
+
+  async runAfterArchive(args: AfterArchiveHookArgs): Promise<void> {
+    for (const hook of this.afterArchiveHooks) {
+      try {
+        const result = await hook(args);
+        if (!result.success) {
+          log.debug("afterArchive hook failed", {
+            workspaceId: args.workspaceId,
+            error: sanitizeErrorMessage(result.error),
+          });
+        }
+      } catch (error) {
+        log.debug("afterArchive hook threw", {
+          workspaceId: args.workspaceId,
+          error: sanitizeErrorMessage(error),
+        });
+      }
+    }
   }
 
   async runAfterUnarchive(args: AfterUnarchiveHookArgs): Promise<void> {

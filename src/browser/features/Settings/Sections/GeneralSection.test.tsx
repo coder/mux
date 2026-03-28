@@ -296,6 +296,48 @@ describe("GeneralSection", () => {
     });
   });
 
+  test("re-enables archive settings with defaults after config load errors", async () => {
+    const { api, updateCoderPrefsMock } = createMockAPI({
+      deleteWorktreeOnArchive: false,
+    });
+    let rejectGetConfig: ((error?: unknown) => void) | undefined;
+    api.config.getConfig = mock(
+      () =>
+        new Promise<MockConfig>((_resolve, reject) => {
+          rejectGetConfig = reject;
+        })
+    );
+    mockApi = api;
+
+    const view = render(
+      <ThemeProvider forcedTheme="dark">
+        <GeneralSection />
+      </ThemeProvider>
+    );
+
+    await waitFor(() => {
+      expect(rejectGetConfig).toBeDefined();
+    });
+
+    const toggle = view.getByRole("switch", { name: "Toggle Delete worktree on archive" });
+    expect(toggle.hasAttribute("disabled")).toBe(true);
+
+    rejectGetConfig?.(new Error("config read failed"));
+
+    await waitFor(() => {
+      expect(toggle.hasAttribute("disabled")).toBe(false);
+    });
+
+    fireEvent.click(toggle);
+
+    await waitFor(() => {
+      expect(updateCoderPrefsMock).toHaveBeenCalledWith({
+        coderWorkspaceArchiveBehavior: DEFAULT_CODER_ARCHIVE_BEHAVIOR,
+        deleteWorktreeOnArchive: true,
+      });
+    });
+  });
+
   test("disables archive settings until config finishes loading", async () => {
     const { api, getConfigMock, updateCoderPrefsMock } = createMockAPI({
       deleteWorktreeOnArchive: false,

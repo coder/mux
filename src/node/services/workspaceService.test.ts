@@ -3417,6 +3417,27 @@ describe("WorkspaceService archive lifecycle hooks", () => {
     expect(entry?.archivedAt).toBeTruthy();
     expect(entry?.archivedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
+  test("persists archivedAt before afterArchive hooks run and treats hook failures as best-effort", async () => {
+    const hooks = new WorkspaceLifecycleHooks();
+
+    const afterHook = mock(() => {
+      const entry = configState.projects.get(projectPath)?.workspaces[0];
+      expect(entry?.archivedAt).toBeTruthy();
+      return Promise.resolve(Err("hook failed"));
+    });
+    hooks.registerAfterArchive(afterHook);
+
+    workspaceService.setWorkspaceLifecycleHooks(hooks);
+
+    const result = await workspaceService.archive(workspaceId);
+
+    expect(result.success).toBe(true);
+    expect(afterHook).toHaveBeenCalledTimes(1);
+
+    const entry = configState.projects.get(projectPath)?.workspaces[0];
+    expect(entry?.archivedAt).toBeTruthy();
+    expect(entry?.archivedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
 });
 
 describe("WorkspaceService archive init cancellation", () => {

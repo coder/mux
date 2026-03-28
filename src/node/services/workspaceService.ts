@@ -3683,6 +3683,32 @@ export class WorkspaceService extends EventEmitter {
         }
       }
 
+      // Lifecycle hooks run after we persist archivedAt.
+      //
+      // Why best-effort: Archive should stay successful once the archived state is durable, even if
+      // follow-up cleanup like managed worktree deletion fails.
+      if (this.workspaceLifecycleHooks) {
+        let hookMetadata: WorkspaceMetadata | undefined = updatedMetadata;
+        if (!hookMetadata) {
+          const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
+          if (!metadataResult.success) {
+            log.debug("Failed to load workspace metadata for afterArchive hook", {
+              workspaceId,
+              error: metadataResult.error,
+            });
+          } else {
+            hookMetadata = metadataResult.data;
+          }
+        }
+
+        if (hookMetadata) {
+          await this.workspaceLifecycleHooks.runAfterArchive({
+            workspaceId,
+            workspaceMetadata: hookMetadata,
+          });
+        }
+      }
+
       return Ok(undefined);
     } catch (error) {
       const message = getErrorMessage(error);

@@ -243,8 +243,11 @@ export function GeneralSection() {
         }
       })
       .catch(() => {
-        // Keep archive controls disabled if config fails to load so we never overwrite the paired
-        // setting with a default value before reading the persisted value at least once.
+        if (archiveBehaviorNonce === archiveBehaviorLoadNonceRef.current) {
+          // Fall back to the safe defaults already in state so the controls can recover after a
+          // config read failure and the next user change can persist a fresh value.
+          setArchiveSettingsLoaded(true);
+        }
       });
   }, [api]);
 
