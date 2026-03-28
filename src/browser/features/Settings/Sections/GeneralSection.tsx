@@ -192,6 +192,7 @@ export function GeneralSection() {
   const [archiveBehavior, setArchiveBehavior] = useState<CoderWorkspaceArchiveBehavior>(
     DEFAULT_CODER_ARCHIVE_BEHAVIOR
   );
+  const [deleteWorktreeOnArchive, setDeleteWorktreeOnArchive] = useState(false);
   const [llmDebugLogs, setLlmDebugLogs] = useState(false);
   const archiveBehaviorLoadNonceRef = useRef(0);
   const deleteWorktreeOnArchiveRef = useRef(false);
@@ -224,7 +225,9 @@ export function GeneralSection() {
               ? cfg.coderWorkspaceArchiveBehavior
               : DEFAULT_CODER_ARCHIVE_BEHAVIOR
           );
-          deleteWorktreeOnArchiveRef.current = cfg.deleteWorktreeOnArchive === true;
+          const shouldDeleteWorktreeOnArchive = cfg.deleteWorktreeOnArchive === true;
+          setDeleteWorktreeOnArchive(shouldDeleteWorktreeOnArchive);
+          deleteWorktreeOnArchiveRef.current = shouldDeleteWorktreeOnArchive;
         }
 
         // Use an independent nonce so debug-log toggles do not discard archive-setting updates.
@@ -278,6 +281,24 @@ export function GeneralSection() {
     },
     [api]
   );
+
+  const handleDeleteWorktreeOnArchiveChange = async (checked: boolean) => {
+    setDeleteWorktreeOnArchive(checked);
+    deleteWorktreeOnArchiveRef.current = checked;
+
+    if (!api?.config?.updateCoderPrefs) {
+      return;
+    }
+
+    try {
+      await api.config.updateCoderPrefs({
+        coderWorkspaceArchiveBehavior: archiveBehavior,
+        deleteWorktreeOnArchive: checked,
+      });
+    } catch {
+      // Best-effort only.
+    }
+  };
 
   const handleLlmDebugLogsChange = (checked: boolean) => {
     // Invalidate any in-flight debug-log load so it doesn't overwrite the user's selection.
@@ -570,6 +591,22 @@ export function GeneralSection() {
             ))}
           </SelectContent>
         </Select>
+      </div>
+
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex-1 pr-4">
+          <div className="text-foreground text-sm">Delete worktree on archive</div>
+          <div className="text-muted mt-0.5 text-xs">
+            When enabled, mux-managed worktrees are deleted when archiving a workspace; the
+            transcript and usage history are preserved.
+          </div>
+        </div>
+        <Switch
+          checked={deleteWorktreeOnArchive}
+          onCheckedChange={handleDeleteWorktreeOnArchiveChange}
+          disabled={!api?.config?.updateCoderPrefs}
+          aria-label="Toggle Delete worktree on archive"
+        />
       </div>
 
       {isBrowserMode && sshHostLoaded && (
