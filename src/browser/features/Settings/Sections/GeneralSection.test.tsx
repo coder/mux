@@ -75,12 +75,7 @@ function createCustomEventPolyfill(
       this.detail = params?.detail as T;
     }
 
-    initCustomEvent(
-      type: string,
-      bubbles?: boolean,
-      cancelable?: boolean,
-      detail?: T
-    ): void {
+    initCustomEvent(type: string, bubbles?: boolean, cancelable?: boolean, detail?: T): void {
       this.initEvent(type, bubbles ?? false, cancelable ?? false);
       this.detail = detail as T;
     }
@@ -97,14 +92,16 @@ function createMockAPI(configOverrides: Partial<MockConfig> = {}): MockAPISetup 
     ...configOverrides,
   };
 
-  const getConfigMock = mock(async () => ({ ...config }));
+  const getConfigMock = mock(() => Promise.resolve({ ...config }));
   const updateCoderPrefsMock = mock(
-    async (input: {
+    (input: {
       coderWorkspaceArchiveBehavior: CoderWorkspaceArchiveBehavior;
       deleteWorktreeOnArchive: boolean;
     }) => {
       config.coderWorkspaceArchiveBehavior = input.coderWorkspaceArchiveBehavior;
       config.deleteWorktreeOnArchive = input.deleteWorktreeOnArchive;
+
+      return Promise.resolve();
     }
   );
 
@@ -113,17 +110,19 @@ function createMockAPI(configOverrides: Partial<MockConfig> = {}): MockAPISetup 
       config: {
         getConfig: getConfigMock,
         updateCoderPrefs: updateCoderPrefsMock,
-        updateLlmDebugLogs: mock(async ({ enabled }: { enabled: boolean }) => {
+        updateLlmDebugLogs: mock(({ enabled }: { enabled: boolean }) => {
           config.llmDebugLogs = enabled;
+
+          return Promise.resolve();
         }),
       },
       server: {
-        getSshHost: mock(async () => null),
-        setSshHost: mock(async (_input: { sshHost: string | null }) => undefined),
+        getSshHost: mock(() => Promise.resolve(null)),
+        setSshHost: mock((_input: { sshHost: string | null }) => Promise.resolve()),
       },
       projects: {
-        getDefaultProjectDir: mock(async () => ""),
-        setDefaultProjectDir: mock(async (_input: { path: string }) => undefined),
+        getDefaultProjectDir: mock(() => Promise.resolve("")),
+        setDefaultProjectDir: mock((_input: { path: string }) => Promise.resolve()),
       },
     },
     getConfigMock,
