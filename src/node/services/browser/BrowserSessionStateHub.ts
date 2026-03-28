@@ -139,23 +139,15 @@ export class BrowserSessionStateHub {
       return;
     }
 
-    const isStaleCommand = commandToken !== undefined && commandToken !== entry.commandGeneration;
-    if (commandToken !== undefined) {
-      entry.activeCommandCount = Math.max(0, entry.activeCommandCount - 1);
+    // Stale tokens belong to a previous session entry lifecycle — reject entirely.
+    // With global monotonic command tokens, a stale token can never be from the same
+    // entry, only from a deleted-and-recreated entry whose count no longer exists.
+    if (commandToken !== undefined && commandToken !== entry.commandGeneration) {
+      return;
     }
 
-    if (isStaleCommand) {
-      // Stale completions still settle their in-flight counter, but must not overwrite the
-      // current page URL for a newer command generation.
-      if (entry.activeCommandCount === 0 && entry.state.isLoading) {
-        this.publish(sessionKey, entry, {
-          type: "page_state",
-          url: entry.state.url,
-          isLoading: false,
-          source: "command",
-        });
-      }
-      return;
+    if (commandToken !== undefined) {
+      entry.activeCommandCount = Math.max(0, entry.activeCommandCount - 1);
     }
 
     const isLoading = entry.activeCommandCount > 0;
