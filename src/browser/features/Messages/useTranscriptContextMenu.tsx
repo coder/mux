@@ -15,6 +15,7 @@ interface UseTranscriptContextMenuOptions {
   transcriptRootRef: React.RefObject<HTMLElement | null>;
   onQuoteText: (quotedText: string) => void;
   onCopyText?: (text: string) => Promise<void>;
+  hasInputTarget?: boolean;
 }
 
 interface UseTranscriptContextMenuReturn {
@@ -27,6 +28,7 @@ export function useTranscriptContextMenu(
 ): UseTranscriptContextMenuReturn {
   const transcriptMenu = useContextMenuPosition();
   const transcriptMenuTextRef = useRef<string>("");
+  const hasInputTarget = options.hasInputTarget ?? true;
 
   const handleTranscriptContextMenu = useCallback(
     (event: React.MouseEvent<HTMLElement>) => {
@@ -77,7 +79,13 @@ export function useTranscriptContextMenu(
         onOpenChange={transcriptMenu.onOpenChange}
         position={transcriptMenu.position}
       >
-        <PositionedMenuItem icon={<TextQuote />} label="Quote in input" onClick={handleQuoteText} />
+        {hasInputTarget ? (
+          <PositionedMenuItem
+            icon={<TextQuote />}
+            label="Quote in input"
+            onClick={handleQuoteText}
+          />
+        ) : null}
         <PositionedMenuItem icon={<Clipboard />} label="Copy text" onClick={handleCopyText} />
       </PositionedMenu>
     ),

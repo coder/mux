@@ -408,6 +408,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   const transcriptContextMenu = useTranscriptContextMenu({
     transcriptRootRef: contentRef,
     onQuoteText: handleQuoteText,
+    hasInputTarget: !transcriptOnly,
   });
 
   // ChatPane is keyed by workspaceId (WorkspaceShell), so per-workspace UI state naturally
