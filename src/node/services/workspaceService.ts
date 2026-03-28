@@ -3798,11 +3798,7 @@ export class WorkspaceService extends EventEmitter {
         return Err("Deleting a managed worktree is only supported for worktree runtimes");
       }
 
-      const managedPath = path.join(
-        workspaceMetadata.runtimeConfig.srcBaseDir,
-        workspaceMetadata.projectName,
-        workspaceMetadata.name
-      );
+      const managedPath = workspaceMetadata.namedWorkspacePath;
       await removeManagedGitWorktree(workspaceMetadata.projectPath, managedPath);
       await this.emitCurrentWorkspaceMetadata(workspaceId);
       return Ok(undefined);

@@ -3747,7 +3747,7 @@ describe("WorkspaceService deleteWorktree", () => {
       type: "worktree",
       srcBaseDir: tempSrcBaseDir,
     };
-    const managedPath = path.join(tempSrcBaseDir, projectName, workspaceName);
+    const managedPath = path.join(tempSrcBaseDir, "_workspaces", workspaceName);
 
     const getCurrentMetadata = async (): Promise<FrontendWorkspaceMetadata> => {
       const transcriptOnly = await fsPromises

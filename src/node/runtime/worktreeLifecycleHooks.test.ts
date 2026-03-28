@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { Ok } from "@/common/types/result";
-import type { WorkspaceMetadata } from "@/common/types/workspace";
+import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { log } from "@/node/services/log";
 import * as disposableExec from "@/node/utils/disposableExec";
 import { GIT_NO_HOOKS_ENV } from "@/node/utils/gitNoHooksEnv";
@@ -27,27 +27,32 @@ function createMockExecResult(
   } as unknown as ReturnType<typeof disposableExec.execFileAsync>;
 }
 
-function createWorkspaceMetadata(overrides?: Partial<WorkspaceMetadata>): WorkspaceMetadata {
+function createWorkspaceMetadata(
+  overrides?: Partial<FrontendWorkspaceMetadata>
+): FrontendWorkspaceMetadata {
+  const runtimeConfig = overrides?.runtimeConfig ?? {
+    type: "worktree" as const,
+    srcBaseDir: "/tmp/src",
+  };
+  const name = overrides?.name ?? "workspace-name";
+  const defaultNamedWorkspacePath =
+    runtimeConfig.type === "worktree"
+      ? path.join(runtimeConfig.srcBaseDir, "_workspaces", name)
+      : path.join("/tmp", name);
+
   return {
     id: "ws",
-    name: "workspace-name",
+    name,
     projectName: "project-name",
     projectPath: "/tmp/project-name",
-    runtimeConfig: {
-      type: "worktree",
-      srcBaseDir: "/tmp/src",
-    },
+    runtimeConfig,
+    namedWorkspacePath: overrides?.namedWorkspacePath ?? defaultNamedWorkspacePath,
     ...overrides,
   };
 }
 
-function getManagedPath(workspaceMetadata: WorkspaceMetadata): string {
-  const runtimeConfig = workspaceMetadata.runtimeConfig;
-  if (!runtimeConfig || !("srcBaseDir" in runtimeConfig) || !runtimeConfig.srcBaseDir) {
-    throw new Error("Expected test metadata with srcBaseDir");
-  }
-
-  return path.join(runtimeConfig.srcBaseDir, workspaceMetadata.projectName, workspaceMetadata.name);
+function getManagedPath(workspaceMetadata: FrontendWorkspaceMetadata): string {
+  return workspaceMetadata.namedWorkspacePath;
 }
 
 async function pathExists(targetPath: string): Promise<boolean> {

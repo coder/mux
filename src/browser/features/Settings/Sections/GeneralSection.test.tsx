@@ -233,7 +233,7 @@ describe("GeneralSection", () => {
     });
   });
 
-  test("keeps the delete-worktree toggle after the user changes it before config finishes loading", async () => {
+  test("disables archive settings until config finishes loading", async () => {
     const api = setupSettingsStory({});
     const originalGetConfig = api.config.getConfig;
     const loadedConfig = await originalGetConfig();
@@ -262,23 +262,26 @@ describe("GeneralSection", () => {
       </ThemeProvider>
     );
 
-    const toggle = view.getByRole("switch", { name: "Toggle Delete worktree on archive" });
-    fireEvent.click(toggle);
-
     await waitFor(() => {
-      expect(updateCoderPrefsMock).toHaveBeenCalledWith({
-        coderWorkspaceArchiveBehavior: DEFAULT_CODER_ARCHIVE_BEHAVIOR,
-        deleteWorktreeOnArchive: true,
-      });
+      expect(resolveGetConfig).toBeDefined();
     });
+
+    const toggle = view.getByRole("switch", { name: "Toggle Delete worktree on archive" });
+    expect(toggle.hasAttribute("disabled")).toBe(true);
+
+    fireEvent.click(toggle);
+    expect(updateCoderPrefsMock).not.toHaveBeenCalled();
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
 
     resolveGetConfig?.({
       ...loadedConfig,
+      coderWorkspaceArchiveBehavior: "delete",
       deleteWorktreeOnArchive: false,
     });
 
     await waitFor(() => {
-      expect(toggle.getAttribute("aria-checked")).toBe("true");
+      expect(updateCoderPrefsMock).not.toHaveBeenCalled();
+      expect(toggle.getAttribute("aria-checked")).toBe("false");
     });
   });
 });
