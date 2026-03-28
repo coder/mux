@@ -83,6 +83,9 @@ import { recordSyntheticReactRenderSample } from "@/browser/utils/perf/reactProf
 // Perf e2e runs load the production bundle where React's onRender profiler callbacks may not
 // fire. This marker records synthetic commit timings for selected subtrees so automated perf
 // runs still capture render-path metrics for workspace-open regressions.
+const TRANSCRIPT_ONLY_NOTICE =
+  "This workspace's worktree is no longer available. This is a read-only chat transcript kept for historical and usage-tracking reasons.";
+
 function PerfRenderMarker(props: { id: string; children: React.ReactNode }): React.ReactElement {
   const renderStartTimeRef = useRef(performance.now());
   renderStartTimeRef.current = performance.now();
@@ -185,7 +188,10 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   const { autoBackgroundOnSend } = useBackgroundBashActions();
   const { clearError: clearBackgroundBashError } = useBackgroundBashError();
 
+  // Transcript-only workspaces preserve historical chat and usage after the worktree is deleted,
+  // so the transcript stays readable while new sends remain disabled.
   const meta = workspaceMetadata.get(workspaceId);
+  const transcriptOnly = meta?.transcriptOnly ?? false;
   const workspaceTitle = meta?.title ?? meta?.name ?? workspaceName;
   const isQueuedAgentTask = Boolean(meta?.parentWorkspaceId) && meta?.taskStatus === "queued";
   const queuedAgentTaskPrompt =
@@ -960,6 +966,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
             workspaceName={workspaceName}
             isStreamStarting={isStreamStarting}
             runtimeConfig={runtimeConfig}
+            transcriptOnly={transcriptOnly}
             isQueuedAgentTask={isQueuedAgentTask}
             isCompacting={isCompacting}
             canInterrupt={canInterrupt}
@@ -994,6 +1001,7 @@ interface ChatInputPaneProps {
   projectName: string;
   workspaceName: string;
   runtimeConfig?: RuntimeConfig;
+  transcriptOnly: boolean;
   isQueuedAgentTask: boolean;
   isCompacting: boolean;
   isStreamStarting: boolean;
@@ -1055,6 +1063,11 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
           This agent task is queued and will start automatically when a parallel slot is available.
         </div>
       )}
+      {props.transcriptOnly && (
+        <div className="border-border-medium bg-background-secondary text-muted rounded-md border px-3 py-2 text-xs">
+          {TRANSCRIPT_ONLY_NOTICE}
+        </div>
+      )}
       <ChatInput
         key={props.workspaceId}
         variant="workspace"
@@ -1063,11 +1076,18 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
         onMessageSent={props.onMessageSent}
         onTruncateHistory={props.onTruncateHistory}
         onModelChange={props.onModelChange}
-        disabled={!props.projectName || !props.workspaceName || props.isQueuedAgentTask}
+        disabled={
+          !props.projectName ||
+          !props.workspaceName ||
+          props.isQueuedAgentTask ||
+          props.transcriptOnly
+        }
         disabledReason={
-          props.isQueuedAgentTask
-            ? "Queued — waiting for an available parallel task slot. This will start automatically."
-            : undefined
+          props.transcriptOnly
+            ? TRANSCRIPT_ONLY_NOTICE
+            : props.isQueuedAgentTask
+              ? "Queued - waiting for an available parallel task slot. This will start automatically."
+              : undefined
         }
         isStreamStarting={props.isStreamStarting}
         isCompacting={props.isCompacting}

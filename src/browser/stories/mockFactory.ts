@@ -45,6 +45,7 @@ export interface WorkspaceFixture {
   createdAt?: string;
   bestOf?: FrontendWorkspaceMetadata["bestOf"];
   title?: string;
+  transcriptOnly?: boolean;
 }
 
 /** Create a workspace with sensible defaults */
@@ -64,6 +65,7 @@ export function createWorkspace(
     createdAt: opts.createdAt ?? new Date().toISOString(),
     title: opts.title,
     bestOf: opts.bestOf,
+    transcriptOnly: opts.transcriptOnly,
   };
 }
 
