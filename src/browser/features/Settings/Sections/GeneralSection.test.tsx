@@ -1,8 +1,51 @@
+import type { ReactNode } from "react";
+import { createContext, useContext } from "react";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
+import type { APIClient } from "@/browser/contexts/API";
 import { ThemeProvider } from "@/browser/contexts/ThemeContext";
 import type { CoderWorkspaceArchiveBehavior } from "@/common/config/coderArchiveBehavior";
+
+interface MockAPIContextValue {
+  api: APIClient;
+  status: "connected";
+  error: null;
+  authenticate: () => void;
+  retry: () => void;
+}
+
+const MockAPIContext = createContext<MockAPIContextValue | null>(null);
+
+void mock.module("@/browser/contexts/API", () => ({
+  APIProvider: (props: { client?: APIClient; children: ReactNode }) => {
+    if (!props.client) {
+      throw new Error("GeneralSection tests require an API client");
+    }
+
+    return (
+      <MockAPIContext.Provider
+        value={{
+          api: props.client,
+          status: "connected",
+          error: null,
+          authenticate: () => undefined,
+          retry: () => undefined,
+        }}
+      >
+        {props.children}
+      </MockAPIContext.Provider>
+    );
+  },
+  useAPI: () => {
+    const context = useContext(MockAPIContext);
+    if (!context) {
+      throw new Error("useAPI must be used within the mocked APIProvider");
+    }
+    return context;
+  },
+}));
+
 import { GeneralSection } from "./GeneralSection";
 import { SettingsSectionStory, setupSettingsStory } from "./settingsStoryUtils";
 
@@ -16,12 +59,16 @@ describe("GeneralSection", () => {
   let originalDocument: typeof globalThis.document;
   let originalNavigator: typeof globalThis.navigator;
   let originalLocalStorage: Storage;
+  let originalStorageEvent: typeof globalThis.StorageEvent;
+  let originalCustomEvent: typeof globalThis.CustomEvent;
 
   beforeEach(() => {
     originalWindow = globalThis.window;
     originalDocument = globalThis.document;
     originalNavigator = globalThis.navigator;
     originalLocalStorage = globalThis.localStorage;
+    originalStorageEvent = globalThis.StorageEvent;
+    originalCustomEvent = globalThis.CustomEvent;
 
     const window = new GlobalWindow({ url: "http://localhost" }) as unknown as Window &
       typeof globalThis;
@@ -30,6 +77,8 @@ describe("GeneralSection", () => {
     globalThis.document = window.document;
     globalThis.navigator = window.navigator;
     globalThis.localStorage = window.localStorage;
+    globalThis.StorageEvent = window.StorageEvent as unknown as typeof StorageEvent;
+    globalThis.CustomEvent = window.CustomEvent as unknown as typeof CustomEvent;
   });
 
   afterEach(() => {
@@ -38,6 +87,8 @@ describe("GeneralSection", () => {
     globalThis.document = originalDocument;
     globalThis.navigator = originalNavigator;
     globalThis.localStorage = originalLocalStorage;
+    globalThis.StorageEvent = originalStorageEvent;
+    globalThis.CustomEvent = originalCustomEvent;
   });
 
   function renderGeneralSection(options: RenderGeneralSectionOptions = {}) {
