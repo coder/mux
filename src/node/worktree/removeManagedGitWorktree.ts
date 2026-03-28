@@ -10,6 +10,15 @@ function isMissingWorktreeError(message: string): boolean {
   return MISSING_WORKTREE_ERROR_PATTERNS.some((pattern) => normalizedError.includes(pattern));
 }
 
+async function worktreePathExists(worktreePath: string): Promise<boolean> {
+  try {
+    await fsPromises.access(worktreePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function pruneWorktreesBestEffort(projectPath: string): Promise<void> {
   try {
     using pruneProc = execFileAsync("git", ["-C", projectPath, "worktree", "prune"], {
@@ -25,9 +34,7 @@ export async function removeManagedGitWorktree(
   projectPath: string,
   worktreePath: string
 ): Promise<void> {
-  try {
-    await fsPromises.access(worktreePath);
-  } catch {
+  if (!(await worktreePathExists(worktreePath))) {
     await pruneWorktreesBestEffort(projectPath);
     return;
   }
@@ -43,6 +50,10 @@ export async function removeManagedGitWorktree(
     await removeProc.result;
   } catch (error) {
     if (!isMissingWorktreeError(getErrorMessage(error))) {
+      throw error;
+    }
+
+    if (await worktreePathExists(worktreePath)) {
       throw error;
     }
 

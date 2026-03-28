@@ -167,6 +167,72 @@ describe("GeneralSection", () => {
     expect(toggle.getAttribute("aria-checked")).toBe("true");
   });
 
+  test("serializes rapid delete-worktree toggle writes so only the latest value is persisted", async () => {
+    const api = setupSettingsStory({});
+    let resolveFirstUpdate: (() => void) | undefined;
+    let resolveSecondUpdate: (() => void) | undefined;
+    const updateCoderPrefsMock = mock(
+      ({
+        coderWorkspaceArchiveBehavior: _coderWorkspaceArchiveBehavior,
+        deleteWorktreeOnArchive: _deleteWorktreeOnArchive,
+      }: {
+        coderWorkspaceArchiveBehavior: CoderWorkspaceArchiveBehavior;
+        deleteWorktreeOnArchive: boolean;
+      }) =>
+        new Promise<void>((resolve) => {
+          if (!resolveFirstUpdate) {
+            resolveFirstUpdate = resolve;
+            return;
+          }
+
+          resolveSecondUpdate = resolve;
+        })
+    );
+    api.config.updateCoderPrefs = updateCoderPrefsMock;
+
+    const view = render(
+      <ThemeProvider forcedTheme="dark">
+        <SettingsSectionStory setup={() => api}>
+          <GeneralSection />
+        </SettingsSectionStory>
+      </ThemeProvider>
+    );
+
+    const toggle = view.getByRole("switch", { name: "Toggle Delete worktree on archive" });
+    await waitFor(() => {
+      expect(toggle.getAttribute("aria-checked")).toBe("false");
+    });
+
+    fireEvent.click(toggle);
+
+    await waitFor(() => {
+      expect(updateCoderPrefsMock).toHaveBeenCalledTimes(1);
+      expect(updateCoderPrefsMock).toHaveBeenNthCalledWith(1, {
+        coderWorkspaceArchiveBehavior: DEFAULT_CODER_ARCHIVE_BEHAVIOR,
+        deleteWorktreeOnArchive: true,
+      });
+    });
+
+    fireEvent.click(toggle);
+    expect(updateCoderPrefsMock).toHaveBeenCalledTimes(1);
+
+    resolveFirstUpdate?.();
+
+    await waitFor(() => {
+      expect(updateCoderPrefsMock).toHaveBeenCalledTimes(2);
+      expect(updateCoderPrefsMock).toHaveBeenNthCalledWith(2, {
+        coderWorkspaceArchiveBehavior: DEFAULT_CODER_ARCHIVE_BEHAVIOR,
+        deleteWorktreeOnArchive: false,
+      });
+    });
+
+    resolveSecondUpdate?.();
+
+    await waitFor(() => {
+      expect(toggle.getAttribute("aria-checked")).toBe("false");
+    });
+  });
+
   test("keeps the delete-worktree toggle after the user changes it before config finishes loading", async () => {
     const api = setupSettingsStory({});
     const originalGetConfig = api.config.getConfig;

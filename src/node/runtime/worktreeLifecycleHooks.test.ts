@@ -203,7 +203,9 @@ describe("createWorktreeArchiveHook", () => {
 
         if (args[3] === "remove") {
           return createMockExecResult(
-            Promise.reject(new Error("fatal: '/missing' does not exist"))
+            rm(managedPath, { recursive: true, force: true }).then(() => {
+              throw new Error("fatal: '/missing' does not exist");
+            })
           );
         }
 
@@ -221,6 +223,46 @@ describe("createWorktreeArchiveHook", () => {
     expect(result).toEqual(Ok(undefined));
     expect(execFileAsyncSpy).toHaveBeenCalledTimes(2);
     expect(debugSpy).not.toHaveBeenCalled();
+  });
+
+  it("logs missing-worktree errors when the managed path still exists", async () => {
+    const srcBaseDir = await createTempRoot();
+    const workspaceMetadata = createWorkspaceMetadata({
+      runtimeConfig: { type: "worktree", srcBaseDir },
+    });
+    const managedPath = getManagedPath(workspaceMetadata);
+    const removeError = new Error("fatal: '/missing' does not exist");
+    await mkdir(managedPath, { recursive: true });
+
+    const execFileAsyncSpy = spyOn(disposableExec, "execFileAsync").mockImplementation(
+      (file, args, options) => {
+        expect(file).toBe("git");
+        expect(args).toEqual([
+          "-C",
+          workspaceMetadata.projectPath,
+          "worktree",
+          "remove",
+          "--force",
+          managedPath,
+        ]);
+        expect(options).toEqual({ env: GIT_NO_HOOKS_ENV });
+        return createMockExecResult(Promise.reject(removeError));
+      }
+    );
+    const debugSpy = spyOn(log, "debug").mockImplementation(() => undefined);
+    const hook = createWorktreeArchiveHook({
+      getDeleteWorktreeOnArchive: () => true,
+    });
+
+    const result = await hook({ workspaceId: workspaceMetadata.id, workspaceMetadata });
+
+    expect(result).toEqual(Ok(undefined));
+    expect(execFileAsyncSpy).toHaveBeenCalledTimes(1);
+    expect(debugSpy).toHaveBeenCalledWith(
+      "Failed to delete managed worktree during archive",
+      expect.objectContaining({ managedPath, error: removeError })
+    );
+    expect(await pathExists(managedPath)).toBe(true);
   });
 
   it("logs git worktree remove failures and still returns Ok", async () => {

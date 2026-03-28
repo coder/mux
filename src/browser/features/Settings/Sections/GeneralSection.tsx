@@ -195,6 +195,7 @@ export function GeneralSection() {
   const [deleteWorktreeOnArchive, setDeleteWorktreeOnArchive] = useState(false);
   const [llmDebugLogs, setLlmDebugLogs] = useState(false);
   const archiveBehaviorLoadNonceRef = useRef(0);
+  const archiveBehaviorRef = useRef<CoderWorkspaceArchiveBehavior>(DEFAULT_CODER_ARCHIVE_BEHAVIOR);
   const deleteWorktreeOnArchiveRef = useRef(false);
 
   const llmDebugLogsLoadNonceRef = useRef(0);
@@ -206,6 +207,7 @@ export function GeneralSection() {
   const archiveBehaviorPendingUpdateRef = useRef<CoderWorkspaceArchiveBehavior | undefined>(
     undefined
   );
+  const deleteWorktreeOnArchivePendingUpdateRef = useRef<boolean | undefined>(undefined);
 
   useEffect(() => {
     if (!api) {
@@ -220,11 +222,13 @@ export function GeneralSection() {
       .then((cfg) => {
         // If the user changed the setting while this request was in flight, keep the UI selection.
         if (archiveBehaviorNonce === archiveBehaviorLoadNonceRef.current) {
-          setArchiveBehavior(
-            isCoderWorkspaceArchiveBehavior(cfg.coderWorkspaceArchiveBehavior)
-              ? cfg.coderWorkspaceArchiveBehavior
-              : DEFAULT_CODER_ARCHIVE_BEHAVIOR
-          );
+          const nextArchiveBehavior = isCoderWorkspaceArchiveBehavior(
+            cfg.coderWorkspaceArchiveBehavior
+          )
+            ? cfg.coderWorkspaceArchiveBehavior
+            : DEFAULT_CODER_ARCHIVE_BEHAVIOR;
+          setArchiveBehavior(nextArchiveBehavior);
+          archiveBehaviorRef.current = nextArchiveBehavior;
           const shouldDeleteWorktreeOnArchive = cfg.deleteWorktreeOnArchive === true;
           setDeleteWorktreeOnArchive(shouldDeleteWorktreeOnArchive);
           deleteWorktreeOnArchiveRef.current = shouldDeleteWorktreeOnArchive;
@@ -240,67 +244,78 @@ export function GeneralSection() {
       });
   }, [api]);
 
+  const queueArchiveBehaviorUpdate = useCallback(() => {
+    if (!api?.config?.updateCoderPrefs) {
+      return;
+    }
+
+    archiveBehaviorUpdateChainRef.current = archiveBehaviorUpdateChainRef.current
+      .then(async () => {
+        // Drain pending refs so changes that happen while updateCoderPrefs is in-flight always
+        // schedule another serialized write with the latest combined preferences.
+        for (;;) {
+          const pendingArchiveBehavior = archiveBehaviorPendingUpdateRef.current;
+          const pendingDeleteWorktreeOnArchive = deleteWorktreeOnArchivePendingUpdateRef.current;
+          if (
+            pendingArchiveBehavior === undefined &&
+            pendingDeleteWorktreeOnArchive === undefined
+          ) {
+            return;
+          }
+
+          // Clear before awaiting so rapid changes coalesce into a new pending value.
+          archiveBehaviorPendingUpdateRef.current = undefined;
+          deleteWorktreeOnArchivePendingUpdateRef.current = undefined;
+
+          try {
+            await api.config.updateCoderPrefs({
+              coderWorkspaceArchiveBehavior: pendingArchiveBehavior ?? archiveBehaviorRef.current,
+              deleteWorktreeOnArchive:
+                pendingDeleteWorktreeOnArchive ?? deleteWorktreeOnArchiveRef.current,
+            });
+          } catch {
+            // Best-effort only. Swallow errors so the queue doesn't get stuck.
+          }
+        }
+      })
+      .catch(() => {
+        // Best-effort only.
+      });
+  }, [api]);
+
   const handleArchiveBehaviorChange = useCallback(
     (behavior: CoderWorkspaceArchiveBehavior) => {
       // Invalidate any in-flight initial load so it doesn't overwrite the user's selection.
       archiveBehaviorLoadNonceRef.current++;
       setArchiveBehavior(behavior);
+      archiveBehaviorRef.current = behavior;
 
       if (!api?.config?.updateCoderPrefs) {
         return;
       }
 
       archiveBehaviorPendingUpdateRef.current = behavior;
-
-      archiveBehaviorUpdateChainRef.current = archiveBehaviorUpdateChainRef.current
-        .then(async () => {
-          // Drain the pending ref so a change that happens while updateCoderPrefs is in-flight
-          // doesn't get stranded without a subsequent write scheduled.
-          for (;;) {
-            const pending = archiveBehaviorPendingUpdateRef.current;
-            if (pending === undefined) {
-              return;
-            }
-
-            // Clear before awaiting so rapid changes coalesce into a new pending value.
-            archiveBehaviorPendingUpdateRef.current = undefined;
-
-            try {
-              await api.config.updateCoderPrefs({
-                coderWorkspaceArchiveBehavior: pending,
-                deleteWorktreeOnArchive: deleteWorktreeOnArchiveRef.current,
-              });
-            } catch {
-              // Best-effort only. Swallow errors so the queue doesn't get stuck.
-            }
-          }
-        })
-        .catch(() => {
-          // Best-effort only.
-        });
+      queueArchiveBehaviorUpdate();
     },
-    [api]
+    [api, queueArchiveBehaviorUpdate]
   );
 
-  const handleDeleteWorktreeOnArchiveChange = (checked: boolean) => {
-    // Invalidate any in-flight archive config load so it does not overwrite the user's toggle.
-    archiveBehaviorLoadNonceRef.current++;
-    setDeleteWorktreeOnArchive(checked);
-    deleteWorktreeOnArchiveRef.current = checked;
+  const handleDeleteWorktreeOnArchiveChange = useCallback(
+    (checked: boolean) => {
+      // Invalidate any in-flight archive config load so it does not overwrite the user's toggle.
+      archiveBehaviorLoadNonceRef.current++;
+      setDeleteWorktreeOnArchive(checked);
+      deleteWorktreeOnArchiveRef.current = checked;
 
-    if (!api?.config?.updateCoderPrefs) {
-      return;
-    }
+      if (!api?.config?.updateCoderPrefs) {
+        return;
+      }
 
-    api.config
-      .updateCoderPrefs({
-        coderWorkspaceArchiveBehavior: archiveBehavior,
-        deleteWorktreeOnArchive: checked,
-      })
-      .catch(() => {
-        // Best-effort only.
-      });
-  };
+      deleteWorktreeOnArchivePendingUpdateRef.current = checked;
+      queueArchiveBehaviorUpdate();
+    },
+    [api, queueArchiveBehaviorUpdate]
+  );
 
   const handleLlmDebugLogsChange = (checked: boolean) => {
     // Invalidate any in-flight debug-log load so it doesn't overwrite the user's selection.
