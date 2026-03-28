@@ -194,6 +194,7 @@ export function GeneralSection() {
   );
   const [llmDebugLogs, setLlmDebugLogs] = useState(false);
   const archiveBehaviorLoadNonceRef = useRef(0);
+  const deleteWorktreeOnArchiveRef = useRef(false);
 
   const llmDebugLogsLoadNonceRef = useRef(0);
 
@@ -223,6 +224,7 @@ export function GeneralSection() {
               ? cfg.coderWorkspaceArchiveBehavior
               : DEFAULT_CODER_ARCHIVE_BEHAVIOR
           );
+          deleteWorktreeOnArchiveRef.current = cfg.deleteWorktreeOnArchive === true;
         }
 
         // Use an independent nonce so debug-log toggles do not discard archive-setting updates.
@@ -261,7 +263,10 @@ export function GeneralSection() {
             archiveBehaviorPendingUpdateRef.current = undefined;
 
             try {
-              await api.config.updateCoderPrefs({ coderWorkspaceArchiveBehavior: pending });
+              await api.config.updateCoderPrefs({
+                coderWorkspaceArchiveBehavior: pending,
+                deleteWorktreeOnArchive: deleteWorktreeOnArchiveRef.current,
+              });
             } catch {
               // Best-effort only. Swallow errors so the queue doesn't get stuck.
             }

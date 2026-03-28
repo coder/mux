@@ -1698,6 +1698,7 @@ export const config = {
       defaultModel: z.string().optional(),
       hiddenModels: z.array(z.string()).optional(),
       coderWorkspaceArchiveBehavior: z.enum(CODER_ARCHIVE_BEHAVIORS),
+      deleteWorktreeOnArchive: z.boolean(),
       runtimeEnablement: z.record(z.string(), z.boolean()),
       defaultRuntime: z.string().nullable(),
       agentAiDefaults: AgentAiDefaultsSchema,
@@ -1754,6 +1755,7 @@ export const config = {
     input: z
       .object({
         coderWorkspaceArchiveBehavior: z.enum(CODER_ARCHIVE_BEHAVIORS),
+        deleteWorktreeOnArchive: z.boolean(),
       })
       .strict(),
     output: z.void(),

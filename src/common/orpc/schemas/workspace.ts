@@ -124,6 +124,10 @@ export const WorkspaceMetadataSchema = z.object({
     description:
       "ISO 8601 timestamp when workspace was last unarchived. Used for recency calculation to bump restored workspaces to top.",
   }),
+  transcriptOnly: z.boolean().optional().meta({
+    description:
+      "True when the workspace worktree is unavailable and only transcript-backed metadata remains.",
+  }),
   projects: z
     .array(ProjectRefSchema)
     .optional()

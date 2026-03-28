@@ -60,6 +60,7 @@ export const AppConfigOnDiskSchema = z
     muxGovernorUrl: z.string().optional(),
     muxGovernorToken: z.string().optional(),
     coderWorkspaceArchiveBehavior: z.enum(CODER_ARCHIVE_BEHAVIORS).optional(),
+    deleteWorktreeOnArchive: z.boolean().optional(),
     stopCoderWorkspaceOnArchive: z.boolean().optional(),
     terminalDefaultShell: z.string().optional(),
     updateChannel: UpdateChannelSchema.optional(),

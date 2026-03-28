@@ -109,6 +109,10 @@ function parseCoderWorkspaceArchiveBehavior(
     : undefined;
 }
 
+function resolveDeleteWorktreeOnArchive(deleteWorktreeOnArchive: unknown): boolean {
+  return parseOptionalBoolean(deleteWorktreeOnArchive) ?? false;
+}
+
 function resolveCoderWorkspaceArchiveBehavior(
   coderWorkspaceArchiveBehavior: unknown,
   stopCoderWorkspaceOnArchive: unknown
@@ -622,6 +626,9 @@ export class Config {
           parsed.coderWorkspaceArchiveBehavior,
           parsed.stopCoderWorkspaceOnArchive
         );
+        const deleteWorktreeOnArchive = resolveDeleteWorktreeOnArchive(
+          parsed.deleteWorktreeOnArchive
+        );
         const stopCoderWorkspaceOnArchive = getLegacyStopCoderWorkspaceOnArchiveValue(
           coderWorkspaceArchiveBehavior
         );
@@ -668,6 +675,7 @@ export class Config {
           muxGovernorUrl: parseOptionalNonEmptyString(parsed.muxGovernorUrl),
           muxGovernorToken: parseOptionalNonEmptyString(parsed.muxGovernorToken),
           coderWorkspaceArchiveBehavior,
+          deleteWorktreeOnArchive,
           stopCoderWorkspaceOnArchive,
           terminalDefaultShell: parseOptionalNonEmptyString(parsed.terminalDefaultShell),
           updateChannel,
@@ -688,6 +696,7 @@ export class Config {
       subagentAiDefaults: {},
       routePriority: this.seedRoutePriorityFromProviders(),
       coderWorkspaceArchiveBehavior: DEFAULT_CODER_ARCHIVE_BEHAVIOR,
+      deleteWorktreeOnArchive: false,
     };
   }
 
@@ -831,6 +840,11 @@ export class Config {
       );
       if (stopCoderWorkspaceOnArchive !== undefined) {
         data.stopCoderWorkspaceOnArchive = stopCoderWorkspaceOnArchive;
+      }
+
+      const deleteWorktreeOnArchive = parseOptionalBoolean(config.deleteWorktreeOnArchive);
+      if (deleteWorktreeOnArchive !== undefined) {
+        data.deleteWorktreeOnArchive = deleteWorktreeOnArchive;
       }
 
       const terminalDefaultShell = parseOptionalNonEmptyString(config.terminalDefaultShell);

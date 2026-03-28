@@ -131,6 +131,8 @@ export interface MockORPCClientOptions {
   subagentAiDefaults?: SubagentAiDefaults;
   /** Coder lifecycle preferences for config.getConfig (e.g., Settings → Coder section) */
   coderWorkspaceArchiveBehavior?: CoderWorkspaceArchiveBehavior;
+  /** Whether archiving removes the worktree after preserving transcript metadata. */
+  deleteWorktreeOnArchive?: boolean;
   /** Initial runtime enablement for config.getConfig */
   runtimeEnablement?: Record<string, boolean>;
   /** Initial default runtime for config.getConfig (global) */
@@ -349,6 +351,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     subagentAiDefaults: initialSubagentAiDefaults,
     agentAiDefaults: initialAgentAiDefaults,
     coderWorkspaceArchiveBehavior: initialCoderWorkspaceArchiveBehavior = "stop",
+    deleteWorktreeOnArchive: initialDeleteWorktreeOnArchive = false,
     runtimeEnablement: initialRuntimeEnablement,
     defaultRuntime: initialDefaultRuntime,
     onePasswordAccountName: initialOnePasswordAccountName = null,
@@ -540,6 +543,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
   let muxGatewayEnabled: boolean | undefined = undefined;
   let muxGatewayModels: string[] | undefined = undefined;
   let coderWorkspaceArchiveBehavior = initialCoderWorkspaceArchiveBehavior;
+  let deleteWorktreeOnArchive = initialDeleteWorktreeOnArchive;
   let runtimeEnablement: Record<string, boolean> = initialRuntimeEnablement ?? {
     local: true,
     worktree: true,
@@ -734,6 +738,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           routePriority,
           routeOverrides,
           coderWorkspaceArchiveBehavior,
+          deleteWorktreeOnArchive,
           runtimeEnablement,
           defaultRuntime,
           agentAiDefaults,
@@ -812,8 +817,10 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       },
       updateCoderPrefs: (input: {
         coderWorkspaceArchiveBehavior: CoderWorkspaceArchiveBehavior;
+        deleteWorktreeOnArchive: boolean;
       }) => {
         coderWorkspaceArchiveBehavior = input.coderWorkspaceArchiveBehavior;
+        deleteWorktreeOnArchive = input.deleteWorktreeOnArchive;
         notifyConfigChanged();
         return Promise.resolve(undefined);
       },

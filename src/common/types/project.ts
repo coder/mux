@@ -119,6 +119,12 @@ export interface ProjectsConfig {
   coderWorkspaceArchiveBehavior?: CoderWorkspaceArchiveBehavior;
 
   /**
+   * When true, mux deletes the archived worktree after preserving transcript metadata.
+   * Defaults to false when absent from config.json.
+   */
+  deleteWorktreeOnArchive?: boolean;
+
+  /**
    * Legacy boolean shim for downgrade compatibility.
    *
    * Stored as `false` only (undefined behaves as true) to keep config.json minimal.
