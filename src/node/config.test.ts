@@ -1001,7 +1001,7 @@ describe("Config", () => {
       expect(metadata.transcriptOnly).toBeUndefined();
     });
 
-    it("returns transcriptOnly for worktree workspaces whose checkout is missing", async () => {
+    it("returns transcriptOnly for archived worktree workspaces whose checkout is missing", async () => {
       const projectPath = "/fake/project";
       const workspacePath = path.join(config.srcDir, "project", "missing-worktree");
 
@@ -1013,6 +1013,7 @@ describe("Config", () => {
               id: "workspace-missing-worktree",
               name: "missing-worktree",
               createdAt: "2025-01-01T00:00:00.000Z",
+              archivedAt: "2025-01-02T00:00:00.000Z",
               runtimeConfig: { type: "worktree", srcBaseDir: config.srcDir },
             },
           ],
@@ -1023,6 +1024,31 @@ describe("Config", () => {
       const [metadata] = await config.getAllWorkspaceMetadata();
 
       expect(metadata.transcriptOnly).toBe(true);
+    });
+
+    it("leaves transcriptOnly unset for queued worktree tasks whose checkout is still missing", async () => {
+      const projectPath = "/fake/project";
+      const workspacePath = path.join(config.srcDir, "project", "queued-missing-worktree");
+
+      await config.editConfig((cfg) => {
+        cfg.projects.set(projectPath, {
+          workspaces: [
+            {
+              path: workspacePath,
+              id: "workspace-queued-missing-worktree",
+              name: "queued-missing-worktree",
+              createdAt: "2025-01-01T00:00:00.000Z",
+              runtimeConfig: { type: "worktree", srcBaseDir: config.srcDir },
+              taskStatus: "queued",
+            },
+          ],
+        });
+        return cfg;
+      });
+
+      const [metadata] = await config.getAllWorkspaceMetadata();
+
+      expect(metadata.transcriptOnly).toBeUndefined();
     });
 
     it("never returns transcriptOnly for non-worktree runtimes", async () => {

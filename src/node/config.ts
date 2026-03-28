@@ -38,6 +38,7 @@ import {
 } from "@/common/types/runtime";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility";
+import { isWorkspaceArchived } from "@/common/utils/archive";
 import { getMuxHome } from "@/common/constants/paths";
 import { GATEWAY_PROVIDERS } from "@/common/constants/providers";
 import {
@@ -1040,13 +1041,18 @@ export class Config {
         "Please upgrade mux to use this workspace.";
     }
 
-    // Mark worktree workspaces with missing checkout directories as transcript-only.
-    // This covers both archive-time cleanup and manual worktree deletion.
+    // Mark archived worktree workspaces with missing checkout directories as transcript-only.
+    // Queued tasks can briefly exist without a provisioned checkout, so only archived
+    // workspaces should surface as transcript-only here.
     const workspacePathExists = await fs.promises
       .access(workspacePath)
       .then(() => true)
       .catch(() => false);
-    if (isWorktreeRuntime(metadata.runtimeConfig) && !workspacePathExists) {
+    if (
+      isWorktreeRuntime(metadata.runtimeConfig) &&
+      isWorkspaceArchived(metadata.archivedAt, metadata.unarchivedAt) &&
+      !workspacePathExists
+    ) {
       result.transcriptOnly = true;
     }
 
