@@ -19,6 +19,7 @@ import {
   EXPANDED_PROJECTS_KEY,
   MOBILE_LEFT_SIDEBAR_SCROLL_TOP_KEY,
   getDraftScopeId,
+  getInputAttachmentsKey,
   getInputKey,
   getWorkspaceNameStateKey,
 } from "@/common/constants/storage";
@@ -277,18 +278,21 @@ function DraftAgentListItemWrapper(props: DraftAgentListItemWrapperProps) {
   const [workspaceNameState] = usePersistedState<unknown>(getWorkspaceNameStateKey(scopeId), null, {
     listener: true,
   });
+  const [draftAttachments] = usePersistedState<unknown[]>(getInputAttachmentsKey(scopeId), [], {
+    listener: true,
+  });
 
   // Debounce the preview values to avoid constant sidebar updates while typing.
   const debouncedPrompt = useDebouncedValue(draftPrompt, DRAFT_PREVIEW_DEBOUNCE_MS);
   const debouncedNameState = useDebouncedValue(workspaceNameState, DRAFT_PREVIEW_DEBOUNCE_MS);
 
   // Keep empty drafts reusable without immediately surfacing them in the sidebar.
-  // Only text content triggers visibility (not attachments or workspace metadata),
-  // so the sidebar stays clean until the user starts typing a message.
-  // The row appears as soon as the composer contains non-whitespace text, while
-  // the preview content below still updates at the debounced cadence.
-  const hasTypedContent = typeof draftPrompt === "string" && draftPrompt.trim().length > 0;
-  if (!hasTypedContent) {
+  // Show the row when the draft has any user-provided content: typed text or
+  // attachments. Uses raw (non-debounced) values so the row appears immediately,
+  // while the preview text below still updates at the debounced cadence.
+  const hasTextContent = typeof draftPrompt === "string" && draftPrompt.trim().length > 0;
+  const hasAttachments = Array.isArray(draftAttachments) && draftAttachments.length > 0;
+  if (!hasTextContent && !hasAttachments) {
     return null;
   }
 
