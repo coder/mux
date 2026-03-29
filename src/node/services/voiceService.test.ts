@@ -192,6 +192,41 @@ describe("VoiceService.transcribe", () => {
     });
   });
 
+  it("respects direct-before-gateway route priority when both are configured", async () => {
+    await withTempConfig(async (config, service) => {
+      config.saveProvidersConfig({
+        "mux-gateway": {
+          couponCode: "gateway-token",
+        },
+        openai: {
+          apiKey: "sk-test",
+        },
+      });
+      await config.editConfig((cfg) => {
+        cfg.routePriority = ["direct", "mux-gateway"];
+        return cfg;
+      });
+
+      const fetchSpy = spyOn(globalThis, "fetch");
+      fetchSpy.mockResolvedValue(new Response("transcribed text"));
+
+      try {
+        const result = await service.transcribe("Zm9v");
+
+        expect(result).toEqual({ success: true, data: "transcribed text" });
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+        const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit | undefined];
+        expect(url).toBe("https://api.openai.com/v1/audio/transcriptions");
+        expect(init?.headers).toEqual({
+          Authorization: "Bearer sk-test",
+        });
+      } finally {
+        fetchSpy.mockRestore();
+      }
+    });
+  });
+
   it("falls back to OpenAI when gateway is disabled", async () => {
     await withTempConfig(async (config, service) => {
       config.saveProvidersConfig({

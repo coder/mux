@@ -1,3 +1,4 @@
+import { resolveRoute } from "@/common/routing";
 import { MUX_GATEWAY_ORIGIN } from "@/common/constants/muxGatewayOAuth";
 import type { ExternalSecretResolver } from "@/common/types/secrets";
 import type { Result } from "@/common/types/result";
@@ -11,6 +12,8 @@ import { log } from "./log";
 
 const OPENAI_TRANSCRIPTION_URL = "https://api.openai.com/v1/audio/transcriptions";
 const MUX_GATEWAY_TRANSCRIPTION_PATH = "/api/v1/openai/v1/audio/transcriptions";
+const OPENAI_TRANSCRIPTION_MODEL = "openai:whisper-1";
+const DEFAULT_TRANSCRIPTION_ROUTE_PRIORITY = ["mux-gateway", "direct"];
 
 interface OpenAITranscriptionConfig {
   apiKey?: string;
@@ -63,12 +66,18 @@ export class VoiceService {
         !isProviderDisabledInConfig(openaiConfig ?? {}) &&
         !!openaiApiKey &&
         (this.policyService?.isProviderAllowed("openai") ?? true);
+      const transcriptionRoute = this.resolveTranscriptionRoute({
+        routePriority: mainConfig.routePriority,
+        routeOverrides: mainConfig.routeOverrides,
+        gatewayAvailable,
+        openaiAvailable,
+      });
 
-      if (gatewayAvailable) {
+      if (transcriptionRoute === "mux-gateway" && gatewayToken) {
         return await this.transcribeWithGateway(audioBase64, gatewayToken, gatewayConfig);
       }
 
-      if (openaiAvailable) {
+      if (transcriptionRoute === "openai" && openaiApiKey) {
         return await this.transcribeWithOpenAI(audioBase64, openaiApiKey, openaiConfig);
       }
 
@@ -89,6 +98,42 @@ export class VoiceService {
       const message = getErrorMessage(error);
       return { success: false, error: `Transcription failed: ${message}` };
     }
+  }
+
+  private resolveTranscriptionRoute(options: {
+    routePriority?: string[];
+    routeOverrides?: Record<string, string>;
+    gatewayAvailable: boolean;
+    openaiAvailable: boolean;
+  }): "mux-gateway" | "openai" | null {
+    // User rationale: when Settings routes OpenAI directly, voice transcription should use
+    // the same direct path instead of silently detouring through Mux Gateway.
+    const route = resolveRoute(
+      OPENAI_TRANSCRIPTION_MODEL,
+      options.routePriority ?? DEFAULT_TRANSCRIPTION_ROUTE_PRIORITY,
+      options.routeOverrides ?? {},
+      (provider) => {
+        if (provider === "mux-gateway") {
+          return options.gatewayAvailable;
+        }
+
+        if (provider === "openai") {
+          return options.openaiAvailable;
+        }
+
+        return false;
+      }
+    );
+
+    if (route.routeProvider === "mux-gateway" && options.gatewayAvailable) {
+      return "mux-gateway";
+    }
+
+    if (route.routeProvider === "openai" && options.openaiAvailable) {
+      return "openai";
+    }
+
+    return null;
   }
 
   private async transcribeWithGateway(
