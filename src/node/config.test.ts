@@ -1001,7 +1001,7 @@ describe("Config", () => {
       expect(metadata.transcriptOnly).toBeUndefined();
     });
 
-    it("returns transcriptOnly for archived worktree workspaces whose checkout is missing", async () => {
+    it("returns transcriptOnly for missing worktree checkouts even after unarchiving", async () => {
       const projectPath = "/fake/project";
       const workspacePath = path.join(config.srcDir, "project", "missing-worktree");
 
@@ -1014,6 +1014,7 @@ describe("Config", () => {
               name: "missing-worktree",
               createdAt: "2025-01-01T00:00:00.000Z",
               archivedAt: "2025-01-02T00:00:00.000Z",
+              unarchivedAt: "2025-01-03T00:00:00.000Z",
               runtimeConfig: { type: "worktree", srcBaseDir: config.srcDir },
             },
           ],
