@@ -6,6 +6,7 @@ process.umask(0o077);
 import "source-map-support/register";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createRequire } from "node:module";
 import {
   cleanupObsoleteMuxBinArtifacts,
   getMuxHome,
@@ -109,6 +110,7 @@ import { log } from "@/node/services/log";
 // These will be loaded on-demand when createWindow() is called
 let config: Config | null = null;
 let services: ServiceContainer | null = null;
+const requireDesktopModule = createRequire(__filename);
 const isE2ETest = process.env.MUX_E2E === "1";
 const forceDistLoad = process.env.MUX_E2E_LOAD_DIST === "1";
 
@@ -1071,11 +1073,36 @@ function createWindow() {
   });
 }
 
+async function maybeRunAttachFileSmokeTest(): Promise<boolean> {
+  const pngPath = process.env.MUX_ATTACH_FILE_SMOKE_TEST_PNG_PATH?.trim();
+  const jpegPath = process.env.MUX_ATTACH_FILE_SMOKE_TEST_JPEG_PATH?.trim();
+  if ((pngPath == null || pngPath.length === 0) && (jpegPath == null || jpegPath.length === 0)) {
+    return false;
+  }
+
+  try {
+    const { runAttachFileSmokeTest } = requireDesktopModule("./attachFileSmokeTest") as {
+      runAttachFileSmokeTest: () => Promise<void>;
+    };
+    await runAttachFileSmokeTest();
+    app.exit(0);
+  } catch (error) {
+    console.error("[attach-file-smoke] failed:", error);
+    app.exit(1);
+  }
+
+  return true;
+}
+
 // Only setup app handlers if we got the lock
 if (gotTheLock) {
   void app.whenReady().then(async () => {
     try {
       console.log("App ready, creating window...");
+
+      if (await maybeRunAttachFileSmokeTest()) {
+        return;
+      }
 
       registerMuxProtocolClient();
 

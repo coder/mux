@@ -280,7 +280,9 @@
       "dist/**/*.wasm",
       "dist/**/*.map",
       "**/node_modules/node-pty/build/**/*",
-      "**/node_modules/@duckdb/**/*.node"
+      "**/node_modules/@duckdb/**/*.node",
+      "**/node_modules/sharp/**/*",
+      "**/node_modules/@img/**/*"
     ],
     "mac": {
       "category": "public.app-category.developer-tools",

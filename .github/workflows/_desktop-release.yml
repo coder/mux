@@ -62,6 +62,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Smoke test packaged macOS attach_file runtime
+        run: make check-mac-attach-file-runtime
+
       - name: Upload macOS assets to release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
