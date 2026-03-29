@@ -56,12 +56,20 @@ async function chooseDefaultAppBundle(): Promise<string> {
     `No ${APP_NAME} found under ${RELEASE_DIR}. Run make dist-mac first.`
   );
 
-  const preferredSuffixes = [
-    path.join("release", "mac-arm64", APP_NAME),
-    path.join("release", "mac", APP_NAME),
-    path.join("release", "mac-universal", APP_NAME),
-    path.join("release", "mac-x64", APP_NAME),
-  ];
+  const preferredSuffixes =
+    process.arch === "arm64"
+      ? [
+          path.join("release", "mac-arm64", APP_NAME),
+          path.join("release", "mac", APP_NAME),
+          path.join("release", "mac-universal", APP_NAME),
+          path.join("release", "mac-x64", APP_NAME),
+        ]
+      : [
+          path.join("release", "mac-x64", APP_NAME),
+          path.join("release", "mac", APP_NAME),
+          path.join("release", "mac-universal", APP_NAME),
+          path.join("release", "mac-arm64", APP_NAME),
+        ];
   for (const suffix of preferredSuffixes) {
     const match = appBundles.find((appBundle) => appBundle.endsWith(suffix));
     if (match != null) {
