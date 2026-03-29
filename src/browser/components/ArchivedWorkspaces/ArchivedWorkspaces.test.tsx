@@ -126,6 +126,42 @@ describe("ArchivedWorkspaces", () => {
     expect(onWorkspacesChangedMock).toHaveBeenCalledTimes(1);
   });
 
+  test("shows an error when single-workspace delete worktree fails", async () => {
+    deleteWorktreeMock.mockImplementationOnce(() =>
+      Promise.resolve({ success: false, error: "Permission denied" })
+    );
+    const workspace = createWorkspace({
+      id: "ws-worktree-error",
+      name: "worktree-error",
+      transcriptOnly: false,
+    });
+
+    const view = render(
+      <ArchivedWorkspaces
+        projectPath={workspace.projectPath}
+        projectName={workspace.projectName}
+        workspaces={[workspace]}
+        onWorkspacesChanged={onWorkspacesChangedMock}
+      />
+    );
+
+    fireEvent.click(view.getByLabelText("Expand archived workspaces"));
+
+    const deleteWorktreeButton = await waitFor(() =>
+      view.getByLabelText(`Delete worktree for workspace ${workspace.name}`)
+    );
+    fireEvent.click(deleteWorktreeButton);
+
+    await waitFor(() => {
+      expect(deleteWorktreeMock).toHaveBeenCalledWith({ workspaceId: workspace.id });
+    });
+    expect(onWorkspacesChangedMock).not.toHaveBeenCalled();
+
+    const alert = await waitFor(() => view.getByRole("alert"));
+    expect(alert.textContent).toContain("Failed to delete managed worktree");
+    expect(alert.textContent).toContain("Permission denied");
+  });
+
   test("hides delete worktree for transcript-only and non-worktree archived workspaces", async () => {
     const transcriptOnlyWorkspace = createWorkspace({
       id: "ws-transcript-only",

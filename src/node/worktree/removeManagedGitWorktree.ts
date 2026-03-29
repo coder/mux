@@ -49,14 +49,21 @@ export async function removeManagedGitWorktree(
     );
     await removeProc.result;
   } catch (error) {
-    if (!isMissingWorktreeError(getErrorMessage(error))) {
-      throw error;
+    const errorMessage = getErrorMessage(error);
+    const worktreeStillExists = await worktreePathExists(worktreePath);
+
+    if (!worktreeStillExists) {
+      if (!isMissingWorktreeError(errorMessage)) {
+        throw error;
+      }
+
+      await pruneWorktreesBestEffort(projectPath);
+      return;
     }
 
-    if (await worktreePathExists(worktreePath)) {
-      throw error;
-    }
-
+    // Multi-project workspaces persist a _workspaces/<name> container here instead of a git
+    // worktree root, so we still need recursive removal after git worktree remove rejects it.
+    await fsPromises.rm(worktreePath, { recursive: true, force: true });
     await pruneWorktreesBestEffort(projectPath);
   }
 }

@@ -1,12 +1,14 @@
 import React from "react";
 
 import { cn } from "@/common/lib/utils";
+import { getArchivedWorkspacesExpandedKey } from "@/common/constants/storage";
 import { isWorktreeRuntime } from "@/common/types/runtime";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import { getErrorMessage } from "@/common/utils/errors";
+import { useAPI } from "@/browser/contexts/API";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
-import { getArchivedWorkspacesExpandedKey } from "@/common/constants/storage";
-import { useAPI } from "@/browser/contexts/API";
+import { usePopoverError } from "@/browser/hooks/usePopoverError";
 import { ChevronDown, ChevronRight, FolderX, Loader2, Search, Trash2 } from "lucide-react";
 import { ArchiveIcon, ArchiveRestoreIcon } from "../icons/ArchiveIcon/ArchiveIcon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
@@ -22,6 +24,7 @@ import {
 } from "@/browser/components/Dialog/Dialog";
 import { ForceDeleteModal } from "../ForceDeleteModal/ForceDeleteModal";
 import { Button } from "@/browser/components/Button/Button";
+import { PopoverError } from "@/browser/components/PopoverError/PopoverError";
 import type { z } from "zod";
 import type { SessionUsageFileSchema } from "@/common/orpc/schemas/chatStats";
 import {
@@ -268,6 +271,7 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
     workspaceId: string;
     error: string;
   } | null>(null);
+  const deleteWorktreeError = usePopoverError();
 
   // Bulk selection state
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
@@ -612,8 +616,12 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
     onWorkspacesChanged?.();
   };
 
-  const handleDeleteWorktree = async (workspaceId: string) => {
+  const handleDeleteWorktree = async (workspaceId: string, anchorEl?: HTMLElement) => {
+    const rect = anchorEl?.getBoundingClientRect();
+    const anchor = rect ? { top: rect.top + window.scrollY, left: rect.right + 10 } : undefined;
+
     if (!api) {
+      deleteWorktreeError.showError(workspaceId, "Not connected to server", anchor);
       return;
     }
 
@@ -623,7 +631,16 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
       const result = await api.workspace.deleteWorktree({ workspaceId });
       if (result.success) {
         onWorkspacesChanged?.();
+        return;
       }
+
+      deleteWorktreeError.showError(
+        workspaceId,
+        result.error ?? "Failed to delete managed worktree",
+        anchor
+      );
+    } catch (error) {
+      deleteWorktreeError.showError(workspaceId, getErrorMessage(error), anchor);
     } finally {
       setDeleteWorktreeIds((prev) => {
         const next = new Set(prev);
@@ -699,6 +716,11 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
           }
           onWorkspacesChanged?.();
         }}
+      />
+      <PopoverError
+        error={deleteWorktreeError.error}
+        prefix="Failed to delete managed worktree"
+        onDismiss={deleteWorktreeError.clearError}
       />
       {bulkOperation && (
         <BulkProgressModal operation={bulkOperation} onClose={() => setBulkOperation(null)} />
@@ -923,7 +945,9 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
                               <Tooltip>
                                 <TooltipTrigger asChild>
                                   <button
-                                    onClick={() => void handleDeleteWorktree(workspace.id)}
+                                    onClick={(event) =>
+                                      void handleDeleteWorktree(workspace.id, event.currentTarget)
+                                    }
                                     disabled={isProcessing}
                                     className="text-muted rounded p-1.5 transition-colors hover:bg-white/10 hover:text-orange-300 disabled:opacity-50"
                                     aria-label={`Delete worktree for workspace ${displayTitle}`}
