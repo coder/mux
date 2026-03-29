@@ -106,11 +106,14 @@ describeIntegration("Draft workspace behavior", () => {
       fireEvent.click(newChatButton);
 
       // Verify still only 1 draft (reused the empty one)
-      await new Promise((r) => setTimeout(r, 500));
-      const draftsAfterSecondClick = getWorkspaceDraftIds(normalizedProjectPath);
-
-      expect(draftsAfterSecondClick.length).toBe(1);
-      expect(draftsAfterSecondClick[0]).toBe(firstDraftId);
+      await waitFor(
+        () => {
+          const draftsAfterSecondClick = getWorkspaceDraftIds(normalizedProjectPath);
+          expect(draftsAfterSecondClick.length).toBe(1);
+          expect(draftsAfterSecondClick[0]).toBe(firstDraftId);
+        },
+        { timeout: 5_000 }
+      );
     } finally {
       await cleanupView(view, cleanupDom);
     }

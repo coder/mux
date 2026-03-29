@@ -283,6 +283,8 @@ function DraftAgentListItemWrapper(props: DraftAgentListItemWrapperProps) {
   const debouncedNameState = useDebouncedValue(workspaceNameState, DRAFT_PREVIEW_DEBOUNCE_MS);
 
   // Keep empty drafts reusable without immediately surfacing them in the sidebar.
+  // Only text content triggers visibility (not attachments or workspace metadata),
+  // so the sidebar stays clean until the user starts typing a message.
   // The row appears as soon as the composer contains non-whitespace text, while
   // the preview content below still updates at the debounced cadence.
   const hasTypedContent = typeof draftPrompt === "string" && draftPrompt.trim().length > 0;
