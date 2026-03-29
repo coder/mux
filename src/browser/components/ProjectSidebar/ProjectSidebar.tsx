@@ -287,12 +287,15 @@ function DraftAgentListItemWrapper(props: DraftAgentListItemWrapperProps) {
   const debouncedNameState = useDebouncedValue(workspaceNameState, DRAFT_PREVIEW_DEBOUNCE_MS);
 
   // Keep empty drafts reusable without immediately surfacing them in the sidebar.
-  // Show the row when the draft has any user-provided content: typed text or
-  // attachments. Uses raw (non-debounced) values so the row appears immediately,
-  // while the preview text below still updates at the debounced cadence.
+  // Show the row when the draft has any user-provided content (typed text,
+  // attachments, or workspace-name edits), mirroring the isDraftEmpty() contract
+  // so non-empty drafts never become hidden orphans.
+  // Uses raw (non-debounced) values so the row appears immediately, while the
+  // preview text below still updates at the debounced cadence.
   const hasTextContent = typeof draftPrompt === "string" && draftPrompt.trim().length > 0;
   const hasAttachments = Array.isArray(draftAttachments) && draftAttachments.length > 0;
-  if (!hasTextContent && !hasAttachments) {
+  const hasNameState = workspaceNameState !== null;
+  if (!hasTextContent && !hasAttachments && !hasNameState) {
     return null;
   }
 
