@@ -22,7 +22,11 @@ import { addProjectViaUI, cleanupView, getWorkspaceDraftIds, setupTestDom } from
 import { renderApp } from "../renderReviewPanel";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 
-import { WORKSPACE_DRAFTS_BY_PROJECT_KEY } from "@/common/constants/storage";
+import {
+  getDraftScopeId,
+  getInputKey,
+  WORKSPACE_DRAFTS_BY_PROJECT_KEY,
+} from "@/common/constants/storage";
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
@@ -107,6 +111,120 @@ describeIntegration("Draft workspace behavior", () => {
 
       expect(draftsAfterSecondClick.length).toBe(1);
       expect(draftsAfterSecondClick[0]).toBe(firstDraftId);
+    } finally {
+      await cleanupView(view, cleanupDom);
+    }
+  }, 60_000);
+
+  test("draft row is hidden in sidebar until user types non-whitespace text", async () => {
+    const env = getSharedEnv();
+    const projectPath = getSharedRepoPath();
+
+    const cleanupDom = setupTestDom();
+    updatePersistedState(WORKSPACE_DRAFTS_BY_PROJECT_KEY, null);
+
+    const view = renderApp({ apiClient: env.orpc });
+
+    try {
+      await view.waitForReady();
+      const normalizedProjectPath = await addProjectViaUI(view, projectPath);
+
+      const projectRow = await waitFor(
+        () => {
+          const el = view.container.querySelector(
+            `[data-project-path="${normalizedProjectPath}"][aria-controls]`
+          );
+          if (!el) throw new Error("Project row not found");
+          return el as HTMLElement;
+        },
+        { timeout: 5_000 }
+      );
+      fireEvent.click(projectRow);
+
+      await waitFor(
+        () => {
+          const textarea = view.container.querySelector("textarea");
+          if (!textarea) throw new Error("Creation textarea not found");
+        },
+        { timeout: 5_000 }
+      );
+
+      const [draftId] = await waitForDraftCount(normalizedProjectPath, 1);
+      expect(draftId).toBeTruthy();
+      expect(view.container.querySelector("[data-draft-id]")).toBeNull();
+
+      updatePersistedState(getInputKey(getDraftScopeId(normalizedProjectPath, draftId)), "hello");
+
+      const visibleDraftRow = await waitFor(
+        () => {
+          const el = view.container.querySelector(`[data-draft-id="${draftId}"]`);
+          if (!el) throw new Error("Draft row not visible yet");
+          return el as HTMLElement;
+        },
+        { timeout: 5_000 }
+      );
+
+      expect(visibleDraftRow.getAttribute("data-draft-id")).toBe(draftId);
+    } finally {
+      await cleanupView(view, cleanupDom);
+    }
+  }, 60_000);
+
+  test("clicking New Chat before typing reuses hidden draft without showing duplicates", async () => {
+    const env = getSharedEnv();
+    const projectPath = getSharedRepoPath();
+
+    const cleanupDom = setupTestDom();
+    updatePersistedState(WORKSPACE_DRAFTS_BY_PROJECT_KEY, null);
+
+    const view = renderApp({ apiClient: env.orpc });
+
+    try {
+      await view.waitForReady();
+      const normalizedProjectPath = await addProjectViaUI(view, projectPath);
+      const projectName = path.basename(normalizedProjectPath);
+
+      const projectRow = await waitFor(
+        () => {
+          const el = view.container.querySelector(
+            `[data-project-path="${normalizedProjectPath}"][aria-controls]`
+          );
+          if (!el) throw new Error("Project row not found");
+          return el as HTMLElement;
+        },
+        { timeout: 5_000 }
+      );
+      fireEvent.click(projectRow);
+
+      await waitFor(
+        () => {
+          const textarea = view.container.querySelector("textarea");
+          if (!textarea) throw new Error("Creation textarea not found");
+        },
+        { timeout: 5_000 }
+      );
+
+      const [draftId] = await waitForDraftCount(normalizedProjectPath, 1);
+      expect(draftId).toBeTruthy();
+      expect(view.container.querySelector("[data-draft-id]")).toBeNull();
+
+      const newChatButton = await waitFor(
+        () => {
+          const btn = view.container.querySelector(`[aria-label="New chat in ${projectName}"]`);
+          if (!btn) throw new Error(`New chat button not found for ${projectName}`);
+          return btn as HTMLElement;
+        },
+        { timeout: 5_000 }
+      );
+      fireEvent.click(newChatButton);
+
+      await waitFor(
+        () => {
+          expect(getWorkspaceDraftIds(normalizedProjectPath)).toEqual([draftId]);
+          expect(view.container.querySelector("[data-draft-id]")).toBeNull();
+        },
+        { timeout: 5_000 }
+      );
     } finally {
       await cleanupView(view, cleanupDom);
     }

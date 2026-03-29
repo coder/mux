@@ -282,6 +282,14 @@ function DraftAgentListItemWrapper(props: DraftAgentListItemWrapperProps) {
   const debouncedPrompt = useDebouncedValue(draftPrompt, DRAFT_PREVIEW_DEBOUNCE_MS);
   const debouncedNameState = useDebouncedValue(workspaceNameState, DRAFT_PREVIEW_DEBOUNCE_MS);
 
+  // Keep empty drafts reusable without immediately surfacing them in the sidebar.
+  // The row appears as soon as the composer contains non-whitespace text, while
+  // the preview content below still updates at the debounced cadence.
+  const hasTypedContent = typeof draftPrompt === "string" && draftPrompt.trim().length > 0;
+  if (!hasTypedContent) {
+    return null;
+  }
+
   const workspaceTitle = getDisplayTitleFromPersistedState(debouncedNameState);
 
   // Collapse whitespace so multi-line prompts show up nicely as a single-line preview.
