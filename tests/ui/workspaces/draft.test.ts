@@ -7,7 +7,7 @@
 
 import "../dom";
 
-import { fireEvent, waitFor } from "@testing-library/react";
+import { act, fireEvent, waitFor } from "@testing-library/react";
 import * as path from "node:path";
 
 import { shouldRunIntegrationTests } from "../../testUtils";
@@ -156,7 +156,9 @@ describeIntegration("Draft workspace behavior", () => {
       expect(draftId).toBeTruthy();
       expect(view.container.querySelector("[data-draft-id]")).toBeNull();
 
-      updatePersistedState(getInputKey(getDraftScopeId(normalizedProjectPath, draftId)), "hello");
+      act(() => {
+        updatePersistedState(getInputKey(getDraftScopeId(normalizedProjectPath, draftId)), "hello");
+      });
 
       const visibleDraftRow = await waitFor(
         () => {
