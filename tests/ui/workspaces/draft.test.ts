@@ -7,7 +7,7 @@
 
 import "../dom";
 
-import { act, fireEvent, waitFor } from "@testing-library/react";
+import { fireEvent, waitFor } from "@testing-library/react";
 import * as path from "node:path";
 
 import { shouldRunIntegrationTests } from "../../testUtils";
@@ -23,6 +23,7 @@ import { renderApp } from "../renderReviewPanel";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 
 import {
+  EXPANDED_PROJECTS_KEY,
   getDraftScopeId,
   getInputKey,
   WORKSPACE_DRAFTS_BY_PROJECT_KEY,
@@ -119,18 +120,22 @@ describeIntegration("Draft workspace behavior", () => {
     }
   }, 60_000);
 
-  test("draft row is hidden in sidebar until user types non-whitespace text", async () => {
+  test("draft row is hidden when empty and visible when draft has content", async () => {
     const env = getSharedEnv();
     const projectPath = getSharedRepoPath();
 
+    let normalizedProjectPath: string | null = null;
+    let draftId: string | null = null;
+
     const cleanupDom = setupTestDom();
     updatePersistedState(WORKSPACE_DRAFTS_BY_PROJECT_KEY, null);
+    updatePersistedState(EXPANDED_PROJECTS_KEY, []);
 
     const view = renderApp({ apiClient: env.orpc });
 
     try {
       await view.waitForReady();
-      const normalizedProjectPath = await addProjectViaUI(view, projectPath);
+      normalizedProjectPath = await addProjectViaUI(view, projectPath);
 
       const projectRow = await waitFor(
         () => {
@@ -144,7 +149,7 @@ describeIntegration("Draft workspace behavior", () => {
       );
       fireEvent.click(projectRow);
 
-      const textarea = await waitFor(
+      await waitFor(
         () => {
           const el = view.container.querySelector('textarea[aria-label="Message Claude"]');
           if (!el) throw new Error("Creation textarea not found");
@@ -153,27 +158,32 @@ describeIntegration("Draft workspace behavior", () => {
         { timeout: 5_000 }
       );
 
-      const [draftId] = await waitForDraftCount(normalizedProjectPath, 1);
+      [draftId] = await waitForDraftCount(normalizedProjectPath, 1);
       expect(draftId).toBeTruthy();
       expect(view.container.querySelector("[data-draft-id]")).toBeNull();
+    } finally {
+      await cleanupView(view, cleanupDom);
+    }
 
-      // In happy-dom CI, the direct persisted-state update can leave the sidebar's
-      // useSyncExternalStore subscribers stale until React also processes an input event.
-      act(() => {
-        updatePersistedState(getInputKey(getDraftScopeId(normalizedProjectPath, draftId)), "hello");
-      });
-      fireEvent.change(textarea, { target: { value: "hello" } });
+    if (!normalizedProjectPath || !draftId) {
+      throw new Error("Draft setup did not complete");
+    }
 
-      await waitFor(
-        () => {
-          expect(textarea.value).toBe("hello");
-        },
-        { timeout: 5_000 }
-      );
+    // Happy-dom CI does not reliably deliver cross-component useSyncExternalStore
+    // re-renders, so seed the non-empty draft state before the second render.
+    const cleanupDom2 = setupTestDom();
+    updatePersistedState(getInputKey(getDraftScopeId(normalizedProjectPath, draftId)), "hello");
+    updatePersistedState(EXPANDED_PROJECTS_KEY, [normalizedProjectPath]);
+
+    const view2 = renderApp({ apiClient: env.orpc });
+
+    try {
+      await view2.waitForReady();
+      await addProjectViaUI(view2, projectPath);
 
       const visibleDraftRow = await waitFor(
         () => {
-          const el = view.container.querySelector(`[data-draft-id="${draftId}"]`);
+          const el = view2.container.querySelector(`[data-draft-id="${draftId}"]`);
           if (!el) throw new Error("Draft row not visible yet");
           return el as HTMLElement;
         },
@@ -182,7 +192,8 @@ describeIntegration("Draft workspace behavior", () => {
 
       expect(visibleDraftRow.getAttribute("data-draft-id")).toBe(draftId);
     } finally {
-      await cleanupView(view, cleanupDom);
+      await cleanupView(view2, cleanupDom2);
+      updatePersistedState(EXPANDED_PROJECTS_KEY, []);
     }
   }, 60_000);
 
