@@ -56,11 +56,9 @@ jobs:
           AC_APIKEY_ID: ${{ secrets.AC_APIKEY_ID }}
           AC_APIKEY_ISSUER_ID: ${{ secrets.AC_APIKEY_ISSUER_ID }}
 
-      - name: Package and publish for macOS
+      - name: Package for macOS
         # Retry for transient Apple timestamp-server failures during code signing.
-        run: ./scripts/retry.sh 3 30 make dist-mac-release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./scripts/retry.sh 3 30 make dist-mac
 
       - name: Smoke test packaged macOS attach_file runtime
         run: make check-mac-attach-file-runtime
