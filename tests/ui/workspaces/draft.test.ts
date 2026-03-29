@@ -144,10 +144,11 @@ describeIntegration("Draft workspace behavior", () => {
       );
       fireEvent.click(projectRow);
 
-      await waitFor(
+      const textarea = await waitFor(
         () => {
-          const textarea = view.container.querySelector("textarea");
-          if (!textarea) throw new Error("Creation textarea not found");
+          const el = view.container.querySelector('textarea[aria-label="Message Claude"]');
+          if (!el) throw new Error("Creation textarea not found");
+          return el as HTMLTextAreaElement;
         },
         { timeout: 5_000 }
       );
@@ -156,9 +157,19 @@ describeIntegration("Draft workspace behavior", () => {
       expect(draftId).toBeTruthy();
       expect(view.container.querySelector("[data-draft-id]")).toBeNull();
 
+      // In happy-dom CI, the direct persisted-state update can leave the sidebar's
+      // useSyncExternalStore subscribers stale until React also processes an input event.
       act(() => {
         updatePersistedState(getInputKey(getDraftScopeId(normalizedProjectPath, draftId)), "hello");
       });
+      fireEvent.change(textarea, { target: { value: "hello" } });
+
+      await waitFor(
+        () => {
+          expect(textarea.value).toBe("hello");
+        },
+        { timeout: 5_000 }
+      );
 
       const visibleDraftRow = await waitFor(
         () => {
