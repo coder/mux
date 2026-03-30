@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { globSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 
 const STORY_DIR = "src/browser/stories";
 const MAX_SNAPSHOT_ENABLED_FILES = 9;
@@ -16,10 +16,12 @@ function hasMetaDisable(content: string): boolean {
 }
 
 describe("Storybook snapshot budget", () => {
-  const storyFiles = globSync(`${STORY_DIR}/*.stories.tsx`);
+  const storyFiles = readdirSync(STORY_DIR)
+    .filter((f: string) => f.endsWith(".stories.tsx"))
+    .map((f: string) => `${STORY_DIR}/${f}`);
 
   test(`app-level story files with snapshots enabled ≤ ${MAX_SNAPSHOT_ENABLED_FILES}`, () => {
-    const filesWithSnapshots = storyFiles.filter((file) => {
+    const filesWithSnapshots = storyFiles.filter((file: string) => {
       const content = readFileSync(file, "utf-8");
       return !hasMetaDisable(content);
     });
