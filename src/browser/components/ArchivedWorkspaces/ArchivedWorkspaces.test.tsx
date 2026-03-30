@@ -151,7 +151,7 @@ describe("ArchivedWorkspaces", () => {
     fireEvent.click(view.getByLabelText("Expand archived workspaces"));
 
     const deleteWorktreeButton = await waitFor(() =>
-      view.getByLabelText(`Delete worktree for workspace ${workspace.name}`)
+      view.getByLabelText(`Remove local checkout for workspace ${workspace.name}`)
     );
     fireEvent.click(deleteWorktreeButton);
 
@@ -183,7 +183,7 @@ describe("ArchivedWorkspaces", () => {
     fireEvent.click(view.getByLabelText("Expand archived workspaces"));
 
     const deleteWorktreeButton = await waitFor(() =>
-      view.getByLabelText(`Delete worktree for workspace ${workspace.name}`)
+      view.getByLabelText(`Remove local checkout for workspace ${workspace.name}`)
     );
     fireEvent.click(deleteWorktreeButton);
 
@@ -222,10 +222,10 @@ describe("ArchivedWorkspaces", () => {
 
     await waitFor(() => {
       expect(
-        view.queryByLabelText(`Delete worktree for workspace ${transcriptOnlyWorkspace.name}`)
+        view.queryByLabelText(`Remove local checkout for workspace ${transcriptOnlyWorkspace.name}`)
       ).toBeNull();
       expect(
-        view.queryByLabelText(`Delete worktree for workspace ${localWorkspace.name}`)
+        view.queryByLabelText(`Remove local checkout for workspace ${localWorkspace.name}`)
       ).toBeNull();
     });
   });
