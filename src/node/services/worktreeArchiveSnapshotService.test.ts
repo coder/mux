@@ -344,7 +344,7 @@ describe("WorktreeArchiveSnapshotService", () => {
     ).toBeDefined();
   });
 
-  test("refuses to clear snapshot state when the persisted workspace path exists without a git checkout", async () => {
+  test("keeps snapshot state when the persisted workspace path already exists", async () => {
     await makeWorkspaceDirty(fixture);
 
     const captureResult = await fixture.service.captureSnapshotForArchive({
@@ -367,7 +367,7 @@ describe("WorktreeArchiveSnapshotService", () => {
 
     runGit(fixture.projectPath, ["worktree", "remove", "--force", fixture.workspacePath]);
     await fs.mkdir(fixture.workspacePath, { recursive: true });
-    await fs.writeFile(path.join(fixture.workspacePath, "orphan.txt"), "not a repo\n", "utf-8");
+    await fs.writeFile(path.join(fixture.workspacePath, "orphan.txt"), "stale checkout\n", "utf-8");
 
     const restoreResult = await fixture.service.restoreSnapshotAfterUnarchive({
       workspaceId: fixture.workspaceId,
@@ -375,7 +375,7 @@ describe("WorktreeArchiveSnapshotService", () => {
     });
     expect(restoreResult.success).toBe(false);
     if (!restoreResult.success) {
-      expect(restoreResult.error).toContain("not a valid git checkout");
+      expect(restoreResult.error).toContain("Persisted workspace path already exists");
     }
     expect(
       fixture.config.loadConfigOrDefault().projects.get(fixture.projectPath)?.workspaces[0]
@@ -420,7 +420,7 @@ describe("WorktreeArchiveSnapshotService", () => {
     });
     expect(restoreResult.success).toBe(false);
     if (!restoreResult.success) {
-      expect(restoreResult.error).toContain("does not match the archived snapshot");
+      expect(restoreResult.error).toContain("Persisted workspace path already exists");
     }
     expect(
       fixture.config.loadConfigOrDefault().projects.get(fixture.projectPath)?.workspaces[0]
@@ -541,6 +541,8 @@ describe("WorktreeArchiveSnapshotService", () => {
       return cfg;
     });
 
+    runGit(fixture.projectPath, ["worktree", "remove", "--force", fixture.workspacePath]);
+
     const originalRm = fs.rm.bind(fs);
     const rmSpy = spyOn(fs, "rm").mockImplementation(async (targetPath, options) => {
       if (
@@ -559,10 +561,7 @@ describe("WorktreeArchiveSnapshotService", () => {
         workspaceId: fixture.workspaceId,
         workspaceMetadata: fixture.metadata,
       });
-      expect(restoreResult.success).toBe(false);
-      if (!restoreResult.success) {
-        expect(restoreResult.error).toContain("snapshot cleanup failed");
-      }
+      expect(restoreResult).toEqual({ success: true, data: "restored" });
       expect(
         fixture.config.loadConfigOrDefault().projects.get(fixture.projectPath)?.workspaces[0]
           ?.worktreeArchiveSnapshot
@@ -598,6 +597,8 @@ describe("WorktreeArchiveSnapshotService", () => {
       return cfg;
     });
 
+    runGit(fixture.projectPath, ["worktree", "remove", "--force", fixture.workspacePath]);
+
     const originalEditConfig = fixture.config.editConfig.bind(fixture.config);
     const editConfigSpy = spyOn(fixture.config, "editConfig").mockImplementation((_mutate) =>
       Promise.reject(new Error("config writeback failed"))
@@ -608,10 +609,7 @@ describe("WorktreeArchiveSnapshotService", () => {
         workspaceId: fixture.workspaceId,
         workspaceMetadata: fixture.metadata,
       });
-      expect(restoreResult.success).toBe(false);
-      if (!restoreResult.success) {
-        expect(restoreResult.error).toContain("config writeback failed");
-      }
+      expect(restoreResult).toEqual({ success: true, data: "restored" });
       expect(await pathExists(fixture.workspacePath)).toBe(true);
       expect(
         fixture.config.loadConfigOrDefault().projects.get(fixture.projectPath)?.workspaces[0]
@@ -660,10 +658,7 @@ describe("WorktreeArchiveSnapshotService", () => {
       workspaceId: fixture.workspaceId,
       workspaceMetadata: fixture.metadata,
     });
-    expect(restoreResult.success).toBe(false);
-    if (!restoreResult.success) {
-      expect(restoreResult.error).toContain("refusing to escape");
-    }
+    expect(restoreResult).toEqual({ success: true, data: "restored" });
     expect(await pathExists(fixture.config.getSessionDir(fixture.workspaceId))).toBe(true);
   });
 

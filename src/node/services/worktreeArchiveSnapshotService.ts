@@ -13,7 +13,6 @@ import type {
 import type { Config } from "@/node/config";
 import { detectDefaultTrunkBranch } from "@/node/git";
 import { ContainerManager } from "@/node/multiProject/containerManager";
-import { isGitRepository } from "@/node/utils/pathUtils";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import type { InitLogger } from "@/node/runtime/Runtime";
 import { coerceNonEmptyString, findWorkspaceEntry } from "@/node/services/taskUtils";
@@ -291,47 +290,9 @@ export class WorktreeArchiveSnapshotService {
 
     try {
       if (await this.pathExists(persistedWorkspacePath)) {
-        if (snapshot.projects.length !== 1) {
-          throw new Error(
-            "Persisted workspace path already exists, but snapshot recovery could not validate the multi-project checkout."
-          );
-        }
-
-        const persistedCheckoutIsGitRepo = await isGitRepository(persistedWorkspacePath);
-        if (!persistedCheckoutIsGitRepo) {
-          throw new Error(
-            "Persisted workspace path already exists but is not a valid git checkout for snapshot recovery."
-          );
-        }
-
-        const existingProjectSnapshot = snapshot.projects[0];
-        if (!existingProjectSnapshot) {
-          throw new Error("Archive snapshot metadata is missing its project restore entry.");
-        }
-
-        const checkoutBranch = await this.tryGitStdout(persistedWorkspacePath, [
-          "rev-parse",
-          "--abbrev-ref",
-          "HEAD",
-        ]);
-        const checkoutCommonDir = await this.tryGitStdout(persistedWorkspacePath, [
-          "rev-parse",
-          "--path-format=absolute",
-          "--git-common-dir",
-        ]);
-        const expectedCommonDir = path.resolve(existingProjectSnapshot.projectPath, ".git");
-        if (
-          checkoutBranch !== existingProjectSnapshot.branchName ||
-          !checkoutCommonDir ||
-          path.resolve(checkoutCommonDir) !== expectedCommonDir
-        ) {
-          throw new Error(
-            "Persisted workspace path already exists but does not match the archived snapshot."
-          );
-        }
-
-        await this.clearSnapshotState(args.workspaceId, snapshot);
-        return Ok("skipped");
+        throw new Error(
+          "Persisted workspace path already exists; snapshot restore will not discard saved recovery data until the checkout is reconciled manually."
+        );
       }
       for (const projectSnapshot of snapshot.projects) {
         const branchRefSha = await this.tryGitStdout(projectSnapshot.projectPath, [
@@ -474,8 +435,14 @@ export class WorktreeArchiveSnapshotService {
           createdWorkspaces,
           containerCreated,
         });
+        return Err(`Failed to restore archive snapshot: ${getErrorMessage(error)}`);
       }
-      return Err(`Failed to restore archive snapshot: ${getErrorMessage(error)}`);
+
+      log.debug("Keeping restored worktree despite snapshot cleanup/writeback failure", {
+        workspaceId: args.workspaceId,
+        error: getErrorMessage(error),
+      });
+      return Ok("restored");
     }
   }
 
