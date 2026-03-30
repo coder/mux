@@ -6,7 +6,7 @@
  * - "Clone repo" — repo URL + clone location inputs
  */
 
-import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
+import { CHROMATIC_SMOKE_MODES, appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import { expandProjects, selectWorkspace } from "./helpers/uiState";
 import { createWorkspace, groupWorkspacesByProject } from "./mocks/workspaces";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
@@ -51,6 +51,9 @@ async function openNewProjectModal(canvasElement: HTMLElement): Promise<void> {
 
 /** Default "Local folder" tab of the Add Project modal. */
 export const LocalFolder: AppStory = {
+  parameters: {
+    chromatic: { modes: CHROMATIC_SMOKE_MODES },
+  },
   render: () => <AppWithMocks setup={setupProjectCreateStory} />,
   play: async ({ canvasElement }) => {
     await openNewProjectModal(canvasElement);

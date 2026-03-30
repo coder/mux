@@ -6,7 +6,7 @@
  */
 
 import React from "react";
-import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
+import { CHROMATIC_SMOKE_MODES, appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import { createWorkspace, groupWorkspacesByProject } from "./mocks/workspaces";
 import { createGitStatusExecutor } from "./helpers/git";
 import { collapseRightSidebar, expandProjects, selectWorkspace } from "./helpers/uiState";
@@ -95,6 +95,9 @@ export const MacOSDesktop: AppStory = {
       return <Story />;
     },
   ],
+  parameters: {
+    chromatic: { modes: CHROMATIC_SMOKE_MODES },
+  },
   render: () => <AppWithMocks setup={createPopulatedClient} />,
 };
 

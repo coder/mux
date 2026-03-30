@@ -4,7 +4,7 @@
 
 import { within, userEvent, waitFor, expect } from "@storybook/test";
 
-import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
+import { CHROMATIC_SMOKE_MODES, appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import { createMockORPCClient, type MockSessionUsage } from "@/browser/stories/mocks/orpc";
 import { expandProjects } from "./helpers/uiState";
 import { createArchivedWorkspace, NOW } from "./mocks/workspaces";
@@ -66,6 +66,9 @@ export default {
 
 /** Chat with Mux - the default boot state (no user projects) */
 export const ChatWithMux: AppStory = {
+  parameters: {
+    chromatic: { modes: CHROMATIC_SMOKE_MODES },
+  },
   render: () => (
     <AppWithMocks
       setup={() =>

@@ -2,7 +2,7 @@
  * Error states & edge cases stories
  */
 
-import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
+import { CHROMATIC_SMOKE_MODES, appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import type { WorkspaceChatMessage, ChatMuxMessage } from "@/common/orpc/types";
 import type { DebugLlmRequestSnapshot } from "@/common/types/debugLlmRequest";
 import {
@@ -170,6 +170,9 @@ const createDebugLlmRequestSnapshot = (workspaceId: string): DebugLlmRequestSnap
  * Stream interrupted banner when a larger-context known model is configured.
  */
 export const ContextExceededSuggestion: AppStory = {
+  parameters: {
+    chromatic: { modes: CHROMATIC_SMOKE_MODES },
+  },
   render: () => (
     <AppWithMocks
       setup={() => {

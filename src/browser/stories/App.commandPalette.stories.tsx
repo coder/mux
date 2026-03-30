@@ -13,7 +13,7 @@
  */
 
 import { expect, userEvent, within } from "@storybook/test";
-import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
+import { CHROMATIC_SMOKE_MODES, appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import { NOW, createWorkspace, groupWorkspacesByProject } from "./mocks/workspaces";
 import { collapseRightSidebar, expandProjects, selectWorkspace } from "./helpers/uiState";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
@@ -127,6 +127,9 @@ async function openPalette(canvasElement: HTMLElement, waitForText: string) {
  * - Mix of recent and older workspaces shows age diversity
  */
 export const WithTitles: AppStory = {
+  parameters: {
+    chromatic: { modes: CHROMATIC_SMOKE_MODES },
+  },
   render: () => <AppWithMocks setup={() => setupStory(createRichWorkspaces())} />,
   play: async ({ canvasElement }) => {
     await openPalette(canvasElement, "Fix login button styling issue");

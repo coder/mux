@@ -2,7 +2,7 @@
  * Sidebar & project navigation stories
  */
 
-import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
+import { CHROMATIC_SMOKE_MODES, appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import { createOnChatAdapter, type ChatHandler } from "./helpers/chatSetup";
 import { setWorkspaceDrafts } from "./helpers/drafts";
 import { clearWorkspaceSelection, expandProjects } from "./helpers/uiState";
@@ -124,6 +124,9 @@ function createGitStatusExecutor(gitStatus?: Map<string, GitStatusFixture>) {
 
 /** Single project with multiple workspaces including SSH */
 export const SingleProject: AppStory = {
+  parameters: {
+    chromatic: { modes: CHROMATIC_SMOKE_MODES },
+  },
   render: () => (
     <AppWithMocks
       setup={() => {

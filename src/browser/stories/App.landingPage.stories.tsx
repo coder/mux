@@ -8,7 +8,7 @@
 import type { APIClient } from "@/browser/contexts/API";
 import type { Summary } from "@/browser/hooks/useAnalytics";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
-import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
+import { CHROMATIC_SMOKE_MODES, appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import { createWorkspace, groupWorkspacesByProject } from "./mocks/workspaces";
 import { createPRStatusExecutor } from "./helpers/git";
 import { expandProjects } from "./helpers/uiState";
@@ -105,6 +105,9 @@ function withAnalytics(client: APIClient): APIClient {
 
 /** Default landing page with gateway balance, stats, and recent workspaces. */
 export const Default: AppStory = {
+  parameters: {
+    chromatic: { modes: CHROMATIC_SMOKE_MODES },
+  },
   render: () => (
     <AppWithMocks
       setup={() => {
