@@ -40,6 +40,35 @@ interface CreatedRestoreWorkspace {
   workspacePath: string;
 }
 
+function findWorkspaceEntryByIdOrPath(
+  config: Config,
+  configSnapshot: ReturnType<Config["loadConfigOrDefault"]>,
+  workspaceId: string
+): ReturnType<typeof findWorkspaceEntry> {
+  const directMatch = findWorkspaceEntry(configSnapshot, workspaceId);
+  if (directMatch) {
+    return directMatch;
+  }
+
+  const locatedWorkspace = config.findWorkspace(workspaceId);
+  if (!locatedWorkspace) {
+    return null;
+  }
+
+  const projectConfig = configSnapshot.projects.get(locatedWorkspace.projectPath);
+  const workspace = projectConfig?.workspaces.find(
+    (entry) => entry.path === locatedWorkspace.workspacePath
+  );
+  if (!workspace) {
+    return null;
+  }
+
+  return {
+    projectPath: locatedWorkspace.projectPath,
+    workspace,
+  };
+}
+
 export class WorktreeArchiveSnapshotService {
   constructor(private readonly config: Config) {}
 
@@ -57,7 +86,11 @@ export class WorktreeArchiveSnapshotService {
     }
 
     const configSnapshot = this.config.loadConfigOrDefault();
-    const workspaceEntry = findWorkspaceEntry(configSnapshot, args.workspaceId);
+    const workspaceEntry = findWorkspaceEntryByIdOrPath(
+      this.config,
+      configSnapshot,
+      args.workspaceId
+    );
     if (!workspaceEntry) {
       return Err("Workspace not found in config");
     }
@@ -106,7 +139,11 @@ export class WorktreeArchiveSnapshotService {
     }
 
     const configSnapshot = this.config.loadConfigOrDefault();
-    const workspaceEntry = findWorkspaceEntry(configSnapshot, args.workspaceId);
+    const workspaceEntry = findWorkspaceEntryByIdOrPath(
+      this.config,
+      configSnapshot,
+      args.workspaceId
+    );
     if (!workspaceEntry) {
       return Err("Workspace not found in config");
     }
@@ -265,7 +302,11 @@ export class WorktreeArchiveSnapshotService {
     );
 
     const configSnapshot = this.config.loadConfigOrDefault();
-    const workspaceEntry = findWorkspaceEntry(configSnapshot, args.workspaceId);
+    const workspaceEntry = findWorkspaceEntryByIdOrPath(
+      this.config,
+      configSnapshot,
+      args.workspaceId
+    );
     if (!workspaceEntry) {
       return Err("Workspace not found in config");
     }
@@ -613,7 +654,7 @@ export class WorktreeArchiveSnapshotService {
     await fsPromises.rm(stateDir, { recursive: true, force: true });
 
     await this.config.editConfig((config) => {
-      const workspaceEntry = findWorkspaceEntry(config, workspaceId);
+      const workspaceEntry = findWorkspaceEntryByIdOrPath(this.config, config, workspaceId);
       if (workspaceEntry) {
         delete workspaceEntry.workspace.worktreeArchiveSnapshot;
       }

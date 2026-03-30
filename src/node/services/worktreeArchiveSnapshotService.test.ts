@@ -139,6 +139,30 @@ describe("WorktreeArchiveSnapshotService", () => {
     await fs.rm(fixture.muxRoot, { recursive: true, force: true });
   });
 
+  test("preflightSnapshotForArchive supports legacy path-only workspace entries", async () => {
+    await fixture.config.editConfig((cfg) => {
+      const workspace = cfg.projects.get(fixture.projectPath)?.workspaces[0];
+      if (!workspace) {
+        throw new Error("Missing workspace entry");
+      }
+      delete workspace.id;
+      return cfg;
+    });
+    await fs.mkdir(fixture.config.getSessionDir(fixture.workspaceName), { recursive: true });
+    await fs.writeFile(
+      path.join(fixture.config.getSessionDir(fixture.workspaceName), "metadata.json"),
+      JSON.stringify({ id: fixture.workspaceId }),
+      "utf-8"
+    );
+
+    const preflightResult = await fixture.service.preflightSnapshotForArchive({
+      workspaceId: fixture.workspaceId,
+      workspaceMetadata: fixture.metadata,
+    });
+
+    expect(preflightResult).toEqual({ success: true, data: undefined });
+  });
+
   test("captures a durable snapshot and restores tracked staged + unstaged changes", async () => {
     await makeWorkspaceDirty(fixture);
 
