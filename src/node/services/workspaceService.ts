@@ -3636,17 +3636,24 @@ export class WorkspaceService extends EventEmitter {
 
       const { projectPath, workspacePath } = workspace;
       const worktreeArchiveBehavior = this.getWorktreeArchiveBehavior();
-      const needsSnapshotCapture =
+      const snapshotBehaviorEnabled =
         worktreeArchiveBehavior === "snapshot" && this.worktreeArchiveSnapshotService != null;
 
       let beforeArchiveMetadata: WorkspaceMetadata | undefined;
-      if (this.workspaceLifecycleHooks || needsSnapshotCapture) {
+      if (this.workspaceLifecycleHooks || snapshotBehaviorEnabled) {
         const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
         if (!metadataResult.success) {
           return Err(metadataResult.error);
         }
         beforeArchiveMetadata = metadataResult.data;
       }
+
+      const shouldSkipSnapshotCapture =
+        snapshotBehaviorEnabled &&
+        beforeArchiveMetadata != null &&
+        Array.isArray(beforeArchiveMetadata.projects) &&
+        beforeArchiveMetadata.projects.length > 1;
+      const needsSnapshotCapture = snapshotBehaviorEnabled && !shouldSkipSnapshotCapture;
 
       // Lifecycle hooks run *before* we persist archivedAt.
       //
@@ -3779,6 +3786,8 @@ export class WorkspaceService extends EventEmitter {
       const { projectPath, workspacePath } = workspace;
 
       let didUnarchive = false;
+      let previousUnarchivedAt: string | undefined;
+      let persistedUnarchivedAt: string | undefined;
 
       await this.config.editConfig((config) => {
         const projectConfig = config.projects.get(projectPath);
@@ -3794,7 +3803,9 @@ export class WorkspaceService extends EventEmitter {
             if (wasArchived) {
               // Just set unarchivedAt - archived state is derived from archivedAt > unarchivedAt.
               // This also bumps workspace to top of recency.
-              workspaceEntry.unarchivedAt = new Date().toISOString();
+              previousUnarchivedAt = workspaceEntry.unarchivedAt;
+              persistedUnarchivedAt = new Date().toISOString();
+              workspaceEntry.unarchivedAt = persistedUnarchivedAt;
               didUnarchive = true;
             }
           }
@@ -3844,6 +3855,21 @@ export class WorkspaceService extends EventEmitter {
             workspaceId,
             error: restoreResult.error,
           });
+          if (persistedUnarchivedAt) {
+            await this.config.editConfig((config) => {
+              const projectConfig = config.projects.get(projectPath);
+              const workspaceEntry = projectConfig?.workspaces.find((w) => w.id === workspaceId);
+              if (workspaceEntry && workspaceEntry.unarchivedAt === persistedUnarchivedAt) {
+                if (previousUnarchivedAt === undefined) {
+                  delete workspaceEntry.unarchivedAt;
+                } else {
+                  workspaceEntry.unarchivedAt = previousUnarchivedAt;
+                }
+              }
+              return config;
+            });
+            await this.emitCurrentWorkspaceMetadata(workspaceId);
+          }
           return Err(restoreResult.error);
         }
       }

@@ -3878,6 +3878,31 @@ describe("WorkspaceService archive snapshots", () => {
     expect(closeDesktopSession).not.toHaveBeenCalled();
   });
 
+  test("archive() skips snapshot capture for multi-project workspaces", async () => {
+    const captureSnapshotForArchive = mock(() => Promise.resolve(Err("should not run")));
+    workspaceService.setWorktreeArchiveSnapshotService({
+      captureSnapshotForArchive,
+      restoreSnapshotAfterUnarchive: mock(() => Promise.resolve(Ok("skipped" as const))),
+    });
+
+    const multiProjectMetadata = {
+      ...workspaceMetadata,
+      projects: [
+        { projectPath, projectName: "proj" },
+        { projectPath: "/tmp/project-b", projectName: "proj-b" },
+      ],
+    } satisfies WorkspaceMetadata;
+    const aiService = workspaceService as unknown as { aiService: AIService };
+    aiService.aiService.getWorkspaceMetadata = mock(() =>
+      Promise.resolve(Ok(multiProjectMetadata))
+    );
+
+    const result = await workspaceService.archive(workspaceId);
+
+    expect(result).toEqual(Ok(undefined));
+    expect(captureSnapshotForArchive).not.toHaveBeenCalled();
+  });
+
   test("archive() aborts when snapshot capture fails", async () => {
     const captureSnapshotForArchive = mock(() => Promise.resolve(Err("snapshot failed")));
     workspaceService.setWorktreeArchiveSnapshotService({
@@ -3995,6 +4020,18 @@ describe("WorkspaceService unarchive snapshot restore", () => {
   });
 
   test("unarchive() returns Err when snapshot restore fails", async () => {
+    const restoreSnapshotAfterUnarchive = mock(() => Promise.resolve(Err("restore failed")));
+    workspaceService.setWorktreeArchiveSnapshotService({
+      captureSnapshotForArchive: mock(() => Promise.resolve(Err("unused"))),
+      restoreSnapshotAfterUnarchive,
+    });
+
+    const result = await workspaceService.unarchive(workspaceId);
+
+    expect(result).toEqual(Err("restore failed"));
+  });
+
+  test("unarchive() rolls back unarchivedAt when snapshot restore fails", async () => {
     const restoreSnapshotAfterUnarchive = mock(() => Promise.resolve(Err("restore failed")));
     workspaceService.setWorktreeArchiveSnapshotService({
       captureSnapshotForArchive: mock(() => Promise.resolve(Err("unused"))),
