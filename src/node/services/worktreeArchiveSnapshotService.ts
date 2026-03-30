@@ -471,7 +471,15 @@ export class WorktreeArchiveSnapshotService {
   }
 
   private async runGitCommand(repoPath: string, args: string[]): Promise<string> {
-    using proc = execFileAsync("git", ["-C", repoPath, ...args], { env: GIT_NO_HOOKS_ENV });
+    const gitEnv =
+      args[0] === "am"
+        ? {
+            ...GIT_NO_HOOKS_ENV,
+            GIT_COMMITTER_NAME: "Mux Archive Restore",
+            GIT_COMMITTER_EMAIL: "mux-archive-restore@local",
+          }
+        : GIT_NO_HOOKS_ENV;
+    using proc = execFileAsync("git", ["-C", repoPath, ...args], { env: gitEnv });
     const { stdout } = await proc.result;
     return stdout;
   }

@@ -233,10 +233,39 @@ describe("WorktreeArchiveSnapshotService", () => {
 
     expect(() => runGit(fixture.projectPath, ["cat-file", "-e", `${headSha}^{commit}`])).toThrow();
 
-    const restoreResult = await fixture.service.restoreSnapshotAfterUnarchive({
-      workspaceId: fixture.workspaceId,
-      workspaceMetadata: fixture.metadata,
-    });
+    const originalHome = process.env.HOME;
+    const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
+    const originalGitConfigGlobal = process.env.GIT_CONFIG_GLOBAL;
+    const emptyHome = path.join(fixture.muxRoot, "empty-home");
+    await fs.mkdir(emptyHome, { recursive: true });
+    process.env.HOME = emptyHome;
+    process.env.XDG_CONFIG_HOME = path.join(emptyHome, ".config");
+    process.env.GIT_CONFIG_GLOBAL = path.join(emptyHome, ".gitconfig");
+
+    let restoreResult: Awaited<ReturnType<typeof fixture.service.restoreSnapshotAfterUnarchive>>;
+    try {
+      restoreResult = await fixture.service.restoreSnapshotAfterUnarchive({
+        workspaceId: fixture.workspaceId,
+        workspaceMetadata: fixture.metadata,
+      });
+    } finally {
+      if (originalHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = originalHome;
+      }
+      if (originalXdgConfigHome === undefined) {
+        delete process.env.XDG_CONFIG_HOME;
+      } else {
+        process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
+      }
+      if (originalGitConfigGlobal === undefined) {
+        delete process.env.GIT_CONFIG_GLOBAL;
+      } else {
+        process.env.GIT_CONFIG_GLOBAL = originalGitConfigGlobal;
+      }
+    }
+
     expect(restoreResult).toEqual({ success: true, data: "restored" });
     expect(runGit(fixture.workspacePath, ["log", "--format=%s", "-n", "3"])).toContain(
       "commit two"
