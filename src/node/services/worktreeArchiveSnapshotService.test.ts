@@ -394,6 +394,48 @@ describe("WorktreeArchiveSnapshotService", () => {
     expect(await pathExists(fixture.workspacePath)).toBe(false);
   });
 
+  test("fails restore when tracked patch artifacts are unavailable", async () => {
+    await makeWorkspaceDirty(fixture);
+
+    const captureResult = await fixture.service.captureSnapshotForArchive({
+      workspaceId: fixture.workspaceId,
+      workspaceMetadata: fixture.metadata,
+    });
+    expect(captureResult.success).toBe(true);
+    if (!captureResult.success) {
+      return;
+    }
+
+    const stagedPatchPath = captureResult.data.projects[0]?.stagedPatchPath;
+    if (!stagedPatchPath) {
+      throw new Error("Expected staged patch path");
+    }
+
+    await fixture.config.editConfig((cfg) => {
+      const workspace = cfg.projects.get(fixture.projectPath)?.workspaces[0];
+      if (!workspace) {
+        throw new Error("Missing workspace entry");
+      }
+      workspace.worktreeArchiveSnapshot = captureResult.data;
+      return cfg;
+    });
+
+    await fs.rm(path.join(fixture.config.getSessionDir(fixture.workspaceId), stagedPatchPath), {
+      force: true,
+    });
+    runGit(fixture.projectPath, ["worktree", "remove", "--force", fixture.workspacePath]);
+
+    const restoreResult = await fixture.service.restoreSnapshotAfterUnarchive({
+      workspaceId: fixture.workspaceId,
+      workspaceMetadata: fixture.metadata,
+    });
+    expect(restoreResult.success).toBe(false);
+    if (!restoreResult.success) {
+      expect(restoreResult.error).toContain("staged patch artifact is unavailable");
+    }
+    expect(await pathExists(fixture.workspacePath)).toBe(false);
+  });
+
   test("preserves snapshot metadata when artifact cleanup fails after a successful restore", async () => {
     await makeWorkspaceDirty(fixture);
 

@@ -325,14 +325,17 @@ export class WorktreeArchiveSnapshotService {
             this.config.getSessionDir(args.workspaceId),
             projectSnapshot.stagedPatchPath
           );
-          if (await this.pathExists(stagedPatchPath)) {
-            await this.runGitCommand(restoreResult.workspacePath, [
-              "apply",
-              "--index",
-              "--binary",
-              stagedPatchPath,
-            ]);
+          if (!(await this.pathExists(stagedPatchPath))) {
+            throw new Error(
+              `Failed to restore ${projectSnapshot.projectName}: staged patch artifact is unavailable.`
+            );
           }
+          await this.runGitCommand(restoreResult.workspacePath, [
+            "apply",
+            "--index",
+            "--binary",
+            stagedPatchPath,
+          ]);
         }
 
         if (projectSnapshot.unstagedPatchPath) {
@@ -340,13 +343,16 @@ export class WorktreeArchiveSnapshotService {
             this.config.getSessionDir(args.workspaceId),
             projectSnapshot.unstagedPatchPath
           );
-          if (await this.pathExists(unstagedPatchPath)) {
-            await this.runGitCommand(restoreResult.workspacePath, [
-              "apply",
-              "--binary",
-              unstagedPatchPath,
-            ]);
+          if (!(await this.pathExists(unstagedPatchPath))) {
+            throw new Error(
+              `Failed to restore ${projectSnapshot.projectName}: unstaged patch artifact is unavailable.`
+            );
           }
+          await this.runGitCommand(restoreResult.workspacePath, [
+            "apply",
+            "--binary",
+            unstagedPatchPath,
+          ]);
         }
       }
 

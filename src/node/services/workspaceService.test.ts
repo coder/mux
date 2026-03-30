@@ -3994,6 +3994,18 @@ describe("WorkspaceService unarchive snapshot restore", () => {
     await cleanupHistory();
   });
 
+  test("unarchive() returns Err when snapshot restore fails", async () => {
+    const restoreSnapshotAfterUnarchive = mock(() => Promise.resolve(Err("restore failed")));
+    workspaceService.setWorktreeArchiveSnapshotService({
+      captureSnapshotForArchive: mock(() => Promise.resolve(Err("unused"))),
+      restoreSnapshotAfterUnarchive,
+    });
+
+    const result = await workspaceService.unarchive(workspaceId);
+
+    expect(result).toEqual(Err("restore failed"));
+  });
+
   test("unarchive() invokes snapshot restore when snapshot metadata is present", async () => {
     const restoreSnapshotAfterUnarchive = mock(() => Promise.resolve(Ok("restored" as const)));
     workspaceService.setWorktreeArchiveSnapshotService({

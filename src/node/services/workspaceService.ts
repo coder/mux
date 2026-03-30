@@ -3844,6 +3844,7 @@ export class WorkspaceService extends EventEmitter {
             workspaceId,
             error: restoreResult.error,
           });
+          return Err(restoreResult.error);
         }
       }
 

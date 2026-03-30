@@ -30,6 +30,17 @@ export function createWorktreeArchiveHook(options: {
       return Ok(undefined);
     }
 
+    if (
+      options.getWorktreeArchiveBehavior() === "snapshot" &&
+      Array.isArray(workspaceMetadata.projects) &&
+      workspaceMetadata.projects.length > 1
+    ) {
+      log.debug("Skipping snapshot worktree cleanup for multi-project archive", {
+        workspaceId: workspaceMetadata.id,
+      });
+      return Ok(undefined);
+    }
+
     if (!hasNamedWorkspacePath(workspaceMetadata)) {
       log.debug(
         "Skipping managed worktree cleanup during archive because persisted path is missing",
