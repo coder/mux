@@ -597,9 +597,9 @@ export class WorktreeArchiveSnapshotService {
       "resolveSessionRelativePath: relativePath must be non-empty"
     );
     const absolutePath = path.resolve(sessionDir, relativePath);
-    const isInsideSessionDir =
-      isPathInsideDir(sessionDir, absolutePath) || absolutePath === sessionDir;
-    assert(isInsideSessionDir, `resolveSessionRelativePath: refusing to escape ${sessionDir}`);
+    const isStrictChildPath =
+      isPathInsideDir(sessionDir, absolutePath) && absolutePath !== sessionDir;
+    assert(isStrictChildPath, `resolveSessionRelativePath: refusing to escape ${sessionDir}`);
     return absolutePath;
   }
 
