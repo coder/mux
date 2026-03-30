@@ -35,8 +35,11 @@ describe("Storybook coverage contract", () => {
 
     test(`${filename} has at least one smoke story with dual-theme coverage`, () => {
       const content = readFileSync(filepath, "utf-8");
-      const hasSmokeCoverage = content.includes("CHROMATIC_SMOKE_MODES");
-      expect(hasSmokeCoverage).toBe(true);
+      // Must appear in a modes assignment context, not just as an import
+      const hasSmokeModeUsage =
+        /modes:\s*CHROMATIC_SMOKE_MODES/.test(content) ||
+        /modes:\s*\{[^}]*CHROMATIC_SMOKE_MODES/.test(content);
+      expect(hasSmokeModeUsage).toBe(true);
     });
   }
 });
