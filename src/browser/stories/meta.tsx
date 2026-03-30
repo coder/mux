@@ -71,7 +71,7 @@ export const StoryUiShell: FC<{ children: ReactNode }> = (props) => {
 export const lightweightMeta: Meta = {
   parameters: {
     layout: "fullscreen",
-    chromatic: { delay: 200, modes: CHROMATIC_SINGLE_MODE },
+    chromatic: { delay: 200 },
   },
   decorators: [
     (Story) => (
