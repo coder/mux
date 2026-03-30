@@ -1,3 +1,4 @@
+import { useState, type ComponentProps } from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, within } from "@storybook/test";
 import { lightweightMeta } from "@/browser/stories/meta.js";
@@ -6,24 +7,82 @@ import {
   mockCoderInfoMissing,
   mockCoderInfoOutdated,
 } from "@/browser/stories/mocks/coder";
-import { RUNTIME_MODE } from "@/common/types/runtime";
-import { RuntimeButtonGroup, type RuntimeButtonGroupProps } from "./CreationControls";
+import {
+  RUNTIME_MODE,
+  type ParsedRuntime,
+  type RuntimeAvailabilityStatus,
+} from "@/common/types/runtime";
+import type { RuntimeAvailabilityState } from "./useCreationWorkspace";
+import {
+  CreationControls,
+  RuntimeButtonGroup,
+  type RuntimeButtonGroupProps,
+} from "./CreationControls";
+import {
+  SettingsSectionStory,
+  setupSettingsStory,
+} from "../Settings/Sections/settingsStoryUtils.js";
+
+const BASE_RUNTIME_AVAILABILITY = {
+  local: { available: true },
+  worktree: { available: true },
+  ssh: { available: true },
+  docker: { available: true },
+} as const;
+
+function getLoadedRuntimeAvailability(
+  devcontainer: RuntimeAvailabilityStatus
+): RuntimeAvailabilityState {
+  return {
+    status: "loaded",
+    data: {
+      ...BASE_RUNTIME_AVAILABILITY,
+      devcontainer,
+    },
+  };
+}
+
+const DEVCONTAINER_UNAVAILABLE = getLoadedRuntimeAvailability({
+  available: false,
+  reason: "devcontainer CLI not found. Install from https://containers.dev/",
+});
+
+const DEVCONTAINER_SINGLE_CONFIG = getLoadedRuntimeAvailability({
+  available: true,
+  cliVersion: "0.81.1",
+  configs: [
+    {
+      path: ".devcontainer/devcontainer.json",
+      label: "Default (.devcontainer/devcontainer.json)",
+    },
+  ],
+});
+
+const DEVCONTAINER_MULTI_CONFIG = getLoadedRuntimeAvailability({
+  available: true,
+  cliVersion: "0.81.1",
+  configs: [
+    {
+      path: ".devcontainer/devcontainer.json",
+      label: "Default (.devcontainer/devcontainer.json)",
+    },
+    {
+      path: ".devcontainer/backend/devcontainer.json",
+      label: "Backend (.devcontainer/backend/devcontainer.json)",
+    },
+    {
+      path: ".devcontainer/frontend/devcontainer.json",
+      label: "Frontend (.devcontainer/frontend/devcontainer.json)",
+    },
+  ],
+});
 
 const BASE_ARGS = {
   value: RUNTIME_MODE.WORKTREE,
   defaultMode: RUNTIME_MODE.WORKTREE,
   onChange: fn(),
   onSetDefault: fn(),
-  runtimeAvailabilityState: {
-    status: "loaded",
-    data: {
-      local: { available: true },
-      worktree: { available: true },
-      ssh: { available: true },
-      docker: { available: true },
-      devcontainer: { available: true },
-    },
-  },
+  runtimeAvailabilityState: getLoadedRuntimeAvailability({ available: true }),
 } satisfies RuntimeButtonGroupProps;
 
 const meta = {
@@ -31,7 +90,7 @@ const meta = {
   title: "App/Chat/Creation Controls",
   component: RuntimeButtonGroup,
   render: (args) => (
-    <div className="bg-background flex min-h-screen items-start p-6">
+    <div className="bg-background p-6">
       <div className="w-full max-w-64">
         <RuntimeButtonGroup {...args} />
       </div>
@@ -42,6 +101,58 @@ const meta = {
 export default meta;
 
 type Story = StoryObj<typeof meta>;
+
+type CreationControlsProps = ComponentProps<typeof CreationControls>;
+
+const BASE_CREATION_CONTROLS_PROPS: Omit<
+  CreationControlsProps,
+  "selectedRuntime" | "onSelectedRuntimeChange" | "runtimeAvailabilityState"
+> = {
+  branches: ["main", "develop"],
+  branchesLoaded: true,
+  trunkBranch: "main",
+  onTrunkBranchChange: fn(),
+  coderConfigFallback: {},
+  sshHostFallback: "devbox.internal",
+  defaultRuntimeMode: RUNTIME_MODE.WORKTREE,
+  onSetDefaultRuntime: fn(),
+  disabled: false,
+  projectPath: "/home/user/projects/my-app",
+  projectName: "my-app",
+  nameState: {
+    name: "devcontainer-story",
+    title: "Devcontainer Story",
+    isGenerating: false,
+    autoGenerate: true,
+    error: null,
+    setAutoGenerate: fn(),
+    setName: fn(),
+  },
+};
+
+function DevcontainerCreationControlsStory(props: {
+  runtimeAvailabilityState: RuntimeAvailabilityState;
+}) {
+  const [selectedRuntime, setSelectedRuntime] = useState<ParsedRuntime>({
+    mode: "devcontainer",
+    configPath: "",
+  });
+
+  return (
+    <SettingsSectionStory setup={() => setupSettingsStory({})}>
+      <div className="bg-background p-6">
+        <div className="max-w-3xl">
+          <CreationControls
+            {...BASE_CREATION_CONTROLS_PROPS}
+            selectedRuntime={selectedRuntime}
+            onSelectedRuntimeChange={setSelectedRuntime}
+            runtimeAvailabilityState={props.runtimeAvailabilityState}
+          />
+        </div>
+      </div>
+    </SettingsSectionStory>
+  );
+}
 
 async function openWorkspaceTypeMenu(storyRoot: HTMLElement): Promise<void> {
   const canvas = within(storyRoot);
@@ -100,5 +211,63 @@ export const CoderOutdated: Story = {
     await expect(coderOption).toHaveTextContent("2.20.0");
     await expect(coderOption).toHaveTextContent("2.25.0");
     await userEvent.keyboard("{Escape}");
+  },
+};
+
+/** Dev container runtime unavailable (option remains visible but disabled). */
+export const DevcontainerUnavailable: Story = {
+  args: {
+    ...BASE_ARGS,
+    runtimeAvailabilityState: DEVCONTAINER_UNAVAILABLE,
+  },
+  play: async ({ canvasElement }) => {
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+
+    await openWorkspaceTypeMenu(storyRoot);
+
+    const devcontainerOption = await within(document.body).findByRole("option", {
+      name: /^Dev container/i,
+    });
+
+    await expect(devcontainerOption).toHaveAttribute("aria-disabled", "true");
+    await userEvent.keyboard("{Escape}");
+  },
+};
+
+/** Dev container runtime with a single config. */
+export const DevcontainerSingleConfig: Story = {
+  render: () => (
+    <DevcontainerCreationControlsStory runtimeAvailabilityState={DEVCONTAINER_SINGLE_CONFIG} />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    const configSelect = await canvas.findByRole("combobox", { name: "Dev container config" });
+    await expect(configSelect).toBeEnabled();
+    await expect(
+      canvas.findByText("Default (.devcontainer/devcontainer.json)")
+    ).resolves.toBeInTheDocument();
+  },
+};
+
+/** Dev container runtime with multiple configs. */
+export const DevcontainerMultiConfig: Story = {
+  render: () => (
+    <DevcontainerCreationControlsStory runtimeAvailabilityState={DEVCONTAINER_MULTI_CONFIG} />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    const configSelect = await canvas.findByRole("combobox", { name: "Dev container config" });
+    await userEvent.click(configSelect);
+
+    const backendOption = await within(document.body).findByRole("option", {
+      name: /Backend \(\.devcontainer\/backend\/devcontainer\.json\)/i,
+    });
+    await userEvent.click(backendOption);
+
+    await expect(
+      canvas.findByText("Backend (.devcontainer/backend/devcontainer.json)")
+    ).resolves.toBeInTheDocument();
   },
 };
