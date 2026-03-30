@@ -12,17 +12,29 @@ function createIsConfigured(configuredProviders: string[]): (provider: string) =
   return (provider: string): boolean => configuredSet.has(provider);
 }
 
+function createIsGatewayModelAccessible(
+  inaccessibleGatewayModels: Array<[gateway: string, modelId: string]>
+): (gateway: string, modelId: string) => boolean {
+  const inaccessibleSet = new Set(
+    inaccessibleGatewayModels.map(([gateway, modelId]) => `${gateway}:${modelId}`)
+  );
+  return (gateway: string, modelId: string): boolean =>
+    !inaccessibleSet.has(`${gateway}:${modelId}`);
+}
+
 function isModelAvailableForRoutes(options: {
   modelId: string;
   configuredProviders: string[];
   routePriority: string[];
   routeOverrides?: Record<string, string>;
+  isGatewayModelAccessible?: (gateway: string, modelId: string) => boolean;
 }): boolean {
   return isModelAvailable(
     options.modelId,
     options.routePriority,
     options.routeOverrides ?? {},
-    createIsConfigured(options.configuredProviders)
+    createIsConfigured(options.configuredProviders),
+    options.isGatewayModelAccessible
   );
 }
 
@@ -58,7 +70,33 @@ describe("resolveRoute", () => {
     expect(thirdConfigured.routeModelId).toBe("claude-opus-4-6");
   });
 
-  test("routes OpenAI models through GitHub Copilot without adding a prefix", () => {
+  test("falls through to the next route when a gateway rejects the model", () => {
+    const resolved = resolveRoute(
+      OPENAI_MODEL,
+      ["github-copilot", "direct"],
+      {},
+      createIsConfigured(["github-copilot", "openai"]),
+      createIsGatewayModelAccessible([["github-copilot", "gpt-5.4"]])
+    );
+
+    expect(resolved.routeProvider).toBe("openai");
+    expect(resolved.routeModelId).toBe("gpt-5.4");
+  });
+
+  test("selects GitHub Copilot when the gateway accepts the model", () => {
+    const resolved = resolveRoute(
+      OPENAI_MODEL,
+      ["github-copilot", "direct"],
+      {},
+      createIsConfigured(["github-copilot", "openai"]),
+      createIsGatewayModelAccessible([])
+    );
+
+    expect(resolved.routeProvider).toBe("github-copilot");
+    expect(resolved.routeModelId).toBe("gpt-5.4");
+  });
+
+  test("routes OpenAI models through GitHub Copilot without adding a prefix when no callback is provided", () => {
     const resolved = resolveRoute(
       OPENAI_MODEL,
       ["github-copilot", "direct"],
@@ -336,6 +374,17 @@ describe("isModelAvailable", () => {
     ).toBe(false);
   });
 
+  test("returns false when the only gateway route rejects the model", () => {
+    expect(
+      isModelAvailableForRoutes({
+        modelId: OPENAI_MODEL,
+        configuredProviders: ["github-copilot"],
+        routePriority: ["github-copilot"],
+        isGatewayModelAccessible: createIsGatewayModelAccessible([["github-copilot", "gpt-5.4"]]),
+      })
+    ).toBe(false);
+  });
+
   test("returns true when an override selects a configured gateway outside routePriority", () => {
     expect(
       isModelAvailableForRoutes({
@@ -449,6 +498,32 @@ describe("availableRoutes", () => {
       {
         route: "direct",
         displayName: "Direct (Anthropic)",
+        isConfigured: false,
+      },
+    ]);
+  });
+
+  test("excludes gateway routes that cannot access the model", () => {
+    const routes = availableRoutes(
+      OPENAI_MODEL,
+      createIsConfigured(["github-copilot"]),
+      createIsGatewayModelAccessible([["github-copilot", "gpt-5.4"]])
+    );
+
+    expect(routes).toEqual([
+      {
+        route: "mux-gateway",
+        displayName: "Mux Gateway",
+        isConfigured: false,
+      },
+      {
+        route: "openrouter",
+        displayName: "OpenRouter",
+        isConfigured: false,
+      },
+      {
+        route: "direct",
+        displayName: "Direct (OpenAI)",
         isConfigured: false,
       },
     ]);
