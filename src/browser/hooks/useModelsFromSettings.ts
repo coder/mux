@@ -155,6 +155,17 @@ export function useModelsFromSettings() {
     [config]
   );
 
+  const isGatewayModelAccessible = useCallback(
+    (gateway: string, modelId: string) => {
+      const models = config?.[gateway]?.models;
+      if (!Array.isArray(models) || models.length === 0) {
+        return true;
+      }
+      return models.some((entry) => getProviderModelEntryId(entry) === modelId);
+    },
+    [config]
+  );
+
   const customModels = useMemo(() => {
     const next = filterHiddenModels(getCustomModels(config), hiddenModels);
     return effectivePolicy ? next.filter((m) => isModelAllowedByPolicy(effectivePolicy, m)) : next;
@@ -179,7 +190,15 @@ export function useModelsFromSettings() {
         return false;
       }
 
-      if (isModelAvailable(modelId, routePriority, routeOverrides, isConfigured)) {
+      if (
+        isModelAvailable(
+          modelId,
+          routePriority,
+          routeOverrides,
+          isConfigured,
+          isGatewayModelAccessible
+        )
+      ) {
         return false;
       }
 
@@ -205,6 +224,7 @@ export function useModelsFromSettings() {
     hiddenModels,
     effectivePolicy,
     isConfigured,
+    isGatewayModelAccessible,
     routePriority,
     routeOverrides,
     openaiApiKeySet,
@@ -225,7 +245,13 @@ export function useModelsFromSettings() {
       config == null
         ? suggested
         : suggested.filter((modelId) =>
-            isModelAvailable(modelId, routePriority, routeOverrides, isConfigured)
+            isModelAvailable(
+              modelId,
+              routePriority,
+              routeOverrides,
+              isConfigured,
+              isGatewayModelAccessible
+            )
           );
 
     if (config == null) {
@@ -263,6 +289,7 @@ export function useModelsFromSettings() {
     hiddenModels,
     effectivePolicy,
     isConfigured,
+    isGatewayModelAccessible,
     routePriority,
     routeOverrides,
     openaiApiKeySet,

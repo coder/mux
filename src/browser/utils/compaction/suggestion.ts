@@ -10,6 +10,7 @@ import { isModelAvailable } from "@/common/routing";
 import type { EffectivePolicy, ProvidersConfigMap } from "@/common/orpc/types";
 import { normalizeToCanonical } from "@/common/utils/ai/models";
 import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
+import { getProviderModelEntryId } from "@/common/utils/providers/modelEntries";
 import { getModelStats } from "@/common/utils/tokens/modelStats";
 
 export interface CompactionSuggestion {
@@ -35,6 +36,18 @@ function buildIsConfigured(
     providersConfig?.[provider]?.isEnabled !== false;
 }
 
+function buildIsGatewayModelAccessible(
+  providersConfig: ProvidersConfigMap | null
+): (gateway: string, modelId: string) => boolean {
+  return (gateway: string, modelId: string) => {
+    const models = providersConfig?.[gateway]?.models;
+    if (!Array.isArray(models) || models.length === 0) {
+      return true;
+    }
+    return models.some((entry) => getProviderModelEntryId(entry) === modelId);
+  };
+}
+
 export interface CompactionRouteOptions {
   routePriority: string[];
   routeOverrides: Record<string, string>;
@@ -57,7 +70,16 @@ export function getExplicitCompactionSuggestion(
 
   const normalized = normalizeToCanonical(modelId);
   const isConfigured = buildIsConfigured(options.providersConfig);
-  if (!isModelAvailable(normalized, options.routePriority, options.routeOverrides, isConfigured)) {
+  const isGatewayModelAccessible = buildIsGatewayModelAccessible(options.providersConfig);
+  if (
+    !isModelAvailable(
+      normalized,
+      options.routePriority,
+      options.routeOverrides,
+      isConfigured,
+      isGatewayModelAccessible
+    )
+  ) {
     return null;
   }
 
@@ -103,9 +125,18 @@ export function getHigherContextCompactionSuggestion(
 
   let best: CompactionSuggestion | null = null;
   const isConfigured = buildIsConfigured(options.providersConfig);
+  const isGatewayModelAccessible = buildIsGatewayModelAccessible(options.providersConfig);
 
   for (const known of Object.values(KNOWN_MODELS)) {
-    if (!isModelAvailable(known.id, options.routePriority, options.routeOverrides, isConfigured)) {
+    if (
+      !isModelAvailable(
+        known.id,
+        options.routePriority,
+        options.routeOverrides,
+        isConfigured,
+        isGatewayModelAccessible
+      )
+    ) {
       continue;
     }
 

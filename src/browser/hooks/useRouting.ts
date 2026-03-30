@@ -8,6 +8,7 @@ import {
   type RouteContext,
 } from "@/common/routing";
 import { normalizeToCanonical } from "@/common/utils/ai/models";
+import { getProviderModelEntryId } from "@/common/utils/providers/modelEntries";
 
 import { useProvidersConfig } from "./useProvidersConfig";
 
@@ -134,6 +135,17 @@ export function useRouting(): RoutingState {
     [providersConfig]
   );
 
+  const isGatewayModelAccessible = useCallback(
+    (gateway: string, modelId: string) => {
+      const models = providersConfig?.[gateway]?.models;
+      if (!Array.isArray(models) || models.length === 0) {
+        return true;
+      }
+      return models.some((entry) => getProviderModelEntryId(entry) === modelId);
+    },
+    [providersConfig]
+  );
+
   const persistRoutePreferences = useCallback(
     (priority: string[], overrides: Record<string, string>) => {
       if (!api?.config?.updateRoutePreferences) {
@@ -234,8 +246,9 @@ export function useRouting(): RoutingState {
   );
 
   const availableRoutes = useCallback(
-    (canonicalModel: string): AvailableRoute[] => listAvailableRoutes(canonicalModel, isConfigured),
-    [isConfigured]
+    (canonicalModel: string): AvailableRoute[] =>
+      listAvailableRoutes(canonicalModel, isConfigured, isGatewayModelAccessible),
+    [isConfigured, isGatewayModelAccessible]
   );
 
   return {

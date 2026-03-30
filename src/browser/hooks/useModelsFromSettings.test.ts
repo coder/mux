@@ -432,6 +432,59 @@ describe("useModelsFromSettings provider availability gating", () => {
     expect(result.current.hiddenModelsForSelector).not.toContain(KNOWN_MODELS.HAIKU.id);
   });
 
+  test("hides models that a configured gateway does not expose", () => {
+    providersConfig = {
+      openai: { apiKeySet: false, isEnabled: true, isConfigured: false },
+      "github-copilot": {
+        apiKeySet: true,
+        isEnabled: true,
+        isConfigured: true,
+        models: [KNOWN_MODELS.GPT_54_MINI.providerModelId],
+      },
+    };
+    routePriority = ["github-copilot", "direct"];
+
+    const { result } = renderHook(() => useModelsFromSettings());
+
+    expect(result.current.models).not.toContain(KNOWN_MODELS.GPT.id);
+    expect(result.current.hiddenModelsForSelector).toContain(KNOWN_MODELS.GPT.id);
+  });
+
+  test("keeps models visible when a configured gateway exposes them", () => {
+    providersConfig = {
+      openai: { apiKeySet: false, isEnabled: true, isConfigured: false },
+      "github-copilot": {
+        apiKeySet: true,
+        isEnabled: true,
+        isConfigured: true,
+        models: [KNOWN_MODELS.GPT.providerModelId],
+      },
+    };
+    routePriority = ["github-copilot", "direct"];
+
+    const { result } = renderHook(() => useModelsFromSettings());
+
+    expect(result.current.models).toContain(KNOWN_MODELS.GPT.id);
+    expect(result.current.hiddenModelsForSelector).not.toContain(KNOWN_MODELS.GPT.id);
+  });
+
+  test("keeps gateway-routed models visible when no gateway model list is present", () => {
+    providersConfig = {
+      openai: { apiKeySet: false, isEnabled: true, isConfigured: false },
+      "github-copilot": {
+        apiKeySet: true,
+        isEnabled: true,
+        isConfigured: true,
+      },
+    };
+    routePriority = ["github-copilot", "direct"];
+
+    const { result } = renderHook(() => useModelsFromSettings());
+
+    expect(result.current.models).toContain(KNOWN_MODELS.GPT.id);
+    expect(result.current.hiddenModelsForSelector).not.toContain(KNOWN_MODELS.GPT.id);
+  });
+
   test("excludes OAuth-gated OpenAI models from hidden bucket when unconfigured", () => {
     // OpenAI is unconfigured and neither API key nor OAuth is set.
     providersConfig = {
