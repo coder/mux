@@ -344,6 +344,43 @@ describe("WorktreeArchiveSnapshotService", () => {
     ).toBeDefined();
   });
 
+  test("skips restore and clears snapshot state when the archived checkout already matches the snapshot", async () => {
+    await makeWorkspaceDirty(fixture);
+
+    const captureResult = await fixture.service.captureSnapshotForArchive({
+      workspaceId: fixture.workspaceId,
+      workspaceMetadata: fixture.metadata,
+    });
+    expect(captureResult.success).toBe(true);
+    if (!captureResult.success) {
+      return;
+    }
+
+    await fixture.config.editConfig((cfg) => {
+      const workspace = cfg.projects.get(fixture.projectPath)?.workspaces[0];
+      if (!workspace) {
+        throw new Error("Missing workspace entry");
+      }
+      workspace.worktreeArchiveSnapshot = captureResult.data;
+      return cfg;
+    });
+
+    const restoreResult = await fixture.service.restoreSnapshotAfterUnarchive({
+      workspaceId: fixture.workspaceId,
+      workspaceMetadata: fixture.metadata,
+    });
+    expect(restoreResult).toEqual({ success: true, data: "skipped" });
+    expect(
+      fixture.config.loadConfigOrDefault().projects.get(fixture.projectPath)?.workspaces[0]
+        ?.worktreeArchiveSnapshot
+    ).toBeUndefined();
+    expect(
+      await pathExists(
+        path.join(fixture.config.getSessionDir(fixture.workspaceId), "archive-state")
+      )
+    ).toBe(false);
+  });
+
   test("keeps snapshot state when the persisted workspace path already exists", async () => {
     await makeWorkspaceDirty(fixture);
 

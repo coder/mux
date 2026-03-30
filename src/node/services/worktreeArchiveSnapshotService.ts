@@ -13,6 +13,7 @@ import type {
 import type { Config } from "@/node/config";
 import { detectDefaultTrunkBranch } from "@/node/git";
 import { ContainerManager } from "@/node/multiProject/containerManager";
+import { isGitRepository } from "@/node/utils/pathUtils";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import type { InitLogger } from "@/node/runtime/Runtime";
 import { coerceNonEmptyString, findWorkspaceEntry } from "@/node/services/taskUtils";
@@ -290,6 +291,20 @@ export class WorktreeArchiveSnapshotService {
 
     try {
       if (await this.pathExists(persistedWorkspacePath)) {
+        const existingProjectSnapshot =
+          snapshot.projects.length === 1 ? snapshot.projects[0] : undefined;
+        if (
+          existingProjectSnapshot &&
+          (await this.existingCheckoutMatchesSnapshot({
+            workspaceId: args.workspaceId,
+            workspacePath: persistedWorkspacePath,
+            projectSnapshot: existingProjectSnapshot,
+          }))
+        ) {
+          await this.clearSnapshotState(args.workspaceId, snapshot);
+          return Ok("skipped");
+        }
+
         throw new Error(
           "Persisted workspace path already exists; snapshot restore will not discard saved recovery data until the checkout is reconciled manually."
         );
@@ -633,6 +648,71 @@ export class WorktreeArchiveSnapshotService {
         });
       }
     }
+  }
+
+  private async existingCheckoutMatchesSnapshot(args: {
+    workspaceId: string;
+    workspacePath: string;
+    projectSnapshot: WorktreeArchiveSnapshotProject;
+  }): Promise<boolean> {
+    const checkoutIsGitRepo = await isGitRepository(args.workspacePath);
+    if (!checkoutIsGitRepo) {
+      return false;
+    }
+
+    const checkoutBranch = await this.tryGitStdout(args.workspacePath, [
+      "rev-parse",
+      "--abbrev-ref",
+      "HEAD",
+    ]);
+    if (checkoutBranch !== args.projectSnapshot.branchName) {
+      return false;
+    }
+
+    const checkoutHeadSha = await this.tryGitStdout(args.workspacePath, ["rev-parse", "HEAD"]);
+    if (checkoutHeadSha !== args.projectSnapshot.headSha) {
+      return false;
+    }
+
+    const checkoutCommonDir = await this.tryGitStdout(args.workspacePath, [
+      "rev-parse",
+      "--path-format=absolute",
+      "--git-common-dir",
+    ]);
+    const expectedCommonDir = path.resolve(args.projectSnapshot.projectPath, ".git");
+    if (!checkoutCommonDir || path.resolve(checkoutCommonDir) !== expectedCommonDir) {
+      return false;
+    }
+
+    const expectedStagedPatch = args.projectSnapshot.stagedPatchPath
+      ? await fsPromises.readFile(
+          this.resolveSessionRelativePath(
+            this.config.getSessionDir(args.workspaceId),
+            args.projectSnapshot.stagedPatchPath
+          ),
+          "utf-8"
+        )
+      : "";
+    const expectedUnstagedPatch = args.projectSnapshot.unstagedPatchPath
+      ? await fsPromises.readFile(
+          this.resolveSessionRelativePath(
+            this.config.getSessionDir(args.workspaceId),
+            args.projectSnapshot.unstagedPatchPath
+          ),
+          "utf-8"
+        )
+      : "";
+
+    const currentStagedPatch = await this.runGitCommand(args.workspacePath, [
+      "diff",
+      "--cached",
+      "--binary",
+    ]);
+    const currentUnstagedPatch = await this.runGitCommand(args.workspacePath, ["diff", "--binary"]);
+
+    return (
+      currentStagedPatch === expectedStagedPatch && currentUnstagedPatch === expectedUnstagedPatch
+    );
   }
 
   private async removeRestoredWorktreePath(
