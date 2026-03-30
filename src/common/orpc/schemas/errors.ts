@@ -4,7 +4,8 @@ import { z } from "zod";
  * Discriminated union for all possible sendMessage errors.
  *
  * The frontend is responsible for language and messaging for api_key_not_found,
- * oauth_not_connected, provider_disabled, and provider_not_supported errors.
+ * oauth_not_connected, provider_disabled, provider_not_supported, and
+ * model_not_available errors.
  * Other error types include details needed for display.
  */
 export const SendMessageErrorSchema = z.discriminatedUnion("type", [
@@ -12,6 +13,7 @@ export const SendMessageErrorSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("oauth_not_connected"), provider: z.string() }),
   z.object({ type: z.literal("provider_disabled"), provider: z.string() }),
   z.object({ type: z.literal("provider_not_supported"), provider: z.string() }),
+  z.object({ type: z.literal("model_not_available"), provider: z.string(), modelId: z.string() }),
   z.object({ type: z.literal("invalid_model_string"), message: z.string() }),
   z.object({ type: z.literal("incompatible_workspace"), message: z.string() }),
   z.object({ type: z.literal("runtime_not_ready"), message: z.string() }),

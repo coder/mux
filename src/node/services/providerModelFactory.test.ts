@@ -94,6 +94,77 @@ describe("ProviderModelFactory.createModel", () => {
   });
 });
 
+describe("ProviderModelFactory GitHub Copilot", () => {
+  it("creates routed gpt-5.4 models with the responses API mode", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        "github-copilot": {
+          apiKey: "copilot-token",
+          models: ["gpt-5.4"],
+        },
+      });
+
+      const projectConfig = config.loadConfigOrDefault();
+      await config.saveConfig({
+        ...projectConfig,
+        routePriority: ["github-copilot", "direct"],
+      });
+
+      const result = await factory.resolveAndCreateModel("openai:gpt-5.4", "off");
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        return;
+      }
+
+      expect(result.data.routeProvider).toBe("github-copilot");
+      expect(result.data.effectiveModelString).toBe("github-copilot:gpt-5.4");
+      expect(result.data.model.constructor.name).toBe("OpenAIResponsesLanguageModel");
+    });
+  });
+
+  it("fails when the requested model is missing from the stored Copilot model list", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        "github-copilot": {
+          apiKey: "copilot-token",
+          models: ["gpt-4.1"],
+        },
+      });
+
+      const result = await factory.createModel("github-copilot:gpt-5.4");
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toEqual({
+          type: "model_not_available",
+          provider: "github-copilot",
+          modelId: "gpt-5.4",
+        });
+      }
+    });
+  });
+
+  it("allows Copilot model creation when no stored model list exists yet", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        "github-copilot": {
+          apiKey: "copilot-token",
+          models: [],
+        },
+      });
+
+      const result = await factory.createModel("github-copilot:gpt-5.4");
+
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        return;
+      }
+
+      expect(result.data.constructor.name).toBe("OpenAIResponsesLanguageModel");
+    });
+  });
+});
+
 describe("ProviderModelFactory modelCostsIncluded", () => {
   it("marks gpt-5.3-codex as subscription-covered when routed through Codex OAuth", async () => {
     await withTempConfig(async (config, factory) => {
@@ -170,6 +241,36 @@ describe("ProviderModelFactory routing", () => {
 
       expect(result.data.effectiveModelString).toBe("openrouter:openai/gpt-5");
       expect(result.data.routeProvider).toBe("openrouter");
+      expect(result.data.routedThroughGateway).toBe(false);
+    });
+  });
+
+  it("passes gateway model accessibility to routing by skipping inaccessible Copilot models", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        openai: {
+          apiKey: "sk-test",
+        },
+        "github-copilot": {
+          apiKey: "copilot-token",
+          models: ["gpt-4.1"],
+        },
+      });
+
+      const projectConfig = config.loadConfigOrDefault();
+      await config.saveConfig({
+        ...projectConfig,
+        routePriority: ["github-copilot", "direct"],
+      });
+
+      const result = await factory.resolveAndCreateModel("openai:gpt-5.4", "off");
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        return;
+      }
+
+      expect(result.data.effectiveModelString).toBe("openai:gpt-5.4");
+      expect(result.data.routeProvider).toBe("openai");
       expect(result.data.routedThroughGateway).toBe(false);
     });
   });

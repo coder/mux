@@ -59,6 +59,7 @@ export function isNonRetryableSendError(error: { type: string }): boolean {
     case "oauth_not_connected": // Missing OAuth connection - user must connect/sign in
     case "provider_disabled": // Provider disabled in settings - user must re-enable
     case "provider_not_supported": // Unsupported provider - user must switch
+    case "model_not_available": // Model missing from fetched provider catalog - user must refresh or switch
     case "invalid_model_string": // Bad model format - user must fix
     case "incompatible_workspace": // Workspace from newer mux version - user must upgrade
     case "runtime_not_ready": // Container doesn't exist - user must recreate workspace

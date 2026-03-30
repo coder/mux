@@ -79,6 +79,13 @@ export const formatSendMessageError = (
         errorType: "unknown",
       };
     }
+    case "model_not_available": {
+      const displayName = getProviderDisplayName(error.provider);
+      return {
+        message: `Model ${error.modelId} is not available for ${displayName}.`,
+        errorType: "model_not_found",
+      };
+    }
     case "invalid_model_string":
       return {
         message: error.message,

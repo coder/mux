@@ -51,6 +51,14 @@ export function formatSendMessageError(error: SendMessageError): FormattedError 
       };
     }
 
+    case "model_not_available": {
+      const displayName = getProviderDisplayName(error.provider);
+      return {
+        message: `Model ${error.modelId} is not available for ${displayName}.`,
+        resolutionHint: `Open Settings → Providers and refresh available models for ${displayName}.`,
+      };
+    }
+
     case "invalid_model_string":
       return {
         message: error.message,

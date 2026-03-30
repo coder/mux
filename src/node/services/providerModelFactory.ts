@@ -22,12 +22,18 @@ import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import type { ExternalSecretResolver } from "@/common/types/secrets";
 import { isOpReference } from "@/common/utils/opRef";
 import { isProviderDisabledInConfig } from "@/common/utils/providers/isProviderDisabled";
+import { getProviderModelEntryId } from "@/common/utils/providers/modelEntries";
+import {
+  isCopilotModelAccessible,
+  selectCopilotApiMode,
+} from "@/common/utils/copilot/modelRouting";
 import type { PolicyService } from "@/node/services/policyService";
 import type { ProviderService } from "@/node/services/providerService";
 import type { CodexOauthService } from "@/node/services/codexOauthService";
 import type { DevToolsService } from "@/node/services/devToolsService";
 import { captureAndStripDevToolsHeader } from "@/node/services/devToolsHeaderCapture";
 import { createDevToolsMiddleware } from "@/node/services/devToolsMiddleware";
+import { log } from "@/node/services/log";
 import { resolveRoute, type RouteContext } from "@/common/routing";
 import {
   getExplicitGatewayPrefix as getExplicitGatewayProvider,
@@ -507,6 +513,21 @@ function extractTextContent(content: unknown): string {
       .trim();
   }
   return "";
+}
+
+function getConfiguredProviderModelIds(providerConfig: ProviderConfig | undefined): string[] {
+  return providerConfig?.models?.map((entry) => getProviderModelEntryId(entry)) ?? [];
+}
+
+function createGatewayModelAccessibilityChecker(providersConfig: ProvidersConfig) {
+  return (gateway: string, gatewayModelId: string): boolean => {
+    const models = providersConfig[gateway]?.models;
+    if (!models || models.length === 0) {
+      return true;
+    }
+
+    return models.some((entry) => getProviderModelEntryId(entry) === gatewayModelId);
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1459,8 +1480,17 @@ export class ProviderModelFactory {
         return Ok(model);
       }
 
-      // GitHub Copilot — OpenAI-compatible with custom auth headers
+      // GitHub Copilot uses the OpenAI provider so it can choose chat or responses per model.
       if (providerName === "github-copilot") {
+        const availableModels = getConfiguredProviderModelIds(providerConfig);
+        if (!isCopilotModelAccessible(modelId, availableModels)) {
+          return Err({
+            type: "model_not_available",
+            provider: providerName,
+            modelId,
+          });
+        }
+
         const creds = resolveProviderCredentials("github-copilot" as ProviderName, providerConfig);
         if (!creds.isConfigured) {
           return Err({ type: "api_key_not_found", provider: providerName });
@@ -1469,8 +1499,6 @@ export class ProviderModelFactory {
         if (creds.apiKey && isOpReference(creds.apiKey) && !resolvedApiKey) {
           return Err({ type: "api_key_not_found", provider: providerName });
         }
-
-        const { createOpenAICompatible } = await PROVIDER_REGISTRY["github-copilot"]();
 
         const baseFetch = getProviderFetch(providerConfig);
         const copilotFetchFn = async (
@@ -1509,14 +1537,18 @@ export class ProviderModelFactory {
         const copilotFetch = Object.assign(copilotFetchFn, baseFetch) as typeof fetch;
         const providerFetch = copilotFetch;
 
+        const { createOpenAI } = await PROVIDER_REGISTRY.openai();
         const baseURL = providerConfig.baseURL ?? "https://api.githubcopilot.com";
-        const provider = createOpenAICompatible({
-          name: "github-copilot",
+        const provider = createOpenAI({
           baseURL,
-          apiKey: "copilot", // placeholder — actual auth via custom fetch
+          apiKey: "copilot", // placeholder, actual auth via custom fetch
           fetch: providerFetch,
         });
-        return Ok(provider.chatModel(modelId));
+        const apiMode = selectCopilotApiMode(modelId);
+        log.debug(`GitHub Copilot model ${modelId} using ${apiMode} API mode`);
+        const model =
+          apiMode === "chatCompletions" ? provider.chat(modelId) : provider.responses(modelId);
+        return Ok(model);
       }
 
       // Generic handler for simple providers (standard API key + factory pattern)
@@ -1659,6 +1691,7 @@ export class ProviderModelFactory {
   private resolveModelRoute(canonicalModel: string): RouteContext {
     const config = this.config.loadConfigOrDefault();
     const providersConfig = this.config.loadProvidersConfig?.() ?? {};
+    const isGatewayModelAccessible = createGatewayModelAccessibilityChecker(providersConfig);
     return resolveRoute(
       canonicalModel,
       config.routePriority ?? ["direct"],
@@ -1673,7 +1706,8 @@ export class ProviderModelFactory {
           providersConfig,
           config
         );
-      }
+      },
+      isGatewayModelAccessible
     );
   }
 
@@ -1705,6 +1739,7 @@ export class ProviderModelFactory {
     const originProvider = originProviderName as ProviderName;
     const config = this.config.loadConfigOrDefault();
     const providersConfig = this.config.loadProvidersConfig() ?? {};
+    const isGatewayModelAccessible = createGatewayModelAccessibilityChecker(providersConfig);
     const routeContext =
       typeof modelKeyOrRouteContext === "object" && modelKeyOrRouteContext != null
         ? modelKeyOrRouteContext
@@ -1724,7 +1759,8 @@ export class ProviderModelFactory {
                 providersConfig,
                 config
               );
-            }
+            },
+            isGatewayModelAccessible
           );
 
     let resolvedRouteProvider = routeContext.routeProvider;
