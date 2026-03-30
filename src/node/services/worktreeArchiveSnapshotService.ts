@@ -13,6 +13,7 @@ import type {
 import type { Config } from "@/node/config";
 import { detectDefaultTrunkBranch } from "@/node/git";
 import { ContainerManager } from "@/node/multiProject/containerManager";
+import { isGitRepository } from "@/node/utils/pathUtils";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import type { InitLogger } from "@/node/runtime/Runtime";
 import { coerceNonEmptyString, findWorkspaceEntry } from "@/node/services/taskUtils";
@@ -241,6 +242,12 @@ export class WorktreeArchiveSnapshotService {
 
     try {
       if (await this.pathExists(persistedWorkspacePath)) {
+        const persistedCheckoutIsGitRepo = await isGitRepository(persistedWorkspacePath);
+        if (!persistedCheckoutIsGitRepo) {
+          throw new Error(
+            "Persisted workspace path already exists but is not a valid git checkout for snapshot recovery."
+          );
+        }
         await this.clearSnapshotState(args.workspaceId, snapshot);
         return Ok("skipped");
       }

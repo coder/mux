@@ -4043,6 +4043,28 @@ describe("WorkspaceService unarchive snapshot restore", () => {
     expect(result).toEqual(Err("restore failed"));
   });
 
+  test("unarchive() rolls back legacy path-only entries when snapshot restore fails", async () => {
+    const restoreSnapshotAfterUnarchive = mock(() => Promise.resolve(Err("restore failed")));
+    workspaceService.setWorktreeArchiveSnapshotService({
+      captureSnapshotForArchive: mock(() => Promise.resolve(Err("unused"))),
+      restoreSnapshotAfterUnarchive,
+    });
+
+    const config = workspaceService as unknown as { config: Config };
+    await config.config.editConfig((currentConfig) => {
+      const workspaceEntry = currentConfig.projects.get(projectPath)?.workspaces[0];
+      if (!workspaceEntry) {
+        throw new Error("Missing workspace entry");
+      }
+      delete workspaceEntry.id;
+      return currentConfig;
+    });
+
+    const result = await workspaceService.unarchive(workspaceId);
+
+    expect(result).toEqual(Err("restore failed"));
+  });
+
   test("unarchive() invokes snapshot restore when snapshot metadata is present", async () => {
     const restoreSnapshotAfterUnarchive = mock(() => Promise.resolve(Ok("restored" as const)));
     workspaceService.setWorktreeArchiveSnapshotService({

@@ -3858,7 +3858,9 @@ export class WorkspaceService extends EventEmitter {
           if (persistedUnarchivedAt) {
             await this.config.editConfig((config) => {
               const projectConfig = config.projects.get(projectPath);
-              const workspaceEntry = projectConfig?.workspaces.find((w) => w.id === workspaceId);
+              const workspaceEntry =
+                projectConfig?.workspaces.find((w) => w.id === workspaceId) ??
+                projectConfig?.workspaces.find((w) => w.path === workspacePath);
               if (workspaceEntry && workspaceEntry.unarchivedAt === persistedUnarchivedAt) {
                 if (previousUnarchivedAt === undefined) {
                   delete workspaceEntry.unarchivedAt;
