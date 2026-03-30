@@ -246,6 +246,75 @@ describe("WorktreeArchiveSnapshotService", () => {
     );
   });
 
+  test("falls back to the archived worktree merge-base even when the primary checkout trunk has advanced", async () => {
+    await makeWorkspaceDirty(fixture);
+    await fs.writeFile(path.join(fixture.projectPath, "main-only.txt"), "main advanced\n", "utf-8");
+    runGit(fixture.projectPath, ["add", "main-only.txt"]);
+    runGit(fixture.projectPath, ["commit", "-m", "main advanced"]);
+
+    const expectedBaseSha = runGit(fixture.workspacePath, ["merge-base", "main", "HEAD"]);
+    const primaryHeadSha = runGit(fixture.projectPath, ["rev-parse", "HEAD"]);
+    expect(primaryHeadSha).not.toBe(expectedBaseSha);
+
+    const captureResult = await fixture.service.captureSnapshotForArchive({
+      workspaceId: fixture.workspaceId,
+      workspaceMetadata: fixture.metadata,
+    });
+    expect(captureResult.success).toBe(true);
+    if (!captureResult.success) {
+      return;
+    }
+
+    expect(captureResult.data.projects[0]?.baseSha).toBe(expectedBaseSha);
+  });
+
+  test("cleans up partially restored worktrees when patch replay fails", async () => {
+    await makeWorkspaceDirty(fixture);
+
+    const captureResult = await fixture.service.captureSnapshotForArchive({
+      workspaceId: fixture.workspaceId,
+      workspaceMetadata: fixture.metadata,
+    });
+    expect(captureResult.success).toBe(true);
+    if (!captureResult.success) {
+      return;
+    }
+
+    await fixture.config.editConfig((cfg) => {
+      const workspace = cfg.projects.get(fixture.projectPath)?.workspaces[0];
+      if (!workspace) {
+        throw new Error("Missing workspace entry");
+      }
+      workspace.worktreeArchiveSnapshot = captureResult.data;
+      return cfg;
+    });
+
+    const stagedPatchPath = captureResult.data.projects[0]?.stagedPatchPath;
+    expect(typeof stagedPatchPath).toBe("string");
+    if (!stagedPatchPath) {
+      throw new Error("Expected staged patch path");
+    }
+    await fs.writeFile(
+      path.join(fixture.config.getSessionDir(fixture.workspaceId), stagedPatchPath),
+      "this is not a valid patch\n",
+      "utf-8"
+    );
+
+    runGit(fixture.projectPath, ["worktree", "remove", "--force", fixture.workspacePath]);
+    expect(await pathExists(fixture.workspacePath)).toBe(false);
+
+    const restoreResult = await fixture.service.restoreSnapshotAfterUnarchive({
+      workspaceId: fixture.workspaceId,
+      workspaceMetadata: fixture.metadata,
+    });
+    expect(restoreResult.success).toBe(false);
+    expect(await pathExists(fixture.workspacePath)).toBe(false);
+    expect(
+      fixture.config.loadConfigOrDefault().projects.get(fixture.projectPath)?.workspaces[0]
+        ?.worktreeArchiveSnapshot
+    ).toBeDefined();
+  });
+
   test("rejects archive snapshots when untracked files are present", async () => {
     await fs.writeFile(path.join(fixture.workspacePath, "untracked.txt"), "hello\n", "utf-8");
 

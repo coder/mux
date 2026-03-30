@@ -3662,25 +3662,6 @@ export class WorkspaceService extends EventEmitter {
         }
       }
 
-      // Archiving removes the workspace from the sidebar; ensure we don't leave a stream running
-      // "headless" with no obvious UI affordance to interrupt it.
-      //
-      // NOTE: We only interrupt after beforeArchive hooks succeed, so a hook failure doesn't stop
-      // an active stream.
-      if (this.aiService.isStreaming(workspaceId)) {
-        const stopResult = await this.interruptStream(workspaceId);
-        if (!stopResult.success) {
-          log.debug("Failed to stop stream during workspace archive", {
-            workspaceId,
-            error: stopResult.error,
-          });
-        }
-      }
-
-      // Archiving hides workspace UI; do not leave terminal PTYs running headless.
-      this.terminalService?.closeWorkspaceSessions(workspaceId);
-      await this.closeDesktopSessionBestEffort(workspaceId, "archive");
-
       let capturedWorktreeSnapshot: WorktreeArchiveSnapshot | undefined;
       if (
         needsSnapshotCapture &&
@@ -3715,6 +3696,23 @@ export class WorkspaceService extends EventEmitter {
         }
         return config;
       });
+
+      // Only tear down live workspace activity after archive persistence succeeds.
+      // Snapshot capture can fail for recoverable validation errors (for example, untracked files),
+      // and those failures must not terminate the user's active sessions.
+      if (this.aiService.isStreaming(workspaceId)) {
+        const stopResult = await this.interruptStream(workspaceId);
+        if (!stopResult.success) {
+          log.debug("Failed to stop stream during workspace archive", {
+            workspaceId,
+            error: stopResult.error,
+          });
+        }
+      }
+
+      // Archiving hides workspace UI; do not leave terminal PTYs or desktop sessions running headless.
+      this.terminalService?.closeWorkspaceSessions(workspaceId);
+      await this.closeDesktopSessionBestEffort(workspaceId, "archive");
 
       // Emit updated metadata
       const allMetadata = await this.config.getAllWorkspaceMetadata();

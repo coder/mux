@@ -3854,6 +3854,30 @@ describe("WorkspaceService archive snapshots", () => {
     });
   });
 
+  test("archive() does not close live sessions when snapshot capture fails", async () => {
+    const closeWorkspaceSessions = mock(() => undefined);
+    workspaceService.setTerminalService({
+      closeWorkspaceSessions,
+    } as unknown as TerminalService);
+
+    const closeDesktopSession = mock(() => Promise.resolve(undefined));
+    workspaceService.setDesktopSessionManager({
+      close: closeDesktopSession,
+    } as unknown as DesktopSessionManager);
+
+    const captureSnapshotForArchive = mock(() => Promise.resolve(Err("snapshot failed")));
+    workspaceService.setWorktreeArchiveSnapshotService({
+      captureSnapshotForArchive,
+      restoreSnapshotAfterUnarchive: mock(() => Promise.resolve(Ok("skipped" as const))),
+    });
+
+    const result = await workspaceService.archive(workspaceId);
+
+    expect(result).toEqual(Err("snapshot failed"));
+    expect(closeWorkspaceSessions).not.toHaveBeenCalled();
+    expect(closeDesktopSession).not.toHaveBeenCalled();
+  });
+
   test("archive() aborts when snapshot capture fails", async () => {
     const captureSnapshotForArchive = mock(() => Promise.resolve(Err("snapshot failed")));
     workspaceService.setWorktreeArchiveSnapshotService({

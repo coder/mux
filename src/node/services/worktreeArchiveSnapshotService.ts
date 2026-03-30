@@ -112,7 +112,7 @@ export class WorktreeArchiveSnapshotService {
         const headSha = await this.gitStdout(projectRepo.repoCwd, ["rev-parse", "HEAD"]);
         const baseSha =
           taskBaseCommitShaByProjectPath[projectRepo.projectPath] ||
-          (await this.gitStdout(projectRepo.projectPath, ["merge-base", trunkBranch, "HEAD"]));
+          (await this.gitStdout(projectRepo.repoCwd, ["merge-base", trunkBranch, "HEAD"]));
 
         const commitCount = Number(
           await this.gitStdout(projectRepo.repoCwd, [
@@ -252,7 +252,7 @@ export class WorktreeArchiveSnapshotService {
           `refs/heads/${projectSnapshot.branchName}`,
         ]);
         if (branchRefSha && branchRefSha !== projectSnapshot.headSha) {
-          return Err(
+          throw new Error(
             `Refusing to restore ${projectSnapshot.projectName}: local branch ${projectSnapshot.branchName} no longer matches the archived snapshot.`
           );
         }
@@ -285,7 +285,7 @@ export class WorktreeArchiveSnapshotService {
           trusted,
         });
         if (!restoreResult.success || !restoreResult.workspacePath) {
-          return Err(
+          throw new Error(
             `Failed to recreate ${projectSnapshot.projectName}: ${
               restoreResult.error ?? "runtime did not return a workspace path"
             }`
