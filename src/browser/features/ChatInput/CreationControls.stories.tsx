@@ -1,23 +1,37 @@
-import { useState, type ComponentProps } from "react";
+import {
+  useState,
+  type ComponentProps,
+  type ReactNode,
+  useEffect,
+  useMemo,
+} from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, within } from "@storybook/test";
+import { APIProvider } from "@/browser/contexts/API";
+import { ProjectProvider } from "@/browser/contexts/ProjectContext";
+import { RouterProvider } from "@/browser/contexts/RouterContext";
+import { SettingsProvider } from "@/browser/contexts/SettingsContext";
+import { WorkspaceProvider } from "@/browser/contexts/WorkspaceContext";
+import type { WorkspaceNameState } from "@/browser/hooks/useWorkspaceName";
 import { lightweightMeta } from "@/browser/stories/meta.js";
 import {
   mockCoderInfoAvailable,
   mockCoderInfoMissing,
   mockCoderInfoOutdated,
 } from "@/browser/stories/mocks/coder";
+import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
+import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import {
   RUNTIME_MODE,
   type ParsedRuntime,
   type RuntimeAvailabilityStatus,
 } from "@/common/types/runtime";
-import type { RuntimeAvailabilityState } from "./useCreationWorkspace";
 import {
   CreationControls,
   RuntimeButtonGroup,
   type RuntimeButtonGroupProps,
 } from "./CreationControls";
+import type { RuntimeAvailabilityState } from "./useCreationWorkspace";
 import {
   SettingsSectionStory,
   setupSettingsStory,
@@ -104,7 +118,7 @@ type Story = StoryObj<typeof meta>;
 
 type CreationControlsProps = ComponentProps<typeof CreationControls>;
 
-const BASE_CREATION_CONTROLS_PROPS: Omit<
+const DEVCONTAINER_BASE_CREATION_CONTROLS_PROPS: Omit<
   CreationControlsProps,
   "selectedRuntime" | "onSelectedRuntimeChange" | "runtimeAvailabilityState"
 > = {
@@ -143,7 +157,7 @@ function DevcontainerCreationControlsStory(props: {
       <div className="bg-background p-6">
         <div className="max-w-3xl">
           <CreationControls
-            {...BASE_CREATION_CONTROLS_PROPS}
+            {...DEVCONTAINER_BASE_CREATION_CONTROLS_PROPS}
             selectedRuntime={selectedRuntime}
             onSelectedRuntimeChange={setSelectedRuntime}
             runtimeAvailabilityState={props.runtimeAvailabilityState}
@@ -270,4 +284,151 @@ export const DevcontainerMultiConfig: Story = {
       canvas.findByText("Backend (.devcontainer/backend/devcontainer.json)")
     ).resolves.toBeInTheDocument();
   },
+};
+
+const CREATION_PROJECT_PATH = "/Users/dev/my-project";
+
+function CreationControlsStoryShell(props: { children: ReactNode }) {
+  const workspaceStore = useWorkspaceStoreRaw();
+  const client = useMemo(
+    () =>
+      createMockORPCClient({
+        projects: new Map([[CREATION_PROJECT_PATH, { workspaces: [] }]]),
+        workspaces: [],
+      }),
+    []
+  );
+
+  useEffect(() => {
+    workspaceStore.setClient(client);
+    return () => {
+      workspaceStore.setClient(null);
+    };
+  }, [client, workspaceStore]);
+
+  return (
+    <APIProvider client={client}>
+      <RouterProvider>
+        <ProjectProvider>
+          <WorkspaceProvider>
+            <SettingsProvider>{props.children}</SettingsProvider>
+          </WorkspaceProvider>
+        </ProjectProvider>
+      </RouterProvider>
+    </APIProvider>
+  );
+}
+
+const BASE_CREATION_NAME_STATE: WorkspaceNameState = {
+  name: "workspace-name",
+  title: null,
+  isGenerating: false,
+  autoGenerate: true,
+  error: null,
+  setAutoGenerate: fn(),
+  setName: fn(),
+};
+
+const CREATION_ERROR_BASE_CONTROLS_PROPS = {
+  branches: ["main"],
+  branchesLoaded: true,
+  trunkBranch: "main",
+  onTrunkBranchChange: fn(),
+  selectedRuntime: { mode: RUNTIME_MODE.WORKTREE },
+  coderConfigFallback: {},
+  sshHostFallback: "devbox",
+  defaultRuntimeMode: RUNTIME_MODE.WORKTREE,
+  onSelectedRuntimeChange: fn(),
+  onSetDefaultRuntime: fn(),
+  disabled: false,
+  projectPath: CREATION_PROJECT_PATH,
+  projectName: "my-project",
+  runtimeAvailabilityState: BASE_ARGS.runtimeAvailabilityState,
+  nameState: BASE_CREATION_NAME_STATE,
+} satisfies CreationControlsProps;
+
+function renderCreationControls(nameState: WorkspaceNameState) {
+  return (
+    <CreationControlsStoryShell>
+      <div className="bg-background p-6">
+        <div className="max-w-4xl">
+          <CreationControls {...CREATION_ERROR_BASE_CONTROLS_PROPS} nameState={nameState} />
+        </div>
+      </div>
+    </CreationControlsStoryShell>
+  );
+}
+
+function createNameState(overrides: Partial<WorkspaceNameState>): WorkspaceNameState {
+  return {
+    ...BASE_CREATION_NAME_STATE,
+    ...overrides,
+  };
+}
+
+/** Name generation failure when provider blocks access for the current account scope. */
+export const NameGenerationPermissionDenied: Story = {
+  render: () =>
+    renderCreationControls(
+      createNameState({
+        error: {
+          kind: "generation",
+          error: {
+            type: "permission_denied",
+            provider: "anthropic",
+            raw: "Forbidden",
+          },
+        },
+      })
+    ),
+};
+
+/** Name generation failure when provider rate limits requests. */
+export const NameGenerationRateLimited: Story = {
+  render: () =>
+    renderCreationControls(
+      createNameState({
+        error: {
+          kind: "generation",
+          error: {
+            type: "rate_limit",
+            raw: "Too many requests",
+          },
+        },
+      })
+    ),
+};
+
+/** Name generation failure when API credentials are invalid. */
+export const NameGenerationAuthError: Story = {
+  render: () =>
+    renderCreationControls(
+      createNameState({
+        error: {
+          kind: "generation",
+          error: {
+            type: "authentication",
+            authKind: "invalid_credentials",
+            provider: "openai",
+            raw: "Invalid API key",
+          },
+        },
+      })
+    ),
+};
+
+/** Manual naming validation error for characters outside the workspace-name policy. */
+export const NameValidationError: Story = {
+  render: () =>
+    renderCreationControls(
+      createNameState({
+        autoGenerate: false,
+        name: "invalid name!",
+        error: {
+          kind: "validation",
+          message:
+            "Workspace names can only contain lowercase letters, numbers, hyphens, and underscores",
+        },
+      })
+    ),
 };
