@@ -1,0 +1,56 @@
+import { describe, expect, it } from "bun:test";
+import {
+  COPILOT_MODEL_PREFIXES,
+  isCopilotModelAccessible,
+  selectCopilotApiMode,
+} from "./modelRouting";
+
+describe("COPILOT_MODEL_PREFIXES", () => {
+  it("exports the shared Copilot model family filters", () => {
+    expect(COPILOT_MODEL_PREFIXES).toEqual(["gpt-5", "claude-", "gemini-3", "grok-code"]);
+  });
+});
+
+describe("selectCopilotApiMode", () => {
+  it("defaults GPT-5 family models to the Responses API", () => {
+    expect(selectCopilotApiMode("gpt-5.4")).toBe("responses");
+    expect(selectCopilotApiMode("gpt-5.4-pro")).toBe("responses");
+    expect(selectCopilotApiMode("gpt-5.1-codex-mini")).toBe("responses");
+  });
+
+  it("routes non-OpenAI Copilot families through chat completions", () => {
+    expect(selectCopilotApiMode("claude-sonnet-4-6")).toBe("chatCompletions");
+    expect(selectCopilotApiMode("gemini-3.1-pro-preview")).toBe("chatCompletions");
+    expect(selectCopilotApiMode("grok-code-fast-1")).toBe("chatCompletions");
+  });
+
+  it("falls back to Responses for unknown or empty model ids", () => {
+    expect(selectCopilotApiMode("")).toBe("responses");
+    expect(selectCopilotApiMode("custom-preview-model")).toBe("responses");
+  });
+
+  it("only applies exception rules when the model id actually matches the family", () => {
+    expect(selectCopilotApiMode("claude")).toBe("responses");
+    expect(selectCopilotApiMode("gemini-30-experimental")).toBe("responses");
+    expect(selectCopilotApiMode("grok-codec-preview")).toBe("responses");
+  });
+});
+
+describe("isCopilotModelAccessible", () => {
+  it("returns true when the model is present in the fetched Copilot list", () => {
+    expect(isCopilotModelAccessible("gpt-5.4", ["gpt-5.4", "claude-sonnet-4-6"])).toBe(true);
+  });
+
+  it("returns false when the model is absent from a non-empty Copilot list", () => {
+    expect(isCopilotModelAccessible("gpt-5.4-pro", ["gpt-5.4", "claude-sonnet-4-6"])).toBe(false);
+  });
+
+  it("returns true when no Copilot model list has been persisted yet", () => {
+    expect(isCopilotModelAccessible("gpt-5.4", [])).toBe(true);
+  });
+
+  it("uses exact string matching instead of prefix matching", () => {
+    expect(isCopilotModelAccessible("gpt-5.4", ["gpt-5"])).toBe(false);
+    expect(isCopilotModelAccessible("", ["gpt-5.4"])).toBe(false);
+  });
+});
