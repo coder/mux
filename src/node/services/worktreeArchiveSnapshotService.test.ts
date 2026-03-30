@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
@@ -313,6 +313,63 @@ describe("WorktreeArchiveSnapshotService", () => {
       fixture.config.loadConfigOrDefault().projects.get(fixture.projectPath)?.workspaces[0]
         ?.worktreeArchiveSnapshot
     ).toBeDefined();
+  });
+
+  test("preserves snapshot metadata when artifact cleanup fails after a successful restore", async () => {
+    await makeWorkspaceDirty(fixture);
+
+    const captureResult = await fixture.service.captureSnapshotForArchive({
+      workspaceId: fixture.workspaceId,
+      workspaceMetadata: fixture.metadata,
+    });
+    expect(captureResult.success).toBe(true);
+    if (!captureResult.success) {
+      return;
+    }
+
+    await fixture.config.editConfig((cfg) => {
+      const workspace = cfg.projects.get(fixture.projectPath)?.workspaces[0];
+      if (!workspace) {
+        throw new Error("Missing workspace entry");
+      }
+      workspace.worktreeArchiveSnapshot = captureResult.data;
+      return cfg;
+    });
+
+    const originalRm = fs.rm.bind(fs);
+    const rmSpy = spyOn(fs, "rm").mockImplementation(async (targetPath, options) => {
+      if (
+        typeof targetPath === "string" &&
+        targetPath.endsWith(
+          path.join(fixture.config.getSessionDir(fixture.workspaceId), "archive-state")
+        )
+      ) {
+        throw new Error("snapshot cleanup failed");
+      }
+      return originalRm(targetPath, options);
+    });
+
+    try {
+      const restoreResult = await fixture.service.restoreSnapshotAfterUnarchive({
+        workspaceId: fixture.workspaceId,
+        workspaceMetadata: fixture.metadata,
+      });
+      expect(restoreResult.success).toBe(false);
+      if (!restoreResult.success) {
+        expect(restoreResult.error).toContain("snapshot cleanup failed");
+      }
+      expect(
+        fixture.config.loadConfigOrDefault().projects.get(fixture.projectPath)?.workspaces[0]
+          ?.worktreeArchiveSnapshot
+      ).toEqual(captureResult.data);
+      expect(
+        await pathExists(
+          path.join(fixture.config.getSessionDir(fixture.workspaceId), "archive-state")
+        )
+      ).toBe(true);
+    } finally {
+      rmSpy.mockRestore();
+    }
   });
 
   test("rejects archive snapshots when untracked files are present", async () => {

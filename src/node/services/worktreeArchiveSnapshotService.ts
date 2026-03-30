@@ -14,7 +14,7 @@ import type { Config } from "@/node/config";
 import { detectDefaultTrunkBranch } from "@/node/git";
 import { ContainerManager } from "@/node/multiProject/containerManager";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
-import type { InitLogger, Runtime } from "@/node/runtime/Runtime";
+import type { InitLogger } from "@/node/runtime/Runtime";
 import { coerceNonEmptyString, findWorkspaceEntry } from "@/node/services/taskUtils";
 import { getWorkspaceProjectRepos } from "@/node/services/workspaceProjectRepos";
 import { log } from "@/node/services/log";
@@ -36,8 +36,6 @@ const NOOP_INIT_LOGGER: InitLogger = {
 interface CreatedRestoreWorkspace {
   projectPath: string;
   projectName: string;
-  runtime: Runtime;
-  trusted: boolean;
   workspacePath: string;
 }
 
@@ -232,11 +230,6 @@ export class WorktreeArchiveSnapshotService {
     }
 
     const persistedWorkspacePath = workspaceEntry.workspace.path;
-    if (await this.pathExists(persistedWorkspacePath)) {
-      await this.clearSnapshotState(args.workspaceId, snapshot);
-      return Ok("skipped");
-    }
-
     const workspaceName = coerceNonEmptyString(workspaceEntry.workspace.name);
     if (!workspaceName) {
       return Err("Workspace is missing its persisted branch name");
@@ -246,6 +239,10 @@ export class WorktreeArchiveSnapshotService {
     let containerCreated = false;
 
     try {
+      if (await this.pathExists(persistedWorkspacePath)) {
+        await this.clearSnapshotState(args.workspaceId, snapshot);
+        return Ok("skipped");
+      }
       for (const projectSnapshot of snapshot.projects) {
         const branchRefSha = await this.tryGitStdout(projectSnapshot.projectPath, [
           "rev-parse",
@@ -295,8 +292,6 @@ export class WorktreeArchiveSnapshotService {
         createdWorkspaces.push({
           projectPath: projectSnapshot.projectPath,
           projectName: projectSnapshot.projectName,
-          runtime,
-          trusted,
           workspacePath: restoreResult.workspacePath,
         });
 
@@ -516,6 +511,10 @@ export class WorktreeArchiveSnapshotService {
     workspaceId: string,
     snapshot: WorktreeArchiveSnapshot
   ): Promise<void> {
+    const sessionDir = this.config.getSessionDir(workspaceId);
+    const stateDir = this.resolveSessionRelativePath(sessionDir, snapshot.stateDirPath);
+    await fsPromises.rm(stateDir, { recursive: true, force: true });
+
     await this.config.editConfig((config) => {
       const workspaceEntry = findWorkspaceEntry(config, workspaceId);
       if (workspaceEntry) {
@@ -523,10 +522,6 @@ export class WorktreeArchiveSnapshotService {
       }
       return config;
     });
-
-    const sessionDir = this.config.getSessionDir(workspaceId);
-    const stateDir = this.resolveSessionRelativePath(sessionDir, snapshot.stateDirPath);
-    await fsPromises.rm(stateDir, { recursive: true, force: true });
   }
 
   private async cleanupFailedRestore(args: {
@@ -544,12 +539,9 @@ export class WorktreeArchiveSnapshotService {
 
     for (const createdWorkspace of [...args.createdWorkspaces].reverse()) {
       try {
-        await createdWorkspace.runtime.deleteWorkspace(
+        await this.removeRestoredWorktreePath(
           createdWorkspace.projectPath,
-          args.workspaceName,
-          true,
-          undefined,
-          createdWorkspace.trusted
+          createdWorkspace.workspacePath
         );
       } catch (error) {
         log.debug("Failed to clean up partially restored worktree snapshot", {
@@ -559,6 +551,32 @@ export class WorktreeArchiveSnapshotService {
         });
       }
     }
+  }
+
+  private async removeRestoredWorktreePath(
+    projectPath: string,
+    workspacePath: string
+  ): Promise<void> {
+    try {
+      using removeProc = execFileAsync(
+        "git",
+        ["-C", projectPath, "worktree", "remove", "--force", workspacePath],
+        { env: GIT_NO_HOOKS_ENV }
+      );
+      await removeProc.result;
+      return;
+    } catch {
+      try {
+        using pruneProc = execFileAsync("git", ["-C", projectPath, "worktree", "prune"], {
+          env: GIT_NO_HOOKS_ENV,
+        });
+        await pruneProc.result;
+      } catch {
+        // Best-effort prune only; fall through to filesystem cleanup.
+      }
+    }
+
+    await fsPromises.rm(workspacePath, { recursive: true, force: true });
   }
 
   private async pathExists(targetPath: string): Promise<boolean> {
