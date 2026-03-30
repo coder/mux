@@ -3838,6 +3838,7 @@ describe("WorkspaceService archive snapshots", () => {
     };
     const captureSnapshotForArchive = mock(() => Promise.resolve(Ok(snapshot)));
     workspaceService.setWorktreeArchiveSnapshotService({
+      preflightSnapshotForArchive: mock(() => Promise.resolve(Ok(undefined))),
       captureSnapshotForArchive,
       restoreSnapshotAfterUnarchive: mock(() => Promise.resolve(Ok("skipped" as const))),
     });
@@ -3865,8 +3866,10 @@ describe("WorkspaceService archive snapshots", () => {
       close: closeDesktopSession,
     } as unknown as DesktopSessionManager);
 
-    const captureSnapshotForArchive = mock(() => Promise.resolve(Err("snapshot failed")));
+    const preflightSnapshotForArchive = mock(() => Promise.resolve(Err("snapshot failed")));
+    const captureSnapshotForArchive = mock(() => Promise.resolve(Err("should not run")));
     workspaceService.setWorktreeArchiveSnapshotService({
+      preflightSnapshotForArchive,
       captureSnapshotForArchive,
       restoreSnapshotAfterUnarchive: mock(() => Promise.resolve(Ok("skipped" as const))),
     });
@@ -3874,6 +3877,7 @@ describe("WorkspaceService archive snapshots", () => {
     const result = await workspaceService.archive(workspaceId);
 
     expect(result).toEqual(Err("snapshot failed"));
+    expect(captureSnapshotForArchive).not.toHaveBeenCalled();
     expect(closeWorkspaceSessions).not.toHaveBeenCalled();
     expect(closeDesktopSession).not.toHaveBeenCalled();
   });
@@ -3881,6 +3885,7 @@ describe("WorkspaceService archive snapshots", () => {
   test("archive() skips snapshot capture for multi-project workspaces", async () => {
     const captureSnapshotForArchive = mock(() => Promise.resolve(Err("should not run")));
     workspaceService.setWorktreeArchiveSnapshotService({
+      preflightSnapshotForArchive: mock(() => Promise.resolve(Ok(undefined))),
       captureSnapshotForArchive,
       restoreSnapshotAfterUnarchive: mock(() => Promise.resolve(Ok("skipped" as const))),
     });
@@ -3906,6 +3911,7 @@ describe("WorkspaceService archive snapshots", () => {
   test("archive() aborts when snapshot capture fails", async () => {
     const captureSnapshotForArchive = mock(() => Promise.resolve(Err("snapshot failed")));
     workspaceService.setWorktreeArchiveSnapshotService({
+      preflightSnapshotForArchive: mock(() => Promise.resolve(Ok(undefined))),
       captureSnapshotForArchive,
       restoreSnapshotAfterUnarchive: mock(() => Promise.resolve(Ok("skipped" as const))),
     });
@@ -4022,6 +4028,7 @@ describe("WorkspaceService unarchive snapshot restore", () => {
   test("unarchive() returns Err when snapshot restore fails", async () => {
     const restoreSnapshotAfterUnarchive = mock(() => Promise.resolve(Err("restore failed")));
     workspaceService.setWorktreeArchiveSnapshotService({
+      preflightSnapshotForArchive: mock(() => Promise.resolve(Ok(undefined))),
       captureSnapshotForArchive: mock(() => Promise.resolve(Err("unused"))),
       restoreSnapshotAfterUnarchive,
     });
@@ -4034,6 +4041,7 @@ describe("WorkspaceService unarchive snapshot restore", () => {
   test("unarchive() rolls back unarchivedAt when snapshot restore fails", async () => {
     const restoreSnapshotAfterUnarchive = mock(() => Promise.resolve(Err("restore failed")));
     workspaceService.setWorktreeArchiveSnapshotService({
+      preflightSnapshotForArchive: mock(() => Promise.resolve(Ok(undefined))),
       captureSnapshotForArchive: mock(() => Promise.resolve(Err("unused"))),
       restoreSnapshotAfterUnarchive,
     });
@@ -4046,6 +4054,7 @@ describe("WorkspaceService unarchive snapshot restore", () => {
   test("unarchive() rolls back legacy path-only entries when snapshot restore fails", async () => {
     const restoreSnapshotAfterUnarchive = mock(() => Promise.resolve(Err("restore failed")));
     workspaceService.setWorktreeArchiveSnapshotService({
+      preflightSnapshotForArchive: mock(() => Promise.resolve(Ok(undefined))),
       captureSnapshotForArchive: mock(() => Promise.resolve(Err("unused"))),
       restoreSnapshotAfterUnarchive,
     });
@@ -4068,6 +4077,7 @@ describe("WorkspaceService unarchive snapshot restore", () => {
   test("unarchive() invokes snapshot restore when snapshot metadata is present", async () => {
     const restoreSnapshotAfterUnarchive = mock(() => Promise.resolve(Ok("restored" as const)));
     workspaceService.setWorktreeArchiveSnapshotService({
+      preflightSnapshotForArchive: mock(() => Promise.resolve(Ok(undefined))),
       captureSnapshotForArchive: mock(() => Promise.resolve(Err("unused"))),
       restoreSnapshotAfterUnarchive,
     });

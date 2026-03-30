@@ -173,7 +173,7 @@ const MAX_WORKSPACE_NAME_COLLISION_RETRIES = 3;
 type WorkspaceAISettings = z.infer<typeof WorkspaceAISettingsSchema>;
 type WorktreeArchiveSnapshotLifecycleService = Pick<
   WorktreeArchiveSnapshotService,
-  "captureSnapshotForArchive" | "restoreSnapshotAfterUnarchive"
+  "preflightSnapshotForArchive" | "captureSnapshotForArchive" | "restoreSnapshotAfterUnarchive"
 >;
 interface WorkspaceAgentStatus {
   emoji: string;
@@ -1246,6 +1246,24 @@ export class WorkspaceService extends EventEmitter {
 
   isExperimentEnabled(experimentId: (typeof EXPERIMENT_IDS)[keyof typeof EXPERIMENT_IDS]): boolean {
     return this.experimentsService?.isExperimentEnabled(experimentId) === true;
+  }
+
+  private async stopLiveWorkspaceActivityForArchive(workspaceId: string): Promise<void> {
+    // Archiving removes the workspace from the sidebar; ensure we don't leave a stream running
+    // "headless" with no obvious UI affordance to interrupt it.
+    if (this.aiService.isStreaming(workspaceId)) {
+      const stopResult = await this.interruptStream(workspaceId);
+      if (!stopResult.success) {
+        log.debug("Failed to stop stream during workspace archive", {
+          workspaceId,
+          error: stopResult.error,
+        });
+      }
+    }
+
+    // Archiving hides workspace UI; do not leave terminal PTYs or desktop sessions running headless.
+    this.terminalService?.closeWorkspaceSessions(workspaceId);
+    await this.closeDesktopSessionBestEffort(workspaceId, "archive");
   }
 
   /**
@@ -3675,6 +3693,17 @@ export class WorkspaceService extends EventEmitter {
         beforeArchiveMetadata &&
         isWorktreeRuntime(beforeArchiveMetadata.runtimeConfig)
       ) {
+        const preflightResult =
+          await this.worktreeArchiveSnapshotService!.preflightSnapshotForArchive({
+            workspaceId,
+            workspaceMetadata: beforeArchiveMetadata,
+          });
+        if (!preflightResult.success) {
+          return Err(preflightResult.error);
+        }
+
+        await this.stopLiveWorkspaceActivityForArchive(workspaceId);
+
         const captureResult = await this.worktreeArchiveSnapshotService!.captureSnapshotForArchive({
           workspaceId,
           workspaceMetadata: beforeArchiveMetadata,
@@ -3704,22 +3733,9 @@ export class WorkspaceService extends EventEmitter {
         return config;
       });
 
-      // Only tear down live workspace activity after archive persistence succeeds.
-      // Snapshot capture can fail for recoverable validation errors (for example, untracked files),
-      // and those failures must not terminate the user's active sessions.
-      if (this.aiService.isStreaming(workspaceId)) {
-        const stopResult = await this.interruptStream(workspaceId);
-        if (!stopResult.success) {
-          log.debug("Failed to stop stream during workspace archive", {
-            workspaceId,
-            error: stopResult.error,
-          });
-        }
+      if (!needsSnapshotCapture) {
+        await this.stopLiveWorkspaceActivityForArchive(workspaceId);
       }
-
-      // Archiving hides workspace UI; do not leave terminal PTYs or desktop sessions running headless.
-      this.terminalService?.closeWorkspaceSessions(workspaceId);
-      await this.closeDesktopSessionBestEffort(workspaceId, "archive");
 
       // Emit updated metadata
       const allMetadata = await this.config.getAllWorkspaceMetadata();

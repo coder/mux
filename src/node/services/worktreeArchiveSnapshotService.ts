@@ -43,6 +43,55 @@ interface CreatedRestoreWorkspace {
 export class WorktreeArchiveSnapshotService {
   constructor(private readonly config: Config) {}
 
+  async preflightSnapshotForArchive(args: {
+    workspaceId: string;
+    workspaceMetadata: WorkspaceMetadata;
+  }): Promise<Result<void>> {
+    assert(
+      args.workspaceId.trim().length > 0,
+      "preflightSnapshotForArchive: workspaceId must be non-empty"
+    );
+
+    if (!isWorktreeRuntime(args.workspaceMetadata.runtimeConfig)) {
+      return Err("Archive snapshots are only supported for worktree runtimes");
+    }
+
+    const configSnapshot = this.config.loadConfigOrDefault();
+    const workspaceEntry = findWorkspaceEntry(configSnapshot, args.workspaceId);
+    if (!workspaceEntry) {
+      return Err("Workspace not found in config");
+    }
+
+    const workspaceName = coerceNonEmptyString(workspaceEntry.workspace.name);
+    if (!workspaceName) {
+      return Err("Workspace is missing its persisted branch name");
+    }
+
+    const projectRepos = getWorkspaceProjectRepos({
+      workspaceId: args.workspaceId,
+      workspaceName,
+      workspacePath: workspaceEntry.workspace.path,
+      runtimeConfig: args.workspaceMetadata.runtimeConfig,
+      projectPath: args.workspaceMetadata.projectPath,
+      projectName: args.workspaceMetadata.projectName,
+      projects: workspaceEntry.workspace.projects,
+    });
+    assert(
+      projectRepos.length > 0,
+      "preflightSnapshotForArchive: expected at least one project repo"
+    );
+
+    try {
+      for (const projectRepo of projectRepos) {
+        await this.ensureNoUnsupportedUntrackedFiles(projectRepo.repoCwd);
+        await this.ensureNoDirtySubmodules(projectRepo.repoCwd);
+      }
+      return Ok(undefined);
+    } catch (error) {
+      return Err(`Failed to capture archive snapshot: ${getErrorMessage(error)}`);
+    }
+  }
+
   async captureSnapshotForArchive(args: {
     workspaceId: string;
     workspaceMetadata: WorkspaceMetadata;
