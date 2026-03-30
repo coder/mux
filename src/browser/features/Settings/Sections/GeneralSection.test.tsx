@@ -1,8 +1,9 @@
 import React from "react";
 import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { GlobalWindow } from "happy-dom";
 import { ThemeProvider } from "@/browser/contexts/ThemeContext";
+import * as ActualSelectPrimitiveModule from "@/browser/components/SelectPrimitive/SelectPrimitive";
+import { installDom } from "../../../../../tests/ui/dom";
 import {
   DEFAULT_CODER_ARCHIVE_BEHAVIOR,
   type CoderWorkspaceArchiveBehavior,
@@ -181,26 +182,6 @@ interface MockAPISetup {
   >;
 }
 
-function createCustomEventPolyfill(
-  window: Window & typeof globalThis
-): typeof globalThis.CustomEvent {
-  class CustomEventPolyfill<T = unknown> extends window.Event implements CustomEvent<T> {
-    detail: T;
-
-    constructor(type: string, params?: CustomEventInit<T>) {
-      super(type, params);
-      this.detail = params?.detail as T;
-    }
-
-    initCustomEvent(type: string, bubbles?: boolean, cancelable?: boolean, detail?: T): void {
-      this.initEvent(type, bubbles ?? false, cancelable ?? false);
-      this.detail = detail as T;
-    }
-  }
-
-  return CustomEventPolyfill as unknown as typeof globalThis.CustomEvent;
-}
-
 function createMockAPI(configOverrides: Partial<MockConfig> = {}): MockAPISetup {
   const config: MockConfig = {
     coderWorkspaceArchiveBehavior: DEFAULT_CODER_ARCHIVE_BEHAVIOR,
@@ -248,48 +229,21 @@ function createMockAPI(configOverrides: Partial<MockConfig> = {}): MockAPISetup 
 }
 
 describe("GeneralSection", () => {
-  let originalWindow: typeof globalThis.window;
-  let originalDocument: typeof globalThis.document;
-  let originalNavigator: typeof globalThis.navigator;
-  let originalLocalStorage: Storage;
-  let originalStorageEvent: typeof globalThis.StorageEvent;
-  let originalCustomEvent: typeof globalThis.CustomEvent;
+  let cleanupDom: (() => void) | null = null;
 
   beforeEach(() => {
-    originalWindow = globalThis.window;
-    originalDocument = globalThis.document;
-    originalNavigator = globalThis.navigator;
-    originalLocalStorage = globalThis.localStorage;
-    originalStorageEvent = globalThis.StorageEvent;
-    originalCustomEvent = globalThis.CustomEvent;
-
-    const window = new GlobalWindow({ url: "http://localhost" }) as unknown as Window &
-      typeof globalThis;
-    const customEvent = window.CustomEvent ?? createCustomEventPolyfill(window);
-
-    Object.defineProperty(window, "CustomEvent", {
-      value: customEvent,
-      configurable: true,
-      writable: true,
-    });
-
-    globalThis.window = window;
-    globalThis.document = window.document;
-    globalThis.navigator = window.navigator;
-    globalThis.localStorage = window.localStorage;
-    globalThis.StorageEvent = window.StorageEvent as unknown as typeof StorageEvent;
-    globalThis.CustomEvent = customEvent;
+    cleanupDom = installDom();
   });
 
   afterEach(() => {
     cleanup();
     mock.restore();
-    globalThis.window = originalWindow;
-    globalThis.document = originalDocument;
-    globalThis.navigator = originalNavigator;
-    globalThis.localStorage = originalLocalStorage;
-    globalThis.StorageEvent = originalStorageEvent;
-    globalThis.CustomEvent = originalCustomEvent;
+    void mock.module(
+      "@/browser/components/SelectPrimitive/SelectPrimitive",
+      () => ActualSelectPrimitiveModule
+    );
+    cleanupDom?.();
+    cleanupDom = null;
   });
 
   function renderGeneralSection(options: RenderGeneralSectionOptions = {}) {
@@ -310,9 +264,14 @@ describe("GeneralSection", () => {
 
   function getSelectTrigger(view: ReturnType<typeof render>, label: string): HTMLElement {
     const labelElement = view.getByText(label);
-    const row = labelElement.parentElement?.parentElement;
-    const trigger = row?.querySelector('[role="combobox"]');
-    if (!(trigger instanceof HTMLElement)) {
+    let container: HTMLElement | null = labelElement.parentElement;
+
+    while (container && !container.querySelector('[role="combobox"]')) {
+      container = container.parentElement;
+    }
+
+    const trigger = container?.querySelector('[role="combobox"]');
+    if (!(trigger instanceof window.HTMLElement)) {
       throw new Error(`Could not find select trigger for ${label}`);
     }
     return trigger;
