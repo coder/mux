@@ -3666,12 +3666,16 @@ export class WorkspaceService extends EventEmitter {
         beforeArchiveMetadata = metadataResult.data;
       }
 
-      const shouldSkipSnapshotCapture =
+      const canSnapshotManagedWorktree =
         snapshotBehaviorEnabled &&
+        beforeArchiveMetadata != null &&
+        isWorktreeRuntime(beforeArchiveMetadata.runtimeConfig);
+      const shouldSkipSnapshotCapture =
+        canSnapshotManagedWorktree &&
         beforeArchiveMetadata != null &&
         Array.isArray(beforeArchiveMetadata.projects) &&
         beforeArchiveMetadata.projects.length > 1;
-      const needsSnapshotCapture = snapshotBehaviorEnabled && !shouldSkipSnapshotCapture;
+      const needsSnapshotCapture = canSnapshotManagedWorktree && !shouldSkipSnapshotCapture;
 
       // Lifecycle hooks run *before* we persist archivedAt.
       //
