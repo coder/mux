@@ -6,7 +6,7 @@
  * images from a named Storybook story.
  */
 
-import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
+import { appMeta, AppWithMocks, CHROMATIC_DISABLED, type AppStory } from "./meta.js";
 import { createOnChatAdapter } from "./helpers/chatSetup";
 import { createGitStatusExecutor } from "./helpers/git";
 import {
@@ -60,6 +60,7 @@ export default {
   parameters: {
     ...appMeta.parameters,
     chromatic: {
+      disableSnapshot: true === CHROMATIC_DISABLED.disableSnapshot,
       ...(appMeta.parameters?.chromatic ?? {}),
       modes: {
         // README screenshots are taken in dark mode.
