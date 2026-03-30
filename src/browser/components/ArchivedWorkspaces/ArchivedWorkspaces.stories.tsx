@@ -126,7 +126,11 @@ export const WorkspaceNameInRuntimeTooltip: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
-    const checkbox = await canvas.findByLabelText("Select Fix agent report rendering", {}, { timeout: 10000 });
+    const checkbox = await canvas.findByLabelText(
+      "Select Fix agent report rendering",
+      {},
+      { timeout: 10000 }
+    );
 
     const row = checkbox.closest<HTMLDivElement>("div");
     if (!row) {

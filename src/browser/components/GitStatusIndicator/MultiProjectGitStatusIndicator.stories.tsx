@@ -213,7 +213,10 @@ export const Diverged: Story = {
 
 export const Clean: Story = {
   render: () => (
-    <MultiProjectIndicatorStory workspace={CLEAN_WORKSPACE} projectStatuses={CLEAN_PROJECT_STATUSES} />
+    <MultiProjectIndicatorStory
+      workspace={CLEAN_WORKSPACE}
+      projectStatuses={CLEAN_PROJECT_STATUSES}
+    />
   ),
   play: async ({ canvasElement }) => {
     await waitForMultiProjectChip(canvasElement, "2 repos");
@@ -222,7 +225,10 @@ export const Clean: Story = {
 
 export const DialogOpen: Story = {
   render: () => (
-    <MultiProjectIndicatorStory workspace={DIALOG_WORKSPACE} projectStatuses={DIALOG_PROJECT_STATUSES} />
+    <MultiProjectIndicatorStory
+      workspace={DIALOG_WORKSPACE}
+      projectStatuses={DIALOG_PROJECT_STATUSES}
+    />
   ),
   play: async ({ canvasElement }) => {
     const chip = await waitForMultiProjectChip(canvasElement, "1 diverged");
