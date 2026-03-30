@@ -344,6 +344,56 @@ describe("WorktreeArchiveSnapshotService", () => {
     ).toBeDefined();
   });
 
+  test("fails restore when committed history is unavailable and the mailbox artifact is missing", async () => {
+    await makeWorkspaceDirty(fixture);
+
+    const captureResult = await fixture.service.captureSnapshotForArchive({
+      workspaceId: fixture.workspaceId,
+      workspaceMetadata: fixture.metadata,
+    });
+    expect(captureResult.success).toBe(true);
+    if (!captureResult.success) {
+      return;
+    }
+
+    const projectSnapshot = captureResult.data.projects[0];
+    if (!projectSnapshot?.committedPatchPath) {
+      throw new Error("Expected committed patch path");
+    }
+
+    const snapshotWithoutMailbox = {
+      ...captureResult.data,
+      projects: captureResult.data.projects.map((snapshotProject) => ({
+        ...snapshotProject,
+        committedPatchPath: undefined,
+      })),
+    };
+
+    await fixture.config.editConfig((cfg) => {
+      const workspace = cfg.projects.get(fixture.projectPath)?.workspaces[0];
+      if (!workspace) {
+        throw new Error("Missing workspace entry");
+      }
+      workspace.worktreeArchiveSnapshot = snapshotWithoutMailbox;
+      return cfg;
+    });
+
+    runGit(fixture.projectPath, ["worktree", "remove", "--force", fixture.workspacePath]);
+    runGit(fixture.projectPath, ["branch", "-D", fixture.workspaceName]);
+    runGit(fixture.projectPath, ["reflog", "expire", "--expire=now", "--all"]);
+    runGit(fixture.projectPath, ["gc", "--prune=now"]);
+
+    const restoreResult = await fixture.service.restoreSnapshotAfterUnarchive({
+      workspaceId: fixture.workspaceId,
+      workspaceMetadata: fixture.metadata,
+    });
+    expect(restoreResult.success).toBe(false);
+    if (!restoreResult.success) {
+      expect(restoreResult.error).toContain("archived committed history is unavailable");
+    }
+    expect(await pathExists(fixture.workspacePath)).toBe(false);
+  });
+
   test("preserves snapshot metadata when artifact cleanup fails after a successful restore", async () => {
     await makeWorkspaceDirty(fixture);
 
@@ -398,6 +448,57 @@ describe("WorktreeArchiveSnapshotService", () => {
       ).toBe(true);
     } finally {
       rmSpy.mockRestore();
+    }
+  });
+
+  test("keeps the restored worktree when snapshot-state writeback fails", async () => {
+    await makeWorkspaceDirty(fixture);
+
+    const captureResult = await fixture.service.captureSnapshotForArchive({
+      workspaceId: fixture.workspaceId,
+      workspaceMetadata: fixture.metadata,
+    });
+    expect(captureResult.success).toBe(true);
+    if (!captureResult.success) {
+      return;
+    }
+
+    await fixture.config.editConfig((cfg) => {
+      const workspace = cfg.projects.get(fixture.projectPath)?.workspaces[0];
+      if (!workspace) {
+        throw new Error("Missing workspace entry");
+      }
+      workspace.worktreeArchiveSnapshot = captureResult.data;
+      return cfg;
+    });
+
+    const originalEditConfig = fixture.config.editConfig.bind(fixture.config);
+    const editConfigSpy = spyOn(fixture.config, "editConfig").mockImplementation((_mutate) =>
+      Promise.reject(new Error("config writeback failed"))
+    );
+
+    try {
+      const restoreResult = await fixture.service.restoreSnapshotAfterUnarchive({
+        workspaceId: fixture.workspaceId,
+        workspaceMetadata: fixture.metadata,
+      });
+      expect(restoreResult.success).toBe(false);
+      if (!restoreResult.success) {
+        expect(restoreResult.error).toContain("config writeback failed");
+      }
+      expect(await pathExists(fixture.workspacePath)).toBe(true);
+      expect(
+        fixture.config.loadConfigOrDefault().projects.get(fixture.projectPath)?.workspaces[0]
+          ?.worktreeArchiveSnapshot
+      ).toEqual(captureResult.data);
+      expect(
+        await pathExists(
+          path.join(fixture.config.getSessionDir(fixture.workspaceId), "archive-state")
+        )
+      ).toBe(false);
+    } finally {
+      editConfigSpy.mockRestore();
+      fixture.config.editConfig = originalEditConfig;
     }
   });
 

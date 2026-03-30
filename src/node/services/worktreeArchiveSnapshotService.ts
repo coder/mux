@@ -237,6 +237,7 @@ export class WorktreeArchiveSnapshotService {
 
     const createdWorkspaces: CreatedRestoreWorkspace[] = [];
     let containerCreated = false;
+    let restoredCheckoutReadyForWriteback = false;
 
     try {
       if (await this.pathExists(persistedWorkspacePath)) {
@@ -302,7 +303,15 @@ export class WorktreeArchiveSnapshotService {
                 projectSnapshot.committedPatchPath
               )
             : undefined;
-          if (committedPatchPath && (await this.pathExists(committedPatchPath))) {
+          const committedPatchAvailable =
+            committedPatchPath !== undefined && (await this.pathExists(committedPatchPath));
+          const committedHistoryWasCaptured = projectSnapshot.baseSha !== projectSnapshot.headSha;
+          if (committedHistoryWasCaptured && !committedPatchAvailable) {
+            throw new Error(
+              `Failed to restore ${projectSnapshot.projectName}: archived committed history is unavailable.`
+            );
+          }
+          if (committedPatchAvailable && committedPatchPath) {
             await this.runGitCommand(restoreResult.workspacePath, [
               "am",
               "--3way",
@@ -355,6 +364,7 @@ export class WorktreeArchiveSnapshotService {
         containerCreated = true;
       }
 
+      restoredCheckoutReadyForWriteback = true;
       await this.clearSnapshotState(args.workspaceId, snapshot);
       return Ok("restored");
     } catch (error) {
@@ -362,12 +372,14 @@ export class WorktreeArchiveSnapshotService {
         workspaceId: args.workspaceId,
         error: getErrorMessage(error),
       });
-      await this.cleanupFailedRestore({
-        workspaceName,
-        runtimeConfig: args.workspaceMetadata.runtimeConfig,
-        createdWorkspaces,
-        containerCreated,
-      });
+      if (!restoredCheckoutReadyForWriteback) {
+        await this.cleanupFailedRestore({
+          workspaceName,
+          runtimeConfig: args.workspaceMetadata.runtimeConfig,
+          createdWorkspaces,
+          containerCreated,
+        });
+      }
       return Err(`Failed to restore archive snapshot: ${getErrorMessage(error)}`);
     }
   }
