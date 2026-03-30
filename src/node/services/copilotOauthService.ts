@@ -4,16 +4,15 @@ import { Err, Ok } from "@/common/types/result";
 import type { ProviderService } from "@/node/services/providerService";
 import type { WindowService } from "@/node/services/windowService";
 import { log } from "@/node/services/log";
-import { createDeferred } from "@/node/utils/oauthUtils";
 import { getErrorMessage } from "@/common/utils/errors";
+import { COPILOT_MODEL_PREFIXES } from "@/common/utils/copilot/modelRouting";
+import { createDeferred } from "@/node/utils/oauthUtils";
 
 const GITHUB_COPILOT_CLIENT_ID = "Ov23li8tweQw6odWQebz";
 const SCOPE = "read:user";
 const POLLING_SAFETY_MARGIN_MS = 3000;
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
 const COMPLETED_FLOW_TTL_MS = 60 * 1000;
-// Only surface top-tier model families from the Copilot API
-export const COPILOT_MODEL_PREFIXES = ["gpt-5", "claude-", "gemini-3", "grok-code"];
 
 const GITHUB_DEVICE_CODE_URL = "https://github.com/login/device/code";
 const GITHUB_ACCESS_TOKEN_URL = "https://github.com/login/oauth/access_token";
