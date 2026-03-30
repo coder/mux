@@ -66,6 +66,9 @@ export class WorktreeManager {
     branchName: string;
     directoryName?: string;
     trunkBranch: string;
+    startPoint?: string;
+    skipRemoteSync?: boolean;
+    workspacePathOverride?: string;
     initLogger: InitLogger;
     abortSignal?: AbortSignal;
     env?: Record<string, string>;
@@ -75,7 +78,12 @@ export class WorktreeManager {
     // Disable git hooks for untrusted projects (prevents post-checkout execution)
     const noHooksEnv = this.getGitExecOptions(params.trusted);
     const workspaceName = params.directoryName ?? branchName;
-    const workspacePath = this.getWorkspacePath(projectPath, workspaceName);
+    const workspacePath =
+      params.workspacePathOverride ?? this.getWorkspacePath(projectPath, workspaceName);
+    const skipRemoteSync = params.skipRemoteSync === true;
+    const trimmedStartPoint = params.startPoint?.trim();
+    const startPoint =
+      trimmedStartPoint && trimmedStartPoint.length > 0 ? trimmedStartPoint : undefined;
     let worktreeCreated = false;
     let createdBranch = false;
 
@@ -110,21 +118,20 @@ export class WorktreeManager {
 
       // Fetch origin before creating worktree (best-effort)
       // This ensures new branches start from the latest origin state
-      const fetchedOrigin = await this.fetchOriginTrunk(
-        projectPath,
-        trunkBranch,
-        initLogger,
-        noHooksEnv
-      );
+      const fetchedOrigin = skipRemoteSync
+        ? false
+        : await this.fetchOriginTrunk(projectPath, trunkBranch, initLogger, noHooksEnv);
 
       // Determine best base for new branches: use origin if local can fast-forward to it,
       // otherwise preserve local state (user may have unpushed work)
       const shouldUseOrigin =
-        fetchedOrigin && (await this.canFastForwardToOrigin(projectPath, trunkBranch, initLogger));
+        !skipRemoteSync &&
+        fetchedOrigin &&
+        (await this.canFastForwardToOrigin(projectPath, trunkBranch, initLogger));
 
       // Create worktree (git worktree is typically fast)
       if (branchExists) {
-        // Branch exists, just add worktree pointing to it
+        // Branch exists, just add a worktree pointing to the existing ref without rewriting it.
         using proc = execFileAsync(
           "git",
           ["-C", projectPath, "worktree", "add", workspacePath, branchName],
@@ -132,10 +139,10 @@ export class WorktreeManager {
         );
         await proc.result;
       } else {
-        // Branch doesn't exist, create from the best available base:
-        // - origin/<trunk> if local is behind/equal (ensures fresh starting point)
-        // - local <trunk> if local is ahead/diverged (preserves user's work)
-        const newBranchBase = shouldUseOrigin ? `origin/${trunkBranch}` : trunkBranch;
+        // Branch doesn't exist, create from the requested start point when provided. Restore flows
+        // use this to recreate archived branches from exact saved commits instead of fetching origin.
+        const newBranchBase =
+          startPoint ?? (shouldUseOrigin ? `origin/${trunkBranch}` : trunkBranch);
         using proc = execFileAsync(
           "git",
           ["-C", projectPath, "worktree", "add", "-b", branchName, workspacePath, newBranchBase],
@@ -155,7 +162,7 @@ export class WorktreeManager {
 
       // For existing branches, fast-forward to latest origin (best-effort)
       // Only if local can fast-forward (preserves unpushed work)
-      if (shouldUseOrigin && branchExists) {
+      if (!skipRemoteSync && shouldUseOrigin && branchExists) {
         await this.fastForwardToOrigin(workspacePath, trunkBranch, initLogger, noHooksEnv);
       }
 

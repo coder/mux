@@ -8,6 +8,7 @@ import {
 } from "@/common/constants/muxChat";
 import { getMuxHelpChatProjectPath } from "@/node/constants/muxChat";
 import { DEFAULT_CODER_ARCHIVE_BEHAVIOR } from "@/common/config/coderArchiveBehavior";
+import { DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR } from "@/common/config/worktreeArchiveBehavior";
 import { createMuxMessage } from "@/common/types/message";
 import { log } from "@/node/services/log";
 import type { Config } from "@/node/config";
@@ -55,6 +56,7 @@ import { getSigningService, type SigningService } from "@/node/services/signingS
 import { coderService, type CoderService } from "@/node/services/coderService";
 import { SshPromptService } from "@/node/services/sshPromptService";
 import { WorkspaceLifecycleHooks } from "@/node/services/workspaceLifecycleHooks";
+import { WorktreeArchiveSnapshotService } from "@/node/services/worktreeArchiveSnapshotService";
 import {
   createCoderArchiveHook,
   createCoderUnarchiveHook,
@@ -303,6 +305,8 @@ export class ServiceContainer {
     this.serverAuthService = new ServerAuthService(config);
 
     const workspaceLifecycleHooks = new WorkspaceLifecycleHooks();
+    const worktreeArchiveSnapshotService = new WorktreeArchiveSnapshotService(this.config);
+    this.workspaceService.setWorktreeArchiveSnapshotService(worktreeArchiveSnapshotService);
     const getArchiveBehavior = () =>
       this.config.loadConfigOrDefault().coderWorkspaceArchiveBehavior ??
       DEFAULT_CODER_ARCHIVE_BEHAVIOR;
@@ -318,10 +322,11 @@ export class ServiceContainer {
         getArchiveBehavior,
       })
     );
-    const getDeleteWorktreeOnArchive = () =>
-      this.config.loadConfigOrDefault().deleteWorktreeOnArchive === true;
+    const getWorktreeArchiveBehavior = () =>
+      this.config.loadConfigOrDefault().worktreeArchiveBehavior ??
+      DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR;
     workspaceLifecycleHooks.registerAfterArchive(
-      createWorktreeArchiveHook({ getDeleteWorktreeOnArchive })
+      createWorktreeArchiveHook({ getWorktreeArchiveBehavior })
     );
     this.workspaceService.setWorkspaceLifecycleHooks(workspaceLifecycleHooks);
 

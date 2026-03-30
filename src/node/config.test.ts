@@ -6,6 +6,10 @@ import {
   CODER_ARCHIVE_BEHAVIORS,
   DEFAULT_CODER_ARCHIVE_BEHAVIOR,
 } from "@/common/config/coderArchiveBehavior";
+import {
+  DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR,
+  WORKTREE_ARCHIVE_BEHAVIORS,
+} from "@/common/config/worktreeArchiveBehavior";
 import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import { type ExternalSecretResolver, secretsToRecord } from "@/common/types/secrets";
 
@@ -303,6 +307,80 @@ describe("Config", () => {
         const reloaded = new Config(tempDir).loadConfigOrDefault();
         expect(reloaded.coderWorkspaceArchiveBehavior).toBe(behavior);
         expect(reloaded.stopCoderWorkspaceOnArchive).toBe(legacyBooleanForBehavior(behavior));
+      }
+    });
+  });
+
+  describe("worktreeArchiveBehavior", () => {
+    const readRawArchiveConfig = () =>
+      JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
+        worktreeArchiveBehavior?: unknown;
+        deleteWorktreeOnArchive?: unknown;
+      };
+
+    for (const behavior of WORKTREE_ARCHIVE_BEHAVIORS) {
+      it(`loads the new enum value ${behavior}`, () => {
+        fs.writeFileSync(
+          path.join(tempDir, "config.json"),
+          JSON.stringify({
+            projects: [],
+            worktreeArchiveBehavior: behavior,
+          })
+        );
+
+        const loaded = config.loadConfigOrDefault();
+        expect(loaded.worktreeArchiveBehavior).toBe(behavior);
+        expect(loaded.deleteWorktreeOnArchive).toBe(behavior === "delete");
+      });
+    }
+
+    it("resolves legacy delete boolean when the enum is missing", () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [],
+          deleteWorktreeOnArchive: true,
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.worktreeArchiveBehavior).toBe("delete");
+      expect(loaded.deleteWorktreeOnArchive).toBe(true);
+    });
+
+    it("defaults to keep when the enum is missing and the legacy boolean is false/undefined", () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [],
+          deleteWorktreeOnArchive: false,
+        })
+      );
+      expect(config.loadConfigOrDefault().worktreeArchiveBehavior).toBe(
+        DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR
+      );
+
+      fs.writeFileSync(path.join(tempDir, "config.json"), JSON.stringify({ projects: [] }));
+      expect(config.loadConfigOrDefault().worktreeArchiveBehavior).toBe(
+        DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR
+      );
+    });
+
+    it("round-trips each behavior with the enum field and legacy shim", async () => {
+      for (const behavior of WORKTREE_ARCHIVE_BEHAVIORS) {
+        await config.editConfig((cfg) => {
+          cfg.worktreeArchiveBehavior = behavior;
+          cfg.deleteWorktreeOnArchive = behavior === "delete";
+          return cfg;
+        });
+
+        const raw = readRawArchiveConfig();
+        expect(raw.worktreeArchiveBehavior).toBe(behavior);
+        expect(raw.deleteWorktreeOnArchive).toBe(behavior === "delete");
+
+        const reloaded = new Config(tempDir).loadConfigOrDefault();
+        expect(reloaded.worktreeArchiveBehavior).toBe(behavior);
+        expect(reloaded.deleteWorktreeOnArchive).toBe(behavior === "delete");
       }
     });
   });

@@ -30,6 +30,44 @@ export const SectionConfigSchema = z.object({
   }),
 });
 
+export const WorktreeArchiveSnapshotProjectSchema = z.object({
+  projectPath: z.string().meta({
+    description: "Absolute path to the project repo that this archive snapshot entry restores.",
+  }),
+  projectName: z.string().meta({ description: "Display name for the project repo." }),
+  storageKey: z.string().meta({
+    description: "Filesystem-safe per-project storage key for archive artifacts.",
+  }),
+  branchName: z.string().meta({ description: "Workspace branch name captured for this project." }),
+  trunkBranch: z
+    .string()
+    .meta({ description: "Trunk branch used to compute merge-base fallback." }),
+  baseSha: z.string().meta({ description: "Commit used as the restore base for patch replay." }),
+  headSha: z.string().meta({ description: "HEAD commit SHA captured at archive time." }),
+  committedPatchPath: z.string().optional().meta({
+    description: "Session-dir-relative path to the git-format-patch mailbox for committed history.",
+  }),
+  stagedPatchPath: z.string().optional().meta({
+    description: "Session-dir-relative path to the staged tracked diff artifact.",
+  }),
+  unstagedPatchPath: z.string().optional().meta({
+    description: "Session-dir-relative path to the unstaged tracked diff artifact.",
+  }),
+});
+
+export const WorktreeArchiveSnapshotSchema = z.object({
+  version: z.literal(1).meta({ description: "Snapshot metadata schema version." }),
+  capturedAt: z
+    .string()
+    .meta({ description: "ISO 8601 timestamp when the snapshot was captured." }),
+  stateDirPath: z.string().meta({
+    description: "Session-dir-relative path to the directory that stores snapshot artifacts.",
+  }),
+  projects: z.array(WorktreeArchiveSnapshotProjectSchema).min(1).meta({
+    description: "Per-project restore metadata for the archived workspace snapshot.",
+  }),
+});
+
 export const WorkspaceConfigSchema = z.object({
   path: z.string().meta({
     description: "Absolute path to workspace directory - REQUIRED for backward compatibility",
@@ -133,6 +171,10 @@ export const WorkspaceConfigSchema = z.object({
     description:
       "ISO 8601 timestamp when workspace was last unarchived. Used for recency calculation to bump restored workspaces to top.",
   }),
+  worktreeArchiveSnapshot: WorktreeArchiveSnapshotSchema.optional().meta({
+    description:
+      "Durable restore metadata captured before archive-time worktree deletion. Present only while an archived snapshot is awaiting restore.",
+  }),
   projects: z.array(ProjectRefSchema).optional(),
   sectionId: z.string().optional().meta({
     description: "ID of the section this workspace belongs to (optional, unsectioned if absent)",
@@ -169,3 +211,6 @@ export const ProjectConfigSchema = z.object({
       "Whether the user has confirmed trust for this project. Untrusted projects cannot run hooks or user scripts.",
   }),
 });
+
+export type WorktreeArchiveSnapshotProject = z.infer<typeof WorktreeArchiveSnapshotProjectSchema>;
+export type WorktreeArchiveSnapshot = z.infer<typeof WorktreeArchiveSnapshotSchema>;

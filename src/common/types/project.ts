@@ -4,6 +4,7 @@
  */
 
 import type { CoderWorkspaceArchiveBehavior } from "@/common/config/coderArchiveBehavior";
+import type { WorktreeArchiveBehavior } from "@/common/config/worktreeArchiveBehavior";
 import type { FeatureFlagOverride, UpdateChannel } from "@/common/config/schemas/appConfigOnDisk";
 import type { z } from "zod";
 import type {
@@ -119,8 +120,21 @@ export interface ProjectsConfig {
   coderWorkspaceArchiveBehavior?: CoderWorkspaceArchiveBehavior;
 
   /**
-   * When true, mux deletes the archived worktree after preserving transcript metadata.
-   * Defaults to false when absent from config.json.
+   * What to do with mux-managed worktree checkouts when a chat is archived.
+   *
+   * - `"keep"`: leave the checkout on disk.
+   * - `"delete"`: delete the checkout without a restore snapshot.
+   * - `"snapshot"`: capture a durable restore snapshot, then delete the checkout.
+   *
+   * Defaults to `"keep"` when absent from config.json.
+   */
+  worktreeArchiveBehavior?: WorktreeArchiveBehavior;
+
+  /**
+   * Legacy boolean shim for downgrade compatibility.
+   *
+   * Stored as `true` only for the new `worktreeArchiveBehavior: "delete"` mode.
+   * `false` disables deletion for older builds and is also used for `"snapshot"`.
    */
   deleteWorktreeOnArchive?: boolean;
 

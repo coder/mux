@@ -173,6 +173,15 @@ export interface WorkspaceCreationParams {
   trunkBranch: string;
   /** Directory name to use for workspace (typically branch name) */
   directoryName: string;
+  /** Optional explicit start point (commit/branch/ref) for the checkout branch. */
+  startPoint?: string;
+  /**
+   * When true, skip origin fetch / fast-forward logic and preserve the requested start point.
+   * Used for deterministic restore flows.
+   */
+  skipRemoteSync?: boolean;
+  /** Optional persisted workspace path override for legacy layouts. */
+  workspacePathOverride?: string;
   /** Logger for streaming creation progress and init hook output */
   initLogger: InitLogger;
   /** Optional abort signal for cancellation */

@@ -272,6 +272,7 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
     error: string;
   } | null>(null);
   const deleteWorktreeError = usePopoverError();
+  const unarchiveError = usePopoverError();
 
   // Bulk selection state
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
@@ -518,7 +519,7 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
     onWorkspacesChanged?.();
   };
 
-  const handleUnarchive = async (workspaceId: string) => {
+  const handleUnarchive = async (workspaceId: string, anchorEl?: HTMLElement) => {
     setProcessingIds((prev) => new Set(prev).add(workspaceId));
     try {
       const result = await unarchiveWorkspace(workspaceId);
@@ -534,6 +535,17 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
           });
         }
         onWorkspacesChanged?.();
+        return;
+      }
+
+      if (anchorEl) {
+        const rect = anchorEl.getBoundingClientRect();
+        unarchiveError.showError(workspaceId, result.error ?? "Failed to restore workspace", {
+          top: rect.top + window.scrollY,
+          left: rect.right + 10,
+        });
+      } else {
+        unarchiveError.showError(workspaceId, result.error ?? "Failed to restore workspace");
       }
     } finally {
       setProcessingIds((prev) => {
@@ -716,6 +728,11 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
           }
           onWorkspacesChanged?.();
         }}
+      />
+      <PopoverError
+        error={unarchiveError.error}
+        prefix="Failed to restore workspace"
+        onDismiss={unarchiveError.clearError}
       />
       <PopoverError
         error={deleteWorktreeError.error}
@@ -931,7 +948,9 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <button
-                                  onClick={() => void handleUnarchive(workspace.id)}
+                                  onClick={(event) =>
+                                    void handleUnarchive(workspace.id, event.currentTarget)
+                                  }
                                   disabled={isProcessing}
                                   className="text-muted hover:text-foreground rounded p-1.5 transition-colors hover:bg-white/10 disabled:opacity-50"
                                   aria-label={`Restore workspace ${displayTitle}`}

@@ -1,4 +1,5 @@
-import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import React from "react";
+import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
 import { ThemeProvider } from "@/browser/contexts/ThemeContext";
@@ -6,10 +7,14 @@ import {
   DEFAULT_CODER_ARCHIVE_BEHAVIOR,
   type CoderWorkspaceArchiveBehavior,
 } from "@/common/config/coderArchiveBehavior";
+import {
+  DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR,
+  type WorktreeArchiveBehavior,
+} from "@/common/config/worktreeArchiveBehavior";
 
 interface MockConfig {
   coderWorkspaceArchiveBehavior: CoderWorkspaceArchiveBehavior;
-  deleteWorktreeOnArchive: boolean;
+  worktreeArchiveBehavior: WorktreeArchiveBehavior;
   llmDebugLogs: boolean;
 }
 
@@ -18,7 +23,7 @@ interface MockAPIClient {
     getConfig: () => Promise<MockConfig>;
     updateCoderPrefs: (input: {
       coderWorkspaceArchiveBehavior: CoderWorkspaceArchiveBehavior;
-      deleteWorktreeOnArchive: boolean;
+      worktreeArchiveBehavior: WorktreeArchiveBehavior;
     }) => Promise<void>;
     updateLlmDebugLogs: (input: { enabled: boolean }) => Promise<void>;
   };
@@ -34,6 +39,118 @@ interface MockAPIClient {
 
 let mockApi: MockAPIClient;
 
+void mock.module("@/browser/components/SelectPrimitive/SelectPrimitive", () => {
+  const SelectContext = React.createContext<{
+    value?: string;
+    disabled?: boolean;
+    open: boolean;
+    options: Map<string, React.ReactNode>;
+    onValueChange?: (value: string) => void;
+    setOpen: (open: boolean) => void;
+  } | null>(null);
+
+  function collectOptions(children: React.ReactNode, options = new Map<string, React.ReactNode>()) {
+    React.Children.forEach(children, (child) => {
+      if (!React.isValidElement<{ value?: string; children?: React.ReactNode }>(child)) {
+        return;
+      }
+
+      if (typeof child.props.value === "string") {
+        options.set(child.props.value, child.props.children);
+      }
+
+      if (child.props.children) {
+        collectOptions(child.props.children, options);
+      }
+    });
+
+    return options;
+  }
+
+  function Select(props: {
+    value?: string;
+    disabled?: boolean;
+    onValueChange?: (value: string) => void;
+    children: React.ReactNode;
+  }) {
+    const [open, setOpen] = React.useState(false);
+    const options = React.useMemo(() => collectOptions(props.children), [props.children]);
+    return (
+      <SelectContext.Provider
+        value={{
+          value: props.value,
+          disabled: props.disabled,
+          open,
+          options,
+          onValueChange: props.onValueChange,
+          setOpen,
+        }}
+      >
+        {props.children}
+      </SelectContext.Provider>
+    );
+  }
+
+  const SelectTrigger = React.forwardRef<
+    HTMLButtonElement,
+    React.ComponentPropsWithoutRef<"button">
+  >((props, ref) => {
+    const context = React.useContext(SelectContext);
+    return (
+      <button
+        {...props}
+        ref={ref}
+        type="button"
+        role="combobox"
+        disabled={context?.disabled}
+        aria-expanded={context?.open ?? false}
+        onPointerDown={(event) => {
+          props.onPointerDown?.(event);
+          if (!context?.disabled) {
+            context?.setOpen(true);
+          }
+        }}
+      >
+        {props.children}
+      </button>
+    );
+  });
+  SelectTrigger.displayName = "MockSelectTrigger";
+
+  function SelectValue() {
+    const context = React.useContext(SelectContext);
+    return <span>{context?.options.get(context?.value ?? "") ?? context?.value ?? ""}</span>;
+  }
+
+  function SelectContent(props: { children: React.ReactNode }) {
+    const context = React.useContext(SelectContext);
+    return context?.open ? <div>{props.children}</div> : null;
+  }
+
+  function SelectItem(props: { value: string; children: React.ReactNode }) {
+    const context = React.useContext(SelectContext);
+    return (
+      <button
+        type="button"
+        onClick={() => {
+          context?.onValueChange?.(props.value);
+          context?.setOpen(false);
+        }}
+      >
+        {props.children}
+      </button>
+    );
+  }
+
+  return {
+    Select,
+    SelectTrigger,
+    SelectValue,
+    SelectContent,
+    SelectItem,
+  };
+});
+
 void mock.module("@/browser/contexts/API", () => ({
   useAPI: () => ({
     api: mockApi,
@@ -48,7 +165,7 @@ import { GeneralSection } from "./GeneralSection";
 
 interface RenderGeneralSectionOptions {
   coderWorkspaceArchiveBehavior?: CoderWorkspaceArchiveBehavior;
-  deleteWorktreeOnArchive?: boolean;
+  worktreeArchiveBehavior?: WorktreeArchiveBehavior;
 }
 
 interface MockAPISetup {
@@ -58,7 +175,7 @@ interface MockAPISetup {
     typeof mock<
       (input: {
         coderWorkspaceArchiveBehavior: CoderWorkspaceArchiveBehavior;
-        deleteWorktreeOnArchive: boolean;
+        worktreeArchiveBehavior: WorktreeArchiveBehavior;
       }) => Promise<void>
     >
   >;
@@ -87,7 +204,7 @@ function createCustomEventPolyfill(
 function createMockAPI(configOverrides: Partial<MockConfig> = {}): MockAPISetup {
   const config: MockConfig = {
     coderWorkspaceArchiveBehavior: DEFAULT_CODER_ARCHIVE_BEHAVIOR,
-    deleteWorktreeOnArchive: false,
+    worktreeArchiveBehavior: DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR,
     llmDebugLogs: false,
     ...configOverrides,
   };
@@ -96,10 +213,10 @@ function createMockAPI(configOverrides: Partial<MockConfig> = {}): MockAPISetup 
   const updateCoderPrefsMock = mock(
     (input: {
       coderWorkspaceArchiveBehavior: CoderWorkspaceArchiveBehavior;
-      deleteWorktreeOnArchive: boolean;
+      worktreeArchiveBehavior: WorktreeArchiveBehavior;
     }) => {
       config.coderWorkspaceArchiveBehavior = input.coderWorkspaceArchiveBehavior;
-      config.deleteWorktreeOnArchive = input.deleteWorktreeOnArchive;
+      config.worktreeArchiveBehavior = input.worktreeArchiveBehavior;
 
       return Promise.resolve();
     }
@@ -178,7 +295,7 @@ describe("GeneralSection", () => {
   function renderGeneralSection(options: RenderGeneralSectionOptions = {}) {
     const { api, updateCoderPrefsMock } = createMockAPI({
       coderWorkspaceArchiveBehavior: options.coderWorkspaceArchiveBehavior,
-      deleteWorktreeOnArchive: options.deleteWorktreeOnArchive,
+      worktreeArchiveBehavior: options.worktreeArchiveBehavior,
     });
     mockApi = api;
 
@@ -191,47 +308,66 @@ describe("GeneralSection", () => {
     return { updateCoderPrefsMock, view };
   }
 
-  test("renders the delete worktree on archive copy and loads the saved value", async () => {
+  function getSelectTrigger(view: ReturnType<typeof render>, label: string): HTMLElement {
+    const labelElement = view.getByText(label);
+    const row = labelElement.parentElement?.parentElement;
+    const trigger = row?.querySelector('[role="combobox"]');
+    if (!(trigger instanceof HTMLElement)) {
+      throw new Error(`Could not find select trigger for ${label}`);
+    }
+    return trigger;
+  }
+
+  function chooseSelectOption(
+    view: ReturnType<typeof render>,
+    label: string,
+    optionText: string
+  ): void {
+    const trigger = getSelectTrigger(view, label);
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+    const portalRoot = view.baseElement.ownerDocument.body;
+    fireEvent.click(within(portalRoot).getByText(optionText));
+  }
+
+  test("renders the worktree archive behavior copy and loads the saved value", async () => {
     const { view } = renderGeneralSection({
       coderWorkspaceArchiveBehavior: "delete",
-      deleteWorktreeOnArchive: true,
+      worktreeArchiveBehavior: "delete",
     });
 
-    expect(view.getByText("Delete worktree on archive")).toBeTruthy();
-    expect(
-      view.getByText(/When enabled, mux-managed worktrees are deleted when archiving a workspace/i)
-    ).toBeTruthy();
+    expect(view.getByText("Worktree archive behavior")).toBeTruthy();
+    expect(view.getByText(/snapshotted so they can be restored on unarchive/i)).toBeTruthy();
 
-    const toggle = view.getByRole("switch", { name: "Toggle Delete worktree on archive" });
     await waitFor(() => {
-      expect(toggle.getAttribute("aria-checked")).toBe("true");
+      expect(getSelectTrigger(view, "Worktree archive behavior").textContent).toContain(
+        "Delete checkout"
+      );
     });
   });
 
-  test("persists the toggle with the current archive behavior", async () => {
+  test("persists the selected worktree archive behavior with the current coder behavior", async () => {
     const { updateCoderPrefsMock, view } = renderGeneralSection({
       coderWorkspaceArchiveBehavior: "delete",
-      deleteWorktreeOnArchive: false,
+      worktreeArchiveBehavior: DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR,
     });
 
-    const toggle = view.getByRole("switch", { name: "Toggle Delete worktree on archive" });
     await waitFor(() => {
-      expect(toggle.getAttribute("aria-checked")).toBe("false");
+      expect(getSelectTrigger(view, "Worktree archive behavior").textContent).toContain(
+        "Keep checkout"
+      );
     });
 
-    fireEvent.click(toggle);
+    chooseSelectOption(view, "Worktree archive behavior", "Snapshot and delete");
 
     await waitFor(() => {
       expect(updateCoderPrefsMock).toHaveBeenCalledWith({
         coderWorkspaceArchiveBehavior: "delete",
-        deleteWorktreeOnArchive: true,
+        worktreeArchiveBehavior: "snapshot",
       });
     });
-
-    expect(toggle.getAttribute("aria-checked")).toBe("true");
   });
 
-  test("serializes rapid delete-worktree toggle writes so only the latest value is persisted", async () => {
+  test("serializes rapid worktree archive behavior writes so only the latest value is persisted", async () => {
     const { api, updateCoderPrefsMock } = createMockAPI();
     let resolveFirstUpdate: (() => void) | undefined;
     let resolveSecondUpdate: (() => void) | undefined;
@@ -239,10 +375,10 @@ describe("GeneralSection", () => {
     api.config.updateCoderPrefs = updateCoderPrefsMock.mockImplementation(
       ({
         coderWorkspaceArchiveBehavior: _coderWorkspaceArchiveBehavior,
-        deleteWorktreeOnArchive: _deleteWorktreeOnArchive,
+        worktreeArchiveBehavior: _worktreeArchiveBehavior,
       }: {
         coderWorkspaceArchiveBehavior: CoderWorkspaceArchiveBehavior;
-        deleteWorktreeOnArchive: boolean;
+        worktreeArchiveBehavior: WorktreeArchiveBehavior;
       }) =>
         new Promise<void>((resolve) => {
           if (!resolveFirstUpdate) {
@@ -261,22 +397,23 @@ describe("GeneralSection", () => {
       </ThemeProvider>
     );
 
-    const toggle = view.getByRole("switch", { name: "Toggle Delete worktree on archive" });
     await waitFor(() => {
-      expect(toggle.getAttribute("aria-checked")).toBe("false");
+      expect(getSelectTrigger(view, "Worktree archive behavior").textContent).toContain(
+        "Keep checkout"
+      );
     });
 
-    fireEvent.click(toggle);
+    chooseSelectOption(view, "Worktree archive behavior", "Delete checkout");
 
     await waitFor(() => {
       expect(updateCoderPrefsMock).toHaveBeenCalledTimes(1);
       expect(updateCoderPrefsMock).toHaveBeenNthCalledWith(1, {
         coderWorkspaceArchiveBehavior: DEFAULT_CODER_ARCHIVE_BEHAVIOR,
-        deleteWorktreeOnArchive: true,
+        worktreeArchiveBehavior: "delete",
       });
     });
 
-    fireEvent.click(toggle);
+    chooseSelectOption(view, "Worktree archive behavior", "Snapshot and delete");
     expect(updateCoderPrefsMock).toHaveBeenCalledTimes(1);
 
     resolveFirstUpdate?.();
@@ -285,20 +422,16 @@ describe("GeneralSection", () => {
       expect(updateCoderPrefsMock).toHaveBeenCalledTimes(2);
       expect(updateCoderPrefsMock).toHaveBeenNthCalledWith(2, {
         coderWorkspaceArchiveBehavior: DEFAULT_CODER_ARCHIVE_BEHAVIOR,
-        deleteWorktreeOnArchive: false,
+        worktreeArchiveBehavior: "snapshot",
       });
     });
 
     resolveSecondUpdate?.();
-
-    await waitFor(() => {
-      expect(toggle.getAttribute("aria-checked")).toBe("false");
-    });
   });
 
   test("re-enables archive settings with defaults after config load errors", async () => {
     const { api, updateCoderPrefsMock } = createMockAPI({
-      deleteWorktreeOnArchive: false,
+      worktreeArchiveBehavior: DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR,
     });
     let rejectGetConfig: ((error?: unknown) => void) | undefined;
     api.config.getConfig = mock(
@@ -319,28 +452,28 @@ describe("GeneralSection", () => {
       expect(rejectGetConfig).toBeDefined();
     });
 
-    const toggle = view.getByRole("switch", { name: "Toggle Delete worktree on archive" });
-    expect(toggle.hasAttribute("disabled")).toBe(true);
+    const trigger = getSelectTrigger(view, "Worktree archive behavior");
+    expect(trigger.hasAttribute("disabled")).toBe(true);
 
     rejectGetConfig?.(new Error("config read failed"));
 
     await waitFor(() => {
-      expect(toggle.hasAttribute("disabled")).toBe(false);
+      expect(trigger.hasAttribute("disabled")).toBe(false);
     });
 
-    fireEvent.click(toggle);
+    chooseSelectOption(view, "Worktree archive behavior", "Delete checkout");
 
     await waitFor(() => {
       expect(updateCoderPrefsMock).toHaveBeenCalledWith({
         coderWorkspaceArchiveBehavior: DEFAULT_CODER_ARCHIVE_BEHAVIOR,
-        deleteWorktreeOnArchive: true,
+        worktreeArchiveBehavior: "delete",
       });
     });
   });
 
   test("disables archive settings until config finishes loading", async () => {
     const { api, getConfigMock, updateCoderPrefsMock } = createMockAPI({
-      deleteWorktreeOnArchive: false,
+      worktreeArchiveBehavior: DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR,
     });
     const loadedConfig = await getConfigMock();
     let resolveGetConfig: ((value: MockConfig) => void) | undefined;
@@ -362,22 +495,21 @@ describe("GeneralSection", () => {
       expect(resolveGetConfig).toBeDefined();
     });
 
-    const toggle = view.getByRole("switch", { name: "Toggle Delete worktree on archive" });
-    expect(toggle.hasAttribute("disabled")).toBe(true);
+    const trigger = getSelectTrigger(view, "Worktree archive behavior");
+    expect(trigger.hasAttribute("disabled")).toBe(true);
 
-    fireEvent.click(toggle);
+    fireEvent.mouseDown(trigger);
     expect(updateCoderPrefsMock).not.toHaveBeenCalled();
-    expect(toggle.getAttribute("aria-checked")).toBe("false");
 
     resolveGetConfig?.({
       ...loadedConfig,
       coderWorkspaceArchiveBehavior: "delete",
-      deleteWorktreeOnArchive: false,
+      worktreeArchiveBehavior: DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR,
     });
 
     await waitFor(() => {
       expect(updateCoderPrefsMock).not.toHaveBeenCalled();
-      expect(toggle.getAttribute("aria-checked")).toBe("false");
+      expect(trigger.hasAttribute("disabled")).toBe(false);
     });
   });
 });

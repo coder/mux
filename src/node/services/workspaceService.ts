@@ -2,6 +2,8 @@ import { EventEmitter } from "events";
 import * as path from "path";
 import * as fsPromises from "fs/promises";
 import assert from "@/common/utils/assert";
+import { DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR } from "@/common/config/worktreeArchiveBehavior";
+import type { WorktreeArchiveSnapshot } from "@/common/schemas/project";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
@@ -124,6 +126,7 @@ import type { SessionUsageService } from "@/node/services/sessionUsageService";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import type { WorkspaceLifecycleHooks } from "@/node/services/workspaceLifecycleHooks";
 import type { TaskService } from "@/node/services/taskService";
+import type { WorktreeArchiveSnapshotService } from "@/node/services/worktreeArchiveSnapshotService";
 
 import { DisposableTempDir } from "@/node/services/tempDir";
 import { createBashTool } from "@/node/services/tools/bash";
@@ -168,6 +171,10 @@ const MAX_WORKSPACE_NAME_COLLISION_RETRIES = 3;
 
 // Shared type for workspace-scoped AI settings (model + thinking)
 type WorkspaceAISettings = z.infer<typeof WorkspaceAISettingsSchema>;
+type WorktreeArchiveSnapshotLifecycleService = Pick<
+  WorktreeArchiveSnapshotService,
+  "captureSnapshotForArchive" | "restoreSnapshotAfterUnarchive"
+>;
 interface WorkspaceAgentStatus {
   emoji: string;
   message: string;
@@ -1138,6 +1145,7 @@ export class WorkspaceService extends EventEmitter {
   private desktopSessionManager?: DesktopSessionManager;
   private readonly sessionTimingService?: SessionTimingService;
   private workspaceLifecycleHooks?: WorkspaceLifecycleHooks;
+  private worktreeArchiveSnapshotService?: WorktreeArchiveSnapshotLifecycleService;
   private taskService?: TaskService;
 
   /**
@@ -1176,12 +1184,22 @@ export class WorkspaceService extends EventEmitter {
     this.workspaceLifecycleHooks = hooks;
   }
 
+  setWorktreeArchiveSnapshotService(service: WorktreeArchiveSnapshotLifecycleService): void {
+    this.worktreeArchiveSnapshotService = service;
+  }
+
   /**
    * Set the task service for auto-resume counter resets.
    * Called after construction due to circular dependency.
    */
   setTaskService(taskService: TaskService): void {
     this.taskService = taskService;
+  }
+
+  private getWorktreeArchiveBehavior(): "keep" | "delete" | "snapshot" {
+    return (
+      this.config.loadConfigOrDefault().worktreeArchiveBehavior ?? DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR
+    );
   }
 
   /**
@@ -3617,20 +3635,27 @@ export class WorkspaceService extends EventEmitter {
       }
 
       const { projectPath, workspacePath } = workspace;
+      const worktreeArchiveBehavior = this.getWorktreeArchiveBehavior();
+      const needsSnapshotCapture =
+        worktreeArchiveBehavior === "snapshot" && this.worktreeArchiveSnapshotService != null;
+
+      let beforeArchiveMetadata: WorkspaceMetadata | undefined;
+      if (this.workspaceLifecycleHooks || needsSnapshotCapture) {
+        const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
+        if (!metadataResult.success) {
+          return Err(metadataResult.error);
+        }
+        beforeArchiveMetadata = metadataResult.data;
+      }
 
       // Lifecycle hooks run *before* we persist archivedAt.
       //
       // NOTE: Archiving is typically a quick UI action, but it can fail if a hook needs to perform
       // cleanup (e.g., stopping a dedicated mux-created Coder workspace) and that cleanup fails.
-      if (this.workspaceLifecycleHooks) {
-        const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
-        if (!metadataResult.success) {
-          return Err(metadataResult.error);
-        }
-
+      if (this.workspaceLifecycleHooks && beforeArchiveMetadata) {
         const hookResult = await this.workspaceLifecycleHooks.runBeforeArchive({
           workspaceId,
-          workspaceMetadata: metadataResult.data,
+          workspaceMetadata: beforeArchiveMetadata,
         });
         if (!hookResult.success) {
           return Err(hookResult.error);
@@ -3656,6 +3681,22 @@ export class WorkspaceService extends EventEmitter {
       this.terminalService?.closeWorkspaceSessions(workspaceId);
       await this.closeDesktopSessionBestEffort(workspaceId, "archive");
 
+      let capturedWorktreeSnapshot: WorktreeArchiveSnapshot | undefined;
+      if (
+        needsSnapshotCapture &&
+        beforeArchiveMetadata &&
+        isWorktreeRuntime(beforeArchiveMetadata.runtimeConfig)
+      ) {
+        const captureResult = await this.worktreeArchiveSnapshotService!.captureSnapshotForArchive({
+          workspaceId,
+          workspaceMetadata: beforeArchiveMetadata,
+        });
+        if (!captureResult.success) {
+          return Err(captureResult.error);
+        }
+        capturedWorktreeSnapshot = captureResult.data;
+      }
+
       await this.config.editConfig((config) => {
         const projectConfig = config.projects.get(projectPath);
         if (projectConfig) {
@@ -3663,8 +3704,13 @@ export class WorkspaceService extends EventEmitter {
             projectConfig.workspaces.find((w) => w.id === workspaceId) ??
             projectConfig.workspaces.find((w) => w.path === workspacePath);
           if (workspaceEntry) {
-            // Just set archivedAt - archived state is derived from archivedAt > unarchivedAt
+            // Just set archivedAt - archived state is derived from archivedAt > unarchivedAt.
             workspaceEntry.archivedAt = new Date().toISOString();
+            if (capturedWorktreeSnapshot) {
+              workspaceEntry.worktreeArchiveSnapshot = capturedWorktreeSnapshot;
+            } else {
+              delete workspaceEntry.worktreeArchiveSnapshot;
+            }
           }
         }
         return config;
@@ -3776,30 +3822,46 @@ export class WorkspaceService extends EventEmitter {
         }
       }
 
+      let hookMetadata: WorkspaceMetadata | undefined = updatedMetadata;
+      if (!hookMetadata && (this.workspaceLifecycleHooks || this.worktreeArchiveSnapshotService)) {
+        const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
+        if (metadataResult.success) {
+          hookMetadata = metadataResult.data;
+        } else {
+          log.debug("Failed to load workspace metadata for unarchive follow-up work", {
+            workspaceId,
+            error: metadataResult.error,
+          });
+        }
+      }
+
+      if (this.worktreeArchiveSnapshotService && hookMetadata) {
+        const restoreResult =
+          await this.worktreeArchiveSnapshotService.restoreSnapshotAfterUnarchive({
+            workspaceId,
+            workspaceMetadata: hookMetadata,
+          });
+        if (!restoreResult.success) {
+          log.debug("Failed to restore worktree archive snapshot during unarchive", {
+            workspaceId,
+            error: restoreResult.error,
+          });
+        }
+      }
+
       // Lifecycle hooks run *after* we persist unarchivedAt.
       //
       // Why best-effort: Unarchive is a quick UI action and should not fail permanently due to a
       // start error (e.g., Coder workspace start).
-      if (this.workspaceLifecycleHooks) {
-        let hookMetadata: WorkspaceMetadata | undefined = updatedMetadata;
-        if (!hookMetadata) {
-          const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
-          if (metadataResult.success) {
-            hookMetadata = metadataResult.data;
-          } else {
-            log.debug("Failed to load workspace metadata for afterUnarchive hooks", {
-              workspaceId,
-              error: metadataResult.error,
-            });
-          }
-        }
+      if (this.workspaceLifecycleHooks && hookMetadata) {
+        await this.workspaceLifecycleHooks.runAfterUnarchive({
+          workspaceId,
+          workspaceMetadata: hookMetadata,
+        });
+      }
 
-        if (hookMetadata) {
-          await this.workspaceLifecycleHooks.runAfterUnarchive({
-            workspaceId,
-            workspaceMetadata: hookMetadata,
-          });
-        }
+      if (this.workspaceLifecycleHooks || this.worktreeArchiveSnapshotService) {
+        await this.emitCurrentWorkspaceMetadata(workspaceId);
       }
 
       return Ok(undefined);

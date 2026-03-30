@@ -2,6 +2,7 @@ import { eventIterator } from "@orpc/server";
 import { UIModeSchema } from "../../types/mode";
 import { z } from "zod";
 import { CODER_ARCHIVE_BEHAVIORS } from "@/common/config/coderArchiveBehavior";
+import { WORKTREE_ARCHIVE_BEHAVIORS } from "@/common/config/worktreeArchiveBehavior";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { ChatStatsSchema, SessionUsageFileSchema } from "./chatStats";
 import {
@@ -1702,7 +1703,7 @@ export const config = {
       defaultModel: z.string().optional(),
       hiddenModels: z.array(z.string()).optional(),
       coderWorkspaceArchiveBehavior: z.enum(CODER_ARCHIVE_BEHAVIORS),
-      deleteWorktreeOnArchive: z.boolean(),
+      worktreeArchiveBehavior: z.enum(WORKTREE_ARCHIVE_BEHAVIORS),
       runtimeEnablement: z.record(z.string(), z.boolean()),
       defaultRuntime: z.string().nullable(),
       agentAiDefaults: AgentAiDefaultsSchema,
@@ -1759,7 +1760,7 @@ export const config = {
     input: z
       .object({
         coderWorkspaceArchiveBehavior: z.enum(CODER_ARCHIVE_BEHAVIORS),
-        deleteWorktreeOnArchive: z.boolean(),
+        worktreeArchiveBehavior: z.enum(WORKTREE_ARCHIVE_BEHAVIORS),
       })
       .strict(),
     output: z.void(),

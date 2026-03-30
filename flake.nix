@@ -202,9 +202,10 @@
               mdbook-linkcheck
               mdbook-pagetoc
 
-              # Terminal bench
+              # Terminal bench + browser recording
               uv
               asciinema
+              ffmpeg
             ]
             ++ lib.optionals stdenv.isLinux [ docker ];
 

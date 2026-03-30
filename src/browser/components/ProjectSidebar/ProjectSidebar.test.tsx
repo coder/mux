@@ -2,7 +2,7 @@ import "../../../../tests/ui/dom";
 
 import { type PropsWithChildren } from "react";
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
-import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 import * as ReactDndModule from "react-dnd";
 import * as ReactDndHtml5BackendModule from "react-dnd-html5-backend";
 import * as MuxLogoDarkModule from "@/browser/assets/logos/mux-logo-dark.svg?react";
@@ -25,6 +25,7 @@ import * as WorkspaceFallbackModelModule from "@/browser/hooks/useWorkspaceFallb
 import * as WorkspaceUnreadModule from "@/browser/hooks/useWorkspaceUnread";
 import * as WorkspaceStoreModule from "@/browser/stores/WorkspaceStore";
 import * as ExperimentsModule from "@/browser/hooks/useExperiments";
+import * as PopoverErrorHookModule from "@/browser/hooks/usePopoverError";
 import * as TooltipModule from "../Tooltip/Tooltip";
 import * as SidebarCollapseButtonModule from "../SidebarCollapseButton/SidebarCollapseButton";
 import * as ConfirmationModalModule from "../ConfirmationModal/ConfirmationModal";
@@ -61,9 +62,17 @@ interface MockAgentListItemProps {
   rowRenderMeta?: AgentRowRenderMeta;
   completedChildrenExpanded?: boolean;
   onToggleCompletedChildren?: (workspaceId: string) => void;
+  onArchiveWorkspace?: (workspaceId: string, button: HTMLElement) => Promise<void>;
 }
 
+let latestArchiveWorkspaceHandler:
+  | ((workspaceId: string, button: HTMLElement) => Promise<void>)
+  | null = null;
+let archiveWorkspaceActionMock = mock(() => Promise.resolve({ success: true }));
 let settingsOpenMock = mock(() => undefined);
+let archivePopoverShowErrorMock = mock(
+  (_workspaceId: string, _error: string, _anchor?: { top: number; left: number }) => undefined
+);
 
 function createProjectContextValue(
   overrides: Partial<ProjectContextModule.ProjectContext> = {}
@@ -110,6 +119,32 @@ function createProjectContextValue(
 let projectContextValue = createProjectContextValue();
 
 function installProjectSidebarTestDoubles() {
+  archivePopoverShowErrorMock = mock(
+    (_workspaceId: string, _error: string, _anchor?: { top: number; left: number }) => undefined
+  );
+  archiveWorkspaceActionMock = mock(() => Promise.resolve({ success: true }));
+  latestArchiveWorkspaceHandler = null;
+  const fallbackPopoverError = {
+    error: null,
+    showError: mock(() => undefined),
+    clearError: mock(() => undefined),
+  };
+  const popoverErrors = [
+    {
+      error: null,
+      showError: archivePopoverShowErrorMock,
+      clearError: mock(() => undefined),
+    },
+    fallbackPopoverError,
+    fallbackPopoverError,
+    fallbackPopoverError,
+    fallbackPopoverError,
+    fallbackPopoverError,
+  ];
+  let popoverErrorIndex = 0;
+  spyOn(PopoverErrorHookModule, "usePopoverError").mockImplementation(
+    () => popoverErrors[popoverErrorIndex++] ?? fallbackPopoverError
+  );
   spyOn(MuxLogoDarkModule, "default").mockImplementation((() => (
     <svg data-testid="mux-logo-dark" />
   )) as typeof MuxLogoDarkModule.default);
@@ -192,7 +227,7 @@ function installProjectSidebarTestDoubles() {
       ({
         selectedWorkspace: null,
         setSelectedWorkspace: () => undefined,
-        archiveWorkspace: () => Promise.resolve({ success: true }),
+        archiveWorkspace: archiveWorkspaceActionMock,
         removeWorkspace: () => Promise.resolve({ success: true }),
         updateWorkspaceTitle: () => Promise.resolve({ success: true }),
         refreshWorkspaceMetadata: () => Promise.resolve(),
@@ -217,6 +252,7 @@ function installProjectSidebarTestDoubles() {
     () =>
       ({
         getWorkspaceMetadata: () => undefined,
+        getAggregator: () => undefined,
       }) as unknown as ReturnType<typeof WorkspaceStoreModule.useWorkspaceStoreRaw>
   );
 
@@ -284,6 +320,8 @@ function installProjectSidebarTestDoubles() {
         ? `${props.metadata.bestOf.label} · ${props.metadata.title ?? props.metadata.name}`
         : (props.metadata.title ?? props.metadata.name);
 
+    latestArchiveWorkspaceHandler = props.onArchiveWorkspace ?? null;
+
     return (
       <div
         data-testid={agentItemTestId(props.metadata.id)}
@@ -299,6 +337,17 @@ function installProjectSidebarTestDoubles() {
             onClick={() => props.onToggleCompletedChildren?.(props.metadata.id)}
           >
             Toggle completed children
+          </button>
+        ) : null}
+        {props.onArchiveWorkspace ? (
+          <button
+            type="button"
+            aria-label={`archive-${props.metadata.id}`}
+            onClick={(event) => {
+              void props.onArchiveWorkspace?.(props.metadata.id, event.currentTarget);
+            }}
+          >
+            Archive workspace
           </button>
         ) : null}
       </div>
@@ -765,6 +814,81 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
     expect(view.getByTestId(agentItemTestId("child-1"))).toBeTruthy();
     expect(view.getByTestId(agentItemTestId("child-2"))).toBeTruthy();
     expect(view.queryByTestId(agentItemTestId("grandchild-1"))).toBeNull();
+  });
+});
+
+describe("ProjectSidebar archive errors", () => {
+  beforeEach(() => {
+    cleanupDom = installDom();
+    window.localStorage.clear();
+    window.localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify(["/projects/demo-project"]));
+    settingsOpenMock = mock(() => undefined);
+    projectContextValue = createProjectContextValue({
+      userProjects: new Map([["/projects/demo-project", { workspaces: [] }]]),
+    });
+    installProjectSidebarTestDoubles();
+    spyOn(PopoverErrorHookModule, "usePopoverError").mockImplementation(
+      () =>
+        ({
+          error: null,
+          showError: archivePopoverShowErrorMock,
+          clearError: mock(() => undefined),
+        }) as unknown as ReturnType<typeof PopoverErrorHookModule.usePopoverError>
+    );
+  });
+
+  afterEach(() => {
+    cleanup();
+    cleanupDom?.();
+    cleanupDom = null;
+    mock.restore();
+  });
+
+  test("uses the shared toast fallback position for archive failures", async () => {
+    archiveWorkspaceActionMock = mock(() =>
+      Promise.resolve({ success: false as const, error: "snapshot failed" })
+    );
+
+    const workspace = {
+      ...createWorkspace("archive-target"),
+      projects: [{ projectPath: "/projects/demo-project", projectName: "demo-project" }],
+    };
+    projectContextValue = createProjectContextValue({
+      userProjects: new Map([
+        [
+          "/projects/demo-project",
+          {
+            workspaces: [{ path: workspace.namedWorkspacePath }],
+          },
+        ],
+      ]),
+    });
+    render(
+      <ProjectSidebar
+        collapsed={false}
+        onToggleCollapsed={() => undefined}
+        sortedWorkspacesByProject={new Map([["/projects/demo-project", [workspace]]])}
+        workspaceRecency={{ [workspace.id]: Date.now() }}
+      />
+    );
+
+    const archiveButton = document.createElement("button");
+    expect(latestArchiveWorkspaceHandler).toBeTruthy();
+    await act(async () => {
+      await latestArchiveWorkspaceHandler?.(workspace.id, archiveButton);
+    });
+
+    expect(archiveWorkspaceActionMock).toHaveBeenCalledTimes(1);
+    expect(archiveWorkspaceActionMock).toHaveBeenCalledWith(workspace.id);
+
+    await waitFor(() => {
+      expect(archivePopoverShowErrorMock).toHaveBeenCalledTimes(1);
+    });
+
+    const args = archivePopoverShowErrorMock.mock.calls[0];
+    expect(args?.[0]).toBe(workspace.id);
+    expect(args?.[1]).toBe("snapshot failed");
+    expect(args?.length).toBe(2);
   });
 });
 

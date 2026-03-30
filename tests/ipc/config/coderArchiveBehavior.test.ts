@@ -17,26 +17,27 @@ describe("config.coderArchiveBehavior", () => {
   it("returns default stop behavior", async () => {
     const cfg = await env.orpc.config.getConfig();
     expect(cfg.coderWorkspaceArchiveBehavior).toBe("stop");
-    expect(cfg.deleteWorktreeOnArchive).toBe(false);
+    expect(cfg.worktreeArchiveBehavior).toBe("keep");
   });
 
   it("persists keep behavior", async () => {
     await env.orpc.config.updateCoderPrefs({
       coderWorkspaceArchiveBehavior: "keep",
-      deleteWorktreeOnArchive: true,
+      worktreeArchiveBehavior: "delete",
     });
     const cfg = await env.orpc.config.getConfig();
     expect(cfg.coderWorkspaceArchiveBehavior).toBe("keep");
 
     const loaded = env.config.loadConfigOrDefault();
     expect(loaded.stopCoderWorkspaceOnArchive).toBe(false);
+    expect(loaded.worktreeArchiveBehavior).toBe("delete");
     expect(loaded.deleteWorktreeOnArchive).toBe(true);
   });
 
   it("persists stop behavior", async () => {
     await env.orpc.config.updateCoderPrefs({
       coderWorkspaceArchiveBehavior: "stop",
-      deleteWorktreeOnArchive: false,
+      worktreeArchiveBehavior: "keep",
     });
     const cfg = await env.orpc.config.getConfig();
     expect(cfg.coderWorkspaceArchiveBehavior).toBe("stop");
@@ -45,9 +46,10 @@ describe("config.coderArchiveBehavior", () => {
   it("persists delete behavior", async () => {
     await env.orpc.config.updateCoderPrefs({
       coderWorkspaceArchiveBehavior: "delete",
-      deleteWorktreeOnArchive: false,
+      worktreeArchiveBehavior: "snapshot",
     });
     const cfg = await env.orpc.config.getConfig();
     expect(cfg.coderWorkspaceArchiveBehavior).toBe("delete");
+    expect(cfg.worktreeArchiveBehavior).toBe("snapshot");
   });
 });

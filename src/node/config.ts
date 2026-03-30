@@ -45,6 +45,11 @@ import {
   isCoderWorkspaceArchiveBehavior,
   type CoderWorkspaceArchiveBehavior,
 } from "@/common/config/coderArchiveBehavior";
+import {
+  DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR,
+  isWorktreeArchiveBehavior,
+  type WorktreeArchiveBehavior,
+} from "@/common/config/worktreeArchiveBehavior";
 import { PlatformPaths } from "@/common/utils/paths";
 import {
   isValidModelFormat,
@@ -107,8 +112,45 @@ function parseCoderWorkspaceArchiveBehavior(
   return isCoderWorkspaceArchiveBehavior(value) ? value : undefined;
 }
 
+function parseWorktreeArchiveBehavior(value: unknown): WorktreeArchiveBehavior | undefined {
+  return isWorktreeArchiveBehavior(value) ? value : undefined;
+}
+
 function resolveDeleteWorktreeOnArchive(deleteWorktreeOnArchive: unknown): boolean {
   return parseOptionalBoolean(deleteWorktreeOnArchive) ?? false;
+}
+
+function resolveWorktreeArchiveBehavior(
+  worktreeArchiveBehavior: unknown,
+  deleteWorktreeOnArchive: unknown
+): WorktreeArchiveBehavior {
+  const parsedBehavior = parseWorktreeArchiveBehavior(worktreeArchiveBehavior);
+  if (parsedBehavior !== undefined) {
+    return parsedBehavior;
+  }
+
+  return resolveDeleteWorktreeOnArchive(deleteWorktreeOnArchive)
+    ? "delete"
+    : DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR;
+}
+
+function getLegacyDeleteWorktreeOnArchiveValue(
+  worktreeArchiveBehavior: WorktreeArchiveBehavior
+): boolean {
+  return worktreeArchiveBehavior === "delete";
+}
+
+function resolveWorktreeArchiveBehaviorForSave(
+  config: Pick<ProjectsConfig, "worktreeArchiveBehavior" | "deleteWorktreeOnArchive">
+): WorktreeArchiveBehavior {
+  const parsedBehavior = parseWorktreeArchiveBehavior(config.worktreeArchiveBehavior);
+  if (parsedBehavior != null) {
+    return parsedBehavior;
+  }
+
+  return resolveDeleteWorktreeOnArchive(config.deleteWorktreeOnArchive)
+    ? "delete"
+    : DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR;
 }
 
 function resolveCoderWorkspaceArchiveBehavior(
@@ -624,9 +666,12 @@ export class Config {
           parsed.coderWorkspaceArchiveBehavior,
           parsed.stopCoderWorkspaceOnArchive
         );
-        const deleteWorktreeOnArchive = resolveDeleteWorktreeOnArchive(
+        const worktreeArchiveBehavior = resolveWorktreeArchiveBehavior(
+          parsed.worktreeArchiveBehavior,
           parsed.deleteWorktreeOnArchive
         );
+        const deleteWorktreeOnArchive =
+          getLegacyDeleteWorktreeOnArchiveValue(worktreeArchiveBehavior);
         const stopCoderWorkspaceOnArchive = getLegacyStopCoderWorkspaceOnArchiveValue(
           coderWorkspaceArchiveBehavior
         );
@@ -673,6 +718,7 @@ export class Config {
           muxGovernorUrl: parseOptionalNonEmptyString(parsed.muxGovernorUrl),
           muxGovernorToken: parseOptionalNonEmptyString(parsed.muxGovernorToken),
           coderWorkspaceArchiveBehavior,
+          worktreeArchiveBehavior,
           deleteWorktreeOnArchive,
           stopCoderWorkspaceOnArchive,
           terminalDefaultShell: parseOptionalNonEmptyString(parsed.terminalDefaultShell),
@@ -694,6 +740,7 @@ export class Config {
       subagentAiDefaults: {},
       routePriority: this.seedRoutePriorityFromProviders(),
       coderWorkspaceArchiveBehavior: DEFAULT_CODER_ARCHIVE_BEHAVIOR,
+      worktreeArchiveBehavior: DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR,
       deleteWorktreeOnArchive: false,
     };
   }
@@ -833,6 +880,9 @@ export class Config {
       const coderWorkspaceArchiveBehavior = resolveCoderWorkspaceArchiveBehaviorForSave(config);
       data.coderWorkspaceArchiveBehavior = coderWorkspaceArchiveBehavior;
 
+      const worktreeArchiveBehavior = resolveWorktreeArchiveBehaviorForSave(config);
+      data.worktreeArchiveBehavior = worktreeArchiveBehavior;
+
       const stopCoderWorkspaceOnArchive = getLegacyStopCoderWorkspaceOnArchiveValue(
         coderWorkspaceArchiveBehavior
       );
@@ -840,10 +890,7 @@ export class Config {
         data.stopCoderWorkspaceOnArchive = stopCoderWorkspaceOnArchive;
       }
 
-      const deleteWorktreeOnArchive = parseOptionalBoolean(config.deleteWorktreeOnArchive);
-      if (deleteWorktreeOnArchive !== undefined) {
-        data.deleteWorktreeOnArchive = deleteWorktreeOnArchive;
-      }
+      data.deleteWorktreeOnArchive = getLegacyDeleteWorktreeOnArchiveValue(worktreeArchiveBehavior);
 
       const terminalDefaultShell = parseOptionalNonEmptyString(config.terminalDefaultShell);
       if (terminalDefaultShell) {

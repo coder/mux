@@ -845,7 +845,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   );
 
   const performArchiveWorkspace = useCallback(
-    async (workspaceId: string, buttonElement?: HTMLElement) => {
+    async (workspaceId: string, _buttonElement?: HTMLElement) => {
       // Mark workspace as being archived for UI feedback
       setArchivingWorkspaceIds((prev) => new Set(prev).add(workspaceId));
 
@@ -853,15 +853,11 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
         const result = await onArchiveWorkspace(workspaceId);
         if (!result.success) {
           const error = result.error ?? "Failed to archive chat";
-          let anchor: { top: number; left: number } | undefined;
-          if (buttonElement) {
-            const rect = buttonElement.getBoundingClientRect();
-            anchor = {
-              top: rect.top + window.scrollY,
-              left: rect.right + 10,
-            };
-          }
-          workspaceArchiveError.showError(workspaceId, error, anchor);
+          // Archive failures can be long-lived workflow errors (for example, untracked-file safety
+          // checks) that users should notice near the active workspace content, not pinned beside a
+          // left-sidebar row that may be far from their current focus. Use the shared toast fallback
+          // position so archive errors match other top-right UI error surfaces.
+          workspaceArchiveError.showError(workspaceId, error);
         }
       } finally {
         // Clear archiving state

@@ -582,7 +582,7 @@ export const router = (authToken?: string) => {
             hiddenModels: config.hiddenModels,
             coderWorkspaceArchiveBehavior:
               config.coderWorkspaceArchiveBehavior ?? DEFAULT_CODER_ARCHIVE_BEHAVIOR,
-            deleteWorktreeOnArchive: config.deleteWorktreeOnArchive === true,
+            worktreeArchiveBehavior: config.worktreeArchiveBehavior ?? "keep",
             runtimeEnablement: normalizeRuntimeEnablement(config.runtimeEnablement),
             defaultRuntime: config.defaultRuntime ?? null,
             agentAiDefaults: config.agentAiDefaults ?? {},
@@ -773,7 +773,7 @@ export const router = (authToken?: string) => {
             return {
               ...config,
               coderWorkspaceArchiveBehavior: input.coderWorkspaceArchiveBehavior,
-              deleteWorktreeOnArchive: input.deleteWorktreeOnArchive,
+              worktreeArchiveBehavior: input.worktreeArchiveBehavior,
             };
           });
         }),

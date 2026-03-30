@@ -5,6 +5,7 @@ import { ProjectConfigSchema } from "../../schemas/project";
 import { RuntimeEnablementOverridesSchema } from "../../schemas/runtimeEnablement";
 import { ThinkingLevelSchema } from "../../types/thinking";
 import { CODER_ARCHIVE_BEHAVIORS } from "../coderArchiveBehavior";
+import { WORKTREE_ARCHIVE_BEHAVIORS } from "../worktreeArchiveBehavior";
 import { TaskSettingsSchema } from "./taskSettings";
 
 export { RuntimeEnablementOverridesSchema } from "../../schemas/runtimeEnablement";
@@ -60,6 +61,7 @@ export const AppConfigOnDiskSchema = z
     muxGovernorUrl: z.string().optional(),
     muxGovernorToken: z.string().optional(),
     coderWorkspaceArchiveBehavior: z.enum(CODER_ARCHIVE_BEHAVIORS).optional(),
+    worktreeArchiveBehavior: z.enum(WORKTREE_ARCHIVE_BEHAVIORS).optional(),
     deleteWorktreeOnArchive: z.boolean().optional(),
     stopCoderWorkspaceOnArchive: z.boolean().optional(),
     terminalDefaultShell: z.string().optional(),
