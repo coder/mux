@@ -628,6 +628,45 @@ describe("WorktreeArchiveSnapshotService", () => {
     }
   });
 
+  test("refuses snapshot cleanup paths that resolve to the session root", async () => {
+    await makeWorkspaceDirty(fixture);
+
+    const captureResult = await fixture.service.captureSnapshotForArchive({
+      workspaceId: fixture.workspaceId,
+      workspaceMetadata: fixture.metadata,
+    });
+    expect(captureResult.success).toBe(true);
+    if (!captureResult.success) {
+      return;
+    }
+
+    const rootScopedSnapshot = {
+      ...captureResult.data,
+      stateDirPath: ".",
+    };
+
+    await fixture.config.editConfig((cfg) => {
+      const workspace = cfg.projects.get(fixture.projectPath)?.workspaces[0];
+      if (!workspace) {
+        throw new Error("Missing workspace entry");
+      }
+      workspace.worktreeArchiveSnapshot = rootScopedSnapshot;
+      return cfg;
+    });
+
+    runGit(fixture.projectPath, ["worktree", "remove", "--force", fixture.workspacePath]);
+
+    const restoreResult = await fixture.service.restoreSnapshotAfterUnarchive({
+      workspaceId: fixture.workspaceId,
+      workspaceMetadata: fixture.metadata,
+    });
+    expect(restoreResult.success).toBe(false);
+    if (!restoreResult.success) {
+      expect(restoreResult.error).toContain("refusing to escape");
+    }
+    expect(await pathExists(fixture.config.getSessionDir(fixture.workspaceId))).toBe(true);
+  });
+
   test("rejects archive snapshots when untracked files are present", async () => {
     await fs.writeFile(path.join(fixture.workspacePath, "untracked.txt"), "hello\n", "utf-8");
 

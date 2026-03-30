@@ -3738,7 +3738,14 @@ export class WorkspaceService extends EventEmitter {
       });
 
       if (!needsSnapshotCapture) {
-        await this.stopLiveWorkspaceActivityForArchive(workspaceId);
+        try {
+          await this.stopLiveWorkspaceActivityForArchive(workspaceId);
+        } catch (error) {
+          log.debug("Failed to stop live workspace activity after archive persistence", {
+            workspaceId,
+            error: getErrorMessage(error),
+          });
+        }
       }
 
       // Emit updated metadata

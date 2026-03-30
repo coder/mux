@@ -3342,6 +3342,22 @@ describe("WorkspaceService archive lifecycle hooks", () => {
     expect(interruptStreamSpy).toHaveBeenCalledTimes(0);
   });
 
+  test("archive() stays successful when post-persist terminal teardown fails", async () => {
+    const closeWorkspaceSessions = mock(() => {
+      throw new Error("terminal close failed");
+    });
+    const terminalService = {
+      closeWorkspaceSessions,
+    } as unknown as TerminalService;
+    workspaceService.setTerminalService(terminalService);
+
+    const result = await workspaceService.archive(workspaceId);
+
+    expect(result).toEqual(Ok(undefined));
+    const entry = configState.projects.get(projectPath)?.workspaces[0];
+    expect(entry?.archivedAt).toBeTruthy();
+  });
+
   test("archive() closes workspace terminal sessions on success", async () => {
     const closeWorkspaceSessions = mock(() => undefined);
     const terminalService = {
