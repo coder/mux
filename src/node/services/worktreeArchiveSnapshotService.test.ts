@@ -383,6 +383,51 @@ describe("WorktreeArchiveSnapshotService", () => {
     ).toEqual(captureResult.data);
   });
 
+  test("keeps snapshot state when a stale checkout exists at the persisted path", async () => {
+    await makeWorkspaceDirty(fixture);
+
+    const captureResult = await fixture.service.captureSnapshotForArchive({
+      workspaceId: fixture.workspaceId,
+      workspaceMetadata: fixture.metadata,
+    });
+    expect(captureResult.success).toBe(true);
+    if (!captureResult.success) {
+      return;
+    }
+
+    await fixture.config.editConfig((cfg) => {
+      const workspace = cfg.projects.get(fixture.projectPath)?.workspaces[0];
+      if (!workspace) {
+        throw new Error("Missing workspace entry");
+      }
+      workspace.worktreeArchiveSnapshot = captureResult.data;
+      return cfg;
+    });
+
+    runGit(fixture.projectPath, ["worktree", "remove", "--force", fixture.workspacePath]);
+    runGit(fixture.projectPath, [
+      "worktree",
+      "add",
+      "-b",
+      "wrong-branch",
+      fixture.workspacePath,
+      "main",
+    ]);
+
+    const restoreResult = await fixture.service.restoreSnapshotAfterUnarchive({
+      workspaceId: fixture.workspaceId,
+      workspaceMetadata: fixture.metadata,
+    });
+    expect(restoreResult.success).toBe(false);
+    if (!restoreResult.success) {
+      expect(restoreResult.error).toContain("does not match the archived snapshot");
+    }
+    expect(
+      fixture.config.loadConfigOrDefault().projects.get(fixture.projectPath)?.workspaces[0]
+        ?.worktreeArchiveSnapshot
+    ).toEqual(captureResult.data);
+  });
+
   test("fails restore when committed history is unavailable and the mailbox artifact is missing", async () => {
     await makeWorkspaceDirty(fixture);
 
