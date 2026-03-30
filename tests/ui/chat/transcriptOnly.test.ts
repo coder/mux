@@ -9,14 +9,10 @@ import { waitFor } from "@testing-library/react";
 import { installDom } from "../dom";
 import { renderApp } from "../renderReviewPanel";
 import { cleanupView, setupWorkspaceView } from "../helpers";
-import {
-  createAssistantMessage,
-  createStaticChatHandler,
-  createUserMessage,
-  createWorkspace,
-  groupWorkspacesByProject,
-} from "@/browser/stories/mockFactory";
+import { createStaticChatHandler } from "@/browser/stories/mocks/chatHandlers";
+import { createAssistantMessage, createUserMessage } from "@/browser/stories/mocks/messages";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
+import { createWorkspace, groupWorkspacesByProject } from "@/browser/stories/mocks/workspaces";
 
 const TRANSCRIPT_ONLY_NOTICE =
   "This workspace's worktree is no longer available. This is a read-only chat transcript kept for historical and usage-tracking reasons.";
