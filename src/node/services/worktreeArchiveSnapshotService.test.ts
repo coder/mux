@@ -146,6 +146,7 @@ describe("WorktreeArchiveSnapshotService", () => {
         throw new Error("Missing workspace entry");
       }
       delete workspace.id;
+      delete workspace.name;
       return cfg;
     });
     await fs.mkdir(fixture.config.getSessionDir(fixture.workspaceName), { recursive: true });

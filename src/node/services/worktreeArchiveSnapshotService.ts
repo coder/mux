@@ -40,6 +40,16 @@ interface CreatedRestoreWorkspace {
   workspacePath: string;
 }
 
+function getPersistedWorkspaceName(workspace: { name?: string; path: string }): string | undefined {
+  const explicitName = coerceNonEmptyString(workspace.name);
+  if (explicitName) {
+    return explicitName;
+  }
+
+  const pathBasename = path.basename(workspace.path.trim());
+  return pathBasename.length > 0 ? pathBasename : undefined;
+}
+
 function findWorkspaceEntryByIdOrPath(
   config: Config,
   configSnapshot: ReturnType<Config["loadConfigOrDefault"]>,
@@ -95,7 +105,7 @@ export class WorktreeArchiveSnapshotService {
       return Err("Workspace not found in config");
     }
 
-    const workspaceName = coerceNonEmptyString(workspaceEntry.workspace.name);
+    const workspaceName = getPersistedWorkspaceName(workspaceEntry.workspace);
     if (!workspaceName) {
       return Err("Workspace is missing its persisted branch name");
     }
@@ -148,7 +158,7 @@ export class WorktreeArchiveSnapshotService {
       return Err("Workspace not found in config");
     }
 
-    const workspaceName = coerceNonEmptyString(workspaceEntry.workspace.name);
+    const workspaceName = getPersistedWorkspaceName(workspaceEntry.workspace);
     if (!workspaceName) {
       return Err("Workspace is missing its persisted branch name");
     }
@@ -321,7 +331,7 @@ export class WorktreeArchiveSnapshotService {
     }
 
     const persistedWorkspacePath = workspaceEntry.workspace.path;
-    const workspaceName = coerceNonEmptyString(workspaceEntry.workspace.name);
+    const workspaceName = getPersistedWorkspaceName(workspaceEntry.workspace);
     if (!workspaceName) {
       return Err("Workspace is missing its persisted branch name");
     }
