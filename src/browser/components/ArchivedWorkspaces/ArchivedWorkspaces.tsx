@@ -807,12 +807,12 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
                         <button
                           onClick={() => void handleBulkDeleteWorktree()}
                           className="text-muted rounded p-1 transition-colors hover:bg-white/10 hover:text-orange-300"
-                          aria-label="Delete managed worktrees for selected"
+                          aria-label="Remove local checkouts for selected"
                         >
                           <FolderX className="h-4 w-4" />
                         </button>
                       </TooltipTrigger>
-                      <TooltipContent>Delete managed worktrees only</TooltipContent>
+                      <TooltipContent>Remove local checkouts</TooltipContent>
                     </Tooltip>
                   )}
                   <Tooltip>
@@ -969,7 +969,7 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
                                     }
                                     disabled={isProcessing}
                                     className="text-muted rounded p-1.5 transition-colors hover:bg-white/10 hover:text-orange-300 disabled:opacity-50"
-                                    aria-label={`Delete worktree for workspace ${displayTitle}`}
+                                    aria-label={`Remove local checkout for workspace ${displayTitle}`}
                                   >
                                     {isDeletingWorktree ? (
                                       <Loader2 className="h-4 w-4 animate-spin" />
@@ -978,7 +978,7 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
                                     )}
                                   </button>
                                 </TooltipTrigger>
-                                <TooltipContent>Delete managed worktree only</TooltipContent>
+                                <TooltipContent>Remove local checkout</TooltipContent>
                               </Tooltip>
                             )}
                             <Tooltip>
