@@ -128,7 +128,18 @@ export const IPhone16e: AppStory = {
     chromatic: {
       ...(appMeta.parameters?.chromatic ?? {}),
       cropToViewport: true,
-      modes: CHROMATIC_SMOKE_MODES,
+      modes: {
+        "dark-mobile": {
+          ...CHROMATIC_SMOKE_MODES["dark-desktop"],
+          viewport: IPHONE_16E,
+          hasTouch: true,
+        },
+        "light-mobile": {
+          ...CHROMATIC_SMOKE_MODES["light-desktop"],
+          viewport: IPHONE_16E,
+          hasTouch: true,
+        },
+      },
     },
   },
   play: async ({ canvasElement }) => {

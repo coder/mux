@@ -6,6 +6,7 @@ const MAX_SNAPSHOT_ENABLED_FILES = 9;
 const MAX_ESTIMATED_SNAPSHOTS = 130;
 const STORY_EXPORT_PATTERN = /^export const \w+/gm;
 const SMOKE_MODE_PATTERN = /modes:\s*CHROMATIC_SMOKE_MODES/g;
+const INLINE_MODE_OBJECT_PATTERN = /modes:\s*{/g;
 
 function hasMetaDisable(content: string): boolean {
   const [metaSection = content] = content.split(/^export const \w+/m, 1);
@@ -13,6 +14,132 @@ function hasMetaDisable(content: string): boolean {
     metaSection.includes("chromatic: CHROMATIC_DISABLED") ||
     /disableSnapshot:\s*true/.test(metaSection)
   );
+}
+
+function findClosingBrace(content: string, openingBraceIndex: number): number {
+  let depth = 0;
+  for (let index = openingBraceIndex; index < content.length; index += 1) {
+    const char = content[index];
+    if (char === "{") {
+      depth += 1;
+      continue;
+    }
+    if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return index;
+      }
+    }
+  }
+
+  return -1;
+}
+
+function countTopLevelObjectEntries(objectLiteral: string): number {
+  const source = objectLiteral.slice(1, -1);
+  if (source.trim().length === 0) {
+    return 0;
+  }
+
+  let braceDepth = 0;
+  let bracketDepth = 0;
+  let parenDepth = 0;
+  let quote: '"' | "'" | "`" | null = null;
+  let escaped = false;
+  let entryHasContent = false;
+  let entryCount = 0;
+
+  for (const char of source) {
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (char === '"' || char === "'" || char === "`") {
+      quote = char;
+      entryHasContent = true;
+      continue;
+    }
+
+    if (char === "{") {
+      braceDepth += 1;
+      entryHasContent = true;
+      continue;
+    }
+    if (char === "}") {
+      braceDepth -= 1;
+      entryHasContent = true;
+      continue;
+    }
+    if (char === "[") {
+      bracketDepth += 1;
+      entryHasContent = true;
+      continue;
+    }
+    if (char === "]") {
+      bracketDepth -= 1;
+      entryHasContent = true;
+      continue;
+    }
+    if (char === "(") {
+      parenDepth += 1;
+      entryHasContent = true;
+      continue;
+    }
+    if (char === ")") {
+      parenDepth -= 1;
+      entryHasContent = true;
+      continue;
+    }
+
+    const atTopLevel = braceDepth === 0 && bracketDepth === 0 && parenDepth === 0;
+    if (char === "," && atTopLevel) {
+      if (entryHasContent) {
+        entryCount += 1;
+        entryHasContent = false;
+      }
+      continue;
+    }
+
+    if (!/\s/.test(char)) {
+      entryHasContent = true;
+    }
+  }
+
+  if (entryHasContent) {
+    entryCount += 1;
+  }
+
+  return entryCount;
+}
+
+function estimateInlineModeExtras(content: string): number {
+  let extraSnapshots = 0;
+
+  for (const match of content.matchAll(INLINE_MODE_OBJECT_PATTERN)) {
+    if (match.index == null) {
+      continue;
+    }
+
+    const openingBraceIndex = match.index + match[0].length - 1;
+    const closingBraceIndex = findClosingBrace(content, openingBraceIndex);
+    if (closingBraceIndex === -1) {
+      continue;
+    }
+
+    const modeCount = countTopLevelObjectEntries(
+      content.slice(openingBraceIndex, closingBraceIndex + 1)
+    );
+    extraSnapshots += Math.max(0, modeCount - 1);
+  }
+
+  return extraSnapshots;
 }
 
 describe("Storybook snapshot budget", () => {
@@ -44,7 +171,8 @@ describe("Storybook snapshot budget", () => {
       }
 
       const smokeStories = (content.match(SMOKE_MODE_PATTERN) ?? []).length;
-      totalSnapshots += storyCount + smokeStories;
+      const inlineModeExtras = estimateInlineModeExtras(content);
+      totalSnapshots += storyCount + smokeStories + inlineModeExtras;
     }
 
     expect(totalSnapshots).toBeLessThanOrEqual(MAX_ESTIMATED_SNAPSHOTS);
