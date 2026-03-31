@@ -51,6 +51,7 @@ import { AnalyticsService } from "@/node/services/analytics/analyticsService";
 import { ExperimentsService } from "@/node/services/experimentsService";
 import { WorkspaceMcpOverridesService } from "@/node/services/workspaceMcpOverridesService";
 import { McpOauthService } from "@/node/services/mcpOauthService";
+import { HeartbeatService } from "@/node/services/heartbeatService";
 import { IdleCompactionService } from "@/node/services/idleCompactionService";
 import { getSigningService, type SigningService } from "@/node/services/signingService";
 import { coderService, type CoderService } from "@/node/services/coderService";
@@ -150,6 +151,7 @@ export class ServiceContainer {
   public readonly sshPromptService = new SshPromptService();
   private readonly ptyService: PTYService;
   public readonly idleCompactionService: IdleCompactionService;
+  public readonly heartbeatService: HeartbeatService;
 
   constructor(config: Config) {
     this.config = config;
@@ -255,6 +257,13 @@ export class ServiceContainer {
       this.historyService,
       this.extensionMetadata,
       (workspaceId) => this.workspaceService.executeIdleCompaction(workspaceId)
+    );
+    // Heartbeat service - periodically sends heartbeat turns to eligible idle workspaces
+    this.heartbeatService = new HeartbeatService(
+      config,
+      this.extensionMetadata,
+      this.workspaceService,
+      this.taskService
     );
     this.windowService = new WindowService();
     this.mcpOauthService = new McpOauthService(
@@ -439,6 +448,10 @@ export class ServiceContainer {
     // Start idle compaction checker
     this.idleCompactionService.start();
     stepDurationsMs["idleCompactionService.start"] = Date.now() - idleCompactionStartedAt;
+
+    const heartbeatStartedAt = Date.now();
+    this.heartbeatService.start();
+    stepDurationsMs["heartbeatService.start"] = Date.now() - heartbeatStartedAt;
 
     // Refresh mux-owned Coder SSH config in background (handles binary path changes on restart)
     // Skip getCoderInfo() to avoid caching "unavailable" if coder isn't installed yet
@@ -642,6 +655,7 @@ export class ServiceContainer {
     await this.desktopBridgeServer.stop();
     this.desktopTokenManager.dispose();
     await this.desktopSessionManager.closeAll();
+    this.heartbeatService.stop();
     this.idleCompactionService.stop();
     await this.browserBridgeServer.stop();
     this.browserSessionStateHub.dispose();
