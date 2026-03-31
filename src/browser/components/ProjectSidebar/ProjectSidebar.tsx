@@ -856,7 +856,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const performArchiveWorkspace = useCallback(
     async (
       workspaceId: string,
-      _buttonElement?: HTMLElement,
+      buttonElement?: HTMLElement,
       acknowledgedUntrackedPaths?: string[]
     ) => {
       // Mark workspace as being archived for UI feedback
@@ -867,6 +867,26 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
           workspaceId,
           acknowledgedUntrackedPaths ? { acknowledgedUntrackedPaths } : undefined
         );
+        if (result.success && result.data?.kind === "confirm-lossy-untracked-files") {
+          const metadata = workspaceStore.getWorkspaceMetadata(workspaceId);
+          const displayTitle = metadata?.title ?? metadata?.name ?? workspaceId;
+          const aggregator = workspaceStore.getAggregator(workspaceId);
+          const hasActiveStreams = (aggregator?.getActiveStreams().length ?? 0) > 0;
+          const pendingStreamStartTime = aggregator?.getPendingStreamStartTime();
+          const isStarting = pendingStreamStartTime != null && !hasActiveStreams;
+          const awaitingUserQuestion = aggregator?.hasAwaitingUserQuestion() ?? false;
+          const isStreaming = (hasActiveStreams || isStarting) && !awaitingUserQuestion;
+          setArchiveConfirmation({
+            workspaceId,
+            displayTitle,
+            buttonElement,
+            untrackedPaths: result.data.paths,
+            // The retry path already handled any earlier streaming warning. Only surface the
+            // interruption warning again when the archive attempt has not yet been confirmed.
+            isStreaming: acknowledgedUntrackedPaths == null ? isStreaming : false,
+          });
+          return;
+        }
         if (!result.success) {
           const error = result.error ?? "Failed to archive chat";
           // Archive failures can be long-lived workflow errors (for example, untracked-file safety
@@ -884,7 +904,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
         });
       }
     },
-    [onArchiveWorkspace, workspaceArchiveError]
+    [onArchiveWorkspace, workspaceArchiveError, workspaceStore]
   );
 
   const hasActiveStream = useCallback(
@@ -946,15 +966,13 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
       return;
     }
 
-    try {
-      await performArchiveWorkspace(
-        archiveConfirmation.workspaceId,
-        archiveConfirmation.buttonElement,
-        archiveConfirmation.untrackedPaths
-      );
-    } finally {
-      setArchiveConfirmation(null);
-    }
+    const confirmation = archiveConfirmation;
+    setArchiveConfirmation(null);
+    await performArchiveWorkspace(
+      confirmation.workspaceId,
+      confirmation.buttonElement,
+      confirmation.untrackedPaths
+    );
   }, [archiveConfirmation, performArchiveWorkspace]);
 
   const handleArchiveWorkspaceCancel = useCallback(() => {

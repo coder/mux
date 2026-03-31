@@ -56,6 +56,39 @@ function resolveVoidResult() {
   return Promise.resolve({ success: true as const, data: undefined });
 }
 
+function resolveArchiveResult(
+  result: { kind: "archived" } | { kind: "confirm-lossy-untracked-files"; paths: string[] } = {
+    kind: "archived",
+  }
+) {
+  return Promise.resolve({ success: true as const, data: result });
+}
+
+function resolveArchivePreflight(
+  result: { kind: "ready" } | { kind: "confirm-lossy-untracked-files"; paths: string[] } = {
+    kind: "ready",
+  }
+) {
+  return Promise.resolve({ success: true as const, data: result });
+}
+
+type ArchiveConfirmationResult =
+  | { kind: "archived" }
+  | { kind: "confirm-lossy-untracked-files"; paths: string[] };
+type ArchivePreflightConfirmationResult =
+  | { kind: "ready" }
+  | { kind: "confirm-lossy-untracked-files"; paths: string[] };
+interface ArchiveWorkspaceActionResult {
+  success: boolean;
+  error?: string;
+  data?: ArchiveConfirmationResult;
+}
+interface ArchivePreflightActionResult {
+  success: boolean;
+  error?: string;
+  data?: ArchivePreflightConfirmationResult;
+}
+
 interface MockAgentListItemProps {
   metadata: FrontendWorkspaceMetadata;
   depth?: number;
@@ -68,7 +101,15 @@ interface MockAgentListItemProps {
 let latestArchiveWorkspaceHandler:
   | ((workspaceId: string, button: HTMLElement) => Promise<void>)
   | null = null;
-let archiveWorkspaceActionMock = mock(() => Promise.resolve({ success: true }));
+let preflightArchiveWorkspaceMock = mock(
+  (_workspaceId: string): Promise<ArchivePreflightActionResult> => resolveArchivePreflight()
+);
+let archiveWorkspaceActionMock = mock(
+  (
+    _workspaceId: string,
+    _options?: { acknowledgedUntrackedPaths?: string[] }
+  ): Promise<ArchiveWorkspaceActionResult> => resolveArchiveResult()
+);
 let settingsOpenMock = mock(() => undefined);
 let archivePopoverShowErrorMock = mock(
   (_workspaceId: string, _error: string, _anchor?: { top: number; left: number }) => undefined
@@ -122,7 +163,15 @@ function installProjectSidebarTestDoubles() {
   archivePopoverShowErrorMock = mock(
     (_workspaceId: string, _error: string, _anchor?: { top: number; left: number }) => undefined
   );
-  archiveWorkspaceActionMock = mock(() => Promise.resolve({ success: true }));
+  preflightArchiveWorkspaceMock = mock(
+    (_workspaceId: string): Promise<ArchivePreflightActionResult> => resolveArchivePreflight()
+  );
+  archiveWorkspaceActionMock = mock(
+    (
+      _workspaceId: string,
+      _options?: { acknowledgedUntrackedPaths?: string[] }
+    ): Promise<ArchiveWorkspaceActionResult> => resolveArchiveResult()
+  );
   latestArchiveWorkspaceHandler = null;
   const fallbackPopoverError = {
     error: null,
@@ -227,8 +276,7 @@ function installProjectSidebarTestDoubles() {
       ({
         selectedWorkspace: null,
         setSelectedWorkspace: () => undefined,
-        preflightArchiveWorkspace: () =>
-          Promise.resolve({ success: true, data: { kind: "ready" as const } }),
+        preflightArchiveWorkspace: preflightArchiveWorkspaceMock,
         archiveWorkspace: archiveWorkspaceActionMock,
         removeWorkspace: () => Promise.resolve({ success: true }),
         updateWorkspaceTitle: () => Promise.resolve({ success: true }),
@@ -272,9 +320,28 @@ function installProjectSidebarTestDoubles() {
   spyOn(SidebarCollapseButtonModule, "SidebarCollapseButton").mockImplementation((() => (
     <button type="button">toggle sidebar</button>
   )) as unknown as typeof SidebarCollapseButtonModule.SidebarCollapseButton);
-  spyOn(ConfirmationModalModule, "ConfirmationModal").mockImplementation(
-    (() => null) as unknown as typeof ConfirmationModalModule.ConfirmationModal
-  );
+  spyOn(ConfirmationModalModule, "ConfirmationModal").mockImplementation(((props: {
+    isOpen: boolean;
+    title: string;
+    description?: React.ReactNode;
+    warning?: React.ReactNode;
+    confirmLabel?: string;
+    onConfirm: () => void;
+    onCancel: () => void;
+  }) =>
+    props.isOpen ? (
+      <div data-testid="archive-confirmation-modal">
+        <div>{props.title}</div>
+        {props.description}
+        {props.warning}
+        <button type="button" onClick={props.onConfirm}>
+          {props.confirmLabel ?? "Confirm"}
+        </button>
+        <button type="button" onClick={props.onCancel}>
+          Cancel
+        </button>
+      </div>
+    ) : null) as unknown as typeof ConfirmationModalModule.ConfirmationModal);
   spyOn(ProjectDeleteConfirmationModalModule, "ProjectDeleteConfirmationModal").mockImplementation(
     ((props: {
       isOpen: boolean;
@@ -819,6 +886,128 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
   });
 });
 
+describe("ProjectSidebar archive confirmations", () => {
+  beforeEach(() => {
+    cleanupDom = installDom();
+    window.localStorage.clear();
+    window.localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify(["/projects/demo-project"]));
+    settingsOpenMock = mock(() => undefined);
+    projectContextValue = createProjectContextValue({
+      userProjects: new Map([["/projects/demo-project", { workspaces: [] }]]),
+    });
+    installProjectSidebarTestDoubles();
+  });
+
+  afterEach(() => {
+    cleanup();
+    cleanupDom?.();
+    cleanupDom = null;
+    mock.restore();
+  });
+
+  function renderArchiveSidebar(workspace: FrontendWorkspaceMetadata) {
+    projectContextValue = createProjectContextValue({
+      userProjects: new Map([
+        [
+          "/projects/demo-project",
+          {
+            workspaces: [{ path: workspace.namedWorkspacePath }],
+          },
+        ],
+      ]),
+    });
+
+    return render(
+      <ProjectSidebar
+        collapsed={false}
+        onToggleCollapsed={() => undefined}
+        sortedWorkspacesByProject={new Map([["/projects/demo-project", [workspace]]])}
+        workspaceRecency={{ [workspace.id]: Date.now() }}
+      />
+    );
+  }
+
+  test("opens the archive confirmation modal when preflight finds untracked files", async () => {
+    preflightArchiveWorkspaceMock = mock(
+      (_workspaceId: string): Promise<ArchivePreflightActionResult> =>
+        resolveArchivePreflight({
+          kind: "confirm-lossy-untracked-files",
+          paths: [".cache/", "temp.txt"],
+        })
+    );
+
+    const workspace = {
+      ...createWorkspace("archive-preflight-confirm"),
+      projects: [{ projectPath: "/projects/demo-project", projectName: "demo-project" }],
+    };
+    const view = renderArchiveSidebar(workspace);
+
+    const archiveButton = document.createElement("button");
+    expect(latestArchiveWorkspaceHandler).toBeTruthy();
+    await act(async () => {
+      await latestArchiveWorkspaceHandler?.(workspace.id, archiveButton);
+    });
+
+    expect(archiveWorkspaceActionMock).not.toHaveBeenCalled();
+    expect(view.getByTestId("archive-confirmation-modal")).toBeTruthy();
+    expect(view.getByText("Archive workspace with untracked files?")).toBeTruthy();
+    expect(view.getByRole("button", { name: "Archive and delete files" })).toBeTruthy();
+  });
+
+  test("reopens the archive confirmation modal when archive finds new untracked files", async () => {
+    let archiveAttempt = 0;
+    archiveWorkspaceActionMock = mock(
+      (
+        workspaceId: string,
+        options?: { acknowledgedUntrackedPaths?: string[] }
+      ): Promise<ArchiveWorkspaceActionResult> => {
+        archiveAttempt += 1;
+        if (archiveAttempt === 1) {
+          return resolveArchiveResult({
+            kind: "confirm-lossy-untracked-files",
+            paths: ["late-file.txt"],
+          });
+        }
+
+        expect(workspaceId).toBe("archive-late-confirm");
+        expect(options).toEqual({ acknowledgedUntrackedPaths: ["late-file.txt"] });
+        return resolveArchiveResult({ kind: "archived" });
+      }
+    );
+
+    const workspace = {
+      ...createWorkspace("archive-late-confirm"),
+      projects: [{ projectPath: "/projects/demo-project", projectName: "demo-project" }],
+    };
+    const view = renderArchiveSidebar(workspace);
+
+    const archiveButton = document.createElement("button");
+    expect(latestArchiveWorkspaceHandler).toBeTruthy();
+    await act(async () => {
+      await latestArchiveWorkspaceHandler?.(workspace.id, archiveButton);
+    });
+
+    await waitFor(() => {
+      expect(view.getByTestId("archive-confirmation-modal")).toBeTruthy();
+    });
+    expect(archivePopoverShowErrorMock).not.toHaveBeenCalled();
+    expect(archiveWorkspaceActionMock).toHaveBeenCalledTimes(1);
+    expect(archiveWorkspaceActionMock).toHaveBeenNthCalledWith(1, workspace.id, undefined);
+
+    act(() => {
+      fireEvent.click(view.getByRole("button", { name: "Archive and delete files" }));
+    });
+
+    await waitFor(() => {
+      expect(archiveWorkspaceActionMock).toHaveBeenCalledTimes(2);
+    });
+    expect(archiveWorkspaceActionMock).toHaveBeenNthCalledWith(2, workspace.id, {
+      acknowledgedUntrackedPaths: ["late-file.txt"],
+    });
+    expect(archivePopoverShowErrorMock).not.toHaveBeenCalled();
+  });
+});
+
 describe("ProjectSidebar archive errors", () => {
   beforeEach(() => {
     cleanupDom = installDom();
@@ -847,8 +1036,12 @@ describe("ProjectSidebar archive errors", () => {
   });
 
   test("uses the shared toast fallback position for archive failures", async () => {
-    archiveWorkspaceActionMock = mock(() =>
-      Promise.resolve({ success: false as const, error: "snapshot failed" })
+    archiveWorkspaceActionMock = mock(
+      (
+        _workspaceId: string,
+        _options?: { acknowledgedUntrackedPaths?: string[] }
+      ): Promise<ArchiveWorkspaceActionResult> =>
+        Promise.resolve({ success: false as const, error: "snapshot failed" })
     );
 
     const workspace = {

@@ -211,6 +211,14 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
           workspaceId,
           acknowledgedUntrackedPaths ? { acknowledgedUntrackedPaths } : undefined
         );
+        if (res.success && res.data?.kind === "confirm-lossy-untracked-files") {
+          setArchiveUntrackedPaths(res.data.paths);
+          // The retry path already handled any earlier streaming warning. Only surface the
+          // interruption warning again when the archive attempt has not yet been confirmed.
+          setArchiveConfirmIsStreaming(acknowledgedUntrackedPaths == null ? isWorking : false);
+          setArchiveConfirmOpen(true);
+          return;
+        }
         if (!res.success) {
           const rect = anchorEl?.getBoundingClientRect();
           archiveError.showError(
@@ -223,7 +231,7 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
         setIsArchiving(false);
       }
     },
-    [workspaceId, archiveWorkspace, archiveError]
+    [workspaceId, archiveWorkspace, archiveError, isWorking]
   );
 
   /**

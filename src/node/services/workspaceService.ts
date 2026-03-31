@@ -121,7 +121,11 @@ import type {
 import type { TerminalService } from "@/node/services/terminalService";
 import type { DesktopSessionManager } from "@/node/services/desktop/DesktopSessionManager";
 import type { WorkspaceAISettingsSchema } from "@/common/orpc/schemas";
-import type { ArchivePreflightResult } from "@/common/orpc/schemas/api";
+import type {
+  ArchiveLossyUntrackedFilesConfirmation,
+  ArchivePreflightResult,
+  ArchiveWorkspaceResult,
+} from "@/common/orpc/schemas/api";
 import type { SessionTimingService } from "@/node/services/sessionTimingService";
 import type { SessionUsageService } from "@/node/services/sessionUsageService";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
@@ -196,6 +200,60 @@ function normalizeRepoRootProjectPath(projectPath: string | null | undefined): s
   }
 
   return stripTrailingSlashes(path.posix.normalize(normalizedPath));
+}
+
+function normalizeArchiveUntrackedPaths(paths: readonly string[]): string[] {
+  const normalizedPaths = paths.map((untrackedPath) => {
+    const trimmedPath = untrackedPath.trim();
+    assert(
+      trimmedPath.length > 0,
+      "normalizeArchiveUntrackedPaths: untracked paths must be non-empty"
+    );
+    return trimmedPath;
+  });
+  return [...new Set(normalizedPaths)].sort();
+}
+
+function buildArchiveLossyUntrackedFilesConfirmation(
+  paths: readonly string[]
+): ArchiveLossyUntrackedFilesConfirmation {
+  const normalizedPaths = normalizeArchiveUntrackedPaths(paths);
+  assert(
+    normalizedPaths.length > 0,
+    "buildArchiveLossyUntrackedFilesConfirmation: expected at least one untracked path"
+  );
+  return {
+    kind: "confirm-lossy-untracked-files",
+    paths: normalizedPaths,
+  };
+}
+
+function areArchiveUntrackedPathListsEqual(
+  leftPaths: readonly string[],
+  rightPaths: readonly string[]
+): boolean {
+  const normalizedLeftPaths = normalizeArchiveUntrackedPaths(leftPaths);
+  const normalizedRightPaths = normalizeArchiveUntrackedPaths(rightPaths);
+  if (normalizedLeftPaths.length !== normalizedRightPaths.length) {
+    return false;
+  }
+
+  return normalizedLeftPaths.every((path, index) => path === normalizedRightPaths[index]);
+}
+
+function isArchiveLossyUntrackedFilesConfirmation(
+  value: unknown
+): value is ArchiveLossyUntrackedFilesConfirmation {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const maybeConfirmation: { kind?: unknown; paths?: unknown } = value;
+  return (
+    maybeConfirmation.kind === "confirm-lossy-untracked-files" &&
+    Array.isArray(maybeConfirmation.paths) &&
+    maybeConfirmation.paths.every((path) => typeof path === "string")
+  );
 }
 
 interface FileCompletionsCacheEntry {
@@ -1204,6 +1262,69 @@ export class WorkspaceService extends EventEmitter {
     return (
       this.config.loadConfigOrDefault().worktreeArchiveBehavior ?? DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR
     );
+  }
+
+  private async getCurrentArchiveUntrackedPaths(args: {
+    workspaceId: string;
+    workspaceMetadata: WorkspaceMetadata;
+  }): Promise<Result<string[]>> {
+    if (this.worktreeArchiveSnapshotService == null) {
+      return Ok([]);
+    }
+
+    if (!isWorktreeRuntime(args.workspaceMetadata.runtimeConfig)) {
+      return Ok([]);
+    }
+
+    // Multi-project workspaces skip snapshot capture entirely, so there is nothing to confirm.
+    if (
+      Array.isArray(args.workspaceMetadata.projects) &&
+      args.workspaceMetadata.projects.length > 1
+    ) {
+      return Ok([]);
+    }
+
+    const unsupportedUntrackedPathsResult =
+      await this.worktreeArchiveSnapshotService.getUnsupportedUntrackedPaths({
+        workspaceId: args.workspaceId,
+        workspaceMetadata: args.workspaceMetadata,
+      });
+    if (!unsupportedUntrackedPathsResult.success) {
+      return Err(unsupportedUntrackedPathsResult.error);
+    }
+
+    return Ok(normalizeArchiveUntrackedPaths(unsupportedUntrackedPathsResult.data));
+  }
+
+  private async getArchiveUntrackedFilesConfirmation(args: {
+    workspaceId: string;
+    workspaceMetadata: WorkspaceMetadata;
+    acknowledgedUntrackedPaths?: string[];
+  }): Promise<Result<ArchiveLossyUntrackedFilesConfirmation | null>> {
+    const currentUntrackedPathsResult = await this.getCurrentArchiveUntrackedPaths({
+      workspaceId: args.workspaceId,
+      workspaceMetadata: args.workspaceMetadata,
+    });
+    if (!currentUntrackedPathsResult.success) {
+      return Err(currentUntrackedPathsResult.error);
+    }
+
+    const currentUntrackedPaths = currentUntrackedPathsResult.data;
+    if (currentUntrackedPaths.length === 0) {
+      return Ok(null);
+    }
+
+    if (args.acknowledgedUntrackedPaths == null) {
+      return Ok(buildArchiveLossyUntrackedFilesConfirmation(currentUntrackedPaths));
+    }
+
+    if (
+      !areArchiveUntrackedPathListsEqual(args.acknowledgedUntrackedPaths, currentUntrackedPaths)
+    ) {
+      return Ok(buildArchiveLossyUntrackedFilesConfirmation(currentUntrackedPaths));
+    }
+
+    return Ok(null);
   }
 
   /**
@@ -3634,29 +3755,16 @@ export class WorkspaceService extends EventEmitter {
       }
       const metadata = metadataResult.data;
 
-      if (!isWorktreeRuntime(metadata.runtimeConfig)) {
-        return Ok({ kind: "ready" as const });
+      const confirmationResult = await this.getArchiveUntrackedFilesConfirmation({
+        workspaceId,
+        workspaceMetadata: metadata,
+      });
+      if (!confirmationResult.success) {
+        return Err(confirmationResult.error);
       }
 
-      // Multi-project workspaces skip snapshot capture entirely.
-      if (Array.isArray(metadata.projects) && metadata.projects.length > 1) {
-        return Ok({ kind: "ready" as const });
-      }
-
-      const untrackedResult =
-        await this.worktreeArchiveSnapshotService!.getUnsupportedUntrackedPaths({
-          workspaceId,
-          workspaceMetadata: metadata,
-        });
-      if (!untrackedResult.success) {
-        return Err(untrackedResult.error);
-      }
-
-      if (untrackedResult.data.length > 0) {
-        return Ok({
-          kind: "confirm-lossy-untracked-files" as const,
-          paths: untrackedResult.data,
-        });
+      if (confirmationResult.data) {
+        return Ok(confirmationResult.data);
       }
 
       return Ok({ kind: "ready" as const });
@@ -3671,8 +3779,14 @@ export class WorkspaceService extends EventEmitter {
    *
    * If init is still running, we abort it before archiving so we don't leave
    * orphaned post-create work running in the background.
+   *
+   * Returns a typed confirmation result instead of a generic error when the current
+   * untracked-file set must be re-reviewed before a lossy snapshot archive can proceed.
    */
-  async archive(workspaceId: string, acknowledgedUntrackedPaths?: string[]): Promise<Result<void>> {
+  async archive(
+    workspaceId: string,
+    acknowledgedUntrackedPaths?: string[]
+  ): Promise<Result<ArchiveWorkspaceResult>> {
     if (workspaceId === MUX_HELP_CHAT_WORKSPACE_ID) {
       return Err("Cannot archive the Chat with Mux system workspace");
     }
@@ -3743,6 +3857,20 @@ export class WorkspaceService extends EventEmitter {
         beforeArchiveMetadata.projects.length > 1;
       const needsSnapshotCapture = canSnapshotManagedWorktree && !shouldSkipSnapshotCapture;
 
+      if (needsSnapshotCapture && beforeArchiveMetadata) {
+        const initialArchiveConfirmationResult = await this.getArchiveUntrackedFilesConfirmation({
+          workspaceId,
+          workspaceMetadata: beforeArchiveMetadata,
+          acknowledgedUntrackedPaths,
+        });
+        if (!initialArchiveConfirmationResult.success) {
+          return Err(initialArchiveConfirmationResult.error);
+        }
+        if (initialArchiveConfirmationResult.data) {
+          return Ok(initialArchiveConfirmationResult.data);
+        }
+      }
+
       // Lifecycle hooks run *before* we persist archivedAt.
       //
       // NOTE: Archiving is typically a quick UI action, but it can fail if a hook needs to perform
@@ -3763,18 +3891,19 @@ export class WorkspaceService extends EventEmitter {
         beforeArchiveMetadata &&
         isWorktreeRuntime(beforeArchiveMetadata.runtimeConfig)
       ) {
-        // When the caller has NOT acknowledged untracked files, run the strict preflight
-        // that rejects any untracked files outright.
-        if (acknowledgedUntrackedPaths == null) {
-          const preflightResult =
-            await this.worktreeArchiveSnapshotService!.preflightSnapshotForArchive({
-              workspaceId,
-              workspaceMetadata: beforeArchiveMetadata,
-            });
-          if (!preflightResult.success) {
-            return Err(preflightResult.error);
-          }
-        } else {
+        const latestArchiveConfirmationResult = await this.getArchiveUntrackedFilesConfirmation({
+          workspaceId,
+          workspaceMetadata: beforeArchiveMetadata,
+          acknowledgedUntrackedPaths,
+        });
+        if (!latestArchiveConfirmationResult.success) {
+          return Err(latestArchiveConfirmationResult.error);
+        }
+        if (latestArchiveConfirmationResult.data) {
+          return Ok(latestArchiveConfirmationResult.data);
+        }
+
+        if (acknowledgedUntrackedPaths != null) {
           log.info("Archive proceeding with acknowledged lossy untracked files", {
             workspaceId,
             acknowledgedPaths: acknowledgedUntrackedPaths,
@@ -3784,13 +3913,17 @@ export class WorkspaceService extends EventEmitter {
         await this.stopLiveWorkspaceActivityForArchive(workspaceId);
 
         // Pass acknowledgedUntrackedPaths to capture so it re-verifies at capture time,
-        // closing the race window between the user's dialog and actual snapshot capture.
+        // closing the remaining race window between the final confirmation check and the
+        // actual snapshot capture work.
         const captureResult = await this.worktreeArchiveSnapshotService!.captureSnapshotForArchive({
           workspaceId,
           workspaceMetadata: beforeArchiveMetadata,
           acknowledgedUntrackedPaths,
         });
         if (!captureResult.success) {
+          if (isArchiveLossyUntrackedFilesConfirmation(captureResult.error)) {
+            return Ok(captureResult.error);
+          }
           return Err(captureResult.error);
         }
         capturedWorktreeSnapshot = captureResult.data;
@@ -3866,7 +3999,7 @@ export class WorkspaceService extends EventEmitter {
         }
       }
 
-      return Ok(undefined);
+      return Ok({ kind: "archived" as const });
     } catch (error) {
       const message = getErrorMessage(error);
       return Err(`Failed to archive workspace: ${message}`);
@@ -4369,6 +4502,13 @@ export class WorkspaceService extends EventEmitter {
         const result = await this.archive(workspaceId);
         if (!result.success) {
           errors.push({ workspaceId, error: result.error });
+          continue;
+        }
+        if (result.data.kind !== "archived") {
+          errors.push({
+            workspaceId,
+            error: `Archive requires confirmation for untracked files: ${result.data.paths.join(", ")}`,
+          });
           continue;
         }
         archivedWorkspaceIds.push(workspaceId);

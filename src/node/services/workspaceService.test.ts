@@ -3354,7 +3354,7 @@ describe("WorkspaceService archive lifecycle hooks", () => {
 
     const result = await workspaceService.archive(workspaceId);
 
-    expect(result).toEqual(Ok(undefined));
+    expect(result).toEqual(Ok({ kind: "archived" }));
     const entry = configState.projects.get(projectPath)?.workspaces[0];
     expect(entry?.archivedAt).toBeTruthy();
   });
@@ -3863,7 +3863,7 @@ describe("WorkspaceService archive snapshots", () => {
 
     const result = await workspaceService.archive(workspaceId);
 
-    expect(result).toEqual(Ok(undefined));
+    expect(result).toEqual(Ok({ kind: "archived" }));
     const entry = configState.projects.get(projectPath)?.workspaces[0];
     expect(entry?.archivedAt).toBeTruthy();
     expect(entry?.worktreeArchiveSnapshot).toEqual(snapshot);
@@ -3874,7 +3874,7 @@ describe("WorkspaceService archive snapshots", () => {
     });
   });
 
-  test("archive() does not close live sessions when snapshot capture fails", async () => {
+  test("archive() does not close live sessions when archive readiness checks fail", async () => {
     const closeWorkspaceSessions = mock(() => undefined);
     workspaceService.setTerminalService({
       closeWorkspaceSessions,
@@ -3885,13 +3885,12 @@ describe("WorkspaceService archive snapshots", () => {
       close: closeDesktopSession,
     } as unknown as DesktopSessionManager);
 
-    const preflightSnapshotForArchive = mock(() => Promise.resolve(Err("snapshot failed")));
     const captureSnapshotForArchive = mock(() => Promise.resolve(Err("should not run")));
     workspaceService.setWorktreeArchiveSnapshotService({
-      preflightSnapshotForArchive,
+      preflightSnapshotForArchive: mock(() => Promise.resolve(Ok(undefined))),
       captureSnapshotForArchive,
       restoreSnapshotAfterUnarchive: mock(() => Promise.resolve(Ok("skipped" as const))),
-      getUnsupportedUntrackedPaths: mock(() => Promise.resolve(Ok([]))),
+      getUnsupportedUntrackedPaths: mock(() => Promise.resolve(Err("snapshot failed"))),
     });
 
     const result = await workspaceService.archive(workspaceId);
@@ -3925,7 +3924,7 @@ describe("WorkspaceService archive snapshots", () => {
 
     const result = await workspaceService.archive(workspaceId);
 
-    expect(result).toEqual(Ok(undefined));
+    expect(result).toEqual(Ok({ kind: "archived" }));
     expect(captureSnapshotForArchive).not.toHaveBeenCalled();
   });
 
@@ -4108,7 +4107,7 @@ describe("WorkspaceService preflightArchive and acknowledged archive", () => {
 
     const result = await workspaceService.archive(workspaceId, untrackedPaths);
 
-    expect(result).toEqual(Ok(undefined));
+    expect(result).toEqual(Ok({ kind: "archived" }));
     // The capture should have been called with acknowledgedUntrackedPaths.
     expect(captureSnapshotForArchive).toHaveBeenCalledWith({
       workspaceId,
@@ -4117,31 +4116,30 @@ describe("WorkspaceService preflightArchive and acknowledged archive", () => {
     });
   });
 
-  test("archive fails safely when acknowledged paths diverge from current", async () => {
-    // Capture itself re-verifies untracked files and detects the mismatch.
+  test("archive returns refreshed confirmation when capture detects new untracked files", async () => {
     const captureSnapshotForArchive = mock(() =>
       Promise.resolve(
-        Err(
-          "Failed to capture archive snapshot: Untracked files changed since you reviewed them. " +
-            "New files: new-file.txt. Please try again."
-        )
+        Err({
+          kind: "confirm-lossy-untracked-files" as const,
+          paths: [".cache/", "new-file.txt"],
+        })
       )
     );
     workspaceService.setWorktreeArchiveSnapshotService({
       preflightSnapshotForArchive: mock(() => Promise.resolve(Ok(undefined))),
       captureSnapshotForArchive,
       restoreSnapshotAfterUnarchive: mock(() => Promise.resolve(Ok("skipped" as const))),
-      getUnsupportedUntrackedPaths: mock(() => Promise.resolve(Ok([]))),
+      getUnsupportedUntrackedPaths: mock(() => Promise.resolve(Ok([".cache/", "temp.txt"]))),
     });
 
-    // User only acknowledged two files, but a third appeared at capture time.
     const result = await workspaceService.archive(workspaceId, [".cache/", "temp.txt"]);
 
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error).toContain("changed since you reviewed");
-    }
-    // Capture was called with the acknowledged paths so it can re-verify.
+    expect(result).toEqual(
+      Ok({
+        kind: "confirm-lossy-untracked-files",
+        paths: [".cache/", "new-file.txt"],
+      })
+    );
     expect(captureSnapshotForArchive).toHaveBeenCalledWith({
       workspaceId,
       workspaceMetadata,
@@ -4149,22 +4147,41 @@ describe("WorkspaceService preflightArchive and acknowledged archive", () => {
     });
   });
 
-  test("archive without acknowledgedUntrackedPaths fails on untracked files via preflight", async () => {
+  test("archive returns refreshed confirmation when acknowledged paths drift before capture", async () => {
+    const captureSnapshotForArchive = mock(() => Promise.resolve(Err("should not run")));
     workspaceService.setWorktreeArchiveSnapshotService({
-      preflightSnapshotForArchive: mock(() =>
-        Promise.resolve(Err("Failed to capture archive snapshot: untracked files: .cache/"))
+      preflightSnapshotForArchive: mock(() => Promise.resolve(Ok(undefined))),
+      captureSnapshotForArchive,
+      restoreSnapshotAfterUnarchive: mock(() => Promise.resolve(Ok("skipped" as const))),
+      getUnsupportedUntrackedPaths: mock(() =>
+        Promise.resolve(Ok([".cache/", "new-file.txt", "temp.txt"]))
       ),
-      captureSnapshotForArchive: mock(() => Promise.resolve(Err("should not run"))),
+    });
+
+    const result = await workspaceService.archive(workspaceId, [".cache/", "temp.txt"]);
+
+    expect(result).toEqual(
+      Ok({
+        kind: "confirm-lossy-untracked-files",
+        paths: [".cache/", "new-file.txt", "temp.txt"],
+      })
+    );
+    expect(captureSnapshotForArchive).not.toHaveBeenCalled();
+  });
+
+  test("archive without acknowledgedUntrackedPaths returns confirmation for untracked files", async () => {
+    const captureSnapshotForArchive = mock(() => Promise.resolve(Err("should not run")));
+    workspaceService.setWorktreeArchiveSnapshotService({
+      preflightSnapshotForArchive: mock(() => Promise.resolve(Ok(undefined))),
+      captureSnapshotForArchive,
       restoreSnapshotAfterUnarchive: mock(() => Promise.resolve(Ok("skipped" as const))),
       getUnsupportedUntrackedPaths: mock(() => Promise.resolve(Ok([".cache/"]))),
     });
 
     const result = await workspaceService.archive(workspaceId);
 
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error).toContain("untracked files");
-    }
+    expect(result).toEqual(Ok({ kind: "confirm-lossy-untracked-files", paths: [".cache/"] }));
+    expect(captureSnapshotForArchive).not.toHaveBeenCalled();
   });
 });
 
@@ -4569,7 +4586,11 @@ describe("WorkspaceService archiveMergedInProject", () => {
     }
   ) => Promise<Result<BashToolResult>>;
 
-  type ArchiveFn = (workspaceId: string) => Promise<Result<void>>;
+  type ArchiveFn = (workspaceId: string) => Promise<Result<{ kind: "archived" }>>;
+
+  function archiveSuccess(): Promise<Result<{ kind: "archived" }>> {
+    return Promise.resolve(Ok({ kind: "archived" }));
+  }
 
   function createServiceHarness(
     allMetadata: FrontendWorkspaceMetadata[],
@@ -4639,7 +4660,7 @@ describe("WorkspaceService archiveMergedInProject", () => {
         }
         return Promise.resolve(result);
       },
-      () => Promise.resolve({ success: true, data: undefined })
+      () => archiveSuccess()
     );
 
     const result = await workspaceService.archiveMergedInProject(TARGET_PROJECT_PATH);
@@ -4685,7 +4706,7 @@ describe("WorkspaceService archiveMergedInProject", () => {
         }
         return Promise.resolve(result);
       },
-      () => Promise.resolve({ success: true, data: undefined })
+      () => archiveSuccess()
     );
 
     const result = await workspaceService.archiveMergedInProject(TARGET_PROJECT_PATH);
@@ -4732,7 +4753,7 @@ describe("WorkspaceService archiveMergedInProject", () => {
         }
         return Promise.resolve(result);
       },
-      () => Promise.resolve({ success: true, data: undefined })
+      () => archiveSuccess()
     );
 
     const result = await workspaceService.archiveMergedInProject(TARGET_PROJECT_PATH);
@@ -4774,7 +4795,7 @@ describe("WorkspaceService archiveMergedInProject", () => {
         }
         return Promise.resolve(result);
       },
-      () => Promise.resolve({ success: true, data: undefined })
+      () => archiveSuccess()
     );
 
     const result = await workspaceService.archiveMergedInProject(TARGET_PROJECT_PATH);
@@ -4813,7 +4834,7 @@ describe("WorkspaceService archiveMergedInProject", () => {
         }
         return Promise.resolve(result);
       },
-      () => Promise.resolve({ success: true, data: undefined })
+      () => archiveSuccess()
     );
 
     const result = await workspaceService.archiveMergedInProject(TARGET_PROJECT_PATH);

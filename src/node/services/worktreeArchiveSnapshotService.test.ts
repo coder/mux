@@ -4,6 +4,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
+import { Err } from "@/common/types/result";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { Config } from "@/node/config";
 import { WorktreeArchiveSnapshotService } from "@/node/services/worktreeArchiveSnapshotService";
@@ -732,10 +733,9 @@ describe("WorktreeArchiveSnapshotService", () => {
       workspaceMetadata: fixture.metadata,
     });
 
-    expect(captureResult.success).toBe(false);
-    if (!captureResult.success) {
-      expect(captureResult.error).toContain("untracked files");
-    }
+    expect(captureResult).toEqual(
+      Err({ kind: "confirm-lossy-untracked-files", paths: ["untracked.txt"] })
+    );
     expect(
       await pathExists(
         path.join(fixture.config.getSessionDir(fixture.workspaceId), "archive-state")
@@ -818,10 +818,16 @@ describe("WorktreeArchiveSnapshotService", () => {
       acknowledgedUntrackedPaths: ["old-file.txt"],
     });
 
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error).toContain("new-file.txt");
-      expect(result.error).toContain("changed since you reviewed");
-    }
+    expect(result).toEqual(
+      Err({
+        kind: "confirm-lossy-untracked-files",
+        paths: ["new-file.txt", "old-file.txt"],
+      })
+    );
+
+    const sessionDirEntries = await fs.readdir(fixture.config.getSessionDir(fixture.workspaceId));
+    expect(sessionDirEntries.filter((entry) => entry.startsWith("archive-state.tmp-")).length).toBe(
+      0
+    );
   });
 });

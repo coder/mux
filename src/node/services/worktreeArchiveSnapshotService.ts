@@ -3,6 +3,7 @@ import * as fsPromises from "node:fs/promises";
 import * as path from "node:path";
 
 import { Err, Ok, type Result } from "@/common/types/result";
+import type { ArchiveLossyUntrackedFilesConfirmation } from "@/common/orpc/schemas/api";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { getSrcBaseDir, isWorktreeRuntime } from "@/common/types/runtime";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -33,6 +34,8 @@ const NOOP_INIT_LOGGER: InitLogger = {
   logComplete: () => undefined,
   enterHookPhase: () => undefined,
 };
+
+type CaptureSnapshotForArchiveError = string | ArchiveLossyUntrackedFilesConfirmation;
 
 interface CreatedRestoreWorkspace {
   projectPath: string;
@@ -219,7 +222,7 @@ export class WorktreeArchiveSnapshotService {
      * When omitted, any untracked files cause the default strict failure.
      */
     acknowledgedUntrackedPaths?: string[];
-  }): Promise<Result<WorktreeArchiveSnapshot>> {
+  }): Promise<Result<WorktreeArchiveSnapshot, CaptureSnapshotForArchiveError>> {
     assert(
       args.workspaceId.trim().length > 0,
       "captureSnapshotForArchive: workspaceId must be non-empty"
@@ -278,23 +281,48 @@ export class WorktreeArchiveSnapshotService {
 
       const projectSnapshots: WorktreeArchiveSnapshotProject[] = [];
       for (const projectRepo of projectRepos) {
+        const currentUntracked = await this.listUnsupportedUntrackedFiles(projectRepo.repoCwd);
         if (args.acknowledgedUntrackedPaths != null) {
           // Re-verify untracked files at capture time to close the race window between
           // the preflight check and actual snapshot capture. Any files created after the
           // user reviewed the dialog are caught here.
-          const currentUntracked = await this.listUnsupportedUntrackedFiles(projectRepo.repoCwd);
           // Paths the user acknowledged but that no longer exist are harmless — only
           // new (unacknowledged) paths are dangerous.
           const acknowledgedSet = new Set(args.acknowledgedUntrackedPaths);
           const newPaths = currentUntracked.filter((p) => !acknowledgedSet.has(p));
           if (newPaths.length > 0) {
-            throw new Error(
-              "Untracked files changed since you reviewed them. " +
-                `New files: ${newPaths.join(", ")}. Please try again.`
+            const latestUntrackedResult = await this.getUnsupportedUntrackedPaths({
+              workspaceId: args.workspaceId,
+              workspaceMetadata: args.workspaceMetadata,
+            });
+            if (!latestUntrackedResult.success) {
+              return Err(latestUntrackedResult.error);
+            }
+            assert(
+              latestUntrackedResult.data.length > 0,
+              "captureSnapshotForArchive: expected current untracked paths when confirmation is required"
             );
+            return Err({
+              kind: "confirm-lossy-untracked-files",
+              paths: latestUntrackedResult.data,
+            });
           }
-        } else {
-          await this.ensureNoUnsupportedUntrackedFiles(projectRepo.repoCwd);
+        } else if (currentUntracked.length > 0) {
+          const latestUntrackedResult = await this.getUnsupportedUntrackedPaths({
+            workspaceId: args.workspaceId,
+            workspaceMetadata: args.workspaceMetadata,
+          });
+          if (!latestUntrackedResult.success) {
+            return Err(latestUntrackedResult.error);
+          }
+          assert(
+            latestUntrackedResult.data.length > 0,
+            "captureSnapshotForArchive: expected current untracked paths when confirmation is required"
+          );
+          return Err({
+            kind: "confirm-lossy-untracked-files",
+            paths: latestUntrackedResult.data,
+          });
         }
         await this.ensureNoDirtySubmodules(projectRepo.repoCwd);
 
@@ -395,8 +423,9 @@ export class WorktreeArchiveSnapshotService {
 
       return Ok(snapshot);
     } catch (error) {
-      await fsPromises.rm(tempStateDir, { recursive: true, force: true });
       return Err(`Failed to capture archive snapshot: ${getErrorMessage(error)}`);
+    } finally {
+      await fsPromises.rm(tempStateDir, { recursive: true, force: true });
     }
   }
 
