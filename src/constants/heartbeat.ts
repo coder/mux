@@ -1,0 +1,3 @@
+export const HEARTBEAT_MIN_INTERVAL_MS = 5 * 60 * 1000;
+export const HEARTBEAT_MAX_INTERVAL_MS = 24 * 60 * 60 * 1000;
+export const HEARTBEAT_DEFAULT_INTERVAL_MS = 30 * 60 * 1000;

@@ -3,6 +3,7 @@ import { ThinkingLevelSchema } from "../../types/thinking";
 import { RuntimeConfigSchema } from "./runtime";
 import { WorkspaceAISettingsByAgentSchema, WorkspaceAISettingsSchema } from "./workspaceAiSettings";
 import { TASK_GROUP_KIND_VALUES } from "@/common/utils/tools/taskGroups";
+import { HEARTBEAT_MAX_INTERVAL_MS, HEARTBEAT_MIN_INTERVAL_MS } from "@/constants/heartbeat";
 
 export const ProjectRefSchema = z.object({
   projectPath: z.string().meta({ description: "Absolute path to the project's main git repo" }),
@@ -28,6 +29,15 @@ export const BestOfGroupSchema = z.object({
   }),
   label: z.string().min(1).optional().meta({
     description: "Optional per-sibling label for grouped task variants.",
+  }),
+});
+
+export const WorkspaceHeartbeatSettingsSchema = z.object({
+  enabled: z.boolean().meta({
+    description: "Whether scheduled workspace heartbeats are enabled for this workspace.",
+  }),
+  intervalMs: z.number().int().min(HEARTBEAT_MIN_INTERVAL_MS).max(HEARTBEAT_MAX_INTERVAL_MS).meta({
+    description: "Heartbeat interval in milliseconds for this workspace.",
   }),
 });
 
@@ -69,6 +79,9 @@ export const WorkspaceMetadataSchema = z.object({
   }),
   aiSettings: WorkspaceAISettingsSchema.optional().meta({
     description: "Workspace-scoped AI settings (model + thinking level) persisted in config",
+  }),
+  heartbeat: WorkspaceHeartbeatSettingsSchema.optional().meta({
+    description: "Persisted heartbeat settings for this workspace.",
   }),
   parentWorkspaceId: z.string().optional().meta({
     description:

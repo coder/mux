@@ -24,6 +24,7 @@ export {
   GitStatusSchema,
   ProjectRefSchema,
   WorkspaceActivitySnapshotSchema,
+  WorkspaceHeartbeatSettingsSchema,
   WorkspaceMetadataSchema,
 } from "./schemas/workspace";
 
