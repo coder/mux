@@ -1,8 +1,7 @@
 import assert from "@/common/utils/assert";
 import type { MuxMessage } from "@/common/types/message";
 import type { ProjectsConfig, Workspace } from "@/common/types/project";
-import type { WorkspaceActivitySnapshot } from "@/common/types/workspace";
-import type { WorkspaceMetadata } from "@/common/types/workspace";
+import type { WorkspaceActivitySnapshot, WorkspaceMetadata } from "@/common/types/workspace";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 import {
   HEARTBEAT_DEFAULT_INTERVAL_MS,
