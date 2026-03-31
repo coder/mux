@@ -7039,7 +7039,7 @@ export class WorkspaceService extends EventEmitter {
   async executeHeartbeat(workspaceId: string): Promise<void> {
     assert(workspaceId.trim().length > 0, "executeHeartbeat requires a non-empty workspaceId");
 
-    const sendOptions = await this.buildHeartbeatSendOptions(workspaceId);
+    const { sendOptions, heartbeatMessage } = await this.buildHeartbeatSendOptions(workspaceId);
 
     const activity = await this.extensionMetadata.getSnapshot(workspaceId);
     const idleMs =
@@ -7048,8 +7048,7 @@ export class WorkspaceService extends EventEmitter {
         : HEARTBEAT_DEFAULT_INTERVAL_MS;
     const idleDuration = this.formatIdleDuration(idleMs);
     const heartbeatLead = `[Heartbeat] This workspace has been idle for approximately ${idleDuration}.`;
-    const heartbeatBody =
-      this.getHeartbeatSettings(workspaceId)?.message ?? HEARTBEAT_DEFAULT_MESSAGE_BODY;
+    const heartbeatBody = heartbeatMessage ?? HEARTBEAT_DEFAULT_MESSAGE_BODY;
     const heartbeatPrompt = `${heartbeatLead} ${heartbeatBody}`;
 
     const muxMetadata = {
@@ -7099,7 +7098,10 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
-  private async buildHeartbeatSendOptions(workspaceId: string): Promise<SendMessageOptions> {
+  private async buildHeartbeatSendOptions(workspaceId: string): Promise<{
+    sendOptions: SendMessageOptions;
+    heartbeatMessage: string | undefined;
+  }> {
     const config = this.config.loadConfigOrDefault();
     const workspaceMatch = this.config.findWorkspace(workspaceId);
 
@@ -7183,12 +7185,15 @@ export class WorkspaceService extends EventEmitter {
       coerceThinkingLevel(requestedThinking) ?? WORKSPACE_DEFAULTS.thinkingLevel;
 
     return {
-      model,
-      agentId,
-      thinkingLevel: enforceThinkingPolicy(model, normalizedThinkingLevel),
-      maxOutputTokens: undefined,
-      // Heartbeats should not mutate persisted workspace AI defaults.
-      skipAiSettingsPersistence: true,
+      sendOptions: {
+        model,
+        agentId,
+        thinkingLevel: enforceThinkingPolicy(model, normalizedThinkingLevel),
+        maxOutputTokens: undefined,
+        // Heartbeats should not mutate persisted workspace AI defaults.
+        skipAiSettingsPersistence: true,
+      },
+      heartbeatMessage: sanitizeHeartbeatMessage(workspaceEntry?.heartbeat?.message),
     };
   }
 
