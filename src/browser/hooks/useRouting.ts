@@ -203,7 +203,8 @@ export function useRouting(): RoutingState {
         normalized,
         routePriority,
         routeOverrides,
-        isConfigured
+        isConfigured,
+        isGatewayModelAccessible
       );
 
       const route = resolved.routeProvider === resolved.origin ? "direct" : resolved.routeProvider;
@@ -220,7 +221,7 @@ export function useRouting(): RoutingState {
         displayName: getRouteDisplayName(route),
       };
     },
-    [isConfigured, routeOverrides, routePriority]
+    [isConfigured, isGatewayModelAccessible, routeOverrides, routePriority]
   );
 
   // Resolve ignoring per-model overrides — answers "what would Auto pick?"
@@ -231,7 +232,8 @@ export function useRouting(): RoutingState {
         normalized,
         routePriority,
         {}, // empty overrides — priority-walk only
-        isConfigured
+        isConfigured,
+        isGatewayModelAccessible
       );
 
       const route = resolved.routeProvider === resolved.origin ? "direct" : resolved.routeProvider;
@@ -241,7 +243,7 @@ export function useRouting(): RoutingState {
         displayName: getRouteDisplayName(route),
       };
     },
-    [isConfigured, routePriority]
+    [isConfigured, isGatewayModelAccessible, routePriority]
   );
 
   const availableRoutes = useCallback(

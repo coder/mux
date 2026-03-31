@@ -1571,6 +1571,7 @@ export class ProviderModelFactory {
         const { createOpenAI } = await PROVIDER_REGISTRY.openai();
         const baseURL = providerConfig.baseURL ?? "https://api.githubcopilot.com";
         const provider = createOpenAI({
+          name: "github-copilot",
           baseURL,
           apiKey: "copilot", // placeholder, actual auth via custom fetch
           fetch: providerFetch,

@@ -116,6 +116,9 @@ describe("ProviderModelFactory GitHub Copilot", () => {
         return;
       }
 
+      expect((result.data.model as { provider?: unknown }).provider).toBe(
+        "github-copilot.responses"
+      );
       expect(result.data.routeProvider).toBe("github-copilot");
       expect(result.data.effectiveModelString).toBe("github-copilot:gpt-5.4");
       expect(result.data.model.constructor.name).toBe("OpenAIResponsesLanguageModel");
