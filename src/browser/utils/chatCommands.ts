@@ -328,7 +328,14 @@ export async function processSlashCommand(
     }
 
     // Manual /heartbeat invocations stay gated until the experiment is explicitly enabled.
-    if (!isExperimentEnabled(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS)) {
+    // Guard the experiment check so non-browser test environments treat it as disabled safely.
+    let heartbeatExperimentEnabled: boolean | undefined;
+    try {
+      heartbeatExperimentEnabled = isExperimentEnabled(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS);
+    } catch {
+      heartbeatExperimentEnabled = false;
+    }
+    if (!heartbeatExperimentEnabled) {
       setToast({
         id: Date.now().toString(),
         type: "error",

@@ -16,6 +16,11 @@ import type { ReviewNoteData } from "@/common/types/review";
 // Note: command helpers read from window.localStorage, so we set both globalThis.localStorage
 // and window.localStorage for test isolation.
 beforeEach(() => {
+  // Ensure `window` exists for browser-environment functions like isExperimentEnabled.
+  if (typeof globalThis.window === "undefined") {
+    (globalThis as unknown as { window: typeof globalThis }).window = globalThis;
+  }
+
   const storageData = new Map<string, string>();
   const storage = {
     getItem: (key: string) => storageData.get(key) ?? null,
