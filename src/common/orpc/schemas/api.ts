@@ -43,6 +43,7 @@ import {
   GitStatusSchema,
   ProjectRefSchema,
   WorkspaceActivitySnapshotSchema,
+  WorkspaceHeartbeatSettingsSchema,
 } from "./workspace";
 import { WorkspaceAISettingsSchema } from "./workspaceAiSettings";
 import {
@@ -956,6 +957,18 @@ export const workspace = {
   regenerateTitle: {
     input: z.object({ workspaceId: z.string() }),
     output: ResultSchema(z.object({ title: z.string() }), z.string()),
+  },
+  heartbeat: {
+    get: {
+      input: z.object({ workspaceId: z.string() }),
+      output: WorkspaceHeartbeatSettingsSchema.nullable(),
+    },
+    set: {
+      input: WorkspaceHeartbeatSettingsSchema.extend({
+        workspaceId: z.string(),
+      }),
+      output: ResultSchema(z.void(), z.string()),
+    },
   },
   updateAgentAISettings: {
     input: z.object({

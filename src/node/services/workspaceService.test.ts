@@ -2916,7 +2916,7 @@ describe("WorkspaceService maybePersistAISettingsFromOptions", () => {
       "ws",
       "exec",
       { model: "openai:gpt-4o-mini", thinkingLevel: "off" },
-      { emitMetadata: false }
+      { persistSelectedAgentId: true }
     );
   });
 });

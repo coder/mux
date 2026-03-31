@@ -111,6 +111,7 @@ import {
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { normalizeAgentId } from "@/common/utils/agentIds";
+import { HEARTBEAT_MAX_INTERVAL_MS, HEARTBEAT_MIN_INTERVAL_MS } from "@/constants/heartbeat";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type {
   StreamStartEvent,
@@ -120,7 +121,10 @@ import type {
 } from "@/common/types/stream";
 import type { TerminalService } from "@/node/services/terminalService";
 import type { DesktopSessionManager } from "@/node/services/desktop/DesktopSessionManager";
-import type { WorkspaceAISettingsSchema } from "@/common/orpc/schemas";
+import type {
+  WorkspaceAISettingsSchema,
+  WorkspaceHeartbeatSettingsSchema,
+} from "@/common/orpc/schemas";
 import type {
   ArchiveLossyUntrackedFilesConfirmation,
   ArchivePreflightResult,
@@ -176,6 +180,7 @@ const MAX_WORKSPACE_NAME_COLLISION_RETRIES = 3;
 
 // Shared type for workspace-scoped AI settings (model + thinking)
 type WorkspaceAISettings = z.infer<typeof WorkspaceAISettingsSchema>;
+type WorkspaceHeartbeatSettings = z.infer<typeof WorkspaceHeartbeatSettingsSchema>;
 type WorktreeArchiveSnapshotLifecycleService = Pick<
   WorktreeArchiveSnapshotService,
   | "preflightSnapshotForArchive"
@@ -3203,6 +3208,88 @@ export class WorkspaceService extends EventEmitter {
     return this.enrichMaybeFrontendMetadata(found);
   }
 
+  getHeartbeatSettings(workspaceId: string): WorkspaceHeartbeatSettings | null {
+    const normalizedWorkspaceId = workspaceId.trim();
+    assert(
+      normalizedWorkspaceId.length > 0,
+      "getHeartbeatSettings requires a non-empty workspaceId"
+    );
+
+    const found = this.config.findWorkspace(normalizedWorkspaceId);
+    if (!found) {
+      return null;
+    }
+
+    const config = this.config.loadConfigOrDefault();
+    const projectConfig = config.projects.get(found.projectPath);
+    const workspaceEntry =
+      projectConfig?.workspaces.find((workspace) => workspace.id === normalizedWorkspaceId) ??
+      projectConfig?.workspaces.find((workspace) => workspace.path === found.workspacePath);
+
+    return workspaceEntry?.heartbeat ? { ...workspaceEntry.heartbeat } : null;
+  }
+
+  async setHeartbeatSettings(
+    workspaceId: string,
+    settings: WorkspaceHeartbeatSettings
+  ): Promise<Result<void, string>> {
+    try {
+      const normalizedWorkspaceId = workspaceId.trim();
+      assert(
+        normalizedWorkspaceId.length > 0,
+        "setHeartbeatSettings requires a non-empty workspaceId"
+      );
+      assert(typeof settings.enabled === "boolean", "Heartbeat enabled flag must be a boolean");
+      assert(Number.isInteger(settings.intervalMs), "Heartbeat interval must be an integer");
+      assert(
+        settings.intervalMs >= HEARTBEAT_MIN_INTERVAL_MS &&
+          settings.intervalMs <= HEARTBEAT_MAX_INTERVAL_MS,
+        `Heartbeat interval must be between ${HEARTBEAT_MIN_INTERVAL_MS} and ${HEARTBEAT_MAX_INTERVAL_MS} ms`
+      );
+
+      const found = this.config.findWorkspace(normalizedWorkspaceId);
+      if (!found) {
+        return Err("Workspace not found");
+      }
+
+      const { projectPath, workspacePath } = found;
+      const config = this.config.loadConfigOrDefault();
+      const projectConfig = config.projects.get(projectPath);
+      if (!projectConfig) {
+        return Err(`Project not found: ${projectPath}`);
+      }
+
+      const workspaceEntry =
+        projectConfig.workspaces.find((workspace) => workspace.id === normalizedWorkspaceId) ??
+        projectConfig.workspaces.find((workspace) => workspace.path === workspacePath);
+      if (!workspaceEntry) {
+        return Err("Workspace not found");
+      }
+
+      const nextSettings = {
+        enabled: settings.enabled,
+        // Keep the interval on disk even when disabled so re-enabling restores the user's choice.
+        intervalMs: settings.intervalMs,
+      } satisfies WorkspaceHeartbeatSettings;
+
+      const changed =
+        workspaceEntry.heartbeat?.enabled !== nextSettings.enabled ||
+        workspaceEntry.heartbeat?.intervalMs !== nextSettings.intervalMs;
+      if (!changed) {
+        return Ok(undefined);
+      }
+
+      workspaceEntry.heartbeat = nextSettings;
+      await this.config.saveConfig(config);
+      await this.emitCurrentWorkspaceMetadata(normalizedWorkspaceId);
+
+      return Ok(undefined);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return Err(`Failed to set heartbeat settings: ${message}`);
+    }
+  }
+
   /**
    * Refresh workspace metadata from config and emit to subscribers.
    * Useful when external changes (like section assignment) modify workspace config.
@@ -4601,18 +4688,18 @@ export class WorkspaceService extends EventEmitter {
       return;
     }
 
-    const extractedSettings = this.extractWorkspaceAISettingsFromSendOptions(options);
-    if (!extractedSettings) return;
-
     const rawAgentId = options?.agentId;
     const agentId = normalizeAgentId(rawAgentId, WORKSPACE_DEFAULTS.agentId);
+    const extractedSettings = this.extractWorkspaceAISettingsFromSendOptions(options);
 
     const persistResult = await this.persistWorkspaceAISettingsForAgent(
       workspaceId,
       agentId,
       extractedSettings,
       {
-        emitMetadata: false,
+        // Normal sends/resumes also persist the selected agent so future backend heartbeat
+        // dispatches can reuse the same workspace default after reloads and reconnects.
+        persistSelectedAgentId: true,
         ...(options?.disableWorkspaceAgents === true ? { disableWorkspaceAgents: true } : {}),
       }
     );
@@ -4627,8 +4714,12 @@ export class WorkspaceService extends EventEmitter {
   private async persistWorkspaceAISettingsForAgent(
     workspaceId: string,
     agentId: string,
-    aiSettings: WorkspaceAISettings,
-    options?: { emitMetadata?: boolean; disableWorkspaceAgents?: boolean }
+    aiSettings: WorkspaceAISettings | null,
+    options?: {
+      emitMetadata?: boolean;
+      disableWorkspaceAgents?: boolean;
+      persistSelectedAgentId?: boolean;
+    }
   ): Promise<Result<boolean, string>> {
     const found = this.config.findWorkspace(workspaceId);
     if (!found) {
@@ -4660,16 +4751,26 @@ export class WorkspaceService extends EventEmitter {
     // settings can fade out naturally instead of being mixed into Auto.
 
     const prev = workspaceEntryWithFallback.aiSettingsByAgent?.[normalizedAgentId];
-    const changed =
-      prev?.model !== aiSettings.model || prev?.thinkingLevel !== aiSettings.thinkingLevel;
-    if (!changed) {
+    const aiSettingsChanged =
+      aiSettings != null &&
+      (prev?.model !== aiSettings.model || prev?.thinkingLevel !== aiSettings.thinkingLevel);
+    const selectedAgentChanged =
+      options?.persistSelectedAgentId === true &&
+      workspaceEntryWithFallback.agentId !== normalizedAgentId;
+    if (!aiSettingsChanged && !selectedAgentChanged) {
       return Ok(false);
     }
 
-    workspaceEntryWithFallback.aiSettingsByAgent = {
-      ...(workspaceEntryWithFallback.aiSettingsByAgent ?? {}),
-      [normalizedAgentId]: aiSettings,
-    };
+    if (aiSettings != null) {
+      workspaceEntryWithFallback.aiSettingsByAgent = {
+        ...(workspaceEntryWithFallback.aiSettingsByAgent ?? {}),
+        [normalizedAgentId]: aiSettings,
+      };
+    }
+
+    if (options?.persistSelectedAgentId === true) {
+      workspaceEntryWithFallback.agentId = normalizedAgentId;
+    }
 
     await this.config.saveConfig(config);
 
