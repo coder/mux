@@ -147,6 +147,46 @@ describe("ProviderModelFactory GitHub Copilot", () => {
     });
   });
 
+  it("allows Copilot model creation when the stored model list is malformed", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        "github-copilot": {
+          apiKey: "copilot-token",
+          models: "not-an-array",
+        },
+      } as unknown as Parameters<Config["saveProvidersConfig"]>[0]);
+
+      const result = await factory.createModel("github-copilot:gpt-5.4");
+
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        return;
+      }
+
+      expect(result.data.constructor.name).toBe("OpenAIResponsesLanguageModel");
+    });
+  });
+
+  it("allows Copilot model creation when the stored model list contains malformed entries", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        "github-copilot": {
+          apiKey: "copilot-token",
+          models: ["   ", null],
+        },
+      } as unknown as Parameters<Config["saveProvidersConfig"]>[0]);
+
+      const result = await factory.createModel("github-copilot:gpt-5.4");
+
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        return;
+      }
+
+      expect(result.data.constructor.name).toBe("OpenAIResponsesLanguageModel");
+    });
+  });
+
   it("allows Copilot model creation when no stored model list exists yet", async () => {
     await withTempConfig(async (config, factory) => {
       config.saveProvidersConfig({

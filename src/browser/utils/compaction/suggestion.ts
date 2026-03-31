@@ -10,7 +10,10 @@ import { isModelAvailable } from "@/common/routing";
 import type { EffectivePolicy, ProvidersConfigMap } from "@/common/orpc/types";
 import { normalizeToCanonical } from "@/common/utils/ai/models";
 import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
-import { isGatewayModelAccessibleFromAuthoritativeCatalog } from "@/common/utils/providers/gatewayModelCatalog";
+import {
+  isGatewayModelAccessibleFromAuthoritativeCatalog,
+  isProviderModelAccessibleFromAuthoritativeCatalog,
+} from "@/common/utils/providers/gatewayModelCatalog";
 import { getModelStats } from "@/common/utils/tokens/modelStats";
 
 export interface CompactionSuggestion {
@@ -47,6 +50,26 @@ function buildIsGatewayModelAccessible(
     );
 }
 
+function buildIsAuthoritativeProviderModelAccessible(
+  providersConfig: ProvidersConfigMap | null
+): (modelString: string) => boolean {
+  return (modelString: string) => {
+    const normalized = normalizeToCanonical(modelString);
+    const colonIndex = normalized.indexOf(":");
+    if (colonIndex <= 0 || colonIndex >= normalized.length - 1) {
+      return true;
+    }
+
+    const provider = normalized.slice(0, colonIndex);
+    const providerModelId = normalized.slice(colonIndex + 1);
+    return isProviderModelAccessibleFromAuthoritativeCatalog(
+      provider,
+      providerModelId,
+      providersConfig?.[provider]?.models
+    );
+  };
+}
+
 export interface CompactionRouteOptions {
   routePriority: string[];
   routeOverrides: Record<string, string>;
@@ -70,6 +93,13 @@ export function getExplicitCompactionSuggestion(
   const normalized = normalizeToCanonical(modelId);
   const isConfigured = buildIsConfigured(options.providersConfig);
   const isGatewayModelAccessible = buildIsGatewayModelAccessible(options.providersConfig);
+  const isAuthoritativeProviderModelAccessible = buildIsAuthoritativeProviderModelAccessible(
+    options.providersConfig
+  );
+  if (!isAuthoritativeProviderModelAccessible(normalized)) {
+    return null;
+  }
+
   if (
     !isModelAvailable(
       normalized,

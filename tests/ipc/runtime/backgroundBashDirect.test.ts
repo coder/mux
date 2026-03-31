@@ -160,40 +160,46 @@ describe("Background Bash Direct Integration", () => {
     const testId = `incrread_${Date.now()}`;
     const marker1 = `INCR_1_${testId}`;
     const marker2 = `INCR_2_${testId}`;
-
-    // Git Bash process startup + file flushing can be slower on Windows CI.
-    // Give ourselves a wide gap between marker1 and marker2 to avoid races.
-    const markerDelaySecs = process.platform === "win32" ? 3 : 1;
+    const triggerFileName = `trigger-${testId}`;
+    const triggerFilePath = path.join(workspacePath, triggerFileName);
 
     const spawnResult = await manager.spawn(
       runtime,
       workspaceId,
-      `echo "${marker1}"; sleep ${markerDelaySecs}; echo "${marker2}"`,
+      `echo "${marker1}"; while [ ! -f "${triggerFileName}" ]; do sleep 0.05; done; echo "${marker2}"`,
       { cwd: workspacePath, displayName: testId }
     );
     expect(spawnResult.success).toBe(true);
     if (!spawnResult.success) return;
 
-    // First read: block until we see output (marker1)
-    const output1 = await manager.getOutput(spawnResult.processId, undefined, undefined, 5);
-    expect(output1.success).toBe(true);
-    if (output1.success) {
-      expect(output1.output).toContain(marker1);
-    }
+    try {
+      // First read: block until we see output (marker1)
+      const output1 = await manager.getOutput(spawnResult.processId, undefined, undefined, 5);
+      expect(output1.success).toBe(true);
+      if (output1.success) {
+        expect(output1.output).toContain(marker1);
+        expect(output1.output).not.toContain(marker2);
+      }
 
-    // Second read: should be empty (marker2 shouldn't be available yet)
-    const output2 = await manager.getOutput(spawnResult.processId);
-    expect(output2.success).toBe(true);
-    if (output2.success) {
-      expect(output2.output).toBe("");
-    }
+      // Second read: should be empty because marker2 is still blocked on the trigger file.
+      const output2 = await manager.getOutput(spawnResult.processId);
+      expect(output2.success).toBe(true);
+      if (output2.success) {
+        expect(output2.output).toBe("");
+      }
 
-    // Third read: block until marker2 arrives
-    const output3 = await manager.getOutput(spawnResult.processId, undefined, undefined, 10);
-    expect(output3.success).toBe(true);
-    if (output3.success) {
-      expect(output3.output).toContain(marker2);
-      expect(output3.output).not.toContain(marker1);
+      // Unblock the process so it can emit marker2.
+      await fs.writeFile(triggerFilePath, "go", "utf-8");
+
+      // Third read: block until marker2 arrives.
+      const output3 = await manager.getOutput(spawnResult.processId, undefined, undefined, 10);
+      expect(output3.success).toBe(true);
+      if (output3.success) {
+        expect(output3.output).toContain(marker2);
+        expect(output3.output).not.toContain(marker1);
+      }
+    } finally {
+      await fs.rm(triggerFilePath, { force: true }).catch(() => {});
     }
   });
 

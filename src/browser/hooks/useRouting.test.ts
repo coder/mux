@@ -12,6 +12,10 @@ import { useRouting } from "./useRouting";
 let providersConfig: ProvidersConfigMap | null = null;
 let routePriority: string[] = ["direct"];
 let routeOverrides: Record<string, string> = {};
+let configGetConfig: () => Promise<{
+  routePriority: string[];
+  routeOverrides: Record<string, string>;
+}>;
 
 async function* emptyStream() {
   await Promise.resolve();
@@ -27,7 +31,7 @@ function createStubApiClient(): APIClient {
       onConfigChanged: () => Promise.resolve(emptyStream()),
     },
     config: {
-      getConfig: () => Promise.resolve({ routePriority, routeOverrides }),
+      getConfig: () => configGetConfig(),
       onConfigChanged: () => Promise.resolve(emptyStream()),
       updateRoutePreferences: () => Promise.resolve(undefined),
     },
@@ -45,20 +49,20 @@ const wrapper: React.FC<{ children: React.ReactNode }> = (props) =>
 
 describe("useRouting", () => {
   beforeEach(() => {
-    globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
+    globalThis.window = new GlobalWindow({ url: "https://mux.example.com/" }) as unknown as Window &
+      typeof globalThis;
     globalThis.document = globalThis.window.document;
     providersConfig = null;
     routePriority = ["direct"];
     routeOverrides = {};
+    configGetConfig = () => Promise.resolve({ routePriority, routeOverrides });
   });
 
   afterEach(() => {
     cleanup();
-    globalThis.window = undefined as unknown as Window & typeof globalThis;
-    globalThis.document = undefined as unknown as Document;
   });
 
-  test("resolveRoute and resolveAutoRoute honor gateway model accessibility", async () => {
+  test("resolveRoute and availableRoutes honor gateway model accessibility", async () => {
     providersConfig = {
       openai: { apiKeySet: true, isEnabled: true, isConfigured: true },
       "github-copilot": {
@@ -71,22 +75,15 @@ describe("useRouting", () => {
 
     const { result } = renderHook(() => useRouting(), { wrapper });
 
-    await waitFor(() =>
+    await waitFor(() => {
       expect(
         result.current
           .availableRoutes(KNOWN_MODELS.GPT.id)
           .some((route) => route.route === "github-copilot")
-      ).toBe(true)
-    );
-
-    result.current.setRoutePreferences(["github-copilot", "direct"], {});
+      ).toBe(false);
+    });
 
     expect(result.current.resolveRoute(KNOWN_MODELS.GPT.id)).toEqual({
-      route: "direct",
-      isAuto: true,
-      displayName: "Direct",
-    });
-    expect(result.current.resolveAutoRoute(KNOWN_MODELS.GPT.id)).toEqual({
       route: "direct",
       isAuto: true,
       displayName: "Direct",

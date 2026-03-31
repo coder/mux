@@ -23,7 +23,7 @@ import type { ExternalSecretResolver } from "@/common/types/secrets";
 import { isOpReference } from "@/common/utils/opRef";
 import { isProviderDisabledInConfig } from "@/common/utils/providers/isProviderDisabled";
 import { isGatewayModelAccessibleFromAuthoritativeCatalog } from "@/common/utils/providers/gatewayModelCatalog";
-import { getProviderModelEntryId } from "@/common/utils/providers/modelEntries";
+import { maybeGetProviderModelEntryId } from "@/common/utils/providers/modelEntries";
 import {
   isCopilotModelAccessible,
   selectCopilotApiMode,
@@ -549,7 +549,15 @@ function extractTextContent(content: unknown): string {
 }
 
 function getConfiguredProviderModelIds(providerConfig: ProviderConfig | undefined): string[] {
-  return providerConfig?.models?.map((entry) => getProviderModelEntryId(entry)) ?? [];
+  const models = providerConfig?.models;
+  if (!Array.isArray(models)) {
+    return [];
+  }
+
+  return models.flatMap((entry) => {
+    const modelId = maybeGetProviderModelEntryId(entry);
+    return modelId == null ? [] : [modelId];
+  });
 }
 
 function createGatewayModelAccessibilityChecker(providersConfig: ProvidersConfig) {

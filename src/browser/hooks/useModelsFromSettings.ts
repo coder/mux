@@ -21,7 +21,10 @@ import { isModelAvailable } from "@/common/routing";
 import type { ProviderModelEntry, ProvidersConfigMap } from "@/common/orpc/types";
 import { DEFAULT_MODEL_KEY, HIDDEN_MODELS_KEY } from "@/common/constants/storage";
 
-import { isGatewayModelAccessibleFromAuthoritativeCatalog } from "@/common/utils/providers/gatewayModelCatalog";
+import {
+  isGatewayModelAccessibleFromAuthoritativeCatalog,
+  isProviderModelAccessibleFromAuthoritativeCatalog,
+} from "@/common/utils/providers/gatewayModelCatalog";
 import { getProviderModelEntryId } from "@/common/utils/providers/modelEntries";
 
 const BUILT_IN_MODELS: string[] = Object.values(KNOWN_MODELS).map((m) => m.id);
@@ -162,10 +165,30 @@ export function useModelsFromSettings() {
     [config]
   );
 
+  const isAuthoritativeProviderModelAccessible = useCallback(
+    (modelString: string) => {
+      const colonIndex = modelString.indexOf(":");
+      if (colonIndex <= 0 || colonIndex >= modelString.length - 1) {
+        return true;
+      }
+
+      const provider = modelString.slice(0, colonIndex);
+      const providerModelId = modelString.slice(colonIndex + 1);
+      return isProviderModelAccessibleFromAuthoritativeCatalog(
+        provider,
+        providerModelId,
+        config?.[provider]?.models
+      );
+    },
+    [config]
+  );
+
   const customModels = useMemo(() => {
-    const next = filterHiddenModels(getCustomModels(config), hiddenModels);
+    const next = filterHiddenModels(getCustomModels(config), hiddenModels).filter(
+      isAuthoritativeProviderModelAccessible
+    );
     return effectivePolicy ? next.filter((m) => isModelAllowedByPolicy(effectivePolicy, m)) : next;
-  }, [config, hiddenModels, effectivePolicy]);
+  }, [config, hiddenModels, effectivePolicy, isAuthoritativeProviderModelAccessible]);
 
   const openaiApiKeySet = config === null ? null : config.openai?.apiKeySet === true;
   const codexOauthSet = config === null ? null : config.openai?.codexOauthSet === true;
@@ -184,6 +207,10 @@ export function useModelsFromSettings() {
     const next = allModels.filter((modelId) => {
       if (userHiddenSet.has(modelId)) {
         return false;
+      }
+
+      if (!isAuthoritativeProviderModelAccessible(modelId)) {
+        return true;
       }
 
       if (
@@ -221,6 +248,7 @@ export function useModelsFromSettings() {
     effectivePolicy,
     isConfigured,
     isGatewayModelAccessible,
+    isAuthoritativeProviderModelAccessible,
     routePriority,
     routeOverrides,
     openaiApiKeySet,
@@ -240,14 +268,16 @@ export function useModelsFromSettings() {
     const providerFiltered =
       config == null
         ? suggested
-        : suggested.filter((modelId) =>
-            isModelAvailable(
-              modelId,
-              routePriority,
-              routeOverrides,
-              isConfigured,
-              isGatewayModelAccessible
-            )
+        : suggested.filter(
+            (modelId) =>
+              isAuthoritativeProviderModelAccessible(modelId) &&
+              isModelAvailable(
+                modelId,
+                routePriority,
+                routeOverrides,
+                isConfigured,
+                isGatewayModelAccessible
+              )
           );
 
     if (config == null) {
@@ -286,6 +316,7 @@ export function useModelsFromSettings() {
     effectivePolicy,
     isConfigured,
     isGatewayModelAccessible,
+    isAuthoritativeProviderModelAccessible,
     routePriority,
     routeOverrides,
     openaiApiKeySet,

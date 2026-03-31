@@ -6,6 +6,7 @@ const MODEL = "anthropic:claude-opus-4-6";
 const OPENAI_MODEL = "openai:gpt-5.4";
 
 const EXPLICIT_GATEWAY_MODEL = "openrouter:openai/gpt-5";
+const EXPLICIT_COPILOT_MODEL = "github-copilot:gpt-5.4";
 
 function createIsConfigured(configuredProviders: string[]): (provider: string) => boolean {
   const configuredSet = new Set(configuredProviders);
@@ -151,6 +152,19 @@ describe("resolveRoute", () => {
       ["openrouter", "mux-gateway", "direct"],
       {},
       () => false
+    );
+
+    expect(resolved.routeProvider).toBe("openai");
+    expect(resolved.routeModelId).toBe("gpt-5");
+  });
+
+  test("falls back from explicit gateway input when the explicit route rejects the model", () => {
+    const resolved = resolveRoute(
+      EXPLICIT_GATEWAY_MODEL,
+      ["direct"],
+      {},
+      createIsConfigured(["openrouter", "openai"]),
+      createIsGatewayModelAccessible([["openrouter", "openai/gpt-5"]])
     );
 
     expect(resolved.routeProvider).toBe("openai");
@@ -334,6 +348,17 @@ describe("isModelAvailable", () => {
     ).toBe(true);
   });
 
+  test("returns false for explicit gateway models when the configured gateway rejects the model", () => {
+    expect(
+      isModelAvailableForRoutes({
+        modelId: EXPLICIT_COPILOT_MODEL,
+        configuredProviders: ["github-copilot"],
+        routePriority: ["direct"],
+        isGatewayModelAccessible: createIsGatewayModelAccessible([["github-copilot", "gpt-5.4"]]),
+      })
+    ).toBe(false);
+  });
+
   test("returns true when gateway route is configured", () => {
     expect(
       isModelAvailableForRoutes({
@@ -501,6 +526,16 @@ describe("availableRoutes", () => {
         isConfigured: false,
       },
     ]);
+  });
+
+  test("excludes direct routes for explicit gateway models that the catalog rejects", () => {
+    const routes = availableRoutes(
+      EXPLICIT_COPILOT_MODEL,
+      createIsConfigured(["github-copilot"]),
+      createIsGatewayModelAccessible([["github-copilot", "gpt-5.4"]])
+    );
+
+    expect(routes).toEqual([]);
   });
 
   test("excludes gateway routes that cannot access the model", () => {

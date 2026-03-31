@@ -117,17 +117,42 @@ function gatewayRouteContext(
 function getConfiguredDirectRouteContext(
   modelInput: string,
   parsed: ReturnType<typeof parseRoutingInput>,
-  isConfigured: (provider: string) => boolean
+  isConfigured: (provider: string) => boolean,
+  isGatewayModelAccessible?: GatewayModelAccessibility
 ): RouteContext | null {
-  return isConfigured(parsed.origin) ? directRouteContext(modelInput, parsed) : null;
+  if (!isConfigured(parsed.origin)) {
+    return null;
+  }
+
+  if (
+    getProviderDefinition(parsed.origin)?.kind === "gateway" &&
+    isGatewayModelAccessible &&
+    !isGatewayModelAccessible(parsed.origin, parsed.originModelId)
+  ) {
+    return null;
+  }
+
+  return directRouteContext(modelInput, parsed);
 }
 
 function getConfiguredExplicitGatewayRouteContext(
   modelInput: string,
   parsed: ReturnType<typeof parseRoutingInput>,
-  isConfigured: (provider: string) => boolean
+  isConfigured: (provider: string) => boolean,
+  isGatewayModelAccessible?: GatewayModelAccessibility
 ): RouteContext | null {
-  if (parsed.explicitGateway == null || !isConfigured(parsed.explicitGateway)) {
+  if (parsed.explicitGateway == null || parsed.explicitGatewayModelId == null) {
+    return null;
+  }
+
+  if (!isConfigured(parsed.explicitGateway)) {
+    return null;
+  }
+
+  if (
+    isGatewayModelAccessible &&
+    !isGatewayModelAccessible(parsed.explicitGateway, parsed.explicitGatewayModelId)
+  ) {
     return null;
   }
 
@@ -174,7 +199,12 @@ function findActiveRouteContext(
   // to canonical override/priority routing so the underlying model
   // stays reachable via other configured routes.
   if (parsed.explicitGateway != null) {
-    const explicit = getConfiguredExplicitGatewayRouteContext(modelInput, parsed, isConfigured);
+    const explicit = getConfiguredExplicitGatewayRouteContext(
+      modelInput,
+      parsed,
+      isConfigured,
+      isGatewayModelAccessible
+    );
     if (explicit) {
       return explicit;
     }
@@ -187,7 +217,12 @@ function findActiveRouteContext(
   const canonicalKey = getCanonicalRouteKey(parsed);
   const override = routeOverrides[canonicalKey];
   if (override === "direct" || override === parsed.origin) {
-    const direct = getConfiguredDirectRouteContext(modelInput, parsed, isConfigured);
+    const direct = getConfiguredDirectRouteContext(
+      modelInput,
+      parsed,
+      isConfigured,
+      isGatewayModelAccessible
+    );
     if (direct) {
       return direct;
     }
@@ -211,7 +246,12 @@ function findActiveRouteContext(
   // 2. Walk routePriority
   for (const route of routePriority) {
     if (route === "direct") {
-      const direct = getConfiguredDirectRouteContext(modelInput, parsed, isConfigured);
+      const direct = getConfiguredDirectRouteContext(
+        modelInput,
+        parsed,
+        isConfigured,
+        isGatewayModelAccessible
+      );
       if (direct) {
         return direct;
       }
@@ -310,7 +350,11 @@ export function availableRoutes(
 
   // Add direct route
   const originDefinition = getProviderDefinition(parsed.origin);
-  if (originDefinition) {
+  const directIsAccessible =
+    originDefinition?.kind !== "gateway" ||
+    !isGatewayModelAccessible ||
+    isGatewayModelAccessible(parsed.origin, parsed.originModelId);
+  if (originDefinition && directIsAccessible) {
     routes.push({
       route: "direct",
       displayName: `Direct (${originDefinition.displayName})`,

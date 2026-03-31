@@ -6,8 +6,28 @@ interface ParsedProviderModelId {
   modelId: string;
 }
 
+export function maybeGetProviderModelEntryId(entry: unknown): string | null {
+  if (typeof entry === "string") {
+    return parseModelId(entry);
+  }
+
+  if (
+    typeof entry === "object" &&
+    entry !== null &&
+    typeof (entry as { id?: unknown }).id === "string"
+  ) {
+    return parseModelId((entry as { id: string }).id);
+  }
+
+  return null;
+}
+
 export function getProviderModelEntryId(entry: ProviderModelEntry): string {
-  return typeof entry === "string" ? entry : entry.id;
+  const modelId = maybeGetProviderModelEntryId(entry);
+  if (modelId == null) {
+    throw new Error("Invalid ProviderModelEntry");
+  }
+  return modelId;
 }
 
 export function getProviderModelEntryContextWindowTokens(entry: ProviderModelEntry): number | null {
