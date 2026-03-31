@@ -227,6 +227,8 @@ function installProjectSidebarTestDoubles() {
       ({
         selectedWorkspace: null,
         setSelectedWorkspace: () => undefined,
+        preflightArchiveWorkspace: () =>
+          Promise.resolve({ success: true, data: { kind: "ready" as const } }),
         archiveWorkspace: archiveWorkspaceActionMock,
         removeWorkspace: () => Promise.resolve({ success: true }),
         updateWorkspaceTitle: () => Promise.resolve({ success: true }),
@@ -879,7 +881,8 @@ describe("ProjectSidebar archive errors", () => {
     });
 
     expect(archiveWorkspaceActionMock).toHaveBeenCalledTimes(1);
-    expect(archiveWorkspaceActionMock).toHaveBeenCalledWith(workspace.id);
+    // No untracked files acknowledged (preflight returned "ready"), so options is undefined.
+    expect(archiveWorkspaceActionMock).toHaveBeenCalledWith(workspace.id, undefined);
 
     await waitFor(() => {
       expect(archivePopoverShowErrorMock).toHaveBeenCalledTimes(1);

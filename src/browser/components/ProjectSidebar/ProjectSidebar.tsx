@@ -59,6 +59,10 @@ import {
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 import { SidebarCollapseButton } from "../SidebarCollapseButton/SidebarCollapseButton";
 import { ConfirmationModal } from "../ConfirmationModal/ConfirmationModal";
+import {
+  buildArchiveConfirmDescription,
+  buildArchiveConfirmWarning,
+} from "@/browser/utils/archiveConfirmation";
 import { ProjectDeleteConfirmationModal } from "../ProjectDeleteConfirmationModal/ProjectDeleteConfirmationModal";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 
@@ -495,6 +499,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const {
     selectedWorkspace,
     setSelectedWorkspace: onSelectWorkspace,
+    preflightArchiveWorkspace,
     archiveWorkspace: onArchiveWorkspace,
     removeWorkspace,
     updateWorkspaceTitle: onUpdateTitle,
@@ -724,6 +729,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     workspaceId: string;
     displayTitle: string;
     buttonElement?: HTMLElement;
+    /** When set, the confirmation warns about permanent deletion of untracked files. */
+    untrackedPaths?: string[];
+    /** Whether the workspace has an active stream that will be interrupted. */
+    isStreaming?: boolean;
   } | null>(null);
   const [deleteConfirmation, setDeleteConfirmation] = useState<{
     projectPath: string;
@@ -845,12 +854,19 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   );
 
   const performArchiveWorkspace = useCallback(
-    async (workspaceId: string, _buttonElement?: HTMLElement) => {
+    async (
+      workspaceId: string,
+      _buttonElement?: HTMLElement,
+      acknowledgedUntrackedPaths?: string[]
+    ) => {
       // Mark workspace as being archived for UI feedback
       setArchivingWorkspaceIds((prev) => new Set(prev).add(workspaceId));
 
       try {
-        const result = await onArchiveWorkspace(workspaceId);
+        const result = await onArchiveWorkspace(
+          workspaceId,
+          acknowledgedUntrackedPaths ? { acknowledgedUntrackedPaths } : undefined
+        );
         if (!result.success) {
           const error = result.error ?? "Failed to archive chat";
           // Archive failures can be long-lived workflow errors (for example, untracked-file safety
@@ -885,18 +901,44 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
   const handleArchiveWorkspace = useCallback(
     async (workspaceId: string, buttonElement?: HTMLElement) => {
-      if (hasActiveStream(workspaceId)) {
-        // Read metadata imperatively (no subscription) to build the display title.
-        const metadata = workspaceStore.getWorkspaceMetadata(workspaceId);
-        const displayTitle = metadata?.title ?? metadata?.name ?? workspaceId;
-        // Confirm before archiving if a stream is active so users don't interrupt in-progress work.
-        setArchiveConfirmation({ workspaceId, displayTitle, buttonElement });
+      const metadata = workspaceStore.getWorkspaceMetadata(workspaceId);
+      const displayTitle = metadata?.title ?? metadata?.name ?? workspaceId;
+      const isStreaming = hasActiveStream(workspaceId);
+
+      // Run preflight to check for untracked files that can't be preserved.
+      const preflight = await preflightArchiveWorkspace(workspaceId);
+      if (!preflight.success) {
+        workspaceArchiveError.showError(
+          workspaceId,
+          preflight.error ?? "Failed to check archive readiness"
+        );
+        return;
+      }
+
+      const untrackedPaths =
+        preflight.data?.kind === "confirm-lossy-untracked-files" ? preflight.data.paths : undefined;
+
+      if (isStreaming || untrackedPaths) {
+        // Show a single combined confirmation dialog for streaming + untracked-file warnings.
+        setArchiveConfirmation({
+          workspaceId,
+          displayTitle,
+          buttonElement,
+          untrackedPaths,
+          isStreaming,
+        });
         return;
       }
 
       await performArchiveWorkspace(workspaceId, buttonElement);
     },
-    [hasActiveStream, performArchiveWorkspace, workspaceStore]
+    [
+      hasActiveStream,
+      performArchiveWorkspace,
+      preflightArchiveWorkspace,
+      workspaceArchiveError,
+      workspaceStore,
+    ]
   );
 
   const handleArchiveWorkspaceConfirm = useCallback(async () => {
@@ -907,7 +949,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     try {
       await performArchiveWorkspace(
         archiveConfirmation.workspaceId,
-        archiveConfirmation.buttonElement
+        archiveConfirmation.buttonElement,
+        archiveConfirmation.untrackedPaths
       );
     } finally {
       setArchiveConfirmation(null);
@@ -2465,13 +2508,24 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
           <ConfirmationModal
             isOpen={archiveConfirmation !== null}
             title={
-              archiveConfirmation
-                ? `Archive "${archiveConfirmation.displayTitle}" while streaming?`
-                : "Archive chat?"
+              archiveConfirmation?.untrackedPaths
+                ? "Archive workspace with untracked files?"
+                : archiveConfirmation
+                  ? `Archive "${archiveConfirmation.displayTitle}" while streaming?`
+                  : "Archive chat?"
             }
-            description="This workspace is currently streaming a response."
-            warning="Archiving will interrupt the active stream."
-            confirmLabel="Archive"
+            description={buildArchiveConfirmDescription(
+              archiveConfirmation?.isStreaming ?? false,
+              archiveConfirmation?.untrackedPaths
+            )}
+            warning={buildArchiveConfirmWarning(
+              archiveConfirmation?.isStreaming ?? false,
+              archiveConfirmation?.untrackedPaths
+            )}
+            confirmLabel={
+              archiveConfirmation?.untrackedPaths ? "Archive and delete files" : "Archive"
+            }
+            confirmVariant="destructive"
             onConfirm={handleArchiveWorkspaceConfirm}
             onCancel={handleArchiveWorkspaceCancel}
           />

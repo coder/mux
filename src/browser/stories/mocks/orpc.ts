@@ -1425,6 +1425,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           workspaces.filter((w) => !isWorkspaceArchived(w.archivedAt, w.unarchivedAt))
         );
       },
+      preflightArchive: () => Promise.resolve({ success: true, data: { kind: "ready" as const } }),
       archive: () => Promise.resolve({ success: true }),
       unarchive: () => Promise.resolve({ success: true }),
       create: (input: { projectPath: string; branchName: string }) => {
