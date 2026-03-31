@@ -565,8 +565,15 @@ export function getCommandGhostHint(
     return null;
   }
 
-  if (commandKey === "heartbeat" && !isExperimentEnabled(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS)) {
-    return null;
+  if (commandKey === "heartbeat") {
+    try {
+      if (!isExperimentEnabled(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS)) {
+        return null;
+      }
+    } catch {
+      // Experiment check unavailable (e.g., test environment) — hide by default.
+      return null;
+    }
   }
 
   return SLASH_COMMAND_DEFINITION_MAP.get(commandKey)?.inputHint ?? null;

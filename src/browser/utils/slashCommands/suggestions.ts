@@ -62,11 +62,15 @@ function buildTopLevelSuggestions(
       };
     },
     (definition) => {
-      if (
-        definition.key === "heartbeat" &&
-        !isExperimentEnabled(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS)
-      ) {
-        return false;
+      if (definition.key === "heartbeat") {
+        try {
+          if (!isExperimentEnabled(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS)) {
+            return false;
+          }
+        } catch {
+          // Experiment check unavailable (e.g., test environment) — hide by default.
+          return false;
+        }
       }
 
       if (isCreation && WORKSPACE_ONLY_COMMAND_KEYS.has(definition.key)) {
