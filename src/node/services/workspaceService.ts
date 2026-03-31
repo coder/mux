@@ -111,7 +111,11 @@ import {
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { normalizeAgentId } from "@/common/utils/agentIds";
-import { HEARTBEAT_MAX_INTERVAL_MS, HEARTBEAT_MIN_INTERVAL_MS } from "@/constants/heartbeat";
+import {
+  HEARTBEAT_DEFAULT_INTERVAL_MS,
+  HEARTBEAT_MAX_INTERVAL_MS,
+  HEARTBEAT_MIN_INTERVAL_MS,
+} from "@/constants/heartbeat";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type {
   StreamStartEvent,
@@ -6959,5 +6963,185 @@ export class WorkspaceService extends EventEmitter {
       // Compaction should not mutate persisted workspace AI defaults.
       skipAiSettingsPersistence: true,
     };
+  }
+
+  /**
+   * Execute a synthetic heartbeat turn for an idle workspace.
+   *
+   * This path is frontend-independent: heartbeats still run even if no UI is open.
+   * Throws on failure so HeartbeatService can log and continue with the next workspace.
+   */
+  async executeHeartbeat(workspaceId: string): Promise<void> {
+    assert(workspaceId.trim().length > 0, "executeHeartbeat requires a non-empty workspaceId");
+
+    const sendOptions = await this.buildHeartbeatSendOptions(workspaceId);
+
+    const activity = await this.extensionMetadata.getSnapshot(workspaceId);
+    const idleMs =
+      typeof activity?.recency === "number"
+        ? Math.max(0, Date.now() - activity.recency)
+        : HEARTBEAT_DEFAULT_INTERVAL_MS;
+    const idleDuration = this.formatIdleDuration(idleMs);
+    const heartbeatPrompt = `[Heartbeat] This workspace has been idle for approximately ${idleDuration}. Check in on the current state of this workspace — review any pending work, check for stale context, and determine if any action is needed. If everything looks good, briefly confirm the workspace status.`;
+
+    const muxMetadata = {
+      type: "heartbeat-request" as const,
+      source: "heartbeat" as const,
+      displayStatus: { emoji: "💓", message: "Heartbeat check..." },
+    };
+
+    const session = this.getOrCreateSession(workspaceId);
+    if (session.isBusy()) {
+      throw new Error(
+        "Failed to execute heartbeat: Workspace is busy; idle-only send was skipped."
+      );
+    }
+
+    const sendResult = await this.sendMessage(
+      workspaceId,
+      heartbeatPrompt,
+      {
+        ...sendOptions,
+        muxMetadata,
+      },
+      {
+        // Heartbeats run in background; avoid mutating auto-resume counters.
+        skipAutoResumeReset: true,
+        // Backend-initiated maintenance turn: do not treat as explicit user re-engagement.
+        synthetic: true,
+        // If the workspace became active after eligibility checks, skip instead of queueing
+        // stale maintenance work for later.
+        requireIdle: true,
+      }
+    );
+
+    if (!sendResult.success) {
+      const rawError = sendResult.error;
+      const formattedError =
+        typeof rawError === "object" && rawError !== null
+          ? "raw" in rawError && typeof rawError.raw === "string"
+            ? rawError.raw
+            : "message" in rawError && typeof rawError.message === "string"
+              ? rawError.message
+              : "type" in rawError && typeof rawError.type === "string"
+                ? rawError.type
+                : JSON.stringify(rawError)
+          : String(rawError);
+      throw new Error(`Failed to execute heartbeat: ${formattedError}`);
+    }
+  }
+
+  private async buildHeartbeatSendOptions(workspaceId: string): Promise<SendMessageOptions> {
+    const config = this.config.loadConfigOrDefault();
+    const workspaceMatch = this.config.findWorkspace(workspaceId);
+
+    const workspaceEntry = workspaceMatch
+      ? (() => {
+          const project = config.projects.get(workspaceMatch.projectPath);
+          return (
+            project?.workspaces.find((workspace) => workspace.id === workspaceId) ??
+            project?.workspaces.find((workspace) => workspace.path === workspaceMatch.workspacePath)
+          );
+        })()
+      : undefined;
+
+    const activity = await this.extensionMetadata.getSnapshot(workspaceId);
+
+    const rawAgentId = workspaceEntry?.agentId;
+    const agentId = normalizeAgentId(rawAgentId, WORKSPACE_DEFAULTS.agentId);
+    const agentSettings =
+      workspaceEntry?.aiSettingsByAgent?.[agentId] ?? workspaceEntry?.aiSettings;
+    const execAgentSettings =
+      agentId !== WORKSPACE_DEFAULTS.agentId
+        ? (workspaceEntry?.aiSettingsByAgent?.[WORKSPACE_DEFAULTS.agentId] ??
+          workspaceEntry?.aiSettings)
+        : undefined;
+
+    const globalAgentDefaults = config.agentAiDefaults?.[agentId];
+    const globalAgentDefaultModel = globalAgentDefaults?.modelString;
+    const normalizedGlobalAgentDefaultModel =
+      typeof globalAgentDefaultModel === "string"
+        ? normalizeToCanonical(globalAgentDefaultModel.trim())
+        : undefined;
+    const validGlobalAgentDefaultModel =
+      normalizedGlobalAgentDefaultModel && isValidModelFormat(normalizedGlobalAgentDefaultModel)
+        ? normalizedGlobalAgentDefaultModel
+        : undefined;
+
+    const globalExecDefaults =
+      agentId !== WORKSPACE_DEFAULTS.agentId
+        ? config.agentAiDefaults?.[WORKSPACE_DEFAULTS.agentId]
+        : undefined;
+    const globalExecDefaultModel = globalExecDefaults?.modelString;
+    const normalizedGlobalExecDefaultModel =
+      typeof globalExecDefaultModel === "string"
+        ? normalizeToCanonical(globalExecDefaultModel.trim())
+        : undefined;
+    const validGlobalExecDefaultModel =
+      normalizedGlobalExecDefaultModel && isValidModelFormat(normalizedGlobalExecDefaultModel)
+        ? normalizedGlobalExecDefaultModel
+        : undefined;
+
+    const fallbackModel =
+      agentSettings?.model ??
+      validGlobalAgentDefaultModel ??
+      execAgentSettings?.model ??
+      validGlobalExecDefaultModel ??
+      activity?.lastModel ??
+      WORKSPACE_DEFAULTS.model;
+
+    let model = normalizeToCanonical(fallbackModel);
+    if (!isValidModelFormat(model)) {
+      log.warn("Heartbeat resolved invalid model; falling back to workspace default", {
+        workspaceId,
+        agentId,
+        model,
+      });
+      model = WORKSPACE_DEFAULTS.model;
+    }
+
+    const globalAgentDefaultThinking = globalAgentDefaults?.thinkingLevel;
+    const globalExecDefaultThinking = globalExecDefaults?.thinkingLevel;
+
+    const requestedThinking =
+      agentSettings?.thinkingLevel ??
+      globalAgentDefaultThinking ??
+      execAgentSettings?.thinkingLevel ??
+      globalExecDefaultThinking ??
+      activity?.lastThinkingLevel ??
+      WORKSPACE_DEFAULTS.thinkingLevel;
+
+    const normalizedThinkingLevel =
+      coerceThinkingLevel(requestedThinking) ?? WORKSPACE_DEFAULTS.thinkingLevel;
+
+    return {
+      model,
+      agentId,
+      thinkingLevel: enforceThinkingPolicy(model, normalizedThinkingLevel),
+      maxOutputTokens: undefined,
+      // Heartbeats should not mutate persisted workspace AI defaults.
+      skipAiSettingsPersistence: true,
+    };
+  }
+
+  private formatIdleDuration(ms: number): string {
+    assert(Number.isFinite(ms) && ms >= 0, "formatIdleDuration requires a non-negative ms value");
+
+    if (ms < 60_000) {
+      return "less than a minute";
+    }
+
+    if (ms < 3_600_000) {
+      const minutes = Math.round(ms / 60_000);
+      return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+    }
+
+    if (ms < 86_400_000) {
+      const hours = Math.round(ms / 3_600_000);
+      return `${hours} hour${hours === 1 ? "" : "s"}`;
+    }
+
+    const days = Math.round(ms / 86_400_000);
+    return `${days} day${days === 1 ? "" : "s"}`;
   }
 }
