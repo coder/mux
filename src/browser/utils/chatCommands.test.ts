@@ -324,6 +324,41 @@ describe("processSlashCommand - heartbeat-set", () => {
     );
   });
 
+  test("still updates the interval when reading current heartbeat settings fails", async () => {
+    const heartbeatGet = mock(() => Promise.reject(new Error("Corrupted heartbeat settings")));
+    const heartbeatSet = mock(() => Promise.resolve({ success: true, data: undefined }));
+    const context = createSlashCommandContext({
+      api: {
+        workspace: {
+          heartbeat: {
+            get: heartbeatGet,
+            set: heartbeatSet,
+          },
+        },
+      } as unknown as SlashCommandContext["api"],
+      workspaceId: "test-ws",
+    });
+
+    setHeartbeatExperiment(true);
+
+    const result = await processSlashCommand({ type: "heartbeat-set", minutes: 30 }, context);
+
+    expect(result).toEqual({ clearInput: true, toastShown: true });
+    expect(heartbeatGet).toHaveBeenCalledWith({ workspaceId: "test-ws" });
+    expect(heartbeatSet).toHaveBeenCalledWith({
+      workspaceId: "test-ws",
+      enabled: true,
+      intervalMs: 30 * 60 * 1000,
+      message: undefined,
+    });
+    expect(context.setToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "success",
+        message: "Heartbeat set to every 30 minutes",
+      })
+    );
+  });
+
   test("preserves the configured interval and message when disabling workspace heartbeats", async () => {
     const heartbeatGet = mock(() =>
       Promise.resolve({

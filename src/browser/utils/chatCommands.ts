@@ -357,9 +357,19 @@ export async function processSlashCommand(
     setInput("");
 
     try {
-      const currentHeartbeatSettings = await activeClient.workspace.heartbeat.get({
-        workspaceId: context.workspaceId,
-      });
+      // Best-effort read: malformed persisted heartbeat settings should not block a command that
+      // can repair them by writing a fresh interval or disabling the feature.
+      let currentHeartbeatSettings: Awaited<
+        ReturnType<typeof activeClient.workspace.heartbeat.get>
+      > | null = null;
+      try {
+        currentHeartbeatSettings = await activeClient.workspace.heartbeat.get({
+          workspaceId: context.workspaceId,
+        });
+      } catch {
+        currentHeartbeatSettings = null;
+      }
+
       // Preserve the stored cadence when toggling heartbeats off so re-enabling restores it,
       // and keep any saved custom heartbeat message when commands only change cadence.
       const intervalMs =
