@@ -1,0 +1,598 @@
+import { describe, test, expect, beforeEach, mock, afterEach } from "bun:test";
+import { HeartbeatService } from "./heartbeatService";
+import type { Config } from "@/node/config";
+import type { ExtensionMetadataService } from "./ExtensionMetadataService";
+import type { WorkspaceService } from "./workspaceService";
+import type { TaskService } from "./taskService";
+import type { ProjectConfig, ProjectsConfig, Workspace } from "@/common/types/project";
+import type { MuxMessage } from "@/common/types/message";
+import { createMuxMessage } from "@/common/types/message";
+import { HEARTBEAT_DEFAULT_INTERVAL_MS } from "@/constants/heartbeat";
+import { EventEmitter } from "events";
+
+async function waitForCondition(
+  condition: () => boolean,
+  options?: { timeoutMs?: number; intervalMs?: number }
+): Promise<void> {
+  const timeoutMs = options?.timeoutMs ?? 1_000;
+  const intervalMs = options?.intervalMs ?? 10;
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    if (condition()) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+
+  throw new Error(`Timed out after ${timeoutMs}ms waiting for condition`);
+}
+
+interface HeartbeatServiceInternals {
+  startupTimeout: ReturnType<typeof setTimeout> | null;
+  checkInterval: ReturnType<typeof setInterval> | null;
+  stopped: boolean;
+  nextEligibleAtByWorkspaceId: Map<string, number>;
+  activeWorkspaceIds: Set<string>;
+  queuedWorkspaceIds: Set<string>;
+  isProcessingQueue: boolean;
+  tick(): void;
+  resyncFromConfig(now: number): void;
+  checkAllWorkspaces(now: number): void;
+  queueWorkspace(workspaceId: string): void;
+}
+
+describe("HeartbeatService", () => {
+  let mockConfig: Config;
+  let currentProjectsConfig: ProjectsConfig;
+  let mockExtensionMetadata: ExtensionMetadataService;
+  let mockWorkspaceService: WorkspaceService;
+  let mockTaskService: TaskService;
+  let service: HeartbeatService;
+  let wsEmitter: EventEmitter;
+
+  let loadConfigMock: ReturnType<typeof mock<() => ProjectsConfig>>;
+  let getSnapshotMock: ReturnType<
+    typeof mock<
+      (workspaceId: string) => Promise<{
+        recency: number;
+        streaming: boolean;
+        lastModel: string | null;
+        lastThinkingLevel: string | null;
+      }>
+    >
+  >;
+  let getChatHistoryMock: ReturnType<typeof mock<(workspaceId: string) => Promise<MuxMessage[]>>>;
+  let executeHeartbeatMock: ReturnType<typeof mock<(workspaceId: string) => Promise<void>>>;
+  let hasActiveDescendantTasksMock: ReturnType<typeof mock<(workspaceId: string) => boolean>>;
+
+  const testWorkspaceId = "test-ws";
+  const workspace2Id = "workspace-2";
+  const testProjectPath = "/test/project";
+  const defaultHeartbeatIntervalMs = 300_000;
+  const staleTimestamp = Date.now() - 600_000;
+
+  function getInternals(): HeartbeatServiceInternals {
+    return service as unknown as HeartbeatServiceInternals;
+  }
+
+  function makeWorkspaceEntry(
+    overrides: Partial<{
+      id: string;
+      name: string;
+      path: string;
+      parentWorkspaceId: string;
+      heartbeat: { enabled: boolean; intervalMs: number };
+      archivedAt: string;
+      unarchivedAt: string;
+    }> = {}
+  ): Workspace {
+    return {
+      id: testWorkspaceId,
+      path: "/test/path",
+      name: "test",
+      heartbeat: { enabled: true, intervalMs: defaultHeartbeatIntervalMs },
+      ...overrides,
+    } as unknown as Workspace;
+  }
+
+  function makeProjectsConfig(workspaces: Workspace[]): ProjectsConfig {
+    return {
+      projects: new Map<string, ProjectConfig>([
+        [testProjectPath, { workspaces } as unknown as ProjectConfig],
+      ]),
+    };
+  }
+
+  function makeSnapshot(
+    overrides: Partial<{
+      recency: number;
+      streaming: boolean;
+      lastModel: string | null;
+      lastThinkingLevel: string | null;
+    }> = {}
+  ) {
+    return {
+      recency: staleTimestamp,
+      streaming: false,
+      lastModel: null,
+      lastThinkingLevel: null,
+      ...overrides,
+    };
+  }
+
+  function makeCompletedTurnHistory(timestamp = staleTimestamp): MuxMessage[] {
+    return [
+      createMuxMessage("1", "user", "Hello", { timestamp }),
+      createMuxMessage("2", "assistant", "Hi!", { timestamp }),
+    ];
+  }
+
+  function makeInteractiveAssistantMessage(timestamp = staleTimestamp): MuxMessage {
+    const assistantMessage = createMuxMessage("2", "assistant", "asking", { timestamp });
+    (assistantMessage as unknown as { parts: unknown[] }).parts = [
+      { type: "text", text: "Let me ask...", state: "done" },
+      {
+        type: "dynamic-tool",
+        toolName: "ask_user_question",
+        state: "input-available",
+        toolCallId: "tc1",
+        args: {},
+        output: undefined,
+      },
+    ];
+    return assistantMessage;
+  }
+
+  beforeEach(() => {
+    currentProjectsConfig = makeProjectsConfig([makeWorkspaceEntry()]);
+
+    loadConfigMock = mock(() => currentProjectsConfig);
+    mockConfig = {
+      loadConfigOrDefault: loadConfigMock,
+      findWorkspace: mock(() => ({ workspacePath: "/test/path", projectPath: testProjectPath })),
+    } as unknown as Config;
+
+    wsEmitter = new EventEmitter();
+    getChatHistoryMock = mock(() => Promise.resolve(makeCompletedTurnHistory()));
+    executeHeartbeatMock = mock(() => Promise.resolve());
+    mockWorkspaceService = Object.assign(wsEmitter, {
+      getChatHistory: getChatHistoryMock,
+      executeHeartbeat: executeHeartbeatMock,
+    }) as unknown as WorkspaceService;
+
+    getSnapshotMock = mock(() => Promise.resolve(makeSnapshot()));
+    mockExtensionMetadata = {
+      getSnapshot: getSnapshotMock,
+    } as unknown as ExtensionMetadataService;
+
+    hasActiveDescendantTasksMock = mock(() => false);
+    mockTaskService = {
+      hasActiveDescendantAgentTasksForWorkspace: hasActiveDescendantTasksMock,
+    } as unknown as TaskService;
+
+    service = new HeartbeatService(
+      mockConfig,
+      mockExtensionMetadata,
+      mockWorkspaceService,
+      mockTaskService
+    );
+  });
+
+  afterEach(() => {
+    service.stop();
+  });
+
+  describe("checkEligibility", () => {
+    test("returns eligible for valid heartbeat-enabled workspace", async () => {
+      const result = await service.checkEligibility(testWorkspaceId, Date.now());
+
+      expect(result.eligible).toBe(true);
+      expect(result.reason).toBeUndefined();
+    });
+
+    test("returns ineligible when workspace not found in config", async () => {
+      currentProjectsConfig = { projects: new Map() };
+
+      const result = await service.checkEligibility(testWorkspaceId, Date.now());
+
+      expect(result.eligible).toBe(false);
+      expect(result.reason).toBe("workspace_not_found");
+    });
+
+    test("returns ineligible when heartbeat is disabled", async () => {
+      currentProjectsConfig = makeProjectsConfig([
+        makeWorkspaceEntry({
+          heartbeat: { enabled: false, intervalMs: defaultHeartbeatIntervalMs },
+        }),
+      ]);
+
+      const result = await service.checkEligibility(testWorkspaceId, Date.now());
+
+      expect(result.eligible).toBe(false);
+      expect(result.reason).toBe("heartbeat_disabled");
+    });
+
+    test("returns ineligible when workspace is archived", async () => {
+      currentProjectsConfig = makeProjectsConfig([
+        makeWorkspaceEntry({ archivedAt: new Date().toISOString() }),
+      ]);
+
+      const result = await service.checkEligibility(testWorkspaceId, Date.now());
+
+      expect(result.eligible).toBe(false);
+      expect(result.reason).toBe("archived");
+    });
+
+    test("returns ineligible when workspace is a child", async () => {
+      currentProjectsConfig = makeProjectsConfig([
+        makeWorkspaceEntry({ parentWorkspaceId: "parent-ws" }),
+      ]);
+
+      const result = await service.checkEligibility(testWorkspaceId, Date.now());
+
+      expect(result.eligible).toBe(false);
+      expect(result.reason).toBe("child_workspace");
+    });
+
+    test("returns ineligible when workspace is streaming", async () => {
+      getSnapshotMock.mockResolvedValueOnce(makeSnapshot({ streaming: true }));
+
+      const result = await service.checkEligibility(testWorkspaceId, Date.now());
+
+      expect(result.eligible).toBe(false);
+      expect(result.reason).toBe("currently_streaming");
+    });
+
+    test("returns ineligible when active descendant tasks exist", async () => {
+      hasActiveDescendantTasksMock.mockReturnValueOnce(true);
+
+      const result = await service.checkEligibility(testWorkspaceId, Date.now());
+
+      expect(result.eligible).toBe(false);
+      expect(result.reason).toBe("active_descendant_tasks");
+    });
+
+    test("returns ineligible when no completed turn (empty history)", async () => {
+      getChatHistoryMock.mockResolvedValueOnce([]);
+
+      const result = await service.checkEligibility(testWorkspaceId, Date.now());
+
+      expect(result.eligible).toBe(false);
+      expect(result.reason).toBe("no_completed_turn");
+    });
+
+    test("returns ineligible when no assistant message in history", async () => {
+      getChatHistoryMock.mockResolvedValueOnce([
+        createMuxMessage("1", "user", "Hello", { timestamp: staleTimestamp }),
+        createMuxMessage("2", "user", "Still there?", { timestamp: staleTimestamp }),
+      ]);
+
+      const result = await service.checkEligibility(testWorkspaceId, Date.now());
+
+      expect(result.eligible).toBe(false);
+      expect(result.reason).toBe("no_completed_turn");
+    });
+
+    test("returns ineligible when last message is from user (awaiting response)", async () => {
+      getChatHistoryMock.mockResolvedValueOnce([
+        createMuxMessage("1", "user", "Hello", { timestamp: staleTimestamp }),
+        createMuxMessage("2", "assistant", "Hi!", { timestamp: staleTimestamp }),
+        createMuxMessage("3", "user", "Another question?", { timestamp: staleTimestamp }),
+      ]);
+
+      const result = await service.checkEligibility(testWorkspaceId, Date.now());
+
+      expect(result.eligible).toBe(false);
+      expect(result.reason).toBe("awaiting_response");
+    });
+
+    test("returns ineligible when last assistant message has interactive tool input", async () => {
+      getChatHistoryMock.mockResolvedValueOnce([
+        createMuxMessage("1", "user", "Hello", { timestamp: staleTimestamp }),
+        makeInteractiveAssistantMessage(),
+      ]);
+
+      const result = await service.checkEligibility(testWorkspaceId, Date.now());
+
+      expect(result.eligible).toBe(false);
+      expect(result.reason).toBe("awaiting_interactive_input");
+    });
+  });
+
+  describe("start/stop lifecycle", () => {
+    test("starts with correct timer configuration", () => {
+      const internals = getInternals();
+
+      expect(internals.stopped).toBe(true);
+      expect(wsEmitter.listenerCount("activity")).toBe(0);
+      expect(wsEmitter.listenerCount("metadata")).toBe(0);
+
+      service.start();
+
+      expect(internals.stopped).toBe(false);
+      expect(internals.startupTimeout).not.toBeNull();
+      expect(internals.checkInterval).toBeNull();
+      expect(wsEmitter.listenerCount("activity")).toBe(1);
+      expect(wsEmitter.listenerCount("metadata")).toBe(1);
+
+      service.stop();
+
+      expect(internals.stopped).toBe(true);
+      expect(internals.startupTimeout).toBeNull();
+      expect(internals.checkInterval).toBeNull();
+      expect(wsEmitter.listenerCount("activity")).toBe(0);
+      expect(wsEmitter.listenerCount("metadata")).toBe(0);
+    });
+
+    test("stop clears all tracking state", () => {
+      service.start();
+      const internals = getInternals();
+
+      internals.resyncFromConfig(0);
+      internals.activeWorkspaceIds.add("active-ws");
+      internals.queuedWorkspaceIds.add("queued-ws");
+      internals.isProcessingQueue = true;
+
+      expect(internals.nextEligibleAtByWorkspaceId.size).toBe(1);
+      expect(internals.activeWorkspaceIds.size).toBe(1);
+      expect(internals.queuedWorkspaceIds.size).toBe(1);
+      expect(internals.isProcessingQueue).toBe(true);
+
+      service.stop();
+
+      expect(internals.nextEligibleAtByWorkspaceId.size).toBe(0);
+      expect(internals.activeWorkspaceIds.size).toBe(0);
+      expect(internals.queuedWorkspaceIds.size).toBe(0);
+      expect(internals.isProcessingQueue).toBe(false);
+    });
+
+    test("stop prevents new scheduling after stop", async () => {
+      service.start();
+      const internals = getInternals();
+
+      service.stop();
+      internals.nextEligibleAtByWorkspaceId.set(testWorkspaceId, 0);
+      internals.tick();
+
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(internals.queuedWorkspaceIds.size).toBe(0);
+      expect(executeHeartbeatMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("event handling", () => {
+    test("activity event resets countdown for tracked workspace", () => {
+      service.start();
+      const internals = getInternals();
+      internals.resyncFromConfig(0);
+
+      const initialDeadline = internals.nextEligibleAtByWorkspaceId.get(testWorkspaceId);
+      wsEmitter.emit("activity", {
+        workspaceId: testWorkspaceId,
+        activity: { recency: Date.now(), streaming: false },
+      });
+
+      const resetDeadline = internals.nextEligibleAtByWorkspaceId.get(testWorkspaceId);
+      expect(initialDeadline).toBe(defaultHeartbeatIntervalMs);
+      expect(resetDeadline).toBeDefined();
+      expect(resetDeadline).toBeGreaterThan(initialDeadline!);
+    });
+
+    test("activity event ignores streaming=true events", () => {
+      service.start();
+      const internals = getInternals();
+      internals.resyncFromConfig(0);
+
+      const initialDeadline = internals.nextEligibleAtByWorkspaceId.get(testWorkspaceId);
+      wsEmitter.emit("activity", {
+        workspaceId: testWorkspaceId,
+        activity: { recency: Date.now(), streaming: true },
+      });
+
+      expect(internals.nextEligibleAtByWorkspaceId.get(testWorkspaceId)).toBe(initialDeadline);
+    });
+
+    test("activity event ignores null activity", () => {
+      service.start();
+      const internals = getInternals();
+      internals.resyncFromConfig(0);
+
+      const initialDeadline = internals.nextEligibleAtByWorkspaceId.get(testWorkspaceId);
+      wsEmitter.emit("activity", { workspaceId: testWorkspaceId, activity: null });
+
+      expect(internals.nextEligibleAtByWorkspaceId.get(testWorkspaceId)).toBe(initialDeadline);
+    });
+
+    test("activity event ignores untracked workspaces", () => {
+      service.start();
+      const internals = getInternals();
+
+      wsEmitter.emit("activity", {
+        workspaceId: testWorkspaceId,
+        activity: { recency: Date.now(), streaming: false },
+      });
+
+      expect(internals.nextEligibleAtByWorkspaceId.has(testWorkspaceId)).toBe(false);
+    });
+
+    test("metadata event purges deleted workspace", async () => {
+      service.start();
+      const internals = getInternals();
+      internals.resyncFromConfig(0);
+
+      wsEmitter.emit("metadata", { workspaceId: testWorkspaceId, metadata: null });
+      internals.checkAllWorkspaces(Number.MAX_SAFE_INTEGER);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(internals.nextEligibleAtByWorkspaceId.has(testWorkspaceId)).toBe(false);
+      expect(executeHeartbeatMock).not.toHaveBeenCalled();
+    });
+
+    test("metadata event purges archived workspace", () => {
+      service.start();
+      const internals = getInternals();
+      internals.resyncFromConfig(0);
+
+      wsEmitter.emit("metadata", {
+        workspaceId: testWorkspaceId,
+        metadata: makeWorkspaceEntry({ archivedAt: new Date().toISOString() }),
+      });
+
+      expect(internals.nextEligibleAtByWorkspaceId.has(testWorkspaceId)).toBe(false);
+    });
+
+    test("metadata event purges child workspace", () => {
+      service.start();
+      const internals = getInternals();
+      internals.resyncFromConfig(0);
+
+      wsEmitter.emit("metadata", {
+        workspaceId: testWorkspaceId,
+        metadata: makeWorkspaceEntry({ parentWorkspaceId: "parent-ws" }),
+      });
+
+      expect(internals.nextEligibleAtByWorkspaceId.has(testWorkspaceId)).toBe(false);
+    });
+
+    test("metadata event re-adds unarchived workspace", () => {
+      service.start();
+      const internals = getInternals();
+      internals.resyncFromConfig(0);
+
+      wsEmitter.emit("metadata", {
+        workspaceId: testWorkspaceId,
+        metadata: makeWorkspaceEntry({ archivedAt: new Date().toISOString() }),
+      });
+      expect(internals.nextEligibleAtByWorkspaceId.has(testWorkspaceId)).toBe(false);
+
+      const beforeReadd = Date.now();
+      wsEmitter.emit("metadata", {
+        workspaceId: testWorkspaceId,
+        metadata: makeWorkspaceEntry({
+          heartbeat: { enabled: true, intervalMs: HEARTBEAT_DEFAULT_INTERVAL_MS },
+          unarchivedAt: new Date().toISOString(),
+        }),
+      });
+
+      const readdedDeadline = internals.nextEligibleAtByWorkspaceId.get(testWorkspaceId);
+      expect(readdedDeadline).toBeDefined();
+      expect(readdedDeadline).toBeGreaterThanOrEqual(beforeReadd + HEARTBEAT_DEFAULT_INTERVAL_MS);
+    });
+  });
+
+  describe("scheduling and dispatch", () => {
+    test("enabled workspace dispatches heartbeat after interval elapses", async () => {
+      service.start();
+      const internals = getInternals();
+
+      internals.resyncFromConfig(0);
+      internals.checkAllWorkspaces(defaultHeartbeatIntervalMs + 1);
+
+      await waitForCondition(() => executeHeartbeatMock.mock.calls.length === 1);
+      expect(executeHeartbeatMock).toHaveBeenCalledWith(testWorkspaceId);
+    });
+
+    test("startup does not fire heartbeats immediately", async () => {
+      service.start();
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      expect(executeHeartbeatMock).not.toHaveBeenCalled();
+    });
+
+    test("concurrency cap of 1", async () => {
+      currentProjectsConfig = makeProjectsConfig([
+        makeWorkspaceEntry(),
+        makeWorkspaceEntry({ id: workspace2Id, name: "test-2", path: "/test/path-2" }),
+      ]);
+
+      service.start();
+      const internals = getInternals();
+
+      let releaseFirstHeartbeat: (() => void) | undefined;
+      const firstHeartbeatGate = new Promise<void>((resolve) => {
+        releaseFirstHeartbeat = resolve;
+      });
+
+      const executionOrder: string[] = [];
+      executeHeartbeatMock.mockImplementation(async (workspaceId: string) => {
+        executionOrder.push(`start:${workspaceId}`);
+        if (workspaceId === testWorkspaceId) {
+          await firstHeartbeatGate;
+        }
+        executionOrder.push(`end:${workspaceId}`);
+      });
+
+      internals.resyncFromConfig(0);
+      internals.checkAllWorkspaces(defaultHeartbeatIntervalMs + 1);
+
+      await waitForCondition(() => executionOrder.includes(`start:${testWorkspaceId}`));
+      expect(executionOrder).toEqual([`start:${testWorkspaceId}`]);
+      expect(internals.activeWorkspaceIds.size).toBe(1);
+
+      releaseFirstHeartbeat?.();
+      await waitForCondition(() => executionOrder.includes(`end:${workspace2Id}`));
+
+      expect(executionOrder).toEqual([
+        `start:${testWorkspaceId}`,
+        `end:${testWorkspaceId}`,
+        `start:${workspace2Id}`,
+        `end:${workspace2Id}`,
+      ]);
+    });
+
+    test("queue deduplication", async () => {
+      service.start();
+      const internals = getInternals();
+
+      let releaseHeartbeat: (() => void) | undefined;
+      const heartbeatGate = new Promise<void>((resolve) => {
+        releaseHeartbeat = resolve;
+      });
+
+      executeHeartbeatMock.mockImplementation(async () => {
+        await heartbeatGate;
+      });
+
+      internals.queueWorkspace(testWorkspaceId);
+      internals.queueWorkspace(testWorkspaceId);
+
+      await waitForCondition(() => executeHeartbeatMock.mock.calls.length === 1);
+      releaseHeartbeat?.();
+      await waitForCondition(() => executeHeartbeatMock.mock.calls.length === 1);
+
+      expect(internals.queuedWorkspaceIds.size).toBe(0);
+    });
+  });
+
+  describe("config resync", () => {
+    test("adds newly enabled workspaces on resync", () => {
+      currentProjectsConfig = makeProjectsConfig([]);
+      const internals = getInternals();
+
+      internals.resyncFromConfig(0);
+      expect(internals.nextEligibleAtByWorkspaceId.has(testWorkspaceId)).toBe(false);
+
+      currentProjectsConfig = makeProjectsConfig([makeWorkspaceEntry()]);
+      internals.resyncFromConfig(1);
+
+      expect(internals.nextEligibleAtByWorkspaceId.get(testWorkspaceId)).toBe(
+        1 + defaultHeartbeatIntervalMs
+      );
+    });
+
+    test("purges removed workspaces on resync", () => {
+      const internals = getInternals();
+
+      internals.resyncFromConfig(0);
+      expect(internals.nextEligibleAtByWorkspaceId.has(testWorkspaceId)).toBe(true);
+
+      currentProjectsConfig = makeProjectsConfig([]);
+      internals.resyncFromConfig(1);
+
+      expect(internals.nextEligibleAtByWorkspaceId.has(testWorkspaceId)).toBe(false);
+    });
+  });
+});
