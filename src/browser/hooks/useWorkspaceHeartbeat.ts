@@ -5,7 +5,7 @@ import { HEARTBEAT_DEFAULT_INTERVAL_MS } from "@/constants/heartbeat";
 
 type WorkspaceHeartbeatSettings = NonNullable<FrontendWorkspaceMetadata["heartbeat"]>;
 
-export interface HeartbeatFormSettings extends WorkspaceHeartbeatSettings {}
+export type HeartbeatFormSettings = WorkspaceHeartbeatSettings;
 
 interface UseWorkspaceHeartbeatParams {
   workspaceId: string | null;

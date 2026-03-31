@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Bell, BellOff, Ellipsis, Menu, Pencil } from "lucide-react";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { cn } from "@/common/lib/utils";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -14,6 +15,7 @@ import { GitStatusIndicator } from "../GitStatusIndicator/GitStatusIndicator";
 import { MultiProjectGitStatusIndicator } from "../GitStatusIndicator/MultiProjectGitStatusIndicator";
 import { RuntimeBadge } from "../RuntimeBadge/RuntimeBadge";
 import { BranchSelector } from "../BranchSelector/BranchSelector";
+import { WorkspaceHeartbeatModal } from "../WorkspaceHeartbeatModal";
 import { WorkspaceMCPModal } from "../WorkspaceMCPModal/WorkspaceMCPModal";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 import { Popover, PopoverTrigger, PopoverContent } from "../Popover/Popover";
@@ -34,6 +36,7 @@ import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { usePopoverError } from "@/browser/hooks/usePopoverError";
 import { isDesktopMode, DESKTOP_TITLEBAR_HEIGHT_CLASS } from "@/browser/hooks/useDesktopTitlebar";
+import { useExperimentValue } from "@/browser/hooks/useExperiments";
 import { DebugLlmRequestModal } from "../DebugLlmRequestModal/DebugLlmRequestModal";
 import { WorkspaceLinks } from "../WorkspaceLinks/WorkspaceLinks";
 import { ShareTranscriptDialog } from "../ShareTranscriptDialog/ShareTranscriptDialog";
@@ -87,6 +90,7 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
   const { preflightArchiveWorkspace, archiveWorkspace } = useWorkspaceActions();
   const { workspaceMetadata } = useWorkspaceContext();
   const isMuxHelpChat = workspaceId === MUX_HELP_CHAT_WORKSPACE_ID;
+  const workspaceHeartbeatsEnabled = useExperimentValue(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS);
   const linkSharingEnabled = useLinkSharingEnabled();
   const openTerminalPopout = useOpenTerminal();
   const openInEditor = useOpenInEditor();
@@ -102,6 +106,7 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
   const [editorError, setEditorError] = useState<string | null>(null);
   const [debugLlmRequestOpen, setDebugLlmRequestOpen] = useState(false);
   const [mcpModalOpen, setMcpModalOpen] = useState(false);
+  const [heartbeatModalOpen, setHeartbeatModalOpen] = useState(false);
   const [availableSkills, setAvailableSkills] = useState<AgentSkillDescriptor[]>([]);
   const [invalidSkills, setInvalidSkills] = useState<AgentSkillIssue[]>([]);
   const isSkillsMountedRef = useRef(true);
@@ -403,6 +408,20 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, []);
+
+  // Keybind for opening heartbeat configuration
+  useEffect(() => {
+    if (!workspaceHeartbeatsEnabled || isMuxHelpChat) return;
+
+    const handler = (e: KeyboardEvent) => {
+      if (matchesKeybind(e, KEYBINDS.CONFIGURE_HEARTBEAT)) {
+        e.preventDefault();
+        setHeartbeatModalOpen(true);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [workspaceHeartbeatsEnabled, isMuxHelpChat]);
 
   // Keybind for sharing transcript — lives here (not AgentListItem) so it
   // works even when the left sidebar is collapsed and list items are unmounted.
@@ -718,6 +737,11 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
             {/* Keep MCP configuration in the more actions menu to keep the workspace menu bar lean. */}
             <WorkspaceActionsMenuContent
               onConfigureMcp={() => setMcpModalOpen(true)}
+              onConfigureHeartbeat={
+                workspaceHeartbeatsEnabled && !isMuxHelpChat
+                  ? () => setHeartbeatModalOpen(true)
+                  : null
+              }
               onOpenTouchFullscreenReview={
                 isTouchMobileScreen ? handleOpenTouchFullscreenReview : null
               }
@@ -741,6 +765,13 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
           </PopoverContent>
         </Popover>
       </div>
+      {workspaceHeartbeatsEnabled && !isMuxHelpChat && (
+        <WorkspaceHeartbeatModal
+          workspaceId={workspaceId}
+          open={heartbeatModalOpen}
+          onOpenChange={setHeartbeatModalOpen}
+        />
+      )}
       <WorkspaceMCPModal
         workspaceId={workspaceId}
         projectPath={projectPath}

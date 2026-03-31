@@ -368,6 +368,10 @@ export const KEYBINDS = {
   // macOS: Cmd+Shift+M, Win/Linux: Ctrl+Shift+M
   CONFIGURE_MCP: { key: "M", ctrl: true, shift: true },
 
+  /** Configure heartbeat settings for current workspace */
+  // macOS: Cmd+Shift+H, Win/Linux: Ctrl+Shift+H
+  CONFIGURE_HEARTBEAT: { key: "H", ctrl: true, shift: true },
+
   /** Open Command Palette */
   // VS Code-style palette
   // macOS: Cmd+Shift+P, Win/Linux: Ctrl+Shift+P
