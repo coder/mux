@@ -1,26 +1,37 @@
 import { describe, expect, test, beforeEach, mock } from "bun:test";
 import type { SendMessageOptions } from "@/common/orpc/types";
+import { EXPERIMENT_IDS, getExperimentKey } from "@/common/constants/experiments";
 import {
   parseRuntimeString,
   prepareCompactionMessage,
   handlePlanShowCommand,
   handlePlanOpenCommand,
   handleCompactCommand,
+  processSlashCommand,
 } from "./chatCommands";
-import type { CommandHandlerContext } from "./chatCommands";
+import type { CommandHandlerContext, SlashCommandContext } from "./chatCommands";
 import type { ReviewNoteData } from "@/common/types/review";
 
-// Simple mock for localStorage to satisfy resolveCompactionModel.
-// Note: resolveCompactionModel reads from window.localStorage (via readPersistedString),
-// so we set both globalThis.localStorage and window.localStorage for test isolation.
+// Simple mock for localStorage to satisfy resolveCompactionModel and experiment gating.
+// Note: command helpers read from window.localStorage, so we set both globalThis.localStorage
+// and window.localStorage for test isolation.
 beforeEach(() => {
+  const storageData = new Map<string, string>();
   const storage = {
-    getItem: () => null,
-    setItem: () => undefined,
-    removeItem: () => undefined,
-    clear: () => undefined,
-    key: () => null,
-    length: 0,
+    getItem: (key: string) => storageData.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      storageData.set(key, value);
+    },
+    removeItem: (key: string) => {
+      storageData.delete(key);
+    },
+    clear: () => {
+      storageData.clear();
+    },
+    key: (index: number) => Array.from(storageData.keys())[index] ?? null,
+    get length() {
+      return storageData.size;
+    },
   } as unknown as Storage;
 
   globalThis.localStorage = storage;
@@ -165,6 +176,199 @@ describe("parseRuntimeString", () => {
     );
     expect(() => parseRuntimeString("kubernetes", workspaceName)).toThrow(
       "Unknown runtime type: 'kubernetes'. Use 'ssh <host>', 'docker <image>', 'devcontainer <config>', 'worktree', or 'local'"
+    );
+  });
+});
+
+describe("processSlashCommand - heartbeat-set", () => {
+  const HEARTBEAT_EXPERIMENT_KEY = getExperimentKey(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS);
+
+  function setHeartbeatExperiment(enabled: boolean) {
+    globalThis.localStorage.setItem(HEARTBEAT_EXPERIMENT_KEY, JSON.stringify(enabled));
+  }
+
+  const createSlashCommandContext = (options?: {
+    api?: SlashCommandContext["api"] | null;
+    workspaceId?: string;
+    variant?: SlashCommandContext["variant"];
+  }): SlashCommandContext => {
+    const setInput = mock(() => undefined);
+    const setToast = mock(() => undefined);
+
+    return {
+      api: options?.api ?? null,
+      workspaceId:
+        options && Object.hasOwn(options, "workspaceId") ? options.workspaceId : "test-ws",
+      variant: options?.variant ?? "workspace",
+      projectPath: "/tmp/project",
+      setPreferredModel: mock(() => undefined),
+      setVimEnabled: mock((cb: (prev: boolean) => boolean) => cb(false)),
+      resetInputHeight: mock(() => undefined),
+      onTruncateHistory: mock(() => Promise.resolve(undefined)),
+      onMessageSent: mock(() => undefined),
+      onCheckReviews: mock(() => undefined),
+      attachedReviewIds: [],
+      openSettings: mock(() => undefined),
+      sendMessageOptions: {
+        model: "anthropic:claude-3-5-sonnet",
+        thinkingLevel: "off",
+        toolPolicy: [],
+        agentId: "exec",
+      },
+      setInput,
+      setToast,
+      setAttachments: mock(() => undefined),
+      setSendingState: mock(() => undefined),
+    };
+  };
+
+  test("shows an error toast when the heartbeat experiment is disabled", async () => {
+    const heartbeatSet = mock(() => Promise.resolve({ success: true, data: undefined }));
+    const context = createSlashCommandContext({
+      api: {
+        workspace: {
+          heartbeat: {
+            set: heartbeatSet,
+          },
+        },
+      } as unknown as SlashCommandContext["api"],
+    });
+
+    setHeartbeatExperiment(false);
+
+    const result = await processSlashCommand({ type: "heartbeat-set", minutes: 30 }, context);
+
+    expect(result).toEqual({ clearInput: false, toastShown: true });
+    expect(heartbeatSet).not.toHaveBeenCalled();
+    expect(context.setToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "error",
+        message:
+          "Heartbeat configuration requires the Workspace Heartbeats experiment to be enabled",
+      })
+    );
+  });
+
+  test("shows an error toast when no workspace is selected", async () => {
+    const heartbeatSet = mock(() => Promise.resolve({ success: true, data: undefined }));
+    const context = createSlashCommandContext({
+      api: {
+        workspace: {
+          heartbeat: {
+            set: heartbeatSet,
+          },
+        },
+      } as unknown as SlashCommandContext["api"],
+      workspaceId: undefined,
+    });
+
+    setHeartbeatExperiment(true);
+
+    const result = await processSlashCommand({ type: "heartbeat-set", minutes: 30 }, context);
+
+    expect(result).toEqual({ clearInput: false, toastShown: true });
+    expect(heartbeatSet).not.toHaveBeenCalled();
+    expect(context.setToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "error",
+        message: "No workspace selected",
+      })
+    );
+  });
+
+  test("enables workspace heartbeats with the requested interval", async () => {
+    const heartbeatSet = mock(() => Promise.resolve({ success: true, data: undefined }));
+    const context = createSlashCommandContext({
+      api: {
+        workspace: {
+          heartbeat: {
+            set: heartbeatSet,
+          },
+        },
+      } as unknown as SlashCommandContext["api"],
+      workspaceId: "test-ws",
+    });
+
+    setHeartbeatExperiment(true);
+
+    const result = await processSlashCommand({ type: "heartbeat-set", minutes: 30 }, context);
+
+    expect(result).toEqual({ clearInput: true, toastShown: true });
+    expect(context.setInput).toHaveBeenCalledWith("");
+    expect(heartbeatSet).toHaveBeenCalledWith({
+      workspaceId: "test-ws",
+      enabled: true,
+      intervalMs: 30 * 60 * 1000,
+    });
+    expect(context.setToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "success",
+        message: "Heartbeat set to every 30 minutes",
+      })
+    );
+  });
+
+  test("disables workspace heartbeats using the default interval", async () => {
+    const heartbeatSet = mock(() => Promise.resolve({ success: true, data: undefined }));
+    const context = createSlashCommandContext({
+      api: {
+        workspace: {
+          heartbeat: {
+            set: heartbeatSet,
+          },
+        },
+      } as unknown as SlashCommandContext["api"],
+      workspaceId: "test-ws",
+    });
+
+    setHeartbeatExperiment(true);
+
+    const result = await processSlashCommand({ type: "heartbeat-set", minutes: null }, context);
+
+    expect(result).toEqual({ clearInput: true, toastShown: true });
+    expect(heartbeatSet).toHaveBeenCalledWith({
+      workspaceId: "test-ws",
+      enabled: false,
+      intervalMs: 1_800_000,
+    });
+    expect(context.setToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "success",
+        message: "Heartbeat disabled",
+      })
+    );
+  });
+
+  test("surfaces backend heartbeat update failures", async () => {
+    const heartbeatSet = mock(() =>
+      Promise.resolve({ success: false as const, error: "Heartbeat update failed" })
+    );
+    const context = createSlashCommandContext({
+      api: {
+        workspace: {
+          heartbeat: {
+            set: heartbeatSet,
+          },
+        },
+      } as unknown as SlashCommandContext["api"],
+      workspaceId: "test-ws",
+    });
+
+    setHeartbeatExperiment(true);
+
+    const result = await processSlashCommand({ type: "heartbeat-set", minutes: 30 }, context);
+
+    expect(result).toEqual({ clearInput: false, toastShown: true });
+    expect(heartbeatSet).toHaveBeenCalledWith({
+      workspaceId: "test-ws",
+      enabled: true,
+      intervalMs: 30 * 60 * 1000,
+    });
+    expect(context.setToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "error",
+        message: "Heartbeat update failed",
+      })
     );
   });
 });
