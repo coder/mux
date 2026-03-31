@@ -291,37 +291,15 @@ export class WorktreeArchiveSnapshotService {
           const acknowledgedSet = new Set(args.acknowledgedUntrackedPaths);
           const newPaths = currentUntracked.filter((p) => !acknowledgedSet.has(p));
           if (newPaths.length > 0) {
-            const latestUntrackedResult = await this.getUnsupportedUntrackedPaths({
+            return this.buildUntrackedConfirmationErr({
               workspaceId: args.workspaceId,
               workspaceMetadata: args.workspaceMetadata,
             });
-            if (!latestUntrackedResult.success) {
-              return Err(latestUntrackedResult.error);
-            }
-            assert(
-              latestUntrackedResult.data.length > 0,
-              "captureSnapshotForArchive: expected current untracked paths when confirmation is required"
-            );
-            return Err({
-              kind: "confirm-lossy-untracked-files",
-              paths: latestUntrackedResult.data,
-            });
           }
         } else if (currentUntracked.length > 0) {
-          const latestUntrackedResult = await this.getUnsupportedUntrackedPaths({
+          return this.buildUntrackedConfirmationErr({
             workspaceId: args.workspaceId,
             workspaceMetadata: args.workspaceMetadata,
-          });
-          if (!latestUntrackedResult.success) {
-            return Err(latestUntrackedResult.error);
-          }
-          assert(
-            latestUntrackedResult.data.length > 0,
-            "captureSnapshotForArchive: expected current untracked paths when confirmation is required"
-          );
-          return Err({
-            kind: "confirm-lossy-untracked-files",
-            paths: latestUntrackedResult.data,
           });
         }
         await this.ensureNoDirtySubmodules(projectRepo.repoCwd);
@@ -678,6 +656,32 @@ export class WorktreeArchiveSnapshotService {
     }
 
     return detectDefaultTrunkBranch(args.projectPath);
+  }
+
+  /**
+   * Fetch the current untracked-file set for a workspace and return an
+   * `Err` asking the user to re-confirm. Used by `captureSnapshotForArchive`
+   * when untracked files are detected that the user hasn't acknowledged.
+   */
+  private async buildUntrackedConfirmationErr(args: {
+    workspaceId: string;
+    workspaceMetadata: WorkspaceMetadata;
+  }): Promise<Result<never, CaptureSnapshotForArchiveError>> {
+    const latestUntrackedResult = await this.getUnsupportedUntrackedPaths({
+      workspaceId: args.workspaceId,
+      workspaceMetadata: args.workspaceMetadata,
+    });
+    if (!latestUntrackedResult.success) {
+      return Err(latestUntrackedResult.error);
+    }
+    assert(
+      latestUntrackedResult.data.length > 0,
+      "captureSnapshotForArchive: expected current untracked paths when confirmation is required"
+    );
+    return Err({
+      kind: "confirm-lossy-untracked-files",
+      paths: latestUntrackedResult.data,
+    });
   }
 
   /**
