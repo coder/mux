@@ -3,7 +3,10 @@ import type { MuxMessage } from "@/common/types/message";
 import { createMuxMessage } from "@/common/types/message";
 import type { ProjectConfig, ProjectsConfig, Workspace } from "@/common/types/project";
 import { Ok } from "@/common/types/result";
-import { HEARTBEAT_DEFAULT_INTERVAL_MS } from "@/constants/heartbeat";
+import {
+  HEARTBEAT_DEFAULT_INTERVAL_MS,
+  HEARTBEAT_DEFAULT_MESSAGE_BODY,
+} from "@/constants/heartbeat";
 import type { Config } from "@/node/config";
 import { EventEmitter } from "events";
 import type { AIService } from "./aiService";
@@ -88,7 +91,7 @@ describe("HeartbeatService", () => {
       name: string;
       path: string;
       parentWorkspaceId: string;
-      heartbeat: { enabled: boolean; intervalMs: number };
+      heartbeat: { enabled: boolean; intervalMs: number; message?: string };
       archivedAt: string;
       unarchivedAt: string;
     }> = {}
@@ -616,6 +619,7 @@ describe("HeartbeatService", () => {
       expect(workspaceId).toBe(testWorkspaceId);
       expect(heartbeatPrompt).toContain("[Heartbeat]");
       expect(heartbeatPrompt).toContain("idle for approximately 5 minutes");
+      expect(heartbeatPrompt).toContain(HEARTBEAT_DEFAULT_MESSAGE_BODY);
       expect(sendOptions.muxMetadata?.type).toBe("heartbeat-request");
       expect(sendOptions.muxMetadata?.source).toBe("heartbeat");
       expect(sendOptions.muxMetadata?.displayStatus?.message).toBe("Heartbeat check...");
@@ -624,6 +628,70 @@ describe("HeartbeatService", () => {
       expect(dispatchOptions?.skipAutoResumeReset).toBe(true);
     });
 
+    test("uses the saved custom heartbeat message when executing a heartbeat", async () => {
+      const heartbeatIntervalMs = 30_000;
+      const idleDurationMs = 5 * 60_000;
+      const idleRecency = Date.now() - idleDurationMs;
+      const customMessage = "Re-check open work, refresh stale context, and summarize next steps.";
+
+      currentProjectsConfig = makeProjectsConfig([
+        makeWorkspaceEntry({
+          heartbeat: {
+            enabled: true,
+            intervalMs: heartbeatIntervalMs,
+            message: customMessage,
+          },
+        }),
+      ]);
+      getSnapshotMock.mockImplementation(() =>
+        Promise.resolve(
+          makeSnapshot({
+            recency: idleRecency,
+            streaming: false,
+          })
+        )
+      );
+
+      const sendMessageMock = mock(() => Promise.resolve(Ok(undefined)));
+      const getOrCreateSessionMock = mock(
+        () =>
+          ({
+            isBusy: () => false,
+          }) as unknown as AgentSession
+      );
+
+      const realWorkspaceService = new WorkspaceService(
+        mockConfig,
+        {} as HistoryService,
+        new EventEmitter() as unknown as AIService,
+        new EventEmitter() as unknown as InitStateManager,
+        mockExtensionMetadata,
+        {} as BackgroundProcessManager
+      );
+      const workspaceServiceOverrides = realWorkspaceService as unknown as {
+        getOrCreateSession: typeof getOrCreateSessionMock;
+        sendMessage: typeof sendMessageMock;
+      };
+      workspaceServiceOverrides.getOrCreateSession = getOrCreateSessionMock;
+      workspaceServiceOverrides.sendMessage = sendMessageMock;
+
+      await realWorkspaceService.executeHeartbeat(testWorkspaceId);
+
+      expect(sendMessageMock).toHaveBeenCalledTimes(1);
+      const firstSendMessageCall = sendMessageMock.mock.calls.at(0) as
+        | [
+            Parameters<WorkspaceService["sendMessage"]>[0],
+            Parameters<WorkspaceService["sendMessage"]>[1],
+          ]
+        | undefined;
+      expect(firstSendMessageCall).toBeDefined();
+      if (!firstSendMessageCall) {
+        throw new Error("Expected custom heartbeat sendMessage to be called exactly once");
+      }
+      const [, heartbeatPrompt] = firstSendMessageCall;
+      expect(heartbeatPrompt).toContain(customMessage);
+      expect(heartbeatPrompt).not.toContain(HEARTBEAT_DEFAULT_MESSAGE_BODY);
+    });
     test("startup does not fire heartbeats immediately", async () => {
       service.start();
 

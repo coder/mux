@@ -3,7 +3,11 @@ import { ThinkingLevelSchema } from "../../types/thinking";
 import { RuntimeConfigSchema } from "./runtime";
 import { WorkspaceAISettingsByAgentSchema, WorkspaceAISettingsSchema } from "./workspaceAiSettings";
 import { TASK_GROUP_KIND_VALUES } from "@/common/utils/tools/taskGroups";
-import { HEARTBEAT_MAX_INTERVAL_MS, HEARTBEAT_MIN_INTERVAL_MS } from "@/constants/heartbeat";
+import {
+  HEARTBEAT_MAX_INTERVAL_MS,
+  HEARTBEAT_MAX_MESSAGE_LENGTH,
+  HEARTBEAT_MIN_INTERVAL_MS,
+} from "@/constants/heartbeat";
 
 export const ProjectRefSchema = z.object({
   projectPath: z.string().meta({ description: "Absolute path to the project's main git repo" }),
@@ -38,6 +42,10 @@ export const WorkspaceHeartbeatSettingsSchema = z.object({
   }),
   intervalMs: z.number().int().min(HEARTBEAT_MIN_INTERVAL_MS).max(HEARTBEAT_MAX_INTERVAL_MS).meta({
     description: "Heartbeat interval in milliseconds for this workspace.",
+  }),
+  message: z.string().max(HEARTBEAT_MAX_MESSAGE_LENGTH).optional().meta({
+    description:
+      "Optional custom instruction body appended after the fixed workspace heartbeat lead-in.",
   }),
 });
 

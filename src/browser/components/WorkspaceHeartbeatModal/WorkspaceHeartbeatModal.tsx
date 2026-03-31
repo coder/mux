@@ -13,7 +13,9 @@ import { useWorkspaceHeartbeat } from "@/browser/hooks/useWorkspaceHeartbeat";
 import assert from "@/common/utils/assert";
 import {
   HEARTBEAT_DEFAULT_INTERVAL_MS,
+  HEARTBEAT_DEFAULT_MESSAGE_BODY,
   HEARTBEAT_MAX_INTERVAL_MS,
+  HEARTBEAT_MAX_MESSAGE_LENGTH,
   HEARTBEAT_MIN_INTERVAL_MS,
 } from "@/constants/heartbeat";
 
@@ -81,6 +83,11 @@ function getValidationErrorMessage(value: string): string | null {
   return null;
 }
 
+function normalizeDraftMessage(value: string): string | undefined {
+  const trimmedValue = value.trim();
+  return trimmedValue.length > 0 ? trimmedValue : undefined;
+}
+
 export function WorkspaceHeartbeatModal(props: WorkspaceHeartbeatModalProps) {
   const { settings, isLoading, isSaving, error, save } = useWorkspaceHeartbeat({
     workspaceId: props.open ? props.workspaceId : null,
@@ -89,12 +96,14 @@ export function WorkspaceHeartbeatModal(props: WorkspaceHeartbeatModalProps) {
   const [draftIntervalMinutes, setDraftIntervalMinutes] = useState(
     formatIntervalMinutes(HEARTBEAT_DEFAULT_INTERVAL_MS)
   );
+  const [draftMessage, setDraftMessage] = useState("");
   const [draftDirty, setDraftDirty] = useState(false);
   const previousOpenRef = useRef(props.open);
   const previousWorkspaceIdRef = useRef(props.workspaceId);
-  const lastSyncedSettingsRef = useRef<Pick<typeof settings, "enabled" | "intervalMs"> | null>(
-    null
-  );
+  const lastSyncedSettingsRef = useRef<Pick<
+    typeof settings,
+    "enabled" | "intervalMs" | "message"
+  > | null>(null);
 
   useEffect(() => {
     const didOpen = props.open && !previousOpenRef.current;
@@ -103,7 +112,8 @@ export function WorkspaceHeartbeatModal(props: WorkspaceHeartbeatModalProps) {
     const settingsChanged =
       lastSyncedSettings == null ||
       lastSyncedSettings.enabled !== settings.enabled ||
-      lastSyncedSettings.intervalMs !== settings.intervalMs;
+      lastSyncedSettings.intervalMs !== settings.intervalMs ||
+      lastSyncedSettings.message !== settings.message;
 
     previousOpenRef.current = props.open;
     previousWorkspaceIdRef.current = props.workspaceId;
@@ -116,13 +126,23 @@ export function WorkspaceHeartbeatModal(props: WorkspaceHeartbeatModalProps) {
     if (didOpen || workspaceChanged || (!draftDirty && settingsChanged)) {
       setDraftEnabled(settings.enabled);
       setDraftIntervalMinutes(formatIntervalMinutes(settings.intervalMs));
+      setDraftMessage(settings.message ?? "");
       setDraftDirty(false);
       lastSyncedSettingsRef.current = {
         enabled: settings.enabled,
         intervalMs: settings.intervalMs,
+        message: settings.message,
       };
     }
-  }, [draftDirty, isLoading, props.open, props.workspaceId, settings.enabled, settings.intervalMs]);
+  }, [
+    draftDirty,
+    isLoading,
+    props.open,
+    props.workspaceId,
+    settings.enabled,
+    settings.intervalMs,
+    settings.message,
+  ]);
 
   const validationError = getValidationErrorMessage(draftIntervalMinutes);
   const errorMessages = [validationError, error].filter(
@@ -156,6 +176,7 @@ export function WorkspaceHeartbeatModal(props: WorkspaceHeartbeatModalProps) {
     const didSave = await save({
       enabled: draftEnabled,
       intervalMs: parsedMinutes * MS_PER_MINUTE,
+      message: normalizeDraftMessage(draftMessage),
     });
     if (didSave) {
       props.onOpenChange(false);
@@ -230,6 +251,34 @@ export function WorkspaceHeartbeatModal(props: WorkspaceHeartbeatModalProps) {
                   <span className="text-muted text-sm">min</span>
                 </div>
               </div>
+
+              {draftEnabled && (
+                <div className="mt-4 space-y-2">
+                  <label htmlFor="workspace-heartbeat-message" className="block">
+                    <div className="text-foreground text-sm font-medium">Message</div>
+                    <div className="text-muted mt-1 text-xs">
+                      Leave empty to use the default heartbeat message.
+                    </div>
+                  </label>
+                  <textarea
+                    id="workspace-heartbeat-message"
+                    rows={4}
+                    maxLength={HEARTBEAT_MAX_MESSAGE_LENGTH}
+                    value={draftMessage}
+                    onChange={(event: React.ChangeEvent<HTMLTextAreaElement>) => {
+                      setDraftMessage(event.target.value);
+                      setDraftDirty(true);
+                    }}
+                    disabled={isSaving}
+                    className="border-border-medium bg-background-secondary text-foreground focus:border-accent focus:ring-accent min-h-[120px] w-full resize-y rounded-md border p-3 text-sm leading-relaxed focus:ring-1 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                    placeholder={HEARTBEAT_DEFAULT_MESSAGE_BODY}
+                    aria-label="Heartbeat message"
+                  />
+                  <div className="text-muted text-xs">
+                    Max {HEARTBEAT_MAX_MESSAGE_LENGTH} characters.
+                  </div>
+                </div>
+              )}
             </div>
 
             {errorMessages.length > 0 && (

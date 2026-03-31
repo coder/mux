@@ -3043,6 +3043,7 @@ export const router = (authToken?: string) => {
             context.workspaceService.setHeartbeatSettings(input.workspaceId, {
               enabled: input.enabled,
               intervalMs: input.intervalMs,
+              message: input.message,
             })
           ),
       },
