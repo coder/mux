@@ -462,6 +462,25 @@ describe("HeartbeatService", () => {
       expect(internals.nextEligibleAtByWorkspaceId.has(testWorkspaceId)).toBe(false);
     });
 
+    test("metadata event updates the tracked deadline when the interval changes", () => {
+      service.start();
+      const internals = getInternals();
+      internals.resyncFromConfig(0);
+
+      const beforeMetadataUpdate = Date.now();
+      const updatedIntervalMs = 45 * 60 * 1000;
+      wsEmitter.emit("metadata", {
+        workspaceId: testWorkspaceId,
+        metadata: makeWorkspaceEntry({
+          heartbeat: { enabled: true, intervalMs: updatedIntervalMs },
+        }),
+      });
+
+      const updatedDeadline = internals.nextEligibleAtByWorkspaceId.get(testWorkspaceId);
+      expect(updatedDeadline).toBeDefined();
+      expect(updatedDeadline).toBeGreaterThanOrEqual(beforeMetadataUpdate + updatedIntervalMs);
+    });
+
     test("metadata event re-adds unarchived workspace", () => {
       service.start();
       const internals = getInternals();
@@ -691,6 +710,42 @@ describe("HeartbeatService", () => {
 
       expect(internals.nextEligibleAtByWorkspaceId.get(testWorkspaceId)).toBe(
         1 + defaultHeartbeatIntervalMs
+      );
+    });
+
+    test("keeps the tracked deadline when resync sees the same interval", () => {
+      const internals = getInternals();
+
+      internals.resyncFromConfig(0);
+      expect(internals.nextEligibleAtByWorkspaceId.get(testWorkspaceId)).toBe(
+        defaultHeartbeatIntervalMs
+      );
+
+      internals.resyncFromConfig(1);
+
+      expect(internals.nextEligibleAtByWorkspaceId.get(testWorkspaceId)).toBe(
+        defaultHeartbeatIntervalMs
+      );
+    });
+
+    test("updates the tracked deadline when resync sees a new interval", () => {
+      const internals = getInternals();
+      const initialIntervalMs = 15 * 60 * 1000;
+      currentProjectsConfig = makeProjectsConfig([
+        makeWorkspaceEntry({ heartbeat: { enabled: true, intervalMs: initialIntervalMs } }),
+      ]);
+
+      internals.resyncFromConfig(0);
+      expect(internals.nextEligibleAtByWorkspaceId.get(testWorkspaceId)).toBe(initialIntervalMs);
+
+      const updatedIntervalMs = 45 * 60 * 1000;
+      currentProjectsConfig = makeProjectsConfig([
+        makeWorkspaceEntry({ heartbeat: { enabled: true, intervalMs: updatedIntervalMs } }),
+      ]);
+      internals.resyncFromConfig(1);
+
+      expect(internals.nextEligibleAtByWorkspaceId.get(testWorkspaceId)).toBe(
+        1 + updatedIntervalMs
       );
     });
 

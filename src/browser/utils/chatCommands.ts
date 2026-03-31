@@ -357,11 +357,19 @@ export async function processSlashCommand(
     setInput("");
 
     try {
+      const currentHeartbeatSettings =
+        parsed.minutes === null
+          ? await activeClient.workspace.heartbeat.get({ workspaceId: context.workspaceId })
+          : null;
+      // Preserve the stored cadence when toggling heartbeats off so re-enabling restores it.
+      const intervalMs =
+        parsed.minutes === null
+          ? (currentHeartbeatSettings?.intervalMs ?? HEARTBEAT_DEFAULT_INTERVAL_MS)
+          : parsed.minutes * 60 * 1000;
       const result = await activeClient.workspace.heartbeat.set({
         workspaceId: context.workspaceId,
         enabled: parsed.minutes !== null,
-        intervalMs:
-          parsed.minutes === null ? HEARTBEAT_DEFAULT_INTERVAL_MS : parsed.minutes * 60 * 1000,
+        intervalMs,
       });
 
       if (!result.success) {

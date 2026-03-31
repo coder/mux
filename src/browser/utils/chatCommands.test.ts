@@ -11,6 +11,7 @@ import {
 } from "./chatCommands";
 import type { CommandHandlerContext, SlashCommandContext } from "./chatCommands";
 import type { ReviewNoteData } from "@/common/types/review";
+import { HEARTBEAT_DEFAULT_INTERVAL_MS } from "@/constants/heartbeat";
 
 // Simple mock for localStorage to satisfy resolveCompactionModel and experiment gating.
 // Note: command helpers read from window.localStorage, so we set both globalThis.localStorage
@@ -313,12 +314,16 @@ describe("processSlashCommand - heartbeat-set", () => {
     );
   });
 
-  test("disables workspace heartbeats using the default interval", async () => {
+  test("preserves the configured interval when disabling workspace heartbeats", async () => {
+    const heartbeatGet = mock(() =>
+      Promise.resolve({ enabled: true as const, intervalMs: 45 * 60 * 1000 })
+    );
     const heartbeatSet = mock(() => Promise.resolve({ success: true, data: undefined }));
     const context = createSlashCommandContext({
       api: {
         workspace: {
           heartbeat: {
+            get: heartbeatGet,
             set: heartbeatSet,
           },
         },
@@ -331,10 +336,11 @@ describe("processSlashCommand - heartbeat-set", () => {
     const result = await processSlashCommand({ type: "heartbeat-set", minutes: null }, context);
 
     expect(result).toEqual({ clearInput: true, toastShown: true });
+    expect(heartbeatGet).toHaveBeenCalledWith({ workspaceId: "test-ws" });
     expect(heartbeatSet).toHaveBeenCalledWith({
       workspaceId: "test-ws",
       enabled: false,
-      intervalMs: 1_800_000,
+      intervalMs: 45 * 60 * 1000,
     });
     expect(context.setToast).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -342,6 +348,34 @@ describe("processSlashCommand - heartbeat-set", () => {
         message: "Heartbeat disabled",
       })
     );
+  });
+
+  test("uses the default interval when disabling heartbeats without saved settings", async () => {
+    const heartbeatGet = mock(() => Promise.resolve(null));
+    const heartbeatSet = mock(() => Promise.resolve({ success: true, data: undefined }));
+    const context = createSlashCommandContext({
+      api: {
+        workspace: {
+          heartbeat: {
+            get: heartbeatGet,
+            set: heartbeatSet,
+          },
+        },
+      } as unknown as SlashCommandContext["api"],
+      workspaceId: "test-ws",
+    });
+
+    setHeartbeatExperiment(true);
+
+    const result = await processSlashCommand({ type: "heartbeat-set", minutes: null }, context);
+
+    expect(result).toEqual({ clearInput: true, toastShown: true });
+    expect(heartbeatGet).toHaveBeenCalledWith({ workspaceId: "test-ws" });
+    expect(heartbeatSet).toHaveBeenCalledWith({
+      workspaceId: "test-ws",
+      enabled: false,
+      intervalMs: HEARTBEAT_DEFAULT_INTERVAL_MS,
+    });
   });
 
   test("surfaces backend heartbeat update failures", async () => {

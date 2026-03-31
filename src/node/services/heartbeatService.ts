@@ -31,6 +31,7 @@ export class HeartbeatService {
   private stopped = true;
 
   private readonly nextEligibleAtByWorkspaceId = new Map<string, number>();
+  private readonly trackedIntervalMsByWorkspaceId = new Map<string, number>();
   private readonly activeWorkspaceIds = new Set<string>();
   private readonly queuedWorkspaceIds = new Set<string>();
   private isProcessingQueue = false;
@@ -100,6 +101,7 @@ export class HeartbeatService {
     this.workspaceService.off("metadata", this.onMetadata);
 
     this.nextEligibleAtByWorkspaceId.clear();
+    this.trackedIntervalMsByWorkspaceId.clear();
     this.activeWorkspaceIds.clear();
     this.queuedWorkspaceIds.clear();
     this.isProcessingQueue = false;
@@ -137,7 +139,7 @@ export class HeartbeatService {
         configuredWorkspaceIds.add(workspaceId);
         const trackingIntervalMs = this.getTrackingIntervalMsForWorkspace(workspace);
         if (trackingIntervalMs != null) {
-          this.ensureTrackedWorkspace(workspaceId, now + trackingIntervalMs);
+          this.ensureTrackedWorkspace(workspaceId, now + trackingIntervalMs, trackingIntervalMs);
           continue;
         }
 
@@ -152,7 +154,11 @@ export class HeartbeatService {
     }
   }
 
-  private ensureTrackedWorkspace(workspaceId: string, nextEligibleAt: number): void {
+  private ensureTrackedWorkspace(
+    workspaceId: string,
+    nextEligibleAt: number,
+    trackingIntervalMs: number
+  ): void {
     assert(
       workspaceId.trim().length > 0,
       "HeartbeatService.ensureTrackedWorkspace requires a workspaceId"
@@ -161,13 +167,31 @@ export class HeartbeatService {
       Number.isFinite(nextEligibleAt),
       "HeartbeatService.ensureTrackedWorkspace requires a finite deadline"
     );
+    assert(
+      Number.isFinite(trackingIntervalMs) && trackingIntervalMs > 0,
+      "HeartbeatService.ensureTrackedWorkspace requires a positive interval"
+    );
 
-    if (this.nextEligibleAtByWorkspaceId.has(workspaceId)) {
+    const previousNextEligibleAt = this.nextEligibleAtByWorkspaceId.get(workspaceId);
+    const previousIntervalMs = this.trackedIntervalMsByWorkspaceId.get(workspaceId);
+    if (previousNextEligibleAt != null && previousIntervalMs === trackingIntervalMs) {
       return;
     }
 
     this.nextEligibleAtByWorkspaceId.set(workspaceId, nextEligibleAt);
-    log.debug("HeartbeatService: tracking workspace", { workspaceId, nextEligibleAt });
+    this.trackedIntervalMsByWorkspaceId.set(workspaceId, trackingIntervalMs);
+    log.debug(
+      previousNextEligibleAt == null
+        ? "HeartbeatService: tracking workspace"
+        : "HeartbeatService: updated tracked workspace deadline",
+      {
+        workspaceId,
+        previousNextEligibleAt,
+        previousIntervalMs,
+        nextEligibleAt,
+        trackingIntervalMs,
+      }
+    );
   }
 
   private purgeWorkspace(workspaceId: string, reason: string): void {
@@ -175,9 +199,10 @@ export class HeartbeatService {
     assert(reason.trim().length > 0, "HeartbeatService.purgeWorkspace requires a reason");
 
     const removedDeadline = this.nextEligibleAtByWorkspaceId.delete(workspaceId);
+    const removedInterval = this.trackedIntervalMsByWorkspaceId.delete(workspaceId);
     const removedActive = this.activeWorkspaceIds.delete(workspaceId);
     const removedQueued = this.queuedWorkspaceIds.delete(workspaceId);
-    if (!removedDeadline && !removedActive && !removedQueued) {
+    if (!removedDeadline && !removedInterval && !removedActive && !removedQueued) {
       return;
     }
 
@@ -185,6 +210,7 @@ export class HeartbeatService {
       workspaceId,
       reason,
       removedDeadline,
+      removedInterval,
       removedActive,
       removedQueued,
     });
@@ -214,6 +240,7 @@ export class HeartbeatService {
     }
 
     this.nextEligibleAtByWorkspaceId.set(workspaceId, Date.now() + intervalMs);
+    this.trackedIntervalMsByWorkspaceId.set(workspaceId, intervalMs);
     log.debug("HeartbeatService: activity event reset countdown", { workspaceId, intervalMs });
   }
 
@@ -241,7 +268,7 @@ export class HeartbeatService {
 
     if (metadata.heartbeat?.enabled) {
       const intervalMs = metadata.heartbeat.intervalMs ?? HEARTBEAT_DEFAULT_INTERVAL_MS;
-      this.ensureTrackedWorkspace(workspaceId, Date.now() + intervalMs);
+      this.ensureTrackedWorkspace(workspaceId, Date.now() + intervalMs, intervalMs);
       return;
     }
 
@@ -345,6 +372,7 @@ export class HeartbeatService {
             const trackingIntervalMs = this.getTrackingIntervalMs(workspaceId, config);
             if (trackingIntervalMs != null) {
               this.nextEligibleAtByWorkspaceId.set(workspaceId, Date.now() + trackingIntervalMs);
+              this.trackedIntervalMsByWorkspaceId.set(workspaceId, trackingIntervalMs);
             } else {
               this.purgeWorkspace(workspaceId, "post_dispatch_ineligible");
             }
