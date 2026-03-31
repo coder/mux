@@ -1,60 +1,47 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { cleanup, renderHook, waitFor } from "@testing-library/react";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { GlobalWindow } from "happy-dom";
+import React from "react";
 
+import { APIProvider, type APIClient } from "@/browser/contexts/API";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
-import { requireTestModule } from "@/browser/testUtils";
-import type * as UseRoutingModule from "./useRouting";
+
+import { useRouting } from "./useRouting";
 
 let providersConfig: ProvidersConfigMap | null = null;
 let routePriority: string[] = ["direct"];
 let routeOverrides: Record<string, string> = {};
 
-async function* emptyConfigStream() {
+async function* emptyStream() {
   await Promise.resolve();
   for (const item of [] as unknown[]) {
     yield item;
   }
 }
 
-const getConfigMock = mock(() =>
-  Promise.resolve({
-    routePriority,
-    routeOverrides,
-  })
-);
-const onConfigChangedMock = mock(() => Promise.resolve(emptyConfigStream()));
-const updateRoutePreferencesMock = mock(() => Promise.resolve(undefined));
-
-const useProvidersConfigMock = mock(() => ({
-  config: providersConfig,
-  refresh: () => Promise.resolve(),
-}));
-
-void mock.module("@/browser/hooks/useProvidersConfig", () => ({
-  useProvidersConfig: useProvidersConfigMock,
-}));
-
-void mock.module("@/browser/contexts/API", () => ({
-  useAPI: () => ({
-    api: {
-      config: {
-        getConfig: getConfigMock,
-        onConfigChanged: onConfigChangedMock,
-        updateRoutePreferences: updateRoutePreferencesMock,
-      },
+function createStubApiClient(): APIClient {
+  return {
+    providers: {
+      getConfig: () => Promise.resolve(providersConfig),
+      onConfigChanged: () => Promise.resolve(emptyStream()),
     },
-  }),
-}));
+    config: {
+      getConfig: () => Promise.resolve({ routePriority, routeOverrides }),
+      onConfigChanged: () => Promise.resolve(emptyStream()),
+      updateRoutePreferences: () => Promise.resolve(undefined),
+    },
+  } as unknown as APIClient;
+}
 
-const hooksDir = dirname(fileURLToPath(import.meta.url));
+const stubClient = createStubApiClient();
 
-const { useRouting } = requireTestModule<{ useRouting: typeof UseRoutingModule.useRouting }>(
-  join(hooksDir, "useRouting.ts")
-);
+const wrapper: React.FC<{ children: React.ReactNode }> = (props) =>
+  React.createElement(
+    APIProvider,
+    { client: stubClient } as React.ComponentProps<typeof APIProvider>,
+    props.children
+  );
 
 describe("useRouting", () => {
   beforeEach(() => {
@@ -63,9 +50,6 @@ describe("useRouting", () => {
     providersConfig = null;
     routePriority = ["direct"];
     routeOverrides = {};
-    getConfigMock.mockClear();
-    onConfigChangedMock.mockClear();
-    updateRoutePreferencesMock.mockClear();
   });
 
   afterEach(() => {
@@ -86,7 +70,7 @@ describe("useRouting", () => {
     };
     routePriority = ["github-copilot", "direct"];
 
-    const { result } = renderHook(() => useRouting());
+    const { result } = renderHook(() => useRouting(), { wrapper });
 
     await waitFor(() => expect(result.current.routePriority).toEqual(["github-copilot", "direct"]));
 
