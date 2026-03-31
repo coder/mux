@@ -409,7 +409,7 @@
 
   --color-background: hsl(210 33% 98%);
   --color-background-secondary: hsl(210 36% 95%);
-  --color-border: hsla(210, 24%, 82%);
+  --color-border: hsl(210, 24%, 82%);
   --color-foreground: hsl(210 18% 16%);
   --color-text: hsl(210 18% 16%);
   --color-text-light: hsl(210 15% 28%);
