@@ -3298,11 +3298,11 @@ export class WorkspaceService extends EventEmitter {
           settings.intervalMs <= HEARTBEAT_MAX_INTERVAL_MS,
         `Heartbeat interval must be between ${HEARTBEAT_MIN_INTERVAL_MS} and ${HEARTBEAT_MAX_INTERVAL_MS} ms`
       );
+      const hasMessageUpdate = Object.prototype.hasOwnProperty.call(settings, "message");
       assert(
-        settings.message == null || typeof settings.message === "string",
+        !hasMessageUpdate || settings.message == null || typeof settings.message === "string",
         "Heartbeat message must be a string when provided"
       );
-      const normalizedMessage = normalizeHeartbeatMessageInput(settings.message);
 
       const found = this.config.findWorkspace(normalizedWorkspaceId);
       if (!found) {
@@ -3323,8 +3323,11 @@ export class WorkspaceService extends EventEmitter {
         return Err("Workspace not found");
       }
 
+      const nextMessage = hasMessageUpdate
+        ? normalizeHeartbeatMessageInput(settings.message)
+        : sanitizeHeartbeatMessage(workspaceEntry.heartbeat?.message);
       const nextSettings: WorkspaceHeartbeatSettings =
-        normalizedMessage == null
+        nextMessage == null
           ? {
               enabled: settings.enabled,
               // Keep the interval on disk even when disabled so re-enabling restores the user's choice.
@@ -3334,7 +3337,7 @@ export class WorkspaceService extends EventEmitter {
               enabled: settings.enabled,
               // Keep the interval on disk even when disabled so re-enabling restores the user's choice.
               intervalMs: settings.intervalMs,
-              message: normalizedMessage,
+              message: nextMessage,
             };
 
       const changed =

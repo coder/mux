@@ -140,7 +140,7 @@ export function useWorkspaceHeartbeat(
           return true;
         }
 
-        setSettings({ ...next });
+        setSettings(normalizeHeartbeatSettings(next));
         setIsSaving(false);
         return true;
       } catch (saveError) {

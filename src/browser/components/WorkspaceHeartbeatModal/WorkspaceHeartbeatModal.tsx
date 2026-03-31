@@ -88,6 +88,10 @@ function normalizeDraftMessage(value: string): string | undefined {
   return trimmedValue.length > 0 ? trimmedValue : undefined;
 }
 
+function getDraftMessageForSave(value: string): string {
+  return normalizeDraftMessage(value) ?? "";
+}
+
 export function WorkspaceHeartbeatModal(props: WorkspaceHeartbeatModalProps) {
   const { settings, isLoading, isSaving, error, save } = useWorkspaceHeartbeat({
     workspaceId: props.open ? props.workspaceId : null,
@@ -100,6 +104,7 @@ export function WorkspaceHeartbeatModal(props: WorkspaceHeartbeatModalProps) {
   const [draftDirty, setDraftDirty] = useState(false);
   const previousOpenRef = useRef(props.open);
   const previousWorkspaceIdRef = useRef(props.workspaceId);
+  const messageTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const lastSyncedSettingsRef = useRef<Pick<
     typeof settings,
     "enabled" | "intervalMs" | "message"
@@ -176,7 +181,9 @@ export function WorkspaceHeartbeatModal(props: WorkspaceHeartbeatModalProps) {
     const didSave = await save({
       enabled: draftEnabled,
       intervalMs: parsedMinutes * MS_PER_MINUTE,
-      message: normalizeDraftMessage(draftMessage),
+      // Read directly from the textarea on save so the final keystroke is preserved even if the
+      // click lands before React finishes flushing the last state update.
+      message: getDraftMessageForSave(messageTextareaRef.current?.value ?? draftMessage),
     });
     if (didSave) {
       props.onOpenChange(false);
@@ -261,6 +268,7 @@ export function WorkspaceHeartbeatModal(props: WorkspaceHeartbeatModalProps) {
                     </div>
                   </label>
                   <textarea
+                    ref={messageTextareaRef}
                     id="workspace-heartbeat-message"
                     rows={4}
                     maxLength={HEARTBEAT_MAX_MESSAGE_LENGTH}

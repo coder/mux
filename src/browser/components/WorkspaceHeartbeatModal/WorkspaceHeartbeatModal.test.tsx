@@ -108,8 +108,11 @@ describe("WorkspaceHeartbeatModal", () => {
     expect(messageField.value).toBe("Review the current workspace status before acting.");
     expect(messageField.placeholder).toBe(HEARTBEAT_DEFAULT_MESSAGE_BODY);
 
-    fireEvent.change(messageField, {
+    fireEvent.input(messageField, {
       target: { value: "Check the pending review queue and summarize next steps." },
+    });
+    await waitFor(() => {
+      expect(messageField.value).toBe("Check the pending review queue and summarize next steps.");
     });
     fireEvent.click(view.getByRole("button", { name: "Save" }));
 
@@ -206,7 +209,10 @@ describe("WorkspaceHeartbeatModal", () => {
     const messageField = (await waitFor(() =>
       view.getByLabelText("Heartbeat message")
     )) as HTMLTextAreaElement;
-    fireEvent.change(messageField, { target: { value: "   " } });
+    fireEvent.input(messageField, { target: { value: "   " } });
+    await waitFor(() => {
+      expect(messageField.value).toBe("   ");
+    });
     fireEvent.click(view.getByRole("button", { name: "Save" }));
 
     await waitFor(() => {
@@ -216,7 +222,7 @@ describe("WorkspaceHeartbeatModal", () => {
           next: {
             enabled: true,
             intervalMs: HEARTBEAT_DEFAULT_INTERVAL_MS,
-            message: undefined,
+            message: "",
           },
         },
       ]);

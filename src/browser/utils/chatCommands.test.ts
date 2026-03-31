@@ -349,7 +349,6 @@ describe("processSlashCommand - heartbeat-set", () => {
       workspaceId: "test-ws",
       enabled: true,
       intervalMs: 30 * 60 * 1000,
-      message: undefined,
     });
     expect(context.setToast).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -425,7 +424,6 @@ describe("processSlashCommand - heartbeat-set", () => {
       workspaceId: "test-ws",
       enabled: false,
       intervalMs: HEARTBEAT_DEFAULT_INTERVAL_MS,
-      message: undefined,
     });
   });
 

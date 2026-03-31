@@ -380,7 +380,11 @@ export async function processSlashCommand(
         workspaceId: context.workspaceId,
         enabled: parsed.minutes !== null,
         intervalMs,
-        message: currentHeartbeatSettings?.message,
+        // Omit message when the best-effort read failed; WorkspaceService preserves the
+        // persisted custom message when this field is absent.
+        ...(currentHeartbeatSettings?.message != null
+          ? { message: currentHeartbeatSettings.message }
+          : {}),
       });
 
       if (!result.success) {
