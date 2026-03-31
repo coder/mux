@@ -1,14 +1,20 @@
 import { describe, test, expect, beforeEach, mock, afterEach } from "bun:test";
-import { HeartbeatService } from "./heartbeatService";
-import type { Config } from "@/node/config";
-import type { ExtensionMetadataService } from "./ExtensionMetadataService";
-import type { WorkspaceService } from "./workspaceService";
-import type { TaskService } from "./taskService";
-import type { ProjectConfig, ProjectsConfig, Workspace } from "@/common/types/project";
 import type { MuxMessage } from "@/common/types/message";
 import { createMuxMessage } from "@/common/types/message";
+import type { ProjectConfig, ProjectsConfig, Workspace } from "@/common/types/project";
+import { Ok } from "@/common/types/result";
 import { HEARTBEAT_DEFAULT_INTERVAL_MS } from "@/constants/heartbeat";
+import type { Config } from "@/node/config";
 import { EventEmitter } from "events";
+import type { AIService } from "./aiService";
+import type { AgentSession } from "./agentSession";
+import type { BackgroundProcessManager } from "./backgroundProcessManager";
+import type { ExtensionMetadataService } from "./ExtensionMetadataService";
+import { HeartbeatService } from "./heartbeatService";
+import type { HistoryService } from "./historyService";
+import type { InitStateManager } from "./initStateManager";
+import type { TaskService } from "./taskService";
+import { WorkspaceService } from "./workspaceService";
 
 async function waitForCondition(
   condition: () => boolean,
@@ -492,6 +498,111 @@ describe("HeartbeatService", () => {
 
       await waitForCondition(() => executeHeartbeatMock.mock.calls.length === 1);
       expect(executeHeartbeatMock).toHaveBeenCalledWith(testWorkspaceId);
+    });
+
+    test("dispatches an eligible heartbeat end-to-end through executeHeartbeat", async () => {
+      const heartbeatIntervalMs = 30_000;
+      const idleDurationMs = 5 * 60_000;
+      const idleRecency = Date.now() - idleDurationMs;
+
+      currentProjectsConfig = makeProjectsConfig([
+        makeWorkspaceEntry({
+          heartbeat: { enabled: true, intervalMs: heartbeatIntervalMs },
+        }),
+      ]);
+      getSnapshotMock.mockImplementation(() =>
+        Promise.resolve(
+          makeSnapshot({
+            recency: idleRecency,
+            streaming: false,
+          })
+        )
+      );
+
+      const sendMessageMock = mock(() => Promise.resolve(Ok(undefined)));
+      const getOrCreateSessionMock = mock(
+        () =>
+          ({
+            isBusy: () => false,
+          }) as unknown as AgentSession
+      );
+
+      const realWorkspaceService = new WorkspaceService(
+        mockConfig,
+        {} as HistoryService,
+        new EventEmitter() as unknown as AIService,
+        new EventEmitter() as unknown as InitStateManager,
+        mockExtensionMetadata,
+        {} as BackgroundProcessManager
+      );
+      const executeHeartbeatImpl = realWorkspaceService.executeHeartbeat.bind(realWorkspaceService);
+      const executeHeartbeatSpy = mock((workspaceId: string) => executeHeartbeatImpl(workspaceId));
+
+      const workspaceServiceOverrides = realWorkspaceService as unknown as {
+        getChatHistory: typeof getChatHistoryMock;
+        getOrCreateSession: typeof getOrCreateSessionMock;
+        sendMessage: typeof sendMessageMock;
+        executeHeartbeat: typeof executeHeartbeatSpy;
+      };
+      workspaceServiceOverrides.getChatHistory = getChatHistoryMock;
+      workspaceServiceOverrides.getOrCreateSession = getOrCreateSessionMock;
+      workspaceServiceOverrides.sendMessage = sendMessageMock;
+      workspaceServiceOverrides.executeHeartbeat = executeHeartbeatSpy;
+
+      service = new HeartbeatService(
+        mockConfig,
+        mockExtensionMetadata,
+        realWorkspaceService,
+        mockTaskService
+      );
+      service.start();
+      const internals = getInternals();
+
+      internals.resyncFromConfig(0);
+      internals.checkAllWorkspaces(heartbeatIntervalMs + 1);
+
+      await waitForCondition(() => sendMessageMock.mock.calls.length === 1);
+
+      expect(executeHeartbeatSpy).toHaveBeenCalledTimes(1);
+      expect(executeHeartbeatSpy).toHaveBeenCalledWith(testWorkspaceId);
+      expect(sendMessageMock).toHaveBeenCalledTimes(1);
+
+      // `mock.calls` is typed as `any[][]`; pin it to the real sendMessage signature so
+      // these assertions stay type-safe without changing the test behavior.
+      interface HeartbeatDisplayStatus {
+        message?: string;
+      }
+      interface HeartbeatSendOptions {
+        muxMetadata?: {
+          type?: string;
+          source?: string;
+          displayStatus?: HeartbeatDisplayStatus;
+        };
+      }
+      type HeartbeatDispatchOptions = NonNullable<Parameters<WorkspaceService["sendMessage"]>[3]>;
+      type HeartbeatSendMessageCall = [
+        workspaceId: Parameters<WorkspaceService["sendMessage"]>[0],
+        heartbeatPrompt: Parameters<WorkspaceService["sendMessage"]>[1],
+        sendOptions: HeartbeatSendOptions,
+        dispatchOptions: HeartbeatDispatchOptions,
+      ];
+      const firstSendMessageCall = sendMessageMock.mock.calls.at(0) as
+        | HeartbeatSendMessageCall
+        | undefined;
+      expect(firstSendMessageCall).toBeDefined();
+      if (!firstSendMessageCall) {
+        throw new Error("Expected heartbeat sendMessage to be called exactly once");
+      }
+      const [workspaceId, heartbeatPrompt, sendOptions, dispatchOptions] = firstSendMessageCall;
+      expect(workspaceId).toBe(testWorkspaceId);
+      expect(heartbeatPrompt).toContain("[Heartbeat]");
+      expect(heartbeatPrompt).toContain("idle for approximately 5 minutes");
+      expect(sendOptions.muxMetadata?.type).toBe("heartbeat-request");
+      expect(sendOptions.muxMetadata?.source).toBe("heartbeat");
+      expect(sendOptions.muxMetadata?.displayStatus?.message).toBe("Heartbeat check...");
+      expect(dispatchOptions?.synthetic).toBe(true);
+      expect(dispatchOptions?.requireIdle).toBe(true);
+      expect(dispatchOptions?.skipAutoResumeReset).toBe(true);
     });
 
     test("startup does not fire heartbeats immediately", async () => {
