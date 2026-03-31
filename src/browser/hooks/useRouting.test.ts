@@ -68,11 +68,18 @@ describe("useRouting", () => {
         models: [KNOWN_MODELS.GPT_54_MINI.providerModelId],
       },
     };
-    routePriority = ["github-copilot", "direct"];
 
     const { result } = renderHook(() => useRouting(), { wrapper });
 
-    await waitFor(() => expect(result.current.routePriority).toEqual(["github-copilot", "direct"]));
+    await waitFor(() =>
+      expect(
+        result.current
+          .availableRoutes(KNOWN_MODELS.GPT.id)
+          .some((route) => route.route === "github-copilot")
+      ).toBe(true)
+    );
+
+    result.current.setRoutePreferences(["github-copilot", "direct"], {});
 
     expect(result.current.resolveRoute(KNOWN_MODELS.GPT.id)).toEqual({
       route: "direct",
