@@ -432,6 +432,24 @@ describe("useModelsFromSettings provider availability gating", () => {
     expect(result.current.hiddenModelsForSelector).not.toContain(KNOWN_MODELS.HAIKU.id);
   });
 
+  test("does not treat custom gateway model entries as an exhaustive route catalog", () => {
+    providersConfig = {
+      openai: { apiKeySet: false, isEnabled: true, isConfigured: false },
+      openrouter: {
+        apiKeySet: true,
+        isEnabled: true,
+        isConfigured: true,
+        models: [OPENROUTER_OPENAI_CUSTOM_MODEL],
+      },
+    };
+    routePriority = ["openrouter", "direct"];
+
+    const { result } = renderHook(() => useModelsFromSettings());
+
+    expect(result.current.models).toContain(KNOWN_MODELS.GPT.id);
+    expect(result.current.hiddenModelsForSelector).not.toContain(KNOWN_MODELS.GPT.id);
+  });
+
   test("hides models that a configured gateway does not expose", () => {
     providersConfig = {
       openai: { apiKeySet: false, isEnabled: true, isConfigured: false },

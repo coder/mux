@@ -275,6 +275,33 @@ describe("ProviderModelFactory routing", () => {
     });
   });
 
+  it("does not treat custom gateway model entries as an exhaustive routed catalog", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        openrouter: {
+          apiKey: "or-test",
+          models: ["team-only-model"],
+        },
+      });
+
+      const projectConfig = config.loadConfigOrDefault();
+      await config.saveConfig({
+        ...projectConfig,
+        routePriority: ["openrouter", "direct"],
+      });
+
+      const result = await factory.resolveAndCreateModel("openai:gpt-5", "off");
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        return;
+      }
+
+      expect(result.data.effectiveModelString).toBe("openrouter:openai/gpt-5");
+      expect(result.data.routeProvider).toBe("openrouter");
+      expect(result.data.routedThroughGateway).toBe(false);
+    });
+  });
+
   it("routes Anthropic models through Bedrock when Bedrock is configured and prioritized", async () => {
     await withTempConfig(async (config, factory) => {
       config.saveProvidersConfig({
@@ -578,6 +605,23 @@ describe("classifyCopilotInitiator", () => {
       messages: [
         { role: "user", content: "hi" },
         { role: "assistant", content: "..." },
+      ],
+    });
+    expect(classifyCopilotInitiator(body)).toBe("agent");
+  });
+
+  it("returns 'user' when the last Responses input item is a user turn", () => {
+    const body = JSON.stringify({
+      input: [{ role: "user", content: [{ type: "input_text", text: "hello" }] }],
+    });
+    expect(classifyCopilotInitiator(body)).toBe("user");
+  });
+
+  it("returns 'agent' when the last Responses input item is a stored tool reference", () => {
+    const body = JSON.stringify({
+      input: [
+        { role: "user", content: [{ type: "input_text", text: "hello" }] },
+        { type: "item_reference", id: "fc_123" },
       ],
     });
     expect(classifyCopilotInitiator(body)).toBe("agent");

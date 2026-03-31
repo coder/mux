@@ -10,7 +10,7 @@ import { isModelAvailable } from "@/common/routing";
 import type { EffectivePolicy, ProvidersConfigMap } from "@/common/orpc/types";
 import { normalizeToCanonical } from "@/common/utils/ai/models";
 import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
-import { getProviderModelEntryId } from "@/common/utils/providers/modelEntries";
+import { isGatewayModelAccessibleFromAuthoritativeCatalog } from "@/common/utils/providers/gatewayModelCatalog";
 import { getModelStats } from "@/common/utils/tokens/modelStats";
 
 export interface CompactionSuggestion {
@@ -39,13 +39,12 @@ function buildIsConfigured(
 function buildIsGatewayModelAccessible(
   providersConfig: ProvidersConfigMap | null
 ): (gateway: string, modelId: string) => boolean {
-  return (gateway: string, modelId: string) => {
-    const models = providersConfig?.[gateway]?.models;
-    if (!Array.isArray(models) || models.length === 0) {
-      return true;
-    }
-    return models.some((entry) => getProviderModelEntryId(entry) === modelId);
-  };
+  return (gateway: string, modelId: string) =>
+    isGatewayModelAccessibleFromAuthoritativeCatalog(
+      gateway,
+      modelId,
+      providersConfig?.[gateway]?.models
+    );
 }
 
 export interface CompactionRouteOptions {

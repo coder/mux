@@ -22,6 +22,7 @@ import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import type { ExternalSecretResolver } from "@/common/types/secrets";
 import { isOpReference } from "@/common/utils/opRef";
 import { isProviderDisabledInConfig } from "@/common/utils/providers/isProviderDisabled";
+import { isGatewayModelAccessibleFromAuthoritativeCatalog } from "@/common/utils/providers/gatewayModelCatalog";
 import { getProviderModelEntryId } from "@/common/utils/providers/modelEntries";
 import {
   isCopilotModelAccessible,
@@ -444,23 +445,55 @@ export function parseModelString(modelString: string): [string, string] {
 
 /**
  * Classify a Copilot API request as "user" or "agent" initiated by inspecting
- * the last message role in the request body. GitHub Copilot bills premium
+ * the last conversational item in the request body. GitHub Copilot bills premium
  * requests only for "user"-initiated calls.
  *
- * Heuristic: if the last message in the messages array has role "user",
- * this is a user-initiated turn. Everything else (tool results, assistant
- * continuations) is agent-initiated.
+ * Heuristic: if the last chat-completions message or Responses input item is a
+ * user turn, treat the request as user-initiated. Assistant continuations, tool
+ * calls, tool outputs, and stored item references are agent-initiated.
  */
 export function classifyCopilotInitiator(body: string | null | undefined): "user" | "agent" {
   try {
-    if (typeof body !== "string") return "user"; // can't parse → safe default
-    const parsed = JSON.parse(body) as { messages?: unknown[] };
+    if (typeof body !== "string") return "user"; // can't parse -> safe default
+    const parsed = JSON.parse(body) as { messages?: unknown[]; input?: unknown };
     const messages = parsed.messages;
-    if (!Array.isArray(messages) || messages.length === 0) return "user";
-    const last = messages[messages.length - 1] as { role?: string } | undefined;
-    return last?.role === "user" ? "user" : "agent";
+    if (Array.isArray(messages) && messages.length > 0) {
+      const last = messages[messages.length - 1] as { role?: string } | undefined;
+      return last?.role === "user" ? "user" : "agent";
+    }
+
+    const input = parsed.input;
+    if (Array.isArray(input)) {
+      for (let index = input.length - 1; index >= 0; index -= 1) {
+        const item: unknown = input[index];
+        if (typeof item !== "object" || item === null) {
+          continue;
+        }
+
+        const role = (item as { role?: unknown }).role;
+        if (typeof role === "string") {
+          if (role === "user") {
+            return "user";
+          }
+          if (role === "assistant") {
+            return "agent";
+          }
+          continue;
+        }
+
+        // AI SDK Responses conversion only emits non-role items for assistant or
+        // tool-driven state, such as function calls, tool outputs, reasoning, and
+        // item references. Treat those as agent-initiated to preserve Copilot billing.
+        const type = (item as { type?: unknown }).type;
+        if (typeof type === "string") {
+          return "agent";
+        }
+      }
+    }
+
+    return "user";
   } catch {
-    return "user"; // parse failure → safe fallback (don't hide usage)
+    return "user"; // parse failure -> safe fallback (don't hide usage)
   }
 }
 
@@ -520,14 +553,12 @@ function getConfiguredProviderModelIds(providerConfig: ProviderConfig | undefine
 }
 
 function createGatewayModelAccessibilityChecker(providersConfig: ProvidersConfig) {
-  return (gateway: string, gatewayModelId: string): boolean => {
-    const models = providersConfig[gateway]?.models;
-    if (!models || models.length === 0) {
-      return true;
-    }
-
-    return models.some((entry) => getProviderModelEntryId(entry) === gatewayModelId);
-  };
+  return (gateway: string, gatewayModelId: string): boolean =>
+    isGatewayModelAccessibleFromAuthoritativeCatalog(
+      gateway,
+      gatewayModelId,
+      providersConfig[gateway]?.models
+    );
 }
 
 // ---------------------------------------------------------------------------

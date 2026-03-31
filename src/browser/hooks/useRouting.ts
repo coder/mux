@@ -8,7 +8,7 @@ import {
   type RouteContext,
 } from "@/common/routing";
 import { normalizeToCanonical } from "@/common/utils/ai/models";
-import { getProviderModelEntryId } from "@/common/utils/providers/modelEntries";
+import { isGatewayModelAccessibleFromAuthoritativeCatalog } from "@/common/utils/providers/gatewayModelCatalog";
 
 import { useProvidersConfig } from "./useProvidersConfig";
 
@@ -136,13 +136,12 @@ export function useRouting(): RoutingState {
   );
 
   const isGatewayModelAccessible = useCallback(
-    (gateway: string, modelId: string) => {
-      const models = providersConfig?.[gateway]?.models;
-      if (!Array.isArray(models) || models.length === 0) {
-        return true;
-      }
-      return models.some((entry) => getProviderModelEntryId(entry) === modelId);
-    },
+    (gateway: string, modelId: string) =>
+      isGatewayModelAccessibleFromAuthoritativeCatalog(
+        gateway,
+        modelId,
+        providersConfig?.[gateway]?.models
+      ),
     [providersConfig]
   );
 
