@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { EventEmitter } from "events";
-import type { ProjectsConfig, Workspace } from "@/common/types/project";
+import type { ProjectConfig, ProjectsConfig, Workspace } from "@/common/types/project";
 import type { Config } from "@/node/config";
 import type { AIService } from "./aiService";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
@@ -14,17 +14,12 @@ const TEST_WORKSPACE_PATH = "/test/path";
 const TEST_PROJECT_PATH = "/test/project";
 
 function createProjectsConfig(workspace: Workspace): ProjectsConfig {
+  const projectConfig: ProjectConfig = {
+    workspaces: [workspace],
+  };
+
   return {
-    projects: new Map([
-      [
-        TEST_PROJECT_PATH,
-        {
-          workspaces: [workspace],
-        } as ProjectsConfig["projects"] extends Map<string, infer ProjectConfig>
-          ? ProjectConfig
-          : never,
-      ],
-    ]),
+    projects: new Map([[TEST_PROJECT_PATH, projectConfig]]),
   };
 }
 
@@ -61,8 +56,9 @@ describe("WorkspaceService heartbeat settings", () => {
         workspacePath: TEST_WORKSPACE_PATH,
         projectPath: TEST_PROJECT_PATH,
       })),
-      saveConfig: mock(async (nextConfig: ProjectsConfig) => {
+      saveConfig: mock((nextConfig: ProjectsConfig) => {
         currentProjectsConfig = nextConfig;
+        return Promise.resolve();
       }),
     } as unknown as Config;
 
