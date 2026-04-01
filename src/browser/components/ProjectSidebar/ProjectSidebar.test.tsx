@@ -1670,6 +1670,85 @@ describe("ProjectSidebar project actions menu", () => {
     });
   });
 
+  test("marks section attention when a promoted draft workspace needs attention", () => {
+    const promotedWorkspace = {
+      ...createWorkspace("promoted-workspace", { title: "Promoted workspace" }),
+      sectionId: "section-1",
+      isInitializing: true,
+    };
+
+    projectContextValue = createProjectContextValue({
+      userProjects: new Map([
+        [
+          demoProjectPath,
+          {
+            workspaces: [
+              {
+                path: `${demoProjectPath}/promoted-workspace`,
+                sectionId: "section-1",
+              },
+            ],
+            sections: [{ id: "section-1", name: "Section 1", color: "#6B7280", nextId: null }],
+          },
+        ],
+      ]),
+    });
+
+    spyOn(WorkspaceContextModule, "useWorkspaceActions").mockImplementation(
+      () =>
+        ({
+          selectedWorkspace: null,
+          setSelectedWorkspace: () => undefined,
+          preflightArchiveWorkspace: preflightArchiveWorkspaceMock,
+          archiveWorkspace: archiveWorkspaceActionMock,
+          removeWorkspace: () => Promise.resolve({ success: true }),
+          updateWorkspaceTitle: () => Promise.resolve({ success: true }),
+          refreshWorkspaceMetadata: () => Promise.resolve(),
+          pendingNewWorkspaceProject: null,
+          pendingNewWorkspaceDraftId: null,
+          workspaceDraftsByProject: {
+            [demoProjectPath]: [
+              {
+                draftId: "draft-promoted",
+                sectionId: "section-1",
+                createdAt: Date.now(),
+              },
+            ],
+          },
+          workspaceDraftPromotionsByProject: {
+            [demoProjectPath]: {
+              "draft-promoted": promotedWorkspace,
+            },
+          },
+          createWorkspaceDraft: () => undefined,
+          openWorkspaceDraft: () => undefined,
+          deleteWorkspaceDraft: () => undefined,
+        }) as unknown as ReturnType<typeof WorkspaceContextModule.useWorkspaceActions>
+    );
+
+    render(
+      <ProjectSidebar
+        collapsed={false}
+        onToggleCollapsed={() => undefined}
+        sortedWorkspacesByProject={new Map([[demoProjectPath, [promotedWorkspace]]])}
+        workspaceRecency={{}}
+      />
+    );
+
+    const sectionHeaderCalls = (
+      SectionHeaderModule.SectionHeader as unknown as {
+        mock: {
+          calls: Array<[Parameters<typeof SectionHeaderModule.SectionHeader>[0]]>;
+        };
+      }
+    ).mock.calls;
+    const sectionProps = sectionHeaderCalls
+      .map(([props]) => props)
+      .find((props) => props.section.id === "section-1");
+
+    expect(sectionProps?.hasAttention).toBe(true);
+  });
+
   test("supports inline project name editing with Enter, Escape, and empty-to-null commit", async () => {
     const updateDisplayName = mock(() => resolveVoidResult());
     projectContextValue = createProjectContextValue({

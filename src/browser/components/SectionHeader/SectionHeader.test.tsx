@@ -74,7 +74,7 @@ describe("SectionHeader auto-created section editing", () => {
     expect(view.onRename).not.toHaveBeenCalled();
   });
 
-  test("removes section on blur when user has not typed", async () => {
+  test("does not remove section on blur when user has not typed", async () => {
     const view = renderSectionHeader();
 
     const input = (await waitFor(() =>
@@ -82,7 +82,7 @@ describe("SectionHeader auto-created section editing", () => {
     )) as HTMLInputElement;
     fireEvent.blur(input);
 
-    expect(view.onAutoCreateAbandon).toHaveBeenCalledTimes(1);
+    expect(view.onAutoCreateAbandon).not.toHaveBeenCalled();
     expect(view.onRename).not.toHaveBeenCalled();
   });
 

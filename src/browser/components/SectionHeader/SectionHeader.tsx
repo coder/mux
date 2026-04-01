@@ -81,8 +81,6 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
     const trimmed = editValue.trim();
     if (trimmed && trimmed !== section.name) {
       onRename(trimmed);
-    } else if (onAutoCreateAbandon && !hasEditedName) {
-      onAutoCreateAbandon();
     } else if (onAutoCreateRenameCancel && hasEditedName) {
       onAutoCreateRenameCancel();
     } else {

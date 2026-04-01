@@ -2805,9 +2805,16 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 const sectionAllWorkspaces =
                                   allBySectionIdForNormalRendering.get(section.id) ?? [];
                                 const sectionDrafts = draftsBySectionId.get(section.id) ?? [];
-                                const sectionHasAttention = sectionAllWorkspaces.some(
-                                  (workspace) => workspaceAttentionById.get(workspace.id) === true
-                                );
+                                const sectionHasPromotedAttention = sectionDrafts.some((draft) => {
+                                  const promotedMetadata = activeDraftPromotions[draft.draftId];
+                                  return promotedMetadata
+                                    ? workspaceAttentionById.get(promotedMetadata.id) === true
+                                    : false;
+                                });
+                                const sectionHasAttention =
+                                  sectionAllWorkspaces.some(
+                                    (workspace) => workspaceAttentionById.get(workspace.id) === true
+                                  ) || sectionHasPromotedAttention;
 
                                 const sectionExpandedKey = getSectionExpandedKey(
                                   projectPath,
