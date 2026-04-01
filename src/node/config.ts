@@ -1261,6 +1261,7 @@ export class Config {
               // GUARANTEE: All workspaces must have runtimeConfig (apply default if missing)
               runtimeConfig: workspace.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG,
               aiSettings: workspace.aiSettings,
+              heartbeat: workspace.heartbeat,
               aiSettingsByAgent:
                 workspace.aiSettingsByAgent ??
                 (workspace.aiSettings
@@ -1364,6 +1365,7 @@ export class Config {
                   }
                 : undefined);
             metadata.aiSettings ??= workspace.aiSettings;
+            metadata.heartbeat ??= workspace.heartbeat;
 
             // Preserve tree/task metadata when present in config (metadata.json won't have it)
             metadata.parentWorkspaceId ??= workspace.parentWorkspaceId;
@@ -1385,6 +1387,11 @@ export class Config {
 
             if (!workspace.aiSettingsByAgent && metadata.aiSettingsByAgent) {
               workspace.aiSettingsByAgent = metadata.aiSettingsByAgent;
+              configModified = true;
+            }
+
+            if (!workspace.heartbeat && metadata.heartbeat) {
+              workspace.heartbeat = metadata.heartbeat;
               configModified = true;
             }
 
@@ -1420,6 +1427,7 @@ export class Config {
               // GUARANTEE: All workspaces must have runtimeConfig
               runtimeConfig: DEFAULT_RUNTIME_CONFIG,
               aiSettings: workspace.aiSettings,
+              heartbeat: workspace.heartbeat,
               aiSettingsByAgent:
                 workspace.aiSettingsByAgent ??
                 (workspace.aiSettings
@@ -1469,6 +1477,7 @@ export class Config {
             // GUARANTEE: All workspaces must have runtimeConfig (even in error cases)
             runtimeConfig: DEFAULT_RUNTIME_CONFIG,
             aiSettings: workspace.aiSettings,
+            heartbeat: workspace.heartbeat,
             aiSettingsByAgent:
               workspace.aiSettingsByAgent ??
               (workspace.aiSettings
@@ -1544,6 +1553,7 @@ export class Config {
         aiSettingsByAgent: metadata.aiSettingsByAgent,
         runtimeConfig: metadata.runtimeConfig,
         aiSettings: metadata.aiSettings,
+        heartbeat: metadata.heartbeat,
         parentWorkspaceId: metadata.parentWorkspaceId,
         agentType: metadata.agentType,
         agentId: metadata.agentId,

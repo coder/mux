@@ -1,4 +1,6 @@
+import { useExperimentValue } from "@/browser/hooks/useExperiments";
 import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 
 /**
  * Human-readable labels for keybind IDs.
@@ -31,6 +33,7 @@ const KEYBIND_LABELS: Record<keyof typeof KEYBINDS, string> = {
   OPEN_IN_EDITOR: "Open in editor",
   SHARE_TRANSCRIPT: "Share transcript",
   CONFIGURE_MCP: "Configure MCP servers",
+  CONFIGURE_HEARTBEAT: "Configure heartbeat",
   OPEN_COMMAND_PALETTE: "Command palette",
   OPEN_COMMAND_PALETTE_ACTIONS: "Command palette (alternate)",
   OPEN_MUX_CHAT: "Open Chat with Mux",
@@ -98,6 +101,7 @@ const KEYBIND_GROUPS: Array<{ label: string; keys: Array<keyof typeof KEYBINDS> 
       "TOGGLE_NOTIFICATIONS",
       "SHARE_TRANSCRIPT",
       "CONFIGURE_MCP",
+      "CONFIGURE_HEARTBEAT",
     ],
   },
   {
@@ -191,9 +195,15 @@ const KEYBIND_DISPLAY_ALTERNATES: Partial<
 };
 
 export function KeybindsSection() {
+  const workspaceHeartbeatsEnabled = useExperimentValue(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS);
+  const visibleKeybindGroups = KEYBIND_GROUPS.map((group) => ({
+    ...group,
+    keys: group.keys.filter((key) => key !== "CONFIGURE_HEARTBEAT" || workspaceHeartbeatsEnabled),
+  })).filter((group) => group.keys.length > 0);
+
   return (
     <div className="space-y-6">
-      {KEYBIND_GROUPS.map((group) => (
+      {visibleKeybindGroups.map((group) => (
         <div key={group.label}>
           <h3 className="text-foreground mb-3 text-sm font-medium">{group.label}</h3>
           <div className="space-y-1">

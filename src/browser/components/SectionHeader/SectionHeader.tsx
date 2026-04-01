@@ -137,9 +137,7 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
       )}
 
       {/* Right-side controls: add chat + section actions */}
-      <div
-        className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 [@media(hover:none)_and_(pointer:coarse)]:opacity-100"
-      >
+      <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 [@media(hover:none)_and_(pointer:coarse)]:opacity-100">
         {/* Add Chat — always visible on touch devices */}
         <Tooltip>
           <TooltipTrigger asChild>

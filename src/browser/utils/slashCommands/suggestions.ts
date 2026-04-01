@@ -3,7 +3,9 @@
  */
 
 import { MODEL_ABBREVIATIONS } from "@/common/constants/knownModels";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
+import { isExperimentEnabled } from "@/browser/hooks/useExperiments";
 import { getSlashCommandDefinitions } from "./parser";
 import { SLASH_COMMAND_DEFINITION_MAP } from "./registry";
 import type {
@@ -60,6 +62,17 @@ function buildTopLevelSuggestions(
       };
     },
     (definition) => {
+      if (definition.key === "heartbeat") {
+        try {
+          if (!isExperimentEnabled(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS)) {
+            return false;
+          }
+        } catch {
+          // Experiment check unavailable (e.g., test environment) — hide by default.
+          return false;
+        }
+      }
+
       if (isCreation && WORKSPACE_ONLY_COMMAND_KEYS.has(definition.key)) {
         return false;
       }

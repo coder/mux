@@ -42,6 +42,7 @@ export type ParsedCommand =
   | { type: "command-missing-args"; command: string; usage: string }
   | { type: "command-invalid-args"; command: string; input: string; usage: string }
   | { type: "idle-compaction"; hours: number | null }
+  | { type: "heartbeat-set"; minutes: number | null }
   | null;
 
 export interface SuggestionsHandlerArgs {

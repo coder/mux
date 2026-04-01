@@ -359,6 +359,10 @@ export type MuxMessageMetadata = MuxMessageMetadataBase &
         path: string;
       }
     | {
+        type: "heartbeat-request";
+        /** Synthetic heartbeat follow-ups use an explicit marker so future backend dispatch stays inspectable. */
+      }
+    | {
         type: "normal"; // Regular messages
         /** Original user input for one-shot overrides (e.g., "/opus+high do something") — used as display content so the command prefix remains visible. */
         rawCommand?: string;

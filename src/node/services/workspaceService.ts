@@ -111,6 +111,12 @@ import {
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { normalizeAgentId } from "@/common/utils/agentIds";
+import {
+  HEARTBEAT_DEFAULT_INTERVAL_MS,
+  HEARTBEAT_DEFAULT_MESSAGE_BODY,
+  HEARTBEAT_MAX_INTERVAL_MS,
+  HEARTBEAT_MIN_INTERVAL_MS,
+} from "@/constants/heartbeat";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type {
   StreamStartEvent,
@@ -120,8 +126,15 @@ import type {
 } from "@/common/types/stream";
 import type { TerminalService } from "@/node/services/terminalService";
 import type { DesktopSessionManager } from "@/node/services/desktop/DesktopSessionManager";
-import type { WorkspaceAISettingsSchema } from "@/common/orpc/schemas";
-import type { ArchivePreflightResult } from "@/common/orpc/schemas/api";
+import type {
+  WorkspaceAISettingsSchema,
+  WorkspaceHeartbeatSettingsSchema,
+} from "@/common/orpc/schemas";
+import type {
+  ArchiveLossyUntrackedFilesConfirmation,
+  ArchivePreflightResult,
+  ArchiveWorkspaceResult,
+} from "@/common/orpc/schemas/api";
 import type { SessionTimingService } from "@/node/services/sessionTimingService";
 import type { SessionUsageService } from "@/node/services/sessionUsageService";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
@@ -172,6 +185,7 @@ const MAX_WORKSPACE_NAME_COLLISION_RETRIES = 3;
 
 // Shared type for workspace-scoped AI settings (model + thinking)
 type WorkspaceAISettings = z.infer<typeof WorkspaceAISettingsSchema>;
+type WorkspaceHeartbeatSettings = z.infer<typeof WorkspaceHeartbeatSettingsSchema>;
 type WorktreeArchiveSnapshotLifecycleService = Pick<
   WorktreeArchiveSnapshotService,
   | "preflightSnapshotForArchive"
@@ -179,6 +193,35 @@ type WorktreeArchiveSnapshotLifecycleService = Pick<
   | "restoreSnapshotAfterUnarchive"
   | "getUnsupportedUntrackedPaths"
 >;
+function normalizeHeartbeatMessageInput(message: string | undefined): string | undefined {
+  if (message == null) {
+    return undefined;
+  }
+
+  assert(typeof message === "string", "Heartbeat message must be a string when provided");
+  const trimmedMessage = message.trim();
+  if (trimmedMessage.length === 0) {
+    return undefined;
+  }
+
+  return trimmedMessage;
+}
+
+// Persisted workspace config can contain non-string or whitespace-only values; normalize the
+// message on read so an invalid override never bricks heartbeat execution.
+function sanitizeHeartbeatMessage(message: unknown): string | undefined {
+  if (typeof message !== "string") {
+    return undefined;
+  }
+
+  const trimmedMessage = message.trim();
+  if (trimmedMessage.length === 0) {
+    return undefined;
+  }
+
+  return trimmedMessage;
+}
+
 interface WorkspaceAgentStatus {
   emoji: string;
   message: string;
@@ -196,6 +239,60 @@ function normalizeRepoRootProjectPath(projectPath: string | null | undefined): s
   }
 
   return stripTrailingSlashes(path.posix.normalize(normalizedPath));
+}
+
+function normalizeArchiveUntrackedPaths(paths: readonly string[]): string[] {
+  const normalizedPaths = paths.map((untrackedPath) => {
+    const trimmedPath = untrackedPath.trim();
+    assert(
+      trimmedPath.length > 0,
+      "normalizeArchiveUntrackedPaths: untracked paths must be non-empty"
+    );
+    return trimmedPath;
+  });
+  return [...new Set(normalizedPaths)].sort();
+}
+
+function buildArchiveLossyUntrackedFilesConfirmation(
+  paths: readonly string[]
+): ArchiveLossyUntrackedFilesConfirmation {
+  const normalizedPaths = normalizeArchiveUntrackedPaths(paths);
+  assert(
+    normalizedPaths.length > 0,
+    "buildArchiveLossyUntrackedFilesConfirmation: expected at least one untracked path"
+  );
+  return {
+    kind: "confirm-lossy-untracked-files",
+    paths: normalizedPaths,
+  };
+}
+
+function areArchiveUntrackedPathListsEqual(
+  leftPaths: readonly string[],
+  rightPaths: readonly string[]
+): boolean {
+  const normalizedLeftPaths = normalizeArchiveUntrackedPaths(leftPaths);
+  const normalizedRightPaths = normalizeArchiveUntrackedPaths(rightPaths);
+  if (normalizedLeftPaths.length !== normalizedRightPaths.length) {
+    return false;
+  }
+
+  return normalizedLeftPaths.every((path, index) => path === normalizedRightPaths[index]);
+}
+
+function isArchiveLossyUntrackedFilesConfirmation(
+  value: unknown
+): value is ArchiveLossyUntrackedFilesConfirmation {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const maybeConfirmation: { kind?: unknown; paths?: unknown } = value;
+  return (
+    maybeConfirmation.kind === "confirm-lossy-untracked-files" &&
+    Array.isArray(maybeConfirmation.paths) &&
+    maybeConfirmation.paths.every((path) => typeof path === "string")
+  );
 }
 
 interface FileCompletionsCacheEntry {
@@ -1204,6 +1301,69 @@ export class WorkspaceService extends EventEmitter {
     return (
       this.config.loadConfigOrDefault().worktreeArchiveBehavior ?? DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR
     );
+  }
+
+  private async getCurrentArchiveUntrackedPaths(args: {
+    workspaceId: string;
+    workspaceMetadata: WorkspaceMetadata;
+  }): Promise<Result<string[]>> {
+    if (this.worktreeArchiveSnapshotService == null) {
+      return Ok([]);
+    }
+
+    if (!isWorktreeRuntime(args.workspaceMetadata.runtimeConfig)) {
+      return Ok([]);
+    }
+
+    // Multi-project workspaces skip snapshot capture entirely, so there is nothing to confirm.
+    if (
+      Array.isArray(args.workspaceMetadata.projects) &&
+      args.workspaceMetadata.projects.length > 1
+    ) {
+      return Ok([]);
+    }
+
+    const unsupportedUntrackedPathsResult =
+      await this.worktreeArchiveSnapshotService.getUnsupportedUntrackedPaths({
+        workspaceId: args.workspaceId,
+        workspaceMetadata: args.workspaceMetadata,
+      });
+    if (!unsupportedUntrackedPathsResult.success) {
+      return Err(unsupportedUntrackedPathsResult.error);
+    }
+
+    return Ok(normalizeArchiveUntrackedPaths(unsupportedUntrackedPathsResult.data));
+  }
+
+  private async getArchiveUntrackedFilesConfirmation(args: {
+    workspaceId: string;
+    workspaceMetadata: WorkspaceMetadata;
+    acknowledgedUntrackedPaths?: string[];
+  }): Promise<Result<ArchiveLossyUntrackedFilesConfirmation | null>> {
+    const currentUntrackedPathsResult = await this.getCurrentArchiveUntrackedPaths({
+      workspaceId: args.workspaceId,
+      workspaceMetadata: args.workspaceMetadata,
+    });
+    if (!currentUntrackedPathsResult.success) {
+      return Err(currentUntrackedPathsResult.error);
+    }
+
+    const currentUntrackedPaths = currentUntrackedPathsResult.data;
+    if (currentUntrackedPaths.length === 0) {
+      return Ok(null);
+    }
+
+    if (args.acknowledgedUntrackedPaths == null) {
+      return Ok(buildArchiveLossyUntrackedFilesConfirmation(currentUntrackedPaths));
+    }
+
+    if (
+      !areArchiveUntrackedPathListsEqual(args.acknowledgedUntrackedPaths, currentUntrackedPaths)
+    ) {
+      return Ok(buildArchiveLossyUntrackedFilesConfirmation(currentUntrackedPaths));
+    }
+
+    return Ok(null);
   }
 
   /**
@@ -3082,6 +3242,124 @@ export class WorkspaceService extends EventEmitter {
     return this.enrichMaybeFrontendMetadata(found);
   }
 
+  getHeartbeatSettings(workspaceId: string): WorkspaceHeartbeatSettings | null {
+    const normalizedWorkspaceId = workspaceId.trim();
+    assert(
+      normalizedWorkspaceId.length > 0,
+      "getHeartbeatSettings requires a non-empty workspaceId"
+    );
+
+    const found = this.config.findWorkspace(normalizedWorkspaceId);
+    if (!found) {
+      return null;
+    }
+
+    const config = this.config.loadConfigOrDefault();
+    const projectConfig = config.projects.get(found.projectPath);
+    const workspaceEntry =
+      projectConfig?.workspaces.find((workspace) => workspace.id === normalizedWorkspaceId) ??
+      projectConfig?.workspaces.find((workspace) => workspace.path === found.workspacePath);
+    if (!workspaceEntry?.heartbeat) {
+      return null;
+    }
+
+    const message = sanitizeHeartbeatMessage(workspaceEntry.heartbeat.message);
+    return message == null
+      ? {
+          enabled: workspaceEntry.heartbeat.enabled,
+          intervalMs: workspaceEntry.heartbeat.intervalMs,
+        }
+      : {
+          enabled: workspaceEntry.heartbeat.enabled,
+          intervalMs: workspaceEntry.heartbeat.intervalMs,
+          message,
+        };
+  }
+
+  async setHeartbeatSettings(
+    workspaceId: string,
+    settings: WorkspaceHeartbeatSettings
+  ): Promise<Result<void, string>> {
+    try {
+      const normalizedWorkspaceId = workspaceId.trim();
+      assert(
+        normalizedWorkspaceId.length > 0,
+        "setHeartbeatSettings requires a non-empty workspaceId"
+      );
+      assert(typeof settings.enabled === "boolean", "Heartbeat enabled flag must be a boolean");
+      assert(Number.isInteger(settings.intervalMs), "Heartbeat interval must be an integer");
+      assert(
+        settings.intervalMs >= HEARTBEAT_MIN_INTERVAL_MS &&
+          settings.intervalMs <= HEARTBEAT_MAX_INTERVAL_MS,
+        `Heartbeat interval must be between ${HEARTBEAT_MIN_INTERVAL_MS} and ${HEARTBEAT_MAX_INTERVAL_MS} ms`
+      );
+      const hasMessageUpdate = Object.prototype.hasOwnProperty.call(settings, "message");
+      assert(
+        !hasMessageUpdate || settings.message == null || typeof settings.message === "string",
+        "Heartbeat message must be a string when provided"
+      );
+
+      const found = this.config.findWorkspace(normalizedWorkspaceId);
+      if (!found) {
+        return Err("Workspace not found");
+      }
+
+      const { projectPath, workspacePath } = found;
+      const config = this.config.loadConfigOrDefault();
+      const projectConfig = config.projects.get(projectPath);
+      if (!projectConfig) {
+        return Err(`Project not found: ${projectPath}`);
+      }
+
+      const workspaceEntry =
+        projectConfig.workspaces.find((workspace) => workspace.id === normalizedWorkspaceId) ??
+        projectConfig.workspaces.find((workspace) => workspace.path === workspacePath);
+      if (!workspaceEntry) {
+        return Err("Workspace not found");
+      }
+
+      const nextMessage = hasMessageUpdate
+        ? normalizeHeartbeatMessageInput(settings.message)
+        : sanitizeHeartbeatMessage(workspaceEntry.heartbeat?.message);
+      const nextSettings: WorkspaceHeartbeatSettings =
+        nextMessage == null
+          ? {
+              enabled: settings.enabled,
+              // Keep the interval on disk even when disabled so re-enabling restores the user's choice.
+              intervalMs: settings.intervalMs,
+            }
+          : {
+              enabled: settings.enabled,
+              // Keep the interval on disk even when disabled so re-enabling restores the user's choice.
+              intervalMs: settings.intervalMs,
+              message: nextMessage,
+            };
+
+      const changed =
+        workspaceEntry.heartbeat?.enabled !== nextSettings.enabled ||
+        workspaceEntry.heartbeat?.intervalMs !== nextSettings.intervalMs ||
+        workspaceEntry.heartbeat?.message !== nextSettings.message;
+      if (!changed) {
+        return Ok(undefined);
+      }
+
+      workspaceEntry.heartbeat = nextSettings;
+      await this.config.saveConfig(config);
+
+      // Changing heartbeat settings is a real user interaction. Persist that recency before
+      // emitting metadata so restarts preserve the post-config-change first-fire deadline
+      // instead of rebuilding from an older completed turn.
+      const interactionTimestamp = Date.now();
+      await this.updateRecencyTimestamp(normalizedWorkspaceId, interactionTimestamp);
+      await this.emitCurrentWorkspaceMetadata(normalizedWorkspaceId);
+
+      return Ok(undefined);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return Err(`Failed to set heartbeat settings: ${message}`);
+    }
+  }
+
   /**
    * Refresh workspace metadata from config and emit to subscribers.
    * Useful when external changes (like section assignment) modify workspace config.
@@ -3634,29 +3912,16 @@ export class WorkspaceService extends EventEmitter {
       }
       const metadata = metadataResult.data;
 
-      if (!isWorktreeRuntime(metadata.runtimeConfig)) {
-        return Ok({ kind: "ready" as const });
+      const confirmationResult = await this.getArchiveUntrackedFilesConfirmation({
+        workspaceId,
+        workspaceMetadata: metadata,
+      });
+      if (!confirmationResult.success) {
+        return Err(confirmationResult.error);
       }
 
-      // Multi-project workspaces skip snapshot capture entirely.
-      if (Array.isArray(metadata.projects) && metadata.projects.length > 1) {
-        return Ok({ kind: "ready" as const });
-      }
-
-      const untrackedResult =
-        await this.worktreeArchiveSnapshotService!.getUnsupportedUntrackedPaths({
-          workspaceId,
-          workspaceMetadata: metadata,
-        });
-      if (!untrackedResult.success) {
-        return Err(untrackedResult.error);
-      }
-
-      if (untrackedResult.data.length > 0) {
-        return Ok({
-          kind: "confirm-lossy-untracked-files" as const,
-          paths: untrackedResult.data,
-        });
+      if (confirmationResult.data) {
+        return Ok(confirmationResult.data);
       }
 
       return Ok({ kind: "ready" as const });
@@ -3671,8 +3936,14 @@ export class WorkspaceService extends EventEmitter {
    *
    * If init is still running, we abort it before archiving so we don't leave
    * orphaned post-create work running in the background.
+   *
+   * Returns a typed confirmation result instead of a generic error when the current
+   * untracked-file set must be re-reviewed before a lossy snapshot archive can proceed.
    */
-  async archive(workspaceId: string, acknowledgedUntrackedPaths?: string[]): Promise<Result<void>> {
+  async archive(
+    workspaceId: string,
+    acknowledgedUntrackedPaths?: string[]
+  ): Promise<Result<ArchiveWorkspaceResult>> {
     if (workspaceId === MUX_HELP_CHAT_WORKSPACE_ID) {
       return Err("Cannot archive the Chat with Mux system workspace");
     }
@@ -3743,6 +4014,20 @@ export class WorkspaceService extends EventEmitter {
         beforeArchiveMetadata.projects.length > 1;
       const needsSnapshotCapture = canSnapshotManagedWorktree && !shouldSkipSnapshotCapture;
 
+      if (needsSnapshotCapture && beforeArchiveMetadata) {
+        const initialArchiveConfirmationResult = await this.getArchiveUntrackedFilesConfirmation({
+          workspaceId,
+          workspaceMetadata: beforeArchiveMetadata,
+          acknowledgedUntrackedPaths,
+        });
+        if (!initialArchiveConfirmationResult.success) {
+          return Err(initialArchiveConfirmationResult.error);
+        }
+        if (initialArchiveConfirmationResult.data) {
+          return Ok(initialArchiveConfirmationResult.data);
+        }
+      }
+
       // Lifecycle hooks run *before* we persist archivedAt.
       //
       // NOTE: Archiving is typically a quick UI action, but it can fail if a hook needs to perform
@@ -3763,18 +4048,19 @@ export class WorkspaceService extends EventEmitter {
         beforeArchiveMetadata &&
         isWorktreeRuntime(beforeArchiveMetadata.runtimeConfig)
       ) {
-        // When the caller has NOT acknowledged untracked files, run the strict preflight
-        // that rejects any untracked files outright.
-        if (acknowledgedUntrackedPaths == null) {
-          const preflightResult =
-            await this.worktreeArchiveSnapshotService!.preflightSnapshotForArchive({
-              workspaceId,
-              workspaceMetadata: beforeArchiveMetadata,
-            });
-          if (!preflightResult.success) {
-            return Err(preflightResult.error);
-          }
-        } else {
+        const latestArchiveConfirmationResult = await this.getArchiveUntrackedFilesConfirmation({
+          workspaceId,
+          workspaceMetadata: beforeArchiveMetadata,
+          acknowledgedUntrackedPaths,
+        });
+        if (!latestArchiveConfirmationResult.success) {
+          return Err(latestArchiveConfirmationResult.error);
+        }
+        if (latestArchiveConfirmationResult.data) {
+          return Ok(latestArchiveConfirmationResult.data);
+        }
+
+        if (acknowledgedUntrackedPaths != null) {
           log.info("Archive proceeding with acknowledged lossy untracked files", {
             workspaceId,
             acknowledgedPaths: acknowledgedUntrackedPaths,
@@ -3784,13 +4070,17 @@ export class WorkspaceService extends EventEmitter {
         await this.stopLiveWorkspaceActivityForArchive(workspaceId);
 
         // Pass acknowledgedUntrackedPaths to capture so it re-verifies at capture time,
-        // closing the race window between the user's dialog and actual snapshot capture.
+        // closing the remaining race window between the final confirmation check and the
+        // actual snapshot capture work.
         const captureResult = await this.worktreeArchiveSnapshotService!.captureSnapshotForArchive({
           workspaceId,
           workspaceMetadata: beforeArchiveMetadata,
           acknowledgedUntrackedPaths,
         });
         if (!captureResult.success) {
+          if (isArchiveLossyUntrackedFilesConfirmation(captureResult.error)) {
+            return Ok(captureResult.error);
+          }
           return Err(captureResult.error);
         }
         capturedWorktreeSnapshot = captureResult.data;
@@ -3866,7 +4156,7 @@ export class WorkspaceService extends EventEmitter {
         }
       }
 
-      return Ok(undefined);
+      return Ok({ kind: "archived" as const });
     } catch (error) {
       const message = getErrorMessage(error);
       return Err(`Failed to archive workspace: ${message}`);
@@ -4371,6 +4661,13 @@ export class WorkspaceService extends EventEmitter {
           errors.push({ workspaceId, error: result.error });
           continue;
         }
+        if (result.data.kind !== "archived") {
+          errors.push({
+            workspaceId,
+            error: `Archive requires confirmation for untracked files: ${result.data.paths.join(", ")}`,
+          });
+          continue;
+        }
         archivedWorkspaceIds.push(workspaceId);
       }
 
@@ -4461,18 +4758,18 @@ export class WorkspaceService extends EventEmitter {
       return;
     }
 
-    const extractedSettings = this.extractWorkspaceAISettingsFromSendOptions(options);
-    if (!extractedSettings) return;
-
     const rawAgentId = options?.agentId;
     const agentId = normalizeAgentId(rawAgentId, WORKSPACE_DEFAULTS.agentId);
+    const extractedSettings = this.extractWorkspaceAISettingsFromSendOptions(options);
 
     const persistResult = await this.persistWorkspaceAISettingsForAgent(
       workspaceId,
       agentId,
       extractedSettings,
       {
-        emitMetadata: false,
+        // Normal sends/resumes also persist the selected agent so future backend heartbeat
+        // dispatches can reuse the same workspace default after reloads and reconnects.
+        persistSelectedAgentId: true,
         ...(options?.disableWorkspaceAgents === true ? { disableWorkspaceAgents: true } : {}),
       }
     );
@@ -4487,8 +4784,12 @@ export class WorkspaceService extends EventEmitter {
   private async persistWorkspaceAISettingsForAgent(
     workspaceId: string,
     agentId: string,
-    aiSettings: WorkspaceAISettings,
-    options?: { emitMetadata?: boolean; disableWorkspaceAgents?: boolean }
+    aiSettings: WorkspaceAISettings | null,
+    options?: {
+      emitMetadata?: boolean;
+      disableWorkspaceAgents?: boolean;
+      persistSelectedAgentId?: boolean;
+    }
   ): Promise<Result<boolean, string>> {
     const found = this.config.findWorkspace(workspaceId);
     if (!found) {
@@ -4520,16 +4821,26 @@ export class WorkspaceService extends EventEmitter {
     // settings can fade out naturally instead of being mixed into Auto.
 
     const prev = workspaceEntryWithFallback.aiSettingsByAgent?.[normalizedAgentId];
-    const changed =
-      prev?.model !== aiSettings.model || prev?.thinkingLevel !== aiSettings.thinkingLevel;
-    if (!changed) {
+    const aiSettingsChanged =
+      aiSettings != null &&
+      (prev?.model !== aiSettings.model || prev?.thinkingLevel !== aiSettings.thinkingLevel);
+    const selectedAgentChanged =
+      options?.persistSelectedAgentId === true &&
+      workspaceEntryWithFallback.agentId !== normalizedAgentId;
+    if (!aiSettingsChanged && !selectedAgentChanged) {
       return Ok(false);
     }
 
-    workspaceEntryWithFallback.aiSettingsByAgent = {
-      ...(workspaceEntryWithFallback.aiSettingsByAgent ?? {}),
-      [normalizedAgentId]: aiSettings,
-    };
+    if (aiSettings != null) {
+      workspaceEntryWithFallback.aiSettingsByAgent = {
+        ...(workspaceEntryWithFallback.aiSettingsByAgent ?? {}),
+        [normalizedAgentId]: aiSettings,
+      };
+    }
+
+    if (options?.persistSelectedAgentId === true) {
+      workspaceEntryWithFallback.agentId = normalizedAgentId;
+    }
 
     await this.config.saveConfig(config);
 
@@ -6718,5 +7029,193 @@ export class WorkspaceService extends EventEmitter {
       // Compaction should not mutate persisted workspace AI defaults.
       skipAiSettingsPersistence: true,
     };
+  }
+
+  /**
+   * Execute a synthetic heartbeat turn for an idle workspace.
+   *
+   * This path is frontend-independent: heartbeats still run even if no UI is open.
+   * Throws on failure so HeartbeatService can log and continue with the next workspace.
+   */
+  async executeHeartbeat(workspaceId: string): Promise<void> {
+    assert(workspaceId.trim().length > 0, "executeHeartbeat requires a non-empty workspaceId");
+
+    const { sendOptions, heartbeatMessage } = await this.buildHeartbeatSendOptions(workspaceId);
+
+    const activity = await this.extensionMetadata.getSnapshot(workspaceId);
+    const idleMs =
+      typeof activity?.recency === "number"
+        ? Math.max(0, Date.now() - activity.recency)
+        : HEARTBEAT_DEFAULT_INTERVAL_MS;
+    const idleDuration = this.formatIdleDuration(idleMs);
+    const heartbeatLead = `[Heartbeat] This workspace has been idle for approximately ${idleDuration}.`;
+    const heartbeatBody = heartbeatMessage ?? HEARTBEAT_DEFAULT_MESSAGE_BODY;
+    const heartbeatPrompt = `${heartbeatLead} ${heartbeatBody}`;
+
+    const muxMetadata = {
+      type: "heartbeat-request" as const,
+      source: "heartbeat" as const,
+      displayStatus: { emoji: "💓", message: "Heartbeat check..." },
+    };
+
+    const session = this.getOrCreateSession(workspaceId);
+    if (session.isBusy()) {
+      throw new Error(
+        "Failed to execute heartbeat: Workspace is busy; idle-only send was skipped."
+      );
+    }
+
+    const sendResult = await this.sendMessage(
+      workspaceId,
+      heartbeatPrompt,
+      {
+        ...sendOptions,
+        muxMetadata,
+      },
+      {
+        // Heartbeats run in background; avoid mutating auto-resume counters.
+        skipAutoResumeReset: true,
+        // Backend-initiated maintenance turn: do not treat as explicit user re-engagement.
+        synthetic: true,
+        // If the workspace became active after eligibility checks, skip instead of queueing
+        // stale maintenance work for later.
+        requireIdle: true,
+      }
+    );
+
+    if (!sendResult.success) {
+      const rawError = sendResult.error;
+      const formattedError =
+        typeof rawError === "object" && rawError !== null
+          ? "raw" in rawError && typeof rawError.raw === "string"
+            ? rawError.raw
+            : "message" in rawError && typeof rawError.message === "string"
+              ? rawError.message
+              : "type" in rawError && typeof rawError.type === "string"
+                ? rawError.type
+                : JSON.stringify(rawError)
+          : String(rawError);
+      throw new Error(`Failed to execute heartbeat: ${formattedError}`);
+    }
+  }
+
+  private async buildHeartbeatSendOptions(workspaceId: string): Promise<{
+    sendOptions: SendMessageOptions;
+    heartbeatMessage: string | undefined;
+  }> {
+    const config = this.config.loadConfigOrDefault();
+    const workspaceMatch = this.config.findWorkspace(workspaceId);
+
+    const workspaceEntry = workspaceMatch
+      ? (() => {
+          const project = config.projects.get(workspaceMatch.projectPath);
+          return (
+            project?.workspaces.find((workspace) => workspace.id === workspaceId) ??
+            project?.workspaces.find((workspace) => workspace.path === workspaceMatch.workspacePath)
+          );
+        })()
+      : undefined;
+
+    const activity = await this.extensionMetadata.getSnapshot(workspaceId);
+
+    const rawAgentId = workspaceEntry?.agentId;
+    const agentId = normalizeAgentId(rawAgentId, WORKSPACE_DEFAULTS.agentId);
+    const agentSettings =
+      workspaceEntry?.aiSettingsByAgent?.[agentId] ?? workspaceEntry?.aiSettings;
+    const execAgentSettings =
+      agentId !== WORKSPACE_DEFAULTS.agentId
+        ? (workspaceEntry?.aiSettingsByAgent?.[WORKSPACE_DEFAULTS.agentId] ??
+          workspaceEntry?.aiSettings)
+        : undefined;
+
+    const globalAgentDefaults = config.agentAiDefaults?.[agentId];
+    const globalAgentDefaultModel = globalAgentDefaults?.modelString;
+    const normalizedGlobalAgentDefaultModel =
+      typeof globalAgentDefaultModel === "string"
+        ? normalizeToCanonical(globalAgentDefaultModel.trim())
+        : undefined;
+    const validGlobalAgentDefaultModel =
+      normalizedGlobalAgentDefaultModel && isValidModelFormat(normalizedGlobalAgentDefaultModel)
+        ? normalizedGlobalAgentDefaultModel
+        : undefined;
+
+    const globalExecDefaults =
+      agentId !== WORKSPACE_DEFAULTS.agentId
+        ? config.agentAiDefaults?.[WORKSPACE_DEFAULTS.agentId]
+        : undefined;
+    const globalExecDefaultModel = globalExecDefaults?.modelString;
+    const normalizedGlobalExecDefaultModel =
+      typeof globalExecDefaultModel === "string"
+        ? normalizeToCanonical(globalExecDefaultModel.trim())
+        : undefined;
+    const validGlobalExecDefaultModel =
+      normalizedGlobalExecDefaultModel && isValidModelFormat(normalizedGlobalExecDefaultModel)
+        ? normalizedGlobalExecDefaultModel
+        : undefined;
+
+    const fallbackModel =
+      agentSettings?.model ??
+      validGlobalAgentDefaultModel ??
+      execAgentSettings?.model ??
+      validGlobalExecDefaultModel ??
+      activity?.lastModel ??
+      WORKSPACE_DEFAULTS.model;
+
+    let model = normalizeToCanonical(fallbackModel);
+    if (!isValidModelFormat(model)) {
+      log.warn("Heartbeat resolved invalid model; falling back to workspace default", {
+        workspaceId,
+        agentId,
+        model,
+      });
+      model = WORKSPACE_DEFAULTS.model;
+    }
+
+    const globalAgentDefaultThinking = globalAgentDefaults?.thinkingLevel;
+    const globalExecDefaultThinking = globalExecDefaults?.thinkingLevel;
+
+    const requestedThinking =
+      agentSettings?.thinkingLevel ??
+      globalAgentDefaultThinking ??
+      execAgentSettings?.thinkingLevel ??
+      globalExecDefaultThinking ??
+      activity?.lastThinkingLevel ??
+      WORKSPACE_DEFAULTS.thinkingLevel;
+
+    const normalizedThinkingLevel =
+      coerceThinkingLevel(requestedThinking) ?? WORKSPACE_DEFAULTS.thinkingLevel;
+
+    return {
+      sendOptions: {
+        model,
+        agentId,
+        thinkingLevel: enforceThinkingPolicy(model, normalizedThinkingLevel),
+        maxOutputTokens: undefined,
+        // Heartbeats should not mutate persisted workspace AI defaults.
+        skipAiSettingsPersistence: true,
+      },
+      heartbeatMessage: sanitizeHeartbeatMessage(workspaceEntry?.heartbeat?.message),
+    };
+  }
+
+  private formatIdleDuration(ms: number): string {
+    assert(Number.isFinite(ms) && ms >= 0, "formatIdleDuration requires a non-negative ms value");
+
+    if (ms < 60_000) {
+      return "less than a minute";
+    }
+
+    if (ms < 3_600_000) {
+      const minutes = Math.round(ms / 60_000);
+      return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+    }
+
+    if (ms < 86_400_000) {
+      const hours = Math.round(ms / 3_600_000);
+      return `${hours} hour${hours === 1 ? "" : "s"}`;
+    }
+
+    const days = Math.round(ms / 86_400_000);
+    return `${days} day${days === 1 ? "" : "s"}`;
   }
 }

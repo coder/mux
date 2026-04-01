@@ -3043,6 +3043,24 @@ export const router = (authToken?: string) => {
           }
           return { success: true };
         }),
+      heartbeat: {
+        get: t
+          .input(schemas.workspace.heartbeat.get.input)
+          .output(schemas.workspace.heartbeat.get.output)
+          .handler(({ context, input }) =>
+            context.workspaceService.getHeartbeatSettings(input.workspaceId)
+          ),
+        set: t
+          .input(schemas.workspace.heartbeat.set.input)
+          .output(schemas.workspace.heartbeat.set.output)
+          .handler(({ context, input }) =>
+            context.workspaceService.setHeartbeatSettings(input.workspaceId, {
+              enabled: input.enabled,
+              intervalMs: input.intervalMs,
+              ...(input.message != null ? { message: input.message } : {}),
+            })
+          ),
+      },
       updateAgentAISettings: t
         .input(schemas.workspace.updateAgentAISettings.input)
         .output(schemas.workspace.updateAgentAISettings.output)

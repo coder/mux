@@ -1,6 +1,10 @@
 import { RuntimeConfigSchema } from "@/common/orpc/schemas/runtime";
 import { WorkspaceMCPOverridesSchema } from "@/common/orpc/schemas/mcp";
-import { BestOfGroupSchema, ProjectRefSchema } from "@/common/orpc/schemas/workspace";
+import {
+  BestOfGroupSchema,
+  ProjectRefSchema,
+  WorkspaceHeartbeatSettingsSchema,
+} from "@/common/orpc/schemas/workspace";
 import {
   WorkspaceAISettingsByAgentSchema,
   WorkspaceAISettingsSchema,
@@ -102,6 +106,9 @@ export const WorkspaceConfigSchema = z.object({
   }),
   aiSettings: WorkspaceAISettingsSchema.optional().meta({
     description: "Workspace-scoped AI settings (model + thinking level)",
+  }),
+  heartbeat: WorkspaceHeartbeatSettingsSchema.optional().meta({
+    description: "Persisted heartbeat settings for this workspace.",
   }),
   parentWorkspaceId: z.string().optional().meta({
     description:

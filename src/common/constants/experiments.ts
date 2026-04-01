@@ -14,6 +14,7 @@ export const EXPERIMENT_IDS = {
   MUX_GOVERNOR: "mux-governor",
   MULTI_PROJECT_WORKSPACES: "multi-project-workspaces",
   AGENT_BROWSER: "agent-browser",
+  WORKSPACE_HEARTBEATS: "workspace-heartbeats",
   PORTABLE_DESKTOP: "portable-desktop",
 } as const;
 
@@ -109,6 +110,14 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     id: EXPERIMENT_IDS.AGENT_BROWSER,
     name: "Agent Browser",
     description: "Show the Browser tab in the right sidebar for live agent-browser viewing",
+    enabledByDefault: false,
+    userOverridable: true,
+    showInSettings: true,
+  },
+  [EXPERIMENT_IDS.WORKSPACE_HEARTBEATS]: {
+    id: EXPERIMENT_IDS.WORKSPACE_HEARTBEATS,
+    name: "Workspace Heartbeats",
+    description: "Persist per-workspace heartbeat settings for future background follow-ups",
     enabledByDefault: false,
     userOverridable: true,
     showInSettings: true,

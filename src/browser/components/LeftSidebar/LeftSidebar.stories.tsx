@@ -386,7 +386,9 @@ export const ResizeHandleVisible: AppStory = {
         onStartResize: () => undefined,
       }}
       setup={() => {
-        const workspaces = [createWorkspace({ id: "ws-resize-1", name: "main", projectName: "my-app" })];
+        const workspaces = [
+          createWorkspace({ id: "ws-resize-1", name: "main", projectName: "my-app" }),
+        ];
 
         return createMockORPCClient({
           projects: groupWorkspacesByProject(workspaces),
@@ -397,7 +399,9 @@ export const ResizeHandleVisible: AppStory = {
   ),
   play: async ({ canvasElement }) => {
     await waitFor(() => {
-      const resizeHandle = canvasElement.querySelector('[data-testid="left-sidebar-resize-handle"]');
+      const resizeHandle = canvasElement.querySelector(
+        '[data-testid="left-sidebar-resize-handle"]'
+      );
       if (!resizeHandle) {
         throw new Error("Expected left sidebar resize handle to be visible");
       }
@@ -414,7 +418,9 @@ export const ResizeHandleActive: AppStory = {
         onStartResize: () => undefined,
       }}
       setup={() => {
-        const workspaces = [createWorkspace({ id: "ws-resize-active-1", name: "main", projectName: "my-app" })];
+        const workspaces = [
+          createWorkspace({ id: "ws-resize-active-1", name: "main", projectName: "my-app" }),
+        ];
 
         return createMockORPCClient({
           projects: groupWorkspacesByProject(workspaces),
@@ -439,7 +445,9 @@ export const MobileOpenOverlay: AppStory = {
     <LeftSidebarStoryShell
       leftSidebarProps={{ collapsed: false }}
       setup={() => {
-        const workspaces = [createWorkspace({ id: "ws-mobile-open-1", name: "main", projectName: "mobile-app" })];
+        const workspaces = [
+          createWorkspace({ id: "ws-mobile-open-1", name: "main", projectName: "mobile-app" }),
+        ];
 
         return createMockORPCClient({
           projects: groupWorkspacesByProject(workspaces),
@@ -1621,4 +1629,3 @@ export const ArchivingWorkspaceAlignment: AppStory = {
     });
   },
 };
-

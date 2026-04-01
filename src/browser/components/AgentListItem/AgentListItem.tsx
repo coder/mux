@@ -7,11 +7,13 @@ import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { useWorkspaceUnread } from "@/browser/hooks/useWorkspaceUnread";
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import { useWorkspaceFallbackModel } from "@/browser/hooks/useWorkspaceFallbackModel";
+import { useExperimentValue } from "@/browser/hooks/useExperiments";
 import {
   TASK_GROUP_KIND,
   getTaskGroupKindFromMetadata,
   normalizeTaskGroupLabel,
 } from "@/common/utils/tools/taskGroups";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { isDevcontainerRuntime } from "@/common/types/runtime";
 import { getWorkspaceLastReadKey } from "@/common/constants/storage";
@@ -47,6 +49,7 @@ import {
 import { useLinkSharingEnabled } from "@/browser/contexts/TelemetryEnabledContext";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { ShareTranscriptDialog } from "../ShareTranscriptDialog/ShareTranscriptDialog";
+import { WorkspaceHeartbeatModal } from "../WorkspaceHeartbeatModal";
 import { WorkspaceActionsMenuContent } from "../WorkspaceActionsMenuContent/WorkspaceActionsMenuContent";
 import { useAPI } from "@/browser/contexts/API";
 
@@ -127,7 +130,10 @@ function getItemPaddingLeft(depth?: number): number {
   return 8 + Math.min(32, safeDepth) * 12;
 }
 
-function getSubAgentConnectorLeft(indentLeft: number, layout: "default" | "task-group-member"): number {
+function getSubAgentConnectorLeft(
+  indentLeft: number,
+  layout: "default" | "task-group-member"
+): number {
   return layout === "task-group-member" ? indentLeft - 2 : indentLeft + 9;
 }
 
@@ -430,6 +436,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
   // Destructure metadata for convenience
   const { id: workspaceId, namedWorkspacePath } = metadata;
   const isMuxHelpChat = workspaceId === MUX_HELP_CHAT_WORKSPACE_ID;
+  const workspaceHeartbeatsEnabled = useExperimentValue(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS);
   const isInitializing = metadata.isInitializing === true;
   const isRemoving = isRemovingProp === true || metadata.isRemoving === true;
   const isDisabled = isRemoving || isArchiving === true;
@@ -465,6 +472,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
 
   const linkSharingEnabled = useLinkSharingEnabled();
   const [shareTranscriptOpen, setShareTranscriptOpen] = useState(false);
+  const [heartbeatModalOpen, setHeartbeatModalOpen] = useState(false);
   const overflowMenuButtonRef = useRef<HTMLButtonElement | null>(null);
   const overflowMenuFrameRef = useRef<number | null>(null);
 
@@ -871,6 +879,11 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                 >
                   <WorkspaceActionsMenuContent
                     onEditTitle={startEditing}
+                    onConfigureHeartbeat={
+                      workspaceHeartbeatsEnabled && !isMuxHelpChat
+                        ? () => setHeartbeatModalOpen(true)
+                        : null
+                    }
                     onStopRuntime={
                       isRuntimeRunning && onStopRuntime
                         ? () =>
@@ -937,6 +950,13 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                   />
                 </PopoverContent>
               </Popover>
+              {workspaceHeartbeatsEnabled && !isMuxHelpChat && (
+                <WorkspaceHeartbeatModal
+                  workspaceId={workspaceId}
+                  open={heartbeatModalOpen}
+                  onOpenChange={setHeartbeatModalOpen}
+                />
+              )}
               {/* Share transcript dialog – rendered as a sibling to the overflow menu.
                   Triggered by the menu item above or the Ctrl+Shift+L keybind.
                   Uses a Dialog (modal) so it stays visible regardless of popover dismissal. */}
@@ -1069,7 +1089,10 @@ function AgentListItemInner(props: UnifiedAgentListItemProps) {
     // Task-group members use a slightly different left rail so their connector
     // trunk aligns with the group's leading chevron column.
     const connectorLayout = props.subAgentConnectorLayout ?? "default";
-    const connectorLeft = getSubAgentConnectorLeft(getItemPaddingLeft(props.depth), connectorLayout);
+    const connectorLeft = getSubAgentConnectorLeft(
+      getItemPaddingLeft(props.depth),
+      connectorLayout
+    );
     const ancestorTrunks = rowMeta.ancestorTrunks.map((trunk) => ({
       left: getAncestorTrunkLeft(trunk.depth, connectorLayout),
       active: trunk.active,

@@ -288,10 +288,10 @@ function isDraftVisible(
   }
 ): boolean {
   const scopeId = getDraftScopeId(projectPath, draftId);
-  const draftPrompt =
-    values?.draftPrompt ?? readPersistedState<string>(getInputKey(scopeId), "");
+  const draftPrompt = values?.draftPrompt ?? readPersistedState<string>(getInputKey(scopeId), "");
   const workspaceNameState =
-    values?.workspaceNameState ?? readPersistedState<unknown>(getWorkspaceNameStateKey(scopeId), null);
+    values?.workspaceNameState ??
+    readPersistedState<unknown>(getWorkspaceNameStateKey(scopeId), null);
   const draftAttachments =
     values?.draftAttachments ?? readPersistedState<unknown[]>(getInputAttachmentsKey(scopeId), []);
 
@@ -906,15 +906,32 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
           workspaceId,
           acknowledgedUntrackedPaths ? { acknowledgedUntrackedPaths } : undefined
         );
+        if (result.success && result.data?.kind === "confirm-lossy-untracked-files") {
+          const metadata = workspaceStore.getWorkspaceMetadata(workspaceId);
+          const displayTitle = metadata?.title ?? metadata?.name ?? workspaceId;
+          const aggregator = workspaceStore.getAggregator(workspaceId);
+          const hasActiveStreams = (aggregator?.getActiveStreams().length ?? 0) > 0;
+          const pendingStreamStartTime = aggregator?.getPendingStreamStartTime();
+          const isStarting = pendingStreamStartTime != null && !hasActiveStreams;
+          const awaitingUserQuestion = aggregator?.hasAwaitingUserQuestion() ?? false;
+          const isStreaming = (hasActiveStreams || isStarting) && !awaitingUserQuestion;
+          setArchiveConfirmation({
+            workspaceId,
+            displayTitle,
+            buttonElement,
+            untrackedPaths: result.data.paths,
+            // The retry path already handled any earlier streaming warning. Only surface the
+            // interruption warning again when the archive attempt has not yet been confirmed.
+            isStreaming: acknowledgedUntrackedPaths == null ? isStreaming : false,
+          });
+          return;
+        }
         if (!result.success) {
           if (acknowledgedUntrackedPaths != null) {
             // Archive may fail if new untracked files appear between confirmation and capture.
             // Re-run preflight so we can reopen the modal with the latest paths.
             const preflight = await preflightArchiveWorkspace(workspaceId);
-            if (
-              preflight.success &&
-              preflight.data?.kind === "confirm-lossy-untracked-files"
-            ) {
+            if (preflight.success && preflight.data?.kind === "confirm-lossy-untracked-files") {
               const metadata = workspaceStore.getWorkspaceMetadata(workspaceId);
               const displayTitle = metadata?.title ?? metadata?.name ?? workspaceId;
               setArchiveConfirmation({
@@ -952,12 +969,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
         });
       }
     },
-    [
-      onArchiveWorkspace,
-      preflightArchiveWorkspace,
-      workspaceArchiveError,
-      workspaceStore,
-    ]
+    [onArchiveWorkspace, preflightArchiveWorkspace, workspaceArchiveError, workspaceStore]
   );
 
   const hasActiveStream = useCallback(
@@ -1359,7 +1371,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   }, [closeProjectContextMenu, handleCreateSection, projectMenuTargetPath]);
 
   const projectMenuTargetConfig = projectMenuTargetPath
-    ? userProjects.get(projectMenuTargetPath) ?? null
+    ? (userProjects.get(projectMenuTargetPath) ?? null)
     : null;
   const projectMenuResolvedColor = resolveSectionColor(projectMenuTargetConfig?.color);
 
@@ -1716,12 +1728,16 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               {isExpanded ? (
                                 <FolderOpen
                                   className="h-4 w-4 transition-opacity duration-200 group-hover:opacity-0"
-                                  style={projectFolderColor ? { color: projectFolderColor } : undefined}
+                                  style={
+                                    projectFolderColor ? { color: projectFolderColor } : undefined
+                                  }
                                 />
                               ) : (
                                 <Folder
                                   className="h-4 w-4 transition-opacity duration-200 group-hover:opacity-0"
-                                  style={projectFolderColor ? { color: projectFolderColor } : undefined}
+                                  style={
+                                    projectFolderColor ? { color: projectFolderColor } : undefined
+                                  }
                                 />
                               )}
                             </span>
@@ -2639,7 +2655,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               return (
                                 <>
                                   {projectHasNoAgentsOrDrafts && (
-                                    <div className="py-2 pl-12 text-content-disabled text-xs">
+                                    <div className="text-content-disabled py-2 pl-12 text-xs">
                                       Empty
                                     </div>
                                   )}
@@ -2680,7 +2696,6 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
                                   {/* Sections */}
                                   {sections.map(renderSection)}
-
                                 </>
                               );
                             })()}

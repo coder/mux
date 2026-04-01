@@ -1,0 +1,166 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useAPI } from "@/browser/contexts/API";
+import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import { HEARTBEAT_DEFAULT_INTERVAL_MS } from "@/constants/heartbeat";
+
+type WorkspaceHeartbeatSettings = NonNullable<FrontendWorkspaceMetadata["heartbeat"]>;
+
+export type HeartbeatFormSettings = WorkspaceHeartbeatSettings;
+
+interface UseWorkspaceHeartbeatParams {
+  workspaceId: string | null;
+}
+
+export interface UseWorkspaceHeartbeatResult {
+  settings: HeartbeatFormSettings;
+  isLoading: boolean;
+  isSaving: boolean;
+  error: string | null;
+  save: (next: HeartbeatFormSettings) => Promise<boolean>;
+}
+
+function getDefaultHeartbeatSettings(): HeartbeatFormSettings {
+  return {
+    enabled: false,
+    intervalMs: HEARTBEAT_DEFAULT_INTERVAL_MS,
+  };
+}
+
+function normalizeHeartbeatSettings(
+  heartbeat: WorkspaceHeartbeatSettings | null
+): HeartbeatFormSettings {
+  if (!heartbeat) {
+    return getDefaultHeartbeatSettings();
+  }
+
+  const trimmedMessage = heartbeat.message?.trim();
+  return trimmedMessage
+    ? { ...heartbeat, message: trimmedMessage }
+    : {
+        enabled: heartbeat.enabled,
+        intervalMs: heartbeat.intervalMs,
+      };
+}
+
+function getHeartbeatErrorMessage(error: unknown, fallbackMessage: string): string {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  return fallbackMessage;
+}
+
+export function useWorkspaceHeartbeat(
+  params: UseWorkspaceHeartbeatParams
+): UseWorkspaceHeartbeatResult {
+  const { workspaceId } = params;
+  const { api } = useAPI();
+  const [settings, setSettings] = useState<HeartbeatFormSettings>(() =>
+    getDefaultHeartbeatSettings()
+  );
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Guards for out-of-order async responses (e.g., rapid toggles or workspace switches).
+  const currentWorkspaceIdRef = useRef<string | null>(workspaceId);
+  currentWorkspaceIdRef.current = workspaceId;
+  const latestSaveRequestIdRef = useRef(0);
+
+  useEffect(() => {
+    setSettings(getDefaultHeartbeatSettings());
+    setIsLoading(true);
+    setIsSaving(false);
+    setError(null);
+
+    if (!workspaceId) {
+      setIsLoading(false);
+      return;
+    }
+
+    if (!api) {
+      return;
+    }
+
+    let cancelled = false;
+    void api.workspace.heartbeat
+      .get({ workspaceId })
+      .then((result) => {
+        if (cancelled) return;
+        if (currentWorkspaceIdRef.current !== workspaceId) return;
+
+        setSettings(normalizeHeartbeatSettings(result));
+        setError(null);
+        setIsLoading(false);
+      })
+      .catch((loadError) => {
+        if (cancelled) return;
+        if (currentWorkspaceIdRef.current !== workspaceId) return;
+
+        setError(
+          getHeartbeatErrorMessage(loadError, "Failed to load workspace heartbeat settings")
+        );
+        setIsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [api, workspaceId]);
+
+  const save = useCallback(
+    async (next: HeartbeatFormSettings): Promise<boolean> => {
+      setIsSaving(true);
+      setError(null);
+
+      if (!workspaceId || !api) {
+        setError("Workspace heartbeat settings are unavailable");
+        setIsSaving(false);
+        return false;
+      }
+
+      const requestId = ++latestSaveRequestIdRef.current;
+      const workspaceIdAtCall = workspaceId;
+
+      try {
+        const result = await api.workspace.heartbeat.set({
+          workspaceId: workspaceIdAtCall,
+          ...next,
+        });
+
+        if (!result.success) {
+          throw new Error(result.error ?? "Failed to save workspace heartbeat settings");
+        }
+
+        if (latestSaveRequestIdRef.current !== requestId) {
+          return true;
+        }
+
+        if (currentWorkspaceIdRef.current !== workspaceIdAtCall) {
+          return true;
+        }
+
+        setSettings(normalizeHeartbeatSettings(next));
+        setIsSaving(false);
+        return true;
+      } catch (saveError) {
+        if (latestSaveRequestIdRef.current !== requestId) {
+          return false;
+        }
+
+        if (currentWorkspaceIdRef.current !== workspaceIdAtCall) {
+          return false;
+        }
+
+        setError(
+          getHeartbeatErrorMessage(saveError, "Failed to save workspace heartbeat settings")
+        );
+        setIsSaving(false);
+        return false;
+      }
+    },
+    [api, workspaceId]
+  );
+
+  return { settings, isLoading, isSaving, error, save };
+}

@@ -43,6 +43,7 @@ import {
   GitStatusSchema,
   ProjectRefSchema,
   WorkspaceActivitySnapshotSchema,
+  WorkspaceHeartbeatSettingsSchema,
 } from "./workspace";
 import { WorkspaceAISettingsSchema } from "./workspaceAiSettings";
 import {
@@ -893,6 +894,21 @@ const DebugLlmRequestSnapshotSchema = z
   })
   .strict();
 
+const ArchiveLossyUntrackedFilesConfirmationSchema = z.object({
+  kind: z.literal("confirm-lossy-untracked-files"),
+  paths: z.array(z.string()),
+});
+
+const ArchivePreflightResultSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("ready") }),
+  ArchiveLossyUntrackedFilesConfirmationSchema,
+]);
+
+const ArchiveWorkspaceResultSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("archived") }),
+  ArchiveLossyUntrackedFilesConfirmationSchema,
+]);
+
 export const workspace = {
   list: {
     input: z
@@ -951,6 +967,18 @@ export const workspace = {
     input: z.object({ workspaceId: z.string() }),
     output: ResultSchema(z.object({ title: z.string() }), z.string()),
   },
+  heartbeat: {
+    get: {
+      input: z.object({ workspaceId: z.string() }),
+      output: WorkspaceHeartbeatSettingsSchema.nullable(),
+    },
+    set: {
+      input: WorkspaceHeartbeatSettingsSchema.extend({
+        workspaceId: z.string(),
+      }),
+      output: ResultSchema(z.void(), z.string()),
+    },
+  },
   updateAgentAISettings: {
     input: z.object({
       workspaceId: z.string(),
@@ -969,23 +997,14 @@ export const workspace = {
   },
   preflightArchive: {
     input: z.object({ workspaceId: z.string() }),
-    output: ResultSchema(
-      z.discriminatedUnion("kind", [
-        z.object({ kind: z.literal("ready") }),
-        z.object({
-          kind: z.literal("confirm-lossy-untracked-files"),
-          paths: z.array(z.string()),
-        }),
-      ]),
-      z.string()
-    ),
+    output: ResultSchema(ArchivePreflightResultSchema, z.string()),
   },
   archive: {
     input: z.object({
       workspaceId: z.string(),
       acknowledgedUntrackedPaths: z.array(z.string()).nullish(),
     }),
-    output: ResultSchema(z.void(), z.string()),
+    output: ResultSchema(ArchiveWorkspaceResultSchema, z.string()),
   },
   unarchive: {
     input: z.object({ workspaceId: z.string() }),
@@ -1406,9 +1425,11 @@ export const workspace = {
 };
 
 export type WorkspaceSendMessageOutput = z.infer<typeof workspace.sendMessage.output>;
-export type ArchivePreflightResult =
-  | { kind: "ready" }
-  | { kind: "confirm-lossy-untracked-files"; paths: string[] };
+export type ArchiveLossyUntrackedFilesConfirmation = z.infer<
+  typeof ArchiveLossyUntrackedFilesConfirmationSchema
+>;
+export type ArchivePreflightResult = z.infer<typeof ArchivePreflightResultSchema>;
+export type ArchiveWorkspaceResult = z.infer<typeof ArchiveWorkspaceResultSchema>;
 
 // Tasks (agent sub-workspaces)
 export const tasks = {

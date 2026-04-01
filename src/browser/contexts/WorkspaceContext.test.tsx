@@ -640,7 +640,7 @@ describe("WorkspaceContext", () => {
       });
 
       expect(workspaceApi.archive).toHaveBeenCalledWith({ workspaceId });
-      expect(result).toEqual({ success: true });
+      expect(result).toEqual({ success: true, data: { kind: "archived" } });
     });
 
     test("strips terminal tabs from valid persisted layout on successful archive", async () => {
@@ -688,6 +688,110 @@ describe("WorkspaceContext", () => {
         readPersistedState<Record<string, string>>(terminalTitlesKey, { stale: "title" })
       ).toEqual({});
     });
+
+    test("preserves persisted terminal state when archive needs refreshed confirmation", async () => {
+      const workspaceId = "ws-archive-confirm-refresh";
+      const layoutKey = getRightSidebarLayoutKey(workspaceId);
+      const terminalTitlesKey = getTerminalTitlesKey(workspaceId);
+      const persistedLayout: RightSidebarLayoutState = {
+        version: 1,
+        nextId: 2,
+        focusedTabsetId: "tabset-1",
+        root: {
+          type: "tabset",
+          id: "tabset-1",
+          tabs: ["costs", "terminal:t1"],
+          activeTab: "terminal:t1",
+        },
+      };
+
+      const { workspace: workspaceApi } = createMockAPI({
+        localStorage: {
+          [layoutKey]: JSON.stringify(persistedLayout),
+          [terminalTitlesKey]: JSON.stringify({ t1: "still-open" }),
+        },
+        workspace: {
+          archive: () =>
+            Promise.resolve({
+              success: true as const,
+              data: {
+                kind: "confirm-lossy-untracked-files" as const,
+                paths: ["late-file.txt"],
+              },
+            }),
+        },
+      });
+
+      const ctx = await setup();
+
+      let result: Awaited<ReturnType<WorkspaceContext["archiveWorkspace"]>> | undefined;
+      await act(async () => {
+        result = await ctx().archiveWorkspace(workspaceId);
+      });
+
+      expect(workspaceApi.archive).toHaveBeenCalledWith({ workspaceId });
+      expect(result).toEqual({
+        success: true,
+        data: { kind: "confirm-lossy-untracked-files", paths: ["late-file.txt"] },
+      });
+      expect(readPersistedState<RightSidebarLayoutState | null>(layoutKey, null)).toEqual(
+        persistedLayout
+      );
+      expect(readPersistedState<Record<string, string>>(terminalTitlesKey, {})).toEqual({
+        t1: "still-open",
+      });
+    });
+  });
+
+  test("treats legacy archive success without data as archived", async () => {
+    const workspaceId = "ws-archive-legacy-success";
+    const layoutKey = getRightSidebarLayoutKey(workspaceId);
+    const terminalTitlesKey = getTerminalTitlesKey(workspaceId);
+    const persistedLayout: RightSidebarLayoutState = {
+      version: 1,
+      nextId: 2,
+      focusedTabsetId: "tabset-1",
+      root: {
+        type: "tabset",
+        id: "tabset-1",
+        tabs: ["costs", "terminal:t1"],
+        activeTab: "terminal:t1",
+      },
+    };
+
+    const legacyArchiveSuccess = { success: true as const } as unknown as Awaited<
+      ReturnType<APIClient["workspace"]["archive"]>
+    >;
+    const { workspace: workspaceApi } = createMockAPI({
+      localStorage: {
+        [layoutKey]: JSON.stringify(persistedLayout),
+        [terminalTitlesKey]: JSON.stringify({ t1: "stale-title" }),
+      },
+      workspace: {
+        // Older fixtures omitted the typed archive payload entirely; keep covering that
+        // downgrade-compatibility shape even though the current schema always includes data.
+        archive: () => Promise.resolve(legacyArchiveSuccess),
+      },
+    });
+
+    const ctx = await setup();
+
+    let result: Awaited<ReturnType<WorkspaceContext["archiveWorkspace"]>> | undefined;
+    await act(async () => {
+      result = await ctx().archiveWorkspace(workspaceId);
+    });
+
+    expect(workspaceApi.archive).toHaveBeenCalledWith({ workspaceId });
+    expect(result).toEqual({ success: true, data: { kind: "archived" } });
+    const cleanedLayout = readPersistedState<RightSidebarLayoutState | null>(layoutKey, null);
+    expect(cleanedLayout?.root.type).toBe("tabset");
+    if (cleanedLayout?.root.type !== "tabset") {
+      throw new Error("Expected cleaned right sidebar layout to be a tabset");
+    }
+    expect(cleanedLayout.root.tabs).not.toContain("terminal:t1");
+    expect(
+      readPersistedState<Record<string, string>>(terminalTitlesKey, { stale: "title" })
+    ).toEqual({});
   });
 
   test("updateWorkspaceTitle updates workspace title via updateTitle API", async () => {
@@ -1277,7 +1381,7 @@ function createMockAPI(options: MockAPIOptions = {}) {
     remove: mock(options.workspace?.remove ?? (() => Promise.resolve({ success: true as const }))),
     archive: mock(
       options.workspace?.archive ??
-        (() => Promise.resolve({ success: true as const, data: undefined }))
+        (() => Promise.resolve({ success: true as const, data: { kind: "archived" as const } }))
     ),
     unarchive: mock(
       options.workspace?.unarchive ??

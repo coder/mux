@@ -12,7 +12,7 @@ import {
 } from "react";
 import { useLocation } from "react-router-dom";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import type { ArchivePreflightResult } from "@/common/orpc/schemas/api";
+import type { ArchivePreflightResult, ArchiveWorkspaceResult } from "@/common/orpc/schemas/api";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar/ProjectSidebar";
 import type { RuntimeConfig } from "@/common/types/runtime";
@@ -446,7 +446,7 @@ export interface WorkspaceContext extends WorkspaceMetadataContextValue {
   archiveWorkspace: (
     workspaceId: string,
     options?: { acknowledgedUntrackedPaths?: string[] }
-  ) => Promise<{ success: boolean; error?: string }>;
+  ) => Promise<{ success: boolean; error?: string; data?: ArchiveWorkspaceResult }>;
   unarchiveWorkspace: (workspaceId: string) => Promise<{ success: boolean; error?: string }>;
   refreshWorkspaceMetadata: () => Promise<void>;
   setWorkspaceMetadata: React.Dispatch<
@@ -1320,7 +1320,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     async (
       workspaceId: string,
       options?: { acknowledgedUntrackedPaths?: string[] }
-    ): Promise<{ success: boolean; error?: string }> => {
+    ): Promise<{ success: boolean; error?: string; data?: ArchiveWorkspaceResult }> => {
       if (!api) return { success: false, error: "API not connected" };
 
       try {
@@ -1329,28 +1329,35 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           acknowledgedUntrackedPaths: options?.acknowledgedUntrackedPaths,
         });
         if (result.success) {
-          // Terminal PTYs are killed on archive; clear persisted terminal tabs so
-          // unarchive doesn't briefly flash dead terminal tabs.
-          const layoutKey = getRightSidebarLayoutKey(workspaceId);
-          const rawLayout = readPersistedState<unknown>(layoutKey, null);
+          // Older mocks/story fixtures may still return `{ success: true }` without the newer
+          // typed archive payload. Treat that legacy success shape as an ordinary archive so
+          // archive flows stay downgrade-friendly instead of crashing on `result.data.kind`.
+          const archiveResult: ArchiveWorkspaceResult = result.data ?? { kind: "archived" };
 
-          if (rawLayout != null) {
-            // Use parseRightSidebarLayoutState to handle legacy migrations
-            // (e.g. "stats" tab stripped) before cleaning terminal tabs.
-            const layout = parseRightSidebarLayoutState(rawLayout, "costs");
-            const terminalTabs = collectAllTabs(layout.root).filter(isTerminalTab);
-            let cleanedLayout = layout;
-            for (const tab of terminalTabs) {
-              cleanedLayout = removeTabEverywhere(cleanedLayout, tab);
+          if (archiveResult.kind === "archived") {
+            // Terminal PTYs are killed on archive; clear persisted terminal tabs so
+            // unarchive doesn't briefly flash dead terminal tabs.
+            const layoutKey = getRightSidebarLayoutKey(workspaceId);
+            const rawLayout = readPersistedState<unknown>(layoutKey, null);
+
+            if (rawLayout != null) {
+              // Use parseRightSidebarLayoutState to handle legacy migrations
+              // (e.g. "stats" tab stripped) before cleaning terminal tabs.
+              const layout = parseRightSidebarLayoutState(rawLayout, "costs");
+              const terminalTabs = collectAllTabs(layout.root).filter(isTerminalTab);
+              let cleanedLayout = layout;
+              for (const tab of terminalTabs) {
+                cleanedLayout = removeTabEverywhere(cleanedLayout, tab);
+              }
+              updatePersistedState(layoutKey, cleanedLayout);
             }
-            updatePersistedState(layoutKey, cleanedLayout);
+
+            // Also clear persisted terminal titles since those sessions are gone.
+            updatePersistedState(getTerminalTitlesKey(workspaceId), {});
           }
 
-          // Also clear persisted terminal titles since those sessions are gone.
-          updatePersistedState(getTerminalTitlesKey(workspaceId), {});
-
           // Workspace list + navigation are driven by the workspace metadata subscription.
-          return { success: true };
+          return { success: true, data: archiveResult };
         }
 
         console.error("Failed to archive workspace:", result.error);

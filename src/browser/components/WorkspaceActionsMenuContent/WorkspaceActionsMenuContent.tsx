@@ -1,6 +1,6 @@
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { ArchiveIcon } from "../icons/ArchiveIcon/ArchiveIcon";
-import { GitBranch, Link2, Maximize2, Pencil, Server, Square } from "lucide-react";
+import { GitBranch, HeartPulse, Link2, Maximize2, Pencil, Server, Square } from "lucide-react";
 import React from "react";
 
 interface WorkspaceActionButtonProps {
@@ -38,6 +38,8 @@ interface WorkspaceActionsMenuContentProps {
   onEditTitle?: (() => void) | null;
   /** Workspace-level settings action currently surfaced from the workspace menu bar. */
   onConfigureMcp?: (() => void) | null;
+  /** Experiment-gated workspace heartbeat settings action. */
+  onConfigureHeartbeat?: (() => void) | null;
   /** Mobile workspace-header action: open immersive review in full-screen touch mode. */
   onOpenTouchFullscreenReview?: (() => void) | null;
   onEnterImmersiveReview?: (() => void) | null;
@@ -84,6 +86,19 @@ export const WorkspaceActionsMenuContent: React.FC<WorkspaceActionsMenuContentPr
             props.onConfigureMcp?.();
           }}
           testId={props.configureMcpTestId}
+        />
+      )}
+      {props.onConfigureHeartbeat && (
+        <WorkspaceActionButton
+          label="Configure heartbeat"
+          shortcut={formatKeybind(KEYBINDS.CONFIGURE_HEARTBEAT)}
+          shortcutClassName={props.shortcutClassName}
+          icon={<HeartPulse className="h-3 w-3 shrink-0" />}
+          onClick={(e) => {
+            e.stopPropagation();
+            props.onCloseMenu();
+            props.onConfigureHeartbeat?.();
+          }}
         />
       )}
       {props.onOpenTouchFullscreenReview && !props.isMuxHelpChat && (

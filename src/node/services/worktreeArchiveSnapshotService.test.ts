@@ -4,6 +4,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
+import { Err } from "@/common/types/result";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { Config } from "@/node/config";
 import { WorktreeArchiveSnapshotService } from "@/node/services/worktreeArchiveSnapshotService";
@@ -124,6 +125,38 @@ async function makeWorkspaceDirty(fixture: TestFixture): Promise<void> {
   await fs.writeFile(
     path.join(fixture.workspacePath, "tracked.txt"),
     "base\ncommit one\ncommit two\nstaged change\nunstaged change\n",
+    "utf-8"
+  );
+}
+
+async function renameWorkspaceWithoutRenamingBranch(
+  fixture: TestFixture,
+  newWorkspaceName: string
+): Promise<void> {
+  const renamedWorkspacePath = path.join(path.dirname(fixture.workspacePath), newWorkspaceName);
+  runGit(fixture.projectPath, ["worktree", "move", fixture.workspacePath, renamedWorkspacePath]);
+
+  await fixture.config.editConfig((cfg) => {
+    const workspace = cfg.projects.get(fixture.projectPath)?.workspaces[0];
+    if (!workspace) {
+      throw new Error("Missing workspace entry");
+    }
+    workspace.path = renamedWorkspacePath;
+    workspace.name = newWorkspaceName;
+    return cfg;
+  });
+
+  fixture.workspacePath = renamedWorkspacePath;
+  fixture.metadata.name = newWorkspaceName;
+}
+
+async function writeWorkspaceBranchMap(
+  projectPath: string,
+  branchMap: Record<string, string>
+): Promise<void> {
+  await fs.writeFile(
+    path.join(projectPath, ".git", "mux-workspace-branches.json"),
+    `${JSON.stringify(branchMap, null, 2)}\n`,
     "utf-8"
   );
 }
@@ -322,6 +355,132 @@ describe("WorktreeArchiveSnapshotService", () => {
     expect(captureResult.data.projects[0]?.baseSha).toBe(expectedBaseSha);
   });
 
+  test("captures the checked-out branch name when a renamed workspace kept its original branch", async () => {
+    const originalBranchName = fixture.workspaceName;
+    const renamedWorkspaceName = "renamed-workspace";
+    await renameWorkspaceWithoutRenamingBranch(fixture, renamedWorkspaceName);
+    await writeWorkspaceBranchMap(fixture.projectPath, {
+      [renamedWorkspaceName]: originalBranchName,
+    });
+    await makeWorkspaceDirty(fixture);
+    runGit(fixture.projectPath, ["branch", renamedWorkspaceName, fixture.baseSha]);
+
+    const captureResult = await fixture.service.captureSnapshotForArchive({
+      workspaceId: fixture.workspaceId,
+      workspaceMetadata: fixture.metadata,
+    });
+    expect(captureResult.success).toBe(true);
+    if (!captureResult.success) {
+      return;
+    }
+
+    expect(captureResult.data.projects[0]?.branchName).toBe(originalBranchName);
+
+    await fixture.config.editConfig((cfg) => {
+      const workspace = cfg.projects.get(fixture.projectPath)?.workspaces[0];
+      if (!workspace) {
+        throw new Error("Missing workspace entry");
+      }
+      workspace.worktreeArchiveSnapshot = captureResult.data;
+      return cfg;
+    });
+
+    runGit(fixture.projectPath, ["worktree", "remove", "--force", fixture.workspacePath]);
+
+    const restoreResult = await fixture.service.restoreSnapshotAfterUnarchive({
+      workspaceId: fixture.workspaceId,
+      workspaceMetadata: fixture.metadata,
+    });
+
+    expect(restoreResult).toEqual({ success: true, data: "restored" });
+    expect(await pathExists(fixture.workspacePath)).toBe(true);
+    expect(runGit(fixture.workspacePath, ["branch", "--show-current"])).toBe(originalBranchName);
+  });
+
+  test("prefers the snapshot branch when it already matches despite a stale persisted mapping", async () => {
+    await makeWorkspaceDirty(fixture);
+    await writeWorkspaceBranchMap(fixture.projectPath, {
+      [fixture.workspaceName]: "missing-legacy-branch",
+    });
+
+    const captureResult = await fixture.service.captureSnapshotForArchive({
+      workspaceId: fixture.workspaceId,
+      workspaceMetadata: fixture.metadata,
+    });
+    expect(captureResult.success).toBe(true);
+    if (!captureResult.success) {
+      return;
+    }
+
+    await fixture.config.editConfig((cfg) => {
+      const workspace = cfg.projects.get(fixture.projectPath)?.workspaces[0];
+      if (!workspace) {
+        throw new Error("Missing workspace entry");
+      }
+      workspace.worktreeArchiveSnapshot = captureResult.data;
+      return cfg;
+    });
+
+    runGit(fixture.projectPath, ["worktree", "remove", "--force", fixture.workspacePath]);
+
+    const restoreResult = await fixture.service.restoreSnapshotAfterUnarchive({
+      workspaceId: fixture.workspaceId,
+      workspaceMetadata: fixture.metadata,
+    });
+
+    expect(restoreResult).toEqual({ success: true, data: "restored" });
+    expect(await pathExists(fixture.workspacePath)).toBe(true);
+    expect(runGit(fixture.workspacePath, ["branch", "--show-current"])).toBe(fixture.workspaceName);
+  });
+
+  test("restores legacy snapshots for renamed workspaces via the persisted branch mapping", async () => {
+    const originalBranchName = fixture.workspaceName;
+    const renamedWorkspaceName = "renamed-workspace";
+    await renameWorkspaceWithoutRenamingBranch(fixture, renamedWorkspaceName);
+    await writeWorkspaceBranchMap(fixture.projectPath, {
+      [renamedWorkspaceName]: originalBranchName,
+    });
+    await makeWorkspaceDirty(fixture);
+    runGit(fixture.projectPath, ["branch", renamedWorkspaceName, fixture.baseSha]);
+
+    const captureResult = await fixture.service.captureSnapshotForArchive({
+      workspaceId: fixture.workspaceId,
+      workspaceMetadata: fixture.metadata,
+    });
+    expect(captureResult.success).toBe(true);
+    if (!captureResult.success) {
+      return;
+    }
+
+    const legacySnapshot = {
+      ...captureResult.data,
+      projects: captureResult.data.projects.map((projectSnapshot) => ({
+        ...projectSnapshot,
+        branchName: renamedWorkspaceName,
+      })),
+    };
+
+    await fixture.config.editConfig((cfg) => {
+      const workspace = cfg.projects.get(fixture.projectPath)?.workspaces[0];
+      if (!workspace) {
+        throw new Error("Missing workspace entry");
+      }
+      workspace.worktreeArchiveSnapshot = legacySnapshot;
+      return cfg;
+    });
+
+    runGit(fixture.projectPath, ["worktree", "remove", "--force", fixture.workspacePath]);
+
+    const restoreResult = await fixture.service.restoreSnapshotAfterUnarchive({
+      workspaceId: fixture.workspaceId,
+      workspaceMetadata: fixture.metadata,
+    });
+
+    expect(restoreResult).toEqual({ success: true, data: "restored" });
+    expect(await pathExists(fixture.workspacePath)).toBe(true);
+    expect(runGit(fixture.workspacePath, ["branch", "--show-current"])).toBe(originalBranchName);
+  });
+
   test("cleans up partially restored worktrees when patch replay fails", async () => {
     await makeWorkspaceDirty(fixture);
 
@@ -490,6 +649,152 @@ describe("WorktreeArchiveSnapshotService", () => {
     ).toEqual(captureResult.data);
   });
 
+  test("does not skip diff checks when no tracked patch artifacts were captured", async () => {
+    const captureResult = await fixture.service.captureSnapshotForArchive({
+      workspaceId: fixture.workspaceId,
+      workspaceMetadata: fixture.metadata,
+    });
+    expect(captureResult.success).toBe(true);
+    if (!captureResult.success) {
+      return;
+    }
+
+    await fixture.config.editConfig((cfg) => {
+      const workspace = cfg.projects.get(fixture.projectPath)?.workspaces[0];
+      if (!workspace) {
+        throw new Error("Missing workspace entry");
+      }
+      workspace.worktreeArchiveSnapshot = captureResult.data;
+      return cfg;
+    });
+
+    await fs.writeFile(path.join(fixture.workspacePath, "tracked.txt"), "base\ndrift\n", "utf-8");
+
+    const restoreResult = await fixture.service.restoreSnapshotAfterUnarchive({
+      workspaceId: fixture.workspaceId,
+      workspaceMetadata: fixture.metadata,
+    });
+
+    expect(restoreResult.success).toBe(false);
+    if (!restoreResult.success) {
+      expect(restoreResult.error).toContain("Persisted workspace path already exists");
+    }
+    expect(
+      fixture.config.loadConfigOrDefault().projects.get(fixture.projectPath)?.workspaces[0]
+        ?.worktreeArchiveSnapshot
+    ).toEqual(captureResult.data);
+  });
+
+  test("does not clear snapshot state when only some tracked patch artifacts remain and the checkout still differs", async () => {
+    await makeWorkspaceDirty(fixture);
+
+    const captureResult = await fixture.service.captureSnapshotForArchive({
+      workspaceId: fixture.workspaceId,
+      workspaceMetadata: fixture.metadata,
+    });
+    expect(captureResult.success).toBe(true);
+    if (!captureResult.success) {
+      return;
+    }
+
+    const stagedPatchPath = captureResult.data.projects[0]?.stagedPatchPath;
+    expect(typeof stagedPatchPath).toBe("string");
+    if (!stagedPatchPath) {
+      throw new Error("Expected staged patch path");
+    }
+
+    await fixture.config.editConfig((cfg) => {
+      const workspace = cfg.projects.get(fixture.projectPath)?.workspaces[0];
+      if (!workspace) {
+        throw new Error("Missing workspace entry");
+      }
+      workspace.worktreeArchiveSnapshot = captureResult.data;
+      return cfg;
+    });
+
+    await fs.rm(path.join(fixture.config.getSessionDir(fixture.workspaceId), stagedPatchPath), {
+      force: true,
+    });
+    await fs.writeFile(
+      path.join(fixture.workspacePath, "tracked.txt"),
+      "base\ncommit one\ncommit two\nstaged change\nunstaged change\nextra drift\n",
+      "utf-8"
+    );
+
+    const restoreResult = await fixture.service.restoreSnapshotAfterUnarchive({
+      workspaceId: fixture.workspaceId,
+      workspaceMetadata: fixture.metadata,
+    });
+
+    expect(restoreResult.success).toBe(false);
+    if (!restoreResult.success) {
+      expect(restoreResult.error).toContain("Persisted workspace path already exists");
+    }
+    expect(
+      fixture.config.loadConfigOrDefault().projects.get(fixture.projectPath)?.workspaces[0]
+        ?.worktreeArchiveSnapshot
+    ).toEqual(captureResult.data);
+  });
+
+  test("does not treat unreadable tracked patch artifacts as missing during retry checks", async () => {
+    await makeWorkspaceDirty(fixture);
+
+    const captureResult = await fixture.service.captureSnapshotForArchive({
+      workspaceId: fixture.workspaceId,
+      workspaceMetadata: fixture.metadata,
+    });
+    expect(captureResult.success).toBe(true);
+    if (!captureResult.success) {
+      return;
+    }
+
+    const stagedPatchPath = captureResult.data.projects[0]?.stagedPatchPath;
+    expect(typeof stagedPatchPath).toBe("string");
+    if (!stagedPatchPath) {
+      throw new Error("Expected staged patch path");
+    }
+
+    await fixture.config.editConfig((cfg) => {
+      const workspace = cfg.projects.get(fixture.projectPath)?.workspaces[0];
+      if (!workspace) {
+        throw new Error("Missing workspace entry");
+      }
+      workspace.worktreeArchiveSnapshot = captureResult.data;
+      return cfg;
+    });
+
+    const originalReadFile = fs.readFile.bind(fs);
+    const readFileSpy = spyOn(fs, "readFile").mockImplementation(((
+      ...args: Parameters<typeof fs.readFile>
+    ): ReturnType<typeof fs.readFile> => {
+      const [targetPath] = args;
+      if (typeof targetPath === "string" && targetPath.endsWith(stagedPatchPath)) {
+        const error = new Error("permission denied") as NodeJS.ErrnoException;
+        error.code = "EACCES";
+        return Promise.reject(error);
+      }
+      return originalReadFile(...args);
+    }) as typeof fs.readFile);
+
+    try {
+      const restoreResult = await fixture.service.restoreSnapshotAfterUnarchive({
+        workspaceId: fixture.workspaceId,
+        workspaceMetadata: fixture.metadata,
+      });
+
+      expect(restoreResult.success).toBe(false);
+      if (!restoreResult.success) {
+        expect(restoreResult.error).toContain("permission denied");
+      }
+      expect(
+        fixture.config.loadConfigOrDefault().projects.get(fixture.projectPath)?.workspaces[0]
+          ?.worktreeArchiveSnapshot
+      ).toEqual(captureResult.data);
+    } finally {
+      readFileSpy.mockRestore();
+    }
+  });
+
   test("fails restore when committed history is unavailable and the mailbox artifact is missing", async () => {
     await makeWorkspaceDirty(fixture);
 
@@ -638,6 +943,73 @@ describe("WorktreeArchiveSnapshotService", () => {
     }
   });
 
+  test("recognizes a restored legacy checkout on retry after snapshot-state writeback fails", async () => {
+    const originalBranchName = fixture.workspaceName;
+    const renamedWorkspaceName = "renamed-workspace";
+    await renameWorkspaceWithoutRenamingBranch(fixture, renamedWorkspaceName);
+    await writeWorkspaceBranchMap(fixture.projectPath, {
+      [renamedWorkspaceName]: originalBranchName,
+    });
+    await makeWorkspaceDirty(fixture);
+    runGit(fixture.projectPath, ["branch", renamedWorkspaceName, fixture.baseSha]);
+
+    const captureResult = await fixture.service.captureSnapshotForArchive({
+      workspaceId: fixture.workspaceId,
+      workspaceMetadata: fixture.metadata,
+    });
+    expect(captureResult.success).toBe(true);
+    if (!captureResult.success) {
+      return;
+    }
+
+    const legacySnapshot = {
+      ...captureResult.data,
+      projects: captureResult.data.projects.map((projectSnapshot) => ({
+        ...projectSnapshot,
+        branchName: renamedWorkspaceName,
+      })),
+    };
+
+    await fixture.config.editConfig((cfg) => {
+      const workspace = cfg.projects.get(fixture.projectPath)?.workspaces[0];
+      if (!workspace) {
+        throw new Error("Missing workspace entry");
+      }
+      workspace.worktreeArchiveSnapshot = legacySnapshot;
+      return cfg;
+    });
+
+    runGit(fixture.projectPath, ["worktree", "remove", "--force", fixture.workspacePath]);
+
+    const originalEditConfig = fixture.config.editConfig.bind(fixture.config);
+    const editConfigSpy = spyOn(fixture.config, "editConfig").mockImplementation((_mutate) =>
+      Promise.reject(new Error("config writeback failed"))
+    );
+
+    try {
+      const firstRestoreResult = await fixture.service.restoreSnapshotAfterUnarchive({
+        workspaceId: fixture.workspaceId,
+        workspaceMetadata: fixture.metadata,
+      });
+      expect(firstRestoreResult).toEqual({ success: true, data: "restored" });
+      expect(await pathExists(fixture.workspacePath)).toBe(true);
+    } finally {
+      editConfigSpy.mockRestore();
+      fixture.config.editConfig = originalEditConfig;
+    }
+
+    const secondRestoreResult = await fixture.service.restoreSnapshotAfterUnarchive({
+      workspaceId: fixture.workspaceId,
+      workspaceMetadata: fixture.metadata,
+    });
+
+    expect(secondRestoreResult).toEqual({ success: true, data: "skipped" });
+    expect(
+      fixture.config.loadConfigOrDefault().projects.get(fixture.projectPath)?.workspaces[0]
+        ?.worktreeArchiveSnapshot
+    ).toBeUndefined();
+  });
+
   test("keeps the restored worktree when snapshot-state writeback fails", async () => {
     await makeWorkspaceDirty(fixture);
 
@@ -732,10 +1104,9 @@ describe("WorktreeArchiveSnapshotService", () => {
       workspaceMetadata: fixture.metadata,
     });
 
-    expect(captureResult.success).toBe(false);
-    if (!captureResult.success) {
-      expect(captureResult.error).toContain("untracked files");
-    }
+    expect(captureResult).toEqual(
+      Err({ kind: "confirm-lossy-untracked-files", paths: ["untracked.txt"] })
+    );
     expect(
       await pathExists(
         path.join(fixture.config.getSessionDir(fixture.workspaceId), "archive-state")
@@ -818,10 +1189,16 @@ describe("WorktreeArchiveSnapshotService", () => {
       acknowledgedUntrackedPaths: ["old-file.txt"],
     });
 
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error).toContain("new-file.txt");
-      expect(result.error).toContain("changed since you reviewed");
-    }
+    expect(result).toEqual(
+      Err({
+        kind: "confirm-lossy-untracked-files",
+        paths: ["new-file.txt", "old-file.txt"],
+      })
+    );
+
+    const sessionDirEntries = await fs.readdir(fixture.config.getSessionDir(fixture.workspaceId));
+    expect(sessionDirEntries.filter((entry) => entry.startsWith("archive-state.tmp-")).length).toBe(
+      0
+    );
   });
 });

@@ -400,7 +400,7 @@ const APP_SIDEBAR_ACTIVE_SUBAGENT_WORKSPACES = [
     title: "Active sub-agent 1",
     projectName: PROJECT_NAME,
     projectPath: PROJECT_PATH,
-    createdAt: new Date(NOW - 12_000).toISOString()
+    createdAt: new Date(NOW - 12_000).toISOString(),
   }),
   createWorkspace({
     id: "ws-sidebar-sub-2",
@@ -408,7 +408,7 @@ const APP_SIDEBAR_ACTIVE_SUBAGENT_WORKSPACES = [
     title: "Active sub-agent 2",
     projectName: PROJECT_NAME,
     projectPath: PROJECT_PATH,
-    createdAt: new Date(NOW - 13_000).toISOString()
+    createdAt: new Date(NOW - 13_000).toISOString(),
   }),
   createWorkspace({
     id: "ws-sidebar-sub-3",
@@ -416,13 +416,16 @@ const APP_SIDEBAR_ACTIVE_SUBAGENT_WORKSPACES = [
     title: "Active sub-agent 3",
     projectName: PROJECT_NAME,
     projectPath: PROJECT_PATH,
-    createdAt: new Date(NOW - 14_000).toISOString()
+    createdAt: new Date(NOW - 14_000).toISOString(),
   }),
 ];
 
 function renderAppSidebarThreeActiveSubAgents() {
   return (
-    <StoryScaffold workspaces={APP_SIDEBAR_ACTIVE_SUBAGENT_WORKSPACES} rowContainerClassName="space-y-0">
+    <StoryScaffold
+      workspaces={APP_SIDEBAR_ACTIVE_SUBAGENT_WORKSPACES}
+      rowContainerClassName="space-y-0"
+    >
       <AgentListItem
         metadata={APP_SIDEBAR_ACTIVE_SUBAGENT_WORKSPACES[0]}
         projectPath={PROJECT_PATH}

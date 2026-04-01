@@ -10,10 +10,14 @@ import type {
   SlashSuggestionContext,
 } from "./types";
 import minimist from "minimist";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { MODEL_ABBREVIATIONS } from "@/common/constants/knownModels";
 import { SLASH_COMMAND_HINTS } from "@/common/constants/slashCommandHints";
-import { WORKSPACE_ONLY_COMMAND_KEYS } from "@/constants/slashCommands";
+import { assert } from "@/common/utils/assert";
+import { isExperimentEnabled } from "@/browser/hooks/useExperiments";
 import { normalizeModelInput } from "@/browser/utils/models/normalizeModelInput";
+import { HEARTBEAT_MAX_INTERVAL_MS, HEARTBEAT_MIN_INTERVAL_MS } from "@/constants/heartbeat";
+import { WORKSPACE_ONLY_COMMAND_KEYS } from "@/constants/slashCommands";
 
 /**
  * Parse multiline command input into first-line tokens and remaining message.
@@ -407,6 +411,21 @@ const newCommandDefinition: SlashCommandDefinition = {
 };
 
 const IDLE_USAGE = `/idle ${SLASH_COMMAND_HINTS.idle}`;
+const HEARTBEAT_USAGE = `/heartbeat ${SLASH_COMMAND_HINTS.heartbeat}`;
+const HEARTBEAT_INTERVAL_GRANULARITY_MS = 60_000;
+
+// Keep slash-command validation aligned with the shared heartbeat bounds.
+assert(
+  HEARTBEAT_MIN_INTERVAL_MS % HEARTBEAT_INTERVAL_GRANULARITY_MS === 0,
+  "Heartbeat minimum interval must be expressed in whole minutes"
+);
+assert(
+  HEARTBEAT_MAX_INTERVAL_MS % HEARTBEAT_INTERVAL_GRANULARITY_MS === 0,
+  "Heartbeat maximum interval must be expressed in whole minutes"
+);
+
+const HEARTBEAT_MINUTES_MIN = HEARTBEAT_MIN_INTERVAL_MS / HEARTBEAT_INTERVAL_GRANULARITY_MS;
+const HEARTBEAT_MINUTES_MAX = HEARTBEAT_MAX_INTERVAL_MS / HEARTBEAT_INTERVAL_GRANULARITY_MS;
 
 const idleCommandDefinition: SlashCommandDefinition = {
   key: "idle",
@@ -443,6 +462,62 @@ const idleCommandDefinition: SlashCommandDefinition = {
   },
 };
 
+const heartbeatCommandDefinition: SlashCommandDefinition = {
+  key: "heartbeat",
+  description: `Configure workspace heartbeats. Usage: ${HEARTBEAT_USAGE}`,
+  inputHint: SLASH_COMMAND_HINTS.heartbeat,
+  appendSpace: false,
+  handler: ({ cleanRemainingTokens }): ParsedCommand => {
+    if (cleanRemainingTokens.length === 0) {
+      return {
+        type: "command-missing-args",
+        command: "heartbeat",
+        usage: HEARTBEAT_USAGE,
+      };
+    }
+
+    const input = cleanRemainingTokens.join(" ");
+    if (cleanRemainingTokens.length !== 1) {
+      return {
+        type: "command-invalid-args",
+        command: "heartbeat",
+        input,
+        usage: HEARTBEAT_USAGE,
+      };
+    }
+
+    const arg = cleanRemainingTokens[0].toLowerCase();
+    if (arg === "off" || arg === "disable" || arg === "0") {
+      return { type: "heartbeat-set", minutes: null };
+    }
+
+    if (!/^\d+$/.test(arg)) {
+      return {
+        type: "command-invalid-args",
+        command: "heartbeat",
+        input,
+        usage: HEARTBEAT_USAGE,
+      };
+    }
+
+    const minutes = Number(arg);
+    if (
+      !Number.isSafeInteger(minutes) ||
+      minutes < HEARTBEAT_MINUTES_MIN ||
+      minutes > HEARTBEAT_MINUTES_MAX
+    ) {
+      return {
+        type: "command-invalid-args",
+        command: "heartbeat",
+        input,
+        usage: HEARTBEAT_USAGE,
+      };
+    }
+
+    return { type: "heartbeat-set", minutes };
+  },
+};
+
 const debugLlmRequestCommandDefinition: SlashCommandDefinition = {
   key: "debug-llm-request",
   description: "Show the last LLM request sent (debug)",
@@ -461,6 +536,7 @@ export const SLASH_COMMAND_DEFINITIONS: readonly SlashCommandDefinition[] = [
   newCommandDefinition,
   vimCommandDefinition,
   idleCommandDefinition,
+  heartbeatCommandDefinition,
   debugLlmRequestCommandDefinition,
 ];
 
@@ -487,6 +563,17 @@ export function getCommandGhostHint(
   const commandKey = match[1];
   if (variant === "creation" && WORKSPACE_ONLY_COMMAND_KEYS.has(commandKey)) {
     return null;
+  }
+
+  if (commandKey === "heartbeat") {
+    try {
+      if (!isExperimentEnabled(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS)) {
+        return null;
+      }
+    } catch {
+      // Experiment check unavailable (e.g., test environment) — hide by default.
+      return null;
+    }
   }
 
   return SLASH_COMMAND_DEFINITION_MAP.get(commandKey)?.inputHint ?? null;
