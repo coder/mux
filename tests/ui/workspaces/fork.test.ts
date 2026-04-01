@@ -98,10 +98,6 @@ describeIntegration("Workspace Fork (UI)", () => {
     let forkedWorkspaceId: string | null = null;
 
     try {
-      const existingWorkspaceIds = new Set(
-        (await app.env.orpc.workspace.list()).map((ws) => ws.id)
-      );
-
       // Chat controls can remain disabled while Docker runtime provisioning settles.
       // Retry the /fork send until the command can be submitted.
       await waitFor(
@@ -113,21 +109,19 @@ describeIntegration("Workspace Fork (UI)", () => {
       await app.chat.expectTranscriptNotContains("Fork Failed", 30_000);
 
       await waitFor(
-        async () => {
-          const allWorkspaces = await app.env.orpc.workspace.list();
-          const forkedWorkspace = allWorkspaces.find((workspace) => {
-            if (existingWorkspaceIds.has(workspace.id)) {
-              return false;
-            }
-            return workspace.projectPath === app.metadata.projectPath;
-          });
-          if (!forkedWorkspace) {
-            throw new Error("Forked Docker workspace not created yet");
+        () => {
+          const path = window.location.pathname;
+          if (!path.startsWith("/workspace/")) {
+            throw new Error(`Unexpected path after Docker fork: ${path}`);
           }
-          forkedWorkspaceId = forkedWorkspace.id;
+
+          const currentId = decodeURIComponent(path.slice("/workspace/".length));
+          if (currentId === app.workspaceId) {
+            throw new Error("Still on source workspace after Docker fork");
+          }
+
+          forkedWorkspaceId = currentId;
         },
-        // Docker runtime provisioning can delay branch creation in CI; allow
-        // additional time for the forked workspace metadata to appear.
         { timeout: 90_000 }
       );
 
