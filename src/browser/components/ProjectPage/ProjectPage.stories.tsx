@@ -5,7 +5,12 @@
 import { within, userEvent, waitFor, expect } from "@storybook/test";
 
 import { expandProjects } from "@/browser/stories/helpers/uiState";
-import { CHROMATIC_SMOKE_MODES, appMeta, AppWithMocks, type AppStory } from "@/browser/stories/meta.js";
+import {
+  CHROMATIC_SMOKE_MODES,
+  appMeta,
+  AppWithMocks,
+  type AppStory,
+} from "@/browser/stories/meta.js";
 import { createMockORPCClient, type MockSessionUsage } from "@/browser/stories/mocks/orpc";
 import { createArchivedWorkspace, NOW } from "@/browser/stories/mocks/workspaces";
 import { LEFT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";

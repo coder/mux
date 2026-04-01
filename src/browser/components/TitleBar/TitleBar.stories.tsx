@@ -1,6 +1,15 @@
 import React from "react";
-import { CHROMATIC_SMOKE_MODES, appMeta, AppWithMocks, type AppStory } from "@/browser/stories/meta.js";
-import { collapseRightSidebar, expandProjects, selectWorkspace } from "@/browser/stories/helpers/uiState";
+import {
+  CHROMATIC_SMOKE_MODES,
+  appMeta,
+  AppWithMocks,
+  type AppStory,
+} from "@/browser/stories/meta.js";
+import {
+  collapseRightSidebar,
+  expandProjects,
+  selectWorkspace,
+} from "@/browser/stories/helpers/uiState";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import { createWorkspace, groupWorkspacesByProject } from "@/browser/stories/mocks/workspaces";
 

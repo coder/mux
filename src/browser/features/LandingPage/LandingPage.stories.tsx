@@ -9,7 +9,12 @@ import type { APIClient } from "@/browser/contexts/API";
 import type { Summary } from "@/browser/hooks/useAnalytics";
 import { createPRStatusExecutor } from "@/browser/stories/helpers/git";
 import { expandProjects } from "@/browser/stories/helpers/uiState";
-import { CHROMATIC_SMOKE_MODES, appMeta, AppWithMocks, type AppStory } from "@/browser/stories/meta.js";
+import {
+  CHROMATIC_SMOKE_MODES,
+  appMeta,
+  AppWithMocks,
+  type AppStory,
+} from "@/browser/stories/meta.js";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import { createWorkspace, groupWorkspacesByProject } from "@/browser/stories/mocks/workspaces";
 import { LEFT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
