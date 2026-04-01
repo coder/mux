@@ -533,6 +533,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const {
     selectedWorkspace,
     setSelectedWorkspace: onSelectWorkspace,
+    preflightArchiveWorkspace,
     archiveWorkspace: onArchiveWorkspace,
     removeWorkspace,
     updateWorkspaceTitle: onUpdateTitle,
@@ -809,14 +810,17 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     }));
   };
 
-  const handleCreateSection = async (projectPath: string, name: string) => {
-    const result = await createSection(projectPath, name);
-    if (result.success) {
-      // Auto-expand the new section
-      const key = getSectionExpandedKey(projectPath, result.data.id);
-      setExpandedSections((prev) => ({ ...prev, [key]: true }));
-    }
-  };
+  const handleCreateSection = useCallback(
+    async (projectPath: string, name: string) => {
+      const result = await createSection(projectPath, name);
+      if (result.success) {
+        // Auto-expand the new section
+        const key = getSectionExpandedKey(projectPath, result.data.id);
+        setExpandedSections((prev) => ({ ...prev, [key]: true }));
+      }
+    },
+    [createSection, setExpandedSections]
+  );
 
   const handleForkWorkspace = useCallback(
     async (workspaceId: string, buttonElement?: HTMLElement) => {
@@ -892,7 +896,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const performArchiveWorkspace = useCallback(
     async (
       workspaceId: string,
-      _buttonElement?: HTMLElement,
+      buttonElement?: HTMLElement,
       acknowledgedUntrackedPaths?: string[]
     ) => {
       // Mark workspace as being archived for UI feedback
@@ -904,6 +908,35 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
           acknowledgedUntrackedPaths ? { acknowledgedUntrackedPaths } : undefined
         );
         if (!result.success) {
+          if (acknowledgedUntrackedPaths != null) {
+            // Archive may fail if new untracked files appear between confirmation and capture.
+            // Re-run preflight so we can reopen the modal with the latest paths.
+            const preflight = await preflightArchiveWorkspace(workspaceId);
+            if (
+              preflight.success &&
+              preflight.data?.kind === "confirm-lossy-untracked-files"
+            ) {
+              const metadata = workspaceStore.getWorkspaceMetadata(workspaceId);
+              const displayTitle = metadata?.title ?? metadata?.name ?? workspaceId;
+              setArchiveConfirmation({
+                workspaceId,
+                displayTitle,
+                buttonElement,
+                untrackedPaths: preflight.data.paths,
+                isStreaming: (() => {
+                  const aggregator = workspaceStore.getAggregator(workspaceId);
+                  if (!aggregator) return false;
+                  const hasActiveStreams = aggregator.getActiveStreams().length > 0;
+                  const isStarting =
+                    aggregator.getPendingStreamStartTime() !== null && !hasActiveStreams;
+                  const awaitingUserQuestion = aggregator.hasAwaitingUserQuestion();
+                  return (hasActiveStreams || isStarting) && !awaitingUserQuestion;
+                })(),
+              });
+              return;
+            }
+          }
+
           const error = result.error ?? "Failed to archive chat";
           // Archive failures can be long-lived workflow errors (for example, untracked-file safety
           // checks) that users should notice near the active workspace content, not pinned beside a
@@ -920,26 +953,12 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
         });
       }
     },
-    [onArchiveWorkspace, workspaceArchiveError]
-  );
-
-  const runArchivePreflight = useCallback(
-    async (
-      workspaceId: string
-    ): Promise<{ success: boolean; error?: string; data?: ArchivePreflightResult }> => {
-      if (!api) return { success: false, error: "API not connected" };
-
-      try {
-        const result = await api.workspace.preflightArchive({ workspaceId });
-        if (result.success) {
-          return { success: true, data: result.data };
-        }
-        return { success: false, error: result.error };
-      } catch (error) {
-        return { success: false, error: getErrorMessage(error) };
-      }
-    },
-    [api]
+    [
+      onArchiveWorkspace,
+      preflightArchiveWorkspace,
+      workspaceArchiveError,
+      workspaceStore,
+    ]
   );
 
   const hasActiveStream = useCallback(
@@ -998,7 +1017,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
       const isStreaming = hasActiveStream(workspaceId);
 
       // Run preflight to check for untracked files that can't be preserved.
-      const preflight = await runArchivePreflight(workspaceId);
+      const preflight = await preflightArchiveWorkspace(workspaceId);
       if (!preflight.success) {
         workspaceArchiveError.showError(
           workspaceId,
@@ -1027,7 +1046,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     [
       hasActiveStream,
       performArchiveWorkspace,
-      runArchivePreflight,
+      preflightArchiveWorkspace,
       workspaceArchiveError,
       workspaceStore,
     ]
@@ -1038,15 +1057,13 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
       return;
     }
 
-    try {
-      await performArchiveWorkspace(
-        archiveConfirmation.workspaceId,
-        archiveConfirmation.buttonElement,
-        archiveConfirmation.untrackedPaths
-      );
-    } finally {
-      setArchiveConfirmation(null);
-    }
+    const confirmation = archiveConfirmation;
+    setArchiveConfirmation(null);
+    await performArchiveWorkspace(
+      confirmation.workspaceId,
+      confirmation.buttonElement,
+      confirmation.untrackedPaths
+    );
   }, [archiveConfirmation, performArchiveWorkspace]);
 
   const handleArchiveWorkspaceCancel = useCallback(() => {
@@ -2623,7 +2640,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               return (
                                 <>
                                   {projectHasNoAgentsOrDrafts && (
-                                    <div className="text-content-disabled pl-12 py-2  text-xs">
+                                    <div className="py-2 pl-12 text-content-disabled text-xs">
                                       Empty
                                     </div>
                                   )}

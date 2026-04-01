@@ -72,7 +72,7 @@ export function TaskGroupListItem(props: TaskGroupListItemProps) {
     >
       <span
         aria-hidden="true"
-        className="text-muted -ml-4 mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center"
+        className="-ml-4 mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center text-muted"
       >
         <ChevronRight
           className="h-3 w-3 transition-transform duration-150"
