@@ -2,6 +2,7 @@ import type { AppStory } from "@/browser/stories/meta.js";
 import { CHROMATIC_SMOKE_MODES, appMeta, AppWithMocks } from "@/browser/stories/meta.js";
 import { selectWorkspace } from "@/browser/stories/helpers/uiState";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
+import { LEFT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
 import {
   createIncompatibleWorkspace,
   createWorkspace,
@@ -14,6 +15,10 @@ const meta = {
 };
 
 export default meta;
+
+function collapseLeftSidebar(): void {
+  localStorage.setItem(LEFT_SIDEBAR_COLLAPSED_KEY, JSON.stringify(true));
+}
 
 // Integration: story renders full app with incompatible workspace to test AIView error state.
 export const IncompatibleWorkspace: AppStory = {
@@ -33,6 +38,7 @@ export const IncompatibleWorkspace: AppStory = {
         ];
 
         selectWorkspace(workspaces[1]);
+        collapseLeftSidebar();
 
         return createMockORPCClient({
           projects: groupWorkspacesByProject(workspaces),

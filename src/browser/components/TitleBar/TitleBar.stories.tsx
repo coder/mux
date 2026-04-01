@@ -11,6 +11,7 @@ import {
   selectWorkspace,
 } from "@/browser/stories/helpers/uiState";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
+import { LEFT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
 import { createWorkspace, groupWorkspacesByProject } from "@/browser/stories/mocks/workspaces";
 
 export default {
@@ -19,6 +20,10 @@ export default {
 };
 
 // Integration: stories render full app to test TitleBar layout in context of sidebar + workspace content.
+
+function collapseLeftSidebar(): void {
+  localStorage.setItem(LEFT_SIDEBAR_COLLAPSED_KEY, JSON.stringify(true));
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared workspace fixtures (2 projects, 4 workspaces)
@@ -59,6 +64,7 @@ function createPopulatedClient() {
   selectWorkspace(workspaces[0]);
   expandProjects([...projects.keys()]);
   collapseRightSidebar();
+  collapseLeftSidebar();
 
   return createMockORPCClient({ projects, workspaces });
 }

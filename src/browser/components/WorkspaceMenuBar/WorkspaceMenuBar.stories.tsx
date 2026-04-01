@@ -11,6 +11,7 @@ import {
   selectWorkspace,
 } from "@/browser/stories/helpers/uiState";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
+import { LEFT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
 import { createWorkspace, groupWorkspacesByProject } from "@/browser/stories/mocks/workspaces";
 
 export default {
@@ -24,6 +25,10 @@ const DEVCONTAINER_RUNTIME = {
   type: "devcontainer" as const,
   configPath: ".devcontainer/devcontainer.json",
 };
+
+function collapseLeftSidebar(): void {
+  localStorage.setItem(LEFT_SIDEBAR_COLLAPSED_KEY, JSON.stringify(true));
+}
 
 /**
  * Build a mock executor that handles BranchSelector's `git rev-parse --abbrev-ref HEAD`
@@ -72,6 +77,7 @@ function createDevcontainerClient(runtimeStatus: "running" | "stopped" | "unknow
   selectWorkspace(workspaces[0]);
   expandProjects([...projects.keys()]);
   collapseRightSidebar();
+  collapseLeftSidebar();
 
   const branches = new Map([
     // dc-1 branch is only available from git when the runtime is running;

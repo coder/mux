@@ -25,6 +25,10 @@ export default {
   title: "Features/LandingPage",
 };
 
+function collapseLeftSidebar(): void {
+  localStorage.setItem(LEFT_SIDEBAR_COLLAPSED_KEY, JSON.stringify(true));
+}
+
 // ─── Shared fixtures ─────────────────────────────────────────────────────────
 
 const PROJECT_PATH = "/home/user/projects/atlas-api";
@@ -117,6 +121,7 @@ export const Default: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() => {
+        collapseLeftSidebar();
         expandProjects([PROJECT_PATH]);
         const client = createMockORPCClient({
           projects: groupWorkspacesByProject(WORKSPACES),
@@ -133,6 +138,7 @@ export const RecentWorkspacePRBadge: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() => {
+        collapseLeftSidebar();
         expandProjects([PROJECT_PATH]);
         const client = createMockORPCClient({
           projects: groupWorkspacesByProject(WORKSPACES_WITH_PR_BADGE),
@@ -150,6 +156,7 @@ export const EmptyState: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() => {
+        collapseLeftSidebar();
         const client = createMockORPCClient({
           projects: new Map(),
           workspaces: [],
@@ -184,12 +191,13 @@ export const ChatWithMux: AppStory = {
   },
   render: () => (
     <AppWithMocks
-      setup={() =>
-        createMockORPCClient({
+      setup={() => {
+        collapseLeftSidebar();
+        return createMockORPCClient({
           projects: new Map(),
           workspaces: [],
-        })
-      }
+        });
+      }}
     />
   ),
 };
