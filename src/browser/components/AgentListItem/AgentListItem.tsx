@@ -614,6 +614,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
     workspaceHeartbeatsEnabled &&
     metadata.heartbeat?.enabled === true &&
     !isSubAgentRow &&
+    !showCompletedChildrenIndicator &&
     visualState === "seen" &&
     !isDisabled;
   const leadingSlotFallback = shouldShowHeartbeatFallback ? <HeartbeatFallbackIcon /> : undefined;

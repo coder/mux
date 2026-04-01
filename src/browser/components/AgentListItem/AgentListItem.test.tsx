@@ -15,6 +15,7 @@ import * as WorkspaceFallbackModelModule from "@/browser/hooks/useWorkspaceFallb
 import * as WorkspaceUnreadModule from "@/browser/hooks/useWorkspaceUnread";
 import * as RuntimeStatusStoreModule from "@/browser/stores/RuntimeStatusStore";
 import * as WorkspaceStoreModule from "@/browser/stores/WorkspaceStore";
+import type { AgentRowRenderMeta } from "@/browser/utils/ui/workspaceFiltering";
 import type { StreamAbortReasonSnapshot } from "@/common/types/stream";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { AgentListItem as AgentListItemComponent } from "./AgentListItem";
@@ -160,6 +161,9 @@ function renderWorkspaceItem(
     metadata?: FrontendWorkspaceMetadata;
     isSelected?: boolean;
     isArchiving?: boolean;
+    rowRenderMeta?: AgentRowRenderMeta;
+    completedChildrenExpanded?: boolean;
+    onToggleCompletedChildren?: (workspaceId: string) => void;
   } = {}
 ) {
   const metadata = options.metadata ?? createMetadata();
@@ -170,6 +174,9 @@ function renderWorkspaceItem(
       projectName={metadata.projectName}
       isSelected={options.isSelected ?? false}
       isArchiving={options.isArchiving}
+      rowRenderMeta={options.rowRenderMeta}
+      completedChildrenExpanded={options.completedChildrenExpanded}
+      onToggleCompletedChildren={options.onToggleCompletedChildren}
       onSelectWorkspace={() => undefined}
       onForkWorkspace={() => Promise.resolve()}
       onArchiveWorkspace={() => Promise.resolve()}
@@ -236,6 +243,38 @@ describe("AgentListItem", () => {
     expect(
       rowView.getByRole("button", { name: `Archive workspace ${TEST_WORKSPACE_TITLE}` })
     ).toBeTruthy();
+  });
+
+  test("does not render a heartbeat icon fallback when completed children indicator is shown", () => {
+    mockWorkspaceHeartbeatsEnabled = true;
+
+    const { row, metadata } = renderWorkspaceItem({
+      metadata: createMetadata({
+        heartbeat: { enabled: true, intervalMs: HEARTBEAT_INTERVAL_MS },
+      }),
+      rowRenderMeta: {
+        depth: 0,
+        rowKind: "primary",
+        connectorPosition: "single",
+        connectorStartsAtParent: false,
+        sharedTrunkActiveThroughRow: false,
+        sharedTrunkActiveBelowRow: false,
+        ancestorTrunks: [],
+        hasHiddenCompletedChildren: false,
+        visibleCompletedChildrenCount: 1,
+      },
+      completedChildrenExpanded: true,
+      onToggleCompletedChildren: () => undefined,
+    });
+    const rowView = within(row);
+
+    expect(rowView.queryByTestId("heartbeat-icon")).toBeNull();
+    expect(
+      rowView.getByTestId(`completed-children-expanded-indicator-${metadata.id}`)
+    ).toBeTruthy();
+    expect(
+      rowView.queryByRole("button", { name: `Archive workspace ${TEST_WORKSPACE_TITLE}` })
+    ).toBeNull();
   });
 
   test("does not render a heartbeat icon fallback when the heartbeat experiment is disabled", () => {
