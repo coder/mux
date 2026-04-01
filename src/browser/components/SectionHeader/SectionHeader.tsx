@@ -28,6 +28,7 @@ interface SectionHeaderProps {
   onDelete: (anchorEl: HTMLElement) => void;
   autoStartEditing?: boolean;
   onAutoCreateAbandon?: () => void;
+  onAutoCreateRenameCancel?: () => void;
 }
 
 export const SectionHeader: React.FC<SectionHeaderProps> = ({
@@ -42,6 +43,7 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
   onDelete,
   autoStartEditing = false,
   onAutoCreateAbandon,
+  onAutoCreateRenameCancel,
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(section.name);
@@ -81,6 +83,8 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
       onRename(trimmed);
     } else if (onAutoCreateAbandon && !hasEditedName) {
       onAutoCreateAbandon();
+    } else if (onAutoCreateRenameCancel && hasEditedName) {
+      onAutoCreateRenameCancel();
     } else {
       setEditValue(section.name);
     }
@@ -143,9 +147,13 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
           onKeyDown={(e) => {
             if (e.key === "Enter") handleSubmitRename();
             if (e.key === "Escape") {
-              if (onAutoCreateAbandon && !hasEditedName) {
+              const hasEditedInCurrentInput = e.currentTarget.value !== section.name;
+              if (onAutoCreateAbandon && !hasEditedName && !hasEditedInCurrentInput) {
                 onAutoCreateAbandon();
                 return;
+              }
+              if (onAutoCreateRenameCancel && (hasEditedName || hasEditedInCurrentInput)) {
+                onAutoCreateRenameCancel();
               }
               setEditValue(section.name);
               setHasEditedName(false);

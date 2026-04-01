@@ -2739,6 +2739,13 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                               }
                                             : undefined
                                         }
+                                        onAutoCreateRenameCancel={
+                                          shouldAutoEditSection
+                                            ? () => {
+                                                setAutoEditingSection(null);
+                                              }
+                                            : undefined
+                                        }
                                         onDelete={(anchorEl) => {
                                           void handleRemoveSection(
                                             projectPath,

@@ -22,6 +22,7 @@ function renderSectionHeader(overrides: Partial<ComponentProps<typeof SectionHea
   const onChangeColor = mock((_color: string) => undefined);
   const onDelete = mock((_anchorEl: HTMLElement) => undefined);
   const onAutoCreateAbandon = mock(() => undefined);
+  const onAutoCreateRenameCancel = mock(() => undefined);
 
   const view = render(
     <TooltipProvider>
@@ -37,6 +38,7 @@ function renderSectionHeader(overrides: Partial<ComponentProps<typeof SectionHea
         onDelete={onDelete}
         autoStartEditing
         onAutoCreateAbandon={onAutoCreateAbandon}
+        onAutoCreateRenameCancel={onAutoCreateRenameCancel}
         {...overrides}
       />
     </TooltipProvider>
@@ -46,6 +48,7 @@ function renderSectionHeader(overrides: Partial<ComponentProps<typeof SectionHea
     ...view,
     onRename,
     onAutoCreateAbandon,
+    onAutoCreateRenameCancel,
   };
 }
 
@@ -80,6 +83,20 @@ describe("SectionHeader auto-created section editing", () => {
     fireEvent.blur(input);
 
     expect(view.onAutoCreateAbandon).toHaveBeenCalledTimes(1);
+    expect(view.onRename).not.toHaveBeenCalled();
+  });
+
+  test("clears auto-create editing on Escape after typing", async () => {
+    const view = renderSectionHeader();
+
+    const input = (await waitFor(() =>
+      view.getByTestId("section-rename-input")
+    )) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "Changed name" } });
+    fireEvent.keyDown(input, { key: "Escape" });
+
+    expect(view.onAutoCreateRenameCancel).toHaveBeenCalledTimes(1);
+    expect(view.onAutoCreateAbandon).not.toHaveBeenCalled();
     expect(view.onRename).not.toHaveBeenCalled();
   });
 });
