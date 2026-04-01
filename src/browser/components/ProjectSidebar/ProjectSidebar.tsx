@@ -14,7 +14,7 @@ import { useDebouncedValue } from "@/browser/hooks/useDebouncedValue";
 import { useWorkspaceFallbackModel } from "@/browser/hooks/useWorkspaceFallbackModel";
 import { useWorkspaceUnread } from "@/browser/hooks/useWorkspaceUnread";
 import { useRuntimeStatusStoreRaw } from "@/browser/stores/RuntimeStatusStore";
-import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
+import { useWorkspaceStoreRaw, type WorkspaceStore } from "@/browser/stores/WorkspaceStore";
 import {
   EXPANDED_PROJECTS_KEY,
   MOBILE_LEFT_SIDEBAR_SCROLL_TOP_KEY,
@@ -160,13 +160,16 @@ const MuxChatHelpButton: React.FC<{
 };
 
 /**
- * Subscribe sidebar-level attention derivation to workspace unread updates.
+ * Subscribe sidebar-level attention derivation to workspace updates.
  *
- * Project/section highlighting is computed in this parent component, so unread
- * writes must trigger a parent re-render even when only an individual row changed.
+ * Project/section highlighting is computed in this parent component, so it must
+ * re-render for both:
+ * - unread storage writes (localStorage-backed "last read" timestamps)
+ * - per-workspace store transitions (streaming, awaiting question, system errors)
  */
-function useWorkspaceLastReadAttentionSubscription(
-  sortedWorkspacesByProject: Map<string, FrontendWorkspaceMetadata[]>
+function useWorkspaceAttentionSubscription(
+  sortedWorkspacesByProject: Map<string, FrontendWorkspaceMetadata[]>,
+  workspaceStore: WorkspaceStore
 ): void {
   const [, setVersion] = useState(0);
 
@@ -175,14 +178,16 @@ function useWorkspaceLastReadAttentionSubscription(
       return;
     }
 
+    const workspaceIds = new Set<string>();
     const workspaceLastReadKeys = new Set<string>();
     for (const workspaces of sortedWorkspacesByProject.values()) {
       for (const workspace of workspaces) {
+        workspaceIds.add(workspace.id);
         workspaceLastReadKeys.add(getWorkspaceLastReadKey(workspace.id));
       }
     }
 
-    if (workspaceLastReadKeys.size === 0) {
+    if (workspaceIds.size === 0 && workspaceLastReadKeys.size === 0) {
       return;
     }
 
@@ -196,18 +201,24 @@ function useWorkspaceLastReadAttentionSubscription(
       }
     };
 
+    const unsubscribeWorkspaceStore = Array.from(workspaceIds.values()).map((workspaceId) =>
+      workspaceStore.subscribeKey(workspaceId, bumpVersion)
+    );
     window.addEventListener("storage", handleStorage);
     for (const key of workspaceLastReadKeys) {
       window.addEventListener(getStorageChangeEvent(key), bumpVersion);
     }
 
     return () => {
+      for (const unsubscribe of unsubscribeWorkspaceStore) {
+        unsubscribe();
+      }
       window.removeEventListener("storage", handleStorage);
       for (const key of workspaceLastReadKeys) {
         window.removeEventListener(getStorageChangeEvent(key), bumpVersion);
       }
     };
-  }, [sortedWorkspacesByProject]);
+  }, [sortedWorkspacesByProject, workspaceStore]);
 }
 
 // Keep the project header visible while scrolling through long workspace lists.
@@ -587,8 +598,6 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   sortedWorkspacesByProject,
   workspaceRecency,
 }) => {
-  useWorkspaceLastReadAttentionSubscription(sortedWorkspacesByProject);
-
   // Use the narrow actions context — does NOT subscribe to workspaceMetadata
   // changes, preventing the entire sidebar tree from re-rendering on every
   // workspace create/archive/rename.
@@ -609,6 +618,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     deleteWorkspaceDraft,
   } = useWorkspaceActions();
   const workspaceStore = useWorkspaceStoreRaw();
+  useWorkspaceAttentionSubscription(sortedWorkspacesByProject, workspaceStore);
   const runtimeStatusStore = useRuntimeStatusStoreRaw();
   const { navigateToProject } = useRouter();
   const { api } = useAPI();

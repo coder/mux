@@ -322,6 +322,7 @@ function installProjectSidebarTestDoubles() {
       ({
         getWorkspaceMetadata: () => undefined,
         getAggregator: () => undefined,
+        subscribeKey: () => () => undefined,
       }) as unknown as ReturnType<typeof WorkspaceStoreModule.useWorkspaceStoreRaw>
   );
 
