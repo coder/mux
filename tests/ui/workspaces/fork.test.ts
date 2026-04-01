@@ -103,7 +103,9 @@ describeIntegration("Workspace Fork (UI)", () => {
       // Docker runtime startup (image pull + init) can keep the stream pending much
       // longer than the default harness timeout; wait before issuing /fork.
       await app.chat.expectStreamComplete(90_000);
-      const existingWorkspaceIds = new Set((await app.env.orpc.workspace.list()).map((ws) => ws.id));
+      const existingWorkspaceIds = new Set(
+        (await app.env.orpc.workspace.list()).map((ws) => ws.id)
+      );
 
       await app.chat.send("/fork");
       await app.chat.expectTranscriptNotContains("Fork Failed", 15_000);

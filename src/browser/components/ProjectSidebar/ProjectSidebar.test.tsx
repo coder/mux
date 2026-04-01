@@ -1408,9 +1408,7 @@ describe("ProjectSidebar project actions menu", () => {
     });
 
     const view = renderSidebar();
-    expect(
-      view.getByRole("button", { name: "Expand project demo-project" })
-    ).toBeTruthy();
+    expect(view.getByRole("button", { name: "Expand project demo-project" })).toBeTruthy();
 
     fireEvent.click(view.getByRole("button", { name: "Project options for demo-project" }));
     fireEvent.click(view.getByRole("button", { name: "Add sub-folder" }));
