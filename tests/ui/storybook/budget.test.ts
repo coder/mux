@@ -12,8 +12,8 @@ const INLINE_MODE_OBJECT_PATTERN = /modes:\s*{/g;
 
 function findColocatedStories(dirs: string[]): string[] {
   return dirs.flatMap((dir: string) =>
-    readdirSync(dir, { recursive: true })
-      .map((entry: string) => join(dir, entry))
+    (readdirSync(dir, { recursive: true }) as string[])
+      .map((entry) => join(dir, entry))
       .filter((file: string) => file.endsWith(".stories.tsx"))
   );
 }
