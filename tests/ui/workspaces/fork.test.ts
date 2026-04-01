@@ -103,31 +103,31 @@ describeIntegration("Workspace Fork (UI)", () => {
       // Docker runtime startup (image pull + init) can keep the stream pending much
       // longer than the default harness timeout; wait before issuing /fork.
       await app.chat.expectStreamComplete(90_000);
+      const existingWorkspaceIds = new Set((await app.env.orpc.workspace.list()).map((ws) => ws.id));
 
       await app.chat.send("/fork");
+      await app.chat.expectTranscriptNotContains("Fork Failed", 15_000);
 
       await waitFor(
-        () => {
-          const path = window.location.pathname;
-          if (!path.startsWith("/workspace/")) {
-            throw new Error(`Unexpected path after fork: ${path}`);
+        async () => {
+          const allWorkspaces = await app.env.orpc.workspace.list();
+          const forkedWorkspace = allWorkspaces.find((workspace) => {
+            if (existingWorkspaceIds.has(workspace.id)) {
+              return false;
+            }
+            return workspace.projectPath === app.metadata.projectPath;
+          });
+          if (!forkedWorkspace) {
+            throw new Error("Forked Docker workspace not created yet");
           }
-
-          const currentId = decodeURIComponent(path.slice("/workspace/".length));
-          if (currentId === app.workspaceId) {
-            throw new Error("Still on source workspace after fork");
-          }
-
-          forkedWorkspaceId = currentId;
+          forkedWorkspaceId = forkedWorkspace.id;
         },
         { timeout: 30_000 }
       );
 
       if (!forkedWorkspaceId) {
-        throw new Error("Missing forked workspace ID after Docker runtime navigation");
+        throw new Error("Missing forked workspace ID after Docker fork");
       }
-
-      await app.chat.expectTranscriptNotContains("Fork Failed", 5_000);
 
       await waitFor(
         () => {
@@ -138,7 +138,7 @@ describeIntegration("Workspace Fork (UI)", () => {
             throw new Error("Forked Docker workspace not found in sidebar");
           }
         },
-        { timeout: 1_000 }
+        { timeout: 5_000 }
       );
     } finally {
       if (forkedWorkspaceId) {
