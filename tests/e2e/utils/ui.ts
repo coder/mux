@@ -205,7 +205,9 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
         return labelIndex === -1 ? 0 : labelIndex;
       };
 
-      // Click paddles until we reach the target level (max 10 clicks to prevent infinite loop)
+      // Click paddles until we reach the target level (max 10 clicks to prevent infinite loop).
+      // Some Linux CI runs intermittently ignore paddle clicks during rapid mode transitions,
+      // so we add a button-cycle fallback when paddles do not land on the requested value.
       for (let i = 0; i < 10; i++) {
         const currentLevel = await getCurrentLevel();
         if (currentLevel === targetLevel) {
@@ -215,6 +217,17 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
           await increasePaddle.click();
         } else {
           await decreasePaddle.click();
+        }
+      }
+
+      let finalLevel = await getCurrentLevel();
+      if (finalLevel !== targetLevel) {
+        for (let i = 0; i < levelLabels.length; i++) {
+          await label.click();
+          finalLevel = await getCurrentLevel();
+          if (finalLevel === targetLevel) {
+            break;
+          }
         }
       }
 
