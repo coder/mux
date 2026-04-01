@@ -229,7 +229,7 @@ describe("AgentListItem", () => {
     expect(rowView.queryByTestId(`workspace-secondary-row-${TEST_WORKSPACE_ID}`)).toBeNull();
   });
 
-  test("renders a heartbeat icon fallback for seen rows when the heartbeat experiment is enabled", () => {
+  test("renders a heartbeat icon directly in the leading slot for seen rows when the heartbeat experiment is enabled", () => {
     mockWorkspaceHeartbeatsEnabled = true;
 
     const { row } = renderWorkspaceItem({
@@ -238,11 +238,15 @@ describe("AgentListItem", () => {
       }),
     });
     const rowView = within(row);
+    const heartbeatIcon = rowView.getByTestId("heartbeat-icon");
 
-    expect(rowView.getByTestId("heartbeat-icon")).toBeTruthy();
+    expect(heartbeatIcon).toBeTruthy();
+    expect(heartbeatIcon.parentElement?.className).toContain(
+      "relative z-20 flex h-4 w-4 shrink-0 items-center justify-center self-center"
+    );
     expect(
-      rowView.getByRole("button", { name: `Archive workspace ${TEST_WORKSPACE_TITLE}` })
-    ).toBeTruthy();
+      rowView.queryByRole("button", { name: `Archive workspace ${TEST_WORKSPACE_TITLE}` })
+    ).toBeNull();
   });
 
   test("does not render a heartbeat icon fallback when completed children indicator is shown", () => {

@@ -190,7 +190,6 @@ function StatusDot(props: {
   isDraft?: boolean;
   isSubAgent?: boolean;
   overlay?: React.ReactNode;
-  fallback?: React.ReactNode;
 }) {
   const hasVisibleDot = isStatusDotVisible(props.state, props.isDraft, props.isSubAgent);
   const usesSubAgentConnectorDot =
@@ -198,7 +197,7 @@ function StatusDot(props: {
   const dot = props.isDraft ? (
     <span className="border-border-subtle block h-3 w-3 rounded-full border border-dashed" />
   ) : !hasVisibleDot ? (
-    (props.fallback ?? <span className="block h-3 w-3 opacity-0" />)
+    <span className="block h-3 w-3 opacity-0" />
   ) : (
     <span
       className={cn(
@@ -237,15 +236,9 @@ function StatusDot(props: {
 function QuickArchiveButton(props: {
   displayTitle: string;
   onArchiveWorkspace: (button: HTMLElement) => void;
-  fallback?: React.ReactNode;
 }) {
   return (
     <div className={LEADING_SLOT_CONTAINER_CLASSES}>
-      {props.fallback && (
-        <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
-          {props.fallback}
-        </span>
-      )}
       <Tooltip>
         <TooltipTrigger asChild>
           <button
@@ -617,7 +610,6 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
     !showCompletedChildrenIndicator &&
     visualState === "seen" &&
     !isDisabled;
-  const leadingSlotFallback = shouldShowHeartbeatFallback ? <HeartbeatFallbackIcon /> : undefined;
   const toggleCompletedChildren = () => {
     if (!canToggleCompletedChildren) {
       return false;
@@ -758,10 +750,13 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
         data-workspace-id={workspaceId}
         data-section-id={sectionId ?? ""}
       >
-        {shouldShowQuickArchiveButton ? (
+        {shouldShowHeartbeatFallback ? (
+          <div className={LEADING_SLOT_CONTAINER_CLASSES}>
+            <HeartbeatFallbackIcon />
+          </div>
+        ) : shouldShowQuickArchiveButton ? (
           <QuickArchiveButton
             displayTitle={displayTitle}
-            fallback={leadingSlotFallback}
             onArchiveWorkspace={(button) => {
               void onArchiveWorkspace(workspaceId, button);
             }}
@@ -770,7 +765,6 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
           <StatusDot
             state={visualState}
             isSubAgent={isSubAgentRow}
-            fallback={leadingSlotFallback}
             overlay={
               showCompletedChildrenIndicator ? (
                 <ChevronDown
