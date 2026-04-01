@@ -9,6 +9,7 @@ import * as MuxLogoDarkModule from "@/browser/assets/logos/mux-logo-dark.svg?rea
 import * as MuxLogoLightModule from "@/browser/assets/logos/mux-logo-light.svg?react";
 import { installDom } from "../../../../tests/ui/dom";
 import { EXPANDED_PROJECTS_KEY } from "@/common/constants/storage";
+import { getDraftScopeId, getInputKey } from "@/common/constants/storage";
 import { MULTI_PROJECT_SIDEBAR_SECTION_ID } from "@/common/constants/multiProject";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import type { AgentRowRenderMeta } from "@/browser/utils/ui/workspaceFiltering";
@@ -40,6 +41,7 @@ import * as SectionDragLayerModule from "../SectionDragLayer/SectionDragLayer";
 import * as DraggableSectionModule from "../DraggableSection/DraggableSection";
 import * as AgentListItemModule from "../AgentListItem/AgentListItem";
 import * as PositionedMenuModule from "../PositionedMenu/PositionedMenu";
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 
 import ProjectSidebar from "./ProjectSidebar";
 
@@ -90,7 +92,11 @@ interface ArchivePreflightActionResult {
 }
 
 interface MockAgentListItemProps {
-  metadata: FrontendWorkspaceMetadata;
+  metadata?: FrontendWorkspaceMetadata;
+  draft?: {
+    draftId: string;
+    title?: string;
+  };
   depth?: number;
   rowRenderMeta?: AgentRowRenderMeta;
   completedChildrenExpanded?: boolean;
@@ -393,20 +399,29 @@ function installProjectSidebarTestDoubles() {
   spyOn(AgentListItemModule, "AgentListItem").mockImplementation(((
     props: MockAgentListItemProps
   ) => {
+    if (props.draft) {
+      return <div data-testid={`draft-item-${props.draft.draftId}`}>{props.draft.title ?? "Draft"}</div>;
+    }
+
+    if (!props.metadata) {
+      return null;
+    }
+    const metadata = props.metadata;
+
     const hasCompletedChildren =
       (props.rowRenderMeta?.hasHiddenCompletedChildren ?? false) ||
       (props.rowRenderMeta?.visibleCompletedChildrenCount ?? 0) > 0;
 
     const displayTitle =
-      props.metadata.bestOf?.kind === "variants" && props.metadata.bestOf.label
-        ? `${props.metadata.bestOf.label} · ${props.metadata.title ?? props.metadata.name}`
-        : (props.metadata.title ?? props.metadata.name);
+      metadata.bestOf?.kind === "variants" && metadata.bestOf.label
+        ? `${metadata.bestOf.label} · ${metadata.title ?? metadata.name}`
+        : (metadata.title ?? metadata.name);
 
     latestArchiveWorkspaceHandler = props.onArchiveWorkspace ?? null;
 
     return (
       <div
-        data-testid={agentItemTestId(props.metadata.id)}
+        data-testid={agentItemTestId(metadata.id)}
         data-depth={String(props.depth ?? -1)}
         data-row-kind={props.rowRenderMeta?.rowKind ?? "unknown"}
         data-completed-expanded={String(props.completedChildrenExpanded ?? false)}
@@ -415,8 +430,8 @@ function installProjectSidebarTestDoubles() {
         {hasCompletedChildren && props.onToggleCompletedChildren ? (
           <button
             type="button"
-            aria-label={toggleButtonLabel(props.metadata.id)}
-            onClick={() => props.onToggleCompletedChildren?.(props.metadata.id)}
+            aria-label={toggleButtonLabel(metadata.id)}
+            onClick={() => props.onToggleCompletedChildren?.(metadata.id)}
           >
             Toggle completed children
           </button>
@@ -424,9 +439,9 @@ function installProjectSidebarTestDoubles() {
         {props.onArchiveWorkspace ? (
           <button
             type="button"
-            aria-label={`archive-${props.metadata.id}`}
+            aria-label={`archive-${metadata.id}`}
             onClick={(event) => {
-              void props.onArchiveWorkspace?.(props.metadata.id, event.currentTarget);
+              void props.onArchiveWorkspace?.(metadata.id, event.currentTarget);
             }}
           >
             Archive workspace
@@ -1516,5 +1531,51 @@ describe("ProjectSidebar project actions menu", () => {
     const view = renderSidebar();
 
     expect(view.getByText("Empty")).toBeTruthy();
+  });
+
+  test("hides empty placeholder immediately when a hidden draft becomes visible", async () => {
+    const draftId = "draft-hidden-empty";
+    spyOn(WorkspaceContextModule, "useWorkspaceActions").mockImplementation(
+      () =>
+        ({
+          selectedWorkspace: null,
+          setSelectedWorkspace: () => undefined,
+          preflightArchiveWorkspace: () =>
+            Promise.resolve({ success: true, data: { kind: "ready" as const } }),
+          archiveWorkspace: archiveWorkspaceActionMock,
+          removeWorkspace: () => Promise.resolve({ success: true }),
+          updateWorkspaceTitle: () => Promise.resolve({ success: true }),
+          refreshWorkspaceMetadata: () => Promise.resolve(),
+          pendingNewWorkspaceProject: null,
+          pendingNewWorkspaceDraftId: null,
+          workspaceDraftsByProject: {
+            [demoProjectPath]: [
+              {
+                draftId,
+                sectionId: null,
+                createdAt: Date.now(),
+              },
+            ],
+          },
+          workspaceDraftPromotionsByProject: {},
+          createWorkspaceDraft: () => undefined,
+          openWorkspaceDraft: () => undefined,
+          deleteWorkspaceDraft: () => undefined,
+        }) as unknown as ReturnType<typeof WorkspaceContextModule.useWorkspaceActions>
+    );
+
+    const view = renderSidebar();
+    expect(view.getByText("Empty")).toBeTruthy();
+
+    const draftScopeId = getDraftScopeId(demoProjectPath, draftId);
+    const draftInputKey = getInputKey(draftScopeId);
+
+    act(() => {
+      updatePersistedState<string>(draftInputKey, "Visible draft prompt", "");
+    });
+
+    await waitFor(() => {
+      expect(view.queryByText("Empty")).toBeNull();
+    });
   });
 });

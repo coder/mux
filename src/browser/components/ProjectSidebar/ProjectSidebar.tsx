@@ -270,6 +270,7 @@ interface DraftAgentListItemWrapperProps {
   draftNumber: number;
   isSelected: boolean;
   sectionId?: string;
+  onVisibilityChange?: (isVisible: boolean) => void;
   onOpen: () => void;
   onDelete: () => void;
 }
@@ -325,13 +326,17 @@ function DraftAgentListItemWrapper(props: DraftAgentListItemWrapperProps) {
   // so non-empty drafts never become hidden orphans.
   // Uses raw (non-debounced) values so the row appears immediately, while the
   // preview text below still updates at the debounced cadence.
-  if (
-    !isDraftVisible(props.projectPath, props.draftId, {
-      draftPrompt,
-      workspaceNameState,
-      draftAttachments: Array.isArray(draftAttachments) ? draftAttachments : [],
-    })
-  ) {
+  const isVisible = isDraftVisible(props.projectPath, props.draftId, {
+    draftPrompt,
+    workspaceNameState,
+    draftAttachments: Array.isArray(draftAttachments) ? draftAttachments : [],
+  });
+
+  useEffect(() => {
+    props.onVisibilityChange?.(isVisible);
+  }, [isVisible, props.onVisibilityChange]);
+
+  if (!isVisible) {
     return null;
   }
 
@@ -756,6 +761,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
   const [archivingWorkspaceIds, setArchivingWorkspaceIds] = useState<Set<string>>(new Set());
   const [removingWorkspaceIds, setRemovingWorkspaceIds] = useState<Set<string>>(new Set());
+  const [draftVisibilityByProject, setDraftVisibilityByProject] = useState<
+    Record<string, Record<string, boolean>>
+  >({});
   const workspaceArchiveError = usePopoverError();
   const workspaceForkError = usePopoverError();
   const workspaceStopRuntimeError = usePopoverError();
@@ -777,6 +785,26 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   } | null>(null);
   const projectRemoveError = usePopoverError();
   const sectionRemoveError = usePopoverError();
+
+  const handleDraftVisibilityChange = useCallback(
+    (projectPath: string, draftId: string, isVisible: boolean) => {
+      setDraftVisibilityByProject((prev) => {
+        const existing = prev[projectPath] ?? {};
+        if (existing[draftId] === isVisible) {
+          return prev;
+        }
+
+        return {
+          ...prev,
+          [projectPath]: {
+            ...existing,
+            [draftId]: isVisible,
+          },
+        };
+      });
+    },
+    []
+  );
 
   const projectContextMenu = useContextMenuPosition({ longPress: true });
   const [projectMenuTargetPath, setProjectMenuTargetPath] = useState<string | null>(null);
@@ -1898,11 +1926,15 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               const sortedDrafts = draftsForProject
                                 .slice()
                                 .sort((a, b) => b.createdAt - a.createdAt);
-                              const visibleDrafts = sortedDrafts.filter((draft) =>
-                                isDraftVisible(projectPath, draft.draftId)
-                              );
+                              const draftVisibilityForProject =
+                                draftVisibilityByProject[projectPath] ?? {};
+                              const hasVisibleDrafts = sortedDrafts.some((draft) => {
+                                const reactiveVisibility =
+                                  draftVisibilityForProject[draft.draftId];
+                                return reactiveVisibility ?? isDraftVisible(projectPath, draft.draftId);
+                              });
                               const projectHasNoAgentsOrDrafts =
-                                projectWorkspaces.length === 0 && visibleDrafts.length === 0;
+                                projectWorkspaces.length === 0 && !hasVisibleDrafts;
                               const draftNumberById = new Map(
                                 sortedDrafts.map(
                                   (draft, index) => [draft.draftId, index + 1] as const
@@ -2232,6 +2264,13 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                     draftNumber={draftNumber}
                                     isSelected={isSelected}
                                     sectionId={sectionId ?? undefined}
+                                    onVisibilityChange={(isVisible) => {
+                                      handleDraftVisibilityChange(
+                                        projectPath,
+                                        draft.draftId,
+                                        isVisible
+                                      );
+                                    }}
                                     onOpen={() =>
                                       handleOpenWorkspaceDraft(
                                         projectPath,
