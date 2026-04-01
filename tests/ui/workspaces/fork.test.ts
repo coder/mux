@@ -102,7 +102,8 @@ describeIntegration("Workspace Fork (UI)", () => {
       await app.chat.expectTranscriptContains("Hello from Docker source workspace");
       // Docker runtime startup (image pull + init) can keep the stream pending much
       // longer than the default harness timeout; wait before issuing /fork.
-      await app.chat.expectStreamComplete(90_000);
+      // CI runners can take >90s on a cold image pull, so give this gate extra headroom.
+      await app.chat.expectStreamComplete(150_000);
       const existingWorkspaceIds = new Set(
         (await app.env.orpc.workspace.list()).map((ws) => ws.id)
       );
@@ -151,7 +152,7 @@ describeIntegration("Workspace Fork (UI)", () => {
 
       await app.dispose();
     }
-  }, 120_000);
+  }, 210_000);
 
   test("context menu Fork chat action adds the new workspace to the sidebar immediately", async () => {
     const app = await createAppHarness({ branchPrefix: "ui-fork-menu" });
