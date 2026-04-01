@@ -678,6 +678,7 @@
   --color-content-primary: #100f0f;
   --color-content-secondary: #575653;
   --color-content-tertiary: #6f6e69;
+  --color-content-disabled: #b7b5ac;
   --color-muted-foreground: #6f6e69;
   --color-secondary: #6f6e69;
   --color-surface-primary: #fffcf0;
@@ -909,6 +910,7 @@
   --color-content-primary: #fffcf0;
   --color-content-secondary: #878580;
   --color-content-tertiary: #575653;
+  --color-content-disabled: #403e3c;
   --color-muted-foreground: #878580;
   --color-secondary: #575653;
   --color-surface-primary: #100f0f;
