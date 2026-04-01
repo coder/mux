@@ -400,7 +400,9 @@ function installProjectSidebarTestDoubles() {
     props: MockAgentListItemProps
   ) => {
     if (props.draft) {
-      return <div data-testid={`draft-item-${props.draft.draftId}`}>{props.draft.title ?? "Draft"}</div>;
+      return (
+        <div data-testid={`draft-item-${props.draft.draftId}`}>{props.draft.title ?? "Draft"}</div>
+      );
     }
 
     if (!props.metadata) {

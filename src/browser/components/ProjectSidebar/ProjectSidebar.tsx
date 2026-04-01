@@ -1986,9 +1986,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               const draftVisibilityForProject =
                                 draftVisibilityByProject[projectPath] ?? {};
                               const hasVisibleDrafts = sortedDrafts.some((draft) => {
-                                const reactiveVisibility =
-                                  draftVisibilityForProject[draft.draftId];
-                                return reactiveVisibility ?? isDraftVisible(projectPath, draft.draftId);
+                                const reactiveVisibility = draftVisibilityForProject[draft.draftId];
+                                return (
+                                  reactiveVisibility ?? isDraftVisible(projectPath, draft.draftId)
+                                );
                               });
                               const projectHasNoAgentsOrDrafts =
                                 projectWorkspaces.length === 0 && !hasVisibleDrafts;
