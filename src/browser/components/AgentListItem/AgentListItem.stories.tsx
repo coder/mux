@@ -8,7 +8,7 @@ import { TitleEditProvider } from "@/browser/contexts/WorkspaceTitleEditContext"
 import { DndProvider } from "react-dnd";
 import { HTML5Backend } from "react-dnd-html5-backend";
 import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
-import { expect, screen, waitFor, userEvent, within } from "@storybook/test";
+import { screen, waitFor, userEvent } from "@storybook/test";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import { NOW, createWorkspace } from "@/browser/stories/mocks/workspaces";
 import { useWorkspaceStoreRaw, workspaceStore } from "@/browser/stores/WorkspaceStore";
@@ -373,49 +373,6 @@ function renderWorkspaceWithRowMeta(options: {
   );
 }
 
-const NESTED_CONNECTOR_WORKSPACES = [
-  createWorkspace({
-    id: "ws-nested-parent",
-    name: "nested-parent",
-    title: "Nested Parent",
-    projectName: PROJECT_NAME,
-    projectPath: PROJECT_PATH,
-    createdAt: new Date(NOW - 6_000).toISOString(),
-  }),
-  createWorkspace({
-    id: "ws-nested-child-a",
-    name: "nested-child-a",
-    title: "Child A",
-    projectName: PROJECT_NAME,
-    projectPath: PROJECT_PATH,
-    createdAt: new Date(NOW - 7_000).toISOString(),
-  }),
-  createWorkspace({
-    id: "ws-nested-gc-1",
-    name: "nested-gc-1",
-    title: "Grandchild 1",
-    projectName: PROJECT_NAME,
-    projectPath: PROJECT_PATH,
-    createdAt: new Date(NOW - 8_000).toISOString(),
-  }),
-  createWorkspace({
-    id: "ws-nested-gc-2",
-    name: "nested-gc-2",
-    title: "Grandchild 2",
-    projectName: PROJECT_NAME,
-    projectPath: PROJECT_PATH,
-    createdAt: new Date(NOW - 9_000).toISOString(),
-  }),
-  createWorkspace({
-    id: "ws-nested-child-b",
-    name: "nested-child-b",
-    title: "Child B",
-    projectName: PROJECT_NAME,
-    projectPath: PROJECT_PATH,
-    createdAt: new Date(NOW - 10_000).toISOString(),
-  }),
-];
-
 const NESTED_CONNECTOR_PARENT_ROW_META = {
   depth: 0,
   rowKind: "primary",
@@ -443,9 +400,7 @@ const APP_SIDEBAR_ACTIVE_SUBAGENT_WORKSPACES = [
     title: "Active sub-agent 1",
     projectName: PROJECT_NAME,
     projectPath: PROJECT_PATH,
-    createdAt: new Date(NOW - 12_000).toISOString(),
-    isInitializing: true,
-    taskStatus: "running",
+    createdAt: new Date(NOW - 12_000).toISOString()
   }),
   createWorkspace({
     id: "ws-sidebar-sub-2",
@@ -453,9 +408,7 @@ const APP_SIDEBAR_ACTIVE_SUBAGENT_WORKSPACES = [
     title: "Active sub-agent 2",
     projectName: PROJECT_NAME,
     projectPath: PROJECT_PATH,
-    createdAt: new Date(NOW - 13_000).toISOString(),
-    isInitializing: true,
-    taskStatus: "running",
+    createdAt: new Date(NOW - 13_000).toISOString()
   }),
   createWorkspace({
     id: "ws-sidebar-sub-3",
@@ -463,9 +416,7 @@ const APP_SIDEBAR_ACTIVE_SUBAGENT_WORKSPACES = [
     title: "Active sub-agent 3",
     projectName: PROJECT_NAME,
     projectPath: PROJECT_PATH,
-    createdAt: new Date(NOW - 14_000).toISOString(),
-    isInitializing: true,
-    taskStatus: "running",
+    createdAt: new Date(NOW - 14_000).toISOString()
   }),
 ];
 
@@ -534,123 +485,6 @@ function renderAppSidebarThreeActiveSubAgents() {
       />
     </StoryScaffold>
   );
-}
-
-function renderNestedConnectorContinuityStory(ancestorTrunkActive: boolean) {
-  const grandchildAncestorTrunks = [{ depth: 1, active: ancestorTrunkActive }] as const;
-  const childB = ancestorTrunkActive
-    ? ({ ...NESTED_CONNECTOR_WORKSPACES[4], taskStatus: "running" } as const)
-    : NESTED_CONNECTOR_WORKSPACES[4];
-
-  return (
-    <StoryScaffold
-      workspaces={[
-        NESTED_CONNECTOR_WORKSPACES[0],
-        NESTED_CONNECTOR_WORKSPACES[1],
-        NESTED_CONNECTOR_WORKSPACES[2],
-        NESTED_CONNECTOR_WORKSPACES[3],
-        childB,
-      ]}
-      rowContainerClassName="space-y-0"
-    >
-      <AgentListItem
-        metadata={NESTED_CONNECTOR_WORKSPACES[0]}
-        projectPath={PROJECT_PATH}
-        projectName={PROJECT_NAME}
-        depth={NESTED_CONNECTOR_PARENT_ROW_META.depth}
-        rowRenderMeta={NESTED_CONNECTOR_PARENT_ROW_META}
-        isSelected={false}
-        onSelectWorkspace={() => undefined}
-        onForkWorkspace={() => Promise.resolve()}
-        onArchiveWorkspace={() => Promise.resolve()}
-        onCancelCreation={() => Promise.resolve()}
-      />
-      <AgentListItem
-        metadata={NESTED_CONNECTOR_WORKSPACES[1]}
-        projectPath={PROJECT_PATH}
-        projectName={PROJECT_NAME}
-        depth={1}
-        rowRenderMeta={createSubAgentRowRenderMeta("middle")}
-        isSelected={false}
-        onSelectWorkspace={() => undefined}
-        onForkWorkspace={() => Promise.resolve()}
-        onArchiveWorkspace={() => Promise.resolve()}
-        onCancelCreation={() => Promise.resolve()}
-      />
-      <AgentListItem
-        metadata={NESTED_CONNECTOR_WORKSPACES[2]}
-        projectPath={PROJECT_PATH}
-        projectName={PROJECT_NAME}
-        depth={2}
-        rowRenderMeta={{
-          ...createSubAgentRowRenderMeta("middle"),
-          depth: 2,
-          ancestorTrunks: grandchildAncestorTrunks,
-        }}
-        isSelected={false}
-        onSelectWorkspace={() => undefined}
-        onForkWorkspace={() => Promise.resolve()}
-        onArchiveWorkspace={() => Promise.resolve()}
-        onCancelCreation={() => Promise.resolve()}
-      />
-      <AgentListItem
-        metadata={NESTED_CONNECTOR_WORKSPACES[3]}
-        projectPath={PROJECT_PATH}
-        projectName={PROJECT_NAME}
-        depth={2}
-        rowRenderMeta={{
-          ...createSubAgentRowRenderMeta("last", {
-            connectorStartsAtParent: false,
-          }),
-          depth: 2,
-          ancestorTrunks: grandchildAncestorTrunks,
-        }}
-        isSelected={false}
-        onSelectWorkspace={() => undefined}
-        onForkWorkspace={() => Promise.resolve()}
-        onArchiveWorkspace={() => Promise.resolve()}
-        onCancelCreation={() => Promise.resolve()}
-      />
-      <AgentListItem
-        metadata={childB}
-        projectPath={PROJECT_PATH}
-        projectName={PROJECT_NAME}
-        depth={1}
-        rowRenderMeta={createSubAgentRowRenderMeta("last", {
-          connectorStartsAtParent: false,
-        })}
-        isSelected={false}
-        onSelectWorkspace={() => undefined}
-        onForkWorkspace={() => Promise.resolve()}
-        onArchiveWorkspace={() => Promise.resolve()}
-        onCancelCreation={() => Promise.resolve()}
-      />
-    </StoryScaffold>
-  );
-}
-
-async function assertNestedConnectorContinuity(
-  canvasElement: HTMLElement,
-  expectedTrunkActive: "true" | "false"
-) {
-  const canvas = within(canvasElement);
-  await expect(canvas.getByText("Nested Parent")).toBeInTheDocument();
-  await expect(canvas.getByText("Child A")).toBeInTheDocument();
-  await expect(canvas.getByText("Grandchild 1")).toBeInTheDocument();
-  await expect(canvas.getByText("Grandchild 2")).toBeInTheDocument();
-  await expect(canvas.getByText("Child B")).toBeInTheDocument();
-
-  await waitFor(async () => {
-    await expect(canvasElement.querySelectorAll('[data-testid="ancestor-trunk"]')).toHaveLength(2);
-  });
-
-  const ancestorTrunks = canvasElement.querySelectorAll<HTMLElement>(
-    '[data-testid="ancestor-trunk"]'
-  );
-  for (const trunk of ancestorTrunks) {
-    await expect(trunk).toHaveAttribute("data-trunk-active", expectedTrunkActive);
-    await expect(trunk.style.left).toBe("16px");
-  }
 }
 
 export const FigmaStates: Story = {

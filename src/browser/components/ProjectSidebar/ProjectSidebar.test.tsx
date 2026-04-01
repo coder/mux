@@ -104,6 +104,7 @@ function createProjectContextValue(
     getSecrets: () => Promise.resolve([]),
     updateSecrets: () => Promise.resolve(),
     updateDisplayName: () => resolveVoidResult(),
+    updateColor: () => resolveVoidResult(),
     createSection: () =>
       Promise.resolve({ success: true, data: { id: "section-1", name: "Section" } }),
     updateSection: () => resolveVoidResult(),
@@ -568,6 +569,7 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
       getSecrets: () => Promise.resolve([]),
       updateSecrets: () => Promise.resolve(),
       updateDisplayName: () => resolveVoidResult(),
+      updateColor: () => resolveVoidResult(),
       createSection: () =>
         Promise.resolve({ success: true, data: { id: "section-1", name: "Section" } }),
       updateSection: () => resolveVoidResult(),
@@ -678,6 +680,7 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
       getSecrets: () => Promise.resolve([]),
       updateSecrets: () => Promise.resolve(),
       updateDisplayName: () => resolveVoidResult(),
+      updateColor: () => resolveVoidResult(),
       createSection: () =>
         Promise.resolve({ success: true, data: { id: "section-1", name: "Section" } }),
       updateSection: () => resolveVoidResult(),
@@ -786,6 +789,7 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
       getSecrets: () => Promise.resolve([]),
       updateSecrets: () => Promise.resolve(),
       updateDisplayName: () => resolveVoidResult(),
+      updateColor: () => resolveVoidResult(),
       createSection: () =>
         Promise.resolve({ success: true, data: { id: "section-1", name: "Section" } }),
       updateSection: () => resolveVoidResult(),
@@ -850,6 +854,18 @@ describe("ProjectSidebar archive errors", () => {
     archiveWorkspaceActionMock = mock(() =>
       Promise.resolve({ success: false as const, error: "snapshot failed" })
     );
+    const apiWithArchivePreflight = {
+      workspace: {
+        preflightArchive: () => Promise.resolve({ success: true, data: { kind: "ready" as const } }),
+      },
+    } as unknown as NonNullable<ReturnType<typeof APIModule.useAPI>["api"]>;
+    spyOn(APIModule, "useAPI").mockImplementation(() => ({
+      api: apiWithArchivePreflight,
+      status: "connected",
+      error: null,
+      authenticate: () => undefined,
+      retry: () => undefined,
+    }));
 
     const workspace = {
       ...createWorkspace("archive-target"),
@@ -943,7 +959,9 @@ describe("ProjectSidebar project actions menu", () => {
     const menuButtons = within(menu).getAllByRole("button");
     expect(menuButtons.map((button) => button.textContent)).toEqual([
       "Edit name",
+      "Add sub-folder",
       "Manage secrets",
+      "Change color",
       "Delete...",
     ]);
   });

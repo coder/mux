@@ -681,21 +681,37 @@ describeIntegration("Workspace Sections", () => {
       expect(workspaceRowBeforeDelete).not.toBeNull();
       expect(workspaceRowBeforeDelete?.getAttribute("data-section-id")).toBe(sectionId);
 
-      // Find and click the delete button on the section
+      // Open section actions and click Delete section
       const sectionElement = view.container.querySelector(`[data-section-id="${sectionId}"]`);
       expect(sectionElement).not.toBeNull();
 
-      // Hover over section to reveal action buttons (they're only visible on hover)
+      // Hover over section to reveal action controls.
       fireEvent.mouseEnter(sectionElement!);
 
-      const deleteButton = sectionElement!.querySelector('[aria-label="Delete section"]');
+      const sectionActionsButton = sectionElement!.querySelector('[aria-label="Section actions"]');
+      expect(sectionActionsButton).not.toBeNull();
+      fireEvent.click(sectionActionsButton!);
+
+      const deleteButton = await waitFor(
+        () => {
+          const buttons = Array.from(view.container.ownerDocument.body.querySelectorAll("button"));
+          const button = buttons.find((candidate) =>
+            candidate.textContent?.trim().startsWith("Delete section")
+          );
+          if (!button) throw new Error("Delete section menu item not found");
+          return button as HTMLButtonElement;
+        },
+        { timeout: 5_000 }
+      );
       expect(deleteButton).not.toBeNull();
-      fireEvent.click(deleteButton!);
+      fireEvent.click(deleteButton);
 
       // Confirm the deletion warning for active workspaces
       const confirmDialog = await waitFor(
         () => {
-          const dialog = view.container.ownerDocument.body.querySelector('[role="dialog"]');
+          const dialog = view.container.ownerDocument.body.querySelector(
+            '[role="dialog"], [role="alertdialog"]'
+          );
           if (!dialog) throw new Error("Delete confirmation dialog not found");
 
           const dialogText = dialog.textContent ?? "";
