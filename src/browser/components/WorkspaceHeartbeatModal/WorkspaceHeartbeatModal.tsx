@@ -15,7 +15,6 @@ import {
   HEARTBEAT_DEFAULT_INTERVAL_MS,
   HEARTBEAT_DEFAULT_MESSAGE_BODY,
   HEARTBEAT_MAX_INTERVAL_MS,
-  HEARTBEAT_MAX_MESSAGE_LENGTH,
   HEARTBEAT_MIN_INTERVAL_MS,
 } from "@/constants/heartbeat";
 
@@ -271,7 +270,6 @@ export function WorkspaceHeartbeatModal(props: WorkspaceHeartbeatModalProps) {
                     ref={messageTextareaRef}
                     id="workspace-heartbeat-message"
                     rows={4}
-                    maxLength={HEARTBEAT_MAX_MESSAGE_LENGTH}
                     value={draftMessage}
                     onChange={(event: React.ChangeEvent<HTMLTextAreaElement>) => {
                       setDraftMessage(event.target.value);
@@ -282,9 +280,6 @@ export function WorkspaceHeartbeatModal(props: WorkspaceHeartbeatModalProps) {
                     placeholder={HEARTBEAT_DEFAULT_MESSAGE_BODY}
                     aria-label="Heartbeat message"
                   />
-                  <div className="text-muted text-xs">
-                    Max {HEARTBEAT_MAX_MESSAGE_LENGTH} characters.
-                  </div>
                 </div>
               )}
             </div>

@@ -43,6 +43,8 @@ function createHeartbeatSettings(
   };
 }
 
+const LONG_HEARTBEAT_MESSAGE = "Review pending work and summarize next steps. ".repeat(30).trim();
+
 describe("WorkspaceHeartbeatModal", () => {
   beforeEach(() => {
     cleanupDom = installDom();
@@ -131,12 +133,49 @@ describe("WorkspaceHeartbeatModal", () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
+  test("saves messages longer than 1000 characters without a client-side cap", async () => {
+    expect(LONG_HEARTBEAT_MESSAGE.length).toBeGreaterThan(1_000);
+    settingsByWorkspaceId.set("ws-1", createHeartbeatSettings({ enabled: true }));
+
+    const onOpenChange = mock((_open: boolean) => undefined);
+    const view = render(
+      <WorkspaceHeartbeatModal workspaceId="ws-1" open={true} onOpenChange={onOpenChange} />
+    );
+
+    const messageField = (await waitFor(() =>
+      view.getByLabelText("Heartbeat message")
+    )) as HTMLTextAreaElement;
+    expect(messageField.getAttribute("maxlength")).toBeNull();
+
+    fireEvent.input(messageField, {
+      target: { value: LONG_HEARTBEAT_MESSAGE },
+    });
+    await waitFor(() => {
+      expect(messageField.value).toBe(LONG_HEARTBEAT_MESSAGE);
+    });
+    fireEvent.click(view.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(saveCalls).toEqual([
+        {
+          workspaceId: "ws-1",
+          next: {
+            enabled: true,
+            intervalMs: HEARTBEAT_DEFAULT_INTERVAL_MS,
+            message: LONG_HEARTBEAT_MESSAGE,
+          },
+        },
+      ]);
+    });
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
   test("reopens with the saved message for the same workspace and does not bleed across workspaces", async () => {
     settingsByWorkspaceId.set(
       "ws-1",
       createHeartbeatSettings({
         enabled: true,
-        message: "Review the open PR status before sending a follow-up.",
+        message: LONG_HEARTBEAT_MESSAGE,
       })
     );
     settingsByWorkspaceId.set("ws-2", createHeartbeatSettings({ enabled: true }));
@@ -151,7 +190,7 @@ describe("WorkspaceHeartbeatModal", () => {
 
     await waitFor(() => {
       expect((view.getByLabelText("Heartbeat message") as HTMLTextAreaElement).value).toBe(
-        "Review the open PR status before sending a follow-up."
+        LONG_HEARTBEAT_MESSAGE
       );
     });
 
@@ -172,7 +211,7 @@ describe("WorkspaceHeartbeatModal", () => {
 
     await waitFor(() => {
       expect((view.getByLabelText("Heartbeat message") as HTMLTextAreaElement).value).toBe(
-        "Review the open PR status before sending a follow-up."
+        LONG_HEARTBEAT_MESSAGE
       );
     });
 

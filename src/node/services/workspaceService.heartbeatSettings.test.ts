@@ -13,6 +13,8 @@ const TEST_WORKSPACE_ID = "test-ws";
 const TEST_WORKSPACE_PATH = "/test/path";
 const TEST_PROJECT_PATH = "/test/project";
 
+const LONG_HEARTBEAT_MESSAGE = "Review pending work and summarize next steps. ".repeat(30).trim();
+
 function createProjectsConfig(workspace: Workspace): ProjectsConfig {
   const projectConfig: ProjectConfig = {
     workspaces: [workspace],
@@ -93,6 +95,31 @@ describe("WorkspaceService heartbeat settings", () => {
       enabled: true,
       intervalMs: 45 * 60 * 1000,
       message: "Keep this custom heartbeat message.",
+    });
+  });
+
+  test("preserves custom messages longer than 1000 characters without truncation", async () => {
+    expect(LONG_HEARTBEAT_MESSAGE.length).toBeGreaterThan(1_000);
+
+    const result = await service.setHeartbeatSettings(TEST_WORKSPACE_ID, {
+      enabled: true,
+      intervalMs: 45 * 60 * 1000,
+      message: LONG_HEARTBEAT_MESSAGE,
+    });
+
+    expect(result.success).toBe(true);
+    const persistedHeartbeat = currentProjectsConfig.projects
+      .get(TEST_PROJECT_PATH)
+      ?.workspaces.at(0)?.heartbeat;
+    expect(persistedHeartbeat).toEqual({
+      enabled: true,
+      intervalMs: 45 * 60 * 1000,
+      message: LONG_HEARTBEAT_MESSAGE,
+    });
+    expect(service.getHeartbeatSettings(TEST_WORKSPACE_ID)).toEqual({
+      enabled: true,
+      intervalMs: 45 * 60 * 1000,
+      message: LONG_HEARTBEAT_MESSAGE,
     });
   });
 

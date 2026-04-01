@@ -115,7 +115,6 @@ import {
   HEARTBEAT_DEFAULT_INTERVAL_MS,
   HEARTBEAT_DEFAULT_MESSAGE_BODY,
   HEARTBEAT_MAX_INTERVAL_MS,
-  HEARTBEAT_MAX_MESSAGE_LENGTH,
   HEARTBEAT_MIN_INTERVAL_MS,
 } from "@/constants/heartbeat";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
@@ -205,14 +204,10 @@ function normalizeHeartbeatMessageInput(message: string | undefined): string | u
     return undefined;
   }
 
-  assert(
-    trimmedMessage.length <= HEARTBEAT_MAX_MESSAGE_LENGTH,
-    `Heartbeat message must be at most ${HEARTBEAT_MAX_MESSAGE_LENGTH} characters`
-  );
   return trimmedMessage;
 }
 
-// Persisted workspace config can outlive earlier validation rules; trim and bound the
+// Persisted workspace config can contain non-string or whitespace-only values; normalize the
 // message on read so an invalid override never bricks heartbeat execution.
 function sanitizeHeartbeatMessage(message: unknown): string | undefined {
   if (typeof message !== "string") {
@@ -224,7 +219,7 @@ function sanitizeHeartbeatMessage(message: unknown): string | undefined {
     return undefined;
   }
 
-  return trimmedMessage.slice(0, HEARTBEAT_MAX_MESSAGE_LENGTH);
+  return trimmedMessage;
 }
 
 interface WorkspaceAgentStatus {
