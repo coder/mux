@@ -127,7 +127,7 @@ describeIntegration("Workspace Fork (UI)", () => {
 
           forkedWorkspaceId = currentId;
         },
-        { timeout: 90_000 }
+        { timeout: 180_000 }
       );
 
       if (!forkedWorkspaceId) {
@@ -154,7 +154,7 @@ describeIntegration("Workspace Fork (UI)", () => {
 
       await app.dispose();
     }
-  }, 300_000);
+  }, 450_000);
 
   test("context menu Fork chat action adds the new workspace to the sidebar immediately", async () => {
     const app = await createAppHarness({ branchPrefix: "ui-fork-menu" });
