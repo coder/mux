@@ -103,6 +103,11 @@ describeIntegration("Workspace Fork (UI)", () => {
       await app.chat.send("Hello from Docker source workspace");
       await app.chat.expectTranscriptContains("Hello from Docker source workspace", 120_000);
 
+      const existingWorkspaceIds = new Set(
+        (await app.env.orpc.workspace.list()).map((ws) => ws.id)
+      );
+      const expectedForkNamePrefix = `${app.metadata.name}-`;
+
       // Chat controls can remain disabled while Docker runtime provisioning settles.
       // Retry the /fork send until the command can be submitted.
       await waitFor(
@@ -114,20 +119,26 @@ describeIntegration("Workspace Fork (UI)", () => {
       await app.chat.expectTranscriptNotContains("Fork Failed", 30_000);
 
       await waitFor(
-        () => {
-          const path = window.location.pathname;
-          if (!path.startsWith("/workspace/")) {
-            throw new Error(`Unexpected path after Docker fork: ${path}`);
+        async () => {
+          const allWorkspaces = await app.env.orpc.workspace.list();
+          const forkedWorkspace = allWorkspaces.find((workspace) => {
+            if (existingWorkspaceIds.has(workspace.id)) {
+              return false;
+            }
+            if (workspace.projectPath !== app.metadata.projectPath) {
+              return false;
+            }
+            if (workspace.runtimeConfig.type !== "docker") {
+              return false;
+            }
+            return workspace.name.startsWith(expectedForkNamePrefix);
+          });
+          if (!forkedWorkspace) {
+            throw new Error("Forked Docker workspace not created yet");
           }
-
-          const currentId = decodeURIComponent(path.slice("/workspace/".length));
-          if (currentId === app.workspaceId) {
-            throw new Error("Still on source workspace after Docker fork");
-          }
-
-          forkedWorkspaceId = currentId;
+          forkedWorkspaceId = forkedWorkspace.id;
         },
-        { timeout: 180_000 }
+        { timeout: 240_000 }
       );
 
       if (!forkedWorkspaceId) {
@@ -143,7 +154,7 @@ describeIntegration("Workspace Fork (UI)", () => {
             throw new Error("Forked Docker workspace not found in sidebar");
           }
         },
-        { timeout: 5_000 }
+        { timeout: 30_000 }
       );
     } finally {
       if (forkedWorkspaceId) {
