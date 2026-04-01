@@ -167,11 +167,11 @@ const MuxChatHelpButton: React.FC<{
  * - unread storage writes (localStorage-backed "last read" timestamps)
  * - attention-relevant workspace transitions (streaming, awaiting question, system errors)
  */
-type WorkspaceAttentionSignal = {
+interface WorkspaceAttentionSignal {
   isWorking: boolean;
   awaitingUserQuestion: boolean;
   hasSystemError: boolean;
-};
+}
 
 function getWorkspaceAttentionSignal(
   workspaceStore: WorkspaceStore,
