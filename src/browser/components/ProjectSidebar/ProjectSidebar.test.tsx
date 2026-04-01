@@ -1504,6 +1504,64 @@ describe("ProjectSidebar project actions menu", () => {
     expect(updateColor).not.toHaveBeenCalled();
   });
 
+  test("keeps in-progress project color edits across project refreshes", async () => {
+    const updateColor = mock((_projectPath: string, _color: string | null) => resolveVoidResult());
+    projectContextValue = createProjectContextValue({
+      userProjects: new Map([
+        [
+          demoProjectPath,
+          {
+            workspaces: [],
+            color: "#6B7280",
+          },
+        ],
+      ]),
+      updateColor,
+    });
+
+    const view = renderSidebar();
+
+    fireEvent.click(view.getByRole("button", { name: "Project options for demo-project" }));
+    fireEvent.click(view.getByRole("button", { name: "Change color" }));
+
+    const initialInput = view.container.querySelector<HTMLInputElement>('input[type="text"]');
+    expect(initialInput?.value).toBe("#6b7280");
+
+    fireEvent.click(view.getByTestId("hex-color-picker"));
+
+    await waitFor(() => {
+      const input = view.container.querySelector<HTMLInputElement>('input[type="text"]');
+      expect(input?.value).toBe("#123456");
+    });
+
+    // Simulate a project refresh echoing a new persisted color while the picker
+    // remains open; the in-progress local edit should remain untouched.
+    projectContextValue = createProjectContextValue({
+      userProjects: new Map([
+        [
+          demoProjectPath,
+          {
+            workspaces: [],
+            color: "#112233",
+          },
+        ],
+      ]),
+      updateColor,
+    });
+
+    view.rerender(
+      <ProjectSidebar
+        collapsed={false}
+        onToggleCollapsed={() => undefined}
+        sortedWorkspacesByProject={new Map()}
+        workspaceRecency={{}}
+      />
+    );
+
+    const inputAfterRefresh = view.container.querySelector<HTMLInputElement>('input[type="text"]');
+    expect(inputAfterRefresh?.value).toBe("#123456");
+  });
+
   test("Add sub-folder expands collapsed project before auto-editing", async () => {
     window.localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify([]));
     const createSection = mock(() =>

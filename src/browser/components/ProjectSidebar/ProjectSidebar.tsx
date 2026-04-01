@@ -1572,27 +1572,20 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   // don't flood IPC + project refreshes while the user drags through hues.
   const debouncedProjectColorPickerValue = useDebouncedValue(projectColorPickerValue, 150);
 
-  useEffect(() => {
-    if (!showProjectColorPicker) {
-      return;
-    }
-    setProjectColorHexInput(projectMenuResolvedColor);
-    setProjectColorPickerValue(projectMenuResolvedColor);
-    setProjectColorPickerDirty(false);
-  }, [projectMenuResolvedColor, showProjectColorPicker]);
-
   const handleProjectMenuColorClick = useCallback(() => {
     if (!projectMenuTargetPath) {
       return;
     }
     setShowProjectColorPicker((prev) => {
       const next = !prev;
-      if (!next) {
-        setProjectColorPickerDirty(false);
+      if (next) {
+        setProjectColorHexInput(projectMenuResolvedColor);
+        setProjectColorPickerValue(projectMenuResolvedColor);
       }
+      setProjectColorPickerDirty(false);
       return next;
     });
-  }, [projectMenuTargetPath]);
+  }, [projectMenuResolvedColor, projectMenuTargetPath]);
 
   const handleProjectColorChange = useCallback(
     async (color: string) => {

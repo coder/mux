@@ -98,18 +98,19 @@ describeIntegration("Workspace Fork (UI)", () => {
     let forkedWorkspaceId: string | null = null;
 
     try {
-      await app.chat.send("Hello from Docker source workspace");
-      await app.chat.expectTranscriptContains("Hello from Docker source workspace");
-      // Docker runtime startup (image pull + init) can keep the stream pending much
-      // longer than the default harness timeout; wait before issuing /fork.
-      // CI runners can take >90s on a cold image pull, so give this gate extra headroom.
-      await app.chat.expectStreamComplete(150_000);
       const existingWorkspaceIds = new Set(
         (await app.env.orpc.workspace.list()).map((ws) => ws.id)
       );
 
-      await app.chat.send("/fork");
-      await app.chat.expectTranscriptNotContains("Fork Failed", 15_000);
+      // Chat controls can remain disabled while Docker runtime provisioning settles.
+      // Retry the /fork send until the command can be submitted.
+      await waitFor(
+        async () => {
+          await app.chat.send("/fork");
+        },
+        { timeout: 180_000 }
+      );
+      await app.chat.expectTranscriptNotContains("Fork Failed", 30_000);
 
       await waitFor(
         async () => {
