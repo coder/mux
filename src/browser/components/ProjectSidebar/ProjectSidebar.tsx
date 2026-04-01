@@ -40,7 +40,11 @@ import {
   KEYBINDS,
 } from "@/browser/utils/ui/keybinds";
 import { useAPI } from "@/browser/contexts/API";
-import { CUSTOM_EVENTS, type CustomEventType } from "@/common/constants/events";
+import {
+  CUSTOM_EVENTS,
+  getStorageChangeEvent,
+  type CustomEventType,
+} from "@/common/constants/events";
 import { PlatformPaths } from "@/common/utils/paths";
 import {
   partitionWorkspacesByAge,
@@ -154,6 +158,57 @@ const MuxChatHelpButton: React.FC<{
     </Tooltip>
   );
 };
+
+/**
+ * Subscribe sidebar-level attention derivation to workspace unread updates.
+ *
+ * Project/section highlighting is computed in this parent component, so unread
+ * writes must trigger a parent re-render even when only an individual row changed.
+ */
+function useWorkspaceLastReadAttentionSubscription(
+  sortedWorkspacesByProject: Map<string, FrontendWorkspaceMetadata[]>
+): void {
+  const [, setVersion] = useState(0);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const workspaceLastReadKeys = new Set<string>();
+    for (const workspaces of sortedWorkspacesByProject.values()) {
+      for (const workspace of workspaces) {
+        workspaceLastReadKeys.add(getWorkspaceLastReadKey(workspace.id));
+      }
+    }
+
+    if (workspaceLastReadKeys.size === 0) {
+      return;
+    }
+
+    const bumpVersion = () => {
+      setVersion((currentVersion) => currentVersion + 1);
+    };
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key && workspaceLastReadKeys.has(event.key)) {
+        bumpVersion();
+      }
+    };
+
+    window.addEventListener("storage", handleStorage);
+    for (const key of workspaceLastReadKeys) {
+      window.addEventListener(getStorageChangeEvent(key), bumpVersion);
+    }
+
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+      for (const key of workspaceLastReadKeys) {
+        window.removeEventListener(getStorageChangeEvent(key), bumpVersion);
+      }
+    };
+  }, [sortedWorkspacesByProject]);
+}
 
 // Keep the project header visible while scrolling through long workspace lists.
 // Project rows are also drag handles, so disable text selection to avoid
@@ -531,6 +586,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   sortedWorkspacesByProject,
   workspaceRecency,
 }) => {
+  useWorkspaceLastReadAttentionSubscription(sortedWorkspacesByProject);
+
   // Use the narrow actions context — does NOT subscribe to workspaceMetadata
   // changes, preventing the entire sidebar tree from re-rendering on every
   // workspace create/archive/rename.
