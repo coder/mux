@@ -1,6 +1,6 @@
 import type { WorkspaceChatMessage, ChatMuxMessage } from "@/common/orpc/types";
 import type { AppStory } from "@/browser/stories/meta.js";
-import { appMeta, AppWithMocks } from "@/browser/stories/meta.js";
+import { appMeta, AppWithMocks, CHROMATIC_SMOKE_MODES } from "@/browser/stories/meta.js";
 import {
   setupCustomChatStory,
   setupSimpleChatStory,
@@ -85,6 +85,7 @@ const LARGE_DIFF = [
 
 /** Basic chat conversation with various message types */
 export const Conversation: AppStory = {
+  parameters: { chromatic: { modes: CHROMATIC_SMOKE_MODES } },
   render: () => (
     <AppWithMocks
       setup={() =>
