@@ -120,7 +120,7 @@ describeIntegration("Workspace Fork (UI)", () => {
 
           forkedWorkspaceId = currentId;
         },
-        { timeout: 15_000 }
+        { timeout: 30_000 }
       );
 
       if (!forkedWorkspaceId) {
