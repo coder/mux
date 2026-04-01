@@ -6,17 +6,20 @@
  * - "Clone repo" — repo URL + clone location inputs
  */
 
-import { CHROMATIC_SMOKE_MODES, appMeta, AppWithMocks, type AppStory } from "./meta.js";
-import { expandProjects, selectWorkspace } from "./helpers/uiState";
-import { createWorkspace, groupWorkspacesByProject } from "./mocks/workspaces";
-import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
-import { within, userEvent, waitFor } from "@storybook/test";
 import type { APIClient } from "@/browser/contexts/API";
+import { expandProjects, selectWorkspace } from "@/browser/stories/helpers/uiState";
+import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
+import { createWorkspace, groupWorkspacesByProject } from "@/browser/stories/mocks/workspaces";
+import type { AppStory } from "@/browser/stories/meta.js";
+import { CHROMATIC_SMOKE_MODES, appMeta, AppWithMocks } from "@/browser/stories/meta.js";
+import { within, userEvent, waitFor } from "@storybook/test";
 
-export default {
+const meta = {
   ...appMeta,
-  title: "App/ProjectCreate",
+  title: "Components/ProjectCreateModal",
 };
+
+export default meta;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // HELPERS
@@ -54,6 +57,7 @@ export const LocalFolder: AppStory = {
   parameters: {
     chromatic: { modes: CHROMATIC_SMOKE_MODES },
   },
+  // Integration: stories navigate via sidebar → "Add project" button to open the modal portal.
   render: () => <AppWithMocks setup={setupProjectCreateStory} />,
   play: async ({ canvasElement }) => {
     await openNewProjectModal(canvasElement);
@@ -62,6 +66,7 @@ export const LocalFolder: AppStory = {
 
 /** "Clone repo" tab of the Add Project modal. */
 export const CloneRepo: AppStory = {
+  // Integration: stories navigate via sidebar → "Add project" button to open the modal portal.
   render: () => <AppWithMocks setup={setupProjectCreateStory} />,
   play: async ({ canvasElement }) => {
     await openNewProjectModal(canvasElement);
