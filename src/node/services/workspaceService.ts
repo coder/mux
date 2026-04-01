@@ -3292,18 +3292,12 @@ export class WorkspaceService extends EventEmitter {
 
     const message = sanitizeHeartbeatMessage(workspaceEntry.heartbeat.message);
     const contextMode = sanitizeHeartbeatContextMode(workspaceEntry.heartbeat.contextMode);
-    return message == null
-      ? {
-          enabled: workspaceEntry.heartbeat.enabled,
-          intervalMs: workspaceEntry.heartbeat.intervalMs,
-          contextMode,
-        }
-      : {
-          enabled: workspaceEntry.heartbeat.enabled,
-          intervalMs: workspaceEntry.heartbeat.intervalMs,
-          message,
-          contextMode,
-        };
+    return {
+      enabled: workspaceEntry.heartbeat.enabled,
+      intervalMs: workspaceEntry.heartbeat.intervalMs,
+      contextMode,
+      ...(message != null ? { message } : {}),
+    };
   }
 
   async setHeartbeatSettings(
@@ -3361,21 +3355,13 @@ export class WorkspaceService extends EventEmitter {
       const nextContextMode = hasContextModeUpdate
         ? sanitizeHeartbeatContextMode(settings.contextMode)
         : sanitizeHeartbeatContextMode(workspaceEntry.heartbeat?.contextMode);
-      const nextSettings: WorkspaceHeartbeatSettings =
-        nextMessage == null
-          ? {
-              enabled: settings.enabled,
-              // Keep the interval on disk even when disabled so re-enabling restores the user's choice.
-              intervalMs: settings.intervalMs,
-              contextMode: nextContextMode,
-            }
-          : {
-              enabled: settings.enabled,
-              // Keep the interval on disk even when disabled so re-enabling restores the user's choice.
-              intervalMs: settings.intervalMs,
-              message: nextMessage,
-              contextMode: nextContextMode,
-            };
+      // Keep the interval on disk even when disabled so re-enabling restores the user's choice.
+      const nextSettings: WorkspaceHeartbeatSettings = {
+        enabled: settings.enabled,
+        intervalMs: settings.intervalMs,
+        contextMode: nextContextMode,
+        ...(nextMessage != null ? { message: nextMessage } : {}),
+      };
 
       const changed =
         workspaceEntry.heartbeat?.enabled !== nextSettings.enabled ||
