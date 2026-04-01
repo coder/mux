@@ -5,7 +5,6 @@ import MuxLogoDark from "@/browser/assets/logos/mux-logo-dark.svg?react";
 import MuxLogoLight from "@/browser/assets/logos/mux-logo-light.svg?react";
 import { useTheme } from "@/browser/contexts/ThemeContext";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import type { ArchivePreflightResult } from "@/common/orpc/schemas/api";
 import {
   readPersistedState,
   updatePersistedState,
