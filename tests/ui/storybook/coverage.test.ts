@@ -20,6 +20,7 @@ const REQUIRED_COLOCATED_STORIES = [
   "src/browser/components/DebugLlmRequestModal/DebugLlmRequestModal.stories.tsx",
   "src/browser/components/AIView/AIView.stories.tsx",
   "src/browser/components/ProjectSidebar/ProjectSidebar.stories.tsx",
+  "src/browser/features/Messages/MessageRenderer.stories.tsx",
 ] as const;
 
 const MIGRATED_APP_STORIES = [
