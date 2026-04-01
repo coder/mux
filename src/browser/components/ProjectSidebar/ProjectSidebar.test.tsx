@@ -126,6 +126,7 @@ let archiveWorkspaceActionMock = mock(
   ): Promise<ArchiveWorkspaceActionResult> => resolveArchiveResult()
 );
 let settingsOpenMock = mock(() => undefined);
+let confirmDialogMock = mock(() => Promise.resolve(true));
 let archivePopoverShowErrorMock = mock(
   (_workspaceId: string, _error: string, _anchor?: { top: number; left: number }) => undefined
 );
@@ -188,6 +189,7 @@ function installProjectSidebarTestDoubles() {
       _options?: { acknowledgedUntrackedPaths?: string[] }
     ): Promise<ArchiveWorkspaceActionResult> => resolveArchiveResult()
   );
+  confirmDialogMock = mock(() => Promise.resolve(true));
   latestArchiveWorkspaceHandler = null;
   latestArchiveConfirmationModalProps = null;
   const fallbackPopoverError = {
@@ -255,7 +257,7 @@ function installProjectSidebarTestDoubles() {
     retry: () => undefined,
   }));
   spyOn(ConfirmDialogContextModule, "useConfirmDialog").mockImplementation(() => ({
-    confirm: () => Promise.resolve(true),
+    confirm: confirmDialogMock,
   }));
   spyOn(ProjectContextModule, "useProjectContext").mockImplementation(() => projectContextValue);
   spyOn(RouterContextModule, "useRouter").mockImplementation(() => ({
@@ -1381,7 +1383,7 @@ describe("ProjectSidebar project actions menu", () => {
     expect(view.getByTestId("project-delete-confirmation-modal").textContent).toBe("demo-project");
   });
 
-  test("Add sub-folder starts inline editing and removes untouched section on abandon", async () => {
+  test("Add sub-folder abandon reuses section-delete confirmation before removing", async () => {
     const createSection = mock(() =>
       Promise.resolve({
         success: true as const,
@@ -1394,7 +1396,12 @@ describe("ProjectSidebar project actions menu", () => {
         [
           demoProjectPath,
           {
-            workspaces: [],
+            workspaces: [
+              {
+                path: `${demoProjectPath}/ws-in-section`,
+                sectionId: "new-section",
+              },
+            ],
             sections: [
               { id: "new-section", name: "New sub-folder", color: "#6B7280", nextId: null },
             ],
@@ -1439,6 +1446,12 @@ describe("ProjectSidebar project actions menu", () => {
     autoEditProps?.onAutoCreateAbandon?.();
 
     await waitFor(() => {
+      expect(confirmDialogMock).toHaveBeenCalledWith({
+        title: "Delete section?",
+        description: "1 workspace(s) in this section will be moved to unsectioned.",
+        confirmLabel: "Delete",
+        confirmVariant: "destructive",
+      });
       expect(removeSection).toHaveBeenCalledWith(demoProjectPath, "new-section");
     });
   });

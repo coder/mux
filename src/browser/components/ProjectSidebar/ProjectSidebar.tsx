@@ -1258,15 +1258,20 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const handleRemoveSection = async (
     projectPath: string,
     sectionId: string,
-    buttonElement: HTMLElement
+    buttonElement?: HTMLElement
   ) => {
     // Capture the anchor location up front because the section action menu unmounts its
     // button immediately after click; failures still need stable error placement.
-    const buttonRect = buttonElement.getBoundingClientRect();
-    const anchor = {
-      top: buttonRect.top + window.scrollY,
-      left: buttonRect.right + 10,
-    };
+    const anchor =
+      buttonElement != null
+        ? (() => {
+            const buttonRect = buttonElement.getBoundingClientRect();
+            return {
+              top: buttonRect.top + window.scrollY,
+              left: buttonRect.right + 10,
+            };
+          })()
+        : undefined;
 
     // removeSection unsections every workspace in the project (including archived),
     // so confirmation needs to count from the full project config.
@@ -2725,16 +2730,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                             ? () => {
                                                 void (async () => {
                                                   setAutoEditingSection(null);
-                                                  const result = await removeSection(
-                                                    projectPath,
-                                                    section.id
-                                                  );
-                                                  if (!result.success) {
-                                                    sectionRemoveError.showError(
-                                                      section.id,
-                                                      result.error ?? "Failed to remove section"
-                                                    );
-                                                  }
+                                                  await handleRemoveSection(projectPath, section.id);
                                                 })();
                                               }
                                             : undefined
