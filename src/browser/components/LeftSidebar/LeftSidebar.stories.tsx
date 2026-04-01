@@ -1,14 +1,13 @@
-/**
- * Sidebar & project navigation stories
- */
-
-import { CHROMATIC_SMOKE_MODES, appMeta, AppWithMocks, type AppStory } from "./meta.js";
-import { createOnChatAdapter, type ChatHandler } from "./helpers/chatSetup";
-import { setWorkspaceDrafts } from "./helpers/drafts";
-import { clearWorkspaceSelection, expandProjects } from "./helpers/uiState";
-import { createStreamingChatHandler } from "./mocks/chatHandlers";
-import { createGitStatusOutput, type GitStatusFixture } from "./mocks/git";
-import { createUserMessage } from "./mocks/messages";
+import type { Meta, StoryObj } from "@storybook/react-vite";
+import { useRef } from "react";
+import { LeftSidebar } from "./LeftSidebar";
+import { CHROMATIC_SMOKE_MODES } from "@/browser/stories/meta.js";
+import { createOnChatAdapter, type ChatHandler } from "@/browser/stories/helpers/chatSetup";
+import { setWorkspaceDrafts } from "@/browser/stories/helpers/drafts";
+import { clearWorkspaceSelection, expandProjects } from "@/browser/stories/helpers/uiState";
+import { createStreamingChatHandler } from "@/browser/stories/mocks/chatHandlers";
+import { createGitStatusOutput, type GitStatusFixture } from "@/browser/stories/mocks/git";
+import { createUserMessage } from "@/browser/stories/mocks/messages";
 import {
   NOW,
   STABLE_TIMESTAMP,
@@ -16,14 +15,37 @@ import {
   createSSHWorkspace,
   createWorkspace,
   groupWorkspacesByProject,
-} from "./mocks/workspaces";
-import { within, userEvent, waitFor } from "@storybook/test";
-
+} from "@/browser/stories/mocks/workspaces";
+import { within, userEvent, waitFor } from "storybook/test";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
+import { APIProvider, type APIClient } from "@/browser/contexts/API";
+import { ThemeProvider } from "@/browser/contexts/ThemeContext";
+import { PolicyProvider } from "@/browser/contexts/PolicyContext";
+import { RouterProvider } from "@/browser/contexts/RouterContext";
+import { ProjectProvider, useProjectContext } from "@/browser/contexts/ProjectContext";
+import { WorkspaceProvider, useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
+import { SettingsProvider } from "@/browser/contexts/SettingsContext";
+import { ConfirmDialogProvider } from "@/browser/contexts/ConfirmDialogContext";
+import { ExperimentsProvider } from "@/browser/contexts/ExperimentsContext";
+import { AboutDialogProvider } from "@/browser/contexts/AboutDialogContext";
+import { TelemetryEnabledProvider } from "@/browser/contexts/TelemetryEnabledContext";
+import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
+import { useWorkspaceRecency } from "@/browser/stores/WorkspaceStore";
+import { buildSortedWorkspacesByProject } from "@/browser/utils/ui/workspaceFiltering";
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
+import {
+  SELECTED_WORKSPACE_KEY,
+  UI_THEME_KEY,
+  getWorkspaceLastReadKey,
+} from "@/common/constants/storage";
 
-export default {
-  ...appMeta,
-  title: "App/Sidebar",
+const meta: Meta<typeof LeftSidebar> = {
+  title: "Components/LeftSidebar",
+  component: LeftSidebar,
+  parameters: {
+    layout: "fullscreen",
+    chromatic: { delay: 500 },
+  },
   decorators: [
     (Story: () => JSX.Element) => {
       // Sidebar stories are about list organization; keep the main panel unselected.
@@ -33,11 +55,132 @@ export default {
   ],
 };
 
-/**
- * Creates an executeBash function that returns deterministic git outputs for Storybook.
- *
- * NOTE: This is only used in full-app stories to make GitStatusIndicator + tooltip stable.
- */
+export default meta;
+type AppStory = StoryObj<typeof meta>;
+
+interface LeftSidebarStoryShellProps {
+  setup: () => APIClient;
+  leftSidebarProps?: LeftSidebarStoryOverrides;
+}
+
+interface LeftSidebarStoryOverrides {
+  collapsed?: boolean;
+  widthPx?: number;
+  isResizing?: boolean;
+  onStartResize?: (e: React.MouseEvent) => void;
+  onToggleCollapsed?: () => void;
+}
+
+// Vite re-evaluates this module on story edits; use a fresh token so the shell
+// can deterministically remount provider state after each hot update.
+const MODULE_RENDER_TOKEN = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+function LeftSidebarStoryScene(props: { leftSidebarProps?: LeftSidebarStoryOverrides }) {
+  const { userProjects } = useProjectContext();
+  const { workspaceMetadata } = useWorkspaceContext();
+  const workspaceRecency = useWorkspaceRecency();
+  const sortedWorkspacesByProject = buildSortedWorkspacesByProject(
+    userProjects,
+    workspaceMetadata,
+    workspaceRecency
+  );
+  const collapsed = props.leftSidebarProps?.collapsed ?? false;
+  const widthPx = props.leftSidebarProps?.widthPx ?? 320;
+  const isResizing = props.leftSidebarProps?.isResizing;
+  const onStartResize = props.leftSidebarProps?.onStartResize;
+  const onToggleCollapsed = props.leftSidebarProps?.onToggleCollapsed ?? (() => undefined);
+
+  return (
+    <div className="h-screen w-[320px] overflow-hidden">
+      <LeftSidebar
+        collapsed={collapsed}
+        onToggleCollapsed={onToggleCollapsed}
+        widthPx={widthPx}
+        isResizing={isResizing}
+        onStartResize={onStartResize}
+        sortedWorkspacesByProject={sortedWorkspacesByProject}
+        workspaceRecency={workspaceRecency}
+      />
+    </div>
+  );
+}
+
+function resetStorybookPersistedStateForStory(): void {
+  if (typeof localStorage !== "undefined") {
+    localStorage.removeItem(SELECTED_WORKSPACE_KEY);
+    localStorage.setItem(UI_THEME_KEY, JSON.stringify("dark"));
+  }
+}
+
+function getStorybookRenderKey(): string | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const storyId = params.get("id") ?? params.get("path");
+  const viewportBucket = window.innerWidth <= 768 ? "narrow" : "wide";
+  return storyId ? `${storyId}:${viewportBucket}` : viewportBucket;
+}
+
+function LeftSidebarStoryShell(props: LeftSidebarStoryShellProps) {
+  const lastRenderKeyRef = useRef<string | null>(null);
+  const lastModuleTokenRef = useRef<string | null>(null);
+  const lastSetupRef = useRef<LeftSidebarStoryShellProps["setup"] | null>(null);
+  const remountEpochRef = useRef(0);
+  const clientRef = useRef<APIClient | null>(null);
+
+  const renderKey = getStorybookRenderKey();
+  // Storybook Fast Refresh preserves refs, so edits to a story's setup function
+  // can otherwise keep showing stale mocked data until a full restart.
+  const moduleChanged = lastModuleTokenRef.current !== MODULE_RENDER_TOKEN;
+  const setupChanged = lastSetupRef.current !== props.setup;
+  const shouldReset =
+    clientRef.current === null ||
+    lastRenderKeyRef.current !== renderKey ||
+    moduleChanged ||
+    setupChanged;
+  if (shouldReset) {
+    resetStorybookPersistedStateForStory();
+    lastRenderKeyRef.current = renderKey;
+    lastModuleTokenRef.current = MODULE_RENDER_TOKEN;
+    lastSetupRef.current = props.setup;
+    remountEpochRef.current += 1;
+    clientRef.current = null;
+  }
+
+  clientRef.current ??= props.setup();
+  const providerTreeKey = `${renderKey ?? "left-sidebar"}:${MODULE_RENDER_TOKEN}:${remountEpochRef.current}`;
+
+  return (
+    <ThemeProvider key={providerTreeKey}>
+      <APIProvider client={clientRef.current}>
+        <PolicyProvider>
+          <RouterProvider>
+            <ExperimentsProvider>
+              <TooltipProvider delayDuration={200}>
+                <SettingsProvider>
+                  <AboutDialogProvider>
+                    <TelemetryEnabledProvider>
+                      <ConfirmDialogProvider>
+                        <ProjectProvider>
+                          <WorkspaceProvider>
+                            <LeftSidebarStoryScene leftSidebarProps={props.leftSidebarProps} />
+                          </WorkspaceProvider>
+                        </ProjectProvider>
+                      </ConfirmDialogProvider>
+                    </TelemetryEnabledProvider>
+                  </AboutDialogProvider>
+                </SettingsProvider>
+              </TooltipProvider>
+            </ExperimentsProvider>
+          </RouterProvider>
+        </PolicyProvider>
+      </APIProvider>
+    </ThemeProvider>
+  );
+}
+
 function createGitStatusExecutor(gitStatus?: Map<string, GitStatusFixture>) {
   const buildBranchDetailsOutput = (status: GitStatusFixture): string => {
     const ahead = status.ahead ?? 0;
@@ -128,7 +271,7 @@ export const SingleProject: AppStory = {
     chromatic: { modes: CHROMATIC_SMOKE_MODES },
   },
   render: () => (
-    <AppWithMocks
+    <LeftSidebarStoryShell
       setup={() => {
         const workspaces = [
           createWorkspace({ id: "ws-1", name: "main", projectName: "my-app" }),
@@ -153,7 +296,7 @@ export const SingleProject: AppStory = {
 /** Multiple projects showing sidebar organization */
 export const MultipleProjects: AppStory = {
   render: () => (
-    <AppWithMocks
+    <LeftSidebarStoryShell
       setup={() => {
         const workspaces = [
           createWorkspace({ id: "ws-1", name: "main", projectName: "frontend" }),
@@ -181,7 +324,7 @@ export const MultipleProjects: AppStory = {
 /** Many workspaces testing sidebar scroll behavior */
 export const ManyWorkspaces: AppStory = {
   render: () => (
-    <AppWithMocks
+    <LeftSidebarStoryShell
       setup={() => {
         const names = [
           "main",
@@ -211,12 +354,144 @@ export const ManyWorkspaces: AppStory = {
   ),
 };
 
+/** Collapsed desktop sidebar rail */
+export const CollapsedDesktop: AppStory = {
+  render: () => (
+    <LeftSidebarStoryShell
+      leftSidebarProps={{ collapsed: true, widthPx: 320 }}
+      setup={() => {
+        const workspaces = [
+          createWorkspace({ id: "ws-collapsed-1", name: "main", projectName: "my-app" }),
+          createWorkspace({
+            id: "ws-collapsed-2",
+            name: "feature/collapsed-rail",
+            projectName: "my-app",
+          }),
+        ];
+
+        return createMockORPCClient({
+          projects: groupWorkspacesByProject(workspaces),
+          workspaces,
+        });
+      }}
+    />
+  ),
+};
+
+/** Desktop resize handle should render while sidebar is open */
+export const ResizeHandleVisible: AppStory = {
+  render: () => (
+    <LeftSidebarStoryShell
+      leftSidebarProps={{
+        onStartResize: () => undefined,
+      }}
+      setup={() => {
+        const workspaces = [createWorkspace({ id: "ws-resize-1", name: "main", projectName: "my-app" })];
+
+        return createMockORPCClient({
+          projects: groupWorkspacesByProject(workspaces),
+          workspaces,
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    await waitFor(() => {
+      const resizeHandle = canvasElement.querySelector('[data-testid="left-sidebar-resize-handle"]');
+      if (!resizeHandle) {
+        throw new Error("Expected left sidebar resize handle to be visible");
+      }
+    });
+  },
+};
+
+/** Active resize state should use accent-colored resize handle */
+export const ResizeHandleActive: AppStory = {
+  render: () => (
+    <LeftSidebarStoryShell
+      leftSidebarProps={{
+        isResizing: true,
+        onStartResize: () => undefined,
+      }}
+      setup={() => {
+        const workspaces = [createWorkspace({ id: "ws-resize-active-1", name: "main", projectName: "my-app" })];
+
+        return createMockORPCClient({
+          projects: groupWorkspacesByProject(workspaces),
+          workspaces,
+        });
+      }}
+    />
+  ),
+};
+
+/** Mobile open state should show overlay backdrop */
+export const MobileOpenOverlay: AppStory = {
+  parameters: {
+    chromatic: {
+      modes: {
+        "dark-mobile": { theme: "dark", viewport: "mobile1", hasTouch: true },
+        "light-mobile": { theme: "light", viewport: "mobile1", hasTouch: true },
+      },
+    },
+  },
+  render: () => (
+    <LeftSidebarStoryShell
+      leftSidebarProps={{ collapsed: false }}
+      setup={() => {
+        const workspaces = [createWorkspace({ id: "ws-mobile-open-1", name: "main", projectName: "mobile-app" })];
+
+        return createMockORPCClient({
+          projects: groupWorkspacesByProject(workspaces),
+          workspaces,
+        });
+      }}
+    />
+  ),
+};
+
+/** Empty state with no projects/workspaces */
+export const EmptySidebar: AppStory = {
+  render: () => (
+    <LeftSidebarStoryShell
+      setup={() =>
+        createMockORPCClient({
+          projects: groupWorkspacesByProject([]),
+          workspaces: [],
+        })
+      }
+    />
+  ),
+};
+
+/** Expanded project with no agents should show empty-state text */
+export const ExpandedProjectNoAgents: AppStory = {
+  render: () => (
+    <LeftSidebarStoryShell
+      setup={() => {
+        const projectPath = "/home/user/projects/empty-project";
+        expandProjects([projectPath]);
+
+        return createMockORPCClient({
+          projects: new Map([[projectPath, { workspaces: [] }]]),
+          workspaces: [],
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    await waitFor(() => {
+      within(canvasElement).getByText("Empty");
+    });
+  },
+};
+
 /**
  * Best-of-n sub-agents are coalesced into a single expandable sidebar row.
  */
 export const BestOfSubagents: AppStory = {
   render: () => (
-    <AppWithMocks
+    <LeftSidebarStoryShell
       setup={() => {
         const projectPath = "/home/user/projects/best-of-demo";
         const parent = createWorkspace({
@@ -310,7 +585,7 @@ export const BestOfSubagents: AppStory = {
  */
 export const VariantSubagents: AppStory = {
   render: () => (
-    <AppWithMocks
+    <LeftSidebarStoryShell
       setup={() => {
         const projectPath = "/home/user/projects/variants-demo";
         const parent = createWorkspace({
@@ -389,7 +664,7 @@ export const VariantSubagents: AppStory = {
  */
 export const SingleOldWorkspaceInOlderTier: AppStory = {
   render: () => (
-    <AppWithMocks
+    <LeftSidebarStoryShell
       setup={() => {
         const projectPath = "/home/user/projects/age-tier-demo";
         const oldCreatedAt = new Date(NOW - 2 * 24 * 60 * 60 * 1000).toISOString();
@@ -526,7 +801,7 @@ export const SingleOldWorkspaceInOlderTier: AppStory = {
  */
 export const SingleRecentWorkspaceInTopTier: AppStory = {
   render: () => (
-    <AppWithMocks
+    <LeftSidebarStoryShell
       setup={() => {
         const projectPath = "/home/user/projects/age-tier-demo";
         const recentCreatedAt = new Date(NOW - 6 * 60 * 60 * 1000).toISOString();
@@ -627,7 +902,7 @@ export const SingleRecentWorkspaceInTopTier: AppStory = {
 /** Long workspace names - tests truncation and prevents horizontal scroll regression */
 export const LongWorkspaceNames: AppStory = {
   render: () => (
-    <AppWithMocks
+    <LeftSidebarStoryShell
       setup={() => {
         const workspaces = [
           createWorkspace({
@@ -686,7 +961,7 @@ export const LongWorkspaceNames: AppStory = {
  */
 export const GitStatusVariations: AppStory = {
   render: () => (
-    <AppWithMocks
+    <LeftSidebarStoryShell
       setup={() => {
         const workspaces = [
           createWorkspace({
@@ -766,17 +1041,9 @@ export const GitStatusVariations: AppStory = {
 
     const row = canvasElement.querySelector<HTMLElement>('[data-workspace-id="ws-diverged"]')!;
 
-    // Select the diverged workspace and wait for top-bar git status to render so
-    // we assert absence in the sidebar only after git status has refreshed.
+    // Select the diverged workspace, then assert the sidebar row itself never
+    // renders the git divergence control in this left-sidebar-only story shell.
     await userEvent.click(row);
-    await waitFor(() => {
-      const controls = document.body.querySelectorAll(
-        'button[aria-label="View git divergence details"]'
-      );
-      if (controls.length === 0) {
-        throw new Error("Top-bar git divergence control not rendered yet");
-      }
-    });
 
     if (within(row).queryByLabelText("View git divergence details") !== null) {
       throw new Error("Sidebar rows should not render git divergence indicators");
@@ -795,7 +1062,7 @@ export const GitStatusVariations: AppStory = {
  */
 export const RuntimeBadgeVariations: AppStory = {
   render: () => (
-    <AppWithMocks
+    <LeftSidebarStoryShell
       setup={() => {
         // Idle workspaces (one of each type)
         const sshIdle = createSSHWorkspace({
@@ -906,7 +1173,7 @@ export const RuntimeBadgeVariations: AppStory = {
  */
 export const WorkspaceTitleHoverCard: AppStory = {
   render: () => (
-    <AppWithMocks
+    <LeftSidebarStoryShell
       setup={() => {
         const sshWorkspace = createSSHWorkspace({
           id: "ws-ssh-hover",
@@ -958,7 +1225,7 @@ export const WorkspaceTitleHoverCard: AppStory = {
  */
 export const WorkspaceDrafts: AppStory = {
   render: () => (
-    <AppWithMocks
+    <LeftSidebarStoryShell
       setup={() => {
         const projectPath = "/home/user/projects/draft-demo";
 
@@ -1012,7 +1279,7 @@ export const WorkspaceDrafts: AppStory = {
  */
 export const WorkspaceDraftSelected: AppStory = {
   render: () => (
-    <AppWithMocks
+    <LeftSidebarStoryShell
       setup={() => {
         const projectPath = "/home/user/projects/draft-selected";
 
@@ -1055,6 +1322,213 @@ export const WorkspaceDraftSelected: AppStory = {
   },
 };
 
+export const MixedAgentStatesAndAges: AppStory = {
+  render: () => (
+    <LeftSidebarStoryShell
+      setup={() => {
+        const projectPath = "/home/user/projects/sidebar-state-mix";
+        const projectName = "sidebar-state-mix";
+        const activeCreatedAt = new Date(NOW - 30 * 60 * 1000).toISOString();
+        const idleUnreadCreatedAt = new Date(NOW - 2 * 60 * 60 * 1000).toISOString();
+        const errorCreatedAt = new Date(NOW - 3 * 60 * 60 * 1000).toISOString();
+        const olderThanOneDayCreatedAt = new Date(NOW - 2 * 24 * 60 * 60 * 1000).toISOString();
+        const olderThanSevenDaysCreatedAt = new Date(NOW - 8 * 24 * 60 * 60 * 1000).toISOString();
+
+        const activeWorkspace = createWorkspace({
+          id: "ws-mixed-active",
+          name: "active-agent",
+          title: "Active agent",
+          projectName,
+          projectPath,
+          createdAt: activeCreatedAt,
+        });
+        const idleUnreadWorkspace = createWorkspace({
+          id: "ws-mixed-idle-unread",
+          name: "idle-unread-agent",
+          title: "Idle unread agent",
+          projectName,
+          projectPath,
+          createdAt: idleUnreadCreatedAt,
+        });
+        const errorWorkspace = createWorkspace({
+          id: "ws-mixed-error",
+          name: "error-agent",
+          title: "Error agent",
+          projectName,
+          projectPath,
+          createdAt: errorCreatedAt,
+        });
+        const olderThanOneDayWorkspace = createWorkspace({
+          id: "ws-mixed-older-than-1-day",
+          name: "older-than-1-day-agent",
+          title: "Older than 1 day agent",
+          projectName,
+          projectPath,
+          createdAt: olderThanOneDayCreatedAt,
+        });
+        const olderThanSevenDaysWorkspace = createWorkspace({
+          id: "ws-mixed-older-than-7-days",
+          name: "older-than-7-days-agent",
+          title: "Older than 7 days agent",
+          projectName,
+          projectPath,
+          createdAt: olderThanSevenDaysCreatedAt,
+        });
+        const parentWithActiveSubagentsWorkspace = {
+          ...createWorkspace({
+            id: "ws-mixed-parent-with-active-subagents",
+            name: "parent-with-active-subagents",
+            title: "Parent with active subagents",
+            projectName,
+            projectPath,
+            createdAt: activeCreatedAt,
+          }),
+          isInitializing: true,
+          taskStatus: "running" as const,
+        };
+        const activeSubagentOne = {
+          ...createWorkspace({
+            id: "ws-mixed-active-subagent-1",
+            name: "active-subagent-1",
+            title: "Active subagent 1",
+            projectName,
+            projectPath,
+            createdAt: activeCreatedAt,
+          }),
+          parentWorkspaceId: parentWithActiveSubagentsWorkspace.id,
+          taskStatus: "running" as const,
+        };
+        const activeSubagentTwo = {
+          ...createWorkspace({
+            id: "ws-mixed-active-subagent-2",
+            name: "active-subagent-2",
+            title: "Active subagent 2",
+            projectName,
+            projectPath,
+            createdAt: activeCreatedAt,
+          }),
+          parentWorkspaceId: parentWithActiveSubagentsWorkspace.id,
+          taskStatus: "running" as const,
+        };
+        const activeSubagentThree = {
+          ...createWorkspace({
+            id: "ws-mixed-active-subagent-3",
+            name: "active-subagent-3",
+            title: "Active subagent 3",
+            projectName,
+            projectPath,
+            createdAt: activeCreatedAt,
+          }),
+          parentWorkspaceId: parentWithActiveSubagentsWorkspace.id,
+          taskStatus: "running" as const,
+        };
+        const workspaces = [
+          activeWorkspace,
+          idleUnreadWorkspace,
+          errorWorkspace,
+          parentWithActiveSubagentsWorkspace,
+          activeSubagentOne,
+          activeSubagentTwo,
+          activeSubagentThree,
+          olderThanOneDayWorkspace,
+          olderThanSevenDaysWorkspace,
+        ];
+
+        setWorkspaceDrafts(projectPath, [
+          {
+            draftId: "draft-mixed-1",
+            workspaceName: "Draft agent",
+            prompt: "Draft prompt preview",
+            createdAt: NOW - 1_000,
+          },
+        ]);
+
+        // Ensure the unread indicator appears for the idle workspace.
+        updatePersistedState(
+          getWorkspaceLastReadKey(idleUnreadWorkspace.id),
+          Date.parse(idleUnreadCreatedAt) - 60_000
+        );
+
+        // Expand age tiers so older-than-1-day and older-than-7-days rows are visible.
+        updatePersistedState("expandedOldWorkspaces", {
+          [`${projectPath}:0`]: true,
+          [`${projectPath}:1`]: true,
+        });
+
+        const chatHandlers = new Map<string, ChatHandler>([
+          [
+            activeWorkspace.id,
+            (emit) => {
+              emit({ type: "caught-up", hasOlderHistory: false });
+              emit({
+                type: "stream-start",
+                workspaceId: activeWorkspace.id,
+                messageId: "mixed-active-stream",
+                model: "mock-model",
+                historySequence: 1_000,
+                startTime: NOW,
+              });
+              return () => undefined;
+            },
+          ],
+          [
+            parentWithActiveSubagentsWorkspace.id,
+            (emit) => {
+              emit({ type: "caught-up", hasOlderHistory: false });
+              emit({
+                type: "stream-start",
+                workspaceId: parentWithActiveSubagentsWorkspace.id,
+                messageId: "mixed-parent-with-active-subagents-stream",
+                model: "mock-model",
+                historySequence: 1_001,
+                startTime: NOW,
+              });
+              return () => undefined;
+            },
+          ],
+          [
+            errorWorkspace.id,
+            (emit) => {
+              emit({ type: "caught-up", hasOlderHistory: false });
+              emit({
+                type: "stream-start",
+                workspaceId: errorWorkspace.id,
+                messageId: "mixed-error-stream",
+                model: "mock-model",
+                historySequence: 1_002,
+                startTime: NOW,
+              });
+              emit({
+                type: "stream-abort",
+                workspaceId: errorWorkspace.id,
+                messageId: "mixed-error-stream",
+                abortReason: "system",
+              });
+              return () => undefined;
+            },
+          ],
+        ]);
+
+        expandProjects([projectPath]);
+
+        return createMockORPCClient({
+          projects: groupWorkspacesByProject(workspaces),
+          workspaces,
+          onChat: createOnChatAdapter(chatHandlers),
+          workspaceActivitySnapshots: {
+            [parentWithActiveSubagentsWorkspace.id]: {
+              recency: NOW,
+              streaming: true,
+              lastModel: "mock-model",
+              lastThinkingLevel: null,
+            },
+          },
+        });
+      }}
+    />
+  ),
+};
+
 /**
  * Archiving workspace alignment regression test.
  *
@@ -1065,7 +1539,7 @@ export const WorkspaceDraftSelected: AppStory = {
  */
 export const ArchivingWorkspaceAlignment: AppStory = {
   render: () => (
-    <AppWithMocks
+    <LeftSidebarStoryShell
       setup={() => {
         const projectPath = "/home/user/projects/my-app";
         const workspaces = [
@@ -1147,3 +1621,4 @@ export const ArchivingWorkspaceAlignment: AppStory = {
     });
   },
 };
+

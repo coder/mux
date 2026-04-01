@@ -38,6 +38,18 @@ const config: StorybookConfig = {
         // because the preview reload is interpreted as a navigation.
         include: ["@radix-ui/react-checkbox", "shiki"],
       },
+      server: {
+        watch: {
+          // Native file events are unreliable in this environment; force polling so
+          // edits to large story files (e.g. LeftSidebar.stories.tsx) are detected.
+          usePolling: true,
+          interval: 100,
+          awaitWriteFinish: {
+            stabilityThreshold: 200,
+            pollInterval: 100,
+          },
+        },
+      },
     });
   },
 };

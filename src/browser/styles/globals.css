@@ -115,6 +115,7 @@
     --color-content-primary: hsl(0 0% 100%);
     --color-content-secondary: hsla(240, 5%, 65%);
     --color-content-tertiary: hsla(240, 5%, 34%);
+    --color-content-disabled: hsl(240, 5%, 26%);
     --color-muted-foreground: hsl(0 0% 60%);
     --color-secondary: hsl(0 0% 42%);
     --color-surface-primary: hsla(240, 10%, 4%, 1);
@@ -417,6 +418,7 @@
   --color-content-primary: hsl(240 10% 4%);
   --color-content-secondary: hsla(240, 5%, 34%);
   --color-content-tertiary: hsl(240, 4%, 46%);
+  --color-content-disabled: hsl(240, 5%, 65%);
   --color-muted-foreground: hsl(210 14% 48%);
   --color-secondary: hsl(210 18% 60%);
   --color-surface-primary: hsla(0, 0%, 100%, 1);

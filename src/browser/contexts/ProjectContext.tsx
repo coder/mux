@@ -89,6 +89,7 @@ export interface ProjectContext {
   getSecrets: (projectPath: string) => Promise<Secret[]>;
   updateSecrets: (projectPath: string, secrets: Secret[]) => Promise<void>;
   updateDisplayName: (projectPath: string, displayName: string | null) => Promise<Result<void>>;
+  updateColor: (projectPath: string, color: string | null) => Promise<Result<void>>;
 
   // Section operations
   createSection: (
@@ -474,6 +475,20 @@ export function ProjectProvider(props: { children: ReactNode }) {
     [api, refreshProjects]
   );
 
+  const updateColor = useCallback(
+    async (projectPath: string, color: string | null): Promise<Result<void>> => {
+      if (!api) return { success: false, error: "API not connected" };
+      try {
+        await api.projects.setColor({ projectPath, color });
+        await refreshProjects();
+        return { success: true, data: undefined };
+      } catch (error) {
+        return { success: false, error: getErrorMessage(error) };
+      }
+    },
+    [api, refreshProjects]
+  );
+
   // Section operations
   const createSection = useCallback(
     async (projectPath: string, name: string, color?: string): Promise<Result<SectionConfig>> => {
@@ -569,6 +584,7 @@ export function ProjectProvider(props: { children: ReactNode }) {
       getSecrets,
       updateSecrets,
       updateDisplayName,
+      updateColor,
       createSection,
       updateSection,
       removeSection,
@@ -594,6 +610,7 @@ export function ProjectProvider(props: { children: ReactNode }) {
       getSecrets,
       updateSecrets,
       updateDisplayName,
+      updateColor,
       createSection,
       updateSection,
       removeSection,

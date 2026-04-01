@@ -1,26 +1,38 @@
 import React, { useState, useRef, useEffect } from "react";
 import { cn } from "@/common/lib/utils";
-import { ChevronRight, Pencil, Trash2, Palette } from "lucide-react";
+import {
+  ChevronRight,
+  EllipsisVertical,
+  Folder,
+  FolderOpen,
+  Palette,
+  Pencil,
+  Trash2,
+} from "lucide-react";
 import type { SectionConfig } from "@/common/types/project";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipIfPresent } from "../Tooltip/Tooltip";
 import { resolveSectionColor, SECTION_COLOR_PALETTE } from "@/common/constants/ui";
 import { HexColorPicker } from "react-colorful";
+import { Popover, PopoverContent, PopoverTrigger } from "../Popover/Popover";
+import { PositionedMenuItem } from "../PositionedMenu/PositionedMenu";
 
 interface SectionHeaderProps {
   section: SectionConfig;
   isExpanded: boolean;
   workspaceCount: number;
+  hasAttention: boolean;
   onToggleExpand: () => void;
   onAddWorkspace: () => void;
   onRename: (name: string) => void;
   onChangeColor: (color: string) => void;
-  onDelete: (event: React.MouseEvent<HTMLButtonElement>) => void;
+  onDelete: (anchorEl: HTMLElement) => void;
 }
 
 export const SectionHeader: React.FC<SectionHeaderProps> = ({
   section,
   isExpanded,
   workspaceCount,
+  hasAttention,
   onToggleExpand,
   onAddWorkspace,
   onRename,
@@ -30,9 +42,9 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(section.name);
   const [showColorPicker, setShowColorPicker] = useState(false);
+  const [isActionsMenuOpen, setIsActionsMenuOpen] = useState(false);
   const [hexInputValue, setHexInputValue] = useState(section.color ?? "");
   const inputRef = useRef<HTMLInputElement>(null);
-  const colorPickerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (isEditing && inputRef.current) {
@@ -40,18 +52,6 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
       inputRef.current.select();
     }
   }, [isEditing]);
-
-  useEffect(() => {
-    if (showColorPicker) {
-      const handleClickOutside = (e: MouseEvent) => {
-        if (colorPickerRef.current && !colorPickerRef.current.contains(e.target as Node)) {
-          setShowColorPicker(false);
-        }
-      };
-      document.addEventListener("mousedown", handleClickOutside);
-      return () => document.removeEventListener("mousedown", handleClickOutside);
-    }
-  }, [showColorPicker]);
 
   const handleSubmitRename = () => {
     const trimmed = editValue.trim();
@@ -65,14 +65,17 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
 
   const sectionColor = resolveSectionColor(section.color);
 
-  // Sync hex input when color changes from picker or presets
+  // Keep hex input in sync while the picker is open, matching project menu behavior.
   useEffect(() => {
+    if (!showColorPicker) {
+      return;
+    }
     setHexInputValue(sectionColor);
-  }, [sectionColor]);
+  }, [sectionColor, showColorPicker]);
 
   return (
     <div
-      className="group relative ml-2 flex items-center gap-1 border-t border-white/5 py-1.5 pr-2 pl-3 select-none"
+      className="group relative ml-4 flex items-center gap-1 py-1.5 pr-2 pl-3 select-none"
       data-section-id={section.id}
     >
       {/* Expand/Collapse Button */}
@@ -82,10 +85,23 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
         aria-label={isExpanded ? "Collapse section" : "Expand section"}
         aria-expanded={isExpanded}
       >
-        <ChevronRight
-          className="h-3 w-3 transition-transform duration-200"
-          style={{ transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)" }}
-        />
+        <span className="relative flex h-3.5 w-3.5 items-center justify-center">
+          <ChevronRight
+            className="absolute inset-0 h-3.5 w-3.5 opacity-0 transition-[opacity,transform] duration-200 group-hover:opacity-100"
+            style={{ transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)" }}
+          />
+          {isExpanded ? (
+            <FolderOpen
+              className="h-3.5 w-3.5 transition-opacity duration-200 group-hover:opacity-0"
+              style={{ color: sectionColor }}
+            />
+          ) : (
+            <Folder
+              className="h-3.5 w-3.5 transition-opacity duration-200 group-hover:opacity-0"
+              style={{ color: sectionColor }}
+            />
+          )}
+        </span>
       </button>
 
       {/* Section Name */}
@@ -110,122 +126,138 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
         <button
           onClick={onToggleExpand}
           onDoubleClick={() => setIsEditing(true)}
-          className="min-w-0 flex-1 cursor-pointer truncate border-none bg-transparent p-0 text-left text-xs font-medium"
-          style={{ color: sectionColor }}
+          className={cn(
+            "min-w-0 flex-1 cursor-pointer truncate border-none bg-transparent p-0 text-left text-xs font-medium",
+            hasAttention ? "text-content-primary" : "text-content-secondary"
+          )}
         >
           {section.name}
           <span className="text-muted ml-1.5 font-normal">({workspaceCount})</span>
         </button>
       )}
 
-      {/* Action buttons stay hover-only on desktop, hide on the narrow touch sidebar,
-          and stay visible on wider touch screens so they never become invisible tap targets. */}
-      <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 [@media(max-width:768px)_and_(hover:none)_and_(pointer:coarse)]:pointer-events-none [@media(min-width:769px)_and_(hover:none)_and_(pointer:coarse)]:opacity-100">
-        {/* Color Picker */}
-        <div className="relative" ref={colorPickerRef}>
+      {/* Right-side controls: add chat + section actions */}
+      <div
+        className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 [@media(hover:none)_and_(pointer:coarse)]:opacity-100"
+      >
+        {/* Add Chat — always visible on touch devices */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              onClick={onAddWorkspace}
+              className="text-secondary hover:text-foreground hover:bg-hover flex h-5 w-5 cursor-pointer items-center justify-center rounded border-none bg-transparent p-0 text-sm transition-colors"
+              aria-label="New chat in section"
+            >
+              +
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>New chat</TooltipContent>
+        </Tooltip>
+
+        {/* Section actions kebab sits immediately to the right of New chat */}
+        <Popover
+          open={isActionsMenuOpen}
+          onOpenChange={(open) => {
+            setIsActionsMenuOpen(open);
+            if (!open) {
+              setShowColorPicker(false);
+            }
+          }}
+        >
           <Tooltip>
             <TooltipTrigger asChild>
-              <button
-                onClick={() => setShowColorPicker(!showColorPicker)}
-                className="text-muted hover:text-foreground hover:bg-hover flex h-5 w-5 cursor-pointer items-center justify-center rounded border-none bg-transparent p-0 transition-colors"
-                aria-label="Change color"
-              >
-                <Palette size={12} />
-              </button>
+              <PopoverTrigger asChild>
+                <button
+                  className="text-muted hover:text-foreground hover:bg-hover flex h-5 w-5 cursor-pointer items-center justify-center rounded border-none bg-transparent p-0 transition-colors"
+                  aria-label="Section actions"
+                >
+                  <EllipsisVertical className="h-3.5 w-3.5" />
+                </button>
+              </PopoverTrigger>
             </TooltipTrigger>
-            <TooltipContent>Change color</TooltipContent>
+            <TooltipContent>Section actions</TooltipContent>
           </Tooltip>
 
-          {showColorPicker && (
-            <div className="bg-background border-border absolute top-full right-0 z-50 mt-1 rounded border p-2 shadow-lg">
-              {/* Preset swatches */}
-              <div className="mb-2 grid grid-cols-5 gap-1">
-                {SECTION_COLOR_PALETTE.map(([name, color]) => (
-                  <TooltipIfPresent key={color} tooltip={name} side="bottom" align="center">
-                    <button
-                      onClick={() => {
-                        onChangeColor(color);
-                        setShowColorPicker(false);
-                      }}
-                      className={cn(
-                        "h-5 w-5 rounded border-2 transition-transform hover:scale-110",
-                        sectionColor === color ? "border-white" : "border-transparent"
-                      )}
-                      style={{ backgroundColor: color }}
-                      aria-label={`Set color to ${name}`}
-                    />
-                  </TooltipIfPresent>
-                ))}
-              </div>
-              {/* Full color picker */}
-              <div className="section-color-picker">
-                <HexColorPicker
-                  color={sectionColor}
-                  onChange={(newColor) => onChangeColor(newColor)}
-                />
-              </div>
-              {/* Hex input */}
-              <div className="mt-2 flex items-center gap-1.5">
-                <input
-                  type="text"
-                  value={hexInputValue}
-                  onChange={(e) => {
-                    const value = e.target.value;
-                    setHexInputValue(value);
-                    // Only apply valid hex colors
-                    if (/^#[0-9a-fA-F]{6}$/.test(value)) {
-                      onChangeColor(value);
-                    }
-                  }}
-                  className="bg-background/50 text-foreground w-full rounded border border-white/20 px-1.5 py-0.5 text-xs outline-none select-text"
-                />
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Rename */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              onClick={() => setIsEditing(true)}
-              className="text-muted hover:text-foreground hover:bg-hover flex h-5 w-5 cursor-pointer items-center justify-center rounded border-none bg-transparent p-0 transition-colors"
-              aria-label="Rename section"
-            >
-              <Pencil size={12} />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>Rename</TooltipContent>
-        </Tooltip>
-
-        {/* Delete */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              onClick={(e) => onDelete(e)}
-              className="text-muted hover:text-danger-light hover:bg-danger-light/10 flex h-5 w-5 cursor-pointer items-center justify-center rounded border-none bg-transparent p-0 transition-colors"
-              aria-label="Delete section"
-            >
-              <Trash2 size={12} />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>Delete section</TooltipContent>
-        </Tooltip>
-      </div>
-
-      {/* Add Chat — always visible on touch devices */}
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            onClick={onAddWorkspace}
-            className="text-secondary hover:text-foreground hover:bg-hover flex h-5 w-5 cursor-pointer items-center justify-center rounded border-none bg-transparent p-0 text-sm opacity-0 transition-[colors,opacity] group-hover:opacity-100 [@media(hover:none)_and_(pointer:coarse)]:opacity-100"
-            aria-label="New chat in section"
+          <PopoverContent
+            align="end"
+            side="bottom"
+            sideOffset={6}
+            className="bg-surface-primary w-[180px] min-w-0! p-1"
+            onClick={(event: React.MouseEvent<HTMLDivElement>) => event.stopPropagation()}
           >
-            +
-          </button>
-        </TooltipTrigger>
-        <TooltipContent>New chat</TooltipContent>
-      </Tooltip>
+            <PositionedMenuItem
+              icon={<Palette />}
+              label="Change color"
+              onClick={() => {
+                setShowColorPicker((open) => !open);
+              }}
+            />
+            {showColorPicker && (
+              <div className="bg-background border-border mx-1 my-1 rounded border p-2">
+                <div className="mb-2 grid grid-cols-5 gap-1">
+                  {SECTION_COLOR_PALETTE.map(([name, color]) => (
+                    <TooltipIfPresent key={color} tooltip={name} side="bottom" align="center">
+                      <button
+                        onClick={() => {
+                          onChangeColor(color);
+                          setHexInputValue(color);
+                          setShowColorPicker(false);
+                        }}
+                        className={cn(
+                          "h-5 w-5 rounded border-2 transition-transform hover:scale-110",
+                          sectionColor === color ? "border-white" : "border-transparent"
+                        )}
+                        style={{ backgroundColor: color }}
+                        aria-label={`Set section color to ${name}`}
+                      />
+                    </TooltipIfPresent>
+                  ))}
+                </div>
+                <div className="section-color-picker">
+                  <HexColorPicker
+                    color={sectionColor}
+                    onChange={(newColor) => {
+                      setHexInputValue(newColor);
+                      onChangeColor(newColor);
+                    }}
+                  />
+                </div>
+                <div className="mt-2 flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    value={hexInputValue}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setHexInputValue(value);
+                      if (/^#[0-9a-fA-F]{6}$/.test(value)) {
+                        onChangeColor(value);
+                      }
+                    }}
+                    className="bg-background/50 text-foreground w-full rounded border border-white/20 px-1.5 py-0.5 text-xs outline-none select-text"
+                  />
+                </div>
+              </div>
+            )}
+            <PositionedMenuItem
+              icon={<Pencil />}
+              label="Rename"
+              onClick={() => {
+                setIsEditing(true);
+                setIsActionsMenuOpen(false);
+              }}
+            />
+            <PositionedMenuItem
+              icon={<Trash2 />}
+              label="Delete section"
+              variant="destructive"
+              onClick={(event) => {
+                onDelete(event.currentTarget);
+                setIsActionsMenuOpen(false);
+              }}
+            />
+          </PopoverContent>
+        </Popover>
+      </div>
     </div>
   );
 };

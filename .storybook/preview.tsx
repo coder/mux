@@ -11,7 +11,7 @@ import {
 } from "../src/common/constants/storage";
 import { NOW } from "../src/browser/stories/storyTime";
 import { updatePersistedState } from "../src/browser/hooks/usePersistedState";
-import { configure } from "@storybook/test";
+import { configure } from "storybook/test";
 
 // Raise the default async-util timeout from 1 000 ms → 5 000 ms.
 // waitFor / findBy* calls inherit this, so individual stories don't need

@@ -11,6 +11,7 @@ interface TaskGroupListItemProps {
   groupId: string;
   title: string;
   kind: TaskGroupKind;
+  sectionId?: string;
   depth: number;
   totalCount: number;
   visibleCount: number;
@@ -55,6 +56,7 @@ export function TaskGroupListItem(props: TaskGroupListItemProps) {
       data-testid={`task-group-${props.groupId}`}
       className={cn(
         "bg-surface-primary relative flex items-start gap-1.5 rounded-l-sm py-2 pr-2 pl-1 select-none transition-all duration-150 hover:bg-surface-secondary",
+        props.sectionId != null ? "ml-7.5" : "ml-5",
         props.isSelected && "bg-surface-secondary"
       )}
       style={{ paddingLeft }}
@@ -70,7 +72,7 @@ export function TaskGroupListItem(props: TaskGroupListItemProps) {
     >
       <span
         aria-hidden="true"
-        className="text-muted mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center"
+        className="text-muted -ml-4 mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center"
       >
         <ChevronRight
           className="h-3 w-3 transition-transform duration-150"

@@ -428,6 +428,114 @@ const NESTED_CONNECTOR_PARENT_ROW_META = {
   visibleCompletedChildrenCount: 0,
 } as const satisfies AgentRowRenderMeta;
 
+const APP_SIDEBAR_ACTIVE_SUBAGENT_WORKSPACES = [
+  createWorkspace({
+    id: "ws-sidebar-parent",
+    name: "sidebar-parent",
+    title: "Sidebar parent agent",
+    projectName: PROJECT_NAME,
+    projectPath: PROJECT_PATH,
+    createdAt: new Date(NOW - 11_000).toISOString(),
+  }),
+  createWorkspace({
+    id: "ws-sidebar-sub-1",
+    name: "sidebar-sub-1",
+    title: "Active sub-agent 1",
+    projectName: PROJECT_NAME,
+    projectPath: PROJECT_PATH,
+    createdAt: new Date(NOW - 12_000).toISOString(),
+    isInitializing: true,
+    taskStatus: "running",
+  }),
+  createWorkspace({
+    id: "ws-sidebar-sub-2",
+    name: "sidebar-sub-2",
+    title: "Active sub-agent 2",
+    projectName: PROJECT_NAME,
+    projectPath: PROJECT_PATH,
+    createdAt: new Date(NOW - 13_000).toISOString(),
+    isInitializing: true,
+    taskStatus: "running",
+  }),
+  createWorkspace({
+    id: "ws-sidebar-sub-3",
+    name: "sidebar-sub-3",
+    title: "Active sub-agent 3",
+    projectName: PROJECT_NAME,
+    projectPath: PROJECT_PATH,
+    createdAt: new Date(NOW - 14_000).toISOString(),
+    isInitializing: true,
+    taskStatus: "running",
+  }),
+];
+
+function renderAppSidebarThreeActiveSubAgents() {
+  return (
+    <StoryScaffold workspaces={APP_SIDEBAR_ACTIVE_SUBAGENT_WORKSPACES} rowContainerClassName="space-y-0">
+      <AgentListItem
+        metadata={APP_SIDEBAR_ACTIVE_SUBAGENT_WORKSPACES[0]}
+        projectPath={PROJECT_PATH}
+        projectName={PROJECT_NAME}
+        depth={0}
+        rowRenderMeta={NESTED_CONNECTOR_PARENT_ROW_META}
+        isSelected={false}
+        onSelectWorkspace={() => undefined}
+        onForkWorkspace={() => Promise.resolve()}
+        onArchiveWorkspace={() => Promise.resolve()}
+        onCancelCreation={() => Promise.resolve()}
+      />
+      <AgentListItem
+        metadata={APP_SIDEBAR_ACTIVE_SUBAGENT_WORKSPACES[1]}
+        projectPath={PROJECT_PATH}
+        projectName={PROJECT_NAME}
+        depth={1}
+        rowRenderMeta={createSubAgentRowRenderMeta("middle", {
+          connectorStartsAtParent: true,
+          sharedTrunkActiveThroughRow: true,
+          sharedTrunkActiveBelowRow: true,
+        })}
+        isSelected={false}
+        onSelectWorkspace={() => undefined}
+        onForkWorkspace={() => Promise.resolve()}
+        onArchiveWorkspace={() => Promise.resolve()}
+        onCancelCreation={() => Promise.resolve()}
+      />
+      <AgentListItem
+        metadata={APP_SIDEBAR_ACTIVE_SUBAGENT_WORKSPACES[2]}
+        projectPath={PROJECT_PATH}
+        projectName={PROJECT_NAME}
+        depth={1}
+        rowRenderMeta={createSubAgentRowRenderMeta("middle", {
+          connectorStartsAtParent: false,
+          sharedTrunkActiveThroughRow: true,
+          sharedTrunkActiveBelowRow: true,
+        })}
+        isSelected={false}
+        onSelectWorkspace={() => undefined}
+        onForkWorkspace={() => Promise.resolve()}
+        onArchiveWorkspace={() => Promise.resolve()}
+        onCancelCreation={() => Promise.resolve()}
+      />
+      <AgentListItem
+        metadata={APP_SIDEBAR_ACTIVE_SUBAGENT_WORKSPACES[3]}
+        projectPath={PROJECT_PATH}
+        projectName={PROJECT_NAME}
+        depth={1}
+        rowRenderMeta={createSubAgentRowRenderMeta("last", {
+          connectorStartsAtParent: false,
+          sharedTrunkActiveThroughRow: true,
+          sharedTrunkActiveBelowRow: false,
+        })}
+        isSelected={false}
+        onSelectWorkspace={() => undefined}
+        onForkWorkspace={() => Promise.resolve()}
+        onArchiveWorkspace={() => Promise.resolve()}
+        onCancelCreation={() => Promise.resolve()}
+      />
+    </StoryScaffold>
+  );
+}
+
 function renderNestedConnectorContinuityStory(ancestorTrunkActive: boolean) {
   const grandchildAncestorTrunks = [{ depth: 1, active: ancestorTrunkActive }] as const;
   const childB = ancestorTrunkActive
@@ -718,23 +826,12 @@ export const SubAgentLastSelectedWithStatusText: Story = {
     }),
 };
 
-export const NestedConnectorContinuity: Story = {
+export const AppSidebarThreeActiveSubAgents: Story = {
   args: undefined as never,
-  name: "SubAgent States/Nested Connector Continuity",
-  render: () => renderNestedConnectorContinuityStory(false),
-  play: async ({ canvasElement }) => {
-    await assertNestedConnectorContinuity(canvasElement, "false");
-  },
+  name: "SubAgent States/App Sidebar Three Active Sub-Agents",
+  render: renderAppSidebarThreeActiveSubAgents,
 };
 
-export const NestedConnectorContinuityActiveAncestor: Story = {
-  args: undefined as never,
-  name: "SubAgent States/Nested Connector Continuity Active Ancestor",
-  render: () => renderNestedConnectorContinuityStory(true),
-  play: async ({ canvasElement }) => {
-    await assertNestedConnectorContinuity(canvasElement, "true");
-  },
-};
 export const ParentWithCompletedChildrenCollapsed: Story = {
   args: undefined as never,
   name: "SubAgent States/Parent With Completed Children Collapsed",

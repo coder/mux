@@ -1035,4 +1035,39 @@ describe("ProjectSidebar project actions menu", () => {
     expect(view.getByText("Custom Label")).toBeTruthy();
     expect(view.getByText("fallback-project")).toBeTruthy();
   });
+
+  test("keeps empty placeholder visible when only hidden empty drafts exist", () => {
+    spyOn(WorkspaceContextModule, "useWorkspaceActions").mockImplementation(
+      () =>
+        ({
+          selectedWorkspace: null,
+          setSelectedWorkspace: () => undefined,
+          preflightArchiveWorkspace: () =>
+            Promise.resolve({ success: true, data: { kind: "ready" as const } }),
+          archiveWorkspace: archiveWorkspaceActionMock,
+          removeWorkspace: () => Promise.resolve({ success: true }),
+          updateWorkspaceTitle: () => Promise.resolve({ success: true }),
+          refreshWorkspaceMetadata: () => Promise.resolve(),
+          pendingNewWorkspaceProject: null,
+          pendingNewWorkspaceDraftId: null,
+          workspaceDraftsByProject: {
+            [demoProjectPath]: [
+              {
+                draftId: "draft-hidden-empty",
+                sectionId: null,
+                createdAt: Date.now(),
+              },
+            ],
+          },
+          workspaceDraftPromotionsByProject: {},
+          createWorkspaceDraft: () => undefined,
+          openWorkspaceDraft: () => undefined,
+          deleteWorkspaceDraft: () => undefined,
+        }) as unknown as ReturnType<typeof WorkspaceContextModule.useWorkspaceActions>
+    );
+
+    const view = renderSidebar();
+
+    expect(view.getByText("Empty")).toBeTruthy();
+  });
 });

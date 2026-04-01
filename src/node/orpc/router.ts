@@ -2435,6 +2435,20 @@ export const router = (authToken?: string) => {
             return config;
           });
         }),
+      setColor: t
+        .input(schemas.projects.setColor.input)
+        .output(schemas.projects.setColor.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => {
+            const normalizedPath = stripTrailingSlashes(input.projectPath);
+            const project = config.projects.get(normalizedPath);
+            if (!project) {
+              throw new Error(`Project not found: ${normalizedPath}`);
+            }
+            project.color = input.color ?? undefined;
+            return config;
+          });
+        }),
       remove: t
         .input(schemas.projects.remove.input)
         .output(schemas.projects.remove.output)

@@ -185,6 +185,9 @@ export const ProjectConfigSchema = z.object({
   displayName: z.string().nullish().meta({
     description: "Custom display name for the project",
   }),
+  color: z.string().optional().meta({
+    description: "Project folder accent color (hex value like #5a9bd4 or preset name)",
+  }),
   workspaces: z.array(WorkspaceConfigSchema),
   sections: z.array(SectionConfigSchema).optional().meta({
     description: "Sections for organizing workspaces within this project",
