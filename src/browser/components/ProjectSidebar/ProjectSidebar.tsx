@@ -1405,6 +1405,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     projectContextMenu.close();
     setProjectMenuTargetPath(null);
     setShowProjectColorPicker(false);
+    setProjectColorPickerDirty(false);
   }, [projectContextMenu]);
 
   const handleProjectMenuOpenChange = useCallback(
@@ -1413,6 +1414,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
       if (!open) {
         setProjectMenuTargetPath(null);
         setShowProjectColorPicker(false);
+        setProjectColorPickerDirty(false);
       }
     },
     [projectContextMenu]
@@ -1422,6 +1424,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     (event: React.MouseEvent, projectPath: string) => {
       setProjectMenuTargetPath(projectPath);
       setShowProjectColorPicker(false);
+      setProjectColorPickerDirty(false);
       projectContextMenu.onContextMenu(event);
     },
     [projectContextMenu]
@@ -1431,6 +1434,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     (event: React.TouchEvent, projectPath: string) => {
       setProjectMenuTargetPath(projectPath);
       setShowProjectColorPicker(false);
+      setProjectColorPickerDirty(false);
       projectContextMenu.touchHandlers.onTouchStart(event);
     },
     [projectContextMenu]
@@ -1581,7 +1585,13 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     if (!projectMenuTargetPath) {
       return;
     }
-    setShowProjectColorPicker((prev) => !prev);
+    setShowProjectColorPicker((prev) => {
+      const next = !prev;
+      if (!next) {
+        setProjectColorPickerDirty(false);
+      }
+      return next;
+    });
   }, [projectMenuTargetPath]);
 
   const handleProjectColorChange = useCallback(

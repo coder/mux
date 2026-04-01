@@ -1,10 +1,11 @@
 import "../../../../tests/ui/dom";
 
-import { type PropsWithChildren } from "react";
+import { type ComponentProps, type PropsWithChildren } from "react";
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { act, cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 import * as ReactDndModule from "react-dnd";
 import * as ReactDndHtml5BackendModule from "react-dnd-html5-backend";
+import * as ReactColorfulModule from "react-colorful";
 import * as MuxLogoDarkModule from "@/browser/assets/logos/mux-logo-dark.svg?react";
 import * as MuxLogoLightModule from "@/browser/assets/logos/mux-logo-light.svg?react";
 import { installDom } from "../../../../tests/ui/dom";
@@ -103,6 +104,8 @@ interface MockAgentListItemProps {
   onToggleCompletedChildren?: (workspaceId: string) => void;
   onArchiveWorkspace?: (workspaceId: string, button: HTMLElement) => Promise<void>;
 }
+
+type HexColorPickerProps = ComponentProps<typeof ReactColorfulModule.HexColorPicker>;
 
 let latestArchiveWorkspaceHandler:
   | ((workspaceId: string, button: HTMLElement) => Promise<void>)
@@ -240,6 +243,17 @@ function installProjectSidebarTestDoubles() {
     currentOffset: null,
   })) as unknown as typeof ReactDndModule.useDragLayer);
   spyOn(ReactDndHtml5BackendModule, "getEmptyImage").mockImplementation(() => new Image());
+  spyOn(ReactColorfulModule, "HexColorPicker").mockImplementation(((props: HexColorPickerProps) => (
+    <button
+      type="button"
+      data-testid="hex-color-picker"
+      onClick={() => {
+        props.onChange?.("#123456");
+      }}
+    >
+      mock color picker
+    </button>
+  )) as typeof ReactColorfulModule.HexColorPicker);
 
   spyOn(DesktopTitlebarModule, "isDesktopMode").mockImplementation(() => false);
   spyOn(ThemeContextModule, "useTheme").mockImplementation(() => ({
@@ -1442,6 +1456,52 @@ describe("ProjectSidebar project actions menu", () => {
     fireEvent.click(view.getByRole("button", { name: "Delete..." }));
 
     expect(view.getByTestId("project-delete-confirmation-modal").textContent).toBe("demo-project");
+  });
+
+  test("reopening the color picker does not apply stale pending color", async () => {
+    const updateColor = mock((_projectPath: string, _color: string | null) => resolveVoidResult());
+    projectContextValue = createProjectContextValue({
+      userProjects: new Map([
+        [
+          demoProjectPath,
+          {
+            workspaces: [],
+            color: "#6B7280",
+          },
+        ],
+      ]),
+      updateColor,
+    });
+
+    const view = renderSidebar();
+
+    fireEvent.click(view.getByRole("button", { name: "Project options for demo-project" }));
+    fireEvent.click(view.getByRole("button", { name: "Change color" }));
+
+    // Let the initial sync settle so the picker starts from the current project color.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 220));
+    });
+
+    fireEvent.click(view.getByTestId("hex-color-picker"));
+
+    // Close before the next debounce window expires so this picker session leaves
+    // behind a pending value that must not auto-commit on reopen.
+    fireEvent.click(view.getByRole("button", { name: "Change color" }));
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 220));
+    });
+
+    expect(updateColor).not.toHaveBeenCalled();
+
+    fireEvent.click(view.getByRole("button", { name: "Change color" }));
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    expect(updateColor).not.toHaveBeenCalled();
   });
 
   test("Add sub-folder expands collapsed project before auto-editing", async () => {
