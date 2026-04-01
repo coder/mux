@@ -26,6 +26,8 @@ interface SectionHeaderProps {
   onRename: (name: string) => void;
   onChangeColor: (color: string) => void;
   onDelete: (anchorEl: HTMLElement) => void;
+  autoStartEditing?: boolean;
+  onAutoCreateAbandon?: () => void;
 }
 
 export const SectionHeader: React.FC<SectionHeaderProps> = ({
@@ -38,13 +40,31 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
   onRename,
   onChangeColor,
   onDelete,
+  autoStartEditing = false,
+  onAutoCreateAbandon,
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(section.name);
+  const [hasEditedName, setHasEditedName] = useState(false);
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [isActionsMenuOpen, setIsActionsMenuOpen] = useState(false);
   const [hexInputValue, setHexInputValue] = useState(section.color ?? "");
   const inputRef = useRef<HTMLInputElement>(null);
+  const autoStartHandledRef = useRef(false);
+
+  const startEditing = () => {
+    setEditValue(section.name);
+    setHasEditedName(false);
+    setIsEditing(true);
+  };
+
+  useEffect(() => {
+    if (!autoStartEditing || autoStartHandledRef.current) {
+      return;
+    }
+    autoStartHandledRef.current = true;
+    startEditing();
+  }, [autoStartEditing, section.name]);
 
   useEffect(() => {
     if (isEditing && inputRef.current) {
@@ -57,9 +77,12 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
     const trimmed = editValue.trim();
     if (trimmed && trimmed !== section.name) {
       onRename(trimmed);
+    } else if (onAutoCreateAbandon && !hasEditedName) {
+      onAutoCreateAbandon();
     } else {
       setEditValue(section.name);
     }
+    setHasEditedName(false);
     setIsEditing(false);
   };
 
@@ -110,12 +133,20 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
           ref={inputRef}
           type="text"
           value={editValue}
-          onChange={(e) => setEditValue(e.target.value)}
+          onChange={(e) => {
+            setHasEditedName(true);
+            setEditValue(e.target.value);
+          }}
           onBlur={handleSubmitRename}
           onKeyDown={(e) => {
             if (e.key === "Enter") handleSubmitRename();
             if (e.key === "Escape") {
+              if (onAutoCreateAbandon && !hasEditedName) {
+                onAutoCreateAbandon();
+                return;
+              }
               setEditValue(section.name);
+              setHasEditedName(false);
               setIsEditing(false);
             }
           }}
@@ -125,7 +156,7 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
       ) : (
         <button
           onClick={onToggleExpand}
-          onDoubleClick={() => setIsEditing(true)}
+          onDoubleClick={startEditing}
           className={cn(
             "min-w-0 flex-1 cursor-pointer truncate border-none bg-transparent p-0 text-left text-xs font-medium",
             hasAttention ? "text-content-primary" : "text-content-secondary"
@@ -240,7 +271,7 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
               icon={<Pencil />}
               label="Rename"
               onClick={() => {
-                setIsEditing(true);
+                startEditing();
                 setIsActionsMenuOpen(false);
               }}
             />

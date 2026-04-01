@@ -1364,6 +1364,66 @@ describe("ProjectSidebar project actions menu", () => {
     expect(view.getByTestId("project-delete-confirmation-modal").textContent).toBe("demo-project");
   });
 
+  test("Add sub-folder starts inline editing and removes untouched section on abandon", async () => {
+    const createSection = mock(() =>
+      Promise.resolve({
+        success: true as const,
+        data: { id: "new-section", name: "New sub-folder", color: "#6B7280", nextId: null },
+      })
+    );
+    const removeSection = mock(() => resolveVoidResult());
+    projectContextValue = createProjectContextValue({
+      userProjects: new Map([
+        [
+          demoProjectPath,
+          {
+            workspaces: [],
+            sections: [{ id: "new-section", name: "New sub-folder", color: "#6B7280", nextId: null }],
+          },
+        ],
+      ]),
+      createSection,
+      removeSection,
+    });
+
+    const view = renderSidebar();
+
+    fireEvent.click(view.getByRole("button", { name: "Project options for demo-project" }));
+    fireEvent.click(view.getByRole("button", { name: "Add sub-folder" }));
+
+    await waitFor(() => {
+      expect(createSection).toHaveBeenCalledWith(demoProjectPath, "New sub-folder");
+    });
+
+    let autoEditProps:
+      | (Parameters<typeof SectionHeaderModule.SectionHeader>[0] & {
+          onAutoCreateAbandon?: () => void;
+          autoStartEditing?: boolean;
+        })
+      | null = null;
+    const sectionHeaderCalls = (
+      SectionHeaderModule.SectionHeader as unknown as {
+        mock: {
+          calls: Array<[Parameters<typeof SectionHeaderModule.SectionHeader>[0]]>;
+        };
+      }
+    ).mock.calls;
+    for (const [props] of sectionHeaderCalls) {
+      if (props.autoStartEditing) {
+        autoEditProps = props;
+      }
+    }
+
+    expect(autoEditProps?.autoStartEditing).toBe(true);
+    expect(typeof autoEditProps?.onAutoCreateAbandon).toBe("function");
+
+    autoEditProps?.onAutoCreateAbandon?.();
+
+    await waitFor(() => {
+      expect(removeSection).toHaveBeenCalledWith(demoProjectPath, "new-section");
+    });
+  });
+
   test("supports inline project name editing with Enter, Escape, and empty-to-null commit", async () => {
     const updateDisplayName = mock(() => resolveVoidResult());
     projectContextValue = createProjectContextValue({

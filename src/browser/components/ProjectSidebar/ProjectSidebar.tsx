@@ -573,6 +573,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
   // Mobile breakpoint for auto-closing sidebar
   const MOBILE_BREAKPOINT = 768;
+  const NEW_SUB_FOLDER_PLACEHOLDER_NAME = "New sub-folder";
   const projectListScrollRef = useRef<HTMLDivElement | null>(null);
   const mobileScrollTopRef = useRef(0);
   const wasCollapsedRef = useRef(collapsed);
@@ -781,6 +782,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const [projectMenuTargetPath, setProjectMenuTargetPath] = useState<string | null>(null);
   const [editingProjectPath, setEditingProjectPath] = useState<string | null>(null);
   const [editingProjectDisplayName, setEditingProjectDisplayName] = useState("");
+  const [autoEditingSection, setAutoEditingSection] = useState<{
+    projectPath: string;
+    sectionId: string;
+  } | null>(null);
   const [showProjectColorPicker, setShowProjectColorPicker] = useState(false);
   const [projectColorHexInput, setProjectColorHexInput] = useState("");
   const skipNextProjectNameBlurCommitRef = useRef(false);
@@ -808,18 +813,6 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
       [key]: !prev[key],
     }));
   };
-
-  const handleCreateSection = useCallback(
-    async (projectPath: string, name: string) => {
-      const result = await createSection(projectPath, name);
-      if (result.success) {
-        // Auto-expand the new section
-        const key = getSectionExpandedKey(projectPath, result.data.id);
-        setExpandedSections((prev) => ({ ...prev, [key]: true }));
-      }
-    },
-    [createSection, setExpandedSections]
-  );
 
   const handleForkWorkspace = useCallback(
     async (workspaceId: string, buttonElement?: HTMLElement) => {
@@ -1359,19 +1352,19 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
       return;
     }
 
+    const targetProjectPath = projectMenuTargetPath;
     closeProjectContextMenu();
-    const sectionName = window.prompt("Sub-folder name");
-    if (sectionName === null) {
-      return;
-    }
-
-    const trimmedName = sectionName.trim();
-    if (!trimmedName) {
-      return;
-    }
-
-    void handleCreateSection(projectMenuTargetPath, trimmedName);
-  }, [closeProjectContextMenu, handleCreateSection, projectMenuTargetPath]);
+    void (async () => {
+      const result = await createSection(targetProjectPath, NEW_SUB_FOLDER_PLACEHOLDER_NAME);
+      if (!result.success) {
+        return;
+      }
+      // New sub-folders should immediately open inline rename and stay visible.
+      const key = getSectionExpandedKey(targetProjectPath, result.data.id);
+      setExpandedSections((prev) => ({ ...prev, [key]: true }));
+      setAutoEditingSection({ projectPath: targetProjectPath, sectionId: result.data.id });
+    })();
+  }, [closeProjectContextMenu, createSection, projectMenuTargetPath, setExpandedSections]);
 
   const projectMenuTargetConfig = projectMenuTargetPath
     ? (userProjects.get(projectMenuTargetPath) ?? null)
@@ -2588,6 +2581,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 );
                                 const isSectionExpanded =
                                   expandedSections[sectionExpandedKey] ?? true;
+                                const shouldAutoEditSection =
+                                  autoEditingSection?.projectPath === projectPath &&
+                                  autoEditingSection?.sectionId === section.id;
 
                                 return (
                                   <DraggableSection
@@ -2617,11 +2613,34 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                           handleAddWorkspace(projectPath, section.id);
                                         }}
                                         onRename={(name) => {
+                                          if (shouldAutoEditSection) {
+                                            setAutoEditingSection(null);
+                                          }
                                           void updateSection(projectPath, section.id, { name });
                                         }}
                                         onChangeColor={(color) => {
                                           void updateSection(projectPath, section.id, { color });
                                         }}
+                                        autoStartEditing={shouldAutoEditSection}
+                                        onAutoCreateAbandon={
+                                          shouldAutoEditSection
+                                            ? () => {
+                                                void (async () => {
+                                                  setAutoEditingSection(null);
+                                                  const result = await removeSection(
+                                                    projectPath,
+                                                    section.id
+                                                  );
+                                                  if (!result.success) {
+                                                    sectionRemoveError.showError(
+                                                      section.id,
+                                                      result.error ?? "Failed to remove section"
+                                                    );
+                                                  }
+                                                })();
+                                              }
+                                            : undefined
+                                        }
                                         onDelete={(anchorEl) => {
                                           void handleRemoveSection(
                                             projectPath,
