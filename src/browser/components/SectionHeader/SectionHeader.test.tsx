@@ -82,5 +82,4 @@ describe("SectionHeader auto-created section editing", () => {
     expect(view.onAutoCreateAbandon).toHaveBeenCalledTimes(1);
     expect(view.onRename).not.toHaveBeenCalled();
   });
-
 });

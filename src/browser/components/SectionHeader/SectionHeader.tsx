@@ -63,7 +63,9 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
       return;
     }
     autoStartHandledRef.current = true;
-    startEditing();
+    setEditValue(section.name);
+    setHasEditedName(false);
+    setIsEditing(true);
   }, [autoStartEditing, section.name]);
 
   useEffect(() => {

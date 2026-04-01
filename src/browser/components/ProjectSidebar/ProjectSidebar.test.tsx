@@ -1378,7 +1378,9 @@ describe("ProjectSidebar project actions menu", () => {
           demoProjectPath,
           {
             workspaces: [],
-            sections: [{ id: "new-section", name: "New sub-folder", color: "#6B7280", nextId: null }],
+            sections: [
+              { id: "new-section", name: "New sub-folder", color: "#6B7280", nextId: null },
+            ],
           },
         ],
       ]),
