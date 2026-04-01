@@ -1042,6 +1042,66 @@ describe("ProjectSidebar archive confirmations", () => {
     });
     expect(archivePopoverShowErrorMock).not.toHaveBeenCalled();
   });
+
+  test("surfaces archive errors after confirmation when untracked paths are unchanged", async () => {
+    let preflightCallCount = 0;
+    preflightArchiveWorkspaceMock = mock(
+      (_workspaceId: string): Promise<ArchivePreflightActionResult> => {
+        preflightCallCount += 1;
+        return resolveArchivePreflight({
+          kind: "confirm-lossy-untracked-files",
+          paths: ["late-file.txt"],
+        });
+      }
+    );
+    archiveWorkspaceActionMock = mock(
+      (
+        workspaceId: string,
+        options?: { acknowledgedUntrackedPaths?: string[] }
+      ): Promise<ArchiveWorkspaceActionResult> => {
+        expect(workspaceId).toBe("archive-stable-untracked");
+        expect(options).toEqual({ acknowledgedUntrackedPaths: ["late-file.txt"] });
+        return Promise.resolve({ success: false as const, error: "snapshot failed" });
+      }
+    );
+
+    spyOn(PopoverErrorHookModule, "usePopoverError").mockImplementation(
+      () =>
+        ({
+          error: null,
+          showError: archivePopoverShowErrorMock,
+          clearError: mock(() => undefined),
+        }) as unknown as ReturnType<typeof PopoverErrorHookModule.usePopoverError>
+    );
+
+    const workspace = {
+      ...createWorkspace("archive-stable-untracked"),
+      projects: [{ projectPath: "/projects/demo-project", projectName: "demo-project" }],
+    };
+    const view = renderArchiveSidebar(workspace);
+
+    const archiveButton = document.createElement("button");
+    expect(latestArchiveWorkspaceHandler).toBeTruthy();
+    await act(async () => {
+      await latestArchiveWorkspaceHandler?.(workspace.id, archiveButton);
+    });
+
+    await waitFor(() => {
+      expect(view.getByTestId("archive-confirmation-modal")).toBeTruthy();
+    });
+
+    await act(async () => {
+      await latestArchiveConfirmationModalProps?.onConfirm();
+    });
+
+    await waitFor(() => {
+      expect(archiveWorkspaceActionMock).toHaveBeenCalledTimes(1);
+      expect(archivePopoverShowErrorMock).toHaveBeenCalledTimes(1);
+    });
+    expect(preflightCallCount).toBe(2);
+    expect(archivePopoverShowErrorMock).toHaveBeenCalledWith(workspace.id, "snapshot failed");
+    expect(view.queryByTestId("archive-confirmation-modal")).toBeNull();
+  });
 });
 
 describe("ProjectSidebar archive errors", () => {

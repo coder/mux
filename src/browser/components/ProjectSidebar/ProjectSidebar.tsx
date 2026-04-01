@@ -651,6 +651,18 @@ interface ProjectSidebarProps {
   workspaceRecency: Record<string, number>;
 }
 
+function didUntrackedPathSetChange(
+  acknowledgedUntrackedPaths: string[],
+  latestUntrackedPaths: string[]
+): boolean {
+  if (acknowledgedUntrackedPaths.length !== latestUntrackedPaths.length) {
+    return true;
+  }
+
+  const acknowledgedSet = new Set(acknowledgedUntrackedPaths);
+  return latestUntrackedPaths.some((path) => !acknowledgedSet.has(path));
+}
+
 const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   collapsed,
   onToggleCollapsed,
@@ -1080,24 +1092,30 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
             // Re-run preflight so we can reopen the modal with the latest paths.
             const preflight = await preflightArchiveWorkspace(workspaceId);
             if (preflight.success && preflight.data?.kind === "confirm-lossy-untracked-files") {
-              const metadata = workspaceStore.getWorkspaceMetadata(workspaceId);
-              const displayTitle = metadata?.title ?? metadata?.name ?? workspaceId;
-              setArchiveConfirmation({
-                workspaceId,
-                displayTitle,
-                buttonElement,
-                untrackedPaths: preflight.data.paths,
-                isStreaming: (() => {
-                  const aggregator = workspaceStore.getAggregator(workspaceId);
-                  if (!aggregator) return false;
-                  const hasActiveStreams = aggregator.getActiveStreams().length > 0;
-                  const isStarting =
-                    aggregator.getPendingStreamStartTime() !== null && !hasActiveStreams;
-                  const awaitingUserQuestion = aggregator.hasAwaitingUserQuestion();
-                  return (hasActiveStreams || isStarting) && !awaitingUserQuestion;
-                })(),
-              });
-              return;
+              const pathsChanged = didUntrackedPathSetChange(
+                acknowledgedUntrackedPaths,
+                preflight.data.paths
+              );
+              if (pathsChanged) {
+                const metadata = workspaceStore.getWorkspaceMetadata(workspaceId);
+                const displayTitle = metadata?.title ?? metadata?.name ?? workspaceId;
+                setArchiveConfirmation({
+                  workspaceId,
+                  displayTitle,
+                  buttonElement,
+                  untrackedPaths: preflight.data.paths,
+                  isStreaming: (() => {
+                    const aggregator = workspaceStore.getAggregator(workspaceId);
+                    if (!aggregator) return false;
+                    const hasActiveStreams = aggregator.getActiveStreams().length > 0;
+                    const isStarting =
+                      aggregator.getPendingStreamStartTime() !== null && !hasActiveStreams;
+                    const awaitingUserQuestion = aggregator.hasAwaitingUserQuestion();
+                    return (hasActiveStreams || isStarting) && !awaitingUserQuestion;
+                  })(),
+                });
+                return;
+              }
             }
           }
 
