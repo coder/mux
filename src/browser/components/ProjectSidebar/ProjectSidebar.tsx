@@ -359,6 +359,7 @@ function isDraftVisible(
 
 function DraftAgentListItemWrapper(props: DraftAgentListItemWrapperProps) {
   const scopeId = getDraftScopeId(props.projectPath, props.draftId);
+  const onVisibilityChange = props.onVisibilityChange;
 
   const [draftPrompt] = usePersistedState<string>(getInputKey(scopeId), "", {
     listener: true,
@@ -388,8 +389,8 @@ function DraftAgentListItemWrapper(props: DraftAgentListItemWrapperProps) {
   });
 
   useEffect(() => {
-    props.onVisibilityChange?.(isVisible);
-  }, [isVisible, props.onVisibilityChange]);
+    onVisibilityChange?.(isVisible);
+  }, [isVisible, onVisibilityChange]);
 
   if (!isVisible) {
     return null;
