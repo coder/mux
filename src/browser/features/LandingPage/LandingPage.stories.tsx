@@ -8,7 +8,7 @@
 import type { APIClient } from "@/browser/contexts/API";
 import type { Summary } from "@/browser/hooks/useAnalytics";
 import { createPRStatusExecutor } from "@/browser/stories/helpers/git";
-import { expandProjects } from "@/browser/stories/helpers/uiState";
+import { collapseLeftSidebar, expandProjects } from "@/browser/stories/helpers/uiState";
 import {
   CHROMATIC_SMOKE_MODES,
   appMeta,
@@ -24,10 +24,6 @@ export default {
   ...appMeta,
   title: "Features/LandingPage",
 };
-
-function collapseLeftSidebar(): void {
-  localStorage.setItem(LEFT_SIDEBAR_COLLAPSED_KEY, JSON.stringify(true));
-}
 
 // ─── Shared fixtures ─────────────────────────────────────────────────────────
 

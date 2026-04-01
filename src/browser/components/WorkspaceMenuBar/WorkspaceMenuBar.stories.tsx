@@ -6,12 +6,12 @@ import {
 } from "@/browser/stories/meta.js";
 import { createGitStatusExecutor } from "@/browser/stories/helpers/git";
 import {
+  collapseLeftSidebar,
   collapseRightSidebar,
   expandProjects,
   selectWorkspace,
 } from "@/browser/stories/helpers/uiState";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
-import { LEFT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
 import { createWorkspace, groupWorkspacesByProject } from "@/browser/stories/mocks/workspaces";
 
 export default {
@@ -25,10 +25,6 @@ const DEVCONTAINER_RUNTIME = {
   type: "devcontainer" as const,
   configPath: ".devcontainer/devcontainer.json",
 };
-
-function collapseLeftSidebar(): void {
-  localStorage.setItem(LEFT_SIDEBAR_COLLAPSED_KEY, JSON.stringify(true));
-}
 
 /**
  * Build a mock executor that handles BranchSelector's `git rev-parse --abbrev-ref HEAD`
