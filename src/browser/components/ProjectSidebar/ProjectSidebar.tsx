@@ -956,6 +956,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const [showProjectColorPicker, setShowProjectColorPicker] = useState(false);
   const [projectColorHexInput, setProjectColorHexInput] = useState("");
   const [projectColorPickerValue, setProjectColorPickerValue] = useState("#000000");
+  const [projectColorPickerDirty, setProjectColorPickerDirty] = useState(false);
   const skipNextProjectNameBlurCommitRef = useRef(false);
 
   // Use functional update to avoid stale closure issues when clicking rapidly
@@ -1573,6 +1574,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     }
     setProjectColorHexInput(projectMenuResolvedColor);
     setProjectColorPickerValue(projectMenuResolvedColor);
+    setProjectColorPickerDirty(false);
   }, [projectMenuResolvedColor, showProjectColorPicker]);
 
   const handleProjectMenuColorClick = useCallback(() => {
@@ -1596,7 +1598,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   );
 
   useEffect(() => {
-    if (!showProjectColorPicker) {
+    if (!showProjectColorPicker || !projectColorPickerDirty) {
       return;
     }
     if (!/^#[0-9a-fA-F]{6}$/.test(debouncedProjectColorPickerValue)) {
@@ -1610,6 +1612,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   }, [
     debouncedProjectColorPickerValue,
     handleProjectColorChange,
+    projectColorPickerDirty,
     projectMenuResolvedColor,
     showProjectColorPicker,
   ]);
@@ -3012,6 +3015,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                         void handleProjectColorChange(color);
                         setProjectColorHexInput(color);
                         setProjectColorPickerValue(color);
+                        setProjectColorPickerDirty(false);
                         setShowProjectColorPicker(false);
                       }}
                       className={cn(
@@ -3029,6 +3033,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                     onChange={(newColor) => {
                       setProjectColorHexInput(newColor);
                       setProjectColorPickerValue(newColor);
+                      setProjectColorPickerDirty(true);
                     }}
                   />
                 </div>
@@ -3041,6 +3046,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                       setProjectColorHexInput(value);
                       if (/^#[0-9a-fA-F]{6}$/.test(value)) {
                         setProjectColorPickerValue(value);
+                        setProjectColorPickerDirty(false);
                         void handleProjectColorChange(value);
                       }
                     }}
