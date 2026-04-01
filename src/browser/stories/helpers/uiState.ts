@@ -2,6 +2,7 @@ import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import {
   SELECTED_WORKSPACE_KEY,
   EXPANDED_PROJECTS_KEY,
+  LEFT_SIDEBAR_COLLAPSED_KEY,
   RIGHT_SIDEBAR_COLLAPSED_KEY,
   getInputKey,
   getModelKey,
@@ -47,6 +48,11 @@ export function expandProjects(projectPaths: string[]): void {
 /** Collapse the right sidebar (default for most stories) */
 export function collapseRightSidebar(): void {
   localStorage.setItem(RIGHT_SIDEBAR_COLLAPSED_KEY, JSON.stringify(true));
+}
+
+/** Collapse the left sidebar (project tree) — use for stories that don't test the sidebar. */
+export function collapseLeftSidebar(): void {
+  localStorage.setItem(LEFT_SIDEBAR_COLLAPSED_KEY, JSON.stringify(true));
 }
 
 /** Expand the right sidebar (for stories testing it) */

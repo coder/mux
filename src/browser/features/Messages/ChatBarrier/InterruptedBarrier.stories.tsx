@@ -2,6 +2,7 @@ import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import type { AppStory } from "@/browser/stories/meta.js";
 import { CHROMATIC_SMOKE_MODES, appMeta, AppWithMocks } from "@/browser/stories/meta.js";
 import { setupCustomChatStory } from "@/browser/stories/helpers/chatSetup";
+import { collapseLeftSidebar } from "@/browser/stories/helpers/uiState";
 import { createUserMessage } from "@/browser/stories/mocks/messages";
 import { STABLE_TIMESTAMP } from "@/browser/stories/mocks/workspaces";
 
@@ -20,6 +21,7 @@ export const ContextExceededSuggestion: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() => {
+        collapseLeftSidebar();
         const workspaceId = "ws-context-exceeded";
         return setupCustomChatStory({
           workspaceId,

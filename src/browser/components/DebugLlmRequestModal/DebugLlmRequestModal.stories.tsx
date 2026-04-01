@@ -4,7 +4,11 @@ import type { DebugLlmRequestSnapshot } from "@/common/types/debugLlmRequest";
 import type { AppStory } from "@/browser/stories/meta.js";
 import { CHROMATIC_SMOKE_MODES, appMeta, AppWithMocks } from "@/browser/stories/meta.js";
 import { createOnChatAdapter } from "@/browser/stories/helpers/chatSetup";
-import { collapseRightSidebar, selectWorkspace } from "@/browser/stories/helpers/uiState";
+import {
+  collapseLeftSidebar,
+  collapseRightSidebar,
+  selectWorkspace,
+} from "@/browser/stories/helpers/uiState";
 import { createUserMessage } from "@/browser/stories/mocks/messages";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import {
@@ -86,6 +90,7 @@ export const DebugLlmRequestModal: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() => {
+        collapseLeftSidebar();
         const workspaceId = "ws-debug-request";
 
         const workspaces = [

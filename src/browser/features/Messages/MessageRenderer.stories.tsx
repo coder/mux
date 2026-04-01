@@ -6,6 +6,7 @@ import {
   setupSimpleChatStory,
   setupStreamingChatStory,
 } from "@/browser/stories/helpers/chatSetup";
+import { collapseLeftSidebar } from "@/browser/stories/helpers/uiState";
 import { createStaticChatHandler } from "@/browser/stories/mocks/chatHandlers";
 import { createAssistantMessage, createUserMessage } from "@/browser/stories/mocks/messages";
 import {
@@ -88,8 +89,9 @@ export const Conversation: AppStory = {
   parameters: { chromatic: { modes: CHROMATIC_SMOKE_MODES } },
   render: () => (
     <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
+      setup={() => {
+        collapseLeftSidebar();
+        return setupSimpleChatStory({
           messages: [
             createUserMessage("msg-1", "Add authentication to the user API endpoint", {
               historySequence: 1,
@@ -144,8 +146,8 @@ export const Conversation: AppStory = {
               ],
             }),
           ],
-        })
-      }
+        });
+      }}
     />
   ),
 };
@@ -155,8 +157,9 @@ export const Conversation: AppStory = {
 export const SyntheticAutoResumeMessages: AppStory = {
   render: () => (
     <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
+      setup={() => {
+        collapseLeftSidebar();
+        return setupSimpleChatStory({
           messages: [
             createUserMessage("msg-1", "Run the full test suite and fix any failures", {
               historySequence: 1,
@@ -203,8 +206,8 @@ export const SyntheticAutoResumeMessages: AppStory = {
               }
             ),
           ],
-        })
-      }
+        });
+      }}
     />
   ),
 };
@@ -212,8 +215,9 @@ export const SyntheticAutoResumeMessages: AppStory = {
 export const WithReasoning: AppStory = {
   render: () => (
     <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
+      setup={() => {
+        collapseLeftSidebar();
+        return setupSimpleChatStory({
           workspaceId: "ws-reasoning",
           messages: [
             createUserMessage("msg-1", "What about error handling if the JWT library throws?", {
@@ -240,8 +244,8 @@ export const WithReasoning: AppStory = {
               }
             ),
           ],
-        })
-      }
+        });
+      }}
     />
   ),
 };
@@ -250,8 +254,9 @@ export const WithReasoning: AppStory = {
 export const Streaming: AppStory = {
   render: () => (
     <AppWithMocks
-      setup={() =>
-        setupStreamingChatStory({
+      setup={() => {
+        collapseLeftSidebar();
+        return setupStreamingChatStory({
           messages: [
             createUserMessage("msg-1", "Refactor the database connection to use pooling", {
               historySequence: 1,
@@ -267,8 +272,8 @@ export const Streaming: AppStory = {
             args: { path: "src/db/connection.ts" },
           },
           gitStatus: { dirty: 1 },
-        })
-      }
+        });
+      }}
     />
   ),
 };
@@ -280,6 +285,7 @@ export const StreamError: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() => {
+        collapseLeftSidebar();
         const workspaceId = "ws-error";
 
         return setupCustomChatStory({
@@ -315,6 +321,7 @@ export const AnthropicOverloaded: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() => {
+        collapseLeftSidebar();
         const workspaceId = "ws-anthropic-overloaded";
 
         return setupCustomChatStory({
@@ -359,6 +366,7 @@ export const MuxGatewayQuota: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() => {
+        collapseLeftSidebar();
         const workspaceId = "ws-mux-gateway-quota";
 
         return setupCustomChatStory({
@@ -405,6 +413,7 @@ export const HiddenHistory: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() => {
+        collapseLeftSidebar();
         // Hidden message type uses special "hidden" role not in ChatMuxMessage union
         // Cast is needed since this is a display-only message type
         const hiddenIndicator = {
@@ -447,8 +456,9 @@ export const HiddenHistory: AppStory = {
 export const LargeDiff: AppStory = {
   render: () => (
     <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
+      setup={() => {
+        collapseLeftSidebar();
+        return setupSimpleChatStory({
           workspaceId: "ws-diff",
           messages: [
             createUserMessage(
@@ -469,8 +479,8 @@ export const LargeDiff: AppStory = {
               }
             ),
           ],
-        })
-      }
+        });
+      }}
     />
   ),
 };
