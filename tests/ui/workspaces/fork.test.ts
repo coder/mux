@@ -98,6 +98,11 @@ describeIntegration("Workspace Fork (UI)", () => {
     let forkedWorkspaceId: string | null = null;
 
     try {
+      // Seed the Docker workspace with one completed message before /fork so the
+      // command has conversation context to duplicate.
+      await app.chat.send("Hello from Docker source workspace");
+      await app.chat.expectTranscriptContains("Hello from Docker source workspace", 120_000);
+
       // Chat controls can remain disabled while Docker runtime provisioning settles.
       // Retry the /fork send until the command can be submitted.
       await waitFor(
