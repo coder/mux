@@ -4,7 +4,11 @@ import type { ProjectsConfig, Workspace } from "@/common/types/project";
 import type { WorkspaceActivitySnapshot } from "@/common/types/workspace";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { isWorkspaceArchived } from "@/common/utils/archive";
-import { HEARTBEAT_DEFAULT_INTERVAL_MS } from "@/constants/heartbeat";
+import {
+  HEARTBEAT_DEFAULT_INTERVAL_MS,
+  HEARTBEAT_MAX_INTERVAL_MS,
+  HEARTBEAT_MIN_INTERVAL_MS,
+} from "@/constants/heartbeat";
 import type { Config } from "@/node/config";
 import type { ExtensionMetadataService } from "./ExtensionMetadataService";
 import { log } from "./log";
@@ -35,6 +39,8 @@ export class HeartbeatService {
   private readonly activeWorkspaceIds = new Set<string>();
   private readonly queuedWorkspaceIds = new Set<string>();
   private isProcessingQueue = false;
+  private tickInFlight = false;
+  private lifecycleVersion = 0;
 
   private readonly onActivity: (event: {
     workspaceId: string;
@@ -63,6 +69,7 @@ export class HeartbeatService {
   start(): void {
     assert(this.stopped, "HeartbeatService.start() called while already running");
     this.stopped = false;
+    this.lifecycleVersion += 1;
 
     this.workspaceService.on("activity", this.onActivity);
     this.workspaceService.on("metadata", this.onMetadata);
@@ -73,9 +80,9 @@ export class HeartbeatService {
       }
 
       this.startupTimeout = null;
-      void this.tick();
+      this.tick();
       this.checkInterval = setInterval(() => {
-        void this.tick();
+        this.tick();
       }, CHECK_INTERVAL_MS);
     }, STARTUP_DELAY_MS);
 
@@ -87,6 +94,7 @@ export class HeartbeatService {
 
   stop(): void {
     this.stopped = true;
+    this.lifecycleVersion += 1;
 
     if (this.startupTimeout) {
       clearTimeout(this.startupTimeout);
@@ -105,32 +113,63 @@ export class HeartbeatService {
     this.activeWorkspaceIds.clear();
     this.queuedWorkspaceIds.clear();
     this.isProcessingQueue = false;
+    this.tickInFlight = false;
 
     log.info("HeartbeatService stopped");
   }
 
   private tick(): void {
-    if (this.stopped) {
+    if (this.stopped || this.tickInFlight) {
       return;
     }
 
     const now = Date.now();
+    const lifecycleVersion = this.lifecycleVersion;
+    this.tickInFlight = true;
+    void this.runTick(now, lifecycleVersion);
+  }
+
+  private async runTick(now: number, lifecycleVersion: number): Promise<void> {
+    assert(Number.isFinite(now), "HeartbeatService.runTick requires a finite timestamp");
+
     try {
-      this.resyncFromConfig(now);
+      await this.resyncFromConfig(now, lifecycleVersion);
+      if (this.stopped || this.lifecycleVersion !== lifecycleVersion) {
+        return;
+      }
+
       this.checkAllWorkspaces(now);
     } catch (error) {
       log.error("HeartbeatService tick failed", { error });
+    } finally {
+      this.tickInFlight = false;
     }
   }
 
-  private resyncFromConfig(now: number): void {
+  private async resyncFromConfig(
+    now: number,
+    lifecycleVersion: number = this.lifecycleVersion
+  ): Promise<void> {
     assert(Number.isFinite(now), "HeartbeatService.resyncFromConfig requires a finite timestamp");
+
+    const activitySnapshots = await this.extensionMetadata.getAllSnapshots();
+    if (this.lifecycleVersion !== lifecycleVersion) {
+      return;
+    }
 
     const config = this.config.loadConfigOrDefault();
     const configuredWorkspaceIds = new Set<string>();
 
     for (const [, projectConfig] of config.projects) {
+      if (this.lifecycleVersion !== lifecycleVersion) {
+        return;
+      }
+
       for (const workspace of projectConfig.workspaces) {
+        if (this.lifecycleVersion !== lifecycleVersion) {
+          return;
+        }
+
         const workspaceId = this.getWorkspaceId(workspace);
         if (!workspaceId) {
           continue;
@@ -139,7 +178,15 @@ export class HeartbeatService {
         configuredWorkspaceIds.add(workspaceId);
         const trackingIntervalMs = this.getTrackingIntervalMsForWorkspace(workspace);
         if (trackingIntervalMs != null) {
-          this.ensureTrackedWorkspace(workspaceId, now + trackingIntervalMs, trackingIntervalMs);
+          const nextEligibleAt = this.nextEligibleAtByWorkspaceId.has(workspaceId)
+            ? now + trackingIntervalMs
+            : this.deriveInitialNextEligibleAt(
+                now,
+                workspaceId,
+                trackingIntervalMs,
+                activitySnapshots.get(workspaceId)
+              );
+          this.ensureTrackedWorkspace(workspaceId, nextEligibleAt, trackingIntervalMs);
           continue;
         }
 
@@ -148,10 +195,61 @@ export class HeartbeatService {
     }
 
     for (const workspaceId of this.getTrackedWorkspaceIds()) {
+      if (this.lifecycleVersion !== lifecycleVersion) {
+        return;
+      }
       if (!configuredWorkspaceIds.has(workspaceId)) {
         this.purgeWorkspace(workspaceId, "config_resync_missing");
       }
     }
+  }
+
+  private deriveInitialNextEligibleAt(
+    now: number,
+    workspaceId: string,
+    trackingIntervalMs: number,
+    activity: WorkspaceActivitySnapshot | undefined
+  ): number {
+    assert(
+      Number.isFinite(now),
+      "HeartbeatService.deriveInitialNextEligibleAt requires a finite timestamp"
+    );
+    assert(
+      workspaceId.trim().length > 0,
+      "HeartbeatService.deriveInitialNextEligibleAt requires a workspaceId"
+    );
+    assert(
+      this.isValidTrackingIntervalMs(trackingIntervalMs),
+      "HeartbeatService.deriveInitialNextEligibleAt requires an interval within supported bounds"
+    );
+
+    const fallbackDeadline = now + trackingIntervalMs;
+    if (!activity || activity.streaming) {
+      return fallbackDeadline;
+    }
+
+    const { recency } = activity;
+    if (!Number.isFinite(recency) || recency < 0 || recency > now) {
+      log.warn("HeartbeatService: ignoring invalid persisted activity recency", {
+        workspaceId,
+        recency,
+        trackingIntervalMs,
+        now,
+      });
+      return fallbackDeadline;
+    }
+
+    const derivedNextEligibleAt = recency + trackingIntervalMs;
+    if (!Number.isFinite(derivedNextEligibleAt)) {
+      log.warn("HeartbeatService: ignoring overflowed persisted activity deadline", {
+        workspaceId,
+        recency,
+        trackingIntervalMs,
+      });
+      return fallbackDeadline;
+    }
+
+    return Math.max(derivedNextEligibleAt, now);
   }
 
   private ensureTrackedWorkspace(
@@ -168,8 +266,8 @@ export class HeartbeatService {
       "HeartbeatService.ensureTrackedWorkspace requires a finite deadline"
     );
     assert(
-      Number.isFinite(trackingIntervalMs) && trackingIntervalMs > 0,
-      "HeartbeatService.ensureTrackedWorkspace requires a positive interval"
+      this.isValidTrackingIntervalMs(trackingIntervalMs),
+      "HeartbeatService.ensureTrackedWorkspace requires an interval within supported bounds"
     );
 
     const previousNextEligibleAt = this.nextEligibleAtByWorkspaceId.get(workspaceId);
@@ -267,7 +365,16 @@ export class HeartbeatService {
     }
 
     if (metadata.heartbeat?.enabled) {
-      const intervalMs = metadata.heartbeat.intervalMs ?? HEARTBEAT_DEFAULT_INTERVAL_MS;
+      const intervalMs = this.getSanitizedTrackingIntervalMs(
+        workspaceId,
+        metadata.heartbeat.intervalMs,
+        "metadata_event"
+      );
+      if (intervalMs == null) {
+        this.purgeWorkspace(workspaceId, "heartbeat_invalid_interval");
+        return;
+      }
+
       this.ensureTrackedWorkspace(workspaceId, Date.now() + intervalMs, intervalMs);
       return;
     }
@@ -281,7 +388,11 @@ export class HeartbeatService {
       return null;
     }
 
-    return workspace.heartbeat.intervalMs ?? HEARTBEAT_DEFAULT_INTERVAL_MS;
+    return this.getSanitizedTrackingIntervalMs(
+      workspaceId,
+      workspace.heartbeat.intervalMs,
+      "heartbeat_lookup"
+    );
   }
 
   private checkAllWorkspaces(now: number): void {
@@ -459,7 +570,50 @@ export class HeartbeatService {
       return null;
     }
 
-    return workspace.heartbeat.intervalMs ?? HEARTBEAT_DEFAULT_INTERVAL_MS;
+    const workspaceId = this.getWorkspaceId(workspace);
+    if (!workspaceId) {
+      return null;
+    }
+
+    return this.getSanitizedTrackingIntervalMs(
+      workspaceId,
+      workspace.heartbeat.intervalMs,
+      "config_resync"
+    );
+  }
+
+  private getSanitizedTrackingIntervalMs(
+    workspaceId: string,
+    rawIntervalMs: number | undefined,
+    source: "config_resync" | "heartbeat_lookup" | "metadata_event"
+  ): number | null {
+    assert(
+      workspaceId.trim().length > 0,
+      "HeartbeatService.getSanitizedTrackingIntervalMs requires a workspaceId"
+    );
+
+    const intervalMs = rawIntervalMs ?? HEARTBEAT_DEFAULT_INTERVAL_MS;
+    if (this.isValidTrackingIntervalMs(intervalMs)) {
+      return intervalMs;
+    }
+
+    log.warn("HeartbeatService: ignoring invalid persisted heartbeat interval", {
+      workspaceId,
+      rawIntervalMs,
+      intervalMs,
+      source,
+      minIntervalMs: HEARTBEAT_MIN_INTERVAL_MS,
+      maxIntervalMs: HEARTBEAT_MAX_INTERVAL_MS,
+    });
+    return null;
+  }
+
+  private isValidTrackingIntervalMs(intervalMs: number): boolean {
+    return (
+      Number.isFinite(intervalMs) &&
+      intervalMs >= HEARTBEAT_MIN_INTERVAL_MS &&
+      intervalMs <= HEARTBEAT_MAX_INTERVAL_MS
+    );
   }
 
   private findWorkspaceConfigEntry(workspaceId: string, config: ProjectsConfig): Workspace | null {

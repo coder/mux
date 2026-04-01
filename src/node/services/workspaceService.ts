@@ -3345,6 +3345,12 @@ export class WorkspaceService extends EventEmitter {
 
       workspaceEntry.heartbeat = nextSettings;
       await this.config.saveConfig(config);
+
+      // Changing heartbeat settings is a real user interaction. Persist that recency before
+      // emitting metadata so restarts preserve the post-config-change first-fire deadline
+      // instead of rebuilding from an older completed turn.
+      const interactionTimestamp = Date.now();
+      await this.updateRecencyTimestamp(normalizedWorkspaceId, interactionTimestamp);
       await this.emitCurrentWorkspaceMetadata(normalizedWorkspaceId);
 
       return Ok(undefined);

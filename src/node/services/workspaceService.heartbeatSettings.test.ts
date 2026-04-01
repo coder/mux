@@ -81,6 +81,48 @@ describe("WorkspaceService heartbeat settings", () => {
     mock.restore();
   });
 
+  test("updates workspace recency when heartbeat settings change", async () => {
+    const updateRecencyTimestamp = mock<(workspaceId: string, timestamp?: number) => Promise<void>>(
+      () => Promise.resolve()
+    );
+    (
+      service as unknown as {
+        updateRecencyTimestamp: (workspaceId: string, timestamp?: number) => Promise<void>;
+      }
+    ).updateRecencyTimestamp = updateRecencyTimestamp;
+
+    const result = await service.setHeartbeatSettings(TEST_WORKSPACE_ID, {
+      enabled: true,
+      intervalMs: 45 * 60 * 1000,
+    });
+
+    expect(result.success).toBe(true);
+    expect(updateRecencyTimestamp).toHaveBeenCalledTimes(1);
+    const recencyUpdateCall = updateRecencyTimestamp.mock.calls.at(0);
+    expect(recencyUpdateCall?.[0]).toBe(TEST_WORKSPACE_ID);
+    expect(typeof recencyUpdateCall?.[1]).toBe("number");
+  });
+
+  test("does not update workspace recency when heartbeat settings do not change", async () => {
+    const updateRecencyTimestamp = mock<(workspaceId: string, timestamp?: number) => Promise<void>>(
+      () => Promise.resolve()
+    );
+    (
+      service as unknown as {
+        updateRecencyTimestamp: (workspaceId: string, timestamp?: number) => Promise<void>;
+      }
+    ).updateRecencyTimestamp = updateRecencyTimestamp;
+
+    const result = await service.setHeartbeatSettings(TEST_WORKSPACE_ID, {
+      enabled: true,
+      intervalMs: 30 * 60 * 1000,
+      message: "Keep this custom heartbeat message.",
+    });
+
+    expect(result.success).toBe(true);
+    expect(updateRecencyTimestamp).not.toHaveBeenCalled();
+  });
+
   test("preserves the existing message when a write omits the message field", async () => {
     const result = await service.setHeartbeatSettings(TEST_WORKSPACE_ID, {
       enabled: true,
