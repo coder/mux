@@ -165,8 +165,47 @@ const MuxChatHelpButton: React.FC<{
  * Project/section highlighting is computed in this parent component, so it must
  * re-render for both:
  * - unread storage writes (localStorage-backed "last read" timestamps)
- * - per-workspace store transitions (streaming, awaiting question, system errors)
+ * - attention-relevant workspace transitions (streaming, awaiting question, system errors)
  */
+type WorkspaceAttentionSignal = {
+  isWorking: boolean;
+  awaitingUserQuestion: boolean;
+  hasSystemError: boolean;
+};
+
+function getWorkspaceAttentionSignal(
+  workspaceStore: WorkspaceStore,
+  workspaceId: string
+): WorkspaceAttentionSignal | null {
+  try {
+    const sidebarState = workspaceStore.getWorkspaceSidebarState(workspaceId);
+    const isWorking =
+      (sidebarState.canInterrupt || sidebarState.isStarting) && !sidebarState.awaitingUserQuestion;
+    return {
+      isWorking,
+      awaitingUserQuestion: sidebarState.awaitingUserQuestion,
+      hasSystemError: sidebarState.lastAbortReason?.reason === "system",
+    };
+  } catch {
+    // Workspace may have been removed while subscriptions are being torn down.
+    return null;
+  }
+}
+
+function didWorkspaceAttentionSignalChange(
+  prev: WorkspaceAttentionSignal | undefined,
+  next: WorkspaceAttentionSignal
+): boolean {
+  if (!prev) {
+    return true;
+  }
+  return (
+    prev.isWorking !== next.isWorking ||
+    prev.awaitingUserQuestion !== next.awaitingUserQuestion ||
+    prev.hasSystemError !== next.hasSystemError
+  );
+}
+
 function useWorkspaceAttentionSubscription(
   sortedWorkspacesByProject: Map<string, FrontendWorkspaceMetadata[]>,
   workspaceStore: WorkspaceStore
@@ -194,6 +233,13 @@ function useWorkspaceAttentionSubscription(
     const bumpVersion = () => {
       setVersion((currentVersion) => currentVersion + 1);
     };
+    const attentionSignalsByWorkspaceId = new Map<string, WorkspaceAttentionSignal>();
+    for (const workspaceId of workspaceIds) {
+      const signal = getWorkspaceAttentionSignal(workspaceStore, workspaceId);
+      if (signal) {
+        attentionSignalsByWorkspaceId.set(workspaceId, signal);
+      }
+    }
 
     const handleStorage = (event: StorageEvent) => {
       if (event.key && workspaceLastReadKeys.has(event.key)) {
@@ -202,7 +248,20 @@ function useWorkspaceAttentionSubscription(
     };
 
     const unsubscribeWorkspaceStore = Array.from(workspaceIds.values()).map((workspaceId) =>
-      workspaceStore.subscribeKey(workspaceId, bumpVersion)
+      workspaceStore.subscribeKey(workspaceId, () => {
+        const nextSignal = getWorkspaceAttentionSignal(workspaceStore, workspaceId);
+        if (!nextSignal) {
+          return;
+        }
+
+        const previousSignal = attentionSignalsByWorkspaceId.get(workspaceId);
+        if (!didWorkspaceAttentionSignalChange(previousSignal, nextSignal)) {
+          return;
+        }
+
+        attentionSignalsByWorkspaceId.set(workspaceId, nextSignal);
+        bumpVersion();
+      })
     );
     window.addEventListener("storage", handleStorage);
     for (const key of workspaceLastReadKeys) {
@@ -1460,12 +1519,25 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
       if (!result.success) {
         return;
       }
+      setExpandedProjectsArray((prev) => {
+        const expanded = Array.isArray(prev) ? prev : [];
+        if (expanded.includes(targetProjectPath)) {
+          return expanded;
+        }
+        return [...expanded, targetProjectPath];
+      });
       // New sub-folders should immediately open inline rename and stay visible.
       const key = getSectionExpandedKey(targetProjectPath, result.data.id);
       setExpandedSections((prev) => ({ ...prev, [key]: true }));
       setAutoEditingSection({ projectPath: targetProjectPath, sectionId: result.data.id });
     })();
-  }, [closeProjectContextMenu, createSection, projectMenuTargetPath, setExpandedSections]);
+  }, [
+    closeProjectContextMenu,
+    createSection,
+    projectMenuTargetPath,
+    setExpandedProjectsArray,
+    setExpandedSections,
+  ]);
 
   const projectMenuTargetConfig = projectMenuTargetPath
     ? (userProjects.get(projectMenuTargetPath) ?? null)

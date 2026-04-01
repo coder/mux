@@ -1384,6 +1384,43 @@ describe("ProjectSidebar project actions menu", () => {
     expect(view.getByTestId("project-delete-confirmation-modal").textContent).toBe("demo-project");
   });
 
+  test("Add sub-folder expands collapsed project before auto-editing", async () => {
+    window.localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify([]));
+    const createSection = mock(() =>
+      Promise.resolve({
+        success: true as const,
+        data: { id: "new-section", name: "New sub-folder", color: "#6B7280", nextId: null },
+      })
+    );
+    projectContextValue = createProjectContextValue({
+      userProjects: new Map([
+        [
+          demoProjectPath,
+          {
+            workspaces: [],
+            sections: [
+              { id: "new-section", name: "New sub-folder", color: "#6B7280", nextId: null },
+            ],
+          },
+        ],
+      ]),
+      createSection,
+    });
+
+    const view = renderSidebar();
+    expect(
+      view.getByRole("button", { name: "Expand project demo-project" })
+    ).toBeTruthy();
+
+    fireEvent.click(view.getByRole("button", { name: "Project options for demo-project" }));
+    fireEvent.click(view.getByRole("button", { name: "Add sub-folder" }));
+
+    await waitFor(() => {
+      expect(createSection).toHaveBeenCalledWith(demoProjectPath, "New sub-folder");
+      expect(view.getByRole("button", { name: "Collapse project demo-project" })).toBeTruthy();
+    });
+  });
+
   test("Add sub-folder abandon reuses section-delete confirmation before removing", async () => {
     const createSection = mock(() =>
       Promise.resolve({
