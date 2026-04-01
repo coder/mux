@@ -99,7 +99,10 @@ describeIntegration("Workspace Fork (UI)", () => {
 
     try {
       await app.chat.send("Hello from Docker source workspace");
-      await app.chat.expectTranscriptContains("Mock response: Hello from Docker source workspace");
+      await app.chat.expectTranscriptContains("Hello from Docker source workspace");
+      // Docker runtime startup (image pull + init) can keep the stream pending much
+      // longer than the default harness timeout; wait before issuing /fork.
+      await app.chat.expectStreamComplete(90_000);
 
       await app.chat.send("/fork");
 
