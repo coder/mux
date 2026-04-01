@@ -2730,7 +2730,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                             ? () => {
                                                 void (async () => {
                                                   setAutoEditingSection(null);
-                                                  await handleRemoveSection(projectPath, section.id);
+                                                  await handleRemoveSection(
+                                                    projectPath,
+                                                    section.id
+                                                  );
                                                 })();
                                               }
                                             : undefined
