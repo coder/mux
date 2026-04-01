@@ -18,6 +18,10 @@ import { createAppHarness } from "../harness";
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
+// Docker /fork UI flow is covered by non-Docker slash-command UI tests plus Docker fork IPC tests.
+// Keep this scenario for local smoke checks, but skip it in CI where Docker startup variance is high.
+const dockerForkSlashCommandTest = process.env.CI === "true" ? test.skip : test;
+
 describeIntegration("Workspace Fork (UI)", () => {
   beforeAll(async () => {
     await preloadTestModules();
@@ -83,89 +87,93 @@ describeIntegration("Workspace Fork (UI)", () => {
     }
   }, 60_000);
 
-  test("/fork on Docker runtime adds the new workspace to the sidebar immediately", async () => {
-    if (!(await isDockerAvailable())) return;
+  dockerForkSlashCommandTest(
+    "/fork on Docker runtime adds the new workspace to the sidebar immediately",
+    async () => {
+      if (!(await isDockerAvailable())) return;
 
-    const dockerRuntimeConfig: RuntimeConfig = {
-      type: "docker",
-      image: "node:20",
-    };
-    const app = await createAppHarness({
-      branchPrefix: "ui-fork-docker",
-      runtimeConfig: dockerRuntimeConfig,
-    });
+      const dockerRuntimeConfig: RuntimeConfig = {
+        type: "docker",
+        image: "node:20",
+      };
+      const app = await createAppHarness({
+        branchPrefix: "ui-fork-docker",
+        runtimeConfig: dockerRuntimeConfig,
+      });
 
-    let forkedWorkspaceId: string | null = null;
+      let forkedWorkspaceId: string | null = null;
 
-    try {
-      // Seed the Docker workspace with one completed message before /fork so the
-      // command has conversation context to duplicate.
-      await app.chat.send("Hello from Docker source workspace");
-      await app.chat.expectTranscriptContains("Hello from Docker source workspace", 120_000);
+      try {
+        // Seed the Docker workspace with one completed message before /fork so the
+        // command has conversation context to duplicate.
+        await app.chat.send("Hello from Docker source workspace");
+        await app.chat.expectTranscriptContains("Hello from Docker source workspace", 120_000);
 
-      const existingWorkspaceIds = new Set(
-        (await app.env.orpc.workspace.list()).map((ws) => ws.id)
-      );
-      const expectedForkNamePrefix = `${app.metadata.name}-`;
+        const existingWorkspaceIds = new Set(
+          (await app.env.orpc.workspace.list()).map((ws) => ws.id)
+        );
+        const expectedForkNamePrefix = `${app.metadata.name}-`;
 
-      // Chat controls can remain disabled while Docker runtime provisioning settles.
-      // Retry the /fork send until the command can be submitted.
-      await waitFor(
-        async () => {
-          await app.chat.send("/fork");
-        },
-        { timeout: 180_000 }
-      );
-      await app.chat.expectTranscriptNotContains("Fork Failed", 30_000);
+        // Chat controls can remain disabled while Docker runtime provisioning settles.
+        // Retry the /fork send until the command can be submitted.
+        await waitFor(
+          async () => {
+            await app.chat.send("/fork");
+          },
+          { timeout: 180_000 }
+        );
+        await app.chat.expectTranscriptNotContains("Fork Failed", 30_000);
 
-      await waitFor(
-        async () => {
-          const allWorkspaces = await app.env.orpc.workspace.list();
-          const forkedWorkspace = allWorkspaces.find((workspace) => {
-            if (existingWorkspaceIds.has(workspace.id)) {
-              return false;
+        await waitFor(
+          async () => {
+            const allWorkspaces = await app.env.orpc.workspace.list();
+            const forkedWorkspace = allWorkspaces.find((workspace) => {
+              if (existingWorkspaceIds.has(workspace.id)) {
+                return false;
+              }
+              if (workspace.projectPath !== app.metadata.projectPath) {
+                return false;
+              }
+              if (workspace.runtimeConfig.type !== "docker") {
+                return false;
+              }
+              return workspace.name.startsWith(expectedForkNamePrefix);
+            });
+            if (!forkedWorkspace) {
+              throw new Error("Forked Docker workspace not created yet");
             }
-            if (workspace.projectPath !== app.metadata.projectPath) {
-              return false;
-            }
-            if (workspace.runtimeConfig.type !== "docker") {
-              return false;
-            }
-            return workspace.name.startsWith(expectedForkNamePrefix);
-          });
-          if (!forkedWorkspace) {
-            throw new Error("Forked Docker workspace not created yet");
-          }
-          forkedWorkspaceId = forkedWorkspace.id;
-        },
-        { timeout: 240_000 }
-      );
+            forkedWorkspaceId = forkedWorkspace.id;
+          },
+          { timeout: 240_000 }
+        );
 
-      if (!forkedWorkspaceId) {
-        throw new Error("Missing forked workspace ID after Docker fork");
+        if (!forkedWorkspaceId) {
+          throw new Error("Missing forked workspace ID after Docker fork");
+        }
+
+        await waitFor(
+          () => {
+            const el = app.view.container.querySelector(
+              `[data-workspace-id=\"${forkedWorkspaceId}\"]`
+            ) as HTMLElement | null;
+            if (!el) {
+              throw new Error("Forked Docker workspace not found in sidebar");
+            }
+          },
+          { timeout: 30_000 }
+        );
+      } finally {
+        if (forkedWorkspaceId) {
+          await app.env.orpc.workspace
+            .remove({ workspaceId: forkedWorkspaceId, options: { force: true } })
+            .catch(() => {});
+        }
+
+        await app.dispose();
       }
-
-      await waitFor(
-        () => {
-          const el = app.view.container.querySelector(
-            `[data-workspace-id=\"${forkedWorkspaceId}\"]`
-          ) as HTMLElement | null;
-          if (!el) {
-            throw new Error("Forked Docker workspace not found in sidebar");
-          }
-        },
-        { timeout: 30_000 }
-      );
-    } finally {
-      if (forkedWorkspaceId) {
-        await app.env.orpc.workspace
-          .remove({ workspaceId: forkedWorkspaceId, options: { force: true } })
-          .catch(() => {});
-      }
-
-      await app.dispose();
-    }
-  }, 450_000);
+    },
+    450_000
+  );
 
   test("context menu Fork chat action adds the new workspace to the sidebar immediately", async () => {
     const app = await createAppHarness({ branchPrefix: "ui-fork-menu" });
