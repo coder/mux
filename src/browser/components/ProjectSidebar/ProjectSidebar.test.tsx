@@ -957,7 +957,10 @@ describe("ProjectSidebar archive confirmations", () => {
   });
 
   test("opens the archive confirmation modal when preflight finds untracked files", async () => {
-    const workspace = createWorkspace("archive-untracked");
+    const workspace = {
+      ...createWorkspace("archive-untracked"),
+      projects: [{ projectPath: "/projects/demo-project", projectName: "demo-project" }],
+    };
     const preflightArchiveWorkspace = mock(() =>
       Promise.resolve({
         success: true as const,
@@ -996,6 +999,7 @@ describe("ProjectSidebar archive confirmations", () => {
     );
 
     const archiveButton = document.createElement("button");
+    expect(latestArchiveWorkspaceHandler).toBeTruthy();
     await act(async () => {
       await latestArchiveWorkspaceHandler?.(workspace.id, archiveButton);
     });
@@ -1010,17 +1014,19 @@ describe("ProjectSidebar archive confirmations", () => {
   });
 
   test("reopens the archive confirmation modal when archive finds new untracked files", async () => {
-    const workspace = createWorkspace("archive-race-window");
+    const workspace = {
+      ...createWorkspace("archive-race-window"),
+      projects: [{ projectPath: "/projects/demo-project", projectName: "demo-project" }],
+    };
+    let preflightCallCount = 0;
     const preflightArchiveWorkspace = mock<
       (workspaceId: string) => Promise<{ success: true; data: { kind: string; paths?: string[] } }>
     >((workspaceId: string) => {
       if (workspaceId !== workspace.id) {
         return Promise.resolve({ success: true, data: { kind: "ready" } });
       }
-      const callCountForWorkspace = preflightArchiveWorkspace.mock.calls.filter(
-        ([id]) => id === workspace.id
-      ).length;
-      if (callCountForWorkspace === 0) {
+      preflightCallCount += 1;
+      if (preflightCallCount === 1) {
         return Promise.resolve({
           success: true,
           data: { kind: "confirm-lossy-untracked-files", paths: ["a.txt"] },
@@ -1069,6 +1075,7 @@ describe("ProjectSidebar archive confirmations", () => {
     );
 
     const archiveButton = document.createElement("button");
+    expect(latestArchiveWorkspaceHandler).toBeTruthy();
     await act(async () => {
       await latestArchiveWorkspaceHandler?.(workspace.id, archiveButton);
     });
