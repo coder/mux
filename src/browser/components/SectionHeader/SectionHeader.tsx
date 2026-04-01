@@ -296,6 +296,7 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
                 label="Rename"
                 onClick={() => {
                   startEditing();
+                  setShowColorPicker(false);
                   setIsActionsMenuOpen(false);
                 }}
               />
@@ -305,6 +306,7 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
                 variant="destructive"
                 onClick={(event) => {
                   onDelete(event.currentTarget);
+                  setShowColorPicker(false);
                   setIsActionsMenuOpen(false);
                 }}
               />
