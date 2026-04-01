@@ -4,12 +4,18 @@
 
 import { within, userEvent, waitFor, expect } from "@storybook/test";
 
-import { CHROMATIC_SMOKE_MODES, appMeta, AppWithMocks, type AppStory } from "./meta.js";
+import { expandProjects } from "@/browser/stories/helpers/uiState";
+import { CHROMATIC_SMOKE_MODES, appMeta, AppWithMocks, type AppStory } from "@/browser/stories/meta.js";
 import { createMockORPCClient, type MockSessionUsage } from "@/browser/stories/mocks/orpc";
-import { expandProjects } from "./helpers/uiState";
-import { createArchivedWorkspace, NOW } from "./mocks/workspaces";
-import type { ProjectConfig } from "@/node/config";
+import { createArchivedWorkspace, NOW } from "@/browser/stories/mocks/workspaces";
 import { LEFT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
+import type { ProjectConfig } from "@/node/config";
+
+// Integration: stories render full app to test ProjectPage workspace creation flows, git init banners, and provider configuration.
+export default {
+  ...appMeta,
+  title: "Components/ProjectPage",
+};
 
 /** Helper to create session usage data with a specific total cost */
 function createSessionUsage(cost: number): MockSessionUsage {
@@ -59,35 +65,19 @@ async function openFirstProjectCreationView(storyRoot: HTMLElement): Promise<voi
 
   await userEvent.click(projectRow);
 }
-export default {
-  ...appMeta,
-  title: "App/Welcome",
-};
-
-/** Chat with Mux - the default boot state (no user projects) */
-export const ChatWithMux: AppStory = {
-  parameters: {
-    chromatic: { modes: CHROMATIC_SMOKE_MODES },
-  },
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        createMockORPCClient({
-          projects: new Map(),
-          workspaces: [],
-        })
-      }
-    />
-  ),
-};
 
 /** Helper to create a project config for a path with no workspaces */
 function projectWithNoWorkspaces(path: string): [string, ProjectConfig] {
   return [path, { workspaces: [] }];
 }
 
-/** Creation view - shown when a project exists but no workspace is selected */
+/**
+ * Creation view - shown when a project exists but no workspace is selected
+ */
 export const CreateWorkspace: AppStory = {
+  parameters: {
+    chromatic: { modes: CHROMATIC_SMOKE_MODES },
+  },
   render: () => (
     <AppWithMocks
       setup={() => {
@@ -136,6 +126,115 @@ export const CreateWorkspaceMultipleProjects: AppStory = {
       }}
     />
   ),
+};
+
+/**
+ * Creation view with project sections configured.
+ * On desktop the section selector is inline / right-aligned in the header row.
+ * On mobile it drops to its own row below the header.
+ *
+ * Includes mobile chromatic modes: the sidebar starts expanded via
+ * localStorage so the play function can click the project row, then
+ * collapses it so the creation form is the main visible content.
+ */
+export const CreateWorkspaceWithSections: AppStory = {
+  parameters: {
+    chromatic: {
+      modes: {
+        dark: { theme: "dark" },
+        light: { theme: "light" },
+        "dark-mobile": { theme: "dark", viewport: "mobile1", hasTouch: true },
+        "light-mobile": { theme: "light", viewport: "mobile1", hasTouch: true },
+      },
+    },
+  },
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        expandProjects(["/Users/dev/my-project"]);
+        // Ensure the sidebar starts expanded so the play function can click
+        // the project row even in mobile viewport modes.
+        localStorage.setItem(LEFT_SIDEBAR_COLLAPSED_KEY, JSON.stringify(false));
+        return createMockORPCClient({
+          projects: new Map([
+            [
+              "/Users/dev/my-project",
+              {
+                workspaces: [],
+                sections: [
+                  { id: "sec_0001", name: "Frontend", color: "#4f8cf7", nextId: "sec_0002" },
+                  { id: "sec_0002", name: "Backend", color: "#f76b4f", nextId: "sec_0003" },
+                  { id: "sec_0003", name: "Infra", color: "#8b5cf6", nextId: null },
+                ],
+              },
+            ],
+          ]),
+          workspaces: [],
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+
+    // Wrap the entire interaction in try/finally so localStorage cleanup
+    // runs even if navigation or assertions fail (prevents cross-story leaks).
+    try {
+      await openFirstProjectCreationView(storyRoot);
+
+      // On mobile, handleAddWorkspace auto-collapses the sidebar after the
+      // project click. On desktop it stays open — collapse it so the creation
+      // form dominates the Chromatic screenshot.
+      const sidebar = storyRoot.querySelector<HTMLElement>("[data-testid='left-sidebar']");
+      const sidebarIsExpanded = sidebar && sidebar.getBoundingClientRect().width > 40;
+      if (sidebarIsExpanded) {
+        const collapseBtn = sidebar.querySelector<HTMLElement>("[aria-label='Collapse sidebar']");
+        if (collapseBtn) {
+          await userEvent.click(collapseBtn);
+        }
+      }
+
+      // Wait for the section selector to be visible. Two instances exist in
+      // the DOM (one for desktop inline, one for mobile own-row via
+      // hidden/md:hidden). Find the one that's actually rendered.
+      await waitFor(
+        () => {
+          const allSelectors = storyRoot.querySelectorAll<HTMLElement>(
+            "[data-testid='section-selector']"
+          );
+          const sectionSelector = Array.from(allSelectors).find(
+            (el) => el.offsetWidth > 0 && el.offsetHeight > 0
+          );
+          if (!sectionSelector) {
+            throw new Error("Section selector not visible");
+          }
+
+          // On narrow viewports, verify the section selector sits below
+          // the header row (mobile-only own-row layout).
+          if (window.innerWidth < 768) {
+            const headerRow = storyRoot.querySelector("[data-component='WorkspaceNameGroup']");
+            if (!headerRow) {
+              throw new Error("Workspace name header row not found");
+            }
+            const headerBottom = headerRow.getBoundingClientRect().bottom;
+            const sectionTop = sectionSelector.getBoundingClientRect().top;
+            if (sectionTop < headerBottom) {
+              throw new Error(
+                `Section selector overlaps header row (section top=${sectionTop}, header bottom=${headerBottom})`
+              );
+            }
+          }
+        },
+        { timeout: 10000 }
+      );
+    } finally {
+      // The sidebar collapse above writes to localStorage. Remove the key
+      // so subsequent stories start with the default (expanded on desktop-
+      // width viewports). Using finally ensures cleanup even on assertion
+      // failure, preventing misleading cascading failures in later stories.
+      localStorage.removeItem(LEFT_SIDEBAR_COLLAPSED_KEY);
+    }
+  },
 };
 
 /**
@@ -535,115 +634,6 @@ export const SingleProviderConfigured: AppStory = {
       },
       { timeout: 10000 }
     );
-  },
-};
-
-/**
- * Creation view with project sections configured.
- * On desktop the section selector is inline / right-aligned in the header row.
- * On mobile it drops to its own row below the header.
- *
- * Includes mobile chromatic modes: the sidebar starts expanded via
- * localStorage so the play function can click the project row, then
- * collapses it so the creation form is the main visible content.
- */
-export const CreateWorkspaceWithSections: AppStory = {
-  parameters: {
-    chromatic: {
-      modes: {
-        dark: { theme: "dark" },
-        light: { theme: "light" },
-        "dark-mobile": { theme: "dark", viewport: "mobile1", hasTouch: true },
-        "light-mobile": { theme: "light", viewport: "mobile1", hasTouch: true },
-      },
-    },
-  },
-  render: () => (
-    <AppWithMocks
-      setup={() => {
-        expandProjects(["/Users/dev/my-project"]);
-        // Ensure the sidebar starts expanded so the play function can click
-        // the project row even in mobile viewport modes.
-        localStorage.setItem(LEFT_SIDEBAR_COLLAPSED_KEY, JSON.stringify(false));
-        return createMockORPCClient({
-          projects: new Map([
-            [
-              "/Users/dev/my-project",
-              {
-                workspaces: [],
-                sections: [
-                  { id: "sec_0001", name: "Frontend", color: "#4f8cf7", nextId: "sec_0002" },
-                  { id: "sec_0002", name: "Backend", color: "#f76b4f", nextId: "sec_0003" },
-                  { id: "sec_0003", name: "Infra", color: "#8b5cf6", nextId: null },
-                ],
-              },
-            ],
-          ]),
-          workspaces: [],
-        });
-      }}
-    />
-  ),
-  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
-
-    // Wrap the entire interaction in try/finally so localStorage cleanup
-    // runs even if navigation or assertions fail (prevents cross-story leaks).
-    try {
-      await openFirstProjectCreationView(storyRoot);
-
-      // On mobile, handleAddWorkspace auto-collapses the sidebar after the
-      // project click. On desktop it stays open — collapse it so the creation
-      // form dominates the Chromatic screenshot.
-      const sidebar = storyRoot.querySelector<HTMLElement>("[data-testid='left-sidebar']");
-      const sidebarIsExpanded = sidebar && sidebar.getBoundingClientRect().width > 40;
-      if (sidebarIsExpanded) {
-        const collapseBtn = sidebar.querySelector<HTMLElement>("[aria-label='Collapse sidebar']");
-        if (collapseBtn) {
-          await userEvent.click(collapseBtn);
-        }
-      }
-
-      // Wait for the section selector to be visible. Two instances exist in
-      // the DOM (one for desktop inline, one for mobile own-row via
-      // hidden/md:hidden). Find the one that's actually rendered.
-      await waitFor(
-        () => {
-          const allSelectors = storyRoot.querySelectorAll<HTMLElement>(
-            "[data-testid='section-selector']"
-          );
-          const sectionSelector = Array.from(allSelectors).find(
-            (el) => el.offsetWidth > 0 && el.offsetHeight > 0
-          );
-          if (!sectionSelector) {
-            throw new Error("Section selector not visible");
-          }
-
-          // On narrow viewports, verify the section selector sits below
-          // the header row (mobile-only own-row layout).
-          if (window.innerWidth < 768) {
-            const headerRow = storyRoot.querySelector("[data-component='WorkspaceNameGroup']");
-            if (!headerRow) {
-              throw new Error("Workspace name header row not found");
-            }
-            const headerBottom = headerRow.getBoundingClientRect().bottom;
-            const sectionTop = sectionSelector.getBoundingClientRect().top;
-            if (sectionTop < headerBottom) {
-              throw new Error(
-                `Section selector overlaps header row (section top=${sectionTop}, header bottom=${headerBottom})`
-              );
-            }
-          }
-        },
-        { timeout: 10000 }
-      );
-    } finally {
-      // The sidebar collapse above writes to localStorage. Remove the key
-      // so subsequent stories start with the default (expanded on desktop-
-      // width viewports). Using finally ensures cleanup even on assertion
-      // failure, preventing misleading cascading failures in later stories.
-      localStorage.removeItem(LEFT_SIDEBAR_COLLAPSED_KEY);
-    }
   },
 };
 

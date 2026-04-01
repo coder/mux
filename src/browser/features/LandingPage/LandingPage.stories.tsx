@@ -7,16 +7,17 @@
 
 import type { APIClient } from "@/browser/contexts/API";
 import type { Summary } from "@/browser/hooks/useAnalytics";
+import { createPRStatusExecutor } from "@/browser/stories/helpers/git";
+import { expandProjects } from "@/browser/stories/helpers/uiState";
+import { CHROMATIC_SMOKE_MODES, appMeta, AppWithMocks, type AppStory } from "@/browser/stories/meta.js";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
-import { CHROMATIC_SMOKE_MODES, appMeta, AppWithMocks, type AppStory } from "./meta.js";
-import { createWorkspace, groupWorkspacesByProject } from "./mocks/workspaces";
-import { createPRStatusExecutor } from "./helpers/git";
-import { expandProjects } from "./helpers/uiState";
+import { createWorkspace, groupWorkspacesByProject } from "@/browser/stories/mocks/workspaces";
 import { LEFT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
 
+// Integration: stories render full app to test landing page layout with sidebar, analytics, and workspace cards.
 export default {
   ...appMeta,
-  title: "App/LandingPage",
+  title: "Features/LandingPage",
 };
 
 // ─── Shared fixtures ─────────────────────────────────────────────────────────
@@ -167,6 +168,23 @@ export const SidebarCollapsed: AppStory = {
         });
         return withAnalytics(client);
       }}
+    />
+  ),
+};
+
+/** Chat with Mux - the default boot state (no user projects) */
+export const ChatWithMux: AppStory = {
+  parameters: {
+    chromatic: { modes: CHROMATIC_SMOKE_MODES },
+  },
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        createMockORPCClient({
+          projects: new Map(),
+          workspaces: [],
+        })
+      }
     />
   ),
 };
