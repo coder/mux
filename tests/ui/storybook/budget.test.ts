@@ -1,12 +1,22 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 const STORY_DIR = "src/browser/stories";
-const MAX_SNAPSHOT_ENABLED_FILES = 9;
-const MAX_ESTIMATED_SNAPSHOTS = 130;
+const COLOCATED_STORY_DIRS = ["src/browser/components", "src/browser/features"];
+const MAX_SNAPSHOT_ENABLED_FILES = 70;
+const MAX_ESTIMATED_SNAPSHOTS = 300;
 const STORY_EXPORT_PATTERN = /^export const \w+/gm;
 const SMOKE_MODE_PATTERN = /modes:\s*CHROMATIC_SMOKE_MODES/g;
 const INLINE_MODE_OBJECT_PATTERN = /modes:\s*{/g;
+
+function findColocatedStories(dirs: string[]): string[] {
+  return dirs.flatMap((dir: string) =>
+    readdirSync(dir, { recursive: true })
+      .map((entry: string) => join(dir, entry))
+      .filter((file: string) => file.endsWith(".stories.tsx"))
+  );
+}
 
 function hasMetaDisable(content: string): boolean {
   const [metaSection = content] = content.split(/^export const \w+/m, 1);
@@ -143,12 +153,15 @@ function estimateInlineModeExtras(content: string): number {
 }
 
 describe("Storybook snapshot budget", () => {
-  const storyFiles = readdirSync(STORY_DIR)
+  // Track snapshot budget across both legacy app-level stories and colocated stories.
+  const appStoryFiles = readdirSync(STORY_DIR)
     .filter((f: string) => f.endsWith(".stories.tsx"))
     .map((f: string) => `${STORY_DIR}/${f}`);
+  const colocatedStoryFiles = findColocatedStories(COLOCATED_STORY_DIRS);
+  const allStoryFiles = [...appStoryFiles, ...colocatedStoryFiles];
 
-  test(`app-level story files with snapshots enabled ≤ ${MAX_SNAPSHOT_ENABLED_FILES}`, () => {
-    const filesWithSnapshots = storyFiles.filter((file: string) => {
+  test(`story files with snapshots enabled ≤ ${MAX_SNAPSHOT_ENABLED_FILES}`, () => {
+    const filesWithSnapshots = allStoryFiles.filter((file: string) => {
       const content = readFileSync(file, "utf-8");
       return !hasMetaDisable(content);
     });
@@ -159,7 +172,7 @@ describe("Storybook snapshot budget", () => {
   test(`estimated total snapshots ≤ ${MAX_ESTIMATED_SNAPSHOTS}`, () => {
     let totalSnapshots = 0;
 
-    for (const file of storyFiles) {
+    for (const file of allStoryFiles) {
       const content = readFileSync(file, "utf-8");
       if (hasMetaDisable(content)) {
         continue;
