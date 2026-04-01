@@ -103,8 +103,11 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
     const trimmed = editValue.trim();
     if (trimmed && trimmed !== section.name) {
       onRename(trimmed);
-    } else if (onAutoCreateRenameCancel && hasEditedName) {
+    } else if (onAutoCreateRenameCancel) {
+      // Blur/submit with no committed rename should exit auto-create mode,
+      // otherwise a later Escape can still route through abandon/delete.
       onAutoCreateRenameCancel();
+      setEditValue(section.name);
     } else {
       setEditValue(section.name);
     }
