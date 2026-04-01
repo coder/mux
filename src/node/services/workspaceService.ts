@@ -211,22 +211,8 @@ type WorktreeArchiveSnapshotLifecycleService = Pick<
   | "restoreSnapshotAfterUnarchive"
   | "getUnsupportedUntrackedPaths"
 >;
-function normalizeHeartbeatMessageInput(message: string | undefined): string | undefined {
-  if (message == null) {
-    return undefined;
-  }
-
-  assert(typeof message === "string", "Heartbeat message must be a string when provided");
-  const trimmedMessage = message.trim();
-  if (trimmedMessage.length === 0) {
-    return undefined;
-  }
-
-  return trimmedMessage;
-}
-
-// Persisted workspace config can contain non-string or whitespace-only values; normalize the
-// message on read so an invalid override never bricks heartbeat execution.
+// Trim and normalize a heartbeat message for storage. Accepts `unknown` so it safely handles
+// both user input (string | undefined) and persisted config values that may have been corrupted.
 function sanitizeHeartbeatMessage(message: unknown): string | undefined {
   if (typeof message !== "string") {
     return undefined;
@@ -3350,7 +3336,7 @@ export class WorkspaceService extends EventEmitter {
       }
 
       const nextMessage = hasMessageUpdate
-        ? normalizeHeartbeatMessageInput(settings.message)
+        ? sanitizeHeartbeatMessage(settings.message)
         : sanitizeHeartbeatMessage(workspaceEntry.heartbeat?.message);
       const nextContextMode = hasContextModeUpdate
         ? sanitizeHeartbeatContextMode(settings.contextMode)
