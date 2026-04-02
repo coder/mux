@@ -510,6 +510,27 @@ describe("useModelsFromSettings provider availability gating", () => {
     expect(result.current.hiddenModelsForSelector).not.toContain(KNOWN_MODELS.GPT.id);
   });
 
+  test("keeps Anthropic models visible when Copilot catalog contains dot-form IDs", () => {
+    providersConfig = {
+      anthropic: { apiKeySet: false, isEnabled: true, isConfigured: false },
+      "github-copilot": {
+        apiKeySet: true,
+        isEnabled: true,
+        isConfigured: true,
+        models: ["claude-opus-4.6"],
+      },
+    };
+    routePriority = ["github-copilot", "direct"];
+
+    const { result } = renderHook(() => useModelsFromSettings());
+
+    expect(result.current.models).toContain(KNOWN_MODELS.OPUS.id);
+    expect(result.current.hiddenModelsForSelector).not.toContain(KNOWN_MODELS.OPUS.id);
+    expect(result.current.customModels.some((model) => model.startsWith("github-copilot:"))).toBe(
+      false
+    );
+  });
+
   test("keeps gateway-routed models visible when no gateway model list is present", () => {
     providersConfig = {
       openai: { apiKeySet: false, isEnabled: true, isConfigured: false },
