@@ -129,18 +129,20 @@ describe("CopilotResponsesLanguageModel", () => {
         expect(url).toBe("https://example.test/responses");
         expect(init.method).toBe("POST");
         capturedBody = getJsonBody(init);
-        return createSseResponse([
-          {
-            event: "response.completed",
-            data: {
-              type: "response.completed",
-              response: {
-                finish_reason: "stop",
-                usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+        return Promise.resolve(
+          createSseResponse([
+            {
+              event: "response.completed",
+              data: {
+                type: "response.completed",
+                response: {
+                  finish_reason: "stop",
+                  usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+                },
               },
             },
-          },
-        ]);
+          ])
+        );
       })
     );
 
@@ -240,7 +242,9 @@ describe("CopilotResponsesLanguageModel", () => {
   });
 
   it("returns generated text, finish reason, usage, and metadata for doGenerate", async () => {
-    restoreFetchers.push(mockFetch(() => createJsonResponse(createCompletedResponse("stop"))));
+    restoreFetchers.push(
+      mockFetch(() => Promise.resolve(createJsonResponse(createCompletedResponse("stop"))))
+    );
 
     const model = createModel();
     const result = await model.doGenerate({
@@ -269,68 +273,70 @@ describe("CopilotResponsesLanguageModel", () => {
   it("streams response metadata, text parts, and finish usage", async () => {
     restoreFetchers.push(
       mockFetch(() =>
-        createSseResponse([
-          {
-            event: "response.created",
-            data: {
-              type: "response.created",
-              response: {
-                id: "resp_stream",
-                created_at: 1_710_000_010,
-                model: "copilot-test",
+        Promise.resolve(
+          createSseResponse([
+            {
+              event: "response.created",
+              data: {
+                type: "response.created",
+                response: {
+                  id: "resp_stream",
+                  created_at: 1_710_000_010,
+                  model: "copilot-test",
+                },
               },
             },
-          },
-          {
-            event: "response.output_item.added",
-            data: {
-              type: "response.output_item.added",
-              output_index: 0,
-              content_index: 0,
-              item: { type: "message", id: "msg_1" },
-            },
-          },
-          {
-            event: "response.output_text.delta",
-            data: {
-              type: "response.output_text.delta",
-              output_index: 0,
-              content_index: 0,
-              item_id: "msg_1",
-              delta: "Hello ",
-            },
-          },
-          {
-            event: "response.output_text.delta",
-            data: {
-              type: "response.output_text.delta",
-              output_index: 0,
-              content_index: 0,
-              item_id: "msg_1",
-              delta: "world",
-            },
-          },
-          {
-            event: "response.output_text.done",
-            data: {
-              type: "response.output_text.done",
-              output_index: 0,
-              content_index: 0,
-              item_id: "msg_1",
-              text: "Hello world",
-            },
-          },
-          {
-            event: "response.completed",
-            data: {
-              type: "response.completed",
-              response: {
-                finish_reason: "stop",
-                usage: { input_tokens: 3, output_tokens: 2, total_tokens: 5 },
+            {
+              event: "response.output_item.added",
+              data: {
+                type: "response.output_item.added",
+                output_index: 0,
+                content_index: 0,
+                item: { type: "message", id: "msg_1" },
               },
             },
-          },
-        ])
+            {
+              event: "response.output_text.delta",
+              data: {
+                type: "response.output_text.delta",
+                output_index: 0,
+                content_index: 0,
+                item_id: "msg_1",
+                delta: "Hello ",
+              },
+            },
+            {
+              event: "response.output_text.delta",
+              data: {
+                type: "response.output_text.delta",
+                output_index: 0,
+                content_index: 0,
+                item_id: "msg_1",
+                delta: "world",
+              },
+            },
+            {
+              event: "response.output_text.done",
+              data: {
+                type: "response.output_text.done",
+                output_index: 0,
+                content_index: 0,
+                item_id: "msg_1",
+                text: "Hello world",
+              },
+            },
+            {
+              event: "response.completed",
+              data: {
+                type: "response.completed",
+                response: {
+                  finish_reason: "stop",
+                  usage: { input_tokens: 3, output_tokens: 2, total_tokens: 5 },
+                },
+              },
+            },
+          ])
+        )
       )
     );
 
@@ -375,57 +381,59 @@ describe("CopilotResponsesLanguageModel", () => {
   it("uses a stable synthetic text id even when item_id rotates", async () => {
     restoreFetchers.push(
       mockFetch(() =>
-        createSseResponse([
-          {
-            event: "response.output_item.added",
-            data: {
-              type: "response.output_item.added",
-              output_index: 2,
-              content_index: 7,
-              item: { type: "message", id: "msg_added" },
-            },
-          },
-          {
-            event: "response.output_text.delta",
-            data: {
-              type: "response.output_text.delta",
-              output_index: 2,
-              content_index: 7,
-              item_id: "msg_delta_1",
-              delta: "A",
-            },
-          },
-          {
-            event: "response.output_text.delta",
-            data: {
-              type: "response.output_text.delta",
-              output_index: 2,
-              content_index: 7,
-              item_id: "msg_delta_2",
-              delta: "B",
-            },
-          },
-          {
-            event: "response.output_text.done",
-            data: {
-              type: "response.output_text.done",
-              output_index: 2,
-              content_index: 7,
-              item_id: "msg_done",
-              text: "AB",
-            },
-          },
-          {
-            event: "response.completed",
-            data: {
-              type: "response.completed",
-              response: {
-                finish_reason: "stop",
-                usage: { input_tokens: 1, output_tokens: 2, total_tokens: 3 },
+        Promise.resolve(
+          createSseResponse([
+            {
+              event: "response.output_item.added",
+              data: {
+                type: "response.output_item.added",
+                output_index: 2,
+                content_index: 7,
+                item: { type: "message", id: "msg_added" },
               },
             },
-          },
-        ])
+            {
+              event: "response.output_text.delta",
+              data: {
+                type: "response.output_text.delta",
+                output_index: 2,
+                content_index: 7,
+                item_id: "msg_delta_1",
+                delta: "A",
+              },
+            },
+            {
+              event: "response.output_text.delta",
+              data: {
+                type: "response.output_text.delta",
+                output_index: 2,
+                content_index: 7,
+                item_id: "msg_delta_2",
+                delta: "B",
+              },
+            },
+            {
+              event: "response.output_text.done",
+              data: {
+                type: "response.output_text.done",
+                output_index: 2,
+                content_index: 7,
+                item_id: "msg_done",
+                text: "AB",
+              },
+            },
+            {
+              event: "response.completed",
+              data: {
+                type: "response.completed",
+                response: {
+                  finish_reason: "stop",
+                  usage: { input_tokens: 1, output_tokens: 2, total_tokens: 3 },
+                },
+              },
+            },
+          ])
+        )
       )
     );
 
@@ -451,7 +459,9 @@ describe("CopilotResponsesLanguageModel", () => {
     ] as const;
 
     for (const [rawReason, expectedReason] of cases) {
-      restoreFetchers.push(mockFetch(() => createJsonResponse(createCompletedResponse(rawReason))));
+      restoreFetchers.push(
+        mockFetch(() => Promise.resolve(createJsonResponse(createCompletedResponse(rawReason))))
+      );
 
       const model = createModel();
       const result = await model.doGenerate({
@@ -468,7 +478,7 @@ describe("CopilotResponsesLanguageModel", () => {
     restoreFetchers.push(
       mockFetch((_url, init) => {
         capturedBody = getJsonBody(init);
-        return createJsonResponse(createCompletedResponse("stop"));
+        return Promise.resolve(createJsonResponse(createCompletedResponse("stop")));
       })
     );
 
@@ -494,7 +504,7 @@ describe("CopilotResponsesLanguageModel", () => {
     restoreFetchers.push(
       mockFetch((_url, init) => {
         capturedBody = getJsonBody(init);
-        return createJsonResponse(createCompletedResponse("stop"));
+        return Promise.resolve(createJsonResponse(createCompletedResponse("stop")));
       })
     );
 
@@ -558,7 +568,7 @@ describe("CopilotResponsesLanguageModel", () => {
         },
       },
     ];
-    restoreFetchers.push(mockFetch(() => createSseResponse(events)));
+    restoreFetchers.push(mockFetch(() => Promise.resolve(createSseResponse(events))));
 
     const model = createModel();
     const result = await model.doStream({
@@ -579,15 +589,17 @@ describe("CopilotResponsesLanguageModel", () => {
   it("parses SSE events that are split across byte chunks", async () => {
     restoreFetchers.push(
       mockFetch(() =>
-        createChunkedSseResponse([
-          "event: response.created\nda",
-          'ta: {"type":"response.created","response":{"id":"resp_split","created_at":1710000030,"model":"copilot-test"}}\n\n',
-          'event: response.output_item.added\ndata: {"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"msg_split"}}\n\n',
-          'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","output_index":0,"content_index":0,"item_id":"msg_split","delta":"split ',
-          'text"}\n\n',
-          'event: response.output_text.done\ndata: {"type":"response.output_text.done","output_index":0,"content_index":0,"item_id":"msg_split","text":"split text"}\n\n',
-          'event: response.completed\ndata: {"type":"response.completed","response":{"finish_reason":"stop","usage":{"input_tokens":1,"output_tokens":2,"total_tokens":3}}}\n\n',
-        ])
+        Promise.resolve(
+          createChunkedSseResponse([
+            "event: response.created\nda",
+            'ta: {"type":"response.created","response":{"id":"resp_split","created_at":1710000030,"model":"copilot-test"}}\n\n',
+            'event: response.output_item.added\ndata: {"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"msg_split"}}\n\n',
+            'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","output_index":0,"content_index":0,"item_id":"msg_split","delta":"split ',
+            'text"}\n\n',
+            'event: response.output_text.done\ndata: {"type":"response.output_text.done","output_index":0,"content_index":0,"item_id":"msg_split","text":"split text"}\n\n',
+            'event: response.completed\ndata: {"type":"response.completed","response":{"finish_reason":"stop","usage":{"input_tokens":1,"output_tokens":2,"total_tokens":3}}}\n\n',
+          ])
+        )
       )
     );
 
@@ -628,11 +640,13 @@ describe("CopilotResponsesLanguageModel", () => {
   it("emits an error part and closes cleanly on malformed JSON", async () => {
     restoreFetchers.push(
       mockFetch(() =>
-        createChunkedSseResponse([
-          'event: response.created\ndata: {"type":"response.created","response":{"id":"resp_bad","created_at":1710000040,"model":"copilot-test"}}\n\n',
-          'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","output_index":0,\n\n',
-          'event: response.completed\ndata: {"type":"response.completed","response":{"finish_reason":"stop","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}\n\n',
-        ])
+        Promise.resolve(
+          createChunkedSseResponse([
+            'event: response.created\ndata: {"type":"response.created","response":{"id":"resp_bad","created_at":1710000040,"model":"copilot-test"}}\n\n',
+            'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","output_index":0,\n\n',
+            'event: response.completed\ndata: {"type":"response.completed","response":{"finish_reason":"stop","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}\n\n',
+          ])
+        )
       )
     );
 
