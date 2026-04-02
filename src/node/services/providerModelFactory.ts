@@ -1527,7 +1527,12 @@ export class ProviderModelFactory {
           input: Parameters<typeof fetch>[0],
           init?: Parameters<typeof fetch>[1]
         ) => {
-          const headers = new Headers(init?.headers);
+          const headers = new Headers(input instanceof Request ? input.headers : undefined);
+          if (init?.headers) {
+            for (const [key, value] of new Headers(init.headers).entries()) {
+              headers.set(key, value);
+            }
+          }
           headers.set("Authorization", `Bearer ${resolvedApiKey ?? ""}`);
           headers.set("Openai-Intent", "conversation-edits");
 
@@ -1547,7 +1552,9 @@ export class ProviderModelFactory {
             return "";
           })();
 
-          const method = (init?.method ?? "GET").toUpperCase();
+          const method = (
+            init?.method ?? (input instanceof Request ? input.method : "GET")
+          ).toUpperCase();
           const isResponsesRequest = /\/v1\/responses(\?|$)/.test(urlString);
 
           let nextInit: Parameters<typeof fetch>[1] = { ...init, headers };
@@ -1559,24 +1566,25 @@ export class ProviderModelFactory {
           let originalBodyText: string | undefined;
           if (typeof init?.body === "string") {
             originalBodyText = init.body;
-            if (method === "POST" && isResponsesRequest) {
-              try {
-                const normalizedBody = normalizeCodexResponsesBody(originalBodyText);
-                headers.delete("content-length");
-                nextInit = {
-                  ...nextInit,
-                  headers,
-                  body: normalizedBody,
-                };
-              } catch {
-                // If body isn't JSON, keep the original request body for Copilot.
-              }
-            }
           } else if (input instanceof Request) {
             try {
               originalBodyText = await input.clone().text();
             } catch {
               // Fall back to undefined so classifyCopilotInitiator defaults to "user".
+            }
+          }
+
+          if (typeof originalBodyText === "string" && method === "POST" && isResponsesRequest) {
+            try {
+              const normalizedBody = normalizeCodexResponsesBody(originalBodyText);
+              headers.delete("content-length");
+              nextInit = {
+                ...nextInit,
+                headers,
+                body: normalizedBody,
+              };
+            } catch {
+              // If body isn't JSON, keep the original request body for Copilot.
             }
           }
 

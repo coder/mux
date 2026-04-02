@@ -4,6 +4,7 @@ import * as os from "os";
 import * as path from "path";
 import { Config } from "@/node/config";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
+import { PROVIDER_REGISTRY } from "@/common/constants/providers";
 import {
   ProviderModelFactory,
   buildAIProviderRequestHeaders,
@@ -207,6 +208,114 @@ describe("ProviderModelFactory GitHub Copilot", () => {
       );
       expect(result.data.routeProvider).toBe("github-copilot");
       expect(result.data.effectiveModelString).toBe("github-copilot:gpt-5.3-codex");
+    });
+  });
+
+  it("normalizes Request bodies for Copilot Codex responses and keeps initiator classification based on the original body", async () => {
+    await withTempConfig(async (config, factory) => {
+      const originalOpenAIRegistry = PROVIDER_REGISTRY.openai;
+      const requests: Array<{
+        input: Parameters<typeof fetch>[0];
+        init?: Parameters<typeof fetch>[1];
+      }> = [];
+      let capturedFetch: typeof fetch | undefined;
+
+      const baseFetch = (
+        input: Parameters<typeof fetch>[0],
+        init?: Parameters<typeof fetch>[1]
+      ) => {
+        requests.push({ input, init });
+
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              id: "resp_test",
+              created_at: 0,
+              model: "gpt-5.3-codex",
+              output: [
+                {
+                  type: "message",
+                  role: "assistant",
+                  id: "msg_test",
+                  content: [{ type: "output_text", text: "ok", annotations: [] }],
+                },
+              ],
+              usage: {
+                input_tokens: 1,
+                output_tokens: 1,
+              },
+            }),
+            {
+              headers: {
+                "Content-Type": "application/json",
+              },
+            }
+          )
+        );
+      };
+
+      config.loadProvidersConfig = () => ({
+        "github-copilot": {
+          apiKey: "copilot-token",
+          models: ["gpt-5.3-codex"],
+          fetch: baseFetch,
+        },
+      });
+
+      PROVIDER_REGISTRY.openai = async () => {
+        const module = await originalOpenAIRegistry();
+        return {
+          ...module,
+          createOpenAI: (options) => {
+            capturedFetch = options?.fetch;
+            return module.createOpenAI(options);
+          },
+        };
+      };
+
+      try {
+        const result = await factory.createModel("github-copilot:gpt-5.3-codex");
+        expect(result.success).toBe(true);
+        if (!result.success) {
+          return;
+        }
+
+        if (!capturedFetch) {
+          throw new Error("Expected Copilot fetch wrapper to be captured");
+        }
+
+        const originalBody = JSON.stringify({
+          model: "gpt-5.3-codex",
+          input: [
+            { role: "user", content: [{ type: "input_text", text: "Ship the fix." }] },
+            { type: "item_reference", id: "rs_123" },
+          ],
+          store: true,
+          truncation: "server-default",
+          metadata: { ignored: true },
+        });
+        const request = new Request("https://api.githubcopilot.com/v1/responses", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": "sdk-key",
+          },
+          body: originalBody,
+        });
+
+        await capturedFetch(request);
+
+        expect(requests).toHaveLength(1);
+        expect(requests[0]?.input).toBe(request);
+        expect(requests[0]?.init?.body).toBe(normalizeCodexResponsesBody(originalBody));
+
+        const headers = new Headers(requests[0]?.init?.headers);
+        expect(headers.get("authorization")).toBe("Bearer copilot-token");
+        expect(headers.get("content-type")).toBe("application/json");
+        expect(headers.get("x-initiator")).toBe("agent");
+      } finally {
+        PROVIDER_REGISTRY.openai = originalOpenAIRegistry;
+      }
     });
   });
 
