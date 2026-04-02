@@ -3,6 +3,7 @@ import {
   COPILOT_MODEL_PREFIXES,
   isCopilotModelAccessible,
   isCopilotRoutableModel,
+  normalizeCopilotModelId,
   selectCopilotApiMode,
 } from "./modelRouting";
 
@@ -51,9 +52,36 @@ describe("selectCopilotApiMode", () => {
   });
 });
 
+describe("normalizeCopilotModelId", () => {
+  it("normalizes Claude dot-version ids to the canonical dash form", () => {
+    expect(normalizeCopilotModelId("claude-opus-4.6")).toBe("claude-opus-4-6");
+    expect(normalizeCopilotModelId("claude-sonnet-4.5")).toBe("claude-sonnet-4-5");
+  });
+
+  it("keeps already-canonical Claude ids unchanged", () => {
+    expect(normalizeCopilotModelId("claude-haiku-4-5")).toBe("claude-haiku-4-5");
+  });
+
+  it("leaves non-Claude ids unchanged", () => {
+    expect(normalizeCopilotModelId("gpt-5.4")).toBe("gpt-5.4");
+  });
+
+  it("strips provider prefixes before normalizing Claude ids", () => {
+    expect(normalizeCopilotModelId("anthropic:claude-opus-4.6")).toBe("claude-opus-4-6");
+  });
+
+  it("returns empty strings unchanged", () => {
+    expect(normalizeCopilotModelId("")).toBe("");
+  });
+});
+
 describe("isCopilotModelAccessible", () => {
   it("returns true when the model is present in the fetched Copilot list", () => {
     expect(isCopilotModelAccessible("gpt-5.4", ["gpt-5.4", "claude-sonnet-4-6"])).toBe(true);
+  });
+
+  it("returns true when Claude ids match after normalization", () => {
+    expect(isCopilotModelAccessible("claude-opus-4-6", ["claude-opus-4.6"])).toBe(true);
   });
 
   it("returns false when the model is absent from a non-empty Copilot list", () => {
@@ -64,7 +92,7 @@ describe("isCopilotModelAccessible", () => {
     expect(isCopilotModelAccessible("gpt-5.4", [])).toBe(true);
   });
 
-  it("uses exact string matching instead of prefix matching", () => {
+  it("uses exact string matching instead of prefix matching after normalization", () => {
     expect(isCopilotModelAccessible("gpt-5.4", ["gpt-5"])).toBe(false);
     expect(isCopilotModelAccessible("", ["gpt-5.4"])).toBe(false);
   });

@@ -13,10 +13,23 @@ export function selectCopilotApiMode(_modelId: string): CopilotApiMode {
   return "chatCompletions";
 }
 
+export function normalizeCopilotModelId(id: string): string {
+  const unprefixedId = id.includes(":") ? id.slice(id.indexOf(":") + 1) : id;
+
+  if (!unprefixedId.startsWith("claude-")) {
+    return unprefixedId;
+  }
+
+  return unprefixedId.replace(/(\d+)\.(\d+)/g, "$1-$2");
+}
+
 export function isCopilotModelAccessible(modelId: string, availableModels: string[]): boolean {
   if (availableModels.length === 0) {
     return true;
   }
 
-  return availableModels.includes(modelId);
+  const normalizedModelId = normalizeCopilotModelId(modelId);
+  return availableModels.some(
+    (availableModel) => normalizeCopilotModelId(availableModel) === normalizedModelId
+  );
 }

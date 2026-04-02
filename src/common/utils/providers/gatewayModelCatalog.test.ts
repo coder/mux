@@ -34,6 +34,22 @@ describe("gatewayModelCatalog", () => {
     ).toBe(true);
   });
 
+  test("matches Copilot Claude ids after dot-vs-dash normalization", () => {
+    expect(
+      isProviderModelAccessibleFromAuthoritativeCatalog("github-copilot", "claude-opus-4-6", [
+        "claude-opus-4.6",
+      ])
+    ).toBe(true);
+  });
+
+  test("does not match unrelated Copilot Claude ids after normalization", () => {
+    expect(
+      isProviderModelAccessibleFromAuthoritativeCatalog("github-copilot", "claude-opus-4-6", [
+        "claude-sonnet-4.5",
+      ])
+    ).toBe(false);
+  });
+
   test("rejects direct Copilot model ids missing from the authoritative catalog", () => {
     expect(
       isProviderModelAccessibleFromAuthoritativeCatalog("github-copilot", "gpt-5.4", [

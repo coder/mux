@@ -1,6 +1,9 @@
 import type { ProviderModelEntry } from "@/common/orpc/types";
 
-import { isCopilotRoutableModel } from "@/common/utils/copilot/modelRouting";
+import {
+  isCopilotRoutableModel,
+  normalizeCopilotModelId,
+} from "@/common/utils/copilot/modelRouting";
 import { maybeGetProviderModelEntryId } from "@/common/utils/providers/modelEntries";
 
 export function isProviderModelAccessibleFromAuthoritativeCatalog(
@@ -23,6 +26,7 @@ export function isProviderModelAccessibleFromAuthoritativeCatalog(
     return true;
   }
 
+  const normalizedModelId = normalizeCopilotModelId(modelId);
   let foundValidEntry = false;
   for (const entry of models) {
     const configuredModelId = maybeGetProviderModelEntryId(entry);
@@ -31,7 +35,7 @@ export function isProviderModelAccessibleFromAuthoritativeCatalog(
     }
 
     foundValidEntry = true;
-    if (configuredModelId === modelId) {
+    if (normalizeCopilotModelId(configuredModelId) === normalizedModelId) {
       return true;
     }
   }
