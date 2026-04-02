@@ -522,6 +522,24 @@ export function modelCostsIncluded(model: LanguageModel): boolean {
   return (model as LanguageModelWithMuxCostsIncluded)[MUX_MODEL_COSTS_INCLUDED] === true;
 }
 
+const CODEX_ALLOWED_PARAMS = new Set([
+  "model",
+  "input",
+  "instructions",
+  "tools",
+  "tool_choice",
+  "parallel_tool_calls",
+  "stream",
+  "store",
+  "prompt_cache_key",
+  "reasoning",
+  "temperature",
+  "top_p",
+  "include",
+  "text", // structured output via Output.object -> text.format
+  "truncation",
+]);
+
 // ---------------------------------------------------------------------------
 // Content extraction
 // ---------------------------------------------------------------------------
@@ -546,6 +564,66 @@ function extractTextContent(content: unknown): string {
       .trim();
   }
   return "";
+}
+
+export function normalizeCodexResponsesBody(body: string): string {
+  const json = JSON.parse(body) as Record<string, unknown>;
+  const truncation = json.truncation;
+  if (truncation !== "auto" && truncation !== "disabled") {
+    json.truncation = "disabled";
+  }
+
+  // Codex-compatible Responses requests must disable storage and strip unsupported params.
+  json.store = false;
+
+  for (const key of Object.keys(json)) {
+    if (!CODEX_ALLOWED_PARAMS.has(key)) {
+      delete json[key];
+    }
+  }
+
+  // item_reference entries depend on stored state lookups, which fail with store=false.
+  if (Array.isArray(json.input)) {
+    json.input = (json.input as Array<Record<string, unknown>>).filter(
+      (item) => !(item && typeof item === "object" && item.type === "item_reference")
+    );
+  }
+
+  const existingInstructions =
+    typeof json.instructions === "string" ? json.instructions.trim() : "";
+  if (existingInstructions.length === 0) {
+    const derivedParts: string[] = [];
+    const keptInput: unknown[] = [];
+
+    const responseInput = json.input;
+    if (Array.isArray(responseInput)) {
+      for (const item of responseInput as unknown[]) {
+        if (!item || typeof item !== "object") {
+          keptInput.push(item);
+          continue;
+        }
+
+        const role = (item as { role?: unknown }).role;
+        if (role !== "system" && role !== "developer") {
+          keptInput.push(item);
+          continue;
+        }
+
+        const content = (item as { content?: unknown }).content;
+        const text = extractTextContent(content);
+        if (text.length > 0) {
+          derivedParts.push(text);
+        }
+      }
+
+      json.input = keptInput;
+    }
+
+    const joined = derivedParts.join("\n\n").trim();
+    json.instructions = joined.length > 0 ? joined : "You are a helpful assistant.";
+  }
+
+  return JSON.stringify(json);
 }
 
 function getConfiguredProviderModelIds(providerConfig: ProviderConfig | undefined): string[] {
@@ -1011,10 +1089,8 @@ export class ProviderModelFactory {
               let nextInit: Parameters<typeof fetch>[1] | undefined = init;
 
               const body = init?.body;
-              // Only parse the JSON body when routing through Codex OAuth — it needs
-              // instruction lifting, store=false, and truncation enforcement.  For
-              // non-Codex requests the SDK already sends the correct truncation value
-              // via providerOptions, so we skip the expensive parse + re-stringify.
+              // Only parse the JSON body when routing through Codex OAuth, since Codex
+              // requires instruction lifting, store=false, and Responses truncation.
               if (
                 shouldRouteThroughCodexOauth &&
                 isOpenAIResponses &&
@@ -1022,106 +1098,13 @@ export class ProviderModelFactory {
                 typeof body === "string"
               ) {
                 try {
-                  const json = JSON.parse(body) as Record<string, unknown>;
-                  const truncation = json.truncation;
-                  if (truncation !== "auto" && truncation !== "disabled") {
-                    json.truncation = "disabled";
-                  }
-
-                  // Codex OAuth (chatgpt.com/backend-api/codex/responses) rejects requests unless
-                  // `instructions` is present and non-empty, and `store` is set to false.
-                  // The AI SDK maps `system` prompts into the `input` array
-                  // (role: system|developer) but does *not* automatically populate
-                  // `instructions`, so we lift all system prompts into `instructions` when
-                  // routing through Codex OAuth.
-
-                  // Codex endpoint requires store=false and only accepts a subset of the
-                  // standard OpenAI Responses API parameters. Use an allowlist to strip
-                  // everything the endpoint doesn't understand (it rejects unknown params
-                  // with 400).
-                  json.store = false;
-
-                  const CODEX_ALLOWED_PARAMS = new Set([
-                    "model",
-                    "input",
-                    "instructions",
-                    "tools",
-                    "tool_choice",
-                    "parallel_tool_calls",
-                    "stream",
-                    "store",
-                    "prompt_cache_key",
-                    "reasoning",
-                    "temperature",
-                    "top_p",
-                    "include",
-                    "text", // structured output via Output.object → text.format
-                  ]);
-
-                  for (const key of Object.keys(json)) {
-                    if (!CODEX_ALLOWED_PARAMS.has(key)) {
-                      delete json[key];
-                    }
-                  }
-
-                  // Filter out item_reference entries from the input. The AI SDK sends
-                  // these as an optimization when store=true — bare { type: "item_reference",
-                  // id: "rs_..." } objects that the server expands by looking up stored
-                  // content. With store=false (required for Codex), these lookups fail.
-                  // The full inline content is always present alongside references, so
-                  // removing them doesn't lose conversation context.
-                  if (Array.isArray(json.input)) {
-                    json.input = (json.input as Array<Record<string, unknown>>).filter(
-                      (item) =>
-                        !(item && typeof item === "object" && item.type === "item_reference")
-                    );
-                  }
-
-                  const existingInstructions =
-                    typeof json.instructions === "string" ? json.instructions.trim() : "";
-
-                  if (existingInstructions.length === 0) {
-                    const derivedParts: string[] = [];
-                    const keptInput: unknown[] = [];
-
-                    const responseInput = json.input;
-                    if (Array.isArray(responseInput)) {
-                      for (const item of responseInput as unknown[]) {
-                        if (!item || typeof item !== "object") {
-                          keptInput.push(item);
-                          continue;
-                        }
-
-                        const role = (item as { role?: unknown }).role;
-                        if (role !== "system" && role !== "developer") {
-                          keptInput.push(item);
-                          continue;
-                        }
-
-                        // Extract text from string content or structured content arrays
-                        // (AI SDK may produce [{type:"text", text:"..."}])
-                        const content = (item as { content?: unknown }).content;
-                        const text = extractTextContent(content);
-                        if (text.length > 0) {
-                          derivedParts.push(text);
-                        }
-                        // Drop this system/developer item from input (don't push to keptInput)
-                      }
-
-                      json.input = keptInput;
-                    }
-
-                    const joined = derivedParts.join("\n\n").trim();
-                    json.instructions = joined.length > 0 ? joined : "You are a helpful assistant.";
-                  }
-
-                  // Clone headers to avoid mutating caller-provided objects
                   const headers = new Headers(init?.headers);
-                  // Remove content-length if present, since body will change
                   headers.delete("content-length");
-
-                  const newBody = JSON.stringify(json);
-                  nextInit = { ...init, headers, body: newBody };
+                  nextInit = {
+                    ...init,
+                    headers,
+                    body: normalizeCodexResponsesBody(body),
+                  };
                 } catch {
                   // If body isn't JSON, fall through to normal fetch (but still allow Codex routing).
                 }
@@ -1548,6 +1531,27 @@ export class ProviderModelFactory {
           headers.set("Authorization", `Bearer ${resolvedApiKey ?? ""}`);
           headers.set("Openai-Intent", "conversation-edits");
 
+          const urlString = (() => {
+            if (typeof input === "string") {
+              return input;
+            }
+            if (input instanceof URL) {
+              return input.toString();
+            }
+            if (typeof input === "object" && input !== null && "url" in input) {
+              const possibleUrl = (input as { url?: unknown }).url;
+              if (typeof possibleUrl === "string") {
+                return possibleUrl;
+              }
+            }
+            return "";
+          })();
+
+          const method = (init?.method ?? "GET").toUpperCase();
+          const isResponsesRequest = /\/v1\/responses(\?|$)/.test(urlString);
+
+          let nextInit: Parameters<typeof fetch>[1] = { ...init, headers };
+
           // Resolve request body text for billing classification.
           // Standard AI SDK path: init.body is a JSON string.
           // Request object path: clone + read body text so the original stream
@@ -1555,6 +1559,20 @@ export class ProviderModelFactory {
           let bodyText: string | undefined;
           if (typeof init?.body === "string") {
             bodyText = init.body;
+            if (method === "POST" && isResponsesRequest) {
+              try {
+                const normalizedBody = normalizeCodexResponsesBody(bodyText);
+                headers.delete("content-length");
+                nextInit = {
+                  ...nextInit,
+                  headers,
+                  body: normalizedBody,
+                };
+                bodyText = normalizedBody;
+              } catch {
+                // If body isn't JSON, keep the original request body for Copilot.
+              }
+            }
           } else if (input instanceof Request) {
             try {
               bodyText = await input.clone().text();
@@ -1571,7 +1589,7 @@ export class ProviderModelFactory {
             opts?.agentInitiated === true ? "agent" : classifyCopilotInitiator(bodyText);
           headers.set("X-Initiator", initiator);
           headers.delete("x-api-key");
-          return baseFetch(input, { ...init, headers });
+          return baseFetch(input, nextInit);
         };
         const copilotFetch = Object.assign(copilotFetchFn, baseFetch) as typeof fetch;
         const providerFetch = copilotFetch;

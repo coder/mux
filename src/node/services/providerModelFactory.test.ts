@@ -10,6 +10,7 @@ import {
   classifyCopilotInitiator,
   modelCostsIncluded,
   MUX_AI_PROVIDER_USER_AGENT,
+  normalizeCodexResponsesBody,
   resolveAIProviderHeaderSource,
 } from "./providerModelFactory";
 import { ProviderService } from "./providerService";
@@ -28,6 +29,63 @@ async function withTempConfig(
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 }
+
+describe("normalizeCodexResponsesBody", () => {
+  it("enforces Codex-compatible fields and lifts system prompts into instructions", () => {
+    const normalized = JSON.parse(
+      normalizeCodexResponsesBody(
+        JSON.stringify({
+          model: "gpt-5.3-codex",
+          input: [
+            { role: "system", content: "Follow project rules." },
+            {
+              role: "developer",
+              content: [{ type: "text", text: "Use concise updates." }],
+            },
+            { role: "user", content: "Ship the fix." },
+            { type: "item_reference", id: "rs_123" },
+          ],
+          store: true,
+          truncation: "server-default",
+          temperature: 0.2,
+          metadata: { ignored: true },
+          text: { format: { type: "json_schema", name: "result" } },
+        })
+      )
+    ) as {
+      instructions: string;
+      input: Array<Record<string, unknown>>;
+      metadata?: unknown;
+      store: boolean;
+      temperature: number;
+      text: unknown;
+      truncation: string;
+    };
+
+    expect(normalized.store).toBe(false);
+    expect(normalized.truncation).toBe("disabled");
+    expect(normalized.temperature).toBe(0.2);
+    expect(normalized.text).toEqual({ format: { type: "json_schema", name: "result" } });
+    expect(normalized.metadata).toBeUndefined();
+    expect(normalized.instructions).toBe("Follow project rules.\n\nUse concise updates.");
+    expect(normalized.input).toEqual([{ role: "user", content: "Ship the fix." }]);
+  });
+
+  it("preserves explicit auto truncation", () => {
+    const normalized = JSON.parse(
+      normalizeCodexResponsesBody(
+        JSON.stringify({
+          model: "gpt-5.3-codex",
+          input: [{ role: "user", content: "Hello" }],
+          truncation: "auto",
+        })
+      )
+    ) as { truncation: string; store: boolean };
+
+    expect(normalized.truncation).toBe("auto");
+    expect(normalized.store).toBe(false);
+  });
+});
 
 describe("ProviderModelFactory.createModel", () => {
   it("returns provider_disabled when a non-gateway provider is disabled", async () => {
@@ -120,6 +178,35 @@ describe("ProviderModelFactory GitHub Copilot", () => {
       expect(result.data.routeProvider).toBe("github-copilot");
       expect(result.data.effectiveModelString).toBe("github-copilot:gpt-5.4");
       expect(result.data.model.constructor.name).toBe("OpenAIChatLanguageModel");
+    });
+  });
+
+  it("creates routed gpt-5.3-codex models with the Responses API mode", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        "github-copilot": {
+          apiKey: "copilot-token",
+          models: ["gpt-5.3-codex"],
+        },
+      });
+
+      const projectConfig = config.loadConfigOrDefault();
+      await config.saveConfig({
+        ...projectConfig,
+        routePriority: ["github-copilot", "direct"],
+      });
+
+      const result = await factory.resolveAndCreateModel("openai:gpt-5.3-codex", "off");
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        return;
+      }
+
+      expect((result.data.model as { provider?: unknown }).provider).toBe(
+        "github-copilot.responses"
+      );
+      expect(result.data.routeProvider).toBe("github-copilot");
+      expect(result.data.effectiveModelString).toBe("github-copilot:gpt-5.3-codex");
     });
   });
 
