@@ -328,7 +328,7 @@ function findLatestLegacyCompactionSummaryIndex(messages: MuxMessage[]): number 
  * the model receives this context for the next turn.
  *
  * @param messages The conversation history
- * @param attachments Post-compaction attachments (plan file, edited files)
+ * @param attachments Post-compaction attachments (plan file, loaded skills, edited files)
  * @returns Messages with attachments injected after compaction summary
  */
 export function injectPostCompactionAttachments(

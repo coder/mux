@@ -2,8 +2,14 @@ import type {
   PostCompactionAttachment,
   PlanFileReferenceAttachment,
   TodoListAttachment,
+  LoadedSkillsSnapshotAttachment,
   EditedFilesReferenceAttachment,
 } from "@/common/types/attachment";
+import {
+  AGENT_SKILL_BODY_TRUNCATION_NOTE,
+  isNormalizedAgentSkillBodyTruncated,
+  renderAgentSkillSnapshotText,
+} from "@/common/utils/agentSkills/skillSnapshot";
 import { renderTodoItemsAsMarkdownList } from "@/common/utils/todoList";
 
 const SYSTEM_UPDATE_OPEN = "<system-update>\n";
@@ -31,6 +37,14 @@ If this plan is relevant to the current work and not already complete, continue 
 function renderTodoListAttachment(attachment: TodoListAttachment): string {
   const items = renderTodoItemsAsMarkdownList(attachment.todos);
   return `TODO list (persisted; \`todo_read\` will return this):\n${items || "- (empty)"}`;
+}
+
+function renderLoadedSkillsSnapshot(attachment: LoadedSkillsSnapshotAttachment): string {
+  const skillEntries = attachment.skills
+    .map((skill) => renderAgentSkillSnapshotText(skill))
+    .join("\n\n");
+
+  return `The following skills were loaded in this session:\n\n${skillEntries}`;
 }
 
 /**
@@ -61,6 +75,8 @@ export function renderAttachmentToContent(attachment: PostCompactionAttachment):
       return renderPlanFileReference(attachment);
     case "todo_list":
       return renderTodoListAttachment(attachment);
+    case "loaded_skills_snapshot":
+      return renderLoadedSkillsSnapshot(attachment);
     case "edited_files_reference":
       return renderEditedFilesReference(attachment);
   }
@@ -93,6 +109,88 @@ function renderPlanFileReferenceWithBudget(
   }
 
   return `${prefix}${planContent}${suffix}`;
+}
+
+function truncateLoadedSkillBodyToBudget(body: string, maxChars: number): string | null {
+  if (maxChars <= 0) {
+    return null;
+  }
+
+  if (body.length <= maxChars) {
+    return body;
+  }
+
+  if (maxChars <= AGENT_SKILL_BODY_TRUNCATION_NOTE.length) {
+    return null;
+  }
+
+  const untruncatedBody = isNormalizedAgentSkillBodyTruncated(body)
+    ? body.slice(0, -AGENT_SKILL_BODY_TRUNCATION_NOTE.length)
+    : body;
+  const sliceLength = Math.max(0, maxChars - AGENT_SKILL_BODY_TRUNCATION_NOTE.length);
+  return `${untruncatedBody.slice(0, sliceLength)}${AGENT_SKILL_BODY_TRUNCATION_NOTE}`;
+}
+
+function renderSingleLoadedSkillWithBudget(
+  skill: LoadedSkillsSnapshotAttachment["skills"][number],
+  maxChars: number
+): string | null {
+  const prefix = `<agent-skill name="${skill.name}" scope="${skill.scope}">\n`;
+  const suffix = "\n</agent-skill>";
+  const availableForBody = maxChars - prefix.length - suffix.length;
+  if (availableForBody <= 0) {
+    return null;
+  }
+
+  const body = truncateLoadedSkillBodyToBudget(skill.body, availableForBody);
+  if (body == null) {
+    return null;
+  }
+
+  return renderAgentSkillSnapshotText({
+    name: skill.name,
+    scope: skill.scope,
+    body,
+  });
+}
+
+function renderLoadedSkillsSnapshotWithBudget(
+  attachment: LoadedSkillsSnapshotAttachment,
+  maxChars: number
+): { content: string | null; omittedSkills: number } {
+  const header = "The following skills were loaded in this session:\n\n";
+
+  if (maxChars <= header.length) {
+    return { content: null, omittedSkills: attachment.skills.length };
+  }
+
+  const entries: string[] = [];
+  let used = header.length;
+
+  for (const skill of attachment.skills) {
+    const separator = entries.length > 0 ? "\n\n" : "";
+    const entryBudget = maxChars - used - separator.length;
+    if (entryBudget <= 0) {
+      break;
+    }
+
+    const entry = renderSingleLoadedSkillWithBudget(skill, entryBudget);
+    if (entry == null) {
+      break;
+    }
+
+    entries.push(entry);
+    used += separator.length + entry.length;
+  }
+
+  if (entries.length === 0) {
+    return { content: null, omittedSkills: attachment.skills.length };
+  }
+
+  return {
+    content: `${header}${entries.join("\n\n")}`,
+    omittedSkills: attachment.skills.length - entries.length,
+  };
 }
 
 function renderEditedFilesReferenceWithBudget(
@@ -141,7 +239,8 @@ function sortAttachmentsForInjection(
   const priority: Record<PostCompactionAttachment["type"], number> = {
     plan_file_reference: 0,
     todo_list: 1,
-    edited_files_reference: 2,
+    loaded_skills_snapshot: 2,
+    edited_files_reference: 3,
   };
 
   return attachments
@@ -166,6 +265,7 @@ export function renderAttachmentsToContentWithBudget(
 
   const blocks: string[] = [];
   let currentLength = 0;
+  let omittedLoadedSkills = 0;
   let omittedFileDiffs = 0;
 
   const addBlock = (block: string): boolean => {
@@ -206,6 +306,19 @@ export function renderAttachmentsToContentWithBudget(
       continue;
     }
 
+    if (attachment.type === "loaded_skills_snapshot") {
+      const { content, omittedSkills } = renderLoadedSkillsSnapshotWithBudget(
+        attachment,
+        remainingForContent
+      );
+      omittedLoadedSkills += omittedSkills;
+
+      if (content) {
+        addBlock(wrapSystemUpdate(content));
+      }
+      continue;
+    }
+
     if (attachment.type === "edited_files_reference") {
       const { content, omittedFiles } = renderEditedFilesReferenceWithBudget(
         attachment,
@@ -218,6 +331,12 @@ export function renderAttachmentsToContentWithBudget(
       }
       continue;
     }
+  }
+
+  if (omittedLoadedSkills > 0) {
+    const plural = omittedLoadedSkills === 1 ? "" : "s";
+    const note = `(post-compaction context truncated; omitted ${omittedLoadedSkills} loaded skill${plural})`;
+    addBlock(wrapSystemUpdate(note));
   }
 
   if (omittedFileDiffs > 0) {

@@ -1,7 +1,13 @@
 import { describe, expect, test, mock, afterEach } from "bun:test";
 import { EventEmitter } from "events";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 
-import type { PostCompactionAttachment } from "@/common/types/attachment";
+import type {
+  LoadedSkillSnapshot,
+  PostCompactionAttachment,
+  TodoListAttachment,
+} from "@/common/types/attachment";
 import { TURNS_BETWEEN_ATTACHMENTS } from "@/common/constants/attachments";
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import type { Config } from "@/node/config";
@@ -13,6 +19,7 @@ import type { HistoryService } from "./historyService";
 import type { InitStateManager } from "./initStateManager";
 import { DisposableTempDir } from "./tempDir";
 import { createTestHistoryService } from "./testHistoryService";
+import { createLoadedSkillSnapshot } from "@/node/services/agentSkills/loadedSkillSnapshots";
 
 function createSuccessfulFileEditMessage(id: string, filePath: string, diff: string): MuxMessage {
   return {
@@ -34,6 +41,19 @@ function createSuccessfulFileEditMessage(id: string, filePath: string, diff: str
   };
 }
 
+function createLoadedSkillFixture(args: {
+  name: string;
+  body: string;
+  scope?: "project" | "global" | "built-in";
+}): LoadedSkillSnapshot {
+  return createLoadedSkillSnapshot({
+    name: args.name,
+    scope: args.scope ?? "project",
+    body: args.body,
+    frontmatterYaml: `name: ${args.name}\ndescription: ${args.name} description`,
+  });
+}
+
 function getEditedFilePaths(attachments: PostCompactionAttachment[]): string[] {
   const editedFilesAttachment = attachments.find(
     (
@@ -43,6 +63,42 @@ function getEditedFilePaths(attachments: PostCompactionAttachment[]): string[] {
   );
 
   return editedFilesAttachment?.files.map((file) => file.path) ?? [];
+}
+
+function getLoadedSkillNames(attachments: PostCompactionAttachment[]): string[] {
+  const loadedSkillsAttachment = attachments.find(
+    (
+      attachment
+    ): attachment is Extract<PostCompactionAttachment, { type: "loaded_skills_snapshot" }> =>
+      attachment.type === "loaded_skills_snapshot"
+  );
+
+  return loadedSkillsAttachment?.skills.map((skill) => skill.name) ?? [];
+}
+
+function getLoadedSkillAttachment(
+  attachments: PostCompactionAttachment[]
+): Extract<PostCompactionAttachment, { type: "loaded_skills_snapshot" }> | undefined {
+  return attachments.find(
+    (
+      attachment
+    ): attachment is Extract<PostCompactionAttachment, { type: "loaded_skills_snapshot" }> =>
+      attachment.type === "loaded_skills_snapshot"
+  );
+}
+
+function getTodoAttachment(
+  attachments: PostCompactionAttachment[]
+): TodoListAttachment | undefined {
+  return attachments.find(
+    (attachment): attachment is TodoListAttachment => attachment.type === "todo_list"
+  );
+}
+
+function getAttachmentTypes(
+  attachments: PostCompactionAttachment[]
+): Array<PostCompactionAttachment["type"]> {
+  return attachments.map((attachment) => attachment.type);
 }
 
 function createSessionForHistory(historyService: HistoryService, sessionDir: string): AgentSession {
@@ -91,17 +147,31 @@ function createSessionForHistory(historyService: HistoryService, sessionDir: str
   });
 }
 
-async function generatePeriodicPostCompactionAttachments(
+interface PrivateSessionAccess {
+  compactionOccurred: boolean;
+  turnsSinceLastAttachment: number;
+  postCompactionLoadedSkills: LoadedSkillSnapshot[];
+  getPostCompactionAttachmentsIfNeeded: () => Promise<PostCompactionAttachment[] | null>;
+}
+
+async function getImmediatePostCompactionAttachments(
   session: AgentSession
 ): Promise<PostCompactionAttachment[]> {
-  const privateSession = session as unknown as {
-    compactionOccurred: boolean;
-    turnsSinceLastAttachment: number;
-    getPostCompactionAttachmentsIfNeeded: () => Promise<PostCompactionAttachment[] | null>;
-  };
+  const privateSession = session as unknown as PrivateSessionAccess;
+  const attachments = await privateSession.getPostCompactionAttachmentsIfNeeded();
+  expect(attachments).not.toBeNull();
+  return attachments ?? [];
+}
+
+async function generatePeriodicPostCompactionAttachments(
+  session: AgentSession,
+  loadedSkills: LoadedSkillSnapshot[] = []
+): Promise<PostCompactionAttachment[]> {
+  const privateSession = session as unknown as PrivateSessionAccess;
 
   privateSession.compactionOccurred = true;
   privateSession.turnsSinceLastAttachment = TURNS_BETWEEN_ATTACHMENTS - 1;
+  privateSession.postCompactionLoadedSkills = loadedSkills;
 
   const attachments = await privateSession.getPostCompactionAttachmentsIfNeeded();
   expect(attachments).not.toBeNull();
@@ -109,7 +179,23 @@ async function generatePeriodicPostCompactionAttachments(
   return attachments ?? [];
 }
 
-describe("AgentSession periodic post-compaction attachments", () => {
+async function writePendingPostCompactionState(args: {
+  sessionDir: string;
+  diffs: Array<{ path: string; diff: string; truncated: boolean }>;
+  loadedSkills: LoadedSkillSnapshot[];
+}): Promise<void> {
+  await fs.writeFile(
+    path.join(args.sessionDir, "post-compaction.json"),
+    JSON.stringify({
+      version: 1,
+      createdAt: Date.now(),
+      diffs: args.diffs,
+      loadedSkills: args.loadedSkills,
+    })
+  );
+}
+
+describe("AgentSession post-compaction attachments", () => {
   let historyCleanup: (() => Promise<void>) | undefined;
   afterEach(async () => {
     await historyCleanup?.();
@@ -192,6 +278,135 @@ describe("AgentSession periodic post-compaction attachments", () => {
     try {
       const attachments = await generatePeriodicPostCompactionAttachments(session);
       expect(getEditedFilePaths(attachments)).toEqual(["/tmp/recent.ts", "/tmp/stale.ts"]);
+    } finally {
+      session.dispose();
+    }
+  });
+
+  test("immediately injects persisted loaded skills alongside todo and file attachments", async () => {
+    using sessionDir = new DisposableTempDir("agent-session-pending-loaded-skills");
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+
+    const loadedSkill = createLoadedSkillFixture({
+      name: "react-effects",
+      body: "Avoid unnecessary useEffect calls.",
+    });
+    await writePendingPostCompactionState({
+      sessionDir: sessionDir.path,
+      diffs: [
+        {
+          path: "/tmp/post-compaction.ts",
+          diff: "@@ -1 +1 @@\n-old\n+new\n",
+          truncated: false,
+        },
+      ],
+      loadedSkills: [loadedSkill],
+    });
+    await fs.writeFile(
+      path.join(sessionDir.path, "todos.json"),
+      JSON.stringify([{ content: "Verify loaded skills", status: "in_progress" }])
+    );
+
+    const session = createSessionForHistory(historyService, sessionDir.path);
+
+    try {
+      const attachments = await getImmediatePostCompactionAttachments(session);
+      expect(getAttachmentTypes(attachments)).toEqual([
+        "todo_list",
+        "loaded_skills_snapshot",
+        "edited_files_reference",
+      ]);
+      expect(getTodoAttachment(attachments)?.todos[0]?.content).toBe("Verify loaded skills");
+      expect(getLoadedSkillNames(attachments)).toEqual(["react-effects"]);
+      expect(getLoadedSkillAttachment(attachments)?.skills[0]?.body).toContain(
+        "Avoid unnecessary useEffect calls."
+      );
+      expect(getEditedFilePaths(attachments)).toEqual(["/tmp/post-compaction.ts"]);
+    } finally {
+      session.dispose();
+    }
+  });
+
+  test("reinjects cached loaded skills on later turns even after pending state is acknowledged", async () => {
+    using sessionDir = new DisposableTempDir("agent-session-periodic-loaded-skills");
+
+    const history: MuxMessage[] = [
+      createMuxMessage("boundary-1", "assistant", "epoch 1 summary", {
+        compacted: "user",
+        compactionBoundary: true,
+        compactionEpoch: 1,
+      }),
+      createSuccessfulFileEditMessage(
+        "recent-edit",
+        "/tmp/recent-periodic.ts",
+        "@@ -1 +1 @@\n-before\n+after\n"
+      ),
+    ];
+
+    const workspaceId = "workspace-post-compaction-test";
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+    for (const msg of history) {
+      await historyService.appendToHistory(workspaceId, msg);
+    }
+
+    const session = createSessionForHistory(historyService, sessionDir.path);
+    const loadedSkill = createLoadedSkillFixture({
+      name: "react-effects",
+      body: "Persist this guardrail across follow-up turns.",
+    });
+
+    try {
+      const attachments = await generatePeriodicPostCompactionAttachments(session, [loadedSkill]);
+      expect(getLoadedSkillNames(attachments)).toEqual(["react-effects"]);
+      expect(getLoadedSkillAttachment(attachments)?.skills[0]?.body).toContain(
+        "Persist this guardrail across follow-up turns."
+      );
+      expect(getEditedFilePaths(attachments)).toEqual(["/tmp/recent-periodic.ts"]);
+    } finally {
+      session.dispose();
+    }
+  });
+
+  test("suppresses only loaded skills when the skills exclusion is enabled", async () => {
+    using sessionDir = new DisposableTempDir("agent-session-skills-excluded");
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+
+    await writePendingPostCompactionState({
+      sessionDir: sessionDir.path,
+      diffs: [
+        {
+          path: "/tmp/excluded-skills.ts",
+          diff: "@@ -1 +1 @@\n-old\n+new\n",
+          truncated: false,
+        },
+      ],
+      loadedSkills: [
+        createLoadedSkillFixture({
+          name: "react-effects",
+          body: "This skill should be excluded.",
+        }),
+      ],
+    });
+    await fs.writeFile(
+      path.join(sessionDir.path, "todos.json"),
+      JSON.stringify([{ content: "Keep todo attached", status: "pending" }])
+    );
+    await fs.writeFile(
+      path.join(sessionDir.path, "exclusions.json"),
+      JSON.stringify({ excludedItems: ["skills"] })
+    );
+
+    const session = createSessionForHistory(historyService, sessionDir.path);
+
+    try {
+      const attachments = await getImmediatePostCompactionAttachments(session);
+      expect(getAttachmentTypes(attachments)).toEqual(["todo_list", "edited_files_reference"]);
+      expect(getTodoAttachment(attachments)?.todos[0]?.content).toBe("Keep todo attached");
+      expect(getLoadedSkillNames(attachments)).toEqual([]);
+      expect(getEditedFilePaths(attachments)).toEqual(["/tmp/excluded-skills.ts"]);
     } finally {
       session.dispose();
     }

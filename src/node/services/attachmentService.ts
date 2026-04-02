@@ -1,6 +1,8 @@
 import type {
   PostCompactionAttachment,
   PlanFileReferenceAttachment,
+  LoadedSkillsSnapshotAttachment,
+  LoadedSkillSnapshot,
   EditedFilesReferenceAttachment,
 } from "@/common/types/attachment";
 import { getPlanFilePath, getLegacyPlanFilePath } from "@/common/utils/planStorage";
@@ -107,16 +109,31 @@ export class AttachmentService {
     };
   }
 
+  static generateLoadedSkillsAttachment(
+    loadedSkills: LoadedSkillSnapshot[],
+    excludedItems: Set<string> = new Set<string>()
+  ): LoadedSkillsSnapshotAttachment | null {
+    if (excludedItems.has("skills") || loadedSkills.length === 0) {
+      return null;
+    }
+
+    return {
+      type: "loaded_skills_snapshot",
+      skills: loadedSkills,
+    };
+  }
+
   /**
    * Generate all post-compaction attachments.
    * Returns empty array if no attachments are needed.
-   * @param excludedItems - Set of item IDs to exclude ("plan" or "file:<path>")
+   * @param excludedItems - Set of item IDs to exclude ("plan", "skills", or "file:<path>")
    */
   static async generatePostCompactionAttachments(
     workspaceName: string,
     projectName: string,
     workspaceId: string,
     fileDiffs: FileEditDiff[],
+    loadedSkills: LoadedSkillSnapshot[],
     runtime: Runtime,
     excludedItems: Set<string> = new Set<string>()
   ): Promise<PostCompactionAttachment[]> {
@@ -137,6 +154,11 @@ export class AttachmentService {
       if (planRef) {
         attachments.push(planRef);
       }
+    }
+
+    const loadedSkillsAttachment = this.generateLoadedSkillsAttachment(loadedSkills, excludedItems);
+    if (loadedSkillsAttachment) {
+      attachments.push(loadedSkillsAttachment);
     }
 
     // Filter out excluded files

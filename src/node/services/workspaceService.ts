@@ -2059,7 +2059,7 @@ export class WorkspaceService extends EventEmitter {
 
   /**
    * Set whether an item is excluded from post-compaction context.
-   * Item IDs: "plan" for plan file, "file:<path>" for tracked files.
+   * Item IDs: "plan" for plan file, "skills" for loaded skill snapshots, "file:<path>" for tracked files.
    */
   public async setPostCompactionExclusion(
     workspaceId: string,

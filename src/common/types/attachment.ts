@@ -3,6 +3,8 @@
  * These attachments are injected after compaction to preserve context that would otherwise be lost.
  */
 
+import type { AgentSkillScope } from "@/common/types/agentSkill";
+
 export interface PlanFileReferenceAttachment {
   type: "plan_file_reference";
   planFilePath: string;
@@ -28,9 +30,24 @@ export interface EditedFilesReferenceAttachment {
   files: EditedFileReference[];
 }
 
+export interface LoadedSkillSnapshot {
+  name: string;
+  scope: AgentSkillScope;
+  sha256: string;
+  body: string;
+  frontmatterYaml?: string;
+  truncated?: boolean;
+}
+
+export interface LoadedSkillsSnapshotAttachment {
+  type: "loaded_skills_snapshot";
+  skills: LoadedSkillSnapshot[];
+}
+
 export type PostCompactionAttachment =
   | PlanFileReferenceAttachment
   | TodoListAttachment
+  | LoadedSkillsSnapshotAttachment
   | EditedFilesReferenceAttachment;
 
 /**
@@ -38,6 +55,7 @@ export type PostCompactionAttachment =
  * Items are identified by:
  * - "plan" for the plan file
  * - "todo" for the todo list
+ * - "skills" for loaded skill snapshots
  * - "file:<path>" for tracked files (path is the full file path)
  */
 export interface PostCompactionExclusions {

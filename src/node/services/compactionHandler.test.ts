@@ -65,6 +65,41 @@ const createSuccessfulFileEditMessage = (
   },
 });
 
+const createSuccessfulAgentSkillReadMessage = (
+  id: string,
+  skillName: string,
+  body: string,
+  metadata?: MuxMessage["metadata"]
+): MuxMessage => ({
+  id,
+  role: "assistant",
+  parts: [
+    {
+      type: "dynamic-tool",
+      toolCallId: `tool-${id}`,
+      toolName: "agent_skill_read",
+      state: "output-available",
+      input: { name: skillName },
+      output: {
+        success: true,
+        skill: {
+          scope: "project",
+          directoryName: skillName,
+          frontmatter: {
+            name: skillName,
+            description: `${skillName} description`,
+          },
+          body,
+        },
+      },
+    },
+  ],
+  metadata: {
+    timestamp: 1234,
+    ...(metadata ?? {}),
+  },
+});
+
 const createStreamEndEvent = (
   summary: string,
   metadata?: Record<string, unknown>
@@ -203,7 +238,7 @@ describe("CompactionHandler", () => {
       });
     });
 
-    it("persists pending diffs to disk and reloads them on restart", async () => {
+    it("persists pending post-compaction state to disk and reloads it on restart", async () => {
       const compactionReq = createCompactionRequest();
 
       const fileEditMessage = createSuccessfulFileEditMessage(
@@ -211,8 +246,13 @@ describe("CompactionHandler", () => {
         "/tmp/foo.ts",
         "@@ -1 +1 @@\n-foo\n+bar\n"
       );
+      const skillReadMessage = createSuccessfulAgentSkillReadMessage(
+        "assistant-skill",
+        "react-effects",
+        "Avoid unnecessary useEffect calls."
+      );
 
-      await seedHistory(fileEditMessage, compactionReq);
+      await seedHistory(fileEditMessage, skillReadMessage, compactionReq);
 
       const event = createStreamEndEvent("Summary");
       const handled = await handler.handleCompletion(event);
@@ -220,15 +260,16 @@ describe("CompactionHandler", () => {
 
       const persistedPath = path.join(sessionDir, "post-compaction.json");
       const raw = await fsPromises.readFile(persistedPath, "utf-8");
-      const parsed = JSON.parse(raw) as { version?: unknown; diffs?: unknown };
+      const parsed = JSON.parse(raw) as {
+        version?: unknown;
+        diffs?: Array<{ path: string; diff: string }>;
+        loadedSkills?: Array<{ name: string; body: string }>;
+      };
       expect(parsed.version).toBe(1);
-
-      const diffs = (parsed as { diffs?: Array<{ path: string; diff: string }> }).diffs;
-      expect(Array.isArray(diffs)).toBe(true);
-      if (Array.isArray(diffs)) {
-        expect(diffs[0]?.path).toBe("/tmp/foo.ts");
-        expect(diffs[0]?.diff).toContain("@@ -1 +1 @@");
-      }
+      expect(parsed.diffs?.[0]?.path).toBe("/tmp/foo.ts");
+      expect(parsed.diffs?.[0]?.diff).toContain("@@ -1 +1 @@");
+      expect(parsed.loadedSkills?.[0]?.name).toBe("react-effects");
+      expect(parsed.loadedSkills?.[0]?.body).toContain("Avoid unnecessary useEffect calls.");
 
       // Simulate a restart: create a new handler and load from disk.
       const { emitter: newEmitter } = createMockEmitter();
@@ -240,11 +281,12 @@ describe("CompactionHandler", () => {
         emitter: newEmitter,
       });
 
-      const pending = await reloaded.peekPendingDiffs();
-      expect(pending).not.toBeNull();
-      expect(pending?.[0]?.path).toBe("/tmp/foo.ts");
+      const pendingState = await reloaded.peekPendingState();
+      expect(pendingState).not.toBeNull();
+      expect(pendingState?.diffs[0]?.path).toBe("/tmp/foo.ts");
+      expect(pendingState?.loadedSkills[0]?.name).toBe("react-effects");
 
-      await reloaded.ackPendingDiffsConsumed();
+      await reloaded.ackPendingStateConsumed();
 
       let exists = true;
       try {
@@ -253,6 +295,120 @@ describe("CompactionHandler", () => {
         exists = false;
       }
       expect(exists).toBe(false);
+    });
+
+    it("loads legacy persisted state files that omit loadedSkills", async () => {
+      const persistedPath = path.join(sessionDir, "post-compaction.json");
+      await fsPromises.writeFile(
+        persistedPath,
+        JSON.stringify({
+          version: 1,
+          createdAt: Date.now(),
+          diffs: [
+            {
+              path: "/tmp/legacy.ts",
+              diff: "@@ -1 +1 @@\n-old\n+legacy\n",
+              truncated: false,
+            },
+          ],
+        })
+      );
+
+      const state = await handler.peekPendingState();
+      expect(state?.diffs.map((diff) => diff.path)).toEqual(["/tmp/legacy.ts"]);
+      expect(state?.loadedSkills).toEqual([]);
+    });
+
+    it("filters malformed persisted loaded skill snapshots without crashing", async () => {
+      const persistedPath = path.join(sessionDir, "post-compaction.json");
+      await fsPromises.writeFile(
+        persistedPath,
+        JSON.stringify({
+          version: 1,
+          createdAt: Date.now(),
+          diffs: [],
+          loadedSkills: [
+            {
+              name: "valid-skill",
+              scope: "project",
+              body: "Keep this skill.",
+              frontmatterYaml: "name: valid-skill\ndescription: Keep this skill",
+            },
+            {
+              name: "",
+              scope: "project",
+              body: "Missing name",
+            },
+            {
+              name: "broken-scope",
+              scope: "invalid",
+              body: "Bad scope",
+            },
+          ],
+        })
+      );
+
+      const state = await handler.peekPendingState();
+      expect(state?.loadedSkills).toHaveLength(1);
+      expect(state?.loadedSkills[0]?.name).toBe("valid-skill");
+      expect(state?.loadedSkills[0]?.body).toContain("Keep this skill.");
+    });
+
+    it("carries cached loaded skills into subsequent compactions without another skill read", async () => {
+      const firstCompactionReq = createCompactionRequest("req-first");
+      const skillReadMessage = createSuccessfulAgentSkillReadMessage(
+        "assistant-skill",
+        "react-effects",
+        "Keep this skill across compactions."
+      );
+
+      await seedHistory(skillReadMessage, firstCompactionReq);
+
+      expect(await handler.handleCompletion(createStreamEndEvent("First summary"))).toBe(true);
+      expect((await handler.peekPendingState())?.loadedSkills.map((skill) => skill.name)).toEqual([
+        "react-effects",
+      ]);
+
+      await handler.ackPendingStateConsumed();
+
+      const secondCompactionReq = createCompactionRequest("req-second");
+      const appendResult = await historyService.appendToHistory(workspaceId, secondCompactionReq);
+      if (!appendResult.success) {
+        throw new Error(`Seed failed: ${appendResult.error}`);
+      }
+
+      expect(await handler.handleCompletion(createStreamEndEvent("Second summary"))).toBe(true);
+
+      const pendingState = await handler.peekPendingState();
+      expect(pendingState?.loadedSkills.map((skill) => skill.name)).toEqual(["react-effects"]);
+
+      const persistedPath = path.join(sessionDir, "post-compaction.json");
+      const raw = await fsPromises.readFile(persistedPath, "utf-8");
+      const parsed = JSON.parse(raw) as { loadedSkills?: Array<{ name: string }> };
+      expect(parsed.loadedSkills?.map((skill) => skill.name)).toEqual(["react-effects"]);
+    });
+
+    it("persists loaded skills with empty bodies", async () => {
+      const compactionReq = createCompactionRequest("req-empty-skill");
+      const skillReadMessage = createSuccessfulAgentSkillReadMessage(
+        "assistant-empty-skill",
+        "empty-skill",
+        ""
+      );
+
+      await seedHistory(skillReadMessage, compactionReq);
+
+      expect(await handler.handleCompletion(createStreamEndEvent("Summary"))).toBe(true);
+
+      const pendingState = await handler.peekPendingState();
+      expect(pendingState?.loadedSkills[0]?.name).toBe("empty-skill");
+      expect(pendingState?.loadedSkills[0]?.body).toBe("");
+
+      const persistedPath = path.join(sessionDir, "post-compaction.json");
+      const raw = await fsPromises.readFile(persistedPath, "utf-8");
+      const parsed = JSON.parse(raw) as { loadedSkills?: Array<{ name: string; body: string }> };
+      expect(parsed.loadedSkills?.[0]?.name).toBe("empty-skill");
+      expect(parsed.loadedSkills?.[0]?.body).toBe("");
     });
 
     it("persists only latest-epoch diffs when a durable compaction boundary exists", async () => {

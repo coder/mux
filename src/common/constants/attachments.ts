@@ -8,8 +8,14 @@ export const TURNS_BETWEEN_ATTACHMENTS = 5;
 /** Maximum size of file content before truncation (50KB) */
 export const MAX_FILE_CONTENT_SIZE = 50_000;
 
+/** Maximum size of a rendered agent skill snapshot body before truncation */
+export const MAX_AGENT_SKILL_SNAPSHOT_CHARS = 50_000;
+
 /** Maximum number of edited files to include in attachments */
 export const MAX_EDITED_FILES = 10;
+
+/** Maximum number of loaded skills to preserve in post-compaction context */
+export const MAX_POST_COMPACTION_LOADED_SKILLS = 10;
 
 /**
  * Maximum total size of the post-compaction context injection.

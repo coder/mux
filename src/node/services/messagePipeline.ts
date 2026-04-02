@@ -45,7 +45,7 @@ export interface PrepareMessagesOptions {
   planFilePath?: string;
   /** File-change attachments for notification injection. */
   changedFileAttachments?: EditedFileAttachment[];
-  /** Post-compaction attachments (plan file, edited files). */
+  /** Post-compaction attachments (plan file, loaded skills, edited files). */
   postCompactionAttachments?: PostCompactionAttachment[] | null;
   /** Runtime for file I/O (used by @file mention injection). */
   runtime: Runtime;
@@ -123,7 +123,7 @@ export async function prepareMessagesForProvider(
     changedFileAttachments
   );
 
-  // Inject post-compaction attachments (plan file, edited files) after compaction summary
+  // Inject post-compaction attachments (plan file, loaded skills, edited files) after compaction summary
   const messagesWithPostCompaction = injectPostCompactionAttachments(
     messagesWithFileChanges,
     postCompactionAttachments

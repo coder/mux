@@ -7,6 +7,7 @@ import type { HistoryService } from "./historyService";
 
 import type { StreamEndEvent } from "@/common/types/stream";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
+import type { LoadedSkillSnapshot } from "@/common/types/attachment";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
@@ -20,7 +21,11 @@ import {
 } from "@/common/types/message";
 import { createCompactionSummaryMessageId } from "@/node/services/utils/messageIds";
 import type { TelemetryService } from "@/node/services/telemetryService";
-import { MAX_EDITED_FILES, MAX_FILE_CONTENT_SIZE } from "@/common/constants/attachments";
+import {
+  MAX_EDITED_FILES,
+  MAX_FILE_CONTENT_SIZE,
+  MAX_POST_COMPACTION_LOADED_SKILLS,
+} from "@/common/constants/attachments";
 import { roundToBase2 } from "@/common/telemetry/utils";
 import { log } from "@/node/services/log";
 import { computeRecencyFromMessages } from "@/common/utils/recency";
@@ -30,6 +35,12 @@ import {
 } from "@/common/utils/messages/extractEditedFiles";
 import { sliceMessagesFromLatestCompactionBoundary } from "@/common/utils/messages/compactionBoundary";
 import { getErrorMessage } from "@/common/utils/errors";
+import {
+  createLoadedSkillSnapshot,
+  mergeLoadedSkillSnapshots,
+  type PersistedLoadedSkillSnapshotInput,
+  extractLoadedSkillSnapshotsFromMessages,
+} from "@/node/services/agentSkills/loadedSkillSnapshots";
 
 /**
  * Check if a string is just a raw JSON object, which suggests the model
@@ -61,6 +72,12 @@ interface PersistedPostCompactionStateV1 {
   version: 1;
   createdAt: number;
   diffs: FileEditDiff[];
+  loadedSkills: LoadedSkillSnapshot[];
+}
+
+interface PendingPostCompactionState {
+  diffs: FileEditDiff[];
+  loadedSkills: LoadedSkillSnapshot[];
 }
 
 function coerceFileEditDiffs(value: unknown): FileEditDiff[] {
@@ -102,6 +119,63 @@ function coerceFileEditDiffs(value: unknown): FileEditDiff[] {
   return diffs;
 }
 
+function coerceLoadedSkillSnapshots(value: unknown): LoadedSkillSnapshot[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const loadedSkills: LoadedSkillSnapshot[] = [];
+  for (const [index, item] of value.entries()) {
+    if (!item || typeof item !== "object") {
+      log.debug("Skipping malformed persisted loaded skill snapshot", {
+        index,
+        reason: "not-object",
+      });
+      continue;
+    }
+
+    const candidate = item as PersistedLoadedSkillSnapshotInput;
+    const name = typeof candidate.name === "string" ? candidate.name.trim() : "";
+    const body = typeof candidate.body === "string" ? candidate.body : null;
+    const frontmatterYaml =
+      typeof candidate.frontmatterYaml === "string" ? candidate.frontmatterYaml : undefined;
+    const truncated = candidate.truncated === true;
+
+    if (name.length === 0 || body === null) {
+      log.debug("Skipping malformed persisted loaded skill snapshot", {
+        index,
+        reason: name.length === 0 ? "invalid-name" : "invalid-body",
+      });
+      continue;
+    }
+
+    try {
+      loadedSkills.push(
+        createLoadedSkillSnapshot({
+          name,
+          scope: candidate.scope,
+          body,
+          frontmatterYaml,
+          alreadyNormalized: true,
+          truncated,
+        })
+      );
+    } catch (error) {
+      log.debug("Skipping malformed persisted loaded skill snapshot", {
+        index,
+        reason: getErrorMessage(error),
+      });
+      continue;
+    }
+
+    if (loadedSkills.length >= MAX_POST_COMPACTION_LOADED_SKILLS) {
+      break;
+    }
+  }
+
+  return mergeLoadedSkillSnapshots(loadedSkills);
+}
+
 function coercePersistedPostCompactionState(value: unknown): PersistedPostCompactionStateV1 | null {
   if (!value || typeof value !== "object") {
     return null;
@@ -119,11 +193,14 @@ function coercePersistedPostCompactionState(value: unknown): PersistedPostCompac
 
   const diffsRaw = (value as { diffs?: unknown }).diffs;
   const diffs = coerceFileEditDiffs(diffsRaw);
+  const loadedSkillsRaw = (value as { loadedSkills?: unknown }).loadedSkills;
+  const loadedSkills = coerceLoadedSkillSnapshots(loadedSkillsRaw);
 
   return {
     version: 1,
     createdAt,
     diffs,
+    loadedSkills,
   };
 }
 
@@ -244,6 +321,8 @@ export class CompactionHandler {
   private postCompactionAttachmentsPending = false;
   /** Cached file diffs extracted from history before appending compaction summary */
   private cachedFileDiffs: FileEditDiff[] = [];
+  /** Cached loaded skill snapshots extracted from history before appending compaction summary */
+  private cachedLoadedSkills: LoadedSkillSnapshot[] = [];
 
   constructor(options: CompactionHandlerOptions) {
     assert(options, "CompactionHandler requires options");
@@ -295,14 +374,15 @@ export class CompactionHandler {
     // and pre-compaction diffs may have been deleted from history.
 
     this.cachedFileDiffs = state.diffs;
+    this.cachedLoadedSkills = state.loadedSkills;
     this.postCompactionAttachmentsPending = true;
   }
 
   /**
-   * Peek pending post-compaction diffs without consuming them.
-   * Returns null if no compaction occurred, otherwise returns the cached diffs.
+   * Peek pending post-compaction state without consuming it.
+   * Returns null if no compaction occurred, otherwise returns cached diffs and skills.
    */
-  async peekPendingDiffs(): Promise<FileEditDiff[] | null> {
+  async peekPendingState(): Promise<PendingPostCompactionState | null> {
     if (!this.postCompactionAttachmentsPending) {
       await this.loadPersistedPendingStateIfNeeded();
     }
@@ -311,14 +391,30 @@ export class CompactionHandler {
       return null;
     }
 
-    return this.cachedFileDiffs;
+    return {
+      diffs: this.cachedFileDiffs,
+      loadedSkills: this.cachedLoadedSkills,
+    };
+  }
+
+  /**
+   * Peek pending post-compaction diffs without consuming them.
+   * Returns null if no compaction occurred, otherwise returns the cached diffs.
+   */
+  async peekPendingDiffs(): Promise<FileEditDiff[] | null> {
+    const state = await this.peekPendingState();
+    return state?.diffs ?? null;
   }
 
   /**
    * Acknowledge that pending post-compaction state has been consumed successfully.
-   * Clears in-memory state and deletes the persisted snapshot from disk.
+   * Clears the pending diff snapshot and deletes the persisted state from disk.
+   *
+   * We intentionally retain loaded skill snapshots in memory after acknowledgement so
+   * later compactions in the same session can keep carrying those guardrails forward
+   * even when no new agent_skill_read call occurs between compactions.
    */
-  async ackPendingDiffsConsumed(): Promise<void> {
+  async ackPendingStateConsumed(): Promise<void> {
     // If we never loaded persisted state but it exists, clear it anyway.
     if (!this.postCompactionAttachmentsPending && !this.persistedPendingStateLoaded) {
       await this.loadPersistedPendingStateIfNeeded();
@@ -329,13 +425,18 @@ export class CompactionHandler {
     await this.deletePersistedPendingStateBestEffort();
   }
 
+  async ackPendingDiffsConsumed(): Promise<void> {
+    await this.ackPendingStateConsumed();
+  }
+
   /**
    * Drop pending post-compaction state (e.g., because it caused context_exceeded).
    */
-  async discardPendingDiffs(reason: string): Promise<void> {
+  async discardPendingState(reason: string): Promise<void> {
     await this.loadPersistedPendingStateIfNeeded();
 
-    if (!this.postCompactionAttachmentsPending) {
+    const hadPendingState = this.postCompactionAttachmentsPending;
+    if (!hadPendingState && this.cachedLoadedSkills.length === 0) {
       return;
     }
 
@@ -343,9 +444,17 @@ export class CompactionHandler {
       workspaceId: this.workspaceId,
       reason,
       trackedFiles: this.cachedFileDiffs.length,
+      loadedSkills: this.cachedLoadedSkills.length,
     });
 
-    await this.ackPendingDiffsConsumed();
+    if (hadPendingState) {
+      await this.ackPendingStateConsumed();
+    }
+    this.cachedLoadedSkills = [];
+  }
+
+  async discardPendingDiffs(reason: string): Promise<void> {
+    await this.discardPendingState(reason);
   }
 
   private async deletePersistedPendingStateBestEffort(): Promise<void> {
@@ -356,14 +465,22 @@ export class CompactionHandler {
     }
   }
 
-  private async persistPendingStateBestEffort(diffs: FileEditDiff[]): Promise<void> {
+  private async persistPendingStateBestEffort(
+    diffs: FileEditDiff[],
+    loadedSkills: LoadedSkillSnapshot[]
+  ): Promise<void> {
     try {
       await fsPromises.mkdir(this.sessionDir, { recursive: true });
+
+      for (const snapshot of loadedSkills) {
+        assert(snapshot.name.trim().length > 0, "loaded skill snapshot name must not be empty");
+      }
 
       const persisted: PersistedPostCompactionStateV1 = {
         version: 1,
         createdAt: Date.now(),
         diffs,
+        loadedSkills,
       };
 
       await fsPromises.writeFile(this.postCompactionStatePath, JSON.stringify(persisted));
@@ -687,10 +804,14 @@ export class CompactionHandler {
     // full history instead of crashing or dropping all diffs.
     const latestCompactionEpochMessages = sliceMessagesFromLatestCompactionBoundary(messages);
     this.cachedFileDiffs = extractEditedFileDiffs(latestCompactionEpochMessages);
+    this.cachedLoadedSkills = mergeLoadedSkillSnapshots([
+      ...this.cachedLoadedSkills,
+      ...extractLoadedSkillSnapshotsFromMessages(latestCompactionEpochMessages),
+    ]);
 
     // Persist pending state before append so pre-compaction diffs survive crashes/restarts.
     // Best-effort: compaction must not fail just because persistence fails.
-    await this.persistPendingStateBestEffort(this.cachedFileDiffs);
+    await this.persistPendingStateBestEffort(this.cachedFileDiffs, this.cachedLoadedSkills);
 
     const nextCompactionEpoch = getNextCompactionEpoch(messages);
     assert(Number.isInteger(nextCompactionEpoch), "next compaction epoch must be an integer");
@@ -810,6 +931,7 @@ export class CompactionHandler {
       : await this.historyService.appendToHistory(this.workspaceId, summaryMessage);
     if (!persistenceResult.success) {
       this.cachedFileDiffs = [];
+      this.cachedLoadedSkills = [];
       await this.deletePersistedPendingStateBestEffort();
       const operation = persistedStreamSummary ? "update streamed summary" : "append summary";
       return Err(`Failed to ${operation}: ${persistenceResult.error}`);

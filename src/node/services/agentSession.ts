@@ -1,10 +1,8 @@
 import assert from "@/common/utils/assert";
 import { EventEmitter } from "events";
 import * as path from "path";
-import { createHash } from "crypto";
 import { mkdir, readFile, unlink, writeFile } from "fs/promises";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
-import YAML from "yaml";
 import { PlatformPaths } from "@/common/utils/paths";
 import { log } from "@/node/services/log";
 import type { Config } from "@/node/config";
@@ -89,7 +87,11 @@ import type { BackgroundProcessManager } from "./backgroundProcessManager";
 
 import { AttachmentService } from "./attachmentService";
 import type { TodoItem } from "@/common/types/tools";
-import type { PostCompactionAttachment, PostCompactionExclusions } from "@/common/types/attachment";
+import type {
+  LoadedSkillSnapshot,
+  PostCompactionAttachment,
+  PostCompactionExclusions,
+} from "@/common/types/attachment";
 import { TURNS_BETWEEN_ATTACHMENTS } from "@/common/constants/attachments";
 
 import {
@@ -115,6 +117,13 @@ import {
 } from "@/common/utils/messages/retryEligibility";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { readAgentSkill } from "@/node/services/agentSkills/agentSkillsService";
+import {
+  createLoadedSkillSnapshot,
+  extractLoadedSkillSnapshotsFromMessages,
+  mergeLoadedSkillSnapshots,
+  stringifyAgentSkillFrontmatter,
+} from "@/node/services/agentSkills/loadedSkillSnapshots";
+import { renderAgentSkillSnapshotText } from "@/common/utils/agentSkills/skillSnapshot";
 import { materializeFileAtMentions } from "@/node/services/fileAtMentions";
 import { getErrorMessage } from "@/common/utils/errors";
 import { CompactionMonitor, type CompactionStatusEvent } from "./compactionMonitor";
@@ -240,7 +249,6 @@ function isCompactionRequestMetadata(meta: unknown): meta is CompactionRequestMe
   return true;
 }
 
-const MAX_AGENT_SKILL_SNAPSHOT_CHARS = 50_000;
 const AUTO_RETRY_PREFERENCE_FILE = "auto-retry-preference.json";
 const STARTUP_AUTO_RETRY_HISTORY_FAILURE_BASE_DELAY_MS = 1_000;
 const STARTUP_AUTO_RETRY_HISTORY_FAILURE_MAX_DELAY_MS = 30_000;
@@ -341,6 +349,12 @@ export class AgentSession {
    * Used to enable the cooldown-based attachment injection.
    */
   private compactionOccurred = false;
+
+  /**
+   * Skill guardrails loaded before compaction are preserved here so later turns can
+   * continue reattaching them even after the pending on-disk state is acknowledged.
+   */
+  private postCompactionLoadedSkills: LoadedSkillSnapshot[] = [];
 
   /**
    * When true, clear any persisted post-compaction state after the next successful non-compaction stream.
@@ -3355,9 +3369,10 @@ export class AgentSession {
       model: context.modelString,
     });
 
-    // The post-compaction diffs are likely the culprit; discard them so we don't loop.
+    // The post-compaction context is likely the culprit; discard it so we don't loop.
+    this.postCompactionLoadedSkills = [];
     try {
-      await this.compactionHandler.discardPendingDiffs("context_exceeded");
+      await this.compactionHandler.discardPendingState("context_exceeded");
       this.onPostCompactionStateChange?.();
     } catch (error) {
       log.warn("Failed to discard pending post-compaction state", {
@@ -3557,8 +3572,9 @@ export class AgentSession {
     }
 
     // Best-effort: discard pending post-compaction state so we don't immediately re-inject it.
+    this.postCompactionLoadedSkills = [];
     try {
-      await this.compactionHandler.discardPendingDiffs("execSubagentHardRestart");
+      await this.compactionHandler.discardPendingState("execSubagentHardRestart");
       this.onPostCompactionStateChange?.();
     } catch (error) {
       log.warn("Failed to discard pending post-compaction state before hard restart", {
@@ -4845,16 +4861,20 @@ export class AgentSession {
    * @returns Attachments to inject, or null if none needed
    */
   private async getPostCompactionAttachmentsIfNeeded(): Promise<PostCompactionAttachment[] | null> {
-    // Check if compaction just occurred (immediate injection with cached diffs)
-    const pendingDiffs = await this.compactionHandler.peekPendingDiffs();
-    if (pendingDiffs !== null) {
+    // Check if compaction just occurred (immediate injection with cached post-compaction state)
+    const pendingState = await this.compactionHandler.peekPendingState();
+    if (pendingState !== null) {
       this.ackPendingPostCompactionStateOnStreamEnd = true;
       this.compactionOccurred = true;
       this.turnsSinceLastAttachment = 0;
+      this.postCompactionLoadedSkills = pendingState.loadedSkills;
       // Clear file state cache since history context is gone
       this.fileChangeTracker.clear();
 
-      return this.buildAttachmentsFromDiffs(pendingDiffs);
+      return this.buildAttachmentsFromContext({
+        diffs: pendingState.diffs,
+        loadedSkills: pendingState.loadedSkills,
+      });
     }
 
     // Increment turn counter
@@ -4870,7 +4890,7 @@ export class AgentSession {
   }
 
   /**
-   * Generate post-compaction attachments by extracting diffs from message history.
+   * Generate post-compaction attachments by extracting diffs and loaded skills from message history.
    */
   private async generatePostCompactionAttachments(): Promise<PostCompactionAttachment[]> {
     // getHistoryFromLatestBoundary already returns only the active compaction epoch,
@@ -4881,17 +4901,23 @@ export class AgentSession {
     }
 
     const fileDiffs = extractEditedFileDiffs(historyResult.data);
-    return this.buildAttachmentsFromDiffs(fileDiffs);
+    const loadedSkills = mergeLoadedSkillSnapshots([
+      ...this.postCompactionLoadedSkills,
+      ...extractLoadedSkillSnapshotsFromMessages(historyResult.data),
+    ]);
+
+    return this.buildAttachmentsFromContext({ diffs: fileDiffs, loadedSkills });
   }
 
   /**
-   * Shared logic for assembling post-compaction attachments from file diffs.
+   * Shared logic for assembling post-compaction attachments from cached context.
    * Loads exclusions, TODO state, workspace metadata, and plan references,
    * then combines them into the final attachment list.
    */
-  private async buildAttachmentsFromDiffs(
-    diffs: FileEditDiff[]
-  ): Promise<PostCompactionAttachment[]> {
+  private async buildAttachmentsFromContext(context: {
+    diffs: FileEditDiff[];
+    loadedSkills: LoadedSkillSnapshot[];
+  }): Promise<PostCompactionAttachment[]> {
     const excludedItems = await this.loadExcludedItems();
     const todoAttachment = await this.loadTodoListAttachment(excludedItems);
 
@@ -4904,7 +4930,15 @@ export class AgentSession {
         attachments.push(todoAttachment);
       }
 
-      const editedFilesRef = AttachmentService.generateEditedFilesAttachment(diffs);
+      const loadedSkillsAttachment = AttachmentService.generateLoadedSkillsAttachment(
+        context.loadedSkills,
+        excludedItems
+      );
+      if (loadedSkillsAttachment) {
+        attachments.push(loadedSkillsAttachment);
+      }
+
+      const editedFilesRef = AttachmentService.generateEditedFilesAttachment(context.diffs);
       if (editedFilesRef) {
         attachments.push(editedFilesRef);
       }
@@ -4917,7 +4951,8 @@ export class AgentSession {
       metadataResult.data.name,
       metadataResult.data.projectName,
       this.workspaceId,
-      diffs,
+      context.diffs,
+      context.loadedSkills,
       runtime,
       excludedItems
     );
@@ -5043,20 +5078,17 @@ export class AgentSession {
     const resolved = await readAgentSkill(runtime, skillDiscoveryPath, parsedName.data);
     const skill = resolved.package;
 
-    const frontmatterYaml = YAML.stringify(skill.frontmatter).trimEnd();
-
-    const body =
-      skill.body.length > MAX_AGENT_SKILL_SNAPSHOT_CHARS
-        ? `${skill.body.slice(0, MAX_AGENT_SKILL_SNAPSHOT_CHARS)}\n\n[Skill body truncated to ${MAX_AGENT_SKILL_SNAPSHOT_CHARS} characters]`
-        : skill.body;
-
-    const snapshotText = `<agent-skill name="${skill.frontmatter.name}" scope="${skill.scope}">\n${body}\n</agent-skill>`;
-
     // Include the parsed YAML frontmatter in the hash so frontmatter-only edits (e.g. description)
     // generate a new snapshot and keep the UI hover preview in sync.
-    const sha256 = createHash("sha256")
-      .update(JSON.stringify({ snapshotText, frontmatterYaml }))
-      .digest("hex");
+    const frontmatterYaml = stringifyAgentSkillFrontmatter(skill.frontmatter);
+    const snapshot = createLoadedSkillSnapshot({
+      name: skill.frontmatter.name,
+      scope: skill.scope,
+      body: skill.body,
+      frontmatterYaml,
+    });
+    const snapshotText = renderAgentSkillSnapshotText(snapshot);
+    const sha256 = snapshot.sha256;
 
     // Dedupe: if we recently persisted the same snapshot, avoid inserting again.
     // Only need last 5 messages — avoid full-file read.
