@@ -1938,7 +1938,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             data-project-path={projectPath}
                             className="text-secondary hover:bg-hover hover:border-border-light mr-1.5 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent p-0 transition-all duration-200"
                           >
-                            <span className="relative flex h-4 w-4 items-center justify-center">
+                            {/* Mobile: nudge folder icon left so it visually centers above connector line. */}
+                            <span className="relative flex h-4 w-4 -translate-x-2 items-center justify-center md:translate-x-0">
                               <ChevronRight
                                 className="absolute inset-0 h-4 w-4 opacity-0 transition-[opacity,transform] duration-200 group-hover:opacity-100"
                                 style={{ transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)" }}
