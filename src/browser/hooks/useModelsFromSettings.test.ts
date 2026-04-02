@@ -468,6 +468,30 @@ describe("useModelsFromSettings provider availability gating", () => {
     expect(result.current.hiddenModelsForSelector).toContain(KNOWN_MODELS.GPT.id);
   });
 
+  test("keeps Copilot catalogs authoritative without surfacing selector entries", () => {
+    providersConfig = {
+      openai: { apiKeySet: false, isEnabled: true, isConfigured: false },
+      "github-copilot": {
+        apiKeySet: true,
+        isEnabled: true,
+        isConfigured: true,
+        models: [KNOWN_MODELS.GPT_54_MINI.providerModelId],
+      },
+    };
+    routePriority = ["github-copilot", "direct"];
+
+    const { result } = renderHook(() => useModelsFromSettings());
+
+    expect(result.current.customModels.some((model) => model.startsWith("github-copilot:"))).toBe(
+      false
+    );
+    expect(
+      result.current.hiddenModelsForSelector.some((model) => model.startsWith("github-copilot:"))
+    ).toBe(false);
+    expect(result.current.models).not.toContain(KNOWN_MODELS.GPT.id);
+    expect(result.current.hiddenModelsForSelector).toContain(KNOWN_MODELS.GPT.id);
+  });
+
   test("keeps models visible when a configured gateway exposes them", () => {
     providersConfig = {
       openai: { apiKeySet: false, isEnabled: true, isConfigured: false },
