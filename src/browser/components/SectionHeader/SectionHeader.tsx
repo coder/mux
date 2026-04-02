@@ -200,6 +200,7 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
             <button
               onClick={(e: React.MouseEvent) => {
                 if (sectionMenu.isOpen) {
+                  setShowColorPicker(false);
                   sectionMenu.close();
                   return;
                 }
