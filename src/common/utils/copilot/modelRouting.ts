@@ -8,17 +8,15 @@ interface CopilotApiModeRule {
   mode: CopilotApiMode;
 }
 
-// Add new rules here when GitHub Copilot requires legacy chat completions routing
-// for a specific model family. Anything without an explicit exception uses Responses.
+// GitHub Copilot only supports the Responses API for Codex-family models.
+// Everything else must use chat completions.
 const COPILOT_API_MODE_RULES: readonly CopilotApiModeRule[] = [
-  { pattern: /^claude-/, mode: "chatCompletions" },
-  { pattern: /^gemini-3(?:[.-]|$)/, mode: "chatCompletions" },
-  { pattern: /^grok-code(?:-|$)/, mode: "chatCompletions" },
+  { pattern: /-codex/, mode: "responses" },
 ];
 
 export function selectCopilotApiMode(modelId: string): CopilotApiMode {
   const matchingRule = COPILOT_API_MODE_RULES.find((rule) => rule.pattern.test(modelId));
-  return matchingRule?.mode ?? "responses";
+  return matchingRule?.mode ?? "chatCompletions";
 }
 
 export function isCopilotModelAccessible(modelId: string, availableModels: string[]): boolean {

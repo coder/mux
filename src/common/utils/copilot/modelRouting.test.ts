@@ -12,27 +12,28 @@ describe("COPILOT_MODEL_PREFIXES", () => {
 });
 
 describe("selectCopilotApiMode", () => {
-  it("defaults GPT-5 family models to the Responses API", () => {
-    expect(selectCopilotApiMode("gpt-5.4")).toBe("responses");
-    expect(selectCopilotApiMode("gpt-5.4-pro")).toBe("responses");
+  it("routes only Codex-family models to the Responses API", () => {
+    expect(selectCopilotApiMode("gpt-5.3-codex")).toBe("responses");
     expect(selectCopilotApiMode("gpt-5.1-codex-mini")).toBe("responses");
   });
 
-  it("routes non-OpenAI Copilot families through chat completions", () => {
+  it("defaults GPT-5 and other Copilot families to chat completions", () => {
+    expect(selectCopilotApiMode("gpt-5.4")).toBe("chatCompletions");
+    expect(selectCopilotApiMode("gpt-5.4-pro")).toBe("chatCompletions");
     expect(selectCopilotApiMode("claude-sonnet-4-6")).toBe("chatCompletions");
     expect(selectCopilotApiMode("gemini-3.1-pro-preview")).toBe("chatCompletions");
     expect(selectCopilotApiMode("grok-code-fast-1")).toBe("chatCompletions");
   });
 
-  it("falls back to Responses for unknown or empty model ids", () => {
-    expect(selectCopilotApiMode("")).toBe("responses");
-    expect(selectCopilotApiMode("custom-preview-model")).toBe("responses");
+  it("falls back to chat completions for unknown or empty model ids", () => {
+    expect(selectCopilotApiMode("")).toBe("chatCompletions");
+    expect(selectCopilotApiMode("custom-preview-model")).toBe("chatCompletions");
   });
 
-  it("only applies exception rules when the model id actually matches the family", () => {
-    expect(selectCopilotApiMode("claude")).toBe("responses");
-    expect(selectCopilotApiMode("gemini-30-experimental")).toBe("responses");
-    expect(selectCopilotApiMode("grok-codec-preview")).toBe("responses");
+  it("only applies the Responses rule when the model id actually contains -codex", () => {
+    expect(selectCopilotApiMode("claude")).toBe("chatCompletions");
+    expect(selectCopilotApiMode("gemini-30-experimental")).toBe("chatCompletions");
+    expect(selectCopilotApiMode("grok-codec-preview")).toBe("chatCompletions");
   });
 });
 
