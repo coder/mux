@@ -1556,26 +1556,25 @@ export class ProviderModelFactory {
           // Standard AI SDK path: init.body is a JSON string.
           // Request object path: clone + read body text so the original stream
           // remains intact for the real network request.
-          let bodyText: string | undefined;
+          let originalBodyText: string | undefined;
           if (typeof init?.body === "string") {
-            bodyText = init.body;
+            originalBodyText = init.body;
             if (method === "POST" && isResponsesRequest) {
               try {
-                const normalizedBody = normalizeCodexResponsesBody(bodyText);
+                const normalizedBody = normalizeCodexResponsesBody(originalBodyText);
                 headers.delete("content-length");
                 nextInit = {
                   ...nextInit,
                   headers,
                   body: normalizedBody,
                 };
-                bodyText = normalizedBody;
               } catch {
                 // If body isn't JSON, keep the original request body for Copilot.
               }
             }
           } else if (input instanceof Request) {
             try {
-              bodyText = await input.clone().text();
+              originalBodyText = await input.clone().text();
             } catch {
               // Fall back to undefined so classifyCopilotInitiator defaults to "user".
             }
@@ -1586,7 +1585,7 @@ export class ProviderModelFactory {
           // If the caller explicitly marked this as agent-initiated (e.g., sub-agent,
           // compaction, internal utility), skip the heuristic and always use "agent".
           const initiator =
-            opts?.agentInitiated === true ? "agent" : classifyCopilotInitiator(bodyText);
+            opts?.agentInitiated === true ? "agent" : classifyCopilotInitiator(originalBodyText);
           headers.set("X-Initiator", initiator);
           headers.delete("x-api-key");
           return baseFetch(input, nextInit);
