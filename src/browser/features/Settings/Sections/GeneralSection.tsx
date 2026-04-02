@@ -10,7 +10,9 @@ import {
 import { Input } from "@/browser/components/Input/Input";
 import { Switch } from "@/browser/components/Switch/Switch";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import { useExperimentValue } from "@/browser/hooks/useExperiments";
 import { useAPI } from "@/browser/contexts/API";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import {
   EDITOR_CONFIG_KEY,
@@ -39,6 +41,7 @@ import {
   isWorktreeArchiveBehavior,
   type WorktreeArchiveBehavior,
 } from "@/common/config/worktreeArchiveBehavior";
+import { HEARTBEAT_DEFAULT_MESSAGE_BODY } from "@/constants/heartbeat";
 
 // Guard against corrupted/old persisted settings (e.g. from a downgraded build).
 const ALLOWED_EDITOR_TYPES: ReadonlySet<EditorType> = new Set([
@@ -160,6 +163,7 @@ const isBrowserMode = typeof window !== "undefined" && !window.api;
 export function GeneralSection() {
   const { themePreference, setTheme } = useTheme();
   const { api } = useAPI();
+  const workspaceHeartbeatsEnabled = useExperimentValue(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS);
   const [launchBehavior, setLaunchBehavior] = usePersistedState<LaunchBehavior>(
     LAUNCH_BEHAVIOR_KEY,
     "dashboard"
@@ -203,6 +207,9 @@ export function GeneralSection() {
   );
   const [archiveSettingsLoaded, setArchiveSettingsLoaded] = useState(false);
   const [llmDebugLogs, setLlmDebugLogs] = useState(false);
+  const [heartbeatDefaultPrompt, setHeartbeatDefaultPrompt] = useState("");
+  const [heartbeatDefaultPromptLoaded, setHeartbeatDefaultPromptLoaded] = useState(false);
+  const [heartbeatDefaultPromptLoadedOk, setHeartbeatDefaultPromptLoadedOk] = useState(false);
   const archiveBehaviorLoadNonceRef = useRef(0);
   const archiveBehaviorRef = useRef<CoderWorkspaceArchiveBehavior>(DEFAULT_CODER_ARCHIVE_BEHAVIOR);
   const worktreeArchiveBehaviorRef = useRef<WorktreeArchiveBehavior>(
@@ -210,11 +217,13 @@ export function GeneralSection() {
   );
 
   const llmDebugLogsLoadNonceRef = useRef(0);
+  const heartbeatDefaultPromptLoadNonceRef = useRef(0);
 
   // updateCoderPrefs writes config.json on the backend. Serialize (and coalesce) updates so rapid
   // selections can't race and persist a stale value via out-of-order writes.
   const archiveBehaviorUpdateChainRef = useRef<Promise<void>>(Promise.resolve());
   const llmDebugLogsUpdateChainRef = useRef<Promise<void>>(Promise.resolve());
+  const heartbeatDefaultPromptUpdateChainRef = useRef<Promise<void>>(Promise.resolve());
   const archiveBehaviorPendingUpdateRef = useRef<CoderWorkspaceArchiveBehavior | undefined>(
     undefined
   );
@@ -228,8 +237,11 @@ export function GeneralSection() {
     }
 
     setArchiveSettingsLoaded(false);
+    setHeartbeatDefaultPromptLoaded(false);
+    setHeartbeatDefaultPromptLoadedOk(false);
     const archiveBehaviorNonce = ++archiveBehaviorLoadNonceRef.current;
     const llmDebugLogsNonce = ++llmDebugLogsLoadNonceRef.current;
+    const heartbeatDefaultPromptNonce = ++heartbeatDefaultPromptLoadNonceRef.current;
 
     void api.config
       .getConfig()
@@ -256,12 +268,24 @@ export function GeneralSection() {
         if (llmDebugLogsNonce === llmDebugLogsLoadNonceRef.current) {
           setLlmDebugLogs(cfg.llmDebugLogs === true);
         }
+
+        if (heartbeatDefaultPromptNonce === heartbeatDefaultPromptLoadNonceRef.current) {
+          setHeartbeatDefaultPrompt(cfg.heartbeatDefaultPrompt ?? "");
+          setHeartbeatDefaultPromptLoaded(true);
+          setHeartbeatDefaultPromptLoadedOk(true);
+        }
       })
       .catch(() => {
         if (archiveBehaviorNonce === archiveBehaviorLoadNonceRef.current) {
           // Fall back to the safe defaults already in state so the controls can recover after a
           // config read failure and the next user change can persist a fresh value.
           setArchiveSettingsLoaded(true);
+        }
+
+        if (heartbeatDefaultPromptNonce === heartbeatDefaultPromptLoadNonceRef.current) {
+          // Keep the field editable after load failures, but avoid clearing an existing saved
+          // prompt unless the user has actively typed a replacement in this session.
+          setHeartbeatDefaultPromptLoaded(true);
         }
       });
   }, [api]);
@@ -366,6 +390,35 @@ export function GeneralSection() {
         // Best-effort persistence.
       });
   };
+
+  const handleHeartbeatDefaultPromptBlur = useCallback(() => {
+    if (!heartbeatDefaultPromptLoaded || !api?.config?.updateHeartbeatDefaultPrompt) {
+      return;
+    }
+
+    const trimmedDefaultPrompt = heartbeatDefaultPrompt.trim();
+    if (!heartbeatDefaultPromptLoadedOk && !trimmedDefaultPrompt) {
+      return;
+    }
+
+    setHeartbeatDefaultPrompt(trimmedDefaultPrompt);
+
+    heartbeatDefaultPromptUpdateChainRef.current = heartbeatDefaultPromptUpdateChainRef.current
+      .catch(() => {
+        // Best-effort only.
+      })
+      .then(() =>
+        api.config.updateHeartbeatDefaultPrompt({
+          defaultPrompt: trimmedDefaultPrompt || null,
+        })
+      )
+      .then(() => {
+        setHeartbeatDefaultPromptLoadedOk(true);
+      })
+      .catch(() => {
+        // Best-effort persistence.
+      });
+  }, [api, heartbeatDefaultPrompt, heartbeatDefaultPromptLoaded, heartbeatDefaultPromptLoadedOk]);
 
   // Load SSH host from server on mount (browser mode only)
   useEffect(() => {
@@ -559,6 +612,30 @@ export function GeneralSection() {
               aria-label="Toggle API Debug Logs"
             />
           </div>
+          {workspaceHeartbeatsEnabled ? (
+            <div className="py-3">
+              <label htmlFor="heartbeat-default-prompt" className="block">
+                <div className="text-foreground text-sm">Default heartbeat prompt</div>
+                <div className="text-muted mt-0.5 text-xs">
+                  Used for workspace heartbeats when a workspace does not set its own message.
+                </div>
+              </label>
+              <textarea
+                id="heartbeat-default-prompt"
+                rows={4}
+                value={heartbeatDefaultPrompt}
+                onChange={(event: React.ChangeEvent<HTMLTextAreaElement>) => {
+                  heartbeatDefaultPromptLoadNonceRef.current++;
+                  setHeartbeatDefaultPromptLoaded(true);
+                  setHeartbeatDefaultPrompt(event.target.value);
+                }}
+                onBlur={handleHeartbeatDefaultPromptBlur}
+                className="border-border-medium bg-background-secondary text-foreground focus:border-accent focus:ring-accent mt-3 min-h-[120px] w-full resize-y rounded-md border p-3 text-sm leading-relaxed focus:ring-1 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                placeholder={HEARTBEAT_DEFAULT_MESSAGE_BODY}
+                aria-label="Default heartbeat prompt"
+              />
+            </div>
+          ) : null}
         </div>
       </div>
 

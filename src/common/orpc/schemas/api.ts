@@ -1762,6 +1762,7 @@ export const config = {
       muxGovernorUrl: z.string().nullable(),
       muxGovernorEnrolled: z.boolean(),
       llmDebugLogs: z.boolean(),
+      heartbeatDefaultPrompt: z.string().optional(),
       onePasswordAccountName: z.string().nullish(),
     }),
   },
@@ -1837,6 +1838,14 @@ export const config = {
     input: z
       .object({
         enabled: z.boolean(),
+      })
+      .strict(),
+    output: z.void(),
+  },
+  updateHeartbeatDefaultPrompt: {
+    input: z
+      .object({
+        defaultPrompt: z.string().nullish(),
       })
       .strict(),
     output: z.void(),

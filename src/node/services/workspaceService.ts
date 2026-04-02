@@ -7385,7 +7385,9 @@ export class WorkspaceService extends EventEmitter {
         // Heartbeats should not mutate persisted workspace AI defaults.
         skipAiSettingsPersistence: true,
       },
-      heartbeatMessage: sanitizeHeartbeatMessage(workspaceEntry?.heartbeat?.message),
+      heartbeatMessage:
+        sanitizeHeartbeatMessage(workspaceEntry?.heartbeat?.message) ??
+        sanitizeHeartbeatMessage(config.heartbeatDefaultPrompt),
       contextMode: sanitizeHeartbeatContextMode(workspaceEntry?.heartbeat?.contextMode),
     };
   }

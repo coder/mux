@@ -49,6 +49,7 @@ export const AppConfigOnDiskSchema = z
     taskSettings: TaskSettingsSchema.optional(),
     muxGatewayEnabled: z.boolean().optional(),
     llmDebugLogs: z.boolean().optional(),
+    heartbeatDefaultPrompt: z.string().optional(),
     muxGatewayModels: z.array(z.string()).optional(),
     routePriority: z.array(z.string()).optional(),
     routeOverrides: z.record(z.string(), z.string()).optional(),

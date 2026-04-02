@@ -132,6 +132,8 @@ export interface MockORPCClientOptions {
   defaultRuntime?: RuntimeEnablementId | null;
   /** Initial 1Password account name for config.getConfig */
   onePasswordAccountName?: string | null;
+  /** Initial global heartbeat default prompt for config.getConfig */
+  heartbeatDefaultPrompt?: string;
   /** Initial route priority for config.getConfig */
   routePriority?: string[];
   /** Initial per-model route overrides for config.getConfig */
@@ -348,6 +350,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     runtimeEnablement: initialRuntimeEnablement,
     defaultRuntime: initialDefaultRuntime,
     onePasswordAccountName: initialOnePasswordAccountName = null,
+    heartbeatDefaultPrompt: initialHeartbeatDefaultPrompt,
     routePriority: initialRoutePriority = ["direct"],
     routeOverrides: initialRouteOverrides = {},
     agentDefinitions: initialAgentDefinitions,
@@ -495,6 +498,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
 
   let defaultRuntime: RuntimeEnablementId | null = initialDefaultRuntime ?? null;
   let onePasswordAccountName: string | null = initialOnePasswordAccountName;
+  let heartbeatDefaultPrompt = initialHeartbeatDefaultPrompt;
   let routePriority = [...initialRoutePriority];
   let routeOverrides = { ...initialRouteOverrides };
   const configChangeSubscribers = new Set<(value: void) => void>();
@@ -685,7 +689,9 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           subagentAiDefaults,
           muxGovernorUrl,
           onePasswordAccountName,
+          heartbeatDefaultPrompt,
           muxGovernorEnrolled,
+          llmDebugLogs: false,
         }),
       saveConfig: (input: {
         taskSettings: unknown;
@@ -766,6 +772,13 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       },
       updateOnePasswordAccountName: (input: { onePasswordAccountName?: string | null }) => {
         onePasswordAccountName = input.onePasswordAccountName ?? null;
+        notifyConfigChanged();
+        return Promise.resolve(undefined);
+      },
+      updateHeartbeatDefaultPrompt: (input: { defaultPrompt?: string | null }) => {
+        heartbeatDefaultPrompt = input.defaultPrompt?.trim()
+          ? input.defaultPrompt.trim()
+          : undefined;
         notifyConfigChanged();
         return Promise.resolve(undefined);
       },

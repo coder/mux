@@ -705,6 +705,7 @@ export class Config {
           taskSettings,
           muxGatewayEnabled,
           llmDebugLogs: parseOptionalBoolean(parsed.llmDebugLogs),
+          heartbeatDefaultPrompt: parseOptionalNonEmptyString(parsed.heartbeatDefaultPrompt),
           muxGatewayModels,
           routePriority,
           routeOverrides,
@@ -769,6 +770,11 @@ export class Config {
       const llmDebugLogs = parseOptionalBoolean(config.llmDebugLogs);
       if (llmDebugLogs !== undefined) {
         data.llmDebugLogs = llmDebugLogs;
+      }
+
+      const heartbeatDefaultPrompt = parseOptionalNonEmptyString(config.heartbeatDefaultPrompt);
+      if (heartbeatDefaultPrompt) {
+        data.heartbeatDefaultPrompt = heartbeatDefaultPrompt;
       }
 
       const muxGatewayModels = parseOptionalStringArray(config.muxGatewayModels);

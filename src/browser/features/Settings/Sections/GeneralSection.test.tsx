@@ -1,8 +1,9 @@
 import React from "react";
 import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { ThemeProvider } from "@/browser/contexts/ThemeContext";
 import * as ActualSelectPrimitiveModule from "@/browser/components/SelectPrimitive/SelectPrimitive";
+import * as ExperimentsModule from "@/browser/hooks/useExperiments";
 import { installDom } from "../../../../../tests/ui/dom";
 import {
   DEFAULT_CODER_ARCHIVE_BEHAVIOR,
@@ -17,6 +18,7 @@ interface MockConfig {
   coderWorkspaceArchiveBehavior: CoderWorkspaceArchiveBehavior;
   worktreeArchiveBehavior: WorktreeArchiveBehavior;
   llmDebugLogs: boolean;
+  heartbeatDefaultPrompt?: string;
 }
 
 interface MockAPIClient {
@@ -27,6 +29,7 @@ interface MockAPIClient {
       worktreeArchiveBehavior: WorktreeArchiveBehavior;
     }) => Promise<void>;
     updateLlmDebugLogs: (input: { enabled: boolean }) => Promise<void>;
+    updateHeartbeatDefaultPrompt: (input: { defaultPrompt?: string | null }) => Promise<void>;
   };
   server: {
     getSshHost: () => Promise<string | null>;
@@ -213,6 +216,15 @@ function createMockAPI(configOverrides: Partial<MockConfig> = {}): MockAPISetup 
 
           return Promise.resolve();
         }),
+        updateHeartbeatDefaultPrompt: mock(
+          ({ defaultPrompt }: { defaultPrompt?: string | null }) => {
+            config.heartbeatDefaultPrompt = defaultPrompt?.trim()
+              ? defaultPrompt.trim()
+              : undefined;
+
+            return Promise.resolve();
+          }
+        ),
       },
       server: {
         getSshHost: mock(() => Promise.resolve(null)),
@@ -233,6 +245,7 @@ describe("GeneralSection", () => {
 
   beforeEach(() => {
     cleanupDom = installDom();
+    spyOn(ExperimentsModule, "useExperimentValue").mockImplementation(() => true);
   });
 
   afterEach(() => {
@@ -428,6 +441,20 @@ describe("GeneralSection", () => {
         worktreeArchiveBehavior: "delete",
       });
     });
+  });
+
+  test("renders the heartbeat default prompt textarea when the experiment is enabled", () => {
+    const { view } = renderGeneralSection();
+
+    expect(view.getByLabelText("Default heartbeat prompt")).toBeTruthy();
+  });
+
+  test("hides the heartbeat default prompt textarea when the experiment is disabled", () => {
+    spyOn(ExperimentsModule, "useExperimentValue").mockImplementation(() => false);
+
+    const { view } = renderGeneralSection();
+
+    expect(view.queryByLabelText("Default heartbeat prompt")).toBeNull();
   });
 
   test("disables archive settings until config finishes loading", async () => {
