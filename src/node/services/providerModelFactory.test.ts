@@ -182,9 +182,13 @@ describe("ProviderModelFactory GitHub Copilot", () => {
     });
   });
 
-  it("creates routed gpt-5.3-codex models with the chat completions API mode", async () => {
+  it("skips Copilot for Codex models and falls back to direct OpenAI", async () => {
     await withTempConfig(async (config, factory) => {
       config.saveProvidersConfig({
+        openai: {
+          apiKey: "sk-test",
+          wireFormat: "chatCompletions",
+        },
         "github-copilot": {
           apiKey: "copilot-token",
           models: ["gpt-5.3-codex"],
@@ -203,9 +207,11 @@ describe("ProviderModelFactory GitHub Copilot", () => {
         return;
       }
 
-      expect((result.data.model as { provider?: unknown }).provider).toBe("github-copilot.chat");
-      expect(result.data.routeProvider).toBe("github-copilot");
-      expect(result.data.effectiveModelString).toBe("github-copilot:gpt-5.3-codex");
+      const provider = (result.data.model as { provider?: unknown }).provider;
+      expect(typeof provider).toBe("string");
+      expect(provider).not.toContain("github-copilot");
+      expect(result.data.routeProvider).toBe("openai");
+      expect(result.data.effectiveModelString).toBe("openai:gpt-5.3-codex");
       expect(result.data.model.constructor.name).toBe("OpenAIChatLanguageModel");
     });
   });
