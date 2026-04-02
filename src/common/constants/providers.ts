@@ -145,7 +145,7 @@ export const PROVIDER_DEFINITIONS = {
     factoryName: "createOpenAICompatible",
     requiresApiKey: true,
     kind: "gateway",
-    routes: ["openai"],
+    routes: ["openai", "anthropic", "google"],
     passthrough: false,
     // Copilot's OpenAI-compatible API accepts raw upstream model IDs for routed OpenAI traffic.
     // Intentionally omit fromGatewayModelId: github-copilot:* model strings are canonical identities

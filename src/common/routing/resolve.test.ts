@@ -97,6 +97,19 @@ describe("resolveRoute", () => {
     expect(resolved.routeModelId).toBe("gpt-5.4");
   });
 
+  test("routes Anthropic models through GitHub Copilot when configured and prioritized", () => {
+    const resolved = resolveRoute(
+      MODEL,
+      ["github-copilot", "direct"],
+      {},
+      createIsConfigured(["github-copilot", "anthropic"]),
+      createIsGatewayModelAccessible([])
+    );
+
+    expect(resolved.routeProvider).toBe("github-copilot");
+    expect(resolved.routeModelId).toBe("claude-opus-4-6");
+  });
+
   test("routes OpenAI models through GitHub Copilot without adding a prefix when no callback is provided", () => {
     const resolved = resolveRoute(
       OPENAI_MODEL,
@@ -275,12 +288,13 @@ describe("resolveRoute", () => {
     expect(resolved.routeModelId).toBe("claude-opus-4-6");
   });
 
-  test("falls through when GitHub Copilot cannot route the model origin", () => {
+  test("falls through when GitHub Copilot rejects an Anthropic model", () => {
     const resolved = resolveRoute(
       MODEL,
       ["github-copilot", "direct"],
       {},
-      createIsConfigured(["github-copilot", "anthropic"])
+      createIsConfigured(["github-copilot", "anthropic"]),
+      createIsGatewayModelAccessible([["github-copilot", "claude-opus-4-6"]])
     );
 
     expect(resolved.routeProvider).toBe("anthropic");
@@ -514,6 +528,11 @@ describe("availableRoutes", () => {
         route: "openrouter",
         displayName: "OpenRouter",
         isConfigured: true,
+      },
+      {
+        route: "github-copilot",
+        displayName: "GitHub Copilot",
+        isConfigured: false,
       },
       {
         route: "bedrock",
