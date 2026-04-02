@@ -5,7 +5,11 @@ import { CopilotResponsesLanguageModel } from "./copilotResponsesLanguageModel";
 function mockFetch(handler: (url: string, init: RequestInit) => Promise<Response>) {
   const originalFetch = globalThis.fetch;
   Object.defineProperty(globalThis, "fetch", {
-    value: Object.assign(handler, { preconnect: () => {} }) as typeof globalThis.fetch,
+    value: Object.assign(handler, {
+      preconnect: () => {
+        // no-op
+      },
+    }) as typeof globalThis.fetch,
     configurable: true,
     writable: true,
   });
@@ -121,7 +125,7 @@ describe("CopilotResponsesLanguageModel", () => {
   it("shapes the outbound request body for streaming calls", async () => {
     let capturedBody: Record<string, unknown> | undefined;
     restoreFetchers.push(
-      mockFetch(async (url, init) => {
+      mockFetch((url, init) => {
         expect(url).toBe("https://example.test/responses");
         expect(init.method).toBe("POST");
         capturedBody = getJsonBody(init);
@@ -236,9 +240,7 @@ describe("CopilotResponsesLanguageModel", () => {
   });
 
   it("returns generated text, finish reason, usage, and metadata for doGenerate", async () => {
-    restoreFetchers.push(
-      mockFetch(async () => createJsonResponse(createCompletedResponse("stop")))
-    );
+    restoreFetchers.push(mockFetch(() => createJsonResponse(createCompletedResponse("stop"))));
 
     const model = createModel();
     const result = await model.doGenerate({
@@ -266,7 +268,7 @@ describe("CopilotResponsesLanguageModel", () => {
 
   it("streams response metadata, text parts, and finish usage", async () => {
     restoreFetchers.push(
-      mockFetch(async () =>
+      mockFetch(() =>
         createSseResponse([
           {
             event: "response.created",
@@ -372,7 +374,7 @@ describe("CopilotResponsesLanguageModel", () => {
 
   it("uses a stable synthetic text id even when item_id rotates", async () => {
     restoreFetchers.push(
-      mockFetch(async () =>
+      mockFetch(() =>
         createSseResponse([
           {
             event: "response.output_item.added",
@@ -449,9 +451,7 @@ describe("CopilotResponsesLanguageModel", () => {
     ] as const;
 
     for (const [rawReason, expectedReason] of cases) {
-      restoreFetchers.push(
-        mockFetch(async () => createJsonResponse(createCompletedResponse(rawReason)))
-      );
+      restoreFetchers.push(mockFetch(() => createJsonResponse(createCompletedResponse(rawReason))));
 
       const model = createModel();
       const result = await model.doGenerate({
@@ -466,7 +466,7 @@ describe("CopilotResponsesLanguageModel", () => {
   it("moves string system prompts into the instructions field", async () => {
     let capturedBody: Record<string, unknown> | undefined;
     restoreFetchers.push(
-      mockFetch(async (_url, init) => {
+      mockFetch((_url, init) => {
         capturedBody = getJsonBody(init);
         return createJsonResponse(createCompletedResponse("stop"));
       })
@@ -492,19 +492,20 @@ describe("CopilotResponsesLanguageModel", () => {
   it("preserves complex system content as a developer input item", async () => {
     let capturedBody: Record<string, unknown> | undefined;
     restoreFetchers.push(
-      mockFetch(async (_url, init) => {
+      mockFetch((_url, init) => {
         capturedBody = getJsonBody(init);
         return createJsonResponse(createCompletedResponse("stop"));
       })
     );
 
     const model = createModel();
+    const structuredSystemPrompt = {
+      role: "system",
+      content: [{ type: "input_text", text: "Structured system prompt" }],
+    };
     await model.doGenerate({
       prompt: [
-        {
-          role: "system",
-          content: [{ type: "input_text", text: "Structured system prompt" }],
-        } as never,
+        structuredSystemPrompt as never,
         { role: "user", content: [{ type: "text", text: "Hi" }] },
       ],
     } as LanguageModelV2CallOptions);
@@ -557,7 +558,7 @@ describe("CopilotResponsesLanguageModel", () => {
         },
       },
     ];
-    restoreFetchers.push(mockFetch(async () => createSseResponse(events)));
+    restoreFetchers.push(mockFetch(() => createSseResponse(events)));
 
     const model = createModel();
     const result = await model.doStream({
@@ -577,7 +578,7 @@ describe("CopilotResponsesLanguageModel", () => {
 
   it("parses SSE events that are split across byte chunks", async () => {
     restoreFetchers.push(
-      mockFetch(async () =>
+      mockFetch(() =>
         createChunkedSseResponse([
           "event: response.created\nda",
           'ta: {"type":"response.created","response":{"id":"resp_split","created_at":1710000030,"model":"copilot-test"}}\n\n',
@@ -626,7 +627,7 @@ describe("CopilotResponsesLanguageModel", () => {
 
   it("emits an error part and closes cleanly on malformed JSON", async () => {
     restoreFetchers.push(
-      mockFetch(async () =>
+      mockFetch(() =>
         createChunkedSseResponse([
           'event: response.created\ndata: {"type":"response.created","response":{"id":"resp_bad","created_at":1710000040,"model":"copilot-test"}}\n\n',
           'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","output_index":0,\n\n',
