@@ -11,6 +11,7 @@ import * as modelStatsModule from "@/common/utils/tokens/modelStats";
 import type { HistoryService } from "./historyService";
 import { createTestHistoryService } from "./testHistoryService";
 import { createAnthropic } from "@ai-sdk/anthropic";
+import { applyCacheControl } from "@/common/utils/ai/cacheStrategy";
 import { countTokens } from "@/node/utils/main/tokenizer";
 import { shouldRunIntegrationTests, validateApiKeys } from "../../../tests/testUtils";
 import { DisposableTempDir } from "@/node/services/tempDir";
@@ -439,6 +440,116 @@ describe("StreamManager - stopWhen configuration", () => {
         steps: [{ toolResults: [{ toolName: "bash", output: { success: true } }] }],
       })
     ).toBe(false);
+  });
+});
+
+describe("StreamManager - Anthropic cache TTL overrides", () => {
+  interface StreamRequestConfigForTests {
+    messages: ModelMessage[];
+    system?: string;
+    tools?: Record<string, Tool>;
+    providerOptions?: Record<string, unknown>;
+  }
+
+  type BuildStreamRequestConfig = (...args: unknown[]) => StreamRequestConfigForTests;
+
+  test("applies anthropicCacheTtlOverride to manual cache markers without top-level cacheControl", () => {
+    const streamManager = new StreamManager(historyService);
+    const buildRequestConfig = Reflect.get(streamManager, "buildStreamRequestConfig") as
+      | BuildStreamRequestConfig
+      | undefined;
+
+    expect(typeof buildRequestConfig).toBe("function");
+    if (!buildRequestConfig) {
+      throw new Error("Expected StreamManager.buildStreamRequestConfig to exist");
+    }
+
+    const model = createAnthropic({ apiKey: "test" })("claude-sonnet-4-5");
+    const modelString = KNOWN_MODELS.SONNET.id;
+    const providerOptions = {
+      anthropic: {
+        disableParallelToolUse: false,
+        sendReasoning: true,
+      },
+    };
+    const messages = applyCacheControl([{ role: "user", content: "hello" }], modelString, "1h");
+    const tools = {
+      readFile: tool({
+        description: "Read a file",
+        inputSchema: z.object({ path: z.string() }),
+        execute: () => Promise.resolve({ ok: true }),
+      }),
+      bash: tool({
+        description: "Run a command",
+        inputSchema: z.object({ command: z.string() }),
+        execute: () => Promise.resolve({ ok: true }),
+      }),
+    };
+
+    const request = buildRequestConfig(
+      model,
+      modelString,
+      messages,
+      "You are a helpful assistant",
+      tools,
+      providerOptions,
+      undefined,
+      undefined,
+      undefined,
+      false,
+      undefined,
+      undefined,
+      "1h"
+    );
+
+    expect(request.system).toBeUndefined();
+    expect(request.providerOptions).toEqual(providerOptions);
+    expect(request.messages).toHaveLength(2);
+    expect(request.messages[0]).toEqual({
+      role: "system",
+      content: "You are a helpful assistant",
+      providerOptions: {
+        anthropic: {
+          cacheControl: {
+            type: "ephemeral",
+            ttl: "1h",
+          },
+        },
+      },
+    });
+    expect(request.messages[1]).toEqual(messages[0]);
+
+    const toolKeys = Object.keys(tools);
+    const firstToolKey = toolKeys[0];
+    const lastToolKey = toolKeys[toolKeys.length - 1];
+    expect(
+      (
+        request.tools?.[firstToolKey] as {
+          providerOptions?: {
+            anthropic?: {
+              cacheControl?: unknown;
+            };
+          };
+        }
+      ).providerOptions?.anthropic?.cacheControl
+    ).toBeUndefined();
+    expect(
+      (
+        request.tools?.[lastToolKey] as {
+          providerOptions?: {
+            anthropic?: {
+              cacheControl?: {
+                type?: string;
+                ttl?: string;
+              };
+            };
+          };
+        }
+      ).providerOptions?.anthropic?.cacheControl
+    ).toEqual({
+      type: "ephemeral",
+      ttl: "1h",
+    });
   });
 });
 

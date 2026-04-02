@@ -235,7 +235,7 @@ describe("buildProviderOptions - Anthropic", () => {
   });
 
   describe("Anthropic cache TTL overrides", () => {
-    test("should include cacheControl ttl when configured", () => {
+    test("should omit top-level cacheControl even when cache TTL is configured", () => {
       const result = buildProviderOptions(
         "anthropic:claude-sonnet-4-5",
         "off",
@@ -250,15 +250,11 @@ describe("buildProviderOptions - Anthropic", () => {
         anthropic: {
           disableParallelToolUse: false,
           sendReasoning: true,
-          cacheControl: {
-            type: "ephemeral",
-            ttl: "1h",
-          },
         },
       });
     });
 
-    test("should include cacheControl ttl for Opus 4.6 effort models", () => {
+    test("should preserve Opus 4.6 reasoning options without top-level cacheControl", () => {
       const result = buildProviderOptions(
         "anthropic:claude-opus-4-6",
         "medium",
@@ -276,10 +272,6 @@ describe("buildProviderOptions - Anthropic", () => {
           thinking: {
             type: "adaptive",
           },
-          cacheControl: {
-            type: "ephemeral",
-            ttl: "5m",
-          },
           effort: "medium",
         },
       });
@@ -287,7 +279,7 @@ describe("buildProviderOptions - Anthropic", () => {
   });
 
   describe("disableBetaFeatures", () => {
-    test("should omit cacheControl when disableBetaFeatures is true even with cacheTtl set", () => {
+    test("should keep omitting top-level cacheControl when disableBetaFeatures is true", () => {
       const result = buildProviderOptions(
         "anthropic:claude-sonnet-4-5",
         "medium",
@@ -303,7 +295,7 @@ describe("buildProviderOptions - Anthropic", () => {
       expect(anthropic.sendReasoning).toBe(true);
     });
 
-    test("should include cacheControl normally when disableBetaFeatures is false", () => {
+    test("should keep omitting top-level cacheControl when disableBetaFeatures is false", () => {
       const result = buildProviderOptions(
         "anthropic:claude-sonnet-4-5",
         "medium",
@@ -315,7 +307,8 @@ describe("buildProviderOptions - Anthropic", () => {
       );
       const anthropic = (result as Record<string, unknown>).anthropic as Record<string, unknown>;
 
-      expect(anthropic.cacheControl).toEqual({ type: "ephemeral", ttl: "1h" });
+      expect(anthropic.cacheControl).toBeUndefined();
+      expect(anthropic.sendReasoning).toBe(true);
     });
   });
 });

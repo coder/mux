@@ -206,11 +206,68 @@ function mergeAnthropicCacheControl(
   return merged;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function hasAnthropicProviderCacheControl(value: unknown): boolean {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  const anthropicOptions = value.anthropic;
+  return isRecord(anthropicOptions) && isRecord(anthropicOptions.cacheControl);
+}
+
 /**
- * Wrap fetch to inject Anthropic cache_control directly into the request body.
- * The AI SDK's providerOptions.anthropic.cacheControl doesn't get translated
- * to raw cache_control for tools or message content parts, so we inject it
- * at the HTTP level.
+ * Count Anthropic prompt-cache breakpoints in a shaped request payload.
+ *
+ * This intentionally counts both raw `cache_control` blocks and untransformed
+ * `providerOptions.anthropic.cacheControl` markers so tests can guard the
+ * budget across direct and gateway request-shaping paths.
+ */
+export function countAnthropicCacheBreakpoints(requestBody: unknown): number {
+  const pending: unknown[] = [requestBody];
+  let count = 0;
+
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (current == null) {
+      continue;
+    }
+
+    if (Array.isArray(current)) {
+      for (const value of current) {
+        pending.push(value);
+      }
+      continue;
+    }
+
+    if (!isRecord(current)) {
+      continue;
+    }
+
+    if (isRecord(current.cache_control)) {
+      count += 1;
+    }
+
+    if (hasAnthropicProviderCacheControl(current.providerOptions)) {
+      count += 1;
+    }
+
+    for (const value of Object.values(current)) {
+      pending.push(value);
+    }
+  }
+
+  return count;
+}
+
+/**
+ * Wrap fetch to normalize Anthropic cache_control directly on the final request body.
+ *
+ * This keeps routed Anthropic payloads aligned with Mux's manual cache markers
+ * and lets a higher-level cacheTtl override win at the last wire-shaping step.
  *
  * Injects cache_control on:
  * 1. Last tool (caches all tool definitions)
@@ -782,8 +839,7 @@ export class ProviderModelFactory {
 
         // Lazy-load Anthropic provider to reduce startup time
         const { createAnthropic } = await PROVIDER_REGISTRY.anthropic();
-        // Wrap fetch to inject cache_control on tools and messages
-        // (SDK doesn't translate providerOptions to cache_control for these)
+        // Wrap fetch to normalize cache_control on the final Anthropic payload.
         // Use getProviderFetch to preserve any user-configured custom fetch (e.g., proxies)
         const baseFetch = getProviderFetch(providerConfig);
         const disableBeta = muxProviderOptions?.anthropic?.disableBetaFeatures === true;
@@ -1375,8 +1431,7 @@ export class ProviderModelFactory {
         const { couponCode } = creds;
 
         const { createGateway } = await PROVIDER_REGISTRY["mux-gateway"]();
-        // For Anthropic models via gateway, wrap fetch to inject cache_control on tools
-        // (gateway provider doesn't process providerOptions.anthropic.cacheControl)
+        // For Anthropic models via gateway, normalize cache_control on the final payload.
         // Use getProviderFetch to preserve any user-configured custom fetch (e.g., proxies)
         const baseFetch = getProviderFetch(providerConfig);
         const isAnthropicModel = modelId.startsWith("anthropic/");

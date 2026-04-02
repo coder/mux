@@ -254,9 +254,11 @@ export function buildProviderOptions(
 
   // Build Anthropic-specific options
   if (formatProvider === "anthropic") {
-    const disableBeta = muxProviderOptions?.anthropic?.disableBetaFeatures === true;
-    const cacheTtl = disableBeta ? undefined : muxProviderOptions?.anthropic?.cacheTtl;
-    const cacheControl = cacheTtl ? { type: "ephemeral" as const, ttl: cacheTtl } : undefined;
+    // Anthropic prompt caching is already applied on Mux's manual cache markers
+    // (cached system message, conversation tail, last tool) deeper in the
+    // request pipeline. Do not also send top-level cacheControl here: the SDK
+    // serializes it to a top-level cache_control block, which adds an extra
+    // breakpoint on direct Anthropic requests.
 
     // Opus 4.5+ and Sonnet 4.6 use the effort parameter for reasoning control.
     // Opus 4.6 / Sonnet 4.6 use adaptive thinking (model decides when/how much to think).
@@ -291,7 +293,6 @@ export function buildProviderOptions(
           disableParallelToolUse: false,
           sendReasoning: true,
           ...(thinking && { thinking }),
-          ...(cacheControl && { cacheControl }),
           effort: effortLevel,
         },
       } satisfies { anthropic: AnthropicProviderOptions };
@@ -310,7 +311,6 @@ export function buildProviderOptions(
       anthropic: {
         disableParallelToolUse: false, // Always enable concurrent tool execution
         sendReasoning: true, // Include reasoning traces in requests sent to the model
-        ...(cacheControl && { cacheControl }),
         // Conditionally add thinking configuration (non-Opus 4.5 models)
         ...(budgetTokens > 0 && {
           thinking: {
