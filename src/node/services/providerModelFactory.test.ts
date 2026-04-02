@@ -4,7 +4,9 @@ import * as os from "os";
 import * as path from "path";
 import { Config } from "@/node/config";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
+import { CODEX_ENDPOINT } from "@/common/constants/codexOAuth";
 import { PROVIDER_REGISTRY } from "@/common/constants/providers";
+import { Ok } from "@/common/types/result";
 import {
   ProviderModelFactory,
   buildAIProviderRequestHeaders,
@@ -14,6 +16,7 @@ import {
   normalizeCodexResponsesBody,
   resolveAIProviderHeaderSource,
 } from "./providerModelFactory";
+import { CodexOauthService } from "./codexOauthService";
 import { ProviderService } from "./providerService";
 
 async function withTempConfig(
@@ -182,13 +185,9 @@ describe("ProviderModelFactory GitHub Copilot", () => {
     });
   });
 
-  it("skips Copilot for Codex models and falls back to direct OpenAI", async () => {
+  it("routes Codex models through the Copilot Responses API path", async () => {
     await withTempConfig(async (config, factory) => {
       config.saveProvidersConfig({
-        openai: {
-          apiKey: "sk-test",
-          wireFormat: "chatCompletions",
-        },
         "github-copilot": {
           apiKey: "copilot-token",
           models: ["gpt-5.3-codex"],
@@ -207,16 +206,16 @@ describe("ProviderModelFactory GitHub Copilot", () => {
         return;
       }
 
-      const provider = (result.data.model as { provider?: unknown }).provider;
-      expect(typeof provider).toBe("string");
-      expect(provider).not.toContain("github-copilot");
-      expect(result.data.routeProvider).toBe("openai");
-      expect(result.data.effectiveModelString).toBe("openai:gpt-5.3-codex");
-      expect(result.data.model.constructor.name).toBe("OpenAIChatLanguageModel");
+      expect((result.data.model as { provider?: unknown }).provider).toBe(
+        "github-copilot.responses"
+      );
+      expect(result.data.routeProvider).toBe("github-copilot");
+      expect(result.data.effectiveModelString).toBe("github-copilot:gpt-5.3-codex");
+      expect(result.data.model.constructor.name).toBe("CopilotResponsesLanguageModel");
     });
   });
 
-  it("normalizes Request bodies for Copilot Codex responses and keeps initiator classification based on the original body", async () => {
+  it("normalizes Request bodies for the Codex OAuth responses endpoint", async () => {
     await withTempConfig(async (config, factory) => {
       const originalOpenAIRegistry = PROVIDER_REGISTRY.openai;
       const requests: Array<{
@@ -224,6 +223,13 @@ describe("ProviderModelFactory GitHub Copilot", () => {
         init?: Parameters<typeof fetch>[1];
       }> = [];
       let capturedFetch: typeof fetch | undefined;
+      const auth = {
+        type: "oauth" as const,
+        access: "test-access-token",
+        refresh: "test-refresh-token",
+        expires: Date.now() + 60_000,
+        accountId: "test-account-id",
+      };
 
       const baseFetch = (
         input: Parameters<typeof fetch>[0],
@@ -260,12 +266,15 @@ describe("ProviderModelFactory GitHub Copilot", () => {
       };
 
       config.loadProvidersConfig = () => ({
-        "github-copilot": {
-          apiKey: "copilot-token",
-          models: ["gpt-5.3-codex"],
+        openai: {
+          codexOauth: auth,
           fetch: baseFetch,
         },
       });
+
+      const codexOauthService = Object.create(CodexOauthService.prototype) as CodexOauthService;
+      codexOauthService.getValidAuth = () => Promise.resolve(Ok(auth));
+      factory.codexOauthService = codexOauthService;
 
       PROVIDER_REGISTRY.openai = async () => {
         const module = await originalOpenAIRegistry();
@@ -279,14 +288,14 @@ describe("ProviderModelFactory GitHub Copilot", () => {
       };
 
       try {
-        const result = await factory.createModel("github-copilot:gpt-5.3-codex");
+        const result = await factory.createModel("openai:gpt-5.3-codex");
         expect(result.success).toBe(true);
         if (!result.success) {
           return;
         }
 
         if (!capturedFetch) {
-          throw new Error("Expected Copilot fetch wrapper to be captured");
+          throw new Error("Expected OpenAI fetch wrapper to be captured");
         }
 
         const originalBody = JSON.stringify({
@@ -299,28 +308,52 @@ describe("ProviderModelFactory GitHub Copilot", () => {
           truncation: "server-default",
           metadata: { ignored: true },
         });
-        const request = new Request("https://api.githubcopilot.com/v1/responses", {
+        const request = new Request("https://api.openai.com/v1/responses", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "x-api-key": "sdk-key",
+            Authorization: "Bearer sdk-key",
           },
           body: originalBody,
         });
 
-        await capturedFetch(request);
+        await capturedFetch(request.url, {
+          method: request.method,
+          headers: request.headers,
+          body: originalBody,
+        });
 
         expect(requests).toHaveLength(1);
-        expect(requests[0]?.input).toBe(request);
+        expect(requests[0]?.input).toBe(CODEX_ENDPOINT);
         expect(requests[0]?.init?.body).toBe(normalizeCodexResponsesBody(originalBody));
 
         const headers = new Headers(requests[0]?.init?.headers);
-        expect(headers.get("authorization")).toBe("Bearer copilot-token");
+        expect(headers.get("authorization")).toBe("Bearer test-access-token");
+        expect(headers.get("chatgpt-account-id")).toBe("test-account-id");
         expect(headers.get("content-type")).toBe("application/json");
-        expect(headers.get("x-initiator")).toBe("agent");
       } finally {
         PROVIDER_REGISTRY.openai = originalOpenAIRegistry;
       }
+    });
+  });
+
+  it("does not force store=false for Copilot Responses requests", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        "github-copilot": {
+          apiKey: "copilot-token",
+          models: ["gpt-5.3-codex"],
+        },
+      });
+
+      const result = await factory.createModel("github-copilot:gpt-5.3-codex");
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        return;
+      }
+
+      expect((result.data as { provider?: unknown }).provider).toBe("github-copilot.responses");
+      expect(result.data.constructor.name).toBe("CopilotResponsesLanguageModel");
     });
   });
 

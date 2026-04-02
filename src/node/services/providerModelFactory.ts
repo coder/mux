@@ -28,6 +28,7 @@ import {
   isCopilotModelAccessible,
   selectCopilotApiMode,
 } from "@/common/utils/copilot/modelRouting";
+import { CopilotResponsesLanguageModel } from "@/node/services/copilot/copilotResponsesLanguageModel";
 import type { PolicyService } from "@/node/services/policyService";
 import type { ProviderService } from "@/node/services/providerService";
 import type { CodexOauthService } from "@/node/services/codexOauthService";
@@ -1502,7 +1503,7 @@ export class ProviderModelFactory {
         return Ok(model);
       }
 
-      // GitHub Copilot uses the OpenAI provider so it can choose chat or responses per model.
+      // GitHub Copilot chooses a stock OpenAI chat model or a custom Responses model per route.
       if (providerName === "github-copilot") {
         const creds = resolveProviderCredentials("github-copilot" as ProviderName, providerConfig);
         if (!creds.isConfigured) {
@@ -1555,6 +1556,9 @@ export class ProviderModelFactory {
           const method = (
             init?.method ?? (input instanceof Request ? input.method : "GET")
           ).toUpperCase();
+          // normalizeCodexResponsesBody() applies only to the stock OpenAI provider's
+          // /v1/responses path (used by Codex OAuth). The custom CopilotResponsesLanguageModel
+          // posts directly to /responses, intentionally bypassing this normalization.
           const isResponsesRequest = /\/v1\/responses(\?|$)/.test(urlString);
 
           let nextInit: Parameters<typeof fetch>[1] = { ...init, headers };
@@ -1600,17 +1604,29 @@ export class ProviderModelFactory {
         };
         const copilotFetch = Object.assign(copilotFetchFn, baseFetch) as typeof fetch;
         const providerFetch = copilotFetch;
+        const baseURL = providerConfig.baseURL ?? "https://api.githubcopilot.com";
+        const apiMode = selectCopilotApiMode(modelId);
+        log.debug(`GitHub Copilot model ${modelId} using ${apiMode} API mode`);
+
+        if (apiMode === "responses") {
+          // Copilot Codex models use a custom Responses language model
+          // that handles Copilot's SSE stream quirks (rotating item_id,
+          // text arriving via output_text.delta rather than inline).
+          const model = new CopilotResponsesLanguageModel({
+            modelId,
+            fetch: providerFetch,
+            baseUrl: baseURL,
+          });
+          return Ok(model as LanguageModel);
+        }
 
         const { createOpenAI } = await PROVIDER_REGISTRY.openai();
-        const baseURL = providerConfig.baseURL ?? "https://api.githubcopilot.com";
         const provider = createOpenAI({
           name: "github-copilot",
           baseURL,
           apiKey: "copilot", // placeholder, actual auth via custom fetch
           fetch: providerFetch,
         });
-        const apiMode = selectCopilotApiMode(modelId);
-        log.debug(`GitHub Copilot model ${modelId} using ${apiMode} API mode`);
         return Ok(provider.chat(modelId));
       }
 
