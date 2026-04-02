@@ -1504,15 +1504,6 @@ export class ProviderModelFactory {
 
       // GitHub Copilot uses the OpenAI provider so it can choose chat or responses per model.
       if (providerName === "github-copilot") {
-        const availableModels = getConfiguredProviderModelIds(providerConfig);
-        if (!isCopilotModelAccessible(modelId, availableModels)) {
-          return Err({
-            type: "model_not_available",
-            provider: providerName,
-            modelId,
-          });
-        }
-
         const creds = resolveProviderCredentials("github-copilot" as ProviderName, providerConfig);
         if (!creds.isConfigured) {
           return Err({ type: "api_key_not_found", provider: providerName });
@@ -1520,6 +1511,15 @@ export class ProviderModelFactory {
         const resolvedApiKey = await this.resolveApiKey(creds.apiKey);
         if (creds.apiKey && isOpReference(creds.apiKey) && !resolvedApiKey) {
           return Err({ type: "api_key_not_found", provider: providerName });
+        }
+
+        const availableModels = getConfiguredProviderModelIds(providerConfig);
+        if (!isCopilotModelAccessible(modelId, availableModels)) {
+          return Err({
+            type: "model_not_available",
+            provider: providerName,
+            modelId,
+          });
         }
 
         const baseFetch = getProviderFetch(providerConfig);

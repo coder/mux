@@ -319,6 +319,26 @@ describe("ProviderModelFactory GitHub Copilot", () => {
     });
   });
 
+  it("returns api_key_not_found before checking a stale Copilot model catalog", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        "github-copilot": {
+          models: ["gpt-4.1"],
+        },
+      });
+
+      const result = await factory.createModel("github-copilot:gpt-5.4");
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toEqual({
+          type: "api_key_not_found",
+          provider: "github-copilot",
+        });
+      }
+    });
+  });
+
   it("fails when the requested model is missing from the stored Copilot model list", async () => {
     await withTempConfig(async (config, factory) => {
       config.saveProvidersConfig({
