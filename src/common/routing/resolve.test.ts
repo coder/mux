@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
+import { isCopilotModelAccessible } from "../utils/copilot/modelRouting";
+
 import { availableRoutes, isModelAvailable, resolveRoute } from "./resolve";
 
 const MODEL = "anthropic:claude-opus-4-6";
@@ -21,6 +23,13 @@ function createIsGatewayModelAccessible(
   );
   return (gateway: string, modelId: string): boolean =>
     !inaccessibleSet.has(`${gateway}:${modelId}`);
+}
+
+function createIsGatewayModelAccessibleFromCopilotCatalog(
+  availableCopilotModels: string[]
+): (gateway: string, modelId: string) => boolean {
+  return (gateway: string, modelId: string): boolean =>
+    gateway !== "github-copilot" || isCopilotModelAccessible(modelId, availableCopilotModels);
 }
 
 function isModelAvailableForRoutes(options: {
@@ -97,13 +106,13 @@ describe("resolveRoute", () => {
     expect(resolved.routeModelId).toBe("gpt-5.4");
   });
 
-  test("routes Anthropic models through GitHub Copilot when configured and prioritized", () => {
+  test("routes Anthropic models through GitHub Copilot when the catalog stores a dot-form model ID", () => {
     const resolved = resolveRoute(
       MODEL,
       ["github-copilot", "direct"],
       {},
       createIsConfigured(["github-copilot", "anthropic"]),
-      createIsGatewayModelAccessible([])
+      createIsGatewayModelAccessibleFromCopilotCatalog(["claude-opus-4.6"])
     );
 
     expect(resolved.routeProvider).toBe("github-copilot");
@@ -513,6 +522,40 @@ describe("availableRoutes", () => {
         isConfigured: false,
       },
     ]);
+  });
+
+  test("includes GitHub Copilot for built-in Anthropic models when Copilot is configured and accepts the model", () => {
+    const routes = availableRoutes(
+      MODEL,
+      createIsConfigured(["anthropic", "github-copilot"]),
+      createIsGatewayModelAccessibleFromCopilotCatalog(["claude-opus-4.6"])
+    );
+
+    expect(routes).toContainEqual({
+      route: "github-copilot",
+      displayName: "GitHub Copilot",
+      isConfigured: true,
+    });
+    expect(routes).toContainEqual({
+      route: "direct",
+      displayName: "Direct (Anthropic)",
+      isConfigured: true,
+    });
+  });
+
+  test("excludes GitHub Copilot for Anthropic models when the catalog rejects the model", () => {
+    const routes = availableRoutes(
+      MODEL,
+      createIsConfigured(["anthropic", "github-copilot"]),
+      createIsGatewayModelAccessibleFromCopilotCatalog(["claude-sonnet-4.5"])
+    );
+
+    expect(routes.some((route) => route.route === "github-copilot")).toBe(false);
+    expect(routes).toContainEqual({
+      route: "direct",
+      displayName: "Direct (Anthropic)",
+      isConfigured: true,
+    });
   });
 
   test("returns all eligible gateways plus direct with configuration status", () => {
