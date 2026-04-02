@@ -33,7 +33,6 @@ import * as ProjectDeleteConfirmationModalModule from "../ProjectDeleteConfirmat
 import * as WorkspaceStatusIndicatorModule from "../WorkspaceStatusIndicator/WorkspaceStatusIndicator";
 import * as PopoverErrorModule from "../PopoverError/PopoverError";
 import * as SectionHeaderModule from "../SectionHeader/SectionHeader";
-import * as AddSectionButtonModule from "../AddSectionButton/AddSectionButton";
 import * as WorkspaceSectionDropZoneModule from "../WorkspaceSectionDropZone/WorkspaceSectionDropZone";
 import * as WorkspaceDragLayerModule from "../WorkspaceDragLayer/WorkspaceDragLayer";
 import * as SectionDragLayerModule from "../SectionDragLayer/SectionDragLayer";
@@ -487,9 +486,6 @@ function installProjectSidebarTestDoubles() {
   );
   spyOn(SectionHeaderModule, "SectionHeader").mockImplementation(
     (() => null) as unknown as typeof SectionHeaderModule.SectionHeader
-  );
-  spyOn(AddSectionButtonModule, "AddSectionButton").mockImplementation(
-    (() => null) as unknown as typeof AddSectionButtonModule.AddSectionButton
   );
   spyOn(WorkspaceSectionDropZoneModule, "WorkspaceSectionDropZone").mockImplementation(
     TestWrapper as unknown as typeof WorkspaceSectionDropZoneModule.WorkspaceSectionDropZone
