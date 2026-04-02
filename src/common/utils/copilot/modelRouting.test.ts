@@ -19,16 +19,17 @@ describe("isCopilotRoutableModel", () => {
     expect(isCopilotRoutableModel("claude-opus-4-6")).toBe(true);
   });
 
-  it("rejects Codex-family models from Copilot routing", () => {
-    expect(isCopilotRoutableModel("gpt-5.3-codex")).toBe(false);
-    expect(isCopilotRoutableModel("gpt-5.1-codex-mini")).toBe(false);
+  it("keeps Codex-family models routable through Copilot", () => {
+    expect(isCopilotRoutableModel("gpt-5.3-codex")).toBe(true);
+    expect(isCopilotRoutableModel("gpt-5.1-codex-mini")).toBe(true);
   });
 });
 
 describe("selectCopilotApiMode", () => {
-  it("routes Codex-family models to chat completions", () => {
-    expect(selectCopilotApiMode("gpt-5.3-codex")).toBe("chatCompletions");
-    expect(selectCopilotApiMode("gpt-5.1-codex-mini")).toBe("chatCompletions");
+  it("routes Codex-family models to Responses", () => {
+    // opencode routes a wider GPT-5 set through Responses, but Mux scopes that path to Codex first.
+    expect(selectCopilotApiMode("gpt-5.3-codex")).toBe("responses");
+    expect(selectCopilotApiMode("gpt-5.1-codex-mini")).toBe("responses");
   });
 
   it("routes GPT-5 and other Copilot families to chat completions", () => {

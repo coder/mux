@@ -3,14 +3,14 @@ export type CopilotApiMode = "responses" | "chatCompletions";
 // Keep this in sync with the Copilot model filtering used after OAuth login.
 export const COPILOT_MODEL_PREFIXES = ["gpt-5", "claude-", "gemini-3", "grok-code"] as const;
 
-export function isCopilotRoutableModel(modelId: string): boolean {
-  return !modelId.includes("-codex");
+export function isCopilotRoutableModel(_modelId: string): boolean {
+  return true;
 }
 
-export function selectCopilotApiMode(_modelId: string): CopilotApiMode {
-  // GitHub Copilot Responses output is currently incompatible with the AI SDK parser,
-  // so every Copilot model stays on chat completions until that upstream path is reliable.
-  return "chatCompletions";
+export function selectCopilotApiMode(modelId: string): CopilotApiMode {
+  // Copilot Codex-family models are proven to work through the custom Responses path.
+  // Keep the broader Copilot catalog on chat completions until the upstream parser is reliable.
+  return modelId.includes("-codex") ? "responses" : "chatCompletions";
 }
 
 export function normalizeCopilotModelId(id: string): string {

@@ -58,12 +58,12 @@ describe("gatewayModelCatalog", () => {
     ).toBe(false);
   });
 
-  test("rejects Codex models from Copilot routing even when the catalog includes them", () => {
+  test("accepts Codex models when the Copilot catalog includes them", () => {
     expect(
       isProviderModelAccessibleFromAuthoritativeCatalog("github-copilot", "gpt-5.3-codex", [
         "gpt-5.3-codex",
       ])
-    ).toBe(false);
+    ).toBe(true);
   });
 
   test("keeps the gateway-specific helper behavior aligned", () => {
