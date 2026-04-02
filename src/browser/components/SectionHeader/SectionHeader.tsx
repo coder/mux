@@ -198,7 +198,13 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
         <Tooltip>
           <TooltipTrigger asChild>
             <button
-              onClick={sectionMenu.onContextMenu}
+              onClick={(e: React.MouseEvent) => {
+                if (sectionMenu.isOpen) {
+                  sectionMenu.close();
+                  return;
+                }
+                sectionMenu.onContextMenu(e);
+              }}
               className="text-muted hover:text-foreground hover:bg-hover flex h-5 w-5 cursor-pointer items-center justify-center rounded border-none bg-transparent p-0 transition-colors"
               aria-label="Section actions"
             >
