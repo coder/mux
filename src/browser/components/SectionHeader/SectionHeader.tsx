@@ -13,7 +13,8 @@ import type { SectionConfig } from "@/common/types/project";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipIfPresent } from "../Tooltip/Tooltip";
 import { resolveSectionColor, SECTION_COLOR_PALETTE } from "@/common/constants/ui";
 import { HexColorPicker } from "react-colorful";
-import { PositionedMenuItem } from "../PositionedMenu/PositionedMenu";
+import { useContextMenuPosition } from "../../hooks/useContextMenuPosition";
+import { PositionedMenu, PositionedMenuItem } from "../PositionedMenu/PositionedMenu";
 
 interface SectionHeaderProps {
   section: SectionConfig;
@@ -48,11 +49,10 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
   const [editValue, setEditValue] = useState(section.name);
   const [hasEditedName, setHasEditedName] = useState(false);
   const [showColorPicker, setShowColorPicker] = useState(false);
-  const [isActionsMenuOpen, setIsActionsMenuOpen] = useState(false);
   const [hexInputValue, setHexInputValue] = useState(section.color ?? "");
   const inputRef = useRef<HTMLInputElement>(null);
-  const actionsMenuRef = useRef<HTMLDivElement>(null);
   const autoStartHandledRef = useRef(false);
+  const sectionMenu = useContextMenuPosition();
 
   const startEditing = () => {
     setEditValue(section.name);
@@ -76,28 +76,6 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
       inputRef.current.select();
     }
   }, [isEditing]);
-
-  useEffect(() => {
-    if (!isActionsMenuOpen) {
-      return;
-    }
-
-    const handlePointerDown = (event: MouseEvent) => {
-      if (
-        actionsMenuRef.current &&
-        event.target instanceof Node &&
-        !actionsMenuRef.current.contains(event.target)
-      ) {
-        setIsActionsMenuOpen(false);
-        setShowColorPicker(false);
-      }
-    };
-
-    document.addEventListener("mousedown", handlePointerDown);
-    return () => {
-      document.removeEventListener("mousedown", handlePointerDown);
-    };
-  }, [isActionsMenuOpen]);
 
   const handleSubmitRename = () => {
     const trimmed = editValue.trim();
@@ -217,105 +195,102 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
         </Tooltip>
 
         {/* Section actions kebab sits immediately to the right of New chat */}
-        <div ref={actionsMenuRef} className="relative">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={() => {
-                  if (isActionsMenuOpen) {
-                    setShowColorPicker(false);
-                  }
-                  setIsActionsMenuOpen((open) => !open);
-                }}
-                className="text-muted hover:text-foreground hover:bg-hover flex h-5 w-5 cursor-pointer items-center justify-center rounded border-none bg-transparent p-0 transition-colors"
-                aria-label="Section actions"
-              >
-                <EllipsisVertical className="h-3.5 w-3.5" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent>Section actions</TooltipContent>
-          </Tooltip>
-
-          {isActionsMenuOpen && (
-            <div
-              className="bg-surface-primary border-border absolute top-full right-0 z-20 mt-1 w-[180px] min-w-0! rounded-md border p-1 shadow-md"
-              onClick={(event: React.MouseEvent<HTMLDivElement>) => event.stopPropagation()}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              onClick={sectionMenu.onContextMenu}
+              className="text-muted hover:text-foreground hover:bg-hover flex h-5 w-5 cursor-pointer items-center justify-center rounded border-none bg-transparent p-0 transition-colors"
+              aria-label="Section actions"
             >
-              <PositionedMenuItem
-                icon={<Palette />}
-                label="Change color"
-                onClick={() => {
-                  setShowColorPicker((open) => !open);
-                }}
-              />
-              {showColorPicker && (
-                <div className="bg-background border-border mx-1 my-1 rounded border p-2">
-                  <div className="mb-2 grid grid-cols-5 gap-1">
-                    {SECTION_COLOR_PALETTE.map(([name, color]) => (
-                      <TooltipIfPresent key={color} tooltip={name} side="bottom" align="center">
-                        <button
-                          onClick={() => {
-                            onChangeColor(color);
-                            setHexInputValue(color);
-                            setShowColorPicker(false);
-                          }}
-                          className={cn(
-                            "h-5 w-5 rounded border-2 transition-transform hover:scale-110",
-                            sectionColor === color ? "border-white" : "border-transparent"
-                          )}
-                          style={{ backgroundColor: color }}
-                          aria-label={`Set section color to ${name}`}
-                        />
-                      </TooltipIfPresent>
-                    ))}
-                  </div>
-                  <div className="section-color-picker">
-                    <HexColorPicker
-                      color={sectionColor}
-                      onChange={(newColor) => {
-                        setHexInputValue(newColor);
-                        onChangeColor(newColor);
+              <EllipsisVertical className="h-3.5 w-3.5" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>Section actions</TooltipContent>
+        </Tooltip>
+
+        <PositionedMenu
+          open={sectionMenu.isOpen}
+          onOpenChange={(open) => {
+            if (!open) {
+              setShowColorPicker(false);
+            }
+            sectionMenu.onOpenChange(open);
+          }}
+          position={sectionMenu.position}
+        >
+          <PositionedMenuItem
+            icon={<Palette />}
+            label="Change color"
+            onClick={() => {
+              setShowColorPicker((open) => !open);
+            }}
+          />
+          {showColorPicker && (
+            <div className="bg-background border-border mx-1 my-1 rounded border p-2">
+              <div className="mb-2 grid grid-cols-5 gap-1">
+                {SECTION_COLOR_PALETTE.map(([name, color]) => (
+                  <TooltipIfPresent key={color} tooltip={name} side="bottom" align="center">
+                    <button
+                      onClick={() => {
+                        onChangeColor(color);
+                        setHexInputValue(color);
+                        setShowColorPicker(false);
                       }}
+                      className={cn(
+                        "h-5 w-5 rounded border-2 transition-transform hover:scale-110",
+                        sectionColor === color ? "border-white" : "border-transparent"
+                      )}
+                      style={{ backgroundColor: color }}
+                      aria-label={`Set section color to ${name}`}
                     />
-                  </div>
-                  <div className="mt-2 flex items-center gap-1.5">
-                    <input
-                      type="text"
-                      value={hexInputValue}
-                      onChange={(e) => {
-                        const value = e.target.value;
-                        setHexInputValue(value);
-                        if (/^#[0-9a-fA-F]{6}$/.test(value)) {
-                          onChangeColor(value);
-                        }
-                      }}
-                      className="bg-background/50 text-foreground w-full rounded border border-white/20 px-1.5 py-0.5 text-xs outline-none select-text"
-                    />
-                  </div>
-                </div>
-              )}
-              <PositionedMenuItem
-                icon={<Pencil />}
-                label="Rename"
-                onClick={() => {
-                  startEditing();
-                  setShowColorPicker(false);
-                  setIsActionsMenuOpen(false);
-                }}
-              />
-              <PositionedMenuItem
-                icon={<Trash2 />}
-                label="Delete section"
-                variant="destructive"
-                onClick={(event) => {
-                  onDelete(event.currentTarget);
-                  setShowColorPicker(false);
-                  setIsActionsMenuOpen(false);
-                }}
-              />
+                  </TooltipIfPresent>
+                ))}
+              </div>
+              <div className="section-color-picker">
+                <HexColorPicker
+                  color={sectionColor}
+                  onChange={(newColor) => {
+                    setHexInputValue(newColor);
+                    onChangeColor(newColor);
+                  }}
+                />
+              </div>
+              <div className="mt-2 flex items-center gap-1.5">
+                <input
+                  type="text"
+                  value={hexInputValue}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setHexInputValue(value);
+                    if (/^#[0-9a-fA-F]{6}$/.test(value)) {
+                      onChangeColor(value);
+                    }
+                  }}
+                  className="bg-background/50 text-foreground w-full rounded border border-white/20 px-1.5 py-0.5 text-xs outline-none select-text"
+                />
+              </div>
             </div>
           )}
-        </div>
+          <PositionedMenuItem
+            icon={<Pencil />}
+            label="Rename"
+            onClick={() => {
+              startEditing();
+              setShowColorPicker(false);
+              sectionMenu.close();
+            }}
+          />
+          <PositionedMenuItem
+            icon={<Trash2 />}
+            label="Delete section"
+            variant="destructive"
+            onClick={(event) => {
+              onDelete(event.currentTarget);
+              setShowColorPicker(false);
+              sectionMenu.close();
+            }}
+          />
+        </PositionedMenu>
       </div>
     </div>
   );
