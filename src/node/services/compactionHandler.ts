@@ -462,10 +462,6 @@ export class CompactionHandler {
     await this.deletePersistedPendingStateBestEffort();
   }
 
-  async ackPendingDiffsConsumed(): Promise<void> {
-    await this.ackPendingStateConsumed();
-  }
-
   /**
    * Drop pending post-compaction state (e.g., because it caused context_exceeded).
    */
@@ -488,10 +484,6 @@ export class CompactionHandler {
       await this.ackPendingStateConsumed();
     }
     this.cachedLoadedSkills = [];
-  }
-
-  async discardPendingDiffs(reason: string): Promise<void> {
-    await this.discardPendingState(reason);
   }
 
   private async deletePersistedPendingStateBestEffort(): Promise<void> {

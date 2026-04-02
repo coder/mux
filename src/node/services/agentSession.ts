@@ -4027,7 +4027,7 @@ export class AgentSession {
           if (this.ackPendingPostCompactionStateOnStreamEnd) {
             this.ackPendingPostCompactionStateOnStreamEnd = false;
             try {
-              await this.compactionHandler.ackPendingDiffsConsumed();
+              await this.compactionHandler.ackPendingStateConsumed();
             } catch (error) {
               log.warn("Failed to ack pending post-compaction state", {
                 workspaceId: this.workspaceId,
