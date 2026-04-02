@@ -1611,9 +1611,7 @@ export class ProviderModelFactory {
         });
         const apiMode = selectCopilotApiMode(modelId);
         log.debug(`GitHub Copilot model ${modelId} using ${apiMode} API mode`);
-        const model =
-          apiMode === "chatCompletions" ? provider.chat(modelId) : provider.responses(modelId);
-        return Ok(model);
+        return Ok(provider.chat(modelId));
       }
 
       // Generic handler for simple providers (standard API key + factory pattern)

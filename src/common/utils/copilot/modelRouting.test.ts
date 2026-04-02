@@ -12,14 +12,15 @@ describe("COPILOT_MODEL_PREFIXES", () => {
 });
 
 describe("selectCopilotApiMode", () => {
-  it("routes only Codex-family models to the Responses API", () => {
-    expect(selectCopilotApiMode("gpt-5.3-codex")).toBe("responses");
-    expect(selectCopilotApiMode("gpt-5.1-codex-mini")).toBe("responses");
+  it("routes Codex-family models to chat completions", () => {
+    expect(selectCopilotApiMode("gpt-5.3-codex")).toBe("chatCompletions");
+    expect(selectCopilotApiMode("gpt-5.1-codex-mini")).toBe("chatCompletions");
   });
 
-  it("defaults GPT-5 and other Copilot families to chat completions", () => {
+  it("routes GPT-5 and other Copilot families to chat completions", () => {
     expect(selectCopilotApiMode("gpt-5.4")).toBe("chatCompletions");
     expect(selectCopilotApiMode("gpt-5.4-pro")).toBe("chatCompletions");
+    expect(selectCopilotApiMode("claude-opus-4-6")).toBe("chatCompletions");
     expect(selectCopilotApiMode("claude-sonnet-4-6")).toBe("chatCompletions");
     expect(selectCopilotApiMode("gemini-3.1-pro-preview")).toBe("chatCompletions");
     expect(selectCopilotApiMode("grok-code-fast-1")).toBe("chatCompletions");
@@ -30,7 +31,7 @@ describe("selectCopilotApiMode", () => {
     expect(selectCopilotApiMode("custom-preview-model")).toBe("chatCompletions");
   });
 
-  it("only applies the Responses rule when the model id actually contains -codex", () => {
+  it("keeps lookalike model ids on chat completions too", () => {
     expect(selectCopilotApiMode("claude")).toBe("chatCompletions");
     expect(selectCopilotApiMode("gemini-30-experimental")).toBe("chatCompletions");
     expect(selectCopilotApiMode("grok-codec-preview")).toBe("chatCompletions");

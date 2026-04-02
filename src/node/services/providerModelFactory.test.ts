@@ -182,7 +182,7 @@ describe("ProviderModelFactory GitHub Copilot", () => {
     });
   });
 
-  it("creates routed gpt-5.3-codex models with the Responses API mode", async () => {
+  it("creates routed gpt-5.3-codex models with the chat completions API mode", async () => {
     await withTempConfig(async (config, factory) => {
       config.saveProvidersConfig({
         "github-copilot": {
@@ -203,11 +203,10 @@ describe("ProviderModelFactory GitHub Copilot", () => {
         return;
       }
 
-      expect((result.data.model as { provider?: unknown }).provider).toBe(
-        "github-copilot.responses"
-      );
+      expect((result.data.model as { provider?: unknown }).provider).toBe("github-copilot.chat");
       expect(result.data.routeProvider).toBe("github-copilot");
       expect(result.data.effectiveModelString).toBe("github-copilot:gpt-5.3-codex");
+      expect(result.data.model.constructor.name).toBe("OpenAIChatLanguageModel");
     });
   });
 
