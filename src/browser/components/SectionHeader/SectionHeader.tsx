@@ -52,6 +52,7 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
   const [hexInputValue, setHexInputValue] = useState(section.color ?? "");
   const inputRef = useRef<HTMLInputElement>(null);
   const autoStartHandledRef = useRef(false);
+  const wasMenuOpenOnPointerDownRef = useRef(false);
   const sectionMenu = useContextMenuPosition();
 
   const startEditing = () => {
@@ -198,8 +199,15 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
         <Tooltip>
           <TooltipTrigger asChild>
             <button
+              onPointerDownCapture={() => {
+                wasMenuOpenOnPointerDownRef.current = sectionMenu.isOpen;
+              }}
               onClick={(e: React.MouseEvent) => {
-                if (sectionMenu.isOpen) {
+                // Radix dismisses on outside pointer-down before this click handler runs.
+                // Preserve explicit toggle behavior by honoring the pre-click open state.
+                const shouldCloseMenu = sectionMenu.isOpen || wasMenuOpenOnPointerDownRef.current;
+                wasMenuOpenOnPointerDownRef.current = false;
+                if (shouldCloseMenu) {
                   setShowColorPicker(false);
                   sectionMenu.close();
                   return;
