@@ -1,6 +1,7 @@
 import type { EventEmitter } from "events";
 import * as fsPromises from "fs/promises";
 import assert from "@/common/utils/assert";
+import { isNonNegativeInteger, isPositiveInteger } from "@/common/utils/numbers";
 import * as path from "path";
 
 import type { HistoryService } from "./historyService";
@@ -245,18 +246,6 @@ function coercePersistedPostCompactionState(value: unknown): PersistedPostCompac
 
 function isCompactedSummaryMessage(message: MuxMessage): boolean {
   return isDurableCompactedMarker(message.metadata?.compacted);
-}
-
-function isPositiveInteger(value: unknown): value is number {
-  return (
-    typeof value === "number" && Number.isFinite(value) && Number.isInteger(value) && value > 0
-  );
-}
-
-function isNonNegativeInteger(value: unknown): value is number {
-  return (
-    typeof value === "number" && Number.isFinite(value) && Number.isInteger(value) && value >= 0
-  );
 }
 
 function getNextCompactionEpoch(messages: MuxMessage[]): number {

@@ -22,18 +22,7 @@ import {
   isDurableCompactionBoundaryMarker,
 } from "@/common/utils/messages/compactionBoundary";
 import { getErrorMessage } from "@/common/utils/errors";
-
-function isPositiveInteger(value: unknown): value is number {
-  return (
-    typeof value === "number" && Number.isFinite(value) && Number.isInteger(value) && value > 0
-  );
-}
-
-function isNonNegativeInteger(value: unknown): value is number {
-  return (
-    typeof value === "number" && Number.isFinite(value) && Number.isInteger(value) && value >= 0
-  );
-}
+import { isNonNegativeInteger, isPositiveInteger } from "@/common/utils/numbers";
 
 function hasDurableCompactionBoundary(metadata: MuxMetadata | undefined): boolean {
   if (metadata?.compactionBoundary !== true) {

@@ -54,6 +54,7 @@ import { shellQuote } from "@/node/runtime/backgroundCommands";
 import { extractEditedFilePaths } from "@/common/utils/messages/extractEditedFiles";
 import { buildCompactionMessageText } from "@/common/utils/compaction/compactionPrompt";
 import { isDurableCompactedMarker } from "@/common/utils/messages/compactionBoundary";
+import { isNonNegativeInteger, isPositiveInteger } from "@/common/utils/numbers";
 import { deriveTodoStatus } from "@/common/utils/todoList";
 import { fileExists } from "@/node/utils/runtime/fileExists";
 import { orchestrateFork } from "@/node/services/utils/forkOrchestrator";
@@ -546,18 +547,6 @@ async function resetForkedSessionUsage(
   await fsPromises.writeFile(
     path.join(sessionDir, "session-usage.json"),
     JSON.stringify({ byModel: {}, version: 1 }, null, 2)
-  );
-}
-
-function isPositiveInteger(value: unknown): value is number {
-  return (
-    typeof value === "number" && Number.isFinite(value) && Number.isInteger(value) && value > 0
-  );
-}
-
-function isNonNegativeInteger(value: unknown): value is number {
-  return (
-    typeof value === "number" && Number.isFinite(value) && Number.isInteger(value) && value >= 0
   );
 }
 

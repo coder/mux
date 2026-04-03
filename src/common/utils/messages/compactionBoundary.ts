@@ -1,12 +1,7 @@
 import assert from "@/common/utils/assert";
+import { isPositiveInteger } from "@/common/utils/numbers";
 
 import type { MuxMessage } from "@/common/types/message";
-
-function isPositiveInteger(value: unknown): value is number {
-  return (
-    typeof value === "number" && Number.isFinite(value) && Number.isInteger(value) && value > 0
-  );
-}
 
 export function isDurableCompactedMarker(
   value: unknown
