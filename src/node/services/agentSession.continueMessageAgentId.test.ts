@@ -1,5 +1,5 @@
 import { describe, expect, test, mock, afterEach } from "bun:test";
-import { buildContinueMessage } from "@/common/types/message";
+import { buildContinueMessage, createMuxMessage } from "@/common/types/message";
 import type { FilePart, SendMessageOptions } from "@/common/orpc/types";
 import { AgentSession } from "./agentSession";
 import type { Config } from "@/node/config";
@@ -222,6 +222,95 @@ describe("AgentSession continue-message agentId fallback", () => {
       throw new Error(`Expected history read to succeed: ${lastMessages.error}`);
     }
     expect(lastMessages.data[0]?.metadata?.muxMetadata).toEqual({ type: "compaction-summary" });
+
+    session.dispose();
+  });
+
+  test("dispatchPendingFollowUp removes heartbeat reset boundaries when idle-only follow-ups are skipped", async () => {
+    const aiService: AIService = {
+      on() {
+        return this;
+      },
+      off() {
+        return this;
+      },
+      isStreaming: () => false,
+      stopStream: mock(() => Promise.resolve({ success: true as const, data: undefined })),
+    } as unknown as AIService;
+
+    const earlierMessage = createMuxMessage("before-reset", "assistant", "Earlier context");
+    const heartbeatBoundary = createMuxMessage(
+      "heartbeat-boundary",
+      "assistant",
+      "Reset boundary",
+      {
+        compacted: "heartbeat",
+        compactionBoundary: true,
+        compactionEpoch: 1,
+        muxMetadata: {
+          type: "compaction-summary",
+          pendingFollowUp: {
+            text: "heartbeat follow-up",
+            model: "openai:gpt-4o",
+            agentId: "exec",
+            dispatchOptions: { requireIdle: true },
+          },
+        },
+      }
+    );
+
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+    await historyService.appendToHistory("ws", earlierMessage);
+    await historyService.appendToHistory("ws", heartbeatBoundary);
+
+    const initStateManager: InitStateManager = {
+      on() {
+        return this;
+      },
+      off() {
+        return this;
+      },
+    } as unknown as InitStateManager;
+
+    const backgroundProcessManager: BackgroundProcessManager = {
+      cleanup: mock(() => Promise.resolve()),
+      setMessageQueued: mock(() => undefined),
+    } as unknown as BackgroundProcessManager;
+
+    const config: Config = {
+      srcDir: "/tmp",
+      getSessionDir: mock(() => "/tmp"),
+    } as unknown as Config;
+
+    const session = new AgentSession({
+      workspaceId: "ws",
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+
+    const internals = session as unknown as SessionInternals;
+    internals.sendMessage = mock(() => Promise.resolve({ success: true as const }));
+    session.queueMessage(
+      "user returned",
+      { model: "openai:gpt-4o", agentId: "exec" },
+      { synthetic: false }
+    );
+
+    const dispatched = await internals.dispatchPendingFollowUp();
+
+    expect(dispatched).toBe(false);
+    expect(internals.sendMessage).not.toHaveBeenCalled();
+
+    const historyResult = await historyService.getLastMessages("ws", 10);
+    expect(historyResult.success).toBe(true);
+    if (!historyResult.success) {
+      throw new Error(`Expected history read to succeed: ${historyResult.error}`);
+    }
+    expect(historyResult.data.map((message) => message.id)).toEqual(["before-reset"]);
 
     session.dispose();
   });

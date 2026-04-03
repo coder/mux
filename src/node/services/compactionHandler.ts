@@ -78,6 +78,13 @@ interface PersistedPostCompactionStateV1 {
   loadedSkills: LoadedSkillSnapshot[];
 }
 
+interface HeartbeatResetRollbackState {
+  postCompactionAttachmentsPending: boolean;
+  cachedFileDiffs: FileEditDiff[];
+  cachedLoadedSkills: LoadedSkillSnapshot[];
+  persistedPendingStateLoaded: boolean;
+}
+
 interface PendingPostCompactionState {
   diffs: FileEditDiff[];
   loadedSkills: LoadedSkillSnapshot[];
@@ -333,6 +340,8 @@ export class CompactionHandler {
   private postCompactionAttachmentsPending = false;
   /** Cached file diffs extracted from history before appending compaction summary */
   private cachedFileDiffs: FileEditDiff[] = [];
+  /** Rollback snapshot for synthetic heartbeat reset boundaries that get skipped before dispatch. */
+  private heartbeatResetRollbackState: HeartbeatResetRollbackState | null = null;
   /** Cached loaded skill snapshots extracted from history before appending compaction summary */
   private cachedLoadedSkills: LoadedSkillSnapshot[] = [];
 
@@ -477,6 +486,35 @@ export class CompactionHandler {
     }
   }
 
+  private captureHeartbeatResetRollbackState(): void {
+    this.heartbeatResetRollbackState = {
+      postCompactionAttachmentsPending: this.postCompactionAttachmentsPending,
+      cachedFileDiffs: [...this.cachedFileDiffs],
+      cachedLoadedSkills: [...this.cachedLoadedSkills],
+      persistedPendingStateLoaded: this.persistedPendingStateLoaded,
+    };
+  }
+
+  private async restoreHeartbeatResetRollbackState(): Promise<void> {
+    const rollbackState = this.heartbeatResetRollbackState;
+    if (!rollbackState) {
+      return;
+    }
+
+    this.postCompactionAttachmentsPending = rollbackState.postCompactionAttachmentsPending;
+    this.cachedFileDiffs = [...rollbackState.cachedFileDiffs];
+    this.cachedLoadedSkills = [...rollbackState.cachedLoadedSkills];
+    this.persistedPendingStateLoaded = rollbackState.persistedPendingStateLoaded;
+
+    if (rollbackState.postCompactionAttachmentsPending) {
+      await this.persistPendingStateBestEffort(this.cachedFileDiffs, this.cachedLoadedSkills);
+    } else {
+      await this.deletePersistedPendingStateBestEffort();
+    }
+
+    this.heartbeatResetRollbackState = null;
+  }
+
   private async persistPendingStateBestEffort(
     diffs: FileEditDiff[],
     loadedSkills: LoadedSkillSnapshot[]
@@ -568,6 +606,8 @@ export class CompactionHandler {
     }
 
     const messages = historyResult.data;
+    await this.loadPersistedPendingStateIfNeeded();
+    this.captureHeartbeatResetRollbackState();
     await this.preparePendingStateFromMessages(messages);
 
     const nextCompactionEpoch = getNextCompactionEpoch(messages);
@@ -613,9 +653,7 @@ export class CompactionHandler {
       summaryMessage
     );
     if (!persistenceResult.success) {
-      this.cachedFileDiffs = [];
-      this.cachedLoadedSkills = [];
-      await this.deletePersistedPendingStateBestEffort();
+      await this.restoreHeartbeatResetRollbackState();
       return Err(`Failed to append heartbeat reset boundary: ${persistenceResult.error}`);
     }
 
@@ -633,6 +671,39 @@ export class CompactionHandler {
 
     this.postCompactionAttachmentsPending = true;
     this.emitChatEvent({ ...summaryMessage, type: "message" });
+    return Ok(undefined);
+  }
+
+  async rollbackHeartbeatContextResetBoundary(
+    summaryMessage: MuxMessage
+  ): Promise<Result<void, string>> {
+    assert(
+      summaryMessage.role === "assistant",
+      "rollbackHeartbeatContextResetBoundary requires an assistant boundary message"
+    );
+    assert(
+      summaryMessage.metadata?.compacted === "heartbeat",
+      "rollbackHeartbeatContextResetBoundary requires a heartbeat reset boundary"
+    );
+
+    const deleteResult = await this.historyService.deleteMessage(
+      this.workspaceId,
+      summaryMessage.id
+    );
+    if (!deleteResult.success) {
+      return Err(`Failed to delete heartbeat reset boundary: ${deleteResult.error}`);
+    }
+
+    await this.restoreHeartbeatResetRollbackState();
+
+    const historySequence = summaryMessage.metadata?.historySequence;
+    if (isNonNegativeInteger(historySequence)) {
+      this.emitChatEvent({
+        type: "delete",
+        historySequences: [historySequence],
+      });
+    }
+
     return Ok(undefined);
   }
 

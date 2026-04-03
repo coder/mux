@@ -4770,7 +4770,16 @@ export class AgentSession {
         hasQueuedMessages: this.hasQueuedMessages(),
         turnPhase: this.turnPhase,
       });
-      await this.clearPendingFollowUpFromSummary(lastMessage);
+      if (lastMessage.metadata?.compacted === "heartbeat") {
+        const rollbackResult =
+          await this.compactionHandler.rollbackHeartbeatContextResetBoundary(lastMessage);
+        if (!rollbackResult.success) {
+          throw new Error(`Failed to rollback heartbeat reset boundary: ${rollbackResult.error}`);
+        }
+        this.onPostCompactionStateChange?.();
+      } else {
+        await this.clearPendingFollowUpFromSummary(lastMessage);
+      }
       return false;
     }
 
