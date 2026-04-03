@@ -179,6 +179,19 @@ function coerceLoadedSkillSnapshots(value: unknown): LoadedSkillSnapshot[] {
   return mergeLoadedSkillSnapshots(loadedSkills);
 }
 
+function mergeFileEditDiffs(existing: FileEditDiff[], incoming: FileEditDiff[]): FileEditDiff[] {
+  const mergedByPath = new Map<string, FileEditDiff>();
+
+  for (const diff of existing) {
+    mergedByPath.set(diff.path, diff);
+  }
+  for (const diff of incoming) {
+    mergedByPath.set(diff.path, diff);
+  }
+
+  return [...mergedByPath.values()].slice(0, MAX_EDITED_FILES);
+}
+
 function coercePersistedPostCompactionState(value: unknown): PersistedPostCompactionStateV1 | null {
   if (!value || typeof value !== "object") {
     return null;
@@ -492,8 +505,13 @@ export class CompactionHandler {
   }
 
   private async preparePendingStateFromMessages(messages: MuxMessage[]): Promise<void> {
+    await this.loadPersistedPendingStateIfNeeded();
+
     const latestCompactionEpochMessages = sliceMessagesFromLatestCompactionBoundary(messages);
-    this.cachedFileDiffs = extractEditedFileDiffs(latestCompactionEpochMessages);
+    this.cachedFileDiffs = mergeFileEditDiffs(
+      this.cachedFileDiffs,
+      extractEditedFileDiffs(latestCompactionEpochMessages)
+    );
     this.cachedLoadedSkills = mergeLoadedSkillSnapshots([
       ...this.cachedLoadedSkills,
       ...extractLoadedSkillSnapshotsFromMessages(latestCompactionEpochMessages),

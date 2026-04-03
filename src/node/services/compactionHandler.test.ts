@@ -368,6 +368,51 @@ describe("CompactionHandler", () => {
       expect(pendingState?.loadedSkills[0]?.name).toBe("react-effects");
     });
 
+    it("preserves pre-existing pending diffs when a heartbeat reset boundary is appended", async () => {
+      const existingBoundary = createMuxMessage(
+        "summary-existing",
+        "assistant",
+        "Existing summary",
+        {
+          compacted: "user",
+          compactionBoundary: true,
+          compactionEpoch: 1,
+        }
+      );
+      await seedHistory(existingBoundary);
+
+      const persistedPath = path.join(sessionDir, "post-compaction.json");
+      await fsPromises.writeFile(
+        persistedPath,
+        JSON.stringify({
+          version: 1,
+          createdAt: Date.now(),
+          diffs: [
+            {
+              path: "/tmp/preexisting.ts",
+              diff: "@@ -1 +1 @@\n-old\n+pending\n",
+              truncated: false,
+            },
+          ],
+          loadedSkills: [],
+        })
+      );
+
+      const result = await handler.appendHeartbeatContextResetBoundary({
+        boundaryText: "Heartbeat context reset boundary",
+        pendingFollowUp: {
+          text: "heartbeat follow-up",
+          model: "openai:gpt-4o",
+          agentId: "exec",
+          dispatchOptions: { requireIdle: true },
+        },
+      });
+
+      expect(result.success).toBe(true);
+      const pendingState = await handler.peekPendingState();
+      expect(pendingState?.diffs.map((diff) => diff.path)).toContain("/tmp/preexisting.ts");
+    });
+
     it("loads legacy persisted state files that omit loadedSkills", async () => {
       const persistedPath = path.join(sessionDir, "post-compaction.json");
       await fsPromises.writeFile(
