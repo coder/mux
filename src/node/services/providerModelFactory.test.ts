@@ -185,6 +185,54 @@ describe("ProviderModelFactory GitHub Copilot", () => {
     });
   });
 
+  it("rewrites Claude model ids back to Copilot's dot form before creating chat models", async () => {
+    await withTempConfig(async (config, factory) => {
+      const originalOpenAIRegistry = PROVIDER_REGISTRY.openai;
+      let capturedModelId: string | undefined;
+
+      config.saveProvidersConfig({
+        "github-copilot": {
+          apiKey: "copilot-token",
+          models: ["claude-opus-4.6"],
+        },
+      });
+
+      PROVIDER_REGISTRY.openai = async () => {
+        const module = await originalOpenAIRegistry();
+        return {
+          ...module,
+          createOpenAI: (options) => {
+            const provider = module.createOpenAI(options);
+            return Object.assign(
+              ((requestedModelId: Parameters<typeof provider>[0]) =>
+                provider(requestedModelId)) as typeof provider,
+              provider,
+              {
+                chat(requestedModelId: Parameters<typeof provider.chat>[0]) {
+                  capturedModelId = requestedModelId;
+                  return provider.chat(requestedModelId);
+                },
+              }
+            );
+          },
+        };
+      };
+
+      try {
+        const result = await factory.createModel("github-copilot:claude-opus-4-6");
+        expect(result.success).toBe(true);
+        if (!result.success) {
+          return;
+        }
+
+        expect(capturedModelId).toBe("claude-opus-4.6");
+        expect((result.data as { provider?: unknown }).provider).toBe("github-copilot.chat");
+      } finally {
+        PROVIDER_REGISTRY.openai = originalOpenAIRegistry;
+      }
+    });
+  });
+
   it("routes Codex models through the Copilot Responses API path", async () => {
     await withTempConfig(async (config, factory) => {
       config.saveProvidersConfig({

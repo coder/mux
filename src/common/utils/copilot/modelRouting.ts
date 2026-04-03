@@ -23,6 +23,22 @@ export function normalizeCopilotModelId(id: string): string {
   return unprefixedId.replace(/(\d+)\.(\d+)/g, "$1-$2");
 }
 
+export function toCopilotModelId(id: string): string {
+  const unprefixedId = id.includes(":") ? id.slice(id.indexOf(":") + 1) : id;
+
+  if (!unprefixedId.startsWith("claude-")) {
+    return unprefixedId;
+  }
+
+  const versionMatch = /^(claude-[a-z0-9-]*?)-(\d+)-(\d+)(-\d{8})?$/.exec(unprefixedId);
+  if (!versionMatch) {
+    return unprefixedId;
+  }
+
+  const [, prefix, majorVersion, minorVersion, suffix = ""] = versionMatch;
+  return `${prefix}-${majorVersion}.${minorVersion}${suffix}`;
+}
+
 export function isCopilotModelAccessible(modelId: string, availableModels: string[]): boolean {
   if (availableModels.length === 0) {
     return true;

@@ -27,6 +27,7 @@ import { maybeGetProviderModelEntryId } from "@/common/utils/providers/modelEntr
 import {
   isCopilotModelAccessible,
   selectCopilotApiMode,
+  toCopilotModelId,
 } from "@/common/utils/copilot/modelRouting";
 import { CopilotResponsesLanguageModel } from "@/node/services/copilot/copilotResponsesLanguageModel";
 import type { PolicyService } from "@/node/services/policyService";
@@ -1606,6 +1607,7 @@ export class ProviderModelFactory {
         const providerFetch = copilotFetch;
         const baseURL = providerConfig.baseURL ?? "https://api.githubcopilot.com";
         const apiMode = selectCopilotApiMode(modelId);
+        const outboundCopilotModelId = toCopilotModelId(modelId);
         log.debug(`GitHub Copilot model ${modelId} using ${apiMode} API mode`);
 
         if (apiMode === "responses") {
@@ -1613,7 +1615,7 @@ export class ProviderModelFactory {
           // that handles Copilot's SSE stream quirks (rotating item_id,
           // text arriving via output_text.delta rather than inline).
           const model = new CopilotResponsesLanguageModel({
-            modelId,
+            modelId: outboundCopilotModelId,
             fetch: providerFetch,
             baseUrl: baseURL,
           });
@@ -1627,7 +1629,7 @@ export class ProviderModelFactory {
           apiKey: "copilot", // placeholder, actual auth via custom fetch
           fetch: providerFetch,
         });
-        return Ok(provider.chat(modelId));
+        return Ok(provider.chat(outboundCopilotModelId));
       }
 
       // Generic handler for simple providers (standard API key + factory pattern)

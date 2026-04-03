@@ -5,6 +5,7 @@ import {
   isCopilotRoutableModel,
   normalizeCopilotModelId,
   selectCopilotApiMode,
+  toCopilotModelId,
 } from "./modelRouting";
 
 describe("COPILOT_MODEL_PREFIXES", () => {
@@ -73,6 +74,21 @@ describe("normalizeCopilotModelId", () => {
 
   it("returns empty strings unchanged", () => {
     expect(normalizeCopilotModelId("")).toBe("");
+  });
+});
+
+describe("toCopilotModelId", () => {
+  it("restores Claude version separators to Copilot's dot form", () => {
+    expect(toCopilotModelId("claude-opus-4-6")).toBe("claude-opus-4.6");
+    expect(toCopilotModelId("claude-sonnet-4-5-20250929")).toBe("claude-sonnet-4.5-20250929");
+  });
+
+  it("leaves non-Claude ids unchanged", () => {
+    expect(toCopilotModelId("gpt-5.4")).toBe("gpt-5.4");
+  });
+
+  it("strips provider prefixes before restoring Claude ids", () => {
+    expect(toCopilotModelId("anthropic:claude-opus-4-6")).toBe("claude-opus-4.6");
   });
 });
 

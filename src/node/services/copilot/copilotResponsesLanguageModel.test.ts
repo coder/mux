@@ -187,8 +187,8 @@ describe("CopilotResponsesLanguageModel", () => {
       topP: 0.8,
       maxOutputTokens: 64,
       providerOptions: {
-        openai: {
-          reasoning: { effort: "medium" },
+        "github-copilot": {
+          reasoningEffort: "medium",
         },
       },
     } satisfies LanguageModelV2CallOptions);

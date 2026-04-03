@@ -260,8 +260,18 @@ function serializeToolResultOutput(output: LanguageModelV2ToolResultOutput) {
 }
 
 function getReasoningOption(providerOptions: LanguageModelV2CallOptions["providerOptions"]) {
-  const openaiOptions = providerOptions?.openai;
-  return openaiOptions && typeof openaiOptions === "object" ? openaiOptions.reasoning : undefined;
+  const copilotOptions = providerOptions?.["github-copilot"];
+  if (!copilotOptions || typeof copilotOptions !== "object") {
+    return undefined;
+  }
+
+  const explicitReasoning = (copilotOptions as Record<string, unknown>).reasoning;
+  if (explicitReasoning && typeof explicitReasoning === "object") {
+    return explicitReasoning;
+  }
+
+  const reasoningEffort = (copilotOptions as Record<string, unknown>).reasoningEffort;
+  return typeof reasoningEffort === "string" ? { effort: reasoningEffort } : undefined;
 }
 
 async function consumeSseStream(
