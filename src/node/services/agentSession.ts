@@ -4759,10 +4759,15 @@ export class AgentSession {
       imageParts?: FilePart[];
     };
 
-    if (followUp.dispatchOptions?.requireIdle === true && this.hasQueuedMessages()) {
+    if (
+      followUp.dispatchOptions?.requireIdle === true &&
+      (this.hasQueuedMessages() || this.isBusy())
+    ) {
       log.info("Skipping pending follow-up because the workspace is no longer idle", {
         workspaceId: this.workspaceId,
         summaryMessageId: lastMessage.id,
+        hasQueuedMessages: this.hasQueuedMessages(),
+        isBusy: this.isBusy(),
       });
       await this.clearPendingFollowUpFromSummary(lastMessage);
       return false;
