@@ -233,11 +233,6 @@
     --color-input-border: hsl(207 51% 59%);
     --color-input-border-focus: hsl(193 91% 64%);
 
-    /* Scrollbar */
-    --color-scrollbar-track: hsl(0 0% 18%);
-    --color-scrollbar-thumb: hsl(0 0% 32%);
-    --color-scrollbar-thumb-hover: hsl(0 0% 42%);
-
     /* Additional Semantic Colors */
     --color-muted: hsl(0 0% 53%); /* #888 - muted text */
     --color-muted-light: hsl(0 0% 50%); /* #808080 - muted light */
@@ -515,10 +510,6 @@
   --color-input-border: hsl(207 75% 52%);
   --color-input-border-focus: hsl(193 85% 56%);
 
-  --color-scrollbar-track: hsl(210 38% 95%);
-  --color-scrollbar-thumb: hsl(210 18% 78%);
-  --color-scrollbar-thumb-hover: hsl(210 18% 70%);
-
   --color-muted: hsl(210 14% 52%);
   --color-muted-light: hsl(210 20% 60%);
   --color-muted-dark: hsl(210 12% 42%);
@@ -764,10 +755,6 @@
   --color-input-border: #205ea6;
   --color-input-border-focus: color-mix(in srgb, var(--color-input-border), white 30%);
 
-  --color-scrollbar-track: #f2f0e5;
-  --color-scrollbar-thumb: #dad8ce;
-  --color-scrollbar-thumb-hover: #cecdc3;
-
   --color-muted: #6f6e69;
   --color-muted-light: #6f6e69;
   --color-muted-dark: #6f6e69;
@@ -996,10 +983,6 @@
   --color-input-text: #cecdc3;
   --color-input-border: #4385be;
   --color-input-border-focus: color-mix(in srgb, var(--color-input-border), white 22%);
-
-  --color-scrollbar-track: #1c1b1a;
-  --color-scrollbar-thumb: #343331;
-  --color-scrollbar-thumb-hover: #403e3c;
 
   --color-muted: #878580;
   --color-muted-light: #cecdc3;
