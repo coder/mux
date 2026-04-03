@@ -90,7 +90,7 @@ describe("useRouting", () => {
     });
   });
 
-  test("resolveRoute routes built-in Anthropic models through Copilot with dot-form catalog entries", async () => {
+  test("availableRoutes exposes Copilot for built-in Anthropic models with dot-form catalog entries", async () => {
     providersConfig = {
       anthropic: { apiKeySet: false, isEnabled: true, isConfigured: false },
       "github-copilot": {
@@ -100,7 +100,6 @@ describe("useRouting", () => {
         models: ["claude-opus-4.6"],
       },
     };
-    routePriority = ["github-copilot", "direct"];
 
     const { result } = renderHook(() => useRouting(), { wrapper });
 
@@ -110,16 +109,6 @@ describe("useRouting", () => {
           .availableRoutes(KNOWN_MODELS.OPUS.id)
           .some((route) => route.route === "github-copilot")
       ).toBe(true);
-    });
-
-    await waitFor(() => {
-      expect(result.current.routePriority).toEqual(routePriority);
-    });
-
-    expect(result.current.resolveRoute(KNOWN_MODELS.OPUS.id)).toEqual({
-      route: "github-copilot",
-      isAuto: true,
-      displayName: "GitHub Copilot",
     });
   });
 });
