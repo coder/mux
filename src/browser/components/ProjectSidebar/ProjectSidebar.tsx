@@ -538,7 +538,7 @@ const ProjectDragLayer: React.FC = () => {
   const { basename } = PlatformPaths.splitAbbreviated(abbrevPath);
 
   return (
-    <div className="pointer-events-none fixed inset-0 z-[9999] cursor-grabbing">
+    <div className="pointer-events-none fixed inset-0 z-9999 cursor-grabbing">
       <div style={{ transform: `translate(${currentOffset.x + 10}px, ${currentOffset.y + 10}px)` }}>
         <div className={cn(PROJECT_ITEM_BASE_CLASS, "w-fit max-w-64 rounded-sm shadow-lg")}>
           <span className="text-secondary mr-2 flex h-5 w-5 shrink-0 items-center justify-center">
