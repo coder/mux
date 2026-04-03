@@ -395,6 +395,90 @@ describe("AgentSession continue-message agentId fallback", () => {
     session.dispose();
   });
 
+  test("dispatchPendingFollowUp keeps heartbeat reset boundaries once a non-idle turn has started", async () => {
+    const aiService: AIService = {
+      on() {
+        return this;
+      },
+      off() {
+        return this;
+      },
+      isStreaming: () => false,
+      stopStream: mock(() => Promise.resolve({ success: true as const, data: undefined })),
+    } as unknown as AIService;
+
+    const heartbeatBoundary = createMuxMessage(
+      "heartbeat-boundary",
+      "assistant",
+      "Reset boundary",
+      {
+        compacted: "heartbeat",
+        compactionBoundary: true,
+        compactionEpoch: 1,
+        muxMetadata: {
+          type: "compaction-summary",
+          pendingFollowUp: {
+            text: "heartbeat follow-up",
+            model: "openai:gpt-4o",
+            agentId: "exec",
+            dispatchOptions: { requireIdle: true },
+          },
+        },
+      }
+    );
+
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+    await historyService.appendToHistory("ws", heartbeatBoundary);
+
+    const initStateManager: InitStateManager = {
+      on() {
+        return this;
+      },
+      off() {
+        return this;
+      },
+    } as unknown as InitStateManager;
+
+    const backgroundProcessManager: BackgroundProcessManager = {
+      cleanup: mock(() => Promise.resolve()),
+      setMessageQueued: mock(() => undefined),
+    } as unknown as BackgroundProcessManager;
+
+    const config: Config = {
+      srcDir: "/tmp",
+      getSessionDir: mock(() => "/tmp"),
+    } as unknown as Config;
+
+    const session = new AgentSession({
+      workspaceId: "ws",
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+
+    const internals = session as unknown as SessionInternals & { isBusy: () => boolean };
+    internals.sendMessage = mock(() => Promise.resolve({ success: true as const }));
+    internals.isBusy = () => true;
+
+    const dispatched = await internals.dispatchPendingFollowUp();
+
+    expect(dispatched).toBe(false);
+    expect(internals.sendMessage).not.toHaveBeenCalled();
+
+    const historyResult = await historyService.getLastMessages("ws", 10);
+    expect(historyResult.success).toBe(true);
+    if (!historyResult.success) {
+      throw new Error(`Expected history read to succeed: ${historyResult.error}`);
+    }
+    expect(historyResult.data[0]?.id).toBe("heartbeat-boundary");
+    expect(historyResult.data[0]?.metadata?.muxMetadata).toEqual({ type: "compaction-summary" });
+
+    session.dispose();
+  });
+
   test("dispatchPendingFollowUp still runs idle-only follow-ups during compaction completion", async () => {
     const aiService: AIService = {
       on() {

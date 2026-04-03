@@ -4776,18 +4776,23 @@ export class AgentSession {
       imageParts?: FilePart[];
     };
 
+    const hasQueuedMessages = this.hasQueuedMessages();
     const hasActiveNonCompletingTurn = this.isBusy() && this.turnPhase !== TurnPhase.COMPLETING;
     if (
       followUp.dispatchOptions?.requireIdle === true &&
-      (this.hasQueuedMessages() || hasActiveNonCompletingTurn)
+      (hasQueuedMessages || hasActiveNonCompletingTurn)
     ) {
       log.info("Skipping pending follow-up because the workspace is no longer idle", {
         workspaceId: this.workspaceId,
         summaryMessageId: lastMessage.id,
-        hasQueuedMessages: this.hasQueuedMessages(),
+        hasQueuedMessages,
         turnPhase: this.turnPhase,
       });
-      if (lastMessage.metadata?.compacted === "heartbeat") {
+      if (
+        lastMessage.metadata?.compacted === "heartbeat" &&
+        hasQueuedMessages &&
+        !hasActiveNonCompletingTurn
+      ) {
         const rollbackResult =
           await this.compactionHandler.rollbackHeartbeatContextResetBoundary(lastMessage);
         if (!rollbackResult.success) {
