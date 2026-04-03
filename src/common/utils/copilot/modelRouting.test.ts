@@ -80,7 +80,11 @@ describe("normalizeCopilotModelId", () => {
 describe("toCopilotModelId", () => {
   it("restores Claude version separators to Copilot's dot form", () => {
     expect(toCopilotModelId("claude-opus-4-6")).toBe("claude-opus-4.6");
-    expect(toCopilotModelId("claude-sonnet-4-5-20250929")).toBe("claude-sonnet-4.5-20250929");
+    expect(toCopilotModelId("claude-sonnet-4-6-20250514")).toBe("claude-sonnet-4.6-20250514");
+  });
+
+  it("leaves date-stamped Claude ids without a short minor version unchanged", () => {
+    expect(toCopilotModelId("claude-sonnet-4-20250514")).toBe("claude-sonnet-4-20250514");
   });
 
   it("leaves non-Claude ids unchanged", () => {

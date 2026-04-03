@@ -30,7 +30,8 @@ export function toCopilotModelId(id: string): string {
     return unprefixedId;
   }
 
-  const versionMatch = /^(claude-[a-z0-9-]*?)-(\d+)-(\d+)(-\d{8})?$/.exec(unprefixedId);
+  // Copilot expects Claude major.minor versions in dot form, but date-stamped suffixes must stay dashed.
+  const versionMatch = /^(claude-[a-z0-9-]*?)-(\d+)-(\d{1,2})(-\d{8})?$/.exec(unprefixedId);
   if (!versionMatch) {
     return unprefixedId;
   }
