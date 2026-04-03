@@ -7,6 +7,7 @@ import * as os from "os";
 import * as path from "path";
 
 import type { EventEmitter } from "events";
+import { MAX_EDITED_FILES } from "@/common/constants/attachments";
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import type { StreamEndEvent } from "@/common/types/stream";
 import type { TelemetryService } from "./telemetryService";
@@ -488,6 +489,60 @@ describe("CompactionHandler", () => {
 
       const pendingState = await handler.peekPendingState();
       expect(pendingState?.diffs.map((diff) => diff.path)).toEqual(["/tmp/preexisting.ts"]);
+    });
+
+    it("prioritizes newly extracted diffs over stale pending diffs when the cap is reached", async () => {
+      const existingBoundary = createMuxMessage(
+        "summary-existing",
+        "assistant",
+        "Existing summary",
+        {
+          compacted: "user",
+          compactionBoundary: true,
+          compactionEpoch: 1,
+        }
+      );
+      const freshEdit = createSuccessfulFileEditMessage(
+        "assistant-edit-fresh",
+        "/tmp/fresh.ts",
+        "@@ -1 +1 @@\n-old\n+fresh\n"
+      );
+      await seedHistory(existingBoundary, freshEdit);
+
+      const persistedPath = path.join(sessionDir, "post-compaction.json");
+      const staleDiffs = Array.from({ length: MAX_EDITED_FILES }, (_value, index) => ({
+        path: `/tmp/stale-${index}.ts`,
+        diff: `@@ -1 +1 @@\n-old\n+stale-${index}\n`,
+        truncated: false,
+      }));
+      await fsPromises.writeFile(
+        persistedPath,
+        JSON.stringify({
+          version: 1,
+          createdAt: Date.now(),
+          diffs: staleDiffs,
+          loadedSkills: [],
+        })
+      );
+
+      const result = await handler.appendHeartbeatContextResetBoundary({
+        boundaryText: "Heartbeat context reset boundary",
+        pendingFollowUp: {
+          text: "heartbeat follow-up",
+          model: "openai:gpt-4o",
+          agentId: "exec",
+          dispatchOptions: { requireIdle: true },
+        },
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        throw new Error(`Expected append to succeed: ${result.error}`);
+      }
+
+      const pendingState = await handler.peekPendingState();
+      expect(pendingState?.diffs.map((diff) => diff.path)).toContain("/tmp/fresh.ts");
+      expect(pendingState?.diffs).toHaveLength(MAX_EDITED_FILES);
     });
 
     it("loads legacy persisted state files that omit loadedSkills", async () => {

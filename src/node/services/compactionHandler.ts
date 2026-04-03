@@ -187,16 +187,32 @@ function coerceLoadedSkillSnapshots(value: unknown): LoadedSkillSnapshot[] {
 }
 
 function mergeFileEditDiffs(existing: FileEditDiff[], incoming: FileEditDiff[]): FileEditDiff[] {
-  const mergedByPath = new Map<string, FileEditDiff>();
+  const merged: FileEditDiff[] = [];
+  const seenPaths = new Set<string>();
+
+  for (const diff of incoming) {
+    if (seenPaths.has(diff.path)) {
+      continue;
+    }
+    seenPaths.add(diff.path);
+    merged.push(diff);
+    if (merged.length >= MAX_EDITED_FILES) {
+      return merged;
+    }
+  }
 
   for (const diff of existing) {
-    mergedByPath.set(diff.path, diff);
-  }
-  for (const diff of incoming) {
-    mergedByPath.set(diff.path, diff);
+    if (seenPaths.has(diff.path)) {
+      continue;
+    }
+    seenPaths.add(diff.path);
+    merged.push(diff);
+    if (merged.length >= MAX_EDITED_FILES) {
+      return merged;
+    }
   }
 
-  return [...mergedByPath.values()].slice(0, MAX_EDITED_FILES);
+  return merged;
 }
 
 function coercePersistedPostCompactionState(value: unknown): PersistedPostCompactionStateV1 | null {
