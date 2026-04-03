@@ -107,6 +107,7 @@ import { WorkspaceDragLayer } from "../WorkspaceDragLayer/WorkspaceDragLayer";
 import { SectionDragLayer } from "../SectionDragLayer/SectionDragLayer";
 import { DraggableSection } from "../DraggableSection/DraggableSection";
 import { Separator } from "../Separator/Separator";
+import { ScrollArea, ScrollAreaViewport } from "../ScrollArea/ScrollArea";
 import type { SectionConfig } from "@/common/types/project";
 import { getErrorMessage } from "@/common/utils/errors";
 import { isMultiProject } from "@/common/utils/multiProject";
@@ -1782,11 +1783,12 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                   <span>Add Project</span>
                 </button>
               </div>
-              <div
-                ref={projectListScrollRef}
-                onScroll={handleProjectListScroll}
-                className="flex-1 overflow-x-hidden overflow-y-auto"
-              >
+              <ScrollArea className="flex-1">
+                <ScrollAreaViewport
+                  ref={projectListScrollRef}
+                  onScroll={handleProjectListScroll}
+                  className="h-full w-full overflow-x-hidden"
+                >
                 {multiProjectWorkspaces.length > 0 && (
                   <div>
                     <div className={PROJECT_ITEM_BASE_CLASS}>
@@ -2970,7 +2972,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                     );
                   })
                 )}
-              </div>
+                </ScrollAreaViewport>
+              </ScrollArea>
             </>
           )}
           <SidebarCollapseButton
