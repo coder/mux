@@ -322,6 +322,10 @@ describe("CompactionHandler", () => {
       });
 
       expect(result.success).toBe(true);
+      if (!result.success) {
+        throw new Error(`Expected append to succeed: ${result.error}`);
+      }
+      expect(result.data.summaryMessageId).toBeDefined();
 
       const latestHistory = await historyService.getLastMessages(workspaceId, 10);
       expect(latestHistory.success).toBe(true);
@@ -409,8 +413,81 @@ describe("CompactionHandler", () => {
       });
 
       expect(result.success).toBe(true);
+      if (!result.success) {
+        throw new Error(`Expected append to succeed: ${result.error}`);
+      }
+      expect(result.data.summaryMessageId).toBeDefined();
       const pendingState = await handler.peekPendingState();
       expect(pendingState?.diffs.map((diff) => diff.path)).toContain("/tmp/preexisting.ts");
+    });
+
+    it("rolls back heartbeat reset boundaries and restores pending state", async () => {
+      const existingBoundary = createMuxMessage(
+        "summary-existing",
+        "assistant",
+        "Existing summary",
+        {
+          compacted: "user",
+          compactionBoundary: true,
+          compactionEpoch: 1,
+        }
+      );
+      await seedHistory(existingBoundary);
+
+      const persistedPath = path.join(sessionDir, "post-compaction.json");
+      await fsPromises.writeFile(
+        persistedPath,
+        JSON.stringify({
+          version: 1,
+          createdAt: Date.now(),
+          diffs: [
+            {
+              path: "/tmp/preexisting.ts",
+              diff: "@@ -1 +1 @@\n-old\n+pending\n",
+              truncated: false,
+            },
+          ],
+          loadedSkills: [],
+        })
+      );
+
+      const appendResult = await handler.appendHeartbeatContextResetBoundary({
+        boundaryText: "Heartbeat context reset boundary",
+        pendingFollowUp: {
+          text: "heartbeat follow-up",
+          model: "openai:gpt-4o",
+          agentId: "exec",
+          dispatchOptions: { requireIdle: true },
+        },
+      });
+      expect(appendResult.success).toBe(true);
+      if (!appendResult.success) {
+        throw new Error(`Expected append to succeed: ${appendResult.error}`);
+      }
+
+      const boundaryHistory = await historyService.getLastMessages(workspaceId, 1);
+      expect(boundaryHistory.success).toBe(true);
+      if (!boundaryHistory.success) {
+        throw new Error(`Expected history read to succeed: ${boundaryHistory.error}`);
+      }
+      const boundaryMessage = boundaryHistory.data[0];
+      expect(boundaryMessage?.metadata?.compacted).toBe("heartbeat");
+
+      if (!boundaryMessage) {
+        throw new Error("Expected heartbeat reset boundary to exist before rollback");
+      }
+      const rollbackResult = await handler.rollbackHeartbeatContextResetBoundary(boundaryMessage);
+      expect(rollbackResult.success).toBe(true);
+
+      const latestHistory = await historyService.getLastMessages(workspaceId, 10);
+      expect(latestHistory.success).toBe(true);
+      if (!latestHistory.success) {
+        throw new Error(`Expected history read to succeed: ${latestHistory.error}`);
+      }
+      expect(latestHistory.data.map((message) => message.id)).toEqual(["summary-existing"]);
+
+      const pendingState = await handler.peekPendingState();
+      expect(pendingState?.diffs.map((diff) => diff.path)).toEqual(["/tmp/preexisting.ts"]);
     });
 
     it("loads legacy persisted state files that omit loadedSkills", async () => {

@@ -4724,27 +4724,44 @@ export class AgentSession {
    * for crash safety. The user message persisted by sendMessage() serves as
    * proof of dispatch (no history rewrite needed).
    */
-  private async dispatchPendingFollowUp(): Promise<boolean> {
+  private async dispatchPendingFollowUp(summaryMessageId?: string): Promise<boolean> {
     if (this.disposed) {
       return false;
     }
 
-    // Read the last message from history — only need 1 message, avoid full-file read.
-    // Startup recovery must retry on transient read failures, so bubble errors.
-    const historyResult = await this.historyService.getLastMessages(this.workspaceId, 1);
-    if (!historyResult.success) {
-      const historyError =
-        typeof historyResult.error === "string"
-          ? historyResult.error
-          : getErrorMessage(historyResult.error);
-      throw new Error(`Failed to read history for startup follow-up recovery: ${historyError}`);
+    let summaryMessage: MuxMessage | undefined;
+    if (summaryMessageId) {
+      const historyResult = await this.historyService.getHistoryFromLatestBoundary(
+        this.workspaceId
+      );
+      if (!historyResult.success) {
+        throw new Error(
+          `Failed to read history for targeted follow-up recovery: ${historyResult.error}`
+        );
+      }
+      summaryMessage = historyResult.data.find((message) => message.id === summaryMessageId);
+      if (!summaryMessage) {
+        return false;
+      }
+    } else {
+      // Read the last message from history — only need 1 message, avoid full-file read.
+      // Startup recovery must retry on transient read failures, so bubble errors.
+      const historyResult = await this.historyService.getLastMessages(this.workspaceId, 1);
+      if (!historyResult.success) {
+        const historyError =
+          typeof historyResult.error === "string"
+            ? historyResult.error
+            : getErrorMessage(historyResult.error);
+        throw new Error(`Failed to read history for startup follow-up recovery: ${historyError}`);
+      }
+
+      if (historyResult.data.length === 0) {
+        return false;
+      }
+      summaryMessage = historyResult.data[0];
     }
 
-    if (historyResult.data.length === 0) {
-      return false;
-    }
-
-    const lastMessage = historyResult.data[0];
+    const lastMessage = summaryMessage;
     const muxMeta = lastMessage.metadata?.muxMetadata;
 
     // Check if it's a compaction summary with a pending follow-up
@@ -4827,6 +4844,7 @@ export class AgentSession {
       providerOptions: followUp.providerOptions,
       experiments: followUp.experiments,
       disableWorkspaceAgents: followUp.disableWorkspaceAgents,
+      skipAiSettingsPersistence: followUp.skipAiSettingsPersistence,
     };
 
     if (effectiveFileParts && effectiveFileParts.length > 0) {
@@ -5250,7 +5268,7 @@ export class AgentSession {
   async appendHeartbeatContextResetBoundary(params: {
     boundaryText: string;
     pendingFollowUp: CompactionFollowUpRequest;
-  }): Promise<Result<void, string>> {
+  }): Promise<Result<{ summaryMessageId: string }, string>> {
     this.assertNotDisposed("appendHeartbeatContextResetBoundary");
 
     if (this.isBusy()) {
@@ -5270,9 +5288,9 @@ export class AgentSession {
     return result;
   }
 
-  async dispatchPendingCompactionFollowUpIfNeeded(): Promise<boolean> {
+  async dispatchPendingCompactionFollowUpIfNeeded(summaryMessageId?: string): Promise<boolean> {
     this.assertNotDisposed("dispatchPendingCompactionFollowUpIfNeeded");
-    return this.dispatchPendingFollowUp();
+    return this.dispatchPendingFollowUp(summaryMessageId);
   }
 
   /**

@@ -587,7 +587,7 @@ export class CompactionHandler {
   async appendHeartbeatContextResetBoundary(params: {
     boundaryText: string;
     pendingFollowUp: CompactionFollowUpRequest;
-  }): Promise<Result<void, string>> {
+  }): Promise<Result<{ summaryMessageId: string }, string>> {
     assert(
       params.boundaryText.trim().length > 0,
       "appendHeartbeatContextResetBoundary requires non-empty boundary text"
@@ -671,7 +671,7 @@ export class CompactionHandler {
 
     this.postCompactionAttachmentsPending = true;
     this.emitChatEvent({ ...summaryMessage, type: "message" });
-    return Ok(undefined);
+    return Ok({ summaryMessageId: summaryMessage.id });
   }
 
   async rollbackHeartbeatContextResetBoundary(

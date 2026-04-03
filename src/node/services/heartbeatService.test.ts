@@ -837,7 +837,7 @@ describe("HeartbeatService", () => {
             dispatchOptions?: { requireIdle?: boolean };
             muxMetadata?: { type?: string };
           };
-        }) => Promise.resolve(Ok(undefined))
+        }) => Promise.resolve(Ok({ summaryMessageId: "heartbeat-reset-boundary" }))
       );
       const dispatchPendingCompactionFollowUpIfNeeded = mock(() => Promise.resolve(true));
       const sessionStub = {
@@ -877,6 +877,9 @@ describe("HeartbeatService", () => {
       expect(appendCall?.pendingFollowUp.dispatchOptions?.requireIdle).toBe(true);
       expect(appendCall?.pendingFollowUp.muxMetadata?.type).toBe("heartbeat-request");
       expect(dispatchPendingCompactionFollowUpIfNeeded).toHaveBeenCalledTimes(1);
+      expect(dispatchPendingCompactionFollowUpIfNeeded).toHaveBeenCalledWith(
+        "heartbeat-reset-boundary"
+      );
     });
 
     test("startup does not fire heartbeats immediately", async () => {

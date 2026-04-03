@@ -49,6 +49,7 @@ type PreservedSendOptions = Pick<
   | "providerOptions"
   | "experiments"
   | "disableWorkspaceAgents"
+  | "skipAiSettingsPersistence"
 >;
 
 /**
@@ -62,6 +63,7 @@ export function pickPreservedSendOptions(options: SendMessageOptions): Preserved
     providerOptions: options.providerOptions,
     experiments: options.experiments,
     disableWorkspaceAgents: options.disableWorkspaceAgents,
+    skipAiSettingsPersistence: options.skipAiSettingsPersistence,
   };
 }
 

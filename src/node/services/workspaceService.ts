@@ -7117,7 +7117,9 @@ export class WorkspaceService extends EventEmitter {
           throw new Error(`Failed to execute heartbeat: ${appendResult.error}`);
         }
 
-        const dispatched = await session.dispatchPendingCompactionFollowUpIfNeeded();
+        const dispatched = await session.dispatchPendingCompactionFollowUpIfNeeded(
+          appendResult.data.summaryMessageId
+        );
         if (!dispatched) {
           log.info("Skipped heartbeat follow-up after reset boundary", {
             workspaceId,
