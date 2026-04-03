@@ -689,6 +689,7 @@
   --color-surface-destructive: color-mix(in srgb, var(--color-danger) 12%, var(--color-background) 88%);
   --color-surface-invert-secondary: #403e3c;
   --color-surface-tertiary: #f2f0e5;
+  --color-surface-quaternary: #dad8ce;
   --color-content-success: #66800b;
   --color-surface-green: color-mix(in srgb, var(--color-success) 20%, var(--color-background) 80%);
   --color-border-pending: #24837b;
@@ -921,6 +922,7 @@
   --color-surface-destructive: color-mix(in srgb, var(--color-danger) 16%, var(--color-background) 84%);
   --color-surface-invert-secondary: #b7b5ac;
   --color-surface-tertiary: #282726;
+  --color-surface-quaternary: #343331;
   --color-content-success: #879a39;
   --color-surface-green: color-mix(in srgb, var(--color-success) 18%, var(--color-background) 82%);
   --color-border-pending: #3aa99f;
