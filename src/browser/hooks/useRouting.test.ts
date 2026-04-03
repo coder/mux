@@ -112,6 +112,10 @@ describe("useRouting", () => {
       ).toBe(true);
     });
 
+    await waitFor(() => {
+      expect(result.current.routePriority).toEqual(routePriority);
+    });
+
     expect(result.current.resolveRoute(KNOWN_MODELS.OPUS.id)).toEqual({
       route: "github-copilot",
       isAuto: true,
