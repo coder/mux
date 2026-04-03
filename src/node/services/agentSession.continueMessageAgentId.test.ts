@@ -306,6 +306,79 @@ describe("AgentSession continue-message agentId fallback", () => {
     session.dispose();
   });
 
+  test("dispatchPendingFollowUp still runs idle-only follow-ups during compaction completion", async () => {
+    const aiService: AIService = {
+      on() {
+        return this;
+      },
+      off() {
+        return this;
+      },
+      isStreaming: () => false,
+      stopStream: mock(() => Promise.resolve({ success: true as const, data: undefined })),
+    } as unknown as AIService;
+
+    const mockSummaryMessage = {
+      id: "summary-completing-turn",
+      role: "assistant" as const,
+      parts: [{ type: "text" as const, text: "Compaction summary" }],
+      metadata: {
+        muxMetadata: {
+          type: "compaction-summary" as const,
+          pendingFollowUp: {
+            text: "heartbeat follow-up",
+            model: "openai:gpt-4o",
+            agentId: "exec",
+            dispatchOptions: { requireIdle: true },
+          },
+        },
+      },
+    } satisfies MuxMessage;
+
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+    await historyService.appendToHistory("ws", mockSummaryMessage);
+
+    const initStateManager: InitStateManager = {
+      on() {
+        return this;
+      },
+      off() {
+        return this;
+      },
+    } as unknown as InitStateManager;
+
+    const backgroundProcessManager: BackgroundProcessManager = {
+      cleanup: mock(() => Promise.resolve()),
+      setMessageQueued: mock(() => undefined),
+    } as unknown as BackgroundProcessManager;
+
+    const config: Config = {
+      srcDir: "/tmp",
+      getSessionDir: mock(() => "/tmp"),
+    } as unknown as Config;
+
+    const session = new AgentSession({
+      workspaceId: "ws",
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+
+    const internals = session as unknown as SessionInternals & { turnPhase: string };
+    internals.sendMessage = mock(() => Promise.resolve({ success: true as const }));
+    internals.turnPhase = "completing";
+
+    const dispatched = await internals.dispatchPendingFollowUp();
+
+    expect(dispatched).toBe(true);
+    expect(internals.sendMessage).toHaveBeenCalledTimes(1);
+
+    session.dispose();
+  });
+
   test("dispatchPendingFollowUp rewrites stale compact retry state to the reconstructed follow-up", async () => {
     const aiService: AIService = {
       on() {

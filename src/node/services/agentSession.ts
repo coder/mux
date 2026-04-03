@@ -4759,15 +4759,16 @@ export class AgentSession {
       imageParts?: FilePart[];
     };
 
+    const hasActiveNonCompletingTurn = this.isBusy() && this.turnPhase !== TurnPhase.COMPLETING;
     if (
       followUp.dispatchOptions?.requireIdle === true &&
-      (this.hasQueuedMessages() || this.isBusy())
+      (this.hasQueuedMessages() || hasActiveNonCompletingTurn)
     ) {
       log.info("Skipping pending follow-up because the workspace is no longer idle", {
         workspaceId: this.workspaceId,
         summaryMessageId: lastMessage.id,
         hasQueuedMessages: this.hasQueuedMessages(),
-        isBusy: this.isBusy(),
+        turnPhase: this.turnPhase,
       });
       await this.clearPendingFollowUpFromSummary(lastMessage);
       return false;
