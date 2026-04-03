@@ -28,6 +28,20 @@ describe("findLatestCompactionBoundaryIndex", () => {
     expect(findLatestCompactionBoundaryIndex(messages)).toBe(3);
   });
 
+  it("treats heartbeat reset boundaries as durable compaction boundaries", () => {
+    const messages = [
+      createMuxMessage("u0", "user", "before"),
+      createMuxMessage("heartbeat-reset", "assistant", "heartbeat reset", {
+        compacted: "heartbeat",
+        compactionBoundary: true,
+        compactionEpoch: 1,
+      }),
+      createMuxMessage("u1", "user", "after"),
+    ];
+
+    expect(findLatestCompactionBoundaryIndex(messages)).toBe(1);
+  });
+
   it("returns -1 when only legacy compacted summaries exist", () => {
     const messages = [
       createMuxMessage("u0", "user", "before"),
@@ -151,6 +165,23 @@ describe("sliceMessagesFromLatestCompactionBoundary", () => {
 
     expect(sliced.map((msg) => msg.id)).toEqual(["summary-2", "u2", "a2"]);
     expect(sliced[0]?.metadata?.compactionBoundary).toBe(true);
+  });
+
+  it("slices from heartbeat reset boundaries", () => {
+    const messages = [
+      createMuxMessage("u0", "user", "before"),
+      createMuxMessage("heartbeat-reset", "assistant", "heartbeat reset", {
+        compacted: "heartbeat",
+        compactionBoundary: true,
+        compactionEpoch: 1,
+      }),
+      createMuxMessage("u1", "user", "after"),
+      createMuxMessage("a1", "assistant", "reply"),
+    ];
+
+    const sliced = sliceMessagesFromLatestCompactionBoundary(messages);
+
+    expect(sliced.map((msg) => msg.id)).toEqual(["heartbeat-reset", "u1", "a1"]);
   });
 
   it("falls back to full history when no durable boundary exists", () => {

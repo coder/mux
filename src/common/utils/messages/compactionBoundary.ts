@@ -8,8 +8,10 @@ function isPositiveInteger(value: unknown): value is number {
   );
 }
 
-function hasDurableCompactedMarker(value: unknown): value is true | "user" | "idle" {
-  return value === true || value === "user" || value === "idle";
+export function isDurableCompactedMarker(
+  value: unknown
+): value is true | "user" | "idle" | "heartbeat" {
+  return value === true || value === "user" || value === "idle" || value === "heartbeat";
 }
 
 export function isDurableCompactionBoundaryMarker(message: MuxMessage | undefined): boolean {
@@ -23,7 +25,7 @@ export function isDurableCompactionBoundaryMarker(message: MuxMessage | undefine
 
   // Self-healing read path: malformed persisted boundary metadata should be ignored,
   // not crash request assembly.
-  if (!hasDurableCompactedMarker(message.metadata.compacted)) {
+  if (!isDurableCompactedMarker(message.metadata.compacted)) {
     return false;
   }
 

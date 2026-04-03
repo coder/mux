@@ -3,7 +3,11 @@ import { ThinkingLevelSchema } from "../../types/thinking";
 import { RuntimeConfigSchema } from "./runtime";
 import { WorkspaceAISettingsByAgentSchema, WorkspaceAISettingsSchema } from "./workspaceAiSettings";
 import { TASK_GROUP_KIND_VALUES } from "@/common/utils/tools/taskGroups";
-import { HEARTBEAT_MAX_INTERVAL_MS, HEARTBEAT_MIN_INTERVAL_MS } from "@/constants/heartbeat";
+import {
+  HEARTBEAT_CONTEXT_MODE_VALUES,
+  HEARTBEAT_MAX_INTERVAL_MS,
+  HEARTBEAT_MIN_INTERVAL_MS,
+} from "@/constants/heartbeat";
 
 export const ProjectRefSchema = z.object({
   projectPath: z.string().meta({ description: "Absolute path to the project's main git repo" }),
@@ -32,6 +36,8 @@ export const BestOfGroupSchema = z.object({
   }),
 });
 
+export const HeartbeatContextModeSchema = z.enum(HEARTBEAT_CONTEXT_MODE_VALUES);
+
 export const WorkspaceHeartbeatSettingsSchema = z.object({
   enabled: z.boolean().meta({
     description: "Whether scheduled workspace heartbeats are enabled for this workspace.",
@@ -42,6 +48,10 @@ export const WorkspaceHeartbeatSettingsSchema = z.object({
   message: z.string().optional().meta({
     description:
       "Optional custom instruction body appended after the fixed workspace heartbeat lead-in.",
+  }),
+  contextMode: HeartbeatContextModeSchema.nullish().meta({
+    description:
+      'Whether heartbeats use the existing context ("normal"), perform a real compaction first ("compact"), or append a synthetic reset boundary first ("reset"). Missing values default to "normal" at read time for backward compatibility.',
   }),
 });
 

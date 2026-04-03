@@ -17,7 +17,10 @@ import { getTokenizerForModel } from "@/node/utils/main/tokenizer";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { safeStringifyForCounting } from "@/common/utils/tokens/safeStringifyForCounting";
 import { normalizeLegacyMuxMetadata } from "@/node/utils/messages/legacy";
-import { isDurableCompactionBoundaryMarker } from "@/common/utils/messages/compactionBoundary";
+import {
+  isDurableCompactedMarker,
+  isDurableCompactionBoundaryMarker,
+} from "@/common/utils/messages/compactionBoundary";
 import { getErrorMessage } from "@/common/utils/errors";
 
 function isPositiveInteger(value: unknown): value is number {
@@ -32,17 +35,13 @@ function isNonNegativeInteger(value: unknown): value is number {
   );
 }
 
-function hasDurableCompactedMarker(value: unknown): value is true | "user" | "idle" {
-  return value === true || value === "user" || value === "idle";
-}
-
 function hasDurableCompactionBoundary(metadata: MuxMetadata | undefined): boolean {
   if (metadata?.compactionBoundary !== true) {
     return false;
   }
 
   // Self-healing read path: malformed boundary markers should be ignored.
-  if (!hasDurableCompactedMarker(metadata.compacted)) {
+  if (!isDurableCompactedMarker(metadata.compacted)) {
     return false;
   }
 

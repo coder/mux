@@ -53,6 +53,7 @@ import { detectDefaultTrunkBranch, listLocalBranches } from "@/node/git";
 import { shellQuote } from "@/node/runtime/backgroundCommands";
 import { extractEditedFilePaths } from "@/common/utils/messages/extractEditedFiles";
 import { buildCompactionMessageText } from "@/common/utils/compaction/compactionPrompt";
+import { isDurableCompactedMarker } from "@/common/utils/messages/compactionBoundary";
 import { deriveTodoStatus } from "@/common/utils/todoList";
 import { fileExists } from "@/node/utils/runtime/fileExists";
 import { orchestrateFork } from "@/node/services/utils/forkOrchestrator";
@@ -95,7 +96,12 @@ import {
   AskUserQuestionToolResultSchema,
 } from "@/common/utils/tools/toolDefinitions";
 import type { UIMode } from "@/common/types/mode";
-import type { MuxMessageMetadata, MuxMessage } from "@/common/types/message";
+import {
+  pickPreservedSendOptions,
+  type CompactionFollowUpRequest,
+  type MuxMessageMetadata,
+  type MuxMessage,
+} from "@/common/types/message";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import {
   hasSrcBaseDir,
@@ -112,10 +118,14 @@ import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { normalizeAgentId } from "@/common/utils/agentIds";
 import {
+  HEARTBEAT_CONTEXT_MODE_VALUES,
+  HEARTBEAT_DEFAULT_CONTEXT_MODE,
   HEARTBEAT_DEFAULT_INTERVAL_MS,
   HEARTBEAT_DEFAULT_MESSAGE_BODY,
   HEARTBEAT_MAX_INTERVAL_MS,
   HEARTBEAT_MIN_INTERVAL_MS,
+  HEARTBEAT_RESET_BOUNDARY_MESSAGE,
+  type HeartbeatContextMode,
 } from "@/constants/heartbeat";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type {
@@ -186,6 +196,14 @@ const MAX_WORKSPACE_NAME_COLLISION_RETRIES = 3;
 // Shared type for workspace-scoped AI settings (model + thinking)
 type WorkspaceAISettings = z.infer<typeof WorkspaceAISettingsSchema>;
 type WorkspaceHeartbeatSettings = z.infer<typeof WorkspaceHeartbeatSettingsSchema>;
+interface HeartbeatExecutionRequest {
+  contextMode: HeartbeatContextMode;
+  sendOptions: SendMessageOptions;
+  heartbeatPrompt: string;
+  muxMetadata: Extract<MuxMessageMetadata, { type: "heartbeat-request" }>;
+  followUp: CompactionFollowUpRequest;
+}
+
 type WorktreeArchiveSnapshotLifecycleService = Pick<
   WorktreeArchiveSnapshotService,
   | "preflightSnapshotForArchive"
@@ -220,6 +238,17 @@ function sanitizeHeartbeatMessage(message: unknown): string | undefined {
   }
 
   return trimmedMessage;
+}
+
+function isHeartbeatContextMode(value: unknown): value is HeartbeatContextMode {
+  return (
+    typeof value === "string" &&
+    HEARTBEAT_CONTEXT_MODE_VALUES.some((candidate) => candidate === value)
+  );
+}
+
+function sanitizeHeartbeatContextMode(value: unknown): HeartbeatContextMode {
+  return isHeartbeatContextMode(value) ? value : HEARTBEAT_DEFAULT_CONTEXT_MODE;
 }
 
 interface WorkspaceAgentStatus {
@@ -576,12 +605,8 @@ interface WorkspaceHistoryLoadMoreResult {
   hasOlder: boolean;
 }
 
-function hasDurableCompactedMarker(value: unknown): value is true | "user" | "idle" {
-  return value === true || value === "user" || value === "idle";
-}
-
 function isCompactedSummaryMessage(message: MuxMessage): boolean {
-  return hasDurableCompactedMarker(message.metadata?.compacted);
+  return isDurableCompactedMarker(message.metadata?.compacted);
 }
 
 function getNextCompactionEpochForAppendBoundary(
@@ -3264,15 +3289,18 @@ export class WorkspaceService extends EventEmitter {
     }
 
     const message = sanitizeHeartbeatMessage(workspaceEntry.heartbeat.message);
+    const contextMode = sanitizeHeartbeatContextMode(workspaceEntry.heartbeat.contextMode);
     return message == null
       ? {
           enabled: workspaceEntry.heartbeat.enabled,
           intervalMs: workspaceEntry.heartbeat.intervalMs,
+          contextMode,
         }
       : {
           enabled: workspaceEntry.heartbeat.enabled,
           intervalMs: workspaceEntry.heartbeat.intervalMs,
           message,
+          contextMode,
         };
   }
 
@@ -3298,6 +3326,13 @@ export class WorkspaceService extends EventEmitter {
         !hasMessageUpdate || settings.message == null || typeof settings.message === "string",
         "Heartbeat message must be a string when provided"
       );
+      const hasContextModeUpdate = Object.prototype.hasOwnProperty.call(settings, "contextMode");
+      assert(
+        !hasContextModeUpdate ||
+          settings.contextMode == null ||
+          isHeartbeatContextMode(settings.contextMode),
+        "Heartbeat context mode must be a supported value when provided"
+      );
 
       const found = this.config.findWorkspace(normalizedWorkspaceId);
       if (!found) {
@@ -3321,24 +3356,30 @@ export class WorkspaceService extends EventEmitter {
       const nextMessage = hasMessageUpdate
         ? normalizeHeartbeatMessageInput(settings.message)
         : sanitizeHeartbeatMessage(workspaceEntry.heartbeat?.message);
+      const nextContextMode = hasContextModeUpdate
+        ? sanitizeHeartbeatContextMode(settings.contextMode)
+        : sanitizeHeartbeatContextMode(workspaceEntry.heartbeat?.contextMode);
       const nextSettings: WorkspaceHeartbeatSettings =
         nextMessage == null
           ? {
               enabled: settings.enabled,
               // Keep the interval on disk even when disabled so re-enabling restores the user's choice.
               intervalMs: settings.intervalMs,
+              contextMode: nextContextMode,
             }
           : {
               enabled: settings.enabled,
               // Keep the interval on disk even when disabled so re-enabling restores the user's choice.
               intervalMs: settings.intervalMs,
               message: nextMessage,
+              contextMode: nextContextMode,
             };
 
       const changed =
         workspaceEntry.heartbeat?.enabled !== nextSettings.enabled ||
         workspaceEntry.heartbeat?.intervalMs !== nextSettings.intervalMs ||
-        workspaceEntry.heartbeat?.message !== nextSettings.message;
+        workspaceEntry.heartbeat?.message !== nextSettings.message ||
+        sanitizeHeartbeatContextMode(workspaceEntry.heartbeat?.contextMode) !== nextContextMode;
       if (!changed) {
         return Ok(undefined);
       }
@@ -6196,7 +6237,7 @@ export class WorkspaceService extends EventEmitter {
           "append-compaction-boundary replace mode must compute a positive compaction epoch"
         );
 
-        const compactedMarker = hasDurableCompactedMarker(summaryMessage.metadata?.compacted)
+        const compactedMarker = isDurableCompactedMarker(summaryMessage.metadata?.compacted)
           ? summaryMessage.metadata.compacted
           : "user";
 
@@ -6211,7 +6252,7 @@ export class WorkspaceService extends EventEmitter {
         };
 
         assert(
-          hasDurableCompactedMarker(messageToAppend.metadata?.compacted),
+          isDurableCompactedMarker(messageToAppend.metadata?.compacted),
           "append-compaction-boundary replace mode requires a durable compacted marker"
         );
         assert(
@@ -7040,7 +7081,61 @@ export class WorkspaceService extends EventEmitter {
   async executeHeartbeat(workspaceId: string): Promise<void> {
     assert(workspaceId.trim().length > 0, "executeHeartbeat requires a non-empty workspaceId");
 
-    const { sendOptions, heartbeatMessage } = await this.buildHeartbeatSendOptions(workspaceId);
+    const heartbeatRequest = await this.buildHeartbeatRequest(workspaceId);
+    const session = this.getOrCreateSession(workspaceId);
+    if (session.isBusy()) {
+      throw new Error(
+        "Failed to execute heartbeat: Workspace is busy; idle-only send was skipped."
+      );
+    }
+    if (session.hasQueuedMessages()) {
+      throw new Error(
+        "Failed to execute heartbeat: Workspace has queued user input; idle-only send was skipped."
+      );
+    }
+
+    log.info("Executing heartbeat", {
+      workspaceId,
+      contextMode: heartbeatRequest.contextMode,
+      model: heartbeatRequest.sendOptions.model,
+      agentId: heartbeatRequest.sendOptions.agentId,
+    });
+
+    switch (heartbeatRequest.contextMode) {
+      case "normal":
+        await this.dispatchHeartbeatMessage(workspaceId, heartbeatRequest);
+        return;
+      case "compact":
+        await this.dispatchHeartbeatCompactionRequest(workspaceId, heartbeatRequest);
+        return;
+      case "reset": {
+        const appendResult = await session.appendHeartbeatContextResetBoundary({
+          boundaryText: HEARTBEAT_RESET_BOUNDARY_MESSAGE,
+          pendingFollowUp: heartbeatRequest.followUp,
+        });
+        if (!appendResult.success) {
+          throw new Error(`Failed to execute heartbeat: ${appendResult.error}`);
+        }
+
+        const dispatched = await session.dispatchPendingCompactionFollowUpIfNeeded();
+        if (!dispatched) {
+          log.info("Skipped heartbeat follow-up after reset boundary", {
+            workspaceId,
+            contextMode: heartbeatRequest.contextMode,
+          });
+        }
+        return;
+      }
+      default: {
+        const exhaustiveContextMode: never = heartbeatRequest.contextMode;
+        throw new Error(`Unhandled heartbeat context mode: ${String(exhaustiveContextMode)}`);
+      }
+    }
+  }
+
+  private async buildHeartbeatRequest(workspaceId: string): Promise<HeartbeatExecutionRequest> {
+    const { sendOptions, heartbeatMessage, contextMode } =
+      await this.buildHeartbeatSendOptions(workspaceId);
 
     const activity = await this.extensionMetadata.getSnapshot(workspaceId);
     const idleMs =
@@ -7052,25 +7147,44 @@ export class WorkspaceService extends EventEmitter {
     const heartbeatBody = heartbeatMessage ?? HEARTBEAT_DEFAULT_MESSAGE_BODY;
     const heartbeatPrompt = `${heartbeatLead} ${heartbeatBody}`;
 
-    const muxMetadata = {
-      type: "heartbeat-request" as const,
-      source: "heartbeat" as const,
+    assert(
+      typeof sendOptions.agentId === "string" && sendOptions.agentId.trim().length > 0,
+      "Heartbeat requests require a resolved agentId"
+    );
+
+    const muxMetadata: Extract<MuxMessageMetadata, { type: "heartbeat-request" }> = {
+      type: "heartbeat-request",
+      source: "heartbeat",
+      requestedModel: sendOptions.model,
       displayStatus: { emoji: "💓", message: "Heartbeat check..." },
     };
 
-    const session = this.getOrCreateSession(workspaceId);
-    if (session.isBusy()) {
-      throw new Error(
-        "Failed to execute heartbeat: Workspace is busy; idle-only send was skipped."
-      );
-    }
+    return {
+      contextMode,
+      sendOptions,
+      heartbeatPrompt,
+      muxMetadata,
+      followUp: {
+        text: heartbeatPrompt,
+        model: sendOptions.model,
+        agentId: sendOptions.agentId,
+        ...pickPreservedSendOptions(sendOptions),
+        muxMetadata,
+        dispatchOptions: { requireIdle: true },
+      },
+    };
+  }
 
+  private async dispatchHeartbeatMessage(
+    workspaceId: string,
+    heartbeatRequest: HeartbeatExecutionRequest
+  ): Promise<void> {
     const sendResult = await this.sendMessage(
       workspaceId,
-      heartbeatPrompt,
+      heartbeatRequest.heartbeatPrompt,
       {
-        ...sendOptions,
-        muxMetadata,
+        ...heartbeatRequest.sendOptions,
+        muxMetadata: heartbeatRequest.muxMetadata,
       },
       {
         // Heartbeats run in background; avoid mutating auto-resume counters.
@@ -7084,24 +7198,67 @@ export class WorkspaceService extends EventEmitter {
     );
 
     if (!sendResult.success) {
-      const rawError = sendResult.error;
-      const formattedError =
-        typeof rawError === "object" && rawError !== null
-          ? "raw" in rawError && typeof rawError.raw === "string"
-            ? rawError.raw
-            : "message" in rawError && typeof rawError.message === "string"
-              ? rawError.message
-              : "type" in rawError && typeof rawError.type === "string"
-                ? rawError.type
-                : JSON.stringify(rawError)
-          : String(rawError);
-      throw new Error(`Failed to execute heartbeat: ${formattedError}`);
+      throw new Error(
+        `Failed to execute heartbeat: ${this.formatSendMessageError(sendResult.error)}`
+      );
     }
+  }
+
+  private async dispatchHeartbeatCompactionRequest(
+    workspaceId: string,
+    heartbeatRequest: HeartbeatExecutionRequest
+  ): Promise<void> {
+    const compactionSendOptions = await this.buildIdleCompactionSendOptions(workspaceId);
+    const compactionMuxMetadata: MuxMessageMetadata = {
+      type: "compaction-request",
+      rawCommand: "/compact",
+      commandPrefix: "/compact",
+      parsed: {
+        model: compactionSendOptions.model,
+        followUpContent: heartbeatRequest.followUp,
+      },
+      requestedModel: compactionSendOptions.model,
+      source: "idle-compaction",
+      displayStatus: { emoji: "💓", message: "Compacting before heartbeat..." },
+    };
+
+    const sendResult = await this.sendMessage(
+      workspaceId,
+      buildCompactionMessageText({ followUpContent: heartbeatRequest.followUp }),
+      {
+        ...compactionSendOptions,
+        muxMetadata: compactionMuxMetadata,
+      },
+      {
+        skipAutoResumeReset: true,
+        synthetic: true,
+        requireIdle: true,
+      }
+    );
+
+    if (!sendResult.success) {
+      throw new Error(
+        `Failed to execute heartbeat: ${this.formatSendMessageError(sendResult.error)}`
+      );
+    }
+  }
+
+  private formatSendMessageError(error: SendMessageError): string {
+    return typeof error === "object" && error !== null
+      ? "raw" in error && typeof error.raw === "string"
+        ? error.raw
+        : "message" in error && typeof error.message === "string"
+          ? error.message
+          : "type" in error && typeof error.type === "string"
+            ? error.type
+            : JSON.stringify(error)
+      : String(error);
   }
 
   private async buildHeartbeatSendOptions(workspaceId: string): Promise<{
     sendOptions: SendMessageOptions;
     heartbeatMessage: string | undefined;
+    contextMode: HeartbeatContextMode;
   }> {
     const config = this.config.loadConfigOrDefault();
     const workspaceMatch = this.config.findWorkspace(workspaceId);
@@ -7195,6 +7352,7 @@ export class WorkspaceService extends EventEmitter {
         skipAiSettingsPersistence: true,
       },
       heartbeatMessage: sanitizeHeartbeatMessage(workspaceEntry?.heartbeat?.message),
+      contextMode: sanitizeHeartbeatContextMode(workspaceEntry?.heartbeat?.contextMode),
     };
   }
 

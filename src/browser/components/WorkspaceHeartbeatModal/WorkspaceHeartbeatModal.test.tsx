@@ -7,6 +7,7 @@ import { installDom } from "../../../../tests/ui/dom";
 import * as WorkspaceHeartbeatHookModule from "@/browser/hooks/useWorkspaceHeartbeat";
 import type { HeartbeatFormSettings } from "@/browser/hooks/useWorkspaceHeartbeat";
 import {
+  HEARTBEAT_DEFAULT_CONTEXT_MODE,
   HEARTBEAT_DEFAULT_INTERVAL_MS,
   HEARTBEAT_DEFAULT_MESSAGE_BODY,
 } from "@/constants/heartbeat";
@@ -39,6 +40,7 @@ function createHeartbeatSettings(
   return {
     enabled: false,
     intervalMs: HEARTBEAT_DEFAULT_INTERVAL_MS,
+    contextMode: HEARTBEAT_DEFAULT_CONTEXT_MODE,
     ...overrides,
   };
 }
@@ -125,12 +127,64 @@ describe("WorkspaceHeartbeatModal", () => {
           next: {
             enabled: true,
             intervalMs: HEARTBEAT_DEFAULT_INTERVAL_MS,
+            contextMode: HEARTBEAT_DEFAULT_CONTEXT_MODE,
             message: "Check the pending review queue and summarize next steps.",
           },
         },
       ]);
     });
     expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  test("saves the selected heartbeat context mode and updates helper copy", async () => {
+    settingsByWorkspaceId.set(
+      "ws-1",
+      createHeartbeatSettings({
+        enabled: true,
+        contextMode: "normal",
+      })
+    );
+
+    const view = render(
+      <WorkspaceHeartbeatModal
+        workspaceId="ws-1"
+        open={true}
+        onOpenChange={mock((_open: boolean) => undefined)}
+      />
+    );
+
+    const contextModeField = (await waitFor(() =>
+      view.getByLabelText("Heartbeat context mode")
+    )) as HTMLSelectElement;
+    expect(contextModeField.value).toBe("normal");
+    expect(view.getByText("Send the heartbeat on the current request context.")).toBeTruthy();
+
+    fireEvent.change(contextModeField, { target: { value: "reset" } });
+
+    await waitFor(() => {
+      expect(contextModeField.value).toBe("reset");
+    });
+    expect(
+      view.getByText(
+        "Adds a visible context-reset marker, preserves history, and sends the heartbeat on a fresh request context without generating a summary."
+      )
+    ).toBeTruthy();
+
+    fireEvent.click(view.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(saveCalls).toEqual([
+        {
+          workspaceId: "ws-1",
+          next: {
+            enabled: true,
+            intervalMs: HEARTBEAT_DEFAULT_INTERVAL_MS,
+            contextMode: "reset",
+            message: "",
+          },
+        },
+      ]);
+    });
   });
 
   test("saves messages longer than 1000 characters without a client-side cap", async () => {
@@ -162,6 +216,7 @@ describe("WorkspaceHeartbeatModal", () => {
           next: {
             enabled: true,
             intervalMs: HEARTBEAT_DEFAULT_INTERVAL_MS,
+            contextMode: HEARTBEAT_DEFAULT_CONTEXT_MODE,
             message: LONG_HEARTBEAT_MESSAGE,
           },
         },
@@ -261,6 +316,7 @@ describe("WorkspaceHeartbeatModal", () => {
           next: {
             enabled: true,
             intervalMs: HEARTBEAT_DEFAULT_INTERVAL_MS,
+            contextMode: HEARTBEAT_DEFAULT_CONTEXT_MODE,
             message: "",
           },
         },

@@ -89,7 +89,12 @@ describe("HeartbeatService", () => {
       name: string;
       path: string;
       parentWorkspaceId: string;
-      heartbeat: { enabled: boolean; intervalMs: number; message?: string };
+      heartbeat: {
+        enabled: boolean;
+        intervalMs: number;
+        message?: string;
+        contextMode?: "normal" | "compact" | "reset";
+      };
       archivedAt: string;
       unarchivedAt: string;
     }> = {}
@@ -562,6 +567,7 @@ describe("HeartbeatService", () => {
         () =>
           ({
             isBusy: () => false,
+            hasQueuedMessages: () => false,
           }) as unknown as AgentSession
       );
 
@@ -673,6 +679,7 @@ describe("HeartbeatService", () => {
         () =>
           ({
             isBusy: () => false,
+            hasQueuedMessages: () => false,
           }) as unknown as AgentSession
       );
 
@@ -708,6 +715,170 @@ describe("HeartbeatService", () => {
       expect(heartbeatPrompt).toContain(customMessage);
       expect(heartbeatPrompt).not.toContain(HEARTBEAT_DEFAULT_MESSAGE_BODY);
     });
+    test("dispatches a real compaction request before heartbeat when context mode is compact", async () => {
+      const heartbeatIntervalMs = HEARTBEAT_MIN_INTERVAL_MS;
+      const idleRecency = Date.now() - 5 * 60_000;
+
+      currentProjectsConfig = makeProjectsConfig([
+        makeWorkspaceEntry({
+          heartbeat: {
+            enabled: true,
+            intervalMs: heartbeatIntervalMs,
+            contextMode: "compact",
+          },
+        }),
+      ]);
+      getSnapshotMock.mockImplementation(() =>
+        Promise.resolve(
+          makeSnapshot({
+            recency: idleRecency,
+            streaming: false,
+          })
+        )
+      );
+
+      const sendMessageMock = mock(() => Promise.resolve(Ok(undefined)));
+      const getOrCreateSessionMock = mock(
+        () =>
+          ({
+            isBusy: () => false,
+            hasQueuedMessages: () => false,
+          }) as unknown as AgentSession
+      );
+
+      const realWorkspaceService = new WorkspaceService(
+        mockConfig,
+        {} as HistoryService,
+        new EventEmitter() as unknown as AIService,
+        new EventEmitter() as unknown as InitStateManager,
+        mockExtensionMetadata,
+        {} as BackgroundProcessManager
+      );
+      const workspaceServiceOverrides = realWorkspaceService as unknown as {
+        getOrCreateSession: typeof getOrCreateSessionMock;
+        sendMessage: typeof sendMessageMock;
+      };
+      workspaceServiceOverrides.getOrCreateSession = getOrCreateSessionMock;
+      workspaceServiceOverrides.sendMessage = sendMessageMock;
+
+      await realWorkspaceService.executeHeartbeat(testWorkspaceId);
+
+      expect(sendMessageMock).toHaveBeenCalledTimes(1);
+      const firstSendMessageCall = sendMessageMock.mock.calls.at(0) as
+        | [
+            Parameters<WorkspaceService["sendMessage"]>[0],
+            Parameters<WorkspaceService["sendMessage"]>[1],
+            {
+              muxMetadata?: {
+                type?: string;
+                parsed?: {
+                  followUpContent?: {
+                    text?: string;
+                    dispatchOptions?: { requireIdle?: boolean };
+                    muxMetadata?: { type?: string };
+                  };
+                };
+                displayStatus?: { message?: string };
+              };
+            },
+            NonNullable<Parameters<WorkspaceService["sendMessage"]>[3]>,
+          ]
+        | undefined;
+      expect(firstSendMessageCall).toBeDefined();
+      if (!firstSendMessageCall) {
+        throw new Error("Expected compact heartbeat sendMessage to be called exactly once");
+      }
+      const [workspaceId, compactionPrompt, sendOptions, dispatchOptions] = firstSendMessageCall;
+      expect(workspaceId).toBe(testWorkspaceId);
+      expect(compactionPrompt).toContain("The user wants to continue with: [Heartbeat]");
+      expect(sendOptions.muxMetadata?.type).toBe("compaction-request");
+      expect(sendOptions.muxMetadata?.displayStatus?.message).toBe(
+        "Compacting before heartbeat..."
+      );
+      expect(sendOptions.muxMetadata?.parsed?.followUpContent?.text).toContain("[Heartbeat]");
+      expect(sendOptions.muxMetadata?.parsed?.followUpContent?.dispatchOptions?.requireIdle).toBe(
+        true
+      );
+      expect(sendOptions.muxMetadata?.parsed?.followUpContent?.muxMetadata?.type).toBe(
+        "heartbeat-request"
+      );
+      expect(dispatchOptions.synthetic).toBe(true);
+      expect(dispatchOptions.requireIdle).toBe(true);
+      expect(dispatchOptions.skipAutoResumeReset).toBe(true);
+    });
+
+    test("appends a reset boundary before heartbeat when context mode is reset", async () => {
+      const heartbeatIntervalMs = HEARTBEAT_MIN_INTERVAL_MS;
+      const idleRecency = Date.now() - 5 * 60_000;
+
+      currentProjectsConfig = makeProjectsConfig([
+        makeWorkspaceEntry({
+          heartbeat: {
+            enabled: true,
+            intervalMs: heartbeatIntervalMs,
+            contextMode: "reset",
+          },
+        }),
+      ]);
+      getSnapshotMock.mockImplementation(() =>
+        Promise.resolve(
+          makeSnapshot({
+            recency: idleRecency,
+            streaming: false,
+          })
+        )
+      );
+
+      const appendHeartbeatContextResetBoundary = mock(
+        (_params: {
+          boundaryText: string;
+          pendingFollowUp: {
+            text?: string;
+            dispatchOptions?: { requireIdle?: boolean };
+            muxMetadata?: { type?: string };
+          };
+        }) => Promise.resolve(Ok(undefined))
+      );
+      const dispatchPendingCompactionFollowUpIfNeeded = mock(() => Promise.resolve(true));
+      const sessionStub = {
+        isBusy: () => false,
+        hasQueuedMessages: () => false,
+        appendHeartbeatContextResetBoundary,
+        dispatchPendingCompactionFollowUpIfNeeded,
+      };
+
+      const realWorkspaceService = new WorkspaceService(
+        mockConfig,
+        {} as HistoryService,
+        new EventEmitter() as unknown as AIService,
+        new EventEmitter() as unknown as InitStateManager,
+        mockExtensionMetadata,
+        {} as BackgroundProcessManager
+      );
+      (
+        realWorkspaceService as unknown as { getOrCreateSession: () => AgentSession }
+      ).getOrCreateSession = mock(() => sessionStub as unknown as AgentSession);
+
+      await realWorkspaceService.executeHeartbeat(testWorkspaceId);
+
+      expect(appendHeartbeatContextResetBoundary).toHaveBeenCalledTimes(1);
+      const appendCall = appendHeartbeatContextResetBoundary.mock.calls.at(0)?.[0] as
+        | {
+            boundaryText: string;
+            pendingFollowUp: {
+              text?: string;
+              dispatchOptions?: { requireIdle?: boolean };
+              muxMetadata?: { type?: string };
+            };
+          }
+        | undefined;
+      expect(appendCall?.boundaryText).toContain("Heartbeat context reset");
+      expect(appendCall?.pendingFollowUp.text).toContain("[Heartbeat]");
+      expect(appendCall?.pendingFollowUp.dispatchOptions?.requireIdle).toBe(true);
+      expect(appendCall?.pendingFollowUp.muxMetadata?.type).toBe("heartbeat-request");
+      expect(dispatchPendingCompactionFollowUpIfNeeded).toHaveBeenCalledTimes(1);
+    });
+
     test("startup does not fire heartbeats immediately", async () => {
       service.start();
 

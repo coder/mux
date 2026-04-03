@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAPI } from "@/browser/contexts/API";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import { HEARTBEAT_DEFAULT_INTERVAL_MS } from "@/constants/heartbeat";
+import {
+  HEARTBEAT_DEFAULT_CONTEXT_MODE,
+  HEARTBEAT_DEFAULT_INTERVAL_MS,
+} from "@/constants/heartbeat";
 
 type WorkspaceHeartbeatSettings = NonNullable<FrontendWorkspaceMetadata["heartbeat"]>;
 
@@ -23,6 +26,7 @@ function getDefaultHeartbeatSettings(): HeartbeatFormSettings {
   return {
     enabled: false,
     intervalMs: HEARTBEAT_DEFAULT_INTERVAL_MS,
+    contextMode: HEARTBEAT_DEFAULT_CONTEXT_MODE,
   };
 }
 
@@ -34,11 +38,13 @@ function normalizeHeartbeatSettings(
   }
 
   const trimmedMessage = heartbeat.message?.trim();
+  const contextMode = heartbeat.contextMode ?? HEARTBEAT_DEFAULT_CONTEXT_MODE;
   return trimmedMessage
-    ? { ...heartbeat, message: trimmedMessage }
+    ? { ...heartbeat, message: trimmedMessage, contextMode }
     : {
         enabled: heartbeat.enabled,
         intervalMs: heartbeat.intervalMs,
+        contextMode,
       };
 }
 

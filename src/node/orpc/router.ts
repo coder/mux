@@ -3058,6 +3058,7 @@ export const router = (authToken?: string) => {
               enabled: input.enabled,
               intervalMs: input.intervalMs,
               ...(input.message != null ? { message: input.message } : {}),
+              ...(input.contextMode != null ? { contextMode: input.contextMode } : {}),
             })
           ),
       },

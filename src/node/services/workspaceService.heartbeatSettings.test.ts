@@ -7,6 +7,7 @@ import type { BackgroundProcessManager } from "./backgroundProcessManager";
 import type { ExtensionMetadataService } from "./ExtensionMetadataService";
 import type { HistoryService } from "./historyService";
 import type { InitStateManager } from "./initStateManager";
+import { HEARTBEAT_DEFAULT_CONTEXT_MODE } from "@/constants/heartbeat";
 import { WorkspaceService } from "./workspaceService";
 
 const TEST_WORKSPACE_ID = "test-ws";
@@ -29,6 +30,7 @@ function createWorkspace(heartbeat: {
   enabled: boolean;
   intervalMs: number;
   message?: string;
+  contextMode?: "normal" | "compact" | "reset";
 }): Workspace {
   return {
     id: TEST_WORKSPACE_ID,
@@ -137,6 +139,7 @@ describe("WorkspaceService heartbeat settings", () => {
       enabled: true,
       intervalMs: 45 * 60 * 1000,
       message: "Keep this custom heartbeat message.",
+      contextMode: HEARTBEAT_DEFAULT_CONTEXT_MODE,
     });
   });
 
@@ -157,11 +160,13 @@ describe("WorkspaceService heartbeat settings", () => {
       enabled: true,
       intervalMs: 45 * 60 * 1000,
       message: LONG_HEARTBEAT_MESSAGE,
+      contextMode: HEARTBEAT_DEFAULT_CONTEXT_MODE,
     });
     expect(service.getHeartbeatSettings(TEST_WORKSPACE_ID)).toEqual({
       enabled: true,
       intervalMs: 45 * 60 * 1000,
       message: LONG_HEARTBEAT_MESSAGE,
+      contextMode: HEARTBEAT_DEFAULT_CONTEXT_MODE,
     });
   });
 
@@ -179,6 +184,32 @@ describe("WorkspaceService heartbeat settings", () => {
     expect(persistedHeartbeat).toEqual({
       enabled: true,
       intervalMs: 45 * 60 * 1000,
+      contextMode: HEARTBEAT_DEFAULT_CONTEXT_MODE,
+    });
+  });
+
+  test("defaults missing context mode to normal on read", () => {
+    expect(service.getHeartbeatSettings(TEST_WORKSPACE_ID)).toEqual({
+      enabled: true,
+      intervalMs: 30 * 60 * 1000,
+      message: "Keep this custom heartbeat message.",
+      contextMode: HEARTBEAT_DEFAULT_CONTEXT_MODE,
+    });
+  });
+
+  test("persists an explicit heartbeat context mode", async () => {
+    const result = await service.setHeartbeatSettings(TEST_WORKSPACE_ID, {
+      enabled: true,
+      intervalMs: 45 * 60 * 1000,
+      contextMode: "compact",
+    });
+
+    expect(result.success).toBe(true);
+    expect(service.getHeartbeatSettings(TEST_WORKSPACE_ID)).toEqual({
+      enabled: true,
+      intervalMs: 45 * 60 * 1000,
+      message: "Keep this custom heartbeat message.",
+      contextMode: "compact",
     });
   });
 });

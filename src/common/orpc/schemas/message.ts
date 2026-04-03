@@ -128,8 +128,10 @@ export const MuxMessageSchema = z.object({
       cmuxMetadata: z.any().optional(), // Legacy field for backward compatibility
       // ACP prompt correlation id for reconnect/diagnostic continuity.
       acpPromptId: z.string().optional(),
-      // Compaction source: "user" (manual), "idle" (auto), or legacy boolean (true)
-      compacted: z.union([z.literal("user"), z.literal("idle"), z.boolean()]).optional(),
+      // Compaction source: "user" (manual), "idle" (auto), "heartbeat" (synthetic reset), or legacy boolean (true)
+      compacted: z
+        .union([z.literal("user"), z.literal("idle"), z.literal("heartbeat"), z.boolean()])
+        .optional(),
       // Monotonic compaction epoch id. Incremented whenever compaction succeeds.
       // Self-healing read path: malformed persisted compactionEpoch is ignored.
       compactionEpoch: CompactionEpochSchema,

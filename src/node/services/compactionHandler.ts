@@ -33,7 +33,10 @@ import {
   extractEditedFileDiffs,
   type FileEditDiff,
 } from "@/common/utils/messages/extractEditedFiles";
-import { sliceMessagesFromLatestCompactionBoundary } from "@/common/utils/messages/compactionBoundary";
+import {
+  isDurableCompactedMarker,
+  sliceMessagesFromLatestCompactionBoundary,
+} from "@/common/utils/messages/compactionBoundary";
 import { getErrorMessage } from "@/common/utils/errors";
 import {
   createLoadedSkillSnapshot,
@@ -204,12 +207,8 @@ function coercePersistedPostCompactionState(value: unknown): PersistedPostCompac
   };
 }
 
-function hasDurableCompactedMarker(value: unknown): value is true | "user" | "idle" {
-  return value === true || value === "user" || value === "idle";
-}
-
 function isCompactedSummaryMessage(message: MuxMessage): boolean {
-  return hasDurableCompactedMarker(message.metadata?.compacted);
+  return isDurableCompactedMarker(message.metadata?.compacted);
 }
 
 function isPositiveInteger(value: unknown): value is number {
@@ -490,6 +489,133 @@ export class CompactionHandler {
         error: getErrorMessage(error),
       });
     }
+  }
+
+  private async preparePendingStateFromMessages(messages: MuxMessage[]): Promise<void> {
+    const latestCompactionEpochMessages = sliceMessagesFromLatestCompactionBoundary(messages);
+    this.cachedFileDiffs = extractEditedFileDiffs(latestCompactionEpochMessages);
+    this.cachedLoadedSkills = mergeLoadedSkillSnapshots([
+      ...this.cachedLoadedSkills,
+      ...extractLoadedSkillSnapshotsFromMessages(latestCompactionEpochMessages),
+    ]);
+
+    // Persist pending state before append so pre-boundary diffs survive crashes/restarts.
+    // Best-effort: boundary creation must not fail just because persistence fails.
+    await this.persistPendingStateBestEffort(this.cachedFileDiffs, this.cachedLoadedSkills);
+  }
+
+  private getMaxExistingHistorySequence(messages: MuxMessage[]): number {
+    return messages.reduce((maxSeq, message) => {
+      const sequence = message.metadata?.historySequence;
+      if (sequence === undefined) {
+        return maxSeq;
+      }
+
+      if (!isNonNegativeInteger(sequence)) {
+        // Self-healing read path: malformed persisted historySequence should not brick boundary writes.
+        log.warn(
+          "Ignoring malformed historySequence while deriving compaction monotonicity bound",
+          {
+            workspaceId: this.workspaceId,
+            messageId: message.id,
+            historySequence: sequence,
+          }
+        );
+        return maxSeq;
+      }
+
+      return Math.max(maxSeq, sequence);
+    }, -1);
+  }
+
+  async appendHeartbeatContextResetBoundary(params: {
+    boundaryText: string;
+    pendingFollowUp: CompactionFollowUpRequest;
+  }): Promise<Result<void, string>> {
+    assert(
+      params.boundaryText.trim().length > 0,
+      "appendHeartbeatContextResetBoundary requires non-empty boundary text"
+    );
+
+    const deletePartialResult = await this.historyService.deletePartial(this.workspaceId);
+    if (!deletePartialResult.success) {
+      log.warn(
+        `Failed to delete partial before heartbeat reset boundary: ${deletePartialResult.error}`
+      );
+    }
+
+    const historyResult = await this.historyService.getHistoryFromLatestBoundary(this.workspaceId);
+    if (!historyResult.success) {
+      return Err(`Failed to read history for heartbeat reset boundary: ${historyResult.error}`);
+    }
+
+    const messages = historyResult.data;
+    await this.preparePendingStateFromMessages(messages);
+
+    const nextCompactionEpoch = getNextCompactionEpoch(messages);
+    assert(
+      Number.isInteger(nextCompactionEpoch) && nextCompactionEpoch > 0,
+      "heartbeat reset boundary must compute a positive compaction epoch"
+    );
+
+    const summaryMessage = createMuxMessage(
+      createCompactionSummaryMessageId(),
+      "assistant",
+      params.boundaryText,
+      {
+        timestamp: Date.now(),
+        synthetic: true,
+        uiVisible: true,
+        compacted: "heartbeat",
+        compactionEpoch: nextCompactionEpoch,
+        compactionBoundary: true,
+        muxMetadata: {
+          type: "compaction-summary",
+          pendingFollowUp: params.pendingFollowUp,
+        },
+      }
+    );
+
+    assert(
+      summaryMessage.metadata?.compacted === "heartbeat",
+      "heartbeat reset boundary must persist the heartbeat compacted marker"
+    );
+    assert(
+      summaryMessage.metadata?.compactionBoundary === true,
+      "heartbeat reset boundary must be marked as a durable boundary"
+    );
+    assert(
+      summaryMessage.metadata?.compactionEpoch === nextCompactionEpoch,
+      "heartbeat reset boundary must persist the computed compaction epoch"
+    );
+
+    const maxExistingHistorySequence = this.getMaxExistingHistorySequence(messages);
+    const persistenceResult = await this.historyService.appendToHistory(
+      this.workspaceId,
+      summaryMessage
+    );
+    if (!persistenceResult.success) {
+      this.cachedFileDiffs = [];
+      this.cachedLoadedSkills = [];
+      await this.deletePersistedPendingStateBestEffort();
+      return Err(`Failed to append heartbeat reset boundary: ${persistenceResult.error}`);
+    }
+
+    const persistedSequence = summaryMessage.metadata?.historySequence;
+    assert(
+      isNonNegativeInteger(persistedSequence),
+      "heartbeat reset boundary persistence must produce a non-negative historySequence"
+    );
+    if (maxExistingHistorySequence >= 0) {
+      assert(
+        persistedSequence > maxExistingHistorySequence,
+        "heartbeat reset boundary historySequence must remain monotonic"
+      );
+    }
+
+    this.postCompactionAttachmentsPending = true;
+    this.emitChatEvent({ ...summaryMessage, type: "message" });
+    return Ok(undefined);
   }
 
   /**
@@ -802,41 +928,12 @@ export class CompactionHandler {
     // does not re-inject stale pre-boundary edits after subsequent compactions.
     // If boundary markers are malformed, slicing self-heals by falling back to
     // full history instead of crashing or dropping all diffs.
-    const latestCompactionEpochMessages = sliceMessagesFromLatestCompactionBoundary(messages);
-    this.cachedFileDiffs = extractEditedFileDiffs(latestCompactionEpochMessages);
-    this.cachedLoadedSkills = mergeLoadedSkillSnapshots([
-      ...this.cachedLoadedSkills,
-      ...extractLoadedSkillSnapshotsFromMessages(latestCompactionEpochMessages),
-    ]);
-
-    // Persist pending state before append so pre-compaction diffs survive crashes/restarts.
-    // Best-effort: compaction must not fail just because persistence fails.
-    await this.persistPendingStateBestEffort(this.cachedFileDiffs, this.cachedLoadedSkills);
+    await this.preparePendingStateFromMessages(messages);
 
     const nextCompactionEpoch = getNextCompactionEpoch(messages);
     assert(Number.isInteger(nextCompactionEpoch), "next compaction epoch must be an integer");
 
-    const maxExistingHistorySequence = messages.reduce((maxSeq, message) => {
-      const sequence = message.metadata?.historySequence;
-      if (sequence === undefined) {
-        return maxSeq;
-      }
-
-      if (!isNonNegativeInteger(sequence)) {
-        // Self-healing read path: malformed persisted historySequence should not brick compaction.
-        log.warn(
-          "Ignoring malformed historySequence while deriving compaction monotonicity bound",
-          {
-            workspaceId: this.workspaceId,
-            messageId: message.id,
-            historySequence: sequence,
-          }
-        );
-        return maxSeq;
-      }
-
-      return Math.max(maxSeq, sequence);
-    }, -1);
+    const maxExistingHistorySequence = this.getMaxExistingHistorySequence(messages);
 
     // For idle compaction, preserve the original recency timestamp so the workspace
     // doesn't appear "recently used" in the sidebar. Use the shared recency utility
