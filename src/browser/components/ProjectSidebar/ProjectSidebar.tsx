@@ -284,8 +284,9 @@ function useWorkspaceAttentionSubscription(
 // Keep the project header visible while scrolling through long workspace lists.
 // Project rows are also drag handles, so disable text selection to avoid
 // highlighting the whole sidebar before a reorder gesture locks in.
+// pr-2 matches AgentListItem LIST_ITEM_BASE_CLASSES so project kebab aligns with workspace rows.
 const PROJECT_ITEM_BASE_CLASS =
-  "group sticky top-0 z-10 py-2 pl-2 pr-3 flex select-none items-center border-l-transparent bg-surface-primary transition-colors duration-150";
+  "group sticky top-0 z-10 py-2 pl-2 pr-1 flex select-none items-center border-l-transparent bg-surface-primary transition-colors duration-150";
 
 function getProjectFallbackLabel(projectPath: string): string {
   const abbreviatedPath = PlatformPaths.abbreviate(projectPath);
@@ -2046,7 +2047,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 }}
                                 aria-label={`New chat in ${projectName}`}
                                 data-project-path={projectPath}
-                                className="text-content-secondary hover:bg-hover hover:border-border-light mr-1 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent text-sm leading-none transition-all duration-200"
+                                className="text-content-secondary hover:bg-hover hover:border-border-light flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent text-sm leading-none transition-all duration-200"
                               >
                                 <Plus className="h-4 w-4 shrink-0" strokeWidth={1.8} />
                               </button>

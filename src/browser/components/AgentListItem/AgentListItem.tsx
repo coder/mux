@@ -118,7 +118,7 @@ export interface DraftAgentListItemProps extends AgentListItemBaseProps {
  * before react-dnd has locked into a drag session.
  */
 const LIST_ITEM_BASE_CLASSES =
-  "bg-surface-primary relative flex items-start gap-1.5 rounded-l-sm py-2 pr-2 select-none transition-all duration-150";
+  "bg-surface-primary relative flex items-start gap-1.5 rounded-l-sm py-2 pr-1.5 select-none transition-all duration-150";
 
 const HIDE_INLINE_ACTIONS_ON_MOBILE_TOUCH =
   "[@media(max-width:768px)_and_(hover:none)_and_(pointer:coarse)]:invisible [@media(max-width:768px)_and_(hover:none)_and_(pointer:coarse)]:pointer-events-none";

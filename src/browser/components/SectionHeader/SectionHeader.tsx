@@ -8,6 +8,7 @@ import {
   Palette,
   Pencil,
   Trash2,
+  Plus,
 } from "lucide-react";
 import type { SectionConfig } from "@/common/types/project";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipIfPresent } from "../Tooltip/Tooltip";
@@ -106,7 +107,7 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
 
   return (
     <div
-      className="group relative ml-4 flex items-center gap-1 py-1.5 pr-2 pl-3 select-none"
+      className="group relative ml-4 flex items-center gap-1 py-1.5 pr-1 pl-3 select-none"
       data-section-id={section.id}
     >
       {/* Expand/Collapse Button */}
@@ -180,7 +181,7 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
       )}
 
       {/* Right-side controls: add chat + section actions */}
-      <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 [@media(hover:none)_and_(pointer:coarse)]:opacity-100">
+      <div className="flex items-center opacity-0 transition-opacity group-hover:opacity-100 [@media(hover:none)_and_(pointer:coarse)]:opacity-100">
         {/* Add Chat — always visible on touch devices */}
         <Tooltip>
           <TooltipTrigger asChild>
@@ -189,7 +190,7 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
               className="text-secondary hover:text-foreground hover:bg-hover flex h-5 w-5 cursor-pointer items-center justify-center rounded border-none bg-transparent p-0 text-sm transition-colors"
               aria-label="New chat in section"
             >
-              +
+              <Plus className="h-4 w-4" />
             </button>
           </TooltipTrigger>
           <TooltipContent>New chat</TooltipContent>
