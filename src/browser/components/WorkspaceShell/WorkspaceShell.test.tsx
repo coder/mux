@@ -51,7 +51,7 @@ void mock.module("../ConnectionStatusToast/ConnectionStatusToast", () => ({
   ConnectionStatusToast: () => null,
 }));
 
-import { WorkspaceShell } from "./WorkspaceShell";
+import { WorkspaceShell, estimateWorkspaceShellFallbackWidthPx } from "./WorkspaceShell";
 
 const defaultProps = {
   workspaceId: "workspace-1",
@@ -62,6 +62,52 @@ const defaultProps = {
   leftSidebarCollapsed: false,
   onToggleLeftSidebarCollapsed: () => undefined,
 };
+
+describe("estimateWorkspaceShellFallbackWidthPx", () => {
+  it("subtracts the expanded left sidebar width from the viewport fallback", () => {
+    expect(
+      estimateWorkspaceShellFallbackWidthPx({
+        viewportWidthPx: 1440,
+        isStacked: false,
+        leftSidebarCollapsed: false,
+        persistedLeftSidebarWidthPx: 360,
+      })
+    ).toBe(1080);
+  });
+
+  it("uses the collapsed sidebar width when the left sidebar is hidden", () => {
+    expect(
+      estimateWorkspaceShellFallbackWidthPx({
+        viewportWidthPx: 1440,
+        isStacked: false,
+        leftSidebarCollapsed: true,
+        persistedLeftSidebarWidthPx: 360,
+      })
+    ).toBe(1420);
+  });
+
+  it("falls back to the default left sidebar width for malformed persisted values", () => {
+    expect(
+      estimateWorkspaceShellFallbackWidthPx({
+        viewportWidthPx: 1440,
+        isStacked: false,
+        leftSidebarCollapsed: false,
+        persistedLeftSidebarWidthPx: { bad: true },
+      })
+    ).toBe(1152);
+  });
+
+  it("leaves stacked layouts at full viewport width", () => {
+    expect(
+      estimateWorkspaceShellFallbackWidthPx({
+        viewportWidthPx: 700,
+        isStacked: true,
+        leftSidebarCollapsed: false,
+        persistedLeftSidebarWidthPx: 360,
+      })
+    ).toBe(700);
+  });
+});
 
 describe("WorkspaceShell loading placeholders", () => {
   beforeEach(() => {

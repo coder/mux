@@ -21,6 +21,8 @@ export function useAutoScroll() {
   const [autoScroll, setAutoScroll] = useState(true);
   const contentRef = useRef<HTMLDivElement>(null);
   const lastScrollTopRef = useRef<number>(0);
+  // Tracks the most recent user-owned scroll intent signal (wheel/touch/keyboard/mouse)
+  // so we can distinguish genuine transcript scrolling from our own scrollTop writes.
   const lastUserInteractionRef = useRef<number>(0);
   // Ref to avoid stale closures in async callbacks - always holds current autoScroll value
   const autoScrollRef = useRef<boolean>(true);

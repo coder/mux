@@ -35,6 +35,7 @@ import * as WorkspaceActionsMenuContentModule from "../WorkspaceActionsMenuConte
 import * as WorkspaceTerminalIconModule from "../icons/WorkspaceTerminalIcon/WorkspaceTerminalIcon";
 import * as SkillIndicatorModule from "../SkillIndicator/SkillIndicator";
 
+import { WORKSPACE_MENU_BAR_LEFT_SIDEBAR_COLLAPSED_PADDING_PX } from "@/constants/layout";
 import { WorkspaceMenuBar } from "./WorkspaceMenuBar";
 
 let cleanupDom: (() => void) | null = null;
@@ -299,6 +300,14 @@ describe("WorkspaceMenuBar archive confirmations", () => {
     mock.restore();
     cleanupDom?.();
     cleanupDom = null;
+  });
+
+  it("applies the collapsed-left-sidebar inset immediately from props", () => {
+    const view = render(<WorkspaceMenuBar {...defaultProps} leftSidebarCollapsed />);
+
+    expect(view.getByTestId("workspace-menu-bar").style.paddingLeft).toBe(
+      `${WORKSPACE_MENU_BAR_LEFT_SIDEBAR_COLLAPSED_PADDING_PX}px`
+    );
   });
 
   it("opens the archive confirmation modal when preflight finds untracked files", async () => {

@@ -1,6 +1,7 @@
 import React from "react";
 import { cn } from "@/common/lib/utils";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import { LEFT_SIDEBAR_COLLAPSED_WIDTH_PX, LEFT_SIDEBAR_DEFAULT_WIDTH_PX } from "@/constants/layout";
 import ProjectSidebar from "../ProjectSidebar/ProjectSidebar";
 import { TitleBar } from "../TitleBar/TitleBar";
 import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
@@ -38,7 +39,9 @@ export function LeftSidebar(props: LeftSidebarProps) {
     }
   };
 
-  const width = collapsed ? "20px" : `${widthPx ?? 288}px`;
+  const width = collapsed
+    ? `${LEFT_SIDEBAR_COLLAPSED_WIDTH_PX}px`
+    : `${widthPx ?? LEFT_SIDEBAR_DEFAULT_WIDTH_PX}px`;
 
   return (
     <>

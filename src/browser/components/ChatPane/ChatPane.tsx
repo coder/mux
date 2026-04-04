@@ -146,6 +146,8 @@ interface ChatPaneProps {
 
 type ReviewsState = ReturnType<typeof useReviews>;
 
+const AUTO_SCROLL_TRANSCRIPT_STYLE = { overflowAnchor: "none" } as const;
+
 export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   const {
     workspaceId,
@@ -781,7 +783,9 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
             <div
               ref={contentRef}
               onWheel={markUserInteraction}
+              onMouseDown={markUserInteraction}
               onTouchMove={markUserInteraction}
+              onKeyDown={markUserInteraction}
               onScroll={handleScroll}
               onContextMenu={transcriptContextMenu.onContextMenu}
               role="log"
@@ -791,6 +795,10 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
               tabIndex={0}
               data-testid="message-window"
               data-loaded={!loading && !isHydratingTranscript}
+              // When ChatPane is driving the transcript to the bottom, disable browser scroll
+              // anchoring for the whole viewport so newly-added tail rows (like the starting
+              // streaming barrier) cannot win the anchor heuristic and flash the layout.
+              style={autoScroll ? AUTO_SCROLL_TRANSCRIPT_STYLE : undefined}
               className="h-full overflow-x-hidden overflow-y-auto p-[15px] leading-[1.5] break-words whitespace-pre-wrap"
             >
               <div

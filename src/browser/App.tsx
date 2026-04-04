@@ -36,6 +36,11 @@ import { useOpenTerminal } from "./hooks/useOpenTerminal";
 import type { CommandAction } from "./contexts/CommandRegistryContext";
 import { useTheme, type ThemePreference } from "./contexts/ThemeContext";
 import { CommandPalette } from "./components/CommandPalette/CommandPalette";
+import {
+  LEFT_SIDEBAR_DEFAULT_WIDTH_PX,
+  LEFT_SIDEBAR_MAX_WIDTH_PX,
+  LEFT_SIDEBAR_MIN_WIDTH_PX,
+} from "@/constants/layout";
 import { buildCoreSources, type BuildSourcesParams } from "./utils/commands/sources";
 
 import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
@@ -160,9 +165,9 @@ function AppInner() {
   // collapse remains a separate toggle and the drag handle is hidden in mobile-touch overlay mode.
   const leftSidebar = useResizableSidebar({
     enabled: true,
-    defaultWidth: 288,
-    minWidth: 200,
-    maxWidth: 600,
+    defaultWidth: LEFT_SIDEBAR_DEFAULT_WIDTH_PX,
+    minWidth: LEFT_SIDEBAR_MIN_WIDTH_PX,
+    maxWidth: LEFT_SIDEBAR_MAX_WIDTH_PX,
     // Keep enough room for the main content so you can't drag-resize the left sidebar
     // to a point where the chat pane becomes unusably narrow.
     getMaxWidthPx: () => {
@@ -183,7 +188,8 @@ function AppInner() {
     storageKey: LEFT_SIDEBAR_WIDTH_KEY,
     side: "left",
   });
-  // Sync sidebar collapse state to root element for CSS-based titlebar insets
+  // Sync sidebar collapse state to the root element for non-React consumers like
+  // Storybook play helpers that need to know whether the sidebar is currently collapsed.
   useEffect(() => {
     document.documentElement.dataset.leftSidebarCollapsed = String(sidebarCollapsed);
   }, [sidebarCollapsed]);

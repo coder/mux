@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useState, useRef, type RefObject } from "react";
 
 interface Size {
   width: number;
@@ -52,8 +52,10 @@ export function useResizeObserver(ref: RefObject<HTMLElement>): Size | null {
   // Intentionally runs after every render.
   // `ref.current` can change (e.g. when rendering a placeholder first) without the
   // ref object itself changing, so a `[ref]` dependency array would fail to attach.
+  // Use a layout effect so consumers like WorkspaceShell can clamp persisted sidebars
+  // against the real measured shell width before the first paint.
   // eslint-disable-next-line react-hooks/exhaustive-deps -- Ref lifecycle is managed manually via observedElementRef.
-  useEffect(() => {
+  useLayoutEffect(() => {
     const element = ref.current;
 
     if (observedElementRef.current === element) {

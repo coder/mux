@@ -457,8 +457,12 @@ function handleShutdown(): void {
     );
   }
 
-  workerParentPort.removeAllListeners("message");
-  workerParentPort.close();
+  // Bun's worker_threads shim used by UI tests can expose a parentPort without the
+  // full EventEmitter cleanup surface. Treat listener removal/port close as best-effort
+  // so shutdown still completes after the transcript-layout regression tests exercise
+  // repeated app harness teardown.
+  workerParentPort.removeAllListeners?.("message");
+  workerParentPort.close?.();
   process.exit(exitCode);
 }
 

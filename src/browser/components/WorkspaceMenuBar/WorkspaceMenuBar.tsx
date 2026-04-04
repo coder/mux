@@ -52,6 +52,7 @@ import { useAgent } from "@/browser/contexts/AgentContext";
 import { useWorkspaceActions, useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { isMultiProject } from "@/common/utils/multiProject";
 import { forkWorkspace } from "@/browser/utils/chatCommands";
+import { WORKSPACE_MENU_BAR_LEFT_SIDEBAR_COLLAPSED_PADDING_PX } from "@/constants/layout";
 import type { AgentSkillDescriptor, AgentSkillIssue } from "@/common/types/agentSkill";
 
 interface WorkspaceMenuBarProps {
@@ -72,6 +73,10 @@ import {
   buildArchiveConfirmDescription,
   buildArchiveConfirmWarning,
 } from "@/browser/utils/archiveConfirmation";
+
+const COLLAPSED_LEFT_SIDEBAR_MENU_BAR_STYLE = {
+  paddingLeft: `${WORKSPACE_MENU_BAR_LEFT_SIDEBAR_COLLAPSED_PADDING_PX}px`,
+} as const;
 
 export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
   workspaceId,
@@ -490,6 +495,9 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
         // Keep header visible when iOS keyboard opens and causes scroll
         "mobile-sticky-header"
       )}
+      // Apply the collapsed-left-sidebar inset from props so the workspace header starts in
+      // the correct position on the very first paint instead of waiting for a later root-attr sync.
+      style={leftSidebarCollapsed ? COLLAPSED_LEFT_SIDEBAR_MENU_BAR_STYLE : undefined}
     >
       <div
         className={cn(

@@ -1,6 +1,13 @@
 import "../dom";
 
-import { waitFor } from "@testing-library/react";
+import { fireEvent, waitFor } from "@testing-library/react";
+
+// App-level UI tests render the loader shell first, so stub Lottie before importing the
+// harness to keep happy-dom from tripping over lottie-web's canvas bootstrap.
+jest.mock("lottie-react", () => ({
+  __esModule: true,
+  default: () => null,
+}));
 
 import { preloadTestModules } from "../../ipc/setup";
 import { createAppHarness } from "../harness";
@@ -114,6 +121,130 @@ describe("Chat bottom layout stability", () => {
     } finally {
       (globalThis as unknown as { ResizeObserver: typeof ResizeObserver }).ResizeObserver =
         originalResizeObserver;
+      await app.dispose();
+    }
+  }, 60_000);
+
+  test("disables browser scroll anchoring while auto-scroll owns the transcript tail", async () => {
+    const app = await createAppHarness({ branchPrefix: "streaming-barrier-anchor" });
+
+    try {
+      await app.chat.send("Seed transcript before testing scroll anchoring");
+      await app.chat.expectStreamComplete();
+
+      const messageWindow = getMessageWindow(app.view.container);
+      let scrollTop = 900;
+      const scrollHeight = 1300;
+      const clientHeight = 400;
+
+      Object.defineProperty(messageWindow, "scrollTop", {
+        configurable: true,
+        get: () => scrollTop,
+        set: (nextValue: number) => {
+          scrollTop = nextValue;
+        },
+      });
+      Object.defineProperty(messageWindow, "scrollHeight", {
+        configurable: true,
+        get: () => scrollHeight,
+      });
+      Object.defineProperty(messageWindow, "clientHeight", {
+        configurable: true,
+        get: () => clientHeight,
+      });
+
+      await waitFor(
+        () => {
+          expect(messageWindow.style.overflowAnchor).toBe("none");
+        },
+        { timeout: 10_000 }
+      );
+
+      // Mark the scroll as user-driven, then move away from the bottom so ChatPane yields
+      // control back to the browser's default anchoring behavior while reading older content.
+      fireEvent.wheel(messageWindow);
+      fireEvent.scroll(messageWindow);
+      scrollTop = 600;
+      fireEvent.scroll(messageWindow);
+
+      await waitFor(() => {
+        expect(messageWindow.style.overflowAnchor).toBe("");
+      });
+
+      await app.chat.send("[mock:wait-start] Hold stream-start so the barrier stays mounted");
+
+      await waitFor(
+        () => {
+          const state = workspaceStore.getWorkspaceSidebarState(app.workspaceId);
+          if (!state.isStarting) {
+            throw new Error("Workspace is not in starting state yet");
+          }
+        },
+        { timeout: 10_000 }
+      );
+
+      await waitFor(
+        () => {
+          expect(messageWindow.style.overflowAnchor).toBe("none");
+        },
+        { timeout: 10_000 }
+      );
+
+      app.env.services.aiService.releaseMockStreamStartGate(app.workspaceId);
+      await app.chat.expectStreamComplete();
+    } finally {
+      await app.dispose();
+    }
+  }, 60_000);
+
+  test("treats keyboard transcript scrolling as user-owned and disables auto-scroll", async () => {
+    const app = await createAppHarness({ branchPrefix: "keyboard-scroll-autoscroll" });
+
+    try {
+      await app.chat.send("Seed transcript before testing keyboard scroll ownership");
+      await app.chat.expectStreamComplete();
+
+      const messageWindow = getMessageWindow(app.view.container);
+      let scrollTop = 900;
+      const scrollHeight = 1300;
+      const clientHeight = 400;
+
+      Object.defineProperty(messageWindow, "scrollTop", {
+        configurable: true,
+        get: () => scrollTop,
+        set: (nextValue: number) => {
+          scrollTop = nextValue;
+        },
+      });
+      Object.defineProperty(messageWindow, "scrollHeight", {
+        configurable: true,
+        get: () => scrollHeight,
+      });
+      Object.defineProperty(messageWindow, "clientHeight", {
+        configurable: true,
+        get: () => clientHeight,
+      });
+
+      await waitFor(
+        () => {
+          expect(messageWindow.style.overflowAnchor).toBe("none");
+        },
+        { timeout: 10_000 }
+      );
+
+      messageWindow.focus();
+      fireEvent.keyDown(messageWindow, { key: "PageUp" });
+      fireEvent.scroll(messageWindow);
+      scrollTop = 600;
+      fireEvent.scroll(messageWindow);
+
+      await waitFor(
+        () => {
+          expect(messageWindow.style.overflowAnchor).toBe("");
+        },
+        { timeout: 10_000 }
+      );
+    } finally {
       await app.dispose();
     }
   }, 60_000);

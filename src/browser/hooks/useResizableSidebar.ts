@@ -22,7 +22,7 @@
  * });
  */
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useCallback, useRef } from "react";
 import { getStorageChangeEvent } from "@/common/constants/events";
 import { readPersistedString, updatePersistedState } from "@/browser/hooks/usePersistedState";
 
@@ -56,6 +56,27 @@ interface UseResizableSidebarResult {
   ResizeHandle: React.FC;
 }
 
+export function resolveInitialResizableSidebarWidth(args: {
+  storedValue: string | null;
+  defaultWidth: number;
+  minWidth: number;
+  maxWidth: number;
+}): number {
+  const effectiveMaxWidth = Math.max(args.minWidth, args.maxWidth);
+  const fallbackWidth = Math.max(args.minWidth, Math.min(effectiveMaxWidth, args.defaultWidth));
+
+  if (!args.storedValue) {
+    return fallbackWidth;
+  }
+
+  const parsedWidth = Number.parseInt(args.storedValue, 10);
+  if (!Number.isFinite(parsedWidth)) {
+    return fallbackWidth;
+  }
+
+  return Math.max(args.minWidth, Math.min(effectiveMaxWidth, parsedWidth));
+}
+
 export function useResizableSidebar({
   enabled,
   defaultWidth,
@@ -78,21 +99,22 @@ export function useResizableSidebar({
       return maxWidth;
     })();
 
-    const effectiveMaxWidth = Math.max(minWidth, resolvedMaxWidth);
-
     try {
-      const stored = localStorage.getItem(storageKey);
-      if (stored) {
-        const parsed = parseInt(stored, 10);
-        if (!isNaN(parsed) && parsed >= minWidth && parsed <= effectiveMaxWidth) {
-          return parsed;
-        }
-      }
+      return resolveInitialResizableSidebarWidth({
+        storedValue: localStorage.getItem(storageKey),
+        defaultWidth,
+        minWidth,
+        maxWidth: resolvedMaxWidth,
+      });
     } catch {
       // Ignore storage errors (private browsing, quota exceeded, etc.)
+      return resolveInitialResizableSidebarWidth({
+        storedValue: null,
+        defaultWidth,
+        minWidth,
+        maxWidth: resolvedMaxWidth,
+      });
     }
-
-    return Math.max(minWidth, Math.min(effectiveMaxWidth, defaultWidth));
   });
 
   const [isResizing, setIsResizing] = useState(false);
@@ -161,8 +183,9 @@ export function useResizableSidebar({
     };
   }, [storageKey, minWidth, maxWidth, isResizing, resolveMaxWidthPx]);
 
-  // Keep current width within bounds when the viewport changes.
-  useEffect(() => {
+  // Keep current width within bounds when the viewport or container-derived max changes.
+  // Use a layout effect so first-paint width corrections happen before the sidebar becomes visible.
+  useLayoutEffect(() => {
     if (typeof window === "undefined") return;
     if (isResizing) return;
 

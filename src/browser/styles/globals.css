@@ -2319,11 +2319,3 @@ input[type="checkbox"] {
 .titlebar-safe-right-gutter-3 { --titlebar-safe-right-gutter: 0.75rem; } /* px-3 */
 .titlebar-safe-right-gutter-2 { --titlebar-safe-right-gutter: 0.5rem; }  /* px-2 */
 
-
-
-/* Titlebar inset for WorkspaceMenuBar when left sidebar is collapsed.
- * The sidebar collapse state is synced to a data attribute on :root by App.tsx.
- * This centralizes the concern - WorkspaceMenuBar doesn't need props or JS logic. */
-:root[data-left-sidebar-collapsed="true"] [data-testid="workspace-menu-bar"] {
-  padding-left: 60px;
-}
