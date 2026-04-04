@@ -250,6 +250,10 @@ function useWorkspaceAttentionSubscription(
 const PROJECT_ITEM_BASE_CLASS =
   "group sticky top-0 z-30 py-2 pl-2 pr-1 flex select-none items-center border-l-transparent bg-surface-primary transition-colors duration-150";
 
+// Shared classes for the chevron toggle buttons on project/section headers.
+const PROJECT_TOGGLE_BUTTON_CLASSES =
+  "text-secondary hover:bg-hover hover:border-border-light mr-1.5 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent p-0 transition-all duration-200";
+
 function getProjectFallbackLabel(projectPath: string): string {
   const abbreviatedPath = PlatformPaths.abbreviate(projectPath);
   const { basename } = PlatformPaths.splitAbbreviated(abbreviatedPath);
@@ -1696,7 +1700,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                       <button
                         onClick={() => toggleProject(MULTI_PROJECT_SIDEBAR_SECTION_ID)}
                         aria-label={`${isMultiProjectSectionExpanded ? "Collapse" : "Expand"} multi-project workspaces`}
-                        className="text-secondary hover:bg-hover hover:border-border-light mr-1.5 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent p-0 transition-all duration-200"
+                        className={PROJECT_TOGGLE_BUTTON_CLASSES}
                       >
                         <span className="relative flex h-4 w-4 items-center justify-center">
                           <ChevronRight
@@ -1839,7 +1843,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             }}
                             aria-label={`${isExpanded ? "Collapse" : "Expand"} project ${projectName}`}
                             data-project-path={projectPath}
-                            className="text-secondary hover:bg-hover hover:border-border-light mr-1.5 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent p-0 transition-all duration-200"
+                            className={PROJECT_TOGGLE_BUTTON_CLASSES}
                           >
                             <span className="relative flex h-4 w-4 items-center justify-center">
                               <ChevronRight
