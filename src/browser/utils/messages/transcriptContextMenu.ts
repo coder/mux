@@ -284,9 +284,14 @@ export function formatTranscriptTextAsQuote(text: string): string {
     return "";
   }
 
-  const quotedLines = normalizedText
-    .split("\n")
-    .map((line) => (line.length > 0 ? `> ${line}` : ">"));
+  // Strip leading/trailing newlines so the quote block doesn't start or end
+  // with empty "> " lines (e.g. from DOM whitespace around block elements).
+  const trimmedText = normalizedText.replace(/^\n+|\n+$/g, "");
+  if (!hasNonWhitespaceTranscriptText(trimmedText)) {
+    return "";
+  }
+
+  const quotedLines = trimmedText.split("\n").map((line) => (line.length > 0 ? `> ${line}` : ">"));
 
   return `${quotedLines.join("\n")}\n\n`;
 }

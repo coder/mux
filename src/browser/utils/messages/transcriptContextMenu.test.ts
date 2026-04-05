@@ -375,7 +375,16 @@ describe("transcriptContextMenu", () => {
 
   test("formats transcript text as markdown quote", () => {
     expect(formatTranscriptTextAsQuote("Line one\nLine two")).toBe("> Line one\n> Line two\n\n");
-    expect(formatTranscriptTextAsQuote("  indented\nline\n")).toBe(">   indented\n> line\n>\n\n");
+    expect(formatTranscriptTextAsQuote("  indented\nline")).toBe(">   indented\n> line\n\n");
     expect(formatTranscriptTextAsQuote("\n\n")).toBe("");
+  });
+
+  test("strips leading and trailing newlines from quote text", () => {
+    expect(formatTranscriptTextAsQuote("\nLine one\nLine two\n")).toBe(
+      "> Line one\n> Line two\n\n"
+    );
+    expect(formatTranscriptTextAsQuote("\n\nLeading\n\n")).toBe("> Leading\n\n");
+    expect(formatTranscriptTextAsQuote("  indented\nline\n")).toBe(">   indented\n> line\n\n");
+    expect(formatTranscriptTextAsQuote("\n  \n")).toBe("");
   });
 });
