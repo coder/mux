@@ -489,6 +489,22 @@ interface WorkspaceProviderProps {
   children: ReactNode;
 }
 
+/**
+ * Startup auto-navigation should yield once the user already has meaningful route state.
+ * Desktop launch-project is the exception: its first pass may override a restored
+ * file:// route when the backend reports explicit startup intent.
+ */
+function shouldBlockStartupAutoNavigation(options: {
+  hasUserNavigatedHome: boolean;
+  hasBlockingRouteState: boolean;
+  shouldOverrideRestoredDesktopRoute?: boolean;
+}): boolean {
+  return (
+    options.hasUserNavigatedHome ||
+    (!options.shouldOverrideRestoredDesktopRoute && options.hasBlockingRouteState)
+  );
+}
+
 export function WorkspaceProvider(props: WorkspaceProviderProps) {
   const { api } = useAPI();
 
@@ -795,6 +811,12 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     return toWorkspaceSelection(metadata);
   }, [currentWorkspaceId, workspaceMetadata]);
 
+  const hasBlockingStartupRouteState =
+    selectedWorkspace != null ||
+    currentSettingsSection != null ||
+    isAnalyticsOpen ||
+    pendingNewWorkspaceProject != null;
+
   // Keep a ref to the current selectedWorkspace for use in functional updates.
   // Update synchronously so route-driven selection changes are visible before
   // any async creation callbacks decide whether to auto-navigate.
@@ -921,26 +943,15 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
     const shouldOverrideRestoredDesktopRoute =
       window.location.protocol === "file:" && !hasCheckedDesktopLaunchProjectRef.current;
-
-    // Skip if we already have a selected workspace unless this is the initial desktop
-    // startup check where explicit launch-project intent must beat replayed local state.
-    if (selectedWorkspace && !shouldOverrideRestoredDesktopRoute) return;
-
-    // If the user explicitly went Home, preserve that intent instead of
-    // immediately re-selecting a launch-project workspace.
-    if (hasUserNavigatedHomeRef.current) return;
-
-    // Skip if user is on the settings or analytics page — navigating to
-    // /settings/:section or /analytics clears the workspace from the URL,
-    // making selectedWorkspace null. Without this guard the effect would
-    // auto-select a workspace and navigate away immediately.
-    if (currentSettingsSection && !shouldOverrideRestoredDesktopRoute) return;
-    if (isAnalyticsOpen && !shouldOverrideRestoredDesktopRoute) return;
-
-    // Skip if user is in the middle of creating a workspace.
-    // Desktop startup is the exception: persisted project/workspace routes should not
-    // block an explicit backend launch-project request such as --add-project.
-    if (pendingNewWorkspaceProject && !shouldOverrideRestoredDesktopRoute) return;
+    if (
+      shouldBlockStartupAutoNavigation({
+        hasUserNavigatedHome: hasUserNavigatedHomeRef.current,
+        hasBlockingRouteState: hasBlockingStartupRouteState,
+        shouldOverrideRestoredDesktopRoute,
+      })
+    ) {
+      return;
+    }
 
     let cancelled = false;
     if (shouldOverrideRestoredDesktopRoute) {
@@ -999,6 +1010,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     currentSettingsSection,
     isAnalyticsOpen,
     pendingNewWorkspaceProject,
+    hasBlockingStartupRouteState,
     workspaceMetadata,
     setSelectedWorkspace,
     navigateToProject,
@@ -1553,16 +1565,15 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
   useEffect(() => {
     if (loading || hasAutoCreatedRef.current) return;
-    if (selectedWorkspace) return;
 
-    // Preserve explicit Home navigation intent.
-    if (hasUserNavigatedHomeRef.current) return;
-
-    // Don't auto-create while the user is on global routes.
-    if (currentSettingsSection || isAnalyticsOpen) return;
-
-    // Skip if user is in the middle of creating a workspace.
-    if (pendingNewWorkspaceProject) return;
+    if (
+      shouldBlockStartupAutoNavigation({
+        hasUserNavigatedHome: hasUserNavigatedHomeRef.current,
+        hasBlockingRouteState: hasBlockingStartupRouteState,
+      })
+    ) {
+      return;
+    }
 
     const behavior = readPersistedState<LaunchBehavior>(LAUNCH_BEHAVIOR_KEY, "dashboard");
     if (behavior !== "new-chat") return;
@@ -1621,6 +1632,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     currentSettingsSection,
     isAnalyticsOpen,
     pendingNewWorkspaceProject,
+    hasBlockingStartupRouteState,
     workspaceMetadata,
     workspaceStore,
     createWorkspaceDraft,
