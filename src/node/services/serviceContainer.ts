@@ -55,6 +55,7 @@ import { HeartbeatService } from "@/node/services/heartbeatService";
 import { IdleCompactionService } from "@/node/services/idleCompactionService";
 import { getSigningService, type SigningService } from "@/node/services/signingService";
 import { coderService, type CoderService } from "@/node/services/coderService";
+import { EventSoundAssetService } from "@/node/services/eventSoundAssetService";
 import { SshPromptService } from "@/node/services/sshPromptService";
 import { WorkspaceLifecycleHooks } from "@/node/services/workspaceLifecycleHooks";
 import { WorktreeArchiveSnapshotService } from "@/node/services/worktreeArchiveSnapshotService";
@@ -148,6 +149,7 @@ export class ServiceContainer {
   public readonly desktopSessionManager: DesktopSessionManager;
   public readonly desktopTokenManager: DesktopTokenManager;
   public readonly desktopBridgeServer: DesktopBridgeServer;
+  public readonly eventSoundAssetService: EventSoundAssetService;
   public readonly sshPromptService = new SshPromptService();
   private readonly ptyService: PTYService;
   public readonly idleCompactionService: IdleCompactionService;
@@ -168,6 +170,8 @@ export class ServiceContainer {
     this.analyticsService = new AnalyticsService(config);
     this.devToolsService = new DevToolsService(config);
     this.browserBridgeTokenManager = new BrowserBridgeTokenManager();
+
+    this.eventSoundAssetService = new EventSoundAssetService(config.rootDir);
 
     // Desktop passes WorkspaceMcpOverridesService explicitly so AIService uses
     // the persistent config rather than creating a default with an ephemeral one.
@@ -640,6 +644,7 @@ export class ServiceContainer {
       coderService: this.coderService,
       serverAuthService: this.serverAuthService,
       sshPromptService: this.sshPromptService,
+      eventSoundAssetService: this.eventSoundAssetService,
       analyticsService: this.analyticsService,
       desktopSessionManager: this.desktopSessionManager,
       desktopTokenManager: this.desktopTokenManager,
@@ -666,6 +671,10 @@ export class ServiceContainer {
 
   setProjectDirectoryPicker(picker: () => Promise<string | null>): void {
     this.projectService.setDirectoryPicker(picker);
+  }
+
+  setProjectAudioFilePicker(picker: () => Promise<string | null>): void {
+    this.projectService.setAudioFilePicker(picker);
   }
 
   setTerminalWindowManager(manager: TerminalWindowManager): void {

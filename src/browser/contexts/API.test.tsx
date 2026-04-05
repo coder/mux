@@ -65,13 +65,44 @@ let fetchImpl: (input: RequestInfo | URL, init?: RequestInit) => Promise<Respons
 
 // Mock orpc client
 let pingImpl: () => Promise<string> = () => Promise.resolve("pong");
+const AUTH_TOKEN_STORAGE_KEY = "mux:auth-token";
 let storedAuthToken: string | null = null;
-const getStoredAuthTokenMock = mock(() => storedAuthToken);
+
+function readStoredAuthTokenFromLocalStorage(): string | null {
+  try {
+    return localStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
+  } catch {
+    return storedAuthToken;
+  }
+}
+
+function writeStoredAuthTokenToLocalStorage(token: string): void {
+  try {
+    localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, token);
+  } catch {
+    // no-op in tests without storage
+  }
+}
+
+function clearStoredAuthTokenFromLocalStorage(): void {
+  try {
+    localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+  } catch {
+    // no-op in tests without storage
+  }
+}
+
+const getStoredAuthTokenMock = mock(() => {
+  storedAuthToken = readStoredAuthTokenFromLocalStorage();
+  return storedAuthToken;
+});
 const setStoredAuthTokenMock = mock((token: string) => {
   storedAuthToken = token;
+  writeStoredAuthTokenToLocalStorage(token);
 });
 const clearStoredAuthTokenMock = mock(() => {
   storedAuthToken = null;
+  clearStoredAuthTokenFromLocalStorage();
 });
 
 void mock.module("@/common/orpc/client", () => ({
@@ -93,6 +124,8 @@ void mock.module("@orpc/client/message-port", () => ({
 void mock.module("@/browser/components/AuthTokenModal/AuthTokenModal", () => ({
   // Note: Module mocks leak between bun test files.
   // Export all commonly-used symbols to avoid cross-test import errors.
+  // Keep token helpers behaviorally close to production so leaked mocks do not
+  // break tests that expect auth-token persistence.
   AuthTokenModal: () => null,
   getStoredAuthToken: getStoredAuthTokenMock,
   setStoredAuthToken: setStoredAuthTokenMock,

@@ -62,6 +62,142 @@ describe("AppConfigOnDiskSchema", () => {
     ).toBe(true);
   });
 
+  it("accepts missing eventSoundSettings", () => {
+    const result = AppConfigOnDiskSchema.safeParse({});
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.eventSoundSettings).toBeUndefined();
+    }
+  });
+
+  it("parses valid eventSoundSettings and applies entry defaults", () => {
+    const result = AppConfigOnDiskSchema.safeParse({
+      eventSoundSettings: {
+        agent_review_ready: {
+          enabled: true,
+        },
+      },
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.eventSoundSettings).toEqual({
+        agent_review_ready: {
+          enabled: true,
+          source: null,
+        },
+      });
+    }
+  });
+
+  it("accepts managed event sound source labels", () => {
+    const result = AppConfigOnDiskSchema.safeParse({
+      eventSoundSettings: {
+        agent_review_ready: {
+          source: {
+            kind: "managed",
+            assetId: "11111111-1111-1111-1111-111111111111.wav",
+            label: "review-ready.wav",
+          },
+        },
+      },
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.eventSoundSettings).toEqual({
+        agent_review_ready: {
+          enabled: false,
+          source: {
+            kind: "managed",
+            assetId: "11111111-1111-1111-1111-111111111111.wav",
+            label: "review-ready.wav",
+          },
+        },
+      });
+    }
+  });
+
+  it("accepts managed event sound source without labels", () => {
+    const result = AppConfigOnDiskSchema.safeParse({
+      eventSoundSettings: {
+        agent_review_ready: {
+          source: {
+            kind: "managed",
+            assetId: "11111111-1111-1111-1111-111111111111.wav",
+          },
+        },
+      },
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.eventSoundSettings).toEqual({
+        agent_review_ready: {
+          enabled: false,
+          source: {
+            kind: "managed",
+            assetId: "11111111-1111-1111-1111-111111111111.wav",
+          },
+        },
+      });
+    }
+  });
+
+  it("preserves unknown eventSoundSettings keys", () => {
+    const result = AppConfigOnDiskSchema.safeParse({
+      eventSoundSettings: {
+        future_event: {
+          source: {
+            kind: "managed",
+            assetId: "11111111-1111-1111-1111-111111111111.wav",
+          },
+        },
+      },
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.eventSoundSettings).toEqual({
+        future_event: {
+          enabled: false,
+          source: {
+            kind: "managed",
+            assetId: "11111111-1111-1111-1111-111111111111.wav",
+          },
+        },
+      });
+    }
+  });
+
+  it("rejects legacy eventSoundSettings filePath entries", () => {
+    expect(
+      AppConfigOnDiskSchema.safeParse({
+        eventSoundSettings: {
+          agent_review_ready: {
+            filePath: "/tmp/legacy.wav",
+          },
+        },
+      }).success
+    ).toBe(false);
+  });
+
+  it("rejects unknown event sound source kinds", () => {
+    expect(
+      AppConfigOnDiskSchema.safeParse({
+        eventSoundSettings: {
+          agent_review_ready: {
+            source: {
+              kind: "external",
+              assetId: "anything",
+            },
+          },
+        },
+      }).success
+    ).toBe(false);
+  });
+
   it("preserves unknown fields via passthrough", () => {
     const valid = { futureField: "something" };
 

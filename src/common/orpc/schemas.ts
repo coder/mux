@@ -214,6 +214,7 @@ export {
   CoderWorkspaceStatusSchema,
   config,
   browser,
+  eventSounds,
   devtools,
   uiLayouts,
   debug,

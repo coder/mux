@@ -5,7 +5,11 @@
 
 import type { CoderWorkspaceArchiveBehavior } from "@/common/config/coderArchiveBehavior";
 import type { WorktreeArchiveBehavior } from "@/common/config/worktreeArchiveBehavior";
-import type { FeatureFlagOverride, UpdateChannel } from "@/common/config/schemas/appConfigOnDisk";
+import type {
+  EventSoundSettings,
+  FeatureFlagOverride,
+  UpdateChannel,
+} from "@/common/config/schemas/appConfigOnDisk";
 import type { z } from "zod";
 import type {
   ProjectConfigSchema,
@@ -163,6 +167,9 @@ export interface ProjectsConfig {
    * Defaults to enabled; store `false` only to keep config.json minimal.
    */
   runtimeEnablement?: Partial<Record<RuntimeEnablementId, false>>;
+
+  /** Event sound settings keyed by sound event name. */
+  eventSoundSettings?: EventSoundSettings;
 
   /** Optional 1Password account name used for desktop SDK account selection. */
   onePasswordAccountName?: string;

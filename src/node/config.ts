@@ -19,10 +19,11 @@ import type {
   FeatureFlagOverride,
   UpdateChannel,
 } from "@/common/types/project";
-import type {
-  AppConfigOnDisk,
-  BaseProviderConfig as ProviderConfig,
-  ProvidersConfig as CanonicalProvidersConfig,
+import {
+  EventSoundSettingsSchema,
+  type AppConfigOnDisk,
+  type BaseProviderConfig as ProviderConfig,
+  type ProvidersConfig as CanonicalProvidersConfig,
 } from "@/common/config/schemas";
 import {
   DEFAULT_TASK_SETTINGS,
@@ -236,6 +237,11 @@ function areStringArraysEqual(a: string[], b: string[]): boolean {
   }
 
   return true;
+}
+
+function parseEventSoundSettings(value: unknown): AppConfigOnDisk["eventSoundSettings"] {
+  const result = EventSoundSettingsSchema.safeParse(value);
+  return result.success ? result.data : undefined;
 }
 
 function normalizeOptionalModelString(value: unknown): string | undefined {
@@ -690,6 +696,8 @@ export class Config {
           ? undefined
           : layoutPresetsRaw;
 
+        const eventSoundSettings = parseEventSoundSettings(parsed.eventSoundSettings);
+
         return {
           projects: projectsMap,
           apiServerBindHost: parseOptionalNonEmptyString(parsed.apiServerBindHost),
@@ -725,6 +733,7 @@ export class Config {
           updateChannel,
           defaultRuntime,
           runtimeEnablement,
+          eventSoundSettings,
           onePasswordAccountName: parseOptionalNonEmptyString(parsed.onePasswordAccountName),
         };
       }
@@ -910,6 +919,11 @@ export class Config {
       const defaultRuntime = normalizeRuntimeEnablementId(config.defaultRuntime);
       if (defaultRuntime !== undefined) {
         data.defaultRuntime = defaultRuntime;
+      }
+
+      const eventSoundSettings = parseEventSoundSettings(config.eventSoundSettings);
+      if (eventSoundSettings !== undefined) {
+        data.eventSoundSettings = eventSoundSettings;
       }
 
       const onePasswordAccountName = parseOptionalNonEmptyString(config.onePasswordAccountName);

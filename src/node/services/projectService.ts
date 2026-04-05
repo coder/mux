@@ -319,6 +319,7 @@ interface FileCompletionsCacheEntry {
 export class ProjectService {
   private readonly fileCompletionsCache = new Map<string, FileCompletionsCacheEntry>();
   private directoryPicker?: () => Promise<string | null>;
+  private audioFilePicker?: () => Promise<string | null>;
   private readonly sshPromptService: SshPromptService | undefined;
   private workspaceService?: WorkspaceRemover;
 
@@ -340,6 +341,15 @@ export class ProjectService {
   async pickDirectory(): Promise<string | null> {
     if (!this.directoryPicker) return null;
     return this.directoryPicker();
+  }
+
+  setAudioFilePicker(picker: () => Promise<string | null>) {
+    this.audioFilePicker = picker;
+  }
+
+  async pickAudioFile(): Promise<string | null> {
+    if (!this.audioFilePicker) return null;
+    return this.audioFilePicker();
   }
 
   async create(

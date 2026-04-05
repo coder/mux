@@ -11,6 +11,8 @@ let cleanupDom: (() => void) | null = null;
 let apiStatus: "auth_required" | "connecting" | "error" = "auth_required";
 let apiError: string | null = "Authentication required";
 
+const AUTH_TOKEN_STORAGE_KEY = "mux:auth-token";
+
 // AppLoader imports App, which pulls in Lottie-based components. In happy-dom,
 // lottie-web's canvas bootstrap can throw during module evaluation.
 void mock.module("lottie-react", () => ({
@@ -67,14 +69,32 @@ void mock.module("@/browser/components/StartupConnectionError/StartupConnectionE
 void mock.module("@/browser/components/AuthTokenModal/AuthTokenModal", () => ({
   // Note: Module mocks leak between bun test files.
   // Export all commonly-used symbols to avoid cross-test import errors.
+  // Keep token helpers behaviorally close to production so leaked mocks do not
+  // break tests that expect auth-token persistence.
   AuthTokenModal: (props: { error?: string | null }) => (
     <div data-testid="AuthTokenModalMock">{props.error ?? "no-error"}</div>
   ),
-  getStoredAuthToken: () => null,
-  // eslint-disable-next-line @typescript-eslint/no-empty-function
-  setStoredAuthToken: () => {},
-  // eslint-disable-next-line @typescript-eslint/no-empty-function
-  clearStoredAuthToken: () => {},
+  getStoredAuthToken: () => {
+    try {
+      return localStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
+    } catch {
+      return null;
+    }
+  },
+  setStoredAuthToken: (token: string) => {
+    try {
+      localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, token);
+    } catch {
+      // no-op in tests without storage
+    }
+  },
+  clearStoredAuthToken: () => {
+    try {
+      localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+    } catch {
+      // no-op in tests without storage
+    }
+  },
 }));
 
 import { AppLoader } from "../AppLoader/AppLoader";
