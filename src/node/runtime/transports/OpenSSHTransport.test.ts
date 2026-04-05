@@ -66,6 +66,28 @@ describe("OpenSSHTransport.spawnRemoteProcess", () => {
     return args;
   }
 
+  test("releases exec leases on close even when health accounting is skipped", async () => {
+    const release = mock(() => undefined);
+    const reportFailure = mock(() => undefined);
+    const markHealthy = mock(() => undefined);
+    acquireLeaseSpy.mockResolvedValue({
+      controlPath: "/tmp/mux-ssh-test-shard",
+      shardId: "shard-0",
+      release,
+      reportFailure,
+      markHealthy,
+    });
+    const transport = new OpenSSHTransport({ host: "remote.example.com" });
+    const spawnResult = await transport.spawnRemoteProcess("echo ok", {});
+
+    spawnResult.onClose?.();
+    spawnResult.onClose?.();
+
+    expect(release).toHaveBeenCalledTimes(1);
+    expect(reportFailure).not.toHaveBeenCalled();
+    expect(markHealthy).not.toHaveBeenCalled();
+  });
+
   test("explicit headless (no service) includes host-key fallback options and BatchMode=yes", async () => {
     setSshPromptCapability(false);
     setOpenSSHHostKeyPolicyMode("headless-fallback");

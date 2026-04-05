@@ -49,6 +49,8 @@ export interface SpawnResult {
   preExec?: Promise<void>;
   /** Optional transport-scoped exit handling (e.g., master-pool health accounting). */
   onExit?: (exitCode: number, stderr: string) => void;
+  /** Optional close handling that must run even for synthetic abort/timeout exits. */
+  onClose?: () => void;
   /** Optional transport-scoped spawn error handling. */
   onError?: (error: Error) => void;
 }
@@ -182,6 +184,7 @@ export abstract class RemoteRuntime implements Runtime {
         if (finalExitCode !== EXIT_CODE_ABORTED && finalExitCode !== EXIT_CODE_TIMEOUT) {
           spawnResult.onExit?.(finalExitCode, stderrForErrorReporting);
         }
+        spawnResult.onClose?.();
         // Let subclass handle exit code (e.g., SSH connection pool)
         this.onExitCode(finalExitCode, options, stderrForErrorReporting);
 

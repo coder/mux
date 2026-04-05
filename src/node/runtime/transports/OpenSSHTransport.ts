@@ -98,6 +98,8 @@ export class OpenSSHTransport implements SSHTransport {
         } else {
           lease.markHealthy();
         }
+      },
+      onClose: () => {
         releaseLease();
       },
       onError: (error) => {
