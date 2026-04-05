@@ -432,13 +432,11 @@ describe("AgentContext", () => {
     }
   });
 
-  test("non-selectable agent in mutable workspace does not block shortcut actions", async () => {
+  test("removed non-selectable agent in mutable workspace remaps and does not block shortcut actions", async () => {
     const projectPath = "/tmp/project";
+    const scopeKey = getAgentIdKey(getProjectScopeId(projectPath));
     mockAgentDefinitions = [LOCKED_AGENT, EXEC_AGENT, PLAN_AGENT];
-    window.localStorage.setItem(
-      getAgentIdKey(getProjectScopeId(projectPath)),
-      JSON.stringify("mux")
-    );
+    window.localStorage.setItem(scopeKey, JSON.stringify("mux"));
 
     let contextValue: AgentContextValue | undefined;
     let openPickerEvents = 0;
@@ -451,8 +449,9 @@ describe("AgentContext", () => {
       renderAgentHarness({ projectPath, onChange: (value) => (contextValue = value) });
 
       await waitFor(() => {
-        expect(contextValue?.agentId).toBe("mux");
+        expect(contextValue?.agentId).toBe("exec");
       });
+      expect(window.localStorage.getItem(scopeKey)).toBe(JSON.stringify("exec"));
 
       window.api = { platform: "darwin", versions: {} };
 
@@ -470,7 +469,7 @@ describe("AgentContext", () => {
       });
 
       await waitFor(() => {
-        expect(contextValue?.agentId).toBe("exec");
+        expect(contextValue?.agentId).toBe("plan");
       });
       expect(openPickerEvents).toBe(1);
     } finally {

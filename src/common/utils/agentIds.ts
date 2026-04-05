@@ -3,6 +3,7 @@ import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 const REMOVED_BUILTIN_AGENT_FALLBACKS: Readonly<Record<string, string>> = {
   ask: WORKSPACE_DEFAULTS.agentId,
   auto: WORKSPACE_DEFAULTS.agentId,
+  mux: WORKSPACE_DEFAULTS.agentId,
 };
 
 export function normalizeAgentId(
