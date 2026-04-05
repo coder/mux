@@ -345,7 +345,8 @@ describe("SSHRuntime bundle sync reuse", () => {
     const snapshotDigest = "abc123";
     const layout = buildRemoteProjectLayout("/home/user/src", projectPath);
     const baseRepoPathArg = JSON.stringify(layout.baseRepoPath);
-    const bundleFileName = `${snapshotDigest}.uuid-1234.bundle`;
+    const bundleUuid = "11111111-1111-1111-1111-111111111111";
+    const bundleFileName = `${snapshotDigest}.${bundleUuid}.bundle`;
     const expectedRemoteBundlePath = path.posix.join(
       "~/.mux-bundles",
       layout.projectId,
@@ -354,7 +355,7 @@ describe("SSHRuntime bundle sync reuse", () => {
     const snapshotMarkerPath = getSnapshotMarkerPath(layout, snapshotDigest);
     const currentSnapshotPath = path.posix.join(layout.snapshotMarkerDir, "current");
     const writeFileCalls: string[] = [];
-    const randomUuidSpy = spyOn(crypto, "randomUUID").mockReturnValue("uuid-1234");
+    const randomUuidSpy = spyOn(crypto, "randomUUID").mockReturnValue(bundleUuid);
     const ensureBaseRepoSpy = spyOn(
       runtime as unknown as RuntimeWithEnsureBaseRepo,
       "ensureBaseRepo"
