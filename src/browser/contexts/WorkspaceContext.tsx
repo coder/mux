@@ -43,6 +43,7 @@ import {
   WORKSPACE_DRAFTS_BY_PROJECT_KEY,
   type LaunchBehavior,
 } from "@/common/constants/storage";
+import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import { useAPI } from "@/browser/contexts/API";
 import { setWorkspaceModelWithOrigin } from "@/browser/utils/modelChange";
 import {
@@ -1576,9 +1577,15 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
             return false;
           }
 
+          const projectConfig = getProjectConfig(workspace.projectPath);
+          if (projectConfig?.projectKind !== "system") {
+            return true;
+          }
+
           // Upgraded installs can still carry hidden legacy system workspaces in metadata.
-          // Skip them here so new-chat startup drafts stay anchored to user-visible projects.
-          return getProjectConfig(workspace.projectPath)?.projectKind !== "system";
+          // Skip those here while still allowing visible multi-project (_multi) workspaces
+          // to participate in the same startup new-chat fallback as the landing page recents list.
+          return workspace.projectPath === MULTI_PROJECT_CONFIG_KEY;
         })
         .sort((a, b) => (workspaceRecency[b.id] ?? 0) - (workspaceRecency[a.id] ?? 0))[0];
 

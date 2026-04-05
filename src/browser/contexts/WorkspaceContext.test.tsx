@@ -15,6 +15,7 @@ import {
   getTerminalTitlesKey,
   getThinkingLevelKey,
 } from "@/common/constants/storage";
+import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import type { RecursivePartial } from "@/browser/testUtils";
 import { readPersistedState } from "@/browser/hooks/usePersistedState";
 import { getProjectRouteId } from "@/common/utils/projectRouteId";
@@ -1177,6 +1178,42 @@ describe("WorkspaceContext", () => {
     await waitFor(() => expect(ctx().loading).toBe(false));
     await waitFor(() => {
       expect(ctx().pendingNewWorkspaceProject).toBe("/existing-project");
+    });
+    expect(ctx().selectedWorkspace).toBeNull();
+  });
+
+  test("desktop: new-chat mode keeps visible multi-project workspaces eligible as recents", async () => {
+    createMockAPI({
+      workspace: {
+        list: () =>
+          Promise.resolve([
+            createWorkspaceMetadata({
+              id: "ws-multi",
+              projectPath: MULTI_PROJECT_CONFIG_KEY,
+              projectName: "_multi",
+              name: "main",
+              namedWorkspacePath: "/tmp/multi-container/main",
+            }),
+          ]),
+      },
+      projects: {
+        list: () =>
+          Promise.resolve([[MULTI_PROJECT_CONFIG_KEY, { workspaces: [], projectKind: "system" }]]),
+      },
+      server: {
+        getLaunchProject: () => Promise.resolve(null),
+      },
+      localStorage: {
+        [LAUNCH_BEHAVIOR_KEY]: JSON.stringify("new-chat"),
+      },
+      desktopMode: true,
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().loading).toBe(false));
+    await waitFor(() => {
+      expect(ctx().pendingNewWorkspaceProject).toBe(MULTI_PROJECT_CONFIG_KEY);
     });
     expect(ctx().selectedWorkspace).toBeNull();
   });
