@@ -1,3 +1,4 @@
+import * as crypto from "node:crypto";
 import * as path from "node:path";
 import { describe, expect, it, beforeEach, afterEach, spyOn } from "bun:test";
 import * as runtimeHelpers from "@/node/utils/runtime/helpers";
@@ -8,6 +9,7 @@ import {
   buildLegacyRemoteProjectLayout,
   buildRemoteProjectLayout,
   getRemoteWorkspacePath,
+  getSnapshotMarkerPath,
 } from "./remoteProjectLayout";
 import { createSSHTransport } from "./transports";
 import { projectSyncCoordinator } from "./projectSyncCoordinator";
@@ -195,6 +197,65 @@ describe("SSHRuntime bundle sync reuse", () => {
     ) => Promise<string | null>;
   }
 
+  interface RuntimeWithSyncProjectToRemote {
+    syncProjectToRemote: (
+      projectPath: string,
+      workspacePath: string,
+      initLogger: {
+        logStep: (message: string) => void;
+        logStdout: (line: string) => void;
+        logStderr: (line: string) => void;
+        logComplete: (exitCode: number) => void;
+      },
+      abortSignal?: AbortSignal
+    ) => Promise<void>;
+  }
+
+  interface RuntimeWithEnsureBaseRepo {
+    ensureBaseRepo: (
+      projectPath: string,
+      initLogger: {
+        logStep: (message: string) => void;
+        logStdout: (line: string) => void;
+        logStderr: (line: string) => void;
+        logComplete: (exitCode: number) => void;
+      },
+      abortSignal?: AbortSignal
+    ) => Promise<string>;
+  }
+
+  interface RuntimeWithComputeSnapshotDigest {
+    computeSnapshotDigest: (projectPath: string) => Promise<string>;
+  }
+
+  interface RuntimeWithTransferBundleToRemote {
+    transferBundleToRemote: (
+      projectPath: string,
+      remoteBundlePath: string,
+      initLogger: {
+        logStep: (message: string) => void;
+        logStdout: (line: string) => void;
+        logStderr: (line: string) => void;
+        logComplete: (exitCode: number) => void;
+      },
+      abortSignal?: AbortSignal
+    ) => Promise<string>;
+  }
+
+  interface RuntimeWithRefreshBaseRepoOrigin {
+    refreshBaseRepoOrigin: (
+      projectPath: string,
+      baseRepoPathArg: string,
+      initLogger: {
+        logStep: (message: string) => void;
+        logStdout: (line: string) => void;
+        logStderr: (line: string) => void;
+        logComplete: (exitCode: number) => void;
+      },
+      abortSignal?: AbortSignal
+    ) => Promise<void>;
+  }
+
   let runtime: SSHRuntime;
   let execBufferedSpy: ReturnType<typeof spyOn<typeof runtimeHelpers, "execBuffered">> | null =
     null;
@@ -276,6 +337,100 @@ describe("SSHRuntime bundle sync reuse", () => {
     } finally {
       localManifestSpy.mockRestore();
       remoteManifestSpy.mockRestore();
+    }
+  });
+
+  it("uploads snapshot bundles through a per-attempt temp path", async () => {
+    const projectPath = "/projects/demo";
+    const snapshotDigest = "abc123";
+    const layout = buildRemoteProjectLayout("/home/user/src", projectPath);
+    const baseRepoPathArg = JSON.stringify(layout.baseRepoPath);
+    const bundleFileName = `${snapshotDigest}.uuid-1234.bundle`;
+    const expectedRemoteBundlePath = path.posix.join(
+      "~/.mux-bundles",
+      layout.projectId,
+      bundleFileName
+    );
+    const snapshotMarkerPath = getSnapshotMarkerPath(layout, snapshotDigest);
+    const currentSnapshotPath = path.posix.join(layout.snapshotMarkerDir, "current");
+    const writeFileCalls: string[] = [];
+    const randomUuidSpy = spyOn(crypto, "randomUUID").mockReturnValue("uuid-1234");
+    const ensureBaseRepoSpy = spyOn(
+      runtime as unknown as RuntimeWithEnsureBaseRepo,
+      "ensureBaseRepo"
+    ).mockResolvedValue(baseRepoPathArg);
+    const computeSnapshotDigestSpy = spyOn(
+      runtime as unknown as RuntimeWithComputeSnapshotDigest,
+      "computeSnapshotDigest"
+    ).mockResolvedValue(snapshotDigest);
+    const transferBundleSpy = spyOn(
+      runtime as unknown as RuntimeWithTransferBundleToRemote,
+      "transferBundleToRemote"
+    ).mockResolvedValue(expectedRemoteBundlePath);
+    const refreshBaseRepoOriginSpy = spyOn(
+      runtime as unknown as RuntimeWithRefreshBaseRepoOrigin,
+      "refreshBaseRepoOrigin"
+    ).mockResolvedValue(undefined);
+    const writeFileSpy = spyOn(runtime, "writeFile").mockImplementation((filePath: string) => {
+      writeFileCalls.push(filePath);
+      return new WritableStream<Uint8Array>({
+        write() {
+          return Promise.resolve();
+        },
+        close() {
+          return Promise.resolve();
+        },
+      });
+    });
+    execBufferedSpy = spyOn(runtimeHelpers, "execBuffered").mockImplementation(
+      (_runtime, command) => {
+        if (command.includes('current_snapshot=""')) {
+          return Promise.resolve({ stdout: "missing\n", stderr: "", exitCode: 0, duration: 0 });
+        }
+        if (command.startsWith("mkdir -p ")) {
+          expect(command).toContain(layout.projectId);
+          return Promise.resolve({ stdout: "", stderr: "", exitCode: 0, duration: 0 });
+        }
+        if (command.includes(" fetch ")) {
+          expect(command).toContain(bundleFileName);
+          return Promise.resolve({ stdout: "", stderr: "", exitCode: 0, duration: 0 });
+        }
+        if (command.startsWith("rm -f ")) {
+          expect(command).toContain(bundleFileName);
+          return Promise.resolve({ stdout: "", stderr: "", exitCode: 0, duration: 0 });
+        }
+        throw new Error(`Unexpected execBuffered command: ${command}`);
+      }
+    );
+
+    try {
+      await (runtime as unknown as RuntimeWithSyncProjectToRemote).syncProjectToRemote(
+        projectPath,
+        "/unused/workspace",
+        initLogger
+      );
+
+      expect(transferBundleSpy).toHaveBeenCalledWith(
+        projectPath,
+        expectedRemoteBundlePath,
+        initLogger,
+        expect.any(AbortSignal)
+      );
+      expect(refreshBaseRepoOriginSpy).toHaveBeenCalledWith(
+        projectPath,
+        baseRepoPathArg,
+        initLogger,
+        expect.any(AbortSignal)
+      );
+      expect(writeFileCalls).toEqual([snapshotMarkerPath, currentSnapshotPath]);
+    } finally {
+      randomUuidSpy.mockRestore();
+      ensureBaseRepoSpy.mockRestore();
+      computeSnapshotDigestSpy.mockRestore();
+      transferBundleSpy.mockRestore();
+      refreshBaseRepoOriginSpy.mockRestore();
+      writeFileSpy.mockRestore();
+      projectSyncCoordinator.clearAll();
     }
   });
 

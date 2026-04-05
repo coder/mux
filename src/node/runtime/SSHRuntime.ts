@@ -1377,10 +1377,12 @@ export class SSHRuntime extends RemoteRuntime {
           );
         }
 
+        // Snapshot markers stay deterministic, but the uploaded bundle itself must use
+        // a per-attempt temp path so concurrent Mux processes do not stream into the same file.
         const remoteBundlePath = path.posix.join(
           "~/.mux-bundles",
           layout.projectId,
-          `${snapshotDigest}.bundle`
+          `${snapshotDigest}.${crypto.randomUUID()}.bundle`
         );
         const remoteBundlePathArg = this.quoteForRemote(remoteBundlePath);
         const remoteBundleParentDir = path.posix.dirname(remoteBundlePath);
