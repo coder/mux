@@ -497,7 +497,7 @@ export class OpenSSHMasterPool {
               allowHostKey: true,
               allowCredential: false,
             },
-            dedupeKey: `${formatSshEndpoint(group.config.host, group.config.port ?? 22)}:${shard.shardId}`,
+            dedupeKey: formatSshEndpoint(group.config.host, group.config.port ?? 22),
             getStderrContext: () => stderr,
             onHostKeyPromptStarted: () => {
               extendDeadline(HOST_KEY_APPROVAL_TIMEOUT_MS);

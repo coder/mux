@@ -1,9 +1,16 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 import type { spawn as spawnProcess } from "child_process";
 import { EventEmitter } from "events";
 import { PassThrough } from "stream";
+import { formatSshEndpoint } from "@/common/utils/ssh/formatSshEndpoint";
+import { SshPromptService } from "@/node/services/sshPromptService";
+import * as openSshPromptMediation from "./openSshPromptMediation";
 import { OpenSSHMasterPool, getShardedControlPath } from "./openSshMasterPool";
-import type { SSHConnectionConfig } from "./sshConnectionPool";
+import {
+  setOpenSSHHostKeyPolicyMode,
+  setSshPromptService,
+  type SSHConnectionConfig,
+} from "./sshConnectionPool";
 
 class FakeChildProcess extends EventEmitter {
   readonly stdout = new PassThrough();
@@ -32,7 +39,13 @@ describe("getShardedControlPath", () => {
 describe("OpenSSHMasterPool", () => {
   const masterProcesses = new Map<string, FakeChildProcess>();
 
+  let releaseInteractiveResponder: (() => void) | undefined;
+
   afterEach(() => {
+    releaseInteractiveResponder?.();
+    releaseInteractiveResponder = undefined;
+    setSshPromptService(undefined);
+    setOpenSSHHostKeyPolicyMode("headless-fallback");
     masterProcesses.clear();
   });
 
@@ -81,6 +94,74 @@ describe("OpenSSHMasterPool", () => {
     second.release();
     third.release();
     pool.clearAll();
+  });
+
+  test("reuses one endpoint-scoped askpass dedupe key across shard startups", async () => {
+    const dedupeKeys: string[] = [];
+    const promptService = new SshPromptService();
+    releaseInteractiveResponder = promptService.registerInteractiveResponder();
+    setSshPromptService(promptService);
+    setOpenSSHHostKeyPolicyMode("strict");
+    const askpassSpy = spyOn(
+      openSshPromptMediation,
+      "createMediatedAskpassSession"
+    ).mockImplementation((params) => {
+      dedupeKeys.push(params.dedupeKey ?? "");
+      const mediatedAskpass: Awaited<
+        ReturnType<typeof openSshPromptMediation.createMediatedAskpassSession>
+      > = {
+        env: {},
+        cleanup: mock(() => undefined),
+        getLastPromptOutcome: () => null,
+      };
+      return Promise.resolve(mediatedAskpass);
+    });
+    const pool = new OpenSSHMasterPool({
+      maxSessionsPerShard: 1,
+      maxShardsPerHost: 2,
+      sleep: () => Promise.resolve(),
+      spawnProcess: ((_command: string, args?: readonly string[]) => {
+        const proc = new FakeChildProcess();
+        const normalizedArgs = [...(args ?? [])];
+
+        if (normalizedArgs.includes("-M")) {
+          const controlPathArg = normalizedArgs.find((arg) => arg.startsWith("ControlPath="));
+          if (controlPathArg) {
+            masterProcesses.set(controlPathArg.slice("ControlPath=".length), proc);
+          }
+          return proc as never;
+        }
+
+        const controlPathIndex = normalizedArgs.indexOf("-S");
+        const controlPath =
+          controlPathIndex >= 0 ? normalizedArgs[controlPathIndex + 1] : undefined;
+        queueMicrotask(() => {
+          if (normalizedArgs.includes("check") && controlPath && masterProcesses.has(controlPath)) {
+            proc.exitCode = 0;
+          }
+          proc.emit("close", proc.exitCode ?? 1, null);
+        });
+        return proc as never;
+      }) as unknown as typeof spawnProcess,
+    });
+
+    const config: SSHConnectionConfig = { host: "remote.example.com", port: 22 };
+    try {
+      const first = await pool.acquireLease(config, { maxWaitMs: 1000, timeoutMs: 1000 });
+      const second = await pool.acquireLease(config, { maxWaitMs: 1000, timeoutMs: 1000 });
+
+      expect(first.controlPath).not.toBe(second.controlPath);
+      expect(dedupeKeys).toEqual([
+        formatSshEndpoint(config.host, config.port ?? 22),
+        formatSshEndpoint(config.host, config.port ?? 22),
+      ]);
+
+      first.release();
+      second.release();
+    } finally {
+      askpassSpy.mockRestore();
+      pool.clearAll();
+    }
   });
 
   test("does not lease a shard until its master is ready", async () => {
