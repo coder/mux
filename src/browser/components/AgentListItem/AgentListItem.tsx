@@ -128,7 +128,7 @@ const SHOW_INLINE_ACTIONS_ON_WIDE_TOUCH =
 /** Calculate left padding based on nesting depth */
 function getItemPaddingLeft(depth?: number): number {
   const safeDepth = typeof depth === "number" && Number.isFinite(depth) ? Math.max(0, depth) : 0;
-  return 8 + Math.min(32, safeDepth) * 12;
+  return 4 + Math.min(32, safeDepth) * 8;
 }
 
 function getSubAgentConnectorLeft(
@@ -314,7 +314,7 @@ function DraftAgentListItemInner(props: DraftAgentListItemProps) {
     <div
       className={cn(
         LIST_ITEM_BASE_CLASSES,
-        sectionId != null ? "ml-8" : "ml-6.5",
+        sectionId != null ? "ml-6" : "ml-5",
         "cursor-pointer pl-1 hover:bg-surface-secondary [&:hover_button]:opacity-100",
         isSelected && "bg-surface-secondary"
       )}
@@ -470,11 +470,15 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
 
   // Display title (fallback to name for legacy workspaces without title)
   const workspaceTitle = metadata.title ?? metadata.name;
-  const variantLabel =
-    getTaskGroupKindFromMetadata(metadata.bestOf) === TASK_GROUP_KIND.VARIANTS
-      ? normalizeTaskGroupLabel(metadata.bestOf?.label)
+  // Derive a short group label for grouped task children: explicit label for variants,
+  // alphabetical letter (A, B, C…) for best-of-n candidates.
+  const groupLabel =
+    metadata.bestOf != null
+      ? getTaskGroupKindFromMetadata(metadata.bestOf) === TASK_GROUP_KIND.VARIANTS
+        ? normalizeTaskGroupLabel(metadata.bestOf.label)
+        : String.fromCharCode(65 + (metadata.bestOf.index ?? 0))
       : undefined;
-  const displayTitle = variantLabel ? `${variantLabel} · ${workspaceTitle}` : workspaceTitle;
+  const displayTitle = groupLabel ? `${groupLabel} · ${workspaceTitle}` : workspaceTitle;
   const isEditing = editingWorkspaceId === workspaceId;
 
   const linkSharingEnabled = useLinkSharingEnabled();
@@ -687,7 +691,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
         className={cn(
           LIST_ITEM_BASE_CLASSES,
           "group/row",
-          sectionId != null ? "ml-7.5" : "ml-5",
+          sectionId != null ? "ml-5.5" : "ml-4",
           isDragging && "opacity-50",
           isRemoving && "opacity-70",
           // Keep hover styles enabled for initializing workspaces so the row feels interactive.
@@ -1014,6 +1018,11 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
               />
             ) : (
               <div className="flex min-w-0 items-center gap-1">
+                {/* Group label (variant name or A/B/C letter) rendered as a non-shrinkable
+                    badge so it stays visible even when the sidebar is narrow. */}
+                {groupLabel && (
+                  <span className="text-muted shrink-0 text-[12px] leading-6">{groupLabel}</span>
+                )}
                 <span
                   className={cn(
                     "min-w-0 flex-1 truncate text-left text-[14px] leading-6 transition-colors duration-200",
@@ -1022,7 +1031,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                     titleColorClass
                   )}
                 >
-                  {displayTitle}
+                  {workspaceTitle}
                 </span>
               </div>
             )}

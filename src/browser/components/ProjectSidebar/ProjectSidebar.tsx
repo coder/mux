@@ -1967,7 +1967,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             </span>
                           </button>
                           <div
-                            className="flex min-w-0 flex-1 items-center pr-2"
+                            className="flex min-w-0 flex-1 items-center pr-1"
                             onContextMenu={(event) => handleOpenProjectMenu(event, projectPath)}
                           >
                             <Tooltip>
@@ -2083,7 +2083,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                           >
                             <div
                               aria-hidden="true"
-                              className="bg-border pointer-events-none absolute top-1 bottom-0 left-4.5 w-px"
+                              className="bg-border pointer-events-none absolute top-1 bottom-0 left-3.5 w-px"
                               style={
                                 projectFolderColor
                                   ? { backgroundColor: projectFolderColor }
