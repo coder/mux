@@ -1,3 +1,4 @@
+import * as path from "node:path";
 import { describe, expect, it, beforeEach, afterEach, spyOn } from "bun:test";
 import * as runtimeHelpers from "@/node/utils/runtime/helpers";
 import * as disposableExec from "@/node/utils/disposableExec";
@@ -9,6 +10,7 @@ import {
   getRemoteWorkspacePath,
 } from "./remoteProjectLayout";
 import { createSSHTransport } from "./transports";
+import { projectSyncCoordinator } from "./projectSyncCoordinator";
 
 /**
  * SSHRuntime unit tests (run with bun test)
@@ -717,6 +719,150 @@ describe("SSHRuntime.deleteWorkspace", () => {
     }
   });
 });
+describe("SSHRuntime branch metadata compatibility", () => {
+  it("keeps the legacy branch manifest in sync when renaming a legacy workspace", async () => {
+    type UpdateWorkspaceBranchMapping = (
+      projectPath: string,
+      oldWorkspaceName: string,
+      newWorkspaceName: string
+    ) => Promise<void>;
+
+    const config = { host: "example.com", srcBaseDir: "/home/user/src" };
+    const projectPath = "/projects/demo";
+    const oldWorkspaceName = "review-slot";
+    const newWorkspaceName = "renamed-slot";
+    const legacyLayout = buildLegacyRemoteProjectLayout(config.srcBaseDir, projectPath);
+    const legacyManifestPath = path.posix.join(
+      legacyLayout.projectRoot,
+      ".mux-workspace-branches.json"
+    );
+    const runtime = new SSHRuntime(config, createSSHTransport(config, false), {
+      projectPath,
+      workspaceName: oldWorkspaceName,
+      workspacePath: getRemoteWorkspacePath(legacyLayout, oldWorkspaceName),
+    });
+    const files = new Map<string, string>([
+      [legacyManifestPath, '{"review-slot":"feature-branch"}\n'],
+    ]);
+    const readFileSpy = spyOn(runtime, "readFile").mockImplementation((filePath: string) => {
+      const contents = files.get(filePath);
+      return new ReadableStream<Uint8Array>({
+        start(controller) {
+          if (contents === undefined) {
+            controller.error(new Error(`Missing file: ${filePath}`));
+            return;
+          }
+          controller.enqueue(new TextEncoder().encode(contents));
+          controller.close();
+        },
+      });
+    });
+    const writeFileSpy = spyOn(runtime, "writeFile").mockImplementation((filePath: string) => {
+      const decoder = new TextDecoder();
+      let contents = "";
+      return new WritableStream<Uint8Array>({
+        write(chunk) {
+          contents += decoder.decode(chunk, { stream: true });
+        },
+        close() {
+          contents += decoder.decode();
+          files.set(filePath, contents);
+        },
+      });
+    });
+    const execBufferedSpy = spyOn(runtimeHelpers, "execBuffered").mockImplementation(
+      (_runtime, command) => {
+        if (command.startsWith("mkdir -p ") || command.startsWith("rm -f ")) {
+          return Promise.resolve({ stdout: "", stderr: "", exitCode: 0, duration: 0 });
+        }
+        throw new Error(`Unexpected execBuffered command: ${command}`);
+      }
+    );
+
+    try {
+      const updateWorkspaceBranchMapping = Reflect.get(
+        runtime,
+        "updateWorkspaceBranchMapping"
+      ) as UpdateWorkspaceBranchMapping;
+      await updateWorkspaceBranchMapping.call(
+        runtime,
+        projectPath,
+        oldWorkspaceName,
+        newWorkspaceName
+      );
+
+      expect(JSON.parse(files.get(legacyManifestPath) ?? "null")).toEqual({
+        [newWorkspaceName]: "feature-branch",
+      });
+    } finally {
+      readFileSpy.mockRestore();
+      writeFileSpy.mockRestore();
+      execBufferedSpy.mockRestore();
+      projectSyncCoordinator.clearAll();
+    }
+  });
+  it("removes stale legacy branch manifest entries even when layout detection falls back to preferred", async () => {
+    type DeletePersistedWorkspaceBranchMapping = (
+      projectPath: string,
+      workspaceName: string
+    ) => Promise<void>;
+
+    const config = { host: "example.com", srcBaseDir: "/home/user/src" };
+    const projectPath = "/projects/demo";
+    const workspaceName = "review-slot";
+    const legacyManifestPath = path.posix.join(
+      buildLegacyRemoteProjectLayout(config.srcBaseDir, projectPath).projectRoot,
+      ".mux-workspace-branches.json"
+    );
+    const runtime = new SSHRuntime(config, createSSHTransport(config, false));
+    const files = new Map<string, string>([
+      [legacyManifestPath, '{"review-slot":"feature-branch"}\n'],
+    ]);
+    const readFileSpy = spyOn(runtime, "readFile").mockImplementation((filePath: string) => {
+      const contents = files.get(filePath);
+      return new ReadableStream<Uint8Array>({
+        start(controller) {
+          if (contents === undefined) {
+            controller.error(new Error(`Missing file: ${filePath}`));
+            return;
+          }
+          controller.enqueue(new TextEncoder().encode(contents));
+          controller.close();
+        },
+      });
+    });
+    const execBufferedSpy = spyOn(runtimeHelpers, "execBuffered").mockImplementation(
+      (_runtime, command) => {
+        if (command.includes("echo legacy") && command.includes("echo preferred")) {
+          return Promise.resolve({ stdout: "preferred\n", stderr: "", exitCode: 0, duration: 0 });
+        }
+        if (command.startsWith("rm -f ")) {
+          const pathMatch = /^rm -f\s+(.+)$/.exec(command);
+          if (pathMatch?.[1]) {
+            files.delete(pathMatch[1].replace(/^"|"$/g, ""));
+          }
+          return Promise.resolve({ stdout: "", stderr: "", exitCode: 0, duration: 0 });
+        }
+        throw new Error(`Unexpected execBuffered command: ${command}`);
+      }
+    );
+
+    try {
+      const deletePersistedWorkspaceBranchMapping = Reflect.get(
+        runtime,
+        "deletePersistedWorkspaceBranchMapping"
+      ) as DeletePersistedWorkspaceBranchMapping;
+      await deletePersistedWorkspaceBranchMapping.call(runtime, projectPath, workspaceName);
+
+      expect(files.has(legacyManifestPath)).toBe(false);
+    } finally {
+      readFileSpy.mockRestore();
+      execBufferedSpy.mockRestore();
+      projectSyncCoordinator.clearAll();
+    }
+  });
+});
+
 describe("SSHRuntime.ensureReady repository checks", () => {
   let execBufferedSpy: ReturnType<typeof spyOn<typeof runtimeHelpers, "execBuffered">> | null =
     null;

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "bun:test";
 
+import {
+  buildLegacyRemoteProjectLayout,
+  getRemoteWorkspacePath,
+} from "@/node/runtime/remoteProjectLayout";
 import { getWorkspaceProjectRepos } from "@/node/services/workspaceProjectRepos";
 
 describe("getWorkspaceProjectRepos", () => {
@@ -57,6 +61,39 @@ describe("getWorkspaceProjectRepos", () => {
     });
 
     expect(repos[0]?.repoCwd).toBe("/tmp/legacy/main");
+  });
+
+  it("derives persisted legacy SSH paths for secondary multi-project repos", () => {
+    const runtimeConfig = {
+      type: "ssh",
+      host: "example.com",
+      srcBaseDir: "/tmp/src",
+    } as const;
+    const workspaceName = "main";
+    const primaryProjectPath = "/tmp/projects/main";
+    const secondaryProjectPath = "/tmp/projects/other";
+    const repos = getWorkspaceProjectRepos({
+      workspaceId: "workspace-1",
+      workspaceName,
+      workspacePath: getRemoteWorkspacePath(
+        buildLegacyRemoteProjectLayout(runtimeConfig.srcBaseDir, primaryProjectPath),
+        workspaceName
+      ),
+      runtimeConfig,
+      projectPath: primaryProjectPath,
+      projectName: "main",
+      projects: [
+        { projectPath: primaryProjectPath, projectName: "main" },
+        { projectPath: secondaryProjectPath, projectName: "other" },
+      ],
+    });
+
+    expect(repos[1]?.repoCwd).toBe(
+      getRemoteWorkspacePath(
+        buildLegacyRemoteProjectLayout(runtimeConfig.srcBaseDir, secondaryProjectPath),
+        workspaceName
+      )
+    );
   });
 
   it("disambiguates storage keys when sanitized project names collide", () => {

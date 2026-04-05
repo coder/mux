@@ -212,6 +212,229 @@ describe("OpenSSHMasterPool", () => {
     pool.clearAll();
   });
 
+  test("honors shard backoff waits instead of polling at the startup cadence", async () => {
+    const sleepCalls: number[] = [];
+    const pool = new OpenSSHMasterPool({
+      maxSessionsPerShard: 1,
+      maxShardsPerHost: 1,
+      startupPollIntervalMs: 50,
+      sleep: (waitMs) => {
+        sleepCalls.push(waitMs);
+        const internals = pool as unknown as {
+          hostGroups: Map<string, { shards: Array<{ health: { backoffUntil?: Date } }> }>;
+        };
+        const shard = [...internals.hostGroups.values()][0]?.shards[0];
+        if (shard?.health.backoffUntil) {
+          shard.health.backoffUntil = new Date(Date.now() - 1);
+        }
+        return Promise.resolve();
+      },
+      spawnProcess: ((_command: string, args?: readonly string[]) => {
+        const proc = new FakeChildProcess();
+        const normalizedArgs = [...(args ?? [])];
+
+        if (normalizedArgs.includes("-M")) {
+          const controlPathArg = normalizedArgs.find((arg) => arg.startsWith("ControlPath="));
+          if (controlPathArg) {
+            masterProcesses.set(controlPathArg.slice("ControlPath=".length), proc);
+          }
+          return proc as never;
+        }
+
+        const controlPathIndex = normalizedArgs.indexOf("-S");
+        const controlPath =
+          controlPathIndex >= 0 ? normalizedArgs[controlPathIndex + 1] : undefined;
+        queueMicrotask(() => {
+          if (normalizedArgs.includes("check") && controlPath && masterProcesses.has(controlPath)) {
+            proc.exitCode = 0;
+          }
+          proc.emit("close", proc.exitCode ?? 1, null);
+        });
+        return proc as never;
+      }) as unknown as typeof spawnProcess,
+    });
+
+    const config: SSHConnectionConfig = { host: "remote.example.com", port: 22 };
+    const first = await pool.acquireLease(config, { maxWaitMs: 1000, timeoutMs: 1000 });
+    sleepCalls.length = 0;
+    first.reportFailure("ssh exited 255");
+    first.release();
+
+    const second = await pool.acquireLease(config, { maxWaitMs: 1000, timeoutMs: 1000 });
+
+    expect(sleepCalls[0]).toBeGreaterThan(100);
+
+    second.release();
+    pool.clearAll();
+  });
+
+  test("polls for free capacity when a healthy shard is saturated even if another shard is backing off", async () => {
+    const sleepCalls: number[] = [];
+    const pool = new OpenSSHMasterPool({
+      maxSessionsPerShard: 1,
+      maxShardsPerHost: 2,
+      startupPollIntervalMs: 50,
+      sleep: (waitMs) => {
+        sleepCalls.push(waitMs);
+        return Promise.resolve();
+      },
+      spawnProcess: ((_command: string, args?: readonly string[]) => {
+        const proc = new FakeChildProcess();
+        const normalizedArgs = [...(args ?? [])];
+
+        if (normalizedArgs.includes("-M")) {
+          const controlPathArg = normalizedArgs.find((arg) => arg.startsWith("ControlPath="));
+          if (controlPathArg) {
+            masterProcesses.set(controlPathArg.slice("ControlPath=".length), proc);
+          }
+          return proc as never;
+        }
+
+        const controlPathIndex = normalizedArgs.indexOf("-S");
+        const controlPath =
+          controlPathIndex >= 0 ? normalizedArgs[controlPathIndex + 1] : undefined;
+        queueMicrotask(() => {
+          if (normalizedArgs.includes("check") && controlPath && masterProcesses.has(controlPath)) {
+            proc.exitCode = 0;
+          }
+          proc.emit("close", proc.exitCode ?? 1, null);
+        });
+        return proc as never;
+      }) as unknown as typeof spawnProcess,
+    });
+
+    const config: SSHConnectionConfig = { host: "remote.example.com", port: 22 };
+    const first = await pool.acquireLease(config, { maxWaitMs: 1000, timeoutMs: 1000 });
+    const internals = pool as unknown as {
+      hostGroups: Map<
+        string,
+        {
+          shards: Array<{
+            health: {
+              backoffUntil?: Date;
+              status: string;
+              consecutiveFailures?: number;
+              lastFailure?: Date;
+              lastError?: string;
+            };
+            ready: boolean;
+            inflight: number;
+            process?: FakeChildProcess;
+            startup?: Promise<void>;
+            stopping: boolean;
+            stderr: string;
+            id: number;
+            shardId: string;
+            controlPath: string;
+            lastUsedAt: number;
+          }>;
+        }
+      >;
+    };
+    const group = [...internals.hostGroups.values()][0];
+    if (!group) {
+      throw new Error("Expected a tracked host group");
+    }
+    group.shards.push({
+      id: 99,
+      shardId: "shard-99",
+      controlPath: "/tmp/mux-backoff-shard",
+      inflight: 0,
+      lastUsedAt: Date.now(),
+      ready: false,
+      stderr: "",
+      stopping: false,
+      health: {
+        status: "unhealthy",
+        consecutiveFailures: 1,
+        lastFailure: new Date(),
+        lastError: "ssh exited 255",
+        backoffUntil: new Date(Date.now() + 10_000),
+      },
+    });
+
+    const secondPromise = pool.acquireLease(config, {
+      maxWaitMs: 1000,
+      timeoutMs: 1000,
+      onWait: () => {
+        first.release();
+      },
+    });
+    const second = await secondPromise;
+
+    expect(sleepCalls[0]).toBe(50);
+
+    second.release();
+    pool.clearAll();
+  });
+
+  test("preserves shard failure history across retries after backoff expires", async () => {
+    let startupAttempts = 0;
+    const controller = new AbortController();
+    const pool = new OpenSSHMasterPool({
+      maxSessionsPerShard: 1,
+      maxShardsPerHost: 1,
+      sleep: () => {
+        const internals = pool as unknown as {
+          hostGroups: Map<string, { shards: Array<{ health: { backoffUntil?: Date } }> }>;
+        };
+        const shard = [...internals.hostGroups.values()][0]?.shards[0];
+        if (shard?.health.backoffUntil) {
+          shard.health.backoffUntil = new Date(Date.now() - 1);
+        }
+        return Promise.resolve();
+      },
+      spawnProcess: ((_command: string, args?: readonly string[]) => {
+        const proc = new FakeChildProcess();
+        const normalizedArgs = [...(args ?? [])];
+
+        if (normalizedArgs.includes("-M")) {
+          startupAttempts += 1;
+          queueMicrotask(() => {
+            proc.emit("error", new Error(`startup failure ${startupAttempts}`));
+            proc.exitCode = 1;
+            proc.emit("exit", proc.exitCode, null);
+            proc.emit("close", proc.exitCode, null);
+            if (startupAttempts === 2) {
+              controller.abort();
+            }
+          });
+          return proc as never;
+        }
+
+        queueMicrotask(() => {
+          proc.exitCode = 1;
+          proc.emit("close", proc.exitCode, null);
+        });
+        return proc as never;
+      }) as unknown as typeof spawnProcess,
+    });
+
+    const config: SSHConnectionConfig = { host: "remote.example.com", port: 22 };
+    try {
+      await pool.acquireLease(config, {
+        maxWaitMs: 1000,
+        timeoutMs: 1000,
+        abortSignal: controller.signal,
+      });
+      throw new Error("Expected acquireLease to reject");
+    } catch {
+      // Expected: we abort after the second failed startup attempt.
+    }
+
+    const internals = pool as unknown as {
+      hostGroups: Map<string, { shards: Array<{ health: { consecutiveFailures?: number } }> }>;
+    };
+    const shard = [...internals.hostGroups.values()][0]?.shards[0];
+    if (!shard) {
+      throw new Error("Expected a tracked shard");
+    }
+    expect(startupAttempts).toBe(2);
+    expect(shard.health.consecutiveFailures).toBe(2);
+
+    pool.clearAll();
+  });
+
   test("ensureReadyMaster ignores saturated exec slots when a shard is already ready", async () => {
     const pool = new OpenSSHMasterPool({
       maxSessionsPerShard: 1,
@@ -338,7 +561,9 @@ describe("OpenSSHMasterPool", () => {
 
     const config: SSHConnectionConfig = { host: "remote.example.com", port: 22 };
     try {
-      await pool.acquireLease(config, { maxWaitMs: 1000, timeoutMs: 1000 });
+      // Keep the wait budget below the minimum 0.8s backoff jitter so this assertion only
+      // verifies one startup attempt, not whether acquireLease later retries within budget.
+      await pool.acquireLease(config, { maxWaitMs: 100, timeoutMs: 1000 });
       throw new Error("Expected acquireLease to reject");
     } catch (error) {
       expect(error).toBeInstanceOf(Error);

@@ -19,6 +19,7 @@ import { InitStateManager } from "./initStateManager";
 import { ProviderService } from "./providerService";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { Config } from "@/node/config";
+import * as runtimeFactory from "@/node/runtime/runtimeFactory";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import { DisposableTempDir } from "@/node/services/tempDir";
 
@@ -1815,7 +1816,11 @@ describe("AIService.streamMessage multi-project trust gating", () => {
     getToolsForModelSpy: ReturnType<typeof spyOn<typeof toolsModule, "getToolsForModel">>;
   }
 
-  function createTrustMetadata(workspaceId: string, projectPaths: string[]): WorkspaceMetadata {
+  function createTrustMetadata(
+    workspaceId: string,
+    projectPaths: string[],
+    runtimeConfig: WorkspaceMetadata["runtimeConfig"] = { type: "local" }
+  ): WorkspaceMetadata {
     const [primaryProjectPath, secondaryProjectPath] = projectPaths;
     if (!primaryProjectPath) {
       throw new Error("Expected at least one project path");
@@ -1832,14 +1837,15 @@ describe("AIService.streamMessage multi-project trust gating", () => {
             { projectPath: secondaryProjectPath, projectName: "project-b" },
           ]
         : undefined,
-      runtimeConfig: { type: "local" },
+      runtimeConfig,
     };
   }
 
   function createHarness(
     muxHomePath: string,
     metadata: WorkspaceMetadata,
-    multiProjectExperimentEnabled = true
+    multiProjectExperimentEnabled = true,
+    workspacePathOverride?: string
   ): TrustGatingHarness {
     const config = new Config(muxHomePath);
     const historyService = new HistoryService(config);
@@ -1949,7 +1955,7 @@ describe("AIService.streamMessage multi-project trust gating", () => {
     spyOn(initStateManager, "waitForInit").mockResolvedValue(undefined);
 
     spyOn(config, "findWorkspace").mockReturnValue({
-      workspacePath: metadata.projectPath,
+      workspacePath: workspacePathOverride ?? metadata.projectPath,
       projectPath: metadata.projectPath,
     });
 
@@ -2032,6 +2038,42 @@ describe("AIService.streamMessage multi-project trust gating", () => {
     expect(trustedFromFirstGetToolsCall(harness.getToolsForModelSpy)).toBe(false);
   });
 
+  it("uses the persisted workspace root as cwd for multi-project ssh startup", async () => {
+    using muxHome = new DisposableTempDir("ai-service-multi-project-persisted-cwd");
+    const projectAPath = path.join(muxHome.path, "project-a");
+    const projectBPath = path.join(muxHome.path, "project-b");
+    await fs.mkdir(projectAPath, { recursive: true });
+    await fs.mkdir(projectBPath, { recursive: true });
+
+    const workspaceId = "workspace-multi-project-persisted-cwd";
+    const persistedWorkspacePath = path.join(muxHome.path, "persisted-legacy-workspace-root");
+    const metadata = createTrustMetadata(workspaceId, [projectAPath, projectBPath], {
+      type: "ssh",
+      host: "example.com",
+      srcBaseDir: "/remote/src",
+    });
+    const harness = createHarness(muxHome.path, metadata, true, persistedWorkspacePath);
+    const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockImplementation(
+      (_runtimeConfig, options) => new LocalRuntime(options?.projectPath ?? projectAPath)
+    );
+
+    try {
+      await harness.config.editConfig((cfg) => {
+        cfg.projects.set(projectAPath, { workspaces: [], trusted: true });
+        cfg.projects.set(projectBPath, { workspaces: [], trusted: true });
+        return cfg;
+      });
+
+      await streamOnce(harness, workspaceId);
+
+      const toolConfig = harness.getToolsForModelSpy.mock.calls[0]?.[1] as
+        | { cwd?: unknown }
+        | undefined;
+      expect(toolConfig?.cwd).toBe(persistedWorkspacePath);
+    } finally {
+      createRuntimeSpy.mockRestore();
+    }
+  });
   it("fails closed before tool setup when the multi-project experiment is disabled", async () => {
     using muxHome = new DisposableTempDir("ai-service-multi-project-experiment-disabled");
     const projectAPath = path.join(muxHome.path, "project-a");

@@ -638,11 +638,8 @@ export class SSHRuntime extends RemoteRuntime {
     workspaceName: string
   ): Promise<void> {
     try {
-      await this.resolveProjectLayout(projectPath, workspaceName);
-      const metadataPath = getWorkspaceMetadataPath(
-        this.getPreferredProjectLayout(projectPath),
-        workspaceName
-      );
+      const layout = await this.resolveProjectLayout(projectPath, workspaceName);
+      const metadataPath = getWorkspaceMetadataPath(layout, workspaceName);
       await execBuffered(this, `rm -f ${this.quoteForRemote(metadataPath)}`, {
         cwd: "/tmp",
         timeout: 10,
@@ -650,6 +647,8 @@ export class SSHRuntime extends RemoteRuntime {
     } catch {
       // Best-effort cleanup after delete; future creates overwrite any stale entry.
     }
+
+    await this.deleteLegacyWorkspaceBranchEntry(projectPath, workspaceName).catch(() => undefined);
   }
 
   private async readWorkspaceBranchMetadata(
@@ -711,27 +710,140 @@ export class SSHRuntime extends RemoteRuntime {
     } finally {
       await writer.close();
     }
+
+    await this.mutateLegacyWorkspaceBranchMap(projectPath, layout, (branchMap) => {
+      branchMap[workspaceName] = branchName;
+    });
   }
 
-  private async readLegacyWorkspaceBranchEntry(
-    projectPath: string,
-    workspaceName: string
-  ): Promise<string | null> {
+  private usesLegacyProjectLayout(projectPath: string, layout: RemoteProjectLayout): boolean {
+    return (
+      layout.projectRoot ===
+      buildLegacyRemoteProjectLayout(this.config.srcBaseDir, projectPath).projectRoot
+    );
+  }
+
+  private async readLegacyWorkspaceBranchMap(projectPath: string): Promise<Record<string, string>> {
     try {
       const contents = await streamToString(
         this.readFile(this.getLegacyWorkspaceBranchMapPath(projectPath))
       );
       const parsed: unknown = JSON.parse(contents);
       if (typeof parsed !== "object" || parsed === null) {
-        return null;
+        return {};
       }
-      const branchMap = parsed as Record<string, unknown>;
-      const branchName =
-        typeof branchMap[workspaceName] === "string" ? branchMap[workspaceName].trim() : "";
-      return branchName.length > 0 ? branchName : null;
+
+      const branchMap: Record<string, string> = {};
+      for (const [workspaceName, branchName] of Object.entries(parsed)) {
+        if (typeof branchName !== "string") {
+          continue;
+        }
+        const trimmedWorkspaceName = workspaceName.trim();
+        const trimmedBranchName = branchName.trim();
+        if (trimmedWorkspaceName.length === 0 || trimmedBranchName.length === 0) {
+          continue;
+        }
+        branchMap[trimmedWorkspaceName] = trimmedBranchName;
+      }
+      return branchMap;
     } catch {
-      return null;
+      return {};
     }
+  }
+
+  private async writeLegacyWorkspaceBranchMap(
+    projectPath: string,
+    branchMap: Record<string, string>
+  ): Promise<void> {
+    const legacyManifestPath = this.getLegacyWorkspaceBranchMapPath(projectPath);
+    const normalizedBranchMap = Object.fromEntries(
+      Object.entries(branchMap).sort(([leftWorkspace], [rightWorkspace]) =>
+        leftWorkspace.localeCompare(rightWorkspace)
+      )
+    );
+    const writer = this.writeFile(legacyManifestPath).getWriter();
+    try {
+      await writer.write(
+        new TextEncoder().encode(`${JSON.stringify(normalizedBranchMap, null, 2)}\n`)
+      );
+    } finally {
+      await writer.close();
+    }
+  }
+
+  private async deleteLegacyWorkspaceBranchEntry(
+    projectPath: string,
+    workspaceName: string
+  ): Promise<void> {
+    const legacyManifestPath = this.getLegacyWorkspaceBranchMapPath(projectPath);
+    const projectKey = this.getProjectSyncKey(this.getDefaultProjectLayout(projectPath).projectId);
+    await projectSyncCoordinator.enqueueProjectMutation(projectKey, async () => {
+      const branchMap = await this.readLegacyWorkspaceBranchMap(projectPath);
+      if (!(workspaceName in branchMap)) {
+        return;
+      }
+
+      delete branchMap[workspaceName];
+      if (Object.keys(branchMap).length === 0) {
+        await execBuffered(this, `rm -f ${this.quoteForRemote(legacyManifestPath)}`, {
+          cwd: "/tmp",
+          timeout: 10,
+        }).catch(() => undefined);
+        return;
+      }
+
+      await this.writeLegacyWorkspaceBranchMap(projectPath, branchMap);
+    });
+  }
+
+  private async mutateLegacyWorkspaceBranchMap(
+    projectPath: string,
+    layout: RemoteProjectLayout,
+    mutate: (branchMap: Record<string, string>) => void
+  ): Promise<void> {
+    if (!this.usesLegacyProjectLayout(projectPath, layout)) {
+      return;
+    }
+
+    const legacyManifestPath = this.getLegacyWorkspaceBranchMapPath(projectPath);
+    const projectKey = this.getProjectSyncKey(this.getDefaultProjectLayout(projectPath).projectId);
+    await projectSyncCoordinator.enqueueProjectMutation(projectKey, async () => {
+      const branchMap = await this.readLegacyWorkspaceBranchMap(projectPath);
+      mutate(branchMap);
+      if (Object.keys(branchMap).length === 0) {
+        await execBuffered(this, `rm -f ${this.quoteForRemote(legacyManifestPath)}`, {
+          cwd: "/tmp",
+          timeout: 10,
+        }).catch(() => undefined);
+        return;
+      }
+
+      const mkdirResult = await execBuffered(
+        this,
+        `mkdir -p ${this.quoteForRemote(path.posix.dirname(legacyManifestPath))}`,
+        {
+          cwd: "/tmp",
+          timeout: 10,
+        }
+      );
+      if (mkdirResult.exitCode !== 0) {
+        throw new Error(
+          `Failed to prepare legacy workspace branch manifest: ${mkdirResult.stderr || mkdirResult.stdout}`
+        );
+      }
+
+      await this.writeLegacyWorkspaceBranchMap(projectPath, branchMap);
+    });
+  }
+
+  private async readLegacyWorkspaceBranchEntry(
+    projectPath: string,
+    workspaceName: string
+  ): Promise<string | null> {
+    const branchName = (await this.readLegacyWorkspaceBranchMap(projectPath))[
+      workspaceName
+    ]?.trim();
+    return branchName && branchName.length > 0 ? branchName : null;
   }
 
   private getLegacyWorkspaceBranchMapPath(projectPath: string): string {

@@ -19,6 +19,24 @@ describe("createRuntimeForWorkspace", () => {
     const internal = runtime as unknown as { currentWorkspacePath?: string };
     expect(internal.currentWorkspacePath).toBe("/tmp/non-canonical/workspaces/review-1");
   });
+
+  it("seeds ssh runtimes from the persisted workspace root", () => {
+    const metadata = {
+      runtimeConfig: {
+        type: "ssh",
+        host: "example.com",
+        srcBaseDir: "/remote/src",
+      } satisfies RuntimeConfig,
+      projectPath: "/projects/demo",
+      name: "review-1",
+      namedWorkspacePath: "/remote/src/demo/review-1",
+    };
+
+    const runtime = createRuntimeForWorkspace(metadata);
+    expect(runtime.getWorkspacePath(metadata.projectPath, "review-2")).toBe(
+      "/remote/src/demo/review-2"
+    );
+  });
 });
 
 describe("resolveWorkspaceExecutionPath", () => {
@@ -37,6 +55,21 @@ describe("resolveWorkspaceExecutionPath", () => {
     expect(resolveWorkspaceExecutionPath(metadata, runtime)).toBe("/persisted/review-1");
   });
 
+  it("falls back to the runtime path when persisted metadata is unavailable", () => {
+    const metadata = {
+      runtimeConfig: {
+        type: "ssh",
+        host: "example.com",
+        srcBaseDir: "/remote/src",
+      } satisfies RuntimeConfig,
+      projectPath: "/projects/demo",
+      name: "review-1",
+    };
+
+    const runtime = createRuntimeForWorkspace(metadata);
+    const runtimeWorkspacePath = runtime.getWorkspacePath(metadata.projectPath, metadata.name);
+    expect(resolveWorkspaceExecutionPath(metadata, runtime)).toBe(runtimeWorkspacePath);
+  });
   it("uses the runtime path for docker workspaces", () => {
     const metadata = {
       runtimeConfig: {

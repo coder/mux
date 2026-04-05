@@ -2,8 +2,13 @@ import assert from "node:assert/strict";
 import * as path from "node:path";
 
 import type { ProjectRef } from "@/common/types/workspace";
-import type { RuntimeConfig } from "@/common/types/runtime";
+import { isSSHRuntime, type RuntimeConfig } from "@/common/types/runtime";
 import { PlatformPaths } from "@/common/utils/paths";
+import {
+  buildLegacyRemoteProjectLayout,
+  buildRemoteProjectLayout,
+  getRemoteWorkspacePath,
+} from "@/node/runtime/remoteProjectLayout";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 
 export interface WorkspaceProjectRepo {
@@ -133,6 +138,43 @@ export function getWorkspaceProjectStorageKeys(
   return storageKeys;
 }
 
+function getWorkspacePathHint(
+  params: WorkspaceProjectRepoParams,
+  targetProjectPath: string
+): string | undefined {
+  if (targetProjectPath === params.projectPath) {
+    return params.workspacePath;
+  }
+  if (!isSSHRuntime(params.runtimeConfig)) {
+    return undefined;
+  }
+
+  const currentProjectRoot = path.posix.dirname(path.posix.normalize(params.workspacePath));
+  const primaryLegacyLayout = buildLegacyRemoteProjectLayout(
+    params.runtimeConfig.srcBaseDir,
+    params.projectPath
+  );
+  if (currentProjectRoot === primaryLegacyLayout.projectRoot) {
+    return getRemoteWorkspacePath(
+      buildLegacyRemoteProjectLayout(params.runtimeConfig.srcBaseDir, targetProjectPath),
+      params.workspaceName
+    );
+  }
+
+  const primaryPreferredLayout = buildRemoteProjectLayout(
+    params.runtimeConfig.srcBaseDir,
+    params.projectPath
+  );
+  if (currentProjectRoot === primaryPreferredLayout.projectRoot) {
+    return getRemoteWorkspacePath(
+      buildRemoteProjectLayout(params.runtimeConfig.srcBaseDir, targetProjectPath),
+      params.workspaceName
+    );
+  }
+
+  return undefined;
+}
+
 export function getWorkspaceProjectRepos(
   params: WorkspaceProjectRepoParams
 ): WorkspaceProjectRepo[] {
@@ -165,8 +207,7 @@ export function getWorkspaceProjectRepos(
       ? createRuntime(params.runtimeConfig, {
           projectPath: project.projectPath,
           workspaceName: params.workspaceName,
-          workspacePath:
-            project.projectPath === params.projectPath ? params.workspacePath : undefined,
+          workspacePath: getWorkspacePathHint(params, project.projectPath),
         }).getWorkspacePath(project.projectPath, params.workspaceName)
       : params.workspacePath;
 

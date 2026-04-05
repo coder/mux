@@ -23,9 +23,13 @@ import type { SendMessageError } from "@/common/types/errors";
 import { getToolsForModel } from "@/common/utils/tools/tools";
 import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
+import {
+  createRuntimeForWorkspace,
+  resolveWorkspaceExecutionPath,
+} from "@/node/runtime/runtimeHelpers";
 import { MultiProjectRuntime } from "@/node/runtime/multiProjectRuntime";
 import { getMuxEnv, getRuntimeType } from "@/node/runtime/initHook";
-import { getSrcBaseDir } from "@/common/types/runtime";
+import { getSrcBaseDir, isSSHRuntime } from "@/common/types/runtime";
 import { ContainerManager } from "@/node/multiProject/containerManager";
 import { secretsToRecord, type ExternalSecretResolver } from "@/common/types/secrets";
 import { mergeMultiProjectSecrets } from "@/node/services/utils/multiProjectSecrets";
@@ -924,9 +928,18 @@ export class AIService extends EventEmitter {
         });
       };
 
-      if (!this.config.findWorkspace(workspaceId)) {
+      const workspace = this.config.findWorkspace(workspaceId);
+      if (!workspace) {
         return Err({ type: "unknown", raw: `Workspace ${workspaceId} not found in config` });
       }
+
+      const metadataWithPath = {
+        ...metadata,
+        // Existing workspaces may still live under the legacy SSH basename layout until the first
+        // post-upgrade operation reuses their persisted root, so stream startup must seed the runtime
+        // from config instead of reconstructing a hashed default path before layout detection runs.
+        namedWorkspacePath: workspace.workspacePath,
+      };
 
       const multiProjectExecutionGate = this.ensureMultiProjectRuntimeExecutionEnabled(
         workspaceId,
@@ -949,17 +962,19 @@ export class AIService extends EventEmitter {
             })),
             metadata.name
           )
-        : createRuntime(metadata.runtimeConfig, {
-            projectPath: metadata.projectPath,
-            workspaceName: metadata.name,
-          });
+        : createRuntimeForWorkspace(metadataWithPath);
 
-      // In-place workspaces (CLI/benchmarks) have projectPath === name
-      // Use path directly instead of reconstructing via getWorkspacePath
+      // In-place workspaces (CLI/benchmarks) have projectPath === name.
       const isInPlace = metadata.projectPath === metadata.name;
       const workspacePath = isInPlace
         ? metadata.projectPath
-        : runtime.getWorkspacePath(metadata.projectPath, metadata.name);
+        : isMultiProject(metadata) && !isSSHRuntime(metadata.runtimeConfig)
+          ? // Non-SSH multi-project runtimes intentionally start from their shared container root so
+            // sibling repos stay addressable during agent/tool setup. SSH workspaces are the exception:
+            // upgraded legacy layouts must reuse the persisted root from config until remote layout
+            // detection seeds the new hashed paths.
+            runtime.getWorkspacePath(metadata.projectPath, metadata.name)
+          : resolveWorkspaceExecutionPath(metadataWithPath, runtime);
 
       // Wait for init to complete before any runtime I/O operations
       // (SSH/devcontainer may not be ready until init finishes pulling the container)

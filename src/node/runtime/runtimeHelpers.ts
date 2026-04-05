@@ -36,10 +36,12 @@ export function resolveWorkspaceExecutionPath(
   }
 
   const persistedWorkspacePath = metadata.namedWorkspacePath?.trim();
-  assert(
-    persistedWorkspacePath,
-    `Workspace ${metadata.name} is missing its persisted workspace path for runtime ${metadata.runtimeConfig.type}`
-  );
+  if (!persistedWorkspacePath) {
+    // Some metadata readers and unit tests only carry canonical workspace identity. Fall back to the
+    // runtime-derived path there, but prefer the persisted path whenever it is available so upgraded
+    // SSH/devcontainer workspaces keep using their exact checkout root.
+    return runtimeWorkspacePath;
+  }
 
   if (isLocalProjectRuntime(metadata.runtimeConfig)) {
     // Project-dir local runtimes always execute directly in the project root.

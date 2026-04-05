@@ -179,7 +179,9 @@ export abstract class RemoteRuntime implements Runtime {
               ? EXIT_CODE_TIMEOUT
               : (code ?? (signal ? -1 : 0));
 
-        spawnResult.onExit?.(finalExitCode, stderrForErrorReporting);
+        if (finalExitCode !== EXIT_CODE_ABORTED && finalExitCode !== EXIT_CODE_TIMEOUT) {
+          spawnResult.onExit?.(finalExitCode, stderrForErrorReporting);
+        }
         // Let subclass handle exit code (e.g., SSH connection pool)
         this.onExitCode(finalExitCode, options, stderrForErrorReporting);
 

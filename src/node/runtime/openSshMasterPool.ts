@@ -239,11 +239,7 @@ export class OpenSSHMasterPool {
         );
       }
 
-      const waitMs = Math.min(
-        remainingMs,
-        nextBackoffMs ?? this.startupPollIntervalMs,
-        this.startupPollIntervalMs
-      );
+      const waitMs = this.getPoolWaitMs(remainingMs, nextBackoffMs);
       options?.onWait?.(waitMs);
       await this.sleep(waitMs, options?.abortSignal);
     }
@@ -322,10 +318,10 @@ export class OpenSSHMasterPool {
         );
       }
 
-      const waitMs = Math.min(
+      const waitMs = this.getPoolWaitMs(
         remainingMs,
-        nextBackoffMs ?? this.startupPollIntervalMs,
-        this.startupPollIntervalMs
+        nextBackoffMs,
+        this.pickReadyShard(hostGroup) != null
       );
       options?.onWait?.(waitMs);
       await this.sleep(waitMs, options?.abortSignal);
@@ -371,6 +367,17 @@ export class OpenSSHMasterPool {
     };
     group.shards.push(shard);
     return shard;
+  }
+
+  private getPoolWaitMs(
+    remainingMs: number,
+    nextBackoffMs: number | undefined,
+    preferPolling = false
+  ): number {
+    return Math.min(
+      remainingMs,
+      preferPolling || nextBackoffMs == null ? this.startupPollIntervalMs : nextBackoffMs
+    );
   }
 
   private getReadyShards(group: HostGroup): MasterShard[] {
@@ -692,6 +699,9 @@ export class OpenSSHMasterPool {
         return true;
       }
       if (shard.inflight > 0) {
+        return true;
+      }
+      if (shard.health.status === "unhealthy") {
         return true;
       }
       const backoffUntil = shard.health.backoffUntil?.getTime();
