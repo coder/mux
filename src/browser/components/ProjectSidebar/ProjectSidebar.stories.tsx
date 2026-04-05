@@ -1,4 +1,4 @@
-import { userEvent, waitFor } from "@storybook/test";
+import { fireEvent, userEvent, waitFor } from "@storybook/test";
 import type { AppStory } from "@/browser/stories/meta.js";
 import { CHROMATIC_SMOKE_MODES, appMeta, AppWithMocks } from "@/browser/stories/meta.js";
 import { expandProjects } from "@/browser/stories/helpers/uiState";
@@ -41,7 +41,10 @@ export const ProjectRemovalDisabled: AppStory = {
       return button;
     });
 
-    await userEvent.click(projectOptionsButton);
+    // Action buttons are hidden (pointer-events: none) until row hover.
+    // CSS :hover can't be triggered by testing-library's userEvent.hover(),
+    // so use fireEvent.click which bypasses the pointer-events check.
+    await fireEvent.click(projectOptionsButton);
 
     await waitFor(() => {
       const menuIsVisible = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).some(

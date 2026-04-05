@@ -316,7 +316,7 @@ function getProjectItemClassName(opts: {
     opts.isDragging ? "cursor-grabbing opacity-35 [&_*]:!cursor-grabbing" : "cursor-grab",
     opts.isOver && "bg-accent/[0.08]",
     opts.selected && "bg-hover border-l-accent",
-    "hover:[&_button]:opacity-100 hover:[&_[data-drag-handle]]:opacity-100"
+    "hover:[&_button]:opacity-100 hover:[&_button]:pointer-events-auto hover:[&_[data-drag-handle]]:opacity-100"
   );
 }
 type DraggableProjectItemProps = React.PropsWithChildren<{
@@ -2046,7 +2046,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 }}
                                 aria-label={`New chat in ${projectName}`}
                                 data-project-path={projectPath}
-                                className="text-content-secondary hover:bg-hover hover:border-border-light flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent text-sm leading-none transition-all duration-200"
+                                className="text-content-secondary hover:bg-hover hover:border-border-light pointer-events-none flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent text-sm leading-none opacity-0 transition-all duration-200 focus-visible:pointer-events-auto focus-visible:opacity-100"
                               >
                                 <Plus className="h-4 w-4 shrink-0" strokeWidth={1.8} />
                               </button>
@@ -2064,7 +2064,12 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 }}
                                 aria-label={`Project options for ${projectName}`}
                                 data-project-path={projectPath}
-                                className="text-content-secondary hover:bg-hover hover:border-border-light flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent transition-all duration-200"
+                                className={cn(
+                                  "text-content-secondary hover:bg-hover hover:border-border-light flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent transition-all duration-200 focus-visible:pointer-events-auto focus-visible:opacity-100",
+                                  projectContextMenu.isOpen && projectMenuTargetPath === projectPath
+                                    ? "pointer-events-auto opacity-100"
+                                    : "pointer-events-none opacity-0"
+                                )}
                               >
                                 <EllipsisVertical className="h-4 w-4 shrink-0" strokeWidth={1.8} />
                               </button>
