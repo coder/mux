@@ -76,6 +76,7 @@ import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/r
 import { MessageQueue } from "./messageQueue";
 import {
   copyStreamLifecycleSnapshot,
+  type RuntimeStatusEvent,
   type StreamAbortReason,
   type StreamEndEvent,
   type StreamLifecycleSnapshot,
@@ -398,6 +399,16 @@ export class AgentSession {
    */
   private terminalStreamError: StreamErrorMessage | null = null;
 
+  /**
+   * Latest pre-stream runtime-status breadcrumb for the in-flight PREPARING turn.
+   *
+   * This used to live only in the renderer, which meant switching away from and back to an
+   * SSH/Coder workspace could drop the startup detail text until a brand-new event arrived.
+   * Keeping the latest breadcrumb in the session lets replay restore the same status UI that
+   * live subscribers saw.
+   */
+  private preparingRuntimeStatus: RuntimeStatusEvent | null = null;
+
   /** Last lifecycle snapshot emitted to live subscribers (used for change detection only). */
   private lastEmittedStreamLifecycle: StreamLifecycleSnapshot | null = null;
 
@@ -609,19 +620,38 @@ export class AgentSession {
     return this.terminalStreamLifecycle ?? { phase: "idle", hadAnyOutput: false };
   }
 
+  private hasSameStreamLifecycle(
+    left: StreamLifecycleSnapshot | null,
+    right: StreamLifecycleSnapshot
+  ): boolean {
+    return (
+      left !== null &&
+      left.phase === right.phase &&
+      left.hadAnyOutput === right.hadAnyOutput &&
+      (left.abortReason ?? null) === (right.abortReason ?? null)
+    );
+  }
+
+  private hasSameRuntimeStatus(
+    left: RuntimeStatusEvent | null,
+    right: RuntimeStatusEvent
+  ): boolean {
+    return (
+      left !== null &&
+      left.phase === right.phase &&
+      left.runtimeType === right.runtimeType &&
+      (left.source ?? null) === (right.source ?? null) &&
+      (left.detail ?? null) === (right.detail ?? null)
+    );
+  }
+
   private emitStreamLifecycleIfChanged(): void {
     if (this.disposed) {
       return;
     }
 
     const snapshot = this.getCurrentStreamLifecycleSnapshot();
-    const lastSnapshot = this.lastEmittedStreamLifecycle;
-    if (
-      lastSnapshot &&
-      lastSnapshot.phase === snapshot.phase &&
-      lastSnapshot.hadAnyOutput === snapshot.hadAnyOutput &&
-      (lastSnapshot.abortReason ?? null) === (snapshot.abortReason ?? null)
-    ) {
+    if (this.hasSameStreamLifecycle(this.lastEmittedStreamLifecycle, snapshot)) {
       return;
     }
 
@@ -651,6 +681,19 @@ export class AgentSession {
       hadAnyOutput: options?.hadAnyOutput ?? this.activeStreamHadAnyDelta,
       abortReason: options?.abortReason,
     });
+  }
+
+  private updatePreparingRuntimeStatus(status: RuntimeStatusEvent): void {
+    if (status.phase === "ready" || status.phase === "error") {
+      this.clearPreparingRuntimeStatus();
+      return;
+    }
+
+    this.preparingRuntimeStatus = status;
+  }
+
+  private clearPreparingRuntimeStatus(): void {
+    this.preparingRuntimeStatus = null;
   }
 
   private emitRetryEvent(event: RetryStatusEvent): void {
@@ -1550,6 +1593,7 @@ export class AgentSession {
 
     let replayedTerminalStreamError = false;
     let replayedStreamLifecycle: StreamLifecycleSnapshot | null = null;
+    let replayedRuntimeStatus: RuntimeStatusEvent | null = null;
     const emitReplayStatusMessage = (message: WorkspaceChatMessage): void => {
       listener({ workspaceId: this.workspaceId, message });
     };
@@ -1563,21 +1607,20 @@ export class AgentSession {
       }
 
       const lifecycle = this.getCurrentStreamLifecycleSnapshot();
-      if (
-        replayedStreamLifecycle &&
-        replayedStreamLifecycle.phase === lifecycle.phase &&
-        replayedStreamLifecycle.hadAnyOutput === lifecycle.hadAnyOutput &&
-        (replayedStreamLifecycle.abortReason ?? null) === (lifecycle.abortReason ?? null)
-      ) {
-        return;
+      if (!this.hasSameStreamLifecycle(replayedStreamLifecycle, lifecycle)) {
+        replayedStreamLifecycle = copyStreamLifecycleSnapshot(lifecycle);
+        emitReplayStatusMessage({
+          type: "stream-lifecycle",
+          workspaceId: this.workspaceId,
+          ...lifecycle,
+        });
       }
 
-      replayedStreamLifecycle = copyStreamLifecycleSnapshot(lifecycle);
-      emitReplayStatusMessage({
-        type: "stream-lifecycle",
-        workspaceId: this.workspaceId,
-        ...lifecycle,
-      });
+      const runtimeStatus = this.preparingRuntimeStatus;
+      if (runtimeStatus && !this.hasSameRuntimeStatus(replayedRuntimeStatus, runtimeStatus)) {
+        replayedRuntimeStatus = { ...runtimeStatus };
+        emitReplayStatusMessage(runtimeStatus);
+      }
     };
 
     let emittedReplayStreamEvents = false;
@@ -3902,6 +3945,7 @@ export class AgentSession {
 
         const preStreamAbortReason = "abortReason" in payload ? payload.abortReason : undefined;
         if (this.turnPhase === TurnPhase.PREPARING) {
+          this.clearPreparingRuntimeStatus();
           this.setTerminalStreamLifecycle("interrupted", {
             abortReason: preStreamAbortReason,
             hadAnyOutput: false,
@@ -3946,7 +3990,12 @@ export class AgentSession {
       this.emitChatEvent(payload);
       this.setTurnPhase(TurnPhase.IDLE);
     });
-    forward("runtime-status", (payload) => this.emitChatEvent(payload));
+    forward("runtime-status", (payload) => {
+      if (payload.type === "runtime-status") {
+        this.updatePreparingRuntimeStatus(payload);
+      }
+      this.emitChatEvent(payload);
+    });
 
     forward("stream-end", async (payload) => {
       if (payload.type !== "stream-end") {
@@ -4151,6 +4200,7 @@ export class AgentSession {
 
   private setTurnPhase(next: TurnPhase): void {
     this.turnPhase = next;
+    this.clearPreparingRuntimeStatus();
 
     if (next !== TurnPhase.IDLE) {
       this.terminalStreamLifecycle = null;

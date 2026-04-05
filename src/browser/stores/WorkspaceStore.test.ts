@@ -1558,6 +1558,98 @@ describe("WorkspaceStore", () => {
       expect(store.getWorkspaceState(workspaceId).isStreamStarting).toBe(false);
     });
 
+    it("replays runtime-status before caught-up when switching back to a preparing workspace", async () => {
+      const workspaceId = "stream-starting-runtime-status-replay";
+      const otherWorkspaceId = "stream-starting-runtime-status-other";
+      const startupDetail = "Checking workspace runtime...";
+      let subscriptionCount = 0;
+      let releaseSecondCaughtUp: (() => void) | undefined;
+
+      mockOnChat.mockImplementation(async function* (
+        input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        if (input?.workspaceId !== workspaceId) {
+          await waitForAbortSignal(options?.signal);
+          return;
+        }
+
+        subscriptionCount += 1;
+
+        if (subscriptionCount === 1) {
+          yield { type: "caught-up" };
+          await Promise.resolve();
+          yield {
+            type: "stream-lifecycle",
+            workspaceId,
+            phase: "preparing",
+            hadAnyOutput: false,
+          };
+          await Promise.resolve();
+          yield {
+            type: "runtime-status",
+            workspaceId,
+            phase: "starting",
+            runtimeType: "ssh",
+            detail: startupDetail,
+          };
+          await waitForAbortSignal(options?.signal);
+          return;
+        }
+
+        yield {
+          type: "stream-lifecycle",
+          workspaceId,
+          phase: "preparing",
+          hadAnyOutput: false,
+        };
+        await Promise.resolve();
+        yield {
+          type: "runtime-status",
+          workspaceId,
+          phase: "starting",
+          runtimeType: "ssh",
+          detail: startupDetail,
+        };
+        await new Promise<void>((resolve) => {
+          releaseSecondCaughtUp = resolve;
+        });
+        yield { type: "caught-up", replay: "full" };
+        await waitForAbortSignal(options?.signal);
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const sawInitialStartup = await waitUntil(() => {
+        const state = store.getWorkspaceState(workspaceId);
+        return state.isStreamStarting && state.runtimeStatus?.detail === startupDetail;
+      });
+      expect(sawInitialStartup).toBe(true);
+
+      createAndAddWorkspace(store, otherWorkspaceId);
+      store.setActiveWorkspaceId(workspaceId);
+
+      const replayedStartupBeforeCaughtUp = await waitUntil(() => {
+        const state = store.getWorkspaceState(workspaceId);
+        return (
+          subscriptionCount >= 2 &&
+          state.isStreamStarting &&
+          state.runtimeStatus?.detail === startupDetail
+        );
+      });
+      expect(replayedStartupBeforeCaughtUp).toBe(true);
+
+      releaseSecondCaughtUp?.();
+
+      const stayedVisibleAfterCaughtUp = await waitUntil(() => {
+        const state = store.getWorkspaceState(workspaceId);
+        return (
+          !state.loading && state.isStreamStarting && state.runtimeStatus?.detail === startupDetail
+        );
+      });
+      expect(stayedVisibleAfterCaughtUp).toBe(true);
+    });
+
     it("active workspace still shows starting during legitimate startup gap", async () => {
       const workspaceId = "stream-starting-active-workspace";
 

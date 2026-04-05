@@ -28,13 +28,16 @@ import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { useCallback, useSyncExternalStore } from "react";
 import {
   isCaughtUpMessage,
+  isStreamAbort,
   isStreamError,
+  isStreamLifecycle,
   isDeleteMessage,
   isBashOutputEvent,
   isTaskCreatedEvent,
   isMuxMessage,
   isQueuedMessageChanged,
   isRestoreToInput,
+  isRuntimeStatus,
 } from "@/common/orpc/types";
 import {
   type StreamAbortEvent,
@@ -1551,6 +1554,8 @@ export class WorkspaceStore {
         : (activity?.lastThinkingLevel ?? aggregator.getCurrentThinkingLevel() ?? null);
       const hasAuthoritativeStreamLifecycle =
         streamLifecycle !== null && streamLifecycle.phase !== "idle";
+      const hasReplayPreparingLifecycle =
+        isActiveWorkspace && !transient.caughtUp && streamLifecycle?.phase === "preparing";
       const aggregatorRecency = aggregator.getRecencyTimestamp();
       const recencyTimestamp =
         aggregatorRecency === null
@@ -1558,10 +1563,11 @@ export class WorkspaceStore {
           : Math.max(aggregatorRecency, activity?.recency ?? aggregatorRecency);
       // Treat the backend lifecycle as authoritative, but keep any optimistic
       // pre-stream "starting" state scoped to the active, caught-up workspace.
-      // Inactive or replaying workspaces should derive status from authoritative
-      // activity instead of a sticky local pending-start timestamp.
+      // Reconnect replay is the one exception: if the backend has already re-emitted
+      // a PREPARING lifecycle snapshot, keep showing startup instead of briefly
+      // hiding the barrier until caught-up lands.
       const isStreamStarting =
-        useAggregatorState &&
+        (useAggregatorState || hasReplayPreparingLifecycle) &&
         (streamLifecycle?.phase === "preparing" ||
           (!hasAuthoritativeStreamLifecycle && pendingStreamStartTime !== null)) &&
         !canInterrupt;
@@ -3566,7 +3572,7 @@ export class WorkspaceStore {
     }
 
     if (!transient.caughtUp && this.isBufferedEvent(data)) {
-      if ("type" in data && (data.type === "stream-lifecycle" || data.type === "stream-abort")) {
+      if (isStreamLifecycle(data) || isStreamAbort(data) || isRuntimeStatus(data)) {
         applyWorkspaceChatEventToAggregator(aggregator, data, { allowSideEffects: false });
         this.states.bump(workspaceId);
       }

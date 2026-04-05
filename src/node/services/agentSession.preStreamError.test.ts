@@ -298,6 +298,55 @@ describe("AgentSession pre-stream errors", () => {
     expect(replayInit).toHaveBeenCalledWith(workspaceId);
   });
 
+  it("replays preparing runtime-status before caught-up so reconnects keep startup details", async () => {
+    const workspaceId = "ws-replay-runtime-status";
+    const { session, cleanup, replayInit, aiEmitter } =
+      await createReplaySessionHarness(workspaceId);
+    historyCleanup = cleanup;
+
+    const privateSession = session as unknown as {
+      setTurnPhase(next: "idle" | "preparing" | "streaming" | "completing"): void;
+    };
+
+    privateSession.setTurnPhase("preparing");
+    aiEmitter.emit("runtime-status", {
+      type: "runtime-status",
+      workspaceId,
+      phase: "starting",
+      runtimeType: "ssh",
+      source: "runtime",
+      detail: "Checking workspace runtime...",
+    });
+
+    const replayedEvents: WorkspaceChatMessage[] = [];
+    await session.replayHistory(({ message }) => replayedEvents.push(message));
+
+    const replayedLifecycleIndex = replayedEvents.findIndex(
+      (event) => event.type === "stream-lifecycle"
+    );
+    const replayedRuntimeStatusIndex = replayedEvents.findIndex(
+      (event) => event.type === "runtime-status"
+    );
+    const caughtUpIndex = replayedEvents.findIndex((event) => event.type === "caught-up");
+    const replayedRuntimeStatus = replayedEvents.find(
+      (event): event is Extract<WorkspaceChatMessage, { type: "runtime-status" }> =>
+        event.type === "runtime-status"
+    );
+
+    expect(replayedRuntimeStatus).toEqual({
+      type: "runtime-status",
+      workspaceId,
+      phase: "starting",
+      runtimeType: "ssh",
+      source: "runtime",
+      detail: "Checking workspace runtime...",
+    });
+    expect(replayedLifecycleIndex).toBeGreaterThanOrEqual(0);
+    expect(replayedRuntimeStatusIndex).toBeGreaterThan(replayedLifecycleIndex);
+    expect(caughtUpIndex).toBeGreaterThan(replayedRuntimeStatusIndex);
+    expect(replayInit).toHaveBeenCalledWith(workspaceId);
+  });
+
   it("schedules auto-retry when runtime startup fails before stream events", async () => {
     const workspaceId = "ws-runtime-start-failed";
 
