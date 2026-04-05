@@ -2010,7 +2010,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                     }}
                                   />
                                 ) : (
-                                  <div className="text-muted-dark flex min-w-0 items-center gap-1.5 text-sm">
+                                  <div className="text-muted-dark flex min-w-0 items-baseline gap-1.5 text-sm">
                                     <span
                                       className={cn(
                                         "min-w-0 flex-1 truncate font-medium",
@@ -2029,7 +2029,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                           : "text-muted"
                                       )}
                                     >
-                                      {projectAgentCount}
+                                      ({projectAgentCount})
                                     </span>
                                   </div>
                                 )}
