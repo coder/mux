@@ -7,15 +7,14 @@ interface SubAgentListItemProps {
   sharedTrunkActiveThroughRow: boolean;
   sharedTrunkActiveBelowRow: boolean;
   ancestorTrunks: ReadonlyArray<{ left: number; active: boolean }>;
-  connectorLeft: number;
+  indentLeft: number;
   isSelected: boolean;
   isElbowActive: boolean;
   children: React.ReactNode;
 }
 
 export function SubAgentListItem(props: SubAgentListItemProps) {
-  // The parent passes the absolute row-space x position for this connector trunk.
-  const connectorLeft = props.connectorLeft;
+  const connectorLeft = props.indentLeft - 10;
   const connectorFillClass = props.isSelected ? "bg-border" : "bg-border-light";
   const connectorBorderClass = props.isSelected ? "border-border" : "border-border-light";
   const connectorColor = props.isSelected ? "var(--color-border)" : "var(--color-border-light)";

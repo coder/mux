@@ -1,15 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { cn } from "@/common/lib/utils";
-import {
-  ChevronRight,
-  EllipsisVertical,
-  Folder,
-  FolderOpen,
-  Palette,
-  Pencil,
-  Trash2,
-  Plus,
-} from "lucide-react";
+import { ChevronRight, EllipsisVertical, Palette, Pencil, Trash2, Plus } from "lucide-react";
 import type { SectionConfig } from "@/common/types/project";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipIfPresent } from "../Tooltip/Tooltip";
 import { resolveSectionColor, SECTION_COLOR_PALETTE } from "@/common/constants/ui";
@@ -31,6 +22,10 @@ interface SectionHeaderProps {
   onAutoCreateAbandon?: () => void;
   onAutoCreateRenameCancel?: () => void;
 }
+
+// Section rows already expose a large click target via the full header, so keep
+// the inline icon buttons compact even on coarse-pointer layouts.
+const COMPACT_SECTION_ICON_BUTTON_CLASSES = "!min-h-0 !min-w-0";
 
 export const SectionHeader: React.FC<SectionHeaderProps> = ({
   section,
@@ -107,36 +102,33 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
 
   return (
     <div
-      className="group relative ml-4 flex items-center gap-1 py-1.5 pr-1 pl-3 select-none"
+      className="group relative flex items-center gap-1 border-t border-white/5 px-2 py-1.5 select-none"
+      style={{
+        // Keep sections visually distinct from project rows so age buckets do not read like
+        // another folder level in the hierarchy after reverting the sidebar redesign.
+        backgroundColor: `${sectionColor}10`,
+        borderLeftWidth: 3,
+        borderLeftColor: sectionColor,
+      }}
       data-section-id={section.id}
     >
-      {/* Expand/Collapse Button */}
       <button
         onClick={onToggleExpand}
-        className="text-secondary hover:text-foreground flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border-none bg-transparent p-0 transition-colors"
+        className={cn(
+          "text-secondary hover:text-foreground flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border-none bg-transparent p-0 transition-colors",
+          COMPACT_SECTION_ICON_BUTTON_CLASSES
+        )}
         aria-label={isExpanded ? "Collapse section" : "Expand section"}
         aria-expanded={isExpanded}
       >
-        <span className="relative flex h-3.5 w-3.5 items-center justify-center">
-          <ChevronRight
-            className="absolute inset-0 h-3.5 w-3.5 opacity-0 transition-[opacity,transform] duration-200 group-hover:opacity-100"
-            style={{ transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)" }}
-          />
-          {isExpanded ? (
-            <FolderOpen
-              className="h-3.5 w-3.5 transition-opacity duration-200 group-hover:opacity-0"
-              style={{ color: sectionColor }}
-            />
-          ) : (
-            <Folder
-              className="h-3.5 w-3.5 transition-opacity duration-200 group-hover:opacity-0"
-              style={{ color: sectionColor }}
-            />
-          )}
-        </span>
+        <ChevronRight
+          size={12}
+          className="h-3 w-3 shrink-0 transition-transform duration-200"
+          strokeWidth={1.8}
+          style={{ transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)" }}
+        />
       </button>
 
-      {/* Section Name */}
       {isEditing ? (
         <input
           ref={inputRef}
@@ -172,7 +164,7 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
           onDoubleClick={startEditing}
           className={cn(
             "min-w-0 flex-1 cursor-pointer truncate border-none bg-transparent p-0 text-left text-xs font-medium",
-            hasAttention ? "text-content-primary" : "text-content-secondary"
+            hasAttention ? "text-content-primary" : "text-foreground"
           )}
         >
           {section.name}
@@ -180,23 +172,7 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
         </button>
       )}
 
-      {/* Right-side controls: add chat + section actions */}
-      <div className="flex items-center opacity-0 transition-opacity group-hover:opacity-100 [@media(hover:none)_and_(pointer:coarse)]:opacity-100">
-        {/* Add Chat — always visible on touch devices */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              onClick={onAddWorkspace}
-              className="text-secondary hover:text-foreground hover:bg-hover flex h-5 w-5 cursor-pointer items-center justify-center rounded border-none bg-transparent p-0 text-sm transition-colors"
-              aria-label="New chat in section"
-            >
-              <Plus className="h-4 w-4" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>New chat</TooltipContent>
-        </Tooltip>
-
-        {/* Section actions kebab sits immediately to the right of New chat */}
+      <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 [@media(hover:none)_and_(pointer:coarse)]:opacity-100">
         <Tooltip>
           <TooltipTrigger asChild>
             <button
@@ -215,13 +191,32 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
                 }
                 sectionMenu.onContextMenu(e);
               }}
-              className="text-muted hover:text-foreground hover:bg-hover flex h-5 w-5 cursor-pointer items-center justify-center rounded border-none bg-transparent p-0 transition-colors"
+              className={cn(
+                "text-muted hover:text-foreground hover:bg-hover flex h-5 w-5 cursor-pointer items-center justify-center rounded border-none bg-transparent p-0 transition-colors",
+                COMPACT_SECTION_ICON_BUTTON_CLASSES
+              )}
               aria-label="Section actions"
             >
               <EllipsisVertical className="h-3.5 w-3.5" />
             </button>
           </TooltipTrigger>
           <TooltipContent>Section actions</TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              onClick={onAddWorkspace}
+              className={cn(
+                "text-secondary hover:text-foreground hover:bg-hover flex h-5 w-5 cursor-pointer items-center justify-center rounded border-none bg-transparent p-0 text-sm transition-colors",
+                COMPACT_SECTION_ICON_BUTTON_CLASSES
+              )}
+              aria-label="New chat in section"
+            >
+              <Plus className="h-4 w-4" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>New chat</TooltipContent>
         </Tooltip>
 
         <PositionedMenu

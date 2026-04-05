@@ -87,8 +87,6 @@ import {
   ChevronRight,
   CircleHelp,
   EllipsisVertical,
-  Folder,
-  FolderOpen,
   KeyRound,
   Palette,
   Pencil,
@@ -102,6 +100,7 @@ import { usePopoverError } from "@/browser/hooks/usePopoverError";
 import { forkWorkspace } from "@/browser/utils/chatCommands";
 import { PopoverError } from "../PopoverError/PopoverError";
 import { SectionHeader } from "../SectionHeader/SectionHeader";
+import { AddSectionButton } from "../AddSectionButton/AddSectionButton";
 import { WorkspaceSectionDropZone } from "../WorkspaceSectionDropZone/WorkspaceSectionDropZone";
 import { WorkspaceDragLayer } from "../WorkspaceDragLayer/WorkspaceDragLayer";
 import { SectionDragLayer } from "../SectionDragLayer/SectionDragLayer";
@@ -284,9 +283,12 @@ function useWorkspaceAttentionSubscription(
 // Keep the project header visible while scrolling through long workspace lists.
 // Project rows are also drag handles, so disable text selection to avoid
 // highlighting the whole sidebar before a reorder gesture locks in.
-// pr-2 matches AgentListItem LIST_ITEM_BASE_CLASSES so project kebab aligns with workspace rows.
 const PROJECT_ITEM_BASE_CLASS =
-  "group sticky top-0 z-10 py-2 pl-2 pr-1 flex select-none items-center border-l-transparent bg-surface-primary transition-colors duration-150";
+  "sticky top-0 z-10 py-2 pl-2 pr-3 flex select-none items-center border-l-transparent bg-surface-primary transition-colors duration-150";
+// Project rows already provide large touch targets via the full-width row and
+// long-press menu. Keep the inline icon buttons compact so they do not expand
+// the header and shove the visible actions out of the sidebar.
+const COMPACT_PROJECT_ICON_BUTTON_CLASSES = "!min-h-0 !min-w-0";
 
 function getProjectFallbackLabel(projectPath: string): string {
   const abbreviatedPath = PlatformPaths.abbreviate(projectPath);
@@ -985,6 +987,17 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     }));
   };
 
+  const handleCreateSection = async (projectPath: string, name: string): Promise<boolean> => {
+    const result = await createSection(projectPath, name);
+    if (!result.success) {
+      return false;
+    }
+
+    // Auto-expand the new section so the sidebar immediately shows the new bucket.
+    const key = getSectionExpandedKey(projectPath, result.data.id);
+    setExpandedSections((prev) => ({ ...prev, [key]: true }));
+    return true;
+  };
   const handleForkWorkspace = useCallback(
     async (workspaceId: string, buttonElement?: HTMLElement) => {
       if (!api) {
@@ -1791,28 +1804,25 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                 viewportClassName="overflow-x-hidden"
               >
                 {multiProjectWorkspaces.length > 0 && (
-                  <div>
+                  <div className="border-hover border-b">
                     <div className={PROJECT_ITEM_BASE_CLASS}>
                       <button
                         onClick={() => toggleProject(MULTI_PROJECT_SIDEBAR_SECTION_ID)}
                         aria-label={`${isMultiProjectSectionExpanded ? "Collapse" : "Expand"} multi-project workspaces`}
-                        className="text-secondary hover:bg-hover hover:border-border-light mr-1.5 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent p-0 transition-all duration-200"
+                        className={cn(
+                          "text-secondary hover:bg-hover hover:border-border-light mr-1.5 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent p-0 transition-all duration-200",
+                          COMPACT_PROJECT_ICON_BUTTON_CLASSES
+                        )}
                       >
-                        <span className="relative flex h-4 w-4 items-center justify-center">
-                          <ChevronRight
-                            className="absolute inset-0 h-4 w-4 opacity-0 transition-[opacity,transform] duration-200 group-hover:opacity-100"
-                            style={{
-                              transform: isMultiProjectSectionExpanded
-                                ? "rotate(90deg)"
-                                : "rotate(0deg)",
-                            }}
-                          />
-                          {isMultiProjectSectionExpanded ? (
-                            <FolderOpen className="h-4 w-4 transition-opacity duration-200 group-hover:opacity-0" />
-                          ) : (
-                            <Folder className="h-4 w-4 transition-opacity duration-200 group-hover:opacity-0" />
-                          )}
-                        </span>
+                        <ChevronRight
+                          className="h-4 w-4 shrink-0 transition-transform duration-200"
+                          strokeWidth={1.8}
+                          style={{
+                            transform: isMultiProjectSectionExpanded
+                              ? "rotate(90deg)"
+                              : "rotate(0deg)",
+                          }}
+                        />
                       </button>
                       <div className="flex min-w-0 flex-1 items-center pr-2">
                         <span className="text-foreground truncate text-sm font-medium">
@@ -1876,7 +1886,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                   sortedProjectPaths.map((projectPath) => {
                     const config = userProjects.get(projectPath);
                     if (!config) return null;
-                    const projectFolderColor = config.color
+                    const projectColor = config.color
                       ? resolveSectionColor(config.color)
                       : undefined;
                     const projectName = getProjectNameFromPath(projectPath);
@@ -1889,13 +1899,12 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                     const isEditingProjectDisplayName = editingProjectPath === projectPath;
                     const projectWorkspaces =
                       singleProjectWorkspacesByProject.get(projectPath) ?? [];
-                    const projectAgentCount = projectWorkspaces.length;
                     const projectHasAttention = projectWorkspaces.some(
                       (workspace) => workspaceAttentionById.get(workspace.id) === true
                     );
 
                     return (
-                      <div key={projectPath}>
+                      <div key={projectPath} className="border-hover border-b">
                         <DraggableProjectItem
                           projectPath={projectPath}
                           onReorder={handleReorder}
@@ -1939,32 +1948,16 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             }}
                             aria-label={`${isExpanded ? "Collapse" : "Expand"} project ${projectName}`}
                             data-project-path={projectPath}
-                            className="text-secondary hover:bg-hover hover:border-border-light mr-1.5 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent p-0 transition-all duration-200"
+                            className={cn(
+                              "text-secondary hover:bg-hover hover:border-border-light mr-1.5 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent p-0 transition-all duration-200",
+                              COMPACT_PROJECT_ICON_BUTTON_CLASSES
+                            )}
                           >
-                            {/* Mobile: nudge folder icon left so it visually centers above connector line. */}
-                            <span className="relative flex h-4 w-4 -translate-x-2 items-center justify-center md:translate-x-0">
-                              <ChevronRight
-                                className="absolute inset-0 h-4 w-4 opacity-0 transition-[opacity,transform] duration-200 group-hover:opacity-100"
-                                style={{
-                                  transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)",
-                                }}
-                              />
-                              {isExpanded ? (
-                                <FolderOpen
-                                  className="h-4 w-4 transition-opacity duration-200 group-hover:opacity-0"
-                                  style={
-                                    projectFolderColor ? { color: projectFolderColor } : undefined
-                                  }
-                                />
-                              ) : (
-                                <Folder
-                                  className="h-4 w-4 transition-opacity duration-200 group-hover:opacity-0"
-                                  style={
-                                    projectFolderColor ? { color: projectFolderColor } : undefined
-                                  }
-                                />
-                              )}
-                            </span>
+                            <ChevronRight
+                              className="h-4 w-4 shrink-0 transition-transform duration-200"
+                              strokeWidth={1.8}
+                              style={{ transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)" }}
+                            />
                           </button>
                           <div
                             className="flex min-w-0 flex-1 items-center pr-2"
@@ -2011,26 +2004,23 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                     }}
                                   />
                                 ) : (
-                                  <div className="text-muted-dark flex min-w-0 items-center gap-1.5 text-sm">
+                                  <div className="text-muted-dark flex min-w-0 flex-1 items-center gap-2 overflow-hidden text-sm">
+                                    {projectColor && (
+                                      <span
+                                        aria-hidden="true"
+                                        className="h-2 w-2 shrink-0 rounded-full"
+                                        style={{ backgroundColor: projectColor }}
+                                      />
+                                    )}
                                     <span
                                       className={cn(
                                         "min-w-0 flex-1 truncate font-medium",
                                         projectHasAttention
                                           ? "text-content-primary"
-                                          : "text-content-secondary"
+                                          : "text-foreground"
                                       )}
                                     >
                                       {displayProjectName}
-                                    </span>
-                                    <span
-                                      className={cn(
-                                        "shrink-0",
-                                        projectHasAttention
-                                          ? "text-content-primary"
-                                          : "text-content-secondary"
-                                      )}
-                                    >
-                                      ({projectAgentCount})
                                     </span>
                                   </div>
                                 )}
@@ -2047,7 +2037,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 }}
                                 aria-label={`New chat in ${projectName}`}
                                 data-project-path={projectPath}
-                                className="text-content-secondary hover:bg-hover hover:border-border-light flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent text-sm leading-none transition-all duration-200"
+                                className={cn(
+                                  "text-content-secondary hover:bg-hover hover:border-border-light mr-1 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent text-sm leading-none transition-all duration-200",
+                                  COMPACT_PROJECT_ICON_BUTTON_CLASSES
+                                )}
                               >
                                 <Plus className="h-4 w-4 shrink-0" strokeWidth={1.8} />
                               </button>
@@ -2065,7 +2058,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 }}
                                 aria-label={`Project options for ${projectName}`}
                                 data-project-path={projectPath}
-                                className="text-content-secondary hover:bg-hover hover:border-border-light flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent transition-all duration-200"
+                                className={cn(
+                                  "text-content-secondary hover:bg-hover hover:border-border-light flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent transition-all duration-200",
+                                  COMPACT_PROJECT_ICON_BUTTON_CLASSES
+                                )}
                               >
                                 <EllipsisVertical className="h-4 w-4 shrink-0" strokeWidth={1.8} />
                               </button>
@@ -2079,17 +2075,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             id={workspaceListId}
                             role="region"
                             aria-label={`Workspaces for ${projectName}`}
-                            className="relative pt-1"
+                            className="pt-1"
                           >
-                            <div
-                              aria-hidden="true"
-                              className="bg-border pointer-events-none absolute top-1 bottom-0 left-4.5 w-px"
-                              style={
-                                projectFolderColor
-                                  ? { backgroundColor: projectFolderColor }
-                                  : undefined
-                              }
-                            />
                             {(() => {
                               // Archived workspaces are excluded from workspaceMetadata so won't appear here
 
@@ -2175,8 +2162,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 sectionId?: string,
                                 rowRenderMetaOverride?: AgentRowRenderMeta | null,
                                 depthOverride?: number,
-                                keyOverride?: string,
-                                subAgentConnectorLayout?: "default" | "task-group-member"
+                                keyOverride?: string
                               ) => {
                                 const rowRenderMeta =
                                   rowRenderMetaOverride === undefined
@@ -2208,7 +2194,6 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                     }
                                     sectionId={sectionId}
                                     rowRenderMeta={rowRenderMeta}
-                                    subAgentConnectorLayout={subAgentConnectorLayout}
                                     completedChildrenExpanded={
                                       expandedCompletedSubAgents[metadata.id] ?? false
                                     }
@@ -2427,8 +2412,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                           sectionId,
                                           rowMetaByWorkspaceId.get(member.id) ?? null,
                                           depth + 1,
-                                          `task-group-member:${taskGroupId}:${member.id}`,
-                                          "task-group-member"
+                                          `task-group-member:${taskGroupId}:${member.id}`
                                         )
                                       );
                                     }
@@ -2698,8 +2682,16 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                             : `Expand workspaces older than ${thresholdLabel}`
                                         }
                                         aria-expanded={isTierExpanded}
-                                        className="text-muted border-hover hover:text-label [&:hover_.arrow]:text-label flex w-full cursor-pointer items-center gap-1 border-t border-none bg-transparent px-3 py-2 pl-7 text-xs font-medium transition-all duration-150 hover:bg-white/3"
+                                        // Keep recency buckets styled like dividers instead of another tree
+                                        // node so “Older than …” still reads as a filter on the list.
+                                        className="text-muted border-hover hover:text-label [&:hover_.arrow]:text-label flex w-full cursor-pointer items-center justify-between border-t border-none bg-transparent px-3 py-2 pl-[22px] text-xs font-medium transition-all duration-150 hover:bg-white/[0.03]"
                                       >
+                                        <div className="flex items-center gap-1.5">
+                                          <span>Older than {thresholdLabel}</span>
+                                          <span className="text-dim font-normal">
+                                            ({displayCount})
+                                          </span>
+                                        </div>
                                         <span
                                           className="arrow text-dim text-[11px] transition-transform duration-200 ease-in-out"
                                           style={{
@@ -2708,14 +2700,11 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                               : "rotate(0deg)",
                                           }}
                                         >
-                                          <ChevronRight className="h-4 w-4" />
+                                          <ChevronRight
+                                            className="h-4 w-4 shrink-0"
+                                            strokeWidth={1.8}
+                                          />
                                         </span>
-                                        <div className="flex items-center gap-1.5">
-                                          <span>Older than {thresholdLabel}</span>
-                                          <span className="text-dim font-normal">
-                                            ({displayCount})
-                                          </span>
-                                        </div>
                                       </button>
                                       {isTierExpanded && (
                                         <>
@@ -2968,6 +2957,12 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
                                   {/* Sections */}
                                   {sections.map(renderSection)}
+
+                                  <AddSectionButton
+                                    onCreateSection={(name) =>
+                                      handleCreateSection(projectPath, name)
+                                    }
+                                  />
                                 </>
                               );
                             })()}

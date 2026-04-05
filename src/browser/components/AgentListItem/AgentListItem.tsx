@@ -86,7 +86,6 @@ export interface AgentListItemProps extends AgentListItemBaseProps {
   variant?: "workspace";
   metadata: FrontendWorkspaceMetadata;
   projectName: string;
-  subAgentConnectorLayout?: "default" | "task-group-member";
   isArchiving?: boolean;
   /** True when deletion is in-flight (optimistic UI while backend removes). */
   isRemoving?: boolean;
@@ -121,26 +120,18 @@ const LIST_ITEM_BASE_CLASSES =
   "bg-surface-primary relative flex items-start gap-1.5 rounded-l-sm py-2 pr-1.5 select-none transition-all duration-150";
 
 const HIDE_INLINE_ACTIONS_ON_MOBILE_TOUCH =
-  "[@media(max-width:768px)_and_(hover:none)_and_(pointer:coarse)]:invisible [@media(max-width:768px)_and_(hover:none)_and_(pointer:coarse)]:pointer-events-none";
+  "[@media(max-width:768px)_and_(hover:none)_and_(pointer:coarse)]:hidden";
 const SHOW_INLINE_ACTIONS_ON_WIDE_TOUCH =
-  "[@media(min-width:769px)_and_(hover:none)_and_(pointer:coarse)]:opacity-100";
+  "[@media(min-width:769px)_and_(hover:none)_and_(pointer:coarse)]:pointer-events-auto [@media(min-width:769px)_and_(hover:none)_and_(pointer:coarse)]:opacity-100";
+// Dense sidebar icon buttons should not inherit the global 44px coarse-pointer
+// minimum, otherwise hidden/inline actions still reserve row width and push the
+// visible controls off-screen.
+const COMPACT_SIDEBAR_ICON_BUTTON_CLASSES = "!min-h-0 !min-w-0";
 
 /** Calculate left padding based on nesting depth */
 function getItemPaddingLeft(depth?: number): number {
   const safeDepth = typeof depth === "number" && Number.isFinite(depth) ? Math.max(0, depth) : 0;
-  return 8 + Math.min(32, safeDepth) * 12;
-}
-
-function getSubAgentConnectorLeft(
-  indentLeft: number,
-  layout: "default" | "task-group-member"
-): number {
-  return layout === "task-group-member" ? indentLeft - 2 : indentLeft + 9;
-}
-
-function getAncestorTrunkLeft(depth: number, layout: "default" | "task-group-member"): number {
-  const indentLeft = getItemPaddingLeft(depth);
-  return layout === "task-group-member" ? indentLeft + 6 : indentLeft + 8;
+  return 12 + Math.min(32, safeDepth) * 12;
 }
 
 type VisualState = "active" | "idle" | "seen" | "hidden" | "error" | "question";
@@ -257,7 +248,12 @@ function QuickArchiveButton(props: {
         <TooltipTrigger asChild>
           <button
             type="button"
-            className="text-muted hover:text-foreground focus-visible:text-foreground pointer-events-none inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 opacity-0 transition-[color,opacity] duration-200 group-focus-within/row:pointer-events-auto group-focus-within/row:opacity-100 group-hover/row:pointer-events-auto group-hover/row:opacity-100"
+            className={cn(
+              "text-muted hover:text-foreground focus-visible:text-foreground pointer-events-none inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 opacity-0 transition-[color,opacity] duration-200 group-focus-within/row:pointer-events-auto group-focus-within/row:opacity-100 group-hover/row:pointer-events-auto group-hover/row:opacity-100",
+              COMPACT_SIDEBAR_ICON_BUTTON_CLASSES,
+              HIDE_INLINE_ACTIONS_ON_MOBILE_TOUCH,
+              SHOW_INLINE_ACTIONS_ON_WIDE_TOUCH
+            )}
             onKeyDown={stopKeyboardPropagation}
             onClick={(event) => {
               event.stopPropagation();
@@ -294,19 +290,9 @@ function ActionButtonWrapper(props: { children: React.ReactNode; className?: str
 // ─────────────────────────────────────────────────────────────────────────────
 
 function DraftAgentListItemInner(props: DraftAgentListItemProps) {
-  const { projectPath, isSelected, depth, sectionId, draft } = props;
+  const { projectPath, isSelected, depth, draft } = props;
   const paddingLeft = getItemPaddingLeft(depth);
   const hasPromptPreview = draft.promptPreview.length > 0;
-  const draftBorderStyle: React.CSSProperties = {
-    backgroundImage: [
-      "repeating-linear-gradient(to right, var(--color-border) 0 5px, transparent 5px 10px)",
-      "repeating-linear-gradient(to right, var(--color-border) 0 5px, transparent 5px 10px)",
-      "repeating-linear-gradient(to bottom, var(--color-border) 0 5px, transparent 5px 10px)",
-    ].join(", "),
-    backgroundSize: "100% 1.5px, 100% 1.5px, 1.5px 100%",
-    backgroundPosition: "left top, left bottom, left top",
-    backgroundRepeat: "no-repeat",
-  };
 
   const ctxMenu = useContextMenuPosition({ longPress: true });
 
@@ -314,11 +300,10 @@ function DraftAgentListItemInner(props: DraftAgentListItemProps) {
     <div
       className={cn(
         LIST_ITEM_BASE_CLASSES,
-        sectionId != null ? "ml-8" : "ml-6.5",
-        "cursor-pointer pl-1 hover:bg-surface-secondary [&:hover_button]:opacity-100",
+        "border-border cursor-pointer border-t border-b border-l border-dashed pl-1 hover:bg-surface-secondary [&:hover_button]:opacity-100",
         isSelected && "bg-surface-secondary"
       )}
-      style={{ paddingLeft, ...draftBorderStyle }}
+      style={{ paddingLeft }}
       onClick={() => {
         if (ctxMenu.suppressClickIfLongPress()) return;
         draft.onOpen();
@@ -374,6 +359,7 @@ function DraftAgentListItemInner(props: DraftAgentListItemProps) {
               type="button"
               className={cn(
                 "text-muted hover:text-content-destructive inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 opacity-0 transition-colors duration-200",
+                COMPACT_SIDEBAR_ICON_BUTTON_CLASSES,
                 // Keep long-press as the compact mobile affordance on narrow
                 // touch layouts, but show the button on wider touch screens so
                 // it never becomes an invisible tappable hotspot.
@@ -687,7 +673,6 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
         className={cn(
           LIST_ITEM_BASE_CLASSES,
           "group/row",
-          sectionId != null ? "ml-7.5" : "ml-5",
           isDragging && "opacity-50",
           isRemoving && "opacity-70",
           // Keep hover styles enabled for initializing workspaces so the row feels interactive.
@@ -813,6 +798,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                   type="button"
                   className={cn(
                     "text-muted inline-flex h-4 w-4 items-center justify-center border-none bg-transparent p-0 transition-colors duration-200",
+                    COMPACT_SIDEBAR_ICON_BUTTON_CLASSES,
                     // Keep cancel affordance hidden until row-hover while initializing,
                     // but force it visible as a spinner once deletion starts.
                     isRemoving
@@ -873,6 +859,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                     ref={overflowMenuButtonRef}
                     className={cn(
                       "text-muted hover:text-foreground inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 transition-colors duration-200",
+                      COMPACT_SIDEBAR_ICON_BUTTON_CLASSES,
                       ctxMenu.isOpen ? "opacity-100" : "opacity-0",
                       HIDE_INLINE_ACTIONS_ON_MOBILE_TOUCH,
                       SHOW_INLINE_ACTIONS_ON_WIDE_TOUCH
@@ -992,7 +979,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
         )}
 
         {/* Keep title row anchored so status dot/title align across single+double-line states. */}
-        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5 overflow-hidden">
           <div
             className={cn(
               // Keep the title column shrinkable on narrow/mobile viewports so the
@@ -1013,7 +1000,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                 data-workspace-id={workspaceId}
               />
             ) : (
-              <div className="flex min-w-0 items-center gap-1">
+              <div className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
                 <span
                   className={cn(
                     "min-w-0 flex-1 truncate text-left text-[14px] leading-6 transition-colors duration-200",
@@ -1104,15 +1091,9 @@ function AgentListItemInner(props: UnifiedAgentListItemProps) {
     // Connector geometry is driven by render metadata so visible siblings keep
     // consistent single/middle/last shapes as parents expand/collapse children.
     const isElbowActive = props.metadata.taskStatus === "running";
-    // Task-group members use a slightly different left rail so their connector
-    // trunk aligns with the group's leading chevron column.
-    const connectorLayout = props.subAgentConnectorLayout ?? "default";
-    const connectorLeft = getSubAgentConnectorLeft(
-      getItemPaddingLeft(props.depth),
-      connectorLayout
-    );
+    const indentLeft = getItemPaddingLeft(props.depth);
     const ancestorTrunks = rowMeta.ancestorTrunks.map((trunk) => ({
-      left: getAncestorTrunkLeft(trunk.depth, connectorLayout),
+      left: getItemPaddingLeft(trunk.depth) - 4,
       active: trunk.active,
     }));
 
@@ -1123,7 +1104,7 @@ function AgentListItemInner(props: UnifiedAgentListItemProps) {
         sharedTrunkActiveThroughRow={rowMeta.sharedTrunkActiveThroughRow}
         sharedTrunkActiveBelowRow={rowMeta.sharedTrunkActiveBelowRow}
         ancestorTrunks={ancestorTrunks}
-        connectorLeft={connectorLeft}
+        indentLeft={indentLeft}
         isSelected={props.isSelected}
         isElbowActive={isElbowActive}
       >
