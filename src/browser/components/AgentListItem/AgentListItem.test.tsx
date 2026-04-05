@@ -6,15 +6,15 @@ import type { ReactNode } from "react";
 import { installDom } from "../../../../tests/ui/dom";
 import type * as ReactDndModuleType from "react-dnd";
 import type * as ReactDndHtml5BackendModuleType from "react-dnd-html5-backend";
-import * as APIModule from "@/browser/contexts/API";
-import * as TelemetryEnabledContextModule from "@/browser/contexts/TelemetryEnabledContext";
-import * as WorkspaceTitleEditContextModule from "@/browser/contexts/WorkspaceTitleEditContext";
-import * as ContextMenuPositionModule from "@/browser/hooks/useContextMenuPosition";
-import * as ExperimentsModule from "@/browser/hooks/useExperiments";
-import * as WorkspaceFallbackModelModule from "@/browser/hooks/useWorkspaceFallbackModel";
-import * as WorkspaceUnreadModule from "@/browser/hooks/useWorkspaceUnread";
-import * as RuntimeStatusStoreModule from "@/browser/stores/RuntimeStatusStore";
-import * as WorkspaceStoreModule from "@/browser/stores/WorkspaceStore";
+import type * as APIModuleType from "@/browser/contexts/API";
+import type * as TelemetryEnabledContextModuleType from "@/browser/contexts/TelemetryEnabledContext";
+import type * as WorkspaceTitleEditContextModuleType from "@/browser/contexts/WorkspaceTitleEditContext";
+import type * as ContextMenuPositionModuleType from "@/browser/hooks/useContextMenuPosition";
+import type * as ExperimentsModuleType from "@/browser/hooks/useExperiments";
+import type * as WorkspaceFallbackModelModuleType from "@/browser/hooks/useWorkspaceFallbackModel";
+import type * as WorkspaceUnreadModule from "@/browser/hooks/useWorkspaceUnread";
+import type * as RuntimeStatusStoreModuleType from "@/browser/stores/RuntimeStatusStore";
+import type * as WorkspaceStoreModule from "@/browser/stores/WorkspaceStore";
 import * as TooltipModule from "../Tooltip/Tooltip";
 import * as WorkspaceStatusIndicatorModule from "../WorkspaceStatusIndicator/WorkspaceStatusIndicator";
 import type { AgentRowRenderMeta } from "@/browser/utils/ui/workspaceFiltering";
@@ -22,8 +22,6 @@ import type { StreamAbortReasonSnapshot } from "@/common/types/stream";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { AgentListItem as AgentListItemComponent } from "./AgentListItem";
 
-let ReactDndModule!: typeof ReactDndModuleType;
-let ReactDndHtml5BackendModule!: typeof ReactDndHtml5BackendModuleType;
 let AgentListItem!: typeof AgentListItemComponent;
 
 const TEST_WORKSPACE_ID = "workspace-archiving";
@@ -91,6 +89,8 @@ function createSystemAbortReason(): StreamAbortReasonSnapshot {
 }
 
 function installAgentListItemTestDoubles() {
+  const passthroughRef = <T,>(value: T): T => value;
+
   spyOn(TooltipModule, "Tooltip").mockImplementation(((props: { children: ReactNode }) => (
     <>{props.children}</>
   )) as unknown as typeof TooltipModule.Tooltip);
@@ -105,59 +105,109 @@ function installAgentListItemTestDoubles() {
   }) => (
     <div data-testid={`workspace-status-indicator-${props.workspaceId}`} />
   )) as unknown as typeof WorkspaceStatusIndicatorModule.WorkspaceStatusIndicator);
-  const passthroughRef = <T,>(value: T): T => value;
 
-  spyOn(ReactDndModule, "useDrag").mockImplementation(
-    (() =>
-      [
-        { isDragging: false },
-        passthroughRef,
-        () => undefined,
-      ] as const) as unknown as typeof ReactDndModule.useDrag
-  );
-  spyOn(ReactDndHtml5BackendModule, "getEmptyImage").mockImplementation(() => new Image());
-  spyOn(APIModule, "useAPI").mockImplementation(() => ({
-    api: null,
-    status: "error",
-    error: "API unavailable",
-    authenticate: () => undefined,
-    retry: () => undefined,
+  /* eslint-disable @typescript-eslint/no-require-imports */
+  const actualReactDnd = require("react-dnd?real=1") as typeof ReactDndModuleType;
+  const actualReactDndHtml5Backend =
+    require("react-dnd-html5-backend?real=1") as typeof ReactDndHtml5BackendModuleType;
+  const actualApi = require("@/browser/contexts/API?real=1") as typeof APIModuleType;
+  const actualTelemetryEnabledContext =
+    require("@/browser/contexts/TelemetryEnabledContext?real=1") as typeof TelemetryEnabledContextModuleType;
+  const actualWorkspaceTitleEditContext =
+    require("@/browser/contexts/WorkspaceTitleEditContext?real=1") as typeof WorkspaceTitleEditContextModuleType;
+  const actualContextMenuPosition =
+    require("@/browser/hooks/useContextMenuPosition?real=1") as typeof ContextMenuPositionModuleType;
+  const actualExperiments =
+    require("@/browser/hooks/useExperiments?real=1") as typeof ExperimentsModuleType;
+  const actualWorkspaceUnread =
+    require("@/browser/hooks/useWorkspaceUnread?real=1") as typeof WorkspaceUnreadModule;
+  const actualRuntimeStatusStore =
+    require("@/browser/stores/RuntimeStatusStore?real=1") as typeof RuntimeStatusStoreModuleType;
+  const actualWorkspaceFallbackModel =
+    require("@/browser/hooks/useWorkspaceFallbackModel?real=1") as typeof WorkspaceFallbackModelModuleType;
+  const actualWorkspaceStore =
+    require("@/browser/stores/WorkspaceStore?real=1") as typeof WorkspaceStoreModule;
+  /* eslint-enable @typescript-eslint/no-require-imports */
+
+  void mock.module("react-dnd", () => ({
+    ...actualReactDnd,
+    useDrag: () => [{ isDragging: false }, passthroughRef, () => undefined] as const,
   }));
-  spyOn(TelemetryEnabledContextModule, "useLinkSharingEnabled").mockImplementation(() => false);
-  spyOn(WorkspaceTitleEditContextModule, "useTitleEdit").mockImplementation(() => ({
-    editingWorkspaceId: null,
-    requestEdit: () => true,
-    confirmEdit: () => Promise.resolve({ success: true }),
-    cancelEdit: () => undefined,
-    generatingTitleWorkspaceIds: new Set<string>(),
-    wrapGenerateTitle: () => undefined,
+
+  void mock.module("react-dnd-html5-backend", () => ({
+    ...actualReactDndHtml5Backend,
+    getEmptyImage: () => new Image(),
   }));
-  spyOn(ContextMenuPositionModule, "useContextMenuPosition").mockImplementation(() => ({
-    position: null,
-    isOpen: false,
-    onContextMenu: () => undefined,
-    onOpenChange: () => undefined,
-    touchHandlers: {
-      onTouchStart: () => undefined,
-      onTouchEnd: () => undefined,
-      onTouchMove: () => undefined,
-    },
-    suppressClickIfLongPress: () => false,
-    close: () => undefined,
+
+  void mock.module("@/browser/contexts/API", () => ({
+    ...actualApi,
+    useAPI: () => ({
+      api: null,
+      status: "error" as const,
+      error: "API unavailable",
+      authenticate: () => undefined,
+      retry: () => undefined,
+    }),
   }));
-  spyOn(ExperimentsModule, "useExperimentValue").mockImplementation(
-    () => mockWorkspaceHeartbeatsEnabled
-  );
-  spyOn(WorkspaceUnreadModule, "useWorkspaceUnread").mockImplementation(
-    () => mockWorkspaceUnreadState
-  );
-  spyOn(RuntimeStatusStoreModule, "useRuntimeStatus").mockImplementation(() => null);
-  spyOn(WorkspaceFallbackModelModule, "useWorkspaceFallbackModel").mockImplementation(
-    () => "claude-sonnet-4-5"
-  );
-  spyOn(WorkspaceStoreModule, "useWorkspaceSidebarState").mockImplementation(
-    () => mockWorkspaceSidebarState
-  );
+
+  void mock.module("@/browser/contexts/TelemetryEnabledContext", () => ({
+    ...actualTelemetryEnabledContext,
+    useLinkSharingEnabled: () => false,
+  }));
+
+  void mock.module("@/browser/contexts/WorkspaceTitleEditContext", () => ({
+    ...actualWorkspaceTitleEditContext,
+    useTitleEdit: () => ({
+      editingWorkspaceId: null,
+      requestEdit: () => true,
+      confirmEdit: () => Promise.resolve({ success: true }),
+      cancelEdit: () => undefined,
+      generatingTitleWorkspaceIds: new Set<string>(),
+      wrapGenerateTitle: () => undefined,
+    }),
+  }));
+
+  void mock.module("@/browser/hooks/useContextMenuPosition", () => ({
+    ...actualContextMenuPosition,
+    useContextMenuPosition: () => ({
+      position: null,
+      isOpen: false,
+      onContextMenu: () => undefined,
+      onOpenChange: () => undefined,
+      touchHandlers: {
+        onTouchStart: () => undefined,
+        onTouchEnd: () => undefined,
+        onTouchMove: () => undefined,
+      },
+      suppressClickIfLongPress: () => false,
+      close: () => undefined,
+    }),
+  }));
+
+  void mock.module("@/browser/hooks/useExperiments", () => ({
+    ...actualExperiments,
+    useExperimentValue: () => mockWorkspaceHeartbeatsEnabled,
+  }));
+
+  void mock.module("@/browser/hooks/useWorkspaceUnread", () => ({
+    ...actualWorkspaceUnread,
+    useWorkspaceUnread: () => mockWorkspaceUnreadState,
+  }));
+
+  void mock.module("@/browser/stores/RuntimeStatusStore", () => ({
+    ...actualRuntimeStatusStore,
+    useRuntimeStatus: () => null,
+  }));
+
+  void mock.module("@/browser/hooks/useWorkspaceFallbackModel", () => ({
+    ...actualWorkspaceFallbackModel,
+    useWorkspaceFallbackModel: () => "claude-sonnet-4-5",
+  }));
+
+  void mock.module("@/browser/stores/WorkspaceStore", () => ({
+    ...actualWorkspaceStore,
+    useWorkspaceSidebarState: () => mockWorkspaceSidebarState,
+  }));
 }
 
 function renderWorkspaceItem(
@@ -205,15 +255,12 @@ describe("AgentListItem", () => {
     mockWorkspaceHeartbeatsEnabled = false;
     mockWorkspaceUnreadState = createWorkspaceUnreadState();
     mockWorkspaceSidebarState = createWorkspaceSidebarState();
+    installAgentListItemTestDoubles();
     /* eslint-disable @typescript-eslint/no-require-imports */
-    ReactDndModule = require("react-dnd") as typeof ReactDndModuleType;
-    ReactDndHtml5BackendModule =
-      require("react-dnd-html5-backend") as typeof ReactDndHtml5BackendModuleType;
-    ({ AgentListItem } = require("./AgentListItem") as {
+    ({ AgentListItem } = require("./AgentListItem?agent-list-item-test=1") as {
       AgentListItem: typeof AgentListItemComponent;
     });
     /* eslint-enable @typescript-eslint/no-require-imports */
-    installAgentListItemTestDoubles();
   });
 
   afterEach(() => {

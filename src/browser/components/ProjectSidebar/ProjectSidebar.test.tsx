@@ -1,19 +1,11 @@
 import "../../../../tests/ui/dom";
 
-import { type ComponentProps, type PropsWithChildren } from "react";
+import React, { type ComponentProps, type PropsWithChildren } from "react";
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { act, cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 import * as ReactDndModule from "react-dnd";
 import * as ReactDndHtml5BackendModule from "react-dnd-html5-backend";
 import * as ReactColorfulModule from "react-colorful";
-void mock.module("@/browser/assets/logos/mux-logo-dark.svg?react", () => ({
-  __esModule: true,
-  default: () => <svg data-testid="mux-logo-dark" />,
-}));
-void mock.module("@/browser/assets/logos/mux-logo-light.svg?react", () => ({
-  __esModule: true,
-  default: () => <svg data-testid="mux-logo-light" />,
-}));
 import { installDom } from "../../../../tests/ui/dom";
 import { EXPANDED_PROJECTS_KEY } from "@/common/constants/storage";
 import { getDraftScopeId, getInputKey } from "@/common/constants/storage";
@@ -46,7 +38,6 @@ import * as WorkspaceSectionDropZoneModule from "../WorkspaceSectionDropZone/Wor
 import * as WorkspaceDragLayerModule from "../WorkspaceDragLayer/WorkspaceDragLayer";
 import * as SectionDragLayerModule from "../SectionDragLayer/SectionDragLayer";
 import * as DraggableSectionModule from "../DraggableSection/DraggableSection";
-import * as PositionedMenuModule from "../PositionedMenu/PositionedMenu";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import type ProjectSidebarComponent from "./ProjectSidebar";
 
@@ -114,62 +105,6 @@ type HexColorPickerProps = ComponentProps<typeof ReactColorfulModule.HexColorPic
 let latestArchiveWorkspaceHandler:
   | ((workspaceId: string, button: HTMLElement) => Promise<void>)
   | null = null;
-void mock.module("../AgentListItem/AgentListItem", () => ({
-  AgentListItem: (props: MockAgentListItemProps) => {
-    if (props.draft) {
-      return (
-        <div data-testid={`draft-item-${props.draft.draftId}`}>{props.draft.title ?? "Draft"}</div>
-      );
-    }
-
-    if (!props.metadata) {
-      return null;
-    }
-    const metadata = props.metadata;
-
-    const hasCompletedChildren =
-      (props.rowRenderMeta?.hasHiddenCompletedChildren ?? false) ||
-      (props.rowRenderMeta?.visibleCompletedChildrenCount ?? 0) > 0;
-
-    const displayTitle =
-      metadata.bestOf?.kind === "variants" && metadata.bestOf.label
-        ? `${metadata.bestOf.label} · ${metadata.title ?? metadata.name}`
-        : (metadata.title ?? metadata.name);
-
-    latestArchiveWorkspaceHandler = props.onArchiveWorkspace ?? null;
-
-    return (
-      <div
-        data-testid={agentItemTestId(metadata.id)}
-        data-depth={String(props.depth ?? -1)}
-        data-row-kind={props.rowRenderMeta?.rowKind ?? "unknown"}
-        data-completed-expanded={String(props.completedChildrenExpanded ?? false)}
-      >
-        <span>{displayTitle}</span>
-        {hasCompletedChildren && props.onToggleCompletedChildren ? (
-          <button
-            type="button"
-            aria-label={toggleButtonLabel(metadata.id)}
-            onClick={() => props.onToggleCompletedChildren?.(metadata.id)}
-          >
-            Toggle completed children
-          </button>
-        ) : null}
-        {props.onArchiveWorkspace ? (
-          <button
-            type="button"
-            aria-label={`archive-${metadata.id}`}
-            onClick={(event) => {
-              void props.onArchiveWorkspace?.(metadata.id, event.currentTarget);
-            }}
-          >
-            Archive workspace
-          </button>
-        ) : null}
-      </div>
-    );
-  },
-}));
 
 let ProjectSidebar!: typeof ProjectSidebarComponent;
 let latestArchiveConfirmationModalProps: {
@@ -257,6 +192,106 @@ function installProjectSidebarTestDoubles() {
   confirmDialogMock = mock(() => Promise.resolve(true));
   latestArchiveWorkspaceHandler = null;
   latestArchiveConfirmationModalProps = null;
+  void mock.module("@/browser/assets/logos/mux-logo-dark.svg?react", () => ({
+    __esModule: true,
+    default: () => <svg data-testid="mux-logo-dark" />,
+  }));
+  void mock.module("@/browser/assets/logos/mux-logo-light.svg?react", () => ({
+    __esModule: true,
+    default: () => <svg data-testid="mux-logo-light" />,
+  }));
+  void mock.module("../AgentListItem/AgentListItem", () => ({
+    AgentListItem: (props: MockAgentListItemProps) => {
+      if (props.draft) {
+        return (
+          <div data-testid={`draft-item-${props.draft.draftId}`}>
+            {props.draft.title ?? "Draft"}
+          </div>
+        );
+      }
+
+      if (!props.metadata) {
+        return null;
+      }
+      const metadata = props.metadata;
+
+      const hasCompletedChildren =
+        (props.rowRenderMeta?.hasHiddenCompletedChildren ?? false) ||
+        (props.rowRenderMeta?.visibleCompletedChildrenCount ?? 0) > 0;
+
+      const displayTitle =
+        metadata.bestOf?.kind === "variants" && metadata.bestOf.label
+          ? `${metadata.bestOf.label} · ${metadata.title ?? metadata.name}`
+          : (metadata.title ?? metadata.name);
+
+      latestArchiveWorkspaceHandler = props.onArchiveWorkspace ?? null;
+
+      return (
+        <div
+          data-testid={agentItemTestId(metadata.id)}
+          data-depth={String(props.depth ?? -1)}
+          data-row-kind={props.rowRenderMeta?.rowKind ?? "unknown"}
+          data-completed-expanded={String(props.completedChildrenExpanded ?? false)}
+        >
+          <span>{displayTitle}</span>
+          {hasCompletedChildren && props.onToggleCompletedChildren ? (
+            <button
+              type="button"
+              aria-label={toggleButtonLabel(metadata.id)}
+              onClick={() => props.onToggleCompletedChildren?.(metadata.id)}
+            >
+              Toggle completed children
+            </button>
+          ) : null}
+          {props.onArchiveWorkspace ? (
+            <button
+              type="button"
+              aria-label={`archive-${metadata.id}`}
+              onClick={(event) => {
+                void props.onArchiveWorkspace?.(metadata.id, event.currentTarget);
+              }}
+            >
+              Archive workspace
+            </button>
+          ) : null}
+        </div>
+      );
+    },
+  }));
+  void mock.module("@/browser/hooks/useContextMenuPosition", () => ({
+    useContextMenuPosition: () => {
+      const [isOpen, setIsOpen] = React.useState(false);
+      const [position, setPosition] = React.useState<{ x: number; y: number } | null>(null);
+
+      return {
+        position,
+        isOpen,
+        onContextMenu: (event: {
+          preventDefault?: () => void;
+          stopPropagation?: () => void;
+          clientX?: number;
+          clientY?: number;
+        }) => {
+          event.preventDefault?.();
+          event.stopPropagation?.();
+          setPosition({ x: event.clientX ?? 0, y: event.clientY ?? 0 });
+          setIsOpen(true);
+        },
+        onOpenChange: (open: boolean) => {
+          setIsOpen(open);
+        },
+        touchHandlers: {
+          onTouchStart: () => undefined,
+          onTouchEnd: () => undefined,
+          onTouchMove: () => undefined,
+        },
+        suppressClickIfLongPress: () => false,
+        close: () => {
+          setIsOpen(false);
+        },
+      };
+    },
+  }));
   const fallbackPopoverError = {
     error: null,
     showError: mock(() => undefined),
@@ -468,30 +503,27 @@ function installProjectSidebarTestDoubles() {
   spyOn(DraggableSectionModule, "DraggableSection").mockImplementation(
     TestWrapper as unknown as typeof DraggableSectionModule.DraggableSection
   );
-  spyOn(PositionedMenuModule, "PositionedMenu").mockImplementation(((props: {
-    open: boolean;
-    children: React.ReactNode;
-  }) =>
-    props.open ? (
-      <div data-testid="project-actions-menu">{props.children}</div>
-    ) : null) as unknown as typeof PositionedMenuModule.PositionedMenu);
-  spyOn(PositionedMenuModule, "PositionedMenuItem").mockImplementation(((props: {
-    label: string;
-    disabled?: boolean;
-    onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
-  }) => (
-    <button
-      type="button"
-      disabled={props.disabled}
-      onClick={(event) => {
-        props.onClick(event);
-      }}
-    >
-      {props.label}
-    </button>
-  )) as unknown as typeof PositionedMenuModule.PositionedMenuItem);
+  void mock.module("../PositionedMenu/PositionedMenu", () => ({
+    PositionedMenu: (props: { open: boolean; children: React.ReactNode }) =>
+      props.open ? <div data-testid="project-actions-menu">{props.children}</div> : null,
+    PositionedMenuItem: (props: {
+      label: string;
+      disabled?: boolean;
+      onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
+    }) => (
+      <button
+        type="button"
+        disabled={props.disabled}
+        onClick={(event) => {
+          props.onClick(event);
+        }}
+      >
+        {props.label}
+      </button>
+    ),
+  }));
   /* eslint-disable @typescript-eslint/no-require-imports */
-  ({ default: ProjectSidebar } = require("./ProjectSidebar") as {
+  ({ default: ProjectSidebar } = require("./ProjectSidebar?project-sidebar-test=1") as {
     default: typeof ProjectSidebarComponent;
   });
   /* eslint-enable @typescript-eslint/no-require-imports */

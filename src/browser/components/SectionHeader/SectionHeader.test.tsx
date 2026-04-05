@@ -1,13 +1,13 @@
 import "../../../../tests/ui/dom";
 
-import type { ComponentProps } from "react";
-import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import React, { type ComponentProps } from "react";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import type { SectionConfig } from "@/common/types/project";
 import { TooltipProvider } from "../Tooltip/Tooltip";
-import * as PositionedMenuModule from "../PositionedMenu/PositionedMenu";
+import type { SectionHeader as SectionHeaderComponent } from "./SectionHeader";
 
-import { SectionHeader } from "./SectionHeader";
+let SectionHeader!: typeof SectionHeaderComponent;
 
 const baseSection: SectionConfig = {
   id: "section-1",
@@ -55,23 +55,59 @@ function renderSectionHeader(overrides: Partial<ComponentProps<typeof SectionHea
 }
 
 beforeEach(() => {
-  spyOn(PositionedMenuModule, "PositionedMenu").mockImplementation(((props: {
-    open: boolean;
-    children: React.ReactNode;
-  }) =>
-    props.open ? (
-      <div data-testid="section-actions-menu">{props.children}</div>
-    ) : null) as unknown as typeof PositionedMenuModule.PositionedMenu);
+  void mock.module("../../hooks/useContextMenuPosition", () => ({
+    useContextMenuPosition: () => {
+      const [isOpen, setIsOpen] = React.useState(false);
+      const [position, setPosition] = React.useState<{ x: number; y: number } | null>(null);
 
-  spyOn(PositionedMenuModule, "PositionedMenuItem").mockImplementation(((props: {
-    label: string;
-    disabled?: boolean;
-    onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
-  }) => (
-    <button type="button" disabled={props.disabled} onClick={props.onClick}>
-      {props.label}
-    </button>
-  )) as unknown as typeof PositionedMenuModule.PositionedMenuItem);
+      return {
+        position,
+        isOpen,
+        onContextMenu: (event: {
+          preventDefault?: () => void;
+          stopPropagation?: () => void;
+          clientX?: number;
+          clientY?: number;
+        }) => {
+          event.preventDefault?.();
+          event.stopPropagation?.();
+          setPosition({ x: event.clientX ?? 0, y: event.clientY ?? 0 });
+          setIsOpen(true);
+        },
+        onOpenChange: (open: boolean) => {
+          setIsOpen(open);
+        },
+        touchHandlers: {
+          onTouchStart: () => undefined,
+          onTouchEnd: () => undefined,
+          onTouchMove: () => undefined,
+        },
+        suppressClickIfLongPress: () => false,
+        close: () => {
+          setIsOpen(false);
+        },
+      };
+    },
+  }));
+  void mock.module("../PositionedMenu/PositionedMenu", () => ({
+    PositionedMenu: (props: { open: boolean; children: React.ReactNode }) =>
+      props.open ? <div data-testid="section-actions-menu">{props.children}</div> : null,
+    PositionedMenuItem: (props: {
+      label: string;
+      disabled?: boolean;
+      onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
+    }) => (
+      <button type="button" disabled={props.disabled} onClick={props.onClick}>
+        {props.label}
+      </button>
+    ),
+  }));
+
+  /* eslint-disable @typescript-eslint/no-require-imports */
+  ({ SectionHeader } = require("./SectionHeader?section-header-test=1") as {
+    SectionHeader: typeof SectionHeaderComponent;
+  });
+  /* eslint-enable @typescript-eslint/no-require-imports */
 });
 
 afterEach(() => {
