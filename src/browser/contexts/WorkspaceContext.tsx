@@ -805,6 +805,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   const hasUserNavigatedHomeRef = useRef(false);
   const hasProcessedInitialLocationRef = useRef(false);
 
+  const hasCheckedDesktopLaunchProjectRef = useRef(false);
   const hasAutoCreatedRef = useRef(false);
   const hasCheckedStaleRouteRef = useRef(false);
 
@@ -918,8 +919,12 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   useEffect(() => {
     if (loading || !api) return;
 
-    // Skip if we already have a selected workspace (from localStorage or URL hash)
-    if (selectedWorkspace) return;
+    const shouldOverrideRestoredDesktopRoute =
+      window.location.protocol === "file:" && !hasCheckedDesktopLaunchProjectRef.current;
+
+    // Skip if we already have a selected workspace unless this is the initial desktop
+    // startup check where explicit launch-project intent must beat replayed local state.
+    if (selectedWorkspace && !shouldOverrideRestoredDesktopRoute) return;
 
     // If the user explicitly went Home, preserve that intent instead of
     // immediately re-selecting a launch-project workspace.
@@ -929,13 +934,18 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     // /settings/:section or /analytics clears the workspace from the URL,
     // making selectedWorkspace null. Without this guard the effect would
     // auto-select a workspace and navigate away immediately.
-    if (currentSettingsSection) return;
-    if (isAnalyticsOpen) return;
+    if (currentSettingsSection && !shouldOverrideRestoredDesktopRoute) return;
+    if (isAnalyticsOpen && !shouldOverrideRestoredDesktopRoute) return;
 
-    // Skip if user is in the middle of creating a workspace
-    if (pendingNewWorkspaceProject) return;
+    // Skip if user is in the middle of creating a workspace.
+    // Desktop startup is the exception: persisted project/workspace routes should not
+    // block an explicit backend launch-project request such as --add-project.
+    if (pendingNewWorkspaceProject && !shouldOverrideRestoredDesktopRoute) return;
 
     let cancelled = false;
+    if (shouldOverrideRestoredDesktopRoute) {
+      hasCheckedDesktopLaunchProjectRef.current = true;
+    }
 
     const checkLaunchProject = async () => {
       // Only available in server mode (checked via platform/capabilities in future)
@@ -952,11 +962,14 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         if (cancelled) return;
 
         if (projectWorkspaces.length > 0) {
-          // Select the first workspace in the project.
-          // Use functional update to avoid race: user may have clicked a workspace
-          // while this async call was in flight.
           const metadata = projectWorkspaces[0];
-          setSelectedWorkspace((current) => current ?? toWorkspaceSelection(metadata));
+          if (shouldOverrideRestoredDesktopRoute) {
+            setSelectedWorkspace(toWorkspaceSelection(metadata));
+          } else {
+            // Use functional update to avoid race: user may have clicked a workspace
+            // while this async call was in flight.
+            setSelectedWorkspace((current) => current ?? toWorkspaceSelection(metadata));
+          }
           return;
         }
 

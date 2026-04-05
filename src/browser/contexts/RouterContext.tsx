@@ -8,8 +8,9 @@ import {
   type ReactNode,
 } from "react";
 import { MemoryRouter, useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { readPersistedState } from "@/browser/hooks/usePersistedState";
+import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import {
+  LAST_VISITED_ROUTE_KEY,
   LAUNCH_BEHAVIOR_KEY,
   SELECTED_WORKSPACE_KEY,
   type LaunchBehavior,
@@ -81,6 +82,63 @@ function markStandalonePwaSessionInitialized(): void {
   }
 }
 
+function hasValidEncodedPathSegment(encodedValue: string): boolean {
+  if (encodedValue.length === 0) {
+    return false;
+  }
+
+  try {
+    decodeURIComponent(encodedValue);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function hasValidRestorableWorkspaceRoute(route: string): boolean {
+  if (!route.startsWith("/workspace/")) {
+    return false;
+  }
+
+  const workspaceId = route.slice("/workspace/".length).split(/[?#]/, 1)[0] ?? "";
+  return hasValidEncodedPathSegment(workspaceId);
+}
+
+function hasValidRestorableSettingsRoute(route: string): boolean {
+  if (!route.startsWith("/settings/")) {
+    return false;
+  }
+
+  const sectionId = route.slice("/settings/".length).split(/[?#]/, 1)[0] ?? "";
+  return hasValidEncodedPathSegment(sectionId);
+}
+
+function matchesRouteBoundary(route: string, basePath: string): boolean {
+  return route === basePath || route.startsWith(`${basePath}?`) || route.startsWith(`${basePath}#`);
+}
+
+function decodePathSegment(segment: string): string | null {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return null;
+  }
+}
+
+function isRestorableRoute(route: unknown): route is string {
+  if (typeof route !== "string" || route.length === 0) {
+    return false;
+  }
+
+  return (
+    route === "/" ||
+    hasValidRestorableWorkspaceRoute(route) ||
+    matchesRouteBoundary(route, "/project") ||
+    hasValidRestorableSettingsRoute(route) ||
+    matchesRouteBoundary(route, "/analytics")
+  );
+}
+
 /** Get initial route from browser URL or default to home. */
 function getInitialRoute(): string {
   const isStorybook = window.location.pathname.endsWith("iframe.html");
@@ -91,6 +149,13 @@ function getInitialRoute(): string {
     : null;
   const shouldIgnoreStandaloneWorkspaceUrl =
     isStandalone && !hasStandaloneSession && window.location.pathname.startsWith("/workspace/");
+
+  if (window.location.protocol === "file:") {
+    const persistedRoute = readPersistedState<string | null>(LAST_VISITED_ROUTE_KEY, null);
+    if (isRestorableRoute(persistedRoute)) {
+      return persistedRoute;
+    }
+  }
 
   // In browser mode (not Storybook), read route directly from URL (enables refresh restoration).
   // Standalone PWAs intentionally ignore stale workspace URLs on cold launch so opening the app
@@ -137,20 +202,25 @@ function getInitialRoute(): string {
   return "/";
 }
 
-/** Sync router state to browser URL (dev server only, not Electron/Storybook). */
+/** Sync router state to browser URL (dev server) and persist the desktop route. */
 function useUrlSync(): void {
   const location = useLocation();
   useEffect(() => {
+    const url = location.pathname + location.search + location.hash;
+
+    // User request: desktop reloads/restarts should reopen the last in-app page
+    // instead of falling back to file:///index.html's Home route.
+    updatePersistedState(LAST_VISITED_ROUTE_KEY, url);
+
     // Skip in Storybook (conflicts with story navigation)
     if (window.location.pathname.endsWith("iframe.html")) return;
-    // Skip in Electron (file:// breaks on reload)
+    // Skip in Electron (file:// reloads always boot through index.html; we restore via localStorage above)
     if (window.location.protocol === "file:") return;
 
-    const url = location.pathname + location.search;
-    if (url !== window.location.pathname + window.location.search) {
+    if (url !== window.location.pathname + window.location.search + window.location.hash) {
       window.history.replaceState(null, "", url);
     }
-  }, [location.pathname, location.search]);
+  }, [location.pathname, location.search, location.hash]);
 }
 
 function RouterContextInner(props: { children: ReactNode }) {
@@ -172,7 +242,7 @@ function RouterContextInner(props: { children: ReactNode }) {
   useUrlSync();
 
   const workspaceMatch = /^\/workspace\/(.+)$/.exec(location.pathname);
-  const currentWorkspaceId = workspaceMatch ? decodeURIComponent(workspaceMatch[1]) : null;
+  const currentWorkspaceId = workspaceMatch ? decodePathSegment(workspaceMatch[1]) : null;
   const currentProjectId =
     location.pathname === "/project"
       ? (searchParams.get("project") ?? searchParams.get("path"))
@@ -180,7 +250,7 @@ function RouterContextInner(props: { children: ReactNode }) {
   const currentProjectPathFromState =
     location.pathname === "/project" ? getProjectPathFromLocationState(location.state) : null;
   const settingsMatch = /^\/settings\/([^/]+)$/.exec(location.pathname);
-  const currentSettingsSection = settingsMatch ? decodeURIComponent(settingsMatch[1]) : null;
+  const currentSettingsSection = settingsMatch ? decodePathSegment(settingsMatch[1]) : null;
   const isAnalyticsOpen = location.pathname === "/analytics";
 
   interface NonSettingsLocationSnapshot {

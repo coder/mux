@@ -66,6 +66,14 @@ export const LAST_CUSTOM_MODEL_PROVIDER_KEY = "lastCustomModelProvider";
 export const SELECTED_WORKSPACE_KEY = "selectedWorkspace";
 
 /**
+ * Get the localStorage key for the last visited app route (global).
+ *
+ * Desktop reloads and restarts boot from file:///index.html, so we persist the
+ * in-app route separately to restore the page the user was already on.
+ */
+export const LAST_VISITED_ROUTE_KEY = "lastVisitedRoute";
+
+/**
  * User preference for what to show on app launch (global).
  * Values: "dashboard" | "new-chat" | "last-workspace"
  */

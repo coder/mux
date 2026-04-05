@@ -4,7 +4,11 @@ import { GlobalWindow } from "happy-dom";
 import { StrictMode } from "react";
 import { useLocation } from "react-router-dom";
 import type { WorkspaceSelection } from "@/browser/components/AgentListItem/AgentListItem";
-import { LAUNCH_BEHAVIOR_KEY, SELECTED_WORKSPACE_KEY } from "@/common/constants/storage";
+import {
+  LAST_VISITED_ROUTE_KEY,
+  LAUNCH_BEHAVIOR_KEY,
+  SELECTED_WORKSPACE_KEY,
+} from "@/common/constants/storage";
 import { RouterProvider, useRouter, type RouterContext } from "./RouterContext";
 
 function createMatchMedia(isStandalone = false): typeof window.matchMedia {
@@ -175,6 +179,120 @@ describe("browser startup launch behavior", () => {
 
     await waitFor(() => {
       expect(view.getByTestId("pathname").textContent).toBe("/");
+    });
+  });
+});
+
+describe("desktop startup route restoration", () => {
+  afterEach(() => {
+    cleanup();
+    globalThis.window = undefined as unknown as Window & typeof globalThis;
+    globalThis.document = undefined as unknown as Document;
+  });
+
+  test("restores the last visited route when Electron boots from file:///index.html", async () => {
+    installWindow("file:///index.html");
+    window.localStorage.setItem(LAST_VISITED_ROUTE_KEY, JSON.stringify("/workspace/reload-me"));
+
+    const view = render(
+      <RouterProvider>
+        <PathnameObserver />
+      </RouterProvider>
+    );
+
+    await waitFor(() => {
+      expect(view.getByTestId("pathname").textContent).toBe("/workspace/reload-me");
+    });
+  });
+
+  test("ignores malformed persisted desktop routes instead of crashing startup", async () => {
+    installWindow("file:///index.html");
+    window.localStorage.setItem(LAST_VISITED_ROUTE_KEY, JSON.stringify({ bad: true }));
+
+    const view = render(
+      <RouterProvider>
+        <PathnameObserver />
+      </RouterProvider>
+    );
+
+    await waitFor(() => {
+      expect(view.getByTestId("pathname").textContent).toBe("/");
+    });
+  });
+
+  test("ignores invalid percent-encoded workspace routes instead of restoring a crash loop", async () => {
+    installWindow("file:///index.html");
+    window.localStorage.setItem(LAST_VISITED_ROUTE_KEY, JSON.stringify("/workspace/%"));
+
+    const view = render(
+      <RouterProvider>
+        <PathnameObserver />
+      </RouterProvider>
+    );
+
+    await waitFor(() => {
+      expect(view.getByTestId("pathname").textContent).toBe("/");
+    });
+  });
+
+  test("ignores desktop routes that only share a project/analytics prefix", async () => {
+    installWindow("file:///index.html");
+    window.localStorage.setItem(LAST_VISITED_ROUTE_KEY, JSON.stringify("/projectevil"));
+
+    let view = render(
+      <RouterProvider>
+        <PathnameObserver />
+      </RouterProvider>
+    );
+
+    await waitFor(() => {
+      expect(view.getByTestId("pathname").textContent).toBe("/");
+    });
+
+    cleanup();
+    installWindow("file:///index.html");
+    window.localStorage.setItem(LAST_VISITED_ROUTE_KEY, JSON.stringify("/analytics-old"));
+
+    view = render(
+      <RouterProvider>
+        <PathnameObserver />
+      </RouterProvider>
+    );
+
+    await waitFor(() => {
+      expect(view.getByTestId("pathname").textContent).toBe("/");
+    });
+  });
+
+  test("persists route changes so the next desktop load can restore them", async () => {
+    installWindow("file:///index.html");
+    let latestRouter: RouterContext | null = null;
+
+    function Observer() {
+      latestRouter = useRouter();
+      return <PathnameObserver />;
+    }
+
+    const view = render(
+      <RouterProvider>
+        <Observer />
+      </RouterProvider>
+    );
+
+    await waitFor(() => {
+      expect(latestRouter).not.toBeNull();
+      expect(view.getByTestId("pathname").textContent).toBe("/");
+    });
+
+    act(() => {
+      latestRouter!.navigateToWorkspace("persist-me");
+    });
+
+    await waitFor(() => {
+      expect(view.getByTestId("pathname").textContent).toBe("/workspace/persist-me");
+      expect(window.localStorage.getItem(LAST_VISITED_ROUTE_KEY)).toBe(
+        JSON.stringify("/workspace/persist-me")
+      );
     });
   });
 });
