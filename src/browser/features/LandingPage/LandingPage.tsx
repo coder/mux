@@ -14,6 +14,7 @@ import {
   toWorkspaceSelection,
 } from "@/browser/contexts/WorkspaceContext";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
+import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import {
   useMuxGatewayAccountStatus,
@@ -320,7 +321,14 @@ export function getRecentVisibleWorkspaces(
   getProjectConfig: (projectPath: string) => { projectKind?: "user" | "system" } | undefined
 ): FrontendWorkspaceMetadata[] {
   return [...workspaceMetadata.values()]
-    .filter((workspace) => getProjectConfig(workspace.projectPath)?.projectKind !== "system")
+    .filter((workspace) => {
+      const projectConfig = getProjectConfig(workspace.projectPath);
+      if (projectConfig?.projectKind !== "system") {
+        return true;
+      }
+
+      return workspace.projectPath === MULTI_PROJECT_CONFIG_KEY;
+    })
     .sort((a, b) => {
       const aRecency = workspaceRecency[a.id] ?? 0;
       const bRecency = workspaceRecency[b.id] ?? 0;

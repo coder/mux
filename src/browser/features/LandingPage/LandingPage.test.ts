@@ -53,4 +53,39 @@ describe("getRecentVisibleWorkspaces", () => {
 
     expect(recentWorkspaces.map((workspace) => workspace.id)).toEqual(["user-visible"]);
   });
+
+  test("keeps visible multi-project workspaces in recent workspaces", () => {
+    const workspaces = new Map<string, FrontendWorkspaceMetadata>([
+      [
+        "multi-project",
+        createWorkspace("multi-project", "_multi", {
+          createdAt: "2026-04-05T00:00:00.000Z",
+        }),
+      ],
+      [
+        "user-visible",
+        createWorkspace("user-visible", "/repo/app", {
+          createdAt: "2026-04-04T00:00:00.000Z",
+        }),
+      ],
+    ]);
+    const projectConfigs = new Map<string, ProjectConfig>([
+      ["_multi", { workspaces: [], projectKind: "system" }],
+      ["/repo/app", { workspaces: [] }],
+    ]);
+
+    const recentWorkspaces = getRecentVisibleWorkspaces(
+      workspaces,
+      {
+        "multi-project": 10,
+        "user-visible": 1,
+      },
+      (projectPath) => projectConfigs.get(projectPath)
+    );
+
+    expect(recentWorkspaces.map((workspace) => workspace.id)).toEqual([
+      "multi-project",
+      "user-visible",
+    ]);
+  });
 });
