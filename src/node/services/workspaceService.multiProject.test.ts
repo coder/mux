@@ -201,6 +201,115 @@ describe("WorkspaceService executeBash runtime selection", () => {
     }
   });
 
+  test("preserves inferred legacy SSH repo roots for multi-project repo-root bash mode", async () => {
+    const workspaceId = "ws-multi-bash-ssh";
+    const workspaceName = "feature-multi-bash-ssh";
+    const srcDir = "/tmp/src";
+    const projectAPath = "/tmp/project-a";
+    const projectBPath = "/tmp/project-b";
+    const primaryWorkspacePath = `/tmp/src/project-a/${workspaceName}`;
+    const metadata: WorkspaceMetadata = {
+      id: workspaceId,
+      name: workspaceName,
+      projectPath: projectAPath,
+      projectName: "project-a",
+      projects: [
+        { projectPath: projectAPath, projectName: "project-a" },
+        { projectPath: projectBPath, projectName: "project-b" },
+      ],
+      runtimeConfig: { type: "ssh", host: "example.com", srcBaseDir: "/tmp/src" },
+    };
+    const waitForInitMock = mock(() => Promise.resolve());
+    const ensureReadyAMock = mock(() => Promise.resolve({ ready: true as const }));
+    const ensureReadyBMock = mock(() => Promise.resolve({ ready: true as const }));
+    const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockImplementation(
+      (_runtimeConfig, options) => {
+        if (options?.projectPath === projectAPath) {
+          expect(options.workspacePath).toBe(primaryWorkspacePath);
+          return {
+            ensureReady: ensureReadyAMock,
+            getWorkspacePath: mock(() => primaryWorkspacePath),
+          } as unknown as ReturnType<typeof runtimeFactory.createRuntime>;
+        }
+        if (options?.projectPath === projectBPath) {
+          expect(options.workspacePath).toBe(`/tmp/src/project-b/${workspaceName}`);
+          return {
+            ensureReady: ensureReadyBMock,
+            getWorkspacePath: mock(() => `/tmp/src/project-b/${workspaceName}`),
+          } as unknown as ReturnType<typeof runtimeFactory.createRuntime>;
+        }
+        throw new Error(`Unexpected projectPath: ${options?.projectPath ?? "missing"}`);
+      }
+    );
+    const bashExecuteMock = mock(() =>
+      Promise.resolve({ success: true as const, output: "ok", exitCode: 0, wall_duration_ms: 1 })
+    );
+    let capturedToolConfig: Parameters<typeof bashToolModule.createBashTool>[0] | undefined;
+    const createBashToolSpy = spyOn(bashToolModule, "createBashTool").mockImplementation(
+      (config) => {
+        capturedToolConfig = config;
+        return {
+          execute: bashExecuteMock,
+        } as unknown as ReturnType<typeof bashToolModule.createBashTool>;
+      }
+    );
+
+    const aiService: AIService = {
+      isStreaming: mock(() => false),
+      getWorkspaceMetadata: mock(() => Promise.resolve(Ok(metadata))),
+      on: mock(() => undefined),
+      off: mock(() => undefined),
+    } as unknown as AIService;
+    const workspaceService = new WorkspaceService(
+      {
+        srcDir,
+        getSessionDir: mock(() => "/tmp/test/sessions"),
+        findWorkspace: mock(() => ({
+          projectPath: projectAPath,
+          workspacePath: primaryWorkspacePath,
+        })),
+        loadConfigOrDefault: mock(() => ({
+          projects: new Map([
+            [projectAPath, { workspaces: [], trusted: true }],
+            [projectBPath, { workspaces: [], trusted: true }],
+          ]),
+        })),
+        getEffectiveSecrets: mock(() => []),
+      } as unknown as Config,
+      historyService,
+      aiService,
+      {
+        on: mock(() => undefined as unknown as InitStateManager),
+        getInitState: mock(() => undefined),
+        waitForInit: waitForInitMock,
+      } as unknown as InitStateManager,
+      mockExtensionMetadataService as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager,
+      undefined,
+      undefined,
+      undefined,
+      createMockExperimentsService(true)
+    );
+
+    try {
+      const result = await workspaceService.executeBash(workspaceId, "git status --short", {
+        cwdMode: "repo-root",
+        repoRootProjectPath: projectBPath,
+      });
+
+      expect(result.success).toBe(true);
+      expect(waitForInitMock).toHaveBeenCalledWith(workspaceId);
+      assert(capturedToolConfig);
+      expect(capturedToolConfig.cwd).toBe(`/tmp/src/project-b/${workspaceName}`);
+      expect(ensureReadyAMock).toHaveBeenCalledTimes(1);
+      expect(ensureReadyBMock).toHaveBeenCalledTimes(1);
+      expect(bashExecuteMock).toHaveBeenCalledTimes(1);
+    } finally {
+      createBashToolSpy.mockRestore();
+      createRuntimeSpy.mockRestore();
+    }
+  });
+
   test("lets multi-project script mode target a secondary repo checkout explicitly", async () => {
     const workspaceId = "ws-multi-bash-repo-root";
     const workspaceName = "feature-multi-bash-repo-root";

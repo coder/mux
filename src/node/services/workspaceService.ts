@@ -39,6 +39,7 @@ import {
   createRuntimeForWorkspace,
   resolveWorkspaceExecutionPath,
 } from "@/node/runtime/runtimeHelpers";
+import { getWorkspacePathHintForProject } from "@/node/services/workspaceProjectRepos";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
 import { ensurePrivateDir } from "@/node/utils/fs";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
@@ -6446,7 +6447,8 @@ export class WorkspaceService extends EventEmitter {
   }
 
   private async listWorkspacePathsForFileCompletions(
-    metadata: FrontendWorkspaceMetadata
+    metadata: FrontendWorkspaceMetadata,
+    workspacePath?: string
   ): Promise<string[] | null> {
     if (!isMultiProject(metadata)) {
       const runtime = createRuntimeForWorkspace(metadata);
@@ -6464,6 +6466,21 @@ export class WorkspaceService extends EventEmitter {
         const projectRuntime = createRuntime(metadata.runtimeConfig, {
           projectPath: project.projectPath,
           workspaceName: metadata.name,
+          workspacePath:
+            isSSHRuntime(metadata.runtimeConfig) && workspacePath != null
+              ? getWorkspacePathHintForProject(
+                  {
+                    workspaceId: metadata.id,
+                    workspaceName: metadata.name,
+                    workspacePath,
+                    runtimeConfig: metadata.runtimeConfig,
+                    projectPath: metadata.projectPath,
+                    projectName: metadata.projectName,
+                    projects: metadata.projects,
+                  },
+                  project.projectPath
+                )
+              : undefined,
         });
         const projectWorkspacePath = projectRuntime.getWorkspacePath(
           project.projectPath,
@@ -6526,7 +6543,11 @@ export class WorkspaceService extends EventEmitter {
         const previousIndex = cacheEntry.index;
 
         try {
-          const files = await this.listWorkspacePathsForFileCompletions(metadata);
+          const workspace = this.config.findWorkspace(workspaceId);
+          const files = await this.listWorkspacePathsForFileCompletions(
+            metadata,
+            workspace?.workspacePath
+          );
           cacheEntry.index = files === null ? previousIndex : buildFileCompletionsIndex(files);
           cacheEntry.fetchedAt = Date.now();
         } catch (error) {
@@ -6616,6 +6637,20 @@ export class WorkspaceService extends EventEmitter {
             runtime: createRuntime(metadata.runtimeConfig, {
               projectPath: project.projectPath,
               workspaceName: metadata.name,
+              workspacePath: isSSHRuntime(metadata.runtimeConfig)
+                ? getWorkspacePathHintForProject(
+                    {
+                      workspaceId,
+                      workspaceName: metadata.name,
+                      workspacePath: workspace.workspacePath,
+                      runtimeConfig: metadata.runtimeConfig,
+                      projectPath: metadata.projectPath,
+                      projectName: metadata.projectName,
+                      projects: metadata.projects,
+                    },
+                    project.projectPath
+                  )
+                : undefined,
             }),
           }))
         : undefined;

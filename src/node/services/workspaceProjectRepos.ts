@@ -138,7 +138,7 @@ export function getWorkspaceProjectStorageKeys(
   return storageKeys;
 }
 
-function getWorkspacePathHint(
+export function getWorkspacePathHintForProject(
   params: WorkspaceProjectRepoParams,
   targetProjectPath: string
 ): string | undefined {
@@ -207,7 +207,7 @@ export function getWorkspaceProjectRepos(
       ? createRuntime(params.runtimeConfig, {
           projectPath: project.projectPath,
           workspaceName: params.workspaceName,
-          workspacePath: getWorkspacePathHint(params, project.projectPath),
+          workspacePath: getWorkspacePathHintForProject(params, project.projectPath),
         }).getWorkspacePath(project.projectPath, params.workspaceName)
       : params.workspacePath;
 

@@ -2240,6 +2240,78 @@ describe("WorkspaceService getFileCompletions", () => {
     expect(execBufferedSpy.mock.calls[0]?.[2].cwd).toBe("/persisted/project-a/ws");
   });
 
+  test("preserves inferred legacy SSH paths for multi-project completions", async () => {
+    interface WorkspaceServiceTestAccess {
+      getInfo: (workspaceId: string) => Promise<FrontendWorkspaceMetadata | null>;
+    }
+
+    const svc = workspaceService as unknown as WorkspaceServiceTestAccess;
+    svc.getInfo = mock(() =>
+      Promise.resolve({
+        id: "ws-multi-ssh",
+        name: "ws",
+        projectName: "project-a",
+        projectPath: "/tmp/project-a",
+        namedWorkspacePath: "/tmp/src/project-a/ws",
+        runtimeConfig: { type: "ssh", host: "example.com", srcBaseDir: "/tmp/src" },
+        projects: [
+          { projectPath: "/tmp/project-a", projectName: "project-a" },
+          { projectPath: "/tmp/project-b", projectName: "project-b" },
+        ],
+      } satisfies FrontendWorkspaceMetadata)
+    );
+    const config = (workspaceService as unknown as { config: Config }).config;
+    spyOn(config, "findWorkspace").mockReturnValue({
+      projectPath: "/tmp/project-a",
+      workspacePath: "/tmp/src/project-a/ws",
+    });
+    createRuntimeSpy.mockImplementation((_runtimeConfig, options) => {
+      const runtimeProjectPath = options?.projectPath;
+      if (!runtimeProjectPath) {
+        throw new Error("Expected createRuntime projectPath in legacy SSH completion test");
+      }
+      return {
+        getWorkspacePath: () =>
+          options.workspacePath ?? `/runtime/${path.basename(runtimeProjectPath)}/ws`,
+      } as unknown as ReturnType<typeof runtimeFactory.createRuntime>;
+    });
+
+    execBufferedSpy.mockImplementation((_runtime, _command, options) => {
+      if (options.cwd === "/tmp/src/project-a/ws") {
+        return Promise.resolve({
+          stdout: "README.md\n",
+          stderr: "",
+          exitCode: 0,
+          duration: 1,
+        });
+      }
+      if (options.cwd === "/tmp/src/project-b/ws") {
+        return Promise.resolve({
+          stdout: "src/b.ts\n",
+          stderr: "",
+          exitCode: 0,
+          duration: 1,
+        });
+      }
+      return Promise.reject(new Error(`Unexpected cwd ${options.cwd}`));
+    });
+
+    const result = await workspaceService.getFileCompletions("ws-multi-ssh", "", 10);
+
+    expect(result.paths).toContain("project-a/README.md");
+    expect(result.paths).toContain("project-b/src/b.ts");
+    expect(createRuntimeSpy).toHaveBeenNthCalledWith(1, expect.anything(), {
+      projectPath: "/tmp/project-a",
+      workspaceName: "ws",
+      workspacePath: "/tmp/src/project-a/ws",
+    });
+    expect(createRuntimeSpy).toHaveBeenNthCalledWith(2, expect.anything(), {
+      projectPath: "/tmp/project-b",
+      workspaceName: "ws",
+      workspacePath: "/tmp/src/project-b/ws",
+    });
+  });
+
   test("aggregates multi-project completions using project-prefixed paths", async () => {
     interface WorkspaceServiceTestAccess {
       getInfo: (workspaceId: string) => Promise<FrontendWorkspaceMetadata | null>;

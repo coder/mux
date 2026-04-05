@@ -269,7 +269,7 @@ describe("SSHRuntime bundle sync reuse", () => {
       );
       expect(localManifestSpy).toHaveBeenCalledWith("/projects/demo");
       expect(remoteManifestSpy).toHaveBeenCalledWith(
-        '"/home/user/src/demo/.mux-base.git"',
+        JSON.stringify(computeBaseRepoPath("/home/user/src", "/projects/demo")),
         undefined
       );
       expect(initMessages.some((message) => message.includes("skipping sync"))).toBe(true);
