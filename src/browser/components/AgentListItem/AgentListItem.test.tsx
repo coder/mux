@@ -67,6 +67,7 @@ function createWorkspaceSidebarState(
     awaitingUserQuestion: false,
     lastAbortReason: null,
     currentModel: null,
+    pendingStreamModel: null,
     recencyTimestamp: null,
     loadedSkills: [],
     skillLoadErrors: [],

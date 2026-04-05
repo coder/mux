@@ -199,14 +199,26 @@ function createUserMessageEvent(
   id: string,
   text: string,
   historySequence: number,
-  timestamp: number
+  timestamp: number,
+  requestedModel?: string
 ): WorkspaceChatMessage {
   return {
     type: "message",
     id,
     role: "user",
     parts: [{ type: "text", text }],
-    metadata: { historySequence, timestamp },
+    metadata: {
+      historySequence,
+      timestamp,
+      ...(requestedModel
+        ? {
+            muxMetadata: {
+              type: "normal",
+              requestedModel,
+            },
+          }
+        : {}),
+    },
   };
 }
 
@@ -1584,6 +1596,40 @@ describe("WorkspaceStore", () => {
         return state.isStreamStarting === true && sidebarState.isStarting === true;
       });
       expect(sawStarting).toBe(true);
+    });
+
+    it("exposes the pending requested model in sidebar state during startup", async () => {
+      const workspaceId = "stream-starting-pending-model-workspace";
+      const requestedModel = "openai:gpt-4o-mini";
+
+      mockOnChat.mockImplementation(async function* (
+        input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        if (input?.workspaceId !== workspaceId) {
+          await waitForAbortSignal(options?.signal);
+          return;
+        }
+
+        yield { type: "caught-up" };
+        await Promise.resolve();
+        yield createUserMessageEvent("pending-model-message", "hello", 1, 2_500, requestedModel);
+        await waitForAbortSignal(options?.signal);
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const sawPendingModel = await waitUntil(() => {
+        const state = store.getWorkspaceState(workspaceId);
+        const sidebarState = store.getWorkspaceSidebarState(workspaceId);
+        return (
+          state.isStreamStarting === true &&
+          state.pendingStreamModel === requestedModel &&
+          sidebarState.isStarting === true &&
+          sidebarState.pendingStreamModel === requestedModel
+        );
+      });
+      expect(sawPendingModel).toBe(true);
     });
   });
 

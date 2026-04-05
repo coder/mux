@@ -123,6 +123,9 @@ export interface WorkspaceSidebarState {
   awaitingUserQuestion: boolean;
   lastAbortReason: StreamAbortReasonSnapshot | null;
   currentModel: string | null;
+  // Requested model for the pending send so the sidebar keeps the same label while
+  // the turn transitions from pre-stream "starting" into the live stream.
+  pendingStreamModel: string | null;
   recencyTimestamp: number | null;
   loadedSkills: LoadedSkill[];
   skillLoadErrors: SkillLoadError[];
@@ -1651,6 +1654,7 @@ export class WorkspaceStore {
       cached.awaitingUserQuestion === fullState.awaitingUserQuestion &&
       cached.lastAbortReason === fullState.lastAbortReason &&
       cached.currentModel === fullState.currentModel &&
+      cached.pendingStreamModel === fullState.pendingStreamModel &&
       cached.recencyTimestamp === fullState.recencyTimestamp &&
       cached.loadedSkills === fullState.loadedSkills &&
       cached.skillLoadErrors === fullState.skillLoadErrors &&
@@ -1671,6 +1675,7 @@ export class WorkspaceStore {
       awaitingUserQuestion: fullState.awaitingUserQuestion,
       lastAbortReason: fullState.lastAbortReason,
       currentModel: fullState.currentModel,
+      pendingStreamModel: fullState.pendingStreamModel,
       recencyTimestamp: fullState.recencyTimestamp,
       loadedSkills: fullState.loadedSkills,
       skillLoadErrors: fullState.skillLoadErrors,
