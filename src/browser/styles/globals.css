@@ -2193,6 +2193,16 @@ input[type="checkbox"] {
   }
 }
 
+/* Radix ScrollArea wraps viewport children in a `display: table; min-width: 100%`
+   div that lets content expand beyond the viewport width (table auto-layout sizes
+   to max-content). This pushes right-aligned elements (action buttons, badges) past
+   the overflow-hidden clip boundary. Force block layout so children respect the
+   viewport width constraint and flex rows truncate properly. */
+[data-radix-scroll-area-viewport] > div {
+  display: block !important;
+  min-width: 0 !important;
+}
+
 .subagent-connector-active {
   /* Remove solid background; dashes rendered by ::before pseudo-element */
   background: none !important;
