@@ -1568,8 +1568,6 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
       if (cancelled) return;
 
-      hasAutoCreatedRef.current = true;
-
       const workspaceRecency = workspaceStore.getWorkspaceRecency();
       const recentWorkspace = [...workspaceMetadata.values()]
         .filter((workspace) => {
@@ -1594,6 +1592,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
       if (!recentWorkspace) return;
 
+      hasAutoCreatedRef.current = true;
       createWorkspaceDraft(recentWorkspace.projectPath);
     };
 

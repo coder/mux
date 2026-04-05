@@ -4,7 +4,7 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
 import type { WorkspaceContext } from "./WorkspaceContext";
 import { WorkspaceProvider, useWorkspaceContext } from "./WorkspaceContext";
-import { ProjectProvider } from "@/browser/contexts/ProjectContext";
+import { ProjectProvider, useProjectContext } from "@/browser/contexts/ProjectContext";
 import { RouterProvider } from "@/browser/contexts/RouterContext";
 import { useWorkspaceStoreRaw as getWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import {
@@ -1171,6 +1171,50 @@ describe("WorkspaceContext", () => {
     expect(ctx().selectedWorkspace).toBeNull();
   });
 
+  test("desktop: new-chat mode retries startup fallback after project metadata loads", async () => {
+    const { projects: projectsApi } = createMockAPI({
+      workspace: {
+        list: () =>
+          Promise.resolve([
+            createWorkspaceMetadata({
+              id: "ws-existing",
+              projectPath: "/existing-project",
+              projectName: "existing-project",
+              name: "main",
+              namedWorkspacePath: "/existing-project-main",
+            }),
+          ]),
+      },
+      projects: {
+        list: () => Promise.resolve([]),
+      },
+      server: {
+        getLaunchProject: () => Promise.resolve(null),
+      },
+      localStorage: {
+        [LAUNCH_BEHAVIOR_KEY]: JSON.stringify("new-chat"),
+      },
+      desktopMode: true,
+    });
+
+    const contexts = await setupWithProjectContext();
+
+    await waitFor(() => expect(contexts.workspace().loading).toBe(false));
+    expect(contexts.workspace().pendingNewWorkspaceProject).toBeNull();
+
+    projectsApi.list.mockImplementation(() =>
+      Promise.resolve([["/existing-project", { workspaces: [] }]])
+    );
+    await act(async () => {
+      await contexts.project().refreshProjects();
+    });
+
+    await waitFor(() => {
+      expect(contexts.workspace().pendingNewWorkspaceProject).toBe("/existing-project");
+    });
+    expect(contexts.workspace().selectedWorkspace).toBeNull();
+  });
+
   test("desktop: new-chat mode skips legacy system workspaces when choosing a recent project", async () => {
     createMockAPI({
       workspace: {
@@ -1439,6 +1483,37 @@ async function setup() {
 
   await waitFor(() => expect(contextRef.current).toBeTruthy());
   return () => contextRef.current!;
+}
+
+async function setupWithProjectContext() {
+  const workspaceRef = { current: null as WorkspaceContext | null };
+  const projectRef = { current: null as ReturnType<typeof useProjectContext> | null };
+
+  function ContextCapture() {
+    workspaceRef.current = useWorkspaceContext();
+    projectRef.current = useProjectContext();
+    return null;
+  }
+
+  render(
+    <RouterProvider>
+      <ProjectProvider>
+        <WorkspaceProvider>
+          <ContextCapture />
+        </WorkspaceProvider>
+      </ProjectProvider>
+    </RouterProvider>
+  );
+
+  getWorkspaceStoreRaw().setClient(currentClientMock as APIClient);
+
+  await waitFor(() => expect(workspaceRef.current).toBeTruthy());
+  await waitFor(() => expect(projectRef.current).toBeTruthy());
+
+  return {
+    workspace: () => workspaceRef.current!,
+    project: () => projectRef.current!,
+  };
 }
 
 interface MockAPIOptions {
