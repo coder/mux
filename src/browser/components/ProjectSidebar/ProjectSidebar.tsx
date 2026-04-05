@@ -2023,13 +2023,13 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                     </span>
                                     <span
                                       className={cn(
-                                        "shrink-0",
+                                        "shrink-0 text-xs",
                                         projectHasAttention
-                                          ? "text-content-primary"
-                                          : "text-content-secondary"
+                                          ? "text-content-secondary"
+                                          : "text-muted"
                                       )}
                                     >
-                                      ({projectAgentCount})
+                                      {projectAgentCount}
                                     </span>
                                   </div>
                                 )}
