@@ -211,7 +211,7 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
         }
 
         for (let attempt = 0; attempt < 3; attempt++) {
-          await control.click();
+          await control.dispatchEvent("click");
           try {
             await expect
               .poll(
@@ -282,8 +282,9 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
         return labelIndex === -1 ? 0 : labelIndex;
       };
 
-      // Click paddles until we reach the target level. If the control is still settling after
-      // a mode switch, clickUntilLabelChanges() retries the interaction before giving up.
+      // Click paddles until we reach the target level. clickUntilLabelChanges() retries
+      // the interaction and dispatches DOM clicks directly so transient Linux Electron
+      // overlays do not interfere with toolbar hit-testing.
       for (let i = 0; i < allowedLabels.length * 2; i++) {
         const currentLevel = await getCurrentLevel();
         if (currentLevel === clampedTargetLevel) {

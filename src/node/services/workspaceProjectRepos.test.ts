@@ -38,6 +38,27 @@ describe("getWorkspaceProjectRepos", () => {
     expect(repos[0]?.storageKey).toBe("..-..-secrets");
   });
 
+  it("reuses the persisted workspace path for the current SSH project in multi-project views", () => {
+    const repos = getWorkspaceProjectRepos({
+      workspaceId: "workspace-1",
+      workspaceName: "main",
+      workspacePath: "/tmp/legacy/main",
+      runtimeConfig: {
+        type: "ssh",
+        host: "example.com",
+        srcBaseDir: "/tmp/src",
+      },
+      projectPath: "/tmp/projects/main",
+      projectName: "main",
+      projects: [
+        { projectPath: "/tmp/projects/main", projectName: "main" },
+        { projectPath: "/tmp/projects/other", projectName: "other" },
+      ],
+    });
+
+    expect(repos[0]?.repoCwd).toBe("/tmp/legacy/main");
+  });
+
   it("disambiguates storage keys when sanitized project names collide", () => {
     const repos = getWorkspaceProjectRepos({
       workspaceId: "workspace-1",

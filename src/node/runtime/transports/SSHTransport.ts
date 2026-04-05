@@ -15,6 +15,8 @@ export interface SpawnOptions {
   forcePTY?: boolean;
   timeout?: number;
   abortSignal?: AbortSignal;
+  /** Absolute client-side deadline (Date.now milliseconds) for queueing + execution. */
+  deadlineMs?: number;
 }
 
 export interface PtySessionParams {

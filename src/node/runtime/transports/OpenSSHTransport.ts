@@ -3,12 +3,8 @@ import { log } from "@/node/services/log";
 
 import { spawnPtyProcess } from "../ptySpawn";
 import { expandTildeForSSH } from "../tildeExpansion";
-import {
-  appendOpenSSHHostKeyPolicyArgs,
-  getControlPath,
-  sshConnectionPool,
-  type SSHConnectionConfig,
-} from "../sshConnectionPool";
+import { appendOpenSSHHostKeyPolicyArgs, type SSHConnectionConfig } from "../sshConnectionPool";
+import { openSshMasterPool } from "../openSshMasterPool";
 import type { SpawnResult } from "../RemoteRuntime";
 import type {
   SSHTransport,
@@ -19,13 +15,7 @@ import type {
 } from "./SSHTransport";
 
 export class OpenSSHTransport implements SSHTransport {
-  private readonly config: SSHConnectionConfig;
-  private readonly controlPath: string;
-
-  constructor(config: SSHConnectionConfig) {
-    this.config = config;
-    this.controlPath = getControlPath(config);
-  }
+  constructor(private readonly config: SSHConnectionConfig) {}
 
   isConnectionFailure(exitCode: number, _stderr: string): boolean {
     return exitCode === 255;
@@ -36,11 +26,11 @@ export class OpenSSHTransport implements SSHTransport {
   }
 
   markHealthy(): void {
-    sshConnectionPool.markHealthy(this.config);
+    // OpenSSH transport reports health through per-process master leases.
   }
 
-  reportFailure(error: string): void {
-    sshConnectionPool.reportFailure(this.config, error);
+  reportFailure(_error: string): void {
+    // OpenSSH transport reports health through per-process master leases.
   }
 
   async acquireConnection(options?: {
@@ -49,7 +39,7 @@ export class OpenSSHTransport implements SSHTransport {
     maxWaitMs?: number;
     onWait?: (waitMs: number) => void;
   }): Promise<void> {
-    await sshConnectionPool.acquireConnection(this.config, {
+    await openSshMasterPool.ensureConnection(this.config, {
       abortSignal: options?.abortSignal,
       timeoutMs: options?.timeoutMs,
       maxWaitMs: options?.maxWaitMs,
@@ -58,42 +48,77 @@ export class OpenSSHTransport implements SSHTransport {
   }
 
   async spawnRemoteProcess(fullCommand: string, options: SpawnOptions): Promise<SpawnResult> {
-    await sshConnectionPool.acquireConnection(this.config, {
+    const remainingWaitMs =
+      options.deadlineMs != null ? Math.max(0, options.deadlineMs - Date.now()) : undefined;
+    const lease = await openSshMasterPool.acquireLease(this.config, {
       abortSignal: options.abortSignal,
+      timeoutMs: remainingWaitMs,
+      maxWaitMs: remainingWaitMs,
     });
 
     // Note: use -tt (not -t) so PTY allocation works even when stdin is a pipe.
-    const sshArgs: string[] = [options.forcePTY ? "-tt" : "-T", ...this.buildSSHArgs()];
+    const sshArgs: string[] = [
+      options.forcePTY ? "-tt" : "-T",
+      ...this.buildBaseSSHArgs(),
+      "-o",
+      "ControlMaster=no",
+      "-o",
+      `ControlPath=${lease.controlPath}`,
+    ];
 
     const connectTimeout =
       options.timeout !== undefined ? Math.min(Math.ceil(options.timeout), 15) : 15;
     sshArgs.push("-o", `ConnectTimeout=${connectTimeout}`);
     sshArgs.push("-o", "ServerAliveInterval=5");
     sshArgs.push("-o", "ServerAliveCountMax=2");
-    // Non-interactive execs must never hang on host-key or password prompts.
-    // Host-key trust policy is capability-scoped (verification service wired),
-    // while responder liveness only affects whether prompts can be shown.
     sshArgs.push("-o", "BatchMode=yes");
     appendOpenSSHHostKeyPolicyArgs(sshArgs);
-
     sshArgs.push(this.config.host, fullCommand);
 
-    log.debug(`SSH exec on ${this.config.host}`);
+    log.debug(`SSH exec on ${this.config.host} via ${lease.shardId}`);
     const process = spawn("ssh", sshArgs, {
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
     });
 
-    return { process };
+    let released = false;
+    const releaseLease = () => {
+      if (released) {
+        return;
+      }
+      released = true;
+      lease.release();
+    };
+
+    return {
+      process,
+      onExit: (exitCode, stderr) => {
+        if (this.isConnectionFailure(exitCode, stderr)) {
+          lease.reportFailure(stderr.trim() || `SSH exited with code ${exitCode}`);
+        } else {
+          lease.markHealthy();
+        }
+        releaseLease();
+      },
+      onError: (error) => {
+        lease.reportFailure(error.message);
+        releaseLease();
+      },
+    };
   }
 
   async createPtySession(params: PtySessionParams): Promise<PtyHandle> {
-    await sshConnectionPool.acquireConnection(this.config, { maxWaitMs: 0 });
+    // PTYs stay on a dedicated direct SSH session so they do not consume pooled master
+    // capacity reserved for the many short exec/file operations that drive workspace scale.
+    // Preflight only needs an already-started master (or to bootstrap one), not a free exec slot.
+    await openSshMasterPool.ensureReadyMaster(this.config, { maxWaitMs: 0 });
 
-    const args: string[] = [...this.buildSSHArgs()];
+    const args: string[] = [...this.buildBaseSSHArgs()];
     args.push("-o", "ConnectTimeout=15");
     args.push("-o", "ServerAliveInterval=5");
     args.push("-o", "ServerAliveCountMax=2");
+    args.push("-o", "BatchMode=yes");
+    appendOpenSSHHostKeyPolicyArgs(args);
     args.push("-t");
     args.push(this.config.host);
 
@@ -113,7 +138,7 @@ export class OpenSSHTransport implements SSHTransport {
     });
   }
 
-  private buildSSHArgs(): string[] {
+  private buildBaseSSHArgs(): string[] {
     const args: string[] = [];
 
     if (this.config.port) {
@@ -125,10 +150,6 @@ export class OpenSSHTransport implements SSHTransport {
     }
 
     args.push("-o", "LogLevel=FATAL");
-    args.push("-o", "ControlMaster=auto");
-    args.push("-o", `ControlPath=${this.controlPath}`);
-    args.push("-o", "ControlPersist=60");
-
     return args;
   }
 }

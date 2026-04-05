@@ -165,6 +165,8 @@ export function getWorkspaceProjectRepos(
       ? createRuntime(params.runtimeConfig, {
           projectPath: project.projectPath,
           workspaceName: params.workspaceName,
+          workspacePath:
+            project.projectPath === params.projectPath ? params.workspacePath : undefined,
         }).getWorkspacePath(project.projectPath, params.workspaceName)
       : params.workspacePath;
 

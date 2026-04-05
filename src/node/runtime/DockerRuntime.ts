@@ -353,7 +353,10 @@ export class DockerRuntime extends RemoteRuntime {
     return `cd ${shescape.quote(cwd)}`;
   }
 
-  protected spawnRemoteProcess(fullCommand: string, _options: ExecOptions): Promise<SpawnResult> {
+  protected spawnRemoteProcess(
+    fullCommand: string,
+    _options: ExecOptions & { deadlineMs?: number }
+  ): Promise<SpawnResult> {
     // Verify container name is available
     if (!this.containerName) {
       throw new RuntimeError(

@@ -3,6 +3,11 @@ import * as runtimeHelpers from "@/node/utils/runtime/helpers";
 import * as disposableExec from "@/node/utils/disposableExec";
 import * as submoduleSync from "./submoduleSync";
 import { SSHRuntime, computeBaseRepoPath } from "./SSHRuntime";
+import {
+  buildLegacyRemoteProjectLayout,
+  buildRemoteProjectLayout,
+  getRemoteWorkspacePath,
+} from "./remoteProjectLayout";
 import { createSSHTransport } from "./transports";
 
 /**
@@ -576,10 +581,8 @@ describe("SSHRuntime.prepareWorkspaceCheckout", () => {
 });
 
 describe("SSHRuntime.createWorkspace", () => {
-  it("uses directoryName for the workspace path while preparing the remote parent directory", async () => {
-    const config = { host: "example.com", srcBaseDir: "/home/user/src" };
-    const runtime = new SSHRuntime(config, createSSHTransport(config, false));
-    const execSpy = spyOn(runtime, "exec").mockResolvedValue({
+  function createExecStream(exitCode = 0) {
+    return {
       stdout: new ReadableStream<Uint8Array>({
         start(controller) {
           controller.close();
@@ -591,18 +594,29 @@ describe("SSHRuntime.createWorkspace", () => {
         },
       }),
       stdin: new WritableStream<Uint8Array>(),
-      exitCode: Promise.resolve(0),
+      exitCode: Promise.resolve(exitCode),
       duration: Promise.resolve(0),
-    });
-    const readFileSpy = spyOn(runtime, "readFile").mockReturnValue(
-      new ReadableStream<Uint8Array>({
-        start(controller) {
-          controller.error(new Error("missing branch map"));
-        },
-      })
+    };
+  }
+
+  it("uses directoryName for the workspace path while preparing the remote parent directory", async () => {
+    const config = { host: "example.com", srcBaseDir: "/home/user/src" };
+    const runtime = new SSHRuntime(config, createSSHTransport(config, false));
+    const expectedLayout = buildRemoteProjectLayout(config.srcBaseDir, "/projects/demo");
+    const expectedWorkspacePath = getRemoteWorkspacePath(expectedLayout, "review-slot");
+    const execSpy = spyOn(runtime, "exec").mockImplementation(() =>
+      Promise.resolve(createExecStream())
     );
-    const writeFileSpy = spyOn(runtime, "writeFile").mockReturnValue(
-      new WritableStream<Uint8Array>()
+    const readFileSpy = spyOn(runtime, "readFile").mockImplementation(
+      () =>
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.error(new Error("missing branch metadata"));
+          },
+        })
+    );
+    const writeFileSpy = spyOn(runtime, "writeFile").mockImplementation(
+      () => new WritableStream<Uint8Array>()
     );
 
     try {
@@ -621,13 +635,16 @@ describe("SSHRuntime.createWorkspace", () => {
 
       expect(result).toEqual({
         success: true,
-        workspacePath: "/home/user/src/demo/review-slot",
+        workspacePath: expectedWorkspacePath,
       });
-      expect(execSpy).toHaveBeenCalledWith('mkdir -p "/home/user/src/demo"', {
-        cwd: "/tmp",
-        timeout: 10,
-        abortSignal: undefined,
-      });
+      expect(execSpy).toHaveBeenCalledWith(
+        `mkdir -p ${JSON.stringify(expectedLayout.projectRoot)}`,
+        {
+          cwd: "/tmp",
+          timeout: 10,
+          abortSignal: undefined,
+        }
+      );
     } finally {
       execSpy.mockRestore();
       readFileSpy.mockRestore();
@@ -650,6 +667,8 @@ describe("SSHRuntime.deleteWorkspace", () => {
   it("deletes the mapped workspace branch instead of the current remote checkout", async () => {
     const config = { host: "example.com", srcBaseDir: "/home/user/src" };
     const runtime = new SSHRuntime(config, createSSHTransport(config, false));
+    const expectedLayout = buildRemoteProjectLayout(config.srcBaseDir, "/projects/demo");
+    const expectedDeletedPath = getRemoteWorkspacePath(expectedLayout, "review-slot");
     const execSpy = spyOn(runtime, "exec").mockImplementation((command) => {
       if (command.includes("git diff --quiet") || command.includes("test -d")) {
         return Promise.resolve(createExecStream(0));
@@ -659,13 +678,14 @@ describe("SSHRuntime.deleteWorkspace", () => {
       }
       throw new Error(`Unexpected exec command: ${command}`);
     });
-    const readFileSpy = spyOn(runtime, "readFile").mockReturnValue(
-      new ReadableStream<Uint8Array>({
-        start(controller) {
-          controller.enqueue(new TextEncoder().encode('{"review-slot":"feature-branch"}\n'));
-          controller.close();
-        },
-      })
+    const readFileSpy = spyOn(runtime, "readFile").mockImplementation(
+      () =>
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('{"review-slot":"feature-branch"}\n'));
+            controller.close();
+          },
+        })
     );
     const execBufferedSpy = spyOn(runtimeHelpers, "execBuffered").mockImplementation(
       (_runtime, command) => {
@@ -688,7 +708,7 @@ describe("SSHRuntime.deleteWorkspace", () => {
       const result = await runtime.deleteWorkspace("/projects/demo", "review-slot", true);
       expect(result).toEqual({
         success: true,
-        deletedPath: "/home/user/src/demo/review-slot",
+        deletedPath: expectedDeletedPath,
       });
     } finally {
       execSpy.mockRestore();
@@ -717,25 +737,27 @@ describe("SSHRuntime.ensureReady repository checks", () => {
 
   it("accepts worktrees where .git is a file", async () => {
     execBufferedSpy = spyOn(runtimeHelpers, "execBuffered")
+      .mockResolvedValueOnce({ stdout: "preferred\n", stderr: "", exitCode: 0, duration: 0 })
       .mockResolvedValueOnce({ stdout: "", stderr: "", exitCode: 0, duration: 0 })
-      .mockResolvedValueOnce({ stdout: ".git", stderr: "", exitCode: 0, duration: 0 })
+      .mockResolvedValueOnce({ stdout: ".git\n", stderr: "", exitCode: 0, duration: 0 })
       .mockResolvedValueOnce({ stdout: "true\n", stderr: "", exitCode: 0, duration: 0 });
 
     const result = await runtime.ensureReady();
 
-    expect(execBufferedSpy).toHaveBeenCalledTimes(3);
-    const firstCommand = execBufferedSpy?.mock.calls[0]?.[1];
-    expect(firstCommand).toContain("test -d");
-    expect(firstCommand).toContain("test -f");
-    const thirdCommand = execBufferedSpy?.mock.calls[2]?.[1];
-    expect(thirdCommand).toContain("rev-parse --is-inside-work-tree");
+    expect(execBufferedSpy).toHaveBeenCalledTimes(4);
+    const secondCommand = execBufferedSpy?.mock.calls[1]?.[1];
+    expect(secondCommand).toContain("test -d");
+    expect(secondCommand).toContain("test -f");
+    const fourthCommand = execBufferedSpy?.mock.calls[3]?.[1];
+    expect(fourthCommand).toContain("rev-parse --is-inside-work-tree");
     expect(result).toEqual({ ready: true });
   });
 
   it("returns runtime_not_ready when git reports the workspace is not inside a work tree", async () => {
     execBufferedSpy = spyOn(runtimeHelpers, "execBuffered")
+      .mockResolvedValueOnce({ stdout: "preferred\n", stderr: "", exitCode: 0, duration: 0 })
       .mockResolvedValueOnce({ stdout: "", stderr: "", exitCode: 0, duration: 0 })
-      .mockResolvedValueOnce({ stdout: ".git", stderr: "", exitCode: 0, duration: 0 })
+      .mockResolvedValueOnce({ stdout: ".git\n", stderr: "", exitCode: 0, duration: 0 })
       .mockResolvedValueOnce({ stdout: "false\n", stderr: "", exitCode: 0, duration: 0 });
 
     const result = await runtime.ensureReady();
@@ -747,12 +769,14 @@ describe("SSHRuntime.ensureReady repository checks", () => {
   });
 
   it("returns runtime_not_ready when the repo is missing", async () => {
-    execBufferedSpy = spyOn(runtimeHelpers, "execBuffered").mockResolvedValue({
-      stdout: "",
-      stderr: "",
-      exitCode: 1,
-      duration: 0,
-    });
+    execBufferedSpy = spyOn(runtimeHelpers, "execBuffered")
+      .mockResolvedValueOnce({ stdout: "preferred\n", stderr: "", exitCode: 0, duration: 0 })
+      .mockResolvedValue({
+        stdout: "",
+        stderr: "",
+        exitCode: 1,
+        duration: 0,
+      });
 
     const result = await runtime.ensureReady();
 
@@ -764,6 +788,7 @@ describe("SSHRuntime.ensureReady repository checks", () => {
 
   it("returns runtime_start_failed when git is unavailable", async () => {
     execBufferedSpy = spyOn(runtimeHelpers, "execBuffered")
+      .mockResolvedValueOnce({ stdout: "preferred\n", stderr: "", exitCode: 0, duration: 0 })
       .mockResolvedValueOnce({ stdout: "", stderr: "", exitCode: 0, duration: 0 })
       .mockResolvedValueOnce({
         stdout: "",
@@ -821,16 +846,77 @@ describe("SSHRuntime.resolvePath", () => {
     });
   });
 });
+describe("SSHRuntime project sync coordination", () => {
+  it("uses srcBaseDir in the per-project sync key", () => {
+    const projectId = "demo-project-123456789abc";
+    const configA = { host: "example.com", srcBaseDir: "/home/user/src-a" };
+    const configB = { host: "example.com", srcBaseDir: "/home/user/src-b" };
+    const runtimeA = new SSHRuntime(configA, createSSHTransport(configA, false));
+    const runtimeB = new SSHRuntime(configB, createSSHTransport(configB, false));
+
+    const getProjectSyncKey = (runtime: SSHRuntime): ((projectIdArg: string) => string) => {
+      const maybeMethod: unknown = Reflect.get(runtime, "getProjectSyncKey");
+      if (typeof maybeMethod !== "function") {
+        throw new Error("getProjectSyncKey is unavailable");
+      }
+      return maybeMethod as (projectIdArg: string) => string;
+    };
+
+    expect(getProjectSyncKey(runtimeA).call(runtimeA, projectId)).not.toBe(
+      getProjectSyncKey(runtimeB).call(runtimeB, projectId)
+    );
+  });
+});
+
+describe("SSHRuntime layout detection", () => {
+  let execBufferedSpy: ReturnType<typeof spyOn<typeof runtimeHelpers, "execBuffered">> | null =
+    null;
+
+  afterEach(() => {
+    execBufferedSpy?.mockRestore();
+    execBufferedSpy = null;
+  });
+
+  it("does not treat legacy root existence alone as evidence of a legacy layout", async () => {
+    const config = { host: "example.com", srcBaseDir: "/home/user/src" };
+    const projectPath = "/projects/demo";
+    const workspaceName = "fresh-workspace";
+    const runtime = new SSHRuntime(config, createSSHTransport(config, false));
+    const preferredLayout = buildRemoteProjectLayout(config.srcBaseDir, projectPath);
+    const legacyLayout = buildLegacyRemoteProjectLayout(config.srcBaseDir, projectPath);
+
+    execBufferedSpy = spyOn(runtimeHelpers, "execBuffered").mockResolvedValue({
+      stdout: "preferred\n",
+      stderr: "",
+      exitCode: 0,
+      duration: 0,
+    });
+
+    const resolveProjectLayout = Reflect.get(runtime, "resolveProjectLayout") as (
+      projectPathArg: string,
+      workspaceNameArg?: string
+    ) => Promise<{ projectRoot: string }>;
+    const layout = await resolveProjectLayout.call(runtime, projectPath, workspaceName);
+
+    expect(layout.projectRoot).toBe(preferredLayout.projectRoot);
+    const detectionCommand = execBufferedSpy.mock.calls[0]?.[1];
+    expect(detectionCommand).toContain(`test -e "${legacyLayout.projectRoot}/${workspaceName}"`);
+    expect(detectionCommand).not.toContain(`test -d "${legacyLayout.projectRoot}"`);
+  });
+});
+
 describe("computeBaseRepoPath", () => {
   it("computes the correct bare repo path", () => {
-    // computeBaseRepoPath uses getProjectName (basename) to compute:
-    // <srcBaseDir>/<projectName>/.mux-base.git
+    const layout = buildRemoteProjectLayout("~/mux", "/Users/me/code/my-project");
     const result = computeBaseRepoPath("~/mux", "/Users/me/code/my-project");
-    expect(result).toBe("~/mux/my-project/.mux-base.git");
+    expect(result).toBe(layout.baseRepoPath);
+    expect(result).toMatch(/^~\/mux\/my-project-[a-f0-9]{12}\/\.mux-base\.git$/);
   });
 
   it("handles absolute srcBaseDir", () => {
+    const layout = buildRemoteProjectLayout("/home/user/src", "/code/repo");
     const result = computeBaseRepoPath("/home/user/src", "/code/repo");
-    expect(result).toBe("/home/user/src/repo/.mux-base.git");
+    expect(result).toBe(layout.baseRepoPath);
+    expect(result).toMatch(/^\/home\/user\/src\/repo-[a-f0-9]{12}\/\.mux-base\.git$/);
   });
 });

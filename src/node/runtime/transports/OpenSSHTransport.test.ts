@@ -1,12 +1,10 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import * as childProcess from "child_process";
 
+import * as ptySpawn from "../ptySpawn";
 import { SshPromptService } from "@/node/services/sshPromptService";
-import {
-  setSshPromptService,
-  setOpenSSHHostKeyPolicyMode,
-  sshConnectionPool,
-} from "../sshConnectionPool";
+import { setSshPromptService, setOpenSSHHostKeyPolicyMode } from "../sshConnectionPool";
+import { openSshMasterPool } from "../openSshMasterPool";
 import { OpenSSHTransport } from "./OpenSSHTransport";
 
 function createMockChildProcess(): ReturnType<typeof childProcess.spawn> {
@@ -18,15 +16,19 @@ function createMockChildProcess(): ReturnType<typeof childProcess.spawn> {
 
 describe("OpenSSHTransport.spawnRemoteProcess", () => {
   let spawnSpy: ReturnType<typeof spyOn<typeof childProcess, "spawn">>;
-  let acquireConnectionSpy: ReturnType<typeof spyOn<typeof sshConnectionPool, "acquireConnection">>;
+  let acquireLeaseSpy: ReturnType<typeof spyOn<typeof openSshMasterPool, "acquireLease">>;
   let releaseInteractiveResponder: (() => void) | undefined;
 
   beforeEach(() => {
     spawnSpy = spyOn(childProcess, "spawn").mockImplementation((() =>
       createMockChildProcess()) as unknown as typeof childProcess.spawn);
-    acquireConnectionSpy = spyOn(sshConnectionPool, "acquireConnection").mockResolvedValue(
-      undefined
-    );
+    acquireLeaseSpy = spyOn(openSshMasterPool, "acquireLease").mockResolvedValue({
+      controlPath: "/tmp/mux-ssh-test-shard",
+      shardId: "shard-0",
+      release: mock(() => undefined),
+      reportFailure: mock(() => undefined),
+      markHealthy: mock(() => undefined),
+    });
   });
 
   afterEach(() => {
@@ -37,7 +39,7 @@ describe("OpenSSHTransport.spawnRemoteProcess", () => {
     setOpenSSHHostKeyPolicyMode("headless-fallback");
 
     spawnSpy.mockRestore();
-    acquireConnectionSpy.mockRestore();
+    acquireLeaseSpy.mockRestore();
   });
 
   function setSshPromptCapability(configured: boolean): SshPromptService | undefined {
@@ -100,5 +102,43 @@ describe("OpenSSHTransport.spawnRemoteProcess", () => {
     expect(args).toContain("BatchMode=yes");
     expect(args).not.toContain("StrictHostKeyChecking=no");
     expect(args).not.toContain("UserKnownHostsFile=/dev/null");
+  });
+});
+
+describe("OpenSSHTransport.createPtySession", () => {
+  let ensureReadyMasterSpy: ReturnType<typeof spyOn<typeof openSshMasterPool, "ensureReadyMaster">>;
+  let spawnPtyProcessSpy: ReturnType<typeof spyOn<typeof ptySpawn, "spawnPtyProcess">>;
+
+  beforeEach(() => {
+    ensureReadyMasterSpy = spyOn(openSshMasterPool, "ensureReadyMaster").mockResolvedValue(
+      undefined
+    );
+    spawnPtyProcessSpy = spyOn(ptySpawn, "spawnPtyProcess").mockReturnValue({
+      write: mock(() => undefined),
+      resize: mock(() => undefined),
+      kill: mock(() => undefined),
+      onData: mock(() => ({ dispose: () => undefined })),
+      onExit: mock(() => ({ dispose: () => undefined })),
+    } as unknown as ReturnType<typeof ptySpawn.spawnPtyProcess>);
+  });
+
+  afterEach(() => {
+    ensureReadyMasterSpy.mockRestore();
+    spawnPtyProcessSpy.mockRestore();
+  });
+
+  test("preflights against a ready master without reserving an exec slot", async () => {
+    const transport = new OpenSSHTransport({ host: "remote.example.com", port: 2222 });
+
+    await transport.createPtySession({
+      workspacePath: "~/workspace",
+      cols: 80,
+      rows: 24,
+    });
+
+    expect(ensureReadyMasterSpy).toHaveBeenCalledWith(
+      { host: "remote.example.com", port: 2222 },
+      { maxWaitMs: 0 }
+    );
   });
 });

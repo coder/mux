@@ -135,6 +135,7 @@ export function createRuntime(config: RuntimeConfig, options?: CreateRuntimeOpti
   const runtimeIdentity = {
     projectPath: options?.projectPath,
     workspaceName: options?.workspaceName,
+    workspacePath: options?.workspacePath,
   };
 
   switch (config.type) {

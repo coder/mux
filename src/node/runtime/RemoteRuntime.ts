@@ -47,6 +47,10 @@ export interface SpawnResult {
   process: ChildProcess;
   /** Optional async work to do before exec (e.g., acquire connection) */
   preExec?: Promise<void>;
+  /** Optional transport-scoped exit handling (e.g., master-pool health accounting). */
+  onExit?: (exitCode: number, stderr: string) => void;
+  /** Optional transport-scoped spawn error handling. */
+  onError?: (error: Error) => void;
 }
 
 /**
@@ -63,7 +67,7 @@ export abstract class RemoteRuntime implements Runtime {
    */
   protected abstract spawnRemoteProcess(
     fullCommand: string,
-    options: ExecOptions
+    options: ExecOptions & { deadlineMs?: number }
   ): Promise<SpawnResult>;
 
   /**
@@ -138,8 +142,13 @@ export abstract class RemoteRuntime implements Runtime {
     }
 
     // Spawn the remote process (SSH or Docker)
-    // For SSH, this awaits connection pool backoff before spawning
-    const { process: childProcess } = await this.spawnRemoteProcess(fullCommand, options);
+    const timeoutMs = options.timeout !== undefined ? options.timeout * 1000 : undefined;
+    const deadlineMs = timeoutMs !== undefined ? Date.now() + timeoutMs : undefined;
+    const spawnResult = await this.spawnRemoteProcess(fullCommand, {
+      ...options,
+      deadlineMs,
+    });
+    const { process: childProcess } = spawnResult;
 
     // Short-lived commands can close stdin before writes/close complete.
     if (childProcess.stdin) {
@@ -163,16 +172,14 @@ export abstract class RemoteRuntime implements Runtime {
     // Create promises for exit code and duration immediately.
     const exitCode = new Promise<number>((resolve, reject) => {
       childProcess.on("close", (code, signal) => {
-        if (aborted || options.abortSignal?.aborted) {
-          resolve(EXIT_CODE_ABORTED);
-          return;
-        }
-        if (timedOut) {
-          resolve(EXIT_CODE_TIMEOUT);
-          return;
-        }
-        const finalExitCode = code ?? (signal ? -1 : 0);
+        const finalExitCode =
+          aborted || options.abortSignal?.aborted
+            ? EXIT_CODE_ABORTED
+            : timedOut
+              ? EXIT_CODE_TIMEOUT
+              : (code ?? (signal ? -1 : 0));
 
+        spawnResult.onExit?.(finalExitCode, stderrForErrorReporting);
         // Let subclass handle exit code (e.g., SSH connection pool)
         this.onExitCode(finalExitCode, options, stderrForErrorReporting);
 
@@ -180,6 +187,7 @@ export abstract class RemoteRuntime implements Runtime {
       });
 
       childProcess.on("error", (err) => {
+        spawnResult.onError?.(err);
         reject(
           new RuntimeError(
             `Failed to execute ${this.commandPrefix} command: ${err.message}`,
@@ -226,8 +234,10 @@ export abstract class RemoteRuntime implements Runtime {
       void exitCode.finally(() => abortSignal.removeEventListener("abort", onAbort));
     }
 
-    // Handle timeout
-    if (options.timeout !== undefined) {
+    // Handle timeout. Include connection acquisition time in the local deadline so
+    // user-configured timeouts do not silently stretch while the runtime waits for SSH capacity.
+    if (timeoutMs !== undefined) {
+      const remainingTimeoutMs = Math.max(0, (deadlineMs ?? Date.now()) - Date.now());
       const timeoutHandle = setTimeout(() => {
         timedOut = true;
 
@@ -245,7 +255,7 @@ export abstract class RemoteRuntime implements Runtime {
           disposable[Symbol.dispose]();
         }, 1000);
         hardKillHandle.unref();
-      }, options.timeout * 1000);
+      }, remainingTimeoutMs);
 
       void exitCode.finally(() => clearTimeout(timeoutHandle));
     }
