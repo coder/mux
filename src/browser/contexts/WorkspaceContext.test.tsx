@@ -1116,7 +1116,7 @@ describe("WorkspaceContext", () => {
           ]),
       },
       projects: {
-        list: () => Promise.resolve([]),
+        list: () => Promise.resolve([["/existing-project", { workspaces: [] }]]),
       },
       server: {
         getLaunchProject: () => Promise.resolve(null),
@@ -1132,6 +1132,41 @@ describe("WorkspaceContext", () => {
     await waitFor(() => expect(ctx().loading).toBe(false));
     await waitFor(() => {
       expect(ctx().pendingNewWorkspaceProject).toBe("/existing-project");
+    });
+    expect(ctx().selectedWorkspace).toBeNull();
+  });
+
+  test("desktop: new-chat mode fails closed when project metadata is unavailable", async () => {
+    createMockAPI({
+      workspace: {
+        list: () =>
+          Promise.resolve([
+            createWorkspaceMetadata({
+              id: "ws-existing",
+              projectPath: "/existing-project",
+              projectName: "existing-project",
+              name: "main",
+              namedWorkspacePath: "/existing-project-main",
+            }),
+          ]),
+      },
+      projects: {
+        list: () => Promise.resolve([]),
+      },
+      server: {
+        getLaunchProject: () => Promise.resolve(null),
+      },
+      localStorage: {
+        [LAUNCH_BEHAVIOR_KEY]: JSON.stringify("new-chat"),
+      },
+      desktopMode: true,
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().loading).toBe(false));
+    await waitFor(() => {
+      expect(ctx().pendingNewWorkspaceProject).toBeNull();
     });
     expect(ctx().selectedWorkspace).toBeNull();
   });

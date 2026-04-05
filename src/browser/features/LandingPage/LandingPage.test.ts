@@ -88,4 +88,18 @@ describe("getRecentVisibleWorkspaces", () => {
       "user-visible",
     ]);
   });
+
+  test("fails closed when project metadata is missing", () => {
+    const workspaces = new Map<string, FrontendWorkspaceMetadata>([
+      ["unknown-project", createWorkspace("unknown-project", "/repo/app")],
+    ]);
+
+    const recentWorkspaces = getRecentVisibleWorkspaces(
+      workspaces,
+      { "unknown-project": 10 },
+      () => undefined
+    );
+
+    expect(recentWorkspaces).toEqual([]);
+  });
 });

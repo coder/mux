@@ -1578,7 +1578,10 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           }
 
           const projectConfig = getProjectConfig(workspace.projectPath);
-          if (projectConfig?.projectKind !== "system") {
+          if (!projectConfig) {
+            return false;
+          }
+          if (projectConfig.projectKind !== "system") {
             return true;
           }
 
