@@ -1987,11 +1987,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             id={workspaceListId}
                             role="region"
                             aria-label={`Workspaces for ${projectName}`}
-                            className="relative pt-1"
+                            className="pt-1"
                           >
-                            {/* Vertical connector line removed — workspace status dots now
-                                align directly with the project folder icon, so the tree
-                                connector is no longer needed. */}
                             {(() => {
                               // Archived workspaces are excluded from workspaceMetadata so won't appear here
 
