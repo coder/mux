@@ -96,7 +96,15 @@ function getHeader(renderResult: RenderResult): HTMLElement {
 }
 
 describe("PinnedTodoList", () => {
+  let originalWindow: typeof globalThis.window;
+  let originalDocument: typeof globalThis.document;
+  let originalLocalStorage: typeof globalThis.localStorage;
+
   beforeEach(() => {
+    originalWindow = globalThis.window;
+    originalDocument = globalThis.document;
+    originalLocalStorage = globalThis.localStorage;
+
     globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
     globalThis.document = globalThis.window.document;
     globalThis.localStorage = globalThis.window.localStorage;
@@ -111,9 +119,9 @@ describe("PinnedTodoList", () => {
     cleanup();
     workspaceStore.subscribeKey = originalSubscribeKey;
     workspaceStore.getWorkspaceState = originalGetWorkspaceState;
-    globalThis.window = undefined as unknown as Window & typeof globalThis;
-    globalThis.document = undefined as unknown as Document;
-    globalThis.localStorage = undefined as unknown as Storage;
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+    globalThis.localStorage = originalLocalStorage;
     workspaceStates.clear();
     workspaceSubscribers.clear();
   });

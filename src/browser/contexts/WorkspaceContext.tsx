@@ -538,6 +538,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   const {
     resolveProjectPath,
     resolveNewChatProjectPath,
+    getProjectConfig,
     hasAnyProject,
     refreshProjects,
     loading: projectsLoading,
@@ -1570,7 +1571,15 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
       const workspaceRecency = workspaceStore.getWorkspaceRecency();
       const recentWorkspace = [...workspaceMetadata.values()]
-        .filter((workspace) => workspace.projectPath)
+        .filter((workspace) => {
+          if (!workspace.projectPath) {
+            return false;
+          }
+
+          // Upgraded installs can still carry hidden legacy system workspaces in metadata.
+          // Skip them here so new-chat startup drafts stay anchored to user-visible projects.
+          return getProjectConfig(workspace.projectPath)?.projectKind !== "system";
+        })
         .sort((a, b) => (workspaceRecency[b.id] ?? 0) - (workspaceRecency[a.id] ?? 0))[0];
 
       if (!recentWorkspace) return;
@@ -1593,6 +1602,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     workspaceMetadata,
     workspaceStore,
     createWorkspaceDraft,
+    getProjectConfig,
   ]);
 
   const openWorkspaceDraft = useCallback(

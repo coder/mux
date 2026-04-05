@@ -4,7 +4,13 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { createRuntime } from "@/node/runtime/runtimeFactory";
+import type { createRuntime as CreateRuntimeFn } from "@/node/runtime/runtimeFactory";
+
+/* eslint-disable @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment */
+const {
+  createRuntime,
+}: { createRuntime: typeof CreateRuntimeFn } = require("@/node/runtime/runtimeFactory?real=1");
+/* eslint-enable @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment */
 import { runSystem1KeepRangesForBashOutput } from "./system1AgentRunner";
 
 // NOTE: These tests do not exercise a real model.

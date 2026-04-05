@@ -71,7 +71,17 @@ describe("WorkspaceService heartbeat settings", () => {
       {} as HistoryService,
       new EventEmitter() as unknown as AIService,
       new EventEmitter() as unknown as InitStateManager,
-      {} as ExtensionMetadataService,
+      {
+        updateRecency: mock(() =>
+          Promise.resolve({
+            recency: Date.now(),
+            streaming: false,
+            lastModel: null,
+            lastThinkingLevel: null,
+            agentStatus: null,
+          })
+        ),
+      } as unknown as ExtensionMetadataService,
       {} as BackgroundProcessManager
     );
     (

@@ -28,11 +28,13 @@ import { MUX_APP_ATTRIBUTION_TITLE, MUX_APP_ATTRIBUTION_URL } from "@/constants/
 import type { ProviderName } from "@/common/constants/providers";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import type { CodexOauthService } from "@/node/services/codexOauthService";
+import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import { CODEX_ENDPOINT } from "@/common/constants/codexOAuth";
 
 import type { LanguageModel, Tool } from "ai";
 import { createMuxMessage } from "@/common/types/message";
 import type { MuxMessage } from "@/common/types/message";
+import type { MuxToolScope } from "@/common/types/toolScope";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { uniqueSuffix } from "@/common/utils/hasher";
 import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
@@ -1155,10 +1157,12 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
 
 describe("AIService.streamMessage compaction boundary slicing", () => {
   interface StreamMessageHarness {
+    config: Config;
     service: AIService;
     planPayloadMessageIds: string[][];
     preparedPayloadMessageIds: string[][];
     preparedToolNamesForSentinel: string[][];
+    streamSystemContextMuxScopes: MuxToolScope[];
     startStreamCalls: unknown[][];
   }
 
@@ -1232,6 +1236,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     const planPayloadMessageIds: string[][] = [];
     const preparedPayloadMessageIds: string[][] = [];
     const preparedToolNamesForSentinel: string[][] = [];
+    const streamSystemContextMuxScopes: MuxToolScope[] = [];
     const startStreamCalls: unknown[][] = [];
 
     const resolvedAgentResult: Awaited<ReturnType<typeof agentResolution.resolveAgentForStream>> = {
@@ -1272,13 +1277,19 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
       return Promise.resolve(planInstructionsResult);
     });
 
-    spyOn(streamContextBuilder, "buildStreamSystemContext").mockResolvedValue({
-      agentSystemPrompt: "test-agent-prompt",
-      systemMessage: "test-system-message",
-      systemMessageTokens: 1,
-      agentDefinitions: undefined,
-      availableSkills: undefined,
-      ancestorPlanFilePaths: [],
+    spyOn(streamContextBuilder, "buildStreamSystemContext").mockImplementation((args) => {
+      if (!args.muxScope) {
+        throw new Error("Expected muxScope in stream system context build args");
+      }
+      streamSystemContextMuxScopes.push(args.muxScope);
+      return Promise.resolve({
+        agentSystemPrompt: "test-agent-prompt",
+        systemMessage: "test-system-message",
+        systemMessageTokens: 1,
+        agentDefinitions: undefined,
+        availableSkills: undefined,
+        ancestorPlanFilePaths: [],
+      });
     });
 
     spyOn(messagePipeline, "prepareMessagesForProvider").mockImplementation((args) => {
@@ -1371,10 +1382,12 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     });
 
     return {
+      config,
       service,
       planPayloadMessageIds,
       preparedPayloadMessageIds,
       preparedToolNamesForSentinel,
+      streamSystemContextMuxScopes,
       startStreamCalls,
     };
   }
@@ -1453,6 +1466,59 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
         runtimeType: "local",
       },
     ]);
+  });
+
+  it("keeps legacy system workspaces on the global mux tool scope", async () => {
+    using muxHome = new DisposableTempDir("ai-service-system-tool-scope");
+    const projectPath = path.join(muxHome.path, "legacy-system-project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "workspace-system-tool-scope";
+    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const harness = createHarness(muxHome.path, metadata);
+    await harness.config.editConfig((cfg) => {
+      cfg.projects.set(projectPath, { workspaces: [], projectKind: "system" });
+      return cfg;
+    });
+
+    const result = await harness.service.streamMessage({
+      messages: [createMuxMessage("latest-user", "user", "hello")],
+      workspaceId,
+      modelString: "openai:gpt-5.2",
+      thinkingLevel: "off",
+    });
+
+    expect(result.success).toBe(true);
+    expect(harness.streamSystemContextMuxScopes.at(-1)).toEqual({
+      type: "global",
+      muxHome: muxHome.path,
+    });
+  });
+
+  it("keeps _multi workspaces on the project mux tool scope", async () => {
+    using muxHome = new DisposableTempDir("ai-service-multi-project-tool-scope");
+    const workspaceId = "workspace-multi-project-tool-scope";
+    const metadata = createWorkspaceMetadata(workspaceId, MULTI_PROJECT_CONFIG_KEY);
+    const harness = createHarness(muxHome.path, metadata);
+    await harness.config.editConfig((cfg) => {
+      cfg.projects.set(MULTI_PROJECT_CONFIG_KEY, { workspaces: [], projectKind: "system" });
+      return cfg;
+    });
+
+    const result = await harness.service.streamMessage({
+      messages: [createMuxMessage("latest-user", "user", "hello")],
+      workspaceId,
+      modelString: "openai:gpt-5.2",
+      thinkingLevel: "off",
+    });
+
+    expect(result.success).toBe(true);
+    expect(harness.streamSystemContextMuxScopes.at(-1)).toEqual({
+      type: "project",
+      muxHome: muxHome.path,
+      projectRoot: MULTI_PROJECT_CONFIG_KEY,
+      projectStorageAuthority: "host-local",
+    });
   });
 
   it("uses the latest durable boundary slice for provider payload and OpenAI derivations", async () => {

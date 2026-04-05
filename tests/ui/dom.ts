@@ -5,6 +5,7 @@ interface DomGlobalsSnapshot {
   document: typeof globalThis.document;
   navigator: typeof globalThis.navigator;
   localStorage: typeof globalThis.localStorage;
+  CustomEvent: typeof globalThis.CustomEvent;
   DocumentFragment: unknown;
   Element: unknown;
   HTMLInputElement: unknown;
@@ -35,6 +36,7 @@ export function installDom(): () => void {
     navigator: globalThis.navigator,
     HTMLInputElement: (globalThis as unknown as { HTMLInputElement?: unknown }).HTMLInputElement,
     localStorage: globalThis.localStorage,
+    CustomEvent: globalThis.CustomEvent,
     NodeFilter: (globalThis as unknown as { NodeFilter?: unknown }).NodeFilter,
     HTMLElement: (globalThis as unknown as { HTMLElement?: unknown }).HTMLElement,
     Node: (globalThis as unknown as { Node?: unknown }).Node,
@@ -56,6 +58,7 @@ export function installDom(): () => void {
   globalThis.navigator = domWindow.navigator;
   globalThis.getComputedStyle = domWindow.getComputedStyle.bind(domWindow);
   globalThis.localStorage = domWindow.localStorage;
+  globalThis.CustomEvent = domWindow.CustomEvent as typeof globalThis.CustomEvent;
   (globalThis as unknown as { Element: unknown }).Element = domWindow.Element;
   (globalThis as unknown as { DocumentFragment: unknown }).DocumentFragment =
     domWindow.DocumentFragment;
@@ -208,6 +211,7 @@ export function installDom(): () => void {
     (globalThis as unknown as { HTMLInputElement?: unknown }).HTMLInputElement =
       previous.HTMLInputElement;
     globalThis.localStorage = previous.localStorage;
+    globalThis.CustomEvent = previous.CustomEvent;
     (globalThis as unknown as { HTMLElement?: unknown }).HTMLElement = previous.HTMLElement;
     (globalThis as unknown as { NodeFilter?: unknown }).NodeFilter = previous.NodeFilter;
     (globalThis as unknown as { MutationObserver?: unknown }).MutationObserver =

@@ -9,7 +9,13 @@ import {
   resolvePathWithinCwd,
   MAX_FILE_SIZE,
 } from "./fileCommon";
-import { createRuntime } from "@/node/runtime/runtimeFactory";
+import type { createRuntime as CreateRuntimeFn } from "@/node/runtime/runtimeFactory";
+
+/* eslint-disable @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment */
+const {
+  createRuntime,
+}: { createRuntime: typeof CreateRuntimeFn } = require("@/node/runtime/runtimeFactory?real=1");
+/* eslint-enable @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment */
 
 describe("fileCommon", () => {
   describe("validateFileSize", () => {

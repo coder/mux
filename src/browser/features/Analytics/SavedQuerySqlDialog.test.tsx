@@ -13,7 +13,15 @@ void mock.module("@/browser/components/Dialog/Dialog", () => ({
   DialogFooter: (props: { children: ReactNode }) => <div>{props.children}</div>,
 }));
 
-import { SavedQuerySqlDialog } from "./SavedQuerySqlDialog";
+import type { SavedQuerySqlDialog as SavedQuerySqlDialogComponent } from "./SavedQuerySqlDialog";
+
+/* eslint-disable @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment */
+const {
+  SavedQuerySqlDialog,
+}: {
+  SavedQuerySqlDialog: typeof SavedQuerySqlDialogComponent;
+} = require("./SavedQuerySqlDialog?real=1");
+/* eslint-enable @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment */
 
 function renderDialog(overrides: Partial<React.ComponentProps<typeof SavedQuerySqlDialog>> = {}) {
   const onSave = overrides.onSave ?? mock(() => undefined);

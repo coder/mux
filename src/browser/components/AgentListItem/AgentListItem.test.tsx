@@ -15,22 +15,12 @@ import * as WorkspaceFallbackModelModule from "@/browser/hooks/useWorkspaceFallb
 import * as WorkspaceUnreadModule from "@/browser/hooks/useWorkspaceUnread";
 import * as RuntimeStatusStoreModule from "@/browser/stores/RuntimeStatusStore";
 import * as WorkspaceStoreModule from "@/browser/stores/WorkspaceStore";
+import * as TooltipModule from "../Tooltip/Tooltip";
+import * as WorkspaceStatusIndicatorModule from "../WorkspaceStatusIndicator/WorkspaceStatusIndicator";
 import type { AgentRowRenderMeta } from "@/browser/utils/ui/workspaceFiltering";
 import type { StreamAbortReasonSnapshot } from "@/common/types/stream";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { AgentListItem as AgentListItemComponent } from "./AgentListItem";
-
-void mock.module("../Tooltip/Tooltip", () => ({
-  Tooltip: (props: { children: ReactNode }) => <>{props.children}</>,
-  TooltipTrigger: (props: { children: ReactNode }) => <>{props.children}</>,
-  TooltipContent: (props: { children: ReactNode }) => <>{props.children}</>,
-}));
-
-void mock.module("@/browser/components/WorkspaceStatusIndicator/WorkspaceStatusIndicator", () => ({
-  WorkspaceStatusIndicator: (props: { workspaceId: string }) => (
-    <div data-testid={`workspace-status-indicator-${props.workspaceId}`} />
-  ),
-}));
 
 let ReactDndModule!: typeof ReactDndModuleType;
 let ReactDndHtml5BackendModule!: typeof ReactDndHtml5BackendModuleType;
@@ -101,6 +91,20 @@ function createSystemAbortReason(): StreamAbortReasonSnapshot {
 }
 
 function installAgentListItemTestDoubles() {
+  spyOn(TooltipModule, "Tooltip").mockImplementation(((props: { children: ReactNode }) => (
+    <>{props.children}</>
+  )) as unknown as typeof TooltipModule.Tooltip);
+  spyOn(TooltipModule, "TooltipTrigger").mockImplementation(((props: { children: ReactNode }) => (
+    <>{props.children}</>
+  )) as unknown as typeof TooltipModule.TooltipTrigger);
+  spyOn(TooltipModule, "TooltipContent").mockImplementation(((props: { children: ReactNode }) => (
+    <>{props.children}</>
+  )) as unknown as typeof TooltipModule.TooltipContent);
+  spyOn(WorkspaceStatusIndicatorModule, "WorkspaceStatusIndicator").mockImplementation(((props: {
+    workspaceId: string;
+  }) => (
+    <div data-testid={`workspace-status-indicator-${props.workspaceId}`} />
+  )) as unknown as typeof WorkspaceStatusIndicatorModule.WorkspaceStatusIndicator);
   const passthroughRef = <T,>(value: T): T => value;
 
   spyOn(ReactDndModule, "useDrag").mockImplementation(

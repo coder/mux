@@ -71,6 +71,7 @@ import { getProjects, isMultiProject } from "@/common/utils/multiProject";
 import { uniqueSuffix } from "@/common/utils/hasher";
 import { isWorkspaceTrustedForSharedExecution } from "@/node/services/utils/workspaceTrust";
 
+import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import { THINKING_LEVEL_OFF, type ThinkingLevel } from "@/common/types/thinking";
 
 import type {
@@ -198,6 +199,35 @@ export function resolveMuxProjectRootForHostFs(
 ): string {
   const runtimeType = metadata.runtimeConfig.type;
   return runtimeType === "ssh" || runtimeType === "docker" ? metadata.projectPath : workspacePath;
+}
+
+function resolveMuxToolScope(
+  config: Config,
+  metadata: WorkspaceMetadata,
+  workspacePath: string
+): MuxToolScope {
+  const projectConfig = config.loadConfigOrDefault().projects.get(metadata.projectPath);
+  if (
+    projectConfig?.projectKind === "system" &&
+    metadata.projectPath !== MULTI_PROJECT_CONFIG_KEY
+  ) {
+    // Preserve ~/.mux-backed tool behavior for legacy system workspaces after removing
+    // Chat with Mux. Multi-project workspaces still point at a real checkout under _multi,
+    // so they stay project-scoped.
+    return {
+      type: "global",
+      muxHome: config.rootDir,
+    };
+  }
+
+  const runtimeType = metadata.runtimeConfig.type;
+  return {
+    type: "project",
+    muxHome: config.rootDir,
+    projectRoot: resolveMuxProjectRootForHostFs(metadata, workspacePath),
+    projectStorageAuthority:
+      runtimeType === "ssh" || runtimeType === "docker" ? "runtime" : "host-local",
+  };
 }
 
 function derivePromptCacheScope(metadata: WorkspaceMetadata): string {
@@ -1082,14 +1112,7 @@ export class AIService extends EventEmitter {
         });
       recordStartupPhaseTiming("buildPlanInstructionsMs", buildPlanInstructionsStartedAt);
 
-      const runtimeType = metadata.runtimeConfig.type;
-      const muxScope: MuxToolScope = {
-        type: "project",
-        muxHome: this.config.rootDir,
-        projectRoot: resolveMuxProjectRootForHostFs(metadata, workspacePath),
-        projectStorageAuthority:
-          runtimeType === "ssh" || runtimeType === "docker" ? "runtime" : "host-local",
-      };
+      const muxScope = resolveMuxToolScope(this.config, metadata, workspacePath);
 
       const desktopSessionManager = this.desktopSessionManager;
       let desktopCapabilityPromise: ReturnType<DesktopSessionManager["getCapability"]> | undefined;

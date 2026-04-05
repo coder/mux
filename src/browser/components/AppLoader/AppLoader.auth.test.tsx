@@ -11,6 +11,15 @@ let cleanupDom: (() => void) | null = null;
 let apiStatus: "auth_required" | "connecting" | "error" = "auth_required";
 let apiError: string | null = "Authentication required";
 
+void mock.module("@/browser/assets/logos/mux-logo-dark.svg?react", () => ({
+  __esModule: true,
+  default: () => <svg data-testid="mux-logo-dark" />,
+}));
+void mock.module("@/browser/assets/logos/mux-logo-light.svg?react", () => ({
+  __esModule: true,
+  default: () => <svg data-testid="mux-logo-light" />,
+}));
+
 // AppLoader imports App, which pulls in Lottie-based components. In happy-dom,
 // lottie-web's canvas bootstrap can throw during module evaluation.
 void mock.module("lottie-react", () => ({
@@ -77,11 +86,18 @@ void mock.module("@/browser/components/AuthTokenModal/AuthTokenModal", () => ({
   clearStoredAuthToken: () => {},
 }));
 
-import { AppLoader } from "../AppLoader/AppLoader";
+import type { AppLoader as AppLoaderComponent } from "../AppLoader/AppLoader";
+
+let AppLoader!: typeof AppLoaderComponent;
 
 describe("AppLoader", () => {
   beforeEach(() => {
     cleanupDom = installDom();
+    /* eslint-disable @typescript-eslint/no-require-imports */
+    ({ AppLoader } = require("../AppLoader/AppLoader") as {
+      AppLoader: typeof AppLoaderComponent;
+    });
+    /* eslint-enable @typescript-eslint/no-require-imports */
   });
 
   afterEach(() => {

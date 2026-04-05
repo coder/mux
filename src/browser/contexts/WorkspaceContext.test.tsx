@@ -1135,6 +1135,52 @@ describe("WorkspaceContext", () => {
     expect(ctx().selectedWorkspace).toBeNull();
   });
 
+  test("desktop: new-chat mode skips legacy system workspaces when choosing a recent project", async () => {
+    createMockAPI({
+      workspace: {
+        list: () =>
+          Promise.resolve([
+            createWorkspaceMetadata({
+              id: "ws-system",
+              projectPath: "/system/internal-project",
+              projectName: "internal-project",
+              name: "main",
+              namedWorkspacePath: "/system/internal-project-main",
+            }),
+            createWorkspaceMetadata({
+              id: "ws-user",
+              projectPath: "/existing-project",
+              projectName: "existing-project",
+              name: "main",
+              namedWorkspacePath: "/existing-project-main",
+            }),
+          ]),
+      },
+      projects: {
+        list: () =>
+          Promise.resolve([
+            ["/system/internal-project", { workspaces: [], projectKind: "system" }],
+            ["/existing-project", { workspaces: [] }],
+          ]),
+      },
+      server: {
+        getLaunchProject: () => Promise.resolve(null),
+      },
+      localStorage: {
+        [LAUNCH_BEHAVIOR_KEY]: JSON.stringify("new-chat"),
+      },
+      desktopMode: true,
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().loading).toBe(false));
+    await waitFor(() => {
+      expect(ctx().pendingNewWorkspaceProject).toBe("/existing-project");
+    });
+    expect(ctx().selectedWorkspace).toBeNull();
+  });
+
   test("browser: launch project does not override existing selection", async () => {
     createMockAPI({
       workspace: {

@@ -5,7 +5,6 @@ const STORY_DIR = "src/browser/stories";
 
 /** App-level integration allowlist — files that must exist with smoke coverage. */
 const REQUIRED_APP_STORIES = [
-  "App.sidebar.stories.tsx",
   "App.commandPalette.stories.tsx",
   "App.phoneViewports.stories.tsx",
 ] as const;
@@ -24,6 +23,7 @@ const REQUIRED_COLOCATED_STORIES = [
 ] as const;
 
 const MIGRATED_APP_STORIES = [
+  "App.sidebar.stories.tsx",
   "App.welcome.stories.tsx",
   "App.landingPage.stories.tsx",
   "App.errors.stories.tsx",

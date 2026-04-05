@@ -9,7 +9,13 @@ import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import * as path from "path";
 import * as fs from "fs";
 import { TestTempDir, createTestToolConfig, getTestDeps } from "./testHelpers";
-import { createRuntime } from "@/node/runtime/runtimeFactory";
+import type { createRuntime as CreateRuntimeFn } from "@/node/runtime/runtimeFactory";
+
+/* eslint-disable @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment */
+const {
+  createRuntime,
+}: { createRuntime: typeof CreateRuntimeFn } = require("@/node/runtime/runtimeFactory?real=1");
+/* eslint-enable @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment */
 import { sshConnectionPool } from "@/node/runtime/sshConnectionPool";
 import type { ToolExecutionOptions } from "ai";
 

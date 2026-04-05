@@ -56,6 +56,7 @@ async function createSessionBundle(workspaceId: string): Promise<SessionBundle> 
     },
     stopStream: mock(() => Promise.resolve(Ok(undefined))),
     isStreaming: mock(() => false),
+    getStreamInfo: mock(() => null),
     streamMessage: mock(() => Promise.resolve(Ok(undefined))),
     getWorkspaceMetadata: mock(() => Promise.resolve(Ok(workspaceMetadata))),
   } as unknown as AIService;
@@ -67,6 +68,7 @@ async function createSessionBundle(workspaceId: string): Promise<SessionBundle> 
     off(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
       return this;
     },
+    replayInit: mock(() => Promise.resolve()),
   } as unknown as InitStateManager;
 
   const backgroundProcessManager: BackgroundProcessManager = {

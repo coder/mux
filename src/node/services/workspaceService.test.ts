@@ -110,6 +110,15 @@ const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {
       agentStatus: null,
     })
   ),
+  updateRecency: mock(() =>
+    Promise.resolve({
+      recency: Date.now(),
+      streaming: false,
+      lastModel: null,
+      lastThinkingLevel: null,
+      agentStatus: null,
+    })
+  ),
 };
 const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
   cleanup: mock(() => Promise.resolve()),
@@ -3143,6 +3152,7 @@ describe("WorkspaceService metadata listeners", () => {
     );
 
     aiService.emit("error", {
+      type: "error",
       workspaceId,
       messageId: "msg-1",
       error: "rate limited",
