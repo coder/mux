@@ -67,13 +67,9 @@ describe("built-in agent definitions", () => {
     expect(removed).not.toContain("agent_skill_read_file");
   });
 
-  test("analytics_query is restricted to the mux (Chat With Mux) agent", () => {
+  test("analytics_query remains unavailable in general-purpose built-in agents", () => {
     const pkgs = getBuiltInAgentDefinitions();
     const byId = new Map(pkgs.map((pkg) => [pkg.id, pkg] as const));
-
-    const mux = byId.get("mux");
-    expect(mux).toBeTruthy();
-    expect(mux?.frontmatter.tools?.add ?? []).toContain("analytics_query");
 
     const exec = byId.get("exec");
     expect(exec).toBeTruthy();

@@ -35,14 +35,6 @@ import type { MCPHttpServerInfo, MCPServerInfo } from "@/common/types/mcp";
 import type { MCPOAuthAuthStatus } from "@/common/types/mcpOauth";
 import type { ChatStats } from "@/common/types/chatStats";
 import {
-  MUX_HELP_CHAT_AGENT_ID,
-  MUX_HELP_CHAT_WORKSPACE_ID,
-  MUX_HELP_CHAT_WORKSPACE_NAME,
-  MUX_HELP_CHAT_WORKSPACE_TITLE,
-} from "@/common/constants/muxChat";
-import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
-import { getWorkspaceLastReadKey } from "@/common/constants/storage";
-import {
   normalizeRuntimeEnablement,
   RUNTIME_ENABLEMENT_IDS,
   type RuntimeEnablementId,
@@ -385,41 +377,8 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     runtimeStatuses = new Map<string, "running" | "stopped" | "unknown" | "unsupported">(),
   } = options;
 
-  // App now boots into the built-in mux-chat workspace by default.
-  // Ensure Storybook mocks always include it so stories don't render "Workspace not found".
-  const muxChatProjectPath = "/Users/dev/.mux/system/chat-with-mux";
-  const muxChatWorkspace: FrontendWorkspaceMetadata = {
-    id: MUX_HELP_CHAT_WORKSPACE_ID,
-    name: MUX_HELP_CHAT_WORKSPACE_NAME,
-    title: MUX_HELP_CHAT_WORKSPACE_TITLE,
-    projectName: "Mux",
-    projectPath: muxChatProjectPath,
-    namedWorkspacePath: muxChatProjectPath,
-    runtimeConfig: { type: "local" },
-    agentId: MUX_HELP_CHAT_AGENT_ID,
-  };
-
-  const workspaces = inputWorkspaces.some((w) => w.id === MUX_HELP_CHAT_WORKSPACE_ID)
-    ? inputWorkspaces
-    : [muxChatWorkspace, ...inputWorkspaces];
-
-  // Keep Storybook aligned with app behavior: the built-in Mux chat workspace belongs to a
-  // system project so user-facing project lists can hide it while still rendering sidebar affordances.
+  const workspaces = inputWorkspaces;
   const projects = new Map(providedProjects);
-  const muxChatProject = projects.get(muxChatProjectPath);
-  if (muxChatProject) {
-    projects.set(muxChatProjectPath, { ...muxChatProject, projectKind: "system" });
-  } else {
-    projects.set(muxChatProjectPath, { workspaces: [], projectKind: "system" });
-  }
-
-  // Keep Storybook's built-in mux-help workspace behavior deterministic:
-  // if stories haven't seeded a read baseline, treat it as "known but never read"
-  // rather than "unknown workspace" so the unread badge can render when recency exists.
-  const muxHelpLastReadKey = getWorkspaceLastReadKey(MUX_HELP_CHAT_WORKSPACE_ID);
-  if (readPersistedState<number | null>(muxHelpLastReadKey, null) === null) {
-    updatePersistedState(muxHelpLastReadKey, 0);
-  }
   const workspaceMap = new Map(workspaces.map((w) => [w.id, w]));
 
   // Terminal sessions are used by RightSidebar and TerminalView.
@@ -512,15 +471,6 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         uiRoutable: false,
         subagentRunnable: true,
         base: "exec",
-      },
-      {
-        id: "mux",
-        scope: "built-in",
-        name: "Chat With Mux",
-        description: "Configure global Mux settings",
-        uiSelectable: false,
-        uiRoutable: false,
-        subagentRunnable: false,
       },
     ] satisfies AgentDefinitionDescriptor[]);
 

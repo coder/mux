@@ -17,7 +17,6 @@ import type { ThinkingLevel } from "@/common/types/thinking";
 import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar/ProjectSidebar";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import type { MuxDeepLinkPayload } from "@/common/types/deepLink";
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import {
   deleteWorkspaceStorage,
   getAgentIdKey,
@@ -1001,9 +1000,6 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     if (!currentWorkspaceId) return;
     if (workspaceMetadata.has(currentWorkspaceId)) return;
 
-    // mux-chat registers asynchronously after initial load — don't treat it as stale.
-    if (currentWorkspaceId === MUX_HELP_CHAT_WORKSPACE_ID) return;
-
     // If metadata is empty, a transient backend failure may have caused
     // workspace.list to return nothing — don't clear a potentially valid route.
     if (workspaceMetadata.size === 0) return;
@@ -1434,14 +1430,9 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   );
   const beginWorkspaceCreation = useCallback(
     (projectPath: string, sectionId?: string) => {
-      if (workspaceMetadata.get(MUX_HELP_CHAT_WORKSPACE_ID)?.projectPath === projectPath) {
-        navigateToWorkspace(MUX_HELP_CHAT_WORKSPACE_ID);
-        return;
-      }
-
       navigateToProject(projectPath, sectionId);
     },
-    [navigateToProject, navigateToWorkspace, workspaceMetadata]
+    [navigateToProject]
   );
   // Persist section selection + URL updates so draft section switches stick across navigation.
   const updateWorkspaceDraftSection = useCallback(
@@ -1579,7 +1570,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
       const workspaceRecency = workspaceStore.getWorkspaceRecency();
       const recentWorkspace = [...workspaceMetadata.values()]
-        .filter((workspace) => workspace.projectPath && workspace.id !== MUX_HELP_CHAT_WORKSPACE_ID)
+        .filter((workspace) => workspace.projectPath)
         .sort((a, b) => (workspaceRecency[b.id] ?? 0) - (workspaceRecency[a.id] ?? 0))[0];
 
       if (!recentWorkspace) return;

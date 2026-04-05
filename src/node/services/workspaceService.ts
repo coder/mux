@@ -5,9 +5,7 @@ import assert from "@/common/utils/assert";
 import { DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR } from "@/common/config/worktreeArchiveBehavior";
 import type { WorktreeArchiveSnapshot } from "@/common/schemas/project";
 import { isWorkspaceArchived } from "@/common/utils/archive";
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
-import { getMuxHelpChatProjectPath } from "@/node/constants/muxChat";
 import type { Config } from "@/node/config";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
@@ -2123,11 +2121,6 @@ export class WorkspaceService extends EventEmitter {
     runtimeConfig?: RuntimeConfig,
     sectionId?: string
   ): Promise<Result<{ metadata: FrontendWorkspaceMetadata }>> {
-    // Chat with Mux is a built-in system workspace; it cannot host additional workspaces.
-    if (projectPath === getMuxHelpChatProjectPath(this.config.rootDir)) {
-      return Err("Cannot create workspaces in the Chat with Mux system project");
-    }
-
     // Validate workspace name
     const validation = validateWorkspaceName(branchName);
     if (!validation.valid) {
@@ -2391,12 +2384,6 @@ export class WorkspaceService extends EventEmitter {
       }));
       const primaryProject = normalizedProjects[0];
       assert(primaryProject, "createMultiProject requires a primary project");
-
-      for (const project of normalizedProjects) {
-        if (project.projectPath === getMuxHelpChatProjectPath(this.config.rootDir)) {
-          return Err("Cannot create workspaces in the Chat with Mux system project");
-        }
-      }
 
       const configSnapshot = this.config.loadConfigOrDefault();
       for (const project of normalizedProjects) {
@@ -2747,10 +2734,6 @@ export class WorkspaceService extends EventEmitter {
   }
 
   async remove(workspaceId: string, force = false): Promise<Result<void>> {
-    if (workspaceId === MUX_HELP_CHAT_WORKSPACE_ID) {
-      return Err("Cannot remove the Chat with Mux system workspace");
-    }
-
     // Idempotent: if already removing, return success to prevent race conditions
     if (this.removingWorkspaces.has(workspaceId)) {
       return Ok(undefined);
@@ -3928,11 +3911,6 @@ export class WorkspaceService extends EventEmitter {
    * whether to show a destructive confirmation dialog.
    */
   async preflightArchive(workspaceId: string): Promise<Result<ArchivePreflightResult>> {
-    if (workspaceId === MUX_HELP_CHAT_WORKSPACE_ID) {
-      // No special preflight needed for the help chat — archive will reject it later.
-      return Ok({ kind: "ready" as const });
-    }
-
     try {
       const workspace = this.config.findWorkspace(workspaceId);
       if (!workspace) {
@@ -3985,10 +3963,6 @@ export class WorkspaceService extends EventEmitter {
     workspaceId: string,
     acknowledgedUntrackedPaths?: string[]
   ): Promise<Result<ArchiveWorkspaceResult>> {
-    if (workspaceId === MUX_HELP_CHAT_WORKSPACE_ID) {
-      return Err("Cannot archive the Chat with Mux system workspace");
-    }
-
     this.archivingWorkspaces.add(workspaceId);
 
     try {
@@ -4210,10 +4184,6 @@ export class WorkspaceService extends EventEmitter {
    * Unarchive a workspace. Restores it to the main sidebar view.
    */
   async unarchive(workspaceId: string): Promise<Result<void>> {
-    if (workspaceId === MUX_HELP_CHAT_WORKSPACE_ID) {
-      return Err("Cannot unarchive the Chat with Mux system workspace");
-    }
-
     try {
       const workspace = this.config.findWorkspace(workspaceId);
       if (!workspace) {
@@ -4618,9 +4588,6 @@ export class WorkspaceService extends EventEmitter {
       const allMetadata = await this.config.getAllWorkspaceMetadata();
 
       const candidates = allMetadata.filter((metadata) => {
-        if (metadata.id === MUX_HELP_CHAT_WORKSPACE_ID) {
-          return false;
-        }
         if (metadata.projectPath !== targetProjectPath) {
           return false;
         }
@@ -4947,10 +4914,6 @@ export class WorkspaceService extends EventEmitter {
     pendingAutoTitle?: boolean
   ): Promise<Result<{ metadata: FrontendWorkspaceMetadata; projectPath: string }>> {
     try {
-      if (sourceWorkspaceId === MUX_HELP_CHAT_WORKSPACE_ID) {
-        return Err("Cannot fork the Chat with Mux system workspace");
-      }
-
       if (this.aiService.isStreaming(sourceWorkspaceId)) {
         await this.historyService.commitPartial(sourceWorkspaceId);
       }

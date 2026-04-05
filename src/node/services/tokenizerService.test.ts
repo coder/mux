@@ -4,7 +4,7 @@ import type { SessionUsageService } from "./sessionUsageService";
 import * as tokenizerUtils from "@/node/utils/main/tokenizer";
 import * as statsUtils from "@/common/utils/tokens/tokenStatsCalculator";
 import { createMuxMessage } from "@/common/types/message";
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
+const GLOBAL_WORKSPACE_ID = "workspace-global";
 
 describe("TokenizerService", () => {
   let sessionUsageService: SessionUsageService;
@@ -111,7 +111,7 @@ describe("TokenizerService", () => {
         undefined
       );
 
-      await service.calculateStats(MUX_HELP_CHAT_WORKSPACE_ID, messages, "gpt-4");
+      await service.calculateStats(GLOBAL_WORKSPACE_ID, messages, "gpt-4");
       await service.calculateStats("another-workspace", messages, "gpt-4");
 
       expect(statsSpy).toHaveBeenNthCalledWith(1, messages, "gpt-4", null, {

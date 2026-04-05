@@ -1,6 +1,5 @@
 import { EventEmitter } from "events";
 import { spawn } from "child_process";
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { secretsToRecord, type ExternalSecretResolver } from "@/common/types/secrets";
 import type { Config } from "@/node/config";
 import { getMuxEnv, getRuntimeType } from "@/node/runtime/initHook";
@@ -152,13 +151,12 @@ export class TerminalService {
 
       // Secrets are local/worktree only. Remote/docker-style transports would expose env via command args
       // unless we add a dedicated secure propagation path.
-      const secrets =
-        shouldInjectLocalEnv && workspaceMetadata.id !== MUX_HELP_CHAT_WORKSPACE_ID
-          ? await secretsToRecord(
-              this.config.getEffectiveSecrets(workspaceMetadata.projectPath),
-              this.opResolver
-            )
-          : {};
+      const secrets = shouldInjectLocalEnv
+        ? await secretsToRecord(
+            this.config.getEffectiveSecrets(workspaceMetadata.projectPath),
+            this.opResolver
+          )
+        : {};
 
       // Any process launched from this terminal inherits these variables.
       // Proxy URI propagation allows terminal tools to construct externally reachable links.

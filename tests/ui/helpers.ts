@@ -167,8 +167,7 @@ export async function setupWorkspaceView(
 /**
  * Navigate to a project's creation page (ProjectPage) by clicking the project row.
  *
- * Note: Mux now boots into the built-in mux-chat workspace, so tests that need the
- * creation UI must explicitly open it.
+ * Tests that need the creation UI must explicitly open the project page.
  */
 export async function openProjectCreationView(
   view: RenderedApp,

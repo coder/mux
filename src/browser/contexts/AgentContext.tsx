@@ -22,7 +22,6 @@ import {
   getDisableWorkspaceAgentsKey,
   GLOBAL_SCOPE_ID,
 } from "@/common/constants/storage";
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 import { sortAgentsStable } from "@/browser/utils/agents";
 import { normalizeAgentId, resolveRemovedBuiltinAgentId } from "@/common/utils/agentIds";
@@ -232,11 +231,9 @@ function AgentProviderWithState(props: {
   }, [fetchAgents, props.projectPath, props.workspaceId, disableWorkspaceAgents]);
 
   // Project-scoped providers should inherit the global default agent until a
-  // project-scoped preference is explicitly set.
-  // Workspace agent is backend-fixed for mux-chat and all child/subagent workspaces.
-  // Derive from existing metadata fields — no extra stored state needed.
-  const isCurrentAgentLocked =
-    props.workspaceId === MUX_HELP_CHAT_WORKSPACE_ID || currentMeta?.parentWorkspaceId != null;
+  // project-scoped preference is explicitly set. Child/subagent workspaces keep
+  // the backend-assigned agent so local persisted overrides cannot drift.
+  const isCurrentAgentLocked = currentMeta?.parentWorkspaceId != null;
 
   // For locked workspaces, use the backend-assigned agent — persisted localStorage
   // may contain a stale selection from before locking, and the picker is disabled

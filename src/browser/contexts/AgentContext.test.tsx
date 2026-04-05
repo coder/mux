@@ -8,7 +8,6 @@ import { GlobalWindow } from "happy-dom";
 
 import { useWorkspaceStoreRaw as getWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { GLOBAL_SCOPE_ID, getAgentIdKey, getProjectScopeId } from "@/common/constants/storage";
 import { requireTestModule } from "@/browser/testUtils";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
@@ -137,9 +136,9 @@ const REVIEW_PROJECT_AGENT: AgentDefinitionDescriptor = {
 };
 
 const LOCKED_AGENT: AgentDefinitionDescriptor = {
-  id: "mux",
+  id: "locked_agent",
   scope: "built-in",
-  name: "Mux",
+  name: "Locked Agent",
   uiSelectable: false,
   uiRoutable: true,
   subagentRunnable: false,
@@ -370,9 +369,13 @@ describe("AgentContext", () => {
 
   test("shortcut actions do not override a locked workspace agent", async () => {
     const projectPath = "/tmp/project";
+    const lockedWorkspaceId = "locked-workspace";
     mockAgentDefinitions = [EXEC_AGENT, PLAN_AGENT];
-    mockWorkspaceMetadata.set(MUX_HELP_CHAT_WORKSPACE_ID, { agentId: "mux" });
-    window.localStorage.setItem(getAgentIdKey(MUX_HELP_CHAT_WORKSPACE_ID), JSON.stringify("exec"));
+    mockWorkspaceMetadata.set(lockedWorkspaceId, {
+      parentWorkspaceId: "parent-workspace",
+      agentId: "exec",
+    });
+    window.localStorage.setItem(getAgentIdKey(lockedWorkspaceId), JSON.stringify("plan"));
 
     let contextValue: AgentContextValue | undefined;
     let openPickerEvents = 0;
@@ -383,14 +386,14 @@ describe("AgentContext", () => {
 
     try {
       renderAgentHarness({
-        workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
+        workspaceId: lockedWorkspaceId,
         projectPath,
         onChange: (value) => (contextValue = value),
       });
 
       await waitFor(() => {
         // Backend-assigned agent overrides stale localStorage in locked workspaces.
-        expect(contextValue?.agentId).toBe("mux");
+        expect(contextValue?.agentId).toBe("exec");
       });
 
       window.api = { platform: "darwin", versions: {} };
@@ -418,7 +421,7 @@ describe("AgentContext", () => {
       });
 
       await waitFor(() => {
-        expect(contextValue?.agentId).toBe("mux");
+        expect(contextValue?.agentId).toBe("exec");
       });
       expect(openPickerEvents).toBe(0);
     } finally {

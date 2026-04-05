@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { describe, it, expect } from "bun:test";
 import type { ToolExecutionOptions } from "ai";
 
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
+const GLOBAL_WORKSPACE_ID = "workspace-global";
 import type { MuxToolScope } from "@/common/types/toolScope";
 import type { AgentSkillDeleteToolResult } from "@/common/types/tools";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
@@ -172,7 +172,7 @@ class RemotePathMappedRuntime extends LocalRuntime {
 
 async function createDeleteTool(
   muxHome: string,
-  workspaceId: string = MUX_HELP_CHAT_WORKSPACE_ID,
+  workspaceId: string = GLOBAL_WORKSPACE_ID,
   muxScope?: MuxToolScope
 ) {
   const workspaceSessionDir = await createWorkspaceSessionDir(muxHome, workspaceId);
@@ -231,7 +231,7 @@ describe("agent_skill_delete", () => {
       projectStorageAuthority: "host-local",
     };
 
-    const tool = await createDeleteTool(tempDir.path, MUX_HELP_CHAT_WORKSPACE_ID, projectScope);
+    const tool = await createDeleteTool(tempDir.path, GLOBAL_WORKSPACE_ID, projectScope);
     const result = (await tool.execute!(
       {
         name: "demo-skill",
@@ -622,8 +622,8 @@ describe("agent_skill_delete", () => {
       );
 
       const baseConfig = createTestToolConfig(tempDir.path, {
-        workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
-        sessionsDir: path.join(muxDir, "sessions", MUX_HELP_CHAT_WORKSPACE_ID),
+        workspaceId: GLOBAL_WORKSPACE_ID,
+        sessionsDir: path.join(muxDir, "sessions", GLOBAL_WORKSPACE_ID),
         muxScope: {
           type: "global",
           muxHome: muxDir,
@@ -878,7 +878,7 @@ describe("agent_skill_delete", () => {
       projectStorageAuthority: "host-local",
     };
 
-    const tool = await createDeleteTool(tempDir.path, MUX_HELP_CHAT_WORKSPACE_ID, projectScope);
+    const tool = await createDeleteTool(tempDir.path, GLOBAL_WORKSPACE_ID, projectScope);
     const result = (await tool.execute!(
       { name: "demo-skill", target: "skill", confirm: true },
       mockToolCallOptions

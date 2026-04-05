@@ -13,7 +13,7 @@ tools:
   remove:
     # Plan should not apply sub-agent patches.
     - task_apply_git_patch
-    # Global config tools are restricted to the mux agent
+    # Global config and catalog tools stay out of general-purpose agents
     - mux_agents_.*
     - agent_skill_write
     - agent_skill_delete

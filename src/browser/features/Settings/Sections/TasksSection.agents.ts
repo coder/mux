@@ -81,15 +81,6 @@ export const FALLBACK_AGENTS: AgentDefinitionDescriptor[] = [
     base: "exec",
   },
   {
-    id: "mux",
-    scope: "built-in",
-    name: "Chat With Mux",
-    description: "Configure global Mux settings",
-    uiSelectable: false,
-    uiRoutable: false,
-    subagentRunnable: false,
-  },
-  {
     id: "name_workspace",
     scope: "built-in",
     name: "Name Workspace",

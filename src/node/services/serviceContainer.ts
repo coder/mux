@@ -1,15 +1,6 @@
 import * as path from "path";
-import * as fsPromises from "fs/promises";
-import {
-  MUX_HELP_CHAT_AGENT_ID,
-  MUX_HELP_CHAT_WORKSPACE_ID,
-  MUX_HELP_CHAT_WORKSPACE_NAME,
-  MUX_HELP_CHAT_WORKSPACE_TITLE,
-} from "@/common/constants/muxChat";
-import { getMuxHelpChatProjectPath } from "@/node/constants/muxChat";
 import { DEFAULT_CODER_ARCHIVE_BEHAVIOR } from "@/common/config/coderArchiveBehavior";
 import { DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR } from "@/common/config/worktreeArchiveBehavior";
-import { createMuxMessage } from "@/common/types/message";
 import { log } from "@/node/services/log";
 import type { Config } from "@/node/config";
 import { createCoreServices, type CoreServices } from "@/node/services/coreServices";
@@ -77,22 +68,6 @@ import { DesktopSessionManager } from "@/node/services/desktop/DesktopSessionMan
 import { DesktopTokenManager } from "@/node/services/desktop/DesktopTokenManager";
 import type { ORPCContext } from "@/node/orpc/context";
 import type { ExternalSecretResolver } from "@/common/types/secrets";
-
-const MUX_HELP_CHAT_WELCOME_MESSAGE_ID = "mux-chat-welcome";
-const MUX_HELP_CHAT_WELCOME_MESSAGE = `Hi, I'm Mux.
-
-This is your built-in **Chat with Mux** workspace — a safe place to ask questions about Mux itself.
-
-I can help you:
-- Configure global agent behavior by editing **~/.mux/AGENTS.md** (I'll show a diff and ask before writing).
-- Pick models/providers and explain Mux modes + tool policies.
-- Troubleshoot common setup issues (keys, runtimes, workspaces, etc.).
-
-Try asking:
-- "What does AGENTS.md do?"
-- "Help me write global instructions for code reviews"
-- "How do I set up an OpenAI / Anthropic key in Mux?"
-`;
 
 /**
  * ServiceContainer - Central dependency container for all backend services.
@@ -459,136 +434,10 @@ export class ServiceContainer {
       log.warn("Background mux SSH config setup failed", { error });
     });
 
-    // Ensure the built-in Chat with Mux system workspace exists.
-    // Defensive: startup-time initialization must never crash the app.
-    const ensureMuxChatWorkspaceStartedAt = Date.now();
-    try {
-      await this.ensureMuxChatWorkspace();
-    } catch (error) {
-      log.warn("[ServiceContainer] Failed to ensure Chat with Mux workspace", { error });
-    } finally {
-      stepDurationsMs.ensureMuxChatWorkspace = Date.now() - ensureMuxChatWorkspaceStartedAt;
-    }
-
     log.info("[startup] ServiceContainer.initialize completed", {
       totalMs: Date.now() - startupStartedAt,
       stepDurationsMs,
     });
-  }
-
-  private async ensureMuxChatWorkspace(): Promise<void> {
-    const projectPath = getMuxHelpChatProjectPath(this.config.rootDir);
-
-    // Ensure the directory exists (LocalRuntime uses project dir directly).
-    await fsPromises.mkdir(projectPath, { recursive: true });
-
-    await this.config.editConfig((config) => {
-      // Dev builds can run with a different MUX_ROOT (for example ~/.mux-dev).
-      // If config.json still has the built-in mux-chat workspace under an older root
-      // (for example ~/.mux), the sidebar can show duplicate "Chat with Mux" entries.
-      // Only treat entries as stale when they still look like a system Mux project so
-      // we do not delete unrelated legacy user workspaces whose generated ID happened
-      // to collide with "mux-chat" (e.g. project basename "mux" + workspace "chat").
-      const staleProjectPaths: string[] = [];
-      for (const [existingProjectPath, existingProjectConfig] of config.projects) {
-        if (existingProjectPath === projectPath) {
-          continue;
-        }
-
-        const isSystemMuxProjectPath =
-          path.basename(existingProjectPath) === "Mux" &&
-          path.basename(path.dirname(existingProjectPath)) === "system";
-
-        if (!isSystemMuxProjectPath) {
-          continue;
-        }
-
-        existingProjectConfig.workspaces = existingProjectConfig.workspaces.filter((workspace) => {
-          const isMuxChatWorkspace = workspace.id === MUX_HELP_CHAT_WORKSPACE_ID;
-          if (!isMuxChatWorkspace) {
-            return true;
-          }
-
-          const looksLikeSystemMuxChat =
-            workspace.agentId === MUX_HELP_CHAT_AGENT_ID ||
-            workspace.path === existingProjectPath ||
-            workspace.name === MUX_HELP_CHAT_WORKSPACE_NAME ||
-            workspace.title === MUX_HELP_CHAT_WORKSPACE_TITLE;
-
-          return !looksLikeSystemMuxChat;
-        });
-
-        if (existingProjectConfig.workspaces.length === 0) {
-          staleProjectPaths.push(existingProjectPath);
-        }
-      }
-
-      for (const staleProjectPath of staleProjectPaths) {
-        config.projects.delete(staleProjectPath);
-      }
-
-      let projectConfig = config.projects.get(projectPath);
-      if (!projectConfig) {
-        projectConfig = { workspaces: [] };
-        config.projects.set(projectPath, projectConfig);
-      }
-
-      // Foundational invariant: built-in project is always marked system.
-      projectConfig.projectKind = "system";
-
-      const existing = projectConfig.workspaces.find((w) => w.id === MUX_HELP_CHAT_WORKSPACE_ID);
-
-      // Self-heal: enforce invariants for the system workspace and collapse duplicates
-      // in the active system project down to exactly one mux-chat entry.
-      const muxChatWorkspace = {
-        ...existing,
-        path: projectPath,
-        id: MUX_HELP_CHAT_WORKSPACE_ID,
-        name: MUX_HELP_CHAT_WORKSPACE_NAME,
-        title: MUX_HELP_CHAT_WORKSPACE_TITLE,
-        agentId: MUX_HELP_CHAT_AGENT_ID,
-        createdAt: existing?.createdAt ?? new Date().toISOString(),
-        runtimeConfig: { type: "local" } as const,
-        archivedAt: undefined,
-        unarchivedAt: undefined,
-      };
-
-      projectConfig.workspaces = [
-        ...projectConfig.workspaces.filter(
-          (workspace) => workspace.id !== MUX_HELP_CHAT_WORKSPACE_ID
-        ),
-        muxChatWorkspace,
-      ];
-
-      return config;
-    });
-
-    await this.ensureMuxChatWelcomeMessage();
-  }
-
-  private async ensureMuxChatWelcomeMessage(): Promise<void> {
-    // Only need to check if any history exists — avoid parsing the entire file
-    if (await this.historyService.hasHistory(MUX_HELP_CHAT_WORKSPACE_ID)) {
-      return;
-    }
-
-    const message = createMuxMessage(
-      MUX_HELP_CHAT_WELCOME_MESSAGE_ID,
-      "assistant",
-      MUX_HELP_CHAT_WELCOME_MESSAGE,
-      // Note: This message should be visible in the UI, so it must NOT be marked synthetic.
-      { timestamp: Date.now() }
-    );
-
-    const appendResult = await this.historyService.appendToHistory(
-      MUX_HELP_CHAT_WORKSPACE_ID,
-      message
-    );
-    if (!appendResult.success) {
-      log.warn("[ServiceContainer] Failed to seed mux-chat welcome message", {
-        error: appendResult.error,
-      });
-    }
   }
 
   /**

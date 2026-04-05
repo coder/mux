@@ -612,7 +612,7 @@ describe("ProjectContext", () => {
     expect(result).toBe("/user-proj");
   });
 
-  test("resolveNewChatProjectPath falls back to system project when no user projects", async () => {
+  test("resolveNewChatProjectPath returns null when no user projects exist", async () => {
     createMockAPI({
       list: () => Promise.resolve([["/system-only", { workspaces: [], projectKind: "system" }]]),
     });
@@ -621,7 +621,7 @@ describe("ProjectContext", () => {
     await waitFor(() => expect(ctx().hasAnyProject).toBe(true));
 
     const result = ctx().resolveNewChatProjectPath({});
-    expect(result).toBe("/system-only");
+    expect(result).toBeNull();
   });
 
   test("resolveNewChatProjectPath returns null when no projects exist", async () => {

@@ -1,7 +1,7 @@
 import { describe, expect, it, spyOn } from "bun:test";
 import type { ToolExecutionOptions } from "ai";
 
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
+const GLOBAL_WORKSPACE_ID = "workspace-global";
 import type { SkillsCatalogReadToolResult } from "@/common/types/tools";
 import { createSkillsCatalogReadTool } from "./skills_catalog_read";
 import * as catalogFetch from "./skillsCatalogFetch";
@@ -32,8 +32,8 @@ This skill is not advertised.
 `;
 
 describe("skills_catalog_read", () => {
-  it("allows read from non-mux-chat workspace", async () => {
-    using tempDir = new TestTempDir("test-skills-catalog-read-non-mux-chat-workspace");
+  it("allows read from project workspace", async () => {
+    using tempDir = new TestTempDir("test-skills-catalog-read-project-workspace");
     const config = createTestToolConfig(tempDir.path, {
       workspaceId: "my-project",
     });
@@ -64,7 +64,7 @@ describe("skills_catalog_read", () => {
   it("returns parsed skill content on success", async () => {
     using tempDir = new TestTempDir("test-skills-catalog-read-success");
     const config = createTestToolConfig(tempDir.path, {
-      workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
+      workspaceId: GLOBAL_WORKSPACE_ID,
     });
 
     const fetchContentSpy = spyOn(catalogFetch, "fetchSkillContent").mockResolvedValue({
@@ -93,7 +93,7 @@ describe("skills_catalog_read", () => {
   it("preserves canonical frontmatter fields such as advertise", async () => {
     using tempDir = new TestTempDir("test-skills-catalog-read-advertise");
     const config = createTestToolConfig(tempDir.path, {
-      workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
+      workspaceId: GLOBAL_WORKSPACE_ID,
     });
 
     const fetchContentSpy = spyOn(catalogFetch, "fetchSkillContent").mockResolvedValue({
@@ -120,7 +120,7 @@ describe("skills_catalog_read", () => {
   it("returns error when fetch fails", async () => {
     using tempDir = new TestTempDir("test-skills-catalog-read-fetch-fail");
     const config = createTestToolConfig(tempDir.path, {
-      workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
+      workspaceId: GLOBAL_WORKSPACE_ID,
     });
 
     const fetchContentSpy = spyOn(catalogFetch, "fetchSkillContent").mockRejectedValue(
@@ -144,7 +144,7 @@ describe("skills_catalog_read", () => {
   it("returns error on invalid SKILL.md content", async () => {
     using tempDir = new TestTempDir("test-skills-catalog-read-invalid-skill-md");
     const config = createTestToolConfig(tempDir.path, {
-      workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
+      workspaceId: GLOBAL_WORKSPACE_ID,
     });
 
     const fetchContentSpy = spyOn(catalogFetch, "fetchSkillContent").mockResolvedValue({

@@ -5,7 +5,7 @@ import { describe, it, expect } from "bun:test";
 import type { ToolExecutionOptions } from "ai";
 
 import { AgentSkillReadToolResultSchema } from "@/common/utils/tools/toolDefinitions";
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
+const GLOBAL_WORKSPACE_ID = "workspace-global";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import { createAgentSkillReadTool } from "./agent_skill_read";
 import { createTestToolConfig, TestTempDir } from "./testHelpers";
@@ -123,9 +123,9 @@ class RemotePathMappedRuntime extends LocalRuntime {
 
 describe("agent_skill_read", () => {
   it("allows reading built-in skills", async () => {
-    using tempDir = new TestTempDir("test-agent-skill-read-mux-chat");
+    using tempDir = new TestTempDir("test-agent-skill-read-global-scope");
     const baseConfig = createTestToolConfig(tempDir.path, {
-      workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
+      workspaceId: GLOBAL_WORKSPACE_ID,
     });
 
     const tool = createAgentSkillReadTool(baseConfig);
@@ -148,7 +148,7 @@ describe("agent_skill_read", () => {
     }
   });
 
-  it("allows reading global skills on disk in Chat with Mux workspace", async () => {
+  it("allows reading global skills on disk in global-scope workspace", async () => {
     using tempDir = new TestTempDir("test-agent-skill-read-global");
     const previousMuxRoot = process.env.MUX_ROOT;
     process.env.MUX_ROOT = tempDir.path;
@@ -157,7 +157,7 @@ describe("agent_skill_read", () => {
       await writeGlobalSkill(tempDir.path, "foo");
 
       const baseConfig = createTestToolConfig(tempDir.path, {
-        workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
+        workspaceId: GLOBAL_WORKSPACE_ID,
       });
       const tool = createAgentSkillReadTool(baseConfig);
 
@@ -182,7 +182,7 @@ describe("agent_skill_read", () => {
     }
   });
 
-  it("prefers global skills over workspace-local shadows in Chat with Mux workspace", async () => {
+  it("prefers global skills over workspace-local shadows in global-scope workspace", async () => {
     using tempDir = new TestTempDir("test-agent-skill-read-global-shadowing");
 
     await writeProjectSkill(tempDir.path, "shadowed-skill", {
@@ -195,7 +195,7 @@ describe("agent_skill_read", () => {
     });
 
     const baseConfig = createTestToolConfig(tempDir.path, {
-      workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
+      workspaceId: GLOBAL_WORKSPACE_ID,
     });
     const tool = createAgentSkillReadTool(baseConfig);
 
@@ -218,7 +218,7 @@ describe("agent_skill_read", () => {
     }
   });
 
-  it("allows reading project skills on disk outside Chat with Mux workspace", async () => {
+  it("allows reading project skills on disk outside global-scope workspace", async () => {
     using tempDir = new TestTempDir("test-agent-skill-read-project");
     await writeProjectSkill(tempDir.path, "project-skill");
 

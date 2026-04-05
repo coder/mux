@@ -46,7 +46,6 @@ function createSessionUsage(cost: number): MockSessionUsage {
 }
 
 async function openFirstProjectCreationView(storyRoot: HTMLElement): Promise<void> {
-  // App now boots into the built-in mux-chat workspace.
   // Navigate to the first project's creation page so creation/banner UI is visible.
 
   const projectRow = await waitFor(

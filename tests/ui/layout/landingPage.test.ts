@@ -3,7 +3,7 @@
  *
  * The landing page is the default startup view — users see gateway credits,
  * 7-day stats, and recent workspaces before explicitly choosing a workspace.
- * No auto-navigation to mux-chat or any other workspace occurs on startup.
+ * No auto-navigation to any workspace occurs on startup.
  */
 
 import "../dom";

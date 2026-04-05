@@ -11,7 +11,6 @@
  * - Tool policy composition (agent → caller)
  */
 
-import { MUX_HELP_CHAT_AGENT_ID } from "@/common/constants/muxChat";
 import { AgentIdSchema } from "@/common/orpc/schemas";
 import type { SendMessageError } from "@/common/types/errors";
 import type { Result } from "@/common/types/result";
@@ -106,8 +105,6 @@ export async function resolveAgentForStream(
   // - Main workspaces use the requested agentId (frontend), falling back to exec.
   const requestedAgentIdRaw =
     (metadata.parentWorkspaceId ? (metadata.agentId ?? metadata.agentType) : undefined) ??
-    // Keep mux-chat bound to the mux agent even when no explicit request is provided.
-    (metadata.agentId === MUX_HELP_CHAT_AGENT_ID ? MUX_HELP_CHAT_AGENT_ID : undefined) ??
     (typeof rawAgentId === "string" ? rawAgentId : undefined) ??
     "exec";
   const requestedAgentIdNormalized = requestedAgentIdRaw.trim().toLowerCase();

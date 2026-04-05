@@ -14,7 +14,6 @@ import {
   normalizeTaskGroupLabel,
 } from "@/common/utils/tools/taskGroups";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { isDevcontainerRuntime } from "@/common/types/runtime";
 import { getWorkspaceLastReadKey } from "@/common/constants/storage";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
@@ -442,7 +441,6 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
 
   // Destructure metadata for convenience
   const { id: workspaceId, namedWorkspacePath } = metadata;
-  const isMuxHelpChat = workspaceId === MUX_HELP_CHAT_WORKSPACE_ID;
   const workspaceHeartbeatsEnabled = useExperimentValue(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS);
   const isInitializing = metadata.isInitializing === true;
   const isRemoving = isRemovingProp === true || metadata.isRemoving === true;
@@ -625,7 +623,6 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
   const shouldShowQuickArchiveButton =
     !isDisabled &&
     !isEditing &&
-    !isMuxHelpChat &&
     !isSubAgentRow &&
     !showCompletedChildrenIndicator &&
     !showsVisibleStatusDot;
@@ -898,9 +895,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                   <WorkspaceActionsMenuContent
                     onEditTitle={startEditing}
                     onConfigureHeartbeat={
-                      workspaceHeartbeatsEnabled && !isMuxHelpChat
-                        ? () => setHeartbeatModalOpen(true)
-                        : null
+                      workspaceHeartbeatsEnabled ? () => setHeartbeatModalOpen(true) : null
                     }
                     onStopRuntime={
                       isRuntimeRunning && onStopRuntime
@@ -920,7 +915,6 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                     }}
                     onCloseMenu={() => ctxMenu.close()}
                     linkSharingEnabled={linkSharingEnabled === true}
-                    isMuxHelpChat={isMuxHelpChat}
                   />
                   {!isSelected && !isUnread && (
                     <PositionedMenuItem
@@ -968,7 +962,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                   />
                 </PopoverContent>
               </Popover>
-              {workspaceHeartbeatsEnabled && !isMuxHelpChat && (
+              {workspaceHeartbeatsEnabled && (
                 <WorkspaceHeartbeatModal
                   workspaceId={workspaceId}
                   open={heartbeatModalOpen}

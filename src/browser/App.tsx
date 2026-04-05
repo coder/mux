@@ -3,7 +3,6 @@ import { useRouter } from "./contexts/RouterContext";
 import { useLocation, useNavigate } from "react-router-dom";
 import "./styles/globals.css";
 import { useWorkspaceContext, toWorkspaceSelection } from "./contexts/WorkspaceContext";
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { useProjectContext } from "./contexts/ProjectContext";
 import type { WorkspaceSelection } from "./components/ProjectSidebar/ProjectSidebar";
 import { LeftSidebar } from "./components/LeftSidebar/LeftSidebar";
@@ -106,7 +105,6 @@ function AppInner() {
     setWorkspaceMetadata,
     removeWorkspace,
     updateWorkspaceTitle,
-    refreshWorkspaceMetadata,
     selectedWorkspace,
     setSelectedWorkspace,
     pendingNewWorkspaceProject,
@@ -237,27 +235,6 @@ function AppInner() {
   useEffect(() => {
     workspaceMetadataRef.current = workspaceMetadata;
   }, [workspaceMetadata]);
-
-  const handleOpenMuxChat = useCallback(() => {
-    // User requested an F1 shortcut to jump straight into Chat with Mux.
-    const metadata = workspaceMetadataRef.current.get(MUX_HELP_CHAT_WORKSPACE_ID);
-    setSelectedWorkspace(
-      metadata
-        ? toWorkspaceSelection(metadata)
-        : {
-            workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
-            projectPath: "",
-            projectName: "Mux",
-            namedWorkspacePath: "",
-          }
-    );
-
-    if (!metadata) {
-      refreshWorkspaceMetadata().catch((error) => {
-        console.error("Failed to refresh workspace metadata", error);
-      });
-    }
-  }, [refreshWorkspaceMetadata, setSelectedWorkspace]);
 
   // Update window title based on selected workspace
   // URL syncing is now handled by RouterContext
@@ -796,9 +773,6 @@ function AppInner() {
             : undefined;
           openCommandPalette(initialQuery);
         }
-      } else if (matchesKeybind(e, KEYBINDS.OPEN_MUX_CHAT)) {
-        e.preventDefault();
-        handleOpenMuxChat();
       } else if (matchesKeybind(e, KEYBINDS.TOGGLE_SIDEBAR)) {
         e.preventDefault();
         setSidebarCollapsed((prev) => !prev);
@@ -825,7 +799,6 @@ function AppInner() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
     handleNavigateWorkspace,
-    handleOpenMuxChat,
     setSidebarCollapsed,
     isCommandPaletteOpen,
     closeCommandPalette,

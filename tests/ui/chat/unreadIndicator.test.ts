@@ -19,7 +19,6 @@ import { preloadTestModules } from "../../ipc/setup";
 import { createAppHarness, type AppHarness } from "../harness";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { workspaceStore } from "@/browser/stores/WorkspaceStore";
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { getWorkspaceLastReadKey } from "@/common/constants/storage";
 import { detectDefaultTrunkBranch } from "@/node/git";
 
@@ -96,35 +95,6 @@ describe("Unread indicator (mock AI router)", () => {
       // but lastReadTimestamp should be set when we selected it
       expect(lastRead).toBeGreaterThan(0);
       expect(isUnread(lastRead)).toBe(false);
-    });
-
-    test("workspace with missing lastRead key is not unread by default", async () => {
-      // Regression for pre-feature/legacy workspaces where no per-workspace
-      // read baseline exists in localStorage.
-
-      // Ensure the target workspace has recency so this test is sensitive.
-      await waitFor(() => {
-        const { recencyTimestamp } = workspaceStore.getWorkspaceSidebarState(
-          MUX_HELP_CHAT_WORKSPACE_ID
-        );
-        expect(recencyTimestamp).not.toBeNull();
-      });
-
-      // Simulate legacy state: no persisted lastRead key for this workspace.
-      updatePersistedState(getWorkspaceLastReadKey(MUX_HELP_CHAT_WORKSPACE_ID), null);
-      expect(window.localStorage.getItem(getWorkspaceLastReadKey(MUX_HELP_CHAT_WORKSPACE_ID))).toBe(
-        null
-      );
-
-      // Missing read baseline should not surface unread by default.
-      await waitFor(() => {
-        const muxHelpButton = app.view.container.querySelector(
-          'button[aria-label="Open Chat with Mux"]'
-        ) as HTMLButtonElement | null;
-        expect(muxHelpButton).not.toBeNull();
-        const unreadDot = muxHelpButton?.querySelector('[aria-label="Unread messages"]');
-        expect(unreadDot).toBeNull();
-      });
     });
 
     test("recencyTimestamp updates when user sends a message", async () => {

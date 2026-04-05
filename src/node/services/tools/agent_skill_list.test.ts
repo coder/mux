@@ -5,7 +5,7 @@ import { describe, expect, it } from "bun:test";
 import type { ToolExecutionOptions } from "ai";
 
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
+const GLOBAL_WORKSPACE_ID = "workspace-global";
 import type { MuxToolScope } from "@/common/types/toolScope";
 import type { AgentSkillListToolResult } from "@/common/types/tools";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
@@ -513,16 +513,13 @@ describe("agent_skill_list", () => {
   it("operates on global skills root when scope is global", async () => {
     using tempDir = new TestTempDir("test-agent-skill-list-global");
 
-    const workspaceSessionDir = await createWorkspaceSessionDir(
-      tempDir.path,
-      MUX_HELP_CHAT_WORKSPACE_ID
-    );
+    const workspaceSessionDir = await createWorkspaceSessionDir(tempDir.path, GLOBAL_WORKSPACE_ID);
 
     await writeGlobalSkill(tempDir.path, "alpha-skill");
     await writeGlobalSkill(tempDir.path, "zeta-skill");
 
     const config = createTestToolConfig(tempDir.path, {
-      workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
+      workspaceId: GLOBAL_WORKSPACE_ID,
       sessionsDir: workspaceSessionDir,
       muxScope: {
         type: "global",
@@ -543,10 +540,7 @@ describe("agent_skill_list", () => {
   it("operates on project skills root when scope is project", async () => {
     using tempDir = new TestTempDir("test-agent-skill-list-project");
 
-    const workspaceSessionDir = await createWorkspaceSessionDir(
-      tempDir.path,
-      MUX_HELP_CHAT_WORKSPACE_ID
-    );
+    const workspaceSessionDir = await createWorkspaceSessionDir(tempDir.path, GLOBAL_WORKSPACE_ID);
 
     const projectRoot = path.join(tempDir.path, "my-project");
     await fs.mkdir(path.join(projectRoot, ".mux", "skills"), { recursive: true });
@@ -562,7 +556,7 @@ describe("agent_skill_list", () => {
     };
 
     const config = createTestToolConfig(tempDir.path, {
-      workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
+      workspaceId: GLOBAL_WORKSPACE_ID,
       sessionsDir: workspaceSessionDir,
       muxScope: projectScope,
     });
@@ -890,16 +884,13 @@ describe("agent_skill_list", () => {
   it("filters unadvertised skills unless includeUnadvertised is true", async () => {
     using tempDir = new TestTempDir("test-agent-skill-list-advertise");
 
-    const workspaceSessionDir = await createWorkspaceSessionDir(
-      tempDir.path,
-      MUX_HELP_CHAT_WORKSPACE_ID
-    );
+    const workspaceSessionDir = await createWorkspaceSessionDir(tempDir.path, GLOBAL_WORKSPACE_ID);
 
     await writeGlobalSkill(tempDir.path, "advertised-skill");
     await writeGlobalSkill(tempDir.path, "hidden-skill", { advertise: false });
 
     const config = createTestToolConfig(tempDir.path, {
-      workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
+      workspaceId: GLOBAL_WORKSPACE_ID,
       sessionsDir: workspaceSessionDir,
       muxScope: {
         type: "global",
@@ -934,10 +925,7 @@ describe("agent_skill_list", () => {
   it("skips symlinked project skill directories inside contained skills root", async () => {
     using tempDir = new TestTempDir("test-agent-skill-list-project-entry-symlink");
 
-    const workspaceSessionDir = await createWorkspaceSessionDir(
-      tempDir.path,
-      MUX_HELP_CHAT_WORKSPACE_ID
-    );
+    const workspaceSessionDir = await createWorkspaceSessionDir(tempDir.path, GLOBAL_WORKSPACE_ID);
 
     const projectRoot = path.join(tempDir.path, "project");
     const skillsDir = path.join(projectRoot, ".mux", "skills");
@@ -967,7 +955,7 @@ describe("agent_skill_list", () => {
     };
 
     const config = createTestToolConfig(tempDir.path, {
-      workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
+      workspaceId: GLOBAL_WORKSPACE_ID,
       sessionsDir: workspaceSessionDir,
       muxScope: projectScope,
     });
@@ -987,10 +975,7 @@ describe("agent_skill_list", () => {
   it("skips project skill when SKILL.md symlink target escapes project root", async () => {
     using tempDir = new TestTempDir("test-agent-skill-list-skillmd-symlink-escape");
 
-    const workspaceSessionDir = await createWorkspaceSessionDir(
-      tempDir.path,
-      MUX_HELP_CHAT_WORKSPACE_ID
-    );
+    const workspaceSessionDir = await createWorkspaceSessionDir(tempDir.path, GLOBAL_WORKSPACE_ID);
 
     const projectRoot = path.join(tempDir.path, "project");
     const skillsDir = path.join(projectRoot, ".mux", "skills");
@@ -1023,7 +1008,7 @@ describe("agent_skill_list", () => {
     };
 
     const config = createTestToolConfig(tempDir.path, {
-      workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
+      workspaceId: GLOBAL_WORKSPACE_ID,
       sessionsDir: workspaceSessionDir,
       muxScope: projectScope,
     });
@@ -1041,10 +1026,7 @@ describe("agent_skill_list", () => {
   it("skips skill with oversized SKILL.md", async () => {
     using tempDir = new TestTempDir("test-agent-skill-list-oversized-skillmd");
 
-    const workspaceSessionDir = await createWorkspaceSessionDir(
-      tempDir.path,
-      MUX_HELP_CHAT_WORKSPACE_ID
-    );
+    const workspaceSessionDir = await createWorkspaceSessionDir(tempDir.path, GLOBAL_WORKSPACE_ID);
 
     await writeGlobalSkill(tempDir.path, "normal-skill");
 
@@ -1055,7 +1037,7 @@ describe("agent_skill_list", () => {
     await fs.writeFile(path.join(oversizedSkillDir, "SKILL.md"), oversizedContent, "utf-8");
 
     const config = createTestToolConfig(tempDir.path, {
-      workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
+      workspaceId: GLOBAL_WORKSPACE_ID,
       sessionsDir: workspaceSessionDir,
       muxScope: {
         type: "global",
@@ -1130,10 +1112,7 @@ describe("agent_skill_list", () => {
   it("skips project skills when .mux is a symlink to external directory", async () => {
     using tempDir = new TestTempDir("test-agent-skill-list-project-mux-symlink");
 
-    const workspaceSessionDir = await createWorkspaceSessionDir(
-      tempDir.path,
-      MUX_HELP_CHAT_WORKSPACE_ID
-    );
+    const workspaceSessionDir = await createWorkspaceSessionDir(tempDir.path, GLOBAL_WORKSPACE_ID);
 
     const projectRoot = path.join(tempDir.path, "project");
     await fs.mkdir(projectRoot, { recursive: true });
@@ -1161,7 +1140,7 @@ describe("agent_skill_list", () => {
     };
 
     const config = createTestToolConfig(tempDir.path, {
-      workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
+      workspaceId: GLOBAL_WORKSPACE_ID,
       sessionsDir: workspaceSessionDir,
       muxScope: projectScope,
     });

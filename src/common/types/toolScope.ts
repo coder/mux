@@ -1,7 +1,7 @@
 /**
  * Pre-resolved scope for mux-managed resource tools (skills, AGENTS.md, config).
  *
- * Global: tools operate under ~/.mux/ (system workspace, Chat with Mux).
+ * Global: tools operate under ~/.mux/.
  * Project: tools operate under the project root (any project workspace).
  *
  * `projectRoot` is a **host-local** filesystem root used by mux tools that call

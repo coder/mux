@@ -5,7 +5,6 @@ import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { GlobalWindow } from "happy-dom";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import type { APIClient } from "@/browser/contexts/API";
 
 const mk = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) => {
@@ -404,18 +403,18 @@ test("analytics rebuild command falls back to alert when chat input toast host i
   }
 });
 
-test("workspace generate title command is hidden for Chat with Mux workspace", () => {
+test("workspace generate title command is available for the current workspace", () => {
   const sources = mk({
     selectedWorkspace: {
       projectPath: "/repo/a",
       projectName: "a",
-      namedWorkspacePath: "/repo/a/mux-help",
-      workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
+      namedWorkspacePath: "/repo/a/feat-x",
+      workspaceId: "w1",
     },
   });
   const actions = sources.flatMap((s) => s());
 
-  expect(actions.some((action) => action.id === "ws:generate-title")).toBe(false);
+  expect(actions.some((action) => action.id === "ws:generate-title")).toBe(true);
 });
 
 test("workspace generate title command dispatches a title-generation request event", async () => {

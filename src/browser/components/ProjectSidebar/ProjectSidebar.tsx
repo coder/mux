@@ -11,8 +11,6 @@ import {
   usePersistedState,
 } from "@/browser/hooks/usePersistedState";
 import { useDebouncedValue } from "@/browser/hooks/useDebouncedValue";
-import { useWorkspaceFallbackModel } from "@/browser/hooks/useWorkspaceFallbackModel";
-import { useWorkspaceUnread } from "@/browser/hooks/useWorkspaceUnread";
 import { useRuntimeStatusStoreRaw } from "@/browser/stores/RuntimeStatusStore";
 import { useWorkspaceStoreRaw, type WorkspaceStore } from "@/browser/stores/WorkspaceStore";
 import {
@@ -73,7 +71,6 @@ import { useSettings } from "@/browser/contexts/SettingsContext";
 
 import { AgentListItem, type WorkspaceSelection } from "../AgentListItem/AgentListItem";
 import { TaskGroupListItem } from "./TaskGroupListItem";
-import { WorkspaceStatusIndicator } from "../WorkspaceStatusIndicator/WorkspaceStatusIndicator";
 import { TitleEditProvider, useTitleEdit } from "@/browser/contexts/WorkspaceTitleEditContext";
 import { useConfirmDialog } from "@/browser/contexts/ConfirmDialogContext";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
@@ -85,7 +82,6 @@ import {
 } from "@/browser/components/PositionedMenu/PositionedMenu";
 import {
   ChevronRight,
-  CircleHelp,
   EllipsisVertical,
   Folder,
   FolderOpen,
@@ -95,7 +91,6 @@ import {
   Trash,
   Plus,
 } from "lucide-react";
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { useWorkspaceActions } from "@/browser/contexts/WorkspaceContext";
 import { useRouter } from "@/browser/contexts/RouterContext";
 import { usePopoverError } from "@/browser/hooks/usePopoverError";
@@ -126,39 +121,6 @@ export type { WorkspaceSelection } from "../AgentListItem/AgentListItem";
 // Draggable project item moved to module scope to avoid remounting on every parent render.
 // Defining components inside another component causes a new function identity each render,
 // which forces React to unmount/remount the subtree. That led to hover flicker and high CPU.
-
-/**
- * Compact button for opening Chat with Mux, showing an unread dot when there are
- * new messages since the user last viewed the workspace.
- */
-const MuxChatHelpButton: React.FC<{
-  onClick: () => void;
-  isSelected: boolean;
-}> = ({ onClick, isSelected }) => {
-  const { isUnread: hasUnread } = useWorkspaceUnread(MUX_HELP_CHAT_WORKSPACE_ID);
-  const isUnread = hasUnread && !isSelected;
-
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          onClick={onClick}
-          className="text-muted hover:text-primary relative flex shrink-0 cursor-pointer items-center border-none bg-transparent p-0 transition-colors"
-          aria-label="Open Chat with Mux"
-        >
-          <CircleHelp className="h-3.5 w-3.5" />
-          {isUnread && (
-            <span
-              className="bg-accent absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full"
-              aria-label="Unread messages"
-            />
-          )}
-        </button>
-      </TooltipTrigger>
-      <TooltipContent side="bottom">Chat with Mux</TooltipContent>
-    </Tooltip>
-  );
-};
 
 /**
  * Subscribe sidebar-level attention derivation to workspace updates.
@@ -554,18 +516,6 @@ const ProjectDragLayer: React.FC = () => {
   );
 };
 
-function MuxChatStatusIndicator() {
-  const fallbackModel = useWorkspaceFallbackModel(MUX_HELP_CHAT_WORKSPACE_ID);
-
-  return (
-    <WorkspaceStatusIndicator
-      workspaceId={MUX_HELP_CHAT_WORKSPACE_ID}
-      fallbackModel={fallbackModel}
-      isCreating={false}
-    />
-  );
-}
-
 /**
  * Handles F2 (edit title) and Shift+F2 (generate new title) keybinds.
  * Rendered inside TitleEditProvider so it can access useTitleEdit().
@@ -580,9 +530,6 @@ function SidebarTitleEditKeybinds(props: {
 
   const regenerateTitleForWorkspace = useCallback(
     (workspaceId: string) => {
-      if (workspaceId === MUX_HELP_CHAT_WORKSPACE_ID) {
-        return;
-      }
       wrapGenerateTitle(workspaceId, () => {
         if (!api) {
           return Promise.resolve({ success: false, error: "Not connected to server" });
@@ -599,7 +546,6 @@ function SidebarTitleEditKeybinds(props: {
       if (!props.selectedWorkspace) return;
       if (isEditableElement(e.target)) return;
       const wsId = props.selectedWorkspace.workspaceId;
-      if (wsId === MUX_HELP_CHAT_WORKSPACE_ID) return;
 
       if (matchesKeybind(e, KEYBINDS.EDIT_WORKSPACE_TITLE)) {
         e.preventDefault();
@@ -809,35 +755,6 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     },
     [openWorkspaceDraft, collapsed, onToggleCollapsed, persistMobileSidebarScrollTop]
   );
-
-  const handleOpenMuxChat = useCallback(() => {
-    // Read metadata imperatively from the store (no subscription) to avoid
-    // making this callback depend on the metadata Map.
-    const meta = workspaceStore.getWorkspaceMetadata(MUX_HELP_CHAT_WORKSPACE_ID);
-
-    handleSelectWorkspace(
-      meta
-        ? {
-            workspaceId: meta.id,
-            projectPath: meta.projectPath,
-            projectName: meta.projectName,
-            namedWorkspacePath: meta.namedWorkspacePath,
-          }
-        : {
-            // Fallback: navigate by ID; metadata will fill in once refreshed.
-            workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
-            projectPath: "",
-            projectName: "Mux",
-            namedWorkspacePath: "",
-          }
-    );
-
-    if (!meta) {
-      refreshWorkspaceMetadata().catch((error) => {
-        console.error("Failed to refresh workspace metadata", error);
-      });
-    }
-  }, [handleSelectWorkspace, refreshWorkspaceMetadata, workspaceStore]);
 
   const handleGoHome = useCallback(() => {
     // Selecting null delegates to WorkspaceContext's home-navigation + selection reset flow.
@@ -1713,9 +1630,6 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
       // Create new workspace for the project of the selected workspace
       if (matchesKeybind(e, KEYBINDS.NEW_WORKSPACE) && selectedWorkspace) {
         e.preventDefault();
-        if (selectedWorkspace.workspaceId === MUX_HELP_CHAT_WORKSPACE_ID) {
-          return;
-        }
         handleAddWorkspace(selectedWorkspace.projectPath);
       } else if (matchesKeybind(e, KEYBINDS.ARCHIVE_WORKSPACE) && selectedWorkspace) {
         e.preventDefault();
@@ -1726,11 +1640,6 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [selectedWorkspace, handleAddWorkspace, handleArchiveWorkspace]);
-
-  // Chat-with-Mux workspace registration is async at startup. Avoid mounting
-  // mux-chat header widgets until metadata exists so their hooks don't assert.
-  const muxChatWorkspaceExists =
-    workspaceStore.getWorkspaceMetadata(MUX_HELP_CHAT_WORKSPACE_ID) !== undefined;
 
   return (
     <TitleEditProvider onUpdateTitle={onUpdateTitle}>
@@ -1765,15 +1674,6 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                   >
                     <MuxLogo className="h-5 w-[44px]" aria-hidden="true" />
                   </button>
-                  {muxChatWorkspaceExists && (
-                    <>
-                      <MuxChatHelpButton
-                        onClick={handleOpenMuxChat}
-                        isSelected={selectedWorkspace?.workspaceId === MUX_HELP_CHAT_WORKSPACE_ID}
-                      />
-                      <MuxChatStatusIndicator />
-                    </>
-                  )}
                 </div>
                 <button
                   onClick={onAddProject}

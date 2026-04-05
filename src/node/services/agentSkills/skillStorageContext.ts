@@ -73,8 +73,8 @@ export function resolveSkillStorageContext(input: {
       kind: "global-local",
       runtime: input.runtime,
       workspacePath: input.workspacePath,
-      // Keep system-scope discovery global-only so downstream readers do not
-      // fall back to workspace-local roots when Chat with Mux reads skills.
+      // Keep global-scope discovery global-only so downstream readers do not
+      // fall back to workspace-local roots when the caller targets ~/.mux.
       roots: buildGlobalLocalRoots({
         runtime: input.runtime,
         muxScope: input.muxScope,

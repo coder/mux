@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { describe, it, expect } from "bun:test";
 import type { ToolExecutionOptions } from "ai";
 
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
+const GLOBAL_WORKSPACE_ID = "workspace-global";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import { RemoteRuntime, type SpawnResult } from "@/node/runtime/RemoteRuntime";
 import { AgentSkillReadFileToolResultSchema } from "@/common/utils/tools/toolDefinitions";
@@ -274,9 +274,9 @@ function createRemoteRuntimeConfig(tempDirPath: string) {
 
 describe("agent_skill_read_file", () => {
   it("allows reading built-in skill files", async () => {
-    using tempDir = new TestTempDir("test-agent-skill-read-file-mux-chat");
+    using tempDir = new TestTempDir("test-agent-skill-read-file-global-scope");
     const baseConfig = createTestToolConfig(tempDir.path, {
-      workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
+      workspaceId: GLOBAL_WORKSPACE_ID,
     });
 
     const tool = createAgentSkillReadFileTool(baseConfig);
@@ -301,7 +301,7 @@ describe("agent_skill_read_file", () => {
     }
   });
 
-  it("allows reading global skill files on disk in Chat with Mux workspace", async () => {
+  it("allows reading global skill files on disk in global-scope workspace", async () => {
     using tempDir = new TestTempDir("test-agent-skill-read-file-global");
     const previousMuxRoot = process.env.MUX_ROOT;
     process.env.MUX_ROOT = tempDir.path;
@@ -310,7 +310,7 @@ describe("agent_skill_read_file", () => {
       await writeGlobalSkill(tempDir.path, "foo");
 
       const baseConfig = createTestToolConfig(tempDir.path, {
-        workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
+        workspaceId: GLOBAL_WORKSPACE_ID,
       });
       const tool = createAgentSkillReadFileTool(baseConfig);
 
@@ -337,7 +337,7 @@ describe("agent_skill_read_file", () => {
     }
   });
 
-  it("reads files from the global skill when a workspace-local shadow exists in Chat with Mux workspace", async () => {
+  it("reads files from the global skill when a workspace-local shadow exists in global-scope workspace", async () => {
     using tempDir = new TestTempDir("test-agent-skill-read-file-global-shadowing");
 
     await writeProjectSkill(tempDir.path, "shadowed-skill", {
@@ -352,7 +352,7 @@ describe("agent_skill_read_file", () => {
     });
 
     const baseConfig = createTestToolConfig(tempDir.path, {
-      workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
+      workspaceId: GLOBAL_WORKSPACE_ID,
     });
     const tool = createAgentSkillReadFileTool(baseConfig);
 
@@ -376,7 +376,7 @@ describe("agent_skill_read_file", () => {
     }
   });
 
-  it("allows reading project skill files on disk outside Chat with Mux workspace", async () => {
+  it("allows reading project skill files on disk outside global-scope workspace", async () => {
     using tempDir = new TestTempDir("test-agent-skill-read-file-project");
     await writeProjectSkill(tempDir.path, "project-skill");
 

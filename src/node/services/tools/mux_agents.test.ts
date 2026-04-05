@@ -5,11 +5,9 @@ import * as path from "path";
 import type { ToolExecutionOptions } from "ai";
 
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
-import {
-  MUX_HELP_CHAT_WORKSPACE_ID,
-  MUX_HELP_CHAT_WORKSPACE_NAME,
-  MUX_HELP_CHAT_WORKSPACE_TITLE,
-} from "@/common/constants/muxChat";
+const GLOBAL_WORKSPACE_ID = "workspace-global";
+const GLOBAL_WORKSPACE_NAME = "global-scope";
+const GLOBAL_WORKSPACE_TITLE = "Global Scope";
 import type { MuxToolScope } from "@/common/types/toolScope";
 import { FILE_EDIT_DIFF_OMITTED_MESSAGE } from "@/common/types/tools";
 
@@ -26,7 +24,7 @@ const mockToolCallOptions: ToolExecutionOptions = {
 function createGlobalMuxAgentsToolConfig(muxHome: string, workspaceSessionDir: string) {
   return {
     ...createTestToolConfig(muxHome, {
-      workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
+      workspaceId: GLOBAL_WORKSPACE_ID,
       sessionsDir: workspaceSessionDir,
     }),
     muxScope: {
@@ -50,7 +48,7 @@ function createProjectMuxAgentsToolConfig(
 
   return {
     ...createTestToolConfig(muxHome, {
-      workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
+      workspaceId: GLOBAL_WORKSPACE_ID,
       sessionsDir: workspaceSessionDir,
     }),
     cwd: projectRoot,
@@ -287,7 +285,7 @@ describe("mux_agents_* tools", () => {
   it("reads ~/.mux/AGENTS.md (returns empty string if missing)", async () => {
     using muxHome = new TestTempDir("mux-global-agents");
 
-    const workspaceSessionDir = path.join(muxHome.path, "sessions", MUX_HELP_CHAT_WORKSPACE_ID);
+    const workspaceSessionDir = path.join(muxHome.path, "sessions", GLOBAL_WORKSPACE_ID);
     await fs.mkdir(workspaceSessionDir, { recursive: true });
 
     const config = createGlobalMuxAgentsToolConfig(muxHome.path, workspaceSessionDir);
@@ -308,7 +306,7 @@ describe("mux_agents_* tools", () => {
     const agentsPath = path.join(muxHome.path, "AGENTS.md");
     await fs.writeFile(
       agentsPath,
-      `# ${MUX_HELP_CHAT_WORKSPACE_TITLE}\n${MUX_HELP_CHAT_WORKSPACE_NAME}\n`,
+      `# ${GLOBAL_WORKSPACE_TITLE}\n${GLOBAL_WORKSPACE_NAME}\n`,
       "utf-8"
     );
 
@@ -318,15 +316,15 @@ describe("mux_agents_* tools", () => {
     };
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.content).toContain(MUX_HELP_CHAT_WORKSPACE_TITLE);
-      expect(result.content).toContain(MUX_HELP_CHAT_WORKSPACE_NAME);
+      expect(result.content).toContain(GLOBAL_WORKSPACE_TITLE);
+      expect(result.content).toContain(GLOBAL_WORKSPACE_NAME);
     }
   });
 
   it("reads project AGENTS.md when scope is project", async () => {
     using muxHome = new TestTempDir("mux-project-agents-read");
 
-    const workspaceSessionDir = path.join(muxHome.path, "sessions", MUX_HELP_CHAT_WORKSPACE_ID);
+    const workspaceSessionDir = path.join(muxHome.path, "sessions", GLOBAL_WORKSPACE_ID);
     await fs.mkdir(workspaceSessionDir, { recursive: true });
 
     const projectRoot = path.join(muxHome.path, "my-project");
@@ -349,7 +347,7 @@ describe("mux_agents_* tools", () => {
   it("refuses to write without explicit confirmation", async () => {
     using muxHome = new TestTempDir("mux-global-agents");
 
-    const workspaceSessionDir = path.join(muxHome.path, "sessions", MUX_HELP_CHAT_WORKSPACE_ID);
+    const workspaceSessionDir = path.join(muxHome.path, "sessions", GLOBAL_WORKSPACE_ID);
     await fs.mkdir(workspaceSessionDir, { recursive: true });
 
     const config = createGlobalMuxAgentsToolConfig(muxHome.path, workspaceSessionDir);
@@ -381,7 +379,7 @@ describe("mux_agents_* tools", () => {
   it("writes ~/.mux/AGENTS.md and returns a diff", async () => {
     using muxHome = new TestTempDir("mux-global-agents");
 
-    const workspaceSessionDir = path.join(muxHome.path, "sessions", MUX_HELP_CHAT_WORKSPACE_ID);
+    const workspaceSessionDir = path.join(muxHome.path, "sessions", GLOBAL_WORKSPACE_ID);
     await fs.mkdir(workspaceSessionDir, { recursive: true });
 
     const config = createGlobalMuxAgentsToolConfig(muxHome.path, workspaceSessionDir);
@@ -409,7 +407,7 @@ describe("mux_agents_* tools", () => {
   it("writes project AGENTS.md when scope is project", async () => {
     using muxHome = new TestTempDir("mux-project-agents-write");
 
-    const workspaceSessionDir = path.join(muxHome.path, "sessions", MUX_HELP_CHAT_WORKSPACE_ID);
+    const workspaceSessionDir = path.join(muxHome.path, "sessions", GLOBAL_WORKSPACE_ID);
     await fs.mkdir(workspaceSessionDir, { recursive: true });
 
     const projectRoot = path.join(muxHome.path, "my-project");
@@ -437,7 +435,7 @@ describe("mux_agents_* tools", () => {
   it("reads and writes project AGENTS.md through an in-root symlink", async () => {
     using muxHome = new TestTempDir("mux-project-agents-symlink");
 
-    const workspaceSessionDir = path.join(muxHome.path, "sessions", MUX_HELP_CHAT_WORKSPACE_ID);
+    const workspaceSessionDir = path.join(muxHome.path, "sessions", GLOBAL_WORKSPACE_ID);
     await fs.mkdir(workspaceSessionDir, { recursive: true });
 
     const projectRoot = path.join(muxHome.path, "my-project");
@@ -484,7 +482,7 @@ describe("mux_agents_* tools", () => {
   it("rejects dangling AGENTS.md symlinks for read and write", async () => {
     using muxHome = new TestTempDir("mux-project-agents-dangling-symlink");
 
-    const workspaceSessionDir = path.join(muxHome.path, "sessions", MUX_HELP_CHAT_WORKSPACE_ID);
+    const workspaceSessionDir = path.join(muxHome.path, "sessions", GLOBAL_WORKSPACE_ID);
     await fs.mkdir(workspaceSessionDir, { recursive: true });
 
     const projectRoot = path.join(muxHome.path, "my-project");
@@ -525,7 +523,7 @@ describe("mux_agents_* tools", () => {
     using muxHome = new TestTempDir("mux-global-agents");
     using outsideRoot = new TestTempDir("mux-global-agents-outside-root");
 
-    const workspaceSessionDir = path.join(muxHome.path, "sessions", MUX_HELP_CHAT_WORKSPACE_ID);
+    const workspaceSessionDir = path.join(muxHome.path, "sessions", GLOBAL_WORKSPACE_ID);
     await fs.mkdir(workspaceSessionDir, { recursive: true });
 
     const config = createGlobalMuxAgentsToolConfig(muxHome.path, workspaceSessionDir);

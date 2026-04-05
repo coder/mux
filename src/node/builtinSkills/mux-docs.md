@@ -16,7 +16,7 @@ This skill bundles an **offline snapshot of the mux docs** under `references/doc
 Why prefer the bundled snapshot?
 
 1. The docs tree below is guaranteed to match what’s embedded.
-2. It’s more likely to match *your installed mux version* (the live site may be ahead).
+2. It’s more likely to match _your installed mux version_ (the live site may be ahead).
 
 To read a specific page:
 
@@ -48,7 +48,6 @@ Use this index to find a page's:
   - **Getting Started**
     - Introduction (`/`) → `references/docs/index.mdx`
     - Install (`/install`) → `references/docs/install.mdx` — Download and install Mux for macOS, Linux, and Windows
-    - Chat with Mux (`/getting-started/chat`) → `references/docs/getting-started/chat.mdx` — Ask questions about Mux, configure settings, install skills, and explore usage analytics
     - **Models**
       - Models (`/config/models`) → `references/docs/config/models.mdx` — Select and configure AI models in Mux
       - Providers (`/config/providers`) → `references/docs/config/providers.mdx` — Configure API keys and settings for AI providers

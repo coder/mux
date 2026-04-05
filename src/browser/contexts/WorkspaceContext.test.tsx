@@ -961,7 +961,7 @@ describe("WorkspaceContext", () => {
   });
 
   test("resolves system project route IDs for pending workspace creation", async () => {
-    const systemProjectPath = "/system/chat-with-mux";
+    const systemProjectPath = "/system/internal-project";
     const systemProjectId = getProjectRouteId(systemProjectPath);
 
     createMockAPI({
@@ -1035,17 +1035,19 @@ describe("WorkspaceContext", () => {
         list: () =>
           Promise.resolve([
             createWorkspaceMetadata({
-              id: "mux-chat",
-              projectPath: "/system/chat-with-mux",
-              projectName: "chat-with-mux",
+              id: "system-workspace",
+              projectPath: "/system/internal-project",
+              projectName: "internal-project",
               name: "main",
-              namedWorkspacePath: "/system/chat-with-mux-main",
+              namedWorkspacePath: "/system/internal-project-main",
             }),
           ]),
       },
       projects: {
         list: () =>
-          Promise.resolve([["/system/chat-with-mux", { workspaces: [], projectKind: "system" }]]),
+          Promise.resolve([
+            ["/system/internal-project", { workspaces: [], projectKind: "system" }],
+          ]),
       },
       server: {
         getLaunchProject: () => Promise.resolve("/launch-project"),
@@ -1278,8 +1280,8 @@ describe("WorkspaceContext", () => {
     const metadata = ctx().workspaceMetadata.get("ws-1");
     expect(metadata?.createdAt).toBe("2025-01-01T00:00:00.000Z");
   });
-  test("unscoped new_chat deep link resolves to system project when no user projects exist", async () => {
-    const systemPath = "/system/chat-with-mux";
+  test("unscoped new_chat deep link does nothing when no user projects exist", async () => {
+    const systemPath = "/system/internal-project";
     createMockAPI({
       projects: {
         list: () => Promise.resolve([[systemPath, { workspaces: [], projectKind: "system" }]]),
@@ -1291,7 +1293,7 @@ describe("WorkspaceContext", () => {
 
     await waitFor(() => {
       const state = ctx();
-      expect(state.pendingNewWorkspaceProject).toBe(systemPath);
+      expect(state.pendingNewWorkspaceProject).toBeNull();
     });
   });
 });

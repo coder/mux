@@ -381,10 +381,6 @@ export const KEYBINDS = {
   // F4 avoids browser-level collisions with Ctrl/Cmd+Shift+P in Firefox.
   OPEN_COMMAND_PALETTE_ACTIONS: { key: "F4" },
 
-  /** Open Chat with Mux */
-  // User requested F1 for quick access to the built-in help chat.
-  OPEN_MUX_CHAT: { key: "F1" },
-
   /** Toggle thinking level between off and last-used value for current model */
   // Saves/restores thinking level per model (defaults to "medium" if not found)
   // macOS: Cmd+Shift+T, Win/Linux: Ctrl+Shift+T

@@ -25,7 +25,6 @@ import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPr
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { MultiProjectRuntime } from "@/node/runtime/multiProjectRuntime";
 import { getMuxEnv, getRuntimeType } from "@/node/runtime/initHook";
-import { MUX_HELP_CHAT_AGENT_ID, MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { getSrcBaseDir } from "@/common/types/runtime";
 import { ContainerManager } from "@/node/multiProject/containerManager";
 import { secretsToRecord, type ExternalSecretResolver } from "@/common/types/secrets";
@@ -1031,11 +1030,6 @@ export class AIService extends EventEmitter {
         shouldDisableTaskToolsForDepth,
         effectiveToolPolicy,
       } = agentResult.data;
-      // Only the built-in mux help agent suppresses project secrets and MCP. User-defined
-      // agents can override the same ID and must keep normal workspace capabilities.
-      const isBuiltInMuxHelpAgent =
-        effectiveAgentId === MUX_HELP_CHAT_AGENT_ID && agentDefinition.scope === "built-in";
-
       const projectTrusted = isProjectTrusted(this.config, metadata.projectPath);
       const sharedExecutionTrusted = isWorkspaceTrustedForSharedExecution(metadata, cfg.projects);
 
@@ -1056,19 +1050,14 @@ export class AIService extends EventEmitter {
       recordStartupPhaseTiming("loadWorkspaceMcpOverridesMs", loadWorkspaceMcpOverridesStartedAt);
 
       // Fetch MCP server config for system prompt (before building message).
-      // The built-in mux help agent must not see project MCP inventory, even outside the
-      // dedicated mux-help workspace; project-scoped overrides of the same ID keep normal access.
       const listMcpServersStartedAt = Date.now();
-      const mcpServers =
-        this.mcpServerManager &&
-        workspaceId !== MUX_HELP_CHAT_WORKSPACE_ID &&
-        !isBuiltInMuxHelpAgent
-          ? await this.mcpServerManager.listServers(
-              metadata.projectPath,
-              mcpOverrides,
-              projectTrusted
-            )
-          : undefined;
+      const mcpServers = this.mcpServerManager
+        ? await this.mcpServerManager.listServers(
+            metadata.projectPath,
+            mcpOverrides,
+            projectTrusted
+          )
+        : undefined;
       recordStartupPhaseTiming("listMcpServersMs", listMcpServersStartedAt);
 
       // Build plan-aware instructions and determine plan→exec transition content.
@@ -1094,16 +1083,13 @@ export class AIService extends EventEmitter {
       recordStartupPhaseTiming("buildPlanInstructionsMs", buildPlanInstructionsStartedAt);
 
       const runtimeType = metadata.runtimeConfig.type;
-      const muxScope: MuxToolScope =
-        workspaceId === MUX_HELP_CHAT_WORKSPACE_ID
-          ? { type: "global", muxHome: this.config.rootDir }
-          : {
-              type: "project",
-              muxHome: this.config.rootDir,
-              projectRoot: resolveMuxProjectRootForHostFs(metadata, workspacePath),
-              projectStorageAuthority:
-                runtimeType === "ssh" || runtimeType === "docker" ? "runtime" : "host-local",
-            };
+      const muxScope: MuxToolScope = {
+        type: "project",
+        muxHome: this.config.rootDir,
+        projectRoot: resolveMuxProjectRootForHostFs(metadata, workspacePath),
+        projectStorageAuthority:
+          runtimeType === "ssh" || runtimeType === "docker" ? "runtime" : "host-local",
+      };
 
       const desktopSessionManager = this.desktopSessionManager;
       let desktopCapabilityPromise: ReturnType<DesktopSessionManager["getCapability"]> | undefined;
@@ -1142,12 +1128,10 @@ export class AIService extends EventEmitter {
       let systemMessageTokens = streamSystemContext.systemMessageTokens;
       let systemMessage = streamSystemContext.systemMessage;
 
-      // Load project secrets (system workspace never gets secrets injected)
-      const projectSecrets = isBuiltInMuxHelpAgent
-        ? []
-        : isMultiProject(metadata)
-          ? mergeMultiProjectSecrets(metadata, this.config)
-          : this.config.getEffectiveSecrets(metadata.projectPath);
+      // Load project secrets for local tool execution and MCP server startup.
+      const projectSecrets = isMultiProject(metadata)
+        ? mergeMultiProjectSecrets(metadata, this.config)
+        : this.config.getEffectiveSecrets(metadata.projectPath);
 
       // Generate stream token and create temp directory for tools
       const streamToken = this.streamManager.generateStreamToken();
@@ -1156,7 +1140,7 @@ export class AIService extends EventEmitter {
       let mcpStats: MCPWorkspaceStats | undefined;
       let mcpSetupDurationMs = 0;
 
-      if (this.mcpServerManager && !isBuiltInMuxHelpAgent) {
+      if (this.mcpServerManager) {
         const mcpToolSetupStartedAt = Date.now();
         try {
           const result = await this.mcpServerManager.getToolsForWorkspace({

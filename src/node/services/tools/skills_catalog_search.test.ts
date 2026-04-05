@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import type { ToolExecutionOptions } from "ai";
 
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
+const GLOBAL_WORKSPACE_ID = "workspace-global";
 import type { SkillsCatalogSearchToolResult } from "@/common/types/tools";
 import { createSkillsCatalogSearchTool } from "./skills_catalog_search";
 import { createTestToolConfig, TestTempDir } from "./testHelpers";
@@ -26,8 +26,8 @@ function jsonResponse(data: unknown, status = 200): Response {
 }
 
 describe("skills_catalog_search", () => {
-  it("allows search from non-mux-chat workspace", async () => {
-    using tempDir = new TestTempDir("test-skills-catalog-search-non-mux-chat-workspace");
+  it("allows search from project workspace", async () => {
+    using tempDir = new TestTempDir("test-skills-catalog-search-project-workspace");
     const config = createTestToolConfig(tempDir.path, {
       workspaceId: "my-project",
     });
@@ -72,7 +72,7 @@ describe("skills_catalog_search", () => {
   it("returns search results with parsed source", async () => {
     using tempDir = new TestTempDir("test-skills-catalog-search-success");
     const config = createTestToolConfig(tempDir.path, {
-      workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
+      workspaceId: GLOBAL_WORKSPACE_ID,
     });
 
     fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(
@@ -115,7 +115,7 @@ describe("skills_catalog_search", () => {
   it("skips skills with malformed source values", async () => {
     using tempDir = new TestTempDir("test-skills-catalog-search-malformed-source");
     const config = createTestToolConfig(tempDir.path, {
-      workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
+      workspaceId: GLOBAL_WORKSPACE_ID,
     });
 
     fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(
@@ -164,7 +164,7 @@ describe("skills_catalog_search", () => {
   it("returns error on API failure", async () => {
     using tempDir = new TestTempDir("test-skills-catalog-search-failure");
     const config = createTestToolConfig(tempDir.path, {
-      workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
+      workspaceId: GLOBAL_WORKSPACE_ID,
     });
 
     fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({ error: "boom" }, 500));

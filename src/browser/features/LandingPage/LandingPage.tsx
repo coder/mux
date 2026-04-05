@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from "react";
-import { CircleHelp, Menu, Plus } from "lucide-react";
+import { Menu, Plus } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import { cn } from "@/common/lib/utils";
@@ -31,14 +31,9 @@ import {
   useAnalyticsSpendOverTime,
   useAnalyticsSummary,
 } from "@/browser/hooks/useAnalytics";
-import {
-  useWorkspaceRecency,
-  useWorkspaceSidebarState,
-  useWorkspaceStoreRaw,
-} from "@/browser/stores/WorkspaceStore";
+import { useWorkspaceRecency, useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import { useGitStatus } from "@/browser/stores/GitStatusStore";
 import { useWorkspacePR } from "@/browser/stores/PRStatusStore";
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 
 // ─── Card styling constant (Analytics dashboard aesthetic) ───────────────
 const CARD_CLASS = "bg-background-secondary border-border-medium rounded-lg border p-3";
@@ -78,11 +73,7 @@ export function LandingPage(props: LandingPageProps) {
       />
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-6 py-8">
-          {/* Top row: Chat with Mux + Gateway balance side by side */}
-          <div className="flex gap-4">
-            <MuxChatCard />
-            <GatewayCreditsCard />
-          </div>
+          <GatewayCreditsCard />
 
           {/* Stats section: graph (left) + 2×2 stat cards (right) */}
           <StatsSection dateFilters={dateFilters} />
@@ -265,43 +256,6 @@ function SpendGraph(props: { dateFilters: DateFilters }) {
   );
 }
 
-function MuxChatCard() {
-  const { setSelectedWorkspace } = useWorkspaceContext();
-  const workspaceStore = useWorkspaceStoreRaw();
-  const muxChatReady =
-    workspaceStore.getWorkspaceMetadata(MUX_HELP_CHAT_WORKSPACE_ID) !== undefined;
-
-  const handleOpenMuxChat = () => {
-    // setSelectedWorkspace handles route navigation from workspaceId alone.
-    // Metadata-driven fields are resolved by WorkspaceContext once loaded.
-    setSelectedWorkspace({
-      workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
-    } as ReturnType<typeof toWorkspaceSelection>);
-  };
-
-  return (
-    <button
-      type="button"
-      disabled={!muxChatReady}
-      onClick={handleOpenMuxChat}
-      className={cn(
-        "bg-background-secondary border-border-medium hover:border-foreground/20 flex min-w-0 flex-1 cursor-pointer items-center gap-4 rounded-lg border p-4 text-left transition-colors",
-        !muxChatReady && "cursor-default opacity-50"
-      )}
-    >
-      <div className="bg-hover flex h-10 w-10 shrink-0 items-center justify-center rounded-lg">
-        <CircleHelp className="text-muted h-5 w-5" />
-      </div>
-      <div>
-        <h3 className="text-foreground text-sm font-medium">Chat with Mux</h3>
-        <p className="text-muted mt-0.5 text-xs">
-          Ask questions, get help with your code, or explore ideas — without a project workspace.
-        </p>
-      </div>
-    </button>
-  );
-}
-
 function ProjectsSection(props: { dateFilters: DateFilters }) {
   const { createWorkspaceDraft } = useWorkspaceContext();
   const spendByProject = useAnalyticsSpendByProject(props.dateFilters);
@@ -368,37 +322,33 @@ function RecentWorkspacesSection() {
   // IMPORTANT: include deterministic tie-breakers so Storybook/Chromatic snapshots
   // cannot flip card order when recency values are equal.
   const recentWorkspaces = useMemo(() => {
-    return (
-      [...workspaceMetadata.values()]
-        // "Chat with Mux" already has a dedicated card on the landing page.
-        .filter((ws) => ws.id !== MUX_HELP_CHAT_WORKSPACE_ID)
-        .sort((a, b) => {
-          const aRecency = workspaceRecency[a.id] ?? 0;
-          const bRecency = workspaceRecency[b.id] ?? 0;
-          if (aRecency !== bRecency) {
-            return bRecency - aRecency;
-          }
+    return [...workspaceMetadata.values()]
+      .sort((a, b) => {
+        const aRecency = workspaceRecency[a.id] ?? 0;
+        const bRecency = workspaceRecency[b.id] ?? 0;
+        if (aRecency !== bRecency) {
+          return bRecency - aRecency;
+        }
 
-          const aCreatedAtRaw = Date.parse(a.createdAt ?? "");
-          const bCreatedAtRaw = Date.parse(b.createdAt ?? "");
-          const aCreatedAt = Number.isFinite(aCreatedAtRaw) ? aCreatedAtRaw : 0;
-          const bCreatedAt = Number.isFinite(bCreatedAtRaw) ? bCreatedAtRaw : 0;
-          if (aCreatedAt !== bCreatedAt) {
-            return bCreatedAt - aCreatedAt;
-          }
+        const aCreatedAtRaw = Date.parse(a.createdAt ?? "");
+        const bCreatedAtRaw = Date.parse(b.createdAt ?? "");
+        const aCreatedAt = Number.isFinite(aCreatedAtRaw) ? aCreatedAtRaw : 0;
+        const bCreatedAt = Number.isFinite(bCreatedAtRaw) ? bCreatedAtRaw : 0;
+        if (aCreatedAt !== bCreatedAt) {
+          return bCreatedAt - aCreatedAt;
+        }
 
-          if (a.name !== b.name) {
-            return a.name < b.name ? -1 : 1;
-          }
+        if (a.name !== b.name) {
+          return a.name < b.name ? -1 : 1;
+        }
 
-          if (a.id !== b.id) {
-            return a.id < b.id ? -1 : 1;
-          }
+        if (a.id !== b.id) {
+          return a.id < b.id ? -1 : 1;
+        }
 
-          return 0;
-        })
-        .slice(0, 4)
-    );
+        return 0;
+      })
+      .slice(0, 4);
   }, [workspaceMetadata, workspaceRecency]);
 
   if (recentWorkspaces.length === 0) return null;

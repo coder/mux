@@ -32,7 +32,6 @@ import type { DesktopSessionManager } from "@/node/services/desktop/DesktopSessi
 import type { WorktreeArchiveSnapshot } from "@/common/schemas/project";
 import type { BashToolResult } from "@/common/types/tools";
 import { createMuxMessage } from "@/common/types/message";
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import * as todoStorageModule from "@/node/services/todos/todoStorage";
 import * as runtimeFactory from "@/node/runtime/runtimeFactory";
 import * as bashToolModule from "@/node/services/tools/bash";
@@ -4640,46 +4639,6 @@ describe("WorkspaceService archiveMergedInProject", () => {
 
     return { workspaceService, executeBashMock, archiveMock };
   }
-
-  test("excludes MUX_HELP_CHAT_WORKSPACE_ID workspaces", async () => {
-    const allMetadata: FrontendWorkspaceMetadata[] = [
-      createMetadata(MUX_HELP_CHAT_WORKSPACE_ID),
-      createMetadata("ws-merged"),
-    ];
-
-    const ghResultsByWorkspaceId: Record<string, Result<BashToolResult>> = {
-      "ws-merged": bashOk('{"state":"MERGED"}'),
-    };
-
-    const { workspaceService, executeBashMock, archiveMock } = createServiceHarness(
-      allMetadata,
-      (workspaceId) => {
-        const result = ghResultsByWorkspaceId[workspaceId];
-        if (!result) {
-          throw new Error(`Unexpected executeBash call for workspaceId: ${workspaceId}`);
-        }
-        return Promise.resolve(result);
-      },
-      () => archiveSuccess()
-    );
-
-    const result = await workspaceService.archiveMergedInProject(TARGET_PROJECT_PATH);
-
-    expect(result.success).toBe(true);
-    if (!result.success) {
-      return;
-    }
-
-    expect(result.data.archivedWorkspaceIds).toEqual(["ws-merged"]);
-    expect(result.data.skippedWorkspaceIds).toEqual([]);
-    expect(result.data.errors).toEqual([]);
-
-    expect(archiveMock).toHaveBeenCalledTimes(1);
-    expect(archiveMock).toHaveBeenCalledWith("ws-merged");
-
-    // Should only query GitHub for the eligible non-mux-chat workspace.
-    expect(executeBashMock).toHaveBeenCalledTimes(1);
-  });
 
   test("treats workspaces with later unarchivedAt as eligible", async () => {
     const allMetadata: FrontendWorkspaceMetadata[] = [

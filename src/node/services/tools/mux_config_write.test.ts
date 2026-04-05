@@ -5,7 +5,7 @@ import { describe, expect, it } from "bun:test";
 import type { ToolExecutionOptions } from "ai";
 import * as jsonc from "jsonc-parser";
 
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
+const GLOBAL_WORKSPACE_ID = "workspace-global";
 import type { MuxToolScope } from "@/common/types/toolScope";
 
 import { createMuxConfigWriteTool } from "./mux_config_write";
@@ -59,7 +59,7 @@ describe("mux_config_write", () => {
   it("enforces explicit confirm gate", async () => {
     using muxHome = new TestTempDir("mux-config-write");
 
-    const tool = await createWriteTool(muxHome.path, MUX_HELP_CHAT_WORKSPACE_ID);
+    const tool = await createWriteTool(muxHome.path, GLOBAL_WORKSPACE_ID);
     const result = (await tool.execute!(
       {
         file: "providers",
@@ -79,7 +79,7 @@ describe("mux_config_write", () => {
     using muxHome = new TestTempDir("mux-config-write");
 
     let onConfigChangedCalls = 0;
-    const tool = await createWriteTool(muxHome.path, MUX_HELP_CHAT_WORKSPACE_ID, () => {
+    const tool = await createWriteTool(muxHome.path, GLOBAL_WORKSPACE_ID, () => {
       onConfigChangedCalls += 1;
     });
 
@@ -129,7 +129,7 @@ describe("mux_config_write", () => {
   it("writes valid app config mutations (defaultModel, hiddenModels, taskSettings)", async () => {
     using muxHome = new TestTempDir("mux-config-write");
 
-    const tool = await createWriteTool(muxHome.path, MUX_HELP_CHAT_WORKSPACE_ID);
+    const tool = await createWriteTool(muxHome.path, GLOBAL_WORKSPACE_ID);
     const result = (await tool.execute!(
       {
         file: "config",
@@ -193,7 +193,7 @@ describe("mux_config_write", () => {
       "utf-8"
     );
 
-    const tool = await createWriteTool(muxHome.path, MUX_HELP_CHAT_WORKSPACE_ID);
+    const tool = await createWriteTool(muxHome.path, GLOBAL_WORKSPACE_ID);
     const result = (await tool.execute!(
       {
         file: "config",
@@ -246,7 +246,7 @@ describe("mux_config_write", () => {
     const initialDocument = JSON.stringify({ defaultModel: "openai:gpt-4o" }, null, 2);
     await fs.writeFile(configPath, initialDocument, "utf-8");
 
-    const tool = await createWriteTool(muxHome.path, MUX_HELP_CHAT_WORKSPACE_ID);
+    const tool = await createWriteTool(muxHome.path, GLOBAL_WORKSPACE_ID);
     const result = (await tool.execute!(
       {
         file: "config",
@@ -274,7 +274,7 @@ describe("mux_config_write", () => {
     using muxHome = new TestTempDir("mux-config-write");
 
     const providersPath = path.join(muxHome.path, "providers.jsonc");
-    const tool = await createWriteTool(muxHome.path, MUX_HELP_CHAT_WORKSPACE_ID);
+    const tool = await createWriteTool(muxHome.path, GLOBAL_WORKSPACE_ID);
     const result = (await tool.execute!(
       {
         file: "providers",
@@ -306,7 +306,7 @@ describe("mux_config_write", () => {
     const initialProviders = JSON.stringify({ anthropic: { apiKey: "sk-real-key" } }, null, 2);
     await fs.writeFile(providersPath, initialProviders, "utf-8");
 
-    const tool = await createWriteTool(muxHome.path, MUX_HELP_CHAT_WORKSPACE_ID);
+    const tool = await createWriteTool(muxHome.path, GLOBAL_WORKSPACE_ID);
     const result = (await tool.execute!(
       {
         file: "providers",
@@ -329,7 +329,7 @@ describe("mux_config_write", () => {
   it("rejects nested redaction sentinel values in object payloads", async () => {
     using muxHome = new TestTempDir("mux-config-write");
 
-    const tool = await createWriteTool(muxHome.path, MUX_HELP_CHAT_WORKSPACE_ID);
+    const tool = await createWriteTool(muxHome.path, GLOBAL_WORKSPACE_ID);
     const result = (await tool.execute!(
       {
         file: "providers",
@@ -369,7 +369,7 @@ describe("mux_config_write", () => {
       "utf-8"
     );
 
-    const tool = await createWriteTool(muxHome.path, MUX_HELP_CHAT_WORKSPACE_ID);
+    const tool = await createWriteTool(muxHome.path, GLOBAL_WORKSPACE_ID);
     const result = (await tool.execute!(
       {
         file: "config",
@@ -399,7 +399,7 @@ describe("mux_config_write", () => {
     const configPath = path.join(muxHome.path, "config.json");
     await fs.writeFile(configPath, JSON.stringify("oops"), "utf-8");
 
-    const tool = await createWriteTool(muxHome.path, MUX_HELP_CHAT_WORKSPACE_ID);
+    const tool = await createWriteTool(muxHome.path, GLOBAL_WORKSPACE_ID);
     const result = (await tool.execute!(
       {
         file: "config",
@@ -426,7 +426,7 @@ describe("mux_config_write", () => {
     const providersPath = path.join(muxHome.path, "providers.jsonc");
     await fs.writeFile(providersPath, "42", "utf-8");
 
-    const tool = await createWriteTool(muxHome.path, MUX_HELP_CHAT_WORKSPACE_ID);
+    const tool = await createWriteTool(muxHome.path, GLOBAL_WORKSPACE_ID);
     const result = (await tool.execute!(
       {
         file: "providers",
@@ -453,7 +453,7 @@ describe("mux_config_write", () => {
     const configPath = path.join(muxHome.path, "config.json");
     await fs.writeFile(configPath, JSON.stringify([]), "utf-8");
 
-    const tool = await createWriteTool(muxHome.path, MUX_HELP_CHAT_WORKSPACE_ID);
+    const tool = await createWriteTool(muxHome.path, GLOBAL_WORKSPACE_ID);
     const result = (await tool.execute!(
       {
         file: "config",
@@ -480,7 +480,7 @@ describe("mux_config_write", () => {
     const providersPath = path.join(muxHome.path, "providers.jsonc");
     await fs.writeFile(providersPath, JSON.stringify([]), "utf-8");
 
-    const tool = await createWriteTool(muxHome.path, MUX_HELP_CHAT_WORKSPACE_ID);
+    const tool = await createWriteTool(muxHome.path, GLOBAL_WORKSPACE_ID);
     const result = (await tool.execute!(
       {
         file: "providers",
@@ -512,7 +512,7 @@ describe("mux_config_write", () => {
     // Symlink config.json → external target
     await fs.symlink(externalTarget, path.join(muxHome.path, "config.json"));
 
-    const tool = await createWriteTool(muxHome.path, MUX_HELP_CHAT_WORKSPACE_ID);
+    const tool = await createWriteTool(muxHome.path, GLOBAL_WORKSPACE_ID);
     const result = (await tool.execute!(
       {
         file: "config",
@@ -540,7 +540,7 @@ describe("mux_config_write", () => {
 
     await fs.symlink(externalTarget, path.join(muxHome.path, "providers.jsonc"));
 
-    const tool = await createWriteTool(muxHome.path, MUX_HELP_CHAT_WORKSPACE_ID);
+    const tool = await createWriteTool(muxHome.path, GLOBAL_WORKSPACE_ID);
     const result = (await tool.execute!(
       {
         file: "providers",

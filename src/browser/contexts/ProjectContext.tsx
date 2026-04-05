@@ -62,7 +62,7 @@ export interface NewChatProjectSelector {
 export interface ProjectContext {
   /** User-visible projects only (system projects filtered out). */
   userProjects: Map<string, ProjectConfig>;
-  /** Canonical system project path when configured (e.g. Chat with Mux), otherwise null. */
+  /** Canonical system project path when configured, otherwise null. */
   systemProjectPath: string | null;
   /** Resolve project path by caller intent (exact path, route ID, or fuzzy deep-link query). */
   resolveProjectPath: (query: ProjectQuery) => string | null;
@@ -321,14 +321,11 @@ export function ProjectProvider(props: { children: ReactNode }) {
 
   const hasAnyProject = allProjectsInternal.size > 0;
 
-  // Default project selection: prefer first user project → system project → any project → null.
+  // Default project selection should only target user-visible projects.
   const resolveDefaultProjectPath = useCallback(() => {
     const firstUser = userProjects.keys().next().value;
-    if (typeof firstUser === "string") return firstUser;
-    if (typeof systemProjectPath === "string") return systemProjectPath;
-    const firstAny = allProjectsInternal.keys().next().value;
-    return typeof firstAny === "string" ? firstAny : null;
-  }, [userProjects, systemProjectPath, allProjectsInternal]);
+    return typeof firstUser === "string" ? firstUser : null;
+  }, [userProjects]);
 
   // Canonical resolver for new-chat deep links: explicit selectors first, default fallback last.
   const resolveNewChatProjectPath = useCallback(

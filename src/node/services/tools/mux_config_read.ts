@@ -11,7 +11,7 @@ import {
 } from "@/node/services/tools/shared/configToolUtils";
 import { redactConfigDocument } from "@/node/services/tools/shared/configRedaction";
 // Parse-only read: schema validation is deferred to write boundaries,
-// so Chat with Mux can inspect schema-invalid configs before repair.
+// so callers can inspect schema-invalid configs before repair.
 import { readConfigDocumentUnvalidated } from "@/node/services/tools/shared/configReadWrite";
 
 export const createMuxConfigReadTool: ToolFactory = (config: ToolConfiguration) => {

@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { describe, it, expect } from "bun:test";
 import type { ToolExecutionOptions } from "ai";
 
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
+const GLOBAL_WORKSPACE_ID = "workspace-global";
 import type { MuxToolScope } from "@/common/types/toolScope";
 import { FILE_EDIT_DIFF_OMITTED_MESSAGE } from "@/common/types/tools";
 import type { AgentSkillReadToolResult, AgentSkillWriteToolResult } from "@/common/types/tools";
@@ -148,7 +148,7 @@ function skillMarkdown(
 
 async function createWriteTool(
   muxHome: string,
-  workspaceId: string = MUX_HELP_CHAT_WORKSPACE_ID,
+  workspaceId: string = GLOBAL_WORKSPACE_ID,
   muxScope?: MuxToolScope
 ) {
   const workspaceSessionDir = await createWorkspaceSessionDir(muxHome, workspaceId);
@@ -217,7 +217,7 @@ describe("agent_skill_write", () => {
       projectStorageAuthority: "host-local",
     };
 
-    const tool = await createWriteTool(tempDir.path, MUX_HELP_CHAT_WORKSPACE_ID, projectScope);
+    const tool = await createWriteTool(tempDir.path, GLOBAL_WORKSPACE_ID, projectScope);
     const content = skillMarkdown("demo-skill", { body: "Project scoped" });
 
     const result = (await tool.execute!(
@@ -731,8 +731,8 @@ describe("agent_skill_write", () => {
       );
 
       const baseConfig = createTestToolConfig(tempDir.path, {
-        workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
-        sessionsDir: path.join(muxDir, "sessions", MUX_HELP_CHAT_WORKSPACE_ID),
+        workspaceId: GLOBAL_WORKSPACE_ID,
+        sessionsDir: path.join(muxDir, "sessions", GLOBAL_WORKSPACE_ID),
         muxScope: {
           type: "global",
           muxHome: muxDir,
@@ -890,7 +890,7 @@ describe("agent_skill_write", () => {
       projectStorageAuthority: "host-local",
     };
 
-    const tool = await createWriteTool(tempDir.path, MUX_HELP_CHAT_WORKSPACE_ID, projectScope);
+    const tool = await createWriteTool(tempDir.path, GLOBAL_WORKSPACE_ID, projectScope);
     const content = skillMarkdown("demo-skill", { body: "Should not land outside project" });
 
     const result = (await tool.execute!(

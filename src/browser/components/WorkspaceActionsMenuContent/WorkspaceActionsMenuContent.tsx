@@ -49,7 +49,6 @@ interface WorkspaceActionsMenuContentProps {
   onArchiveChat?: ((anchorEl: HTMLElement) => void) | null;
   onCloseMenu: () => void;
   linkSharingEnabled: boolean;
-  isMuxHelpChat: boolean;
   shortcutClassName?: string;
   configureMcpTestId?: string;
 }
@@ -101,7 +100,7 @@ export const WorkspaceActionsMenuContent: React.FC<WorkspaceActionsMenuContentPr
           }}
         />
       )}
-      {props.onOpenTouchFullscreenReview && !props.isMuxHelpChat && (
+      {props.onOpenTouchFullscreenReview && (
         <WorkspaceActionButton
           label="Mobile full-screen review"
           icon={<Maximize2 className="h-3 w-3 shrink-0" />}
@@ -112,7 +111,7 @@ export const WorkspaceActionsMenuContent: React.FC<WorkspaceActionsMenuContentPr
           }}
         />
       )}
-      {props.onEnterImmersiveReview && !props.isMuxHelpChat && (
+      {props.onEnterImmersiveReview && (
         <WorkspaceActionButton
           label="Immersive review"
           shortcut={formatKeybind(KEYBINDS.TOGGLE_REVIEW_IMMERSIVE)}
@@ -125,7 +124,7 @@ export const WorkspaceActionsMenuContent: React.FC<WorkspaceActionsMenuContentPr
           }}
         />
       )}
-      {props.onStopRuntime && !props.isMuxHelpChat && (
+      {props.onStopRuntime && (
         <WorkspaceActionButton
           label="Stop container"
           icon={<Square className="h-3 w-3 shrink-0" />}
@@ -136,7 +135,7 @@ export const WorkspaceActionsMenuContent: React.FC<WorkspaceActionsMenuContentPr
           }}
         />
       )}
-      {props.onForkChat && !props.isMuxHelpChat && (
+      {props.onForkChat && (
         <WorkspaceActionButton
           label="Fork chat"
           icon={<GitBranch className="h-3 w-3 shrink-0" />}
@@ -147,7 +146,7 @@ export const WorkspaceActionsMenuContent: React.FC<WorkspaceActionsMenuContentPr
           }}
         />
       )}
-      {props.onShareTranscript && props.linkSharingEnabled === true && !props.isMuxHelpChat && (
+      {props.onShareTranscript && props.linkSharingEnabled === true && (
         <WorkspaceActionButton
           label="Share transcript"
           shortcut={formatKeybind(KEYBINDS.SHARE_TRANSCRIPT)}
@@ -160,7 +159,7 @@ export const WorkspaceActionsMenuContent: React.FC<WorkspaceActionsMenuContentPr
           }}
         />
       )}
-      {props.onArchiveChat && !props.isMuxHelpChat && (
+      {props.onArchiveChat && (
         <WorkspaceActionButton
           label="Archive chat"
           shortcut={formatKeybind(KEYBINDS.ARCHIVE_WORKSPACE)}

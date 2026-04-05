@@ -180,8 +180,8 @@ export const SidebarCollapsed: AppStory = {
   ),
 };
 
-/** Chat with Mux - the default boot state (no user projects) */
-export const ChatWithMux: AppStory = {
+/** Empty landing page with no user projects. */
+export const EmptyLandingPage: AppStory = {
   parameters: {
     chromatic: { modes: CHROMATIC_SMOKE_MODES },
   },

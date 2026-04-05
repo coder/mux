@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { describe, expect, it } from "bun:test";
 import type { ToolExecutionOptions } from "ai";
 
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
+const GLOBAL_WORKSPACE_ID = "workspace-global";
 import type { MuxToolScope } from "@/common/types/toolScope";
 import { REDACTED_SECRET_VALUE } from "@/node/services/tools/shared/configRedaction";
 
@@ -114,7 +114,7 @@ describe("mux_config_read", () => {
       "utf-8"
     );
 
-    const tool = await createReadTool(muxHome.path, MUX_HELP_CHAT_WORKSPACE_ID);
+    const tool = await createReadTool(muxHome.path, GLOBAL_WORKSPACE_ID);
 
     const fullResult = (await tool.execute!(
       { file: "providers" },
@@ -289,7 +289,7 @@ describe("mux_config_read", () => {
       "utf-8"
     );
 
-    const tool = await createReadTool(muxHome.path, MUX_HELP_CHAT_WORKSPACE_ID);
+    const tool = await createReadTool(muxHome.path, GLOBAL_WORKSPACE_ID);
 
     const result = (await tool.execute!(
       { file: "config" },
@@ -316,7 +316,7 @@ describe("mux_config_read", () => {
       "utf-8"
     );
 
-    const tool = await createReadTool(muxHome.path, MUX_HELP_CHAT_WORKSPACE_ID);
+    const tool = await createReadTool(muxHome.path, GLOBAL_WORKSPACE_ID);
 
     // "constructor" is inherited from Object.prototype — must not be traversable
     const constructorResult = (await tool.execute!(
@@ -356,7 +356,7 @@ describe("mux_config_read", () => {
       "utf-8"
     );
 
-    const tool = await createReadTool(muxHome.path, MUX_HELP_CHAT_WORKSPACE_ID);
+    const tool = await createReadTool(muxHome.path, GLOBAL_WORKSPACE_ID);
     const result = (await tool.execute!(
       { file: "config" },
       mockToolCallOptions
@@ -376,7 +376,7 @@ describe("mux_config_read", () => {
 
     await fs.writeFile(path.join(muxHome.path, "config.json"), "{ not valid json !!!", "utf-8");
 
-    const tool = await createReadTool(muxHome.path, MUX_HELP_CHAT_WORKSPACE_ID);
+    const tool = await createReadTool(muxHome.path, GLOBAL_WORKSPACE_ID);
     const result = (await tool.execute!(
       { file: "config" },
       mockToolCallOptions
