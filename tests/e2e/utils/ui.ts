@@ -174,8 +174,9 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
     },
 
     /**
-     * Set the thinking level using paddle controls.
-     * Values map to: 0=OFF, 1=LOW, 2=MED, 3=HIGH, 4=XHIGH
+     * Set the thinking level using the control's currently allowed subset.
+     * Numeric values index into the allowed levels sorted from lowest to highest,
+     * matching the app's model-aware thinking policy.
      */
     async setThinkingLevel(targetLevel: number): Promise<void> {
       if (!Number.isInteger(targetLevel)) {
@@ -186,8 +187,6 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
       }
 
       const levelLabels = ["OFF", "LOW", "MED", "HIGH", "XHIGH"];
-      const targetLabel = levelLabels[targetLevel];
-
       const label = thinkingLevelLabel(page);
       const decreasePaddle = thinkingDecreasePaddle(page);
       const increasePaddle = thinkingIncreasePaddle(page);
@@ -195,37 +194,119 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
       // Wait for thinking controls to be visible
       await expect(label).toBeVisible();
 
-      // Get current level by reading the label text
-      const getCurrentLevel = async (): Promise<number> => {
+      const readCurrentLabel = async (): Promise<string> => {
         const text = await label.textContent();
         const normalized = text?.trim().toUpperCase() ?? "";
 
         // Note: XHIGH contains HIGH as a substring, so we must avoid includes()-based matching here.
-        const labelIndex = levelLabels.findIndex((l) => normalized === l);
+        return levelLabels.find((candidate) => normalized === candidate) ?? levelLabels[0];
+      };
+
+      const clickUntilLabelChanges = async (
+        control: Locator,
+        previousLabel: string
+      ): Promise<string> => {
+        if (await control.isDisabled()) {
+          return previousLabel;
+        }
+
+        for (let attempt = 0; attempt < 3; attempt++) {
+          await control.click();
+          try {
+            await expect
+              .poll(
+                async () => {
+                  const currentLabel = await readCurrentLabel();
+                  return currentLabel === previousLabel ? null : currentLabel;
+                },
+                { timeout: 1_000 }
+              )
+              .not.toBeNull();
+            return await readCurrentLabel();
+          } catch {
+            // Linux CI can drop clicks during rapid mode transitions; retry the same control.
+          }
+        }
+
+        return await readCurrentLabel();
+      };
+
+      const discoverAllowedLabels = async (): Promise<string[]> => {
+        const startLabel = await readCurrentLabel();
+        const seen = new Set<string>([startLabel]);
+        let currentLabel = startLabel;
+
+        while (!(await decreasePaddle.isDisabled())) {
+          const nextLabel = await clickUntilLabelChanges(decreasePaddle, currentLabel);
+          if (nextLabel === currentLabel) {
+            break;
+          }
+          currentLabel = nextLabel;
+          seen.add(currentLabel);
+        }
+
+        while (!(await increasePaddle.isDisabled())) {
+          const nextLabel = await clickUntilLabelChanges(increasePaddle, currentLabel);
+          if (nextLabel === currentLabel) {
+            break;
+          }
+          currentLabel = nextLabel;
+          seen.add(currentLabel);
+        }
+
+        while (currentLabel !== startLabel) {
+          const needsLowerLevel =
+            levelLabels.indexOf(currentLabel) > levelLabels.indexOf(startLabel);
+          const nextLabel = await clickUntilLabelChanges(
+            needsLowerLevel ? decreasePaddle : increasePaddle,
+            currentLabel
+          );
+          if (nextLabel === currentLabel) {
+            break;
+          }
+          currentLabel = nextLabel;
+        }
+
+        return [...seen].sort(
+          (left, right) => levelLabels.indexOf(left) - levelLabels.indexOf(right)
+        );
+      };
+
+      const allowedLabels = await discoverAllowedLabels();
+      const clampedTargetLevel = Math.max(0, Math.min(targetLevel, allowedLabels.length - 1));
+      const targetLabel = allowedLabels[clampedTargetLevel] ?? allowedLabels[0] ?? levelLabels[0];
+
+      const getCurrentLevel = async (): Promise<number> => {
+        const currentLabel = await readCurrentLabel();
+        const labelIndex = allowedLabels.findIndex((candidate) => currentLabel === candidate);
         return labelIndex === -1 ? 0 : labelIndex;
       };
 
-      // Click paddles until we reach the target level (max 10 clicks to prevent infinite loop).
-      // Some Linux CI runs intermittently ignore paddle clicks during rapid mode transitions,
-      // so we add a button-cycle fallback when paddles do not land on the requested value.
-      for (let i = 0; i < 10; i++) {
+      // Click paddles until we reach the target level. If the control is still settling after
+      // a mode switch, clickUntilLabelChanges() retries the interaction before giving up.
+      for (let i = 0; i < allowedLabels.length * 2; i++) {
         const currentLevel = await getCurrentLevel();
-        if (currentLevel === targetLevel) {
+        if (currentLevel === clampedTargetLevel) {
           break;
         }
-        if (currentLevel < targetLevel) {
-          await increasePaddle.click();
-        } else {
-          await decreasePaddle.click();
+
+        const currentLabel = allowedLabels[currentLevel] ?? (await readCurrentLabel());
+        const nextLabel = await clickUntilLabelChanges(
+          currentLevel < clampedTargetLevel ? increasePaddle : decreasePaddle,
+          currentLabel
+        );
+        if (nextLabel === currentLabel) {
+          break;
         }
       }
 
       let finalLevel = await getCurrentLevel();
-      if (finalLevel !== targetLevel) {
-        for (let i = 0; i < levelLabels.length; i++) {
-          await label.click();
+      if (finalLevel !== clampedTargetLevel) {
+        for (let i = 0; i < allowedLabels.length; i++) {
+          const currentLabel = await readCurrentLabel();
+          const nextLabel = await clickUntilLabelChanges(label, currentLabel);
           finalLevel = await getCurrentLevel();
-          if (finalLevel === targetLevel) {
+          if (finalLevel === clampedTargetLevel || nextLabel === currentLabel) {
             break;
           }
         }
