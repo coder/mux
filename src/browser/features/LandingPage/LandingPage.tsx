@@ -13,6 +13,7 @@ import {
   useWorkspaceContext,
   toWorkspaceSelection,
 } from "@/browser/contexts/WorkspaceContext";
+import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import {
   useMuxGatewayAccountStatus,
@@ -32,6 +33,7 @@ import {
   useAnalyticsSummary,
 } from "@/browser/hooks/useAnalytics";
 import { useWorkspaceRecency, useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
+import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { useGitStatus } from "@/browser/stores/GitStatusStore";
 import { useWorkspacePR } from "@/browser/stores/PRStatusStore";
 
@@ -312,44 +314,52 @@ function ProjectsSection(props: { dateFilters: DateFilters }) {
   );
 }
 
+export function getRecentVisibleWorkspaces(
+  workspaceMetadata: Map<string, FrontendWorkspaceMetadata>,
+  workspaceRecency: Record<string, number>,
+  getProjectConfig: (projectPath: string) => { projectKind?: "user" | "system" } | undefined
+): FrontendWorkspaceMetadata[] {
+  return [...workspaceMetadata.values()]
+    .filter((workspace) => getProjectConfig(workspace.projectPath)?.projectKind !== "system")
+    .sort((a, b) => {
+      const aRecency = workspaceRecency[a.id] ?? 0;
+      const bRecency = workspaceRecency[b.id] ?? 0;
+      if (aRecency !== bRecency) {
+        return bRecency - aRecency;
+      }
+
+      const aCreatedAtRaw = Date.parse(a.createdAt ?? "");
+      const bCreatedAtRaw = Date.parse(b.createdAt ?? "");
+      const aCreatedAt = Number.isFinite(aCreatedAtRaw) ? aCreatedAtRaw : 0;
+      const bCreatedAt = Number.isFinite(bCreatedAtRaw) ? bCreatedAtRaw : 0;
+      if (aCreatedAt !== bCreatedAt) {
+        return bCreatedAt - aCreatedAt;
+      }
+
+      if (a.name !== b.name) {
+        return a.name < b.name ? -1 : 1;
+      }
+
+      if (a.id !== b.id) {
+        return a.id < b.id ? -1 : 1;
+      }
+
+      return 0;
+    })
+    .slice(0, 4);
+}
+
 // ─── Recent workspaces section ───────────────────────────────────────────
 function RecentWorkspacesSection() {
   const { workspaceMetadata } = useWorkspaceMetadata();
   const { setSelectedWorkspace } = useWorkspaceContext();
+  const { getProjectConfig } = useProjectContext();
   const workspaceRecency = useWorkspaceRecency();
 
-  // Sort all workspaces by recency, take top 4.
-  // IMPORTANT: include deterministic tie-breakers so Storybook/Chromatic snapshots
-  // cannot flip card order when recency values are equal.
-  const recentWorkspaces = useMemo(() => {
-    return [...workspaceMetadata.values()]
-      .sort((a, b) => {
-        const aRecency = workspaceRecency[a.id] ?? 0;
-        const bRecency = workspaceRecency[b.id] ?? 0;
-        if (aRecency !== bRecency) {
-          return bRecency - aRecency;
-        }
-
-        const aCreatedAtRaw = Date.parse(a.createdAt ?? "");
-        const bCreatedAtRaw = Date.parse(b.createdAt ?? "");
-        const aCreatedAt = Number.isFinite(aCreatedAtRaw) ? aCreatedAtRaw : 0;
-        const bCreatedAt = Number.isFinite(bCreatedAtRaw) ? bCreatedAtRaw : 0;
-        if (aCreatedAt !== bCreatedAt) {
-          return bCreatedAt - aCreatedAt;
-        }
-
-        if (a.name !== b.name) {
-          return a.name < b.name ? -1 : 1;
-        }
-
-        if (a.id !== b.id) {
-          return a.id < b.id ? -1 : 1;
-        }
-
-        return 0;
-      })
-      .slice(0, 4);
-  }, [workspaceMetadata, workspaceRecency]);
+  const recentWorkspaces = useMemo(
+    () => getRecentVisibleWorkspaces(workspaceMetadata, workspaceRecency, getProjectConfig),
+    [workspaceMetadata, workspaceRecency, getProjectConfig]
+  );
 
   if (recentWorkspaces.length === 0) return null;
 
