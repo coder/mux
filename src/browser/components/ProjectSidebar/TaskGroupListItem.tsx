@@ -25,7 +25,7 @@ interface TaskGroupListItemProps {
 }
 
 function getItemPaddingLeft(depth: number): number {
-  return 8 + Math.min(32, Math.max(0, depth)) * 8;
+  return 10 + Math.min(32, Math.max(0, depth)) * 8;
 }
 
 export function TaskGroupListItem(props: TaskGroupListItemProps) {
@@ -56,7 +56,7 @@ export function TaskGroupListItem(props: TaskGroupListItemProps) {
       data-testid={`task-group-${props.groupId}`}
       className={cn(
         "bg-surface-primary relative flex items-start gap-1.5 rounded-l-sm py-2 pr-2 pl-1 select-none transition-all duration-150 hover:bg-surface-secondary",
-        props.sectionId != null ? "ml-5.5" : "ml-4",
+        props.sectionId != null ? "ml-2" : "ml-0",
         props.isSelected && "bg-surface-secondary"
       )}
       style={{ paddingLeft }}
@@ -72,7 +72,7 @@ export function TaskGroupListItem(props: TaskGroupListItemProps) {
     >
       <span
         aria-hidden="true"
-        className="text-muted mt-0.5 -ml-4 inline-flex h-4 w-4 shrink-0 items-center justify-center"
+        className="text-muted mt-0.5 -ml-2.5 inline-flex h-4 w-4 shrink-0 items-center justify-center"
       >
         <ChevronRight
           className="h-3 w-3 transition-transform duration-150"

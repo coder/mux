@@ -125,10 +125,12 @@ const HIDE_INLINE_ACTIONS_ON_MOBILE_TOUCH =
 const SHOW_INLINE_ACTIONS_ON_WIDE_TOUCH =
   "[@media(min-width:769px)_and_(hover:none)_and_(pointer:coarse)]:opacity-100";
 
-/** Calculate left padding based on nesting depth */
+/** Calculate left padding based on nesting depth.
+ *  Base 10px places the status dot center at 18px — aligned with the project
+ *  folder icon center (pl-2 8px + half of h-5 w-5 button 10px = 18px). */
 function getItemPaddingLeft(depth?: number): number {
   const safeDepth = typeof depth === "number" && Number.isFinite(depth) ? Math.max(0, depth) : 0;
-  return 4 + Math.min(32, safeDepth) * 8;
+  return 10 + Math.min(32, safeDepth) * 8;
 }
 
 function getSubAgentConnectorLeft(
@@ -314,7 +316,7 @@ function DraftAgentListItemInner(props: DraftAgentListItemProps) {
     <div
       className={cn(
         LIST_ITEM_BASE_CLASSES,
-        sectionId != null ? "ml-6" : "ml-5",
+        sectionId != null ? "ml-2" : "ml-0",
         "cursor-pointer pl-1 hover:bg-surface-secondary [&:hover_button]:opacity-100",
         isSelected && "bg-surface-secondary"
       )}
@@ -691,7 +693,9 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
         className={cn(
           LIST_ITEM_BASE_CLASSES,
           "group/row",
-          sectionId != null ? "ml-5.5" : "ml-4",
+          // No left margin — status dot aligns with the project folder icon.
+          // Section members get a small indent for visual grouping.
+          sectionId != null ? "ml-2" : "ml-0",
           isDragging && "opacity-50",
           isRemoving && "opacity-70",
           // Keep hover styles enabled for initializing workspaces so the row feels interactive.

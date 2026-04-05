@@ -1941,8 +1941,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             data-project-path={projectPath}
                             className="text-secondary hover:bg-hover hover:border-border-light mr-1.5 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent p-0 transition-all duration-200"
                           >
-                            {/* Mobile: nudge folder icon left so it visually centers above connector line. */}
-                            <span className="relative flex h-4 w-4 -translate-x-2 items-center justify-center md:translate-x-0">
+                            <span className="relative flex h-4 w-4 items-center justify-center">
                               <ChevronRight
                                 className="absolute inset-0 h-4 w-4 opacity-0 transition-[opacity,transform] duration-200 group-hover:opacity-100"
                                 style={{
@@ -2081,15 +2080,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             aria-label={`Workspaces for ${projectName}`}
                             className="relative pt-1"
                           >
-                            <div
-                              aria-hidden="true"
-                              className="bg-border pointer-events-none absolute top-1 bottom-0 left-3.5 w-px"
-                              style={
-                                projectFolderColor
-                                  ? { backgroundColor: projectFolderColor }
-                                  : undefined
-                              }
-                            />
+                            {/* Vertical connector line removed — workspace status dots now
+                                align directly with the project folder icon, so the tree
+                                connector is no longer needed. */}
                             {(() => {
                               // Archived workspaces are excluded from workspaceMetadata so won't appear here
 

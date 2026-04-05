@@ -107,7 +107,7 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
 
   return (
     <div
-      className="group relative ml-3 flex items-center gap-1 py-1.5 pr-1 pl-2 select-none"
+      className="group relative ml-0 flex items-center gap-1 py-1.5 pr-1 pl-2.5 select-none"
       data-section-id={section.id}
     >
       {/* Expand/Collapse Button */}
