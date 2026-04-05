@@ -1,5 +1,6 @@
 import { ChevronRight, Layers3 } from "lucide-react";
 
+import { getSidebarItemPaddingLeft } from "@/browser/components/sidebarItemLayout";
 import { cn } from "@/common/lib/utils";
 import {
   formatTaskGroupHeader,
@@ -24,12 +25,8 @@ interface TaskGroupListItemProps {
   onToggle: () => void;
 }
 
-function getItemPaddingLeft(depth: number): number {
-  return 10 + Math.min(32, Math.max(0, depth)) * 8;
-}
-
 export function TaskGroupListItem(props: TaskGroupListItemProps) {
-  const paddingLeft = getItemPaddingLeft(props.depth);
+  const paddingLeft = getSidebarItemPaddingLeft(props.depth);
   const statusParts: string[] = [];
   if (props.runningCount > 0) {
     statusParts.push(`${props.runningCount} running`);

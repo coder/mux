@@ -161,6 +161,7 @@ function renderWorkspaceItem(
     metadata?: FrontendWorkspaceMetadata;
     isSelected?: boolean;
     isArchiving?: boolean;
+    depth?: number;
     rowRenderMeta?: AgentRowRenderMeta;
     completedChildrenExpanded?: boolean;
     onToggleCompletedChildren?: (workspaceId: string) => void;
@@ -174,6 +175,7 @@ function renderWorkspaceItem(
       projectName={metadata.projectName}
       isSelected={options.isSelected ?? false}
       isArchiving={options.isArchiving}
+      depth={options.depth ?? options.rowRenderMeta?.depth}
       rowRenderMeta={options.rowRenderMeta}
       completedChildrenExpanded={options.completedChildrenExpanded}
       onToggleCompletedChildren={options.onToggleCompletedChildren}
@@ -242,11 +244,37 @@ describe("AgentListItem", () => {
 
     expect(heartbeatIcon).toBeTruthy();
     expect(heartbeatIcon.parentElement?.className).toContain(
-      "relative z-20 flex h-4 w-4 shrink-0 items-center justify-center self-center"
+      "relative z-20 flex shrink-0 items-center justify-center self-center"
     );
+    expect(heartbeatIcon.parentElement?.getAttribute("style")).toContain("width: 16px");
+    expect(heartbeatIcon.parentElement?.getAttribute("style")).toContain("height: 16px");
     expect(
       rowView.queryByRole("button", { name: `Archive workspace ${TEST_WORKSPACE_TITLE}` })
     ).toBeNull();
+  });
+
+  test("anchors sub-agent connectors to the parent and child leading status slots", () => {
+    const { view } = renderWorkspaceItem({
+      depth: 1,
+      rowRenderMeta: {
+        depth: 1,
+        rowKind: "subagent",
+        connectorPosition: "single",
+        connectorStartsAtParent: true,
+        sharedTrunkActiveThroughRow: false,
+        sharedTrunkActiveBelowRow: false,
+        ancestorTrunks: [],
+        hasHiddenCompletedChildren: false,
+        visibleCompletedChildrenCount: 0,
+      },
+    });
+
+    const topSegment = view.getByTestId("subagent-connector-top-segment");
+    const elbow = view.getByTestId("subagent-connector-elbow");
+
+    expect(topSegment.getAttribute("style")).toContain("left: 18px");
+    expect(elbow.getAttribute("style")).toContain("left: 18px");
+    expect(elbow.getAttribute("style")).toContain("width: 8px");
   });
 
   test("does not render a heartbeat icon fallback when completed children indicator is shown", () => {

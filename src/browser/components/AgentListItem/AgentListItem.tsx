@@ -1,13 +1,14 @@
 import { useTitleEdit } from "@/browser/contexts/WorkspaceTitleEditContext";
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { useContextMenuPosition } from "@/browser/hooks/useContextMenuPosition";
+import { useExperimentValue } from "@/browser/hooks/useExperiments";
+import { useWorkspaceFallbackModel } from "@/browser/hooks/useWorkspaceFallbackModel";
+import { useWorkspaceUnread } from "@/browser/hooks/useWorkspaceUnread";
+import { useRuntimeStatus } from "@/browser/stores/RuntimeStatusStore";
+import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import type { AgentRowRenderMeta } from "@/browser/utils/ui/workspaceFiltering";
 import { cn } from "@/common/lib/utils";
-import { useRuntimeStatus } from "@/browser/stores/RuntimeStatusStore";
-import { updatePersistedState } from "@/browser/hooks/usePersistedState";
-import { useWorkspaceUnread } from "@/browser/hooks/useWorkspaceUnread";
-import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
-import { useWorkspaceFallbackModel } from "@/browser/hooks/useWorkspaceFallbackModel";
-import { useExperimentValue } from "@/browser/hooks/useExperiments";
 import {
   TASK_GROUP_KIND,
   getTaskGroupKindFromMetadata,
@@ -25,8 +26,15 @@ import { SubAgentListItem } from "./SubAgentListItem";
 
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 import { Popover, PopoverContent, PopoverTrigger, PopoverAnchor } from "../Popover/Popover";
-import { useContextMenuPosition } from "@/browser/hooks/useContextMenuPosition";
 import { PositionedMenu, PositionedMenuItem } from "../PositionedMenu/PositionedMenu";
+import {
+  getAncestorRailX,
+  getSidebarItemPaddingLeft,
+  getSubAgentChildStatusCenterX,
+  getSubAgentParentRailX,
+  SIDEBAR_LEADING_SLOT_SIZE_PX,
+  type SubAgentConnectorLayout,
+} from "../sidebarItemLayout";
 import {
   Trash2,
   Trash,
@@ -86,7 +94,7 @@ export interface AgentListItemProps extends AgentListItemBaseProps {
   variant?: "workspace";
   metadata: FrontendWorkspaceMetadata;
   projectName: string;
-  subAgentConnectorLayout?: "default" | "task-group-member";
+  subAgentConnectorLayout?: SubAgentConnectorLayout;
   isArchiving?: boolean;
   /** True when deletion is in-flight (optimistic UI while backend removes). */
   isRemoving?: boolean;
@@ -125,25 +133,10 @@ const HIDE_INLINE_ACTIONS_ON_MOBILE_TOUCH =
 const SHOW_INLINE_ACTIONS_ON_WIDE_TOUCH =
   "[@media(min-width:769px)_and_(hover:none)_and_(pointer:coarse)]:opacity-100";
 
-/** Calculate left padding based on nesting depth.
- *  Base 10px places the status dot center at 18px — aligned with the project
- *  folder icon center (pl-2 8px + half of h-5 w-5 button 10px = 18px). */
-function getItemPaddingLeft(depth?: number): number {
-  const safeDepth = typeof depth === "number" && Number.isFinite(depth) ? Math.max(0, depth) : 0;
-  return 10 + Math.min(32, safeDepth) * 8;
-}
-
-function getSubAgentConnectorLeft(
-  indentLeft: number,
-  layout: "default" | "task-group-member"
-): number {
-  return layout === "task-group-member" ? indentLeft - 2 : indentLeft + 9;
-}
-
-function getAncestorTrunkLeft(depth: number, layout: "default" | "task-group-member"): number {
-  const indentLeft = getItemPaddingLeft(depth);
-  return layout === "task-group-member" ? indentLeft + 6 : indentLeft + 8;
-}
+const LEADING_SLOT_CONTAINER_STYLE = {
+  width: SIDEBAR_LEADING_SLOT_SIZE_PX,
+  height: SIDEBAR_LEADING_SLOT_SIZE_PX,
+} as const;
 
 type VisualState = "active" | "idle" | "seen" | "hidden" | "error" | "question";
 
@@ -193,7 +186,7 @@ function isStatusDotVisible(state: VisualState, isDraft?: boolean, isSubAgent?: 
 }
 
 const LEADING_SLOT_CONTAINER_CLASSES =
-  "relative z-20 flex h-4 w-4 shrink-0 items-center justify-center self-center";
+  "relative z-20 flex shrink-0 items-center justify-center self-center";
 
 function HeartbeatFallbackIcon() {
   return (
@@ -238,6 +231,7 @@ function StatusDot(props: {
       // Keep the status dot above sub-agent connector overlays so branch lines do
       // not draw across the dot when rows are nested.
       className={LEADING_SLOT_CONTAINER_CLASSES}
+      style={LEADING_SLOT_CONTAINER_STYLE}
     >
       {dot}
       {props.overlay && (
@@ -254,7 +248,7 @@ function QuickArchiveButton(props: {
   onArchiveWorkspace: (button: HTMLElement) => void;
 }) {
   return (
-    <div className={LEADING_SLOT_CONTAINER_CLASSES}>
+    <div className={LEADING_SLOT_CONTAINER_CLASSES} style={LEADING_SLOT_CONTAINER_STYLE}>
       <Tooltip>
         <TooltipTrigger asChild>
           <button
@@ -297,7 +291,7 @@ function ActionButtonWrapper(props: { children: React.ReactNode; className?: str
 
 function DraftAgentListItemInner(props: DraftAgentListItemProps) {
   const { projectPath, isSelected, depth, sectionId, draft } = props;
-  const paddingLeft = getItemPaddingLeft(depth);
+  const paddingLeft = getSidebarItemPaddingLeft(depth);
   const hasPromptPreview = draft.promptPreview.length > 0;
   const draftBorderStyle: React.CSSProperties = {
     backgroundImage: [
@@ -658,7 +652,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
         ? "text-content-tertiary"
         : "text-content-primary";
 
-  const paddingLeft = getItemPaddingLeft(depth);
+  const paddingLeft = getSidebarItemPaddingLeft(depth);
 
   // Drag handle for moving workspace between sections
   const [{ isDragging }, drag, dragPreview] = useDrag(
@@ -786,7 +780,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
         data-section-id={sectionId ?? ""}
       >
         {shouldShowHeartbeatFallback ? (
-          <div className={LEADING_SLOT_CONTAINER_CLASSES}>
+          <div className={LEADING_SLOT_CONTAINER_CLASSES} style={LEADING_SLOT_CONTAINER_STYLE}>
             <HeartbeatFallbackIcon />
           </div>
         ) : shouldShowQuickArchiveButton ? (
@@ -1117,15 +1111,12 @@ function AgentListItemInner(props: UnifiedAgentListItemProps) {
     // Connector geometry is driven by render metadata so visible siblings keep
     // consistent single/middle/last shapes as parents expand/collapse children.
     const isElbowActive = props.metadata.taskStatus === "running";
-    // Task-group members use a slightly different left rail so their connector
-    // trunk aligns with the group's leading chevron column.
     const connectorLayout = props.subAgentConnectorLayout ?? "default";
-    const connectorLeft = getSubAgentConnectorLeft(
-      getItemPaddingLeft(props.depth),
-      connectorLayout
-    );
+    const connectorDepth = props.depth ?? rowMeta.depth;
+    const connectorRailX = getSubAgentParentRailX(connectorDepth, connectorLayout);
+    const childStatusCenterX = getSubAgentChildStatusCenterX(connectorDepth);
     const ancestorTrunks = rowMeta.ancestorTrunks.map((trunk) => ({
-      left: getAncestorTrunkLeft(trunk.depth, connectorLayout),
+      left: getAncestorRailX(trunk.depth, connectorLayout),
       active: trunk.active,
     }));
 
@@ -1136,7 +1127,8 @@ function AgentListItemInner(props: UnifiedAgentListItemProps) {
         sharedTrunkActiveThroughRow={rowMeta.sharedTrunkActiveThroughRow}
         sharedTrunkActiveBelowRow={rowMeta.sharedTrunkActiveBelowRow}
         ancestorTrunks={ancestorTrunks}
-        connectorLeft={connectorLeft}
+        connectorRailX={connectorRailX}
+        childStatusCenterX={childStatusCenterX}
         isSelected={props.isSelected}
         isElbowActive={isElbowActive}
       >
