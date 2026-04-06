@@ -1,4 +1,4 @@
-import type { ProvidersConfigMap } from "@/common/orpc/types";
+import type { ProvidersConfigWithModels } from "@/common/utils/providers/modelEntries";
 import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import modelsData from "../tokens/models.json";
 import { modelsExtra } from "../tokens/models-extra";
@@ -11,6 +11,7 @@ interface RawModelCapabilitiesData {
   supports_video_input?: boolean;
   max_pdf_size_mb?: number;
   litellm_provider?: string;
+  supported_endpoints?: string[];
   [key: string]: unknown;
 }
 
@@ -41,11 +42,12 @@ function generateLookupKeys(modelString: string): string[] {
   const modelName = colonIndex !== -1 ? modelString.slice(colonIndex + 1) : modelString;
   const litellmProvider = PROVIDER_KEY_ALIASES[provider] ?? provider;
 
-  const keys: string[] = [
-    modelName, // Direct model name (e.g., "claude-opus-4-5")
-  ];
+  const keys: string[] = [];
 
   if (provider) {
+    // Provider-scoped keys first so provider-specific metadata (e.g.
+    // `github_copilot/gpt-5.2` restricting `/v1/batch`) wins over the
+    // generic bare-model entry.
     keys.push(
       `${litellmProvider}/${modelName}`, // "ollama/gpt-oss:20b"
       `${litellmProvider}/${modelName}-cloud` // "ollama/gpt-oss:20b-cloud" (LiteLLM convention)
@@ -58,6 +60,9 @@ function generateLookupKeys(modelString: string): string[] {
       keys.push(`${litellmProvider}/${baseModel}`);
     }
   }
+
+  // Bare model name is the last-resort fallback.
+  keys.push(modelName);
 
   return keys;
 }
@@ -90,25 +95,34 @@ export function getModelCapabilities(modelString: string): ModelCapabilities | n
   const modelsExtraRecord = modelsExtra as unknown as Record<string, RawModelCapabilitiesData>;
   const modelsDataRecord = modelsData as unknown as Record<string, RawModelCapabilitiesData>;
 
-  // Merge models.json (upstream) + models-extra.ts (local overrides). Extras win.
-  // This avoids wiping capabilities (e.g. PDF support) when modelsExtra only overrides
-  // pricing/token limits.
+  // Merge across ALL matching lookup keys so provider-scoped entries (first
+  // in lookup order) override specific fields while bare-model entries fill
+  // in capabilities the provider-scoped entry omits (e.g. github_copilot/gpt-4o
+  // lacks supports_pdf_input but bare gpt-4o has it).
+  // Within each key, modelsExtra wins over modelsData (upstream).
+  let merged: RawModelCapabilitiesData | null = null;
   for (const key of lookupKeys) {
     const base = modelsDataRecord[key];
     const extra = modelsExtraRecord[key];
 
     if (base || extra) {
-      const merged: RawModelCapabilitiesData = { ...(base ?? {}), ...(extra ?? {}) };
-      return extractModelCapabilities(merged);
+      const keyData: RawModelCapabilitiesData = Object.assign({}, base ?? {}, extra ?? {});
+      if (merged != null) {
+        // Earlier keys (provider-scoped) take priority; later keys (bare model)
+        // fill gaps but don't override.
+        merged = Object.assign({}, keyData, merged);
+      } else {
+        merged = keyData;
+      }
     }
   }
 
-  return null;
+  return merged ? extractModelCapabilities(merged) : null;
 }
 
 export function getModelCapabilitiesResolved(
   modelString: string,
-  providersConfig: ProvidersConfigMap | null
+  providersConfig: ProvidersConfigWithModels | null
 ): ModelCapabilities | null {
   const metadataModel = resolveModelForMetadata(modelString, providersConfig);
   return getModelCapabilities(metadataModel);
@@ -126,4 +140,58 @@ export function getSupportedInputMediaTypes(
   if (caps.supportsAudioInput) result.add("audio");
   if (caps.supportsVideoInput) result.add("video");
   return result;
+}
+
+/**
+ * Resolve supported API endpoints for a model string from static metadata.
+ *
+ * Returns the `supported_endpoints` array (e.g. `["/v1/responses"]`) when
+ * found in models-extra or models.json, or `null` when no metadata exists
+ * or the metadata lacks endpoint information.
+ */
+export function getSupportedEndpoints(modelString: string): string[] | null {
+  const normalized = normalizeToCanonical(modelString);
+  const lookupKeys = generateLookupKeys(normalized);
+
+  const modelsExtraRecord = modelsExtra as unknown as Record<string, RawModelCapabilitiesData>;
+  const modelsDataRecord = modelsData as unknown as Record<string, RawModelCapabilitiesData>;
+
+  for (const key of lookupKeys) {
+    const base = modelsDataRecord[key];
+    const extra = modelsExtraRecord[key];
+
+    if (base || extra) {
+      // Extra wins for the same field; merge so we don't lose base-only endpoints.
+      const merged: RawModelCapabilitiesData = { ...(base ?? {}), ...(extra ?? {}) };
+      return merged.supported_endpoints ?? null;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Like `getSupportedEndpoints`, but first resolves config aliases
+ * (e.g. `mappedToModel`) so gateway-scoped model IDs inherit metadata
+ * from the underlying model when the gateway-scoped key has no entry.
+ */
+export function getSupportedEndpointsResolved(
+  modelString: string,
+  providersConfig: ProvidersConfigWithModels | null
+): string[] | null {
+  // Try the raw (possibly gateway-scoped) key first so provider-specific
+  // endpoint overrides (e.g. `github_copilot/gpt-5.4`) take priority.
+  const direct = getSupportedEndpoints(modelString);
+  if (direct != null) {
+    return direct;
+  }
+
+  // Fall back to the metadata-resolved alias (e.g. mappedToModel) so
+  // models without a provider-scoped entry inherit from the bare model.
+  const metadataModel = resolveModelForMetadata(modelString, providersConfig);
+  if (metadataModel !== modelString) {
+    return getSupportedEndpoints(metadataModel);
+  }
+
+  return null;
 }

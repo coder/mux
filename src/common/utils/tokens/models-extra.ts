@@ -112,6 +112,7 @@ export const modelsExtra: Record<string, ModelData> = {
     supports_vision: true,
     supports_reasoning: true,
     supports_response_schema: true,
+    supported_endpoints: ["/v1/chat/completions", "/v1/responses"],
     knowledge_cutoff: "2025-08-31",
   },
 

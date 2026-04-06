@@ -29,6 +29,7 @@ import {
   injectPostCompactionAttachments,
 } from "@/browser/utils/messages/modelMessageTransform";
 import { applyCacheControl, type AnthropicCacheTtl } from "@/common/utils/ai/cacheStrategy";
+import { normalizeToolCallIds } from "@/node/utils/messages/normalizeToolCallIds";
 import { log } from "./log";
 
 /** Options for the full message preparation pipeline. */
@@ -81,9 +82,10 @@ export interface PrepareMessagesOptions {
  * 10. Rewriting data-URI file parts to SDK-safe inline base64
  * 11. Converting to Vercel AI SDK ModelMessage format
  * 12. Self-healing: filtering empty/whitespace assistant messages
- * 13. Applying provider-specific message transforms
- * 14. Applying cache control headers
- * 15. Validating Anthropic compliance (logs warnings only)
+ * 13. Normalizing oversized tool call IDs (>64 chars) for OpenAI compatibility
+ * 14. Applying provider-specific message transforms
+ * 15. Applying cache control headers
+ * 16. Validating Anthropic compliance (logs warnings only)
  */
 export async function prepareMessagesForProvider(
   opts: PrepareMessagesOptions
@@ -185,10 +187,15 @@ export async function prepareMessagesForProvider(
 
   const modelMessages = sanitizeAssistantModelMessages(rawModelMessages, workspaceId);
 
-  log.debug_obj(`${workspaceId}/2_model_messages.json`, modelMessages);
+  // Normalize oversized tool call IDs (>64 chars) that would be rejected by
+  // OpenAI's Responses API. Uses deterministic hashing so paired tool-call and
+  // tool-result parts stay matched. Request-only — does not mutate history.
+  const normalizedMessages = normalizeToolCallIds(modelMessages);
+
+  log.debug_obj(`${workspaceId}/2_model_messages.json`, normalizedMessages);
 
   // Apply ModelMessage transforms based on provider requirements
-  const transformedMessages = transformModelMessages(modelMessages, providerForMessages, {
+  const transformedMessages = transformModelMessages(normalizedMessages, providerForMessages, {
     anthropicThinkingEnabled:
       providerForMessages === "anthropic" && effectiveThinkingLevel !== "off",
   });

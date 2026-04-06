@@ -34,12 +34,14 @@ import {
   normalizeToCanonical,
 } from "@/common/utils/ai/models";
 import type { AnthropicCacheTtl } from "@/common/utils/ai/cacheStrategy";
+import { getSupportedEndpointsResolved } from "@/common/utils/ai/modelCapabilities";
 import { MUX_APP_ATTRIBUTION_TITLE, MUX_APP_ATTRIBUTION_URL } from "@/constants/appAttribution";
 import { resolveProviderCredentials } from "@/node/utils/providerRequirements";
 import {
   normalizeGatewayStreamUsage,
   normalizeGatewayGenerateResult,
 } from "@/node/utils/gatewayStreamNormalization";
+import { wrapCopilotResponsesModel } from "@/node/services/copilotResponsesModel";
 import { EnvHttpProxyAgent, type Dispatcher } from "undici";
 import packageJson from "../../../package.json";
 
@@ -1525,8 +1527,6 @@ export class ProviderModelFactory {
           return Err({ type: "api_key_not_found", provider: providerName });
         }
 
-        const { createOpenAICompatible } = await PROVIDER_REGISTRY["github-copilot"]();
-
         const baseFetch = getProviderFetch(providerConfig);
         const copilotFetchFn = async (
           input: Parameters<typeof fetch>[0],
@@ -1565,6 +1565,34 @@ export class ProviderModelFactory {
         const providerFetch = copilotFetch;
 
         const baseURL = providerConfig.baseURL ?? "https://api.githubcopilot.com";
+
+        // Determine whether the Copilot model supports the Responses API.
+        // Check provider-scoped metadata first (github_copilot/model), then fall
+        // back to bare-model metadata via alias resolution. Conservative default:
+        // use chat/completions when no endpoint metadata exists.
+        const fullCopilotModelId = `github-copilot:${modelId}`;
+        const endpoints = getSupportedEndpointsResolved(fullCopilotModelId, providersConfig);
+        const supportsResponses = endpoints?.includes("/v1/responses") ?? false;
+        // Prefer responses when available; fall back to chat (current behavior)
+        // when only chat is supported or endpoint metadata is absent entirely.
+        const useCopilotResponses = supportsResponses;
+
+        if (useCopilotResponses) {
+          // Use the full OpenAI SDK provider which supports .responses() —
+          // createOpenAICompatible only exposes .chatModel().
+          // Keep provider name as "github-copilot" so the SDK reads provider
+          // options from the correct namespace (matching buildProviderOptions output).
+          const { createOpenAI } = await PROVIDER_REGISTRY.openai();
+          const provider = createOpenAI({
+            name: "github-copilot",
+            baseURL,
+            apiKey: "copilot", // placeholder — actual auth via custom fetch
+            fetch: providerFetch,
+          });
+          return Ok(wrapCopilotResponsesModel(provider.responses(modelId)));
+        }
+
+        const { createOpenAICompatible } = await PROVIDER_REGISTRY["github-copilot"]();
         const provider = createOpenAICompatible({
           name: "github-copilot",
           baseURL,

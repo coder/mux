@@ -1,5 +1,15 @@
-import type { ProviderModelEntry, ProvidersConfigMap } from "@/common/orpc/types";
+import type { ProviderModelEntry } from "@/common/orpc/types";
 import { normalizeToCanonical } from "@/common/utils/ai/models";
+
+/**
+ * Minimal providers-config shape needed for model-entry lookup.
+ * Both the raw disk config (`ProvidersConfig`) and the API-facing map
+ * (`ProvidersConfigMap`) satisfy this, so callers don't need to convert.
+ */
+export type ProvidersConfigWithModels = Record<
+  string,
+  { models?: ProviderModelEntry[] } | undefined
+>;
 
 interface ParsedProviderModelId {
   provider: string;
@@ -37,7 +47,7 @@ function parseProviderModelId(fullModelId: string): ParsedProviderModelId | null
 }
 
 function findProviderModelEntry(
-  providersConfig: ProvidersConfigMap | null,
+  providersConfig: ProvidersConfigWithModels | null,
   provider: string,
   modelId: string
 ): ProviderModelEntry | null {
@@ -65,7 +75,7 @@ function findProviderModelEntry(
  */
 function findProviderModelEntryScoped(
   fullModelId: string,
-  providersConfig: ProvidersConfigMap | null
+  providersConfig: ProvidersConfigWithModels | null
 ): ProviderModelEntry | null {
   const rawParsed = parseProviderModelId(fullModelId);
   if (rawParsed) {
@@ -94,7 +104,7 @@ function findProviderModelEntryScoped(
 
 export function getModelContextWindowOverride(
   fullModelId: string,
-  providersConfig: ProvidersConfigMap | null
+  providersConfig: ProvidersConfigWithModels | null
 ): number | null {
   const entry = findProviderModelEntryScoped(fullModelId, providersConfig);
   return entry ? getProviderModelEntryContextWindowTokens(entry) : null;
@@ -102,7 +112,7 @@ export function getModelContextWindowOverride(
 
 export function resolveModelForMetadata(
   fullModelId: string,
-  providersConfig: ProvidersConfigMap | null
+  providersConfig: ProvidersConfigWithModels | null
 ): string {
   const entry = findProviderModelEntryScoped(fullModelId, providersConfig);
   return (entry ? getProviderModelEntryMappedTo(entry) : null) ?? fullModelId;

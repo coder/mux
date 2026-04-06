@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -14,6 +14,7 @@ import {
   resolveAIProviderHeaderSource,
 } from "./providerModelFactory";
 import { ProviderService } from "./providerService";
+import * as copilotResponsesModule from "./copilotResponsesModel";
 
 async function withTempConfig(
   run: (config: Config, factory: ProviderModelFactory) => Promise<void> | void
@@ -449,6 +450,178 @@ describe("ProviderModelFactory routing", () => {
       expect(result.data.routeProvider).toBe("openai");
       expect(result.data.routedThroughGateway).toBe(false);
     });
+  });
+});
+
+describe("ProviderModelFactory Copilot endpoint selection", () => {
+  // Helper: extract the SDK provider identifier from a LanguageModel.
+  // At runtime createModel always returns an object model (LanguageModelV3),
+  // but the TS union type includes string literals so we narrow here.
+  function getModelProvider(model: unknown): string {
+    return (model as { provider: string }).provider;
+  }
+
+  it("uses responses endpoint for a Copilot model with /v1/responses support", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        "github-copilot": {
+          apiKey: "ghu_test",
+        },
+      });
+
+      // gpt-5.2 has Copilot-scoped metadata with both /v1/chat/completions and /v1/responses
+      const result = await factory.createModel("github-copilot:gpt-5.2");
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      // When responses endpoint is supported, model provider should include "responses"
+      expect(getModelProvider(result.data)).toContain("responses");
+    });
+  });
+
+  it("uses responses endpoint for a responses-only Copilot model", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        "github-copilot": {
+          apiKey: "ghu_test",
+        },
+      });
+
+      // gpt-5.1-codex-max in models.json has supported_endpoints: ["/v1/responses"] only
+      const result = await factory.createModel("github-copilot:gpt-5.1-codex-max");
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      expect(getModelProvider(result.data)).toContain("responses");
+    });
+  });
+
+  it("uses chat endpoint for a chat-only Copilot model", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        "github-copilot": {
+          apiKey: "ghu_test",
+        },
+      });
+
+      // claude-sonnet-4 in models.json has supported_endpoints: ["/v1/chat/completions"]
+      const result = await factory.createModel("github-copilot:claude-sonnet-4");
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      expect(getModelProvider(result.data)).toContain("chat");
+      expect(getModelProvider(result.data)).not.toContain("responses");
+    });
+  });
+
+  it("falls back to chat endpoint when endpoint metadata is absent", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        "github-copilot": {
+          apiKey: "ghu_test",
+        },
+      });
+
+      // gpt-4o has no supported_endpoints in either copilot-scoped or bare metadata
+      const result = await factory.createModel("github-copilot:gpt-4o");
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      expect(getModelProvider(result.data)).toContain("chat");
+      expect(getModelProvider(result.data)).not.toContain("responses");
+    });
+  });
+
+  it("inherits bare-model endpoint metadata when provider-scoped entry is missing", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        "github-copilot": {
+          apiKey: "ghu_test",
+        },
+      });
+
+      // github_copilot/gpt-5.4 does NOT exist in models.json,
+      // but bare "gpt-5.4" in models-extra has supported_endpoints with /v1/responses.
+      const result = await factory.createModel("github-copilot:gpt-5.4");
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      expect(getModelProvider(result.data)).toContain("responses");
+    });
+  });
+});
+
+describe("ProviderModelFactory Copilot wrapper invocation", () => {
+  it("invokes wrapCopilotResponsesModel for a responses-capable Copilot model", async () => {
+    const wrapSpy = spyOn(copilotResponsesModule, "wrapCopilotResponsesModel");
+    try {
+      await withTempConfig(async (config, factory) => {
+        config.saveProvidersConfig({
+          "github-copilot": {
+            apiKey: "ghu_test",
+          },
+        });
+
+        wrapSpy.mockClear();
+
+        // gpt-5.2 has Copilot-scoped metadata with /v1/responses support
+        const result = await factory.createModel("github-copilot:gpt-5.2");
+        expect(result.success).toBe(true);
+
+        // The wrapper must have been called exactly once for the responses branch
+        expect(wrapSpy).toHaveBeenCalledTimes(1);
+      });
+    } finally {
+      wrapSpy.mockRestore();
+    }
+  });
+
+  it("does not invoke wrapCopilotResponsesModel for a chat-only Copilot model", async () => {
+    const wrapSpy = spyOn(copilotResponsesModule, "wrapCopilotResponsesModel");
+    try {
+      await withTempConfig(async (config, factory) => {
+        config.saveProvidersConfig({
+          "github-copilot": {
+            apiKey: "ghu_test",
+          },
+        });
+
+        wrapSpy.mockClear();
+
+        // claude-sonnet-4 has supported_endpoints: ["/v1/chat/completions"] only
+        const result = await factory.createModel("github-copilot:claude-sonnet-4");
+        expect(result.success).toBe(true);
+
+        // The wrapper should NOT be called for chat-only models
+        expect(wrapSpy).not.toHaveBeenCalled();
+      });
+    } finally {
+      wrapSpy.mockRestore();
+    }
+  });
+
+  it("does not invoke wrapCopilotResponsesModel when endpoint metadata is absent", async () => {
+    const wrapSpy = spyOn(copilotResponsesModule, "wrapCopilotResponsesModel");
+    try {
+      await withTempConfig(async (config, factory) => {
+        config.saveProvidersConfig({
+          "github-copilot": {
+            apiKey: "ghu_test",
+          },
+        });
+
+        wrapSpy.mockClear();
+
+        // gpt-4o has no supported_endpoints metadata — should fall back to chat
+        const result = await factory.createModel("github-copilot:gpt-4o");
+        expect(result.success).toBe(true);
+
+        // No wrapper invocation for metadata-missing models
+        expect(wrapSpy).not.toHaveBeenCalled();
+      });
+    } finally {
+      wrapSpy.mockRestore();
+    }
   });
 });
 
