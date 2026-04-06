@@ -930,7 +930,7 @@ describe("WorkspaceContext", () => {
     );
   });
 
-  test("selectedWorkspace starts null on landing page (no localStorage restore)", async () => {
+  test("root startup opens the recent project page instead of restoring selectedWorkspace localStorage", async () => {
     createMockAPI({
       workspace: {
         list: () =>
@@ -944,7 +944,11 @@ describe("WorkspaceContext", () => {
             }),
           ]),
       },
-      // Seed localStorage — should be ignored since app starts at landing page
+      projects: {
+        list: () => Promise.resolve([["/restore", { workspaces: [] }]]),
+      },
+      // Seed localStorage — WorkspaceContext should resolve the compatibility root
+      // route to the project page instead of reviving the removed landing page.
       localStorage: {
         selectedWorkspace: JSON.stringify({
           workspaceId: "ws-restore",
@@ -958,7 +962,9 @@ describe("WorkspaceContext", () => {
     const ctx = await setup();
 
     await waitFor(() => expect(ctx().loading).toBe(false));
-    // With the new landing page default, localStorage is not used to restore selection
+    await waitFor(() => {
+      expect(ctx().pendingNewWorkspaceProject).toBe("/restore");
+    });
     expect(ctx().selectedWorkspace).toBeNull();
   });
 

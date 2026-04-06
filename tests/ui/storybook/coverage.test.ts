@@ -13,7 +13,6 @@ const REQUIRED_COLOCATED_STORIES = [
   "src/browser/components/ProjectCreateModal/ProjectCreateModal.stories.tsx",
   "src/browser/components/TitleBar/TitleBar.stories.tsx",
   "src/browser/components/WorkspaceMenuBar/WorkspaceMenuBar.stories.tsx",
-  "src/browser/features/LandingPage/LandingPage.stories.tsx",
   "src/browser/components/ProjectPage/ProjectPage.stories.tsx",
   "src/browser/features/Messages/ChatBarrier/InterruptedBarrier.stories.tsx",
   "src/browser/components/DebugLlmRequestModal/DebugLlmRequestModal.stories.tsx",

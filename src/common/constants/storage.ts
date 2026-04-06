@@ -75,7 +75,8 @@ export const LAST_VISITED_ROUTE_KEY = "lastVisitedRoute";
 
 /**
  * User preference for what to show on app launch (global).
- * Values: "dashboard" | "new-chat" | "last-workspace"
+ * Values: "dashboard" (legacy storage value that now opens the recent project page)
+ * | "new-chat" | "last-workspace"
  */
 export const LAUNCH_BEHAVIOR_KEY = "launchBehavior";
 

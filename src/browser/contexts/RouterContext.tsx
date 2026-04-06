@@ -20,7 +20,12 @@ import { getProjectRouteId } from "@/common/utils/projectRouteId";
 
 export interface RouterContext {
   navigateToWorkspace: (workspaceId: string) => void;
-  navigateToProject: (projectPath: string, sectionId?: string, draftId?: string) => void;
+  navigateToProject: (
+    projectPath: string,
+    sectionId?: string,
+    draftId?: string,
+    options?: { replace?: boolean }
+  ) => void;
   navigateToHome: () => void;
   navigateToSettings: (section?: string) => void;
   navigateFromSettings: () => void;
@@ -131,7 +136,6 @@ function isRestorableRoute(route: unknown): route is string {
   }
 
   return (
-    route === "/" ||
     hasValidRestorableWorkspaceRoute(route) ||
     matchesRouteBoundary(route, "/project") ||
     hasValidRestorableSettingsRoute(route) ||
@@ -139,7 +143,7 @@ function isRestorableRoute(route: unknown): route is string {
   );
 }
 
-/** Get initial route from browser URL or default to home. */
+/** Get the initial route, falling back to the compatibility root entrypoint when needed. */
 function getInitialRoute(): string {
   const isStorybook = window.location.pathname.endsWith("iframe.html");
   const isStandalone = isStandalonePwa();
@@ -159,7 +163,8 @@ function getInitialRoute(): string {
 
   // In browser mode (not Storybook), read route directly from URL (enables refresh restoration).
   // Standalone PWAs intentionally ignore stale workspace URLs on cold launch so opening the app
-  // lands on the dashboard, while preserving explicit deep links like /settings or /project.
+  // lands on the default root entrypoint, while preserving explicit deep links like /settings
+  // or /project.
   if (window.location.protocol !== "file:" && !isStorybook && !shouldIgnoreStandaloneWorkspaceUrl) {
     const url = window.location.pathname + window.location.search;
     // Only use URL if it's a valid route (starts with /, not just "/" or empty)
@@ -198,7 +203,8 @@ function getInitialRoute(): string {
     }
   }
 
-  // "dashboard" and "new-chat" both start at /
+  // "dashboard" (legacy storage value) and "new-chat" both enter through "/".
+  // WorkspaceContext immediately resolves that compatibility root route to a real page.
   return "/";
 }
 
@@ -208,9 +214,12 @@ function useUrlSync(): void {
   useEffect(() => {
     const url = location.pathname + location.search + location.hash;
 
-    // User request: desktop reloads/restarts should reopen the last in-app page
-    // instead of falling back to file:///index.html's Home route.
-    updatePersistedState(LAST_VISITED_ROUTE_KEY, url);
+    // The dedicated Mux home page is gone. Keep "/" as a transient compatibility
+    // entrypoint, but only persist real restorable routes so desktop relaunches reopen
+    // the last meaningful page instead of getting stuck on root.
+    if (isRestorableRoute(url)) {
+      updatePersistedState(LAST_VISITED_ROUTE_KEY, url);
+    }
 
     // Skip in Storybook (conflicts with story navigation)
     if (window.location.pathname.endsWith("iframe.html")) return;
@@ -312,25 +321,32 @@ function RouterContextInner(props: { children: ReactNode }) {
   const pendingSectionId = location.pathname === "/project" ? searchParams.get("section") : null;
   const pendingDraftId = location.pathname === "/project" ? searchParams.get("draft") : null;
 
-  // Navigation functions use push (not replace) to build history for back/forward navigation.
-  // See App.tsx handleMouseNavigation and KEYBINDS.NAVIGATE_BACK/FORWARD.
+  // Navigation defaults to push so back/forward keeps working as expected.
+  // Callers can opt into replace for compatibility-root redirects that should not
+  // add a disposable "/" history entry.
   const navigateToWorkspace = useCallback((id: string) => {
     void navigateRef.current(`/workspace/${encodeURIComponent(id)}`);
   }, []);
 
-  const navigateToProject = useCallback((path: string, sectionId?: string, draftId?: string) => {
-    const projectId = getProjectRouteId(path);
-    const params = new URLSearchParams();
-    params.set("project", projectId);
-    if (sectionId) {
-      params.set("section", sectionId);
-    }
-    if (draftId) {
-      params.set("draft", draftId);
-    }
-    const url = `/project?${params.toString()}`;
-    void navigateRef.current(url, { state: { projectPath: path } });
-  }, []);
+  const navigateToProject = useCallback(
+    (path: string, sectionId?: string, draftId?: string, options?: { replace?: boolean }) => {
+      const projectId = getProjectRouteId(path);
+      const params = new URLSearchParams();
+      params.set("project", projectId);
+      if (sectionId) {
+        params.set("section", sectionId);
+      }
+      if (draftId) {
+        params.set("draft", draftId);
+      }
+      const url = `/project?${params.toString()}`;
+      void navigateRef.current(url, {
+        replace: options?.replace === true,
+        state: { projectPath: path },
+      });
+    },
+    []
+  );
 
   const navigateToHome = useCallback(() => {
     void navigateRef.current("/");

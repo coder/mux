@@ -134,8 +134,9 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
 
       await workspaceItem.click();
 
-      // The app boots into the landing page. After clicking a workspace we need to confirm
-      // the navigation actually landed on the demo workspace (not just any transcript).
+      // Startup can land on a project page or a restored workspace. After clicking a
+      // workspace we need to confirm the navigation actually landed on the demo workspace
+      // (not just any transcript).
       const expectedProjectName = path.basename(context.projectPath);
       await expect(page.getByTestId("workspace-menu-bar")).toContainText(expectedProjectName, {
         timeout: 20_000,

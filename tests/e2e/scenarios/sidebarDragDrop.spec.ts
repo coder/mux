@@ -188,8 +188,8 @@ test.describe("sidebar drag and drop", () => {
       { wsId: workspaceId }
     );
 
-    // Reload to pick up the layout. The app boots to the landing page after
-    // reload, so re-open the workspace via the sidebar.
+    // Reload to pick up the layout, then re-open the workspace via the sidebar
+    // so the persisted split layout is applied in the active workspace view.
     await page.reload();
     await page.waitForLoadState("domcontentloaded");
     await ui.projects.openFirstWorkspace();

@@ -135,8 +135,11 @@ const EDITOR_OPTIONS: Array<{ value: EditorType; label: string }> = [
   { value: "custom", label: "Custom" },
 ];
 
+// Keep the legacy "dashboard" storage value for backwards compatibility even
+// though the dedicated landing page has been removed. It now means "open the
+// recent project page".
 const LAUNCH_BEHAVIOR_OPTIONS = [
-  { value: "dashboard", label: "Dashboard" },
+  { value: "dashboard", label: "Recent project" },
   { value: "new-chat", label: "New chat on recent project" },
   { value: "last-workspace", label: "Last visited workspace" },
 ] as const;

@@ -205,6 +205,31 @@ describe("desktop startup route restoration", () => {
     });
   });
 
+  test("ignores persisted desktop root routes so last-workspace fallback can win", async () => {
+    installWindow("file:///index.html");
+
+    const savedWorkspace: WorkspaceSelection = {
+      workspaceId: "workspace-123",
+      projectPath: "/tmp/project",
+      projectName: "Test Project",
+      namedWorkspacePath: "/tmp/project/workspace-123",
+    };
+
+    window.localStorage.setItem(LAST_VISITED_ROUTE_KEY, JSON.stringify("/"));
+    window.localStorage.setItem(LAUNCH_BEHAVIOR_KEY, JSON.stringify("last-workspace"));
+    window.localStorage.setItem(SELECTED_WORKSPACE_KEY, JSON.stringify(savedWorkspace));
+
+    const view = render(
+      <RouterProvider>
+        <PathnameObserver />
+      </RouterProvider>
+    );
+
+    await waitFor(() => {
+      expect(view.getByTestId("pathname").textContent).toBe("/workspace/workspace-123");
+    });
+  });
+
   test("ignores malformed persisted desktop routes instead of crashing startup", async () => {
     installWindow("file:///index.html");
     window.localStorage.setItem(LAST_VISITED_ROUTE_KEY, JSON.stringify({ bad: true }));
@@ -294,6 +319,48 @@ describe("desktop startup route restoration", () => {
         JSON.stringify("/workspace/persist-me")
       );
     });
+  });
+  test("keeps the last meaningful desktop route when navigation briefly hits /", async () => {
+    installWindow("file:///index.html");
+    let latestRouter: RouterContext | null = null;
+
+    function Observer() {
+      latestRouter = useRouter();
+      return <PathnameObserver />;
+    }
+
+    const view = render(
+      <RouterProvider>
+        <Observer />
+      </RouterProvider>
+    );
+
+    await waitFor(() => {
+      expect(latestRouter).not.toBeNull();
+      expect(view.getByTestId("pathname").textContent).toBe("/");
+    });
+
+    act(() => {
+      latestRouter!.navigateToWorkspace("persist-me");
+    });
+
+    await waitFor(() => {
+      expect(window.localStorage.getItem(LAST_VISITED_ROUTE_KEY)).toBe(
+        JSON.stringify("/workspace/persist-me")
+      );
+    });
+
+    act(() => {
+      latestRouter!.navigateToHome();
+    });
+
+    await waitFor(() => {
+      expect(view.getByTestId("pathname").textContent).toBe("/");
+    });
+
+    expect(window.localStorage.getItem(LAST_VISITED_ROUTE_KEY)).toBe(
+      JSON.stringify("/workspace/persist-me")
+    );
   });
 });
 

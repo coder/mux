@@ -99,8 +99,35 @@ import assert from "@/common/utils/assert";
 import { createProjectRefs } from "@/common/utils/multiProject";
 import { MULTI_PROJECT_SIDEBAR_SECTION_ID } from "@/common/constants/multiProject";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
-import { LandingPage } from "@/browser/features/LandingPage/LandingPage";
+import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 import { LoadingScreen } from "@/browser/components/LoadingScreen/LoadingScreen";
+
+function RootRouteShell(props: {
+  leftSidebarCollapsed: boolean;
+  onToggleLeftSidebarCollapsed: () => void;
+}) {
+  return (
+    <div className="bg-surface-primary flex flex-1 flex-col overflow-hidden">
+      {props.leftSidebarCollapsed ? (
+        <div
+          className={`bg-sidebar border-border-light flex shrink-0 items-center border-b px-4 py-2 ${isDesktopMode() ? "titlebar-drag" : ""}`}
+        >
+          <button
+            type="button"
+            onClick={props.onToggleLeftSidebarCollapsed}
+            className={`border-border-medium bg-background-secondary text-foreground hover:bg-hover rounded-md border px-3 py-1.5 text-sm transition-colors ${isDesktopMode() ? "titlebar-no-drag" : ""}`}
+            aria-label="Open sidebar menu"
+          >
+            Open sidebar
+          </button>
+        </div>
+      ) : null}
+      <div className="flex flex-1 items-center justify-center px-6">
+        <p className="text-muted text-sm">Select or add a project to get started.</p>
+      </div>
+    </div>
+  );
+}
 
 function AppInner() {
   // Get workspace state from context
@@ -269,7 +296,8 @@ function AppInner() {
       const metadata = workspaceMetadata.get(selectedWorkspace.workspaceId);
 
       if (!metadata) {
-        // Workspace was deleted - navigate home (clears selection)
+        // Workspace metadata disappeared while this route was active. Clear the stale
+        // selection so the router can self-heal to the compatibility root route.
         console.warn(
           `Workspace ${selectedWorkspace.workspaceId} no longer exists, clearing selection`
         );
@@ -1098,9 +1126,15 @@ function AppInner() {
               })()
             ) : currentWorkspaceId ? (
               loading ? (
+                // Keep a lightweight loading shell while WorkspaceContext validates or
+                // self-heals stale `/workspace/:id` routes. Restoring a path alone is not
+                // enough; we only render AIView once metadata hydration confirms it exists.
                 <LoadingScreen statusText="Opening workspace..." />
               ) : (
-                <LandingPage
+                // If metadata never hydrated for the routed workspace, avoid trapping the user
+                // on a permanent spinner. Show the same non-blocking root shell while the route
+                // waits for a later retry or manual navigation.
+                <RootRouteShell
                   leftSidebarCollapsed={sidebarCollapsed}
                   onToggleLeftSidebarCollapsed={handleToggleSidebar}
                 />
@@ -1154,7 +1188,10 @@ function AppInner() {
                 );
               })()
             ) : (
-              <LandingPage
+              // The dedicated Mux home page was removed. Keep `/` as a minimal shell so
+              // WorkspaceContext can redirect it to a concrete project route when possible,
+              // without reintroducing a sticky dashboard screen.
+              <RootRouteShell
                 leftSidebarCollapsed={sidebarCollapsed}
                 onToggleLeftSidebarCollapsed={handleToggleSidebar}
               />
