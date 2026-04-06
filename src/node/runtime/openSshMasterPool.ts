@@ -184,7 +184,9 @@ export class OpenSSHMasterPool {
       }
 
       this.trimExitedShards(hostGroup);
-      if (this.pickReadyShard(hostGroup)) {
+      const readyShard = this.pickReadyShard(hostGroup);
+      if (readyShard) {
+        this.scheduleIdleDisposalIfUnused(readyShard);
         return;
       }
 
@@ -202,6 +204,7 @@ export class OpenSSHMasterPool {
               ? defaultStartTimeoutMs
               : Math.min(defaultStartTimeoutMs, Math.max(1, deadlineMs - Date.now()));
           await this.startShard(hostGroup, restartable, startupTimeoutMs, options?.abortSignal);
+          this.scheduleIdleDisposalIfUnused(restartable);
           return;
         } catch (error) {
           if (options?.abortSignal?.aborted) {
@@ -219,6 +222,7 @@ export class OpenSSHMasterPool {
               ? defaultStartTimeoutMs
               : Math.min(defaultStartTimeoutMs, Math.max(1, deadlineMs - Date.now()));
           await this.startShard(hostGroup, shard, startupTimeoutMs, options?.abortSignal);
+          this.scheduleIdleDisposalIfUnused(shard);
           return;
         } catch (error) {
           if (options?.abortSignal?.aborted) {
@@ -435,6 +439,12 @@ export class OpenSSHMasterPool {
         this.recordShardFailure(shard, error);
       },
     };
+  }
+
+  private scheduleIdleDisposalIfUnused(shard: MasterShard): void {
+    if (shard.inflight === 0) {
+      this.scheduleIdleDisposal(shard);
+    }
   }
 
   private scheduleIdleDisposal(shard: MasterShard): void {

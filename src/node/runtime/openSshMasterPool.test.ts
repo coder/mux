@@ -555,6 +555,55 @@ describe("OpenSSHMasterPool", () => {
     pool.clearAll();
   });
 
+  test("ensureReadyMaster schedules idle cleanup after bootstrapping a shard", async () => {
+    const pool = new OpenSSHMasterPool({
+      maxSessionsPerShard: 1,
+      maxShardsPerHost: 1,
+      sleep: () => Promise.resolve(),
+      spawnProcess: ((_command: string, args?: readonly string[]) => {
+        const proc = new FakeChildProcess();
+        const normalizedArgs = [...(args ?? [])];
+
+        if (normalizedArgs.includes("-M")) {
+          const controlPathArg = normalizedArgs.find((arg) => arg.startsWith("ControlPath="));
+          if (controlPathArg) {
+            masterProcesses.set(controlPathArg.slice("ControlPath=".length), proc);
+          }
+          return proc as never;
+        }
+
+        const controlPathIndex = normalizedArgs.indexOf("-S");
+        const controlPath =
+          controlPathIndex >= 0 ? normalizedArgs[controlPathIndex + 1] : undefined;
+        queueMicrotask(() => {
+          if (normalizedArgs.includes("check") && controlPath && masterProcesses.has(controlPath)) {
+            proc.exitCode = 0;
+          }
+          proc.emit("close", proc.exitCode ?? 1, null);
+        });
+        return proc as never;
+      }) as unknown as typeof spawnProcess,
+    });
+
+    const config: SSHConnectionConfig = { host: "remote.example.com", port: 22 };
+    await pool.ensureReadyMaster(config, { maxWaitMs: 0, timeoutMs: 1000 });
+
+    const internals = pool as unknown as {
+      hostGroups: Map<
+        string,
+        { shards: Array<{ inflight: number; idleTimer?: ReturnType<typeof setTimeout> }> }
+      >;
+    };
+    const shard = [...internals.hostGroups.values()][0]?.shards[0];
+    if (!shard) {
+      throw new Error("Expected a tracked shard");
+    }
+    expect(shard.inflight).toBe(0);
+    expect(shard.idleTimer).toBeDefined();
+
+    pool.clearAll();
+  });
+
   test("retries transient shard startup failures within the maxWait budget", async () => {
     let startupAttempts = 0;
     const pool = new OpenSSHMasterPool({
