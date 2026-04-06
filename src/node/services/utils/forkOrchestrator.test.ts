@@ -153,6 +153,7 @@ describe("orchestrateFork", () => {
     expect(createRuntimeMock).toHaveBeenCalledWith(DEFAULT_FORKED_RUNTIME_CONFIG, {
       projectPath: PROJECT_PATH,
       workspaceName: NEW_WORKSPACE_NAME,
+      workspacePath: "/workspaces/forked",
     });
   });
 
@@ -201,6 +202,7 @@ describe("orchestrateFork", () => {
     expect(createRuntimeMock).toHaveBeenCalledWith(DEFAULT_FORKED_RUNTIME_CONFIG, {
       projectPath: PROJECT_PATH,
       workspaceName: NEW_WORKSPACE_NAME,
+      workspacePath: "/workspaces/created",
     });
   });
 
@@ -409,6 +411,7 @@ describe("orchestrateFork", () => {
     expect(createRuntimeMock).toHaveBeenCalledWith(customForkedRuntimeConfig, {
       projectPath: PROJECT_PATH,
       workspaceName: NEW_WORKSPACE_NAME,
+      workspacePath: "/workspaces/created-with-custom-runtime",
     });
   });
 
@@ -451,10 +454,14 @@ describe("orchestrateFork", () => {
       expect.objectContaining({ containerName: "mux-demo-source-aaaaaa" })
     );
 
-    // createRuntime should also receive the normalized config
+    // createRuntime should also receive the normalized config and the created workspace path.
     expect(createRuntimeMock).toHaveBeenCalledWith(
       expect.objectContaining({ containerName: expectedContainerName }),
-      { projectPath: PROJECT_PATH, workspaceName: NEW_WORKSPACE_NAME }
+      {
+        projectPath: PROJECT_PATH,
+        workspaceName: NEW_WORKSPACE_NAME,
+        workspacePath: "/workspaces/new",
+      }
     );
   });
   it("returns Err when create fallback also fails", async () => {

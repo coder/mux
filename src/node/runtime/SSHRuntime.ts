@@ -62,6 +62,18 @@ const BUNDLE_REF_PREFIX = "refs/mux-bundle/";
 /** Small backoff for concurrent writers healing the same shared base repo config. */
 const BASE_REPO_CONFIG_LOCK_RETRY_DELAYS_MS = [50, 100, 200];
 
+const sharedProjectLayouts = new Map<string, RemoteProjectLayout>();
+
+function getProjectLayoutCacheKey(config: SSHRuntimeConfig, projectPath: string): string {
+  return [
+    config.host,
+    config.port?.toString() ?? "22",
+    config.identityFile ?? "default",
+    config.srcBaseDir,
+    projectPath,
+  ].join(":");
+}
+
 function isGitConfigLockConflict(message: string): boolean {
   return /could not lock config file/i.test(message);
 }
@@ -166,6 +178,10 @@ export function computeBaseRepoPath(srcBaseDir: string, projectPath: string): st
  *
  * Extends RemoteRuntime for shared exec/file operations.
  */
+export function clearSharedProjectLayoutCache(): void {
+  sharedProjectLayouts.clear();
+}
+
 export class SSHRuntime extends RemoteRuntime {
   private readonly config: SSHRuntimeConfig;
   private readonly transport: SSHTransport;
@@ -195,7 +211,7 @@ export class SSHRuntime extends RemoteRuntime {
     this.currentWorkspacePath = options?.workspacePath;
 
     if (options?.projectPath && options.workspacePath) {
-      this.projectLayouts.set(
+      this.cacheProjectLayout(
         options.projectPath,
         buildRemoteProjectLayout(
           this.config.srcBaseDir,
@@ -250,15 +266,31 @@ export class SSHRuntime extends RemoteRuntime {
     return buildRemoteProjectLayout(this.config.srcBaseDir, projectPath);
   }
 
+  private getCachedProjectLayout(projectPath: string): RemoteProjectLayout | undefined {
+    return (
+      this.projectLayouts.get(projectPath) ??
+      sharedProjectLayouts.get(getProjectLayoutCacheKey(this.config, projectPath))
+    );
+  }
+
+  private cacheProjectLayout(
+    projectPath: string,
+    layout: RemoteProjectLayout
+  ): RemoteProjectLayout {
+    this.projectLayouts.set(projectPath, layout);
+    sharedProjectLayouts.set(getProjectLayoutCacheKey(this.config, projectPath), layout);
+    return layout;
+  }
+
   private getPreferredProjectLayout(projectPath: string): RemoteProjectLayout {
-    return this.projectLayouts.get(projectPath) ?? this.getDefaultProjectLayout(projectPath);
+    return this.getCachedProjectLayout(projectPath) ?? this.getDefaultProjectLayout(projectPath);
   }
 
   private async resolveProjectLayout(
     projectPath: string,
     workspaceName?: string
   ): Promise<RemoteProjectLayout> {
-    const cached = this.projectLayouts.get(projectPath);
+    const cached = this.getCachedProjectLayout(projectPath);
     if (cached) {
       return cached;
     }
@@ -286,11 +318,9 @@ export class SSHRuntime extends RemoteRuntime {
         timeout: 10,
       });
       const layout = detection.stdout.trim() === "legacy" ? legacyLayout : preferredLayout;
-      this.projectLayouts.set(projectPath, layout);
-      return layout;
+      return this.cacheProjectLayout(projectPath, layout);
     } catch {
-      this.projectLayouts.set(projectPath, preferredLayout);
-      return preferredLayout;
+      return this.cacheProjectLayout(projectPath, preferredLayout);
     }
   }
 
@@ -435,12 +465,7 @@ export class SSHRuntime extends RemoteRuntime {
       return this.currentWorkspacePath;
     }
 
-    const cachedLayout = this.projectLayouts.get(projectPath);
-    if (cachedLayout) {
-      return getRemoteWorkspacePath(cachedLayout, workspaceName);
-    }
-
-    return getRemoteWorkspacePath(this.getDefaultProjectLayout(projectPath), workspaceName);
+    return getRemoteWorkspacePath(this.getPreferredProjectLayout(projectPath), workspaceName);
   }
 
   /**

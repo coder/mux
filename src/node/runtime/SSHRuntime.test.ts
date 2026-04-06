@@ -4,7 +4,7 @@ import { describe, expect, it, beforeEach, afterEach, spyOn } from "bun:test";
 import * as runtimeHelpers from "@/node/utils/runtime/helpers";
 import * as disposableExec from "@/node/utils/disposableExec";
 import * as submoduleSync from "./submoduleSync";
-import { SSHRuntime, computeBaseRepoPath } from "./SSHRuntime";
+import { SSHRuntime, clearSharedProjectLayoutCache, computeBaseRepoPath } from "./SSHRuntime";
 import {
   buildLegacyRemoteProjectLayout,
   buildRemoteProjectLayout,
@@ -34,6 +34,10 @@ function createMockExecResult(
     [Symbol.dispose]: () => undefined,
   } as unknown as ReturnType<typeof disposableExec.execFileAsync>;
 }
+
+afterEach(() => {
+  clearSharedProjectLayoutCache();
+});
 
 describe("SSHRuntime constructor", () => {
   it("should accept tilde in srcBaseDir", () => {
@@ -1204,6 +1208,23 @@ describe("SSHRuntime layout detection", () => {
     const detectionCommand = execBufferedSpy.mock.calls[0]?.[1];
     expect(detectionCommand).toContain(`test -e "${legacyLayout.projectRoot}/${workspaceName}"`);
     expect(detectionCommand).not.toContain(`test -d "${legacyLayout.projectRoot}"`);
+  });
+  it("reuses a cached legacy layout for fresh runtimes without workspacePath hints", () => {
+    const config = { host: "example.com", srcBaseDir: "/home/user/src" };
+    const projectPath = "/projects/cached-legacy-demo";
+    const workspaceName = "legacy-slot";
+    const legacyLayout = buildLegacyRemoteProjectLayout(config.srcBaseDir, projectPath);
+    const legacyWorkspacePath = getRemoteWorkspacePath(legacyLayout, workspaceName);
+
+    new SSHRuntime(config, createSSHTransport(config, false), {
+      projectPath,
+      workspaceName,
+      workspacePath: legacyWorkspacePath,
+    });
+
+    const freshRuntime = new SSHRuntime(config, createSSHTransport(config, false));
+
+    expect(freshRuntime.getWorkspacePath(projectPath, workspaceName)).toBe(legacyWorkspacePath);
   });
 });
 

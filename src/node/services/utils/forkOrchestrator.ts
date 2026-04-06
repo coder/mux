@@ -577,6 +577,7 @@ export async function orchestrateFork(
   const targetRuntime = createRuntime(normalizedForkedRuntimeConfig, {
     projectPath,
     workspaceName: newWorkspaceName,
+    workspacePath,
   });
 
   return Ok({

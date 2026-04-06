@@ -5168,9 +5168,11 @@ export class WorkspaceService extends EventEmitter {
       // Copy plan file using explicit source/target runtimes for cross-runtime safety.
       // Create a fresh source runtime handle because DockerRuntime.forkWorkspace() can
       // mutate the original runtime's container identity to target the new workspace.
+      const sourceWorkspace = this.config.findWorkspace(sourceWorkspaceId);
       const freshSourceRuntime = createRuntime(sourceRuntimeConfig, {
         projectPath: foundProjectPath,
         workspaceName: sourceMetadata.name,
+        workspacePath: sourceWorkspace?.workspacePath,
       });
       await copyPlanFileAcrossRuntimes(
         freshSourceRuntime,
