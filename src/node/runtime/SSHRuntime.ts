@@ -38,12 +38,22 @@ import { expandTildeForSSH as expandHookPath } from "./tildeExpansion";
 import { expandTildeForSSH, cdCommandForSSH } from "./tildeExpansion";
 import { execBuffered } from "@/node/utils/runtime/helpers";
 import { getErrorMessage } from "@/common/utils/errors";
-import { type SSHRuntimeConfig } from "./sshConnectionPool";
+import {
+  type SSHRuntimeConfig,
+  getControlPath,
+  appendOpenSSHHostKeyPolicyArgs,
+  sshConnectionPool,
+} from "./sshConnectionPool";
 import { getOriginUrlForBundle } from "./gitBundleSync";
 import { gitNoHooksPrefix } from "@/node/utils/gitNoHooksEnv";
 import { execFileAsync } from "@/node/utils/disposableExec";
 import { syncRuntimeGitSubmodules } from "./submoduleSync";
-import type { PtyHandle, PtySessionParams, SSHTransport } from "./transports";
+import {
+  OpenSSHTransport,
+  type PtyHandle,
+  type PtySessionParams,
+  type SSHTransport,
+} from "./transports";
 import {
   buildRemoteProjectLayout,
   getRemoteWorkspacePath,
@@ -51,8 +61,8 @@ import {
 } from "./remoteProjectLayout";
 import { streamToString, shescape } from "./streamUtils";
 
-/** Staging namespace for bundle-imported branch refs. Branches land here instead
- *  of refs/heads/* so they don't collide with branches checked out in worktrees. */
+/** Staging namespace for synced branch refs. Branches land here instead of
+ *  refs/heads/* so they don't collide with branches checked out in worktrees. */
 const BUNDLE_REF_PREFIX = "refs/mux-bundle/";
 
 /** Small backoff for concurrent writers healing the same shared base repo config. */
@@ -194,6 +204,40 @@ async function waitForProcessExit(proc: ChildProcess): Promise<number> {
     proc.on("close", (code) => resolve(code ?? 0));
     proc.on("error", (err) => reject(err));
   });
+}
+
+/** Truncate SSH stderr for error logging (prefer the first transport-related line, max 200 chars). */
+function truncateSSHError(stderr: string): string {
+  const trimmed = stderr.trim();
+  if (!trimmed) return "exit code 255";
+
+  const lines = trimmed.split("\n").filter(Boolean);
+  const preferredLine =
+    lines.find((line) =>
+      /(ssh:|Could not resolve hostname|Host key verification failed|Permission denied|Connection (timed out|refused|reset)|No route to host|Network is unreachable|kex_exchange_identification|Could not read from remote repository)/i.test(
+        line
+      )
+    ) ?? lines[0];
+
+  if (preferredLine.length <= 200) return preferredLine;
+  return preferredLine.slice(0, 197) + "...";
+}
+
+function isUnsupportedAtomicPush(errorMsg: string): boolean {
+  return /atomic/i.test(errorMsg) && /(does not support|not support|unsupported)/i.test(errorMsg);
+}
+
+function isGitPushTransportFailure(exitCode: number | null, errorMsg: string): boolean {
+  if (exitCode === 255) {
+    return true;
+  }
+  if (exitCode !== 128) {
+    return false;
+  }
+
+  return /(ssh:|Could not resolve hostname|Host key verification failed|Permission denied|Connection (timed out|refused|reset)|No route to host|Network is unreachable|kex_exchange_identification|Could not read from remote repository)/i.test(
+    errorMsg
+  );
 }
 // Re-export SSHRuntimeConfig from connection pool (defined there to avoid circular deps)
 export type { SSHRuntimeConfig } from "./sshConnectionPool";
@@ -902,23 +946,6 @@ export class SSHRuntime extends RemoteRuntime {
   }
 
   /**
-   * Sync project to remote using git bundle
-   *
-   * Uses `git bundle` to create a packfile and clones it on the remote.
-   *
-   * Benefits over git archive:
-   * - Creates a real git repository on remote (can run git commands)
-   * - Better parity with git worktrees (full .git directory with metadata)
-   * - Enables remote git operations (commit, branch, status, diff, etc.)
-   * - Only tracked files in checkout (no node_modules, build artifacts)
-   * - Includes full history for flexibility
-   *
-   * Benefits over rsync/scp:
-   * - Much faster (only tracked files)
-   * - No external dependencies (git is always available)
-   * - Simpler implementation
-   */
-  /**
    * Transfer a git bundle to the remote and return its path.
    * Callers are responsible for cleanup of the remote bundle file.
    */
@@ -1007,13 +1034,254 @@ export class SSHRuntime extends RemoteRuntime {
     return remoteBundlePath;
   }
 
+  private async syncProjectSnapshotViaBundle(
+    projectPath: string,
+    layout: RemoteProjectLayout,
+    currentSnapshotPath: string,
+    snapshotDigest: string,
+    baseRepoPathArg: string,
+    initLogger: InitLogger,
+    abortSignal?: AbortSignal
+  ): Promise<void> {
+    // Snapshot markers stay deterministic, but the uploaded bundle itself must use
+    // a per-attempt temp path so concurrent Mux processes do not stream into the same file.
+    const remoteBundlePath = path.posix.join(
+      "~/.mux-bundles",
+      layout.projectId,
+      `${snapshotDigest}.${crypto.randomUUID()}.bundle`
+    );
+    const remoteBundlePathArg = this.quoteForRemote(remoteBundlePath);
+    const remoteBundleParentDir = path.posix.dirname(remoteBundlePath);
+    const prepareRemoteDirs = await execBuffered(
+      this,
+      `mkdir -p ${this.quoteForRemote(remoteBundleParentDir)} ${this.quoteForRemote(path.posix.dirname(currentSnapshotPath))}`,
+      { cwd: "/tmp", timeout: 10, abortSignal }
+    );
+    if (prepareRemoteDirs.exitCode !== 0) {
+      throw new Error(
+        `Failed to prepare remote snapshot directories: ${prepareRemoteDirs.stderr || prepareRemoteDirs.stdout}`
+      );
+    }
+
+    await this.transferBundleToRemote(projectPath, remoteBundlePath, initLogger, abortSignal);
+
+    try {
+      // Import branches and tags from the bundle into the shared bare repo.
+      // Branches land in refs/mux-bundle/* (staging namespace) instead of
+      // refs/heads/* to avoid colliding with branches checked out in existing
+      // worktrees — git refuses to update any ref checked out in a worktree.
+      // Tags go directly to refs/tags/* (they're never checked out).
+      initLogger.logStep("Importing bundle into shared base repository...");
+      const fetchResult = await execBuffered(
+        this,
+        `git -C ${baseRepoPathArg} fetch --prune --prune-tags ${remoteBundlePathArg} '+refs/heads/*:${BUNDLE_REF_PREFIX}*' '+refs/tags/*:refs/tags/*'`,
+        { cwd: "/tmp", timeout: 300, abortSignal }
+      );
+      if (fetchResult.exitCode !== 0) {
+        throw new Error(
+          `Failed to import bundle into base repo: ${fetchResult.stderr || fetchResult.stdout}`
+        );
+      }
+    } finally {
+      // Best-effort cleanup of the remote bundle file.
+      try {
+        await execBuffered(this, `rm -f ${remoteBundlePathArg}`, {
+          cwd: "/tmp",
+          timeout: 10,
+        });
+      } catch {
+        // Ignore cleanup errors.
+      }
+    }
+  }
+
   /**
-   * Sync local project to the shared bare base repo on the remote via git bundle.
+   * Build a GIT_SSH_COMMAND that mirrors the runtime's SSH config so `git push`
+   * reuses the same multiplexed connection and auth settings.
+   */
+  private buildGitSshCommand(): string {
+    const config = this.transport.getConfig();
+    // GIT_SSH_COMMAND is interpreted as a shell command string, so values
+    // containing spaces or special characters must be quoted to prevent
+    // incorrect word-splitting (e.g., identity file paths with spaces,
+    // ControlPath under /tmp with user-generated segments).
+    const singleQuote = "'";
+    const escapedSingleQuote = `${singleQuote}\\${singleQuote}${singleQuote}`;
+    const q = (s: string) => `${singleQuote}${s.replace(/'/g, escapedSingleQuote)}${singleQuote}`;
+
+    const args: string[] = ["ssh"];
+
+    if (config.port) {
+      args.push("-p", config.port.toString());
+    }
+    if (config.identityFile) {
+      args.push("-i", q(config.identityFile));
+    }
+
+    // Reuse the runtime's ControlPath so git push piggybacks on the existing
+    // multiplexed connection instead of opening a new one.
+    const controlPath = getControlPath(config);
+    args.push("-o", "LogLevel=FATAL");
+    args.push("-o", "ControlMaster=auto");
+    args.push("-o", q(`ControlPath=${controlPath}`));
+    args.push("-o", "ControlPersist=60");
+    args.push("-o", "BatchMode=yes");
+    args.push("-o", "ConnectTimeout=15");
+    args.push("-o", "ServerAliveInterval=5");
+    args.push("-o", "ServerAliveCountMax=2");
+
+    // Match the runtime's host key policy (permissive in headless mode).
+    appendOpenSSHHostKeyPolicyArgs(args);
+
+    return args.join(" ");
+  }
+
+  private async syncProjectSnapshotViaGitPush(
+    projectPath: string,
+    layout: RemoteProjectLayout,
+    currentSnapshotPath: string,
+    initLogger: InitLogger,
+    abortSignal?: AbortSignal
+  ): Promise<void> {
+    const prepareSnapshotDir = await execBuffered(
+      this,
+      `mkdir -p ${this.quoteForRemote(path.posix.dirname(currentSnapshotPath))}`,
+      { cwd: "/tmp", timeout: 10, abortSignal }
+    );
+    if (prepareSnapshotDir.exitCode !== 0) {
+      throw new Error(
+        `Failed to prepare remote snapshot directory: ${prepareSnapshotDir.stderr || prepareSnapshotDir.stdout}`
+      );
+    }
+
+    await this.transport.acquireConnection({
+      abortSignal,
+      onWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
+    });
+
+    if (abortSignal?.aborted) {
+      throw new Error("Sync aborted");
+    }
+
+    initLogger.logStep("Pushing to remote...");
+
+    // Build the SSH remote URL pointing to the shared bare base repo.
+    // Use ssh:// URL format (not SCP-style host:path) because:
+    //  - SCP-style breaks on IPv6 literals (first : is ambiguous)
+    //  - ssh:// handles ~/ paths natively via /~/ syntax
+    //  - ssh:// respects the port from GIT_SSH_COMMAND without -p duplication
+    const baseRepoPath = layout.baseRepoPath;
+    // ssh:// URLs: /~/ means home-relative, / means absolute, and relative
+    // paths need /~/ prefix (resolved relative to home on the remote).
+    let urlPath: string;
+    if (baseRepoPath.startsWith("~/")) {
+      urlPath = `/~/${baseRepoPath.slice(2)}`;
+    } else if (baseRepoPath.startsWith("/")) {
+      urlPath = baseRepoPath;
+    } else {
+      // Relative path (e.g., "src/project/.mux-base.git") — treat as
+      // home-relative to match the old bundle flow's shell resolution.
+      urlPath = `/~/${baseRepoPath}`;
+    }
+    // Bracket bare IPv6 addresses for URL syntax. The host field can be:
+    //   hostname        → no change
+    //   user@hostname   → no change
+    //   2001:db8::1     → [2001:db8::1]       (bare IPv6)
+    //   user@[::1]      → no change            (already bracketed)
+    //   [::1]           → no change            (already bracketed)
+    const host = this.config.host;
+    const atIdx = host.lastIndexOf("@");
+    const hostPart = atIdx >= 0 ? host.slice(atIdx + 1) : host;
+    const userPrefix = atIdx >= 0 ? host.slice(0, atIdx + 1) : "";
+    const needsBrackets = hostPart.includes(":") && !hostPart.startsWith("[");
+    const urlHost = needsBrackets ? `${userPrefix}[${hostPart}]` : host;
+    const remoteUrl = `ssh://${urlHost}${urlPath}`;
+    const gitSshCommand = this.buildGitSshCommand();
+
+    // Push local branches and tags to the remote base repo. Branches land in
+    // refs/mux-bundle/* (staging namespace) and tags go to refs/tags/* directly.
+    // --prune keeps the staging refs aligned with local deletions so snapshot
+    // markers remain reusable after local branch/tag cleanup.
+    //
+    // NOTE: This runs `git push` locally (not through the runtime's SSHTransport),
+    // so it depends on the local `ssh` CLI being available. On OpenSSH runtimes,
+    // the transport already depends on that binary and shares the same ControlPath.
+    const pushArgsBase = [
+      "-C",
+      projectPath,
+      "push",
+      "--force",
+      "--prune",
+      "--no-verify",
+      remoteUrl,
+      `+refs/heads/*:${BUNDLE_REF_PREFIX}*`,
+      "+refs/tags/*:refs/tags/*",
+    ];
+    const runPush = async (useAtomic: boolean): Promise<void> => {
+      const pushArgs = useAtomic
+        ? [...pushArgsBase.slice(0, 4), "--atomic", ...pushArgsBase.slice(4)]
+        : pushArgsBase;
+      using pushProc = execFileAsync("git", pushArgs, {
+        env: { GIT_SSH_COMMAND: gitSshCommand },
+        onStderrData: (chunk) => {
+          for (const line of chunk.split("\n").filter(Boolean)) {
+            initLogger.logStderr(line);
+          }
+        },
+      });
+
+      // Bound the push with a 300s timeout (matching the old bundle path) and
+      // wire up abort signal — disposing kills the child process.
+      const pushTimeout = setTimeout(() => pushProc[Symbol.dispose](), 300_000);
+      const onAbort = () => pushProc[Symbol.dispose]();
+      abortSignal?.addEventListener("abort", onAbort, { once: true });
+      try {
+        await pushProc.result;
+      } finally {
+        clearTimeout(pushTimeout);
+        abortSignal?.removeEventListener("abort", onAbort);
+      }
+    };
+    const throwPushFailure = (error: unknown): never => {
+      const errorMsg = getErrorMessage(error);
+      const exitCode = (error as { code?: number | null }).code ?? null;
+      const isConnectionFailure =
+        (exitCode != null && this.transport.isConnectionFailure(exitCode, errorMsg)) ||
+        isGitPushTransportFailure(exitCode, errorMsg);
+      if (isConnectionFailure) {
+        sshConnectionPool.reportFailure(this.transport.getConfig(), truncateSSHError(errorMsg));
+      }
+      throw new Error(`Failed to push to remote: ${errorMsg}`);
+    };
+
+    try {
+      await runPush(true);
+    } catch (error) {
+      const errorMsg = getErrorMessage(error);
+      if (!isUnsupportedAtomicPush(errorMsg)) {
+        throwPushFailure(error);
+      }
+
+      initLogger.logStep("Remote git does not support atomic push; retrying without --atomic...");
+      try {
+        await runPush(false);
+      } catch (retryError) {
+        throwPushFailure(retryError);
+      }
+    }
+  }
+
+  /**
+   * Sync local project to the shared bare base repo on the remote.
+   *
+   * OpenSSH runtimes use native `git push` so Git negotiates incremental object
+   * transfer automatically. SSH2 runtimes keep the bundle path so sync does not
+   * depend on a local OpenSSH CLI or local known_hosts state.
    *
    * Branches land in a staging namespace (refs/mux-bundle/*) to avoid colliding
    * with branches checked out in existing worktrees. Tags go to refs/tags/*
-   * directly. Remote tracking refs are excluded entirely.
-   * Idempotent — re-running is a no-op when nothing changed.
+   * directly. Remote tracking refs are excluded by the refspec — only local
+   * branches and tags are synchronized.
    */
   protected async syncProjectToRemote(
     projectPath: string,
@@ -1028,6 +1296,7 @@ export class SSHRuntime extends RemoteRuntime {
     const layout = this.getProjectLayout(projectPath);
     const currentSnapshotPath = layout.currentSnapshotPath;
     const projectKey = this.getProjectSyncKey(layout.projectId);
+    const useNativeGitPush = this.transport instanceof OpenSSHTransport;
 
     await enqueueProjectSync(projectKey, abortSignal, async () => {
       if (abortSignal?.aborted) {
@@ -1042,11 +1311,11 @@ export class SSHRuntime extends RemoteRuntime {
         [
           'current_snapshot=""',
           `if test -f ${this.quoteForRemote(currentSnapshotPath)}; then`,
-          `  current_snapshot=$(tr -d '\\n' < ${this.quoteForRemote(currentSnapshotPath)})`,
+          `  current_snapshot=$(tr -d '\n' < ${this.quoteForRemote(currentSnapshotPath)})`,
           "fi",
           `if test "$current_snapshot" = ${shescape.quote(snapshotDigest)}; then`,
-          `  bundle_ref=$(git -C ${baseRepoPathArg} for-each-ref --count=1 --format='%(refname)' ${shescape.quote(BUNDLE_REF_PREFIX)})`,
-          '  if test -n "$bundle_ref"; then',
+          `  staged_ref=$(git -C ${baseRepoPathArg} for-each-ref --count=1 --format='%(refname)' ${shescape.quote(BUNDLE_REF_PREFIX)})`,
+          '  if test -n "$staged_ref"; then',
           "    echo reusable",
           "  else",
           "    echo stale-current",
@@ -1070,76 +1339,47 @@ export class SSHRuntime extends RemoteRuntime {
           return;
         }
         initLogger.logStep(
-          "Remote snapshot marker drifted from imported refs; reimporting bundle..."
+          "Remote snapshot marker drifted from synced refs; resyncing project snapshot..."
         );
       }
       if (snapshotStatus === "stale-current") {
         initLogger.logStep(
-          "Remote snapshot marker found without matching imported refs; reimporting bundle..."
+          "Remote snapshot marker found without matching synced refs; resyncing project snapshot..."
         );
       }
 
-      // Snapshot markers stay deterministic, but the uploaded bundle itself must use
-      // a per-attempt temp path so concurrent Mux processes do not stream into the same file.
-      const remoteBundlePath = path.posix.join(
-        "~/.mux-bundles",
-        layout.projectId,
-        `${snapshotDigest}.${crypto.randomUUID()}.bundle`
-      );
-      const remoteBundlePathArg = this.quoteForRemote(remoteBundlePath);
-      const remoteBundleParentDir = path.posix.dirname(remoteBundlePath);
-      const prepareRemoteDirs = await execBuffered(
-        this,
-        `mkdir -p ${this.quoteForRemote(remoteBundleParentDir)} ${this.quoteForRemote(path.posix.dirname(currentSnapshotPath))}`,
-        { cwd: "/tmp", timeout: 10, abortSignal }
-      );
-      if (prepareRemoteDirs.exitCode !== 0) {
-        throw new Error(
-          `Failed to prepare remote snapshot directories: ${prepareRemoteDirs.stderr || prepareRemoteDirs.stdout}`
+      if (useNativeGitPush) {
+        await this.syncProjectSnapshotViaGitPush(
+          projectPath,
+          layout,
+          currentSnapshotPath,
+          initLogger,
+          abortSignal
+        );
+      } else {
+        await this.syncProjectSnapshotViaBundle(
+          projectPath,
+          layout,
+          currentSnapshotPath,
+          snapshotDigest,
+          baseRepoPathArg,
+          initLogger,
+          abortSignal
         );
       }
 
-      await this.transferBundleToRemote(projectPath, remoteBundlePath, initLogger, abortSignal);
+      // Keep the bare base repo's origin aligned with the local project so later
+      // fetchOriginTrunk() calls base new worktrees on the intended remote.
+      await this.refreshBaseRepoOrigin(projectPath, baseRepoPathArg, initLogger, abortSignal);
 
+      const currentSnapshotWriter = this.writeFile(currentSnapshotPath).getWriter();
       try {
-        // Import branches and tags from the bundle into the shared bare repo.
-        // Branches land in refs/mux-bundle/* (staging namespace) instead of
-        // refs/heads/* to avoid colliding with branches checked out in existing
-        // worktrees — git refuses to update any ref checked out in a worktree.
-        // Tags go directly to refs/tags/* (they're never checked out).
-        initLogger.logStep("Importing bundle into shared base repository...");
-        const fetchResult = await execBuffered(
-          this,
-          `git -C ${baseRepoPathArg} fetch --prune --prune-tags ${remoteBundlePathArg} '+refs/heads/*:${BUNDLE_REF_PREFIX}*' '+refs/tags/*:refs/tags/*'`,
-          { cwd: "/tmp", timeout: 300, abortSignal }
-        );
-        if (fetchResult.exitCode !== 0) {
-          throw new Error(
-            `Failed to import bundle into base repo: ${fetchResult.stderr || fetchResult.stdout}`
-          );
-        }
-
-        await this.refreshBaseRepoOrigin(projectPath, baseRepoPathArg, initLogger, abortSignal);
-
-        const currentSnapshotWriter = this.writeFile(currentSnapshotPath).getWriter();
-        try {
-          await currentSnapshotWriter.write(new TextEncoder().encode(`${snapshotDigest}\n`));
-        } finally {
-          await currentSnapshotWriter.close();
-        }
-
-        initLogger.logStep("Repository synced to base successfully");
+        await currentSnapshotWriter.write(new TextEncoder().encode(`${snapshotDigest}\n`));
       } finally {
-        // Best-effort cleanup of the remote bundle file.
-        try {
-          await execBuffered(this, `rm -f ${remoteBundlePathArg}`, {
-            cwd: "/tmp",
-            timeout: 10,
-          });
-        } catch {
-          // Ignore cleanup errors.
-        }
+        await currentSnapshotWriter.close();
       }
+
+      initLogger.logStep("Repository synced to base successfully");
     });
   }
 
