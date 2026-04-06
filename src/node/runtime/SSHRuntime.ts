@@ -1438,7 +1438,7 @@ export class SSHRuntime extends RemoteRuntime {
           initLogger.logStep("Importing bundle into shared base repository...");
           const fetchResult = await execBuffered(
             this,
-            `git -C ${baseRepoPathArg} fetch ${remoteBundlePathArg} '+refs/heads/*:${BUNDLE_REF_PREFIX}*' '+refs/tags/*:refs/tags/*'`,
+            `git -C ${baseRepoPathArg} fetch --prune --prune-tags ${remoteBundlePathArg} '+refs/heads/*:${BUNDLE_REF_PREFIX}*' '+refs/tags/*:refs/tags/*'`,
             { cwd: "/tmp", timeout: 300, abortSignal: sharedAbortSignal }
           );
           if (fetchResult.exitCode !== 0) {

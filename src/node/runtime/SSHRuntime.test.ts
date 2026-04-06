@@ -397,6 +397,7 @@ describe("SSHRuntime bundle sync reuse", () => {
           return Promise.resolve({ stdout: "", stderr: "", exitCode: 0, duration: 0 });
         }
         if (command.includes(" fetch ")) {
+          expect(command).toContain("fetch --prune --prune-tags");
           expect(command).toContain(bundleFileName);
           return Promise.resolve({ stdout: "", stderr: "", exitCode: 0, duration: 0 });
         }
