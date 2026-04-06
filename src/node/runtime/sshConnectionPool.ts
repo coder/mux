@@ -284,7 +284,7 @@ export class SSHConnectionPool {
         log.debug(`SSH connection to ${config.host} has inflight probe, waiting...`);
         try {
           await existing;
-          return;
+          continue;
         } catch (error) {
           // Probe failed; if we're in wait mode we'll loop and sleep through the backoff.
           if (!shouldWait) {

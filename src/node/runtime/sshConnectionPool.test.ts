@@ -457,6 +457,68 @@ describe("SSHConnectionPool", () => {
       expect(pool.getConnectionHealth(config)?.consecutiveFailures).toBe(1);
     });
 
+    test("re-checks requested ControlPath after waiting for another probe", async () => {
+      const pool = new SSHConnectionPool();
+      const config: SSHRuntimeConfig = {
+        host: "test.example.com",
+        srcBaseDir: "/work",
+      };
+      const privatePool = pool as unknown as {
+        probeConnection: (
+          config: SSHRuntimeConfig,
+          timeoutMs: number,
+          key: string,
+          controlPath: string
+        ) => Promise<void>;
+        markHealthyByKey: (key: string) => void;
+        markControlPathReady: (key: string, controlPath: string) => void;
+      };
+
+      const probeCalls: string[] = [];
+      let releaseFirstProbe!: () => void;
+      let signalFirstProbeStarted!: () => void;
+      const firstProbeStarted = new Promise<void>((resolve) => {
+        signalFirstProbeStarted = resolve;
+      });
+
+      const probeSpy = spyOn(privatePool, "probeConnection").mockImplementation(
+        async (_config, _timeoutMs, key, controlPath) => {
+          probeCalls.push(controlPath);
+          if (probeCalls.length === 1) {
+            signalFirstProbeStarted();
+            await new Promise<void>((resolve) => {
+              releaseFirstProbe = () => {
+                privatePool.markHealthyByKey(key);
+                privatePool.markControlPathReady(key, controlPath);
+                resolve();
+              };
+            });
+            return;
+          }
+
+          privatePool.markHealthyByKey(key);
+          privatePool.markControlPathReady(key, controlPath);
+        }
+      );
+
+      const firstAcquire = pool.acquireConnection(config, {
+        controlPath: "/tmp/mux-control-a",
+        maxWaitMs: 0,
+      });
+      await firstProbeStarted;
+
+      const secondAcquire = pool.acquireConnection(config, {
+        controlPath: "/tmp/mux-control-b",
+        maxWaitMs: 0,
+      });
+      releaseFirstProbe();
+
+      await Promise.all([firstAcquire, secondAcquire]);
+
+      expect(probeCalls).toEqual(["/tmp/mux-control-a", "/tmp/mux-control-b"]);
+      probeSpy.mockRestore();
+    });
+
     test("callers waking from backoff share single probe (herd only released on success)", async () => {
       const pool = new SSHConnectionPool();
       const config: SSHRuntimeConfig = {
