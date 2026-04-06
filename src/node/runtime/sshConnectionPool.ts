@@ -178,6 +178,53 @@ async function sleepWithAbort(ms: number, abortSignal?: AbortSignal): Promise<vo
   });
 }
 
+async function waitForPromiseWithTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  abortSignal?: AbortSignal,
+  timeoutError?: Error
+): Promise<T> {
+  if (abortSignal?.aborted) {
+    throw new Error("Operation aborted");
+  }
+
+  return await new Promise<T>((resolve, reject) => {
+    let settled = false;
+
+    const cleanup = () => {
+      clearTimeout(timer);
+      abortSignal?.removeEventListener("abort", onAbort);
+    };
+
+    const finish = (handler: () => void) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      handler();
+    };
+
+    const onAbort = () => {
+      finish(() => reject(new Error("Operation aborted")));
+    };
+
+    const timer = setTimeout(() => {
+      finish(() => reject(timeoutError ?? new Error("Operation timed out")));
+    }, timeoutMs);
+
+    abortSignal?.addEventListener("abort", onAbort);
+    promise.then(
+      (value) => {
+        finish(() => resolve(value));
+      },
+      (error) => {
+        finish(() => reject(error instanceof Error ? error : new Error(String(error))));
+      }
+    );
+  });
+}
+
 /**
  * SSH Connection Pool
  *
@@ -223,6 +270,13 @@ export class SSHConnectionPool {
     const key = makeConnectionKey(config);
     const requestedControlPath = options.controlPath ?? getControlPath(config);
     const startTime = Date.now();
+    const getRemainingWaitBudgetMs = (): number =>
+      Math.max(0, maxWaitMs - (Date.now() - startTime));
+    const createWaitBudgetExceededError = (lastError?: string): Error =>
+      new Error(
+        `SSH connection to ${config.host} did not become healthy within ${maxWaitMs}ms. ` +
+          `Last error: ${lastError ?? "unknown"}`
+      );
 
     while (true) {
       if (options.abortSignal?.aborted) {
@@ -243,13 +297,9 @@ export class SSHConnectionPool {
           );
         }
 
-        const elapsedMs = Date.now() - startTime;
-        const budgetMs = Math.max(0, maxWaitMs - elapsedMs);
+        const budgetMs = getRemainingWaitBudgetMs();
         if (budgetMs <= 0) {
-          throw new Error(
-            `SSH connection to ${config.host} did not become healthy within ${maxWaitMs}ms. ` +
-              `Last error: ${health.lastError ?? "unknown"}`
-          );
+          throw createWaitBudgetExceededError(health.lastError);
         }
 
         const waitMs = Math.min(remainingMs, budgetMs);
@@ -283,11 +333,28 @@ export class SSHConnectionPool {
       if (existing) {
         log.debug(`SSH connection to ${config.host} has inflight probe, waiting...`);
         try {
-          await existing;
+          if (shouldWait) {
+            const budgetMs = getRemainingWaitBudgetMs();
+            if (budgetMs <= 0) {
+              throw createWaitBudgetExceededError(health?.lastError);
+            }
+            await waitForPromiseWithTimeout(
+              existing,
+              budgetMs,
+              options.abortSignal,
+              createWaitBudgetExceededError(health?.lastError)
+            );
+          } else {
+            await existing;
+          }
           continue;
         } catch (error) {
           // Probe failed; if we're in wait mode we'll loop and sleep through the backoff.
-          if (!shouldWait) {
+          if (
+            !shouldWait ||
+            (error instanceof Error &&
+              error.message.includes(`did not become healthy within ${maxWaitMs}ms`))
+          ) {
             throw error;
           }
           continue;
@@ -295,8 +362,14 @@ export class SSHConnectionPool {
       }
 
       // Start new probe.
+      const probeTimeoutMs = shouldWait
+        ? Math.min(timeoutMs, getRemainingWaitBudgetMs())
+        : timeoutMs;
+      if (probeTimeoutMs <= 0) {
+        throw createWaitBudgetExceededError(health?.lastError);
+      }
       log.debug(`SSH connection to ${config.host} needs probe, starting health check`);
-      const probe = this.probeConnection(config, timeoutMs, key, requestedControlPath);
+      const probe = this.probeConnection(config, probeTimeoutMs, key, requestedControlPath);
       this.inflight.set(key, probe);
 
       try {

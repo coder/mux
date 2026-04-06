@@ -554,6 +554,35 @@ export class SSHRuntime extends RemoteRuntime {
     return false;
   }
 
+  private async resolveWorktreeBaseRepoPath(
+    projectPath: string,
+    workspacePath: string,
+    abortSignal?: AbortSignal
+  ): Promise<string> {
+    const fallbackBaseRepoPath = this.getBaseRepoPath(projectPath);
+
+    try {
+      const result = await execBuffered(
+        this,
+        `git -C ${this.quoteForRemote(workspacePath)} rev-parse --path-format=absolute --git-common-dir`,
+        {
+          cwd: "/tmp",
+          timeout: 10,
+          abortSignal,
+        }
+      );
+      const resolvedBaseRepoPath = result.stdout.trim();
+      if (result.exitCode === 0 && resolvedBaseRepoPath.length > 0) {
+        return resolvedBaseRepoPath;
+      }
+    } catch {
+      // Fall back to the canonical hashed layout when the existing workspace cannot report its
+      // common git dir (for example, if the directory is already partially missing/corrupted).
+    }
+
+    return fallbackBaseRepoPath;
+  }
+
   /**
    * Detect whether a remote workspace is a git worktree (`.git` is a file)
    * vs a legacy full clone (`.git` is a directory).
@@ -1514,8 +1543,11 @@ export class SSHRuntime extends RemoteRuntime {
 
       let moveCommand: string;
       if (isWorktree) {
-        // Worktree: use `git worktree move` to keep base repo metadata consistent.
-        const baseRepoPathArg = expandTildeForSSH(this.getBaseRepoPath(projectPath));
+        // Worktree: use `git worktree move` to keep the workspace registered in whichever
+        // shared base repo originally created it, including upgraded legacy SSH layouts.
+        const baseRepoPathArg = expandTildeForSSH(
+          await this.resolveWorktreeBaseRepoPath(projectPath, oldPath, abortSignal)
+        );
         moveCommand = `git -C ${baseRepoPathArg} worktree move ${expandedOldPath} ${expandedNewPath}`;
       } else {
         // Legacy full clone: plain mv.
@@ -1714,8 +1746,11 @@ export class SSHRuntime extends RemoteRuntime {
       const isWorktree = await this.isWorktreeWorkspace(deletedPath, abortSignal);
 
       if (isWorktree) {
-        // Worktree: use `git worktree remove` to clean up the base repo's worktree metadata.
-        const baseRepoPathArg = expandTildeForSSH(this.getBaseRepoPath(projectPath));
+        // Worktree: use `git worktree remove` against the actual common git dir for this
+        // workspace so upgraded legacy SSH worktrees keep their original base repo metadata.
+        const baseRepoPathArg = expandTildeForSSH(
+          await this.resolveWorktreeBaseRepoPath(projectPath, deletedPath, abortSignal)
+        );
         const removeCmd = force
           ? `${nhp}git -C ${baseRepoPathArg} worktree remove --force ${this.quoteForRemote(deletedPath)}`
           : `${nhp}git -C ${baseRepoPathArg} worktree remove ${this.quoteForRemote(deletedPath)}`;

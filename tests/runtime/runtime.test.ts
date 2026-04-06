@@ -33,8 +33,9 @@ import {
 import { execBuffered, readFileString, writeFileString } from "@/node/utils/runtime/helpers";
 import type { Runtime } from "@/node/runtime/Runtime";
 import { RuntimeError } from "@/node/runtime/Runtime";
-import { computeBaseRepoPath, type SSHRuntime } from "@/node/runtime/SSHRuntime";
+import { computeBaseRepoPath, SSHRuntime } from "@/node/runtime/SSHRuntime";
 import {
+  buildLegacyRemoteProjectLayout,
   buildRemoteProjectLayout,
   getRemoteWorkspacePath,
 } from "@/node/runtime/remoteProjectLayout";
@@ -1682,6 +1683,106 @@ describeIntegration("Runtime integration tests", () => {
         expect(branchCheck.stdout.trim()).toBe("");
       } finally {
         await execBuffered(runtime, `rm -rf "${layout.projectRoot}"`, {
+          cwd: "/home/testuser",
+          timeout: 30,
+        });
+      }
+    }, 60000);
+
+    test("renameWorkspace and deleteWorkspace keep using the legacy base repo for upgraded SSH worktrees", async () => {
+      if (!sshConfig) {
+        throw new Error("SSH config unavailable");
+      }
+
+      const config = {
+        host: "testuser@localhost",
+        srcBaseDir,
+        identityFile: sshConfig.privateKeyPath,
+        port: sshConfig.port,
+      };
+      const runtime = new SSHRuntime(config, createSSHTransport(config, false), {
+        projectPath: "/unused",
+        workspaceName: "unused",
+      });
+      const projectName = `wt-legacy-rename-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+      const projectPath = `/some/path/${projectName}`;
+      const legacyLayout = buildLegacyRemoteProjectLayout(srcBaseDir, projectPath);
+      const baseRepoPath = legacyLayout.baseRepoPath;
+      const oldWorkspacePath = getRemoteWorkspacePath(legacyLayout, "old-name");
+      const newWorkspacePath = getRemoteWorkspacePath(legacyLayout, "new-name");
+      const legacyRuntime = new SSHRuntime(config, createSSHTransport(config, false), {
+        projectPath,
+        workspaceName: "old-name",
+        workspacePath: oldWorkspacePath,
+      });
+
+      try {
+        await execBuffered(
+          runtime,
+          [
+            `mkdir -p "${legacyLayout.projectRoot}"`,
+            `git init --bare "${baseRepoPath}"`,
+            `TMPCLONE=$(mktemp -d)`,
+            `git clone "${baseRepoPath}" "$TMPCLONE/work"`,
+            `cd "$TMPCLONE/work"`,
+            `git config user.email "test@test.com"`,
+            `git config user.name "Test"`,
+            `echo "x" > x.txt && git add x.txt && git commit -m "init"`,
+            `git push origin HEAD:main`,
+            `rm -rf "$TMPCLONE"`,
+          ].join(" && "),
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+
+        await execBuffered(
+          runtime,
+          `git -C "${baseRepoPath}" worktree add "${oldWorkspacePath}" -b old-name main`,
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+
+        const renameResult = await legacyRuntime.renameWorkspace(
+          projectPath,
+          "old-name",
+          "new-name"
+        );
+        expect(renameResult.success).toBe(true);
+        if (!renameResult.success) return;
+
+        const legacyWorktreeList = await execBuffered(
+          runtime,
+          `git -C "${baseRepoPath}" worktree list`,
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+        expect(legacyWorktreeList.stdout).toContain("/new-name");
+        expect(legacyWorktreeList.stdout).not.toContain("/old-name");
+
+        const renamedLegacyRuntime = new SSHRuntime(config, createSSHTransport(config, false), {
+          projectPath,
+          workspaceName: "new-name",
+          workspacePath: newWorkspacePath,
+        });
+        const deleteResult = await renamedLegacyRuntime.deleteWorkspace(
+          projectPath,
+          "new-name",
+          true
+        );
+        expect(deleteResult.success).toBe(true);
+
+        const deletedPathCheck = await execBuffered(
+          runtime,
+          `test -d "${newWorkspacePath}" && echo "exists" || echo "missing"`,
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+        expect(deletedPathCheck.stdout.trim()).toBe("missing");
+
+        const branchCheck = await execBuffered(
+          runtime,
+          `git -C "${baseRepoPath}" branch --list old-name`,
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+        expect(branchCheck.stdout.trim()).toBe("");
+      } finally {
+        await execBuffered(runtime, `rm -rf "${legacyLayout.projectRoot}"`, {
           cwd: "/home/testuser",
           timeout: 30,
         });
