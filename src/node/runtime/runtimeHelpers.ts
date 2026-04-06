@@ -1,5 +1,10 @@
 import assert from "@/common/utils/assert";
-import { isDockerRuntime, isLocalProjectRuntime, type RuntimeConfig } from "@/common/types/runtime";
+import {
+  isDockerRuntime,
+  isLocalProjectRuntime,
+  isSSHRuntime,
+  type RuntimeConfig,
+} from "@/common/types/runtime";
 import type { Runtime } from "./Runtime";
 import { createRuntime } from "./runtimeFactory";
 
@@ -43,9 +48,15 @@ export function resolveWorkspaceExecutionPath(
 
   const persistedWorkspacePath = metadata.namedWorkspacePath?.trim();
   if (!persistedWorkspacePath) {
-    // Some metadata readers and unit tests only carry canonical workspace identity. Fall back to the
-    // runtime-derived path there, but prefer the persisted path whenever it is available so upgraded
-    // SSH/devcontainer workspaces keep using their exact checkout root.
+    // SSH workspaces must keep using the persisted checkout root from config so upgraded legacy
+    // workspaces do not silently fall back to the reconstructed hashed path and miss their real cwd.
+    assert(
+      !isSSHRuntime(metadata.runtimeConfig),
+      `SSH workspace ${metadata.name} is missing a persisted workspace path`
+    );
+
+    // Other runtimes can still fall back to their canonical derived path when only identity metadata
+    // is available (for example in narrow unit tests).
     return runtimeWorkspacePath;
   }
 

@@ -59,12 +59,28 @@ describe("resolveWorkspaceExecutionPath", () => {
     expect(resolveWorkspaceExecutionPath(metadata, runtime)).toBe("/persisted/review-1");
   });
 
-  it("falls back to the runtime path when persisted metadata is unavailable", () => {
+  it("requires the persisted path for SSH workspaces", () => {
     const metadata = {
       runtimeConfig: {
         type: "ssh",
         host: "example.com",
         srcBaseDir: "/remote/src",
+      } satisfies RuntimeConfig,
+      projectPath: "/projects/demo",
+      name: "review-1",
+    };
+
+    const runtime = createRuntimeForWorkspace(metadata);
+    expect(() => resolveWorkspaceExecutionPath(metadata, runtime)).toThrow(
+      /missing a persisted workspace path/
+    );
+  });
+
+  it("falls back to the runtime path for non-SSH workspaces when persisted metadata is unavailable", () => {
+    const metadata = {
+      runtimeConfig: {
+        type: "worktree",
+        srcBaseDir: "/tmp/src",
       } satisfies RuntimeConfig,
       projectPath: "/projects/demo",
       name: "review-1",
