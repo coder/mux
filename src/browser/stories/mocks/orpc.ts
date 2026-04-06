@@ -318,7 +318,7 @@ type MockMcpTestResult = { success: true; tools: string[] } | { success: false; 
 export function createMockORPCClient(options: MockORPCClientOptions = {}): APIClient {
   const {
     projects: providedProjects = new Map<string, ProjectConfig>(),
-    workspaces: inputWorkspaces = [],
+    workspaces = [],
     projectGitStatusesByWorkspace = new Map<string, ApiProjectGitStatusResult[]>(),
     workspaceActivitySnapshots = {},
     onChat,
@@ -383,7 +383,6 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     runtimeStatuses = new Map<string, "running" | "stopped" | "unknown" | "unsupported">(),
   } = options;
 
-  const workspaces = inputWorkspaces;
   const projects = new Map(providedProjects);
   const workspaceMap = new Map(workspaces.map((w) => [w.id, w]));
 
