@@ -2240,7 +2240,7 @@ describe("WorkspaceService getFileCompletions", () => {
     expect(execBufferedSpy.mock.calls[0]?.[2].cwd).toBe("/persisted/project-a/ws");
   });
 
-  test("preserves inferred legacy SSH paths for multi-project completions", async () => {
+  test("preserves the current SSH workspace path and derives sibling legacy paths for multi-project completions when the persisted root matches that layout", async () => {
     interface WorkspaceServiceTestAccess {
       getInfo: (workspaceId: string) => Promise<FrontendWorkspaceMetadata | null>;
     }
@@ -2268,7 +2268,7 @@ describe("WorkspaceService getFileCompletions", () => {
     createRuntimeSpy.mockImplementation((_runtimeConfig, options) => {
       const runtimeProjectPath = options?.projectPath;
       if (!runtimeProjectPath) {
-        throw new Error("Expected createRuntime projectPath in legacy SSH completion test");
+        throw new Error("Expected createRuntime projectPath in SSH completion test");
       }
       return {
         getWorkspacePath: () =>

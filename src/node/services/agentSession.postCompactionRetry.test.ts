@@ -272,7 +272,9 @@ describe("AgentSession execSubagentHardRestart", () => {
       name: "child",
       projectName: "proj",
       projectPath: "/tmp/proj",
-      namedWorkspacePath: "/tmp/proj/child",
+      // Project-dir local runtimes execute in the project root, so persisted workspace paths
+      // must match projectPath instead of pointing at a synthetic sibling checkout.
+      namedWorkspacePath: "/tmp/proj",
       runtimeConfig: { type: "local" },
       parentWorkspaceId,
       agentId: "exec",

@@ -2832,6 +2832,8 @@ export class WorkspaceService extends EventEmitter {
         const metadata = metadataResult.data;
         const configSnapshot = this.config.loadConfigOrDefault();
 
+        const persistedWorkspacePath = this.config.findWorkspace(workspaceId)?.workspacePath;
+
         if (isMultiProject(metadata)) {
           const projects = getProjects(metadata);
           const deleteErrors: string[] = [];
@@ -2846,6 +2848,20 @@ export class WorkspaceService extends EventEmitter {
               const runtime = createRuntime(metadata.runtimeConfig, {
                 projectPath: project.projectPath,
                 workspaceName: metadata.name,
+                workspacePath: persistedWorkspacePath
+                  ? getWorkspacePathHintForProject(
+                      {
+                        workspaceId,
+                        workspaceName: metadata.name,
+                        workspacePath: persistedWorkspacePath,
+                        runtimeConfig: metadata.runtimeConfig,
+                        projectPath: metadata.projectPath,
+                        projectName: metadata.projectName,
+                        projects: metadata.projects,
+                      },
+                      project.projectPath
+                    )
+                  : undefined,
               });
               const trusted =
                 configSnapshot.projects.get(stripTrailingSlashes(project.projectPath))?.trusted ??
@@ -2966,6 +2982,7 @@ export class WorkspaceService extends EventEmitter {
           const runtime = createRuntime(metadata.runtimeConfig, {
             projectPath,
             workspaceName: metadata.name,
+            workspacePath: persistedWorkspacePath,
           });
 
           // Delete workspace from runtime first - if this fails with force=false, we abort
@@ -3461,6 +3478,7 @@ export class WorkspaceService extends EventEmitter {
               const rollbackRuntime = createRuntime(oldMetadata.runtimeConfig, {
                 projectPath: renamedProject.projectPath,
                 workspaceName: newName,
+                workspacePath: renamedProject.newWorkspacePath,
               });
               const rollbackTrusted =
                 configSnapshot.projects.get(stripTrailingSlashes(renamedProject.projectPath))
@@ -3494,6 +3512,18 @@ export class WorkspaceService extends EventEmitter {
           const runtime = createRuntime(oldMetadata.runtimeConfig, {
             projectPath: project.projectPath,
             workspaceName: oldName,
+            workspacePath: getWorkspacePathHintForProject(
+              {
+                workspaceId,
+                workspaceName: oldName,
+                workspacePath: workspace.workspacePath,
+                runtimeConfig: oldMetadata.runtimeConfig,
+                projectPath: oldMetadata.projectPath,
+                projectName: oldMetadata.projectName,
+                projects: oldMetadata.projects,
+              },
+              project.projectPath
+            ),
           });
 
           const trusted =
@@ -3616,6 +3646,7 @@ export class WorkspaceService extends EventEmitter {
         const runtime = createRuntime(oldMetadata.runtimeConfig, {
           projectPath: configProjectPath,
           workspaceName: oldName,
+          workspacePath: workspace.workspacePath,
         });
 
         const trusted =
@@ -5011,9 +5042,11 @@ export class WorkspaceService extends EventEmitter {
         return Err(resolvedNameValidation.error ?? "Invalid workspace name");
       }
 
+      const sourceWorkspace = this.config.findWorkspace(sourceWorkspaceId);
       const sourceRuntime = createRuntime(sourceRuntimeConfig, {
         projectPath: foundProjectPath,
         workspaceName: sourceMetadata.name,
+        workspacePath: sourceWorkspace?.workspacePath,
       });
 
       const newWorkspaceId = this.config.generateStableId();
@@ -5169,7 +5202,6 @@ export class WorkspaceService extends EventEmitter {
       // Copy plan file using explicit source/target runtimes for cross-runtime safety.
       // Create a fresh source runtime handle because DockerRuntime.forkWorkspace() can
       // mutate the original runtime's container identity to target the new workspace.
-      const sourceWorkspace = this.config.findWorkspace(sourceWorkspaceId);
       const freshSourceRuntime = createRuntime(sourceRuntimeConfig, {
         projectPath: foundProjectPath,
         workspaceName: sourceMetadata.name,

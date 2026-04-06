@@ -142,9 +142,6 @@ export function getWorkspacePathHintForProject(
   params: WorkspaceProjectRepoParams,
   targetProjectPath: string
 ): string | undefined {
-  if (targetProjectPath === params.projectPath) {
-    return params.workspacePath;
-  }
   if (!isSSHRuntime(params.runtimeConfig)) {
     return undefined;
   }
@@ -203,13 +200,17 @@ export function getWorkspaceProjectRepos(
   const isMultiProject = projectStorageKeys.length > 1;
 
   const repos = projectStorageKeys.map((project) => {
-    const repoCwd = isMultiProject
-      ? createRuntime(params.runtimeConfig, {
+    const sshWorkspacePathHint = isMultiProject
+      ? getWorkspacePathHintForProject(params, project.projectPath)
+      : undefined;
+
+    const repoCwd = !isMultiProject
+      ? params.workspacePath
+      : (sshWorkspacePathHint ??
+        createRuntime(params.runtimeConfig, {
           projectPath: project.projectPath,
           workspaceName: params.workspaceName,
-          workspacePath: getWorkspacePathHintForProject(params, project.projectPath),
-        }).getWorkspacePath(project.projectPath, params.workspaceName)
-      : params.workspacePath;
+        }).getWorkspacePath(project.projectPath, params.workspaceName));
 
     assert(
       repoCwd.trim().length > 0,

@@ -1598,7 +1598,7 @@ describeIntegration("Runtime integration tests", () => {
       }
     }, 60000);
 
-    test("renameWorkspace uses git worktree move for worktree-based workspaces", async () => {
+    test("renameWorkspace uses git worktree move and deleteWorkspace still cleans up the renamed branch", async () => {
       const runtime = createSSHRuntime();
       const projectName = `wt-rename-${Date.now()}-${Math.random().toString(36).substring(7)}`;
       const projectPath = `/some/path/${projectName}`;
@@ -1663,6 +1663,23 @@ describeIntegration("Runtime integration tests", () => {
         });
         expect(worktreeList.stdout).toContain("/new-name");
         expect(worktreeList.stdout).not.toContain("/old-name");
+
+        const deleteResult = await runtime.deleteWorkspace(projectPath, "new-name", true);
+        expect(deleteResult.success).toBe(true);
+
+        const deletedPathCheck = await execBuffered(
+          runtime,
+          `test -d "${newWorkspacePath}" && echo "exists" || echo "missing"`,
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+        expect(deletedPathCheck.stdout.trim()).toBe("missing");
+
+        const branchCheck = await execBuffered(
+          runtime,
+          `git -C "${baseRepoPath}" branch --list old-name`,
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+        expect(branchCheck.stdout.trim()).toBe("");
       } finally {
         await execBuffered(runtime, `rm -rf "${layout.projectRoot}"`, {
           cwd: "/home/testuser",
@@ -1670,6 +1687,63 @@ describeIntegration("Runtime integration tests", () => {
         });
       }
     }, 60000);
+
+    test("exec handles a concurrent burst on one SSH host", async () => {
+      const runtime = createSSHRuntime();
+      const projectName = `ssh-burst-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+      const tmpDir = await import("os").then((os) => os.tmpdir());
+      const localProjectPath = `${tmpDir}/${projectName}`;
+      const layout = getLayout(localProjectPath);
+      const workspaceName = "burst-ws";
+      const workspacePath = getRemoteWorkspacePath(layout, workspaceName);
+      const { execSync } = await import("child_process");
+
+      try {
+        execSync(
+          [
+            `mkdir -p "${localProjectPath}"`,
+            `cd "${localProjectPath}"`,
+            `git init -b main`,
+            `git config user.email "test@test.com"`,
+            `git config user.name "Test"`,
+            `echo "content" > file.txt`,
+            `git add file.txt`,
+            `git commit -m "initial"`,
+          ].join(" && "),
+          { stdio: "pipe" }
+        );
+
+        const initResult = await runtime.initWorkspace({
+          projectPath: localProjectPath,
+          branchName: workspaceName,
+          trunkBranch: "main",
+          workspacePath,
+          initLogger: noopInitLogger,
+        });
+        if (!initResult.success) {
+          throw new Error(`initWorkspace failed: ${initResult.error}`);
+        }
+
+        const results = await Promise.all(
+          Array.from({ length: 12 }, async (_value, index) => {
+            const result = await execBuffered(
+              runtime,
+              `printf '%s' ${JSON.stringify(String(index))} > burst-${index}.txt && cat burst-${index}.txt`,
+              { cwd: workspacePath, timeout: 30 }
+            );
+            expect(result.exitCode).toBe(0);
+            expect(result.stdout.trim()).toBe(String(index));
+          })
+        );
+        expect(results).toHaveLength(12);
+      } finally {
+        execSync(`rm -rf "${localProjectPath}"`);
+        await execBuffered(runtime, `rm -rf "${layout.projectRoot}"`, {
+          cwd: "/home/testuser",
+          timeout: 30,
+        });
+      }
+    }, 120000);
   });
 
   /**
@@ -1688,14 +1762,13 @@ describeIntegration("Runtime integration tests", () => {
     test("initWorkspace does not populate refs/remotes/origin in the base repo from the bundle", async () => {
       const runtime = createSSHRuntime();
 
-      // projectName must match the basename of the local project path so that
-      // getBaseRepoPath(localProjectPath) resolves to the expected baseRepoPath.
       const projectName = `sync-no-remotes-${Date.now()}-${Math.random().toString(36).substring(7)}`;
       const tmpDir = await import("os").then((os) => os.tmpdir());
       const localProjectPath = `${tmpDir}/${projectName}`;
+      const layout = buildRemoteProjectLayout(srcBaseDir, localProjectPath);
       const branchName = "test-ws";
-      const workspacePath = `${srcBaseDir}/${projectName}/${branchName}`;
-      const baseRepoPath = `${srcBaseDir}/${projectName}/.mux-base.git`;
+      const workspacePath = getRemoteWorkspacePath(layout, branchName);
+      const baseRepoPath = layout.baseRepoPath;
 
       const { execSync } = await import("child_process");
       try {
@@ -1757,7 +1830,7 @@ describeIntegration("Runtime integration tests", () => {
           expect(baseRefs.stdout).not.toContain("refs/remotes/origin/main");
           expect(baseRefs.stdout).not.toContain("refs/remotes/origin/stale-branch");
         } finally {
-          await execBuffered(runtime, `rm -rf "${srcBaseDir}/${projectName}"`, {
+          await execBuffered(runtime, `rm -rf "${layout.projectRoot}"`, {
             cwd: "/home/testuser",
             timeout: 30,
           });
@@ -1773,9 +1846,10 @@ describeIntegration("Runtime integration tests", () => {
       const projectName = `sync-heal-bare-${Date.now()}-${Math.random().toString(36).substring(7)}`;
       const tmpDir = await import("os").then((os) => os.tmpdir());
       const localProjectPath = `${tmpDir}/${projectName}`;
+      const layout = buildRemoteProjectLayout(srcBaseDir, localProjectPath);
       const branchName = "worktree-heal";
-      const workspacePath = `${srcBaseDir}/${projectName}/${branchName}`;
-      const baseRepoPath = `${srcBaseDir}/${projectName}/.mux-base.git`;
+      const workspacePath = getRemoteWorkspacePath(layout, branchName);
+      const baseRepoPath = layout.baseRepoPath;
 
       const { execSync } = await import("child_process");
       try {
@@ -1795,7 +1869,7 @@ describeIntegration("Runtime integration tests", () => {
 
         await execBuffered(
           runtime,
-          `mkdir -p "${srcBaseDir}/${projectName}" && git init --bare "${baseRepoPath}"`,
+          `mkdir -p "${layout.projectRoot}" && git init --bare "${baseRepoPath}"`,
           { cwd: "/home/testuser", timeout: 30 }
         );
 
@@ -1839,7 +1913,7 @@ describeIntegration("Runtime integration tests", () => {
         expect(workspaceCoreBareCheck.exitCode).toBe(1);
       } finally {
         execSync(`rm -rf "${localProjectPath}"`);
-        await execBuffered(runtime, `rm -rf "${srcBaseDir}/${projectName}"`, {
+        await execBuffered(runtime, `rm -rf "${layout.projectRoot}"`, {
           cwd: "/home/testuser",
           timeout: 30,
         });
@@ -1888,7 +1962,7 @@ describeIntegration("Runtime integration tests", () => {
 
         const snapshotMarkerCheck = await execBuffered(
           runtime,
-          `find "${layout.snapshotMarkerDir}" -type f | head -n 1`,
+          `test -f "${layout.currentSnapshotPath}" && cat "${layout.currentSnapshotPath}"`,
           { cwd: "/home/testuser", timeout: 30 }
         );
         expect(snapshotMarkerCheck.stdout.trim()).not.toBe("");
@@ -2052,9 +2126,10 @@ describeIntegration("Runtime integration tests", () => {
       const localProjectPath = `${tmpDir}/${projectName}`;
       const wsAName = "ws-a";
       const wsBName = "ws-b";
-      const wsAPath = `${srcBaseDir}/${projectName}/${wsAName}`;
-      const wsBPath = `${srcBaseDir}/${projectName}/${wsBName}`;
-      const baseRepoPath = `${srcBaseDir}/${projectName}/.mux-base.git`;
+      const layout = buildRemoteProjectLayout(srcBaseDir, localProjectPath);
+      const wsAPath = getRemoteWorkspacePath(layout, wsAName);
+      const wsBPath = getRemoteWorkspacePath(layout, wsBName);
+      const baseRepoPath = layout.baseRepoPath;
 
       const { execSync } = await import("child_process");
 
@@ -2158,7 +2233,7 @@ describeIntegration("Runtime integration tests", () => {
         expect(worktreeList.stdout).toContain(wsBName);
       } finally {
         execSync(`rm -rf "${localProjectPath}"`);
-        await execBuffered(runtime, `rm -rf "${srcBaseDir}/${projectName}"`, {
+        await execBuffered(runtime, `rm -rf "${layout.projectRoot}"`, {
           cwd: "/home/testuser",
           timeout: 30,
         });

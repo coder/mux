@@ -291,10 +291,8 @@ export class SSH2Transport implements SSHTransport {
       const process = new SSH2ChildProcess(channel) as unknown as ChildProcess;
       return {
         process,
-        onExit: (exitCode) => {
-          if (exitCode === 0) {
-            ssh2ConnectionPool.markHealthy(this.config);
-          }
+        onExit: () => {
+          ssh2ConnectionPool.markHealthy(this.config);
         },
         onError: (error) => {
           ssh2ConnectionPool.reportFailure(this.config, getErrorMessage(error));

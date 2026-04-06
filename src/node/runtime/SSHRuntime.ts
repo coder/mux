@@ -41,17 +41,14 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { type SSHRuntimeConfig } from "./sshConnectionPool";
 import { getOriginUrlForBundle } from "./gitBundleSync";
 import { gitNoHooksPrefix } from "@/node/utils/gitNoHooksEnv";
+import { execFileAsync } from "@/node/utils/disposableExec";
 import { syncRuntimeGitSubmodules } from "./submoduleSync";
 import type { PtyHandle, PtySessionParams, SSHTransport } from "./transports";
 import {
-  buildLegacyRemoteProjectLayout,
   buildRemoteProjectLayout,
   getRemoteWorkspacePath,
-  getSnapshotMarkerPath,
-  getWorkspaceMetadataPath,
   type RemoteProjectLayout,
 } from "./remoteProjectLayout";
-import { projectSyncCoordinator } from "./projectSyncCoordinator";
 import { streamToString, shescape } from "./streamUtils";
 
 /** Staging namespace for bundle-imported branch refs. Branches land here instead
@@ -61,16 +58,57 @@ const BUNDLE_REF_PREFIX = "refs/mux-bundle/";
 /** Small backoff for concurrent writers healing the same shared base repo config. */
 const BASE_REPO_CONFIG_LOCK_RETRY_DELAYS_MS = [50, 100, 200];
 
-const sharedProjectLayouts = new Map<string, RemoteProjectLayout>();
+const sharedProjectSyncTails = new Map<string, Promise<void>>();
 
-function getProjectLayoutCacheKey(config: SSHRuntimeConfig, projectPath: string): string {
-  return [
-    config.host,
-    config.port?.toString() ?? "22",
-    config.identityFile ?? "default",
-    config.srcBaseDir,
-    projectPath,
-  ].join(":");
+async function enqueueProjectSync(
+  projectKey: string,
+  abortSignal: AbortSignal | undefined,
+  fn: () => Promise<void>
+): Promise<void> {
+  const previous = sharedProjectSyncTails.get(projectKey) ?? Promise.resolve();
+  let releaseCurrent: (() => void) | undefined;
+  const current = new Promise<void>((resolve) => {
+    releaseCurrent = resolve;
+  });
+  const tail = previous.then(
+    () => current,
+    () => current
+  );
+  sharedProjectSyncTails.set(projectKey, tail);
+  void tail.finally(() => {
+    if (sharedProjectSyncTails.get(projectKey) === tail) {
+      sharedProjectSyncTails.delete(projectKey);
+    }
+  });
+
+  let onAbort: (() => void) | undefined;
+  const waitForPrevious = previous.catch(() => undefined);
+  const waitForTurn = abortSignal
+    ? Promise.race([
+        waitForPrevious,
+        new Promise<never>((_, reject) => {
+          onAbort = () => reject(new Error("Operation aborted"));
+          if (abortSignal.aborted) {
+            onAbort();
+            return;
+          }
+          abortSignal.addEventListener("abort", onAbort, { once: true });
+        }),
+      ])
+    : waitForPrevious;
+
+  try {
+    await waitForTurn;
+    if (abortSignal?.aborted) {
+      throw new Error("Operation aborted");
+    }
+    await fn();
+  } finally {
+    if (onAbort) {
+      abortSignal?.removeEventListener("abort", onAbort);
+    }
+    releaseCurrent?.();
+  }
 }
 
 function isGitConfigLockConflict(message: string): boolean {
@@ -177,10 +215,6 @@ export function computeBaseRepoPath(srcBaseDir: string, projectPath: string): st
  *
  * Extends RemoteRuntime for shared exec/file operations.
  */
-export function clearSharedProjectLayoutCache(): void {
-  sharedProjectLayouts.clear();
-}
-
 export class SSHRuntime extends RemoteRuntime {
   private readonly config: SSHRuntimeConfig;
   private readonly transport: SSHTransport;
@@ -189,7 +223,6 @@ export class SSHRuntime extends RemoteRuntime {
   private readonly currentWorkspacePath?: string;
   /** Cached resolved bgOutputDir (tilde expanded to absolute path) */
   private resolvedBgOutputDir: string | null = null;
-  private readonly projectLayouts = new Map<string, RemoteProjectLayout>();
 
   constructor(
     config: SSHRuntimeConfig,
@@ -208,17 +241,6 @@ export class SSHRuntime extends RemoteRuntime {
     this.ensureReadyProjectPath = options?.projectPath;
     this.ensureReadyWorkspaceName = options?.workspaceName;
     this.currentWorkspacePath = options?.workspacePath;
-
-    if (options?.projectPath && options.workspacePath) {
-      this.cacheProjectLayout(
-        options.projectPath,
-        buildRemoteProjectLayout(
-          this.config.srcBaseDir,
-          options.projectPath,
-          path.posix.dirname(options.workspacePath)
-        )
-      );
-    }
   }
 
   /**
@@ -261,66 +283,8 @@ export class SSHRuntime extends RemoteRuntime {
     return this.config;
   }
 
-  private getDefaultProjectLayout(projectPath: string): RemoteProjectLayout {
+  private getProjectLayout(projectPath: string): RemoteProjectLayout {
     return buildRemoteProjectLayout(this.config.srcBaseDir, projectPath);
-  }
-
-  private getCachedProjectLayout(projectPath: string): RemoteProjectLayout | undefined {
-    return (
-      this.projectLayouts.get(projectPath) ??
-      sharedProjectLayouts.get(getProjectLayoutCacheKey(this.config, projectPath))
-    );
-  }
-
-  private cacheProjectLayout(
-    projectPath: string,
-    layout: RemoteProjectLayout
-  ): RemoteProjectLayout {
-    this.projectLayouts.set(projectPath, layout);
-    sharedProjectLayouts.set(getProjectLayoutCacheKey(this.config, projectPath), layout);
-    return layout;
-  }
-
-  private getPreferredProjectLayout(projectPath: string): RemoteProjectLayout {
-    return this.getCachedProjectLayout(projectPath) ?? this.getDefaultProjectLayout(projectPath);
-  }
-
-  private async resolveProjectLayout(
-    projectPath: string,
-    workspaceName?: string
-  ): Promise<RemoteProjectLayout> {
-    const cached = this.getCachedProjectLayout(projectPath);
-    if (cached) {
-      return cached;
-    }
-
-    const preferredLayout = this.getDefaultProjectLayout(projectPath);
-    const legacyLayout = buildLegacyRemoteProjectLayout(this.config.srcBaseDir, projectPath);
-    const preferredWorkspacePath =
-      workspaceName != null ? getRemoteWorkspacePath(preferredLayout, workspaceName) : undefined;
-    const legacyWorkspacePath =
-      workspaceName != null ? getRemoteWorkspacePath(legacyLayout, workspaceName) : undefined;
-
-    const detectLayoutScript = `
-      if ${legacyWorkspacePath ? `test -e ${this.quoteForRemote(legacyWorkspacePath)}` : "false"}; then
-        echo legacy
-      elif test -d ${this.quoteForRemote(preferredLayout.projectRoot)}${preferredWorkspacePath ? ` || test -e ${this.quoteForRemote(preferredWorkspacePath)}` : ""}; then
-        echo preferred
-      else
-        echo preferred
-      fi
-    `;
-
-    try {
-      const detection = await execBuffered(this, detectLayoutScript, {
-        cwd: "/tmp",
-        timeout: 10,
-      });
-      const layout = detection.stdout.trim() === "legacy" ? legacyLayout : preferredLayout;
-      return this.cacheProjectLayout(projectPath, layout);
-    } catch {
-      return this.cacheProjectLayout(projectPath, preferredLayout);
-    }
   }
 
   private getProjectSyncKey(projectId: string): string {
@@ -464,7 +428,7 @@ export class SSHRuntime extends RemoteRuntime {
       return this.currentWorkspacePath;
     }
 
-    return getRemoteWorkspacePath(this.getPreferredProjectLayout(projectPath), workspaceName);
+    return getRemoteWorkspacePath(this.getProjectLayout(projectPath), workspaceName);
   }
 
   /**
@@ -472,7 +436,7 @@ export class SSHRuntime extends RemoteRuntime {
    * All worktree-based workspaces share this object store.
    */
   private getBaseRepoPath(projectPath: string): string {
-    return this.getPreferredProjectLayout(projectPath).baseRepoPath;
+    return this.getProjectLayout(projectPath).baseRepoPath;
   }
 
   /**
@@ -485,7 +449,7 @@ export class SSHRuntime extends RemoteRuntime {
     initLogger: InitLogger,
     abortSignal?: AbortSignal
   ): Promise<string> {
-    const layout = await this.resolveProjectLayout(projectPath);
+    const layout = this.getProjectLayout(projectPath);
     const baseRepoPath = layout.baseRepoPath;
     const baseRepoPathArg = expandTildeForSSH(baseRepoPath);
 
@@ -629,254 +593,6 @@ export class SSHRuntime extends RemoteRuntime {
     }
   }
 
-  private async persistWorkspaceBranchMapping(
-    projectPath: string,
-    workspaceName: string,
-    branchName: string
-  ): Promise<void> {
-    await this.writeWorkspaceBranchMetadata(projectPath, workspaceName, branchName);
-  }
-
-  private async updateWorkspaceBranchMapping(
-    projectPath: string,
-    oldWorkspaceName: string,
-    newWorkspaceName: string
-  ): Promise<void> {
-    const branchName =
-      (await this.readWorkspaceBranchMetadata(projectPath, oldWorkspaceName))?.trim() ??
-      oldWorkspaceName;
-    await this.writeWorkspaceBranchMetadata(projectPath, newWorkspaceName, branchName);
-    await this.deletePersistedWorkspaceBranchMapping(projectPath, oldWorkspaceName);
-  }
-
-  private async getPersistedWorkspaceBranchName(
-    projectPath: string,
-    workspaceName: string
-  ): Promise<string | null> {
-    const branchName = (await this.readWorkspaceBranchMetadata(projectPath, workspaceName))?.trim();
-    return branchName ?? null;
-  }
-
-  private async deletePersistedWorkspaceBranchMapping(
-    projectPath: string,
-    workspaceName: string
-  ): Promise<void> {
-    try {
-      const layout = await this.resolveProjectLayout(projectPath, workspaceName);
-      const metadataPath = getWorkspaceMetadataPath(layout, workspaceName);
-      await execBuffered(this, `rm -f ${this.quoteForRemote(metadataPath)}`, {
-        cwd: "/tmp",
-        timeout: 10,
-      }).catch(() => undefined);
-    } catch {
-      // Best-effort cleanup after delete; future creates overwrite any stale entry.
-    }
-
-    await this.deleteLegacyWorkspaceBranchEntry(projectPath, workspaceName).catch(() => undefined);
-  }
-
-  private async readWorkspaceBranchMetadata(
-    projectPath: string,
-    workspaceName: string
-  ): Promise<string | null> {
-    try {
-      await this.resolveProjectLayout(projectPath, workspaceName);
-      const metadataPath = getWorkspaceMetadataPath(
-        this.getPreferredProjectLayout(projectPath),
-        workspaceName
-      );
-      const contents = await streamToString(this.readFile(metadataPath));
-      const parsed: unknown = JSON.parse(contents);
-      if (typeof parsed === "object" && parsed !== null) {
-        const branchName =
-          "branchName" in parsed && typeof parsed.branchName === "string"
-            ? parsed.branchName.trim()
-            : "";
-        if (branchName.length > 0) {
-          return branchName;
-        }
-      }
-    } catch {
-      // Fall back to the legacy shared manifest for pre-migration workspaces.
-    }
-
-    return this.readLegacyWorkspaceBranchEntry(projectPath, workspaceName);
-  }
-
-  private async writeWorkspaceBranchMetadata(
-    projectPath: string,
-    workspaceName: string,
-    branchName: string
-  ): Promise<void> {
-    const layout = await this.resolveProjectLayout(projectPath, workspaceName);
-    const metadataPath = getWorkspaceMetadataPath(layout, workspaceName);
-    const mkdirResult = await execBuffered(
-      this,
-      `mkdir -p ${this.quoteForRemote(layout.workspaceMetadataDir)}`,
-      {
-        cwd: "/tmp",
-        timeout: 10,
-      }
-    );
-    if (mkdirResult.exitCode !== 0) {
-      throw new Error(
-        `Failed to prepare remote workspace metadata: ${mkdirResult.stderr || mkdirResult.stdout}`
-      );
-    }
-
-    const payload = {
-      workspaceName,
-      branchName,
-    };
-    const writer = this.writeFile(metadataPath).getWriter();
-    try {
-      await writer.write(new TextEncoder().encode(`${JSON.stringify(payload, null, 2)}\n`));
-    } finally {
-      await writer.close();
-    }
-
-    await this.mutateLegacyWorkspaceBranchMap(projectPath, layout, (branchMap) => {
-      branchMap[workspaceName] = branchName;
-    });
-  }
-
-  private usesLegacyProjectLayout(projectPath: string, layout: RemoteProjectLayout): boolean {
-    return (
-      layout.projectRoot ===
-      buildLegacyRemoteProjectLayout(this.config.srcBaseDir, projectPath).projectRoot
-    );
-  }
-
-  private async readLegacyWorkspaceBranchMap(projectPath: string): Promise<Record<string, string>> {
-    try {
-      const contents = await streamToString(
-        this.readFile(this.getLegacyWorkspaceBranchMapPath(projectPath))
-      );
-      const parsed: unknown = JSON.parse(contents);
-      if (typeof parsed !== "object" || parsed === null) {
-        return {};
-      }
-
-      const branchMap: Record<string, string> = {};
-      for (const [workspaceName, branchName] of Object.entries(parsed)) {
-        if (typeof branchName !== "string") {
-          continue;
-        }
-        const trimmedWorkspaceName = workspaceName.trim();
-        const trimmedBranchName = branchName.trim();
-        if (trimmedWorkspaceName.length === 0 || trimmedBranchName.length === 0) {
-          continue;
-        }
-        branchMap[trimmedWorkspaceName] = trimmedBranchName;
-      }
-      return branchMap;
-    } catch {
-      return {};
-    }
-  }
-
-  private async writeLegacyWorkspaceBranchMap(
-    projectPath: string,
-    branchMap: Record<string, string>
-  ): Promise<void> {
-    const legacyManifestPath = this.getLegacyWorkspaceBranchMapPath(projectPath);
-    const normalizedBranchMap = Object.fromEntries(
-      Object.entries(branchMap).sort(([leftWorkspace], [rightWorkspace]) =>
-        leftWorkspace.localeCompare(rightWorkspace)
-      )
-    );
-    const writer = this.writeFile(legacyManifestPath).getWriter();
-    try {
-      await writer.write(
-        new TextEncoder().encode(`${JSON.stringify(normalizedBranchMap, null, 2)}\n`)
-      );
-    } finally {
-      await writer.close();
-    }
-  }
-
-  private async deleteLegacyWorkspaceBranchEntry(
-    projectPath: string,
-    workspaceName: string
-  ): Promise<void> {
-    const legacyManifestPath = this.getLegacyWorkspaceBranchMapPath(projectPath);
-    const projectKey = this.getProjectSyncKey(this.getDefaultProjectLayout(projectPath).projectId);
-    await projectSyncCoordinator.enqueueProjectMutation(projectKey, async () => {
-      const branchMap = await this.readLegacyWorkspaceBranchMap(projectPath);
-      if (!(workspaceName in branchMap)) {
-        return;
-      }
-
-      delete branchMap[workspaceName];
-      if (Object.keys(branchMap).length === 0) {
-        await execBuffered(this, `rm -f ${this.quoteForRemote(legacyManifestPath)}`, {
-          cwd: "/tmp",
-          timeout: 10,
-        }).catch(() => undefined);
-        return;
-      }
-
-      await this.writeLegacyWorkspaceBranchMap(projectPath, branchMap);
-    });
-  }
-
-  private async mutateLegacyWorkspaceBranchMap(
-    projectPath: string,
-    layout: RemoteProjectLayout,
-    mutate: (branchMap: Record<string, string>) => void
-  ): Promise<void> {
-    if (!this.usesLegacyProjectLayout(projectPath, layout)) {
-      return;
-    }
-
-    const legacyManifestPath = this.getLegacyWorkspaceBranchMapPath(projectPath);
-    const projectKey = this.getProjectSyncKey(this.getDefaultProjectLayout(projectPath).projectId);
-    await projectSyncCoordinator.enqueueProjectMutation(projectKey, async () => {
-      const branchMap = await this.readLegacyWorkspaceBranchMap(projectPath);
-      mutate(branchMap);
-      if (Object.keys(branchMap).length === 0) {
-        await execBuffered(this, `rm -f ${this.quoteForRemote(legacyManifestPath)}`, {
-          cwd: "/tmp",
-          timeout: 10,
-        }).catch(() => undefined);
-        return;
-      }
-
-      const mkdirResult = await execBuffered(
-        this,
-        `mkdir -p ${this.quoteForRemote(path.posix.dirname(legacyManifestPath))}`,
-        {
-          cwd: "/tmp",
-          timeout: 10,
-        }
-      );
-      if (mkdirResult.exitCode !== 0) {
-        throw new Error(
-          `Failed to prepare legacy workspace branch manifest: ${mkdirResult.stderr || mkdirResult.stdout}`
-        );
-      }
-
-      await this.writeLegacyWorkspaceBranchMap(projectPath, branchMap);
-    });
-  }
-
-  private async readLegacyWorkspaceBranchEntry(
-    projectPath: string,
-    workspaceName: string
-  ): Promise<string | null> {
-    const branchName = (await this.readLegacyWorkspaceBranchMap(projectPath))[
-      workspaceName
-    ]?.trim();
-    return branchName && branchName.length > 0 ? branchName : null;
-  }
-
-  private getLegacyWorkspaceBranchMapPath(projectPath: string): string {
-    return path.posix.join(
-      buildLegacyRemoteProjectLayout(this.config.srcBaseDir, projectPath).projectRoot,
-      ".mux-workspace-branches.json"
-    );
-  }
-
   /**
    * Resolve the bundle staging ref for the trunk branch.
    * Returns refs/mux-bundle/<trunkBranch> if it exists, otherwise falls back
@@ -912,6 +628,55 @@ export class SSHRuntime extends RemoteRuntime {
     }
 
     return null;
+  }
+
+  private async resolveLocalSyncRefManifest(projectPath: string): Promise<string | null> {
+    try {
+      using proc = execFileAsync("git", ["-C", projectPath, "show-ref", "--heads", "--tags"]);
+      const { stdout } = await proc.result;
+      return stdout
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0)
+        .sort()
+        .join("\n");
+    } catch {
+      return null;
+    }
+  }
+
+  private async resolveRemoteSyncRefManifest(
+    baseRepoPathArg: string,
+    abortSignal?: AbortSignal
+  ): Promise<string | null> {
+    const result = await execBuffered(
+      this,
+      `git -C ${baseRepoPathArg} for-each-ref --format='%(objectname) %(refname)' ${BUNDLE_REF_PREFIX} refs/tags`,
+      { cwd: "/tmp", timeout: 20, abortSignal }
+    );
+    if (result.exitCode !== 0) {
+      return null;
+    }
+
+    return result.stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .map((line) => {
+        const separator = line.indexOf(" ");
+        if (separator === -1) {
+          return line;
+        }
+
+        const oid = line.slice(0, separator);
+        const refName = line.slice(separator + 1);
+        const normalizedRefName = refName.startsWith(BUNDLE_REF_PREFIX)
+          ? refName.replace(BUNDLE_REF_PREFIX, "refs/heads/")
+          : refName;
+        return `${oid} ${normalizedRefName}`;
+      })
+      .sort()
+      .join("\n");
   }
 
   private async refreshBaseRepoOrigin(
@@ -970,11 +735,10 @@ export class SSHRuntime extends RemoteRuntime {
       return { ready: false, error: "Aborted", errorType: "runtime_start_failed" };
     }
 
-    const layout = await this.resolveProjectLayout(
+    const workspacePath = this.getWorkspacePath(
       this.ensureReadyProjectPath,
       this.ensureReadyWorkspaceName
     );
-    const workspacePath = getRemoteWorkspacePath(layout, this.ensureReadyWorkspaceName);
     const gitDir = path.posix.join(workspacePath, ".git");
     const gitDirProbe = this.quoteForRemote(gitDir);
 
@@ -1232,145 +996,122 @@ export class SSHRuntime extends RemoteRuntime {
       throw new Error("Operation aborted");
     }
 
-    const layout = await this.resolveProjectLayout(projectPath);
-    const snapshotDigest = await this.computeSnapshotDigest(projectPath);
-    const snapshotMarkerPath = getSnapshotMarkerPath(layout, snapshotDigest);
-    const currentSnapshotPath = path.posix.join(layout.snapshotMarkerDir, "current");
+    const layout = this.getProjectLayout(projectPath);
+    const currentSnapshotPath = layout.currentSnapshotPath;
     const projectKey = this.getProjectSyncKey(layout.projectId);
-    const snapshotKey = `${projectKey}:${snapshotDigest}`;
 
-    await projectSyncCoordinator.runSnapshotSync(
-      { projectKey, snapshotKey, abortSignal },
-      async (sharedAbortSignal) => {
-        const baseRepoPathArg = await this.ensureBaseRepo(
-          projectPath,
-          initLogger,
-          sharedAbortSignal
-        );
+    await enqueueProjectSync(projectKey, abortSignal, async () => {
+      if (abortSignal?.aborted) {
+        throw new Error("Operation aborted");
+      }
 
-        const snapshotStatusCheck = await execBuffered(
-          this,
-          [
-            'current_snapshot=""',
-            `if test -f ${this.quoteForRemote(currentSnapshotPath)}; then`,
-            `  current_snapshot=$(tr -d '\\n' < ${this.quoteForRemote(currentSnapshotPath)})`,
-            "fi",
-            `if test -f ${this.quoteForRemote(snapshotMarkerPath)} && test "$current_snapshot" = ${shescape.quote(snapshotDigest)}; then`,
-            `  bundle_ref=$(git -C ${baseRepoPathArg} for-each-ref --count=1 --format='%(refname)' ${shescape.quote(BUNDLE_REF_PREFIX)})`,
-            '  if test -n "$bundle_ref"; then',
-            "    echo reusable",
-            "  else",
-            "    echo stale-marker",
-            "  fi",
-            `elif test -f ${this.quoteForRemote(snapshotMarkerPath)} || test -n "$current_snapshot"; then`,
-            "  echo stale-marker",
-            "else",
-            "  echo missing",
-            "fi",
-          ].join("\n"),
-          { cwd: "/tmp", timeout: 10, abortSignal: sharedAbortSignal }
-        );
-        const snapshotStatus = snapshotStatusCheck.stdout.trim();
-        if (snapshotStatus === "reusable") {
-          await this.refreshBaseRepoOrigin(
-            projectPath,
-            baseRepoPathArg,
-            initLogger,
-            sharedAbortSignal
-          );
+      const snapshotDigest = await this.computeSnapshotDigest(projectPath);
+      const baseRepoPathArg = await this.ensureBaseRepo(projectPath, initLogger, abortSignal);
+
+      const snapshotStatusCheck = await execBuffered(
+        this,
+        [
+          'current_snapshot=""',
+          `if test -f ${this.quoteForRemote(currentSnapshotPath)}; then`,
+          `  current_snapshot=$(tr -d '\\n' < ${this.quoteForRemote(currentSnapshotPath)})`,
+          "fi",
+          `if test "$current_snapshot" = ${shescape.quote(snapshotDigest)}; then`,
+          `  bundle_ref=$(git -C ${baseRepoPathArg} for-each-ref --count=1 --format='%(refname)' ${shescape.quote(BUNDLE_REF_PREFIX)})`,
+          '  if test -n "$bundle_ref"; then',
+          "    echo reusable",
+          "  else",
+          "    echo stale-current",
+          "  fi",
+          "else",
+          "  echo missing",
+          "fi",
+        ].join("\n"),
+        { cwd: "/tmp", timeout: 10, abortSignal }
+      );
+      const snapshotStatus = snapshotStatusCheck.stdout.trim();
+      if (snapshotStatus === "reusable") {
+        const localRefManifest = await this.resolveLocalSyncRefManifest(projectPath);
+        const remoteRefManifest =
+          localRefManifest == null
+            ? null
+            : await this.resolveRemoteSyncRefManifest(baseRepoPathArg, abortSignal);
+        if (localRefManifest != null && remoteRefManifest === localRefManifest) {
+          await this.refreshBaseRepoOrigin(projectPath, baseRepoPathArg, initLogger, abortSignal);
           initLogger.logStep("Reusing existing remote project snapshot");
           return;
         }
-        if (snapshotStatus === "stale-marker") {
-          initLogger.logStep(
-            "Remote snapshot marker found without matching imported refs; reimporting bundle..."
-          );
-        }
-
-        // Snapshot markers stay deterministic, but the uploaded bundle itself must use
-        // a per-attempt temp path so concurrent Mux processes do not stream into the same file.
-        const remoteBundlePath = path.posix.join(
-          "~/.mux-bundles",
-          layout.projectId,
-          `${snapshotDigest}.${crypto.randomUUID()}.bundle`
+        initLogger.logStep(
+          "Remote snapshot marker drifted from imported refs; reimporting bundle..."
         );
-        const remoteBundlePathArg = this.quoteForRemote(remoteBundlePath);
-        const remoteBundleParentDir = path.posix.dirname(remoteBundlePath);
-        const prepareRemoteDirs = await execBuffered(
+      }
+      if (snapshotStatus === "stale-current") {
+        initLogger.logStep(
+          "Remote snapshot marker found without matching imported refs; reimporting bundle..."
+        );
+      }
+
+      // Snapshot markers stay deterministic, but the uploaded bundle itself must use
+      // a per-attempt temp path so concurrent Mux processes do not stream into the same file.
+      const remoteBundlePath = path.posix.join(
+        "~/.mux-bundles",
+        layout.projectId,
+        `${snapshotDigest}.${crypto.randomUUID()}.bundle`
+      );
+      const remoteBundlePathArg = this.quoteForRemote(remoteBundlePath);
+      const remoteBundleParentDir = path.posix.dirname(remoteBundlePath);
+      const prepareRemoteDirs = await execBuffered(
+        this,
+        `mkdir -p ${this.quoteForRemote(remoteBundleParentDir)} ${this.quoteForRemote(path.posix.dirname(currentSnapshotPath))}`,
+        { cwd: "/tmp", timeout: 10, abortSignal }
+      );
+      if (prepareRemoteDirs.exitCode !== 0) {
+        throw new Error(
+          `Failed to prepare remote snapshot directories: ${prepareRemoteDirs.stderr || prepareRemoteDirs.stdout}`
+        );
+      }
+
+      await this.transferBundleToRemote(projectPath, remoteBundlePath, initLogger, abortSignal);
+
+      try {
+        // Import branches and tags from the bundle into the shared bare repo.
+        // Branches land in refs/mux-bundle/* (staging namespace) instead of
+        // refs/heads/* to avoid colliding with branches checked out in existing
+        // worktrees — git refuses to update any ref checked out in a worktree.
+        // Tags go directly to refs/tags/* (they're never checked out).
+        initLogger.logStep("Importing bundle into shared base repository...");
+        const fetchResult = await execBuffered(
           this,
-          `mkdir -p ${this.quoteForRemote(remoteBundleParentDir)} ${this.quoteForRemote(layout.snapshotMarkerDir)}`,
-          { cwd: "/tmp", timeout: 10, abortSignal: sharedAbortSignal }
+          `git -C ${baseRepoPathArg} fetch --prune --prune-tags ${remoteBundlePathArg} '+refs/heads/*:${BUNDLE_REF_PREFIX}*' '+refs/tags/*:refs/tags/*'`,
+          { cwd: "/tmp", timeout: 300, abortSignal }
         );
-        if (prepareRemoteDirs.exitCode !== 0) {
+        if (fetchResult.exitCode !== 0) {
           throw new Error(
-            `Failed to prepare remote snapshot directories: ${prepareRemoteDirs.stderr || prepareRemoteDirs.stdout}`
+            `Failed to import bundle into base repo: ${fetchResult.stderr || fetchResult.stdout}`
           );
         }
 
-        await this.transferBundleToRemote(
-          projectPath,
-          remoteBundlePath,
-          initLogger,
-          sharedAbortSignal
-        );
+        await this.refreshBaseRepoOrigin(projectPath, baseRepoPathArg, initLogger, abortSignal);
 
+        const currentSnapshotWriter = this.writeFile(currentSnapshotPath).getWriter();
         try {
-          // Import branches and tags from the bundle into the shared bare repo.
-          // Branches land in refs/mux-bundle/* (staging namespace) instead of
-          // refs/heads/* to avoid colliding with branches checked out in existing
-          // worktrees — git refuses to update any ref checked out in a worktree.
-          // Tags go directly to refs/tags/* (they're never checked out).
-          initLogger.logStep("Importing bundle into shared base repository...");
-          const fetchResult = await execBuffered(
-            this,
-            `git -C ${baseRepoPathArg} fetch --prune --prune-tags ${remoteBundlePathArg} '+refs/heads/*:${BUNDLE_REF_PREFIX}*' '+refs/tags/*:refs/tags/*'`,
-            { cwd: "/tmp", timeout: 300, abortSignal: sharedAbortSignal }
-          );
-          if (fetchResult.exitCode !== 0) {
-            throw new Error(
-              `Failed to import bundle into base repo: ${fetchResult.stderr || fetchResult.stdout}`
-            );
-          }
-
-          await this.refreshBaseRepoOrigin(
-            projectPath,
-            baseRepoPathArg,
-            initLogger,
-            sharedAbortSignal
-          );
-
-          const markerWriter = this.writeFile(snapshotMarkerPath).getWriter();
-          try {
-            await markerWriter.write(
-              new TextEncoder().encode(
-                `${JSON.stringify({ snapshotDigest, importedAt: new Date().toISOString() }, null, 2)}\n`
-              )
-            );
-          } finally {
-            await markerWriter.close();
-          }
-
-          const currentSnapshotWriter = this.writeFile(currentSnapshotPath).getWriter();
-          try {
-            await currentSnapshotWriter.write(new TextEncoder().encode(`${snapshotDigest}\n`));
-          } finally {
-            await currentSnapshotWriter.close();
-          }
-
-          initLogger.logStep("Repository synced to base successfully");
+          await currentSnapshotWriter.write(new TextEncoder().encode(`${snapshotDigest}\n`));
         } finally {
-          // Best-effort cleanup of the remote bundle file.
-          try {
-            await execBuffered(this, `rm -f ${remoteBundlePathArg}`, {
-              cwd: "/tmp",
-              timeout: 10,
-            });
-          } catch {
-            // Ignore cleanup errors.
-          }
+          await currentSnapshotWriter.close();
+        }
+
+        initLogger.logStep("Repository synced to base successfully");
+      } finally {
+        // Best-effort cleanup of the remote bundle file.
+        try {
+          await execBuffered(this, `rm -f ${remoteBundlePathArg}`, {
+            cwd: "/tmp",
+            timeout: 10,
+          });
+        } catch {
+          // Ignore cleanup errors.
         }
       }
-    );
+    });
   }
 
   /** Get origin URL from local project for setting on the remote base repo. */
@@ -1384,8 +1125,7 @@ export class SSHRuntime extends RemoteRuntime {
   async createWorkspace(params: WorkspaceCreationParams): Promise<WorkspaceCreationResult> {
     try {
       const { projectPath, directoryName, initLogger, abortSignal } = params;
-      const layout = await this.resolveProjectLayout(projectPath, directoryName);
-      this.projectLayouts.set(projectPath, layout);
+      const layout = this.getProjectLayout(projectPath);
       // Workspace directories follow the persisted workspace name; branch checkout happens later.
       const workspacePath = getRemoteWorkspacePath(layout, directoryName);
 
@@ -1423,7 +1163,6 @@ export class SSHRuntime extends RemoteRuntime {
         };
       }
 
-      await this.persistWorkspaceBranchMapping(projectPath, directoryName, params.branchName);
       initLogger.logStep("Remote workspace prepared");
 
       return {
@@ -1439,15 +1178,6 @@ export class SSHRuntime extends RemoteRuntime {
   }
 
   async initWorkspace(params: WorkspaceInitParams): Promise<WorkspaceInitResult> {
-    this.projectLayouts.set(
-      params.projectPath,
-      buildRemoteProjectLayout(
-        this.config.srcBaseDir,
-        params.projectPath,
-        path.posix.dirname(params.workspacePath)
-      )
-    );
-
     // Disable git hooks for untrusted projects (prevents post-checkout execution)
     const nhp = gitNoHooksPrefix(params.trusted);
 
@@ -1772,9 +1502,8 @@ export class SSHRuntime extends RemoteRuntime {
     if (abortSignal?.aborted) {
       return { success: false, error: "Rename operation aborted" };
     }
-    const layout = await this.resolveProjectLayout(projectPath, oldName);
-    const oldPath = getRemoteWorkspacePath(layout, oldName);
-    const newPath = getRemoteWorkspacePath(layout, newName);
+    const oldPath = this.getWorkspacePath(projectPath, oldName);
+    const newPath = path.posix.join(path.posix.dirname(oldPath), newName);
 
     try {
       const expandedOldPath = expandTildeForSSH(oldPath);
@@ -1822,7 +1551,6 @@ export class SSHRuntime extends RemoteRuntime {
         };
       }
 
-      await this.updateWorkspaceBranchMapping(projectPath, oldName, newName);
       return { success: true, oldPath, newPath };
     } catch (error) {
       return {
@@ -1847,8 +1575,7 @@ export class SSHRuntime extends RemoteRuntime {
     // Disable git hooks for untrusted projects
     const nhp = gitNoHooksPrefix(trusted);
 
-    const layout = await this.resolveProjectLayout(projectPath, workspaceName);
-    const deletedPath = getRemoteWorkspacePath(layout, workspaceName);
+    const deletedPath = this.getWorkspacePath(projectPath, workspaceName);
 
     try {
       // Combine all pre-deletion checks into a single bash script to minimize round trips
@@ -1948,7 +1675,6 @@ export class SSHRuntime extends RemoteRuntime {
       // Handle check results
       if (checkExitCode === 3) {
         // Directory doesn't exist - deletion is idempotent (success).
-        await this.deletePersistedWorkspaceBranchMapping(projectPath, workspaceName);
         return { success: true, deletedPath };
       }
 
@@ -1982,8 +1708,7 @@ export class SSHRuntime extends RemoteRuntime {
         };
       }
 
-      const branchToDelete =
-        (await this.getPersistedWorkspaceBranchName(projectPath, workspaceName)) ?? workspaceName;
+      const branchToDelete = await this.resolveCheckedOutBranch(deletedPath, abortSignal, 10);
 
       // Detect if workspace is a worktree (.git is a file) vs a legacy full clone (.git is a directory).
       const isWorktree = await this.isWorktreeWorkspace(deletedPath, abortSignal);
@@ -2056,7 +1781,6 @@ export class SSHRuntime extends RemoteRuntime {
         }
       }
 
-      await this.deletePersistedWorkspaceBranchMapping(projectPath, workspaceName);
       return { success: true, deletedPath };
     } catch (error) {
       return { success: false, error: `Failed to delete directory: ${getErrorMessage(error)}` };
@@ -2066,9 +1790,11 @@ export class SSHRuntime extends RemoteRuntime {
   async forkWorkspace(params: WorkspaceForkParams): Promise<WorkspaceForkResult> {
     const { projectPath, sourceWorkspaceName, newWorkspaceName, initLogger, abortSignal } = params;
 
-    const layout = await this.resolveProjectLayout(projectPath, sourceWorkspaceName);
-    const sourceWorkspacePath = getRemoteWorkspacePath(layout, sourceWorkspaceName);
-    const newWorkspacePath = getRemoteWorkspacePath(layout, newWorkspaceName);
+    const sourceWorkspacePath = this.getWorkspacePath(projectPath, sourceWorkspaceName);
+    const newWorkspacePath = path.posix.join(
+      path.posix.dirname(sourceWorkspacePath),
+      newWorkspaceName
+    );
 
     // For SSH commands, tilde must be expanded using $HOME - plain quoting won't expand it.
     const sourceWorkspacePathArg = expandTildeForSSH(sourceWorkspacePath);

@@ -27,6 +27,7 @@ import {
   createRuntimeContextForWorkspace,
   resolveWorkspaceExecutionPath,
 } from "@/node/runtime/runtimeHelpers";
+import { getWorkspacePathHintForProject } from "@/node/services/workspaceProjectRepos";
 import { MultiProjectRuntime } from "@/node/runtime/multiProjectRuntime";
 import { getMuxEnv, getRuntimeType } from "@/node/runtime/initHook";
 import { getSrcBaseDir, isSSHRuntime } from "@/common/types/runtime";
@@ -935,9 +936,9 @@ export class AIService extends EventEmitter {
 
       const metadataWithPath = {
         ...metadata,
-        // Existing workspaces may still live under the legacy SSH basename layout until the first
-        // post-upgrade operation reuses their persisted root, so stream startup must seed the runtime
-        // from config instead of reconstructing a hashed default path before layout detection runs.
+        // Existing SSH workspaces may still live at a persisted root that differs from the canonical
+        // hashed project layout, so stream startup seeds the runtime from config for the current
+        // workspace instead of always reconstructing the path from project metadata.
         namedWorkspacePath: workspace.workspacePath,
       };
 
@@ -962,6 +963,20 @@ export class AIService extends EventEmitter {
               runtime: createRuntime(metadata.runtimeConfig, {
                 projectPath: project.projectPath,
                 workspaceName: metadata.name,
+                workspacePath: isSSHRuntime(metadata.runtimeConfig)
+                  ? getWorkspacePathHintForProject(
+                      {
+                        workspaceId,
+                        workspaceName: metadata.name,
+                        workspacePath: workspace.workspacePath,
+                        runtimeConfig: metadata.runtimeConfig,
+                        projectPath: metadata.projectPath,
+                        projectName: metadata.projectName,
+                        projects: metadata.projects,
+                      },
+                      project.projectPath
+                    )
+                  : undefined,
               }),
             })),
             metadata.name

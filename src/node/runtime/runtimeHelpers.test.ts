@@ -37,8 +37,8 @@ describe("createRuntimeForWorkspace", () => {
     };
 
     const runtime = createRuntimeForWorkspace(metadata);
-    expect(runtime.getWorkspacePath(metadata.projectPath, "review-2")).toBe(
-      "/remote/src/demo/review-2"
+    expect(runtime.getWorkspacePath(metadata.projectPath, "review-2")).toMatch(
+      /^\/remote\/src\/demo-[a-f0-9]{12}\/review-2$/
     );
   });
 });
@@ -120,8 +120,8 @@ describe("createRuntimeContextForWorkspace", () => {
     const context = createRuntimeContextForWorkspace(metadata);
 
     expect(context.workspacePath).toBe("/remote/src/demo/review-1");
-    expect(context.runtime.getWorkspacePath(metadata.projectPath, "review-2")).toBe(
-      "/remote/src/demo/review-2"
+    expect(context.runtime.getWorkspacePath(metadata.projectPath, "review-2")).toMatch(
+      /^\/remote\/src\/demo-[a-f0-9]{12}\/review-2$/
     );
   });
 });

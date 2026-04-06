@@ -4,15 +4,13 @@ import { getProjectName } from "@/node/utils/runtime/helpers";
 
 export const REMOTE_BASE_REPO_DIR = ".mux-base.git";
 const REMOTE_METADATA_DIR = ".mux-meta";
-const REMOTE_WORKSPACE_METADATA_DIR = "workspaces";
-const REMOTE_SNAPSHOT_MARKER_DIR = "snapshots";
+const REMOTE_CURRENT_SNAPSHOT_FILE = "current-snapshot";
 
 export interface RemoteProjectLayout {
   projectId: string;
   projectRoot: string;
   baseRepoPath: string;
-  workspaceMetadataDir: string;
-  snapshotMarkerDir: string;
+  currentSnapshotPath: string;
 }
 
 function sanitizeProjectSegment(segment: string): string {
@@ -41,14 +39,16 @@ export function buildRemoteProjectLayout(
 ): RemoteProjectLayout {
   const projectId = createRemoteProjectId(projectPath);
   const projectRoot = projectRootOverride ?? path.posix.join(srcBaseDir, projectId);
-  const metadataRoot = path.posix.join(projectRoot, REMOTE_METADATA_DIR);
 
   return {
     projectId,
     projectRoot,
     baseRepoPath: path.posix.join(projectRoot, REMOTE_BASE_REPO_DIR),
-    workspaceMetadataDir: path.posix.join(metadataRoot, REMOTE_WORKSPACE_METADATA_DIR),
-    snapshotMarkerDir: path.posix.join(metadataRoot, REMOTE_SNAPSHOT_MARKER_DIR),
+    currentSnapshotPath: path.posix.join(
+      projectRoot,
+      REMOTE_METADATA_DIR,
+      REMOTE_CURRENT_SNAPSHOT_FILE
+    ),
   };
 }
 
@@ -56,21 +56,13 @@ export function buildLegacyRemoteProjectLayout(
   srcBaseDir: string,
   projectPath: string
 ): RemoteProjectLayout {
-  const legacyRoot = path.posix.join(srcBaseDir, getProjectName(projectPath));
-  return buildRemoteProjectLayout(srcBaseDir, projectPath, legacyRoot);
+  return buildRemoteProjectLayout(
+    srcBaseDir,
+    projectPath,
+    path.posix.join(srcBaseDir, getProjectName(projectPath))
+  );
 }
 
 export function getRemoteWorkspacePath(layout: RemoteProjectLayout, workspaceName: string): string {
   return path.posix.join(layout.projectRoot, workspaceName);
-}
-
-export function getWorkspaceMetadataPath(
-  layout: RemoteProjectLayout,
-  workspaceName: string
-): string {
-  return path.posix.join(layout.workspaceMetadataDir, `${hashText(workspaceName)}.json`);
-}
-
-export function getSnapshotMarkerPath(layout: RemoteProjectLayout, snapshotDigest: string): string {
-  return path.posix.join(layout.snapshotMarkerDir, `${snapshotDigest}.json`);
 }

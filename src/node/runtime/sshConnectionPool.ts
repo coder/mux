@@ -139,6 +139,12 @@ export interface AcquireConnectionOptions {
   onWait?: (waitMs: number) => void;
 
   /**
+   * Optional explicit ControlPath to probe/bootstrap before returning. When omitted,
+   * the default host-scoped ControlPath is used.
+   */
+  controlPath?: string;
+
+  /**
    * Test seam.
    *
    * If provided, this is used for sleeping between wait cycles.
@@ -183,6 +189,7 @@ async function sleepWithAbort(ms: number, abortSignal?: AbortSignal): Promise<vo
  */
 export class SSHConnectionPool {
   private health = new Map<string, ConnectionHealth>();
+  private readyControlPaths = new Map<string, Set<string>>();
   private inflight = new Map<string, Promise<void>>();
 
   /**
@@ -214,6 +221,7 @@ export class SSHConnectionPool {
     const shouldWait = maxWaitMs > 0;
 
     const key = makeConnectionKey(config);
+    const requestedControlPath = options.controlPath ?? getControlPath(config);
     const startTime = Date.now();
 
     while (true) {
@@ -253,13 +261,21 @@ export class SSHConnectionPool {
       // Return immediately if known healthy and not stale.
       if (health?.status === "healthy") {
         const age = Date.now() - (health.lastSuccess?.getTime() ?? 0);
-        if (age < HEALTHY_TTL_MS) {
+        const specificMasterReady =
+          options.controlPath == null ? true : this.isControlPathReady(key, requestedControlPath);
+        if (age < HEALTHY_TTL_MS && specificMasterReady) {
           log.debug(`SSH connection to ${config.host} is known healthy, skipping probe`);
           return;
         }
-        log.debug(
-          `SSH connection to ${config.host} health is stale (${Math.round(age / 1000)}s), re-probing`
-        );
+        if (!specificMasterReady) {
+          log.debug(
+            `SSH connection to ${config.host} is healthy, but ControlPath ${requestedControlPath} is not ready; bootstrapping it now`
+          );
+        } else {
+          log.debug(
+            `SSH connection to ${config.host} health is stale (${Math.round(age / 1000)}s), re-probing`
+          );
+        }
       }
 
       // Check for inflight probe - singleflighting.
@@ -280,7 +296,7 @@ export class SSHConnectionPool {
 
       // Start new probe.
       log.debug(`SSH connection to ${config.host} needs probe, starting health check`);
-      const probe = this.probeConnection(config, timeoutMs, key);
+      const probe = this.probeConnection(config, timeoutMs, key, requestedControlPath);
       this.inflight.set(key, probe);
 
       try {
@@ -302,6 +318,20 @@ export class SSHConnectionPool {
         this.inflight.delete(key);
       }
     }
+  }
+
+  private isControlPathReady(key: string, controlPath: string): boolean {
+    return this.readyControlPaths.get(key)?.has(controlPath) === true;
+  }
+
+  private markControlPathReady(key: string, controlPath: string): void {
+    const readyPaths = this.readyControlPaths.get(key) ?? new Set<string>();
+    readyPaths.add(controlPath);
+    this.readyControlPaths.set(key, readyPaths);
+  }
+
+  private clearReadyControlPaths(key: string): void {
+    this.readyControlPaths.delete(key);
   }
 
   /**
@@ -329,6 +359,7 @@ export class SSHConnectionPool {
       health.backoffUntil = undefined;
       health.consecutiveFailures = 0;
       health.status = "unknown";
+      this.clearReadyControlPaths(key);
       log.info(`Reset backoff for SSH connection to ${config.host}`);
     }
   }
@@ -372,6 +403,7 @@ export class SSHConnectionPool {
     const backoffIndex = Math.min(failures - 1, BACKOFF_SCHEDULE.length - 1);
     const backoffSecs = withJitter(BACKOFF_SCHEDULE[backoffIndex]);
 
+    this.clearReadyControlPaths(key);
     this.health.set(key, {
       status: "unhealthy",
       lastFailure: new Date(),
@@ -391,6 +423,7 @@ export class SSHConnectionPool {
    */
   clearAllHealth(): void {
     this.health.clear();
+    this.readyControlPaths.clear();
     this.inflight.clear();
   }
 
@@ -400,9 +433,9 @@ export class SSHConnectionPool {
   private async probeConnection(
     config: SSHConnectionConfig,
     timeoutMs: number,
-    key: string
+    key: string,
+    controlPath = getControlPath(config)
   ): Promise<void> {
-    const controlPath = getControlPath(config);
     const promptService = sshPromptService;
     const canPromptInteractively = isInteractiveHostKeyApprovalAvailable();
 
@@ -508,6 +541,7 @@ export class SSHConnectionPool {
 
         if (code === 0) {
           this.markHealthyByKey(key);
+          this.markControlPathReady(key, controlPath);
           log.debug(`SSH probe to ${config.host} succeeded`);
           resolve();
         } else {

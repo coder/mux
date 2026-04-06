@@ -181,10 +181,12 @@ describe("WorkspaceService executeBash runtime selection", () => {
       expect(createRuntimeSpy).toHaveBeenNthCalledWith(1, metadata.runtimeConfig, {
         projectPath: projectAPath,
         workspaceName,
+        workspacePath: undefined,
       });
       expect(createRuntimeSpy).toHaveBeenNthCalledWith(2, metadata.runtimeConfig, {
         projectPath: projectBPath,
         workspaceName,
+        workspacePath: undefined,
       });
       assert(capturedToolConfig);
       expect(capturedToolConfig.runtime).toBeInstanceOf(MultiProjectRuntime);
@@ -201,7 +203,7 @@ describe("WorkspaceService executeBash runtime selection", () => {
     }
   });
 
-  test("preserves inferred legacy SSH repo roots for multi-project repo-root bash mode", async () => {
+  test("preserves the current SSH repo root and derives sibling legacy repo roots for multi-project repo-root bash mode when the persisted root matches that layout", async () => {
     const workspaceId = "ws-multi-bash-ssh";
     const workspaceName = "feature-multi-bash-ssh";
     const srcDir = "/tmp/src";
