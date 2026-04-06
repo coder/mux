@@ -113,6 +113,25 @@ describe("shouldBypassDeferredMessages", () => {
     result: { success: true, output: "hi", exitCode: 0, wall_duration_ms: 5 },
   };
 
+  const runningInit: DisplayedMessage = {
+    type: "workspace-init",
+    id: "workspace-init",
+    historySequence: -1,
+    status: "running",
+    hookPath: "/tmp/project/.mux/init",
+    lines: [{ line: "Installing dependencies...", isError: false }],
+    exitCode: null,
+    timestamp: 1,
+    durationMs: null,
+  };
+
+  const completedInit: DisplayedMessage = {
+    ...runningInit,
+    status: "success",
+    exitCode: 0,
+    durationMs: 2_000,
+  };
+
   it("returns true when immediate snapshot has active rows", () => {
     expect(shouldBypassDeferredMessages([executingBash], [executingBash])).toBe(true);
   });
@@ -139,6 +158,16 @@ describe("shouldBypassDeferredMessages", () => {
     expect(shouldBypassDeferredMessages([completedBash, userRow], [userRow, completedBash])).toBe(
       true
     );
+  });
+
+  it("returns true when init output is still running", () => {
+    expect(shouldBypassDeferredMessages([runningInit], [runningInit])).toBe(true);
+  });
+
+  it("returns true when the deferred snapshot still shows a running init hook", () => {
+    // Regression scenario: reconnect replay completed the init hook, but the deferred
+    // snapshot is still holding on to the older running row from before catch-up.
+    expect(shouldBypassDeferredMessages([completedInit], [runningInit])).toBe(true);
   });
 
   it("returns false when both snapshots are settled and in sync", () => {

@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach, mock, type Mock } from "bun:test";
+import type { DisplayedMessage } from "@/common/types/message";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { StreamStartEvent, ToolCallStartEvent } from "@/common/types/stream";
 import type { WorkspaceActivitySnapshot, WorkspaceChatMessage } from "@/common/orpc/types";
@@ -1657,6 +1658,133 @@ describe("WorkspaceStore", () => {
         const state = store.getWorkspaceState(workspaceId);
         return (
           !state.loading && state.isStreamStarting && state.runtimeStatus?.detail === startupDetail
+        );
+      });
+      expect(stayedVisibleAfterCaughtUp).toBe(true);
+    });
+
+    it("shows replayed init output before caught-up when switching back to a workspace", async () => {
+      const workspaceId = "workspace-init-replay";
+      const otherWorkspaceId = "workspace-init-other";
+      const firstLine = "Preparing workspace...";
+      const replayedLine = "Syncing repository over SSH...";
+      let subscriptionCount = 0;
+      let releaseSecondInitOutput: (() => void) | undefined;
+      let releaseSecondCaughtUp: (() => void) | undefined;
+
+      const getInitMessage = (): {
+        state: ReturnType<WorkspaceStore["getWorkspaceState"]>;
+        initMessage: Extract<DisplayedMessage, { type: "workspace-init" }> | undefined;
+      } => {
+        const state = store.getWorkspaceState(workspaceId);
+        const initMessage = state.messages.find(
+          (message): message is Extract<DisplayedMessage, { type: "workspace-init" }> =>
+            message.type === "workspace-init"
+        );
+        return { state, initMessage };
+      };
+
+      mockOnChat.mockImplementation(async function* (
+        input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        if (input?.workspaceId !== workspaceId) {
+          await waitForAbortSignal(options?.signal);
+          return;
+        }
+
+        subscriptionCount += 1;
+
+        if (subscriptionCount === 1) {
+          yield { type: "caught-up" };
+          await Promise.resolve();
+          yield {
+            type: "init-start",
+            hookPath: "/tmp/project/.mux/init",
+            timestamp: 1_000,
+          };
+          await Promise.resolve();
+          yield {
+            type: "init-output",
+            line: firstLine,
+            isError: false,
+            timestamp: 1_001,
+          };
+          await waitForAbortSignal(options?.signal);
+          return;
+        }
+
+        yield {
+          type: "init-start",
+          hookPath: "/tmp/project/.mux/init",
+          timestamp: 2_000,
+        };
+        await new Promise<void>((resolve) => {
+          releaseSecondInitOutput = resolve;
+        });
+        yield {
+          type: "init-output",
+          line: replayedLine,
+          isError: false,
+          timestamp: 2_001,
+        };
+        await new Promise<void>((resolve) => {
+          releaseSecondCaughtUp = resolve;
+        });
+        yield { type: "caught-up", replay: "full" };
+        await waitForAbortSignal(options?.signal);
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const sawInitialInit = await waitUntil(() => {
+        const { state, initMessage } = getInitMessage();
+        return (
+          state.loading === false &&
+          initMessage?.status === "running" &&
+          initMessage.lines[0]?.line === firstLine
+        );
+      });
+      expect(sawInitialInit).toBe(true);
+
+      createAndAddWorkspace(store, otherWorkspaceId);
+      store.setActiveWorkspaceId(workspaceId);
+
+      const sawEmptyReconnectInit = await waitUntil(() => {
+        const { state, initMessage } = getInitMessage();
+        return (
+          subscriptionCount >= 2 &&
+          state.loading === false &&
+          state.isHydratingTranscript === false &&
+          initMessage?.status === "running" &&
+          initMessage.lines.length === 0
+        );
+      });
+      expect(sawEmptyReconnectInit).toBe(true);
+
+      releaseSecondInitOutput?.();
+
+      const replayedInitBeforeCaughtUp = await waitUntil(() => {
+        const { state, initMessage } = getInitMessage();
+        return (
+          subscriptionCount >= 2 &&
+          state.loading === false &&
+          state.isHydratingTranscript === false &&
+          initMessage?.status === "running" &&
+          initMessage.lines.length === 1 &&
+          initMessage.lines[0]?.line === replayedLine
+        );
+      });
+      expect(replayedInitBeforeCaughtUp).toBe(true);
+
+      releaseSecondCaughtUp?.();
+
+      const stayedVisibleAfterCaughtUp = await waitUntil(() => {
+        const { state, initMessage } = getInitMessage();
+        return (
+          !state.loading &&
+          initMessage?.status === "running" &&
+          initMessage.lines[0]?.line === replayedLine
         );
       });
       expect(stayedVisibleAfterCaughtUp).toBe(true);

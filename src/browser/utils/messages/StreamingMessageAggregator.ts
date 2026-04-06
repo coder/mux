@@ -1595,6 +1595,20 @@ export class StreamingMessageAggregator {
     }
   }
 
+  /**
+   * Replay-visible init output needs a synchronous cache flush. WorkspaceStore can
+   * bump subscribers before the normal 100ms init-output throttle fires, and in
+   * reconnects that would otherwise leave the newest line hidden until caught-up.
+   */
+  flushPendingInitOutput(): void {
+    if (this.initOutputThrottleTimer) {
+      clearTimeout(this.initOutputThrottleTimer);
+      this.initOutputThrottleTimer = null;
+    }
+
+    this.invalidateCache();
+  }
+
   clearPendingStreamStart(): void {
     this.setPendingStreamStartTime(null);
   }

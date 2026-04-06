@@ -32,6 +32,9 @@ import {
   isStreamError,
   isStreamLifecycle,
   isDeleteMessage,
+  isInitEnd,
+  isInitOutput,
+  isInitStart,
   isBashOutputEvent,
   isTaskCreatedEvent,
   isMuxMessage,
@@ -1525,6 +1528,10 @@ export class WorkspaceStore {
       const aggregator = this.assertGet(workspaceId);
 
       const hasMessages = aggregator.hasMessages();
+      const displayedMessages = aggregator.getDisplayedMessages();
+      const hasRunningInitMessage = displayedMessages.some(
+        (message) => message.type === "workspace-init" && message.status === "running"
+      );
       const transient = this.assertChatTransientState(workspaceId);
       const historyPagination =
         this.historyPagination.get(workspaceId) ?? createInitialHistoryPaginationState();
@@ -1574,8 +1581,14 @@ export class WorkspaceStore {
         (streamLifecycle?.phase === "preparing" ||
           (!hasAuthoritativeStreamLifecycle && pendingStreamStartTime !== null)) &&
         !canInterrupt;
+      // Only actively running init output should bypass transcript hydration. Completed init
+      // rows are still replayed, but they should not suppress the normal catch-up placeholder
+      // for stale cached transcript content on reconnect.
       const isHydratingTranscript =
-        isActiveWorkspace && transient.isHydratingTranscript && !transient.caughtUp;
+        isActiveWorkspace &&
+        transient.isHydratingTranscript &&
+        !transient.caughtUp &&
+        !hasRunningInitMessage;
       const aggregatorTodos = aggregator.getCurrentTodos();
       const displayStatus = useAggregatorState ? undefined : (activity?.displayStatus ?? undefined);
       const todoStatus = useAggregatorState
@@ -1596,13 +1609,13 @@ export class WorkspaceStore {
 
       return {
         name: metadata?.name ?? workspaceId, // Fall back to ID if metadata missing
-        messages: aggregator.getDisplayedMessages(),
+        messages: displayedMessages,
         queuedMessage: transient.queuedMessage,
         canInterrupt,
         isCompacting: aggregator.isCompacting(),
         isStreamStarting,
         awaitingUserQuestion: aggregator.hasAwaitingUserQuestion(),
-        loading: !hasMessages && !transient.caughtUp,
+        loading: !hasMessages && !hasRunningInitMessage && !transient.caughtUp,
         isHydratingTranscript,
         hasOlderHistory: historyPagination.hasOlder,
         loadingOlderHistory: historyPagination.loading,
@@ -3577,9 +3590,24 @@ export class WorkspaceStore {
     }
 
     if (!transient.caughtUp && this.isBufferedEvent(data)) {
-      if (isStreamLifecycle(data) || isStreamAbort(data) || isRuntimeStatus(data)) {
+      if (
+        isStreamLifecycle(data) ||
+        isStreamAbort(data) ||
+        isRuntimeStatus(data) ||
+        isInitStart(data) ||
+        isInitOutput(data) ||
+        isInitEnd(data)
+      ) {
+        // SSH/Coder init replay can be the only transcript content for a new workspace.
+        // Apply it immediately so switching back mid-init shows the latest backend output
+        // instead of only a generic loading placeholder until caught-up lands.
         applyWorkspaceChatEventToAggregator(aggregator, data, { allowSideEffects: false });
-        this.states.bump(workspaceId);
+        if (isInitOutput(data)) {
+          aggregator.flushPendingInitOutput();
+          this.scheduleIdleStateBump(workspaceId);
+        } else {
+          this.states.bump(workspaceId);
+        }
       }
 
       transient.pendingStreamEvents.push(data);
