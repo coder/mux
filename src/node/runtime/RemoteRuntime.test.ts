@@ -33,8 +33,7 @@ class TestRemoteRuntime extends RemoteRuntime {
   constructor(
     private readonly childProcess: FakeChildProcess,
     private readonly onExitCalls: Array<[number, string]>,
-    private readonly onCloseCalls: number[],
-    private readonly onExitCodeCalls: number[]
+    private readonly onCloseCalls: number[]
   ) {
     super();
   }
@@ -64,10 +63,6 @@ class TestRemoteRuntime extends RemoteRuntime {
 
   protected cdCommand(cwd: string): string {
     return `cd ${cwd}`;
-  }
-
-  protected override onExitCode(exitCode: number): void {
-    this.onExitCodeCalls.push(exitCode);
   }
 
   resolvePath(targetPath: string): Promise<string> {
@@ -108,8 +103,7 @@ describe("RemoteRuntime synthetic exit handling", () => {
     const childProcess = new FakeChildProcess();
     const onExitCalls: Array<[number, string]> = [];
     const onCloseCalls: number[] = [];
-    const onExitCodeCalls: number[] = [];
-    const runtime = new TestRemoteRuntime(childProcess, onExitCalls, onCloseCalls, onExitCodeCalls);
+    const runtime = new TestRemoteRuntime(childProcess, onExitCalls, onCloseCalls);
     const controller = new AbortController();
 
     const stream = await runtime.exec("echo ok", { cwd: "/tmp", abortSignal: controller.signal });
@@ -119,15 +113,13 @@ describe("RemoteRuntime synthetic exit handling", () => {
     expect(await stream.exitCode).toBe(EXIT_CODE_ABORTED);
     expect(onExitCalls).toEqual([]);
     expect(onCloseCalls).toEqual([1]);
-    expect(onExitCodeCalls).toEqual([EXIT_CODE_ABORTED]);
   });
 
   test("does not forward timed-out exits to transport onExit hooks", async () => {
     const childProcess = new FakeChildProcess();
     const onExitCalls: Array<[number, string]> = [];
     const onCloseCalls: number[] = [];
-    const onExitCodeCalls: number[] = [];
-    const runtime = new TestRemoteRuntime(childProcess, onExitCalls, onCloseCalls, onExitCodeCalls);
+    const runtime = new TestRemoteRuntime(childProcess, onExitCalls, onCloseCalls);
 
     const stream = await runtime.exec("echo ok", { cwd: "/tmp", timeout: 0.01 });
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -136,6 +128,5 @@ describe("RemoteRuntime synthetic exit handling", () => {
     expect(await stream.exitCode).toBe(EXIT_CODE_TIMEOUT);
     expect(onExitCalls).toEqual([]);
     expect(onCloseCalls).toEqual([1]);
-    expect(onExitCodeCalls).toEqual([EXIT_CODE_TIMEOUT]);
   });
 });

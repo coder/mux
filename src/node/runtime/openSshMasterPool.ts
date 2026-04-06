@@ -136,6 +136,12 @@ function isProcessAlive(proc: ChildProcess | undefined): boolean {
   return proc != null && proc.exitCode == null && proc.signalCode == null;
 }
 
+interface ShardAcquisitionBehavior<T> {
+  pickReadyShard(group: HostGroup): MasterShard | undefined;
+  finalizeShard(shard: MasterShard): T;
+  preferPolling(group: HostGroup): boolean;
+}
+
 export class OpenSSHMasterPool {
   private readonly hostGroups = new Map<string, HostGroup>();
   private readonly spawnProcess: SpawnFn;
@@ -171,93 +177,35 @@ export class OpenSSHMasterPool {
     config: SSHConnectionConfig,
     options?: AcquireLeaseOptions
   ): Promise<void> {
-    const maxWaitMs = options?.maxWaitMs ?? this.defaultMaxWaitMs;
-    const defaultStartTimeoutMs = options?.timeoutMs ?? this.defaultMasterStartTimeoutMs;
-    const deadlineMs = Date.now() + maxWaitMs;
-    const key = makeConnectionKey(config);
-    const hostGroup = this.getOrCreateHostGroup(key, config);
-    let lastStartError: Error | undefined;
-
-    while (true) {
-      if (options?.abortSignal?.aborted) {
-        throw new Error("Operation aborted");
-      }
-
-      this.trimExitedShards(hostGroup);
-      const readyShard = this.pickReadyShard(hostGroup);
-      if (readyShard) {
-        this.scheduleIdleDisposalIfUnused(readyShard);
-        return;
-      }
-
-      const restartable = hostGroup.shards.find((shard) => {
-        return (
-          !isProcessAlive(shard.process) &&
-          shard.startup == null &&
-          (shard.health.backoffUntil == null || shard.health.backoffUntil.getTime() <= Date.now())
-        );
-      });
-      if (restartable) {
-        try {
-          const startupTimeoutMs =
-            maxWaitMs === 0
-              ? defaultStartTimeoutMs
-              : Math.min(defaultStartTimeoutMs, Math.max(1, deadlineMs - Date.now()));
-          await this.startShard(hostGroup, restartable, startupTimeoutMs, options?.abortSignal);
-          this.scheduleIdleDisposalIfUnused(restartable);
-          return;
-        } catch (error) {
-          if (options?.abortSignal?.aborted) {
-            throw error;
-          }
-          lastStartError = error instanceof Error ? error : new Error(getErrorMessage(error));
-        }
-      }
-
-      if (hostGroup.shards.length < this.maxShardsPerHost) {
-        const shard = this.createShard(hostGroup);
-        try {
-          const startupTimeoutMs =
-            maxWaitMs === 0
-              ? defaultStartTimeoutMs
-              : Math.min(defaultStartTimeoutMs, Math.max(1, deadlineMs - Date.now()));
-          await this.startShard(hostGroup, shard, startupTimeoutMs, options?.abortSignal);
-          this.scheduleIdleDisposalIfUnused(shard);
-          return;
-        } catch (error) {
-          if (options?.abortSignal?.aborted) {
-            throw error;
-          }
-          lastStartError = error instanceof Error ? error : new Error(getErrorMessage(error));
-        }
-      }
-
-      const nextBackoffMs = this.getNextBackoffWaitMs(hostGroup);
-      const remainingMs = deadlineMs - Date.now();
-      if (remainingMs <= 0) {
-        if (lastStartError) {
-          throw lastStartError;
-        }
-        throw new Error(
-          `SSH master pool for ${config.host} did not become available within ${maxWaitMs}ms`
-        );
-      }
-
-      const waitMs = this.getPoolWaitMs(remainingMs, nextBackoffMs);
-      options?.onWait?.(waitMs);
-      await this.sleep(waitMs, options?.abortSignal);
-    }
+    await this.withAcquiredShard(config, options, {
+      pickReadyShard: (group) => this.pickReadyShard(group),
+      finalizeShard: (shard) => {
+        this.scheduleIdleDisposalIfUnused(shard);
+      },
+      preferPolling: () => false,
+    });
   }
 
   async acquireLease(
     config: SSHConnectionConfig,
     options?: AcquireLeaseOptions
   ): Promise<OpenSSHMasterLease> {
+    return this.withAcquiredShard(config, options, {
+      pickReadyShard: (group) => this.pickAvailableShard(group),
+      finalizeShard: (shard) => this.reserveShard(shard),
+      preferPolling: (group) => this.pickReadyShard(group) != null,
+    });
+  }
+
+  private async withAcquiredShard<T>(
+    config: SSHConnectionConfig,
+    options: AcquireLeaseOptions | undefined,
+    behavior: ShardAcquisitionBehavior<T>
+  ): Promise<T> {
     const maxWaitMs = options?.maxWaitMs ?? this.defaultMaxWaitMs;
     const defaultStartTimeoutMs = options?.timeoutMs ?? this.defaultMasterStartTimeoutMs;
     const deadlineMs = Date.now() + maxWaitMs;
-    const key = makeConnectionKey(config);
-    const hostGroup = this.getOrCreateHostGroup(key, config);
+    const hostGroup = this.getOrCreateHostGroup(makeConnectionKey(config), config);
     let lastStartError: Error | undefined;
 
     while (true) {
@@ -266,52 +214,44 @@ export class OpenSSHMasterPool {
       }
 
       this.trimExitedShards(hostGroup);
-      const available = this.pickAvailableShard(hostGroup);
-      if (available) {
-        return this.reserveShard(available);
+      const readyShard = behavior.pickReadyShard(hostGroup);
+      if (readyShard) {
+        return behavior.finalizeShard(readyShard);
       }
 
-      const restartable = hostGroup.shards.find((shard) => {
-        return (
-          !isProcessAlive(shard.process) &&
-          shard.startup == null &&
-          (shard.health.backoffUntil == null || shard.health.backoffUntil.getTime() <= Date.now())
-        );
-      });
-      if (restartable) {
-        try {
-          const startupTimeoutMs =
-            maxWaitMs === 0
-              ? defaultStartTimeoutMs
-              : Math.min(defaultStartTimeoutMs, Math.max(1, deadlineMs - Date.now()));
-          await this.startShard(hostGroup, restartable, startupTimeoutMs, options?.abortSignal);
-          return this.reserveShard(restartable);
-        } catch (error) {
-          if (options?.abortSignal?.aborted) {
-            throw error;
-          }
-          lastStartError = error instanceof Error ? error : new Error(getErrorMessage(error));
-        }
+      const restartedShard = await this.tryStartShardForAcquisition(
+        hostGroup,
+        this.pickRestartableShard(hostGroup),
+        defaultStartTimeoutMs,
+        maxWaitMs,
+        deadlineMs,
+        options?.abortSignal,
+        behavior,
+        lastStartError
+      );
+      if ("result" in restartedShard) {
+        return restartedShard.result;
       }
+      lastStartError = restartedShard.error;
 
       if (hostGroup.shards.length < this.maxShardsPerHost) {
-        const shard = this.createShard(hostGroup);
-        try {
-          const startupTimeoutMs =
-            maxWaitMs === 0
-              ? defaultStartTimeoutMs
-              : Math.min(defaultStartTimeoutMs, Math.max(1, deadlineMs - Date.now()));
-          await this.startShard(hostGroup, shard, startupTimeoutMs, options?.abortSignal);
-          return this.reserveShard(shard);
-        } catch (error) {
-          if (options?.abortSignal?.aborted) {
-            throw error;
-          }
-          lastStartError = error instanceof Error ? error : new Error(getErrorMessage(error));
+        const createdShard = this.createShard(hostGroup);
+        const startedShard = await this.tryStartShardForAcquisition(
+          hostGroup,
+          createdShard,
+          defaultStartTimeoutMs,
+          maxWaitMs,
+          deadlineMs,
+          options?.abortSignal,
+          behavior,
+          lastStartError
+        );
+        if ("result" in startedShard) {
+          return startedShard.result;
         }
+        lastStartError = startedShard.error;
       }
 
-      const nextBackoffMs = this.getNextBackoffWaitMs(hostGroup);
       const remainingMs = deadlineMs - Date.now();
       if (remainingMs <= 0) {
         if (lastStartError) {
@@ -324,12 +264,64 @@ export class OpenSSHMasterPool {
 
       const waitMs = this.getPoolWaitMs(
         remainingMs,
-        nextBackoffMs,
-        this.pickReadyShard(hostGroup) != null
+        this.getNextBackoffWaitMs(hostGroup),
+        behavior.preferPolling(hostGroup)
       );
       options?.onWait?.(waitMs);
       await this.sleep(waitMs, options?.abortSignal);
     }
+  }
+
+  private async tryStartShardForAcquisition<T>(
+    hostGroup: HostGroup,
+    shard: MasterShard | undefined,
+    defaultStartTimeoutMs: number,
+    maxWaitMs: number,
+    deadlineMs: number,
+    abortSignal: AbortSignal | undefined,
+    behavior: ShardAcquisitionBehavior<T>,
+    lastStartError: Error | undefined
+  ): Promise<{ result: T } | { error: Error | undefined }> {
+    if (!shard) {
+      return { error: lastStartError };
+    }
+
+    try {
+      await this.startShard(
+        hostGroup,
+        shard,
+        this.getStartupTimeoutMs(defaultStartTimeoutMs, maxWaitMs, deadlineMs),
+        abortSignal
+      );
+      return { result: behavior.finalizeShard(shard) };
+    } catch (error) {
+      if (abortSignal?.aborted) {
+        throw error;
+      }
+      return {
+        error: error instanceof Error ? error : new Error(getErrorMessage(error)),
+      };
+    }
+  }
+
+  private getStartupTimeoutMs(
+    defaultStartTimeoutMs: number,
+    maxWaitMs: number,
+    deadlineMs: number
+  ): number {
+    return maxWaitMs === 0
+      ? defaultStartTimeoutMs
+      : Math.min(defaultStartTimeoutMs, Math.max(1, deadlineMs - Date.now()));
+  }
+
+  private pickRestartableShard(group: HostGroup): MasterShard | undefined {
+    return group.shards.find((shard) => {
+      return (
+        !isProcessAlive(shard.process) &&
+        shard.startup == null &&
+        (shard.health.backoffUntil == null || shard.health.backoffUntil.getTime() <= Date.now())
+      );
+    });
   }
 
   clearAll(): void {

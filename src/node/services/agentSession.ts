@@ -64,8 +64,8 @@ import {
   type StartupRetrySendOptions,
 } from "@/common/types/message";
 import {
+  createRuntimeContextForWorkspace,
   createRuntimeForWorkspace,
-  resolveWorkspaceExecutionPath,
 } from "@/node/runtime/runtimeHelpers";
 import { hasNonEmptyPlanFile } from "@/node/utils/runtime/helpers";
 import { isExecLikeEditingCapableInResolvedChain } from "@/common/utils/agentTools";
@@ -3521,14 +3521,7 @@ export class AgentSession {
     let chain: Awaited<ReturnType<typeof resolveAgentInheritanceChain>> | undefined;
     for (const agentMetadata of metadataCandidates) {
       try {
-        const runtime = createRuntimeForWorkspace(agentMetadata);
-
-        // In-place workspaces (CLI/benchmarks) have projectPath === name.
-        // Use path directly instead of reconstructing via getWorkspacePath.
-        const isInPlace = agentMetadata.projectPath === agentMetadata.name;
-        const workspacePath = isInPlace
-          ? agentMetadata.projectPath
-          : runtime.getWorkspacePath(agentMetadata.projectPath, agentMetadata.name);
+        const { runtime, workspacePath } = createRuntimeContextForWorkspace(agentMetadata);
 
         const agentDiscoveryPath =
           context.options?.disableWorkspaceAgents === true
@@ -4450,13 +4443,7 @@ export class AgentSession {
     }
 
     const metadata = metadataResult.data;
-    const runtime = createRuntimeForWorkspace(metadata);
-
-    // In-place workspaces (CLI/benchmarks) have projectPath === name.
-    const isInPlace = metadata.projectPath === metadata.name;
-    const workspacePath = isInPlace
-      ? metadata.projectPath
-      : resolveWorkspaceExecutionPath(metadata, runtime);
+    const { runtime, workspacePath } = createRuntimeContextForWorkspace(metadata);
 
     // When disableWorkspaceAgents is active, use project path for discovery
     // (only built-in/global agents). Mirrors resolveAgentForStream behavior.
@@ -5118,8 +5105,7 @@ export class AgentSession {
     }
 
     const metadata = metadataResult.data;
-    const runtime = createRuntimeForWorkspace(metadata);
-    const workspacePath = resolveWorkspaceExecutionPath(metadata, runtime);
+    const { runtime, workspacePath } = createRuntimeContextForWorkspace(metadata);
 
     const materialized = await materializeFileAtMentions(messageText, {
       runtime,
@@ -5182,13 +5168,7 @@ export class AgentSession {
     }
 
     const metadata = metadataResult.data;
-    const runtime = createRuntimeForWorkspace(metadata);
-
-    // In-place workspaces (CLI/benchmarks) have projectPath === name.
-    const isInPlace = metadata.projectPath === metadata.name;
-    const workspacePath = isInPlace
-      ? metadata.projectPath
-      : resolveWorkspaceExecutionPath(metadata, runtime);
+    const { runtime, workspacePath } = createRuntimeContextForWorkspace(metadata);
 
     // When workspace agents are disabled, resolve skills from the project path instead of
     // the worktree so skill invocation uses the same precedence/discovery root as the UI.

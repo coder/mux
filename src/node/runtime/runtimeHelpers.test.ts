@@ -1,7 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { DevcontainerRuntime } from "./DevcontainerRuntime";
-import { createRuntimeForWorkspace, resolveWorkspaceExecutionPath } from "./runtimeHelpers";
+import {
+  createRuntimeContextForWorkspace,
+  createRuntimeForWorkspace,
+  resolveWorkspaceExecutionPath,
+} from "./runtimeHelpers";
 
 describe("createRuntimeForWorkspace", () => {
   it("forwards the persisted workspace path to devcontainer runtimes", () => {
@@ -83,5 +87,41 @@ describe("resolveWorkspaceExecutionPath", () => {
 
     const runtime = createRuntimeForWorkspace(metadata);
     expect(resolveWorkspaceExecutionPath(metadata, runtime)).toBe("/src");
+  });
+
+  it("returns the project root for in-place workspaces", () => {
+    const metadata = {
+      runtimeConfig: {
+        type: "worktree",
+        srcBaseDir: "/tmp/src",
+      } satisfies RuntimeConfig,
+      projectPath: "/projects/cli",
+      name: "/projects/cli",
+    };
+
+    const runtime = createRuntimeForWorkspace(metadata);
+    expect(resolveWorkspaceExecutionPath(metadata, runtime)).toBe("/projects/cli");
+  });
+});
+
+describe("createRuntimeContextForWorkspace", () => {
+  it("returns a runtime together with the resolved execution path", () => {
+    const metadata = {
+      runtimeConfig: {
+        type: "ssh",
+        host: "example.com",
+        srcBaseDir: "/remote/src",
+      } satisfies RuntimeConfig,
+      projectPath: "/projects/demo",
+      name: "review-1",
+      namedWorkspacePath: "/remote/src/demo/review-1",
+    };
+
+    const context = createRuntimeContextForWorkspace(metadata);
+
+    expect(context.workspacePath).toBe("/remote/src/demo/review-1");
+    expect(context.runtime.getWorkspacePath(metadata.projectPath, "review-2")).toBe(
+      "/remote/src/demo/review-2"
+    );
   });
 });

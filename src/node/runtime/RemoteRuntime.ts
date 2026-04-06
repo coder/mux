@@ -11,7 +11,6 @@
  * - spawnRemoteProcess() - how to spawn the external process (ssh/docker)
  * - getBasePath() - base directory for workspace operations
  * - quoteForRemote() - path quoting strategy
- * - onExitCode() - optional exit code handling (SSH connection pool)
  */
 
 import type { ChildProcess } from "child_process";
@@ -45,8 +44,6 @@ import { getAtomicWriteTempPath } from "./atomicWriteTempPath";
 export interface SpawnResult {
   /** The spawned child process */
   process: ChildProcess;
-  /** Optional async work to do before exec (e.g., acquire connection) */
-  preExec?: Promise<void>;
   /** Optional transport-scoped exit handling (e.g., master-pool health accounting). */
   onExit?: (exitCode: number, stderr: string) => void;
   /** Optional close handling that must run even for synthetic abort/timeout exits. */
@@ -65,7 +62,7 @@ export abstract class RemoteRuntime implements Runtime {
    *
    * @param fullCommand The full shell command to execute (already wrapped in bash -c)
    * @param options Original exec options
-   * @returns The spawned process and optional pre-exec work
+   * @returns The spawned process and optional transport lifecycle hooks
    */
   protected abstract spawnRemoteProcess(
     fullCommand: string,
@@ -89,15 +86,6 @@ export abstract class RemoteRuntime implements Runtime {
    * SSH needs special handling for ~, Docker uses simple quoting.
    */
   protected abstract cdCommand(cwd: string): string;
-
-  /**
-   * Called when exec completes with an exit code.
-   * Subclasses can use this for connection pool health tracking.
-   * @param stderr - Captured stderr for error reporting (e.g., SSH connection failures)
-   */
-  protected onExitCode(_exitCode: number, _options: ExecOptions, _stderr: string): void {
-    // Default: no-op. SSH overrides to report to connection pool.
-  }
 
   /**
    * Command prefix (e.g., "SSH" or "Docker") for logging.
@@ -185,8 +173,6 @@ export abstract class RemoteRuntime implements Runtime {
           spawnResult.onExit?.(finalExitCode, stderrForErrorReporting);
         }
         spawnResult.onClose?.();
-        // Let subclass handle exit code (e.g., SSH connection pool)
-        this.onExitCode(finalExitCode, options, stderrForErrorReporting);
 
         resolve(finalExitCode);
       });

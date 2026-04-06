@@ -235,14 +235,6 @@ export class SSH2Transport implements SSHTransport {
     return this.config;
   }
 
-  markHealthy(): void {
-    ssh2ConnectionPool.markHealthy(this.config);
-  }
-
-  reportFailure(error: string): void {
-    ssh2ConnectionPool.reportFailure(this.config, error);
-  }
-
   async acquireConnection(options?: {
     abortSignal?: AbortSignal;
     timeoutMs?: number;

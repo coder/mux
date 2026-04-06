@@ -36,6 +36,7 @@ import {
 } from "@/node/runtime/runtimeFactory";
 import { MultiProjectRuntime } from "@/node/runtime/multiProjectRuntime";
 import {
+  createRuntimeContextForWorkspace,
   createRuntimeForWorkspace,
   resolveWorkspaceExecutionPath,
 } from "@/node/runtime/runtimeHelpers";
@@ -6453,8 +6454,7 @@ export class WorkspaceService extends EventEmitter {
     workspacePath?: string
   ): Promise<string[] | null> {
     if (!isMultiProject(metadata)) {
-      const runtime = createRuntimeForWorkspace(metadata);
-      const workspacePath = resolveWorkspaceExecutionPath(metadata, runtime);
+      const { runtime, workspacePath } = createRuntimeContextForWorkspace(metadata);
       return this.listGitPathsForFileCompletions(runtime, workspacePath);
     }
 

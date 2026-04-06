@@ -41,7 +41,6 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { type SSHRuntimeConfig } from "./sshConnectionPool";
 import { getOriginUrlForBundle } from "./gitBundleSync";
 import { gitNoHooksPrefix } from "@/node/utils/gitNoHooksEnv";
-import { execFileAsync } from "@/node/utils/disposableExec";
 import { syncRuntimeGitSubmodules } from "./submoduleSync";
 import type { PtyHandle, PtySessionParams, SSHTransport } from "./transports";
 import {
@@ -915,120 +914,6 @@ export class SSHRuntime extends RemoteRuntime {
     return null;
   }
 
-  private async resolveLocalRefOid(projectPath: string, ref: string): Promise<string | null> {
-    try {
-      using proc = execFileAsync("git", ["-C", projectPath, "rev-parse", "--verify", ref]);
-      const { stdout } = await proc.result;
-      const oid = stdout.trim();
-      return oid.length > 0 ? oid : null;
-    } catch {
-      return null;
-    }
-  }
-
-  private async resolveLocalSyncRefManifest(projectPath: string): Promise<string | null> {
-    try {
-      using proc = execFileAsync("git", [
-        "-C",
-        projectPath,
-        "for-each-ref",
-        "--format=%(refname) %(objectname)",
-        "refs/heads",
-        "refs/tags",
-      ]);
-      const { stdout } = await proc.result;
-      return stdout
-        .split("\n")
-        .map((line) => line.trim())
-        .filter((line) => line.length > 0)
-        .sort()
-        .join("\n");
-    } catch {
-      return null;
-    }
-  }
-
-  private async resolveRemoteSyncRefManifest(
-    baseRepoPathArg: string,
-    abortSignal?: AbortSignal
-  ): Promise<string | null> {
-    const result = await execBuffered(
-      this,
-      `git -C ${baseRepoPathArg} for-each-ref --format='%(refname) %(objectname)' ${BUNDLE_REF_PREFIX} refs/tags`,
-      { cwd: "/tmp", timeout: 20, abortSignal }
-    );
-    if (result.exitCode !== 0) {
-      return null;
-    }
-
-    return result.stdout
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0)
-      .map((line) =>
-        line.startsWith(BUNDLE_REF_PREFIX) ? line.replace(BUNDLE_REF_PREFIX, "refs/heads/") : line
-      )
-      .sort()
-      .join("\n");
-  }
-
-  private async shouldReuseCurrentBundleTrunk(
-    projectPath: string,
-    trunkBranch: string,
-    initLogger: InitLogger,
-    abortSignal?: AbortSignal
-  ): Promise<boolean> {
-    const localTrunkOid = await this.resolveLocalRefOid(projectPath, trunkBranch);
-    if (localTrunkOid == null) {
-      return false;
-    }
-
-    try {
-      const remoteTrunkRef = `${BUNDLE_REF_PREFIX}${trunkBranch}`;
-      const baseRepoPathArg = expandTildeForSSH(this.getBaseRepoPath(projectPath));
-      const remoteTrunkResult = await execBuffered(
-        this,
-        `git -C ${baseRepoPathArg} rev-parse --verify ${shescape.quote(remoteTrunkRef)}`,
-        { cwd: "/tmp", timeout: 10, abortSignal }
-      );
-      if (remoteTrunkResult.exitCode !== 0) {
-        return false;
-      }
-
-      const remoteTrunkOid = remoteTrunkResult.stdout.trim();
-      if (remoteTrunkOid.length === 0 || remoteTrunkOid !== localTrunkOid) {
-        return false;
-      }
-
-      const localRefManifest = await this.resolveLocalSyncRefManifest(projectPath);
-      if (localRefManifest == null) {
-        return false;
-      }
-
-      const remoteRefManifest = await this.resolveRemoteSyncRefManifest(
-        baseRepoPathArg,
-        abortSignal
-      );
-      if (remoteRefManifest == null || remoteRefManifest !== localRefManifest) {
-        return false;
-      }
-    } catch (error) {
-      log.debug("Failed to probe shared bundle trunk; falling back to sync", {
-        projectPath,
-        trunkBranch,
-        error: getErrorMessage(error),
-      });
-      return false;
-    }
-
-    // Re-uploading the full bundle adds startup latency even when the shared base already
-    // has the exact trunk snapshot this workspace will branch from.
-    initLogger.logStep(
-      `Remote bundle already matches ${trunkBranch} (${localTrunkOid.slice(0, 12)}); skipping sync`
-    );
-    return true;
-  }
-
   private async refreshBaseRepoOrigin(
     projectPath: string,
     baseRepoPathArg: string,
@@ -1620,64 +1505,43 @@ export class SSHRuntime extends RemoteRuntime {
       needsWorktreeCheckout = true;
     }
 
-    let shouldSyncBaseRepo = needsWorktreeCheckout;
-    if (shouldSyncBaseRepo) {
-      shouldSyncBaseRepo = !(await this.shouldReuseCurrentBundleTrunk(
-        projectPath,
-        trunkBranch,
-        initLogger,
-        abortSignal
-      ));
-    }
-
     if (needsWorktreeCheckout) {
-      if (shouldSyncBaseRepo) {
-        // SSH workspace initialization owns repo materialization: it syncs the project into
-        // the shared base repo, checks out the worktree, and then materializes submodules
-        // before repo-controlled init hooks run.
-        initLogger.logStep("Syncing project files to remote...");
-        const maxSyncAttempts = 3;
-        for (let attempt = 1; attempt <= maxSyncAttempts; attempt++) {
-          try {
-            await this.syncProjectToRemote(projectPath, workspacePath, initLogger, abortSignal);
-            break;
-          } catch (error) {
-            const errorMsg = getErrorMessage(error);
-            const isRetryable =
-              errorMsg.includes("pack-objects died") ||
-              errorMsg.includes("Connection reset") ||
-              errorMsg.includes("Connection closed") ||
-              errorMsg.includes("Broken pipe") ||
-              errorMsg.includes("EPIPE");
+      // SSH workspace initialization owns repo materialization: it syncs the project into
+      // the shared base repo, checks out the worktree, and then materializes submodules
+      // before repo-controlled init hooks run.
+      initLogger.logStep("Syncing project files to remote...");
+      const maxSyncAttempts = 3;
+      for (let attempt = 1; attempt <= maxSyncAttempts; attempt++) {
+        try {
+          await this.syncProjectToRemote(projectPath, workspacePath, initLogger, abortSignal);
+          break;
+        } catch (error) {
+          const errorMsg = getErrorMessage(error);
+          const isRetryable =
+            errorMsg.includes("pack-objects died") ||
+            errorMsg.includes("Connection reset") ||
+            errorMsg.includes("Connection closed") ||
+            errorMsg.includes("Broken pipe") ||
+            errorMsg.includes("EPIPE");
 
-            if (!isRetryable || attempt === maxSyncAttempts) {
-              throw new Error(`Failed to sync project: ${errorMsg}`);
-            }
-
-            log.info(
-              `Sync failed (attempt ${attempt}/${maxSyncAttempts}), will retry: ${errorMsg}`
-            );
-            initLogger.logStep(
-              `Sync failed, retrying (attempt ${attempt + 1}/${maxSyncAttempts})...`
-            );
-            await new Promise((r) => setTimeout(r, attempt * 1000));
+          if (!isRetryable || attempt === maxSyncAttempts) {
+            throw new Error(`Failed to sync project: ${errorMsg}`);
           }
-        }
-        initLogger.logStep("Files synced successfully");
-      }
 
-      // Even when the shared base repo is already current, a brand-new workspace still needs
-      // git worktree add so the checkout exists before init hooks or submodule sync run.
-      // Re-enter ensureBaseRepo() here so older shared repos still get their local core.bare
-      // config normalized before we reuse them for a fresh worktree checkout.
+          log.info(`Sync failed (attempt ${attempt}/${maxSyncAttempts}), will retry: ${errorMsg}`);
+          initLogger.logStep(
+            `Sync failed, retrying (attempt ${attempt + 1}/${maxSyncAttempts})...`
+          );
+          await new Promise((r) => setTimeout(r, attempt * 1000));
+        }
+      }
+      initLogger.logStep("Files synced successfully");
+
+      // A brand-new workspace still needs git worktree add so the checkout exists before init hooks
+      // or submodule sync run. Re-enter ensureBaseRepo() here so older shared repos still get their
+      // local core.bare config normalized before we reuse them for a fresh worktree checkout.
       const baseRepoPath = this.getBaseRepoPath(projectPath);
       const baseRepoPathArg = await this.ensureBaseRepo(projectPath, initLogger, abortSignal);
-
-      if (!shouldSyncBaseRepo) {
-        // Skipping the bundle upload must still refresh origin in case the user repointed
-        // the local remote without changing trunk commits.
-        await this.refreshBaseRepoOrigin(projectPath, baseRepoPathArg, initLogger, abortSignal);
-      }
 
       // Fetch latest from origin in the base repo (best-effort) so new branches
       // can start from the latest upstream state.

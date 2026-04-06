@@ -24,7 +24,7 @@ import { getToolsForModel } from "@/common/utils/tools/tools";
 import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import {
-  createRuntimeForWorkspace,
+  createRuntimeContextForWorkspace,
   resolveWorkspaceExecutionPath,
 } from "@/node/runtime/runtimeHelpers";
 import { MultiProjectRuntime } from "@/node/runtime/multiProjectRuntime";
@@ -949,8 +949,12 @@ export class AIService extends EventEmitter {
         return multiProjectExecutionGate;
       }
 
-      const runtime = isMultiProject(metadata)
-        ? new MultiProjectRuntime(
+      const singleProjectContext = isMultiProject(metadata)
+        ? undefined
+        : createRuntimeContextForWorkspace(metadataWithPath);
+      const runtime = singleProjectContext
+        ? singleProjectContext.runtime
+        : new MultiProjectRuntime(
             new ContainerManager(getSrcBaseDir(metadata.runtimeConfig) ?? this.config.srcDir),
             getProjects(metadata).map((project) => ({
               projectPath: project.projectPath,
@@ -961,20 +965,17 @@ export class AIService extends EventEmitter {
               }),
             })),
             metadata.name
-          )
-        : createRuntimeForWorkspace(metadataWithPath);
+          );
 
-      // In-place workspaces (CLI/benchmarks) have projectPath === name.
-      const isInPlace = metadata.projectPath === metadata.name;
-      const workspacePath = isInPlace
-        ? metadata.projectPath
-        : isMultiProject(metadata) && !isSSHRuntime(metadata.runtimeConfig)
-          ? // Non-SSH multi-project runtimes intentionally start from their shared container root so
+      const workspacePath =
+        singleProjectContext?.workspacePath ??
+        (isSSHRuntime(metadata.runtimeConfig)
+          ? resolveWorkspaceExecutionPath(metadataWithPath, runtime)
+          : // Non-SSH multi-project runtimes intentionally start from their shared container root so
             // sibling repos stay addressable during agent/tool setup. SSH workspaces are the exception:
             // upgraded legacy layouts must reuse the persisted root from config until remote layout
             // detection seeds the new hashed paths.
-            runtime.getWorkspacePath(metadata.projectPath, metadata.name)
-          : resolveWorkspaceExecutionPath(metadataWithPath, runtime);
+            runtime.getWorkspacePath(metadata.projectPath, metadata.name));
 
       // Wait for init to complete before any runtime I/O operations
       // (SSH/devcontainer may not be ready until init finishes pulling the container)

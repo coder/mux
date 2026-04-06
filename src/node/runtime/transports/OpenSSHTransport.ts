@@ -38,14 +38,6 @@ export class OpenSSHTransport implements SSHTransport {
     return this.config;
   }
 
-  markHealthy(): void {
-    // OpenSSH transport reports health through per-process master leases.
-  }
-
-  reportFailure(_error: string): void {
-    // OpenSSH transport reports health through per-process master leases.
-  }
-
   async acquireConnection(options?: {
     abortSignal?: AbortSignal;
     timeoutMs?: number;

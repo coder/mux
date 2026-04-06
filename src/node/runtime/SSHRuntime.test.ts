@@ -2,7 +2,6 @@ import * as crypto from "node:crypto";
 import * as path from "node:path";
 import { describe, expect, it, beforeEach, afterEach, spyOn } from "bun:test";
 import * as runtimeHelpers from "@/node/utils/runtime/helpers";
-import * as disposableExec from "@/node/utils/disposableExec";
 import * as submoduleSync from "./submoduleSync";
 import { SSHRuntime, clearSharedProjectLayoutCache, computeBaseRepoPath } from "./SSHRuntime";
 import {
@@ -21,20 +20,6 @@ import { projectSyncCoordinator } from "./projectSyncCoordinator";
  * worktree-based operations) require Docker and are in tests/runtime/runtime.test.ts.
  * Run with: TEST_INTEGRATION=1 bun x jest tests/runtime/runtime.test.ts
  */
-function createMockExecResult(
-  result: Promise<{ stdout: string; stderr: string }>
-): ReturnType<typeof disposableExec.execFileAsync> {
-  void result.catch(() => undefined);
-  return {
-    result,
-    get promise() {
-      return result;
-    },
-    child: {},
-    [Symbol.dispose]: () => undefined,
-  } as unknown as ReturnType<typeof disposableExec.execFileAsync>;
-}
-
 afterEach(() => {
   clearSharedProjectLayoutCache();
 });
@@ -178,29 +163,6 @@ describe("SSHRuntime base repo config normalization", () => {
 });
 
 describe("SSHRuntime bundle sync reuse", () => {
-  type ShouldReuseCurrentBundleTrunk = (
-    projectPath: string,
-    trunkBranch: string,
-    initLogger: {
-      logStep: (message: string) => void;
-      logStdout: (line: string) => void;
-      logStderr: (line: string) => void;
-      logComplete: (exitCode: number) => void;
-    },
-    abortSignal?: AbortSignal
-  ) => Promise<boolean>;
-
-  interface RuntimeWithResolveLocalSyncRefManifest {
-    resolveLocalSyncRefManifest: (projectPath: string) => Promise<string | null>;
-  }
-
-  interface RuntimeWithResolveRemoteSyncRefManifest {
-    resolveRemoteSyncRefManifest: (
-      baseRepoPathArg: string,
-      abortSignal?: AbortSignal
-    ) => Promise<string | null>;
-  }
-
   interface RuntimeWithSyncProjectToRemote {
     syncProjectToRemote: (
       projectPath: string,
@@ -263,13 +225,8 @@ describe("SSHRuntime bundle sync reuse", () => {
   let runtime: SSHRuntime;
   let execBufferedSpy: ReturnType<typeof spyOn<typeof runtimeHelpers, "execBuffered">> | null =
     null;
-  let execFileAsyncSpy: ReturnType<typeof spyOn<typeof disposableExec, "execFileAsync">> | null =
-    null;
-  const initMessages: string[] = [];
   const initLogger = {
-    logStep: (message: string) => {
-      initMessages.push(message);
-    },
+    logStep: () => undefined,
     logStdout: () => undefined,
     logStderr: () => undefined,
     logComplete: () => undefined,
@@ -278,70 +235,12 @@ describe("SSHRuntime bundle sync reuse", () => {
   beforeEach(() => {
     const config = { host: "example.com", srcBaseDir: "/home/user/src" };
     runtime = new SSHRuntime(config, createSSHTransport(config, false));
-    initMessages.length = 0;
   });
 
   afterEach(() => {
     execBufferedSpy?.mockRestore();
     execBufferedSpy = null;
-    execFileAsyncSpy?.mockRestore();
-    execFileAsyncSpy = null;
-  });
-
-  function getShouldReuseCurrentBundleTrunk(): ShouldReuseCurrentBundleTrunk {
-    const reuseUnknown: unknown = Reflect.get(runtime, "shouldReuseCurrentBundleTrunk");
-    if (typeof reuseUnknown !== "function") {
-      throw new Error("shouldReuseCurrentBundleTrunk is unavailable");
-    }
-
-    return reuseUnknown as ShouldReuseCurrentBundleTrunk;
-  }
-
-  it("reuses the shared bundle when the remote refs already match local refs", async () => {
-    execFileAsyncSpy = spyOn(disposableExec, "execFileAsync").mockReturnValue(
-      createMockExecResult(Promise.resolve({ stdout: "abc123\n", stderr: "" }))
-    );
-    execBufferedSpy = spyOn(runtimeHelpers, "execBuffered").mockResolvedValue({
-      stdout: "abc123\n",
-      stderr: "",
-      exitCode: 0,
-      duration: 0,
-    });
-    const localManifestSpy = spyOn(
-      runtime as unknown as RuntimeWithResolveLocalSyncRefManifest,
-      "resolveLocalSyncRefManifest"
-    ).mockResolvedValue("refs/heads/main abc123\nrefs/tags/v1 def456");
-    const remoteManifestSpy = spyOn(
-      runtime as unknown as RuntimeWithResolveRemoteSyncRefManifest,
-      "resolveRemoteSyncRefManifest"
-    ).mockResolvedValue("refs/heads/main abc123\nrefs/tags/v1 def456");
-
-    try {
-      expect(
-        await getShouldReuseCurrentBundleTrunk().call(runtime, "/projects/demo", "main", initLogger)
-      ).toBe(true);
-      expect(execFileAsyncSpy).toHaveBeenCalledWith("git", [
-        "-C",
-        "/projects/demo",
-        "rev-parse",
-        "--verify",
-        "main",
-      ]);
-      expect(execBufferedSpy).toHaveBeenCalledWith(
-        runtime,
-        expect.stringContaining("refs/mux-bundle/main"),
-        expect.objectContaining({ cwd: "/tmp", timeout: 10 })
-      );
-      expect(localManifestSpy).toHaveBeenCalledWith("/projects/demo");
-      expect(remoteManifestSpy).toHaveBeenCalledWith(
-        JSON.stringify(computeBaseRepoPath("/home/user/src", "/projects/demo")),
-        undefined
-      );
-      expect(initMessages.some((message) => message.includes("skipping sync"))).toBe(true);
-    } finally {
-      localManifestSpy.mockRestore();
-      remoteManifestSpy.mockRestore();
-    }
+    projectSyncCoordinator.clearAll();
   });
 
   it("uploads snapshot bundles through a per-attempt temp path", async () => {
@@ -439,84 +338,6 @@ describe("SSHRuntime bundle sync reuse", () => {
       projectSyncCoordinator.clearAll();
     }
   });
-
-  it("does not reuse the shared bundle when the remote trunk ref is stale", async () => {
-    execFileAsyncSpy = spyOn(disposableExec, "execFileAsync").mockReturnValue(
-      createMockExecResult(Promise.resolve({ stdout: "abc123\n", stderr: "" }))
-    );
-    execBufferedSpy = spyOn(runtimeHelpers, "execBuffered").mockResolvedValue({
-      stdout: "def456\n",
-      stderr: "",
-      exitCode: 0,
-      duration: 0,
-    });
-
-    expect(
-      await getShouldReuseCurrentBundleTrunk().call(runtime, "/projects/demo", "main", initLogger)
-    ).toBe(false);
-    expect(initMessages).toHaveLength(0);
-  });
-
-  it("does not reuse the shared bundle when non-trunk refs drift", async () => {
-    execFileAsyncSpy = spyOn(disposableExec, "execFileAsync").mockReturnValue(
-      createMockExecResult(Promise.resolve({ stdout: "abc123\n", stderr: "" }))
-    );
-    execBufferedSpy = spyOn(runtimeHelpers, "execBuffered").mockResolvedValue({
-      stdout: "abc123\n",
-      stderr: "",
-      exitCode: 0,
-      duration: 0,
-    });
-    const localManifestSpy = spyOn(
-      runtime as unknown as RuntimeWithResolveLocalSyncRefManifest,
-      "resolveLocalSyncRefManifest"
-    ).mockResolvedValue("refs/heads/main abc123\nrefs/tags/v2 fedcba");
-    const remoteManifestSpy = spyOn(
-      runtime as unknown as RuntimeWithResolveRemoteSyncRefManifest,
-      "resolveRemoteSyncRefManifest"
-    ).mockResolvedValue("refs/heads/main abc123\nrefs/tags/v1 def456");
-
-    try {
-      expect(
-        await getShouldReuseCurrentBundleTrunk().call(runtime, "/projects/demo", "main", initLogger)
-      ).toBe(false);
-      expect(initMessages).toHaveLength(0);
-    } finally {
-      localManifestSpy.mockRestore();
-      remoteManifestSpy.mockRestore();
-    }
-  });
-
-  it("falls back to sync when the remote bundle probe throws", async () => {
-    execFileAsyncSpy = spyOn(disposableExec, "execFileAsync").mockReturnValue(
-      createMockExecResult(Promise.resolve({ stdout: "abc123\n", stderr: "" }))
-    );
-    execBufferedSpy = spyOn(runtimeHelpers, "execBuffered").mockImplementation(() => {
-      throw new Error("ssh unavailable");
-    });
-
-    expect(
-      await getShouldReuseCurrentBundleTrunk().call(runtime, "/projects/demo", "main", initLogger)
-    ).toBe(false);
-    expect(initMessages).toHaveLength(0);
-  });
-
-  it("does not reuse the shared bundle when the local trunk ref is missing", async () => {
-    execFileAsyncSpy = spyOn(disposableExec, "execFileAsync").mockReturnValue(
-      createMockExecResult(Promise.reject(new Error("unknown revision")))
-    );
-    execBufferedSpy = spyOn(runtimeHelpers, "execBuffered").mockResolvedValue({
-      stdout: "abc123\n",
-      stderr: "",
-      exitCode: 0,
-      duration: 0,
-    });
-
-    expect(
-      await getShouldReuseCurrentBundleTrunk().call(runtime, "/projects/demo", "main", initLogger)
-    ).toBe(false);
-    expect(execBufferedSpy).not.toHaveBeenCalled();
-  });
 });
 
 describe("SSHRuntime.prepareWorkspaceCheckout", () => {
@@ -539,20 +360,6 @@ describe("SSHRuntime.prepareWorkspaceCheckout", () => {
       },
       nhp: string
     ) => Promise<void>;
-  }
-
-  interface RuntimeWithShouldReuseCurrentBundleTrunk {
-    shouldReuseCurrentBundleTrunk: (
-      projectPath: string,
-      trunkBranch: string,
-      initLogger: {
-        logStep: (message: string) => void;
-        logStdout: (line: string) => void;
-        logStderr: (line: string) => void;
-        logComplete: (exitCode: number) => void;
-      },
-      abortSignal?: AbortSignal
-    ) => Promise<boolean>;
   }
 
   interface RuntimeWithFetchOriginTrunk {
@@ -591,18 +398,6 @@ describe("SSHRuntime.prepareWorkspaceCheckout", () => {
     ) => Promise<string>;
   }
 
-  interface RuntimeWithGetOriginUrlForSync {
-    getOriginUrlForSync: (
-      projectPath: string,
-      initLogger: {
-        logStep: (message: string) => void;
-        logStdout: (line: string) => void;
-        logStderr: (line: string) => void;
-        logComplete: (exitCode: number) => void;
-      }
-    ) => Promise<{ originUrl: string | null }>;
-  }
-
   interface RuntimeWithCanFastForwardToOrigin {
     canFastForwardToOrigin: (
       workspacePath: string,
@@ -632,7 +427,7 @@ describe("SSHRuntime.prepareWorkspaceCheckout", () => {
     ) => Promise<void>;
   }
 
-  it("still creates a worktree when bundle sync is skipped for a new workspace", async () => {
+  it("syncs the project before creating a worktree for a new workspace", async () => {
     const config = { host: "example.com", srcBaseDir: "/home/user/src" };
     const runtime = new SSHRuntime(config, createSSHTransport(config, false));
     const initMessages: string[] = [];
@@ -650,20 +445,12 @@ describe("SSHRuntime.prepareWorkspaceCheckout", () => {
         if (command === "test -d /home/user/src/demo/review-slot") {
           return Promise.resolve({ stdout: "", stderr: "", exitCode: 1, duration: 0 });
         }
-        if (
-          command.includes("remote set-url origin") ||
-          command.includes("remote add origin") ||
-          command.includes('worktree add "/home/user/src/demo/review-slot"')
-        ) {
+        if (command.includes('worktree add "/home/user/src/demo/review-slot"')) {
           return Promise.resolve({ stdout: "", stderr: "", exitCode: 0, duration: 0 });
         }
         throw new Error(`Unexpected execBuffered command: ${command}`);
       }
     );
-    const reuseSpy = spyOn(
-      runtime as unknown as RuntimeWithShouldReuseCurrentBundleTrunk,
-      "shouldReuseCurrentBundleTrunk"
-    ).mockResolvedValue(true);
     const fetchOriginSpy = spyOn(
       runtime as unknown as RuntimeWithFetchOriginTrunk,
       "fetchOriginTrunk"
@@ -676,10 +463,6 @@ describe("SSHRuntime.prepareWorkspaceCheckout", () => {
       runtime as unknown as RuntimeWithEnsureBaseRepo,
       "ensureBaseRepo"
     ).mockResolvedValue('"/home/user/src/demo/.mux-base.git"');
-    const getOriginUrlSpy = spyOn(
-      runtime as unknown as RuntimeWithGetOriginUrlForSync,
-      "getOriginUrlForSync"
-    ).mockResolvedValue({ originUrl: "git@github.com:coder/mux.git" });
     const canFastForwardSpy = spyOn(
       runtime as unknown as RuntimeWithCanFastForwardToOrigin,
       "canFastForwardToOrigin"
@@ -706,18 +489,16 @@ describe("SSHRuntime.prepareWorkspaceCheckout", () => {
         ""
       );
 
-      expect(reuseSpy).toHaveBeenCalled();
-      expect(syncProjectSpy).not.toHaveBeenCalled();
+      expect(syncProjectSpy).toHaveBeenCalledWith(
+        "/projects/demo",
+        "/home/user/src/demo/review-slot",
+        initLogger,
+        undefined
+      );
       expect(ensureBaseRepoSpy).toHaveBeenCalledWith("/projects/demo", initLogger, undefined);
       expect(fetchOriginSpy).toHaveBeenCalled();
       expect(resolveBundleSpy).toHaveBeenCalled();
-      expect(getOriginUrlSpy).toHaveBeenCalledWith("/projects/demo", initLogger);
       expect(canFastForwardSpy).not.toHaveBeenCalled();
-      expect(execBufferedSpy).toHaveBeenCalledWith(
-        runtime,
-        expect.stringContaining("remote set-url origin 'git@github.com:coder/mux.git'"),
-        expect.objectContaining({ cwd: "/tmp", timeout: 10 })
-      );
       expect(execBufferedSpy).toHaveBeenCalledWith(
         runtime,
         expect.stringContaining(
@@ -728,14 +509,13 @@ describe("SSHRuntime.prepareWorkspaceCheckout", () => {
       expect(syncSubmodulesSpy).toHaveBeenCalledWith(
         expect.objectContaining({ workspacePath: "/home/user/src/demo/review-slot" })
       );
+      expect(initMessages).toContain("Files synced successfully");
       expect(initMessages).toContain("Worktree created successfully");
     } finally {
       execBufferedSpy.mockRestore();
-      reuseSpy.mockRestore();
       fetchOriginSpy.mockRestore();
       resolveBundleSpy.mockRestore();
       ensureBaseRepoSpy.mockRestore();
-      getOriginUrlSpy.mockRestore();
       canFastForwardSpy.mockRestore();
       syncProjectSpy.mockRestore();
       syncSubmodulesSpy.mockRestore();

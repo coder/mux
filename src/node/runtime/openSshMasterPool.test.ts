@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import type { spawn as spawnProcess } from "child_process";
 import { EventEmitter } from "events";
 import { PassThrough } from "stream";
@@ -40,6 +40,12 @@ describe("OpenSSHMasterPool", () => {
   const masterProcesses = new Map<string, FakeChildProcess>();
 
   let releaseInteractiveResponder: (() => void) | undefined;
+
+  beforeEach(() => {
+    setSshPromptService(undefined);
+    setOpenSSHHostKeyPolicyMode("headless-fallback");
+    masterProcesses.clear();
+  });
 
   afterEach(() => {
     releaseInteractiveResponder?.();

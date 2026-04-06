@@ -28,6 +28,12 @@ export function resolveWorkspaceExecutionPath(
   metadata: WorkspaceMetadataForRuntime,
   runtime: Runtime
 ): string {
+  if (metadata.projectPath === metadata.name) {
+    // In-place workspaces (CLI/benchmarks) execute directly in their project root instead of a
+    // named sibling checkout, so deriving a worktree path would be reconstructing the wrong shape.
+    return metadata.projectPath;
+  }
+
   const runtimeWorkspacePath = runtime.getWorkspacePath(metadata.projectPath, metadata.name);
   assert(runtimeWorkspacePath, `Workspace ${metadata.name} resolved to an empty runtime path`);
 
@@ -52,6 +58,25 @@ export function resolveWorkspaceExecutionPath(
   }
 
   return persistedWorkspacePath;
+}
+
+export interface WorkspaceRuntimeContext {
+  runtime: Runtime;
+  workspacePath: string;
+}
+
+/**
+ * Recreate an existing workspace runtime together with the execution path that should be used for
+ * terminals, tool calls, and agent discovery.
+ */
+export function createRuntimeContextForWorkspace(
+  metadata: WorkspaceMetadataForRuntime
+): WorkspaceRuntimeContext {
+  const runtime = createRuntimeForWorkspace(metadata);
+  return {
+    runtime,
+    workspacePath: resolveWorkspaceExecutionPath(metadata, runtime),
+  };
 }
 
 /**
