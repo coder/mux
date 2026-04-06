@@ -14,6 +14,19 @@ import type {
   PtySessionParams,
 } from "./SSHTransport";
 
+const MAX_REPORTED_FAILURE_STDERR_CHARS = 1000;
+
+function summarizeFailureStderr(stderr: string, exitCode: number): string {
+  const trimmed = stderr.trim();
+  if (trimmed.length === 0) {
+    return `SSH exited with code ${exitCode}`;
+  }
+  if (trimmed.length <= MAX_REPORTED_FAILURE_STDERR_CHARS) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, MAX_REPORTED_FAILURE_STDERR_CHARS)}…`;
+}
+
 export class OpenSSHTransport implements SSHTransport {
   constructor(private readonly config: SSHConnectionConfig) {}
 
@@ -94,7 +107,7 @@ export class OpenSSHTransport implements SSHTransport {
       process,
       onExit: (exitCode, stderr) => {
         if (this.isConnectionFailure(exitCode, stderr)) {
-          lease.reportFailure(stderr.trim() || `SSH exited with code ${exitCode}`);
+          lease.reportFailure(summarizeFailureStderr(stderr, exitCode));
         } else {
           lease.markHealthy();
         }

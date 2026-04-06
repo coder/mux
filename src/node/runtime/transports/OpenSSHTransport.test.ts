@@ -88,6 +88,34 @@ describe("OpenSSHTransport.spawnRemoteProcess", () => {
     expect(markHealthy).not.toHaveBeenCalled();
   });
 
+  test("truncates connection-failure stderr before reporting shard health", async () => {
+    const release = mock(() => undefined);
+    let reportedError: string | undefined;
+    const reportFailure = mock((error: string) => {
+      reportedError = error;
+    });
+    const markHealthy = mock(() => undefined);
+    acquireLeaseSpy.mockResolvedValue({
+      controlPath: "/tmp/mux-ssh-test-shard",
+      shardId: "shard-0",
+      release,
+      reportFailure,
+      markHealthy,
+    });
+    const transport = new OpenSSHTransport({ host: "remote.example.com" });
+    const spawnResult = await transport.spawnRemoteProcess("echo ok", {});
+    const longStderr = `${"x".repeat(1100)}\n`;
+
+    spawnResult.onExit?.(255, longStderr);
+
+    if (reportedError == null) {
+      throw new Error("Expected reportFailure to be called with a string error summary");
+    }
+    expect(reportedError.length).toBeLessThan(longStderr.trim().length);
+    expect(reportedError.endsWith("…")).toBe(true);
+    expect(markHealthy).not.toHaveBeenCalled();
+  });
+
   test("explicit headless (no service) includes host-key fallback options and BatchMode=yes", async () => {
     setSshPromptCapability(false);
     setOpenSSHHostKeyPolicyMode("headless-fallback");
