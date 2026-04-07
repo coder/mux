@@ -186,6 +186,8 @@ function isStatusDotVisible(state: VisualState, isDraft?: boolean, isSubAgent?: 
 
 const LEADING_SLOT_CONTAINER_CLASSES =
   "relative z-1 flex shrink-0 items-center justify-center self-center";
+const STATUS_DOT_SLOT_CONTAINER_CLASSES =
+  "relative z-20 flex shrink-0 items-center justify-center self-center";
 
 function HeartbeatFallbackIcon() {
   return (
@@ -229,7 +231,7 @@ function StatusDot(props: {
     <div
       // Keep the status dot above sub-agent connector overlays so branch lines do
       // not draw across the dot when rows are nested.
-      className={LEADING_SLOT_CONTAINER_CLASSES}
+      className={STATUS_DOT_SLOT_CONTAINER_CLASSES}
       style={LEADING_SLOT_CONTAINER_STYLE}
     >
       {dot}

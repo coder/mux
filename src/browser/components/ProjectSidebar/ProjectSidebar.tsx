@@ -248,7 +248,7 @@ function useWorkspaceAttentionSubscription(
 // highlighting the whole sidebar before a reorder gesture locks in.
 // pr-2 matches AgentListItem LIST_ITEM_BASE_CLASSES so project kebab aligns with workspace rows.
 const PROJECT_ITEM_BASE_CLASS =
-  "group sticky top-0 z-10 py-2 pl-2 pr-1 flex select-none items-center border-l-transparent bg-surface-primary transition-colors duration-150";
+  "group sticky top-0 z-30 py-2 pl-2 pr-1 flex select-none items-center border-l-transparent bg-surface-primary transition-colors duration-150";
 
 function getProjectFallbackLabel(projectPath: string): string {
   const abbreviatedPath = PlatformPaths.abbreviate(projectPath);
