@@ -24,7 +24,6 @@ const REQUIRED_COLOCATED_STORIES = [
 const MIGRATED_APP_STORIES = [
   "App.sidebar.stories.tsx",
   "App.welcome.stories.tsx",
-  "App.landingPage.stories.tsx",
   "App.errors.stories.tsx",
   "App.titlebar.stories.tsx",
   "App.projectCreate.stories.tsx",
