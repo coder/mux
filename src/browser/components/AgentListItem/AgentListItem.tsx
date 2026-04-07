@@ -185,7 +185,7 @@ function isStatusDotVisible(state: VisualState, isDraft?: boolean, isSubAgent?: 
 }
 
 const LEADING_SLOT_CONTAINER_CLASSES =
-  "relative z-20 flex shrink-0 items-center justify-center self-center";
+  "relative z-1 flex shrink-0 items-center justify-center self-center";
 
 function HeartbeatFallbackIcon() {
   return (
