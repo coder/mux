@@ -182,6 +182,19 @@ describe("StreamingBarrier", () => {
     expect(view.getByText("claude-opus-4-6 starting...")).toBeTruthy();
   });
 
+  test("keeps the barrier mounted when startup detail is an empty string", () => {
+    currentWorkspaceState = createWorkspaceState({
+      canInterrupt: false,
+      pendingStreamStartTime: Date.now(),
+      pendingStreamModel: "anthropic:claude-opus-4-6",
+      runtimeStatus: { phase: "starting", detail: "" },
+    });
+
+    const view = render(<StreamingBarrier workspaceId="ws-1" />);
+
+    expect(view.getByRole("button", { name: "Stop streaming" })).toBeTruthy();
+  });
+
   test("shows backend startup breadcrumb text while the stream is starting", () => {
     currentWorkspaceState = createWorkspaceState({
       canInterrupt: false,

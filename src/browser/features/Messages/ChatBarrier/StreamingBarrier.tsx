@@ -210,7 +210,7 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({
   })();
   const statusText = useStabilizedStreamingStatusText(phase, rawStatusText);
 
-  if (!phase || !statusText) {
+  if (!phase || statusText == null) {
     return null;
   }
 
