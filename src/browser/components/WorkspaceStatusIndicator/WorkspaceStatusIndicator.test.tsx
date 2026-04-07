@@ -1,18 +1,21 @@
 import "../../../../tests/ui/dom";
 
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
-import { cleanup, render } from "@testing-library/react";
+import { cleanup, fireEvent, render } from "@testing-library/react";
 import { installDom } from "../../../../tests/ui/dom";
 import * as WorkspaceStoreModule from "@/browser/stores/WorkspaceStore";
-
 import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
 import { getModelName } from "@/common/utils/ai/models";
 import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
 
-function mockSidebarState(
+const FALLBACK_MODEL = "anthropic:claude-sonnet-4-5";
+const PENDING_MODEL = "openai:gpt-4o-mini";
+const PENDING_DISPLAY_NAME = formatModelDisplayName(getModelName(PENDING_MODEL));
+
+function createSidebarState(
   overrides: Partial<WorkspaceStoreModule.WorkspaceSidebarState> = {}
-): void {
-  spyOn(WorkspaceStoreModule, "useWorkspaceSidebarState").mockImplementation(() => ({
+): WorkspaceStoreModule.WorkspaceSidebarState {
+  return {
     canInterrupt: false,
     isStarting: false,
     awaitingUserQuestion: false,
@@ -26,7 +29,30 @@ function mockSidebarState(
     terminalActiveCount: 0,
     terminalSessionCount: 0,
     ...overrides,
-  }));
+  };
+}
+
+function renderIndicator(
+  overrides: Partial<WorkspaceStoreModule.WorkspaceSidebarState> = {},
+  workspaceId = "workspace"
+) {
+  const state = createSidebarState(overrides);
+  spyOn(WorkspaceStoreModule, "useWorkspaceSidebarState").mockImplementation(() => state);
+  const view = render(
+    <WorkspaceStatusIndicator workspaceId={workspaceId} fallbackModel={FALLBACK_MODEL} />
+  );
+  return {
+    state,
+    view,
+    rerender(nextWorkspaceId = workspaceId) {
+      view.rerender(
+        <WorkspaceStatusIndicator workspaceId={nextWorkspaceId} fallbackModel={FALLBACK_MODEL} />
+      );
+    },
+    phaseSlot: () => view.container.querySelector("[data-phase-slot]"),
+    phaseIcon: () => view.container.querySelector("[data-phase-slot] svg"),
+    modelDisplay: () => view.container.querySelector("[data-model-display]"),
+  };
 }
 
 describe("WorkspaceStatusIndicator", () => {
@@ -43,107 +69,76 @@ describe("WorkspaceStatusIndicator", () => {
     mock.restore();
   });
 
-  test("keeps unfinished todo status static once the stream is idle", () => {
-    mockSidebarState({
-      agentStatus: { emoji: "🔄", message: "Run checks" },
+  for (const [name, overrides, spins] of [
+    [
+      "keeps unfinished todo status static once the stream is idle",
+      { agentStatus: { emoji: "🔄", message: "Run checks" } },
+      false,
+    ],
+    [
+      "keeps refresh-style status animated while a stream is still active",
+      { canInterrupt: true, agentStatus: { emoji: "🔄", message: "Run checks" } },
+      true,
+    ],
+  ] satisfies Array<[string, Partial<WorkspaceStoreModule.WorkspaceSidebarState>, boolean]>) {
+    test(name, () => {
+      const { view } = renderIndicator(overrides, name);
+      const className = view.container.querySelector("svg")?.getAttribute("class") ?? "";
+      expect(view.container.querySelector("svg")).toBeTruthy();
+      expect(className.includes("animate-spin")).toBe(spins);
     });
-
-    const view = render(
-      <WorkspaceStatusIndicator workspaceId="workspace-idle" fallbackModel="openai:gpt-5.4" />
-    );
-
-    const icon = view.container.querySelector("svg");
-    expect(icon).toBeTruthy();
-    expect(icon?.getAttribute("class") ?? "").not.toContain("animate-spin");
-  });
-
-  test("keeps refresh-style status animated while a stream is still active", () => {
-    mockSidebarState({
-      canInterrupt: true,
-      agentStatus: { emoji: "🔄", message: "Run checks" },
-    });
-
-    const view = render(
-      <WorkspaceStatusIndicator workspaceId="workspace-streaming" fallbackModel="openai:gpt-5.4" />
-    );
-
-    const icon = view.container.querySelector("svg");
-    expect(icon).toBeTruthy();
-    expect(icon?.getAttribute("class") ?? "").toContain("animate-spin");
-  });
-
-  test("keeps the steady streaming layout free of the transient handoff slot", () => {
-    mockSidebarState({
-      canInterrupt: true,
-      currentModel: "openai:gpt-4o-mini",
-    });
-
-    const view = render(
-      <WorkspaceStatusIndicator
-        workspaceId="workspace-live-stream"
-        fallbackModel="anthropic:claude-sonnet-4-5"
-      />
-    );
-
-    expect(view.container.querySelector("[data-phase-slot]")).toBeNull();
-    expect(view.container.textContent?.toLowerCase()).toContain("streaming");
-  });
+  }
 
   test("keeps the model label anchored when starting hands off to streaming", () => {
-    const pendingModel = "openai:gpt-4o-mini";
-    const fallbackModel = "anthropic:claude-sonnet-4-5";
-    const pendingDisplayName = formatModelDisplayName(getModelName(pendingModel));
-    const fallbackDisplayName = formatModelDisplayName(getModelName(fallbackModel));
-    const state: WorkspaceStoreModule.WorkspaceSidebarState = {
-      canInterrupt: false,
-      isStarting: true,
-      awaitingUserQuestion: false,
-      lastAbortReason: null,
-      currentModel: null,
-      pendingStreamModel: pendingModel,
-      recencyTimestamp: null,
-      loadedSkills: [],
-      skillLoadErrors: [],
-      agentStatus: undefined,
-      terminalActiveCount: 0,
-      terminalSessionCount: 0,
-    };
-    spyOn(WorkspaceStoreModule, "useWorkspaceSidebarState").mockImplementation(() => state);
-
-    const view = render(
-      <WorkspaceStatusIndicator
-        workspaceId="workspace-phase-shift-starting"
-        fallbackModel={fallbackModel}
-      />
+    const indicator = renderIndicator(
+      { isStarting: true, pendingStreamModel: PENDING_MODEL },
+      "workspace-phase-shift-starting"
     );
+    expect(indicator.phaseSlot()?.getAttribute("class") ?? "").toContain("w-3");
+    expect(indicator.phaseSlot()?.getAttribute("class") ?? "").toContain("mr-1.5");
+    expect(indicator.phaseIcon()?.getAttribute("class") ?? "").toContain("animate-spin");
+    expect(indicator.modelDisplay()?.textContent ?? "").toContain(PENDING_DISPLAY_NAME);
+    expect(indicator.view.container.textContent?.toLowerCase()).toContain("starting");
 
-    const getPhaseSlot = () => view.container.querySelector("[data-phase-slot]");
-    const getPhaseIcon = () => getPhaseSlot()?.querySelector("svg");
-    const getModelDisplay = () => view.container.querySelector("[data-model-display]");
+    Object.assign(indicator.state, {
+      isStarting: false,
+      canInterrupt: true,
+      currentModel: PENDING_MODEL,
+      pendingStreamModel: null,
+    });
+    indicator.rerender("workspace-phase-shift-streaming");
 
-    expect(getPhaseSlot()?.getAttribute("class") ?? "").toContain("w-3");
-    expect(getPhaseSlot()?.getAttribute("class") ?? "").toContain("mr-1.5");
-    expect(getPhaseIcon()?.getAttribute("class") ?? "").toContain("animate-spin");
-    expect(getModelDisplay()?.textContent ?? "").toContain(pendingDisplayName);
-    expect(getModelDisplay()?.textContent ?? "").not.toContain(fallbackDisplayName);
-    expect(view.container.textContent?.toLowerCase()).toContain("starting");
+    expect(indicator.phaseSlot()?.getAttribute("class") ?? "").toContain("w-0");
+    expect(indicator.phaseSlot()?.getAttribute("class") ?? "").toContain("mr-0");
+    expect(indicator.phaseIcon()?.getAttribute("class") ?? "").not.toContain("animate-spin");
+    fireEvent.transitionEnd(indicator.phaseSlot()!, { propertyName: "width" });
+    expect(indicator.phaseSlot()).toBeNull();
+    expect(indicator.modelDisplay()?.textContent ?? "").toContain(PENDING_DISPLAY_NAME);
+    expect(indicator.view.container.textContent?.toLowerCase()).toContain("streaming");
+  });
 
-    state.isStarting = false;
-    state.canInterrupt = true;
-    state.currentModel = pendingModel;
-    state.pendingStreamModel = null;
-    view.rerender(
-      <WorkspaceStatusIndicator
-        workspaceId="workspace-phase-shift-streaming"
-        fallbackModel={fallbackModel}
-      />
+  test("does not leak the collapsed handoff slot after agent status hides it", () => {
+    const indicator = renderIndicator(
+      { isStarting: true, pendingStreamModel: PENDING_MODEL },
+      "workspace-status-handoff-starting"
     );
+    expect(indicator.phaseSlot()?.getAttribute("class") ?? "").toContain("w-3");
 
-    expect(getPhaseSlot()?.getAttribute("class") ?? "").toContain("w-0");
-    expect(getPhaseSlot()?.getAttribute("class") ?? "").toContain("mr-0");
-    expect(getPhaseIcon()?.getAttribute("class") ?? "").not.toContain("animate-spin");
-    expect(getModelDisplay()?.textContent ?? "").toContain(pendingDisplayName);
-    expect(getModelDisplay()?.textContent ?? "").not.toContain(fallbackDisplayName);
-    expect(view.container.textContent?.toLowerCase()).toContain("streaming");
+    Object.assign(indicator.state, {
+      isStarting: false,
+      canInterrupt: true,
+      currentModel: PENDING_MODEL,
+      pendingStreamModel: null,
+      agentStatus: { emoji: "🔄", message: "Run checks" },
+    });
+    indicator.rerender("workspace-status-handoff-status");
+    expect(indicator.phaseSlot()).toBeNull();
+    expect(indicator.view.container.textContent ?? "").toContain("Run checks");
+
+    indicator.state.agentStatus = undefined;
+    indicator.rerender("workspace-status-handoff-streaming");
+    expect(indicator.phaseSlot()).toBeNull();
+    expect(indicator.modelDisplay()?.textContent ?? "").toContain(PENDING_DISPLAY_NAME);
+    expect(indicator.view.container.textContent?.toLowerCase()).toContain("streaming");
   });
 });

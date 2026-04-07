@@ -29,23 +29,37 @@ export const WorkspaceStatusIndicator = memo<{
 
   const previousPhaseRef = useRef<typeof phase>(phase);
   const [isCollapsingPhaseSlot, setIsCollapsingPhaseSlot] = useState(false);
+  const phaseSlotBlocked = awaitingUserQuestion || Boolean(agentStatus);
   const shouldCollapsePhaseSlot =
     isCollapsingPhaseSlot || (previousPhaseRef.current === "starting" && phase === "streaming");
+  const showPhaseSlot = !phaseSlotBlocked && (phase === "starting" || shouldCollapsePhaseSlot);
 
   useEffect(() => {
     const previousPhase = previousPhaseRef.current;
     previousPhaseRef.current = phase;
 
-    if (previousPhase === "starting" && phase === "streaming") {
-      setIsCollapsingPhaseSlot(true);
-      const timeoutId = window.setTimeout(() => {
-        setIsCollapsingPhaseSlot(false);
-      }, 150);
-      return () => window.clearTimeout(timeoutId);
+    if (phaseSlotBlocked) {
+      setIsCollapsingPhaseSlot(false);
+      return;
     }
 
-    setIsCollapsingPhaseSlot(false);
-  }, [phase]);
+    if (previousPhase === "starting" && phase === "streaming") {
+      setIsCollapsingPhaseSlot(true);
+      return;
+    }
+
+    if (phase !== "streaming") {
+      setIsCollapsingPhaseSlot(false);
+    }
+  }, [phase, phaseSlotBlocked]);
+
+  // Let the CSS transition decide when the handoff slot can disappear so the JS logic
+  // does not need a mirrored timeout that can drift from the rendered duration.
+  const handlePhaseSlotTransitionEnd = () => {
+    if (phase === "streaming" && isCollapsingPhaseSlot) {
+      setIsCollapsingPhaseSlot(false);
+    }
+  };
 
   // Show prompt when ask_user_question is pending - make it prominent
   if (awaitingUserQuestion) {
@@ -109,28 +123,11 @@ export const WorkspaceStatusIndicator = memo<{
       : (currentModel ?? pendingStreamModel ?? fallbackModel);
   const suffix = phase === "starting" ? "- starting..." : "- streaming...";
 
-  if (phase === "streaming" && !shouldCollapsePhaseSlot) {
-    return (
-      <div className="text-muted flex min-w-0 items-center gap-1.5 text-xs">
-        {modelToShow ? (
-          <>
-            <span className="min-w-0 truncate">
-              <ModelDisplay modelString={modelToShow} showTooltip={false} />
-            </span>
-            <span className="shrink-0 opacity-70">{suffix}</span>
-          </>
-        ) : (
-          <span className="min-w-0 truncate">Assistant - streaming...</span>
-        )}
-      </div>
-    );
-  }
-
   return (
     <div className="text-muted flex min-w-0 items-center text-xs">
       {/* Keep the old steady-state layout, but hold the spinner slot just long enough to
           animate the start -> stream handoff instead of flashing the label left. */}
-      {(phase === "starting" || shouldCollapsePhaseSlot) && (
+      {showPhaseSlot && (
         <span
           className={
             phase === "starting"
@@ -138,6 +135,7 @@ export const WorkspaceStatusIndicator = memo<{
               : "mr-0 inline-flex w-0 shrink-0 overflow-hidden opacity-0 transition-[margin,width,opacity] duration-150 ease-out"
           }
           data-phase-slot
+          onTransitionEnd={handlePhaseSlotTransitionEnd}
         >
           <Loader2
             aria-hidden="true"
