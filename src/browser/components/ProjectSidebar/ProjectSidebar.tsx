@@ -3047,7 +3047,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
           />
           {!(isDesktopMode() && collapsed) && (
             // Keep the sidebar divider above sticky row content and scroll-layer visuals.
-            <div aria-hidden className="bg-border-light pointer-events-none absolute inset-y-0 right-0 z-40 w-px" />
+            <div
+              aria-hidden
+              className="bg-border-light pointer-events-none absolute inset-y-0 right-0 z-40 w-px"
+            />
           )}
         </div>
       </DndProvider>
