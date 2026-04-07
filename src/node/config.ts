@@ -1312,7 +1312,6 @@ export class Config {
               archivedAt: workspace.archivedAt,
               unarchivedAt: workspace.unarchivedAt,
               projects: workspaceProjects,
-              sectionId: workspace.sectionId,
             };
 
             // Migrate missing createdAt to config for next load
@@ -1410,8 +1409,6 @@ export class Config {
             // Preserve archived timestamps from config
             metadata.archivedAt ??= workspace.archivedAt;
             metadata.unarchivedAt ??= workspace.unarchivedAt;
-            // Preserve section assignment from config
-            metadata.sectionId ??= workspace.sectionId;
             metadata.forkFamilyBaseName ??= workspace.forkFamilyBaseName;
 
             if (!workspace.aiSettingsByAgent && metadata.aiSettingsByAgent) {
@@ -1478,7 +1475,6 @@ export class Config {
               archivedAt: workspace.archivedAt,
               unarchivedAt: workspace.unarchivedAt,
               projects: workspaceProjects,
-              sectionId: workspace.sectionId,
             };
 
             // Save to config for next load
@@ -1526,7 +1522,6 @@ export class Config {
             taskPrompt: workspace.taskPrompt,
             taskTrunkBranch: workspace.taskTrunkBranch,
             projects: workspaceProjects,
-            sectionId: workspace.sectionId,
           };
 
           workspaceMetadata.push(
@@ -1596,7 +1591,6 @@ export class Config {
         archivedAt: metadata.archivedAt,
         unarchivedAt: metadata.unarchivedAt,
         projects: metadata.projects,
-        sectionId: metadata.sectionId,
       };
 
       if (existingIndex >= 0) {

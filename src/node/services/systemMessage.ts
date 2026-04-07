@@ -1,9 +1,10 @@
+import * as fs from "node:fs/promises";
 import path from "node:path";
 
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import type { MCPServerMap } from "@/common/types/mcp";
 import type { RuntimeMode } from "@/common/types/runtime";
-import { RUNTIME_MODE } from "@/common/types/runtime";
+import { RUNTIME_MODE, isLocalProjectRuntime } from "@/common/types/runtime";
 import { getProjects, isMultiProject } from "@/common/utils/multiProject";
 import {
   readInstructionSet,
@@ -310,6 +311,120 @@ export async function readToolInstructions(
   });
 }
 
+async function resolveGitTopLevel(projectPath: string): Promise<string | null> {
+  let currentDirectory = path.resolve(projectPath);
+
+  while (true) {
+    try {
+      await fs.access(path.join(currentDirectory, ".git"));
+      return currentDirectory;
+    } catch {
+      const parentDirectory = path.dirname(currentDirectory);
+      if (parentDirectory === currentDirectory) {
+        return null;
+      }
+      currentDirectory = parentDirectory;
+    }
+  }
+}
+
+function buildInstructionHierarchy(projectRootPath: string, projectPath: string): string[] {
+  const normalizedRoot = path.resolve(projectRootPath);
+  const normalizedProjectPath = path.resolve(projectPath);
+  const relativeProjectPath = path.relative(normalizedRoot, normalizedProjectPath);
+
+  if (relativeProjectPath.length === 0) {
+    return [normalizedRoot];
+  }
+
+  if (relativeProjectPath.startsWith("..") || path.isAbsolute(relativeProjectPath)) {
+    return [normalizedProjectPath];
+  }
+
+  const segments = relativeProjectPath.split(path.sep).filter((segment) => segment.length > 0);
+  return [
+    normalizedRoot,
+    ...segments.map((_, index) => path.join(normalizedRoot, ...segments.slice(0, index + 1))),
+  ];
+}
+
+async function readInstructionHierarchy(
+  runtime: Runtime,
+  workspaceProjectRootPath: string | null,
+  projectPath: string
+): Promise<string[]> {
+  const projectRootPath = (await resolveGitTopLevel(projectPath)) ?? projectPath;
+  const hierarchy = buildInstructionHierarchy(projectRootPath, projectPath);
+  const segments: string[] = [];
+
+  for (const localDirectory of hierarchy) {
+    if (!workspaceProjectRootPath) {
+      const localInstructions = await readInstructionSet(localDirectory);
+      if (localInstructions) {
+        segments.push(localInstructions);
+      }
+      continue;
+    }
+
+    const relativeProjectPath = path.relative(projectRootPath, localDirectory);
+    const runtimeDirectory =
+      relativeProjectPath.length === 0
+        ? workspaceProjectRootPath
+        : path.join(workspaceProjectRootPath, relativeProjectPath);
+    const runtimeInstructions = await readInstructionSetFromRuntime(runtime, runtimeDirectory);
+    if (runtimeInstructions) {
+      segments.push(runtimeInstructions);
+      continue;
+    }
+
+    const localInstructions = await readInstructionSet(localDirectory);
+    if (localInstructions) {
+      segments.push(localInstructions);
+    }
+  }
+
+  return segments;
+}
+
+async function readSingleProjectContextInstructions(
+  metadata: WorkspaceMetadata,
+  runtime: Runtime,
+  workspacePath: string
+): Promise<string | null> {
+  if (isLocalProjectRuntime(metadata.runtimeConfig)) {
+    const projectRootPath =
+      (await resolveGitTopLevel(metadata.projectPath)) ?? metadata.projectPath;
+    const hierarchy = buildInstructionHierarchy(projectRootPath, metadata.projectPath);
+    const contextSegments: string[] = [];
+
+    for (const localDirectory of hierarchy.slice(0, -1)) {
+      const localInstructions = await readInstructionSet(localDirectory);
+      if (localInstructions) {
+        contextSegments.push(localInstructions);
+      }
+    }
+
+    const workspaceInstructions = await readInstructionSetFromRuntime(runtime, workspacePath);
+    if (workspaceInstructions) {
+      contextSegments.push(workspaceInstructions);
+    } else {
+      const leafProjectInstructions = await readInstructionSet(hierarchy[hierarchy.length - 1]);
+      if (leafProjectInstructions) {
+        contextSegments.push(leafProjectInstructions);
+      }
+    }
+
+    return contextSegments.length > 0 ? contextSegments.join("\n\n") : null;
+  }
+
+  const projectInstructionRoots = await readInstructionHierarchy(
+    runtime,
+    workspacePath,
+    metadata.projectPath
+  );
+  return projectInstructionRoots.length > 0 ? projectInstructionRoots.join("\n\n") : null;
+}
+
 async function readMultiProjectContextInstructions(
   metadata: WorkspaceMetadata,
   runtime: Runtime,
@@ -333,13 +448,13 @@ async function readMultiProjectContextInstructions(
     );
     seenProjectNames.add(project.projectName);
 
-    const workspaceProjectPath = path.join(workspacePath, project.projectName);
-    const projectInstructions =
-      (await readInstructionSetFromRuntime(runtime, workspaceProjectPath)) ??
-      (await readInstructionSet(project.projectPath));
-    if (projectInstructions) {
-      contextSegments.push(projectInstructions);
-    }
+    const workspaceProjectRootPath = path.join(workspacePath, project.projectName);
+    const projectInstructions = await readInstructionHierarchy(
+      runtime,
+      workspaceProjectRootPath,
+      project.projectPath
+    );
+    contextSegments.push(...projectInstructions);
   }
 
   return contextSegments.length > 0 ? contextSegments.join("\n\n") : null;
@@ -349,9 +464,9 @@ async function readMultiProjectContextInstructions(
  * Read instruction sets from global and context sources.
  * Internal helper for buildSystemMessage and extractToolInstructions.
  *
- * Single-project workspaces keep the historical lookup order of workspace root → project root.
- * Multi-project workspaces layer the shared container instructions with every per-project repo
- * mounted under <workspace>/<projectName> so secondary repos can contribute scoped instructions.
+ * Single-project workspaces concatenate repo-level instructions from parent to child so nested
+ * sub-projects inherit every AGENTS.md along the path. Multi-project workspaces also include the
+ * shared container instructions plus each mounted project's own parent→child instruction chain.
  *
  * @param metadata - Workspace metadata (contains projectPath)
  * @param runtime - Runtime for reading workspace files (supports SSH)
@@ -366,8 +481,7 @@ async function readInstructionSources(
   const globalInstructions = await readInstructionSet(getSystemDirectory());
   const contextInstructions = isMultiProject(metadata)
     ? await readMultiProjectContextInstructions(metadata, runtime, workspacePath)
-    : ((await readInstructionSetFromRuntime(runtime, workspacePath)) ??
-      (await readInstructionSet(metadata.projectPath)));
+    : await readSingleProjectContextInstructions(metadata, runtime, workspacePath);
 
   return [globalInstructions, contextInstructions];
 }

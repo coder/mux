@@ -133,9 +133,7 @@ export const CreateWorkspaceMultipleProjects: AppStory = {
 };
 
 /**
- * Creation view with project sections configured.
- * On desktop the section selector is inline / right-aligned in the header row.
- * On mobile it drops to its own row below the header.
+ * Creation view for a project opened from the sidebar on desktop and mobile.
  *
  * Includes mobile chromatic modes: the sidebar starts expanded via
  * localStorage so the play function can click the project row, then
@@ -160,19 +158,7 @@ export const CreateWorkspaceWithSections: AppStory = {
         // the project row even in mobile viewport modes.
         localStorage.setItem(LEFT_SIDEBAR_COLLAPSED_KEY, JSON.stringify(false));
         return createMockORPCClient({
-          projects: new Map([
-            [
-              "/Users/dev/my-project",
-              {
-                workspaces: [],
-                sections: [
-                  { id: "sec_0001", name: "Frontend", color: "#4f8cf7", nextId: "sec_0002" },
-                  { id: "sec_0002", name: "Backend", color: "#f76b4f", nextId: "sec_0003" },
-                  { id: "sec_0003", name: "Infra", color: "#8b5cf6", nextId: null },
-                ],
-              },
-            ],
-          ]),
+          projects: new Map([["/Users/dev/my-project", { workspaces: [] }]]),
           workspaces: [],
         });
       }}
@@ -198,34 +184,21 @@ export const CreateWorkspaceWithSections: AppStory = {
         }
       }
 
-      // Wait for the section selector to be visible. Two instances exist in
-      // the DOM (one for desktop inline, one for mobile own-row via
-      // hidden/md:hidden). Find the one that's actually rendered.
       await waitFor(
         () => {
-          const allSelectors = storyRoot.querySelectorAll<HTMLElement>(
-            "[data-testid='section-selector']"
+          const headerRow = storyRoot.querySelector<HTMLElement>(
+            "[data-component='WorkspaceNameGroup']"
           );
-          const sectionSelector = Array.from(allSelectors).find(
-            (el) => el.offsetWidth > 0 && el.offsetHeight > 0
-          );
-          if (!sectionSelector) {
-            throw new Error("Section selector not visible");
+          if (!headerRow) {
+            throw new Error("Workspace name header row not found");
           }
 
-          // On narrow viewports, verify the section selector sits below
-          // the header row (mobile-only own-row layout).
           if (window.innerWidth < 768) {
-            const headerRow = storyRoot.querySelector("[data-component='WorkspaceNameGroup']");
-            if (!headerRow) {
-              throw new Error("Workspace name header row not found");
-            }
-            const headerBottom = headerRow.getBoundingClientRect().bottom;
-            const sectionTop = sectionSelector.getBoundingClientRect().top;
-            if (sectionTop < headerBottom) {
-              throw new Error(
-                `Section selector overlaps header row (section top=${sectionTop}, header bottom=${headerBottom})`
-              );
+            const runtimeGroup = storyRoot.querySelector<HTMLElement>(
+              "[data-component='RuntimeTypeGroup']"
+            );
+            if (!runtimeGroup) {
+              throw new Error("Runtime controls not found");
             }
           }
         },

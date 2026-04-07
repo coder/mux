@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
@@ -171,6 +172,10 @@ describe("buildSystemMessage", () => {
     };
   }
 
+  function initGitRepo(repoPath: string): void {
+    execFileSync("git", ["-C", repoPath, "init", "-b", "main"]);
+  }
+
   afterEach(async () => {
     // Clean up temp directory
     await fs.rm(tempDir, { recursive: true, force: true });
@@ -208,6 +213,68 @@ Use clear examples.
     const customInstructions = extractTagContent(systemMessage, "custom-instructions") ?? "";
     expect(customInstructions).toContain("Always be helpful.");
     expect(customInstructions).toContain("Use clear examples.");
+  });
+
+  test("concatenates parent and child instructions for nested sub-projects", async () => {
+    const childProjectDir = path.join(projectDir, "packages", "payments");
+    await fs.mkdir(childProjectDir, { recursive: true });
+    initGitRepo(projectDir);
+
+    await fs.writeFile(path.join(projectDir, "AGENTS.md"), "Root instructions.");
+    await fs.writeFile(path.join(childProjectDir, "AGENTS.md"), "Child instructions.");
+
+    const metadata: WorkspaceMetadata = {
+      id: "test-workspace",
+      name: "test-workspace",
+      projectName: "payments",
+      projectPath: childProjectDir,
+      runtimeConfig: { type: "local" },
+    };
+
+    const systemMessage = await buildSystemMessage(metadata, runtime, childProjectDir);
+    const customInstructions = extractTagContent(systemMessage, "custom-instructions") ?? "";
+
+    expect(customInstructions).toContain("Root instructions.");
+    expect(customInstructions).toContain("Child instructions.");
+    expect(customInstructions.indexOf("Root instructions.")).toBeLessThan(
+      customInstructions.indexOf("Child instructions.")
+    );
+  });
+
+  test("preserves tool instructions from every nested sub-project instruction file", async () => {
+    const childProjectDir = path.join(projectDir, "packages", "payments");
+    await fs.mkdir(childProjectDir, { recursive: true });
+    initGitRepo(projectDir);
+
+    await fs.writeFile(
+      path.join(projectDir, "AGENTS.md"),
+      "## Tool: bash\nFrom root: start with git status --short.\n"
+    );
+    await fs.writeFile(
+      path.join(childProjectDir, "AGENTS.md"),
+      "## Tool: bash\nFrom child: prefer bun test --watch.\n"
+    );
+
+    const metadata: WorkspaceMetadata = {
+      id: "test-workspace",
+      name: "test-workspace",
+      projectName: "payments",
+      projectPath: childProjectDir,
+      runtimeConfig: { type: "local" },
+    };
+
+    const toolInstructions = await readToolInstructions(
+      metadata,
+      runtime,
+      childProjectDir,
+      "anthropic:claude-sonnet-4-20250514"
+    );
+
+    expect(toolInstructions.bash).toBe(
+      ["From root: start with git status --short.", "From child: prefer bun test --watch."].join(
+        "\n\n"
+      )
+    );
   });
 
   test("includes generic instructions from every project repo in a multi-project workspace", async () => {

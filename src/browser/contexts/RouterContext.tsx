@@ -20,7 +20,7 @@ import { getProjectRouteId } from "@/common/utils/projectRouteId";
 
 export interface RouterContext {
   navigateToWorkspace: (workspaceId: string) => void;
-  navigateToProject: (projectPath: string, sectionId?: string, draftId?: string) => void;
+  navigateToProject: (projectPath: string, draftId?: string) => void;
   navigateToHome: () => void;
   navigateToSettings: (section?: string) => void;
   navigateFromSettings: () => void;
@@ -36,9 +36,6 @@ export interface RouterContext {
 
   /** Optional project path carried via in-memory navigation state (not persisted on refresh). */
   currentProjectPathFromState: string | null;
-
-  /** Section ID for pending workspace creation (from URL) */
-  pendingSectionId: string | null;
 
   /** Draft ID for UI-only workspace creation drafts (from URL) */
   pendingDraftId: string | null;
@@ -294,14 +291,10 @@ function RouterContextInner(props: { children: ReactNode }) {
     const legacyPath = params.get("path");
     const projectParam = params.get("project");
     if (!projectParam && legacyPath) {
-      const section = params.get("section");
       const draft = params.get("draft");
       const projectId = getProjectRouteId(legacyPath);
       const nextParams = new URLSearchParams();
       nextParams.set("project", projectId);
-      if (section) {
-        nextParams.set("section", section);
-      }
       if (draft) {
         nextParams.set("draft", draft);
       }
@@ -309,7 +302,6 @@ function RouterContextInner(props: { children: ReactNode }) {
       void navigateRef.current(url, { replace: true, state: { projectPath: legacyPath } });
     }
   }, [location.pathname, location.search]);
-  const pendingSectionId = location.pathname === "/project" ? searchParams.get("section") : null;
   const pendingDraftId = location.pathname === "/project" ? searchParams.get("draft") : null;
 
   // Navigation functions use push (not replace) to build history for back/forward navigation.
@@ -318,13 +310,10 @@ function RouterContextInner(props: { children: ReactNode }) {
     void navigateRef.current(`/workspace/${encodeURIComponent(id)}`);
   }, []);
 
-  const navigateToProject = useCallback((path: string, sectionId?: string, draftId?: string) => {
+  const navigateToProject = useCallback((path: string, draftId?: string) => {
     const projectId = getProjectRouteId(path);
     const params = new URLSearchParams();
     params.set("project", projectId);
-    if (sectionId) {
-      params.set("section", sectionId);
-    }
     if (draftId) {
       params.set("draft", draftId);
     }
@@ -380,7 +369,6 @@ function RouterContextInner(props: { children: ReactNode }) {
       currentSettingsSection,
       currentProjectId,
       currentProjectPathFromState,
-      pendingSectionId,
       pendingDraftId,
       isAnalyticsOpen,
     }),
@@ -396,7 +384,6 @@ function RouterContextInner(props: { children: ReactNode }) {
       currentSettingsSection,
       currentProjectId,
       currentProjectPathFromState,
-      pendingSectionId,
       pendingDraftId,
       isAnalyticsOpen,
     ]

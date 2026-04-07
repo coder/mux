@@ -183,7 +183,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   );
   const { variant } = props;
   const creationProjectPath = variant === "creation" ? props.projectPath : "";
-  const creationDraftId = variant === "creation" ? props.pendingDraftId : null;
   const [thinkingLevel] = useThinkingLevel();
   const atMentionProjectPath = variant === "creation" ? props.projectPath : null;
   const workspaceId = variant === "workspace" ? props.workspaceId : null;
@@ -507,8 +506,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const preEditDraftRef = useRef<DraftState>({ text: "", attachments: [] });
   const preEditReviewsRef = useRef<ReviewNoteDataForDisplay[] | null>(null);
   const { open } = useSettings();
-  const { selectedWorkspace, beginWorkspaceCreation, updateWorkspaceDraftSection } =
-    useWorkspaceContext();
+  const { selectedWorkspace } = useWorkspaceContext();
   const { agentId, currentAgent } = useAgent();
 
   // Use current agent's uiColor, or neutral border until agents load
@@ -719,9 +717,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const openModelSelector = useCallback(() => {
     modelSelectorRef.current?.open();
   }, []);
-  // Section selection state for creation variant (must be before useCreationWorkspace)
   const { userProjects } = useProjectContext();
-  const pendingSectionId = variant === "creation" ? (props.pendingSectionId ?? null) : null;
   const creationProject = variant === "creation" ? userProjects.get(props.projectPath) : undefined;
   const hasCreationRuntimeOverrides =
     creationProject?.runtimeOverridesEnabled === true ||
@@ -732,65 +728,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     variant === "creation" && hasCreationRuntimeOverrides
       ? normalizeRuntimeEnablement(creationProject?.runtimeEnablement)
       : runtimeEnablement;
-  const creationSections = creationProject?.sections ?? [];
 
-  const [selectedSectionId, setSelectedSectionId] = useState<string | null>(() => pendingSectionId);
   const [hasAttemptedCreateSend, setHasAttemptedCreateSend] = useState(false);
-
-  // Keep local selection in sync with the URL-driven pending section (sidebar "+" button).
-  useEffect(() => {
-    if (variant !== "creation") {
-      return;
-    }
-
-    setSelectedSectionId(pendingSectionId);
-  }, [pendingSectionId, variant]);
-
-  // If the section disappears (e.g. deleted in another window), avoid creating a workspace
-  // with a dangling sectionId.
-  useEffect(() => {
-    if (variant !== "creation") {
-      return;
-    }
-
-    if (!creationProject || !selectedSectionId) {
-      return;
-    }
-
-    const stillExists = (creationProject.sections ?? []).some(
-      (section) => section.id === selectedSectionId
-    );
-    if (!stillExists) {
-      setSelectedSectionId(null);
-    }
-  }, [creationProject, selectedSectionId, variant]);
-
-  const handleCreationSectionChange = useCallback(
-    (sectionId: string | null) => {
-      setSelectedSectionId(sectionId);
-
-      if (variant !== "creation") {
-        return;
-      }
-
-      if (typeof creationDraftId === "string" && creationDraftId.trim().length > 0) {
-        updateWorkspaceDraftSection(creationProjectPath, creationDraftId, sectionId);
-        return;
-      }
-
-      beginWorkspaceCreation(
-        creationProjectPath,
-        typeof sectionId === "string" && sectionId.trim().length > 0 ? sectionId : undefined
-      );
-    },
-    [
-      beginWorkspaceCreation,
-      creationDraftId,
-      creationProjectPath,
-      updateWorkspaceDraftSection,
-      variant,
-    ]
-  );
 
   // Creation-specific state (hook always called, but only used when variant === "creation")
   // This avoids conditional hook calls which violate React rules
@@ -800,7 +739,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           projectPath: props.projectPath,
           onWorkspaceCreated: props.onWorkspaceCreated,
           message: input,
-          sectionId: selectedSectionId,
           draftId: props.pendingDraftId,
           userModel: preferredModel,
         }
@@ -876,9 +814,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           nameState: creationState.nameState,
           runtimeAvailabilityState: creationState.runtimeAvailabilityState,
           runtimeEnablement: creationRuntimeEnablement,
-          sections: creationSections,
-          selectedSectionId,
-          onSectionChange: handleCreationSectionChange,
           allowedRuntimeModes: runtimePolicy.allowedModes,
           allowSshHost: runtimePolicy.allowSshHost,
           allowSshCoder: runtimePolicy.allowSshCoder,

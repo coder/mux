@@ -2120,8 +2120,7 @@ export class WorkspaceService extends EventEmitter {
     branchName: string,
     trunkBranch: string | undefined,
     title?: string,
-    runtimeConfig?: RuntimeConfig,
-    sectionId?: string
+    runtimeConfig?: RuntimeConfig
   ): Promise<Result<{ metadata: FrontendWorkspaceMetadata }>> {
     // Validate workspace name
     const validation = validateWorkspaceName(branchName);
@@ -2303,7 +2302,6 @@ export class WorkspaceService extends EventEmitter {
           title,
           createdAt: metadata.createdAt,
           runtimeConfig: finalRuntimeConfig,
-          sectionId,
         });
         return config;
       });
@@ -5246,8 +5244,6 @@ export class WorkspaceService extends EventEmitter {
         createdAt: new Date().toISOString(),
         runtimeConfig: forkedRuntimeConfig,
         namedWorkspacePath,
-        // Preserve workspace organization when forking via /fork.
-        sectionId: sourceMetadata.sectionId,
         // Forks with a continue message stay pending until the first accepted user send
         // can generate a more specific title, unless the user edits the title first.
         pendingAutoTitle: pendingAutoTitle === true ? true : undefined,

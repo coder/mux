@@ -113,7 +113,6 @@ function AppInner() {
     selectedWorkspace,
     setSelectedWorkspace,
     pendingNewWorkspaceProject,
-    pendingNewWorkspaceSectionId,
     pendingNewWorkspaceDraftId,
     beginWorkspaceCreation,
   } = useWorkspaceContext();
@@ -1116,7 +1115,6 @@ function AppInner() {
                     projectName={projectName}
                     leftSidebarCollapsed={sidebarCollapsed}
                     onToggleLeftSidebarCollapsed={handleToggleSidebar}
-                    pendingSectionId={pendingNewWorkspaceSectionId}
                     pendingDraftId={pendingNewWorkspaceDraftId}
                     onWorkspaceCreated={(metadata, options) => {
                       // IMPORTANT: Add workspace to store FIRST (synchronous) to ensure

@@ -20,7 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/browser/components/SelectPrimitive/SelectPrimitive";
-import { Blocks, Cog, GitBranch, Loader2, Wand2, X } from "lucide-react";
+import { Blocks, Cog, GitBranch, Loader2, Wand2 } from "lucide-react";
 import { PlatformPaths } from "@/common/utils/paths";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useSettings } from "@/browser/contexts/SettingsContext";
@@ -40,8 +40,6 @@ import {
 
 import type { WorkspaceNameState, WorkspaceNameUIError } from "@/browser/hooks/useWorkspaceName";
 import type { CoderInfo } from "@/common/orpc/schemas/coder";
-import type { SectionConfig } from "@/common/types/project";
-import { resolveSectionColor } from "@/common/constants/ui";
 import {
   CoderAvailabilityMessage,
   CoderWorkspaceForm,
@@ -128,12 +126,6 @@ interface CreationControlsProps {
   runtimeAvailabilityState: RuntimeAvailabilityState;
   /** Runtime enablement toggles from Settings (hide disabled runtimes). */
   runtimeEnablement?: RuntimeEnablement;
-  /** Available sections for this project */
-  sections?: SectionConfig[];
-  /** Currently selected section ID */
-  selectedSectionId?: string | null;
-  /** Callback when section selection changes */
-  onSectionChange?: (sectionId: string | null) => void;
   /** Which runtime field (if any) is in error state for visual feedback */
   runtimeFieldError?: "docker" | "ssh" | null;
 
@@ -320,113 +312,6 @@ const resolveRuntimeButtonState = (
     isDefault: defaultMode === value,
   };
 };
-
-/** Aesthetic section picker with color accent */
-interface SectionPickerProps {
-  sections: SectionConfig[];
-  selectedSectionId: string | null;
-  onSectionChange: (sectionId: string | null) => void;
-  disabled?: boolean;
-}
-
-function SectionSelectItem(props: { section: SectionConfig }) {
-  const color = resolveSectionColor(props.section.color);
-
-  return (
-    <SelectPrimitive.Item
-      value={props.section.id}
-      className="hover:bg-hover focus:bg-hover flex cursor-default items-center gap-2.5 rounded-sm px-3 py-1.5 text-sm font-medium outline-none select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
-    >
-      <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: color }} />
-      <SelectPrimitive.ItemText>{props.section.name}</SelectPrimitive.ItemText>
-    </SelectPrimitive.Item>
-  );
-}
-
-function SectionPicker(props: SectionPickerProps) {
-  const { sections, selectedSectionId, onSectionChange, disabled } = props;
-
-  // Radix Select treats `""` as an "unselected" value; normalize any accidental
-  // empty-string IDs back to null so the UI stays consistent.
-  const normalizedSelectedSectionId =
-    selectedSectionId && selectedSectionId.trim().length > 0 ? selectedSectionId : null;
-
-  const selectedSection = normalizedSelectedSectionId
-    ? sections.find((s) => s.id === normalizedSelectedSectionId)
-    : null;
-  const sectionColor = resolveSectionColor(selectedSection?.color);
-
-  return (
-    <div
-      className="relative inline-flex items-center"
-      data-testid="section-selector"
-      data-selected-section={normalizedSelectedSectionId ?? ""}
-    >
-      <RadixSelect
-        value={normalizedSelectedSectionId ?? ""}
-        onValueChange={(value: string) => onSectionChange(value.trim() ? value : null)}
-        disabled={disabled}
-      >
-        {/* Trigger IS the full pill so Radix aligns the dropdown to it. */}
-        <SelectTrigger
-          className={cn(
-            "inline-flex h-auto w-auto items-center gap-2.5 rounded-md border bg-transparent py-1.5 pl-3 text-sm font-medium shadow-none transition-colors focus:ring-0",
-            normalizedSelectedSectionId ? "pr-8" : "pr-3",
-            selectedSection ? "text-foreground" : "text-muted"
-          )}
-          style={{
-            borderColor: selectedSection ? sectionColor : "var(--color-border-medium)",
-            borderLeftWidth: selectedSection ? "3px" : "1px",
-            backgroundColor: selectedSection ? `${sectionColor}08` : "transparent",
-          }}
-        >
-          {/* Color indicator dot */}
-          <div
-            className="size-2.5 shrink-0 rounded-full transition-colors"
-            style={{
-              backgroundColor: selectedSection ? sectionColor : "var(--color-muted)",
-              opacity: selectedSection ? 1 : 0.4,
-            }}
-          />
-          <span className="text-muted-foreground shrink-0 text-xs">Section</span>
-          <SelectValue placeholder="Select..." />
-        </SelectTrigger>
-        <SelectContent className="border-border-medium">
-          {sections.map((section) => (
-            <SectionSelectItem key={section.id} section={section} />
-          ))}
-        </SelectContent>
-      </RadixSelect>
-      {/* Clear button is a sibling (not nested in the trigger) to avoid
-          nesting interactive elements. Absolutely positioned over the
-          right padding reserved by the trigger's pr-8. */}
-      {normalizedSelectedSectionId && (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              aria-label="Clear section selection"
-              disabled={disabled}
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                onSectionChange(null);
-              }}
-              className={cn(
-                "text-muted hover:text-error absolute right-1.5 top-1/2 -translate-y-1/2 inline-flex size-5 items-center justify-center rounded-sm transition-colors",
-                "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent",
-                "disabled:pointer-events-none disabled:opacity-50"
-              )}
-            >
-              <X className="h-3 w-3" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>Clear section</TooltipContent>
-        </Tooltip>
-      )}
-    </div>
-  );
-}
 
 export function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
   const state = props.runtimeAvailabilityState;
@@ -939,34 +824,7 @@ export function CreationControls(props: CreationControlsProps) {
           </div>
           {nameState.error && <NameErrorDisplay error={nameState.error} />}
         </div>
-
-        {/* Section selector - inline on desktop, hidden on mobile (shown separately below) */}
-        {props.sections && props.sections.length > 0 && props.onSectionChange && (
-          <>
-            <div className="hidden flex-1 md:block" />
-            <div className="hidden md:block">
-              <SectionPicker
-                sections={props.sections}
-                selectedSectionId={props.selectedSectionId ?? null}
-                onSectionChange={props.onSectionChange}
-                disabled={props.disabled}
-              />
-            </div>
-          </>
-        )}
       </div>
-
-      {/* Section selector - own row on mobile only, hidden on desktop */}
-      {props.sections && props.sections.length > 0 && props.onSectionChange && (
-        <div className="md:hidden">
-          <SectionPicker
-            sections={props.sections}
-            selectedSectionId={props.selectedSectionId ?? null}
-            onSectionChange={props.onSectionChange}
-            disabled={props.disabled}
-          />
-        </div>
-      )}
 
       {/* Runtime and source branch controls */}
       <div className="flex flex-col gap-1.5" data-component="RuntimeTypeGroup">

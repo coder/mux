@@ -60,8 +60,6 @@ export interface ChatInputCreationVariant {
   variant: "creation";
   projectPath: string;
   projectName: string;
-  /** Section ID to pre-select (from sidebar section "+" button) */
-  pendingSectionId?: string | null;
   /** Draft ID for UI-only workspace creation drafts (from URL) */
   pendingDraftId?: string | null;
   onWorkspaceCreated: (

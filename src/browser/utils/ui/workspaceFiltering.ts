@@ -540,13 +540,17 @@ export function partitionWorkspacesByAge(
  * - unsectioned: workspaces not assigned to any section
  * - bySectionId: map of section ID to workspaces in that section
  */
+type LegacySectionWorkspace = FrontendWorkspaceMetadata & {
+  sectionId?: string;
+};
+
 interface SectionPartitionResult {
-  unsectioned: FrontendWorkspaceMetadata[];
-  bySectionId: Map<string, FrontendWorkspaceMetadata[]>;
+  unsectioned: LegacySectionWorkspace[];
+  bySectionId: Map<string, LegacySectionWorkspace[]>;
 }
 
 /**
- * Partition workspaces by their sectionId.
+ * Partition workspaces by their legacy sectionId.
  * Preserves input order within each partition.
  *
  * @param workspaces - All workspaces for the project (in display order)
@@ -554,12 +558,12 @@ interface SectionPartitionResult {
  * @returns Partitioned workspaces
  */
 export function partitionWorkspacesBySection(
-  workspaces: FrontendWorkspaceMetadata[],
+  workspaces: LegacySectionWorkspace[],
   sections: SectionConfig[]
 ): SectionPartitionResult {
   const sectionIds = new Set(sections.map((s) => s.id));
-  const unsectioned: FrontendWorkspaceMetadata[] = [];
-  const bySectionId = new Map<string, FrontendWorkspaceMetadata[]>();
+  const unsectioned: LegacySectionWorkspace[] = [];
+  const bySectionId = new Map<string, LegacySectionWorkspace[]>();
 
   // Initialize all sections with empty arrays to ensure consistent ordering
   for (const section of sections) {
@@ -567,13 +571,13 @@ export function partitionWorkspacesBySection(
   }
 
   // Build workspace lookup for parent resolution
-  const byId = new Map<string, FrontendWorkspaceMetadata>();
+  const byId = new Map<string, LegacySectionWorkspace>();
   for (const workspace of workspaces) {
     byId.set(workspace.id, workspace);
   }
 
   // Resolve effective section for a workspace (inherit from parent if unset)
-  const resolveSection = (workspace: FrontendWorkspaceMetadata): string | undefined => {
+  const resolveSection = (workspace: LegacySectionWorkspace): string | undefined => {
     if (workspace.sectionId && sectionIds.has(workspace.sectionId)) {
       return workspace.sectionId;
     }

@@ -2900,54 +2900,6 @@ export const router = (authToken?: string) => {
             context.projectService.setIdleCompactionHours(input.projectPath, input.hours)
           ),
       },
-      sections: {
-        list: t
-          .input(schemas.projects.sections.list.input)
-          .output(schemas.projects.sections.list.output)
-          .handler(({ context, input }) => context.projectService.listSections(input.projectPath)),
-        create: t
-          .input(schemas.projects.sections.create.input)
-          .output(schemas.projects.sections.create.output)
-          .handler(({ context, input }) =>
-            context.projectService.createSection(input.projectPath, input.name, input.color)
-          ),
-        update: t
-          .input(schemas.projects.sections.update.input)
-          .output(schemas.projects.sections.update.output)
-          .handler(({ context, input }) =>
-            context.projectService.updateSection(input.projectPath, input.sectionId, {
-              name: input.name,
-              color: input.color,
-            })
-          ),
-        remove: t
-          .input(schemas.projects.sections.remove.input)
-          .output(schemas.projects.sections.remove.output)
-          .handler(({ context, input }) =>
-            context.projectService.removeSection(input.projectPath, input.sectionId)
-          ),
-        reorder: t
-          .input(schemas.projects.sections.reorder.input)
-          .output(schemas.projects.sections.reorder.output)
-          .handler(({ context, input }) =>
-            context.projectService.reorderSections(input.projectPath, input.sectionIds)
-          ),
-        assignWorkspace: t
-          .input(schemas.projects.sections.assignWorkspace.input)
-          .output(schemas.projects.sections.assignWorkspace.output)
-          .handler(async ({ context, input }) => {
-            const result = await context.projectService.assignWorkspaceToSection(
-              input.projectPath,
-              input.workspaceId,
-              input.sectionId
-            );
-            if (result.success) {
-              // Emit metadata update so frontend receives the sectionId change
-              await context.workspaceService.refreshAndEmitMetadata(input.workspaceId);
-            }
-            return result;
-          }),
-      },
     },
     nameGeneration: {
       generate: t
@@ -3022,8 +2974,7 @@ export const router = (authToken?: string) => {
             input.branchName,
             input.trunkBranch,
             input.title,
-            input.runtimeConfig,
-            input.sectionId
+            input.runtimeConfig
           );
           if (!result.success) {
             return { success: false, error: result.error };

@@ -1036,7 +1036,7 @@ describe("partitionWorkspacesBySection", () => {
     id: string,
     sectionId?: string,
     parentWorkspaceId?: string
-  ): FrontendWorkspaceMetadata => ({
+  ): FrontendWorkspaceMetadata & { sectionId?: string } => ({
     id,
     name: `workspace-${id}`,
     projectName: "test-project",

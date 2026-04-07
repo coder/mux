@@ -239,56 +239,37 @@ export const IPhone17ProMaxTouchReviewImmersive: AppStory = {
 };
 
 /**
- * Mobile sidebar with a project containing a custom section.
- * Verifies section header action buttons (+, color, rename, delete) are visible
- * on touch devices where hover state doesn't exist.
+ * Mobile sidebar with a nested sub-project path.
+ * Verifies the child project renders under its parent on touch-sized layouts.
  */
-export const IPhone16eSidebarWithSections: AppStory = {
+export const IPhone16eSidebarWithSubProjects: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() => {
         const projectPath = "/home/user/projects/my-app";
-        const sectionId = "sec00001";
+        const childProjectPath = `${projectPath}/packages/payments`;
 
         const workspaces = [
           createWorkspace({
-            id: "ws-unsectioned",
+            id: "ws-parent",
             name: "main",
             projectName: "my-app",
             projectPath,
           }),
-          {
-            ...createWorkspace({
-              id: "ws-in-section-1",
-              name: "feature/auth",
-              projectName: "my-app",
-              projectPath,
-            }),
-            sectionId,
-          },
-          {
-            ...createWorkspace({
-              id: "ws-in-section-2",
-              name: "feature/payments",
-              projectName: "my-app",
-              projectPath,
-            }),
-            sectionId,
-          },
+          createWorkspace({
+            id: "ws-child",
+            name: "feature/payments",
+            projectName: "payments",
+            projectPath: childProjectPath,
+          }),
         ];
 
-        // Build project config with a custom section
         const projects = groupWorkspacesByProject(workspaces);
-        const projectConfig = projects.get(projectPath)!;
-        projects.set(projectPath, {
-          ...projectConfig,
-          sections: [{ id: sectionId, name: "Features", color: "#6366f1", nextId: null }],
-        });
 
-        // Sidebar open with no workspace selected so the sidebar content is visible
+        // Sidebar open with no workspace selected so the sidebar content is visible.
         clearWorkspaceSelection();
         collapseRightSidebar();
-        expandProjects([projectPath]);
+        expandProjects([projectPath, childProjectPath]);
         window.localStorage.setItem(LEFT_SIDEBAR_COLLAPSED_KEY, JSON.stringify(false));
 
         return createMockORPCClient({ projects, workspaces });
@@ -308,17 +289,9 @@ export const IPhone16eSidebarWithSections: AppStory = {
     },
   },
   play: async ({ canvasElement }) => {
-    // No workspace is selected so there's no ChatInput to wait for;
-    // skip stabilizePhoneViewportStory and wait for the section directly.
     await waitFor(
       () => {
-        const sectionHeader = canvasElement.querySelector('[data-section-id="sec00001"]');
-        if (!sectionHeader) throw new Error("Section header not found");
-        // Verify the section header action buttons are in the DOM.
-        // The actual visibility assertion (opacity via CSS media query) is
-        // validated by the Chromatic snapshot in touch mode — the Storybook
-        // test runner doesn't emulate pointer:coarse media queries.
-        within(sectionHeader as HTMLElement).getByLabelText("New chat in section");
+        within(canvasElement).getByText("payments");
       },
       { timeout: 10_000 }
     );

@@ -160,9 +160,6 @@ export const WorkspaceMetadataSchema = z.object({
         "When >1 entry, this is a multi-project workspace. " +
         "projectPath/projectName reflect the primary project for backcompat.",
     }),
-  sectionId: z.string().optional().meta({
-    description: "ID of the section this workspace belongs to (optional, unsectioned if absent)",
-  }),
 });
 
 export const FrontendWorkspaceMetadataSchema = WorkspaceMetadataSchema.extend({

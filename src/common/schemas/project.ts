@@ -183,9 +183,6 @@ export const WorkspaceConfigSchema = z.object({
       "Durable restore metadata captured before archive-time worktree deletion. Present only while an archived snapshot is awaiting restore.",
   }),
   projects: z.array(ProjectRefSchema).optional(),
-  sectionId: z.string().optional().meta({
-    description: "ID of the section this workspace belongs to (optional, unsectioned if absent)",
-  }),
 });
 
 export const ProjectConfigSchema = z.object({
@@ -196,9 +193,6 @@ export const ProjectConfigSchema = z.object({
     description: "Project folder accent color (hex value like #5a9bd4 or preset name)",
   }),
   workspaces: z.array(WorkspaceConfigSchema),
-  sections: z.array(SectionConfigSchema).optional().meta({
-    description: "Sections for organizing workspaces within this project",
-  }),
   idleCompactionHours: z.number().min(1).nullable().optional().meta({
     description:
       "Hours of inactivity before auto-compacting workspaces. null/undefined = disabled.",
