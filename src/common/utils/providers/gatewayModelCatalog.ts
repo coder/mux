@@ -1,9 +1,6 @@
 import type { ProviderModelEntry } from "@/common/orpc/types";
 
-import {
-  isCopilotRoutableModel,
-  normalizeCopilotModelId,
-} from "@/common/utils/copilot/modelRouting";
+import { normalizeCopilotModelId } from "@/common/utils/copilot/modelRouting";
 import { maybeGetProviderModelEntryId } from "@/common/utils/providers/modelEntries";
 
 export function isProviderModelAccessibleFromAuthoritativeCatalog(
@@ -16,10 +13,6 @@ export function isProviderModelAccessibleFromAuthoritativeCatalog(
   // stores the full model catalog returned by Copilot's /models endpoint.
   if (provider !== "github-copilot") {
     return true;
-  }
-
-  if (!isCopilotRoutableModel(modelId)) {
-    return false;
   }
 
   if (!Array.isArray(models) || models.length === 0) {
