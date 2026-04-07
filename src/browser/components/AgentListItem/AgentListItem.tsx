@@ -779,7 +779,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
         data-section-id={sectionId ?? ""}
       >
         {shouldShowHeartbeatFallback ? (
-          <div className={LEADING_SLOT_CONTAINER_CLASSES} style={LEADING_SLOT_CONTAINER_STYLE}>
+          <div className={STATUS_DOT_SLOT_CONTAINER_CLASSES} style={LEADING_SLOT_CONTAINER_STYLE}>
             <HeartbeatFallbackIcon />
           </div>
         ) : shouldShowQuickArchiveButton ? (
