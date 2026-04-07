@@ -176,7 +176,7 @@ export class HeartbeatService {
         }
 
         configuredWorkspaceIds.add(workspaceId);
-        const trackingIntervalMs = this.getTrackingIntervalMsForWorkspace(workspace);
+        const trackingIntervalMs = this.getTrackingIntervalMsForWorkspace(workspace, config);
         if (trackingIntervalMs != null) {
           const nextEligibleAt = this.nextEligibleAtByWorkspaceId.has(workspaceId)
             ? now + trackingIntervalMs
@@ -365,9 +365,11 @@ export class HeartbeatService {
     }
 
     if (metadata.heartbeat?.enabled) {
+      const config = this.config.loadConfigOrDefault();
       const intervalMs = this.getSanitizedTrackingIntervalMs(
         workspaceId,
         metadata.heartbeat.intervalMs,
+        config,
         "metadata_event"
       );
       if (intervalMs == null) {
@@ -391,6 +393,7 @@ export class HeartbeatService {
     return this.getSanitizedTrackingIntervalMs(
       workspaceId,
       workspace.heartbeat.intervalMs,
+      config,
       "heartbeat_lookup"
     );
   }
@@ -556,10 +559,13 @@ export class HeartbeatService {
 
   private getTrackingIntervalMs(workspaceId: string, config: ProjectsConfig): number | null {
     const workspace = this.findWorkspaceConfigEntry(workspaceId, config);
-    return workspace ? this.getTrackingIntervalMsForWorkspace(workspace) : null;
+    return workspace ? this.getTrackingIntervalMsForWorkspace(workspace, config) : null;
   }
 
-  private getTrackingIntervalMsForWorkspace(workspace: Workspace): number | null {
+  private getTrackingIntervalMsForWorkspace(
+    workspace: Workspace,
+    config: ProjectsConfig
+  ): number | null {
     if (workspace.heartbeat?.enabled !== true) {
       return null;
     }
@@ -578,6 +584,7 @@ export class HeartbeatService {
     return this.getSanitizedTrackingIntervalMs(
       workspaceId,
       workspace.heartbeat.intervalMs,
+      config,
       "config_resync"
     );
   }
@@ -585,6 +592,7 @@ export class HeartbeatService {
   private getSanitizedTrackingIntervalMs(
     workspaceId: string,
     rawIntervalMs: number | undefined,
+    config: ProjectsConfig,
     source: "config_resync" | "heartbeat_lookup" | "metadata_event"
   ): number | null {
     assert(
@@ -592,7 +600,8 @@ export class HeartbeatService {
       "HeartbeatService.getSanitizedTrackingIntervalMs requires a workspaceId"
     );
 
-    const intervalMs = rawIntervalMs ?? HEARTBEAT_DEFAULT_INTERVAL_MS;
+    const intervalMs =
+      rawIntervalMs ?? config.heartbeatDefaultIntervalMs ?? HEARTBEAT_DEFAULT_INTERVAL_MS;
     if (this.isValidTrackingIntervalMs(intervalMs)) {
       return intervalMs;
     }

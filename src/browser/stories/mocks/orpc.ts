@@ -134,6 +134,8 @@ export interface MockORPCClientOptions {
   onePasswordAccountName?: string | null;
   /** Initial global heartbeat default prompt for config.getConfig */
   heartbeatDefaultPrompt?: string;
+  /** Initial global heartbeat default interval for config.getConfig */
+  heartbeatDefaultIntervalMs?: number;
   /** Initial route priority for config.getConfig */
   routePriority?: string[];
   /** Initial per-model route overrides for config.getConfig */
@@ -351,6 +353,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     defaultRuntime: initialDefaultRuntime,
     onePasswordAccountName: initialOnePasswordAccountName = null,
     heartbeatDefaultPrompt: initialHeartbeatDefaultPrompt,
+    heartbeatDefaultIntervalMs: initialHeartbeatDefaultIntervalMs,
     routePriority: initialRoutePriority = ["direct"],
     routeOverrides: initialRouteOverrides = {},
     agentDefinitions: initialAgentDefinitions,
@@ -499,6 +502,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
   let defaultRuntime: RuntimeEnablementId | null = initialDefaultRuntime ?? null;
   let onePasswordAccountName: string | null = initialOnePasswordAccountName;
   let heartbeatDefaultPrompt = initialHeartbeatDefaultPrompt;
+  let heartbeatDefaultIntervalMs = initialHeartbeatDefaultIntervalMs;
   let routePriority = [...initialRoutePriority];
   let routeOverrides = { ...initialRouteOverrides };
   const configChangeSubscribers = new Set<(value: void) => void>();
@@ -690,6 +694,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           muxGovernorUrl,
           onePasswordAccountName,
           heartbeatDefaultPrompt,
+          heartbeatDefaultIntervalMs,
           muxGovernorEnrolled,
           llmDebugLogs: false,
         }),
@@ -779,6 +784,11 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         heartbeatDefaultPrompt = input.defaultPrompt?.trim()
           ? input.defaultPrompt.trim()
           : undefined;
+        notifyConfigChanged();
+        return Promise.resolve(undefined);
+      },
+      updateHeartbeatDefaultIntervalMs: (input: { intervalMs?: number | null }) => {
+        heartbeatDefaultIntervalMs = input.intervalMs ?? undefined;
         notifyConfigChanged();
         return Promise.resolve(undefined);
       },

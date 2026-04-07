@@ -44,6 +44,7 @@ interface HeartbeatServiceInternals {
   checkInterval: ReturnType<typeof setInterval> | null;
   stopped: boolean;
   nextEligibleAtByWorkspaceId: Map<string, number>;
+  trackedIntervalMsByWorkspaceId: Map<string, number>;
   activeWorkspaceIds: Set<string>;
   queuedWorkspaceIds: Set<string>;
   isProcessingQueue: boolean;
@@ -91,7 +92,7 @@ describe("HeartbeatService", () => {
       parentWorkspaceId: string;
       heartbeat: {
         enabled: boolean;
-        intervalMs: number;
+        intervalMs?: number;
         message?: string;
         contextMode?: "normal" | "compact" | "reset";
       };
@@ -1193,6 +1194,29 @@ describe("HeartbeatService", () => {
 
       expect(internals.nextEligibleAtByWorkspaceId.get(testWorkspaceId)).toBe(
         1 + updatedIntervalMs
+      );
+    });
+
+    test("uses the global default heartbeat interval when a workspace does not set one", async () => {
+      const internals = getInternals();
+      const globalDefaultIntervalMs = HEARTBEAT_MIN_INTERVAL_MS;
+      currentProjectsConfig = {
+        ...makeProjectsConfig([
+          makeWorkspaceEntry({
+            heartbeat: { enabled: true },
+          }),
+        ]),
+        heartbeatDefaultIntervalMs: globalDefaultIntervalMs,
+      };
+
+      const beforeResync = Date.now();
+      await internals.resyncFromConfig(beforeResync);
+
+      expect(internals.trackedIntervalMsByWorkspaceId.get(testWorkspaceId)).toBe(
+        globalDefaultIntervalMs
+      );
+      expect(internals.nextEligibleAtByWorkspaceId.get(testWorkspaceId)).toBeGreaterThanOrEqual(
+        beforeResync + globalDefaultIntervalMs
       );
     });
 

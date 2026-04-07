@@ -89,6 +89,8 @@ export interface ProjectsConfig {
   llmDebugLogs?: boolean;
   /** Default heartbeat prompt used when a workspace heartbeat does not set its own message. */
   heartbeatDefaultPrompt?: string;
+  /** Default heartbeat interval used when a workspace heartbeat does not set its own cadence. */
+  heartbeatDefaultIntervalMs?: number;
   muxGatewayModels?: string[];
   routePriority?: string[];
   routeOverrides?: Record<string, string>;

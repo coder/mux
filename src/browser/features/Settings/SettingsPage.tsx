@@ -16,6 +16,7 @@ import {
   ShieldCheck,
   Server,
   Lock,
+  HeartPulse,
 } from "lucide-react";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useOnboardingPause } from "@/browser/features/SplashScreens/SplashScreenProvider";
@@ -37,6 +38,7 @@ import { ExperimentsSection } from "./Sections/ExperimentsSection";
 import { ServerAccessSection } from "./Sections/ServerAccessSection";
 import { KeybindsSection } from "./Sections/KeybindsSection";
 import { SecuritySection } from "./Sections/SecuritySection";
+import { HeartbeatSection } from "./Sections/HeartbeatSection";
 import type { SettingsSection } from "./types";
 
 const BASE_SECTIONS: SettingsSection[] = [
@@ -124,6 +126,7 @@ export function SettingsPage(props: SettingsPageProps) {
   const onboardingPause = useOnboardingPause();
   const system1Enabled = useExperimentValue(EXPERIMENT_IDS.SYSTEM_1);
   const governorEnabled = useExperimentValue(EXPERIMENT_IDS.MUX_GOVERNOR);
+  const workspaceHeartbeatsEnabled = useExperimentValue(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS);
 
   // Keep routing on a valid section when an experiment-gated section is disabled.
   useEffect(() => {
@@ -133,7 +136,16 @@ export function SettingsPage(props: SettingsPageProps) {
     if (!governorEnabled && activeSection === "governor") {
       setActiveSection(BASE_SECTIONS[0]?.id ?? "general");
     }
-  }, [activeSection, setActiveSection, system1Enabled, governorEnabled]);
+    if (!workspaceHeartbeatsEnabled && activeSection === "heartbeat") {
+      setActiveSection(BASE_SECTIONS[0]?.id ?? "general");
+    }
+  }, [
+    activeSection,
+    setActiveSection,
+    system1Enabled,
+    governorEnabled,
+    workspaceHeartbeatsEnabled,
+  ]);
 
   // Close settings on Escape. Uses bubble phase so inner surfaces (Select dropdowns,
   // Popover, Dialog) that call stopPropagation/preventDefault on Escape get first
@@ -172,6 +184,17 @@ export function SettingsPage(props: SettingsPageProps) {
         label: "Governor",
         icon: <ShieldCheck className="h-4 w-4" />,
         component: GovernorSection,
+      },
+    ];
+  }
+  if (workspaceHeartbeatsEnabled) {
+    sections = [
+      ...sections,
+      {
+        id: "heartbeat",
+        label: "Heartbeat",
+        icon: <HeartPulse className="h-4 w-4" />,
+        component: HeartbeatSection,
       },
     ];
   }

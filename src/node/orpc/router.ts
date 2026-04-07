@@ -593,6 +593,7 @@ export const router = (authToken?: string) => {
             muxGovernorEnrolled,
             llmDebugLogs: config.llmDebugLogs === true,
             heartbeatDefaultPrompt: config.heartbeatDefaultPrompt ?? undefined,
+            heartbeatDefaultIntervalMs: config.heartbeatDefaultIntervalMs ?? undefined,
             onePasswordAccountName: config.onePasswordAccountName ?? null,
           };
         }),
@@ -971,6 +972,19 @@ export const router = (authToken?: string) => {
               config.heartbeatDefaultPrompt = trimmed;
             } else {
               delete config.heartbeatDefaultPrompt;
+            }
+            return config;
+          });
+        }),
+      updateHeartbeatDefaultIntervalMs: t
+        .input(schemas.config.updateHeartbeatDefaultIntervalMs.input)
+        .output(schemas.config.updateHeartbeatDefaultIntervalMs.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => {
+            if (input.intervalMs != null) {
+              config.heartbeatDefaultIntervalMs = input.intervalMs;
+            } else {
+              delete config.heartbeatDefaultIntervalMs;
             }
             return config;
           });

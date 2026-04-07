@@ -7,6 +7,7 @@ import { ThinkingLevelSchema } from "../../types/thinking";
 import { CODER_ARCHIVE_BEHAVIORS } from "../coderArchiveBehavior";
 import { WORKTREE_ARCHIVE_BEHAVIORS } from "../worktreeArchiveBehavior";
 import { TaskSettingsSchema } from "./taskSettings";
+import { HEARTBEAT_MAX_INTERVAL_MS, HEARTBEAT_MIN_INTERVAL_MS } from "@/constants/heartbeat";
 
 export { RuntimeEnablementOverridesSchema } from "../../schemas/runtimeEnablement";
 export type { RuntimeEnablementOverrides } from "../../schemas/runtimeEnablement";
@@ -50,6 +51,12 @@ export const AppConfigOnDiskSchema = z
     muxGatewayEnabled: z.boolean().optional(),
     llmDebugLogs: z.boolean().optional(),
     heartbeatDefaultPrompt: z.string().optional(),
+    heartbeatDefaultIntervalMs: z
+      .number()
+      .int()
+      .min(HEARTBEAT_MIN_INTERVAL_MS)
+      .max(HEARTBEAT_MAX_INTERVAL_MS)
+      .optional(),
     muxGatewayModels: z.array(z.string()).optional(),
     routePriority: z.array(z.string()).optional(),
     routeOverrides: z.record(z.string(), z.string()).optional(),
