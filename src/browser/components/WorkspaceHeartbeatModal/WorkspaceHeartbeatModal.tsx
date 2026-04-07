@@ -12,31 +12,20 @@ import { Switch } from "@/browser/components/Switch/Switch";
 import { useWorkspaceHeartbeat } from "@/browser/hooks/useWorkspaceHeartbeat";
 import assert from "@/common/utils/assert";
 import {
+  clampIntervalMinutes,
+  formatIntervalMinutes,
+  HEARTBEAT_DEFAULT_INTERVAL_MINUTES,
+  HEARTBEAT_MAX_INTERVAL_MINUTES,
+  HEARTBEAT_MIN_INTERVAL_MINUTES,
+  intervalMinutesToMs,
+  parseIntervalMinutes,
+} from "@/browser/utils/heartbeatIntervalMinutes";
+import {
   HEARTBEAT_DEFAULT_CONTEXT_MODE,
   HEARTBEAT_DEFAULT_INTERVAL_MS,
   HEARTBEAT_DEFAULT_MESSAGE_BODY,
-  HEARTBEAT_MAX_INTERVAL_MS,
-  HEARTBEAT_MIN_INTERVAL_MS,
   type HeartbeatContextMode,
 } from "@/constants/heartbeat";
-
-const MS_PER_MINUTE = 60_000;
-const HEARTBEAT_MIN_INTERVAL_MINUTES = HEARTBEAT_MIN_INTERVAL_MS / MS_PER_MINUTE;
-const HEARTBEAT_MAX_INTERVAL_MINUTES = HEARTBEAT_MAX_INTERVAL_MS / MS_PER_MINUTE;
-const HEARTBEAT_DEFAULT_INTERVAL_MINUTES = HEARTBEAT_DEFAULT_INTERVAL_MS / MS_PER_MINUTE;
-
-assert(
-  Number.isInteger(HEARTBEAT_MIN_INTERVAL_MINUTES),
-  "Workspace heartbeat minimum interval must be a whole number of minutes"
-);
-assert(
-  Number.isInteger(HEARTBEAT_MAX_INTERVAL_MINUTES),
-  "Workspace heartbeat maximum interval must be a whole number of minutes"
-);
-assert(
-  Number.isInteger(HEARTBEAT_DEFAULT_INTERVAL_MINUTES),
-  "Workspace heartbeat default interval must be a whole number of minutes"
-);
 
 const HEARTBEAT_CONTEXT_MODE_OPTIONS: Array<{
   value: HeartbeatContextMode;
@@ -72,33 +61,6 @@ interface WorkspaceHeartbeatModalProps {
   workspaceId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-}
-
-function formatIntervalMinutes(intervalMs: number): string {
-  if (!Number.isFinite(intervalMs)) {
-    return String(HEARTBEAT_DEFAULT_INTERVAL_MINUTES);
-  }
-
-  const roundedMinutes = Math.round(intervalMs / MS_PER_MINUTE);
-  return String(clampIntervalMinutes(roundedMinutes));
-}
-
-function parseIntervalMinutes(value: string): number | null {
-  const trimmedValue = value.trim();
-  if (trimmedValue.length === 0 || !/^\d+$/.test(trimmedValue)) {
-    return null;
-  }
-
-  const minutes = Number.parseInt(trimmedValue, 10);
-  return Number.isInteger(minutes) ? minutes : null;
-}
-
-function clampIntervalMinutes(minutes: number): number {
-  assert(Number.isInteger(minutes), "Workspace heartbeat minutes must be a whole number");
-  return Math.min(
-    HEARTBEAT_MAX_INTERVAL_MINUTES,
-    Math.max(HEARTBEAT_MIN_INTERVAL_MINUTES, minutes)
-  );
 }
 
 function getValidationErrorMessage(value: string): string | null {
@@ -221,7 +183,7 @@ export function WorkspaceHeartbeatModal(props: WorkspaceHeartbeatModalProps) {
 
     const didSave = await save({
       enabled: draftEnabled,
-      intervalMs: parsedMinutes * MS_PER_MINUTE,
+      intervalMs: intervalMinutesToMs(parsedMinutes),
       contextMode: draftContextMode,
       // Read directly from the textarea on save so the final keystroke is preserved even if the
       // click lands before React finishes flushing the last state update.
