@@ -1,4 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
+import { z } from "zod";
 
 import type { InitStateManager } from "@/node/services/initStateManager";
 import type { DesktopSessionManager } from "@/node/services/desktop/DesktopSessionManager";
@@ -155,5 +156,38 @@ describe("getToolsForModel", () => {
     );
 
     expect(Object.keys(tools).filter((toolName) => toolName.startsWith("desktop_"))).toEqual([]);
+  });
+
+  test("returns tool keys in sorted order", async () => {
+    const runtime = new LocalRuntime(process.cwd());
+    const initStateManager = createInitStateManager();
+
+    const tools = await getToolsForModel(
+      "noop:model",
+      {
+        cwd: process.cwd(),
+        runtime,
+        runtimeTempDir: "/tmp",
+        workspaceId: "ws-1",
+      },
+      "ws-1",
+      initStateManager,
+      undefined,
+      {
+        zeta_tool: {
+          description: "zeta",
+          inputSchema: z.object({}),
+          execute: mock(() => Promise.resolve({})),
+        },
+        alpha_tool: {
+          description: "alpha",
+          inputSchema: z.object({}),
+          execute: mock(() => Promise.resolve({})),
+        },
+      }
+    );
+
+    const toolNames = Object.keys(tools);
+    expect(toolNames).toEqual([...toolNames].sort((a, b) => a.localeCompare(b)));
   });
 });

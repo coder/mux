@@ -526,5 +526,8 @@ export async function getToolsForModel(
   // Then apply model-only notifications (adds notifications to results)
   finalTools = wrapToolsWithModelOnlyNotifications(finalTools, config);
 
-  return finalTools;
+  // Sort tool names so provider prompt cache prefixes stay byte-identical
+  // across turns, even when tool composition sources are assembled in a
+  // different order.
+  return Object.fromEntries(Object.entries(finalTools).sort(([a], [b]) => a.localeCompare(b)));
 }
