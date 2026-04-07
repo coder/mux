@@ -405,6 +405,48 @@ describe("AgentListItem", () => {
     expect(row.querySelector(".bg-surface-invert-secondary.border-surface-tertiary")).toBeTruthy();
   });
 
+  test("keeps the secondary status row mounted through a quick create-to-stream handoff", () => {
+    const metadata = createMetadata({ isInitializing: true });
+    const renderItem = () => (
+      <AgentListItem
+        metadata={metadata}
+        projectPath={metadata.projectPath}
+        projectName={metadata.projectName}
+        isSelected={false}
+        onSelectWorkspace={() => undefined}
+        onForkWorkspace={() => Promise.resolve()}
+        onArchiveWorkspace={() => Promise.resolve()}
+        onCancelCreation={() => Promise.resolve()}
+      />
+    );
+    const view = render(renderItem());
+    const getRow = () =>
+      view.container.querySelector<HTMLElement>(
+        `[data-workspace-id="${metadata.id}"][role="button"]`
+      );
+    const getSecondaryRow = () => view.queryByTestId(`workspace-secondary-row-${metadata.id}`);
+
+    const assertRowStaysActive = () => {
+      expect(getSecondaryRow()).toBeTruthy();
+      const row = getRow();
+      expect(row).toBeTruthy();
+      expect(row?.querySelector(".workspace-status-dot-active")).toBeTruthy();
+    };
+
+    assertRowStaysActive();
+
+    metadata.isInitializing = false;
+    mockWorkspaceSidebarState = createWorkspaceSidebarState();
+    view.rerender(renderItem());
+
+    assertRowStaysActive();
+
+    mockWorkspaceSidebarState = createWorkspaceSidebarState({ canInterrupt: true });
+    view.rerender(renderItem());
+
+    assertRowStaysActive();
+  });
+
   test.each([
     {
       name: "active rows",

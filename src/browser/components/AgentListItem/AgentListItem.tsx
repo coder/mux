@@ -2,6 +2,10 @@ import { useTitleEdit } from "@/browser/contexts/WorkspaceTitleEditContext";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { useContextMenuPosition } from "@/browser/hooks/useContextMenuPosition";
 import { useExperimentValue } from "@/browser/hooks/useExperiments";
+import {
+  getWorkspaceStreamingStatusPhase,
+  useWorkspaceStreamingStatusPhase,
+} from "@/browser/hooks/useWorkspaceStreamingStatusPhase";
 import { useWorkspaceFallbackModel } from "@/browser/hooks/useWorkspaceFallbackModel";
 import { useWorkspaceUnread } from "@/browser/hooks/useWorkspaceUnread";
 import { useRuntimeStatus } from "@/browser/stores/RuntimeStatusStore";
@@ -588,7 +592,14 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
   } = useWorkspaceSidebarState(workspaceId);
 
   const fallbackModel = useWorkspaceFallbackModel(workspaceId);
-  const isWorking = (canInterrupt || isStarting) && !awaitingUserQuestion;
+  const streamingStatusPhase = getWorkspaceStreamingStatusPhase({
+    canInterrupt,
+    isStarting,
+    isCreating: isInitializing,
+  });
+  const { displayPhase: displayStreamingStatusPhase } =
+    useWorkspaceStreamingStatusPhase(streamingStatusPhase);
+  const isWorking = displayStreamingStatusPhase !== null && !awaitingUserQuestion;
   const hasError = lastAbortReason?.reason === "system";
   const visualState = getVisualState({
     awaitingUserQuestion,
@@ -596,7 +607,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
     isRemoving,
     isArchiving: isArchiving === true,
     isWorking,
-    isStarting,
+    isStarting: displayStreamingStatusPhase === "starting",
     isUnread,
     isSelected,
     hasError,
@@ -604,7 +615,10 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
   const isSubAgentRow = rowRenderMeta?.rowKind === "subagent";
   const showsVisibleStatusDot = isStatusDotVisible(visualState, false, isSubAgentRow);
   const hasStatusText =
-    Boolean(agentStatus) || awaitingUserQuestion || isWorking || isInitializing || isRemoving;
+    Boolean(agentStatus) ||
+    awaitingUserQuestion ||
+    displayStreamingStatusPhase !== null ||
+    isRemoving;
   // Keep archiving feedback inline with the title so the row doesn't jump to a
   // two-line layout right before it disappears from the sidebar.
   const shouldShowInlineArchivingStatus = isArchiving === true && !isRemoving;

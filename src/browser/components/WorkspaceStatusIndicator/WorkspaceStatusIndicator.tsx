@@ -1,8 +1,12 @@
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import { ModelDisplay } from "@/browser/features/Messages/ModelDisplay";
 import { EmojiIcon } from "@/browser/components/icons/EmojiIcon/EmojiIcon";
+import {
+  getWorkspaceStreamingStatusPhase,
+  useWorkspaceStreamingStatusPhase,
+} from "@/browser/hooks/useWorkspaceStreamingStatusPhase";
 import { CircleHelp, ExternalLinkIcon, Loader2 } from "lucide-react";
-import { memo, useEffect, useRef, useState } from "react";
+import { memo } from "react";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 
 export const WorkspaceStatusIndicator = memo<{
@@ -21,31 +25,12 @@ export const WorkspaceStatusIndicator = memo<{
     agentStatus,
   } = useWorkspaceSidebarState(workspaceId);
 
-  const phase: "starting" | "streaming" | null = canInterrupt
-    ? "streaming"
-    : isStarting || isCreating
-      ? "starting"
-      : null;
-
-  const previousPhaseRef = useRef<typeof phase>(phase);
-  const [isCollapsingPhaseSlot, setIsCollapsingPhaseSlot] = useState(false);
-  const shouldCollapsePhaseSlot =
-    isCollapsingPhaseSlot || (previousPhaseRef.current === "starting" && phase === "streaming");
-
-  useEffect(() => {
-    const previousPhase = previousPhaseRef.current;
-    previousPhaseRef.current = phase;
-
-    if (previousPhase === "starting" && phase === "streaming") {
-      setIsCollapsingPhaseSlot(true);
-      const timeoutId = window.setTimeout(() => {
-        setIsCollapsingPhaseSlot(false);
-      }, 150);
-      return () => window.clearTimeout(timeoutId);
-    }
-
-    setIsCollapsingPhaseSlot(false);
-  }, [phase]);
+  const phase = getWorkspaceStreamingStatusPhase({
+    canInterrupt,
+    isStarting,
+    isCreating,
+  });
+  const { displayPhase, shouldCollapsePhaseSlot } = useWorkspaceStreamingStatusPhase(phase);
 
   // Show prompt when ask_user_question is pending - make it prominent
   if (awaitingUserQuestion) {
@@ -59,7 +44,7 @@ export const WorkspaceStatusIndicator = memo<{
 
   // Todo-derived status can outlive the stream that produced it. Once the turn is idle,
   // keep refresh-style status icons static so unfinished work does not look actively running.
-  const agentStatusSpinOverride = canInterrupt || isStarting || isCreating ? undefined : false;
+  const agentStatusSpinOverride = displayPhase !== null ? undefined : false;
 
   if (agentStatus) {
     return (
@@ -99,17 +84,17 @@ export const WorkspaceStatusIndicator = memo<{
     );
   }
 
-  if (!phase) {
+  if (!displayPhase) {
     return null;
   }
 
   const modelToShow =
-    phase === "starting"
+    displayPhase === "starting"
       ? (pendingStreamModel ?? fallbackModel)
       : (currentModel ?? pendingStreamModel ?? fallbackModel);
-  const suffix = phase === "starting" ? "- starting..." : "- streaming...";
+  const suffix = displayPhase === "starting" ? "- starting..." : "- streaming...";
 
-  if (phase === "streaming" && !shouldCollapsePhaseSlot) {
+  if (displayPhase === "streaming" && !shouldCollapsePhaseSlot) {
     return (
       <div className="text-muted flex min-w-0 items-center gap-1.5 text-xs">
         {modelToShow ? (
@@ -130,10 +115,10 @@ export const WorkspaceStatusIndicator = memo<{
     <div className="text-muted flex min-w-0 items-center text-xs">
       {/* Keep the old steady-state layout, but hold the spinner slot just long enough to
           animate the start -> stream handoff instead of flashing the label left. */}
-      {(phase === "starting" || shouldCollapsePhaseSlot) && (
+      {(displayPhase === "starting" || shouldCollapsePhaseSlot) && (
         <span
           className={
-            phase === "starting"
+            displayPhase === "starting"
               ? "mr-1.5 inline-flex w-3 shrink-0 overflow-hidden opacity-100"
               : "mr-0 inline-flex w-0 shrink-0 overflow-hidden opacity-0 transition-[margin,width,opacity] duration-150 ease-out"
           }
@@ -142,7 +127,9 @@ export const WorkspaceStatusIndicator = memo<{
           <Loader2
             aria-hidden="true"
             className={
-              phase === "starting" ? "h-3 w-3 shrink-0 animate-spin opacity-70" : "h-3 w-3 shrink-0"
+              displayPhase === "starting"
+                ? "h-3 w-3 shrink-0 animate-spin opacity-70"
+                : "h-3 w-3 shrink-0"
             }
           />
         </span>
@@ -156,7 +143,7 @@ export const WorkspaceStatusIndicator = memo<{
         </div>
       ) : (
         <span className="min-w-0 truncate">
-          {phase === "starting" ? "Assistant - starting..." : "Assistant - streaming..."}
+          {displayPhase === "starting" ? "Assistant - starting..." : "Assistant - streaming..."}
         </span>
       )}
     </div>

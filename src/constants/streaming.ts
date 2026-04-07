@@ -1,6 +1,10 @@
 // Smooth streaming presentation constants.
 // These control the jitter buffer that makes streamed text appear at a steady cadence
 // instead of bursty token clumps. Internal-only; no user-facing setting.
+// Short visual debounce for sidebar status handoffs so the row stays anchored while
+// startup/streaming flags settle on adjacent renders.
+export const WORKSPACE_STREAMING_STATUS_TRANSITION_MS = 150;
+
 export const STREAM_SMOOTHING = {
   /** Baseline reveal speed in characters per second. */
   BASE_CHARS_PER_SEC: 72,
