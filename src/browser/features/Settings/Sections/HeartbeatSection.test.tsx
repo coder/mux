@@ -12,6 +12,10 @@ interface MockConfig {
   heartbeatDefaultIntervalMs?: number;
 }
 
+interface MockOptions {
+  getConfigError?: Error;
+}
+
 interface MockAPIClient {
   config: {
     getConfig: () => Promise<MockConfig>;
@@ -34,7 +38,7 @@ void mock.module("@/browser/contexts/API", () => ({
 
 import { HeartbeatSection } from "./HeartbeatSection";
 
-function createMockAPI(configOverrides: Partial<MockConfig> = {}) {
+function createMockAPI(configOverrides: Partial<MockConfig> = {}, options: MockOptions = {}) {
   const config: MockConfig = {
     ...configOverrides,
   };
@@ -55,7 +59,11 @@ function createMockAPI(configOverrides: Partial<MockConfig> = {}) {
   return {
     api: {
       config: {
-        getConfig: mock(() => Promise.resolve({ ...config })),
+        getConfig: mock(() =>
+          options.getConfigError
+            ? Promise.reject(options.getConfigError)
+            : Promise.resolve({ ...config })
+        ),
         updateHeartbeatDefaultPrompt: updateHeartbeatDefaultPromptMock,
         updateHeartbeatDefaultIntervalMs: updateHeartbeatDefaultIntervalMsMock,
       },
@@ -65,9 +73,12 @@ function createMockAPI(configOverrides: Partial<MockConfig> = {}) {
   };
 }
 
-function renderHeartbeatSection(configOverrides: Partial<MockConfig> = {}) {
+function renderHeartbeatSection(
+  configOverrides: Partial<MockConfig> = {},
+  options: MockOptions = {}
+) {
   const { api, updateHeartbeatDefaultPromptMock, updateHeartbeatDefaultIntervalMsMock } =
-    createMockAPI(configOverrides);
+    createMockAPI(configOverrides, options);
   mockApi = api;
 
   const view = render(
@@ -124,6 +135,42 @@ describe("HeartbeatSection", () => {
         defaultPrompt: initialPrompt,
       });
     });
+  });
+
+  test("skips saving a stale prompt after config reload fails until the user edits", async () => {
+    const initialPrompt = "Review pending work before acting.";
+    const { view } = renderHeartbeatSection({
+      heartbeatDefaultPrompt: initialPrompt,
+    });
+
+    const promptField = (await waitFor(() =>
+      view.getByLabelText("Default heartbeat prompt")
+    )) as HTMLTextAreaElement;
+
+    await waitFor(() => {
+      expect(promptField.value).toBe(initialPrompt);
+    });
+
+    const failedReload = createMockAPI({}, { getConfigError: new Error("load failed") });
+    mockApi = failedReload.api;
+    view.rerender(
+      <ThemeProvider forcedTheme="dark">
+        <HeartbeatSection />
+      </ThemeProvider>
+    );
+
+    await waitFor(() => {
+      expect(promptField.value).toBe(initialPrompt);
+    });
+
+    const failedReloadPromptField = view.getByLabelText(
+      "Default heartbeat prompt"
+    ) as HTMLTextAreaElement;
+
+    fireEvent.blur(failedReloadPromptField);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(failedReload.updateHeartbeatDefaultPromptMock).not.toHaveBeenCalled();
   });
 
   test("loads and saves the default heartbeat threshold", async () => {

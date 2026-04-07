@@ -69,6 +69,7 @@ export function HeartbeatSection() {
   const heartbeatDefaultIntervalLoadNonceRef = useRef(0);
   const heartbeatDefaultPromptUpdateChainRef = useRef<Promise<void>>(Promise.resolve());
   const heartbeatDefaultIntervalUpdateChainRef = useRef<Promise<void>>(Promise.resolve());
+  const heartbeatDefaultPromptEditedSinceLoadRef = useRef(false);
   const heartbeatDefaultIntervalEditedSinceLoadRef = useRef(false);
 
   useEffect(() => {
@@ -80,6 +81,7 @@ export function HeartbeatSection() {
     setHeartbeatDefaultPromptLoadedOk(false);
     setHeartbeatDefaultIntervalLoaded(false);
     setHeartbeatDefaultIntervalLoadedOk(false);
+    heartbeatDefaultPromptEditedSinceLoadRef.current = false;
     heartbeatDefaultIntervalEditedSinceLoadRef.current = false;
 
     const heartbeatDefaultPromptNonce = ++heartbeatDefaultPromptLoadNonceRef.current;
@@ -92,6 +94,7 @@ export function HeartbeatSection() {
           setHeartbeatDefaultPrompt(cfg.heartbeatDefaultPrompt ?? "");
           setHeartbeatDefaultPromptLoaded(true);
           setHeartbeatDefaultPromptLoadedOk(true);
+          heartbeatDefaultPromptEditedSinceLoadRef.current = false;
         }
 
         if (heartbeatDefaultIntervalNonce === heartbeatDefaultIntervalLoadNonceRef.current) {
@@ -122,7 +125,7 @@ export function HeartbeatSection() {
     }
 
     const trimmedDefaultPrompt = heartbeatDefaultPrompt.trim();
-    if (!heartbeatDefaultPromptLoadedOk && !trimmedDefaultPrompt) {
+    if (!heartbeatDefaultPromptLoadedOk && !heartbeatDefaultPromptEditedSinceLoadRef.current) {
       return;
     }
 
@@ -139,6 +142,7 @@ export function HeartbeatSection() {
       )
       .then(() => {
         setHeartbeatDefaultPromptLoadedOk(true);
+        heartbeatDefaultPromptEditedSinceLoadRef.current = false;
       })
       .catch(() => {
         // Best-effort persistence.
@@ -231,6 +235,7 @@ export function HeartbeatSection() {
           value={heartbeatDefaultPrompt}
           onChange={(event: React.ChangeEvent<HTMLTextAreaElement>) => {
             heartbeatDefaultPromptLoadNonceRef.current++;
+            heartbeatDefaultPromptEditedSinceLoadRef.current = true;
             setHeartbeatDefaultPromptLoaded(true);
             setHeartbeatDefaultPrompt(event.target.value);
           }}
