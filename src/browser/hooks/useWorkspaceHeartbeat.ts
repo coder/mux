@@ -8,6 +8,10 @@ import {
 
 type WorkspaceHeartbeatSettings = NonNullable<FrontendWorkspaceMetadata["heartbeat"]>;
 
+interface HeartbeatGlobalDefaults {
+  intervalMs: number;
+}
+
 export type HeartbeatFormSettings = WorkspaceHeartbeatSettings;
 
 interface UseWorkspaceHeartbeatParams {
@@ -20,27 +24,45 @@ export interface UseWorkspaceHeartbeatResult {
   isSaving: boolean;
   error: string | null;
   save: (next: HeartbeatFormSettings) => Promise<boolean>;
+  /** Global default prompt from config, for use as placeholder text. */
+  globalDefaultPrompt: string | undefined;
 }
 
-function getDefaultHeartbeatSettings(): HeartbeatFormSettings {
+function normalizeHeartbeatDefaultMessage(message?: string): string | undefined {
+  const trimmedMessage = message?.trim();
+  return trimmedMessage ?? undefined;
+}
+
+function getDefaultHeartbeatSettings(
+  globalDefaults?: HeartbeatGlobalDefaults
+): HeartbeatFormSettings {
+  // Only seed the interval from global defaults. The message is intentionally left
+  // empty so saving without editing does not persist the global prompt as a
+  // workspace-level override (the backend handles prompt fallback at execution time).
   return {
     enabled: false,
-    intervalMs: HEARTBEAT_DEFAULT_INTERVAL_MS,
+    intervalMs: globalDefaults?.intervalMs ?? HEARTBEAT_DEFAULT_INTERVAL_MS,
     contextMode: HEARTBEAT_DEFAULT_CONTEXT_MODE,
   };
 }
 
 function normalizeHeartbeatSettings(
-  heartbeat: WorkspaceHeartbeatSettings | null
+  heartbeat: WorkspaceHeartbeatSettings | null,
+  globalDefaults?: HeartbeatGlobalDefaults
 ): HeartbeatFormSettings {
   if (!heartbeat) {
-    return getDefaultHeartbeatSettings();
+    return getDefaultHeartbeatSettings(globalDefaults);
   }
 
-  const trimmedMessage = heartbeat.message?.trim();
+  const message = normalizeHeartbeatDefaultMessage(heartbeat.message);
   const contextMode = heartbeat.contextMode ?? HEARTBEAT_DEFAULT_CONTEXT_MODE;
-  return trimmedMessage
-    ? { ...heartbeat, message: trimmedMessage, contextMode }
+  return message
+    ? {
+        enabled: heartbeat.enabled,
+        intervalMs: heartbeat.intervalMs,
+        contextMode,
+        message,
+      }
     : {
         enabled: heartbeat.enabled,
         intervalMs: heartbeat.intervalMs,
@@ -67,6 +89,7 @@ export function useWorkspaceHeartbeat(
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [globalDefaultPrompt, setGlobalDefaultPrompt] = useState<string | undefined>(undefined);
 
   // Guards for out-of-order async responses (e.g., rapid toggles or workspace switches).
   const currentWorkspaceIdRef = useRef<string | null>(workspaceId);
@@ -78,6 +101,7 @@ export function useWorkspaceHeartbeat(
     setIsLoading(true);
     setIsSaving(false);
     setError(null);
+    setGlobalDefaultPrompt(undefined);
 
     if (!workspaceId) {
       setIsLoading(false);
@@ -89,13 +113,22 @@ export function useWorkspaceHeartbeat(
     }
 
     let cancelled = false;
-    void api.workspace.heartbeat
-      .get({ workspaceId })
-      .then((result) => {
+    void Promise.all([
+      api.workspace.heartbeat.get({ workspaceId }),
+      api.config.getConfig().catch(() => null),
+    ])
+      .then(([heartbeat, config]) => {
         if (cancelled) return;
         if (currentWorkspaceIdRef.current !== workspaceId) return;
 
-        setSettings(normalizeHeartbeatSettings(result));
+        const globalDefaults = config
+          ? {
+              intervalMs: config.heartbeatDefaultIntervalMs ?? HEARTBEAT_DEFAULT_INTERVAL_MS,
+            }
+          : undefined;
+
+        setSettings(normalizeHeartbeatSettings(heartbeat, globalDefaults));
+        setGlobalDefaultPrompt(config?.heartbeatDefaultPrompt?.trim() ?? undefined);
         setError(null);
         setIsLoading(false);
       })
@@ -103,6 +136,7 @@ export function useWorkspaceHeartbeat(
         if (cancelled) return;
         if (currentWorkspaceIdRef.current !== workspaceId) return;
 
+        setGlobalDefaultPrompt(undefined);
         setError(
           getHeartbeatErrorMessage(loadError, "Failed to load workspace heartbeat settings")
         );
@@ -168,5 +202,5 @@ export function useWorkspaceHeartbeat(
     [api, workspaceId]
   );
 
-  return { settings, isLoading, isSaving, error, save };
+  return { settings, isLoading, isSaving, error, save, globalDefaultPrompt };
 }

@@ -124,9 +124,11 @@ function getDraftMessageForSave(value: string): string {
 }
 
 export function WorkspaceHeartbeatModal(props: WorkspaceHeartbeatModalProps) {
-  const { settings, isLoading, isSaving, error, save } = useWorkspaceHeartbeat({
-    workspaceId: props.open ? props.workspaceId : null,
-  });
+  const { settings, isLoading, isSaving, error, save, globalDefaultPrompt } = useWorkspaceHeartbeat(
+    {
+      workspaceId: props.open ? props.workspaceId : null,
+    }
+  );
   const settingsContextMode = settings.contextMode ?? HEARTBEAT_DEFAULT_CONTEXT_MODE;
   const [draftEnabled, setDraftEnabled] = useState(false);
   const [draftIntervalMinutes, setDraftIntervalMinutes] = useState(
@@ -351,7 +353,7 @@ export function WorkspaceHeartbeatModal(props: WorkspaceHeartbeatModalProps) {
                     }}
                     disabled={isSaving}
                     className="border-border-medium bg-background-secondary text-foreground focus:border-accent focus:ring-accent min-h-[120px] w-full resize-y rounded-md border p-3 text-sm leading-relaxed focus:ring-1 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
-                    placeholder={HEARTBEAT_DEFAULT_MESSAGE_BODY}
+                    placeholder={globalDefaultPrompt ?? HEARTBEAT_DEFAULT_MESSAGE_BODY}
                     aria-label="Heartbeat message"
                   />
                 </div>

@@ -154,8 +154,29 @@ export function HeartbeatSection() {
       return;
     }
 
+    if (!heartbeatDefaultIntervalLoadedOk && !heartbeatDefaultIntervalEditedSinceLoadRef.current) {
+      return;
+    }
+
     const parsedMinutes = parseIntervalMinutes(draftIntervalMinutes);
+
+    // Empty or invalid input: clear the global override so the hardcoded default applies.
     if (parsedMinutes == null) {
+      setDraftIntervalMinutes("");
+
+      heartbeatDefaultIntervalUpdateChainRef.current =
+        heartbeatDefaultIntervalUpdateChainRef.current
+          .catch(() => {
+            /* Best-effort. */
+          })
+          .then(() => api.config.updateHeartbeatDefaultIntervalMs({ intervalMs: null }))
+          .then(() => {
+            setHeartbeatDefaultIntervalLoadedOk(true);
+            heartbeatDefaultIntervalEditedSinceLoadRef.current = false;
+          })
+          .catch(() => {
+            /* Best-effort. */
+          });
       return;
     }
 
@@ -163,10 +184,6 @@ export function HeartbeatSection() {
     const clampedMinutesValue = String(clampedMinutes);
     if (clampedMinutesValue !== draftIntervalMinutes) {
       setDraftIntervalMinutes(clampedMinutesValue);
-    }
-
-    if (!heartbeatDefaultIntervalLoadedOk && !heartbeatDefaultIntervalEditedSinceLoadRef.current) {
-      return;
     }
 
     heartbeatDefaultIntervalUpdateChainRef.current = heartbeatDefaultIntervalUpdateChainRef.current
