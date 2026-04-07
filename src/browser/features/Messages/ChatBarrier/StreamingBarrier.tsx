@@ -36,6 +36,92 @@ interface StreamingBarrierProps {
   onCancelCompaction?: () => void;
 }
 
+const STREAMING_STATUS_TRANSITION_DEBOUNCE_MS = 200;
+const DEBOUNCED_STREAMING_PHASES: ReadonlySet<StreamingPhase> = new Set([
+  "starting",
+  "streaming",
+  "compacting",
+]);
+
+function shouldDebounceStreamingStatusTransition(
+  previousPhase: StreamingPhase | null,
+  nextPhase: StreamingPhase | null
+): boolean {
+  return (
+    previousPhase !== null &&
+    nextPhase !== null &&
+    previousPhase !== nextPhase &&
+    DEBOUNCED_STREAMING_PHASES.has(previousPhase) &&
+    DEBOUNCED_STREAMING_PHASES.has(nextPhase)
+  );
+}
+
+function useStabilizedStreamingStatusText(
+  phase: StreamingPhase | null,
+  rawStatusText: string | null
+): string | null {
+  const [displayStatusText, setDisplayStatusText] = React.useState(rawStatusText);
+  const previousPhaseRef = React.useRef<StreamingPhase | null>(null);
+  const activeDebounceRef = React.useRef<{
+    phase: StreamingPhase;
+    timer: ReturnType<typeof setTimeout>;
+  } | null>(null);
+  const latestRawStatusTextRef = React.useRef(rawStatusText);
+  latestRawStatusTextRef.current = rawStatusText;
+
+  const shouldStartDebounceTransition = shouldDebounceStreamingStatusTransition(
+    previousPhaseRef.current,
+    phase
+  );
+  const isHoldingDebouncedTransition =
+    shouldStartDebounceTransition || activeDebounceRef.current?.phase === phase;
+
+  React.useEffect(() => {
+    return () => {
+      if (activeDebounceRef.current) {
+        clearTimeout(activeDebounceRef.current.timer);
+      }
+    };
+  }, []);
+
+  React.useEffect(() => {
+    previousPhaseRef.current = phase;
+
+    if (shouldStartDebounceTransition && phase !== null) {
+      if (activeDebounceRef.current) {
+        clearTimeout(activeDebounceRef.current.timer);
+      }
+
+      const timer = setTimeout(() => {
+        activeDebounceRef.current = null;
+        // Debounce transient stage-label churn so the transcript tail does not flash
+        // through short-lived startup breadcrumbs when the runtime advances quickly.
+        setDisplayStatusText(latestRawStatusTextRef.current);
+      }, STREAMING_STATUS_TRANSITION_DEBOUNCE_MS);
+      activeDebounceRef.current = { phase, timer };
+      return;
+    }
+
+    const activeDebounce = activeDebounceRef.current;
+    if (activeDebounce?.phase === phase) {
+      // Keep the previous label pinned across same-phase rerenders (like token/tps updates)
+      // until the cross-phase debounce window completes.
+      return;
+    }
+
+    if (activeDebounce) {
+      clearTimeout(activeDebounce.timer);
+      activeDebounceRef.current = null;
+    }
+
+    setDisplayStatusText(rawStatusText);
+  }, [phase, rawStatusText, shouldStartDebounceTransition]);
+
+  // Render newly-visible phases synchronously so the barrier and stop control appear
+  // immediately; only hold onto the prior label during quick intra-stream handoffs.
+  return isHoldingDebouncedTransition ? displayStatusText : rawStatusText;
+}
+
 /**
  * Self-contained streaming status barrier.
  * Computes streaming state internally from workspaceId.
@@ -80,9 +166,6 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({
   const tokenCount = showTokenCount ? workspaceState.streamingTokenCount : undefined;
   const tps = showTokenCount ? workspaceState.streamingTPS : undefined;
 
-  // Nothing to show
-  if (!phase) return null;
-
   // Model to display:
   // - "starting" phase: prefer pendingStreamModel (from muxMetadata), then localStorage
   // - Otherwise: use currentModel from active stream
@@ -102,7 +185,11 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({
   const interruptHint = `hit ${interruptKeybind} to cancel`;
 
   // Compute status text based on phase
-  const statusText = (() => {
+  const rawStatusText = (() => {
+    if (!phase) {
+      return null;
+    }
+
     switch (phase) {
       case "starting":
         // Prefer any backend-provided startup breadcrumb so users can see whether
@@ -121,6 +208,11 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({
         return modelName ? `${modelName} streaming...` : "streaming...";
     }
   })();
+  const statusText = useStabilizedStreamingStatusText(phase, rawStatusText);
+
+  if (!phase || !statusText) {
+    return null;
+  }
 
   // Compute cancel hint based on phase
   const cancelText = (() => {

@@ -37,6 +37,9 @@ function createWorkspaceState(overrides: Partial<MockWorkspaceState> = {}): Mock
   return state;
 }
 
+const STREAMING_STATUS_TRANSITION_DEBOUNCE_MS = 200;
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 let currentWorkspaceState = createWorkspaceState();
 let hasInterruptingStream = false;
 const setInterrupting = mock((_workspaceId: string) => undefined);
@@ -158,6 +161,27 @@ describe("StreamingBarrier", () => {
     expect(interruptStream).toHaveBeenCalledWith({ workspaceId: "ws-1" });
   });
 
+  test("shows the barrier immediately when streaming phase first becomes active", () => {
+    currentWorkspaceState = createWorkspaceState({
+      canInterrupt: false,
+      pendingStreamStartTime: null,
+      pendingStreamModel: null,
+    });
+
+    const view = render(<StreamingBarrier workspaceId="ws-1" />);
+    expect(view.queryByRole("button", { name: "Stop streaming" })).toBeNull();
+
+    currentWorkspaceState = createWorkspaceState({
+      canInterrupt: false,
+      pendingStreamStartTime: Date.now(),
+      pendingStreamModel: "anthropic:claude-opus-4-6",
+    });
+    view.rerender(<StreamingBarrier workspaceId="ws-1" />);
+
+    expect(view.getByRole("button", { name: "Stop streaming" })).toBeTruthy();
+    expect(view.getByText("claude-opus-4-6 starting...")).toBeTruthy();
+  });
+
   test("shows backend startup breadcrumb text while the stream is starting", () => {
     currentWorkspaceState = createWorkspaceState({
       canInterrupt: false,
@@ -169,6 +193,88 @@ describe("StreamingBarrier", () => {
     const view = render(<StreamingBarrier workspaceId="ws-1" />);
 
     expect(view.getByText("Loading tools...")).toBeTruthy();
+  });
+
+  test("keeps same-phase startup breadcrumb updates immediate", () => {
+    currentWorkspaceState = createWorkspaceState({
+      canInterrupt: false,
+      pendingStreamStartTime: Date.now(),
+      pendingStreamModel: "anthropic:claude-opus-4-6",
+      runtimeStatus: { phase: "starting", detail: "Starting workspace..." },
+    });
+
+    const view = render(<StreamingBarrier workspaceId="ws-1" />);
+    expect(view.getByText("Starting workspace...")).toBeTruthy();
+
+    currentWorkspaceState = createWorkspaceState({
+      canInterrupt: false,
+      pendingStreamStartTime: Date.now(),
+      pendingStreamModel: "anthropic:claude-opus-4-6",
+      runtimeStatus: { phase: "starting", detail: "Loading tools..." },
+    });
+    view.rerender(<StreamingBarrier workspaceId="ws-1" />);
+
+    expect(view.getByText("Loading tools...")).toBeTruthy();
+    expect(view.queryByText("Starting workspace...")).toBeNull();
+  });
+
+  test("debounces fast status-label transitions between startup and streaming", async () => {
+    currentWorkspaceState = createWorkspaceState({
+      canInterrupt: false,
+      pendingStreamStartTime: Date.now(),
+      pendingStreamModel: "anthropic:claude-opus-4-6",
+      runtimeStatus: { phase: "starting", detail: "Loading tools..." },
+    });
+
+    const view = render(<StreamingBarrier workspaceId="ws-1" />);
+
+    expect(view.getByText("Loading tools...")).toBeTruthy();
+
+    currentWorkspaceState = createWorkspaceState({
+      canInterrupt: true,
+      currentModel: "anthropic:claude-opus-4-6",
+    });
+    view.rerender(<StreamingBarrier workspaceId="ws-1" />);
+
+    expect(view.getByText("Loading tools...")).toBeTruthy();
+    expect(view.queryByText("claude-opus-4-6 streaming...")).toBeNull();
+
+    await sleep(STREAMING_STATUS_TRANSITION_DEBOUNCE_MS + 60);
+
+    expect(view.getByText("claude-opus-4-6 streaming...")).toBeTruthy();
+  });
+
+  test("keeps the prior label during same-phase rerenders inside the debounce window", async () => {
+    currentWorkspaceState = createWorkspaceState({
+      canInterrupt: false,
+      pendingStreamStartTime: Date.now(),
+      pendingStreamModel: "anthropic:claude-opus-4-6",
+      runtimeStatus: { phase: "starting", detail: "Loading tools..." },
+    });
+
+    const view = render(<StreamingBarrier workspaceId="ws-1" />);
+    expect(view.getByText("Loading tools...")).toBeTruthy();
+
+    currentWorkspaceState = createWorkspaceState({
+      canInterrupt: true,
+      currentModel: "anthropic:claude-opus-4-6",
+    });
+    view.rerender(<StreamingBarrier workspaceId="ws-1" />);
+
+    currentWorkspaceState = createWorkspaceState({
+      canInterrupt: true,
+      currentModel: "anthropic:claude-opus-4-6",
+      streamingTokenCount: 42,
+      streamingTPS: 18,
+    });
+    view.rerender(<StreamingBarrier workspaceId="ws-1" />);
+
+    expect(view.getByText("Loading tools...")).toBeTruthy();
+    expect(view.queryByText("claude-opus-4-6 streaming...")).toBeNull();
+
+    await sleep(STREAMING_STATUS_TRANSITION_DEBOUNCE_MS + 60);
+
+    expect(view.getByText("claude-opus-4-6 streaming...")).toBeTruthy();
   });
 
   test("shows vim interrupt shortcut when vim mode is enabled", () => {
