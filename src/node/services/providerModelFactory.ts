@@ -37,6 +37,7 @@ import type { DevToolsService } from "@/node/services/devToolsService";
 import { captureAndStripDevToolsHeader } from "@/node/services/devToolsHeaderCapture";
 import { createDevToolsMiddleware } from "@/node/services/devToolsMiddleware";
 import { log } from "@/node/services/log";
+import { resolveProviderOptionsNamespaceKey } from "@/common/utils/ai/providerOptions";
 import { resolveRoute, type RouteContext } from "@/common/routing";
 import {
   getExplicitGatewayPrefix as getExplicitGatewayProvider,
@@ -1623,8 +1624,15 @@ export class ProviderModelFactory {
         }
 
         const { createOpenAI } = await PROVIDER_REGISTRY.openai();
+        const providerOptionsNamespace = resolveProviderOptionsNamespaceKey(
+          "openai",
+          "github-copilot"
+        );
         const provider = createOpenAI({
-          name: "github-copilot",
+          // Keep the SDK provider name aligned with buildProviderOptions() so
+          // Copilot-routed OpenAI reasoning settings land under the namespace
+          // that @ai-sdk/openai actually reads.
+          name: providerOptionsNamespace,
           baseURL,
           apiKey: "copilot", // placeholder, actual auth via custom fetch
           fetch: providerFetch,

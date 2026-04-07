@@ -6,6 +6,7 @@ import { Config } from "@/node/config";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { CODEX_ENDPOINT } from "@/common/constants/codexOAuth";
 import { PROVIDER_REGISTRY } from "@/common/constants/providers";
+import { resolveProviderOptionsNamespaceKey } from "@/common/utils/ai/providerOptions";
 import { Ok } from "@/common/types/result";
 import {
   ProviderModelFactory,
@@ -159,6 +160,9 @@ describe("ProviderModelFactory.createModel", () => {
 describe("ProviderModelFactory GitHub Copilot", () => {
   it("creates routed gpt-5.4 models with the chat completions API mode", async () => {
     await withTempConfig(async (config, factory) => {
+      const originalOpenAIRegistry = PROVIDER_REGISTRY.openai;
+      let capturedProviderName: string | undefined;
+
       config.saveProvidersConfig({
         "github-copilot": {
           apiKey: "copilot-token",
@@ -166,22 +170,40 @@ describe("ProviderModelFactory GitHub Copilot", () => {
         },
       });
 
-      const projectConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...projectConfig,
-        routePriority: ["github-copilot", "direct"],
-      });
+      PROVIDER_REGISTRY.openai = async () => {
+        const module = await originalOpenAIRegistry();
+        return {
+          ...module,
+          createOpenAI: (options) => {
+            capturedProviderName = options?.name;
+            return module.createOpenAI(options);
+          },
+        };
+      };
 
-      const result = await factory.resolveAndCreateModel("openai:gpt-5.4", "off");
-      expect(result.success).toBe(true);
-      if (!result.success) {
-        return;
+      try {
+        const projectConfig = config.loadConfigOrDefault();
+        await config.saveConfig({
+          ...projectConfig,
+          routePriority: ["github-copilot", "direct"],
+        });
+
+        const result = await factory.resolveAndCreateModel("openai:gpt-5.4", "off");
+        expect(result.success).toBe(true);
+        if (!result.success) {
+          return;
+        }
+
+        expect(capturedProviderName).toBe(
+          resolveProviderOptionsNamespaceKey("openai", "github-copilot")
+        );
+        expect((result.data.model as { provider?: unknown }).provider).toBe("github-copilot.chat");
+        expect(result.data.routeProvider).toBe("github-copilot");
+        expect(result.data.effectiveModelString).toBe("github-copilot:gpt-5.4");
+        expect(result.data.model.constructor.name).toBe("OpenAIChatLanguageModel");
+      } finally {
+        PROVIDER_REGISTRY.openai = originalOpenAIRegistry;
       }
-
-      expect((result.data.model as { provider?: unknown }).provider).toBe("github-copilot.chat");
-      expect(result.data.routeProvider).toBe("github-copilot");
-      expect(result.data.effectiveModelString).toBe("github-copilot:gpt-5.4");
-      expect(result.data.model.constructor.name).toBe("OpenAIChatLanguageModel");
     });
   });
 
