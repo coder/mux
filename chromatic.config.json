@@ -4,5 +4,5 @@
   "storybookBuildDir": "storybook-static",
   "exitZeroOnChanges": true,
   "exitOnceUploaded": true,
-  "autoAcceptChanges": "fix/debounce-streaming-status-label"
+  "autoAcceptChanges": false
 }
