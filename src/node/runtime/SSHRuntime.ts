@@ -1510,6 +1510,7 @@ export class SSHRuntime extends RemoteRuntime {
       // before repo-controlled init hooks run.
       initLogger.logStep("Syncing project files to remote...");
       const maxSyncAttempts = 3;
+      const retryCleanupBaseRepoPathArg = expandTildeForSSH(this.getBaseRepoPath(projectPath));
       for (let attempt = 1; attempt <= maxSyncAttempts; attempt++) {
         try {
           await this.syncProjectToRemote(projectPath, workspacePath, initLogger, abortSignal);
@@ -1521,13 +1522,36 @@ export class SSHRuntime extends RemoteRuntime {
             errorMsg.includes("Connection reset") ||
             errorMsg.includes("Connection closed") ||
             errorMsg.includes("Broken pipe") ||
-            errorMsg.includes("EPIPE");
+            errorMsg.includes("EPIPE") ||
+            errorMsg.includes("Command killed by signal");
 
           if (!isRetryable || attempt === maxSyncAttempts) {
             throw new Error(`Failed to sync project: ${errorMsg}`);
           }
 
           log.info(`Sync failed (attempt ${attempt}/${maxSyncAttempts}), will retry: ${errorMsg}`);
+          log.info(
+            `Running remote git gc before retrying sync push (attempt ${attempt + 1}/${maxSyncAttempts})`
+          );
+          try {
+            // Clean up orphaned objects from failed push to prevent negotiation bloat.
+            const gcResult = await execBuffered(
+              this,
+              `git -C ${retryCleanupBaseRepoPathArg} gc --prune=now`,
+              {
+                cwd: "/tmp",
+                timeout: 60,
+                abortSignal,
+              }
+            );
+            if (gcResult.exitCode !== 0) {
+              log.warn(
+                `Remote git gc exited ${gcResult.exitCode} before sync retry: ${gcResult.stderr || gcResult.stdout}`
+              );
+            }
+          } catch (cleanupError) {
+            log.warn(`Remote git gc failed before sync retry: ${getErrorMessage(cleanupError)}`);
+          }
           initLogger.logStep(
             `Sync failed, retrying (attempt ${attempt + 1}/${maxSyncAttempts})...`
           );
