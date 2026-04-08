@@ -35,6 +35,7 @@ import { RemoteRuntime, type SpawnResult } from "./RemoteRuntime";
 import { log } from "@/node/services/log";
 import { runInitHookOnRuntime, runWorkspaceInitHook } from "./initHook";
 import { expandTildeForSSH, cdCommandForSSH } from "./tildeExpansion";
+import { sleepWithAbort } from "@/node/utils/abort";
 import { execBuffered } from "@/node/utils/runtime/helpers";
 import { getErrorMessage } from "@/common/utils/errors";
 import {
@@ -131,34 +132,6 @@ async function enqueueProjectSync(
     }
     releaseCurrent?.();
   }
-}
-
-async function sleepWithAbort(ms: number, abortSignal?: AbortSignal): Promise<void> {
-  if (ms <= 0) {
-    return;
-  }
-  if (abortSignal?.aborted) {
-    throw new Error("Operation aborted");
-  }
-
-  await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      cleanup();
-      resolve();
-    }, ms);
-
-    const onAbort = () => {
-      cleanup();
-      reject(new Error("Operation aborted"));
-    };
-
-    const cleanup = () => {
-      clearTimeout(timer);
-      abortSignal?.removeEventListener("abort", onAbort);
-    };
-
-    abortSignal?.addEventListener("abort", onAbort, { once: true });
-  });
 }
 
 function isGitConfigLockConflict(message: string): boolean {

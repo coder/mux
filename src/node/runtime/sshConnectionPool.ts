@@ -18,6 +18,7 @@ import * as crypto from "crypto";
 import * as path from "path";
 import * as os from "os";
 import { spawn } from "child_process";
+import { sleepWithAbort } from "@/node/utils/abort";
 import { HOST_KEY_APPROVAL_TIMEOUT_MS } from "@/common/constants/ssh";
 import { formatSshEndpoint } from "@/common/utils/ssh/formatSshEndpoint";
 import { log } from "@/node/services/log";
@@ -150,32 +151,6 @@ export interface AcquireConnectionOptions {
    * If provided, this is used for sleeping between wait cycles.
    */
   sleep?: (ms: number, abortSignal?: AbortSignal) => Promise<void>;
-}
-
-async function sleepWithAbort(ms: number, abortSignal?: AbortSignal): Promise<void> {
-  if (ms <= 0) return;
-  if (abortSignal?.aborted) {
-    throw new Error("Operation aborted");
-  }
-
-  await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      cleanup();
-      resolve();
-    }, ms);
-
-    const onAbort = () => {
-      cleanup();
-      reject(new Error("Operation aborted"));
-    };
-
-    const cleanup = () => {
-      clearTimeout(timer);
-      abortSignal?.removeEventListener("abort", onAbort);
-    };
-
-    abortSignal?.addEventListener("abort", onAbort);
-  });
 }
 
 async function waitForPromiseWithTimeout<T>(

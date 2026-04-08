@@ -33,3 +33,37 @@ export function linkAbortSignal(
   source.addEventListener("abort", onAbort, { once: true });
   return () => source.removeEventListener("abort", onAbort);
 }
+
+/**
+ * Sleep for `ms` milliseconds, rejecting early if `abortSignal` fires.
+ *
+ * Extracted from four identical copies across SSHRuntime, sshConnectionPool,
+ * SSH2ConnectionPool, and codexOauthService.
+ */
+export async function sleepWithAbort(ms: number, abortSignal?: AbortSignal): Promise<void> {
+  if (ms <= 0) {
+    return;
+  }
+  if (abortSignal?.aborted) {
+    throw new Error("Operation aborted");
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, ms);
+
+    const onAbort = () => {
+      cleanup();
+      reject(new Error("Operation aborted"));
+    };
+
+    const cleanup = () => {
+      clearTimeout(timer);
+      abortSignal?.removeEventListener("abort", onAbort);
+    };
+
+    abortSignal?.addEventListener("abort", onAbort, { once: true });
+  });
+}

@@ -16,6 +16,7 @@ import type { Config } from "@/node/config";
 import type { ProviderService } from "@/node/services/providerService";
 import type { WindowService } from "@/node/services/windowService";
 import { log } from "@/node/services/log";
+import { sleepWithAbort } from "@/node/utils/abort";
 import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
 import {
   extractAccountIdFromTokens,
@@ -728,33 +729,4 @@ export class CodexOauthService {
 
     return Promise.resolve();
   }
-}
-
-async function sleepWithAbort(ms: number, signal: AbortSignal): Promise<void> {
-  if (ms <= 0) {
-    return;
-  }
-
-  if (signal.aborted) {
-    throw new Error("aborted");
-  }
-
-  await new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      cleanup();
-      resolve();
-    }, ms);
-
-    const onAbort = () => {
-      cleanup();
-      reject(new Error("aborted"));
-    };
-
-    const cleanup = () => {
-      clearTimeout(timeout);
-      signal.removeEventListener("abort", onAbort);
-    };
-
-    signal.addEventListener("abort", onAbort);
-  });
 }
