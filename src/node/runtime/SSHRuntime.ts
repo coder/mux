@@ -67,6 +67,15 @@ const BUNDLE_REF_PREFIX = "refs/mux-bundle/";
 
 /** Small backoff for concurrent writers healing the same shared base repo config. */
 const BASE_REPO_CONFIG_LOCK_RETRY_DELAYS_MS = [50, 100, 200];
+const PROJECT_SYNC_MAX_ATTEMPTS = 3;
+const PROJECT_SYNC_RETRYABLE_ERRORS = [
+  "pack-objects died",
+  "Connection reset",
+  "Connection closed",
+  "Broken pipe",
+  "EPIPE",
+  "Command killed by signal",
+] as const;
 
 const sharedProjectSyncTails = new Map<string, Promise<void>>();
 
@@ -119,6 +128,34 @@ async function enqueueProjectSync(
     }
     releaseCurrent?.();
   }
+}
+
+async function sleepWithAbort(ms: number, abortSignal?: AbortSignal): Promise<void> {
+  if (ms <= 0) {
+    return;
+  }
+  if (abortSignal?.aborted) {
+    throw new Error("Operation aborted");
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, ms);
+
+    const onAbort = () => {
+      cleanup();
+      reject(new Error("Operation aborted"));
+    };
+
+    const cleanup = () => {
+      clearTimeout(timer);
+      abortSignal?.removeEventListener("abort", onAbort);
+    };
+
+    abortSignal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 function isGitConfigLockConflict(message: string): boolean {
@@ -339,6 +376,50 @@ export class SSHRuntime extends RemoteRuntime {
       this.config.srcBaseDir,
       projectId,
     ].join(":");
+  }
+
+  private isRetryableProjectSyncError(errorMsg: string): boolean {
+    return PROJECT_SYNC_RETRYABLE_ERRORS.some((pattern) => errorMsg.includes(pattern));
+  }
+
+  protected async cleanupRetryableProjectSyncFailure(
+    baseRepoPathArg: string,
+    attempt: number,
+    maxAttempts: number,
+    abortSignal?: AbortSignal
+  ): Promise<void> {
+    if (abortSignal?.aborted) {
+      throw new Error("Operation aborted");
+    }
+
+    log.info(
+      `Running remote git gc before retrying sync push (attempt ${attempt + 1}/${maxAttempts})`
+    );
+    try {
+      const gcResult = await execBuffered(this, `git -C ${baseRepoPathArg} gc --prune=now`, {
+        cwd: "/tmp",
+        timeout: 60,
+        abortSignal,
+      });
+      if (gcResult.exitCode !== 0) {
+        log.warn(
+          `Remote git gc exited ${gcResult.exitCode} before sync retry: ${gcResult.stderr || gcResult.stdout}`
+        );
+      }
+    } catch (cleanupError) {
+      const cleanupErrorMsg = getErrorMessage(cleanupError);
+      if (abortSignal?.aborted || cleanupErrorMsg === "Operation aborted") {
+        throw cleanupError instanceof Error ? cleanupError : new Error(cleanupErrorMsg);
+      }
+      log.warn(`Remote git gc failed before sync retry: ${cleanupErrorMsg}`);
+    }
+  }
+
+  protected async waitForProjectSyncRetryDelay(
+    ms: number,
+    abortSignal?: AbortSignal
+  ): Promise<void> {
+    await sleepWithAbort(ms, abortSignal);
   }
 
   private async computeSnapshotDigest(projectPath: string): Promise<string> {
@@ -1285,7 +1366,6 @@ export class SSHRuntime extends RemoteRuntime {
    */
   protected async syncProjectToRemote(
     projectPath: string,
-    _workspacePath: string,
     initLogger: InitLogger,
     abortSignal?: AbortSignal
   ): Promise<void> {
@@ -1294,93 +1374,142 @@ export class SSHRuntime extends RemoteRuntime {
     }
 
     const layout = this.getProjectLayout(projectPath);
-    const currentSnapshotPath = layout.currentSnapshotPath;
     const projectKey = this.getProjectSyncKey(layout.projectId);
-    const useNativeGitPush = this.transport instanceof OpenSSHTransport;
+    const retryCleanupBaseRepoPathArg = expandTildeForSSH(layout.baseRepoPath);
 
+    // Keep retries, cancellation handling, and retry cleanup inside the project-scoped
+    // sync lock so a follow-up init cannot race the shared base repo while we are healing it.
     await enqueueProjectSync(projectKey, abortSignal, async () => {
-      if (abortSignal?.aborted) {
-        throw new Error("Operation aborted");
-      }
-
-      const snapshotDigest = await this.computeSnapshotDigest(projectPath);
-      const baseRepoPathArg = await this.ensureBaseRepo(projectPath, initLogger, abortSignal);
-
-      const snapshotStatusCheck = await execBuffered(
-        this,
-        [
-          'current_snapshot=""',
-          `if test -f ${this.quoteForRemote(currentSnapshotPath)}; then`,
-          `  current_snapshot=$(tr -d '\n' < ${this.quoteForRemote(currentSnapshotPath)})`,
-          "fi",
-          `if test "$current_snapshot" = ${shescape.quote(snapshotDigest)}; then`,
-          `  staged_ref=$(git -C ${baseRepoPathArg} for-each-ref --count=1 --format='%(refname)' ${shescape.quote(BUNDLE_REF_PREFIX)})`,
-          '  if test -n "$staged_ref"; then',
-          "    echo reusable",
-          "  else",
-          "    echo stale-current",
-          "  fi",
-          "else",
-          "  echo missing",
-          "fi",
-        ].join("\n"),
-        { cwd: "/tmp", timeout: 10, abortSignal }
-      );
-      const snapshotStatus = snapshotStatusCheck.stdout.trim();
-      if (snapshotStatus === "reusable") {
-        const localRefManifest = await this.resolveLocalSyncRefManifest(projectPath);
-        const remoteRefManifest =
-          localRefManifest == null
-            ? null
-            : await this.resolveRemoteSyncRefManifest(baseRepoPathArg, abortSignal);
-        if (localRefManifest != null && remoteRefManifest === localRefManifest) {
-          await this.refreshBaseRepoOrigin(projectPath, baseRepoPathArg, initLogger, abortSignal);
-          initLogger.logStep("Reusing existing remote project snapshot");
-          return;
+      for (let attempt = 1; attempt <= PROJECT_SYNC_MAX_ATTEMPTS; attempt++) {
+        if (abortSignal?.aborted) {
+          throw new Error("Operation aborted");
         }
-        initLogger.logStep(
-          "Remote snapshot marker drifted from synced refs; resyncing project snapshot..."
-        );
-      }
-      if (snapshotStatus === "stale-current") {
-        initLogger.logStep(
-          "Remote snapshot marker found without matching synced refs; resyncing project snapshot..."
-        );
-      }
 
-      if (useNativeGitPush) {
-        await this.syncProjectSnapshotViaGitPush(
-          projectPath,
-          layout,
-          currentSnapshotPath,
-          initLogger,
-          abortSignal
-        );
-      } else {
-        await this.syncProjectSnapshotViaBundle(
-          projectPath,
-          layout,
-          currentSnapshotPath,
-          snapshotDigest,
-          baseRepoPathArg,
-          initLogger,
-          abortSignal
-        );
+        try {
+          await this.syncProjectToRemoteOnce(projectPath, layout, initLogger, abortSignal);
+          return;
+        } catch (error) {
+          const errorMsg = getErrorMessage(error);
+          if (abortSignal?.aborted || errorMsg === "Operation aborted") {
+            throw error instanceof Error ? error : new Error(errorMsg);
+          }
+          if (
+            !this.isRetryableProjectSyncError(errorMsg) ||
+            attempt === PROJECT_SYNC_MAX_ATTEMPTS
+          ) {
+            throw new Error(`Failed to sync project: ${errorMsg}`);
+          }
+
+          log.info(
+            `Sync failed (attempt ${attempt}/${PROJECT_SYNC_MAX_ATTEMPTS}), will retry: ${errorMsg}`
+          );
+          await this.cleanupRetryableProjectSyncFailure(
+            retryCleanupBaseRepoPathArg,
+            attempt,
+            PROJECT_SYNC_MAX_ATTEMPTS,
+            abortSignal
+          );
+          if (abortSignal?.aborted) {
+            throw new Error("Operation aborted");
+          }
+          initLogger.logStep(
+            `Sync failed, retrying (attempt ${attempt + 1}/${PROJECT_SYNC_MAX_ATTEMPTS})...`
+          );
+          await this.waitForProjectSyncRetryDelay(attempt * 1000, abortSignal);
+        }
       }
-
-      // Keep the bare base repo's origin aligned with the local project so later
-      // fetchOriginTrunk() calls base new worktrees on the intended remote.
-      await this.refreshBaseRepoOrigin(projectPath, baseRepoPathArg, initLogger, abortSignal);
-
-      const currentSnapshotWriter = this.writeFile(currentSnapshotPath).getWriter();
-      try {
-        await currentSnapshotWriter.write(new TextEncoder().encode(`${snapshotDigest}\n`));
-      } finally {
-        await currentSnapshotWriter.close();
-      }
-
-      initLogger.logStep("Repository synced to base successfully");
     });
+  }
+
+  protected async syncProjectToRemoteOnce(
+    projectPath: string,
+    layout: RemoteProjectLayout,
+    initLogger: InitLogger,
+    abortSignal?: AbortSignal
+  ): Promise<void> {
+    if (abortSignal?.aborted) {
+      throw new Error("Operation aborted");
+    }
+
+    const currentSnapshotPath = layout.currentSnapshotPath;
+    const useNativeGitPush = this.transport instanceof OpenSSHTransport;
+    const snapshotDigest = await this.computeSnapshotDigest(projectPath);
+    const baseRepoPathArg = await this.ensureBaseRepo(projectPath, initLogger, abortSignal);
+
+    const snapshotStatusCheck = await execBuffered(
+      this,
+      [
+        'current_snapshot=""',
+        `if test -f ${this.quoteForRemote(currentSnapshotPath)}; then`,
+        `  current_snapshot=$(tr -d '\n' < ${this.quoteForRemote(currentSnapshotPath)})`,
+        "fi",
+        `if test "$current_snapshot" = ${shescape.quote(snapshotDigest)}; then`,
+        `  staged_ref=$(git -C ${baseRepoPathArg} for-each-ref --count=1 --format='%(refname)' ${shescape.quote(BUNDLE_REF_PREFIX)})`,
+        '  if test -n "$staged_ref"; then',
+        "    echo reusable",
+        "  else",
+        "    echo stale-current",
+        "  fi",
+        "else",
+        "  echo missing",
+        "fi",
+      ].join("\n"),
+      { cwd: "/tmp", timeout: 10, abortSignal }
+    );
+    const snapshotStatus = snapshotStatusCheck.stdout.trim();
+    if (snapshotStatus === "reusable") {
+      const localRefManifest = await this.resolveLocalSyncRefManifest(projectPath);
+      const remoteRefManifest =
+        localRefManifest == null
+          ? null
+          : await this.resolveRemoteSyncRefManifest(baseRepoPathArg, abortSignal);
+      if (localRefManifest != null && remoteRefManifest === localRefManifest) {
+        await this.refreshBaseRepoOrigin(projectPath, baseRepoPathArg, initLogger, abortSignal);
+        initLogger.logStep("Reusing existing remote project snapshot");
+        return;
+      }
+      initLogger.logStep(
+        "Remote snapshot marker drifted from synced refs; resyncing project snapshot..."
+      );
+    }
+    if (snapshotStatus === "stale-current") {
+      initLogger.logStep(
+        "Remote snapshot marker found without matching synced refs; resyncing project snapshot..."
+      );
+    }
+
+    if (useNativeGitPush) {
+      await this.syncProjectSnapshotViaGitPush(
+        projectPath,
+        layout,
+        currentSnapshotPath,
+        initLogger,
+        abortSignal
+      );
+    } else {
+      await this.syncProjectSnapshotViaBundle(
+        projectPath,
+        layout,
+        currentSnapshotPath,
+        snapshotDigest,
+        baseRepoPathArg,
+        initLogger,
+        abortSignal
+      );
+    }
+
+    // Keep the bare base repo's origin aligned with the local project so later
+    // fetchOriginTrunk() calls base new worktrees on the intended remote.
+    await this.refreshBaseRepoOrigin(projectPath, baseRepoPathArg, initLogger, abortSignal);
+
+    const currentSnapshotWriter = this.writeFile(currentSnapshotPath).getWriter();
+    try {
+      await currentSnapshotWriter.write(new TextEncoder().encode(`${snapshotDigest}\n`));
+    } finally {
+      await currentSnapshotWriter.close();
+    }
+
+    initLogger.logStep("Repository synced to base successfully");
   }
 
   /** Get origin URL from local project for setting on the remote base repo. */
@@ -1509,55 +1638,7 @@ export class SSHRuntime extends RemoteRuntime {
       // the shared base repo, checks out the worktree, and then materializes submodules
       // before repo-controlled init hooks run.
       initLogger.logStep("Syncing project files to remote...");
-      const maxSyncAttempts = 3;
-      const retryCleanupBaseRepoPathArg = expandTildeForSSH(this.getBaseRepoPath(projectPath));
-      for (let attempt = 1; attempt <= maxSyncAttempts; attempt++) {
-        try {
-          await this.syncProjectToRemote(projectPath, workspacePath, initLogger, abortSignal);
-          break;
-        } catch (error) {
-          const errorMsg = getErrorMessage(error);
-          const isRetryable =
-            errorMsg.includes("pack-objects died") ||
-            errorMsg.includes("Connection reset") ||
-            errorMsg.includes("Connection closed") ||
-            errorMsg.includes("Broken pipe") ||
-            errorMsg.includes("EPIPE") ||
-            errorMsg.includes("Command killed by signal");
-
-          if (!isRetryable || attempt === maxSyncAttempts) {
-            throw new Error(`Failed to sync project: ${errorMsg}`);
-          }
-
-          log.info(`Sync failed (attempt ${attempt}/${maxSyncAttempts}), will retry: ${errorMsg}`);
-          log.info(
-            `Running remote git gc before retrying sync push (attempt ${attempt + 1}/${maxSyncAttempts})`
-          );
-          try {
-            // Clean up orphaned objects from failed push to prevent negotiation bloat.
-            const gcResult = await execBuffered(
-              this,
-              `git -C ${retryCleanupBaseRepoPathArg} gc --prune=now`,
-              {
-                cwd: "/tmp",
-                timeout: 60,
-                abortSignal,
-              }
-            );
-            if (gcResult.exitCode !== 0) {
-              log.warn(
-                `Remote git gc exited ${gcResult.exitCode} before sync retry: ${gcResult.stderr || gcResult.stdout}`
-              );
-            }
-          } catch (cleanupError) {
-            log.warn(`Remote git gc failed before sync retry: ${getErrorMessage(cleanupError)}`);
-          }
-          initLogger.logStep(
-            `Sync failed, retrying (attempt ${attempt + 1}/${maxSyncAttempts})...`
-          );
-          await new Promise((r) => setTimeout(r, attempt * 1000));
-        }
-      }
+      await this.syncProjectToRemote(projectPath, initLogger, abortSignal);
       initLogger.logStep("Files synced successfully");
 
       // A brand-new workspace still needs git worktree add so the checkout exists before init hooks
