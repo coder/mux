@@ -25,7 +25,12 @@ function createMatchMedia(isStandalone = false): typeof window.matchMedia {
     }) satisfies MediaQueryList) as typeof window.matchMedia;
 }
 
-function installWindow(url: string, options?: { isStandalone?: boolean }) {
+type NavigationType = "navigate" | "reload" | "back_forward" | "prerender";
+
+function installWindow(
+  url: string,
+  options?: { isStandalone?: boolean; navigationType?: NavigationType }
+) {
   // Happy DOM can default to an opaque origin ("null") which breaks URL-based
   // logic in RouterContext. Give it a stable origin.
   const happyWindow = new GlobalWindow({ url });
@@ -34,6 +39,15 @@ function installWindow(url: string, options?: { isStandalone?: boolean }) {
   globalThis.window.matchMedia = createMatchMedia(options?.isStandalone);
   globalThis.window.localStorage.clear();
   globalThis.window.sessionStorage.clear();
+
+  const navigationEntries = [
+    { type: options?.navigationType ?? "navigate" } as unknown as PerformanceNavigationTiming,
+  ];
+  Object.defineProperty(globalThis.window.performance, "getEntriesByType", {
+    configurable: true,
+    value: (entryType: string) =>
+      entryType === "navigation" ? (navigationEntries as unknown as PerformanceEntryList) : [],
+  });
 }
 
 function PathnameObserver() {
@@ -135,6 +149,21 @@ describe("browser startup launch behavior", () => {
 
     await waitFor(() => {
       expect(view.getByTestId("pathname").textContent).toBe("/");
+    });
+  });
+
+  test("same-tab browser reload preserves a /workspace/:id URL in dashboard mode", async () => {
+    installWindow("https://mux.example.com/workspace/reload-me", { navigationType: "reload" });
+    window.localStorage.setItem(LAUNCH_BEHAVIOR_KEY, JSON.stringify("dashboard"));
+
+    const view = render(
+      <RouterProvider>
+        <PathnameObserver />
+      </RouterProvider>
+    );
+
+    await waitFor(() => {
+      expect(view.getByTestId("pathname").textContent).toBe("/workspace/reload-me");
     });
   });
 
@@ -384,7 +413,6 @@ describe("standalone PWA startup", () => {
 
     await waitFor(() => {
       expect(view.getByTestId("pathname").textContent).toBe("/");
-      expect(window.sessionStorage.getItem("muxStandaloneSessionInitialized")).toBe("1");
     });
   });
 
@@ -426,8 +454,10 @@ describe("standalone PWA startup", () => {
   });
 
   test("still restores the current route on reloads inside the same standalone window", async () => {
-    installWindow("https://mux.example.com/workspace/reload-me", { isStandalone: true });
-    window.sessionStorage.setItem("muxStandaloneSessionInitialized", "1");
+    installWindow("https://mux.example.com/workspace/reload-me", {
+      isStandalone: true,
+      navigationType: "reload",
+    });
 
     const view = render(
       <RouterProvider>

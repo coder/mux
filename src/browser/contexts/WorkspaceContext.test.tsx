@@ -48,6 +48,8 @@ const createWorkspaceMetadata = (
   ...overrides,
 });
 
+type NavigationType = "navigate" | "reload" | "back_forward" | "prerender";
+
 describe("WorkspaceContext", () => {
   afterEach(() => {
     cleanup();
@@ -968,6 +970,36 @@ describe("WorkspaceContext", () => {
     expect(ctx().selectedWorkspace).toBeNull();
   });
 
+  test("browser reload restores the open workspace instead of reopening project creation", async () => {
+    createMockAPI({
+      workspace: {
+        list: () =>
+          Promise.resolve([
+            createWorkspaceMetadata({
+              id: "ws-open-chat",
+              projectPath: "/existing",
+              projectName: "existing",
+              name: "main",
+              namedWorkspacePath: "/existing-main",
+            }),
+          ]),
+      },
+      localStorage: {
+        [LAUNCH_BEHAVIOR_KEY]: JSON.stringify("dashboard"),
+      },
+      locationPath: "/workspace/ws-open-chat",
+      navigationType: "reload",
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().loading).toBe(false));
+    await waitFor(() => {
+      expect(ctx().selectedWorkspace?.workspaceId).toBe("ws-open-chat");
+    });
+    expect(ctx().pendingNewWorkspaceProject).toBeNull();
+  });
+
   test("resolves system project route IDs for pending workspace creation", async () => {
     const systemProjectPath = "/system/internal-project";
     const systemProjectId = getProjectRouteId(systemProjectPath);
@@ -1566,6 +1598,7 @@ interface MockAPIOptions {
   locationHash?: string;
   locationPath?: string;
   desktopMode?: boolean;
+  navigationType?: NavigationType;
   pendingDeepLinks?: Array<{ type: string; [key: string]: unknown }>;
 }
 
@@ -1595,6 +1628,15 @@ function createMockAPI(options: MockAPIOptions = {}) {
   if (options.locationHash) {
     happyWindow.location.hash = options.locationHash;
   }
+
+  const navigationEntries = [
+    { type: options.navigationType ?? "navigate" } as unknown as PerformanceNavigationTiming,
+  ];
+  Object.defineProperty(happyWindow.performance, "getEntriesByType", {
+    configurable: true,
+    value: (entryType: string) =>
+      entryType === "navigation" ? (navigationEntries as unknown as PerformanceEntryList) : [],
+  });
 
   // Set up deep link API on the window object for pending deep-link tests
   (happyWindow as unknown as { api?: Record<string, unknown> }).api = {

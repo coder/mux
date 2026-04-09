@@ -62,7 +62,7 @@ export function useRouter(): RouterContext {
   return ctx;
 }
 
-const STANDALONE_PWA_SESSION_KEY = "muxStandaloneSessionInitialized";
+type StartupNavigationType = "navigate" | "reload" | "back_forward" | "prerender" | null;
 
 function isStandalonePwa(): boolean {
   return (
@@ -71,20 +71,52 @@ function isStandalonePwa(): boolean {
   );
 }
 
-function hasStandalonePwaSessionInitialized(): boolean {
-  try {
-    return window.sessionStorage.getItem(STANDALONE_PWA_SESSION_KEY) === "1";
-  } catch {
-    return false;
+function getStartupNavigationType(): StartupNavigationType {
+  const entries = window.performance?.getEntriesByType?.("navigation");
+  const firstEntry = entries?.[0];
+  const entryType =
+    firstEntry && typeof firstEntry === "object" && "type" in firstEntry ? firstEntry.type : null;
+
+  if (
+    entryType === "navigate" ||
+    entryType === "reload" ||
+    entryType === "back_forward" ||
+    entryType === "prerender"
+  ) {
+    return entryType;
   }
+
+  const legacyType = window.performance?.navigation?.type;
+  if (legacyType === 1) {
+    return "reload";
+  }
+  if (legacyType === 2) {
+    return "back_forward";
+  }
+  if (legacyType === 0) {
+    return "navigate";
+  }
+
+  return null;
 }
 
-function markStandalonePwaSessionInitialized(): void {
-  try {
-    window.sessionStorage.setItem(STANDALONE_PWA_SESSION_KEY, "1");
-  } catch {
-    // If sessionStorage is unavailable, fall back to treating each load as a fresh launch.
+function isRouteRestoringNavigationType(type: StartupNavigationType): boolean {
+  return type === "reload" || type === "back_forward";
+}
+
+function shouldRestoreWorkspaceUrlOnStartup(options: {
+  isStandalone: boolean;
+  launchBehavior: LaunchBehavior | null;
+  navigationType: StartupNavigationType;
+}): boolean {
+  if (options.isStandalone) {
+    return isRouteRestoringNavigationType(options.navigationType);
   }
+
+  return (
+    options.launchBehavior === "last-workspace" ||
+    isRouteRestoringNavigationType(options.navigationType)
+  );
 }
 
 function hasValidEncodedPathSegment(encodedValue: string): boolean {
@@ -147,12 +179,10 @@ function isRestorableRoute(route: unknown): route is string {
 function getInitialRoute(): string {
   const isStorybook = window.location.pathname.endsWith("iframe.html");
   const isStandalone = isStandalonePwa();
-  const hasStandaloneSession = hasStandalonePwaSessionInitialized();
+  const navigationType = getStartupNavigationType();
   const launchBehavior = !isStandalone
     ? readPersistedState<LaunchBehavior>(LAUNCH_BEHAVIOR_KEY, "dashboard")
     : null;
-  const shouldIgnoreStandaloneWorkspaceUrl =
-    isStandalone && !hasStandaloneSession && window.location.pathname.startsWith("/workspace/");
 
   if (window.location.protocol === "file:") {
     const persistedRoute = readPersistedState<string | null>(LAST_VISITED_ROUTE_KEY, null);
@@ -161,11 +191,10 @@ function getInitialRoute(): string {
     }
   }
 
-  // In browser mode (not Storybook), read route directly from URL (enables refresh restoration).
-  // Standalone PWAs intentionally ignore stale workspace URLs on cold launch so opening the app
-  // lands on the default root entrypoint, while preserving explicit deep links like /settings
-  // or /project.
-  if (window.location.protocol !== "file:" && !isStorybook && !shouldIgnoreStandaloneWorkspaceUrl) {
+  // In browser mode (not Storybook), read route directly from the current URL. Workspace
+  // routes are special: fresh launches may ignore them, but explicit restore-style navigations
+  // such as hard reload/back-forward should reopen the same chat.
+  if (window.location.protocol !== "file:" && !isStorybook) {
     const url = window.location.pathname + window.location.search;
     // Only use URL if it's a valid route (starts with /, not just "/" or empty)
     if (url.startsWith("/") && url !== "/") {
@@ -173,9 +202,13 @@ function getInitialRoute(): string {
         return url;
       }
 
-      // Respect dashboard/new-chat launch preferences in browser mode so stale workspace URLs
-      // do not silently override the user's chosen startup destination on a fresh launch.
-      if (isStandalone || launchBehavior === "last-workspace") {
+      if (
+        shouldRestoreWorkspaceUrlOnStartup({
+          isStandalone,
+          launchBehavior,
+          navigationType,
+        })
+      ) {
         return url;
       }
     }
@@ -427,13 +460,6 @@ function RouterContextInner(props: { children: ReactNode }) {
 // causing a flash of stale UI between normal-priority updates (e.g.
 // setIsSending(false)) and the deferred route change.
 export function RouterProvider(props: { children: ReactNode }) {
-  useEffect(() => {
-    if (!isStandalonePwa()) return;
-    // Mark the standalone session after commit so StrictMode's throwaway renders cannot
-    // flip a cold launch into the reload path before the first real paint.
-    markStandalonePwaSessionInitialized();
-  }, []);
-
   return (
     <MemoryRouter initialEntries={[getInitialRoute()]} unstable_useTransitions={false}>
       <RouterContextInner>{props.children}</RouterContextInner>
