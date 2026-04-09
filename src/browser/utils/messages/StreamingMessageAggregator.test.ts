@@ -2086,6 +2086,41 @@ describe("StreamingMessageAggregator", () => {
       expect(aggregator.getRuntimeStatus()).toBeNull();
     });
 
+    test("keeps an optimistic new-chat start through an empty replay", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.markOptimisticPendingStreamStart("openai:gpt-4o-mini");
+      aggregator.loadHistoricalMessages([], false);
+
+      expect(aggregator.getPendingStreamStartTime()).not.toBeNull();
+      expect(aggregator.getPendingStreamModel()).toBe("openai:gpt-4o-mini");
+    });
+
+    test("ends the optimistic new-chat start once replay shows the first user turn", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.markOptimisticPendingStreamStart("openai:gpt-4o-mini");
+      aggregator.loadHistoricalMessages([
+        createMuxMessage("user-1", "user", "Hello", {
+          historySequence: 1,
+          timestamp: Date.now(),
+        }),
+      ]);
+
+      expect(aggregator.getPendingStreamStartTime()).toBeNull();
+      expect(aggregator.getPendingStreamModel()).toBeNull();
+    });
+
+    test("preserves an optimistic new-chat start across replay resets", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.markOptimisticPendingStreamStart("openai:gpt-4o-mini");
+      aggregator.resetForReplay();
+
+      expect(aggregator.getPendingStreamStartTime()).not.toBeNull();
+      expect(aggregator.getPendingStreamModel()).toBe("openai:gpt-4o-mini");
+    });
+
     test("clears stale pending state when authoritative history now ends with assistant", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
       seedPendingStreamState(aggregator);

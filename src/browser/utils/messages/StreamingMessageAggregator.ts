@@ -454,6 +454,11 @@ export class StreamingMessageAggregator {
   // reflects one-shot/compaction overrides instead of stale localStorage values.
   private pendingStreamModel: string | null = null;
 
+  // A brand-new workspace can auto-navigate before onChat replays the first user turn.
+  // Keep the startup barrier alive through that empty catch-up window until we see
+  // either the real user message or a terminal stream event.
+  private optimisticPendingStreamStart = false;
+
   // Last completed stream timing stats (preserved after stream ends for display)
   // Unlike activeStreams, this persists until the next stream starts
   private lastCompletedStreamStats: {
@@ -1066,9 +1071,14 @@ export class StreamingMessageAggregator {
 
     if (!opts?.skipDerivedState && !hasActiveStream && this.pendingStreamStartTime !== null) {
       const latestMessage = this.getAllMessages().at(-1);
-      if (!latestMessage || latestMessage.role === "assistant") {
-        // Authoritative history now shows an idle/assistant-ended transcript, so any
-        // preserved "starting..." state came from a disconnected pre-stream turn.
+      const historySettledThePendingTurn =
+        latestMessage?.role === "assistant" ||
+        (latestMessage?.role === "user" && this.optimisticPendingStreamStart) ||
+        (latestMessage == null && !this.optimisticPendingStreamStart);
+      if (historySettledThePendingTurn) {
+        // User rationale: optimistic startup for a brand-new chat should survive an
+        // empty caught-up cycle, but once history shows the first turn (or an assistant
+        // response), the normal transcript can take over and the local barrier should end.
         this.clearPendingStreamLifecycleState();
       }
     }
@@ -1246,6 +1256,19 @@ export class StreamingMessageAggregator {
     return this.pendingStreamModel;
   }
 
+  markOptimisticPendingStreamStart(model: string | null): void {
+    this.optimisticPendingStreamStart = true;
+    this.pendingCompactionRequest = null;
+    this.pendingStreamModel = model;
+    this.setPendingStreamStartTime(Date.now());
+  }
+
+  clearPendingStreamStartIfNotOptimistic(): void {
+    if (!this.optimisticPendingStreamStart) {
+      this.clearPendingStreamStart();
+    }
+  }
+
   private getLatestHistoricalCompactionRequest(): PendingCompactionRequest | null {
     let sawCompletedCompaction = false;
     const messages = this.getAllMessages();
@@ -1302,6 +1325,7 @@ export class StreamingMessageAggregator {
     if (time === null) {
       this.pendingCompactionRequest = null;
       this.pendingStreamModel = null;
+      this.optimisticPendingStreamStart = false;
     }
   }
 
@@ -1611,6 +1635,29 @@ export class StreamingMessageAggregator {
 
   clearPendingStreamStart(): void {
     this.setPendingStreamStartTime(null);
+  }
+
+  resetForReplay(): void {
+    const pendingStreamSnapshot =
+      this.pendingStreamStartTime === null
+        ? null
+        : {
+            pendingStreamStartTime: this.pendingStreamStartTime,
+            pendingCompactionRequest: this.pendingCompactionRequest,
+            pendingStreamModel: this.pendingStreamModel,
+            optimisticPendingStreamStart: this.optimisticPendingStreamStart,
+          };
+
+    this.clear();
+
+    if (!pendingStreamSnapshot) {
+      return;
+    }
+
+    this.pendingStreamStartTime = pendingStreamSnapshot.pendingStreamStartTime;
+    this.pendingCompactionRequest = pendingStreamSnapshot.pendingCompactionRequest;
+    this.pendingStreamModel = pendingStreamSnapshot.pendingStreamModel;
+    this.optimisticPendingStreamStart = pendingStreamSnapshot.optimisticPendingStreamStart;
   }
 
   clear(): void {
@@ -2470,6 +2517,7 @@ export class StreamingMessageAggregator {
               }
             : null;
 
+        this.optimisticPendingStreamStart = false;
         this.pendingStreamModel = muxMetadata?.requestedModel ?? null;
 
         if (muxMeta?.displayStatus) {

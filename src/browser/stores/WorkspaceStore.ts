@@ -192,10 +192,6 @@ export interface AdvisorLivePhaseState {
   timestamp: number;
 }
 
-interface PendingInitialSendState {
-  pendingStreamModel: string | null;
-}
-
 interface WorkspaceChatTransientState {
   caughtUp: boolean;
   isHydratingTranscript: boolean;
@@ -207,7 +203,6 @@ interface WorkspaceChatTransientState {
   liveAdvisorPhase: Map<string, AdvisorLivePhaseState>;
   liveTaskIds: Map<string, string[]>;
   autoRetryStatus: AutoRetryStatus | null;
-  pendingInitialSend: PendingInitialSendState | null;
 }
 
 interface HistoryPaginationCursor {
@@ -259,7 +254,6 @@ function createInitialChatTransientState(): WorkspaceChatTransientState {
     liveAdvisorPhase: new Map(),
     liveTaskIds: new Map(),
     autoRetryStatus: null,
-    pendingInitialSend: null,
   };
 }
 
@@ -657,10 +651,6 @@ export class WorkspaceStore {
     "stream-abort": (workspaceId, aggregator, data) => {
       const streamAbortData = data as StreamAbortEvent;
       applyWorkspaceChatEventToAggregator(aggregator, streamAbortData);
-      const transient = this.assertChatTransientState(workspaceId);
-      if (transient.pendingInitialSend != null) {
-        transient.pendingInitialSend = null;
-      }
 
       // Track stream interruption telemetry (get model from aggregator)
       const model = aggregator.getCurrentModel();
@@ -1499,24 +1489,6 @@ export class WorkspaceStore {
     return state;
   }
 
-  private setPendingInitialSend(workspaceId: string, pendingStreamModel: string | null): void {
-    const transient = this.chatTransientState.get(workspaceId);
-    if (!transient) {
-      return;
-    }
-    transient.pendingInitialSend = { pendingStreamModel };
-    this.states.bump(workspaceId);
-  }
-
-  private clearPendingInitialSend(workspaceId: string): void {
-    const transient = this.chatTransientState.get(workspaceId);
-    if (transient?.pendingInitialSend == null) {
-      return;
-    }
-    transient.pendingInitialSend = null;
-    this.states.bump(workspaceId);
-  }
-
   private deriveHistoryPaginationState(
     aggregator: StreamingMessageAggregator,
     hasOlderOverride?: boolean
@@ -1608,9 +1580,7 @@ export class WorkspaceStore {
         : (activity?.lastThinkingLevel ?? aggregator.getCurrentThinkingLevel() ?? null);
       const hasAuthoritativeStreamLifecycle =
         streamLifecycle !== null && streamLifecycle.phase !== "idle";
-      const hasReplayPreparingLifecycle =
-        isActiveWorkspace && !transient.caughtUp && streamLifecycle?.phase === "preparing";
-      const optimisticPendingInitialSend = isActiveWorkspace ? transient.pendingInitialSend : null;
+      const activePendingStreamStartTime = isActiveWorkspace ? pendingStreamStartTime : null;
       const aggregatorRecency = aggregator.getRecencyTimestamp();
       const recencyTimestamp =
         aggregatorRecency === null
@@ -1618,16 +1588,13 @@ export class WorkspaceStore {
           : Math.max(aggregatorRecency, activity?.recency ?? aggregatorRecency);
       // User rationale: a brand-new chat should show its startup barrier immediately instead of
       // flashing "Catching up"/"No Messages Yet" while the very first send is still in flight.
-      // Treat the backend lifecycle as authoritative, but keep an optimistic pre-stream state
-      // for the active creation flow until onChat observes the first real user message/error.
+      // The aggregator owns both normal user-message startup and the optimistic new-chat handoff,
+      // so the workspace only needs to ask whether the active transcript still has a pending start.
       const isStreamStarting =
-        (useAggregatorState ||
-          hasReplayPreparingLifecycle ||
-          optimisticPendingInitialSend !== null) &&
+        isActiveWorkspace &&
+        !canInterrupt &&
         (streamLifecycle?.phase === "preparing" ||
-          (!hasAuthoritativeStreamLifecycle &&
-            (pendingStreamStartTime !== null || optimisticPendingInitialSend !== null))) &&
-        !canInterrupt;
+          (!hasAuthoritativeStreamLifecycle && activePendingStreamStartTime !== null));
       // Only actively running init output should bypass transcript hydration. Completed init
       // rows are still replayed, but they should not suppress the normal catch-up placeholder
       // for stale cached transcript content on reconnect.
@@ -1676,8 +1643,7 @@ export class WorkspaceStore {
         lastAbortReason: aggregator.getLastAbortReason(),
         agentStatus,
         pendingStreamStartTime,
-        pendingStreamModel:
-          optimisticPendingInitialSend?.pendingStreamModel ?? aggregator.getPendingStreamModel(),
+        pendingStreamModel: aggregator.getPendingStreamModel(),
         autoRetryStatus: transient.autoRetryStatus,
         runtimeStatus: aggregator.getRuntimeStatus(),
         streamingTokenCount,
@@ -2432,10 +2398,6 @@ export class WorkspaceStore {
       // cannot leak compaction metadata into future completion callbacks.
       this.aggregators.get(workspaceId)?.clearActiveStreams();
       this.aggregators.get(workspaceId)?.clearPendingStreamStart();
-      const transient = this.chatTransientState.get(workspaceId);
-      if (transient?.pendingInitialSend != null) {
-        transient.pendingInitialSend = null;
-      }
     }
 
     if (snapshot?.streaming !== true) {
@@ -2873,7 +2835,7 @@ export class WorkspaceStore {
       this.preReplayUsageSnapshot.delete(workspaceId);
     }
 
-    aggregator.clear();
+    aggregator.resetForReplay();
 
     // Reset per-workspace transient state so the next replay rebuilds from the backend source of truth.
     const previousTransient = this.chatTransientState.get(workspaceId);
@@ -2884,9 +2846,6 @@ export class WorkspaceStore {
     if (previousTransient?.isHydratingTranscript) {
       nextTransient.isHydratingTranscript = true;
     }
-    // User rationale: optimistic first-send startup must survive replay resets because the
-    // initial full replay can happen before the first user turn is actually replayed.
-    nextTransient.pendingInitialSend = previousTransient?.pendingInitialSend ?? null;
 
     this.chatTransientState.set(workspaceId, nextTransient);
 
@@ -3250,11 +3209,23 @@ export class WorkspaceStore {
   }
 
   markPendingInitialSend(workspaceId: string, pendingStreamModel: string | null): void {
-    this.setPendingInitialSend(workspaceId, pendingStreamModel);
+    const aggregator = this.aggregators.get(workspaceId);
+    if (!aggregator) {
+      return;
+    }
+
+    aggregator.markOptimisticPendingStreamStart(pendingStreamModel);
+    this.states.bump(workspaceId);
   }
 
   clearPendingInitialSendState(workspaceId: string): void {
-    this.clearPendingInitialSend(workspaceId);
+    const aggregator = this.aggregators.get(workspaceId);
+    if (aggregator?.getPendingStreamStartTime() == null) {
+      return;
+    }
+
+    aggregator.clearPendingStreamStart();
+    this.states.bump(workspaceId);
   }
 
   /**
@@ -3539,12 +3510,11 @@ export class WorkspaceStore {
       ) {
         aggregator.clearActiveStreams();
       }
-      // When server confirms no active stream, clear any stale aggregator-owned pending-start
-      // state so reconnects don't stay stuck in "starting...". Keep the optimistic initial-send
-      // flag until we actually observe the first turn (or a definitive background stop) because
-      // caught-up can arrive before the delayed first send is replayed.
+      // When server confirms no active stream, a normal pending-start is stale and should end.
+      // The only exception is the optimistic new-chat handoff: caught-up can arrive before the
+      // delayed first send is replayed, so that local barrier must survive until the turn appears.
       if (serverActiveStreamMessageId === undefined) {
-        aggregator.clearPendingStreamStart();
+        aggregator.clearPendingStreamStartIfNotOptimistic();
       }
 
       if (replay === "full") {
@@ -3574,18 +3544,9 @@ export class WorkspaceStore {
 
       if (transient.historicalMessages.length > 0) {
         const loadMode = replay === "full" ? "replace" : "append";
-        const bufferedInitialUserMessage =
-          transient.pendingInitialSend !== null &&
-          transient.historicalMessages.some((message) => message.role === "user");
         aggregator.loadHistoricalMessages(transient.historicalMessages, hasActiveStream, {
           mode: loadMode,
         });
-        // Keep the optimistic pending-start flag alive until caught-up applies the buffered
-        // first-turn history. Clearing it earlier would let generic loading placeholders win
-        // for one render before the replayed user message establishes the real startup state.
-        if (bufferedInitialUserMessage) {
-          transient.pendingInitialSend = null;
-        }
         transient.historicalMessages.length = 0;
       } else if (replay === "full") {
         // Full replay can legitimately contain zero messages (e.g. compacted to empty).
@@ -3710,7 +3671,6 @@ export class WorkspaceStore {
       const allowSideEffects = !transient.replayingHistory;
 
       applyWorkspaceChatEventToAggregator(aggregator, data, { allowSideEffects });
-      this.clearPendingInitialSend(workspaceId);
 
       this.states.bump(workspaceId);
       return;
@@ -3793,9 +3753,6 @@ export class WorkspaceStore {
         // Buffer historical MuxMessages
         transient.historicalMessages.push(data);
       } else {
-        if (data.role === "user" && transient.pendingInitialSend !== null) {
-          transient.pendingInitialSend = null;
-        }
         // Process live events immediately (after history loaded)
         applyWorkspaceChatEventToAggregator(aggregator, data);
 

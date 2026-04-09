@@ -1058,18 +1058,11 @@ describe("WorkspaceStore", () => {
       expect(store.getWorkspaceState(workspaceId).isHydratingTranscript).toBe(true);
     });
 
-    it("preserves optimistic initial-send startup across full replay resets", () => {
+    it("preserves optimistic startup across full replay resets", () => {
       const workspaceId = "workspace-full-replay-pending-start";
       const requestedModel = "openai:gpt-4o-mini";
       const internalStore = store as unknown as {
         resetChatStateForReplay: (workspaceId: string) => void;
-        chatTransientState: Map<
-          string,
-          {
-            pendingInitialSend: { pendingStreamModel: string | null } | null;
-            isHydratingTranscript: boolean;
-          }
-        >;
       };
 
       createAndAddWorkspace(store, workspaceId);
@@ -1077,9 +1070,9 @@ describe("WorkspaceStore", () => {
 
       internalStore.resetChatStateForReplay(workspaceId);
 
-      const transientState = internalStore.chatTransientState.get(workspaceId);
-      expect(transientState?.pendingInitialSend).toEqual({ pendingStreamModel: requestedModel });
-      expect(store.getWorkspaceState(workspaceId).isStreamStarting).toBe(true);
+      const state = store.getWorkspaceState(workspaceId);
+      expect(state.isStreamStarting).toBe(true);
+      expect(state.pendingStreamModel).toBe(requestedModel);
     });
 
     it("clears transcript hydration after repeated catch-up retry failures", async () => {
