@@ -194,12 +194,6 @@ export const FILE_EDIT_TOOL_NAMES = [
 ] as const;
 
 /**
- * Prefix for file write denial error messages.
- * This consistent prefix helps both the UI and models detect when writes fail.
- */
-export const WRITE_DENIED_PREFIX = "WRITE DENIED, FILE UNMODIFIED:";
-
-/**
  * Prefix for edit failure notes (agent-only messages).
  * This prefix signals to the agent that the file was not modified.
  */
