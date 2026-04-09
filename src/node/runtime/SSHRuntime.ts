@@ -392,10 +392,28 @@ export class SSHRuntime extends RemoteRuntime {
       throw new Error("Operation aborted");
     }
 
+    const promisorPackDirArg = `${baseRepoPathArg}/objects/pack`;
     log.info(
-      `Running remote git gc before retrying sync push (attempt ${attempt + 1}/${maxAttempts})`
+      `Running remote promisor cleanup and git gc before retrying sync push (attempt ${attempt + 1}/${maxAttempts})`
     );
     try {
+      const promisorCleanupResult = await execBuffered(
+        this,
+        `find ${promisorPackDirArg} -name '*.promisor' -print -delete 2>/dev/null || true`,
+        {
+          cwd: "/tmp",
+          timeout: 10,
+          abortSignal,
+        }
+      );
+      const removedPromisorCount = promisorCleanupResult.stdout
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean).length;
+      if (removedPromisorCount > 0) {
+        log.info(`Removed ${removedPromisorCount} stale promisor marker(s) before sync retry`);
+      }
+
       const gcResult = await execBuffered(this, `git -C ${baseRepoPathArg} gc --prune=now`, {
         cwd: "/tmp",
         timeout: 60,
@@ -411,7 +429,7 @@ export class SSHRuntime extends RemoteRuntime {
       if (abortSignal?.aborted || cleanupErrorMsg === "Operation aborted") {
         throw cleanupError instanceof Error ? cleanupError : new Error(cleanupErrorMsg);
       }
-      log.warn(`Remote git gc failed before sync retry: ${cleanupErrorMsg}`);
+      log.warn(`Remote sync retry cleanup failed: ${cleanupErrorMsg}`);
     }
   }
 

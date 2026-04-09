@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type { InitLogger } from "./Runtime";
+import type { ExecOptions, ExecStream, InitLogger } from "./Runtime";
 import { SSHRuntime } from "./SSHRuntime";
 import type { RemoteProjectLayout } from "./remoteProjectLayout";
 import type { SSHRuntimeConfig } from "./sshConnectionPool";
@@ -50,6 +50,35 @@ function createMockTransport(config: SSHRuntimeConfig): SSHTransport {
     createPtySession(_params: PtySessionParams): Promise<PtyHandle> {
       return Promise.reject(new Error("Unexpected PTY creation in SSHRuntime retry test"));
     },
+  };
+}
+
+function createTextStream(text: string): ReadableStream<Uint8Array> {
+  const encoded = new TextEncoder().encode(text);
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      if (encoded.byteLength > 0) {
+        controller.enqueue(encoded);
+      }
+      controller.close();
+    },
+  });
+}
+
+const resolveVoid = (): Promise<void> => Promise.resolve();
+const discardChunk = (_chunk: Uint8Array): Promise<void> => Promise.resolve();
+
+function createExecStream(stdout: string, stderr = "", exitCode = 0): ExecStream {
+  return {
+    stdout: createTextStream(stdout),
+    stderr: createTextStream(stderr),
+    stdin: new WritableStream<Uint8Array>({
+      write: discardChunk,
+      close: resolveVoid,
+      abort: resolveVoid,
+    }),
+    exitCode: Promise.resolve(exitCode),
+    duration: Promise.resolve(0),
   };
 }
 
@@ -122,7 +151,46 @@ class TestSSHRuntime extends SSHRuntime {
   }
 }
 
+class CleanupCommandSSHRuntime extends SSHRuntime {
+  readonly commands: string[] = [];
+  readonly timeouts: number[] = [];
+
+  constructor() {
+    const config: SSHRuntimeConfig = {
+      host: "example.test",
+      srcBaseDir: "/remote/src",
+    };
+    super(config, createMockTransport(config));
+  }
+
+  async runCleanup(baseRepoPathArg: string, abortSignal?: AbortSignal): Promise<void> {
+    await this.cleanupRetryableProjectSyncFailure(baseRepoPathArg, 1, 3, abortSignal);
+  }
+
+  override exec(command: string, options: ExecOptions): Promise<ExecStream> {
+    this.commands.push(command);
+    this.timeouts.push(options.timeout ?? -1);
+    const stdout = command.startsWith("find ")
+      ? "/remote/src/project/.mux-base.git/objects/pack/pack-a.promisor\n"
+      : "";
+    return Promise.resolve(createExecStream(stdout));
+  }
+}
+
 describe("SSHRuntime project sync retry orchestration", () => {
+  it("removes stale promisor markers before running git gc", async () => {
+    const runtime = new CleanupCommandSSHRuntime();
+    const baseRepoPathArg = '"/remote/src/project/.mux-base.git"';
+
+    await runtime.runCleanup(baseRepoPathArg);
+
+    expect(runtime.commands).toEqual([
+      `find ${baseRepoPathArg}/objects/pack -name '*.promisor' -print -delete 2>/dev/null || true`,
+      `git -C ${baseRepoPathArg} gc --prune=now`,
+    ]);
+    expect(runtime.timeouts).toEqual([10, 60]);
+  });
+
   it("skips cleanup and backoff when a retryable failure was user-aborted", async () => {
     const runtime = new TestSSHRuntime();
     const abortController = new AbortController();
