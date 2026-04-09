@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAPI } from "@/browser/contexts/API";
+import { useWorkspaceActions } from "@/browser/contexts/WorkspaceContext";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import {
   HEARTBEAT_DEFAULT_CONTEXT_MODE,
@@ -83,6 +84,7 @@ export function useWorkspaceHeartbeat(
 ): UseWorkspaceHeartbeatResult {
   const { workspaceId } = params;
   const { api } = useAPI();
+  const { setWorkspaceMetadata } = useWorkspaceActions();
   const [settings, setSettings] = useState<HeartbeatFormSettings>(() =>
     getDefaultHeartbeatSettings()
   );
@@ -180,7 +182,21 @@ export function useWorkspaceHeartbeat(
           return true;
         }
 
-        setSettings(normalizeHeartbeatSettings(next));
+        const normalizedSettings = normalizeHeartbeatSettings(next);
+        setWorkspaceMetadata((prev) => {
+          const existingMetadata = prev.get(workspaceIdAtCall);
+          if (!existingMetadata) {
+            return prev;
+          }
+
+          const updated = new Map(prev);
+          updated.set(workspaceIdAtCall, {
+            ...existingMetadata,
+            heartbeat: normalizedSettings,
+          });
+          return updated;
+        });
+        setSettings(normalizedSettings);
         setIsSaving(false);
         return true;
       } catch (saveError) {
@@ -199,7 +215,7 @@ export function useWorkspaceHeartbeat(
         return false;
       }
     },
-    [api, workspaceId]
+    [api, setWorkspaceMetadata, workspaceId]
   );
 
   return { settings, isLoading, isSaving, error, save, globalDefaultPrompt };
