@@ -3,11 +3,22 @@ import { describe, it, expect } from "@jest/globals";
 import {
   shouldShowInterruptedBarrier,
   mergeConsecutiveStreamErrors,
-  computeBashOutputGroupInfo,
   computeBashOutputGroupInfos,
   shouldBypassDeferredMessages,
+  type BashOutputGroupInfo,
 } from "./messageUtils";
 import type { DisplayedMessage } from "@/common/types/message";
+
+/** Test-only convenience wrapper: compute group info for a single index. */
+function computeBashOutputGroupInfo(
+  messages: DisplayedMessage[],
+  index: number
+): BashOutputGroupInfo | undefined {
+  if (index < 0 || index >= messages.length) {
+    return undefined;
+  }
+  return computeBashOutputGroupInfos(messages)[index];
+}
 
 describe("shouldShowInterruptedBarrier", () => {
   it("returns false for executing ask_user_question", () => {

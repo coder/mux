@@ -273,17 +273,3 @@ export function computeBashOutputGroupInfos(
 
   return groupInfos;
 }
-
-/**
- * Computes the bash_output group info for a message at a given index.
- */
-export function computeBashOutputGroupInfo(
-  messages: DisplayedMessage[],
-  index: number
-): BashOutputGroupInfo | undefined {
-  if (index < 0 || index >= messages.length) {
-    return undefined;
-  }
-
-  return computeBashOutputGroupInfos(messages)[index];
-}
