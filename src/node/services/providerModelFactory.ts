@@ -597,7 +597,6 @@ const CODEX_ALLOWED_PARAMS = new Set([
   "top_p",
   "include",
   "text", // structured output via Output.object -> text.format
-  "truncation",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -628,10 +627,10 @@ function extractTextContent(content: unknown): string {
 
 export function normalizeCodexResponsesBody(body: string): string {
   const json = JSON.parse(body) as Record<string, unknown>;
-  const truncation = json.truncation;
-  if (truncation !== "auto" && truncation !== "disabled") {
-    json.truncation = "disabled";
-  }
+
+  // ChatGPT's Codex endpoint is stricter than the public OpenAI Responses API
+  // and currently rejects the `truncation` field entirely.
+  delete json.truncation;
 
   // Codex-compatible Responses requests must disable storage and strip unsupported params.
   json.store = false;
@@ -1116,9 +1115,9 @@ export class ProviderModelFactory {
         const baseFetch = getProviderFetch(providerConfig);
         const codexOauthService = this.codexOauthService;
 
-        // Wrap fetch to default truncation to "disabled" for OpenAI Responses API calls.
-        // This preserves our compaction handling while still allowing explicit truncation (e.g., auto).
-        const fetchWithOpenAITruncation = Object.assign(
+        // Wrap fetch so Codex OAuth Responses requests are normalized before
+        // they are rerouted from api.openai.com to chatgpt.com's Codex backend.
+        const fetchWithOpenAICodexNormalization = Object.assign(
           async (
             input: Parameters<typeof fetch>[0],
             init?: Parameters<typeof fetch>[1]
@@ -1149,7 +1148,8 @@ export class ProviderModelFactory {
 
               const body = init?.body;
               // Only parse the JSON body when routing through Codex OAuth, since Codex
-              // requires instruction lifting, store=false, and Responses truncation.
+              // requires instruction lifting, store=false, and stripping unsupported
+              // Responses fields like `truncation`.
               if (
                 shouldRouteThroughCodexOauth &&
                 isOpenAIResponses &&
@@ -1212,7 +1212,7 @@ export class ProviderModelFactory {
 
         // Lazy-load OpenAI provider to reduce startup time
         const { createOpenAI } = await PROVIDER_REGISTRY.openai();
-        const providerFetch = fetchWithOpenAITruncation as typeof fetch;
+        const providerFetch = fetchWithOpenAICodexNormalization as typeof fetch;
         const provider = createOpenAI({
           ...configWithCreds,
           // Cast is safe: our fetch implementation is compatible with the SDK's fetch type.
