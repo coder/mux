@@ -54,6 +54,30 @@ export function copyStreamLifecycleSnapshot(
   };
 }
 
+export function areStreamLifecycleSnapshotsEqual(
+  left: Pick<StreamLifecycleSnapshot, "phase" | "hadAnyOutput" | "abortReason"> | null,
+  right: Pick<StreamLifecycleSnapshot, "phase" | "hadAnyOutput" | "abortReason"> | null
+): boolean {
+  return (
+    left === right ||
+    (left !== null &&
+      right !== null &&
+      left.phase === right.phase &&
+      left.hadAnyOutput === right.hadAnyOutput &&
+      (left.abortReason ?? null) === (right.abortReason ?? null))
+  );
+}
+
+export function isInFlightStreamLifecyclePhase(phase: StreamLifecyclePhase): boolean {
+  return phase === "preparing" || phase === "streaming" || phase === "completing";
+}
+
+export function hasInFlightStreamLifecycle(
+  snapshot: Pick<StreamLifecycleSnapshot, "phase"> | null | undefined
+): boolean {
+  return snapshot != null && isInFlightStreamLifecyclePhase(snapshot.phase);
+}
+
 export interface StreamAbortReasonSnapshot {
   reason: StreamAbortReason;
   at: number;
@@ -89,3 +113,42 @@ export type AutoRetryAbandonedEvent = z.infer<typeof AutoRetryAbandonedEventSche
  * Used for both runtime readiness and generic startup breadcrumbs in the barrier UI.
  */
 export type RuntimeStatusEvent = z.infer<typeof RuntimeStatusEventSchema>;
+
+/**
+ * Shared runtime-status helpers used by both the backend session replay path and the
+ * renderer aggregator so startup breadcrumbs follow the same lifecycle semantics.
+ */
+export function copyRuntimeStatusEvent(
+  status: Pick<
+    RuntimeStatusEvent,
+    "type" | "workspaceId" | "phase" | "runtimeType" | "source" | "detail"
+  >
+): RuntimeStatusEvent {
+  return {
+    type: status.type,
+    workspaceId: status.workspaceId,
+    phase: status.phase,
+    runtimeType: status.runtimeType,
+    ...(status.source != null ? { source: status.source } : {}),
+    ...(status.detail != null ? { detail: status.detail } : {}),
+  };
+}
+
+export function areRuntimeStatusEventsEqual(
+  left: Pick<RuntimeStatusEvent, "phase" | "runtimeType" | "source" | "detail"> | null,
+  right: Pick<RuntimeStatusEvent, "phase" | "runtimeType" | "source" | "detail"> | null
+): boolean {
+  return (
+    left === right ||
+    (left !== null &&
+      right !== null &&
+      left.phase === right.phase &&
+      left.runtimeType === right.runtimeType &&
+      (left.source ?? null) === (right.source ?? null) &&
+      (left.detail ?? null) === (right.detail ?? null))
+  );
+}
+
+export function isTerminalRuntimeStatusPhase(phase: RuntimeStatusEvent["phase"]): boolean {
+  return phase === "ready" || phase === "error";
+}

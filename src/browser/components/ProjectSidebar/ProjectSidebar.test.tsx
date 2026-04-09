@@ -425,6 +425,19 @@ function installProjectSidebarTestDoubles() {
     () =>
       ({
         getWorkspaceMetadata: () => undefined,
+        getWorkspaceSidebarState: () => ({
+          canInterrupt: false,
+          isStarting: false,
+          awaitingUserQuestion: false,
+          lastAbortReason: null,
+          currentModel: null,
+          recencyTimestamp: null,
+          loadedSkills: [],
+          skillLoadErrors: [],
+          agentStatus: undefined,
+          terminalActiveCount: 0,
+          terminalSessionCount: 0,
+        }),
         getAggregator: () => undefined,
         subscribeKey: () => () => undefined,
       }) as unknown as ReturnType<typeof WorkspaceStoreModule.useWorkspaceStoreRaw>

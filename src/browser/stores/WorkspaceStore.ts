@@ -3404,8 +3404,9 @@ export class WorkspaceStore {
   }
 
   /**
-   * Check if data is a buffered event type by checking the handler map.
-   * This ensures isStreamEvent() and processStreamEvent() can never fall out of sync.
+   * Check if data is one of the standard buffered event types backed by WorkspaceStore handlers.
+   * Replayed stream-error opts into the same buffering path through getBufferedReplayEventBehavior()
+   * so live errors can still bypass buffering and surface immediately.
    */
   private isBufferedEvent(data: WorkspaceChatMessage): boolean {
     if (!("type" in data)) {
@@ -3419,6 +3420,31 @@ export class WorkspaceStore {
       data.type === "bash-output" ||
       data.type === "task-created"
     );
+  }
+
+  private getBufferedReplayEventBehavior(
+    data: WorkspaceChatMessage
+  ): { previewDuringReplay: boolean } | null {
+    if (isStreamError(data)) {
+      return data.replay === true ? { previewDuringReplay: true } : null;
+    }
+
+    if (!this.isBufferedEvent(data)) {
+      return null;
+    }
+
+    return {
+      previewDuringReplay: isStreamLifecycle(data) || isStreamAbort(data) || isRuntimeStatus(data),
+    };
+  }
+
+  private previewBufferedEventDuringReplay(
+    workspaceId: string,
+    aggregator: StreamingMessageAggregator,
+    data: WorkspaceChatMessage
+  ): void {
+    applyWorkspaceChatEventToAggregator(aggregator, data, { allowSideEffects: false });
+    this.states.bump(workspaceId);
   }
 
   private handleChatMessage(workspaceId: string, data: WorkspaceChatMessage): void {
@@ -3566,20 +3592,15 @@ export class WorkspaceStore {
     //
     // This is especially important for workspaces with long histories (100+ messages),
     // where unbuffered rendering would cause visible lag and UI stutter.
-    if (!transient.caughtUp && isStreamError(data) && data.replay === true) {
-      // Show replayed terminal errors immediately so reconnect UIs preserve the same
-      // failure classification/copy as the live session, then replay them again after
-      // history loads so full-replay replacement does not wipe the error back out.
-      applyWorkspaceChatEventToAggregator(aggregator, data, { allowSideEffects: false });
-      this.states.bump(workspaceId);
-      transient.pendingStreamEvents.push(data);
-      return;
-    }
-
-    if (!transient.caughtUp && this.isBufferedEvent(data)) {
-      if (isStreamLifecycle(data) || isStreamAbort(data) || isRuntimeStatus(data)) {
-        applyWorkspaceChatEventToAggregator(aggregator, data, { allowSideEffects: false });
-        this.states.bump(workspaceId);
+    const bufferedReplayEventBehavior = !transient.caughtUp
+      ? this.getBufferedReplayEventBehavior(data)
+      : null;
+    if (bufferedReplayEventBehavior) {
+      if (bufferedReplayEventBehavior.previewDuringReplay) {
+        // Preview replayed startup/terminal state immediately so reconnect UI preserves the
+        // live session's barrier/error classification until buffered events are replayed again
+        // after transcript hydration completes.
+        this.previewBufferedEventDuringReplay(workspaceId, aggregator, data);
       }
 
       transient.pendingStreamEvents.push(data);

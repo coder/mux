@@ -8,7 +8,10 @@ import type {
 import { createMuxMessage, getCompactionFollowUpContent } from "@/common/types/message";
 
 import {
+  copyRuntimeStatusEvent,
   copyStreamLifecycleSnapshot,
+  hasInFlightStreamLifecycle,
+  isTerminalRuntimeStatusPhase,
   type StreamStartEvent,
   type StreamDeltaEvent,
   type UsageDeltaEvent,
@@ -1209,11 +1212,7 @@ export class StreamingMessageAggregator {
   }
 
   private clearInFlightStreamLifecycle(): void {
-    if (
-      this.streamLifecycle?.phase === "preparing" ||
-      this.streamLifecycle?.phase === "streaming" ||
-      this.streamLifecycle?.phase === "completing"
-    ) {
+    if (hasInFlightStreamLifecycle(this.streamLifecycle)) {
       this.streamLifecycle = null;
     }
   }
@@ -1224,12 +1223,12 @@ export class StreamingMessageAggregator {
    */
   handleRuntimeStatus(status: RuntimeStatusEvent): void {
     // Keep stream lifecycle code focused on when runtime status becomes irrelevant.
-    if (status.phase === "ready" || status.phase === "error") {
+    if (isTerminalRuntimeStatusPhase(status.phase)) {
       this.clearRuntimeStatus();
       return;
     }
 
-    this.runtimeStatus = status;
+    this.runtimeStatus = copyRuntimeStatusEvent(status);
   }
 
   private clearRuntimeStatus(): void {

@@ -155,6 +155,13 @@ function getWorkspaceAttentionSignal(
   }
 }
 
+function isWorkspaceWorkingForSidebar(
+  workspaceStore: WorkspaceStore,
+  workspaceId: string
+): boolean {
+  return getWorkspaceAttentionSignal(workspaceStore, workspaceId)?.isWorking ?? false;
+}
+
 function didWorkspaceAttentionSignalChange(
   prev: WorkspaceAttentionSignal | undefined,
   next: WorkspaceAttentionSignal
@@ -990,12 +997,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
         if (result.success && result.data?.kind === "confirm-lossy-untracked-files") {
           const metadata = workspaceStore.getWorkspaceMetadata(workspaceId);
           const displayTitle = metadata?.title ?? metadata?.name ?? workspaceId;
-          const aggregator = workspaceStore.getAggregator(workspaceId);
-          const hasActiveStreams = (aggregator?.getActiveStreams().length ?? 0) > 0;
-          const pendingStreamStartTime = aggregator?.getPendingStreamStartTime();
-          const isStarting = pendingStreamStartTime != null && !hasActiveStreams;
-          const awaitingUserQuestion = aggregator?.hasAwaitingUserQuestion() ?? false;
-          const isStreaming = (hasActiveStreams || isStarting) && !awaitingUserQuestion;
+          const isStreaming = isWorkspaceWorkingForSidebar(workspaceStore, workspaceId);
           setArchiveConfirmation({
             workspaceId,
             displayTitle,
@@ -1025,15 +1027,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                   displayTitle,
                   buttonElement,
                   untrackedPaths: preflight.data.paths,
-                  isStreaming: (() => {
-                    const aggregator = workspaceStore.getAggregator(workspaceId);
-                    if (!aggregator) return false;
-                    const hasActiveStreams = aggregator.getActiveStreams().length > 0;
-                    const isStarting =
-                      aggregator.getPendingStreamStartTime() !== null && !hasActiveStreams;
-                    const awaitingUserQuestion = aggregator.hasAwaitingUserQuestion();
-                    return (hasActiveStreams || isStarting) && !awaitingUserQuestion;
-                  })(),
+                  isStreaming: isWorkspaceWorkingForSidebar(workspaceStore, workspaceId),
                 });
                 return;
               }
@@ -1060,26 +1054,17 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   );
 
   const hasActiveStream = useCallback(
-    (workspaceId: string) => {
-      const aggregator = workspaceStore.getAggregator(workspaceId);
-      if (!aggregator) return false;
-      const hasActiveStreams = aggregator.getActiveStreams().length > 0;
-      const isStarting = aggregator.getPendingStreamStartTime() !== null && !hasActiveStreams;
-      const awaitingUserQuestion = aggregator.hasAwaitingUserQuestion();
-      return (hasActiveStreams || isStarting) && !awaitingUserQuestion;
-    },
+    (workspaceId: string) => isWorkspaceWorkingForSidebar(workspaceStore, workspaceId),
     [workspaceStore]
   );
 
   const workspaceHasAttention = useCallback(
     (workspace: FrontendWorkspaceMetadata) => {
       const workspaceId = workspace.id;
-      const aggregator = workspaceStore.getAggregator(workspaceId);
-      const hasActiveStreams = aggregator ? aggregator.getActiveStreams().length > 0 : false;
-      const isStarting = aggregator?.getPendingStreamStartTime() != null && !hasActiveStreams;
-      const awaitingUserQuestion = aggregator?.hasAwaitingUserQuestion() ?? false;
-      const isWorking = (hasActiveStreams || isStarting) && !awaitingUserQuestion;
-      const hasError = aggregator?.getLastAbortReason()?.reason === "system";
+      const attentionSignal = getWorkspaceAttentionSignal(workspaceStore, workspaceId);
+      const isWorking = attentionSignal?.isWorking ?? false;
+      const awaitingUserQuestion = attentionSignal?.awaitingUserQuestion ?? false;
+      const hasError = attentionSignal?.hasSystemError ?? false;
       const isRemoving = workspace.isRemoving === true;
       const isArchiving = archivingWorkspaceIds.has(workspaceId);
       const isInitializing = workspace.isInitializing === true;
