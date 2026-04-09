@@ -1058,6 +1058,30 @@ describe("WorkspaceStore", () => {
       expect(store.getWorkspaceState(workspaceId).isHydratingTranscript).toBe(true);
     });
 
+    it("preserves optimistic initial-send startup across full replay resets", () => {
+      const workspaceId = "workspace-full-replay-pending-start";
+      const requestedModel = "openai:gpt-4o-mini";
+      const internalStore = store as unknown as {
+        resetChatStateForReplay: (workspaceId: string) => void;
+        chatTransientState: Map<
+          string,
+          {
+            pendingInitialSend: { pendingStreamModel: string | null } | null;
+            isHydratingTranscript: boolean;
+          }
+        >;
+      };
+
+      createAndAddWorkspace(store, workspaceId);
+      store.markPendingInitialSend(workspaceId, requestedModel);
+
+      internalStore.resetChatStateForReplay(workspaceId);
+
+      const transientState = internalStore.chatTransientState.get(workspaceId);
+      expect(transientState?.pendingInitialSend).toEqual({ pendingStreamModel: requestedModel });
+      expect(store.getWorkspaceState(workspaceId).isStreamStarting).toBe(true);
+    });
+
     it("clears transcript hydration after repeated catch-up retry failures", async () => {
       const workspaceId = "workspace-hydration-retry-fallback";
       let attempts = 0;
@@ -1571,6 +1595,95 @@ describe("WorkspaceStore", () => {
       expect(store.getWorkspaceState(workspaceId).isStreamStarting).toBe(false);
     });
 
+    it("clears optimistic starting state on pre-stream abort", async () => {
+      const workspaceId = "optimistic-pending-start-stream-abort";
+      const requestedModel = "openai:gpt-4o-mini";
+      let releaseAbort!: () => void;
+      const abortReady = new Promise<void>((resolve) => {
+        releaseAbort = resolve;
+      });
+
+      mockOnChat.mockImplementation(async function* (
+        input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        if (input?.workspaceId !== workspaceId) {
+          await waitForAbortSignal(options?.signal);
+          return;
+        }
+
+        yield { type: "caught-up", replay: "full" };
+        await abortReady;
+        yield {
+          type: "stream-abort",
+          workspaceId,
+          messageId: "optimistic-pending-start-stream-abort-msg",
+          abortReason: "user",
+          metadata: {},
+        };
+        await waitForAbortSignal(options?.signal);
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+      store.markPendingInitialSend(workspaceId, requestedModel);
+
+      const sawStarting = await waitUntil(
+        () => store.getWorkspaceState(workspaceId).isStreamStarting
+      );
+      expect(sawStarting).toBe(true);
+
+      releaseAbort();
+
+      const clearedStarting = await waitUntil(() => {
+        const state = store.getWorkspaceState(workspaceId);
+        return state.isStreamStarting === false;
+      });
+      expect(clearedStarting).toBe(true);
+    });
+
+    it("ignores non-streaming activity snapshots while optimistic start awaits replay", async () => {
+      const workspaceId = "optimistic-pending-start-activity-list";
+      const requestedModel = "openai:gpt-4o-mini";
+      let releaseCaughtUp!: () => void;
+      const caughtUpReady = new Promise<void>((resolve) => {
+        releaseCaughtUp = resolve;
+      });
+
+      mockActivityList.mockResolvedValue({
+        [workspaceId]: {
+          recency: 3_000,
+          streaming: false,
+          lastModel: requestedModel,
+          lastThinkingLevel: null,
+        },
+      });
+      recreateStore();
+      mockOnChat.mockImplementation(async function* (
+        input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        if (input?.workspaceId !== workspaceId) {
+          await waitForAbortSignal(options?.signal);
+          return;
+        }
+
+        await caughtUpReady;
+        yield { type: "caught-up", replay: "full" };
+        await waitForAbortSignal(options?.signal);
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+      store.markPendingInitialSend(workspaceId, requestedModel);
+
+      const keptStartingBeforeReplay = await waitUntil(() => {
+        const state = store.getWorkspaceState(workspaceId);
+        return state.loading === true && state.isStreamStarting === true;
+      });
+      expect(keptStartingBeforeReplay).toBe(true);
+
+      releaseCaughtUp();
+    });
+
     it("replays runtime-status before caught-up when switching back to a preparing workspace", async () => {
       const workspaceId = "stream-starting-runtime-status-replay";
       const otherWorkspaceId = "stream-starting-runtime-status-other";
@@ -1816,6 +1929,61 @@ describe("WorkspaceStore", () => {
         return state.isStreamStarting === true && sidebarState.isStarting === true;
       });
       expect(sawStarting).toBe(true);
+    });
+
+    it("keeps optimistic starting state until buffered first-turn history finishes catching up", async () => {
+      const workspaceId = "optimistic-pending-start-replay";
+      const requestedModel = "openai:gpt-4o-mini";
+      let releaseBufferedUser!: () => void;
+      let releaseCaughtUp!: () => void;
+      const bufferedUserReady = new Promise<void>((resolve) => {
+        releaseBufferedUser = resolve;
+      });
+      const caughtUpReady = new Promise<void>((resolve) => {
+        releaseCaughtUp = resolve;
+      });
+
+      mockOnChat.mockImplementation(async function* (
+        input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        if (input?.workspaceId !== workspaceId) {
+          await waitForAbortSignal(options?.signal);
+          return;
+        }
+
+        await bufferedUserReady;
+        yield createUserMessageEvent("buffered-first-turn", "hello", 1, 2_750, requestedModel);
+        await caughtUpReady;
+        yield { type: "caught-up", replay: "full" };
+        await waitForAbortSignal(options?.signal);
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+      store.markPendingInitialSend(workspaceId, requestedModel);
+      releaseBufferedUser();
+
+      const keptStartingWhileBuffered = await waitUntil(() => {
+        const state = store.getWorkspaceState(workspaceId);
+        return (
+          state.loading === true &&
+          state.isStreamStarting === true &&
+          state.pendingStreamModel === requestedModel
+        );
+      });
+      expect(keptStartingWhileBuffered).toBe(true);
+
+      releaseCaughtUp();
+
+      const renderedBufferedHistoryAfterCaughtUp = await waitUntil(() => {
+        const state = store.getWorkspaceState(workspaceId);
+        return (
+          state.loading === false &&
+          state.isStreamStarting === false &&
+          state.messages.some((message) => message.type === "user")
+        );
+      });
+      expect(renderedBufferedHistoryAfterCaughtUp).toBe(true);
     });
 
     it("exposes the pending requested model in sidebar state during startup", async () => {

@@ -11,6 +11,13 @@
  */
 
 import "../dom";
+
+// App-level UI tests can hit loader shells first, so stub Lottie before importing the
+// harness to keep happy-dom from tripping over lottie-web's canvas bootstrap.
+jest.mock("lottie-react", () => ({
+  __esModule: true,
+  default: () => null,
+}));
 import { waitFor } from "@testing-library/react";
 
 import { preloadTestModules } from "../../ipc/setup";

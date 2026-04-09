@@ -54,6 +54,7 @@ import { normalizeModelInput } from "@/browser/utils/models/normalizeModelInput"
 import { resolveDevcontainerSelection } from "@/browser/utils/devcontainerSelection";
 import { getErrorMessage } from "@/common/utils/errors";
 import { normalizeAgentId } from "@/common/utils/agentIds";
+import { workspaceStore } from "@/browser/stores/WorkspaceStore";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 export type CreationSendResult = { success: true } | { success: false; error?: SendMessageError };
@@ -392,6 +393,8 @@ export function useCreationWorkspace({
           : null
       );
 
+      let createdWorkspaceId: string | null = null;
+
       try {
         // Wait for identity generation to complete (blocks if still in progress)
         // Returns null if generation failed or manual name is empty (error already set in hook)
@@ -506,6 +509,7 @@ export function useCreationWorkspace({
         }
 
         const { metadata } = createResult;
+        createdWorkspaceId = metadata.id;
 
         // Best-effort: persist the initial AI settings to the backend immediately so this workspace
         // is portable across devices even before the first stream starts.
@@ -560,6 +564,13 @@ export function useCreationWorkspace({
           })();
 
         onWorkspaceCreated(metadata, { autoNavigate: shouldAutoNavigate });
+        if (shouldAutoNavigate) {
+          // User rationale: after creating a brand-new chat, keep the workspace in a visible
+          // "starting" state until onChat observes the first real user message or error.
+          // Background-created workspaces should skip this optimistic flag so they don't open later
+          // looking like a stale in-flight startup.
+          workspaceStore.markPendingInitialSend(metadata.id, baseModel);
+        }
 
         if (typeof draftId === "string" && draftId.trim().length > 0 && promoteWorkspaceDraft) {
           // UI-only: show the created workspace in-place where the draft was rendered.
@@ -594,6 +605,9 @@ export function useCreationWorkspace({
         });
 
         if (!sendResult.success) {
+          if (createdWorkspaceId) {
+            workspaceStore.clearPendingInitialSendState(createdWorkspaceId);
+          }
           if (sendResult.error) {
             // Persist the failure so the workspace view can surface a toast after navigation.
             updatePersistedState(getPendingWorkspaceSendErrorKey(metadata.id), sendResult.error);
@@ -603,6 +617,9 @@ export function useCreationWorkspace({
 
         return { success: true };
       } catch (err) {
+        if (createdWorkspaceId) {
+          workspaceStore.clearPendingInitialSendState(createdWorkspaceId);
+        }
         const errorMessage = getErrorMessage(err);
         setToast({
           id: Date.now().toString(),

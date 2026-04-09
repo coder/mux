@@ -27,6 +27,7 @@ import type {
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
+import { workspaceStore } from "@/browser/stores/WorkspaceStore";
 import { useCreationWorkspace, type CreationSendResult } from "./useCreationWorkspace";
 
 const readPersistedStateCalls: Array<[string, unknown]> = [];
@@ -492,6 +493,9 @@ describe("useCreationWorkspace", () => {
     updatePersistedStateCalls.length = 0;
     draftSettingsInvocations = [];
     draftSettingsState = createDraftSettingsHarness();
+    routerState.currentWorkspaceId = null;
+    routerState.currentProjectId = null;
+    routerState.pendingDraftId = null;
   });
 
   afterEach(() => {
@@ -915,6 +919,69 @@ describe("useCreationWorkspace", () => {
     expect(handleSendResult).toEqual({ success: true });
   });
 
+  test("marks pending initial send only for auto-navigated creations", async () => {
+    const listBranchesMock = mock(
+      (): Promise<BranchListResult> =>
+        Promise.resolve({
+          branches: ["main"],
+          recommendedTrunk: "main",
+        })
+    );
+    const sendMessageMock = mock(
+      (_args: WorkspaceSendMessageArgs): Promise<WorkspaceSendMessageResult> =>
+        Promise.resolve({ success: true, data: {} } as WorkspaceSendMessageResult)
+    );
+    const createMock = mock(
+      (_args: WorkspaceCreateArgs): Promise<WorkspaceCreateResult> =>
+        Promise.resolve({
+          success: true,
+          metadata: TEST_METADATA,
+        } as WorkspaceCreateResult)
+    );
+    const nameGenerationMock = mock(
+      (_args: NameGenerationArgs): Promise<NameGenerationResult> =>
+        Promise.resolve({
+          success: true,
+          data: { name: "generated-name", modelUsed: "anthropic:claude-haiku-4-5" },
+        } as NameGenerationResult)
+    );
+    setupWindow({
+      listBranches: listBranchesMock,
+      sendMessage: sendMessageMock,
+      create: createMock,
+      nameGeneration: nameGenerationMock,
+    });
+
+    draftSettingsState = createDraftSettingsHarness({ trunkBranch: "main" });
+    routerState.pendingDraftId = "different-draft";
+    const onWorkspaceCreated = mock(
+      (metadata: FrontendWorkspaceMetadata, options?: { autoNavigate?: boolean }) => ({
+        metadata,
+        options,
+      })
+    );
+    const markPendingInitialSendSpy = spyOn(workspaceStore, "markPendingInitialSend");
+
+    const getHook = renderUseCreationWorkspace({
+      projectPath: TEST_PROJECT_PATH,
+      onWorkspaceCreated,
+      message: "test message",
+      draftId: "draft-being-created",
+    });
+
+    await waitFor(() => expect(getHook().branches).toEqual(["main"]));
+
+    let handleSendResult: CreationSendResult | undefined;
+    await act(async () => {
+      handleSendResult = await getHook().handleSend("test message");
+    });
+
+    expect(handleSendResult).toEqual({ success: true });
+    expect(onWorkspaceCreated.mock.calls.length).toBe(1);
+    expect(onWorkspaceCreated.mock.calls[0][1]).toEqual({ autoNavigate: false });
+    expect(markPendingInitialSendSpy.mock.calls.length).toBe(0);
+  });
+
   test("handleSend surfaces backend errors and resets state", async () => {
     const createMock = mock(
       (_args: WorkspaceCreateArgs): Promise<WorkspaceCreateResult> =>
@@ -1078,8 +1145,12 @@ function createDraftSettingsHarness(
 
 interface HookOptions {
   projectPath: string;
-  onWorkspaceCreated: (metadata: FrontendWorkspaceMetadata) => void;
+  onWorkspaceCreated: (
+    metadata: FrontendWorkspaceMetadata,
+    options?: { autoNavigate?: boolean }
+  ) => void;
   message?: string;
+  draftId?: string | null;
 }
 
 function renderUseCreationWorkspace(options: HookOptions) {

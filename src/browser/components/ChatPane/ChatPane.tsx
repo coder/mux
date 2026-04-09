@@ -630,8 +630,14 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
 
   const hasInterruptedStream = interruption?.hasInterruptedStream ?? false;
   // Keep rendering cached transcript rows during incremental catch-up so workspace switches
-  // feel stable; only show the full placeholder when there's no transcript content yet.
-  const showTranscriptHydrationPlaceholder = isHydratingTranscript && deferredMessages.length === 0;
+  // feel stable, but a brand-new chat should keep its starting barrier visible instead of
+  // flashing transcript placeholders before the first send reaches the workspace history.
+  const showTranscriptHydrationPlaceholder =
+    isHydratingTranscript && deferredMessages.length === 0 && !workspaceState.isStreamStarting;
+  const showEmptyTranscriptPlaceholder =
+    deferredMessages.length === 0 &&
+    !showTranscriptHydrationPlaceholder &&
+    !workspaceState.isStreamStarting;
   const showRetryBarrier =
     !isHydratingTranscript &&
     !workspaceState.canInterrupt &&
@@ -805,7 +811,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                 ref={innerRef}
                 className={cn(
                   "max-w-4xl mx-auto",
-                  (showTranscriptHydrationPlaceholder || deferredMessages.length === 0) && "h-full"
+                  (showTranscriptHydrationPlaceholder || showEmptyTranscriptPlaceholder) && "h-full"
                 )}
               >
                 {showTranscriptHydrationPlaceholder ? (
@@ -816,7 +822,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                     <h3>Loading transcript...</h3>
                     <p>Syncing recent messages for this workspace</p>
                   </div>
-                ) : deferredMessages.length === 0 ? (
+                ) : showEmptyTranscriptPlaceholder ? (
                   <div className="text-placeholder flex h-full flex-1 flex-col items-center justify-center text-center [&_h3]:m-0 [&_h3]:mb-2.5 [&_h3]:text-base [&_h3]:font-medium [&_p]:m-0 [&_p]:text-[13px]">
                     <h3>No Messages Yet</h3>
                     <p>Send a message below to begin</p>

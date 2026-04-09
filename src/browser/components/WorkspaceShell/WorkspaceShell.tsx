@@ -182,7 +182,7 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
   });
   const backgroundBashError = useBackgroundBashError();
 
-  if (!workspaceState || workspaceState.loading) {
+  if (!workspaceState || (workspaceState.loading && !workspaceState.isStreamStarting)) {
     return (
       <WorkspacePlaceholder
         title="Loading workspace..."
@@ -192,10 +192,12 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
     );
   }
 
+  // User rationale: a just-created chat should keep showing its startup barrier instead of
+  // flashing generic loading/catch-up placeholders before the first send reaches onChat.
   // Web-only: during workspace switches, the WebSocket subscription needs time to
   // catch up. Show a splash instead of flashing stale cached messages.
   // Electron's MessageChannel is near-instant so this gate is unnecessary there.
-  if (workspaceState.isHydratingTranscript && !window.api) {
+  if (workspaceState.isHydratingTranscript && !window.api && !workspaceState.isStreamStarting) {
     return (
       <WorkspacePlaceholder
         title="Catching up with the agent..."
