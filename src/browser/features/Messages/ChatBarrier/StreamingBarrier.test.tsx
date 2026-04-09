@@ -37,7 +37,7 @@ function createWorkspaceState(overrides: Partial<MockWorkspaceState> = {}): Mock
   return state;
 }
 
-const STREAMING_STATUS_TRANSITION_DEBOUNCE_MS = 200;
+const STREAMING_STATUS_TRANSITION_DEBOUNCE_MS = 2000;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 let currentWorkspaceState = createWorkspaceState();
