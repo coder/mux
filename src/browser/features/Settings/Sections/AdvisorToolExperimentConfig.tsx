@@ -99,7 +99,7 @@ function areAdvisorSettingsEqual(a: AdvisorSettingsState, b: AdvisorSettingsStat
   );
 }
 
-export function AdvisorSection() {
+export function AdvisorToolExperimentConfig() {
   const { api } = useAPI();
   const { models, hiddenModelsForSelector } = useModelsFromSettings();
 
@@ -117,11 +117,20 @@ export function AdvisorSection() {
   const savingRef = useRef(false);
   const pendingSaveRef = useRef<AdvisorSavePayload | null>(null);
   const lastSyncedRef = useRef<AdvisorSettingsState | null>(null);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!api) {
       return;
     }
+
+    let ignore = false;
 
     setLoaded(false);
     setLoadFailed(false);
@@ -130,6 +139,10 @@ export function AdvisorSection() {
     void api.config
       .getConfig()
       .then((cfg) => {
+        if (ignore) {
+          return;
+        }
+
         const normalizedTaskSettings = normalizeTaskSettings(cfg.taskSettings);
         const normalizedModelString = normalizeAdvisorModelString(cfg.advisorModelString);
         const normalizedMaxUsesPerTurn = normalizeAdvisorMaxUsesPerTurn(cfg.advisorMaxUsesPerTurn);
@@ -148,11 +161,19 @@ export function AdvisorSection() {
         setLoaded(true);
       })
       .catch((error: unknown) => {
+        if (ignore) {
+          return;
+        }
+
         taskSettingsRef.current = null;
         setSaveError(getErrorMessage(error));
         setLoadFailed(true);
         setLoaded(true);
       });
+
+    return () => {
+      ignore = true;
+    };
   }, [api]);
 
   useEffect(() => {
@@ -219,10 +240,14 @@ export function AdvisorSection() {
               advisorModelString: payload.advisorModelString,
               advisorMaxUsesPerTurn: payload.advisorMaxUsesPerTurn,
             };
-            setSaveError(null);
+            if (isMountedRef.current) {
+              setSaveError(null);
+            }
           })
           .catch((error: unknown) => {
-            setSaveError(getErrorMessage(error));
+            if (isMountedRef.current) {
+              setSaveError(getErrorMessage(error));
+            }
           })
           .finally(() => {
             savingRef.current = false;
@@ -275,6 +300,8 @@ export function AdvisorSection() {
         return;
       }
 
+      // The inline advisor settings disappear immediately when the experiment is toggled off, so
+      // flush any debounced edits during unmount instead of dropping the user's last change.
       pendingSaveRef.current = null;
       savingRef.current = true;
       void api.config
@@ -328,91 +355,91 @@ export function AdvisorSection() {
     setLastValidLimitedValue(normalizedValue);
   };
 
+  if (!api) {
+    return (
+      <div className="bg-background-secondary px-4 py-3">
+        <div className="text-muted text-xs">Connect to mux to configure this setting.</div>
+      </div>
+    );
+  }
+
   if (!loaded) {
     return (
-      <div className="flex items-center justify-center gap-2 py-12">
-        <Loader2 className="text-muted h-5 w-5 animate-spin" />
-        <span className="text-muted text-sm">Loading settings...</span>
+      <div className="bg-background-secondary flex items-center gap-2 px-4 py-3">
+        <Loader2 className="text-muted h-4 w-4 animate-spin" />
+        <span className="text-muted text-xs">Loading advisor defaults…</span>
       </div>
     );
   }
 
   if (loadFailed) {
-    return <div className="text-danger-light text-sm">Failed to load advisor settings.</div>;
+    return (
+      <div className="bg-background-secondary px-4 py-3">
+        <div className="text-danger-light text-xs">Failed to load advisor settings.</div>
+      </div>
+    );
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h3 className="text-foreground mb-1 text-sm font-medium">Advisor Defaults</h3>
-        <div className="text-muted text-xs">Global defaults for the experimental advisor tool.</div>
+    <div className="bg-background-secondary space-y-3 px-4 py-3">
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <div className="text-foreground text-sm">Advisor Model</div>
+          <div className="text-muted text-xs">Global default for nested advisor calls.</div>
+        </div>
+        <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
+          <ModelSelector
+            value={advisorModelString}
+            onChange={setAdvisorModelString}
+            models={models}
+            hiddenModels={hiddenModelsForSelector}
+            emptyLabel="Select model"
+            variant="box"
+            className="bg-modal-bg md:max-w-[22rem]"
+          />
+          {advisorModelString ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-9 px-2"
+              onClick={() => setAdvisorModelString("")}
+            >
+              Reset
+            </Button>
+          ) : null}
+        </div>
       </div>
 
-      <div className="border-border-medium overflow-hidden rounded-md border">
-        <div className="border-border-medium bg-background-secondary/50 border-b px-2 py-1.5 md:px-3">
-          <span className="text-muted text-xs font-medium">Advisor Tool</span>
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <div className="text-foreground text-sm">Max Uses / Turn</div>
+          <div className="text-muted text-xs">Per response.</div>
         </div>
-        <div className="divide-border-medium divide-y">
-          <div className="flex items-center gap-4 px-2 py-2 md:px-3">
-            <div className="w-32 shrink-0">
-              <div className="text-muted text-xs">Advisor Model</div>
-              <div className="text-muted-light text-[10px]">Global default</div>
-            </div>
-            <div className="flex min-w-0 flex-1 items-center gap-2">
-              <ModelSelector
-                value={advisorModelString}
-                onChange={setAdvisorModelString}
-                models={models}
-                hiddenModels={hiddenModelsForSelector}
-                emptyLabel="Select model"
-                variant="box"
-                className="bg-modal-bg"
-              />
-              {advisorModelString ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-9 px-2"
-                  onClick={() => setAdvisorModelString("")}
-                >
-                  Reset
-                </Button>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="flex items-center gap-4 px-2 py-2 md:px-3">
-            <div className="w-32 shrink-0">
-              <div className="text-muted text-xs">Max Uses / Turn</div>
-              <div className="text-muted-light text-[10px]">Per response</div>
-            </div>
-            <div className="flex min-w-0 flex-1 items-center gap-2">
-              <Select value={maxUsesMode} onValueChange={setAdvisorMaxUsesMode}>
-                <SelectTrigger className="border-border-medium bg-modal-bg h-9 w-32">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="unlimited">Unlimited</SelectItem>
-                  <SelectItem value="limited">Limited</SelectItem>
-                </SelectContent>
-              </Select>
-              {maxUsesMode === "limited" ? (
-                <Input
-                  aria-label="Advisor max uses per turn"
-                  type="number"
-                  min={1}
-                  step={1}
-                  value={limitedDraft}
-                  onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
-                    handleLimitedDraftChange(event.target.value)
-                  }
-                  onBlur={handleLimitedDraftBlur}
-                  className="border-border-medium bg-background-secondary h-9 w-28"
-                />
-              ) : null}
-            </div>
-          </div>
+        <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
+          <Select value={maxUsesMode} onValueChange={setAdvisorMaxUsesMode}>
+            <SelectTrigger className="border-border-medium bg-modal-bg h-9 w-32">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="unlimited">Unlimited</SelectItem>
+              <SelectItem value="limited">Limited</SelectItem>
+            </SelectContent>
+          </Select>
+          {maxUsesMode === "limited" ? (
+            <Input
+              aria-label="Advisor max uses per turn"
+              type="number"
+              min={1}
+              step={1}
+              value={limitedDraft}
+              onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
+                handleLimitedDraftChange(event.target.value)
+              }
+              onBlur={handleLimitedDraftBlur}
+              className="border-border-medium bg-modal-bg h-9 w-28"
+            />
+          ) : null}
         </div>
       </div>
 

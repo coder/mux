@@ -2,8 +2,9 @@ import React from "react";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 
-import { ThemeProvider } from "@/browser/contexts/ThemeContext";
 import * as ActualSelectPrimitiveModule from "@/browser/components/SelectPrimitive/SelectPrimitive";
+import { ThemeProvider } from "@/browser/contexts/ThemeContext";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { DEFAULT_TASK_SETTINGS, type TaskSettings } from "@/common/types/tasks";
 import { installDom } from "../../../../../tests/ui/dom";
 
@@ -27,6 +28,7 @@ interface MockAPIClient {
 }
 
 let mockApi: MockAPIClient;
+let experimentValues: Record<string, boolean>;
 
 void mock.module("@/browser/components/SelectPrimitive/SelectPrimitive", () => {
   const SelectContext = React.createContext<{
@@ -150,6 +152,17 @@ void mock.module("@/browser/contexts/API", () => ({
   }),
 }));
 
+void mock.module("@/browser/contexts/ExperimentsContext", () => ({
+  useExperiment: (experimentId: string) => [
+    experimentValues[experimentId] ?? false,
+    (enabled: boolean) => {
+      experimentValues[experimentId] = enabled;
+    },
+  ],
+  useExperimentValue: (experimentId: string) => experimentValues[experimentId] ?? false,
+  useRemoteExperimentValue: () => null,
+}));
+
 void mock.module("@/browser/hooks/useModelsFromSettings", () => ({
   useModelsFromSettings: () => ({
     models: ["openai:gpt-4o", "anthropic:claude-sonnet-4-5"],
@@ -174,7 +187,13 @@ void mock.module("@/browser/components/ModelSelector/ModelSelector", () => ({
   ),
 }));
 
-import { AdvisorSection } from "./AdvisorSection";
+void mock.module("@/browser/hooks/useTelemetry", () => ({
+  useTelemetry: () => ({
+    experimentOverridden: () => undefined,
+  }),
+}));
+
+import { ExperimentsSection } from "./ExperimentsSection";
 
 function createMockAPI(configOverrides: Partial<MockConfig> = {}) {
   const config: MockConfig = {
@@ -213,11 +232,13 @@ function createMockAPI(configOverrides: Partial<MockConfig> = {}) {
   };
 }
 
-describe("AdvisorSection", () => {
+describe("ExperimentsSection advisor config", () => {
   let cleanupDom: (() => void) | null = null;
 
   beforeEach(() => {
     cleanupDom = installDom();
+    window.api = { platform: "linux", versions: {} };
+    experimentValues = {};
   });
 
   afterEach(() => {
@@ -231,17 +252,25 @@ describe("AdvisorSection", () => {
     cleanupDom = null;
   });
 
-  function renderAdvisorSection(configOverrides: Partial<MockConfig> = {}) {
-    const { api, saveConfigMock } = createMockAPI(configOverrides);
+  function renderExperimentsSection(params?: {
+    advisorEnabled?: boolean;
+    configOverrides?: Partial<MockConfig>;
+  }) {
+    const { advisorEnabled = true, configOverrides = {} } = params ?? {};
+    experimentValues = {
+      [EXPERIMENT_IDS.ADVISOR_TOOL]: advisorEnabled,
+    };
+
+    const { api, getConfigMock, saveConfigMock } = createMockAPI(configOverrides);
     mockApi = api;
 
     const view = render(
       <ThemeProvider forcedTheme="dark">
-        <AdvisorSection />
+        <ExperimentsSection />
       </ThemeProvider>
     );
 
-    return { view, saveConfigMock };
+    return { view, getConfigMock, saveConfigMock };
   }
 
   function getSelectTrigger(view: ReturnType<typeof render>, label: string): HTMLElement {
@@ -266,11 +295,33 @@ describe("AdvisorSection", () => {
     fireEvent.click(view.getByText(optionText));
   }
 
-  test("seeds limited mode with 3 when switching from unlimited", async () => {
-    const { view, saveConfigMock } = renderAdvisorSection();
+  test("keeps the advisor row toggle-only when the experiment is disabled", async () => {
+    const { view, getConfigMock } = renderExperimentsSection({ advisorEnabled: false });
 
     await waitFor(() => {
-      expect(view.getByText("Advisor Defaults")).toBeDefined();
+      expect(view.getByText("Advisor Tool")).toBeDefined();
+    });
+
+    expect(getConfigMock).not.toHaveBeenCalled();
+    expect(view.queryByText("Advisor Model")).toBeNull();
+    expect(view.queryByText("Max Uses / Turn")).toBeNull();
+  });
+
+  test("shows the advisor inline config when the experiment is enabled", async () => {
+    const { view, getConfigMock } = renderExperimentsSection({ advisorEnabled: true });
+
+    await waitFor(() => {
+      expect(getConfigMock).toHaveBeenCalledTimes(1);
+      expect(view.getByText("Advisor Model")).toBeDefined();
+      expect(view.getByText("Max Uses / Turn")).toBeDefined();
+    });
+  });
+
+  test("seeds limited mode with 3 when switching from unlimited", async () => {
+    const { view, saveConfigMock } = renderExperimentsSection();
+
+    await waitFor(() => {
+      expect(view.getByText("Max Uses / Turn")).toBeDefined();
     });
 
     chooseSelectOption(view, "Max Uses / Turn", "Limited");
@@ -291,7 +342,9 @@ describe("AdvisorSection", () => {
   });
 
   test("restores the existing limit after toggling back from unlimited", async () => {
-    const { view, saveConfigMock } = renderAdvisorSection({ advisorMaxUsesPerTurn: 5 });
+    const { view, saveConfigMock } = renderExperimentsSection({
+      configOverrides: { advisorMaxUsesPerTurn: 5 },
+    });
 
     const limitInput = (await waitFor(() =>
       view.getByLabelText("Advisor max uses per turn")
