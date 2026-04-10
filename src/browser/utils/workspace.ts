@@ -10,6 +10,7 @@ import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 export function getWorkspaceSidebarKey(meta: FrontendWorkspaceMetadata): string {
   const initKey = meta.isInitializing === true ? "initializing" : "";
   const removingKey = meta.isRemoving === true ? "removing" : "";
+  const heartbeatEnabledKey = meta.heartbeat?.enabled === true ? "heartbeat-enabled" : "";
 
   return [
     meta.id,
@@ -17,6 +18,7 @@ export function getWorkspaceSidebarKey(meta: FrontendWorkspaceMetadata): string 
     meta.title ?? "", // Display title (falls back to name in UI)
     initKey,
     removingKey,
+    heartbeatEnabledKey, // Heartbeat icon replaces the seen-state archive affordance in the sidebar.
     meta.parentWorkspaceId ?? "", // Nested sidebar indentation/order
     meta.taskStatus ?? "", // Task lifecycle label/state for sub-agent rows
     meta.agentType ?? "", // Agent preset badge/label (future)
