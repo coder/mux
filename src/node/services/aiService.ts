@@ -1304,6 +1304,9 @@ export class AIService extends EventEmitter {
         advisorToolConfig.advisorMaxUsesPerTurn === null
           ? null
           : (advisorToolConfig.advisorMaxUsesPerTurn ?? ADVISOR_DEFAULT_MAX_USES_PER_TURN);
+      // Advisor settings currently expose only a model override + usage cap. Keep the runtime
+      // metadata field available so the tool UI can surface reasoning once that config exists.
+      const advisorReasoningLevel: string | undefined = undefined;
       const muxEnv = getMuxEnv(
         metadata.projectPath,
         getRuntimeType(metadata.runtimeConfig),
@@ -1328,6 +1331,7 @@ export class AIService extends EventEmitter {
             ? {
                 advisorRuntime: {
                   advisorModelString,
+                  reasoningLevel: advisorReasoningLevel,
                   maxUsesPerTurn: advisorMaxUses,
                   getTranscriptSnapshot: () => {
                     const messages = advisorTranscriptRef.messages;

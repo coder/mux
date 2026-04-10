@@ -124,6 +124,8 @@ export interface ToolConfiguration {
   advisorRuntime?: {
     /** The advisor model string (e.g. "anthropic:claude-sonnet-4-20250514") */
     advisorModelString: string;
+    /** Optional reasoning/thinking level metadata for the advisor request. */
+    reasoningLevel?: string;
     /** Normalized max uses per turn: null = unlimited, positive integer = exact cap */
     maxUsesPerTurn: number | null;
     /** Returns the live conversation transcript up to the current tool call */

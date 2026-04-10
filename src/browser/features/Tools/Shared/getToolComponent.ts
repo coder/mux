@@ -9,6 +9,7 @@ import { z, type ZodSchema } from "zod";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 
 import { AnalyticsQueryToolCall } from "../analyticsQuery/AnalyticsQueryToolCall";
+import { AdvisorToolCall } from "../AdvisorToolCall";
 import { GenericToolCall } from "../GenericToolCall";
 import { BashToolCall } from "../BashToolCall";
 import { DesktopActionToolCall } from "../DesktopActionToolCall";
@@ -137,6 +138,7 @@ const TOOL_REGISTRY: Record<string, ToolRegistryEntry> = {
     component: AnalyticsQueryToolCall,
     schema: TOOL_DEFINITIONS.analytics_query.schema,
   },
+  advisor: { component: AdvisorToolCall, schema: TOOL_DEFINITIONS.advisor.schema },
   web_fetch: { component: WebFetchToolCall, schema: TOOL_DEFINITIONS.web_fetch.schema },
   bash_background_list: {
     component: BashBackgroundListToolCall,

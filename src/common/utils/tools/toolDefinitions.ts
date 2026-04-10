@@ -160,6 +160,7 @@ const AdvisorToolAdviceResultSchema = z
     type: z.literal("advice"),
     advice: z.string().min(1),
     advisorModel: z.string().min(1),
+    reasoningLevel: z.string().optional(),
     remainingUses: z.number().int().min(0).nullable(),
   })
   .strict();
@@ -168,6 +169,7 @@ const AdvisorToolLimitResultSchema = z
   .object({
     type: z.literal("limit_reached"),
     advisorModel: z.string().min(1),
+    reasoningLevel: z.string().optional(),
     message: z.string().min(1),
   })
   .strict();

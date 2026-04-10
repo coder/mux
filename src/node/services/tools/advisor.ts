@@ -12,8 +12,13 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
 
   const runtime = config.advisorRuntime;
   const advisorModelString = runtime.advisorModelString.trim();
+  const reasoningLevel = runtime.reasoningLevel?.trim();
 
   assert(advisorModelString.length > 0, "advisorModelString must be a non-empty string");
+  assert(
+    reasoningLevel === undefined || reasoningLevel.length > 0,
+    "advisor reasoningLevel must be undefined or a non-empty string"
+  );
   assert(
     runtime.maxUsesPerTurn === null ||
       (Number.isInteger(runtime.maxUsesPerTurn) && runtime.maxUsesPerTurn > 0),
@@ -37,6 +42,7 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
         return {
           type: "limit_reached" as const,
           advisorModel: advisorModelString,
+          reasoningLevel,
           message: `Advisor limit reached for this turn (max ${runtime.maxUsesPerTurn} uses).`,
         };
       }
@@ -65,6 +71,7 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
           type: "advice" as const,
           advice: result.text,
           advisorModel: advisorModelString,
+          reasoningLevel,
           remainingUses,
         };
       } catch (error) {
