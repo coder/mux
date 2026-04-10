@@ -61,6 +61,7 @@ import { ensurePrivateDirSync } from "@/node/utils/fs";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { isProviderAutoRouteEligible } from "@/node/utils/providerRequirements";
 import { getContainerName as getDockerContainerName } from "@/node/runtime/DockerRuntime";
+import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
 
 // Re-export project/provider types from dedicated schema/types files (for preload usage)
 export type { Workspace, ProjectConfig, ProjectsConfig, ProviderConfig, CanonicalProvidersConfig };
@@ -320,6 +321,10 @@ function parseOptionalPositiveInteger(value: unknown): number | undefined {
   }
 
   return value;
+}
+
+function parseOptionalThinkingLevel(value: unknown): ThinkingLevel | undefined {
+  return coerceThinkingLevel(value);
 }
 
 function parseOptionalHeartbeatIntervalMs(value: unknown): number | undefined {
@@ -685,6 +690,7 @@ export class Config {
 
         const defaultModel = normalizeOptionalModelString(parsed.defaultModel);
         const advisorModelString = parseOptionalNonEmptyString(parsed.advisorModelString);
+        const advisorThinkingLevel = parseOptionalThinkingLevel(parsed.advisorThinkingLevel);
         const advisorMaxUsesPerTurn =
           parsed.advisorMaxUsesPerTurn === null
             ? null
@@ -744,6 +750,7 @@ export class Config {
           routeOverrides,
           defaultModel,
           advisorModelString,
+          advisorThinkingLevel,
           advisorMaxUsesPerTurn,
           hiddenModels,
           agentAiDefaults,
@@ -832,6 +839,11 @@ export class Config {
       const advisorModelString = parseOptionalNonEmptyString(config.advisorModelString);
       if (advisorModelString !== undefined) {
         data.advisorModelString = advisorModelString;
+      }
+
+      const advisorThinkingLevel = parseOptionalThinkingLevel(config.advisorThinkingLevel);
+      if (advisorThinkingLevel !== undefined) {
+        data.advisorThinkingLevel = advisorThinkingLevel;
       }
 
       if (config.advisorMaxUsesPerTurn === null) {

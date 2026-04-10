@@ -63,6 +63,7 @@ export const AppConfigOnDiskSchema = z
     routeOverrides: z.record(z.string(), z.string()).optional(),
     defaultModel: z.string().optional(),
     advisorModelString: z.string().optional(),
+    advisorThinkingLevel: ThinkingLevelSchema.optional(),
     advisorMaxUsesPerTurn: z.number().int().positive().nullable().optional(),
     hiddenModels: z.array(z.string()).optional(),
     preferredCompactionModel: z.string().optional(),

@@ -163,6 +163,10 @@ function normalizeOptionalConfigString(value: string | null | undefined): string
   return trimmedValue;
 }
 
+function normalizeOptionalConfigThinkingLevel(value: string | null | undefined) {
+  return coerceThinkingLevel(value);
+}
+
 function normalizeAdvisorMaxUsesPerTurn(value: number | null | undefined): number | null {
   if (value == null) {
     return null;
@@ -599,6 +603,7 @@ export const router = (authToken?: string) => {
             routeOverrides: config.routeOverrides,
             defaultModel: config.defaultModel,
             advisorModelString: config.advisorModelString ?? null,
+            advisorThinkingLevel: config.advisorThinkingLevel ?? null,
             advisorMaxUsesPerTurn: config.advisorMaxUsesPerTurn ?? null,
             hiddenModels: config.hiddenModels,
             coderWorkspaceArchiveBehavior:
@@ -911,6 +916,12 @@ export const router = (authToken?: string) => {
 
             if (input.advisorModelString !== undefined) {
               result.advisorModelString = normalizeOptionalConfigString(input.advisorModelString);
+            }
+
+            if (input.advisorThinkingLevel !== undefined) {
+              result.advisorThinkingLevel = normalizeOptionalConfigThinkingLevel(
+                input.advisorThinkingLevel
+              );
             }
 
             if (input.advisorMaxUsesPerTurn !== undefined) {

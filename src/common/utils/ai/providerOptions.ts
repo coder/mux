@@ -7,8 +7,9 @@
  */
 
 import type { AnthropicProviderOptions } from "@ai-sdk/anthropic";
-import type { OpenAIResponsesProviderOptions } from "@ai-sdk/openai";
 import type { GoogleGenerativeAIProviderOptions } from "@ai-sdk/google";
+import type { OpenAIResponsesProviderOptions } from "@ai-sdk/openai";
+import type { JSONValue } from "@ai-sdk/provider";
 import type { XaiProviderOptions } from "@ai-sdk/xai";
 import { PROVIDER_DEFINITIONS, type ProviderName } from "@/common/constants/providers";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
@@ -31,6 +32,7 @@ import { normalizeToCanonical, supports1MContext } from "./models";
  * @see https://openrouter.ai/docs/use-cases/reasoning-tokens
  */
 interface OpenRouterReasoningOptions {
+  [key: string]: JSONValue | undefined;
   reasoning?: {
     enabled?: boolean;
     exclude?: boolean;

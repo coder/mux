@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { generateText, tool, type Tool } from "ai";
 
 import { ADVISOR_SYSTEM_PROMPT } from "@/common/constants/advisor";
+import { THINKING_LEVEL_OFF, coerceThinkingLevel } from "@/common/types/thinking";
+import { buildProviderOptions } from "@/common/utils/ai/providerOptions";
 import { getErrorMessage } from "@/common/utils/errors";
 import { AdvisorToolInputSchema, TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { ToolConfiguration } from "@/common/utils/tools/tools";
@@ -13,11 +15,16 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
   const runtime = config.advisorRuntime;
   const advisorModelString = runtime.advisorModelString.trim();
   const reasoningLevel = runtime.reasoningLevel?.trim();
+  const effectiveReasoningLevel = coerceThinkingLevel(reasoningLevel) ?? THINKING_LEVEL_OFF;
 
   assert(advisorModelString.length > 0, "advisorModelString must be a non-empty string");
   assert(
     reasoningLevel === undefined || reasoningLevel.length > 0,
     "advisor reasoningLevel must be undefined or a non-empty string"
+  );
+  assert(
+    reasoningLevel === undefined || effectiveReasoningLevel === reasoningLevel,
+    "advisor reasoningLevel must be a valid ThinkingLevel when provided"
   );
   assert(
     runtime.maxUsesPerTurn === null ||
@@ -31,6 +38,7 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
   assert(typeof runtime.createModel === "function", "advisor createModel must be a function");
 
   let usesThisTurn = 0;
+  const providerOptions = buildProviderOptions(advisorModelString, effectiveReasoningLevel);
 
   return tool({
     description: TOOL_DEFINITIONS.advisor.description,
@@ -61,6 +69,7 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
           messages: transcript,
           // Advisor requests are intentionally tool-less strategic consultations.
           tools: {},
+          providerOptions,
           abortSignal: execOptions?.abortSignal ?? runtime.abortSignal,
         });
 

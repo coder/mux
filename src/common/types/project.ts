@@ -16,6 +16,7 @@ import type { AgentAiDefaults } from "./agentAiDefaults";
 import type { RuntimeEnablementId } from "./runtime";
 import type { TaskSettings, SubagentAiDefaults } from "./tasks";
 import type { LayoutPresetsConfig } from "./uiLayouts";
+import type { ThinkingLevel } from "./thinking";
 
 export type Workspace = z.infer<typeof WorkspaceConfigSchema>;
 
@@ -102,6 +103,8 @@ export interface ProjectsConfig {
   defaultModel?: string;
   /** Global advisor model override for the experimental advisor tool. */
   advisorModelString?: string;
+  /** Global advisor reasoning override for the experimental advisor tool. */
+  advisorThinkingLevel?: ThinkingLevel;
   /** Positive per-turn advisor cap; null/undefined means unlimited. */
   advisorMaxUsesPerTurn?: number | null;
   /**

@@ -79,6 +79,7 @@ import { isWorkspaceTrustedForSharedExecution } from "@/node/services/utils/work
 
 import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import { THINKING_LEVEL_OFF, type ThinkingLevel } from "@/common/types/thinking";
+import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 
 import type {
   ErrorEvent,
@@ -1063,12 +1064,7 @@ export class AIService extends EventEmitter {
 
       // Resolve agent definition, compute effective mode & tool policy.
       const cfg = this.config.loadConfigOrDefault();
-      // The on-disk config schema already validates the staged advisor fields even though the
-      // lightweight ProjectsConfig type used here has not grown them yet.
-      const advisorToolConfig = cfg as typeof cfg & {
-        advisorModelString?: string;
-        advisorMaxUsesPerTurn?: number | null;
-      };
+      const advisorToolConfig = cfg;
       const advisorExperimentEnabled =
         experiments?.advisorTool === true ||
         this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.ADVISOR_TOOL) === true;
@@ -1304,9 +1300,12 @@ export class AIService extends EventEmitter {
         advisorToolConfig.advisorMaxUsesPerTurn === null
           ? null
           : (advisorToolConfig.advisorMaxUsesPerTurn ?? ADVISOR_DEFAULT_MAX_USES_PER_TURN);
-      // Advisor settings currently expose only a model override + usage cap. Keep the runtime
-      // metadata field available so the tool UI can surface reasoning once that config exists.
-      const advisorReasoningLevel: string | undefined = undefined;
+      // Clamp the persisted advisor thinking level so the tool metadata matches the
+      // providerOptions actually sent to generateText().
+      const advisorReasoningLevel = enforceThinkingPolicy(
+        advisorModelString,
+        advisorToolConfig.advisorThinkingLevel ?? THINKING_LEVEL_OFF
+      );
       const muxEnv = getMuxEnv(
         metadata.projectPath,
         getRuntimeType(metadata.runtimeConfig),

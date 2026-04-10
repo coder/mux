@@ -14,8 +14,15 @@ import {
 import { useAPI } from "@/browser/contexts/API";
 import { useModelsFromSettings } from "@/browser/hooks/useModelsFromSettings";
 import { normalizeTaskSettings, type TaskSettings } from "@/common/types/tasks";
+import {
+  coerceThinkingLevel,
+  getThinkingOptionLabel,
+  THINKING_LEVEL_OFF,
+  type ThinkingLevel,
+} from "@/common/types/thinking";
 import assert from "@/common/utils/assert";
 import { getErrorMessage } from "@/common/utils/errors";
+import { enforceThinkingPolicy, getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
 
 const DEFAULT_LIMITED_MAX_USES = 3;
 
@@ -28,6 +35,7 @@ type AdvisorMode = "limited" | "unlimited";
 
 interface AdvisorSettingsState {
   advisorModelString: string | null;
+  advisorThinkingLevel: ThinkingLevel;
   advisorMaxUsesPerTurn: number | null;
 }
 
@@ -68,14 +76,21 @@ function parsePositiveInteger(value: string): number | null {
 
 function normalizeAdvisorDraft(params: {
   advisorModelString: string;
+  advisorThinkingLevel: ThinkingLevel;
   maxUsesMode: AdvisorMode;
   limitedDraft: string;
   lastValidLimitedValue: number;
 }): AdvisorSettingsState {
   const normalizedModelString = normalizeAdvisorModelString(params.advisorModelString);
+  const normalizedThinkingLevel = enforceThinkingPolicy(
+    normalizedModelString ?? "",
+    params.advisorThinkingLevel
+  );
+
   if (params.maxUsesMode === "unlimited") {
     return {
       advisorModelString: normalizedModelString,
+      advisorThinkingLevel: normalizedThinkingLevel,
       advisorMaxUsesPerTurn: null,
     };
   }
@@ -87,6 +102,7 @@ function normalizeAdvisorDraft(params: {
 
   return {
     advisorModelString: normalizedModelString,
+    advisorThinkingLevel: normalizedThinkingLevel,
     advisorMaxUsesPerTurn:
       parsePositiveInteger(params.limitedDraft) ?? params.lastValidLimitedValue,
   };
@@ -95,6 +111,7 @@ function normalizeAdvisorDraft(params: {
 function areAdvisorSettingsEqual(a: AdvisorSettingsState, b: AdvisorSettingsState): boolean {
   return (
     a.advisorModelString === b.advisorModelString &&
+    a.advisorThinkingLevel === b.advisorThinkingLevel &&
     a.advisorMaxUsesPerTurn === b.advisorMaxUsesPerTurn
   );
 }
@@ -104,6 +121,7 @@ export function AdvisorToolExperimentConfig() {
   const { models, hiddenModelsForSelector } = useModelsFromSettings();
 
   const [advisorModelString, setAdvisorModelString] = useState("");
+  const [advisorThinkingLevel, setAdvisorThinkingLevel] = useState<ThinkingLevel>(THINKING_LEVEL_OFF);
   const [maxUsesMode, setMaxUsesMode] = useState<AdvisorMode>("unlimited");
   const [limitedDraft, setLimitedDraft] = useState(String(DEFAULT_LIMITED_MAX_USES));
   const [lastValidLimitedValue, setLastValidLimitedValue] = useState(DEFAULT_LIMITED_MAX_USES);
@@ -145,16 +163,20 @@ export function AdvisorToolExperimentConfig() {
 
         const normalizedTaskSettings = normalizeTaskSettings(cfg.taskSettings);
         const normalizedModelString = normalizeAdvisorModelString(cfg.advisorModelString);
+        const normalizedThinkingLevel =
+          coerceThinkingLevel(cfg.advisorThinkingLevel) ?? THINKING_LEVEL_OFF;
         const normalizedMaxUsesPerTurn = normalizeAdvisorMaxUsesPerTurn(cfg.advisorMaxUsesPerTurn);
         const nextLimitedValue = normalizedMaxUsesPerTurn ?? DEFAULT_LIMITED_MAX_USES;
 
         taskSettingsRef.current = normalizedTaskSettings;
         setAdvisorModelString(normalizedModelString ?? "");
+        setAdvisorThinkingLevel(normalizedThinkingLevel);
         setMaxUsesMode(normalizedMaxUsesPerTurn == null ? "unlimited" : "limited");
         setLimitedDraft(String(nextLimitedValue));
         setLastValidLimitedValue(nextLimitedValue);
         lastSyncedRef.current = {
           advisorModelString: normalizedModelString,
+          advisorThinkingLevel: normalizedThinkingLevel,
           advisorMaxUsesPerTurn: normalizedMaxUsesPerTurn,
         };
         setLoadFailed(false);
@@ -194,6 +216,7 @@ export function AdvisorToolExperimentConfig() {
 
     const normalizedAdvisorSettings = normalizeAdvisorDraft({
       advisorModelString,
+      advisorThinkingLevel,
       maxUsesMode,
       limitedDraft,
       lastValidLimitedValue,
@@ -233,11 +256,13 @@ export function AdvisorToolExperimentConfig() {
           .saveConfig({
             taskSettings: payload.taskSettings,
             advisorModelString: payload.advisorModelString,
+            advisorThinkingLevel: payload.advisorThinkingLevel,
             advisorMaxUsesPerTurn: payload.advisorMaxUsesPerTurn,
           })
           .then(() => {
             lastSyncedRef.current = {
               advisorModelString: payload.advisorModelString,
+              advisorThinkingLevel: payload.advisorThinkingLevel,
               advisorMaxUsesPerTurn: payload.advisorMaxUsesPerTurn,
             };
             if (isMountedRef.current) {
@@ -267,6 +292,7 @@ export function AdvisorToolExperimentConfig() {
   }, [
     api,
     advisorModelString,
+    advisorThinkingLevel,
     limitedDraft,
     loadFailed,
     loaded,
@@ -308,6 +334,7 @@ export function AdvisorToolExperimentConfig() {
         .saveConfig({
           taskSettings: payload.taskSettings,
           advisorModelString: payload.advisorModelString,
+          advisorThinkingLevel: payload.advisorThinkingLevel,
           advisorMaxUsesPerTurn: payload.advisorMaxUsesPerTurn,
         })
         .catch(() => undefined)
@@ -353,6 +380,22 @@ export function AdvisorToolExperimentConfig() {
     );
     setLimitedDraft(String(normalizedValue));
     setLastValidLimitedValue(normalizedValue);
+  };
+
+  const effectiveAdvisorModelStringForThinking = normalizeAdvisorModelString(advisorModelString) ?? "";
+  const allowedThinkingLevels = getThinkingPolicyForModel(effectiveAdvisorModelStringForThinking);
+  const effectiveAdvisorThinkingLevel = enforceThinkingPolicy(
+    effectiveAdvisorModelStringForThinking,
+    advisorThinkingLevel
+  );
+
+  const handleAdvisorThinkingLevelChange = (value: string) => {
+    const nextThinkingLevel = coerceThinkingLevel(value);
+    if (!nextThinkingLevel) {
+      return;
+    }
+
+    setAdvisorThinkingLevel(nextThinkingLevel);
   };
 
   if (!api) {
@@ -408,6 +451,31 @@ export function AdvisorToolExperimentConfig() {
               Reset
             </Button>
           ) : null}
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <div className="text-foreground text-sm">Reasoning</div>
+          <div className="text-muted text-xs">Applied to advisor requests.</div>
+        </div>
+        <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
+          <Select
+            value={effectiveAdvisorThinkingLevel}
+            onValueChange={handleAdvisorThinkingLevelChange}
+            disabled={allowedThinkingLevels.length <= 1}
+          >
+            <SelectTrigger className="border-border-medium bg-modal-bg h-9 w-32">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {allowedThinkingLevels.map((level) => (
+                <SelectItem key={level} value={level}>
+                  {getThinkingOptionLabel(level, effectiveAdvisorModelStringForThinking)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       </div>
 
