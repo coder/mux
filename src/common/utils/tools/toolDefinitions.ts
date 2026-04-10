@@ -35,6 +35,7 @@ import {
   BASH_MAX_TOTAL_BYTES,
   WEB_FETCH_MAX_OUTPUT_BYTES,
 } from "@/common/constants/toolLimits";
+import { ADVISOR_TOOL_DESCRIPTION } from "@/common/constants/advisor";
 import {
   ConfigMutationPathSchema,
   ConfigOperationsSchema,
@@ -146,6 +147,42 @@ const AskUserQuestionToolLegacySchema = z
 export const AskUserQuestionToolResultSchema = z.union([
   AskUserQuestionToolSummarySchema,
   AskUserQuestionToolLegacySchema,
+]);
+
+// -----------------------------------------------------------------------------
+// advisor (nested strategic guidance)
+// -----------------------------------------------------------------------------
+
+export const AdvisorToolInputSchema = z.object({}).strict();
+
+const AdvisorToolAdviceResultSchema = z
+  .object({
+    type: z.literal("advice"),
+    advice: z.string().min(1),
+    advisorModel: z.string().min(1),
+    remainingUses: z.number().int().min(0).nullable(),
+  })
+  .strict();
+
+const AdvisorToolLimitResultSchema = z
+  .object({
+    type: z.literal("limit_reached"),
+    advisorModel: z.string().min(1),
+    message: z.string().min(1),
+  })
+  .strict();
+
+const AdvisorToolErrorResultSchema = z
+  .object({
+    type: z.literal("error"),
+    message: z.string().min(1),
+  })
+  .strict();
+
+export const AdvisorToolResultSchema = z.discriminatedUnion("type", [
+  AdvisorToolAdviceResultSchema,
+  AdvisorToolLimitResultSchema,
+  AdvisorToolErrorResultSchema,
 ]);
 
 // -----------------------------------------------------------------------------
@@ -1315,6 +1352,10 @@ export const TOOL_DEFINITIONS = {
         })
     ),
   },
+  advisor: {
+    description: ADVISOR_TOOL_DESCRIPTION,
+    schema: AdvisorToolInputSchema,
+  },
   ask_user_question: {
     description:
       "Ask 1–4 multiple-choice questions (with optional multi-select) and wait for the user's answers. " +
@@ -2033,6 +2074,7 @@ export function getAvailableTools(
   options?: {
     enableAgentReport?: boolean;
     enableAnalyticsQuery?: boolean;
+    enableAdvisor?: boolean;
     /** @deprecated Mux global tools are always included. */
     enableMuxGlobalAgentsTools?: boolean;
   }
@@ -2040,6 +2082,7 @@ export function getAvailableTools(
   const [provider] = modelString.split(":");
   const enableAgentReport = options?.enableAgentReport ?? true;
   const enableAnalyticsQuery = options?.enableAnalyticsQuery ?? true;
+  const enableAdvisor = options?.enableAdvisor ?? false;
 
   // Base tools available for all models
   // Note: Tool availability is controlled by agent tool policy (allowlist), not mode checks here.
@@ -2068,6 +2111,7 @@ export function getAvailableTools(
     "file_edit_replace_string",
     // "file_edit_replace_lines", // DISABLED: causes models to break repo state
     "file_edit_insert",
+    ...(enableAdvisor ? ["advisor"] : []),
     "ask_user_question",
     "propose_plan",
     "bash",

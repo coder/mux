@@ -1,4 +1,4 @@
-import { type Tool } from "ai";
+import { type LanguageModel, type Tool } from "ai";
 import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
 import { createFileReadTool } from "@/node/services/tools/file_read";
 import { createAttachFileTool } from "@/node/services/tools/attach_file";
@@ -10,6 +10,7 @@ import { createFileEditReplaceStringTool } from "@/node/services/tools/file_edit
 // DISABLED: import { createFileEditReplaceLinesTool } from "@/node/services/tools/file_edit_replace_lines";
 import { createFileEditInsertTool } from "@/node/services/tools/file_edit_insert";
 import { createAskUserQuestionTool } from "@/node/services/tools/ask_user_question";
+import { createAdvisorTool } from "@/node/services/tools/advisor";
 import { createProposePlanTool } from "@/node/services/tools/propose_plan";
 import { createTodoWriteTool, createTodoReadTool } from "@/node/services/tools/todo";
 import { createNotifyTool } from "@/node/services/tools/notify";
@@ -53,6 +54,7 @@ import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import type { FileState } from "@/node/services/agentSession";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
+import type { ModelMessage } from "@/common/types/message";
 import type { ProjectRef } from "@/common/types/workspace";
 
 /**
@@ -117,6 +119,19 @@ export interface ToolConfiguration {
   /** Analytics service for raw SQL queries against DuckDB analytics data */
   analyticsService?: {
     executeRawQuery(sql: string): Promise<unknown>;
+  };
+  /** Runtime bundle for the advisor tool (present only when advisor is eligible for this stream). */
+  advisorRuntime?: {
+    /** The advisor model string (e.g. "anthropic:claude-sonnet-4-20250514") */
+    advisorModelString: string;
+    /** Normalized max uses per turn: null = unlimited, positive integer = exact cap */
+    maxUsesPerTurn: number | null;
+    /** Returns the live conversation transcript up to the current tool call */
+    getTranscriptSnapshot: () => ModelMessage[];
+    /** Creates a LanguageModel from a model string (delegates to providerModelFactory) */
+    createModel: (modelString: string) => Promise<LanguageModel>;
+    /** The abort signal from the parent stream */
+    abortSignal: AbortSignal;
   };
   /** Desktop session manager for desktop automation tools */
   desktopSessionManager?: DesktopSessionManager;
@@ -381,6 +396,7 @@ export async function getToolsForModel(
     mux_config_write: createMuxConfigWriteTool(config),
     skills_catalog_search: createSkillsCatalogSearchTool(config),
     skills_catalog_read: createSkillsCatalogReadTool(config),
+    ...(config.advisorRuntime ? { advisor: createAdvisorTool(config) } : {}),
     ask_user_question: createAskUserQuestionTool(config),
     propose_plan: createProposePlanTool(config),
     // propose_name is intentionally NOT registered here — it's only used by
@@ -492,6 +508,7 @@ export async function getToolsForModel(
     getAvailableTools(modelString, {
       enableAgentReport: config.enableAgentReport,
       enableAnalyticsQuery: Boolean(config.analyticsService),
+      enableAdvisor: Boolean(config.advisorRuntime),
       // Mux global tools are always created; tool policy (agent frontmatter)
       // controls which agents can actually use them.
       enableMuxGlobalAgentsTools: true,

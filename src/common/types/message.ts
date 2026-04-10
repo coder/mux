@@ -1,4 +1,4 @@
-import type { UIMessage } from "ai";
+import type { ModelMessage, UIMessage } from "ai";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { StreamErrorType } from "./errors";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
@@ -9,6 +9,8 @@ import type { AgentMode } from "./mode";
 import type { AgentSkillScope } from "./agentSkill";
 import type { ThinkingLevel } from "./thinking";
 import { type ReviewNoteData, formatReviewForModel } from "./review";
+
+export type { ModelMessage };
 
 /**
  * Review data stored in message metadata for display.
