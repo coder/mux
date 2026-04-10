@@ -609,6 +609,7 @@ export const ToolPolicySchema = z.array(ToolPolicyFilterSchema).meta({
 export const ExperimentsSchema = z.object({
   programmaticToolCalling: z.boolean().optional(),
   programmaticToolCallingExclusive: z.boolean().optional(),
+  advisorTool: z.boolean().optional(),
   system1: z.boolean().optional(),
   execSubagentHardRestart: z.boolean().optional(),
 });

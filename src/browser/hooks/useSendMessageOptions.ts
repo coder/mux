@@ -61,6 +61,7 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWi
   const programmaticToolCallingExclusive = useExperimentOverrideValue(
     EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING_EXCLUSIVE
   );
+  const advisorTool = useExperimentOverrideValue(EXPERIMENT_IDS.ADVISOR_TOOL);
   const system1 = useExperimentOverrideValue(EXPERIMENT_IDS.SYSTEM_1);
   const execSubagentHardRestart = useExperimentOverrideValue(
     EXPERIMENT_IDS.EXEC_SUBAGENT_HARD_RESTART
@@ -89,6 +90,7 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWi
     experiments: {
       programmaticToolCalling,
       programmaticToolCallingExclusive,
+      advisorTool,
       system1,
       execSubagentHardRestart,
     },

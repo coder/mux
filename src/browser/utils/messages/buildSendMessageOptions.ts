@@ -7,6 +7,7 @@ import { normalizeSelectedModel, normalizeToCanonical } from "@/common/utils/ai/
 export interface ExperimentValues {
   programmaticToolCalling: boolean | undefined;
   programmaticToolCallingExclusive: boolean | undefined;
+  advisorTool: boolean | undefined;
   system1: boolean | undefined;
   execSubagentHardRestart: boolean | undefined;
 }

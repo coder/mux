@@ -1070,6 +1070,7 @@ export class AIService extends EventEmitter {
         advisorMaxUsesPerTurn?: number | null;
       };
       const advisorExperimentEnabled =
+        experiments?.advisorTool === true ||
         this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.ADVISOR_TOOL) === true;
       emitStartupBreadcrumb("loading_workspace_context");
       const resolveAgentForStreamStartedAt = Date.now();
