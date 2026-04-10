@@ -16,6 +16,7 @@
 import * as path from "node:path";
 
 import assert from "@/common/utils/assert";
+import { ADVISOR_USAGE_GUIDANCE } from "@/common/constants/advisor";
 import type { MuxMessage } from "@/common/types/message";
 import type { DesktopCapability } from "@/common/types/desktop";
 import type { ProjectsConfig } from "@/common/types/project";
@@ -236,6 +237,8 @@ export interface BuildStreamSystemContextOptions {
   mcpServers: Parameters<typeof buildSystemMessage>[5];
   muxScope?: MuxToolScope;
   loadDesktopCapability?: () => Promise<DesktopCapability>;
+  /** Whether the advisor tool is available for the current agent */
+  advisorToolAvailable?: boolean;
 }
 
 /** Result of system context assembly. */
@@ -419,6 +422,15 @@ function mergeAdditionalInstructions(
   return primaryInstructions ?? secondaryInstructions;
 }
 
+function buildAdvisorGuidanceSection(): string {
+  return [
+    "<advisor-guidance>",
+    "You have access to an advisor tool that consults a stronger model for strategic guidance.",
+    ADVISOR_USAGE_GUIDANCE,
+    "</advisor-guidance>",
+  ].join("\n");
+}
+
 /**
  * Build the agent system prompt, system message, and discover available agents/skills.
  *
@@ -449,6 +461,7 @@ export async function buildStreamSystemContext(
     mcpServers,
     muxScope,
     loadDesktopCapability,
+    advisorToolAvailable,
   } = opts;
 
   const workspaceLog = log.withFields({ workspaceId, workspaceName: metadata.name });
@@ -479,10 +492,15 @@ export async function buildStreamSystemContext(
     }
   }
 
-  const agentSystemPrompt =
-    isSubagentWorkspace && subagentAppendPrompt
-      ? `${resolvedBody}\n\n${subagentAppendPrompt}`
-      : resolvedBody;
+  const agentPromptSections = [resolvedBody];
+  if (isSubagentWorkspace && subagentAppendPrompt) {
+    agentPromptSections.push(subagentAppendPrompt);
+  }
+  if (advisorToolAvailable) {
+    // Keep prompt guidance in lockstep with actual tool availability for the agent.
+    agentPromptSections.push(buildAdvisorGuidanceSection());
+  }
+  const agentSystemPrompt = agentPromptSections.join("\n\n");
 
   // Discover available agent definitions for sub-agent context (only for top-level workspaces).
   //
