@@ -12,9 +12,10 @@ import type { WorkspaceMetadata } from "@/common/types/workspace";
 import type { SendMessageOptions, ProvidersConfigMap } from "@/common/orpc/types";
 
 import type { DebugLlmRequestSnapshot } from "@/common/types/debugLlmRequest";
+import { ADVISOR_DEFAULT_MAX_USES_PER_TURN } from "@/common/constants/advisor";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 
-import type { MuxMessage } from "@/common/types/message";
+import type { ModelMessage, MuxMessage } from "@/common/types/message";
 import { createMuxMessage } from "@/common/types/message";
 import type { Config } from "@/node/config";
 import { StreamManager } from "./streamManager";
@@ -1062,6 +1063,12 @@ export class AIService extends EventEmitter {
 
       // Resolve agent definition, compute effective mode & tool policy.
       const cfg = this.config.loadConfigOrDefault();
+      // The on-disk config schema already validates the staged advisor fields even though the
+      // lightweight ProjectsConfig type used here has not grown them yet.
+      const advisorToolConfig = cfg as typeof cfg & {
+        advisorModelString?: string;
+        advisorMaxUsesPerTurn?: number | null;
+      };
       emitStartupBreadcrumb("loading_workspace_context");
       const resolveAgentForStreamStartedAt = Date.now();
       const agentResult = await resolveAgentForStream({
@@ -1265,6 +1272,34 @@ export class AIService extends EventEmitter {
         workspaceId.trim().length > 0,
         "AIService.streamMessage requires a non-empty workspaceId"
       );
+      const advisorExperimentEnabled =
+        this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.ADVISOR_TOOL) === true;
+      const agentAdvisorEnabled = cfg.agentAiDefaults?.[effectiveAgentId]?.advisorEnabled === true;
+      const advisorModelString = advisorToolConfig.advisorModelString?.trim() ?? "";
+      if (advisorExperimentEnabled && agentAdvisorEnabled && advisorModelString.length === 0) {
+        workspaceLog.warn(
+          "Advisor tool enabled for agent without advisorModelString; suppressing",
+          {
+            effectiveAgentId,
+          }
+        );
+      }
+      const advisorEligible =
+        advisorExperimentEnabled && agentAdvisorEnabled && advisorModelString.length > 0;
+      if (advisorEligible) {
+        assert(
+          advisorModelString.length > 0,
+          "AIService advisorModelString must be non-empty when advisor is eligible"
+        );
+      }
+      // Mutable ref updated by StreamManager.prepareStep so the advisor tool reads the live
+      // transcript lazily at execute time instead of capturing a stale snapshot here.
+      const advisorTranscriptRef: { messages?: ModelMessage[] } = {};
+      // Normalize: undefined -> default, null -> unlimited, positive int -> exact cap.
+      const advisorMaxUses =
+        advisorToolConfig.advisorMaxUsesPerTurn === null
+          ? null
+          : (advisorToolConfig.advisorMaxUsesPerTurn ?? ADVISOR_DEFAULT_MAX_USES_PER_TURN);
       const muxEnv = getMuxEnv(
         metadata.projectPath,
         getRuntimeType(metadata.runtimeConfig),
@@ -1285,6 +1320,32 @@ export class AIService extends EventEmitter {
           secrets: await secretsToRecord(projectSecrets, this.opResolver),
           muxEnv,
           runtimeTempDir,
+          ...(advisorEligible
+            ? {
+                advisorRuntime: {
+                  advisorModelString,
+                  maxUsesPerTurn: advisorMaxUses,
+                  getTranscriptSnapshot: () => {
+                    const messages = advisorTranscriptRef.messages;
+                    assert(
+                      messages != null,
+                      "AIService advisor transcript ref must be populated before advisor execution"
+                    );
+                    return messages;
+                  },
+                  createModel: async (ms: string) => {
+                    const advisorModel = await this.createModel(ms, undefined, { workspaceId });
+                    if (!advisorModel.success) {
+                      throw new Error(
+                        `Failed to create advisor model: ${getErrorMessage(advisorModel.error)}`
+                      );
+                    }
+                    return advisorModel.data;
+                  },
+                  abortSignal: combinedAbortSignal,
+                },
+              }
+            : {}),
           openaiWireFormat: effectiveMuxProviderOptions?.openai?.wireFormat,
           backgroundProcessManager: this.backgroundProcessManager,
           // Plan agent configuration for plan file access.
@@ -1670,7 +1731,12 @@ export class AIService extends EventEmitter {
         requestHeaders,
         effectiveMuxProviderOptions.anthropic?.cacheTtl ?? undefined,
         forceToolChoice,
-        resolvedOverrides.standard
+        resolvedOverrides.standard,
+        advisorEligible
+          ? (stepMessages) => {
+              advisorTranscriptRef.messages = stepMessages;
+            }
+          : undefined
       );
       recordStartupPhaseTiming("startStreamMs", startStreamStartedAt);
 
