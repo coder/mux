@@ -23,16 +23,22 @@ export const shescape = {
 export async function streamToString(stream: ReadableStream<Uint8Array>): Promise<string> {
   const reader = stream.getReader();
   const decoder = new TextDecoder("utf-8");
-  let result = "";
+  // Collect decoded chunks into an array and join at the end.
+  // Using += would build a deep V8 ConsString rope; subsequent regex/indexOf
+  // on that rope dereferences one pointer per character, causing O(n²)-class
+  // hangs on large newline-free payloads (e.g. minified CSS from web_fetch).
+  const chunks: string[] = [];
 
   try {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      result += decoder.decode(value, { stream: true });
+      chunks.push(decoder.decode(value, { stream: true }));
     }
-    result += decoder.decode();
-    return result;
+    // Final flush
+    const tail = decoder.decode();
+    if (tail) chunks.push(tail);
+    return chunks.join("");
   } finally {
     reader.releaseLock();
   }

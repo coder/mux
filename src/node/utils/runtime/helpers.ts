@@ -1,4 +1,5 @@
 import type { Runtime, ExecOptions } from "@/node/runtime/Runtime";
+import { streamToString } from "@/node/runtime/streamUtils";
 import { PlatformPaths } from "@/node/utils/paths.main";
 import { getLegacyPlanFilePath, getPlanFilePath } from "@/common/utils/planStorage";
 import { shellQuote } from "@/common/utils/shell";
@@ -95,33 +96,6 @@ export async function writeFileString(
   } catch (err) {
     writer.releaseLock();
     throw err;
-  }
-}
-
-/**
- * Convert a ReadableStream<Uint8Array> to a UTF-8 string
- */
-async function streamToString(stream: ReadableStream<Uint8Array>): Promise<string> {
-  const reader = stream.getReader();
-  const decoder = new TextDecoder("utf-8");
-  // Collect decoded chunks into an array and join at the end.
-  // Using += would build a deep V8 ConsString rope; subsequent regex/indexOf
-  // on that rope dereferences one pointer per character, causing O(n²)-class
-  // hangs on large newline-free payloads (e.g. minified CSS from web_fetch).
-  const chunks: string[] = [];
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(decoder.decode(value, { stream: true }));
-    }
-    // Final flush
-    const tail = decoder.decode();
-    if (tail) chunks.push(tail);
-    return chunks.join("");
-  } finally {
-    reader.releaseLock();
   }
 }
 
