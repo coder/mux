@@ -198,6 +198,13 @@ function spawnProxyCommand(
   return { sock, process: proc };
 }
 
+/** Extract a message string from an error for `.includes()` matching.
+ *  Unlike getErrorMessage, this doesn't walk the cause chain and returns ""
+ *  for non-Error, non-string values — intentionally narrow for match guards. */
+function errorMessageText(error: unknown): string {
+  return error instanceof Error ? error.message : typeof error === "string" ? error : "";
+}
+
 /**
  * Detect if error is due to encrypted key without passphrase.
  * ssh2 throws parse errors like "Cannot parse privateKey: Encrypted private OpenSSH key detected,
@@ -208,7 +215,7 @@ function isEncryptedKeyError(error: unknown): boolean {
   if (!error) {
     return false;
   }
-  const message = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  const message = errorMessageText(error);
   return (
     message.includes("Encrypted private key detected") ||
     message.includes("Encrypted private OpenSSH key detected") ||
@@ -235,7 +242,7 @@ function isAuthFailure(error: unknown): boolean {
     }
   }
 
-  const message = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  const message = errorMessageText(error);
   return (
     message.includes("All configured authentication methods failed") ||
     message.includes("Authentication failed") ||
