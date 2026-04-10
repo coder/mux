@@ -154,6 +154,25 @@ function isTrustedProjectPath(context: ORPCContext, projectPath?: string | null)
   return isProjectTrusted(context.config, projectPath);
 }
 
+function normalizeOptionalConfigString(value: string | null | undefined): string | undefined {
+  const trimmedValue = value?.trim();
+  if (!trimmedValue) {
+    return undefined;
+  }
+
+  return trimmedValue;
+}
+
+function normalizeAdvisorMaxUsesPerTurn(value: number | null | undefined): number | null {
+  if (value == null) {
+    return null;
+  }
+
+  assert(Number.isInteger(value), "Advisor max uses per turn must be an integer");
+  assert(value > 0, "Advisor max uses per turn must be positive");
+  return value;
+}
+
 function normalizeMuxMessageFromDisk(value: unknown): MuxMessage | null {
   if (!value || typeof value !== "object") {
     return null;
@@ -579,6 +598,8 @@ export const router = (authToken?: string) => {
             routePriority: config.routePriority,
             routeOverrides: config.routeOverrides,
             defaultModel: config.defaultModel,
+            advisorModelString: config.advisorModelString ?? null,
+            advisorMaxUsesPerTurn: config.advisorMaxUsesPerTurn ?? null,
             hiddenModels: config.hiddenModels,
             coderWorkspaceArchiveBehavior:
               config.coderWorkspaceArchiveBehavior ?? DEFAULT_CODER_ARCHIVE_BEHAVIOR,
@@ -887,6 +908,16 @@ export const router = (authToken?: string) => {
           await context.config.editConfig((config) => {
             const normalizedTaskSettings = normalizeTaskSettings(input.taskSettings);
             const result = { ...config, taskSettings: normalizedTaskSettings };
+
+            if (input.advisorModelString !== undefined) {
+              result.advisorModelString = normalizeOptionalConfigString(input.advisorModelString);
+            }
+
+            if (input.advisorMaxUsesPerTurn !== undefined) {
+              result.advisorMaxUsesPerTurn = normalizeAdvisorMaxUsesPerTurn(
+                input.advisorMaxUsesPerTurn
+              );
+            }
 
             if (input.agentAiDefaults !== undefined) {
               const normalized = normalizeAgentAiDefaults(input.agentAiDefaults);

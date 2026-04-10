@@ -100,6 +100,10 @@ export interface ProjectsConfig {
    * Mirrors the browser localStorage cache (DEFAULT_MODEL_KEY).
    */
   defaultModel?: string;
+  /** Global advisor model override for the experimental advisor tool. */
+  advisorModelString?: string;
+  /** Positive per-turn advisor cap; null/undefined means unlimited. */
+  advisorMaxUsesPerTurn?: number | null;
   /**
    * Hidden model IDs (shared via ~/.mux/config.json).
    * Mirrors the browser localStorage cache (HIDDEN_MODELS_KEY).

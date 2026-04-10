@@ -310,6 +310,18 @@ function parseOptionalPort(value: unknown): number | undefined {
   return value;
 }
 
+function parseOptionalPositiveInteger(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value)) {
+    return undefined;
+  }
+
+  if (value <= 0) {
+    return undefined;
+  }
+
+  return value;
+}
+
 function parseOptionalHeartbeatIntervalMs(value: unknown): number | undefined {
   if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value)) {
     return undefined;
@@ -672,6 +684,11 @@ export class Config {
         const routeOverrides = normalizeRouteOverridesRecord(parsed.routeOverrides);
 
         const defaultModel = normalizeOptionalModelString(parsed.defaultModel);
+        const advisorModelString = parseOptionalNonEmptyString(parsed.advisorModelString);
+        const advisorMaxUsesPerTurn =
+          parsed.advisorMaxUsesPerTurn === null
+            ? null
+            : parseOptionalPositiveInteger(parsed.advisorMaxUsesPerTurn);
         const hiddenModels = normalizeOptionalModelStringArray(parsed.hiddenModels);
         const legacySubagentAiDefaults = normalizeSubagentAiDefaults(parsed.subagentAiDefaults);
 
@@ -726,6 +743,8 @@ export class Config {
           routePriority,
           routeOverrides,
           defaultModel,
+          advisorModelString,
+          advisorMaxUsesPerTurn,
           hiddenModels,
           agentAiDefaults,
           // Legacy fields are still parsed and returned for downgrade compatibility.
@@ -808,6 +827,20 @@ export class Config {
       const defaultModel = normalizeOptionalModelString(config.defaultModel);
       if (defaultModel !== undefined) {
         data.defaultModel = defaultModel;
+      }
+
+      const advisorModelString = parseOptionalNonEmptyString(config.advisorModelString);
+      if (advisorModelString !== undefined) {
+        data.advisorModelString = advisorModelString;
+      }
+
+      if (config.advisorMaxUsesPerTurn === null) {
+        data.advisorMaxUsesPerTurn = null;
+      } else {
+        const advisorMaxUsesPerTurn = parseOptionalPositiveInteger(config.advisorMaxUsesPerTurn);
+        if (advisorMaxUsesPerTurn !== undefined) {
+          data.advisorMaxUsesPerTurn = advisorMaxUsesPerTurn;
+        }
       }
 
       const hiddenModels = normalizeOptionalModelStringArray(config.hiddenModels);

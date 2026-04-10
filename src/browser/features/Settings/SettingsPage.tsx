@@ -17,12 +17,14 @@ import {
   Server,
   Lock,
   HeartPulse,
+  Compass,
 } from "lucide-react";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useOnboardingPause } from "@/browser/features/SplashScreens/SplashScreenProvider";
 import { useExperimentValue } from "@/browser/hooks/useExperiments";
 import { isEditableElement, KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keybinds";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import { AdvisorSection } from "./Sections/AdvisorSection";
 import { GeneralSection } from "./Sections/GeneralSection";
 import { TasksSection } from "./Sections/TasksSection";
 import { ProvidersSection } from "./Sections/ProvidersSection";
@@ -126,6 +128,7 @@ export function SettingsPage(props: SettingsPageProps) {
   const onboardingPause = useOnboardingPause();
   const system1Enabled = useExperimentValue(EXPERIMENT_IDS.SYSTEM_1);
   const governorEnabled = useExperimentValue(EXPERIMENT_IDS.MUX_GOVERNOR);
+  const advisorToolEnabled = useExperimentValue(EXPERIMENT_IDS.ADVISOR_TOOL);
   const workspaceHeartbeatsEnabled = useExperimentValue(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS);
 
   // Keep routing on a valid section when an experiment-gated section is disabled.
@@ -136,6 +139,9 @@ export function SettingsPage(props: SettingsPageProps) {
     if (!governorEnabled && activeSection === "governor") {
       setActiveSection(BASE_SECTIONS[0]?.id ?? "general");
     }
+    if (!advisorToolEnabled && activeSection === "advisor") {
+      setActiveSection(BASE_SECTIONS[0]?.id ?? "general");
+    }
     if (!workspaceHeartbeatsEnabled && activeSection === "heartbeat") {
       setActiveSection(BASE_SECTIONS[0]?.id ?? "general");
     }
@@ -144,6 +150,7 @@ export function SettingsPage(props: SettingsPageProps) {
     setActiveSection,
     system1Enabled,
     governorEnabled,
+    advisorToolEnabled,
     workspaceHeartbeatsEnabled,
   ]);
 
@@ -184,6 +191,17 @@ export function SettingsPage(props: SettingsPageProps) {
         label: "Governor",
         icon: <ShieldCheck className="h-4 w-4" />,
         component: GovernorSection,
+      },
+    ];
+  }
+  if (advisorToolEnabled) {
+    sections = [
+      ...sections,
+      {
+        id: "advisor",
+        label: "Advisor",
+        icon: <Compass className="h-4 w-4" />,
+        component: AdvisorSection,
       },
     ];
   }
