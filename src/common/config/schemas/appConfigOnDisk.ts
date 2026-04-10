@@ -18,6 +18,7 @@ export const AgentAiDefaultsEntrySchema = z.object({
   modelString: z.string().optional(),
   thinkingLevel: ThinkingLevelSchema.optional(),
   enabled: z.boolean().optional(),
+  advisorEnabled: z.boolean().optional(),
 });
 
 export const AgentAiDefaultsSchema = z.record(AgentIdSchema, AgentAiDefaultsEntrySchema);
@@ -61,6 +62,8 @@ export const AppConfigOnDiskSchema = z
     routePriority: z.array(z.string()).optional(),
     routeOverrides: z.record(z.string(), z.string()).optional(),
     defaultModel: z.string().optional(),
+    advisorModelString: z.string().optional(),
+    advisorMaxUsesPerTurn: z.number().int().positive().nullable().optional(),
     hiddenModels: z.array(z.string()).optional(),
     preferredCompactionModel: z.string().optional(),
     agentAiDefaults: AgentAiDefaultsSchema.optional(),
