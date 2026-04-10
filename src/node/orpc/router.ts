@@ -604,7 +604,7 @@ export const router = (authToken?: string) => {
             defaultModel: config.defaultModel,
             advisorModelString: config.advisorModelString ?? null,
             advisorThinkingLevel: config.advisorThinkingLevel ?? null,
-            advisorMaxUsesPerTurn: config.advisorMaxUsesPerTurn ?? null,
+            advisorMaxUsesPerTurn: config.advisorMaxUsesPerTurn,
             hiddenModels: config.hiddenModels,
             coderWorkspaceArchiveBehavior:
               config.coderWorkspaceArchiveBehavior ?? DEFAULT_CODER_ARCHIVE_BEHAVIOR,

@@ -1757,7 +1757,7 @@ export const config = {
       defaultModel: z.string().optional(),
       advisorModelString: AdvisorModelStringSchema,
       advisorThinkingLevel: AdvisorThinkingLevelSchema,
-      advisorMaxUsesPerTurn: AdvisorMaxUsesPerTurnSchema,
+      advisorMaxUsesPerTurn: AdvisorMaxUsesPerTurnSchema.optional(),
       hiddenModels: z.array(z.string()).optional(),
       coderWorkspaceArchiveBehavior: z.enum(CODER_ARCHIVE_BEHAVIORS),
       worktreeArchiveBehavior: z.enum(WORKTREE_ARCHIVE_BEHAVIORS),
