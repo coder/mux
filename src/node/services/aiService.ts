@@ -1069,6 +1069,8 @@ export class AIService extends EventEmitter {
         advisorModelString?: string;
         advisorMaxUsesPerTurn?: number | null;
       };
+      const advisorExperimentEnabled =
+        this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.ADVISOR_TOOL) === true;
       emitStartupBreadcrumb("loading_workspace_context");
       const resolveAgentForStreamStartedAt = Date.now();
       const agentResult = await resolveAgentForStream({
@@ -1081,6 +1083,7 @@ export class AIService extends EventEmitter {
         callerToolPolicy: toolPolicy,
         cfg,
         emitError: (event) => this.emit("error", event),
+        isAdvisorExperimentEnabled: advisorExperimentEnabled,
       });
       recordStartupPhaseTiming("resolveAgentForStreamMs", resolveAgentForStreamStartedAt);
       if (!agentResult.success) {
@@ -1100,6 +1103,10 @@ export class AIService extends EventEmitter {
       } = agentResult.data;
       const projectTrusted = isProjectTrusted(this.config, metadata.projectPath);
       const sharedExecutionTrusted = isWorkspaceTrustedForSharedExecution(metadata, cfg.projects);
+      const agentAdvisorEnabled = cfg.agentAiDefaults?.[effectiveAgentId]?.advisorEnabled === true;
+      const advisorModelString = advisorToolConfig.advisorModelString?.trim() ?? "";
+      const advisorToolAvailable =
+        advisorExperimentEnabled && agentAdvisorEnabled && advisorModelString.length > 0;
 
       // Fetch workspace MCP overrides (for filtering servers and tools)
       // NOTE: Stored in <workspace>/.mux/mcp.local.jsonc (not ~/.mux/config.json).
@@ -1182,6 +1189,7 @@ export class AIService extends EventEmitter {
         mcpServers,
         muxScope,
         loadDesktopCapability,
+        advisorToolAvailable,
       });
       recordStartupPhaseTiming("buildStreamSystemContextMs", buildStreamSystemContextStartedAt);
       const { agentSystemPrompt, agentDefinitions, availableSkills, ancestorPlanFilePaths } =
@@ -1272,10 +1280,6 @@ export class AIService extends EventEmitter {
         workspaceId.trim().length > 0,
         "AIService.streamMessage requires a non-empty workspaceId"
       );
-      const advisorExperimentEnabled =
-        this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.ADVISOR_TOOL) === true;
-      const agentAdvisorEnabled = cfg.agentAiDefaults?.[effectiveAgentId]?.advisorEnabled === true;
-      const advisorModelString = advisorToolConfig.advisorModelString?.trim() ?? "";
       if (advisorExperimentEnabled && agentAdvisorEnabled && advisorModelString.length === 0) {
         workspaceLog.warn(
           "Advisor tool enabled for agent without advisorModelString; suppressing",
@@ -1284,8 +1288,7 @@ export class AIService extends EventEmitter {
           }
         );
       }
-      const advisorEligible =
-        advisorExperimentEnabled && agentAdvisorEnabled && advisorModelString.length > 0;
+      const advisorEligible = advisorToolAvailable;
       if (advisorEligible) {
         assert(
           advisorModelString.length > 0,
