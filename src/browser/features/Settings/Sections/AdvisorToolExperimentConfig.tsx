@@ -433,11 +433,11 @@ export function AdvisorToolExperimentConfig() {
   return (
     <div className="bg-background-secondary space-y-3 px-4 py-3">
       <div className="flex items-center justify-between gap-4">
-        <div>
+        <div className="flex-1">
           <div className="text-foreground text-sm">Advisor Model</div>
           <div className="text-muted text-xs">Global default for nested advisor calls.</div>
         </div>
-        <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
+        <div className="flex items-center justify-end gap-2">
           <ModelSelector
             value={advisorModelString}
             onChange={setAdvisorModelString}
@@ -451,11 +451,11 @@ export function AdvisorToolExperimentConfig() {
       </div>
 
       <div className="flex items-center justify-between gap-4">
-        <div>
+        <div className="flex-1">
           <div className="text-foreground text-sm">Reasoning</div>
           <div className="text-muted text-xs">Applied to advisor requests.</div>
         </div>
-        <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
+        <div className="flex items-center justify-end gap-2">
           <Select
             value={effectiveAdvisorThinkingLevel}
             onValueChange={handleAdvisorThinkingLevelChange}
@@ -476,11 +476,11 @@ export function AdvisorToolExperimentConfig() {
       </div>
 
       <div className="flex items-center justify-between gap-4">
-        <div>
+        <div className="flex-1">
           <div className="text-foreground text-sm">Max Uses / Turn</div>
           <div className="text-muted text-xs">Per response.</div>
         </div>
-        <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
+        <div className="flex items-center justify-end gap-2">
           <Select value={maxUsesMode} onValueChange={setAdvisorMaxUsesMode}>
             <SelectTrigger className="border-border-medium bg-modal-bg h-9 w-32">
               <SelectValue />
