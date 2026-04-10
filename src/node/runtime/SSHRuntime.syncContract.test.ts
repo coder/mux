@@ -189,11 +189,51 @@ describe("SSHRuntime authoritative sync contract", () => {
   it("pushes pruneable bundle branches separately from shared tags", async () => {
     const runtime = new CommandCaptureSSHRuntime();
     const layout = createLayout();
-    const pushArgs: string[][] = [];
+    const gitCalls: string[][] = [];
 
     spyOn(disposableExec, "execFileAsync").mockImplementation((file, args) => {
       expect(file).toBe("git");
-      pushArgs.push([...args]);
+      gitCalls.push([...args]);
+      const isTagCheck = args.includes("for-each-ref") && args.includes("refs/tags");
+      return createMockExecResult(
+        Promise.resolve({ stdout: isTagCheck ? "refs/tags/v1.0.0\n" : "", stderr: "" })
+      );
+    });
+
+    await (runtime as unknown as GitPushPrivateApi).syncProjectSnapshotViaGitPush(
+      "/local/project",
+      layout,
+      layout.currentSnapshotPath,
+      noopInitLogger
+    );
+
+    const pushCalls = gitCalls.filter((args) => args.includes("push"));
+    const tagCheckCalls = gitCalls.filter((args) => args.includes("for-each-ref"));
+
+    expect(pushCalls).toHaveLength(2);
+    expect(tagCheckCalls).toHaveLength(1);
+    expect(tagCheckCalls[0]).toContain("--count=1");
+    expect(tagCheckCalls[0]).toContain("refs/tags");
+
+    expect(pushCalls[0]).toContain("--prune");
+    expect(pushCalls[0]).toContain("--atomic");
+    expect(pushCalls[0]).toContain("+refs/heads/*:refs/mux-bundle/*");
+    expect(pushCalls[0]).not.toContain("+refs/tags/*:refs/tags/*");
+
+    expect(pushCalls[1]).not.toContain("--prune");
+    expect(pushCalls[1]).not.toContain("--atomic");
+    expect(pushCalls[1]).toContain("+refs/tags/*:refs/tags/*");
+    expect(pushCalls[1]).not.toContain("+refs/heads/*:refs/mux-bundle/*");
+  });
+
+  it("skips the metadata tag push when the local repo has no tags", async () => {
+    const runtime = new CommandCaptureSSHRuntime();
+    const layout = createLayout();
+    const gitCalls: string[][] = [];
+
+    spyOn(disposableExec, "execFileAsync").mockImplementation((file, args) => {
+      expect(file).toBe("git");
+      gitCalls.push([...args]);
       return createMockExecResult(Promise.resolve({ stdout: "", stderr: "" }));
     });
 
@@ -204,16 +244,15 @@ describe("SSHRuntime authoritative sync contract", () => {
       noopInitLogger
     );
 
-    expect(pushArgs).toHaveLength(2);
-    expect(pushArgs[0]).toContain("--prune");
-    expect(pushArgs[0]).toContain("--atomic");
-    expect(pushArgs[0]).toContain("+refs/heads/*:refs/mux-bundle/*");
-    expect(pushArgs[0]).not.toContain("+refs/tags/*:refs/tags/*");
+    const pushCalls = gitCalls.filter((args) => args.includes("push"));
+    const tagCheckCalls = gitCalls.filter((args) => args.includes("for-each-ref"));
 
-    expect(pushArgs[1]).not.toContain("--prune");
-    expect(pushArgs[1]).not.toContain("--atomic");
-    expect(pushArgs[1]).toContain("+refs/tags/*:refs/tags/*");
-    expect(pushArgs[1]).not.toContain("+refs/heads/*:refs/mux-bundle/*");
+    expect(pushCalls).toHaveLength(1);
+    expect(tagCheckCalls).toHaveLength(1);
+    expect(pushCalls[0]).toContain("--prune");
+    expect(pushCalls[0]).toContain("--atomic");
+    expect(pushCalls[0]).toContain("+refs/heads/*:refs/mux-bundle/*");
+    expect(pushCalls[0]).not.toContain("+refs/tags/*:refs/tags/*");
   });
 
   it("fetches pruneable bundle branches separately from shared tags", async () => {

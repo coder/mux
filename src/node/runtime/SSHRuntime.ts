@@ -1209,6 +1209,19 @@ export class SSHRuntime extends RemoteRuntime {
     }
   }
 
+  private async hasLocalTags(projectPath: string): Promise<boolean> {
+    using proc = execFileAsync("git", [
+      "-C",
+      projectPath,
+      "for-each-ref",
+      "--count=1",
+      "--format=%(refname)",
+      "refs/tags",
+    ]);
+    const { stdout } = await proc.result;
+    return stdout.trim().length > 0;
+  }
+
   /**
    * Build a GIT_SSH_COMMAND that mirrors the runtime's SSH config so `git push`
    * reuses the same multiplexed connection and auth settings.
@@ -1383,6 +1396,13 @@ export class SSHRuntime extends RemoteRuntime {
       } catch (retryError) {
         throwPushFailure(retryError);
       }
+    }
+
+    // Metadata propagation is a true no-op when the local repo has no tags.
+    // Guarding the tag push keeps branch sync authoritative instead of failing on
+    // Git's "no refs in common" error for an empty tag refspec.
+    if (!(await this.hasLocalTags(projectPath))) {
+      return;
     }
 
     try {
