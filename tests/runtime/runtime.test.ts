@@ -1941,6 +1941,137 @@ describeIntegration("Runtime integration tests", () => {
       }
     }, 120000);
 
+    test("initWorkspace reuses snapshots and preserves remote-only tags across later resyncs", async () => {
+      const runtime = createSSHRuntime();
+
+      const projectName = `sync-remote-tags-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+      const tmpDir = await import("os").then((os) => os.tmpdir());
+      const localProjectPath = `${tmpDir}/${projectName}`;
+      const layout = buildRemoteProjectLayout(srcBaseDir, localProjectPath);
+      const firstWorkspacePath = getRemoteWorkspacePath(layout, "tags-a");
+      const secondWorkspacePath = getRemoteWorkspacePath(layout, "tags-b");
+      const thirdWorkspacePath = getRemoteWorkspacePath(layout, "tags-c");
+      const baseRepoPath = layout.baseRepoPath;
+
+      const createCapturingInitLogger = (steps: string[]) => ({
+        ...noopInitLogger,
+        logStep(step: string) {
+          steps.push(step);
+        },
+      });
+
+      const { execSync } = await import("child_process");
+      try {
+        execSync(
+          [
+            `mkdir -p "${localProjectPath}"`,
+            `cd "${localProjectPath}"`,
+            `git init -b main`,
+            `git config user.email "test@test.com"`,
+            `git config user.name "Test"`,
+            `echo "version-a" > file.txt`,
+            `git add file.txt`,
+            `git commit -m "initial"`,
+          ].join(" && "),
+          { stdio: "pipe" }
+        );
+
+        const firstInit = await runtime.initWorkspace({
+          projectPath: localProjectPath,
+          branchName: "tags-a",
+          trunkBranch: "main",
+          workspacePath: firstWorkspacePath,
+          initLogger: noopInitLogger,
+        });
+        if (!firstInit.success) {
+          throw new Error(`first initWorkspace failed: ${firstInit.error}`);
+        }
+
+        const initialBaseHead = await execBuffered(
+          runtime,
+          `git -C "${baseRepoPath}" rev-parse refs/mux-bundle/main`,
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+        const initialBaseHeadOid = initialBaseHead.stdout.trim();
+        expect(initialBaseHead.exitCode).toBe(0);
+        expect(initialBaseHeadOid).not.toBe("");
+
+        const addRemoteOnlyTag = await execBuffered(
+          runtime,
+          `git -C "${baseRepoPath}" update-ref refs/tags/remote-only ${initialBaseHeadOid}`,
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+        expect(addRemoteOnlyTag.exitCode).toBe(0);
+
+        const reuseSteps: string[] = [];
+        const secondInit = await runtime.initWorkspace({
+          projectPath: localProjectPath,
+          branchName: "tags-b",
+          trunkBranch: "main",
+          workspacePath: secondWorkspacePath,
+          initLogger: createCapturingInitLogger(reuseSteps),
+        });
+        if (!secondInit.success) {
+          throw new Error(`second initWorkspace failed: ${secondInit.error}`);
+        }
+        expect(reuseSteps).toContain("Reusing existing remote project snapshot");
+
+        const remoteOnlyTagBeforeResync = await execBuffered(
+          runtime,
+          `git -C "${baseRepoPath}" rev-parse refs/tags/remote-only`,
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+        expect(remoteOnlyTagBeforeResync.exitCode).toBe(0);
+        expect(remoteOnlyTagBeforeResync.stdout.trim()).toBe(initialBaseHeadOid);
+
+        execSync(
+          [
+            `cd "${localProjectPath}"`,
+            `echo "version-b" > file.txt`,
+            `git add file.txt`,
+            `git commit -m "second"`,
+          ].join(" && "),
+          { stdio: "pipe" }
+        );
+        const secondCommit = execSync(`git -C "${localProjectPath}" rev-parse HEAD`, {
+          encoding: "utf8",
+        }).trim();
+
+        const thirdInit = await runtime.initWorkspace({
+          projectPath: localProjectPath,
+          branchName: "tags-c",
+          trunkBranch: "main",
+          workspacePath: thirdWorkspacePath,
+          initLogger: noopInitLogger,
+        });
+        if (!thirdInit.success) {
+          throw new Error(`third initWorkspace failed: ${thirdInit.error}`);
+        }
+
+        const updatedBaseHead = await execBuffered(
+          runtime,
+          `git -C "${baseRepoPath}" rev-parse refs/mux-bundle/main`,
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+        expect(updatedBaseHead.exitCode).toBe(0);
+        expect(updatedBaseHead.stdout.trim()).toBe(secondCommit);
+
+        const remoteOnlyTagAfterResync = await execBuffered(
+          runtime,
+          `git -C "${baseRepoPath}" rev-parse refs/tags/remote-only`,
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+        expect(remoteOnlyTagAfterResync.exitCode).toBe(0);
+        expect(remoteOnlyTagAfterResync.stdout.trim()).toBe(initialBaseHeadOid);
+      } finally {
+        execSync(`rm -rf "${localProjectPath}"`);
+        await execBuffered(runtime, `rm -rf "${layout.projectRoot}"`, {
+          cwd: "/home/testuser",
+          timeout: 30,
+        });
+      }
+    }, 120000);
+
     test("initWorkspace strips shared core.bare from pre-existing base repos before checkout", async () => {
       const runtime = createSSHRuntime();
 

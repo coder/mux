@@ -441,8 +441,11 @@ export class SSHRuntime extends RemoteRuntime {
   }
 
   private async computeSnapshotDigest(projectPath: string): Promise<string> {
+    // Workspace materialization only depends on branch tips. Tags are shared repo
+    // metadata that can legitimately drift, so they must not participate in the
+    // authoritative snapshot identity or force a resync on their own.
     const refsOutput = await new Promise<string>((resolve, reject) => {
-      const proc = spawn("git", ["-C", projectPath, "show-ref", "--heads", "--tags"], {
+      const proc = spawn("git", ["-C", projectPath, "show-ref", "--heads"], {
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
       });
@@ -804,7 +807,7 @@ export class SSHRuntime extends RemoteRuntime {
 
   private async resolveLocalSyncRefManifest(projectPath: string): Promise<string | null> {
     try {
-      using proc = execFileAsync("git", ["-C", projectPath, "show-ref", "--heads", "--tags"]);
+      using proc = execFileAsync("git", ["-C", projectPath, "show-ref", "--heads"]);
       const { stdout } = await proc.result;
       return stdout
         .split("\n")
@@ -823,7 +826,7 @@ export class SSHRuntime extends RemoteRuntime {
   ): Promise<string | null> {
     const result = await execBuffered(
       this,
-      `git -C ${baseRepoPathArg} for-each-ref --format='%(objectname) %(refname)' ${BUNDLE_REF_PREFIX} refs/tags`,
+      `git -C ${baseRepoPathArg} for-each-ref --format='%(objectname) %(refname)' ${BUNDLE_REF_PREFIX}`,
       { cwd: "/tmp", timeout: 20, abortSignal }
     );
     if (result.exitCode !== 0) {
@@ -1165,20 +1168,32 @@ export class SSHRuntime extends RemoteRuntime {
     await this.transferBundleToRemote(projectPath, remoteBundlePath, initLogger, abortSignal);
 
     try {
-      // Import branches and tags from the bundle into the shared bare repo.
-      // Branches land in refs/mux-bundle/* (staging namespace) instead of
-      // refs/heads/* to avoid colliding with branches checked out in existing
-      // worktrees — git refuses to update any ref checked out in a worktree.
-      // Tags go directly to refs/tags/* (they're never checked out).
+      // Import authoritative branches and shared tags from the bundle into the
+      // shared bare repo. Branches land in refs/mux-bundle/* (staging namespace)
+      // instead of refs/heads/* to avoid colliding with branches checked out in
+      // existing worktrees, and they stay pruneable because branch deletion should
+      // invalidate snapshot reuse. Tags go directly to refs/tags/*, but they are
+      // fetched separately without --prune so remote-only metadata tags survive.
       initLogger.logStep("Importing bundle into shared base repository...");
-      const fetchResult = await execBuffered(
+      const branchFetchResult = await execBuffered(
         this,
-        `git -C ${baseRepoPathArg} fetch --prune --prune-tags ${remoteBundlePathArg} '+refs/heads/*:${BUNDLE_REF_PREFIX}*' '+refs/tags/*:refs/tags/*'`,
+        `git -C ${baseRepoPathArg} fetch --prune ${remoteBundlePathArg} '+refs/heads/*:${BUNDLE_REF_PREFIX}*'`,
         { cwd: "/tmp", timeout: 300, abortSignal }
       );
-      if (fetchResult.exitCode !== 0) {
+      if (branchFetchResult.exitCode !== 0) {
         throw new Error(
-          `Failed to import bundle into base repo: ${fetchResult.stderr || fetchResult.stdout}`
+          `Failed to import bundle branches into base repo: ${branchFetchResult.stderr || branchFetchResult.stdout}`
+        );
+      }
+
+      const tagFetchResult = await execBuffered(
+        this,
+        `git -C ${baseRepoPathArg} fetch ${remoteBundlePathArg} '+refs/tags/*:refs/tags/*'`,
+        { cwd: "/tmp", timeout: 300, abortSignal }
+      );
+      if (tagFetchResult.exitCode !== 0) {
+        throw new Error(
+          `Failed to import bundle tags into base repo: ${tagFetchResult.stderr || tagFetchResult.stdout}`
         );
       }
     } finally {
@@ -1297,29 +1312,16 @@ export class SSHRuntime extends RemoteRuntime {
     const remoteUrl = `ssh://${urlHost}${urlPath}`;
     const gitSshCommand = this.buildGitSshCommand();
 
-    // Push local branches and tags to the remote base repo. Branches land in
-    // refs/mux-bundle/* (staging namespace) and tags go to refs/tags/* directly.
-    // --prune keeps the staging refs aligned with local deletions so snapshot
-    // markers remain reusable after local branch/tag cleanup.
+    // Push authoritative branches and shared tags separately. Branches land in
+    // refs/mux-bundle/* (staging namespace) and stay pruneable because branch
+    // deletion should invalidate snapshot reuse. Tags go to refs/tags/* as
+    // shared metadata, but they must not be pruned based on this local clone's
+    // view of the repo.
     //
     // NOTE: This runs `git push` locally (not through the runtime's SSHTransport),
     // so it depends on the local `ssh` CLI being available. On OpenSSH runtimes,
     // the transport already depends on that binary and shares the same ControlPath.
-    const pushArgsBase = [
-      "-C",
-      projectPath,
-      "push",
-      "--force",
-      "--prune",
-      "--no-verify",
-      remoteUrl,
-      `+refs/heads/*:${BUNDLE_REF_PREFIX}*`,
-      "+refs/tags/*:refs/tags/*",
-    ];
-    const runPush = async (useAtomic: boolean): Promise<void> => {
-      const pushArgs = useAtomic
-        ? [...pushArgsBase.slice(0, 4), "--atomic", ...pushArgsBase.slice(4)]
-        : pushArgsBase;
+    const runPush = async (pushArgs: string[]): Promise<void> => {
       using pushProc = execFileAsync("git", pushArgs, {
         env: { GIT_SSH_COMMAND: gitSshCommand },
         onStderrData: (chunk) => {
@@ -1352,9 +1354,23 @@ export class SSHRuntime extends RemoteRuntime {
       }
       throw new Error(`Failed to push to remote: ${errorMsg}`);
     };
+    const branchPushArgsBase = [
+      "-C",
+      projectPath,
+      "push",
+      "--force",
+      "--prune",
+      "--no-verify",
+      remoteUrl,
+      `+refs/heads/*:${BUNDLE_REF_PREFIX}*`,
+    ];
 
     try {
-      await runPush(true);
+      await runPush([
+        ...branchPushArgsBase.slice(0, 4),
+        "--atomic",
+        ...branchPushArgsBase.slice(4),
+      ]);
     } catch (error) {
       const errorMsg = getErrorMessage(error);
       if (!isUnsupportedAtomicPush(errorMsg)) {
@@ -1363,10 +1379,24 @@ export class SSHRuntime extends RemoteRuntime {
 
       initLogger.logStep("Remote git does not support atomic push; retrying without --atomic...");
       try {
-        await runPush(false);
+        await runPush(branchPushArgsBase);
       } catch (retryError) {
         throwPushFailure(retryError);
       }
+    }
+
+    try {
+      await runPush([
+        "-C",
+        projectPath,
+        "push",
+        "--force",
+        "--no-verify",
+        remoteUrl,
+        "+refs/tags/*:refs/tags/*",
+      ]);
+    } catch (error) {
+      throwPushFailure(error);
     }
   }
 
@@ -1377,10 +1407,11 @@ export class SSHRuntime extends RemoteRuntime {
    * transfer automatically. SSH2 runtimes keep the bundle path so sync does not
    * depend on a local OpenSSH CLI or local known_hosts state.
    *
-   * Branches land in a staging namespace (refs/mux-bundle/*) to avoid colliding
-   * with branches checked out in existing worktrees. Tags go to refs/tags/*
-   * directly. Remote tracking refs are excluded by the refspec — only local
-   * branches and tags are synchronized.
+   * Branches are the authoritative workspace-materialization state: they land in
+   * refs/mux-bundle/* so they do not collide with worktree checkouts, and they
+   * remain pruneable so branch deletions invalidate snapshot reuse. Tags still
+   * sync into refs/tags/* when a branch resync happens, but they are treated as
+   * shared metadata instead of authoritative snapshot state.
    */
   protected async syncProjectToRemote(
     projectPath: string,
