@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 
-import { Button } from "@/browser/components/Button/Button";
 import { Input } from "@/browser/components/Input/Input";
 import { ModelSelector } from "@/browser/components/ModelSelector/ModelSelector";
 import {
@@ -13,6 +12,7 @@ import {
 } from "@/browser/components/SelectPrimitive/SelectPrimitive";
 import { useAPI } from "@/browser/contexts/API";
 import { useModelsFromSettings } from "@/browser/hooks/useModelsFromSettings";
+import { ADVISOR_DEFAULT_MAX_USES_PER_TURN } from "@/common/constants/advisor";
 import { normalizeTaskSettings, type TaskSettings } from "@/common/types/tasks";
 import {
   coerceThinkingLevel,
@@ -24,7 +24,7 @@ import assert from "@/common/utils/assert";
 import { getErrorMessage } from "@/common/utils/errors";
 import { enforceThinkingPolicy, getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
 
-const DEFAULT_LIMITED_MAX_USES = 3;
+const DEFAULT_LIMITED_MAX_USES = ADVISOR_DEFAULT_MAX_USES_PER_TURN;
 
 assert(
   Number.isInteger(DEFAULT_LIMITED_MAX_USES) && DEFAULT_LIMITED_MAX_USES > 0,
@@ -121,8 +121,9 @@ export function AdvisorToolExperimentConfig() {
   const { models, hiddenModelsForSelector } = useModelsFromSettings();
 
   const [advisorModelString, setAdvisorModelString] = useState("");
-  const [advisorThinkingLevel, setAdvisorThinkingLevel] = useState<ThinkingLevel>(THINKING_LEVEL_OFF);
-  const [maxUsesMode, setMaxUsesMode] = useState<AdvisorMode>("unlimited");
+  const [advisorThinkingLevel, setAdvisorThinkingLevel] =
+    useState<ThinkingLevel>(THINKING_LEVEL_OFF);
+  const [maxUsesMode, setMaxUsesMode] = useState<AdvisorMode>("limited");
   const [limitedDraft, setLimitedDraft] = useState(String(DEFAULT_LIMITED_MAX_USES));
   const [lastValidLimitedValue, setLastValidLimitedValue] = useState(DEFAULT_LIMITED_MAX_USES);
 
@@ -166,18 +167,23 @@ export function AdvisorToolExperimentConfig() {
         const normalizedThinkingLevel =
           coerceThinkingLevel(cfg.advisorThinkingLevel) ?? THINKING_LEVEL_OFF;
         const normalizedMaxUsesPerTurn = normalizeAdvisorMaxUsesPerTurn(cfg.advisorMaxUsesPerTurn);
+        // Match the backend starter cap when the setting is unset; only an explicit null is
+        // the user's Unlimited opt-in.
+        const nextMaxUsesMode: AdvisorMode =
+          cfg.advisorMaxUsesPerTurn === null ? "unlimited" : "limited";
         const nextLimitedValue = normalizedMaxUsesPerTurn ?? DEFAULT_LIMITED_MAX_USES;
+        const nextMaxUsesPerTurn = nextMaxUsesMode === "unlimited" ? null : nextLimitedValue;
 
         taskSettingsRef.current = normalizedTaskSettings;
         setAdvisorModelString(normalizedModelString ?? "");
         setAdvisorThinkingLevel(normalizedThinkingLevel);
-        setMaxUsesMode(normalizedMaxUsesPerTurn == null ? "unlimited" : "limited");
+        setMaxUsesMode(nextMaxUsesMode);
         setLimitedDraft(String(nextLimitedValue));
         setLastValidLimitedValue(nextLimitedValue);
         lastSyncedRef.current = {
           advisorModelString: normalizedModelString,
           advisorThinkingLevel: normalizedThinkingLevel,
-          advisorMaxUsesPerTurn: normalizedMaxUsesPerTurn,
+          advisorMaxUsesPerTurn: nextMaxUsesPerTurn,
         };
         setLoadFailed(false);
         setLoaded(true);
@@ -382,7 +388,8 @@ export function AdvisorToolExperimentConfig() {
     setLastValidLimitedValue(normalizedValue);
   };
 
-  const effectiveAdvisorModelStringForThinking = normalizeAdvisorModelString(advisorModelString) ?? "";
+  const effectiveAdvisorModelStringForThinking =
+    normalizeAdvisorModelString(advisorModelString) ?? "";
   const allowedThinkingLevels = getThinkingPolicyForModel(effectiveAdvisorModelStringForThinking);
   const effectiveAdvisorThinkingLevel = enforceThinkingPolicy(
     effectiveAdvisorModelStringForThinking,
@@ -440,17 +447,6 @@ export function AdvisorToolExperimentConfig() {
             variant="box"
             className="bg-modal-bg md:max-w-[22rem]"
           />
-          {advisorModelString ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-9 px-2"
-              onClick={() => setAdvisorModelString("")}
-            >
-              Reset
-            </Button>
-          ) : null}
         </div>
       </div>
 
