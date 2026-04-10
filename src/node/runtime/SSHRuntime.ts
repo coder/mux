@@ -67,6 +67,10 @@ const BUNDLE_REF_PREFIX = "refs/mux-bundle/";
 
 /** Small backoff for concurrent writers healing the same shared base repo config. */
 const BASE_REPO_CONFIG_LOCK_RETRY_DELAYS_MS = [50, 100, 200];
+const BASE_REPO_HEALTH_PROBE_TIMEOUT_SECONDS = 10;
+const BASE_REPO_PROMISOR_CLEANUP_TIMEOUT_SECONDS = 10;
+const BASE_REPO_MAINTENANCE_TIMEOUT_SECONDS = 120;
+const BASE_REPO_FRAGMENTED_PACK_THRESHOLD = 25;
 const PROJECT_SYNC_MAX_ATTEMPTS = 3;
 const PROJECT_SYNC_RETRYABLE_ERRORS = [
   "pack-objects died",
@@ -382,6 +386,103 @@ export class SSHRuntime extends RemoteRuntime {
     return PROJECT_SYNC_RETRYABLE_ERRORS.some((pattern) => errorMsg.includes(pattern));
   }
 
+  private async probeBaseRepoHealth(
+    baseRepoPathArg: string,
+    abortSignal?: AbortSignal
+  ): Promise<{ packCount: number | null }> {
+    const result = await execBuffered(this, `git -C ${baseRepoPathArg} count-objects -v`, {
+      cwd: "/tmp",
+      timeout: BASE_REPO_HEALTH_PROBE_TIMEOUT_SECONDS,
+      abortSignal,
+    });
+    if (result.exitCode !== 0) {
+      throw new Error(
+        `Failed to inspect shared base repository health: ${result.stderr || result.stdout}`
+      );
+    }
+
+    const packCountMatch = /^packs:\s*(\d+)\s*$/m.exec(result.stdout);
+    return {
+      packCount: packCountMatch ? Number.parseInt(packCountMatch[1], 10) : null,
+    };
+  }
+
+  protected async repairBaseRepoForSync(
+    baseRepoPathArg: string,
+    repairContext: string,
+    abortSignal?: AbortSignal
+  ): Promise<void> {
+    if (abortSignal?.aborted) {
+      throw new Error("Operation aborted");
+    }
+
+    const promisorPackDirArg = `${baseRepoPathArg}/objects/pack`;
+    log.info(repairContext);
+
+    const promisorCleanupResult = await execBuffered(
+      this,
+      `find ${promisorPackDirArg} -name '*.promisor' -print -delete 2>/dev/null || true`,
+      {
+        cwd: "/tmp",
+        timeout: BASE_REPO_PROMISOR_CLEANUP_TIMEOUT_SECONDS,
+        abortSignal,
+      }
+    );
+    const removedPromisorCount = promisorCleanupResult.stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean).length;
+    if (removedPromisorCount > 0) {
+      log.info(
+        `Removed ${removedPromisorCount} stale promisor marker(s) during base repo maintenance`
+      );
+    }
+
+    const gcResult = await execBuffered(this, `git -C ${baseRepoPathArg} gc --prune=now`, {
+      cwd: "/tmp",
+      timeout: BASE_REPO_MAINTENANCE_TIMEOUT_SECONDS,
+      abortSignal,
+    });
+    if (gcResult.exitCode !== 0) {
+      log.warn(
+        `Remote git gc exited ${gcResult.exitCode} during base repo maintenance: ${gcResult.stderr || gcResult.stdout}`
+      );
+    }
+  }
+
+  protected async ensureHealthyBaseRepoForSync(
+    baseRepoPathArg: string,
+    initLogger: InitLogger,
+    abortSignal?: AbortSignal
+  ): Promise<void> {
+    if (abortSignal?.aborted) {
+      throw new Error("Operation aborted");
+    }
+
+    try {
+      const { packCount } = await this.probeBaseRepoHealth(baseRepoPathArg, abortSignal);
+      if (packCount == null || packCount < BASE_REPO_FRAGMENTED_PACK_THRESHOLD) {
+        return;
+      }
+
+      const packFileLabel = packCount === 1 ? "pack file" : "pack files";
+      initLogger.logStep(
+        `Shared base repository is fragmented (${packCount} ${packFileLabel}); running maintenance before sync...`
+      );
+      await this.repairBaseRepoForSync(
+        baseRepoPathArg,
+        `Running shared base repository maintenance before sync (${packCount} ${packFileLabel})`,
+        abortSignal
+      );
+    } catch (healthError) {
+      const healthErrorMsg = getErrorMessage(healthError);
+      if (abortSignal?.aborted || healthErrorMsg === "Operation aborted") {
+        throw healthError instanceof Error ? healthError : new Error(healthErrorMsg);
+      }
+      log.warn(`Shared base repository maintenance preflight failed: ${healthErrorMsg}`);
+    }
+  }
+
   protected async cleanupRetryableProjectSyncFailure(
     baseRepoPathArg: string,
     attempt: number,
@@ -392,38 +493,12 @@ export class SSHRuntime extends RemoteRuntime {
       throw new Error("Operation aborted");
     }
 
-    const promisorPackDirArg = `${baseRepoPathArg}/objects/pack`;
-    log.info(
-      `Running remote promisor cleanup and git gc before retrying sync push (attempt ${attempt + 1}/${maxAttempts})`
-    );
     try {
-      const promisorCleanupResult = await execBuffered(
-        this,
-        `find ${promisorPackDirArg} -name '*.promisor' -print -delete 2>/dev/null || true`,
-        {
-          cwd: "/tmp",
-          timeout: 10,
-          abortSignal,
-        }
+      await this.repairBaseRepoForSync(
+        baseRepoPathArg,
+        `Running remote promisor cleanup and git gc before retrying sync push (attempt ${attempt + 1}/${maxAttempts})`,
+        abortSignal
       );
-      const removedPromisorCount = promisorCleanupResult.stdout
-        .split("\n")
-        .map((line) => line.trim())
-        .filter(Boolean).length;
-      if (removedPromisorCount > 0) {
-        log.info(`Removed ${removedPromisorCount} stale promisor marker(s) before sync retry`);
-      }
-
-      const gcResult = await execBuffered(this, `git -C ${baseRepoPathArg} gc --prune=now`, {
-        cwd: "/tmp",
-        timeout: 60,
-        abortSignal,
-      });
-      if (gcResult.exitCode !== 0) {
-        log.warn(
-          `Remote git gc exited ${gcResult.exitCode} before sync retry: ${gcResult.stderr || gcResult.stdout}`
-        );
-      }
     } catch (cleanupError) {
       const cleanupErrorMsg = getErrorMessage(cleanupError);
       if (abortSignal?.aborted || cleanupErrorMsg === "Operation aborted") {
@@ -1504,6 +1579,10 @@ export class SSHRuntime extends RemoteRuntime {
     const useNativeGitPush = this.transport instanceof OpenSSHTransport;
     const snapshotDigest = await this.computeSnapshotDigest(projectPath);
     const baseRepoPathArg = await this.ensureBaseRepo(projectPath, initLogger, abortSignal);
+
+    // Treat the shared bare repo as a managed cache: verify its health before
+    // we ask Git to negotiate another sync against a fragmented object store.
+    await this.ensureHealthyBaseRepoForSync(baseRepoPathArg, initLogger, abortSignal);
 
     const snapshotStatusCheck = await execBuffered(
       this,

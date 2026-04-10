@@ -154,6 +154,15 @@ class TestSSHRuntime extends SSHRuntime {
 class CleanupCommandSSHRuntime extends SSHRuntime {
   readonly commands: string[] = [];
   readonly timeouts: number[] = [];
+  readonly steps: string[] = [];
+
+  countObjectsStdout = "count: 0\npacks: 0\n";
+  countObjectsStderr = "";
+  countObjectsExitCode = 0;
+  promisorStdout = "/remote/src/project/.mux-base.git/objects/pack/pack-a.promisor\n";
+  gcStdout = "";
+  gcStderr = "";
+  gcExitCode = 0;
 
   constructor() {
     const config: SSHRuntimeConfig = {
@@ -167,13 +176,39 @@ class CleanupCommandSSHRuntime extends SSHRuntime {
     await this.cleanupRetryableProjectSyncFailure(baseRepoPathArg, 1, 3, abortSignal);
   }
 
+  async runEnsureHealthy(baseRepoPathArg: string, abortSignal?: AbortSignal): Promise<void> {
+    await this.ensureHealthyBaseRepoForSync(
+      baseRepoPathArg,
+      {
+        ...noopInitLogger,
+        logStep: (step) => {
+          this.steps.push(step);
+        },
+      },
+      abortSignal
+    );
+  }
+
   override exec(command: string, options: ExecOptions): Promise<ExecStream> {
     this.commands.push(command);
     this.timeouts.push(options.timeout ?? -1);
-    const stdout = command.startsWith("find ")
-      ? "/remote/src/project/.mux-base.git/objects/pack/pack-a.promisor\n"
-      : "";
-    return Promise.resolve(createExecStream(stdout));
+
+    if (command.includes("count-objects -v")) {
+      return Promise.resolve(
+        createExecStream(
+          this.countObjectsStdout,
+          this.countObjectsStderr,
+          this.countObjectsExitCode
+        )
+      );
+    }
+    if (command.startsWith("find ")) {
+      return Promise.resolve(createExecStream(this.promisorStdout));
+    }
+    if (command.includes(" gc --prune=now")) {
+      return Promise.resolve(createExecStream(this.gcStdout, this.gcStderr, this.gcExitCode));
+    }
+    return Promise.resolve(createExecStream(""));
   }
 }
 
@@ -188,7 +223,93 @@ describe("SSHRuntime project sync retry orchestration", () => {
       `find ${baseRepoPathArg}/objects/pack -name '*.promisor' -print -delete 2>/dev/null || true`,
       `git -C ${baseRepoPathArg} gc --prune=now`,
     ]);
-    expect(runtime.timeouts).toEqual([10, 60]);
+    expect(runtime.timeouts).toEqual([10, 120]);
+  });
+
+  it("proactively repairs fragmented base repos before sync", async () => {
+    const runtime = new CleanupCommandSSHRuntime();
+    const baseRepoPathArg = '"/remote/src/project/.mux-base.git"';
+    runtime.countObjectsStdout = "count: 0\npacks: 50\n";
+
+    await runtime.runEnsureHealthy(baseRepoPathArg);
+
+    expect(runtime.steps).toEqual([
+      "Shared base repository is fragmented (50 pack files); running maintenance before sync...",
+    ]);
+    expect(runtime.commands).toEqual([
+      `git -C ${baseRepoPathArg} count-objects -v`,
+      `find ${baseRepoPathArg}/objects/pack -name '*.promisor' -print -delete 2>/dev/null || true`,
+      `git -C ${baseRepoPathArg} gc --prune=now`,
+    ]);
+    expect(runtime.timeouts).toEqual([10, 10, 120]);
+  });
+
+  it("skips proactive maintenance for healthy base repos", async () => {
+    const runtime = new CleanupCommandSSHRuntime();
+    const baseRepoPathArg = '"/remote/src/project/.mux-base.git"';
+    runtime.countObjectsStdout = "count: 0\npacks: 5\n";
+
+    await runtime.runEnsureHealthy(baseRepoPathArg);
+
+    expect(runtime.steps).toEqual([]);
+    expect(runtime.commands).toEqual([`git -C ${baseRepoPathArg} count-objects -v`]);
+    expect(runtime.timeouts).toEqual([10]);
+  });
+
+  it("treats base repo health probe failures as best-effort", async () => {
+    const runtime = new CleanupCommandSSHRuntime();
+    const baseRepoPathArg = '"/remote/src/project/.mux-base.git"';
+    runtime.countObjectsExitCode = 128;
+    runtime.countObjectsStderr = "fatal: not a git repository";
+
+    await runtime.runEnsureHealthy(baseRepoPathArg);
+
+    expect(runtime.steps).toEqual([]);
+    expect(runtime.commands).toEqual([`git -C ${baseRepoPathArg} count-objects -v`]);
+    expect(runtime.timeouts).toEqual([10]);
+  });
+
+  it("keeps proactive maintenance best-effort when git gc exits non-zero", async () => {
+    const runtime = new CleanupCommandSSHRuntime();
+    const baseRepoPathArg = '"/remote/src/project/.mux-base.git"';
+    runtime.countObjectsStdout = "count: 0\npacks: 50\n";
+    runtime.gcExitCode = 1;
+    runtime.gcStderr = "warning: gc skipped";
+
+    await runtime.runEnsureHealthy(baseRepoPathArg);
+
+    expect(runtime.steps).toEqual([
+      "Shared base repository is fragmented (50 pack files); running maintenance before sync...",
+    ]);
+    expect(runtime.commands).toEqual([
+      `git -C ${baseRepoPathArg} count-objects -v`,
+      `find ${baseRepoPathArg}/objects/pack -name '*.promisor' -print -delete 2>/dev/null || true`,
+      `git -C ${baseRepoPathArg} gc --prune=now`,
+    ]);
+    expect(runtime.timeouts).toEqual([10, 10, 120]);
+  });
+
+  it("propagates aborts during proactive maintenance preflight", async () => {
+    const runtime = new CleanupCommandSSHRuntime();
+    const baseRepoPathArg = '"/remote/src/project/.mux-base.git"';
+    const abortController = new AbortController();
+    abortController.abort();
+
+    let failure: unknown;
+    try {
+      await runtime.runEnsureHealthy(baseRepoPathArg, abortController.signal);
+      throw new Error("Expected preflight maintenance to stop when aborted");
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(Error);
+    if (!(failure instanceof Error)) {
+      throw new Error("Expected aborted preflight maintenance to throw an Error");
+    }
+    expect(failure.message).toBe("Operation aborted");
+    expect(runtime.commands).toEqual([]);
+    expect(runtime.timeouts).toEqual([]);
   });
 
   it("skips cleanup and backoff when a retryable failure was user-aborted", async () => {
