@@ -18,7 +18,7 @@ describe("config.saveConfig advisor settings", () => {
     const initialConfig = await env.orpc.config.getConfig();
 
     expect(initialConfig.advisorModelString).toBeNull();
-    expect(initialConfig.advisorMaxUsesPerTurn).toBeNull();
+    expect(initialConfig.advisorMaxUsesPerTurn).toBeUndefined();
 
     await env.orpc.config.saveConfig({
       taskSettings: initialConfig.taskSettings,
