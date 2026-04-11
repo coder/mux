@@ -154,7 +154,10 @@ function getAdvisorStatusPresentation(
   }
 }
 
-const MetadataBadge: React.FC<React.HTMLAttributes<HTMLSpanElement>> = ({ className, ...props }) => (
+const MetadataBadge: React.FC<React.HTMLAttributes<HTMLSpanElement>> = ({
+  className,
+  ...props
+}) => (
   <span
     className={cn(
       "inline-flex items-center gap-1 rounded-full border border-white/10 bg-code-bg px-2 py-0.5 text-[10px] leading-none text-secondary",
@@ -214,7 +217,10 @@ export const AdvisorToolCall: React.FC<AdvisorToolCallProps> = ({
         <ExpandIcon expanded={expanded}>▶</ExpandIcon>
         <ToolIcon toolName="advisor" />
         <ToolName>advisor</ToolName>
-        <StatusIndicator status={statusPresentation.status} className={statusPresentation.className}>
+        <StatusIndicator
+          status={statusPresentation.status}
+          className={statusPresentation.className}
+        >
           {statusPresentation.content}
         </StatusIndicator>
       </ToolHeader>
@@ -296,7 +302,9 @@ export const AdvisorToolCall: React.FC<AdvisorToolCallProps> = ({
 
           {toolStatus === "redacted" && result === undefined && (
             <DetailSection>
-              <div className="text-muted text-[11px] italic">Output excluded from shared transcript</div>
+              <div className="text-muted text-[11px] italic">
+                Output excluded from shared transcript
+              </div>
             </DetailSection>
           )}
         </ToolDetails>
