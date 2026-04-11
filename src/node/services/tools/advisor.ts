@@ -87,12 +87,14 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
         if (error instanceof Error && error.name === "AbortError") {
           return {
             type: "error" as const,
+            isError: true,
             message: "Advisor request was aborted.",
           };
         }
 
         return {
           type: "error" as const,
+          isError: true,
           message: `Advisor request failed: ${getErrorMessage(error)}`,
         };
       }

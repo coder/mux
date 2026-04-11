@@ -177,6 +177,7 @@ const AdvisorToolLimitResultSchema = z
 const AdvisorToolErrorResultSchema = z
   .object({
     type: z.literal("error"),
+    isError: z.literal(true).optional(),
     message: z.string().min(1),
   })
   .strict();
