@@ -1102,7 +1102,7 @@ export class AIService extends EventEmitter {
       const sharedExecutionTrusted = isWorkspaceTrustedForSharedExecution(metadata, cfg.projects);
       const agentAdvisorEnabled = cfg.agentAiDefaults?.[effectiveAgentId]?.advisorEnabled === true;
       const advisorModelString = advisorToolConfig.advisorModelString?.trim() ?? "";
-      const advisorToolAvailable =
+      const advisorToolEligible =
         advisorExperimentEnabled && agentAdvisorEnabled && advisorModelString.length > 0;
 
       // Fetch workspace MCP overrides (for filtering servers and tools)
@@ -1168,31 +1168,37 @@ export class AIService extends EventEmitter {
               return desktopCapabilityPromise;
             };
 
-      // Build agent system prompt, system message, and discover agents/skills.
+      const buildStreamSystemContextForAdvisor = (advisorToolAvailable: boolean) =>
+        buildStreamSystemContext({
+          runtime,
+          metadata,
+          workspacePath,
+          workspaceId,
+          agentDefinition,
+          agentDiscoveryPath,
+          isSubagentWorkspace,
+          effectiveAdditionalInstructions,
+          planFilePath,
+          modelString,
+          cfg,
+          providersConfig: this.providerService.getConfig(),
+          mcpServers,
+          muxScope,
+          loadDesktopCapability,
+          advisorToolAvailable,
+        });
+
+      // Build provisional agent context before tool policy finalizes the toolset.
+      // The final system prompt is rebuilt after policy application so advisor guidance cannot
+      // survive when the resolved toolset strips the advisor tool.
       const buildStreamSystemContextStartedAt = Date.now();
-      const streamSystemContext = await buildStreamSystemContext({
-        runtime,
-        metadata,
-        workspacePath,
-        workspaceId,
-        agentDefinition,
-        agentDiscoveryPath,
-        isSubagentWorkspace,
-        effectiveAdditionalInstructions,
-        planFilePath,
-        modelString,
-        cfg,
-        providersConfig: this.providerService.getConfig(),
-        mcpServers,
-        muxScope,
-        loadDesktopCapability,
-        advisorToolAvailable,
-      });
+      const prePolicyStreamSystemContext =
+        await buildStreamSystemContextForAdvisor(advisorToolEligible);
       recordStartupPhaseTiming("buildStreamSystemContextMs", buildStreamSystemContextStartedAt);
       const { agentSystemPrompt, agentDefinitions, availableSkills, ancestorPlanFilePaths } =
-        streamSystemContext;
-      let systemMessageTokens = streamSystemContext.systemMessageTokens;
-      let systemMessage = streamSystemContext.systemMessage;
+        prePolicyStreamSystemContext;
+      let systemMessageTokens = prePolicyStreamSystemContext.systemMessageTokens;
+      let systemMessage = prePolicyStreamSystemContext.systemMessage;
 
       // Load project secrets for local tool execution and MCP server startup.
       const projectSecrets = isMultiProject(metadata)
@@ -1227,20 +1233,6 @@ export class AIService extends EventEmitter {
           mcpSetupDurationMs = Date.now() - mcpToolSetupStartedAt;
           startupPhaseTimingsMs.mcpToolSetupMs = mcpSetupDurationMs;
         }
-      }
-
-      if (mcpStats && mcpStats.failedServerCount > 0) {
-        const failedNames = mcpStats.failedServerNames.join(", ");
-        workspaceLog.warn("MCP servers failed to start", { failedNames });
-        // Prepend warning so the model can inform the user about unavailable tools.
-        systemMessage = `[Warning: ${mcpStats.failedServerCount} MCP server(s) failed to start: ${failedNames}. Tools from these servers are unavailable. Check MCP server configuration in Settings.]\n\n${systemMessage}`;
-        // Keep context-size estimation accurate after mutating the system prompt.
-        const metadataModel = resolveModelForMetadata(
-          modelString,
-          this.providerService.getConfig()
-        );
-        const tokenizer = await getTokenizerForModel(modelString, metadataModel);
-        systemMessageTokens = await tokenizer.countTokens(systemMessage);
       }
 
       const createTempDirForStreamStartedAt = Date.now();
@@ -1285,7 +1277,7 @@ export class AIService extends EventEmitter {
           }
         );
       }
-      const advisorEligible = advisorToolAvailable;
+      const advisorEligible = advisorToolEligible;
       if (advisorEligible) {
         assert(
           advisorModelString.length > 0,
@@ -1422,6 +1414,26 @@ export class AIService extends EventEmitter {
         "applyToolPolicyAndExperimentsMs",
         applyToolPolicyAndExperimentsStartedAt
       );
+
+      const advisorToolAvailable = tools.advisor !== undefined;
+      const finalStreamSystemContext =
+        await buildStreamSystemContextForAdvisor(advisorToolAvailable);
+      systemMessageTokens = finalStreamSystemContext.systemMessageTokens;
+      systemMessage = finalStreamSystemContext.systemMessage;
+
+      if (mcpStats && mcpStats.failedServerCount > 0) {
+        const failedNames = mcpStats.failedServerNames.join(", ");
+        workspaceLog.warn("MCP servers failed to start", { failedNames });
+        // Reapply the MCP startup warning after rebuilding the final system prompt.
+        systemMessage = `[Warning: ${mcpStats.failedServerCount} MCP server(s) failed to start: ${failedNames}. Tools from these servers are unavailable. Check MCP server configuration in Settings.]\n\n${systemMessage}`;
+        // Keep context-size estimation accurate after mutating the system prompt.
+        const metadataModel = resolveModelForMetadata(
+          modelString,
+          this.providerService.getConfig()
+        );
+        const tokenizer = await getTokenizerForModel(modelString, metadataModel);
+        systemMessageTokens = await tokenizer.countTokens(systemMessage);
+      }
 
       const toolNamesForSentinel = Object.keys(tools).sort();
 
