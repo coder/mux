@@ -54,6 +54,10 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
           message: `Advisor limit reached for this turn (max ${runtime.maxUsesPerTurn} uses).`,
         };
       }
+      // Reserve the slot before any await so concurrent advisor calls cannot bypass the per-turn cap.
+      usesThisTurn++;
+      const remainingUses =
+        runtime.maxUsesPerTurn !== null ? runtime.maxUsesPerTurn - usesThisTurn : null;
 
       const transcript = runtime.getTranscriptSnapshot();
       assert(Array.isArray(transcript), "advisor transcript snapshot must be an array");
@@ -61,7 +65,6 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
 
       try {
         const model = await runtime.createModel(advisorModelString);
-        usesThisTurn++;
 
         const result = await generateText({
           model,
@@ -72,9 +75,6 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
           providerOptions,
           abortSignal: execOptions?.abortSignal ?? runtime.abortSignal,
         });
-
-        const remainingUses =
-          runtime.maxUsesPerTurn !== null ? runtime.maxUsesPerTurn - usesThisTurn : null;
 
         return {
           type: "advice" as const,
