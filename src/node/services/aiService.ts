@@ -1066,7 +1066,7 @@ export class AIService extends EventEmitter {
       const cfg = this.config.loadConfigOrDefault();
       const advisorToolConfig = cfg;
       const advisorExperimentEnabled =
-        experiments?.advisorTool === true ||
+        experiments?.advisorTool ??
         this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.ADVISOR_TOOL) === true;
       emitStartupBreadcrumb("loading_workspace_context");
       const resolveAgentForStreamStartedAt = Date.now();
