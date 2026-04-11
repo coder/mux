@@ -1089,7 +1089,6 @@ export class AIService extends EventEmitter {
 
       // Resolve agent definition, compute effective mode & tool policy.
       const cfg = this.config.loadConfigOrDefault();
-      const advisorToolConfig = cfg;
       const advisorExperimentEnabled =
         experiments?.advisorTool ??
         this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.ADVISOR_TOOL) === true;
@@ -1126,7 +1125,7 @@ export class AIService extends EventEmitter {
       const projectTrusted = isProjectTrusted(this.config, metadata.projectPath);
       const sharedExecutionTrusted = isWorkspaceTrustedForSharedExecution(metadata, cfg.projects);
       const agentAdvisorEnabled = cfg.agentAiDefaults?.[effectiveAgentId]?.advisorEnabled === true;
-      const advisorModelString = advisorToolConfig.advisorModelString?.trim() ?? "";
+      const advisorModelString = cfg.advisorModelString?.trim() ?? "";
       const advisorToolEligible =
         advisorExperimentEnabled && agentAdvisorEnabled && advisorModelString.length > 0;
 
@@ -1302,8 +1301,7 @@ export class AIService extends EventEmitter {
           }
         );
       }
-      const advisorEligible = advisorToolEligible;
-      if (advisorEligible) {
+      if (advisorToolEligible) {
         assert(
           advisorModelString.length > 0,
           "AIService advisorModelString must be non-empty when advisor is eligible"
@@ -1318,14 +1316,14 @@ export class AIService extends EventEmitter {
       const toolModelCostsIncludedByModelString = new Map<string, boolean>();
       // Normalize: undefined -> default, null -> unlimited, positive int -> exact cap.
       const advisorMaxUses =
-        advisorToolConfig.advisorMaxUsesPerTurn === null
+        cfg.advisorMaxUsesPerTurn === null
           ? null
-          : (advisorToolConfig.advisorMaxUsesPerTurn ?? ADVISOR_DEFAULT_MAX_USES_PER_TURN);
+          : (cfg.advisorMaxUsesPerTurn ?? ADVISOR_DEFAULT_MAX_USES_PER_TURN);
       // Clamp the persisted advisor thinking level so the tool metadata matches the
       // providerOptions actually sent to generateText().
       const advisorReasoningLevel = enforceThinkingPolicy(
         advisorModelString,
-        advisorToolConfig.advisorThinkingLevel ?? THINKING_LEVEL_OFF
+        cfg.advisorThinkingLevel ?? THINKING_LEVEL_OFF
       );
       const muxEnv = getMuxEnv(
         metadata.projectPath,
@@ -1347,7 +1345,7 @@ export class AIService extends EventEmitter {
           secrets: await secretsToRecord(projectSecrets, this.opResolver),
           muxEnv,
           runtimeTempDir,
-          ...(advisorEligible
+          ...(advisorToolEligible
             ? {
                 advisorRuntime: {
                   advisorModelString,
@@ -1841,7 +1839,7 @@ export class AIService extends EventEmitter {
         effectiveMuxProviderOptions.anthropic?.cacheTtl ?? undefined,
         forceToolChoice,
         resolvedOverrides.standard,
-        advisorEligible
+        advisorToolEligible
           ? (stepMessages) => {
               advisorTranscriptRef.messages = stepMessages;
             }
