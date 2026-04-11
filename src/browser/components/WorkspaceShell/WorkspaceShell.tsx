@@ -192,12 +192,22 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
     );
   }
 
+  const hasCachedWorkspaceContent =
+    workspaceState.messages.length > 0 || workspaceState.queuedMessage !== null;
+
   // User rationale: a just-created chat should keep showing its startup barrier instead of
   // flashing generic loading/catch-up placeholders before the first send reaches onChat.
   // Web-only: during workspace switches, the WebSocket subscription needs time to
-  // catch up. Show a splash instead of flashing stale cached messages.
+  // catch up. Only fall back to the generic splash when there is no cached transcript
+  // or queued draft to keep visible; otherwise preserve the current workspace content
+  // during the replay handoff so transcript switches do not flash away.
   // Electron's MessageChannel is near-instant so this gate is unnecessary there.
-  if (workspaceState.isHydratingTranscript && !window.api && !workspaceState.isStreamStarting) {
+  if (
+    workspaceState.isHydratingTranscript &&
+    !window.api &&
+    !workspaceState.isStreamStarting &&
+    !hasCachedWorkspaceContent
+  ) {
     return (
       <WorkspacePlaceholder
         title="Catching up with the agent..."

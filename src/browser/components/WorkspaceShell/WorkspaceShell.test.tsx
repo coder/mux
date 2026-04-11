@@ -7,6 +7,9 @@ import { installDom } from "../../../../tests/ui/dom";
 interface MockWorkspaceState {
   loading?: boolean;
   isHydratingTranscript?: boolean;
+  isStreamStarting?: boolean;
+  messages?: Array<{ id: string }>;
+  queuedMessage?: { id: string } | null;
 }
 
 let cleanupDom: (() => void) | null = null;
@@ -22,7 +25,24 @@ void mock.module("lottie-react", () => ({
 }));
 
 void mock.module("@/browser/stores/WorkspaceStore", () => ({
-  useWorkspaceState: () => workspaceState,
+  useWorkspaceState: () =>
+    workspaceState
+      ? {
+          messages: [],
+          queuedMessage: null,
+          ...workspaceState,
+        }
+      : workspaceState,
+}));
+
+void mock.module("../ChatPane/ChatPane", () => ({
+  ChatPane: (props: { workspaceId: string }) => (
+    <div data-testid="chat-pane">Chat pane for {props.workspaceId}</div>
+  ),
+}));
+
+void mock.module("@/browser/features/RightSidebar/RightSidebar", () => ({
+  RightSidebar: () => <div data-testid="right-sidebar" />,
 }));
 
 void mock.module("@/browser/contexts/ThemeContext", () => ({
@@ -135,6 +155,21 @@ describe("WorkspaceShell loading placeholders", () => {
 
     expect(view.getByText("Catching up with the agent...")).toBeTruthy();
     expect(view.getByTestId("lottie-animation")).toBeTruthy();
+  });
+
+  it("keeps cached transcript content visible during web hydration", () => {
+    workspaceState = {
+      isHydratingTranscript: true,
+      isStreamStarting: false,
+      loading: false,
+      messages: [{ id: "message-1" }],
+      queuedMessage: null,
+    };
+
+    const view = render(<WorkspaceShell {...defaultProps} />);
+
+    expect(view.queryByText("Catching up with the agent...")).toBeNull();
+    expect(view.getByTestId("chat-pane")).toBeTruthy();
   });
 
   it("renders loading animation during workspace loading", () => {
