@@ -6,17 +6,20 @@ import * as ActualSelectPrimitiveModule from "@/browser/components/SelectPrimiti
 import { ThemeProvider } from "@/browser/contexts/ThemeContext";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { DEFAULT_TASK_SETTINGS, type TaskSettings } from "@/common/types/tasks";
+import { THINKING_LEVEL_OFF, type ThinkingLevel } from "@/common/types/thinking";
 import { installDom } from "../../../../../tests/ui/dom";
 
 interface MockConfig {
   taskSettings: TaskSettings;
   advisorModelString: string | null;
-  advisorMaxUsesPerTurn: number | null;
+  advisorThinkingLevel: ThinkingLevel | null | undefined;
+  advisorMaxUsesPerTurn: number | null | undefined;
 }
 
 interface SaveConfigInput {
   taskSettings: TaskSettings;
   advisorModelString?: string | null;
+  advisorThinkingLevel?: ThinkingLevel | null;
   advisorMaxUsesPerTurn?: number | null;
 }
 
@@ -199,7 +202,8 @@ function createMockAPI(configOverrides: Partial<MockConfig> = {}) {
   const config: MockConfig = {
     taskSettings: DEFAULT_TASK_SETTINGS,
     advisorModelString: null,
-    advisorMaxUsesPerTurn: null,
+    advisorThinkingLevel: undefined,
+    advisorMaxUsesPerTurn: undefined,
     ...configOverrides,
   };
 
@@ -207,6 +211,7 @@ function createMockAPI(configOverrides: Partial<MockConfig> = {}) {
     Promise.resolve({
       taskSettings: config.taskSettings,
       advisorModelString: config.advisorModelString,
+      advisorThinkingLevel: config.advisorThinkingLevel,
       advisorMaxUsesPerTurn: config.advisorMaxUsesPerTurn,
     })
   );
@@ -216,6 +221,7 @@ function createMockAPI(configOverrides: Partial<MockConfig> = {}) {
     config.advisorModelString = input.advisorModelString?.trim()
       ? input.advisorModelString.trim()
       : null;
+    config.advisorThinkingLevel = input.advisorThinkingLevel ?? null;
     config.advisorMaxUsesPerTurn = input.advisorMaxUsesPerTurn ?? null;
     return Promise.resolve();
   });
@@ -320,22 +326,36 @@ describe("ExperimentsSection advisor config", () => {
   test("seeds limited mode with 3 when switching from unlimited", async () => {
     const { view, saveConfigMock } = renderExperimentsSection();
 
-    await waitFor(() => {
-      expect(view.getByText("Max Uses / Turn")).toBeDefined();
-    });
-
-    chooseSelectOption(view, "Max Uses / Turn", "Limited");
-
-    const limitInput = (await waitFor(() =>
+    const initialLimitInput = (await waitFor(() =>
       view.getByLabelText("Advisor max uses per turn")
     )) as HTMLInputElement;
 
-    expect(limitInput.value).toBe("3");
+    expect(initialLimitInput.value).toBe("3");
+
+    chooseSelectOption(view, "Max Uses / Turn", "Unlimited");
 
     await waitFor(() => {
       expect(saveConfigMock.mock.calls.at(-1)?.[0]).toEqual({
         taskSettings: DEFAULT_TASK_SETTINGS,
         advisorModelString: null,
+        advisorThinkingLevel: THINKING_LEVEL_OFF,
+        advisorMaxUsesPerTurn: null,
+      });
+    });
+
+    chooseSelectOption(view, "Max Uses / Turn", "Limited");
+
+    const restoredInput = (await waitFor(() =>
+      view.getByLabelText("Advisor max uses per turn")
+    )) as HTMLInputElement;
+
+    expect(restoredInput.value).toBe("3");
+
+    await waitFor(() => {
+      expect(saveConfigMock.mock.calls.at(-1)?.[0]).toEqual({
+        taskSettings: DEFAULT_TASK_SETTINGS,
+        advisorModelString: null,
+        advisorThinkingLevel: THINKING_LEVEL_OFF,
         advisorMaxUsesPerTurn: 3,
       });
     });
@@ -358,6 +378,7 @@ describe("ExperimentsSection advisor config", () => {
       expect(saveConfigMock.mock.calls.at(-1)?.[0]).toEqual({
         taskSettings: DEFAULT_TASK_SETTINGS,
         advisorModelString: null,
+        advisorThinkingLevel: THINKING_LEVEL_OFF,
         advisorMaxUsesPerTurn: null,
       });
     });
