@@ -1823,7 +1823,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     );
   });
 
-  it("persists tool model usage through the tool configuration callback", async () => {
+  it("resolves advisor tool metadata pricing without changing the stored model bucket", async () => {
     using muxHome = new DisposableTempDir("ai-service-tool-model-usage");
     const projectPath = path.join(muxHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
@@ -1837,6 +1837,12 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
       getSessionUsage,
     } as unknown as SessionUsageService;
     const harness = createHarness(muxHome.path, metadata, { sessionUsageService });
+    const metadataModel = KNOWN_MODELS.SONNET.id;
+    harness.config.saveProvidersConfig({
+      anthropic: {
+        models: [{ id: "custom-sonnet", mappedToModel: metadataModel }],
+      },
+    });
 
     const result = await harness.service.streamMessage({
       messages: [createMuxMessage("latest-user", "user", "continue")],
@@ -1864,7 +1870,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     const event: ToolModelUsageEvent = {
       source: "tool",
       toolName: "advisor",
-      model: "anthropic:claude-sonnet-4-20250514",
+      model: "anthropic:custom-sonnet",
       usage: {
         inputTokens: 120,
         cachedInputTokens: 10,
@@ -1878,15 +1884,29 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
       toolCallId: "call-1",
       timestamp: Date.now(),
     };
-    const expectedDisplayUsage = createDisplayUsage(
+    const unresolvedDisplayUsage = createDisplayUsage(
       event.usage,
       event.model,
       event.providerMetadata
+    );
+    expect(unresolvedDisplayUsage).toBeDefined();
+    if (!unresolvedDisplayUsage) {
+      throw new Error("Expected unresolved tool usage event to produce display usage");
+    }
+    expect(unresolvedDisplayUsage.input.cost_usd).toBeUndefined();
+
+    const expectedDisplayUsage = createDisplayUsage(
+      event.usage,
+      event.model,
+      event.providerMetadata,
+      metadataModel
     );
     expect(expectedDisplayUsage).toBeDefined();
     if (!expectedDisplayUsage) {
       throw new Error("Expected tool usage event to produce display usage");
     }
+    expect(expectedDisplayUsage.model).toBe(event.model);
+    expect(expectedDisplayUsage.input.cost_usd).toBeDefined();
 
     const canonicalModel = normalizeToCanonical(event.model);
     const callSequence: string[] = [];

@@ -1421,7 +1421,16 @@ export class AIService extends EventEmitter {
                   event.providerMetadata,
                   toolModelCostsIncludedByModelString.get(eventModel)
                 );
-                const displayUsage = createDisplayUsage(event.usage, eventModel, providerMetadata);
+                const metadataModel = resolveModelForMetadata(
+                  eventModel,
+                  this.providerService.getConfig()
+                );
+                const displayUsage = createDisplayUsage(
+                  event.usage,
+                  eventModel,
+                  providerMetadata,
+                  metadataModel
+                );
                 if (!displayUsage) {
                   return;
                 }
