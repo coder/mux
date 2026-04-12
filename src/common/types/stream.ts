@@ -26,6 +26,7 @@ import type {
   ToolCallStartEventSchema,
   BashOutputEventSchema,
   TaskCreatedEventSchema,
+  AdvisorPhaseEventSchema,
   UsageDeltaEventSchema,
   RuntimeStatusEventSchema,
 } from "../orpc/schemas";
@@ -64,6 +65,7 @@ export type ErrorEvent = z.infer<typeof ErrorEventSchema>;
 
 export type BashOutputEvent = z.infer<typeof BashOutputEventSchema>;
 export type TaskCreatedEvent = z.infer<typeof TaskCreatedEventSchema>;
+export type AdvisorPhaseEvent = z.infer<typeof AdvisorPhaseEventSchema>;
 export type ToolCallStartEvent = z.infer<typeof ToolCallStartEventSchema>;
 export type ToolCallDeltaEvent = z.infer<typeof ToolCallDeltaEventSchema>;
 export type ToolCallEndEvent = z.infer<typeof ToolCallEndEventSchema>;

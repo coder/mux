@@ -366,6 +366,20 @@ export const BashOutputEventSchema = z.object({
 });
 
 /**
+ * UI-only advisor progress update for live phase display.
+ *
+ * This is intentionally NOT part of the tool result returned to the model.
+ * It is streamed over workspace.onChat so the UI can show honest advisor progress.
+ */
+export const AdvisorPhaseEventSchema = z.object({
+  type: z.literal("advisor-phase"),
+  workspaceId: z.string(),
+  toolCallId: z.string(),
+  phase: z.enum(["preparing_context", "waiting_for_response", "finalizing_result"]),
+  timestamp: z.number().meta({ description: "When the phase changed (Date.now())" }),
+});
+
+/**
  * UI-only notification that a task tool call has created a child workspace.
  *
  * This is intentionally NOT part of the tool result returned to the model.
@@ -550,6 +564,7 @@ export const WorkspaceChatMessageSchema = z.discriminatedUnion("type", [
   ToolCallEndEventSchema,
   BashOutputEventSchema,
   TaskCreatedEventSchema,
+  AdvisorPhaseEventSchema,
   // Reasoning events
   ReasoningDeltaEventSchema,
   ReasoningEndEventSchema,

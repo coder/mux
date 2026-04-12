@@ -6,6 +6,7 @@ import { ADVISOR_SYSTEM_PROMPT } from "@/common/constants/advisor";
 import { THINKING_LEVEL_OFF, coerceThinkingLevel } from "@/common/types/thinking";
 import { buildProviderOptions } from "@/common/utils/ai/providerOptions";
 import { getErrorMessage } from "@/common/utils/errors";
+import type { AdvisorPhaseEvent } from "@/common/types/stream";
 import { AdvisorToolInputSchema, TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { ToolConfiguration } from "@/common/utils/tools/tools";
 
@@ -43,8 +44,24 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
   return tool({
     description: TOOL_DEFINITIONS.advisor.description,
     inputSchema: AdvisorToolInputSchema,
-    execute: async (args, execOptions) => {
+    execute: async (args, { abortSignal, toolCallId }) => {
       assert(Object.keys(args).length === 0, "advisor tool does not accept input");
+
+      const emitAdvisorPhase = (phase: AdvisorPhaseEvent["phase"]): void => {
+        if (!config.emitChatEvent || !config.workspaceId || !toolCallId) {
+          return;
+        }
+
+        config.emitChatEvent({
+          type: "advisor-phase",
+          workspaceId: config.workspaceId,
+          toolCallId,
+          phase,
+          timestamp: Date.now(),
+        } satisfies AdvisorPhaseEvent);
+      };
+
+      emitAdvisorPhase("preparing_context");
 
       if (runtime.maxUsesPerTurn !== null && usesThisTurn >= runtime.maxUsesPerTurn) {
         return {
@@ -66,6 +83,8 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
       try {
         const model = await runtime.createModel(advisorModelString);
 
+        emitAdvisorPhase("waiting_for_response");
+
         const result = await generateText({
           model,
           system: ADVISOR_SYSTEM_PROMPT,
@@ -73,8 +92,10 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
           // Advisor requests are intentionally tool-less strategic consultations.
           tools: {},
           providerOptions,
-          abortSignal: execOptions?.abortSignal ?? runtime.abortSignal,
+          abortSignal: abortSignal ?? runtime.abortSignal,
         });
+
+        emitAdvisorPhase("finalizing_result");
 
         return {
           type: "advice" as const,
