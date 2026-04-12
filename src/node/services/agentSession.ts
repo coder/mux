@@ -3851,6 +3851,9 @@ export class AgentSession {
     forward("advisor-phase", (payload) => {
       this.emitChatEvent(payload);
     });
+    forward("session-usage-delta", (payload) => {
+      this.emitChatEvent(payload);
+    });
     forward("tool-call-delta", (payload) => {
       this.markActiveStreamHadAnyOutput();
       this.emitChatEvent(payload);

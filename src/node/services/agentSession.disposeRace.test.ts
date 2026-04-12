@@ -206,6 +206,102 @@ describe("AgentSession disposal race conditions", () => {
     });
   });
 
+  test("forwards session-usage-delta events to onChatEvent subscribers for the matching workspace", () => {
+    const aiHandlers = new Map<string, (...args: unknown[]) => void>();
+
+    const aiService: AIService = {
+      on(eventName: string | symbol, listener: (...args: unknown[]) => void) {
+        aiHandlers.set(String(eventName), listener);
+        return this;
+      },
+      off(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+      stopStream: mock(() => Promise.resolve(Ok(undefined))),
+      isStreaming: mock(() => false),
+      streamMessage: mock(() => Promise.resolve(Ok(undefined))),
+    } as unknown as AIService;
+
+    const historyService: HistoryService = {
+      appendToHistory: mock(() => Promise.resolve(Ok(undefined))),
+    } as unknown as HistoryService;
+
+    const initStateManager: InitStateManager = {
+      on(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+      off(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+    } as unknown as InitStateManager;
+
+    const backgroundProcessManager: BackgroundProcessManager = {
+      cleanup: mock(() => Promise.resolve()),
+      setMessageQueued: mock(() => undefined),
+    } as unknown as BackgroundProcessManager;
+
+    const config: Config = {
+      srcDir: "/tmp",
+      getSessionDir: mock(() => "/tmp"),
+    } as unknown as Config;
+
+    const session = new AgentSession({
+      workspaceId: "ws",
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+
+    const chatEvents: Array<{ workspaceId: string; message: unknown }> = [];
+    session.onChatEvent((event) => {
+      chatEvents.push(event);
+    });
+
+    const usageDeltaPayload = {
+      "anthropic:claude-sonnet-4-20250514": {
+        input: { tokens: 10, cost_usd: 0.005 },
+        cached: { tokens: 0, cost_usd: 0 },
+        cacheCreate: { tokens: 0, cost_usd: 0 },
+        output: { tokens: 5, cost_usd: 0.005 },
+        reasoning: { tokens: 0, cost_usd: 0 },
+      },
+    };
+
+    const sessionUsageDelta = aiHandlers.get("session-usage-delta");
+    expect(sessionUsageDelta).toBeDefined();
+
+    sessionUsageDelta?.({
+      type: "session-usage-delta",
+      workspaceId: "other-workspace",
+      sourceWorkspaceId: "other-workspace",
+      byModelDelta: usageDeltaPayload,
+      timestamp: 100,
+    });
+    expect(chatEvents).toHaveLength(0);
+
+    sessionUsageDelta?.({
+      type: "session-usage-delta",
+      workspaceId: "ws",
+      sourceWorkspaceId: "ws",
+      byModelDelta: usageDeltaPayload,
+      timestamp: 101,
+    });
+
+    expect(chatEvents).toHaveLength(1);
+    expect(chatEvents[0]).toEqual({
+      workspaceId: "ws",
+      message: {
+        type: "session-usage-delta",
+        workspaceId: "ws",
+        sourceWorkspaceId: "ws",
+        byModelDelta: usageDeltaPayload,
+        timestamp: 101,
+      },
+    });
+  });
+
   test("does not reset auto-retry intent for synthetic or rejected sends", async () => {
     const aiService: AIService = {
       on(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {

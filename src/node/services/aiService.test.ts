@@ -1888,15 +1888,37 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
       throw new Error("Expected tool usage event to produce display usage");
     }
 
+    const canonicalModel = normalizeToCanonical(event.model);
+    const callSequence: string[] = [];
+    let sessionUsageDeltaEvent: unknown;
+    harness.service.once("session-usage-delta", (payload) => {
+      callSequence.push("emit");
+      sessionUsageDeltaEvent = payload;
+    });
+
+    recordUsage.mockImplementationOnce(() => {
+      callSequence.push("recordUsage");
+      return Promise.resolve(undefined);
+    });
+
     reportModelUsage(event);
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(recordUsage).toHaveBeenCalledWith(
-      workspaceId,
-      normalizeToCanonical(event.model),
-      expectedDisplayUsage
-    );
+    expect(recordUsage).toHaveBeenCalledWith(workspaceId, canonicalModel, expectedDisplayUsage);
+    expect(callSequence).toEqual(["recordUsage", "emit"]);
+    expect(sessionUsageDeltaEvent).toBeDefined();
+    if (typeof sessionUsageDeltaEvent !== "object" || sessionUsageDeltaEvent === null) {
+      throw new Error("Expected session-usage-delta event payload");
+    }
+    const sessionUsageDeltaRecord = sessionUsageDeltaEvent as Record<string, unknown>;
+    expect(sessionUsageDeltaRecord.type).toBe("session-usage-delta");
+    expect(sessionUsageDeltaRecord.workspaceId).toBe(workspaceId);
+    expect(sessionUsageDeltaRecord.sourceWorkspaceId).toBe(workspaceId);
+    expect(sessionUsageDeltaRecord.byModelDelta).toEqual({
+      [canonicalModel]: expectedDisplayUsage,
+    });
+    expect(typeof sessionUsageDeltaRecord.timestamp).toBe("number");
   });
 
   it("logs and swallows tool model usage persistence failures", async () => {

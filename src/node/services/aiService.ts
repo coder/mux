@@ -1387,11 +1387,19 @@ export class AIService extends EventEmitter {
                 if (!displayUsage) {
                   return;
                 }
+                const canonicalModel = normalizeToCanonical(eventModel);
                 await this.sessionUsageService.recordUsage(
                   workspaceId,
-                  normalizeToCanonical(eventModel),
+                  canonicalModel,
                   displayUsage
                 );
+                this.emit("session-usage-delta", {
+                  type: "session-usage-delta" as const,
+                  workspaceId,
+                  sourceWorkspaceId: workspaceId,
+                  byModelDelta: { [canonicalModel]: displayUsage },
+                  timestamp: Date.now(),
+                });
               } catch (error) {
                 log.warn("Failed to record tool model usage", {
                   error,
