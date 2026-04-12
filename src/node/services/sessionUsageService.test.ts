@@ -390,6 +390,24 @@ describe("SessionUsageService", () => {
       expect(result!.byModel["claude-opus-4-20250514"].input.tokens).toBe(500);
     });
 
+    it("keeps mixed-model session totals separate while lastRequest follows the latest write", async () => {
+      const workspaceId = "test-workspace";
+      const parentModel = "openai:gpt-5.2";
+      const advisorModel = "anthropic:claude-sonnet-4-20250514";
+      const parentUsage = createUsage(100, 50);
+      const advisorUsage = createUsage(40, 10);
+
+      await service.recordUsage(workspaceId, parentModel, parentUsage);
+      await service.recordUsage(workspaceId, advisorModel, advisorUsage);
+
+      const result = await service.getSessionUsage(workspaceId);
+      expect(result).toBeDefined();
+      expect(result?.byModel[parentModel]).toEqual(parentUsage);
+      expect(result?.byModel[advisorModel]).toEqual(advisorUsage);
+      expect(result?.lastRequest?.model).toBe(advisorModel);
+      expect(result?.lastRequest?.usage).toEqual(advisorUsage);
+    });
+
     it("should update lastRequest with each recordUsage call", async () => {
       const workspaceId = "test-workspace";
       const usage1 = createUsage(100, 50);

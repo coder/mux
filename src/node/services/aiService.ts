@@ -55,6 +55,8 @@ import { createErrorEvent } from "./utils/sendMessageError";
 import { createAssistantMessageId } from "./utils/messageIds";
 import type { SessionUsageService } from "./sessionUsageService";
 import { sumUsageHistory, getTotalCost } from "@/common/utils/tokens/usageAggregator";
+import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
+import { normalizeToCanonical } from "@/common/utils/ai/models";
 import { readToolInstructions } from "./systemMessage";
 import type { TelemetryService } from "@/node/services/telemetryService";
 import type { DevToolsService } from "@/node/services/devToolsService";
@@ -1367,6 +1369,39 @@ export class AIService extends EventEmitter {
           enableAgentReport: Boolean(metadata.parentWorkspaceId),
           // External edit detection callback
           recordFileState,
+          reportModelUsage: (event) => {
+            void (async () => {
+              try {
+                if (!this.sessionUsageService) {
+                  return;
+                }
+                const eventModel = event.model.trim();
+                assert(eventModel.length > 0, "tool model usage event model must be non-empty");
+                // Persist tool-side model usage under its own model bucket so session costs keep
+                // advisor/system-side pricing separate from the parent chat model.
+                const displayUsage = createDisplayUsage(
+                  event.usage,
+                  eventModel,
+                  event.providerMetadata
+                );
+                if (!displayUsage) {
+                  return;
+                }
+                await this.sessionUsageService.recordUsage(
+                  workspaceId,
+                  normalizeToCanonical(eventModel),
+                  displayUsage
+                );
+              } catch (error) {
+                log.warn("Failed to record tool model usage", {
+                  error,
+                  workspaceId,
+                  toolName: event.toolName,
+                  model: event.model,
+                });
+              }
+            })();
+          },
           onConfigChanged: () => this.providerService.notifyConfigChanged(),
           taskService: this.taskService,
           analyticsService: this.analyticsService,

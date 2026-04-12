@@ -1,4 +1,5 @@
 import { type LanguageModel, type Tool } from "ai";
+import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
 import { createFileReadTool } from "@/node/services/tools/file_read";
 import { createAttachFileTool } from "@/node/services/tools/attach_file";
@@ -57,6 +58,16 @@ import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { ModelMessage } from "@/common/types/message";
 import type { ProjectRef } from "@/common/types/workspace";
 
+export interface ToolModelUsageEvent {
+  source: "tool";
+  toolName: string;
+  model: string;
+  usage: LanguageModelV2Usage;
+  providerMetadata?: Record<string, unknown>;
+  toolCallId?: string;
+  timestamp: number;
+}
+
 /**
  * Configuration for tools that need runtime context
  */
@@ -100,6 +111,8 @@ export interface ToolConfiguration {
   recordFileState?: (filePath: string, state: FileState) => Promise<void>;
   /** Callback to notify that provider/config was written (triggers hot-reload). */
   onConfigChanged?: () => void;
+  /** Best-effort callback for recording tool-initiated model usage in session totals. */
+  reportModelUsage?: (event: ToolModelUsageEvent) => void;
   /** Task orchestration for sub-agent tasks */
   taskService?: TaskService;
   /** Enable agent_report tool (only valid for child task workspaces) */

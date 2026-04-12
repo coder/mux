@@ -9,6 +9,7 @@ import { getErrorMessage } from "@/common/utils/errors";
 import type { AdvisorPhaseEvent } from "@/common/types/stream";
 import { AdvisorToolInputSchema, TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { ToolConfiguration } from "@/common/utils/tools/tools";
+import { log } from "@/node/services/log";
 
 export function createAdvisorTool(config: ToolConfiguration): Tool {
   assert(config.advisorRuntime, "advisorRuntime must be set when advisor tool is registered");
@@ -96,6 +97,30 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
         });
 
         emitAdvisorPhase("finalizing_result");
+
+        if (config.reportModelUsage != null && result.usage != null) {
+          try {
+            assert(
+              advisorModelString.length > 0,
+              "advisorModelString must remain non-empty when reporting usage"
+            );
+            // Keep advisor costs under the advisor model bucket instead of folding them into
+            // the parent chat stream's model totals.
+            config.reportModelUsage({
+              source: "tool",
+              toolName: "advisor",
+              model: advisorModelString,
+              usage: result.usage,
+              providerMetadata: result.providerMetadata as Record<string, unknown> | undefined,
+              toolCallId,
+              timestamp: Date.now(),
+            });
+          } catch (error) {
+            log.debug("advisor: failed to report model usage", {
+              error: getErrorMessage(error),
+            });
+          }
+        }
 
         return {
           type: "advice" as const,
