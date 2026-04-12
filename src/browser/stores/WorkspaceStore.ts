@@ -35,6 +35,7 @@ import {
   isInitEnd,
   isInitOutput,
   isInitStart,
+  isAdvisorPhaseEvent,
   isBashOutputEvent,
   isTaskCreatedEvent,
   isMuxMessage,
@@ -3690,17 +3691,16 @@ export class WorkspaceStore {
       return;
     }
 
-    if ("type" in data && data.type === "advisor-phase") {
-      const advisorPhase: AdvisorPhaseEvent = data;
+    if (isAdvisorPhaseEvent(data)) {
       const transient = this.assertChatTransientState(workspaceId);
-      const prev = transient.liveAdvisorPhase.get(advisorPhase.toolCallId);
+      const prev = transient.liveAdvisorPhase.get(data.toolCallId);
 
       // Avoid unnecessary re-renders if the phase is unchanged.
-      if (prev?.phase === advisorPhase.phase) return;
+      if (prev?.phase === data.phase) return;
 
-      transient.liveAdvisorPhase.set(advisorPhase.toolCallId, {
-        phase: advisorPhase.phase,
-        timestamp: advisorPhase.timestamp,
+      transient.liveAdvisorPhase.set(data.toolCallId, {
+        phase: data.phase,
+        timestamp: data.timestamp,
       });
 
       // Low-frequency: bump immediately so advisor progress updates feel responsive.
