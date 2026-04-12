@@ -3848,6 +3848,9 @@ export class AgentSession {
     forward("task-created", (payload) => {
       this.emitChatEvent(payload);
     });
+    forward("advisor-phase", (payload) => {
+      this.emitChatEvent(payload);
+    });
     forward("tool-call-delta", (payload) => {
       this.markActiveStreamHadAnyOutput();
       this.emitChatEvent(payload);
