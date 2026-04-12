@@ -1,15 +1,23 @@
 import type { ComponentProps } from "react";
-import { afterEach, beforeEach, describe, expect, test, vi } from "bun:test";
+import type { AdvisorLivePhaseState } from "@/browser/stores/WorkspaceStore";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
 
 import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 
-vi.mock("@/browser/stores/WorkspaceStore", () => ({
-  useAdvisorToolLivePhase: vi.fn(),
+const useAdvisorToolLivePhaseMock = mock(
+  (
+    _workspaceId: string | undefined,
+    _toolCallId: string | undefined
+  ): AdvisorLivePhaseState | undefined => undefined
+);
+
+void mock.module("@/browser/stores/WorkspaceStore", () => ({
+  useAdvisorToolLivePhase: useAdvisorToolLivePhaseMock,
 }));
 
-vi.mock("./Shared/ElapsedTimeDisplay", () => ({
+void mock.module("./Shared/ElapsedTimeDisplay", () => ({
   ElapsedTimeDisplay: ({
     startedAt,
     isActive,
@@ -25,15 +33,7 @@ vi.mock("./Shared/ElapsedTimeDisplay", () => ({
   ),
 }));
 
-import { useAdvisorToolLivePhase } from "@/browser/stores/WorkspaceStore";
 import { AdvisorToolCall } from "./AdvisorToolCall";
-
-type MockedAdvisorPhaseHook = typeof useAdvisorToolLivePhase & {
-  mockReset(): void;
-  mockReturnValue(value: ReturnType<typeof useAdvisorToolLivePhase>): void;
-};
-
-const mockedUseAdvisorToolLivePhase = useAdvisorToolLivePhase as MockedAdvisorPhaseHook;
 
 function renderAdvisorToolCall(props: Partial<ComponentProps<typeof AdvisorToolCall>> = {}) {
   return render(
@@ -61,11 +61,12 @@ describe("AdvisorToolCall", () => {
     globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
     globalThis.document = globalThis.window.document;
 
-    mockedUseAdvisorToolLivePhase.mockReset();
+    useAdvisorToolLivePhaseMock.mockReset();
   });
 
   afterEach(() => {
     cleanup();
+    mock.restore();
     globalThis.window = originalWindow;
     globalThis.document = originalDocument;
   });
@@ -73,14 +74,14 @@ describe("AdvisorToolCall", () => {
   test("shows live phase timing in collapsed and expanded executing states", () => {
     const startedAt = 1_700_000_000_123;
 
-    mockedUseAdvisorToolLivePhase.mockReturnValue({
+    useAdvisorToolLivePhaseMock.mockReturnValue({
       phase: "waiting_for_response",
       timestamp: startedAt + 250,
     });
 
     const view = renderAdvisorToolCall({ startedAt });
 
-    expect(mockedUseAdvisorToolLivePhase).toHaveBeenCalledWith("workspace-1", "advisor-call-1");
+    expect(useAdvisorToolLivePhaseMock).toHaveBeenCalledWith("workspace-1", "advisor-call-1");
     expect(view.getByText("Waiting for response")).toBeTruthy();
 
     let timers = view.getAllByTestId("elapsed-time");
@@ -100,7 +101,7 @@ describe("AdvisorToolCall", () => {
   });
 
   test("falls back to a generic running state before a live phase arrives", () => {
-    mockedUseAdvisorToolLivePhase.mockReturnValue(undefined);
+    useAdvisorToolLivePhaseMock.mockReturnValue(undefined);
 
     const view = renderAdvisorToolCall();
 
@@ -111,7 +112,7 @@ describe("AdvisorToolCall", () => {
   });
 
   test("continues rendering completed advice results", () => {
-    mockedUseAdvisorToolLivePhase.mockReturnValue(undefined);
+    useAdvisorToolLivePhaseMock.mockReturnValue(undefined);
 
     const view = renderAdvisorToolCall({
       status: "completed",
