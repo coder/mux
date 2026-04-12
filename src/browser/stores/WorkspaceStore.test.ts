@@ -3978,6 +3978,167 @@ describe("WorkspaceStore", () => {
       expect(live.stdout).toContain("buffered");
     });
   });
+  describe("advisor-phase events", () => {
+    it("tracks the latest live advisor phase while the advisor tool is running", async () => {
+      const workspaceId = "advisor-phase-workspace-1";
+
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        yield { type: "caught-up" };
+        await Promise.resolve();
+        yield {
+          type: "advisor-phase",
+          workspaceId,
+          toolCallId: "call-advisor-1",
+          phase: "preparing_context",
+          timestamp: 1,
+        };
+        yield {
+          type: "advisor-phase",
+          workspaceId,
+          toolCallId: "call-advisor-1",
+          phase: "waiting_for_response",
+          timestamp: 2,
+        };
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const hasLatestPhase = await waitUntil(
+        () =>
+          store.getAdvisorToolLivePhase(workspaceId, "call-advisor-1")?.phase ===
+          "waiting_for_response"
+      );
+      expect(hasLatestPhase).toBe(true);
+
+      const live = store.getAdvisorToolLivePhase(workspaceId, "call-advisor-1");
+      expect(live).toEqual({
+        phase: "waiting_for_response",
+        timestamp: 2,
+      });
+
+      const liveAgain = store.getAdvisorToolLivePhase(workspaceId, "call-advisor-1");
+      expect(liveAgain).toBe(live);
+    });
+
+    it("clears live advisor phase on advisor tool-call-end", async () => {
+      const workspaceId = "advisor-phase-workspace-2";
+      let releaseToolEnd: (() => void) | undefined;
+      const waitForToolEnd = new Promise<void>((resolve) => {
+        releaseToolEnd = resolve;
+      });
+
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        yield { type: "caught-up" };
+        await Promise.resolve();
+        yield {
+          type: "advisor-phase",
+          workspaceId,
+          toolCallId: "call-advisor-2",
+          phase: "finalizing_result",
+          timestamp: 1,
+        };
+        await waitForToolEnd;
+        yield {
+          type: "tool-call-end",
+          workspaceId,
+          messageId: "m-advisor-2",
+          toolCallId: "call-advisor-2",
+          toolName: "advisor",
+          result: { success: true },
+          timestamp: 2,
+        };
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const hasLivePhase = await waitUntil(
+        () =>
+          store.getAdvisorToolLivePhase(workspaceId, "call-advisor-2")?.phase ===
+          "finalizing_result"
+      );
+      expect(hasLivePhase).toBe(true);
+
+      releaseToolEnd?.();
+
+      const clearedLivePhase = await waitUntil(
+        () => store.getAdvisorToolLivePhase(workspaceId, "call-advisor-2") === undefined
+      );
+      expect(clearedLivePhase).toBe(true);
+    });
+
+    it("ignores duplicate advisor phases for the same tool call", async () => {
+      const workspaceId = "advisor-phase-workspace-3";
+      let releaseDuplicate: (() => void) | undefined;
+      const waitForDuplicate = new Promise<void>((resolve) => {
+        releaseDuplicate = resolve;
+      });
+
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        yield { type: "caught-up" };
+        await Promise.resolve();
+        yield {
+          type: "advisor-phase",
+          workspaceId,
+          toolCallId: "call-advisor-3",
+          phase: "waiting_for_response",
+          timestamp: 1,
+        };
+        await waitForDuplicate;
+        yield {
+          type: "advisor-phase",
+          workspaceId,
+          toolCallId: "call-advisor-3",
+          phase: "waiting_for_response",
+          timestamp: 2,
+        };
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const hasInitialPhase = await waitUntil(
+        () => store.getAdvisorToolLivePhase(workspaceId, "call-advisor-3")?.timestamp === 1
+      );
+      expect(hasInitialPhase).toBe(true);
+
+      const live = store.getAdvisorToolLivePhase(workspaceId, "call-advisor-3");
+      expect(live).toEqual({
+        phase: "waiting_for_response",
+        timestamp: 1,
+      });
+      if (!live) throw new Error("Expected live advisor phase");
+
+      let notificationCount = 0;
+      const unsubscribe = store.subscribeKey(workspaceId, () => {
+        notificationCount += 1;
+      });
+
+      releaseDuplicate?.();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const liveAfterDuplicate = store.getAdvisorToolLivePhase(workspaceId, "call-advisor-3");
+      expect(liveAfterDuplicate).toBe(live);
+      expect(liveAfterDuplicate).toEqual({
+        phase: "waiting_for_response",
+        timestamp: 1,
+      });
+      expect(notificationCount).toBe(0);
+
+      unsubscribe();
+    });
+  });
+
   describe("task-created events", () => {
     it("exposes live taskId while the task tool is running", async () => {
       const workspaceId = "task-created-workspace-1";

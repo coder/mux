@@ -43,6 +43,7 @@ import {
   isRuntimeStatus,
 } from "@/common/orpc/types";
 import {
+  type AdvisorPhaseEvent,
   type StreamAbortEvent,
   type StreamAbortReasonSnapshot,
   type StreamEndEvent,
@@ -185,6 +186,11 @@ export interface WorkspaceConsumersState {
   topFilePaths?: Array<{ path: string; tokens: number }>; // Top 10 files aggregated across all file tools
 }
 
+export interface AdvisorLivePhaseState {
+  phase: AdvisorPhaseEvent["phase"];
+  timestamp: number;
+}
+
 interface WorkspaceChatTransientState {
   caughtUp: boolean;
   isHydratingTranscript: boolean;
@@ -193,6 +199,7 @@ interface WorkspaceChatTransientState {
   replayingHistory: boolean;
   queuedMessage: QueuedMessage | null;
   liveBashOutput: Map<string, LiveBashOutputInternal>;
+  liveAdvisorPhase: Map<string, AdvisorLivePhaseState>;
   liveTaskIds: Map<string, string[]>;
   autoRetryStatus: AutoRetryStatus | null;
 }
@@ -243,6 +250,7 @@ function createInitialChatTransientState(): WorkspaceChatTransientState {
     replayingHistory: false,
     queuedMessage: null,
     liveBashOutput: new Map(),
+    liveAdvisorPhase: new Map(),
     liveTaskIds: new Map(),
     autoRetryStatus: null,
   };
@@ -675,35 +683,35 @@ export class WorkspaceStore {
     },
     "tool-call-end": (workspaceId, aggregator, data) => {
       const toolCallEnd = data as Extract<WorkspaceChatMessage, { type: "tool-call-end" }>;
+      const transient = this.chatTransientState.get(workspaceId);
 
       // Cleanup live bash output once the real tool result contains output.
       // If output is missing (e.g. tmpfile overflow), keep the tail buffer so the UI still shows something.
-      if (toolCallEnd.toolName === "bash") {
-        const transient = this.chatTransientState.get(workspaceId);
-        if (transient) {
-          const output = (toolCallEnd.result as { output?: unknown } | undefined)?.output;
-          if (typeof output === "string") {
-            transient.liveBashOutput.delete(toolCallEnd.toolCallId);
-          } else {
-            // If we keep the tail buffer, ensure we don't get stuck in "filtering" UI state.
-            const prev = transient.liveBashOutput.get(toolCallEnd.toolCallId);
-            if (prev?.phase === "filtering") {
-              const next = appendLiveBashOutputChunk(
-                prev,
-                { text: "", isError: false, phase: "output" },
-                BASH_TRUNCATE_MAX_TOTAL_BYTES
-              );
-              if (next !== prev) {
-                transient.liveBashOutput.set(toolCallEnd.toolCallId, next);
-              }
+      if (toolCallEnd.toolName === "bash" && transient) {
+        const output = (toolCallEnd.result as { output?: unknown } | undefined)?.output;
+        if (typeof output === "string") {
+          transient.liveBashOutput.delete(toolCallEnd.toolCallId);
+        } else {
+          // If we keep the tail buffer, ensure we don't get stuck in "filtering" UI state.
+          const prev = transient.liveBashOutput.get(toolCallEnd.toolCallId);
+          if (prev?.phase === "filtering") {
+            const next = appendLiveBashOutputChunk(
+              prev,
+              { text: "", isError: false, phase: "output" },
+              BASH_TRUNCATE_MAX_TOTAL_BYTES
+            );
+            if (next !== prev) {
+              transient.liveBashOutput.set(toolCallEnd.toolCallId, next);
             }
           }
         }
       }
 
-      // Cleanup ephemeral taskId storage once the actual tool result is available.
+      // Cleanup ephemeral advisor/task state once the actual tool result is available.
+      if (toolCallEnd.toolName === "advisor") {
+        transient?.liveAdvisorPhase.delete(toolCallEnd.toolCallId);
+      }
       if (toolCallEnd.toolName === "task") {
-        const transient = this.chatTransientState.get(workspaceId);
         transient?.liveTaskIds.delete(toolCallEnd.toolCallId);
       }
       applyWorkspaceChatEventToAggregator(aggregator, data);
@@ -1450,6 +1458,13 @@ export class WorkspaceStore {
     // Important: return the stored object reference so useSyncExternalStore sees a stable snapshot.
     // (Returning a fresh object every call can trigger an infinite re-render loop.)
     return state ?? null;
+  }
+
+  getAdvisorToolLivePhase(
+    workspaceId: string,
+    toolCallId: string
+  ): AdvisorLivePhaseState | undefined {
+    return this.chatTransientState.get(workspaceId)?.liveAdvisorPhase.get(toolCallId);
   }
 
   getTaskToolLiveTaskIds(workspaceId: string, toolCallId: string): string[] | null {
@@ -3425,11 +3440,12 @@ export class WorkspaceStore {
       return false;
     }
 
-    // Buffer high-frequency stream events (including bash/task live updates) until
+    // Buffer high-frequency stream events (including bash/task/advisor live updates) until
     // caught-up so full-replay reconnects can deterministically rebuild transient state.
     return (
       data.type in this.bufferedEventHandlers ||
       data.type === "bash-output" ||
+      data.type === "advisor-phase" ||
       data.type === "task-created"
     );
   }
@@ -3502,6 +3518,7 @@ export class WorkspaceStore {
         // Live tool-call UI is tied to the active stream context; clear it when replay
         // replaces history, reports no active stream, or reports a different stream ID.
         transient.liveBashOutput.clear();
+        transient.liveAdvisorPhase.clear();
         transient.liveTaskIds.clear();
       }
 
@@ -3670,6 +3687,24 @@ export class WorkspaceStore {
 
       // High-frequency: throttle UI updates like other delta-style events.
       this.scheduleIdleStateBump(workspaceId);
+      return;
+    }
+
+    if ("type" in data && data.type === "advisor-phase") {
+      const advisorPhase: AdvisorPhaseEvent = data;
+      const transient = this.assertChatTransientState(workspaceId);
+      const prev = transient.liveAdvisorPhase.get(advisorPhase.toolCallId);
+
+      // Avoid unnecessary re-renders if the phase is unchanged.
+      if (prev?.phase === advisorPhase.phase) return;
+
+      transient.liveAdvisorPhase.set(advisorPhase.toolCallId, {
+        phase: advisorPhase.phase,
+        timestamp: advisorPhase.timestamp,
+      });
+
+      // Low-frequency: bump immediately so advisor progress updates feel responsive.
+      this.states.bump(workspaceId);
       return;
     }
 
@@ -3854,6 +3889,27 @@ export function useBashToolLiveOutput(
     () => {
       if (!workspaceId || !toolCallId) return null;
       return store.getBashToolLiveOutput(workspaceId, toolCallId);
+    }
+  );
+}
+
+/**
+ * Hook to get UI-only live advisor phase for a running advisor tool call.
+ */
+export function useAdvisorToolLivePhase(
+  workspaceId: string | undefined,
+  toolCallId: string | undefined
+): AdvisorLivePhaseState | undefined {
+  const store = getStoreInstance();
+
+  return useSyncExternalStore(
+    (listener) => {
+      if (!workspaceId) return () => undefined;
+      return store.subscribeKey(workspaceId, listener);
+    },
+    () => {
+      if (!workspaceId || !toolCallId) return undefined;
+      return store.getAdvisorToolLivePhase(workspaceId, toolCallId);
     }
   );
 }
