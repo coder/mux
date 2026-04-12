@@ -1921,6 +1921,119 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     expect(typeof sessionUsageDeltaRecord.timestamp).toBe("number");
   });
 
+  it("zeros advisor tool usage costs for costs-included models before persisting", async () => {
+    using muxHome = new DisposableTempDir("ai-service-tool-model-usage-costs-included");
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "workspace-tool-model-usage-costs-included";
+    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const recordUsage = mock(() => Promise.resolve(undefined));
+    const getSessionUsage = mock(() => Promise.resolve(undefined));
+    const sessionUsageService = {
+      recordUsage,
+      getSessionUsage,
+    } as unknown as SessionUsageService;
+    const harness = createHarness(muxHome.path, metadata, { sessionUsageService });
+
+    harness.config.saveProvidersConfig({
+      openai: {
+        codexOauth: {
+          type: "oauth",
+          access: "test-access-token",
+          refresh: "test-refresh-token",
+          expires: Date.now() + 60_000,
+          accountId: "test-account-id",
+        },
+      },
+    });
+    const baseConfig = harness.config.loadConfigOrDefault();
+    await harness.config.saveConfig({
+      ...baseConfig,
+      advisorModelString: KNOWN_MODELS.GPT_53_CODEX.id,
+      agentAiDefaults: {
+        ...baseConfig.agentAiDefaults,
+        exec: {
+          ...baseConfig.agentAiDefaults?.exec,
+          advisorEnabled: true,
+        },
+      },
+    });
+
+    const result = await harness.service.streamMessage({
+      messages: [createMuxMessage("latest-user", "user", "continue")],
+      workspaceId,
+      modelString: "openai:gpt-5.2",
+      thinkingLevel: "off",
+      experiments: { advisorTool: true },
+    });
+
+    expect(result.success).toBe(true);
+    const toolConfig = harness.getToolsForModelSpy.mock.calls[0]?.[1];
+    if (!toolConfig || typeof toolConfig !== "object") {
+      throw new Error("Expected getToolsForModel to receive a tool configuration object");
+    }
+
+    const advisorRuntime = (
+      toolConfig as {
+        advisorRuntime?: {
+          createModel: (modelString: string) => Promise<LanguageModel>;
+        };
+      }
+    ).advisorRuntime;
+    expect(advisorRuntime).toBeDefined();
+    if (!advisorRuntime) {
+      throw new Error("Expected advisorRuntime in tool configuration");
+    }
+    await advisorRuntime.createModel(KNOWN_MODELS.GPT_53_CODEX.id);
+
+    const reportModelUsage = (
+      toolConfig as {
+        reportModelUsage?: (event: ToolModelUsageEvent) => void;
+      }
+    ).reportModelUsage;
+    if (!reportModelUsage) {
+      throw new Error("Expected reportModelUsage callback on tool configuration");
+    }
+
+    const event: ToolModelUsageEvent = {
+      source: "tool",
+      toolName: "advisor",
+      model: KNOWN_MODELS.GPT_53_CODEX.id,
+      usage: {
+        inputTokens: 120,
+        outputTokens: 45,
+        totalTokens: 165,
+      },
+      providerMetadata: {
+        openai: { reasoningTokens: 5 },
+      },
+      timestamp: Date.now(),
+    };
+    const expectedDisplayUsage = createDisplayUsage(event.usage, event.model, {
+      ...(event.providerMetadata ?? {}),
+      mux: { costsIncluded: true },
+    });
+    expect(expectedDisplayUsage).toBeDefined();
+    if (!expectedDisplayUsage) {
+      throw new Error("Expected tool usage event to produce display usage");
+    }
+    expect(expectedDisplayUsage.costsIncluded).toBe(true);
+    expect(expectedDisplayUsage.input.cost_usd).toBe(0);
+    expect(expectedDisplayUsage.output.cost_usd).toBe(0);
+    expect(expectedDisplayUsage.reasoning.cost_usd).toBe(0);
+
+    reportModelUsage(event);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(recordUsage).toHaveBeenCalledWith(
+      workspaceId,
+      normalizeToCanonical(event.model),
+      expectedDisplayUsage
+    );
+  });
+
   it("logs and swallows tool model usage persistence failures", async () => {
     using muxHome = new DisposableTempDir("ai-service-tool-model-usage-failure");
     const projectPath = path.join(muxHome.path, "project");

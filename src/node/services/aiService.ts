@@ -176,6 +176,29 @@ function mergeProviderExtrasUnderMux(
   return merged;
 }
 
+function markProviderMetadataCostsIncluded(
+  providerMetadata: Record<string, unknown> | undefined,
+  costsIncluded: boolean | undefined
+): Record<string, unknown> | undefined {
+  if (!costsIncluded) {
+    return providerMetadata;
+  }
+
+  const muxMetadata = providerMetadata?.mux;
+  const existingMux =
+    muxMetadata && typeof muxMetadata === "object"
+      ? (muxMetadata as Record<string, unknown>)
+      : undefined;
+
+  return {
+    ...(providerMetadata ?? {}),
+    mux: {
+      ...(existingMux ?? {}),
+      costsIncluded: true,
+    },
+  };
+}
+
 interface ToolExecutionContext {
   toolCallId?: string;
   abortSignal?: AbortSignal;
@@ -1289,6 +1312,10 @@ export class AIService extends EventEmitter {
       // Mutable ref updated by StreamManager.prepareStep so the advisor tool reads the live
       // transcript lazily at execute time instead of capturing a stale snapshot here.
       const advisorTranscriptRef: { messages?: ModelMessage[] } = {};
+      // Tool-side generateText() results do not consistently echo mux.costsIncluded in
+      // providerMetadata, so remember the resolved billing mode from model creation and
+      // re-stamp it before converting usage into display/session costs.
+      const toolModelCostsIncludedByModelString = new Map<string, boolean>();
       // Normalize: undefined -> default, null -> unlimited, positive int -> exact cap.
       const advisorMaxUses =
         advisorToolConfig.advisorMaxUsesPerTurn === null
@@ -1335,12 +1362,23 @@ export class AIService extends EventEmitter {
                     return messages;
                   },
                   createModel: async (ms: string) => {
-                    const advisorModel = await this.createModel(ms, undefined, { workspaceId });
+                    const advisorModelString = ms.trim();
+                    assert(
+                      advisorModelString.length > 0,
+                      "advisor model string must be non-empty when creating an advisor model"
+                    );
+                    const advisorModel = await this.createModel(advisorModelString, undefined, {
+                      workspaceId,
+                    });
                     if (!advisorModel.success) {
                       throw new Error(
                         `Failed to create advisor model: ${getErrorMessage(advisorModel.error)}`
                       );
                     }
+                    toolModelCostsIncludedByModelString.set(
+                      advisorModelString,
+                      modelCostsIncluded(advisorModel.data)
+                    );
                     return advisorModel.data;
                   },
                   abortSignal: combinedAbortSignal,
@@ -1379,11 +1417,11 @@ export class AIService extends EventEmitter {
                 assert(eventModel.length > 0, "tool model usage event model must be non-empty");
                 // Persist tool-side model usage under its own model bucket so session costs keep
                 // advisor/system-side pricing separate from the parent chat model.
-                const displayUsage = createDisplayUsage(
-                  event.usage,
-                  eventModel,
-                  event.providerMetadata
+                const providerMetadata = markProviderMetadataCostsIncluded(
+                  event.providerMetadata,
+                  toolModelCostsIncludedByModelString.get(eventModel)
                 );
+                const displayUsage = createDisplayUsage(event.usage, eventModel, providerMetadata);
                 if (!displayUsage) {
                   return;
                 }
