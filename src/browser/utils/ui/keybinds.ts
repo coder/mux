@@ -286,7 +286,9 @@ export const KEYBINDS = {
   TOGGLE_AGENT: { key: "A", ctrl: true, shift: true },
 
   /** Cycle to next manual agent without opening picker */
-  CYCLE_AGENT: { key: ".", ctrl: true },
+  // Use the physical Period key so Cmd+. keeps working on macOS and layouts
+  // where KeyboardEvent.key varies for this shortcut.
+  CYCLE_AGENT: { key: ".", code: "Period", ctrl: true, allowShift: true },
 
   /** Send message / Submit form */
   SEND_MESSAGE: { key: "Enter" },

@@ -71,6 +71,20 @@ describe("CYCLE_MODEL keybind (Ctrl+/)", () => {
   });
 });
 
+describe("CYCLE_AGENT keybind (Ctrl/Cmd+.)", () => {
+  it("matches Cmd+. on macOS via the Period key code", () => {
+    globalThis.window = { api: { platform: "darwin" } } as unknown as Window & typeof globalThis;
+    const event = createEvent({ key: ".", code: "Period", metaKey: true });
+    expect(matchesKeybind(event, KEYBINDS.CYCLE_AGENT)).toBe(true);
+  });
+
+  it("matches Cmd+Shift+Period on layouts where Period requires Shift", () => {
+    globalThis.window = { api: { platform: "darwin" } } as unknown as Window & typeof globalThis;
+    const event = createEvent({ key: ">", code: "Period", metaKey: true, shiftKey: true });
+    expect(matchesKeybind(event, KEYBINDS.CYCLE_AGENT)).toBe(true);
+  });
+});
+
 test("removed auto agent toggle keybind", () => {
   const removedKey = ["TOGGLE", "AUTO", "AGENT"].join("_");
   expect(KEYBINDS).not.toHaveProperty(removedKey);

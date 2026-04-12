@@ -331,7 +331,7 @@ describe("AgentContext", () => {
 
     fireEvent.keyDown(window, {
       key: ".",
-      ctrlKey: true,
+      code: "Period",
       metaKey: true,
     });
 
@@ -358,7 +358,7 @@ describe("AgentContext", () => {
 
     fireEvent.keyDown(window, {
       key: ".",
-      ctrlKey: true,
+      code: "Period",
       metaKey: true,
     });
 
@@ -409,13 +409,12 @@ describe("AgentContext", () => {
       // Cycle and secondary shortcut actions should no-op as well.
       fireEvent.keyDown(window, {
         key: ".",
-        ctrlKey: true,
+        code: "Period",
         metaKey: true,
       });
       fireEvent.keyDown(window, {
         key: ">",
         code: "Period",
-        ctrlKey: true,
         metaKey: true,
         shiftKey: true,
       });
@@ -464,7 +463,7 @@ describe("AgentContext", () => {
 
       fireEvent.keyDown(window, {
         key: ".",
-        ctrlKey: true,
+        code: "Period",
         metaKey: true,
       });
 
