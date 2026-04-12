@@ -144,17 +144,6 @@ export interface StreamMessageOptions {
   openaiTruncationModeOverride?: "auto" | "disabled";
 }
 
-// ---------------------------------------------------------------------------
-// Utility: deep-clone with structuredClone fallback
-// ---------------------------------------------------------------------------
-
-/** Deep-clone a value using structuredClone (with JSON fallback). */
-function safeClone<T>(value: T): T {
-  return typeof structuredClone === "function"
-    ? structuredClone(value)
-    : (JSON.parse(JSON.stringify(value)) as T);
-}
-
 /**
  * Recursively merge user-provided provider extras under Mux-built provider options.
  * Mux values win on leaf conflicts; both sides' non-conflicting nested fields are preserved.
@@ -445,7 +434,7 @@ export class AIService extends EventEmitter {
               },
             };
 
-            this.lastLlmRequestByWorkspace.set(data.workspaceId, safeClone(updated));
+            this.lastLlmRequestByWorkspace.set(data.workspaceId, structuredClone(updated));
           }
         }
       } catch (error) {
@@ -1745,7 +1734,7 @@ export class AIService extends EventEmitter {
       };
 
       try {
-        this.lastLlmRequestByWorkspace.set(workspaceId, safeClone(snapshot));
+        this.lastLlmRequestByWorkspace.set(workspaceId, structuredClone(snapshot));
       } catch (error) {
         const errMsg = getErrorMessage(error);
         workspaceLog.warn("Failed to capture debug LLM request snapshot", { error: errMsg });
