@@ -172,6 +172,32 @@ describe("WorkspaceShell loading placeholders", () => {
     expect(view.getByTestId("chat-pane")).toBeTruthy();
   });
 
+  it("keeps the same chat pane DOM node across workspace switches", () => {
+    workspaceState = {
+      isHydratingTranscript: false,
+      isStreamStarting: false,
+      loading: false,
+      messages: [{ id: "message-1" }],
+      queuedMessage: null,
+    };
+
+    const view = render(<WorkspaceShell {...defaultProps} />);
+    const firstChatPane = view.getByTestId("chat-pane");
+
+    view.rerender(
+      <WorkspaceShell
+        {...defaultProps}
+        workspaceId="workspace-2"
+        workspaceName="feature-two"
+        namedWorkspacePath="/projects/demo/workspaces/feature-two"
+      />
+    );
+
+    const secondChatPane = view.getByTestId("chat-pane");
+    expect(secondChatPane).toBe(firstChatPane);
+    expect(secondChatPane.textContent).toContain("workspace-2");
+  });
+
   it("renders loading animation during workspace loading", () => {
     workspaceState = {
       loading: true,

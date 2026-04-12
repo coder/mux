@@ -424,11 +424,15 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     hasInputTarget: !transcriptOnly,
   });
 
-  // ChatPane is keyed by workspaceId (WorkspaceShell), so per-workspace UI state naturally
-  // resets on workspace switches. Clear background errors so they don't leak across workspaces.
+  // Workspace switches should not leak background bash errors into the newly selected chat.
   useEffect(() => {
     clearBackgroundBashError();
-  }, [clearBackgroundBashError]);
+  }, [clearBackgroundBashError, workspaceId]);
+
+  useEffect(() => {
+    setEditingState({ workspaceId, message: undefined });
+    setExpandedBashGroups(new Set());
+  }, [workspaceId]);
 
   const handleChatInputReady = useCallback((api: ChatInputAPI) => {
     chatInputAPI.current = api;
@@ -607,15 +611,19 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     }
   }, [workspaceState?.messages, workspaceState?.todos, autoScroll, performAutoScroll]);
 
-  // Scroll to bottom when workspace loads or changes
-  // useLayoutEffect ensures scroll happens synchronously after DOM mutations
-  // but before browser paint - critical for Chromatic snapshot consistency
+  const hasLoadedTranscriptRows = !workspaceState.loading && workspaceState.messages.length > 0;
+
+  // Reset transcript scroll ownership when switching workspaces. If the target workspace already
+  // has cached rows, pin to the bottom before paint; otherwise just re-arm auto-scroll so the
+  // next hydrated/streaming updates own the tail instead of showing the prior workspace's state.
   useLayoutEffect(() => {
-    if (workspaceState && !workspaceState.loading && workspaceState.messages.length > 0) {
+    if (hasLoadedTranscriptRows) {
       jumpToBottom();
+      return;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaceId, workspaceState?.loading]);
+
+    setAutoScroll(true);
+  }, [hasLoadedTranscriptRows, jumpToBottom, setAutoScroll, workspaceId]);
 
   // Compute showRetryBarrier once for both keybinds and UI.
   // Track if last message was interrupted or errored (for RetryBarrier).

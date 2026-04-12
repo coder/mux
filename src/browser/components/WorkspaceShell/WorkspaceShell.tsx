@@ -236,9 +236,10 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
       )}
       style={{ containerType: "inline-size" }}
     >
-      {/* Keyed by workspaceId to prevent cross-workspace message-list flashes. */}
+      {/* Keep the transcript viewport mounted across workspace switches so the browser doesn't
+          visually tear the pane while the new workspace content hydrates. ChatPane resets its
+          per-workspace local UI state internally, and the composer remains keyed by workspaceId. */}
       <ChatPane
-        key={`chat-${props.workspaceId}`}
         workspaceId={props.workspaceId}
         workspaceState={workspaceState}
         projectPath={props.projectPath}
