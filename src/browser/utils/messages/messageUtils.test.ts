@@ -171,6 +171,15 @@ describe("shouldBypassDeferredMessages", () => {
     );
   });
 
+  it("returns true when the deferred snapshot still belongs to the previous workspace", () => {
+    expect(
+      shouldBypassDeferredMessages([completedBash], [completedBash], {
+        immediateWorkspaceId: "workspace-b",
+        deferredWorkspaceId: "workspace-a",
+      })
+    ).toBe(true);
+  });
+
   it("returns true when init output is still running", () => {
     expect(shouldBypassDeferredMessages([runningInit], [runningInit])).toBe(true);
   });

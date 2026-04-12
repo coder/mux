@@ -300,17 +300,29 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   // during rapid updates (streaming), keeping the UI responsive.
   // Must be defined before any early returns to satisfy React Hooks rules.
   const transformedMessages = useMemo(() => mergeConsecutiveStreamErrors(messages), [messages]);
-  const deferredTransformedMessages = useDeferredValue(transformedMessages);
+  const immediateMessageSnapshot = useMemo(
+    () => ({ workspaceId, messages: transformedMessages }),
+    [workspaceId, transformedMessages]
+  );
+  const deferredMessageSnapshot = useDeferredValue(immediateMessageSnapshot);
 
   // CRITICAL: Show immediate messages when streaming or when message count changes.
   // useDeferredValue can defer indefinitely if React keeps getting new work (rapid deltas).
   // During active streaming (reasoning, text), we MUST show immediate updates or the UI
   // appears frozen while only the token counter updates (reads aggregator directly).
+  // Also bypass the deferred snapshot when it still belongs to the previous workspace so
+  // chat switches cannot briefly render stale transcript rows from the old workspace.
   const shouldBypassDeferral = shouldBypassDeferredMessages(
-    transformedMessages,
-    deferredTransformedMessages
+    immediateMessageSnapshot.messages,
+    deferredMessageSnapshot.messages,
+    {
+      immediateWorkspaceId: workspaceId,
+      deferredWorkspaceId: deferredMessageSnapshot.workspaceId,
+    }
   );
-  const deferredMessages = shouldBypassDeferral ? transformedMessages : deferredTransformedMessages;
+  const deferredMessages = shouldBypassDeferral
+    ? immediateMessageSnapshot.messages
+    : deferredMessageSnapshot.messages;
 
   const latestMessageId = getLastNonDecorativeMessage(deferredMessages)?.id ?? null;
   const messageListContextValue = useMemo(

@@ -127,8 +127,20 @@ export function shouldShowInterruptedBarrier(
  */
 export function shouldBypassDeferredMessages(
   messages: DisplayedMessage[],
-  deferredMessages: DisplayedMessage[]
+  deferredMessages: DisplayedMessage[],
+  options?: {
+    immediateWorkspaceId?: string;
+    deferredWorkspaceId?: string;
+  }
 ): boolean {
+  if (
+    options?.immediateWorkspaceId !== undefined &&
+    options?.deferredWorkspaceId !== undefined &&
+    options.immediateWorkspaceId !== options.deferredWorkspaceId
+  ) {
+    return true;
+  }
+
   const hasActiveRows = (rows: DisplayedMessage[]) =>
     rows.some(
       (m) =>
