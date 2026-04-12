@@ -3,9 +3,14 @@ import { AlertTriangle } from "lucide-react";
 
 import { MarkdownRenderer } from "../Messages/MarkdownRenderer";
 import { cn } from "@/common/lib/utils";
+import {
+  type AdvisorLivePhaseState,
+  useAdvisorToolLivePhase,
+} from "@/browser/stores/WorkspaceStore";
 import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
 import { getModelName } from "@/common/utils/ai/models";
 import { JsonHighlight } from "./Shared/HighlightedCode";
+import { ElapsedTimeDisplay } from "./Shared/ElapsedTimeDisplay";
 import {
   DetailContent,
   DetailLabel,
@@ -26,6 +31,9 @@ interface AdvisorToolCallProps {
   args: Record<string, unknown>;
   result?: unknown;
   status?: string;
+  workspaceId?: string;
+  toolCallId?: string;
+  startedAt?: number;
 }
 
 type AdvisorToolResult =
@@ -54,6 +62,11 @@ interface AdvisorStatusPresentation {
 }
 
 const TRAILING_MODEL_DATE_SUFFIX = /-(?:\d{8}|\d{4}-\d{2}-\d{2})$/;
+const ADVISOR_PHASE_LABELS: Record<AdvisorLivePhaseState["phase"], string> = {
+  preparing_context: "Preparing context",
+  waiting_for_response: "Waiting for response",
+  finalizing_result: "Finalizing result",
+};
 
 function isToolStatus(value: string | undefined): value is ToolStatus {
   switch (value) {
@@ -193,9 +206,13 @@ export const AdvisorToolCall: React.FC<AdvisorToolCallProps> = ({
   args: _args,
   result,
   status,
+  workspaceId,
+  toolCallId,
+  startedAt,
 }) => {
   const { expanded, toggleExpanded } = useToolExpansion();
   const toolStatus = isToolStatus(status) ? status : "pending";
+  const livePhase = useAdvisorToolLivePhase(workspaceId, toolCallId);
   const advisorResult = isAdvisorToolResult(result) ? result : null;
   const hasUnrecognizedResult = result !== undefined && result !== null && advisorResult === null;
   const detailsText =
@@ -210,6 +227,17 @@ export const AdvisorToolCall: React.FC<AdvisorToolCallProps> = ({
         content: getStatusDisplay("failed"),
       }
     : getAdvisorStatusPresentation(advisorResult, toolStatus);
+  const isExecutingWithoutResult =
+    toolStatus === "executing" && advisorResult === null && !hasUnrecognizedResult;
+  const executingStatusLabel = livePhase ? ADVISOR_PHASE_LABELS[livePhase.phase] : "Running";
+  const headerStatusContent = isExecutingWithoutResult ? (
+    <>
+      <span>{executingStatusLabel}</span>
+      <ElapsedTimeDisplay startedAt={startedAt} isActive={true} />
+    </>
+  ) : (
+    statusPresentation.content
+  );
 
   return (
     <ToolContainer expanded={expanded} className="@container">
@@ -221,7 +249,7 @@ export const AdvisorToolCall: React.FC<AdvisorToolCallProps> = ({
           status={statusPresentation.status}
           className={statusPresentation.className}
         >
-          {statusPresentation.content}
+          {headerStatusContent}
         </StatusIndicator>
       </ToolHeader>
 
@@ -291,11 +319,12 @@ export const AdvisorToolCall: React.FC<AdvisorToolCallProps> = ({
             </>
           )}
 
-          {toolStatus === "executing" && advisorResult === null && !hasUnrecognizedResult && (
+          {isExecutingWithoutResult && (
             <DetailSection>
               <div className="text-secondary text-[11px]">
-                Consulting advisor
+                {executingStatusLabel}
                 <LoadingDots />
+                <ElapsedTimeDisplay startedAt={startedAt} isActive={true} />
               </div>
             </DetailSection>
           )}
