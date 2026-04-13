@@ -111,6 +111,26 @@ describe("AdvisorToolCall", () => {
     expect(timers[0]?.dataset.active).toBe("true");
   });
 
+  test("renders the advisor question when present", () => {
+    useAdvisorToolLivePhaseMock.mockReturnValue(undefined);
+
+    const view = renderAdvisorToolCall({
+      args: { question: "  Should we split the refactor into smaller commits?  " },
+      status: "completed",
+      result: {
+        type: "advice",
+        advice: "Prefer the smaller diff so reviewers can verify it quickly.",
+        advisorModel: "openai:gpt-4.1-mini",
+        remainingUses: 1,
+      },
+    });
+
+    fireEvent.click(view.getByText("advisor"));
+
+    expect(view.getByText("Question")).toBeTruthy();
+    expect(view.getByText("Should we split the refactor into smaller commits?")).toBeTruthy();
+  });
+
   test("continues rendering completed advice results", () => {
     useAdvisorToolLivePhaseMock.mockReturnValue(undefined);
 

@@ -37,6 +37,7 @@ function createToolConfig(
       maxOutputTokens: options?.maxOutputTokens,
       getTranscriptSnapshot: createTranscript,
       createModel,
+      takeToolCallSnapshot: () => undefined,
       abortSignal: new AbortController().signal,
     },
   };
@@ -151,6 +152,34 @@ describe("advisor tool", () => {
     expect(Object.prototype.hasOwnProperty.call(generateTextArgs ?? {}, "maxOutputTokens")).toBe(
       false
     );
+  });
+
+
+  it("accepts optional question input without changing the advisor request", async () => {
+    using tempDir = new TestTempDir("advisor-tool-optional-question");
+    const { config } = createToolConfig(tempDir.path);
+    const generateTextSpy = mockGenerateTextSuccess({
+      text: "Split the work if each piece can be reviewed independently.",
+      usage: {
+        inputTokens: 50,
+        outputTokens: 20,
+        totalTokens: 70,
+      },
+    });
+
+    const tool = createAdvisorTool(config);
+    const rawResult: unknown = await Promise.resolve(
+      tool.execute!({ question: "  Should we split this refactor?  " }, mockToolCallOptions)
+    );
+
+    expect(generateTextSpy).toHaveBeenCalledTimes(1);
+    expect(rawResult).toEqual({
+      type: "advice",
+      advice: "Split the work if each piece can be reviewed independently.",
+      advisorModel: ADVISOR_MODEL,
+      reasoningLevel: "medium",
+      remainingUses: 2,
+    });
   });
 
   it("does not report usage when the advisor model call fails", async () => {

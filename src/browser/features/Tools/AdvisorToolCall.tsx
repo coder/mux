@@ -87,6 +87,16 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+function getAdvisorQuestion(args: Record<string, unknown>): string | undefined {
+  const rawQuestion = args.question;
+  if (rawQuestion == null || typeof rawQuestion !== "string") {
+    return undefined;
+  }
+
+  const question = rawQuestion.trim();
+  return question.length > 0 ? question : undefined;
+}
+
 function isRemainingUses(value: unknown): value is number | null {
   return value === null || (typeof value === "number" && Number.isInteger(value) && value >= 0);
 }
@@ -203,7 +213,7 @@ const AdvisorMetadata: React.FC<{ advisorModel: string; reasoningLevel?: string 
 };
 
 export const AdvisorToolCall: React.FC<AdvisorToolCallProps> = ({
-  args: _args,
+  args,
   result,
   status,
   workspaceId,
@@ -213,6 +223,7 @@ export const AdvisorToolCall: React.FC<AdvisorToolCallProps> = ({
   const { expanded, toggleExpanded } = useToolExpansion();
   const toolStatus = isToolStatus(status) ? status : "pending";
   const livePhase = useAdvisorToolLivePhase(workspaceId, toolCallId);
+  const question = getAdvisorQuestion(args);
   const advisorResult = isAdvisorToolResult(result) ? result : null;
   const hasUnrecognizedResult = result !== undefined && result !== null && advisorResult === null;
   const detailsText =
@@ -255,6 +266,13 @@ export const AdvisorToolCall: React.FC<AdvisorToolCallProps> = ({
 
       {expanded && (
         <ToolDetails text={detailsText}>
+          {question && (
+            <DetailSection>
+              <DetailLabel>Question</DetailLabel>
+              <DetailContent className="text-secondary px-2 py-1.5">{question}</DetailContent>
+            </DetailSection>
+          )}
+
           {advisorResult?.type === "advice" && (
             <>
               <AdvisorMetadata

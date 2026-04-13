@@ -51,7 +51,13 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
     description: TOOL_DEFINITIONS.advisor.description,
     inputSchema: AdvisorToolInputSchema,
     execute: async (args, { abortSignal, toolCallId }) => {
-      assert(Object.keys(args).length === 0, "advisor tool does not accept input");
+      // Phase 3 will thread the normalized question into the advisor handoff. Normalize it now so
+      // rollout-safe callers can pass `{}` or `{ question }` without changing current behavior.
+      const question = args.question != null ? args.question.trim() || undefined : undefined;
+      assert(
+        question == null || question.length > 0,
+        "advisor question must be undefined or a non-empty string after trimming"
+      );
 
       const emitAdvisorPhase = (phase: AdvisorPhaseEvent["phase"]): void => {
         if (!config.emitChatEvent || !config.workspaceId || !toolCallId) {

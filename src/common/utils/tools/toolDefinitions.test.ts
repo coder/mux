@@ -247,6 +247,23 @@ describe("TOOL_DEFINITIONS", () => {
     );
   });
 
+  it("accepts an optional advisor question and encourages passing one", () => {
+    expect(TOOL_DEFINITIONS.advisor.schema.safeParse({}).success).toBe(true);
+    expect(TOOL_DEFINITIONS.advisor.schema.safeParse({ question: null }).success).toBe(true);
+
+    const parsed = TOOL_DEFINITIONS.advisor.schema.safeParse({
+      question: "Should we split this refactor into smaller commits?",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.question).toBe("Should we split this refactor into smaller commits?");
+    }
+
+    expect(TOOL_DEFINITIONS.advisor.description).toContain("pass a brief `question`");
+    expect(TOOL_DEFINITIONS.advisor.description).toContain("decision or ambiguity");
+  });
+
   it("encourages compact task briefs and best-of delegation discipline", () => {
     expect(TOOL_DEFINITIONS.task.description).toContain("compact task brief");
     expect(TOOL_DEFINITIONS.task.description).toContain("plan file");

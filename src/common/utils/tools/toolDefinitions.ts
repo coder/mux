@@ -153,7 +153,11 @@ export const AskUserQuestionToolResultSchema = z.union([
 // advisor (nested strategic guidance)
 // -----------------------------------------------------------------------------
 
-export const AdvisorToolInputSchema = z.object({}).strict();
+export const AdvisorToolInputSchema = z
+  .object({
+    question: z.string().min(1).nullish(),
+  })
+  .strict();
 
 const AdvisorToolAdviceResultSchema = z
   .object({

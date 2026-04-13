@@ -12,7 +12,8 @@ export const ADVISOR_USAGE_GUIDANCE =
 /** Description shown to the model when the advisor tool is registered. */
 export const ADVISOR_TOOL_DESCRIPTION =
   "Ask a stronger model for strategic advice based on the live conversation transcript. " +
-  ADVISOR_USAGE_GUIDANCE;
+  ADVISOR_USAGE_GUIDANCE +
+  " When you call this tool, pass a brief `question` summarizing the decision or ambiguity you need help with.";
 
 /**
  * System prompt for the nested advisor model call.
