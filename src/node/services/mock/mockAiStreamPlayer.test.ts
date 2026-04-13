@@ -293,6 +293,71 @@ describe("MockAiStreamPlayer", () => {
     );
   });
 
+  test("suppresses stale stream errors after a replacement stream cancels the old one", async () => {
+    const aiServiceStub = new EventEmitter();
+
+    const player = new MockAiStreamPlayer({
+      historyService,
+      aiService: aiServiceStub as unknown as AIService,
+    });
+
+    const originalDeletePartial = historyService.deletePartial.bind(historyService);
+    let deletePartialCallCount = 0;
+    spyOn(historyService, "deletePartial").mockImplementation(async (workspaceIdToDelete) => {
+      deletePartialCallCount += 1;
+      if (deletePartialCallCount === 1) {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+      return await originalDeletePartial(workspaceIdToDelete);
+    });
+
+    const workspaceId = "workspace-stale-stream-error";
+    const errorEvents: Array<{ messageId?: string }> = [];
+    aiServiceStub.on("error", (payload: unknown) => {
+      if (readWorkspaceId(payload) !== workspaceId) {
+        return;
+      }
+      errorEvents.push(payload as { messageId?: string });
+    });
+
+    const firstUserMessage = createMuxMessage(
+      "user-stream-error-first",
+      "user",
+      "[mock:error:api] Trigger API error",
+      {
+        timestamp: Date.now(),
+      }
+    );
+
+    const firstPlayResult = await player.play([firstUserMessage], workspaceId);
+    expect(firstPlayResult.success).toBe(true);
+
+    await waitForCondition(() => deletePartialCallCount >= 1, 1000);
+
+    const replacementUserMessage = createMuxMessage(
+      "user-stream-error-second",
+      "user",
+      "[force] replacement stream after cancelled error",
+      {
+        timestamp: Date.now(),
+      }
+    );
+
+    const replacementPlayResult = await player.play([replacementUserMessage], workspaceId);
+    expect(replacementPlayResult.success).toBe(true);
+
+    await waitForCondition(
+      async () => (await historyService.readPartial(workspaceId)) !== null,
+      1500
+    );
+    await new Promise((resolve) => setTimeout(resolve, 350));
+
+    expect(errorEvents).toHaveLength(0);
+
+    player.stop(workspaceId);
+    await waitForCondition(() => !player.isStreaming(workspaceId), 1000);
+  });
+
   test("commits the full assistant message and clears partial state on stream end", async () => {
     const aiServiceStub = new EventEmitter();
 

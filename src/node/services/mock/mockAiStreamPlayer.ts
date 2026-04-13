@@ -725,6 +725,13 @@ export class MockAiStreamPlayer {
         if (!deletePartialResult.success) {
           log.error(`Failed to clear mock partial for ${messageId}: ${deletePartialResult.error}`);
         }
+
+        // Replacement streams can cancel this handler while deletePartial() is in flight.
+        // Ignore the stale error once the original active stream has been cancelled or replaced.
+        if (active.cancelled || this.activeStreams.get(workspaceId) !== active) {
+          return;
+        }
+
         this.deps.aiService.emit(
           "error",
           createErrorEvent(workspaceId, {
