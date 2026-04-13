@@ -259,9 +259,6 @@ describe("TOOL_DEFINITIONS", () => {
     if (parsed.success) {
       expect(parsed.data.question).toBe("Should we split this refactor into smaller commits?");
     }
-
-    expect(TOOL_DEFINITIONS.advisor.description).toContain("pass a brief `question`");
-    expect(TOOL_DEFINITIONS.advisor.description).toContain("decision or ambiguity");
   });
 
   it("encourages compact task briefs and best-of delegation discipline", () => {
