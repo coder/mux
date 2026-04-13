@@ -250,8 +250,8 @@ export class MockAiStreamPlayer {
     }
   }
 
-  stop(workspaceId: string): void {
-    void this.stopActiveStream(workspaceId);
+  async stop(workspaceId: string): Promise<void> {
+    await this.stopActiveStream(workspaceId);
   }
 
   async play(

@@ -2051,7 +2051,7 @@ export class AIService extends EventEmitter {
     }
 
     if (this.mockModeEnabled && this.mockAiStreamPlayer) {
-      this.mockAiStreamPlayer.stop(workspaceId);
+      await this.mockAiStreamPlayer.stop(workspaceId);
       return Ok(undefined);
     }
     return this.streamManager.stopStream(workspaceId, options);

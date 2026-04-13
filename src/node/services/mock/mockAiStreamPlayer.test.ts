@@ -77,7 +77,7 @@ describe("MockAiStreamPlayer", () => {
 
     const firstResult = await player.play([firstTurnUser], workspaceId);
     expect(firstResult.success).toBe(true);
-    player.stop(workspaceId);
+    await player.stop(workspaceId);
 
     // Read back what was appended during the first turn
     const historyResult = await historyService.getLastMessages(workspaceId, 100);
@@ -112,7 +112,7 @@ describe("MockAiStreamPlayer", () => {
     const secondSeq = secondAppend.metadata?.historySequence ?? -1;
     expect(secondSeq).toBe(firstSeq + 1);
 
-    player.stop(workspaceId);
+    await player.stop(workspaceId);
   });
 
   test("removes assistant placeholder when aborted before stream scheduling", async () => {
@@ -221,7 +221,7 @@ describe("MockAiStreamPlayer", () => {
     expect(partial?.id).toMatch(/^msg-mock-/);
     expect(extractText(partial).length).toBeGreaterThan(0);
 
-    player.stop(workspaceId);
+    await player.stop(workspaceId);
     await waitForCondition(
       async () => (await historyService.readPartial(workspaceId)) === null,
       1000
@@ -286,7 +286,7 @@ describe("MockAiStreamPlayer", () => {
     expect(replacementPartial).not.toBeNull();
     expect(replacementPartial?.id).not.toBe(firstPartial?.id);
 
-    player.stop(workspaceId);
+    await player.stop(workspaceId);
     await waitForCondition(
       async () => (await historyService.readPartial(workspaceId)) === null,
       1500
@@ -354,7 +354,7 @@ describe("MockAiStreamPlayer", () => {
 
     expect(errorEvents).toHaveLength(0);
 
-    player.stop(workspaceId);
+    await player.stop(workspaceId);
     await waitForCondition(() => !player.isStreaming(workspaceId), 1000);
   });
 
@@ -424,7 +424,7 @@ describe("MockAiStreamPlayer", () => {
         if (!stopped) {
           stopped = true;
           clearTimeout(timeout);
-          player.stop(workspaceId);
+          void player.stop(workspaceId);
           resolve();
         }
       });
