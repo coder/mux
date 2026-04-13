@@ -225,20 +225,13 @@ export class MockAiStreamPlayer {
       }
     });
   }
-  stop(workspaceId: string): void {
+  private async stopActiveStream(workspaceId: string): Promise<void> {
     const active = this.activeStreams.get(workspaceId);
     if (!active) return;
 
     active.cancelled = true;
 
-    // User-initiated mock interrupts should not leave behind resumable partial state.
-    void this.deps.historyService.deletePartial(workspaceId).then((result) => {
-      if (!result.success) {
-        log.error(`Failed to clear mock partial on stop for ${active.messageId}: ${result.error}`);
-      }
-    });
-
-    // Emit stream-abort event to mirror real streaming behavior
+    // Emit stream-abort event to mirror real streaming behavior before we await disk cleanup.
     this.deps.aiService.emit("stream-abort", {
       type: "stream-abort",
       workspaceId,
@@ -247,6 +240,18 @@ export class MockAiStreamPlayer {
     });
 
     this.cleanup(workspaceId);
+
+    // User-initiated mock interrupts should not leave behind resumable partial state.
+    const deletePartialResult = await this.deps.historyService.deletePartial(workspaceId);
+    if (!deletePartialResult.success) {
+      log.error(
+        `Failed to clear mock partial on stop for ${active.messageId}: ${deletePartialResult.error}`
+      );
+    }
+  }
+
+  stop(workspaceId: string): void {
+    void this.stopActiveStream(workspaceId);
   }
 
   async play(
@@ -367,9 +372,10 @@ export class MockAiStreamPlayer {
 
     historySequence = assistantMessage.metadata?.historySequence ?? historySequence;
 
-    // Cancel any existing stream before starting a new one
+    // Cancel any existing stream before starting a new one. Await partial cleanup so the old
+    // stream cannot delete the replacement stream's partial snapshot after it begins writing.
     if (this.isStreaming(workspaceId)) {
-      this.stop(workspaceId);
+      await this.stopActiveStream(workspaceId);
     }
 
     this.scheduleEvents(workspaceId, events, messageId, historySequence);

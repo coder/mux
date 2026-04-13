@@ -228,6 +228,71 @@ describe("MockAiStreamPlayer", () => {
     );
   });
 
+  test("waits for partial cleanup before a replacement stream starts writing its own partial", async () => {
+    const aiServiceStub = new EventEmitter();
+
+    const player = new MockAiStreamPlayer({
+      historyService,
+      aiService: aiServiceStub as unknown as AIService,
+    });
+
+    const originalDeletePartial = historyService.deletePartial.bind(historyService);
+    spyOn(historyService, "deletePartial").mockImplementation(async (workspaceIdToDelete) => {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      return await originalDeletePartial(workspaceIdToDelete);
+    });
+
+    const workspaceId = "workspace-partial-replacement";
+    const firstUserMessage = createMuxMessage(
+      "user-partial-first",
+      "user",
+      "[force] first-partial-marker keep streaming",
+      {
+        timestamp: Date.now(),
+      }
+    );
+
+    const firstPlayResult = await player.play([firstUserMessage], workspaceId);
+    expect(firstPlayResult.success).toBe(true);
+
+    await waitForCondition(
+      async () => (await historyService.readPartial(workspaceId)) !== null,
+      1500
+    );
+
+    const firstPartial = await historyService.readPartial(workspaceId);
+    expect(firstPartial).not.toBeNull();
+
+    const secondUserMessage = createMuxMessage(
+      "user-partial-second",
+      "user",
+      "[force] second-partial-marker keep streaming",
+      {
+        timestamp: Date.now(),
+      }
+    );
+
+    const secondPlayResult = await player.play([secondUserMessage], workspaceId);
+    expect(secondPlayResult.success).toBe(true);
+
+    await waitForCondition(async () => {
+      const partial = await historyService.readPartial(workspaceId);
+      return partial !== null && partial.id !== firstPartial?.id;
+    }, 2000);
+
+    await new Promise((resolve) => setTimeout(resolve, 250));
+
+    const replacementPartial = await historyService.readPartial(workspaceId);
+    expect(replacementPartial).not.toBeNull();
+    expect(replacementPartial?.id).not.toBe(firstPartial?.id);
+
+    player.stop(workspaceId);
+    await waitForCondition(
+      async () => (await historyService.readPartial(workspaceId)) === null,
+      1500
+    );
+  });
+
   test("commits the full assistant message and clears partial state on stream end", async () => {
     const aiServiceStub = new EventEmitter();
 
