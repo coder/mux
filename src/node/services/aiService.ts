@@ -1307,18 +1307,43 @@ export class AIService extends EventEmitter {
       const onAdvisorChunk: StreamTextOnChunk = ({ chunk }) => {
         switch (chunk.type) {
           case "text-delta": {
-            const chunkText = "delta" in chunk ? chunk.delta : chunk.text;
-            assert(typeof chunkText === "string", "advisor text chunk must contain string text");
-            advisorStepCaptureRef.currentStepText += chunkText;
+            const textDeltaChunk = chunk as {
+              text?: unknown;
+              delta?: unknown;
+              textDelta?: unknown;
+            };
+            // Providers/SDKs can stream advisor text deltas under different field names.
+            const chunkText =
+              typeof textDeltaChunk.textDelta === "string"
+                ? textDeltaChunk.textDelta
+                : typeof textDeltaChunk.delta === "string"
+                  ? textDeltaChunk.delta
+                  : typeof textDeltaChunk.text === "string"
+                    ? textDeltaChunk.text
+                    : "";
+            if (chunkText.length > 0) {
+              advisorStepCaptureRef.currentStepText += chunkText;
+            }
             return;
           }
           case "reasoning-delta": {
-            const chunkText = "delta" in chunk ? chunk.delta : chunk.text;
-            assert(
-              typeof chunkText === "string",
-              "advisor reasoning chunk must contain string text"
-            );
-            advisorStepCaptureRef.currentStepReasoning += chunkText;
+            const reasoningChunk = chunk as {
+              text?: unknown;
+              textDelta?: unknown;
+              delta?: unknown;
+            };
+            // Anthropic signature updates can arrive as reasoning deltas without text.
+            const chunkText =
+              typeof reasoningChunk.text === "string"
+                ? reasoningChunk.text
+                : typeof reasoningChunk.textDelta === "string"
+                  ? reasoningChunk.textDelta
+                  : typeof reasoningChunk.delta === "string"
+                    ? reasoningChunk.delta
+                    : "";
+            if (chunkText.length > 0) {
+              advisorStepCaptureRef.currentStepReasoning += chunkText;
+            }
             return;
           }
           case "tool-call": {
