@@ -155,7 +155,7 @@ export const AskUserQuestionToolResultSchema = z.union([
 
 export const AdvisorToolInputSchema = z
   .object({
-    question: z.string().min(1).nullish(),
+    question: z.string().min(1).max(500).nullish(),
   })
   .strict();
 
