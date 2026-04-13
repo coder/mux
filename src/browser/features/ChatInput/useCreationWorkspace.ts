@@ -563,14 +563,10 @@ export function useCreationWorkspace({
             return latestRoute.pendingDraftId === draftId;
           })();
 
-        onWorkspaceCreated(metadata, { autoNavigate: shouldAutoNavigate });
-        if (shouldAutoNavigate) {
-          // User rationale: after creating a brand-new chat, keep the workspace in a visible
-          // "starting" state until onChat observes the first real user message or error.
-          // Background-created workspaces should skip this optimistic flag so they don't open later
-          // looking like a stale in-flight startup.
-          workspaceStore.markPendingInitialSend(metadata.id, baseModel);
-        }
+        onWorkspaceCreated(metadata, {
+          autoNavigate: shouldAutoNavigate,
+          pendingStreamModel: shouldAutoNavigate ? baseModel : null,
+        });
 
         if (typeof draftId === "string" && draftId.trim().length > 0 && promoteWorkspaceDraft) {
           // UI-only: show the created workspace in-place where the draft was rendered.

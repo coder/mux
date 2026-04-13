@@ -1163,13 +1163,20 @@ function AppInner() {
                       setWorkspaceMetadata((prev) => new Map(prev).set(metadata.id, metadata));
 
                       if (options?.autoNavigate !== false) {
-                        // Only switch to new workspace if user hasn't selected another one
-                        // during the creation process (selectedWorkspace was null when creation started)
                         setSelectedWorkspace((current) => {
                           if (current !== null) {
-                            // User has already selected another workspace - don't override
+                            // If the user picked another workspace before create/send resolved,
+                            // keep their explicit selection and skip the optimistic starting barrier.
                             return current;
                           }
+
+                          // Keep the optimistic pending-start marker inside the same state update
+                          // that wins workspace selection so queued selection changes in the same
+                          // batch cannot leave a background-created workspace looking "starting".
+                          workspaceStore.markPendingInitialSend(
+                            metadata.id,
+                            options?.pendingStreamModel ?? null
+                          );
                           return toWorkspaceSelection(metadata);
                         });
                       }

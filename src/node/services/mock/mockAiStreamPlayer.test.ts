@@ -15,6 +15,33 @@ function readWorkspaceId(payload: unknown): string | undefined {
   return typeof workspaceId === "string" ? workspaceId : undefined;
 }
 
+function extractText(message: MuxMessage | null | undefined): string {
+  if (!message) {
+    return "";
+  }
+
+  return message.parts
+    .filter(
+      (part): part is Extract<MuxMessage["parts"][number], { type: "text" }> => part.type === "text"
+    )
+    .map((part) => part.text)
+    .join("");
+}
+
+async function waitForCondition(
+  check: () => boolean | Promise<boolean>,
+  timeoutMs: number
+): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (await check()) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Timed out waiting for condition after ${timeoutMs}ms`);
+}
+
 describe("MockAiStreamPlayer", () => {
   let historyService: HistoryService;
   let cleanup: () => Promise<void>;
@@ -150,6 +177,88 @@ describe("MockAiStreamPlayer", () => {
     const storedResult = await historyService.getLastMessages(workspaceId, 100);
     const storedMessages = storedResult.success ? storedResult.data : [];
     expect(storedMessages.some((msg) => msg.id === assistantMsg.id)).toBe(false);
+  });
+
+  test("writes partial assistant state while a mock stream is still in progress", async () => {
+    const aiServiceStub = new EventEmitter();
+
+    const player = new MockAiStreamPlayer({
+      historyService,
+      aiService: aiServiceStub as unknown as AIService,
+    });
+
+    const workspaceId = "workspace-partial-progress";
+    const firstDelta = new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error("Timed out waiting for stream-delta"));
+      }, 1000);
+
+      aiServiceStub.on("stream-delta", (payload: unknown) => {
+        if (readWorkspaceId(payload) !== workspaceId) {
+          return;
+        }
+        clearTimeout(timeout);
+        resolve();
+      });
+    });
+
+    const userMessage = createMuxMessage("user-partial", "user", "[force] keep streaming", {
+      timestamp: Date.now(),
+    });
+
+    const playResult = await player.play([userMessage], workspaceId);
+    expect(playResult.success).toBe(true);
+
+    await firstDelta;
+    await waitForCondition(
+      async () => (await historyService.readPartial(workspaceId)) !== null,
+      1000
+    );
+
+    const partial = await historyService.readPartial(workspaceId);
+    expect(partial).not.toBeNull();
+    expect(partial?.metadata?.partial).toBe(true);
+    expect(partial?.id).toMatch(/^msg-mock-/);
+    expect(extractText(partial).length).toBeGreaterThan(0);
+
+    player.stop(workspaceId);
+    await waitForCondition(
+      async () => (await historyService.readPartial(workspaceId)) === null,
+      1000
+    );
+  });
+
+  test("commits the full assistant message and clears partial state on stream end", async () => {
+    const aiServiceStub = new EventEmitter();
+
+    const player = new MockAiStreamPlayer({
+      historyService,
+      aiService: aiServiceStub as unknown as AIService,
+    });
+
+    const workspaceId = "workspace-partial-commit";
+    const userMessage = createMuxMessage(
+      "user-commit",
+      "user",
+      "[mock:list-languages] List 3 programming languages",
+      {
+        timestamp: Date.now(),
+      }
+    );
+
+    const playResult = await player.play([userMessage], workspaceId);
+    expect(playResult.success).toBe(true);
+
+    await waitForCondition(() => !player.isStreaming(workspaceId), 2000);
+
+    const partial = await historyService.readPartial(workspaceId);
+    expect(partial).toBeNull();
+
+    const historyResult = await historyService.getLastMessages(workspaceId, 10);
+    const historyMessages = historyResult.success ? historyResult.data : [];
+    const assistantMessage = historyMessages.find((message) => message.role === "assistant");
+    expect(assistantMessage).toBeDefined();
+    expect(extractText(assistantMessage)).toContain("Here are three programming languages");
   });
 
   test("stop prevents queued stream events from emitting", async () => {

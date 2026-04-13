@@ -18,6 +18,8 @@ export interface ChatInputAPI {
 export interface WorkspaceCreatedOptions {
   /** When false, register metadata without navigating to the new workspace. */
   autoNavigate?: boolean;
+  /** Pending model for the optimistic startup barrier when navigation actually occurs. */
+  pendingStreamModel?: string | null;
 }
 
 // Workspace variant: full functionality for existing workspaces

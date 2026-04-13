@@ -167,13 +167,22 @@ async function sendMessage(page: Page, text: string): Promise<void> {
   await page.keyboard.press("Enter");
 }
 
+// Wait for the completed assistant row, not just the first visible mock prefix.
+// The earlier repro only waited for text to start appearing, which exercised an
+// in-flight mock-stream resume gap rather than a completed-chat switch.
 async function waitForMockResponse(page: Page, marker: string): Promise<void> {
   await page.waitForFunction(
-    (marker: string) => (document.body.textContent ?? "").includes(`Mock response: ${marker}`),
+    (marker: string) => {
+      const messages = document.querySelectorAll("[data-message-block]");
+      const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
+      const lastMessageText = lastMessage?.textContent ?? "";
+      const actionButtonCount =
+        lastMessage?.querySelectorAll("[data-message-meta-actions] button").length ?? 0;
+      return lastMessageText.includes(`Mock response: ${marker}`) && actionButtonCount > 1;
+    },
     marker,
     { timeout: 60_000 }
   );
-  await page.waitForTimeout(500);
 }
 
 async function captureSwitch(args: {
