@@ -1,5 +1,5 @@
 import React from "react";
-import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 
 import * as ActualSelectPrimitiveModule from "@/browser/components/SelectPrimitive/SelectPrimitive";
@@ -14,6 +14,7 @@ interface MockConfig {
   advisorModelString: string | null;
   advisorThinkingLevel: ThinkingLevel | null | undefined;
   advisorMaxUsesPerTurn: number | null | undefined;
+  advisorMaxOutputTokens: number | null | undefined;
 }
 
 interface SaveConfigInput {
@@ -21,6 +22,7 @@ interface SaveConfigInput {
   advisorModelString?: string | null;
   advisorThinkingLevel?: ThinkingLevel | null;
   advisorMaxUsesPerTurn?: number | null;
+  advisorMaxOutputTokens?: number | null;
 }
 
 interface MockAPIClient {
@@ -204,6 +206,7 @@ function createMockAPI(configOverrides: Partial<MockConfig> = {}) {
     advisorModelString: null,
     advisorThinkingLevel: undefined,
     advisorMaxUsesPerTurn: undefined,
+    advisorMaxOutputTokens: undefined,
     ...configOverrides,
   };
 
@@ -213,6 +216,7 @@ function createMockAPI(configOverrides: Partial<MockConfig> = {}) {
       advisorModelString: config.advisorModelString,
       advisorThinkingLevel: config.advisorThinkingLevel,
       advisorMaxUsesPerTurn: config.advisorMaxUsesPerTurn,
+      advisorMaxOutputTokens: config.advisorMaxOutputTokens,
     })
   );
 
@@ -223,6 +227,7 @@ function createMockAPI(configOverrides: Partial<MockConfig> = {}) {
       : null;
     config.advisorThinkingLevel = input.advisorThinkingLevel ?? null;
     config.advisorMaxUsesPerTurn = input.advisorMaxUsesPerTurn ?? null;
+    config.advisorMaxOutputTokens = input.advisorMaxOutputTokens ?? null;
     return Promise.resolve();
   });
 
@@ -297,8 +302,21 @@ describe("ExperimentsSection advisor config", () => {
 
   function chooseSelectOption(view: ReturnType<typeof render>, label: string, optionText: string) {
     const trigger = getSelectTrigger(view, label);
+    const row = trigger.parentElement?.parentElement;
+    if (!(row instanceof window.HTMLElement)) {
+      throw new Error(`Could not find row for ${label}`);
+    }
+
     fireEvent.pointerDown(trigger);
-    fireEvent.click(view.getByText(optionText));
+
+    const option = within(row)
+      .getAllByRole("button", { name: optionText })
+      .find((element) => element !== trigger);
+    if (!(option instanceof window.HTMLElement)) {
+      throw new Error(`Could not find ${optionText} option for ${label}`);
+    }
+
+    fireEvent.click(option);
   }
 
   test("keeps the advisor row toggle-only when the experiment is disabled", async () => {
@@ -340,6 +358,7 @@ describe("ExperimentsSection advisor config", () => {
         advisorModelString: null,
         advisorThinkingLevel: THINKING_LEVEL_OFF,
         advisorMaxUsesPerTurn: null,
+        advisorMaxOutputTokens: null,
       });
     });
 
@@ -357,6 +376,7 @@ describe("ExperimentsSection advisor config", () => {
         advisorModelString: null,
         advisorThinkingLevel: THINKING_LEVEL_OFF,
         advisorMaxUsesPerTurn: 3,
+        advisorMaxOutputTokens: null,
       });
     });
   });
@@ -380,6 +400,7 @@ describe("ExperimentsSection advisor config", () => {
         advisorModelString: null,
         advisorThinkingLevel: THINKING_LEVEL_OFF,
         advisorMaxUsesPerTurn: null,
+        advisorMaxOutputTokens: null,
       });
     });
 
