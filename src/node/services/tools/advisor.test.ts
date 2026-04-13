@@ -36,6 +36,7 @@ function createToolConfig(
       maxUsesPerTurn: 3,
       maxOutputTokens: options?.maxOutputTokens,
       getTranscriptSnapshot: createTranscript,
+      takeToolCallSnapshot: () => undefined,
       createModel,
       takeToolCallSnapshot: () => undefined,
       abortSignal: new AbortController().signal,

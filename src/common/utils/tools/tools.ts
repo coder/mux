@@ -68,6 +68,20 @@ export interface ToolModelUsageEvent {
   timestamp: number;
 }
 
+export interface AdvisorToolCallSnapshot {
+  toolCallId: string;
+  toolName: "advisor";
+  input: Record<string, unknown>;
+  stepText: string;
+  stepReasoning: string;
+}
+
+export interface AdvisorStepCaptureRef {
+  currentStepText: string;
+  currentStepReasoning: string;
+  frozenSnapshotsByToolCallId: Map<string, AdvisorToolCallSnapshot>;
+}
+
 /**
  * Configuration for tools that need runtime context
  */
@@ -145,6 +159,8 @@ export interface ToolConfiguration {
     maxOutputTokens?: number;
     /** Returns the live conversation transcript up to the current tool call */
     getTranscriptSnapshot: () => ModelMessage[];
+    /** Returns the frozen same-step capture snapshot for a specific advisor tool call, if available. */
+    takeToolCallSnapshot: (toolCallId: string) => AdvisorToolCallSnapshot | undefined;
     /** Creates a LanguageModel from a model string (delegates to providerModelFactory) */
     createModel: (modelString: string) => Promise<LanguageModel>;
     /** The abort signal from the parent stream */

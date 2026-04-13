@@ -67,6 +67,9 @@ import { normalizeLiteralRequiredToolPattern } from "@/common/utils/agentTools";
 // Disable noisy AI SDK warning logging.
 globalThis.AI_SDK_LOG_WARNINGS = false;
 
+export type StreamTextOnChunk = NonNullable<Parameters<typeof streamText>[0]["onChunk"]>;
+export type StreamTextOnChunkEvent = Parameters<StreamTextOnChunk>[0];
+
 const EMPTY_STREAM_OUTPUT_ERROR_MESSAGE =
   "The model ended the stream before producing any assistant-visible output. This usually means the upstream stream was dropped rather than completed normally. Mux will retry automatically when possible, and if retries keep failing you should try again or switch models.";
 
@@ -121,6 +124,8 @@ interface StreamRequestConfig {
   maxOutputTokens?: number;
   streamCallSettings?: Omit<ResolvedCallSettingsOverrides, "maxOutputTokens">;
   hasQueuedMessage?: () => boolean;
+  /** Optional hook for callers that need chunk-level visibility during streaming. */
+  onChunk?: StreamTextOnChunk;
   /** Optional hook for callers that need the live prepared step transcript. */
   onStepMessages?: (messages: ModelMessage[]) => void;
   toolPolicy?: ToolPolicy;
@@ -1123,6 +1128,7 @@ export class StreamManager extends EventEmitter {
     hasQueuedMessage?: () => boolean,
     headers?: Record<string, string | undefined>,
     anthropicCacheTtlOverride?: AnthropicCacheTtl,
+    onChunk?: StreamTextOnChunk,
     onStepMessages?: (messages: ModelMessage[]) => void
   ): StreamRequestConfig {
     let finalProviderOptions = providerOptions;
@@ -1221,6 +1227,7 @@ export class StreamManager extends EventEmitter {
       streamCallSettings:
         Object.keys(streamCallSettings).length > 0 ? streamCallSettings : undefined,
       hasQueuedMessage,
+      onChunk,
       onStepMessages,
       toolPolicy,
       toolChoice,
@@ -1305,6 +1312,7 @@ export class StreamManager extends EventEmitter {
         if (rewritten === stepMessages) return undefined;
         return { messages: rewritten };
       },
+      onChunk: request.onChunk,
       tools: request.tools,
       // When set (top-level agents), force the model to call the required tool.
       // stopWhen still runs and ends the stream once a successful result appears.
@@ -1345,6 +1353,7 @@ export class StreamManager extends EventEmitter {
     thinkingLevel?: string,
     headers?: Record<string, string | undefined>,
     anthropicCacheTtlOverride?: AnthropicCacheTtl,
+    onChunk?: StreamTextOnChunk,
     onStepMessages?: (messages: ModelMessage[]) => void
   ): WorkspaceStreamInfo {
     // abortController is created and linked to the caller-provided abortSignal in startStream().
@@ -1365,6 +1374,7 @@ export class StreamManager extends EventEmitter {
       hasQueuedMessage,
       headers,
       anthropicCacheTtlOverride,
+      onChunk,
       onStepMessages
     );
 
@@ -2856,6 +2866,7 @@ export class StreamManager extends EventEmitter {
     anthropicCacheTtlOverride?: AnthropicCacheTtl,
     forceToolChoice?: boolean,
     callSettingsOverrides?: ResolvedCallSettingsOverrides,
+    onChunk?: StreamTextOnChunk,
     onStepMessages?: (messages: ModelMessage[]) => void
   ): Promise<Result<StreamToken, SendMessageError>> {
     const typedWorkspaceId = workspaceId as WorkspaceId;
@@ -2936,6 +2947,7 @@ export class StreamManager extends EventEmitter {
           thinkingLevel,
           headers,
           anthropicCacheTtlOverride,
+          onChunk,
           onStepMessages
         );
 

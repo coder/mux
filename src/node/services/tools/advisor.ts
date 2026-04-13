@@ -42,6 +42,10 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
     typeof runtime.getTranscriptSnapshot === "function",
     "advisor getTranscriptSnapshot must be a function"
   );
+  assert(
+    typeof runtime.takeToolCallSnapshot === "function",
+    "advisor takeToolCallSnapshot must be a function"
+  );
   assert(typeof runtime.createModel === "function", "advisor createModel must be a function");
 
   let usesThisTurn = 0;

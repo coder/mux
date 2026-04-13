@@ -34,7 +34,7 @@ import { CODEX_ENDPOINT } from "@/common/constants/codexOAuth";
 
 import type { LanguageModel, Tool } from "ai";
 import { createMuxMessage } from "@/common/types/message";
-import type { MuxMessage } from "@/common/types/message";
+import type { ModelMessage, MuxMessage } from "@/common/types/message";
 import type { MuxToolScope } from "@/common/types/toolScope";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { uniqueSuffix } from "@/common/utils/hasher";
@@ -1408,6 +1408,108 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     };
   }
 
+  const START_STREAM_ON_CHUNK_INDEX = 22;
+  const START_STREAM_ON_STEP_MESSAGES_INDEX = 23;
+
+  interface AdvisorRuntimeForTests {
+    createModel: (modelString: string) => Promise<LanguageModel>;
+    takeToolCallSnapshot: (toolCallId: string) =>
+      | {
+          toolCallId: string;
+          toolName: "advisor";
+          input: Record<string, unknown>;
+          stepText: string;
+          stepReasoning: string;
+        }
+      | undefined;
+  }
+
+  type AdvisorOnChunk = (event: {
+    chunk: {
+      type: string;
+      delta?: string;
+      toolCallId?: string;
+      toolName?: string;
+      input?: unknown;
+    };
+  }) => PromiseLike<void> | void;
+
+  async function enableAdvisorForHarness(
+    harness: StreamMessageHarness,
+    advisorModelString = KNOWN_MODELS.SONNET.id
+  ): Promise<void> {
+    const baseConfig = harness.config.loadConfigOrDefault();
+    await harness.config.saveConfig({
+      ...baseConfig,
+      advisorModelString,
+      agentAiDefaults: {
+        ...baseConfig.agentAiDefaults,
+        exec: {
+          ...baseConfig.agentAiDefaults?.exec,
+          advisorEnabled: true,
+        },
+      },
+    });
+  }
+
+  async function startAdvisorStream(
+    harness: StreamMessageHarness,
+    workspaceId: string
+  ): Promise<Awaited<ReturnType<AIService["streamMessage"]>>> {
+    const result = await harness.service.streamMessage({
+      messages: [createMuxMessage("latest-user", "user", "continue")],
+      workspaceId,
+      modelString: "openai:gpt-5.2",
+      thinkingLevel: "off",
+      experiments: { advisorTool: true },
+    });
+    expect(result.success).toBe(true);
+    return result;
+  }
+
+  function getToolConfigFromHarness(harness: StreamMessageHarness): Record<string, unknown> {
+    const toolConfig = harness.getToolsForModelSpy.mock.calls[0]?.[1];
+    if (!toolConfig || typeof toolConfig !== "object") {
+      throw new Error("Expected getToolsForModel to receive a tool configuration object");
+    }
+    return toolConfig as unknown as Record<string, unknown>;
+  }
+
+  function getAdvisorRuntimeFromHarness(harness: StreamMessageHarness): AdvisorRuntimeForTests {
+    const toolConfig = getToolConfigFromHarness(harness);
+    const advisorRuntime = (toolConfig as { advisorRuntime?: AdvisorRuntimeForTests })
+      .advisorRuntime;
+    expect(advisorRuntime).toBeDefined();
+    if (!advisorRuntime) {
+      throw new Error("Expected advisorRuntime in tool configuration");
+    }
+    return advisorRuntime;
+  }
+
+  function getAdvisorCallbacksFromHarness(harness: StreamMessageHarness): {
+    onChunk: AdvisorOnChunk;
+    onStepMessages: (messages: ModelMessage[]) => void;
+  } {
+    expect(harness.startStreamCalls).toHaveLength(1);
+    const startStreamCall = harness.startStreamCalls[0];
+    if (!startStreamCall) {
+      throw new Error("Expected streamManager.startStream call arguments");
+    }
+
+    const onChunk = startStreamCall[START_STREAM_ON_CHUNK_INDEX];
+    const onStepMessages = startStreamCall[START_STREAM_ON_STEP_MESSAGES_INDEX];
+    expect(typeof onChunk).toBe("function");
+    expect(typeof onStepMessages).toBe("function");
+    if (typeof onChunk !== "function" || typeof onStepMessages !== "function") {
+      throw new Error("Expected advisor startStream callbacks");
+    }
+
+    return {
+      onChunk: onChunk as AdvisorOnChunk,
+      onStepMessages: onStepMessages as (messages: ModelMessage[]) => void,
+    };
+  }
+
   afterEach(() => {
     mock.restore();
   });
@@ -1821,6 +1923,174 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     expect(openaiOptions.promptCacheKey).toBe(
       `mux-v1-project-under-test-${uniqueSuffix([projectPath])}`
     );
+  });
+
+  it("freezes advisor tool-call snapshots at the tool-call boundary", async () => {
+    using muxHome = new DisposableTempDir("ai-service-advisor-step-snapshot-boundary");
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "workspace-advisor-step-snapshot-boundary";
+    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const harness = createHarness(muxHome.path, metadata);
+    await enableAdvisorForHarness(harness);
+
+    await startAdvisorStream(harness, workspaceId);
+
+    const advisorRuntime = getAdvisorRuntimeFromHarness(harness);
+    const { onChunk, onStepMessages } = getAdvisorCallbacksFromHarness(harness);
+    onStepMessages([{ role: "user", content: "continue" }]);
+
+    const input = { focus: "shared context" };
+    await onChunk({ chunk: { type: "text-delta", delta: "draft answer" } });
+    await onChunk({ chunk: { type: "reasoning-delta", delta: "risk analysis" } });
+    await onChunk({
+      chunk: {
+        type: "tool-call",
+        toolCallId: "advisor-call-1",
+        toolName: "advisor",
+        input,
+      },
+    });
+    input.focus = "mutated after freeze";
+
+    expect(advisorRuntime.takeToolCallSnapshot("advisor-call-1")).toEqual({
+      toolCallId: "advisor-call-1",
+      toolName: "advisor",
+      input: { focus: "shared context" },
+      stepText: "draft answer",
+      stepReasoning: "risk analysis",
+    });
+  });
+
+  it("keeps multiple advisor tool-call snapshots isolated within the same step", async () => {
+    using muxHome = new DisposableTempDir("ai-service-advisor-step-snapshot-isolated");
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "workspace-advisor-step-snapshot-isolated";
+    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const harness = createHarness(muxHome.path, metadata);
+    await enableAdvisorForHarness(harness);
+
+    await startAdvisorStream(harness, workspaceId);
+
+    const advisorRuntime = getAdvisorRuntimeFromHarness(harness);
+    const { onChunk, onStepMessages } = getAdvisorCallbacksFromHarness(harness);
+    onStepMessages([{ role: "user", content: "continue" }]);
+
+    await onChunk({ chunk: { type: "text-delta", delta: "alpha" } });
+    await onChunk({ chunk: { type: "reasoning-delta", delta: "first" } });
+    await onChunk({
+      chunk: {
+        type: "tool-call",
+        toolCallId: "advisor-call-1",
+        toolName: "advisor",
+        input: {},
+      },
+    });
+    await onChunk({ chunk: { type: "text-delta", delta: " beta" } });
+    await onChunk({ chunk: { type: "reasoning-delta", delta: " second" } });
+    await onChunk({
+      chunk: {
+        type: "tool-call",
+        toolCallId: "advisor-call-2",
+        toolName: "advisor",
+        input: {},
+      },
+    });
+
+    expect(advisorRuntime.takeToolCallSnapshot("advisor-call-1")).toMatchObject({
+      stepText: "alpha",
+      stepReasoning: "first",
+    });
+    expect(advisorRuntime.takeToolCallSnapshot("advisor-call-2")).toMatchObject({
+      stepText: "alpha beta",
+      stepReasoning: "first second",
+    });
+  });
+
+  it("resets advisor step capture buffers and frozen snapshots between steps", async () => {
+    using muxHome = new DisposableTempDir("ai-service-advisor-step-snapshot-reset");
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "workspace-advisor-step-snapshot-reset";
+    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const harness = createHarness(muxHome.path, metadata);
+    await enableAdvisorForHarness(harness);
+
+    await startAdvisorStream(harness, workspaceId);
+
+    const advisorRuntime = getAdvisorRuntimeFromHarness(harness);
+    const { onChunk, onStepMessages } = getAdvisorCallbacksFromHarness(harness);
+    onStepMessages([{ role: "user", content: "step 1" }]);
+
+    await onChunk({ chunk: { type: "text-delta", delta: "old text" } });
+    await onChunk({ chunk: { type: "reasoning-delta", delta: "old reasoning" } });
+    await onChunk({
+      chunk: {
+        type: "tool-call",
+        toolCallId: "advisor-call-1",
+        toolName: "advisor",
+        input: {},
+      },
+    });
+
+    onStepMessages([{ role: "user", content: "step 2" }]);
+    expect(advisorRuntime.takeToolCallSnapshot("advisor-call-1")).toBeUndefined();
+
+    await onChunk({ chunk: { type: "text-delta", delta: "new text" } });
+    await onChunk({ chunk: { type: "reasoning-delta", delta: "new reasoning" } });
+    await onChunk({
+      chunk: {
+        type: "tool-call",
+        toolCallId: "advisor-call-2",
+        toolName: "advisor",
+        input: {},
+      },
+    });
+
+    expect(advisorRuntime.takeToolCallSnapshot("advisor-call-2")).toEqual({
+      toolCallId: "advisor-call-2",
+      toolName: "advisor",
+      input: {},
+      stepText: "new text",
+      stepReasoning: "new reasoning",
+    });
+  });
+
+  it("consumes advisor tool-call snapshots on first read", async () => {
+    using muxHome = new DisposableTempDir("ai-service-advisor-step-snapshot-consume");
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "workspace-advisor-step-snapshot-consume";
+    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const harness = createHarness(muxHome.path, metadata);
+    await enableAdvisorForHarness(harness);
+
+    await startAdvisorStream(harness, workspaceId);
+
+    const advisorRuntime = getAdvisorRuntimeFromHarness(harness);
+    const { onChunk, onStepMessages } = getAdvisorCallbacksFromHarness(harness);
+    onStepMessages([{ role: "user", content: "continue" }]);
+
+    await onChunk({ chunk: { type: "text-delta", delta: "visible text" } });
+    await onChunk({
+      chunk: {
+        type: "tool-call",
+        toolCallId: "advisor-call-1",
+        toolName: "advisor",
+        input: {},
+      },
+    });
+
+    expect(advisorRuntime.takeToolCallSnapshot("advisor-call-1")).toMatchObject({
+      toolCallId: "advisor-call-1",
+      stepText: "visible text",
+    });
+    expect(advisorRuntime.takeToolCallSnapshot("advisor-call-1")).toBeUndefined();
   });
 
   it("resolves advisor tool metadata pricing without changing the stored model bucket", async () => {

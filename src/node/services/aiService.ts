@@ -18,10 +18,10 @@ import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import type { ModelMessage, MuxMessage } from "@/common/types/message";
 import { createMuxMessage } from "@/common/types/message";
 import type { Config } from "@/node/config";
-import { StreamManager } from "./streamManager";
+import { StreamManager, type StreamTextOnChunk } from "./streamManager";
 import type { InitStateManager } from "./initStateManager";
 import type { SendMessageError } from "@/common/types/errors";
-import { getToolsForModel } from "@/common/utils/tools/tools";
+import { getToolsForModel, type AdvisorStepCaptureRef } from "@/common/utils/tools/tools";
 import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import {
@@ -1299,6 +1299,55 @@ export class AIService extends EventEmitter {
       // Mutable ref updated by StreamManager.prepareStep so the advisor tool reads the live
       // transcript lazily at execute time instead of capturing a stale snapshot here.
       const advisorTranscriptRef: { messages?: ModelMessage[] } = {};
+      const advisorStepCaptureRef: AdvisorStepCaptureRef = {
+        currentStepText: "",
+        currentStepReasoning: "",
+        frozenSnapshotsByToolCallId: new Map(),
+      };
+      const onAdvisorChunk: StreamTextOnChunk = ({ chunk }) => {
+        switch (chunk.type) {
+          case "text-delta": {
+            const chunkText = "delta" in chunk ? chunk.delta : chunk.text;
+            assert(typeof chunkText === "string", "advisor text chunk must contain string text");
+            advisorStepCaptureRef.currentStepText += chunkText;
+            return;
+          }
+          case "reasoning-delta": {
+            const chunkText = "delta" in chunk ? chunk.delta : chunk.text;
+            assert(
+              typeof chunkText === "string",
+              "advisor reasoning chunk must contain string text"
+            );
+            advisorStepCaptureRef.currentStepReasoning += chunkText;
+            return;
+          }
+          case "tool-call": {
+            if (chunk.toolName !== "advisor") {
+              return;
+            }
+            const toolCallId = chunk.toolCallId.trim();
+            assert(toolCallId.length > 0, "advisor tool-call snapshot must have a non-empty id");
+            assert(
+              isPlainObject(chunk.input),
+              "advisor tool-call snapshot input must be a plain object"
+            );
+            assert(
+              !advisorStepCaptureRef.frozenSnapshotsByToolCallId.has(toolCallId),
+              "advisor tool-call snapshot must be frozen at most once per step"
+            );
+            advisorStepCaptureRef.frozenSnapshotsByToolCallId.set(toolCallId, {
+              toolCallId,
+              toolName: "advisor",
+              input: { ...chunk.input },
+              stepText: advisorStepCaptureRef.currentStepText,
+              stepReasoning: advisorStepCaptureRef.currentStepReasoning,
+            });
+            return;
+          }
+          default:
+            return;
+        }
+      };
       // Tool-side generateText() results do not consistently echo mux.costsIncluded in
       // providerMetadata, so remember the resolved billing mode from model creation and
       // re-stamp it before converting usage into display/session costs.
@@ -1357,6 +1406,25 @@ export class AIService extends EventEmitter {
                       "AIService advisor transcript ref must be populated before advisor execution"
                     );
                     return messages;
+                  },
+                  takeToolCallSnapshot: (toolCallId) => {
+                    const normalizedToolCallId = toolCallId.trim();
+                    assert(normalizedToolCallId.length > 0, "advisor toolCallId must be non-empty");
+                    const snapshot =
+                      advisorStepCaptureRef.frozenSnapshotsByToolCallId.get(normalizedToolCallId);
+                    if (snapshot == null) {
+                      return undefined;
+                    }
+                    const didDelete =
+                      advisorStepCaptureRef.frozenSnapshotsByToolCallId.delete(
+                        normalizedToolCallId
+                      );
+                    assert(didDelete, "advisor tool-call snapshot must be deleted when consumed");
+                    assert(
+                      snapshot.toolName === "advisor",
+                      "advisor snapshot must belong to advisor"
+                    );
+                    return snapshot;
                   },
                   createModel: async (ms: string) => {
                     const advisorModelString = ms.trim();
@@ -1838,9 +1906,13 @@ export class AIService extends EventEmitter {
         effectiveMuxProviderOptions.anthropic?.cacheTtl ?? undefined,
         forceToolChoice,
         resolvedOverrides.standard,
+        advisorToolEligible ? onAdvisorChunk : undefined,
         advisorToolEligible
           ? (stepMessages) => {
               advisorTranscriptRef.messages = stepMessages;
+              advisorStepCaptureRef.currentStepText = "";
+              advisorStepCaptureRef.currentStepReasoning = "";
+              advisorStepCaptureRef.frozenSnapshotsByToolCallId.clear();
             }
           : undefined
       );

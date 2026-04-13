@@ -728,6 +728,7 @@ describe("StreamManager - call settings overrides", () => {
     headers?: Record<string, string | undefined>;
     maxOutputTokens?: number;
     streamCallSettings?: Record<string, unknown>;
+    onChunk?: NonNullable<Parameters<typeof aiSdk.streamText>[0]["onChunk"]>;
   }
 
   type BuildStreamRequestConfig = (...args: unknown[]) => StreamRequestConfigForTests;
@@ -870,6 +871,35 @@ describe("StreamManager - call settings overrides", () => {
         topP: 0.9,
       })
     );
+  });
+
+  test("forwards onChunk to streamText unchanged", () => {
+    const streamManager = new StreamManager(historyService);
+    const { buildRequestConfig, createStreamResult } = getRequestHelpers(streamManager);
+    const streamTextSpy = setupStreamTextSpy();
+    const onChunk = mock(() => undefined);
+
+    const request = buildRequestConfig(
+      model,
+      modelString,
+      messages,
+      "system",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      false,
+      undefined,
+      undefined,
+      undefined,
+      onChunk,
+      undefined
+    );
+
+    createStreamResult(request, new AbortController());
+
+    expect(streamTextSpy).toHaveBeenCalledWith(expect.objectContaining({ onChunk }));
   });
 
   test("does not store streamCallSettings when overrides are empty", () => {
