@@ -695,6 +695,10 @@ export class Config {
           parsed.advisorMaxUsesPerTurn === null
             ? null
             : parseOptionalPositiveInteger(parsed.advisorMaxUsesPerTurn);
+        const advisorMaxOutputTokens =
+          parsed.advisorMaxOutputTokens === null
+            ? null
+            : parseOptionalPositiveInteger(parsed.advisorMaxOutputTokens);
         const hiddenModels = normalizeOptionalModelStringArray(parsed.hiddenModels);
         const legacySubagentAiDefaults = normalizeSubagentAiDefaults(parsed.subagentAiDefaults);
 
@@ -752,6 +756,7 @@ export class Config {
           advisorModelString,
           advisorThinkingLevel,
           advisorMaxUsesPerTurn,
+          advisorMaxOutputTokens,
           hiddenModels,
           agentAiDefaults,
           // Legacy fields are still parsed and returned for downgrade compatibility.
@@ -852,6 +857,15 @@ export class Config {
         const advisorMaxUsesPerTurn = parseOptionalPositiveInteger(config.advisorMaxUsesPerTurn);
         if (advisorMaxUsesPerTurn !== undefined) {
           data.advisorMaxUsesPerTurn = advisorMaxUsesPerTurn;
+        }
+      }
+
+      if (config.advisorMaxOutputTokens === null) {
+        data.advisorMaxOutputTokens = null;
+      } else {
+        const advisorMaxOutputTokens = parseOptionalPositiveInteger(config.advisorMaxOutputTokens);
+        if (advisorMaxOutputTokens !== undefined) {
+          data.advisorMaxOutputTokens = advisorMaxOutputTokens;
         }
       }
 

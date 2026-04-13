@@ -107,6 +107,8 @@ export interface ProjectsConfig {
   advisorThinkingLevel?: ThinkingLevel;
   /** Positive per-turn advisor cap; null/undefined means unlimited. */
   advisorMaxUsesPerTurn?: number | null;
+  /** Positive max-output-tokens cap for advisor responses; null/undefined means unlimited. */
+  advisorMaxOutputTokens?: number | null;
   /**
    * Hidden model IDs (shared via ~/.mux/config.json).
    * Mirrors the browser localStorage cache (HIDDEN_MODELS_KEY).

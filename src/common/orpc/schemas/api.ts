@@ -1744,6 +1744,7 @@ const ResolvedTaskSettingsSchema = TaskSettingsSchema.required({
 const AdvisorModelStringSchema = z.string().nullable();
 const AdvisorThinkingLevelSchema = ThinkingLevelSchema.nullable();
 const AdvisorMaxUsesPerTurnSchema = z.number().int().positive().nullable();
+const AdvisorMaxOutputTokensSchema = z.number().int().positive().nullable();
 
 export const config = {
   getConfig: {
@@ -1758,6 +1759,7 @@ export const config = {
       advisorModelString: AdvisorModelStringSchema,
       advisorThinkingLevel: AdvisorThinkingLevelSchema,
       advisorMaxUsesPerTurn: AdvisorMaxUsesPerTurnSchema.optional(),
+      advisorMaxOutputTokens: AdvisorMaxOutputTokensSchema.optional(),
       hiddenModels: z.array(z.string()).optional(),
       coderWorkspaceArchiveBehavior: z.enum(CODER_ARCHIVE_BEHAVIORS),
       worktreeArchiveBehavior: z.enum(WORKTREE_ARCHIVE_BEHAVIORS),
@@ -1781,6 +1783,7 @@ export const config = {
       advisorModelString: AdvisorModelStringSchema.nullish(),
       advisorThinkingLevel: AdvisorThinkingLevelSchema.nullish(),
       advisorMaxUsesPerTurn: AdvisorMaxUsesPerTurnSchema.nullish(),
+      advisorMaxOutputTokens: AdvisorMaxOutputTokensSchema.nullish(),
       agentAiDefaults: AgentAiDefaultsSchema.optional(),
       // Legacy field (downgrade compatibility)
       subagentAiDefaults: SubagentAiDefaultsSchema.optional(),

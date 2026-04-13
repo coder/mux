@@ -65,6 +65,7 @@ export const AppConfigOnDiskSchema = z
     advisorModelString: z.string().optional(),
     advisorThinkingLevel: ThinkingLevelSchema.optional(),
     advisorMaxUsesPerTurn: z.number().int().positive().nullable().optional(),
+    advisorMaxOutputTokens: z.number().int().positive().nullable().optional(),
     hiddenModels: z.array(z.string()).optional(),
     preferredCompactionModel: z.string().optional(),
     agentAiDefaults: AgentAiDefaultsSchema.optional(),
