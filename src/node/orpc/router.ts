@@ -177,6 +177,16 @@ function normalizeAdvisorMaxUsesPerTurn(value: number | null | undefined): numbe
   return value;
 }
 
+function normalizeAdvisorMaxOutputTokens(value: number | null | undefined): number | null {
+  if (value == null) {
+    return null;
+  }
+
+  assert(Number.isInteger(value), "Advisor max output tokens must be an integer");
+  assert(value > 0, "Advisor max output tokens must be positive");
+  return value;
+}
+
 function normalizeMuxMessageFromDisk(value: unknown): MuxMessage | null {
   if (!value || typeof value !== "object") {
     return null;
@@ -927,6 +937,12 @@ export const router = (authToken?: string) => {
             if (input.advisorMaxUsesPerTurn !== undefined) {
               result.advisorMaxUsesPerTurn = normalizeAdvisorMaxUsesPerTurn(
                 input.advisorMaxUsesPerTurn
+              );
+            }
+
+            if (input.advisorMaxOutputTokens !== undefined) {
+              result.advisorMaxOutputTokens = normalizeAdvisorMaxOutputTokens(
+                input.advisorMaxOutputTokens
               );
             }
 
