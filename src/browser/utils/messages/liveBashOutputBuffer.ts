@@ -143,13 +143,3 @@ export function appendLiveBashOutputChunk(
 
   return next;
 }
-
-export function toLiveBashOutputView(state: LiveBashOutputInternal): LiveBashOutputView {
-  return {
-    stdout: state.stdout,
-    stderr: state.stderr,
-    combined: state.combined,
-    truncated: state.truncated,
-    phase: state.phase,
-  };
-}
