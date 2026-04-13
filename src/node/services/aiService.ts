@@ -1350,16 +1350,17 @@ export class AIService extends EventEmitter {
             if (chunk.toolName !== "advisor") {
               return;
             }
-            const toolCallId = chunk.toolCallId.trim();
-            assert(toolCallId.length > 0, "advisor tool-call snapshot must have a non-empty id");
-            assert(
-              isPlainObject(chunk.input),
-              "advisor tool-call snapshot input must be a plain object"
-            );
-            assert(
-              !advisorStepCaptureRef.frozenSnapshotsByToolCallId.has(toolCallId),
-              "advisor tool-call snapshot must be frozen at most once per step"
-            );
+            const toolCallId = chunk.toolCallId?.trim?.() ?? "";
+            // Skip malformed tool calls defensively — the normal tool-error
+            // path will handle bad input; crashing the stream callback would
+            // be worse than missing the snapshot.
+            if (
+              toolCallId.length === 0 ||
+              !isPlainObject(chunk.input) ||
+              advisorStepCaptureRef.frozenSnapshotsByToolCallId.has(toolCallId)
+            ) {
+              return;
+            }
             advisorStepCaptureRef.frozenSnapshotsByToolCallId.set(toolCallId, {
               toolCallId,
               toolName: "advisor",
