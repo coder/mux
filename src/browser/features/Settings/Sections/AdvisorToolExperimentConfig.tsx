@@ -58,15 +58,8 @@ function normalizeAdvisorModelString(value: string | null | undefined): string |
   return trimmedValue;
 }
 
-function normalizeAdvisorMaxUsesPerTurn(value: number | null | undefined): number | null {
-  if (!Number.isInteger(value) || value == null || value <= 0) {
-    return null;
-  }
-
-  return value;
-}
-
-function normalizeAdvisorMaxOutputTokens(value: number | null | undefined): number | null {
+/** Coerce a nullable number to a positive integer or null. */
+function normalizePositiveIntOrNull(value: number | null | undefined): number | null {
   if (!Number.isInteger(value) || value == null || value <= 0) {
     return null;
   }
@@ -198,10 +191,8 @@ export function AdvisorToolExperimentConfig() {
         const normalizedModelString = normalizeAdvisorModelString(cfg.advisorModelString);
         const normalizedThinkingLevel =
           coerceThinkingLevel(cfg.advisorThinkingLevel) ?? THINKING_LEVEL_OFF;
-        const normalizedMaxUsesPerTurn = normalizeAdvisorMaxUsesPerTurn(cfg.advisorMaxUsesPerTurn);
-        const normalizedMaxOutputTokens = normalizeAdvisorMaxOutputTokens(
-          cfg.advisorMaxOutputTokens
-        );
+        const normalizedMaxUsesPerTurn = normalizePositiveIntOrNull(cfg.advisorMaxUsesPerTurn);
+        const normalizedMaxOutputTokens = normalizePositiveIntOrNull(cfg.advisorMaxOutputTokens);
         // Match the backend starter cap when the setting is unset; only an explicit null is
         // the user's Unlimited opt-in.
         const nextMaxUsesMode: AdvisorMode =
