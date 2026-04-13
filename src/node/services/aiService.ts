@@ -1308,6 +1308,15 @@ export class AIService extends EventEmitter {
         cfg.advisorMaxUsesPerTurn === null
           ? null
           : (cfg.advisorMaxUsesPerTurn ?? ADVISOR_DEFAULT_MAX_USES_PER_TURN);
+      assert(
+        cfg.advisorMaxOutputTokens == null ||
+          (Number.isInteger(cfg.advisorMaxOutputTokens) && cfg.advisorMaxOutputTokens > 0),
+        "AIService advisorMaxOutputTokens must be null, undefined, or a positive integer"
+      );
+      const advisorMaxOutputTokens =
+        cfg.advisorMaxOutputTokens != null && cfg.advisorMaxOutputTokens > 0
+          ? cfg.advisorMaxOutputTokens
+          : undefined;
       // Clamp the persisted advisor thinking level so the tool metadata matches the
       // providerOptions actually sent to generateText().
       const advisorReasoningLevel = enforceThinkingPolicy(
@@ -1340,6 +1349,7 @@ export class AIService extends EventEmitter {
                   advisorModelString,
                   reasoningLevel: advisorReasoningLevel,
                   maxUsesPerTurn: advisorMaxUses,
+                  maxOutputTokens: advisorMaxOutputTokens,
                   getTranscriptSnapshot: () => {
                     const messages = advisorTranscriptRef.messages;
                     assert(

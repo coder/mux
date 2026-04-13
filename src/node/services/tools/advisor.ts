@@ -34,6 +34,11 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
     "advisor maxUsesPerTurn must be null or a positive integer"
   );
   assert(
+    runtime.maxOutputTokens === undefined ||
+      (Number.isInteger(runtime.maxOutputTokens) && runtime.maxOutputTokens > 0),
+    "advisor maxOutputTokens must be undefined or a positive integer"
+  );
+  assert(
     typeof runtime.getTranscriptSnapshot === "function",
     "advisor getTranscriptSnapshot must be a function"
   );
@@ -94,6 +99,7 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
           tools: {},
           providerOptions,
           abortSignal: abortSignal ?? runtime.abortSignal,
+          ...(runtime.maxOutputTokens != null ? { maxOutputTokens: runtime.maxOutputTokens } : {}),
         });
 
         emitAdvisorPhase("finalizing_result");

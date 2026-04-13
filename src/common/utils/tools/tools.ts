@@ -141,6 +141,8 @@ export interface ToolConfiguration {
     reasoningLevel?: string;
     /** Normalized max uses per turn: null = unlimited, positive integer = exact cap */
     maxUsesPerTurn: number | null;
+    /** Normalized max output tokens cap for advisor responses: undefined = unlimited, positive integer = explicit cap */
+    maxOutputTokens?: number;
     /** Returns the live conversation transcript up to the current tool call */
     getTranscriptSnapshot: () => ModelMessage[];
     /** Creates a LanguageModel from a model string (delegates to providerModelFactory) */
