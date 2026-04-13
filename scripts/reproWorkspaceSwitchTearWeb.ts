@@ -5,13 +5,15 @@
  *
  * Why this exists:
  * - The remaining artifact was reported in the web/dev-server path, not Electron.
- * - The visible tear appears to already contain the target workspace transcript.
+ * - The visible tear can show up either as a transcript shift or as the composer briefly
+ *   disappearing while the target workspace opens.
  *
  * What it does:
  * 1. Boots an isolated `make dev-server` instance with a temporary MUX_ROOT.
  * 2. Creates two real workspaces in the browser app and sends live mock-chat turns.
- * 3. Switches between them while capturing transcript screenshots.
- * 4. Exits with code 1 when the target transcript keeps shifting after it is visible.
+ * 3. Replays both seen->seen switches and reload->unseen switches while sampling layout.
+ * 4. Exits with code 1 when the target transcript shifts after it is visible or when the
+ *    composer disappears during a workspace open.
  */
 import fs from "fs/promises";
 import net from "net";
@@ -39,6 +41,18 @@ interface SwitchFrameSample {
   chatInputHeight: number | null;
   imagePath: string;
   png: Buffer;
+}
+
+interface OpenTransitionFrameSample {
+  frame: number;
+  timestamp: number;
+  hasInput: boolean;
+  chatInputHeight: number | null;
+  hasMessageWindow: boolean;
+  messageWindowHeight: number | null;
+  containsTargetMarker: boolean;
+  loadingWorkspace: boolean;
+  loadingTranscript: boolean;
 }
 
 function buildMarker(label: string): string {
@@ -185,6 +199,65 @@ async function waitForMockResponse(page: Page, marker: string): Promise<void> {
   );
 }
 
+async function captureOpenTransition(args: {
+  page: Page;
+  clickWorkspaceId: string;
+  targetMarker: string;
+}): Promise<OpenTransitionFrameSample[]> {
+  const row = args.page.locator(
+    `[data-workspace-id="${args.clickWorkspaceId}"][data-workspace-path]`
+  );
+  await row.waitFor({ state: "visible", timeout: 60_000 });
+  await row.scrollIntoViewIfNeeded();
+  await args.page.evaluate((targetMarker: string) => {
+    (
+      window as Window & {
+        __muxOpenTransitionFramesPromise?: Promise<OpenTransitionFrameSample[]>;
+      }
+    ).__muxOpenTransitionFramesPromise = new Promise((resolve) => {
+      const frames: OpenTransitionFrameSample[] = [];
+      let frame = 0;
+      const step = () => {
+        const inputSection = document.querySelector(
+          '[data-component="ChatInputSection"]'
+        ) as HTMLElement | null;
+        const messageWindow = document.querySelector(
+          '[data-testid="message-window"]'
+        ) as HTMLElement | null;
+        const bodyText = document.body.textContent ?? "";
+        frames.push({
+          frame,
+          timestamp: performance.now(),
+          hasInput: inputSection !== null,
+          chatInputHeight: inputSection?.getBoundingClientRect().height ?? null,
+          hasMessageWindow: messageWindow !== null,
+          messageWindowHeight: messageWindow?.getBoundingClientRect().height ?? null,
+          containsTargetMarker: bodyText.includes(targetMarker),
+          loadingWorkspace: bodyText.includes("Loading workspace..."),
+          loadingTranscript: bodyText.includes("Loading transcript..."),
+        });
+        frame += 1;
+        if (frame < 20) {
+          requestAnimationFrame(step);
+        } else {
+          resolve(frames);
+        }
+      };
+      requestAnimationFrame(step);
+    });
+  }, args.targetMarker);
+  await row.dispatchEvent("click");
+  return await args.page.evaluate(() => {
+    return (
+      (
+        window as Window & {
+          __muxOpenTransitionFramesPromise?: Promise<OpenTransitionFrameSample[]>;
+        }
+      ).__muxOpenTransitionFramesPromise ?? Promise.resolve([])
+    );
+  });
+}
+
 async function captureSwitch(args: {
   page: Page;
   sourceMarker: string;
@@ -236,6 +309,30 @@ async function captureSwitch(args: {
     frames.push({ ...snapshot, imagePath, png });
   }
   return frames;
+}
+
+function detectInputDisappearances(frames: OpenTransitionFrameSample[]) {
+  const disappearances = [] as Array<{
+    frame: number;
+    loadingWorkspace: boolean;
+    loadingTranscript: boolean;
+  }>;
+  let sawInput = false;
+  for (const frame of frames) {
+    if (frame.hasInput) {
+      sawInput = true;
+      continue;
+    }
+    if (!sawInput) {
+      continue;
+    }
+    disappearances.push({
+      frame: frame.frame,
+      loadingWorkspace: frame.loadingWorkspace,
+      loadingTranscript: frame.loadingTranscript,
+    });
+  }
+  return disappearances;
 }
 
 function detectGeometryShift(frames: SwitchFrameSample[]) {
@@ -408,6 +505,36 @@ async function main() {
         { timeout: 60_000 }
       );
 
+      await page.goto(
+        `http://127.0.0.1:${vitePort}/project/${encodeURIComponent(demoProject.projectPath)}`,
+        {
+          waitUntil: "domcontentloaded",
+        }
+      );
+      await waitForProjectPage(page);
+      await ensureProjectExpanded(page);
+
+      const firstOpenAfterReloadFrames = await captureOpenTransition({
+        page,
+        clickWorkspaceId: workspaceA.workspaceId,
+        targetMarker: workspaceSeedA.marker,
+      });
+      await page.waitForFunction(
+        (marker: string) => document.body.textContent?.includes(marker) ?? false,
+        workspaceSeedA.marker,
+        { timeout: 60_000 }
+      );
+      const firstSwitchToUnseenAfterReloadFrames = await captureOpenTransition({
+        page,
+        clickWorkspaceId: workspaceB.workspaceId,
+        targetMarker: workspaceSeedB.marker,
+      });
+      await page.waitForFunction(
+        (marker: string) => document.body.textContent?.includes(marker) ?? false,
+        workspaceSeedB.marker,
+        { timeout: 60_000 }
+      );
+
       const result = {
         muxRoot,
         outputDir,
@@ -421,6 +548,14 @@ async function main() {
           unstableVisualDiffs: await detectVisualInstability(secondDirectionFrames),
           frames: stripPng(secondDirectionFrames),
         },
+        firstOpenAfterReload: {
+          inputDisappearances: detectInputDisappearances(firstOpenAfterReloadFrames),
+          frames: firstOpenAfterReloadFrames,
+        },
+        firstSwitchToUnseenAfterReload: {
+          inputDisappearances: detectInputDisappearances(firstSwitchToUnseenAfterReloadFrames),
+          frames: firstSwitchToUnseenAfterReloadFrames,
+        },
       };
       const diagnosticsPath = path.join(outputDir, "workspace-switch-tear-web-diagnostics.json");
       await fs.writeFile(diagnosticsPath, JSON.stringify(result, null, 2));
@@ -429,7 +564,9 @@ async function main() {
         result.firstDirection.geometryShifts.length > 0 ||
         result.firstDirection.unstableVisualDiffs.length > 0 ||
         result.secondDirection.geometryShifts.length > 0 ||
-        result.secondDirection.unstableVisualDiffs.length > 0;
+        result.secondDirection.unstableVisualDiffs.length > 0 ||
+        result.firstOpenAfterReload.inputDisappearances.length > 0 ||
+        result.firstSwitchToUnseenAfterReload.inputDisappearances.length > 0;
 
       console.log(
         JSON.stringify(
@@ -445,6 +582,12 @@ async function main() {
             secondDirection: {
               geometryShifts: result.secondDirection.geometryShifts,
               unstableVisualDiffs: result.secondDirection.unstableVisualDiffs,
+            },
+            firstOpenAfterReload: {
+              inputDisappearances: result.firstOpenAfterReload.inputDisappearances,
+            },
+            firstSwitchToUnseenAfterReload: {
+              inputDisappearances: result.firstSwitchToUnseenAfterReload.inputDisappearances,
             },
           },
           null,

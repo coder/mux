@@ -145,7 +145,7 @@ describe("WorkspaceShell loading placeholders", () => {
     addReviewMock.mockClear();
   });
 
-  it("renders loading animation during hydration in web mode", () => {
+  it("keeps the chat pane mounted during hydration in web mode", () => {
     workspaceState = {
       isHydratingTranscript: true,
       loading: false,
@@ -153,8 +153,21 @@ describe("WorkspaceShell loading placeholders", () => {
 
     const view = render(<WorkspaceShell {...defaultProps} />);
 
-    expect(view.getByText("Catching up with the agent...")).toBeTruthy();
-    expect(view.getByTestId("lottie-animation")).toBeTruthy();
+    expect(view.queryByText("Catching up with the agent...")).toBeNull();
+    expect(view.getByTestId("chat-pane")).toBeTruthy();
+  });
+
+  it("keeps the chat pane mounted during initial web workspace loading", () => {
+    workspaceState = {
+      loading: true,
+      isHydratingTranscript: true,
+      isStreamStarting: false,
+    };
+
+    const view = render(<WorkspaceShell {...defaultProps} />);
+
+    expect(view.queryByText("Loading workspace...")).toBeNull();
+    expect(view.getByTestId("chat-pane")).toBeTruthy();
   });
 
   it("keeps cached transcript content visible during web hydration", () => {
@@ -198,7 +211,7 @@ describe("WorkspaceShell loading placeholders", () => {
     expect(secondChatPane.textContent).toContain("workspace-2");
   });
 
-  it("renders loading animation during workspace loading", () => {
+  it("renders loading animation during non-hydrating workspace loading", () => {
     workspaceState = {
       loading: true,
       isHydratingTranscript: false,

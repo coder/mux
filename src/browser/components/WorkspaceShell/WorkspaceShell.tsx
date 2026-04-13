@@ -182,7 +182,7 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
   });
   const backgroundBashError = useBackgroundBashError();
 
-  if (!workspaceState || (workspaceState.loading && !workspaceState.isStreamStarting)) {
+  if (!workspaceState) {
     return (
       <WorkspacePlaceholder
         title="Loading workspace..."
@@ -192,25 +192,23 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
     );
   }
 
-  const hasCachedWorkspaceContent =
-    workspaceState.messages.length > 0 || workspaceState.queuedMessage !== null;
+  const shouldKeepChatPaneMountedDuringHydration =
+    !window.api && workspaceState.isHydratingTranscript && !workspaceState.isStreamStarting;
 
   // User rationale: a just-created chat should keep showing its startup barrier instead of
   // flashing generic loading/catch-up placeholders before the first send reaches onChat.
-  // Web-only: during workspace switches, the WebSocket subscription needs time to
-  // catch up. Only fall back to the generic splash when there is no cached transcript
-  // or queued draft to keep visible; otherwise preserve the current workspace content
-  // during the replay handoff so transcript switches do not flash away.
-  // Electron's MessageChannel is near-instant so this gate is unnecessary there.
+  // Web-only: keep the chat pane mounted during transcript hydration so the composer does not
+  // disappear while a workspace is opening. ChatPane already owns the transcript-level loading
+  // placeholder, so swapping the whole shell here causes the vertical tear reproduced by
+  // scripts/reproWorkspaceSwitchTearWeb.ts.
   if (
-    workspaceState.isHydratingTranscript &&
-    !window.api &&
+    workspaceState.loading &&
     !workspaceState.isStreamStarting &&
-    !hasCachedWorkspaceContent
+    !shouldKeepChatPaneMountedDuringHydration
   ) {
     return (
       <WorkspacePlaceholder
-        title="Catching up with the agent..."
+        title="Loading workspace..."
         showAnimation
         className={props.className}
       />
