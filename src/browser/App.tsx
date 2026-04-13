@@ -1163,6 +1163,7 @@ function AppInner() {
                       setWorkspaceMetadata((prev) => new Map(prev).set(metadata.id, metadata));
 
                       if (options?.autoNavigate !== false) {
+                        let createdSelection: WorkspaceSelection | null = null;
                         setSelectedWorkspace((current) => {
                           if (current !== null) {
                             // If the user picked another workspace before create/send resolved,
@@ -1170,15 +1171,20 @@ function AppInner() {
                             return current;
                           }
 
-                          // Keep the optimistic pending-start marker inside the same state update
-                          // that wins workspace selection so queued selection changes in the same
-                          // batch cannot leave a background-created workspace looking "starting".
+                          createdSelection = toWorkspaceSelection(metadata);
+                          return createdSelection;
+                        });
+
+                        // WorkspaceContext resolves functional selection updates synchronously
+                        // against its latest ref, so by the time setSelectedWorkspace() returns we
+                        // know whether this creation actually won and can safely mark the
+                        // optimistic starting barrier outside the updater callback.
+                        if (createdSelection) {
                           workspaceStore.markPendingInitialSend(
                             metadata.id,
                             options?.pendingStreamModel ?? null
                           );
-                          return toWorkspaceSelection(metadata);
-                        });
+                        }
                       }
 
                       // Track telemetry
