@@ -104,7 +104,16 @@ describe("task_await executing visualization", () => {
       await setupWorkspaceView(view, createResult.metadata, workspaceId);
       await waitForWorkspaceChatToRender(view.container);
 
-      const toolName = view.getByText("task_await");
+      const toolName = await waitFor(
+        () => {
+          const node = view?.queryByText("task_await");
+          if (!node) {
+            throw new Error("task_await tool call has not hydrated yet");
+          }
+          return node;
+        },
+        { timeout: 30_000 }
+      );
       toolName.click();
 
       await waitFor(() => {
