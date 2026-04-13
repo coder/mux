@@ -1,6 +1,12 @@
 /** Default per-turn usage cap for the experimental advisor tool. */
 export const ADVISOR_DEFAULT_MAX_USES_PER_TURN = 3;
 
+/** Tail-biased truncation budget for same-step commentary included in advisor handoffs. */
+export const ADVISOR_HANDOFF_MAX_TEXT_CHARS = 4000;
+
+/** Tail-biased truncation budget for same-step reasoning included in advisor handoffs. */
+export const ADVISOR_HANDOFF_MAX_REASONING_CHARS = 4000;
+
 /**
  * Shared guidance for when the advisor tool is appropriate.
  * Reused by the tool description now and future system-prompt wiring later.
@@ -41,4 +47,5 @@ Do not narrate tool use, file inspection, or implementation steps as your own ac
 You may suggest user-facing wording when helpful, but keep the response addressed to the calling assistant.
 
 If the current direction already looks sound, confirm it briefly and explain why.
-Keep the response concise and pointed.`;
+Keep the response concise and pointed.
+The final user message may contain a structured advisor handoff summarizing the immediate consultation request and same-step context.`;
