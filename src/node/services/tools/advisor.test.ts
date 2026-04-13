@@ -23,6 +23,7 @@ function createToolConfig(
   tempDir: string,
   options?: {
     reportModelUsage?: Parameters<typeof createAdvisorTool>[0]["reportModelUsage"];
+    maxOutputTokens?: number;
   }
 ) {
   const createModel = mock(() => Promise.resolve({} as LanguageModel));
@@ -33,6 +34,7 @@ function createToolConfig(
       advisorModelString: ADVISOR_MODEL,
       reasoningLevel: "medium",
       maxUsesPerTurn: 3,
+      maxOutputTokens: options?.maxOutputTokens,
       getTranscriptSnapshot: createTranscript,
       createModel,
       abortSignal: new AbortController().signal,
@@ -104,6 +106,51 @@ describe("advisor tool", () => {
     expect(event?.toolName).toBe("advisor");
     expect(event?.model).toBe(ADVISOR_MODEL);
     expect(typeof event?.timestamp).toBe("number");
+  });
+
+  it("passes maxOutputTokens to generateText when the advisor runtime is capped", async () => {
+    using tempDir = new TestTempDir("advisor-tool-max-output-tokens-limited");
+    const { config } = createToolConfig(tempDir.path, { maxOutputTokens: 1000 });
+    const generateTextSpy = mockGenerateTextSuccess({
+      text: "Keep the recommendation concise.",
+      usage: {
+        inputTokens: 24,
+        outputTokens: 12,
+        totalTokens: 36,
+      },
+    });
+
+    const tool = createAdvisorTool(config);
+    await Promise.resolve(tool.execute!({}, mockToolCallOptions));
+
+    expect(generateTextSpy).toHaveBeenCalledTimes(1);
+    const generateTextArgs = generateTextSpy.mock.calls[0]?.[0];
+    expect(generateTextArgs?.maxOutputTokens).toBe(1000);
+  });
+
+  it("omits maxOutputTokens from generateText when the advisor runtime is unlimited", async () => {
+    using tempDir = new TestTempDir("advisor-tool-max-output-tokens-unlimited");
+    const { config } = createToolConfig(tempDir.path, { maxOutputTokens: undefined });
+    const generateTextSpy = mockGenerateTextSuccess({
+      text: "Return the full analysis.",
+      usage: {
+        inputTokens: 30,
+        outputTokens: 18,
+        totalTokens: 48,
+      },
+    });
+
+    const tool = createAdvisorTool(config);
+    await Promise.resolve(tool.execute!({}, mockToolCallOptions));
+
+    expect(generateTextSpy).toHaveBeenCalledTimes(1);
+    const generateTextArgs = generateTextSpy.mock.calls[0]?.[0] as
+      | Record<string, unknown>
+      | undefined;
+    expect(generateTextArgs?.maxOutputTokens).toBeUndefined();
+    expect(Object.prototype.hasOwnProperty.call(generateTextArgs ?? {}, "maxOutputTokens")).toBe(
+      false
+    );
   });
 
   it("does not report usage when the advisor model call fails", async () => {
