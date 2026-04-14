@@ -244,7 +244,7 @@ describe("StreamingBarrier", () => {
     expect(view.queryByText("Starting workspace...")).toBeNull();
   });
 
-  test("debounces fast startup-to-streaming phase transition", async () => {
+  test("shows new label immediately on cross-phase transition", () => {
     // Start in "starting" phase — first appearance is immediate.
     currentWorkspaceState = createWorkspaceState({
       canInterrupt: false,
@@ -256,20 +256,13 @@ describe("StreamingBarrier", () => {
     const view = render(<StreamingBarrier workspaceId="ws-1" />);
     expect(view.getByText("Loading tools...")).toBeTruthy();
 
-    // Quickly transition to streaming — text held at the first value.
+    // Transition to streaming — cross-phase, so immediate.
     currentWorkspaceState = createWorkspaceState({
       canInterrupt: true,
       currentModel: "anthropic:claude-opus-4-6",
     });
     view.rerender(<StreamingBarrier workspaceId="ws-1" />);
 
-    // Still showing the startup text; streaming text not promoted yet.
-    expect(view.getByText("Loading tools...")).toBeTruthy();
-    expect(view.queryByText("claude-opus-4-6 streaming...")).toBeNull();
-
-    await sleep(STATUS_DISPLAY_DELAY_MS + 50);
-
-    // Settled streaming text appears.
     expect(view.getByText("claude-opus-4-6 streaming...")).toBeTruthy();
     expect(view.queryByText("Loading tools...")).toBeNull();
   });

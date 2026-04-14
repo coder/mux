@@ -69,12 +69,19 @@ function useStabilizedStreamingStatusText(
   const [debouncedText, setDebouncedText] = React.useState<string | null>(rawStatusText);
   const pendingTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevWorkspaceRef = React.useRef(workspaceId);
+  const prevPhaseRef = React.useRef(phase);
   const latestRawRef = React.useRef(rawStatusText);
   latestRawRef.current = rawStatusText;
 
-  // Detect workspace switch at render time so the returned value is correct
+  // Detect context changes at render time so the returned value is correct
   // on the same render frame — no post-paint flash of stale text.
   const isWorkspaceSwitch = prevWorkspaceRef.current !== workspaceId;
+  const isPhaseChange = prevPhaseRef.current !== phase;
+  // Only debounce within-phase text churn; cross-phase transitions should
+  // show the new label immediately.
+  const shouldDebounce =
+    phase != null && DEBOUNCED_PHASES.has(phase) && !isWorkspaceSwitch && !isPhaseChange;
+
   if (isWorkspaceSwitch) {
     prevWorkspaceRef.current = workspaceId;
     if (pendingTimerRef.current) {
@@ -82,6 +89,7 @@ function useStabilizedStreamingStatusText(
       pendingTimerRef.current = null;
     }
   }
+  prevPhaseRef.current = phase;
 
   React.useEffect(() => {
     if (pendingTimerRef.current) {
@@ -95,19 +103,16 @@ function useStabilizedStreamingStatusText(
       return;
     }
 
-    // Non-debounced phases are always immediate.
-    if (!DEBOUNCED_PHASES.has(phase)) {
+    // Immediate sync: workspace switches, phase transitions, non-debounced
+    // phases, or first appearance (prev null).
+    if (!shouldDebounce) {
       setDebouncedText(rawStatusText);
       return;
     }
 
-    // First appearance is immediate so the barrier/stop control mounts right
-    // away and the empty-transcript placeholder doesn't flash through.
-    setDebouncedText((prev) => prev ?? rawStatusText);
-
-    // Each new value restarts the stability timer. Only text that survives
-    // the full delay is promoted to the display, so rapid status label
-    // cycling (breadcrumbs, quick phase transitions) is coalesced.
+    // Within-phase text churn: keep the previous label and start the timer.
+    // Only text that survives the full delay is promoted to the display,
+    // so rapid status label cycling (breadcrumbs) is coalesced.
     pendingTimerRef.current = setTimeout(() => {
       pendingTimerRef.current = null;
       setDebouncedText(latestRawRef.current);
@@ -119,13 +124,11 @@ function useStabilizedStreamingStatusText(
         pendingTimerRef.current = null;
       }
     };
-  }, [workspaceId, phase, rawStatusText]);
+  }, [workspaceId, phase, rawStatusText, shouldDebounce]);
 
-  // On workspace switch, return the new workspace's text synchronously so
-  // the render frame never shows the previous workspace's label.
-  if (isWorkspaceSwitch) {
-    return rawStatusText;
-  }
+  // Bypass debouncedText for transitions that should be reflected immediately.
+  if (phase == null || rawStatusText == null) return null;
+  if (!shouldDebounce) return rawStatusText;
 
   return debouncedText;
 }
