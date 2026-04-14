@@ -74,7 +74,6 @@ import {
   useBackgroundBashActions,
   useBackgroundBashError,
 } from "@/browser/contexts/BackgroundBashContext";
-import { useBackgroundProcesses } from "@/browser/stores/BackgroundBashStore";
 import {
   buildEditingStateFromDisplayed,
   normalizeQueuedMessage,
@@ -189,7 +188,6 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   const aggregator = useWorkspaceAggregator(workspaceId);
   const workspaceUsage = useWorkspaceUsage(workspaceId);
   const reviews = useReviews(workspaceId);
-  const backgroundProcesses = useBackgroundProcesses(workspaceId);
   const { autoBackgroundOnSend } = useBackgroundBashActions();
   const { clearError: clearBackgroundBashError } = useBackgroundBashError();
 
@@ -278,9 +276,6 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     loadingOlderHistory,
   } = workspaceState;
   const shouldShowPinnedTodoList = workspaceState.todos.length > 0;
-  const shouldShowBackgroundProcessesBanner = backgroundProcesses.some(
-    (process) => process.status === "running"
-  );
   const shouldShowReviewsBanner = reviews.reviews.length > 0;
   const shouldRenderLoadOlderMessagesButton = hasOlderHistory && !isChromaticStorybookEnvironment();
   const loadOlderMessagesShortcutLabel = formatKeybind(KEYBINDS.LOAD_OLDER_MESSAGES);
@@ -1031,7 +1026,6 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
               isQueuedAgentTask={isQueuedAgentTask}
               isCompacting={isCompacting}
               shouldShowPinnedTodoList={shouldShowPinnedTodoList}
-              shouldShowBackgroundProcessesBanner={shouldShowBackgroundProcessesBanner}
               shouldShowReviewsBanner={shouldShowReviewsBanner}
               canInterrupt={canInterrupt}
               autoCompactionResult={autoCompactionResult}
@@ -1083,7 +1077,6 @@ interface ChatInputPaneProps {
   isStreamStarting: boolean;
   isHydratingTranscript: boolean;
   shouldShowPinnedTodoList: boolean;
-  shouldShowBackgroundProcessesBanner: boolean;
   shouldShowReviewsBanner: boolean;
   canInterrupt: boolean;
   autoCompactionResult: ReturnType<typeof checkAutoCompaction>;
@@ -1138,11 +1131,9 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
     decorationItems.push(<PinnedTodoList key="pinned-todo-list" workspaceId={props.workspaceId} />);
   }
 
-  if (props.shouldShowBackgroundProcessesBanner) {
-    decorationItems.push(
-      <BackgroundProcessesBanner key="background-processes" workspaceId={props.workspaceId} />
-    );
-  }
+  decorationItems.push(
+    <BackgroundProcessesBanner key="background-processes" workspaceId={props.workspaceId} />
+  );
 
   if (props.shouldShowReviewsBanner) {
     decorationItems.push(<ReviewsBanner key="reviews-banner" workspaceId={props.workspaceId} />);
