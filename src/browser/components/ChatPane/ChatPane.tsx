@@ -648,10 +648,12 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   const shouldMountRetryBarrier = !suppressRetryBarrier;
   const showRetryBarrierUI = showRetryBarrier && !suppressRetryBarrier;
 
-  // Keep the transcript bottom pinned before paint when the tail changes.
-  // Sending a message can append a new user row and mount footer UI (streaming/retry/TODO)
-  // in the same turn; synchronizing here avoids a visible jump before the async
-  // ResizeObserver / streaming auto-scroll path runs.
+  // Keep the transcript bottom pinned before paint when visible transcript chrome changes.
+  // Sending a message can append a new user row and mount footer UI (streaming/retry/TODO),
+  // and opening a cached non-streaming transcript can reveal hydration-gated UI like the
+  // interrupted marker or the older-history button without changing latestMessageId.
+  // Synchronizing here avoids a visible jump before the async ResizeObserver / auto-scroll
+  // path runs.
   useLayoutEffect(() => {
     if (!autoScroll || !contentRef.current) {
       return;
@@ -667,6 +669,8 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     workspaceState?.isStreamStarting,
     workspaceState?.canInterrupt,
     shouldShowQueuedAgentTaskPrompt,
+    shouldRenderLoadOlderMessagesButton,
+    isHydratingTranscript,
   ]);
 
   const handleLoadOlderHistory = useCallback(() => {

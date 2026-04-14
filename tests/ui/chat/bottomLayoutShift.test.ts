@@ -1,6 +1,6 @@
 import "../dom";
 
-import { fireEvent, waitFor } from "@testing-library/react";
+import { act, fireEvent, waitFor } from "@testing-library/react";
 
 // App-level UI tests render the loader shell first, so stub Lottie before importing the
 // harness to keep happy-dom from tripping over lottie-web's canvas bootstrap.
@@ -11,7 +11,7 @@ jest.mock("lottie-react", () => ({
 
 import { preloadTestModules } from "../../ipc/setup";
 import { createAppHarness } from "../harness";
-import { workspaceStore } from "@/browser/stores/WorkspaceStore";
+import { useWorkspaceStoreRaw, workspaceStore } from "@/browser/stores/WorkspaceStore";
 
 function getMessageWindow(container: HTMLElement): HTMLDivElement {
   const element = container.querySelector('[data-testid="message-window"]');
@@ -245,6 +245,99 @@ describe("Chat bottom layout stability", () => {
         { timeout: 10_000 }
       );
     } finally {
+      await app.dispose();
+    }
+  }, 60_000);
+
+  test("keeps the transcript pinned when opening cached history reveals older-history chrome", async () => {
+    const app = await createAppHarness({ branchPrefix: "open-layout-shift" });
+
+    const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
+    const originalWindowRequestAnimationFrame = window.requestAnimationFrame;
+    const originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
+    const originalWindowCancelAnimationFrame = window.cancelAnimationFrame;
+    const queuedAnimationFrames: FrameRequestCallback[] = [];
+
+    try {
+      await app.chat.send("Seed transcript before testing workspace-open pinning");
+      await app.chat.expectStreamComplete();
+      await app.chat.expectTranscriptContains(
+        "Mock response: Seed transcript before testing workspace-open pinning"
+      );
+
+      // Let the previous turn's queued auto-scroll frames settle before we freeze the async path.
+      await new Promise<void>((resolve) => originalRequestAnimationFrame(() => resolve()));
+      await new Promise<void>((resolve) => originalRequestAnimationFrame(() => resolve()));
+
+      const messageWindow = getMessageWindow(app.view.container);
+      let scrollTop = 1000;
+      let scrollHeight = 1000;
+
+      Object.defineProperty(messageWindow, "scrollTop", {
+        configurable: true,
+        get: () => scrollTop,
+        set: (nextValue: number) => {
+          scrollTop = nextValue;
+        },
+      });
+      Object.defineProperty(messageWindow, "scrollHeight", {
+        configurable: true,
+        get: () => scrollHeight,
+      });
+      Object.defineProperty(messageWindow, "clientHeight", {
+        configurable: true,
+        get: () => 400,
+      });
+
+      const requestAnimationFrameMock: typeof requestAnimationFrame = (callback) => {
+        queuedAnimationFrames.push(callback);
+        return queuedAnimationFrames.length;
+      };
+      const cancelAnimationFrameMock: typeof cancelAnimationFrame = () => undefined;
+
+      globalThis.requestAnimationFrame = requestAnimationFrameMock;
+      window.requestAnimationFrame = requestAnimationFrameMock;
+      globalThis.cancelAnimationFrame = cancelAnimationFrameMock;
+      window.cancelAnimationFrame = cancelAnimationFrameMock;
+
+      // eslint-disable-next-line react-hooks/rules-of-hooks -- plain singleton accessor, no React state.
+      const storeRaw = useWorkspaceStoreRaw() as unknown as {
+        historyPagination: Map<string, { hasOlder: boolean; loading: boolean }>;
+        bumpState(workspaceId: string): void;
+      };
+      const paginationState = storeRaw.historyPagination.get(app.workspaceId);
+      expect(paginationState).toBeDefined();
+
+      await waitFor(
+        () => {
+          expect(app.view.container.textContent ?? "").not.toContain("Load older messages");
+        },
+        { timeout: 10_000 }
+      );
+
+      // Workspace-open catch-up can reveal the older-history button above cached rows without
+      // changing the latest message, so bottom pinning must happen synchronously.
+      scrollTop = scrollHeight;
+      scrollHeight = 1120;
+      act(() => {
+        paginationState!.hasOlder = true;
+        paginationState!.loading = false;
+        storeRaw.bumpState(app.workspaceId);
+      });
+
+      await waitFor(
+        () => {
+          expect(app.view.container.textContent ?? "").toContain("Load older messages");
+        },
+        { timeout: 10_000 }
+      );
+
+      expect(scrollTop).toBe(scrollHeight);
+    } finally {
+      globalThis.requestAnimationFrame = originalRequestAnimationFrame;
+      window.requestAnimationFrame = originalWindowRequestAnimationFrame;
+      globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
+      window.cancelAnimationFrame = originalWindowCancelAnimationFrame;
       await app.dispose();
     }
   }, 60_000);
