@@ -254,6 +254,15 @@ export class MockAiStreamPlayer {
     await this.stopActiveStream(workspaceId);
   }
 
+  private async deleteAssistantPlaceholder(workspaceId: string, messageId: string): Promise<void> {
+    const deleteResult = await this.deps.historyService.deleteMessage(workspaceId, messageId);
+    if (!deleteResult.success) {
+      log.error(
+        `Failed to delete aborted mock assistant placeholder (${messageId}): ${deleteResult.error}`
+      );
+    }
+  }
+
   private isCurrentActiveStream(workspaceId: string, active: ActiveStream): boolean {
     return !active.cancelled && this.activeStreams.get(workspaceId) === active;
   }
@@ -365,12 +374,7 @@ export class MockAiStreamPlayer {
     }
 
     if (abortSignal?.aborted) {
-      const deleteResult = await this.deps.historyService.deleteMessage(workspaceId, messageId);
-      if (!deleteResult.success) {
-        log.error(
-          `Failed to delete aborted mock assistant placeholder (${messageId}): ${deleteResult.error}`
-        );
-      }
+      await this.deleteAssistantPlaceholder(workspaceId, messageId);
       return Ok(undefined);
     }
 
@@ -380,6 +384,11 @@ export class MockAiStreamPlayer {
     // stream cannot delete the replacement stream's partial snapshot after it begins writing.
     if (this.isStreaming(workspaceId)) {
       await this.stopActiveStream(workspaceId);
+    }
+
+    if (abortSignal?.aborted) {
+      await this.deleteAssistantPlaceholder(workspaceId, messageId);
+      return Ok(undefined);
     }
 
     this.scheduleEvents(workspaceId, events, messageId, historySequence);

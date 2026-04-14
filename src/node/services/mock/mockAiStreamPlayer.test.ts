@@ -179,6 +179,89 @@ describe("MockAiStreamPlayer", () => {
     expect(storedMessages.some((msg) => msg.id === assistantMsg.id)).toBe(false);
   });
 
+  test("does not schedule a replacement stream when abort fires during prior stop cleanup", async () => {
+    const aiServiceStub = new EventEmitter();
+
+    const player = new MockAiStreamPlayer({
+      historyService,
+      aiService: aiServiceStub as unknown as AIService,
+    });
+
+    const originalDeletePartial = historyService.deletePartial.bind(historyService);
+    let deletePartialCallCount = 0;
+    let releaseStopCleanup!: () => void;
+    const stopCleanupGate = new Promise<void>((resolve) => {
+      releaseStopCleanup = () => resolve();
+    });
+    spyOn(historyService, "deletePartial").mockImplementation(async (workspaceIdToDelete) => {
+      deletePartialCallCount += 1;
+      if (deletePartialCallCount === 1) {
+        await stopCleanupGate;
+      }
+      return await originalDeletePartial(workspaceIdToDelete);
+    });
+
+    const workspaceId = "workspace-abort-during-replacement-stop";
+    const streamStartMessageIds: string[] = [];
+    aiServiceStub.on("stream-start", (payload: unknown) => {
+      if (readWorkspaceId(payload) !== workspaceId) {
+        return;
+      }
+      const messageId = (payload as { messageId?: string }).messageId;
+      if (typeof messageId === "string") {
+        streamStartMessageIds.push(messageId);
+      }
+    });
+
+    const firstUserMessage = createMuxMessage(
+      "user-abort-replacement-first",
+      "user",
+      "[force] first stream before aborted replacement",
+      {
+        timestamp: Date.now(),
+      }
+    );
+
+    try {
+      const firstPlayResult = await player.play([firstUserMessage], workspaceId);
+      expect(firstPlayResult.success).toBe(true);
+      expect(streamStartMessageIds).toHaveLength(1);
+
+      const abortController = new AbortController();
+      const replacementUserMessage = createMuxMessage(
+        "user-abort-replacement-second",
+        "user",
+        "[force] replacement stream should abort before scheduling",
+        {
+          timestamp: Date.now(),
+        }
+      );
+
+      const replacementPlayPromise = player.play([replacementUserMessage], workspaceId, {
+        abortSignal: abortController.signal,
+      });
+
+      await waitForCondition(() => deletePartialCallCount >= 1, 1000);
+      abortController.abort();
+      releaseStopCleanup();
+
+      const replacementPlayResult = await replacementPlayPromise;
+      expect(replacementPlayResult.success).toBe(true);
+
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      expect(player.isStreaming(workspaceId)).toBe(false);
+      expect(streamStartMessageIds).toHaveLength(1);
+
+      const historyResult = await historyService.getLastMessages(workspaceId, 10);
+      const historyMessages = historyResult.success ? historyResult.data : [];
+      expect(historyMessages.filter((message) => message.role === "assistant")).toHaveLength(1);
+    } finally {
+      releaseStopCleanup();
+      await player.stop(workspaceId);
+    }
+  });
+
   test("writes partial assistant state while a mock stream is still in progress", async () => {
     const aiServiceStub = new EventEmitter();
 
