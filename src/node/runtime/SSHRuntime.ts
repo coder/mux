@@ -920,6 +920,50 @@ export class SSHRuntime extends RemoteRuntime {
     );
   }
 
+  /**
+   * Pre-fetch from origin on the remote host to reduce local→remote push size.
+   *
+   * When the remote bare repo has an origin configured, runs `git fetch origin`
+   * on the SSH host. The host's datacenter connection to the upstream is
+   * typically much faster than the local machine's (e.g., hotel wifi vs
+   * datacenter). After this, the subsequent local→remote `git push` only needs
+   * to transfer objects that don't exist on origin — usually just unpushed
+   * local commits.
+   *
+   * Best-effort: failures are swallowed because the push still works without
+   * the pre-populated cache (it just transfers more data).
+   */
+  private async prefetchOriginOnRemote(
+    projectPath: string,
+    baseRepoPathArg: string,
+    initLogger: InitLogger,
+    abortSignal?: AbortSignal
+  ): Promise<void> {
+    // Ensure the remote base repo knows where origin is before fetching.
+    await this.refreshBaseRepoOrigin(projectPath, baseRepoPathArg, initLogger, abortSignal);
+
+    try {
+      initLogger.logStep("Pre-fetching from origin on remote host...");
+      const result = await execBuffered(
+        this,
+        // Fetch all branches from origin into the base repo's object store.
+        // This runs entirely on the remote — only the SSH control channel
+        // traverses the local link, so it's fast even on slow connections.
+        `git -C ${baseRepoPathArg} fetch --prune origin`,
+        { cwd: "/tmp", timeout: 120, abortSignal }
+      );
+      if (result.exitCode === 0) {
+        initLogger.logStep("Pre-fetched from origin on remote host");
+      } else {
+        initLogger.logStep("Pre-fetch from origin skipped (fetch failed)");
+      }
+    } catch {
+      // Best-effort — if origin is unreachable or not configured, the local
+      // push will still transfer all required objects.
+      initLogger.logStep("Pre-fetch from origin skipped (not reachable)");
+    }
+  }
+
   override async ensureReady(options?: EnsureReadyOptions): Promise<EnsureReadyResult> {
     const repoCheck = await this.checkWorkspaceRepo(options);
     if (repoCheck) {
@@ -1599,6 +1643,15 @@ export class SSHRuntime extends RemoteRuntime {
     }
 
     if (useNativeGitPush) {
+      // Pre-populate the remote base repo with objects from origin before the
+      // local→remote push. The SSH host's datacenter connection is typically
+      // orders of magnitude faster than the local machine's (e.g., hotel wifi),
+      // so fetching origin on the remote first turns the subsequent push into a
+      // small incremental transfer instead of a full repo upload.
+      // Only useful for git-push sync — bundle sync uploads a fresh local bundle
+      // that can't reuse remote objects, so the prefetch would be wasted I/O.
+      await this.prefetchOriginOnRemote(projectPath, baseRepoPathArg, initLogger, abortSignal);
+
       await this.syncProjectSnapshotViaGitPush(
         projectPath,
         layout,
