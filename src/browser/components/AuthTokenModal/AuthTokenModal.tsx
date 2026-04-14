@@ -11,6 +11,7 @@ import {
 import { Button } from "@/browser/components/Button/Button";
 import { getBrowserBackendBaseUrl } from "@/browser/utils/backendBaseUrl";
 import { getErrorMessage } from "@/common/utils/errors";
+import { isAbortError } from "@/browser/utils/isAbortError";
 
 interface AuthTokenModalProps {
   isOpen: boolean;
@@ -136,8 +137,7 @@ export function AuthTokenModal(props: AuthTokenModalProps) {
           return;
         }
 
-        const isAbortError = error instanceof DOMException && error.name === "AbortError";
-        if (!isAbortError) {
+        if (!isAbortError(error)) {
           setGithubDeviceFlowEnabled(false);
           setGithubOptionsLoading(false);
         }
@@ -218,8 +218,7 @@ export function AuthTokenModal(props: AuthTokenModalProps) {
         clearStoredAuthToken();
         props.onSessionAuthenticated?.();
       } catch (error) {
-        const isAbortError = error instanceof DOMException && error.name === "AbortError";
-        if (isAbortError) {
+        if (isAbortError(error)) {
           return;
         }
 
