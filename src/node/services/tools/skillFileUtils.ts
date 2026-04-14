@@ -27,7 +27,7 @@ export function isAbsolutePathAny(filePath: string): boolean {
   return /^[A-Za-z]:[\\/]/.test(filePath);
 }
 
-export function resolveSkillFilePath(
+function resolveSkillFilePath(
   skillDir: string,
   filePath: string
 ): {
@@ -63,7 +63,7 @@ export function resolveSkillFilePath(
   };
 }
 
-export async function lstatIfExists(targetPath: string): Promise<Stats | null> {
+async function lstatIfExists(targetPath: string): Promise<Stats | null> {
   try {
     return await fsPromises.lstat(targetPath);
   } catch (error) {
