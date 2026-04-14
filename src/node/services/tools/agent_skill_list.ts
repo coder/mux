@@ -188,6 +188,8 @@ export const createAgentSkillListTool: ToolFactory = (config: ToolConfiguration)
           throw new Error("agent_skill_list requires muxScope");
         }
 
+        const userHome = path.dirname(muxScope.muxHome);
+
         // Always list global skills; also list project skills when in a project workspace.
         const roots: Array<{
           skillsRoot: string;
@@ -199,14 +201,26 @@ export const createAgentSkillListTool: ToolFactory = (config: ToolConfiguration)
             containmentRoot: muxScope.muxHome,
             scope: "global",
           },
+          {
+            skillsRoot: path.join(userHome, ".agents", "skills"),
+            containmentRoot: userHome,
+            scope: "global",
+          },
         ];
         if (muxScope.type === "project") {
-          // Project skills listed first so they appear before global ones
-          roots.unshift({
-            skillsRoot: path.join(muxScope.projectRoot, ".mux", "skills"),
-            containmentRoot: muxScope.projectRoot,
-            scope: "project",
-          });
+          roots.unshift(
+            {
+              // Project skills listed first so they appear before global ones.
+              skillsRoot: path.join(muxScope.projectRoot, ".mux", "skills"),
+              containmentRoot: muxScope.projectRoot,
+              scope: "project",
+            },
+            {
+              skillsRoot: path.join(muxScope.projectRoot, ".agents", "skills"),
+              containmentRoot: muxScope.projectRoot,
+              scope: "project",
+            }
+          );
         }
 
         const skills: AgentSkillDescriptor[] = [];

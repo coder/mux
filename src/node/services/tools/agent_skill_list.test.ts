@@ -369,6 +369,67 @@ describe("agent_skill_list", () => {
     });
   });
 
+  it("lists skills from all four local roots in project workspaces", async () => {
+    using homeDir = new TestTempDir("test-agent-skill-list-local-roots-home");
+    using project = new TestTempDir("test-agent-skill-list-local-roots-project");
+    const muxHome = path.join(homeDir.path, ".mux");
+
+    await fs.mkdir(muxHome, { recursive: true });
+
+    await withMuxRoot(muxHome, async () => {
+      await writeSkill(path.join(project.path, ".mux", "skills"), "project-only", {
+        description: "from project mux root",
+      });
+      await writeSkill(path.join(project.path, ".agents", "skills"), "project-universal", {
+        description: "from project universal root",
+      });
+      await writeGlobalSkill(muxHome, "global-only", {
+        description: "from global mux root",
+      });
+      await writeSkill(path.join(homeDir.path, ".agents", "skills"), "global-universal", {
+        description: "from global universal root",
+      });
+
+      const tool = createAgentSkillListTool(
+        createTestToolConfig(project.path, {
+          muxScope: {
+            type: "project",
+            muxHome,
+            projectRoot: project.path,
+            projectStorageAuthority: "host-local",
+          },
+        })
+      );
+      const result = (await tool.execute!({}, mockToolCallOptions)) as AgentSkillListToolResult;
+
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        return;
+      }
+
+      expect(getSkill(result.skills, "project-only")).toMatchObject({
+        name: "project-only",
+        description: "from project mux root",
+        scope: "project",
+      });
+      expect(getSkill(result.skills, "project-universal")).toMatchObject({
+        name: "project-universal",
+        description: "from project universal root",
+        scope: "project",
+      });
+      expect(getSkill(result.skills, "global-only")).toMatchObject({
+        name: "global-only",
+        description: "from global mux root",
+        scope: "global",
+      });
+      expect(getSkill(result.skills, "global-universal")).toMatchObject({
+        name: "global-universal",
+        description: "from global universal root",
+        scope: "global",
+      });
+    });
+  });
+
   it("returns only the winning descriptor when project skills shadow global skills", async () => {
     using project = new TestTempDir("test-agent-skill-list-shadow-project");
     using muxHome = new TestTempDir("test-agent-skill-list-shadow-home");
@@ -447,6 +508,66 @@ describe("agent_skill_list", () => {
       expect(result.skills.some((skill) => skill.name === "visible-project")).toBe(true);
       expect(result.skills.some((skill) => skill.name === "hidden-project")).toBe(false);
       expect(result.skills.some((skill) => skill.name === "hidden-global")).toBe(false);
+    });
+  });
+
+  it("filters hidden skills from local legacy .agents/skills roots unless includeUnadvertised is true", async () => {
+    using homeDir = new TestTempDir("test-agent-skill-list-local-hidden-legacy-home");
+    using project = new TestTempDir("test-agent-skill-list-local-hidden-legacy-project");
+    const muxHome = path.join(homeDir.path, ".mux");
+    const hiddenProjectSkill = "hidden-project-universal";
+    const hiddenGlobalSkill = "hidden-global-universal";
+
+    await fs.mkdir(muxHome, { recursive: true });
+
+    await withMuxRoot(muxHome, async () => {
+      await writeSkill(path.join(project.path, ".agents", "skills"), hiddenProjectSkill, {
+        advertise: false,
+      });
+      await writeSkill(path.join(homeDir.path, ".agents", "skills"), hiddenGlobalSkill, {
+        advertise: false,
+      });
+
+      const tool = createAgentSkillListTool(
+        createTestToolConfig(project.path, {
+          muxScope: {
+            type: "project",
+            muxHome,
+            projectRoot: project.path,
+            projectStorageAuthority: "host-local",
+          },
+        })
+      );
+
+      const defaultResult = (await tool.execute!(
+        {},
+        mockToolCallOptions
+      )) as AgentSkillListToolResult;
+      expect(defaultResult.success).toBe(true);
+      if (defaultResult.success) {
+        expect(defaultResult.skills.some((skill) => skill.name === hiddenProjectSkill)).toBe(false);
+        expect(defaultResult.skills.some((skill) => skill.name === hiddenGlobalSkill)).toBe(false);
+      }
+
+      const includeAllResult = (await tool.execute!(
+        { includeUnadvertised: true },
+        mockToolCallOptions
+      )) as AgentSkillListToolResult;
+      expect(includeAllResult.success).toBe(true);
+      if (!includeAllResult.success) {
+        return;
+      }
+
+      expect(getSkill(includeAllResult.skills, hiddenProjectSkill)).toMatchObject({
+        name: hiddenProjectSkill,
+        scope: "project",
+        advertise: false,
+      });
+      expect(getSkill(includeAllResult.skills, hiddenGlobalSkill)).toMatchObject({
+        name: hiddenGlobalSkill,
+        scope: "global",
+        advertise: false,
+      });
     });
   });
 
