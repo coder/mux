@@ -1192,7 +1192,7 @@ export const TOOL_DEFINITIONS = {
   },
   agent_skill_list: {
     description:
-      "List available skills. In a project workspace, lists both project skills (.mux/skills/) and global skills (~/.mux/skills/), each tagged with its scope. In the system workspace, lists global skills only.",
+      "List available skills. In a project workspace, lists project skills from .mux/skills/ and legacy/universal .agents/skills/, plus global skills from ~/.mux/skills/ and legacy/universal ~/.agents/skills/, each tagged with its scope. In the system workspace, lists global skills only.",
     schema: z
       .object({
         includeUnadvertised: z
