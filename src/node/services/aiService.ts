@@ -190,6 +190,25 @@ interface ToolExecutionContext {
   abortSignal?: AbortSignal;
 }
 
+/**
+ * Extract the first string-typed value from a chunk object by trying field names
+ * in priority order. Different AI SDK chunk types (`text-delta`, `reasoning-delta`)
+ * surface the delta text under varying field names; this avoids duplicating the
+ * probe logic for each case.
+ */
+function extractChunkDeltaText(
+  chunk: Record<string, unknown>,
+  fieldPriority: readonly string[]
+): string {
+  for (const field of fieldPriority) {
+    const value = chunk[field];
+    if (typeof value === "string") {
+      return value;
+    }
+  }
+  return "";
+}
+
 function isToolExecutionContext(value: unknown): value is ToolExecutionContext {
   if (typeof value !== "object" || value == null || Array.isArray(value)) {
     return false;
@@ -1302,40 +1321,24 @@ export class AIService extends EventEmitter {
       const onAdvisorChunk: StreamTextOnChunk = ({ chunk }) => {
         switch (chunk.type) {
           case "text-delta": {
-            const textDeltaChunk = chunk as {
-              text?: unknown;
-              delta?: unknown;
-              textDelta?: unknown;
-            };
             // Providers/SDKs can stream advisor text deltas under different field names.
-            const chunkText =
-              typeof textDeltaChunk.textDelta === "string"
-                ? textDeltaChunk.textDelta
-                : typeof textDeltaChunk.delta === "string"
-                  ? textDeltaChunk.delta
-                  : typeof textDeltaChunk.text === "string"
-                    ? textDeltaChunk.text
-                    : "";
+            const chunkText = extractChunkDeltaText(chunk as Record<string, unknown>, [
+              "textDelta",
+              "delta",
+              "text",
+            ]);
             if (chunkText.length > 0) {
               advisorStepCaptureRef.currentStepText += chunkText;
             }
             return;
           }
           case "reasoning-delta": {
-            const reasoningChunk = chunk as {
-              text?: unknown;
-              textDelta?: unknown;
-              delta?: unknown;
-            };
             // Anthropic signature updates can arrive as reasoning deltas without text.
-            const chunkText =
-              typeof reasoningChunk.text === "string"
-                ? reasoningChunk.text
-                : typeof reasoningChunk.textDelta === "string"
-                  ? reasoningChunk.textDelta
-                  : typeof reasoningChunk.delta === "string"
-                    ? reasoningChunk.delta
-                    : "";
+            const chunkText = extractChunkDeltaText(chunk as Record<string, unknown>, [
+              "text",
+              "textDelta",
+              "delta",
+            ]);
             if (chunkText.length > 0) {
               advisorStepCaptureRef.currentStepReasoning += chunkText;
             }
