@@ -1634,6 +1634,49 @@ describe("WorkspaceStore", () => {
       expect(clearedStarting).toBe(true);
     });
 
+    it("clears optimistic starting state after a second authoritative idle catch-up", async () => {
+      const workspaceId = "optimistic-pending-start-idle-catch-up";
+      const otherWorkspaceId = "optimistic-pending-start-idle-catch-up-other";
+      const requestedModel = "openai:gpt-4o-mini";
+      let subscriptionCount = 0;
+
+      mockOnChat.mockImplementation(async function* (
+        input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        if (input?.workspaceId !== workspaceId) {
+          await waitForAbortSignal(options?.signal);
+          return;
+        }
+
+        subscriptionCount += 1;
+        yield {
+          type: "caught-up",
+          replay: subscriptionCount === 1 ? "full" : "since",
+        };
+        await waitForAbortSignal(options?.signal);
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+      store.markPendingInitialSend(workspaceId, requestedModel);
+
+      const keptStartingThroughFirstIdleCatchUp = await waitUntil(() => {
+        const state = store.getWorkspaceState(workspaceId);
+        return subscriptionCount >= 1 && state.isStreamStarting === true;
+      });
+      expect(keptStartingThroughFirstIdleCatchUp).toBe(true);
+
+      createAndAddWorkspace(store, otherWorkspaceId);
+      store.setActiveWorkspaceId(workspaceId);
+
+      const clearedStartingAfterSecondIdleCatchUp = await waitUntil(() => {
+        const state = store.getWorkspaceState(workspaceId);
+        return subscriptionCount >= 2 && state.pendingStreamStartTime === null;
+      });
+      expect(clearedStartingAfterSecondIdleCatchUp).toBe(true);
+      expect(store.getWorkspaceState(workspaceId).isStreamStarting).toBe(false);
+    });
+
     it("ignores non-streaming activity snapshots while optimistic start awaits replay", async () => {
       const workspaceId = "optimistic-pending-start-activity-list";
       const requestedModel = "openai:gpt-4o-mini";

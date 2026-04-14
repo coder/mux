@@ -458,6 +458,7 @@ export class StreamingMessageAggregator {
   // Keep the startup barrier alive through that empty catch-up window until we see
   // either the real user message or a terminal stream event.
   private optimisticPendingStreamStart = false;
+  private optimisticPendingStreamStartIdleCaughtUpCount = 0;
 
   // Last completed stream timing stats (preserved after stream ends for display)
   // Unlike activeStreams, this persists until the next stream starts
@@ -1258,6 +1259,7 @@ export class StreamingMessageAggregator {
 
   markOptimisticPendingStreamStart(model: string | null): void {
     this.optimisticPendingStreamStart = true;
+    this.optimisticPendingStreamStartIdleCaughtUpCount = 0;
     this.pendingCompactionRequest = null;
     this.pendingStreamModel = model;
     this.setPendingStreamStartTime(Date.now());
@@ -1266,7 +1268,18 @@ export class StreamingMessageAggregator {
   clearPendingStreamStartIfNotOptimistic(): void {
     if (!this.optimisticPendingStreamStart) {
       this.clearPendingStreamStart();
+      return;
     }
+
+    // Preserve exactly one authoritative idle caught-up cycle for a just-created workspace.
+    // If the server later still reports no active stream and no replayed turn has arrived,
+    // the optimistic startup barrier is stale and should clear so recovery UI can reappear.
+    if (this.optimisticPendingStreamStartIdleCaughtUpCount > 0) {
+      this.clearPendingStreamStart();
+      return;
+    }
+
+    this.optimisticPendingStreamStartIdleCaughtUpCount += 1;
   }
 
   private getLatestHistoricalCompactionRequest(): PendingCompactionRequest | null {
@@ -1326,6 +1339,7 @@ export class StreamingMessageAggregator {
       this.pendingCompactionRequest = null;
       this.pendingStreamModel = null;
       this.optimisticPendingStreamStart = false;
+      this.optimisticPendingStreamStartIdleCaughtUpCount = 0;
     }
   }
 
@@ -1646,6 +1660,8 @@ export class StreamingMessageAggregator {
             pendingCompactionRequest: this.pendingCompactionRequest,
             pendingStreamModel: this.pendingStreamModel,
             optimisticPendingStreamStart: this.optimisticPendingStreamStart,
+            optimisticPendingStreamStartIdleCaughtUpCount:
+              this.optimisticPendingStreamStartIdleCaughtUpCount,
           };
 
     this.clear();
@@ -1658,6 +1674,8 @@ export class StreamingMessageAggregator {
     this.pendingCompactionRequest = pendingStreamSnapshot.pendingCompactionRequest;
     this.pendingStreamModel = pendingStreamSnapshot.pendingStreamModel;
     this.optimisticPendingStreamStart = pendingStreamSnapshot.optimisticPendingStreamStart;
+    this.optimisticPendingStreamStartIdleCaughtUpCount =
+      pendingStreamSnapshot.optimisticPendingStreamStartIdleCaughtUpCount;
   }
 
   clear(): void {
@@ -2518,6 +2536,7 @@ export class StreamingMessageAggregator {
             : null;
 
         this.optimisticPendingStreamStart = false;
+        this.optimisticPendingStreamStartIdleCaughtUpCount = 0;
         this.pendingStreamModel = muxMetadata?.requestedModel ?? null;
 
         if (muxMeta?.displayStatus) {

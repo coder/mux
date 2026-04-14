@@ -3511,8 +3511,9 @@ export class WorkspaceStore {
         aggregator.clearActiveStreams();
       }
       // When server confirms no active stream, a normal pending-start is stale and should end.
-      // The only exception is the optimistic new-chat handoff: caught-up can arrive before the
-      // delayed first send is replayed, so that local barrier must survive until the turn appears.
+      // Preserve exactly one optimistic new-chat catch-up cycle: the first authoritative idle
+      // caught-up can arrive before the delayed first send is replayed, but if a later catch-up
+      // still reports no active stream then the optimistic barrier was stale and must clear.
       if (serverActiveStreamMessageId === undefined) {
         aggregator.clearPendingStreamStartIfNotOptimistic();
       }
