@@ -14,6 +14,7 @@ interface MockWorkspaceState {
 
 let cleanupDom: (() => void) | null = null;
 let workspaceState: MockWorkspaceState | undefined;
+let originalWindowApi: WindowApi | undefined;
 
 const openTerminalMock = mock(() => Promise.resolve());
 const addReviewMock = mock(() => undefined);
@@ -132,6 +133,8 @@ describe("estimateWorkspaceShellFallbackWidthPx", () => {
 describe("WorkspaceShell loading placeholders", () => {
   beforeEach(() => {
     cleanupDom = installDom();
+    originalWindowApi = window.api;
+    delete window.api;
     workspaceState = undefined;
   });
 
@@ -140,6 +143,12 @@ describe("WorkspaceShell loading placeholders", () => {
     mock.restore();
     cleanupDom?.();
     cleanupDom = null;
+    if (originalWindowApi === undefined) {
+      delete window.api;
+    } else {
+      window.api = originalWindowApi;
+    }
+    originalWindowApi = undefined;
     workspaceState = undefined;
     openTerminalMock.mockClear();
     addReviewMock.mockClear();
@@ -158,6 +167,20 @@ describe("WorkspaceShell loading placeholders", () => {
   });
 
   it("keeps the chat pane mounted during initial web workspace loading", () => {
+    workspaceState = {
+      loading: true,
+      isHydratingTranscript: true,
+      isStreamStarting: false,
+    };
+
+    const view = render(<WorkspaceShell {...defaultProps} />);
+
+    expect(view.queryByText("Loading workspace...")).toBeNull();
+    expect(view.getByTestId("chat-pane")).toBeTruthy();
+  });
+
+  it("keeps the chat pane mounted during initial Electron workspace loading", () => {
+    window.api = { platform: "linux", versions: {} };
     workspaceState = {
       loading: true,
       isHydratingTranscript: true,

@@ -193,14 +193,14 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
   }
 
   const shouldKeepChatPaneMountedDuringHydration =
-    !window.api && workspaceState.isHydratingTranscript && !workspaceState.isStreamStarting;
+    workspaceState.isHydratingTranscript && !workspaceState.isStreamStarting;
 
   // User rationale: a just-created chat should keep showing its startup barrier instead of
   // flashing generic loading/catch-up placeholders before the first send reaches onChat.
-  // Web-only: keep the chat pane mounted during transcript hydration so the composer does not
-  // disappear while a workspace is opening. ChatPane already owns the transcript-level loading
-  // placeholder, so swapping the whole shell here causes the vertical tear reproduced by
-  // scripts/reproWorkspaceSwitchTearWeb.ts.
+  // Keep the chat pane mounted during transcript hydration so the composer does not disappear
+  // while a workspace is opening. ChatPane already owns the transcript-level loading placeholder,
+  // so swapping the whole shell here causes the vertical tear reproduced in both browser and
+  // Electron repros when an unseen workspace is opened.
   if (
     workspaceState.loading &&
     !workspaceState.isStreamStarting &&
