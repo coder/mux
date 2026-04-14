@@ -1,4 +1,5 @@
 import * as fsPromises from "fs/promises";
+import os from "node:os";
 import * as path from "path";
 import { tool } from "ai";
 
@@ -188,7 +189,7 @@ export const createAgentSkillListTool: ToolFactory = (config: ToolConfiguration)
           throw new Error("agent_skill_list requires muxScope");
         }
 
-        const userHome = path.dirname(muxScope.muxHome);
+        const userHome = os.homedir();
 
         // Always list global skills; also list project skills when in a project workspace.
         const roots: Array<{
