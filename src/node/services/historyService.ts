@@ -886,6 +886,35 @@ export class HistoryService {
   }
 
   /**
+   * Delete the partial message file only when it still belongs to the expected message.
+   * Returns true when a matching partial was deleted, false when the partial was missing
+   * or belonged to a different message.
+   */
+  async deletePartialIfMessageIdMatches(
+    workspaceId: string,
+    messageId: string
+  ): Promise<Result<boolean>> {
+    return this.fileLocks.withLock(workspaceId, async () => {
+      try {
+        const partialPath = this.getPartialPath(workspaceId);
+        const data = await fs.readFile(partialPath, "utf-8");
+        const partialMessage = normalizeLegacyMuxMetadata(JSON.parse(data) as MuxMessage);
+        if (partialMessage.id !== messageId) {
+          return Ok(false);
+        }
+        await fs.unlink(partialPath);
+        return Ok(true);
+      } catch (error) {
+        if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+          return Ok(false);
+        }
+        const errorMessage = getErrorMessage(error);
+        return Err(`Failed to delete matching partial: ${errorMessage}`);
+      }
+    });
+  }
+
+  /**
    * Commit any existing partial message to chat history and delete partial.json.
    *
    * This is idempotent:

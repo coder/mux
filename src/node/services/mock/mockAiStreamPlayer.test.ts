@@ -361,6 +361,112 @@ describe("MockAiStreamPlayer", () => {
     }
   });
 
+  test("does not let stale delayed-write cleanup delete a replacement stream partial", async () => {
+    const aiServiceStub = new EventEmitter();
+
+    const player = new MockAiStreamPlayer({
+      historyService,
+      aiService: aiServiceStub as unknown as AIService,
+    });
+
+    const originalWritePartial = historyService.writePartial.bind(historyService);
+    let releaseFirstWrite!: () => void;
+    const firstWriteGate = new Promise<void>((resolve) => {
+      releaseFirstWrite = () => resolve();
+    });
+    let writePartialCallCount = 0;
+    spyOn(historyService, "writePartial").mockImplementation(
+      async (workspaceIdToWrite, message) => {
+        writePartialCallCount += 1;
+        if (writePartialCallCount === 1) {
+          await firstWriteGate;
+        }
+        return await originalWritePartial(workspaceIdToWrite, message);
+      }
+    );
+
+    const originalDeletePartialIfMessageIdMatches =
+      historyService.deletePartialIfMessageIdMatches.bind(historyService);
+    let releaseStaleCleanup!: () => void;
+    const staleCleanupGate = new Promise<void>((resolve) => {
+      releaseStaleCleanup = () => resolve();
+    });
+    let deleteMatchingCallCount = 0;
+    spyOn(historyService, "deletePartialIfMessageIdMatches").mockImplementation(
+      async (workspaceIdToDelete, messageIdToDelete) => {
+        deleteMatchingCallCount += 1;
+        if (deleteMatchingCallCount === 1) {
+          await staleCleanupGate;
+        }
+        return await originalDeletePartialIfMessageIdMatches(
+          workspaceIdToDelete,
+          messageIdToDelete
+        );
+      }
+    );
+
+    const workspaceId = "workspace-stale-delayed-write-cleanup";
+    const streamStartMessageIds: string[] = [];
+    aiServiceStub.on("stream-start", (payload: unknown) => {
+      if (readWorkspaceId(payload) !== workspaceId) {
+        return;
+      }
+      const messageId = (payload as { messageId?: string }).messageId;
+      if (typeof messageId === "string") {
+        streamStartMessageIds.push(messageId);
+      }
+    });
+
+    const firstUserMessage = createMuxMessage(
+      "user-stale-delayed-write-first",
+      "user",
+      "[force] first stream before stale delayed-write cleanup",
+      {
+        timestamp: Date.now(),
+      }
+    );
+
+    try {
+      const firstPlayResult = await player.play([firstUserMessage], workspaceId);
+      expect(firstPlayResult.success).toBe(true);
+
+      await waitForCondition(() => writePartialCallCount >= 1, 1000);
+
+      const replacementUserMessage = createMuxMessage(
+        "user-stale-delayed-write-second",
+        "user",
+        "[force] replacement stream should keep its partial after stale cleanup",
+        {
+          timestamp: Date.now(),
+        }
+      );
+
+      const replacementPlayResult = await player.play([replacementUserMessage], workspaceId);
+      expect(replacementPlayResult.success).toBe(true);
+
+      await waitForCondition(() => streamStartMessageIds.length >= 2, 1000);
+      const replacementMessageId = streamStartMessageIds[1];
+
+      releaseFirstWrite();
+      await waitForCondition(() => deleteMatchingCallCount >= 1, 1000);
+
+      await waitForCondition(
+        async () => (await historyService.readPartial(workspaceId))?.id === replacementMessageId,
+        2000
+      );
+
+      releaseStaleCleanup();
+      await waitForCondition(
+        async () => (await historyService.readPartial(workspaceId))?.id === replacementMessageId,
+        1000
+      );
+    } finally {
+      releaseFirstWrite();
+      releaseStaleCleanup();
+      await player.stop(workspaceId);
+    }
+  });
+
   test("waits for partial cleanup before a replacement stream starts writing its own partial", async () => {
     const aiServiceStub = new EventEmitter();
 

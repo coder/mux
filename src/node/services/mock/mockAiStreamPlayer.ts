@@ -603,9 +603,12 @@ export class MockAiStreamPlayer {
     }
 
     // stopActiveStream()/replacement can cancel the stream after the pre-write ownership check
-    // but before the async partial write finishes. Re-check here so a stale write cannot
-    // recreate partial.json after an interrupt or replacement already cleared it.
-    const deletePartialResult = await this.deps.historyService.deletePartial(workspaceId);
+    // but before the async partial write finishes. Re-check here and delete only if the stale
+    // stream still owns partial.json so a replacement stream's newer snapshot survives.
+    const deletePartialResult = await this.deps.historyService.deletePartialIfMessageIdMatches(
+      workspaceId,
+      active.messageId
+    );
     if (!deletePartialResult.success) {
       log.error(
         `Failed to clear stale mock partial after write for ${active.messageId}: ${deletePartialResult.error}`
