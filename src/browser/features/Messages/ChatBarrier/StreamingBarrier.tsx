@@ -55,7 +55,10 @@ function useStabilizedStreamingStatusText(
   phase: StreamingPhase | null,
   rawStatusText: string | null
 ): string | null {
-  const [displayStatusText, setDisplayStatusText] = React.useState<string | null>(null);
+  // Seed with the raw text so the very first render has content when a stream
+  // phase is already active — avoids a single null-frame that would drop the
+  // barrier/stop control before the effect fires.
+  const [displayStatusText, setDisplayStatusText] = React.useState<string | null>(rawStatusText);
   const pendingTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeWorkspaceRef = React.useRef(workspaceId);
   const latestRawRef = React.useRef(rawStatusText);
