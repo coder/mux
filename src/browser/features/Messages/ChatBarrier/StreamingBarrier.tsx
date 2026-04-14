@@ -36,90 +36,56 @@ interface StreamingBarrierProps {
   onCancelCompaction?: () => void;
 }
 
-const STREAMING_STATUS_TRANSITION_DEBOUNCE_MS = 2000;
-const DEBOUNCED_STREAMING_PHASES: ReadonlySet<StreamingPhase> = new Set([
-  "starting",
-  "streaming",
-  "compacting",
-]);
+// Don't show a new status until it has been the current value for this long.
+// Transient phase labels that pass through quickly are suppressed entirely —
+// the user only sees states that actually persist.
+const STATUS_DISPLAY_DELAY_MS = 1000;
 
-function shouldDebounceStreamingStatusTransition(
-  previousPhase: StreamingPhase | null,
-  nextPhase: StreamingPhase | null
-): boolean {
-  return (
-    previousPhase !== null &&
-    nextPhase !== null &&
-    previousPhase !== nextPhase &&
-    DEBOUNCED_STREAMING_PHASES.has(previousPhase) &&
-    DEBOUNCED_STREAMING_PHASES.has(nextPhase)
-  );
-}
-
+/**
+ * Trailing-edge debounce for streaming status text.
+ *
+ * Each new text/phase change restarts a timer. Only values that survive for
+ * STATUS_DISPLAY_DELAY_MS are promoted to the display. Rapid breadcrumb
+ * cycling during startup or quick phase transitions are never shown — the
+ * user sees only the settled state. Disappearance is always immediate so
+ * the barrier hides promptly when the stream ends.
+ */
 function useStabilizedStreamingStatusText(
   phase: StreamingPhase | null,
   rawStatusText: string | null
 ): string | null {
-  const [displayStatusText, setDisplayStatusText] = React.useState(rawStatusText);
-  const previousPhaseRef = React.useRef<StreamingPhase | null>(null);
-  const activeDebounceRef = React.useRef<{
-    phase: StreamingPhase;
-    timer: ReturnType<typeof setTimeout>;
-  } | null>(null);
-  const latestRawStatusTextRef = React.useRef(rawStatusText);
-  latestRawStatusTextRef.current = rawStatusText;
-
-  const shouldStartDebounceTransition = shouldDebounceStreamingStatusTransition(
-    previousPhaseRef.current,
-    phase
-  );
-  const isHoldingDebouncedTransition =
-    shouldStartDebounceTransition || activeDebounceRef.current?.phase === phase;
+  const [displayStatusText, setDisplayStatusText] = React.useState<string | null>(null);
+  const pendingTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latestRawRef = React.useRef(rawStatusText);
+  latestRawRef.current = rawStatusText;
 
   React.useEffect(() => {
     return () => {
-      if (activeDebounceRef.current) {
-        clearTimeout(activeDebounceRef.current.timer);
-      }
+      if (pendingTimerRef.current) clearTimeout(pendingTimerRef.current);
     };
   }, []);
 
   React.useEffect(() => {
-    previousPhaseRef.current = phase;
+    if (pendingTimerRef.current) {
+      clearTimeout(pendingTimerRef.current);
+      pendingTimerRef.current = null;
+    }
 
-    if (shouldStartDebounceTransition && phase !== null) {
-      if (activeDebounceRef.current) {
-        clearTimeout(activeDebounceRef.current.timer);
-      }
-
-      const timer = setTimeout(() => {
-        activeDebounceRef.current = null;
-        // Debounce transient stage-label churn so the transcript tail does not flash
-        // through short-lived startup breadcrumbs when the runtime advances quickly.
-        setDisplayStatusText(latestRawStatusTextRef.current);
-      }, STREAMING_STATUS_TRANSITION_DEBOUNCE_MS);
-      activeDebounceRef.current = { phase, timer };
+    // Disappearance is always immediate so the barrier hides promptly.
+    if (phase == null || rawStatusText == null) {
+      setDisplayStatusText(null);
       return;
     }
 
-    const activeDebounce = activeDebounceRef.current;
-    if (activeDebounce?.phase === phase) {
-      // Keep the previous label pinned across same-phase rerenders (like token/tps updates)
-      // until the cross-phase debounce window completes.
-      return;
-    }
+    // Each new value restarts the stability timer. Only text that survives
+    // the full delay is promoted to the display.
+    pendingTimerRef.current = setTimeout(() => {
+      pendingTimerRef.current = null;
+      setDisplayStatusText(latestRawRef.current);
+    }, STATUS_DISPLAY_DELAY_MS);
+  }, [phase, rawStatusText]);
 
-    if (activeDebounce) {
-      clearTimeout(activeDebounce.timer);
-      activeDebounceRef.current = null;
-    }
-
-    setDisplayStatusText(rawStatusText);
-  }, [phase, rawStatusText, shouldStartDebounceTransition]);
-
-  // Render newly-visible phases synchronously so the barrier and stop control appear
-  // immediately; only hold onto the prior label during quick intra-stream handoffs.
-  return isHoldingDebouncedTransition ? displayStatusText : rawStatusText;
+  return displayStatusText;
 }
 
 /**
