@@ -19,6 +19,7 @@ import { EditCutoffBarrier } from "@/browser/features/Messages/ChatBarrier/EditC
 import { StreamingBarrier } from "@/browser/features/Messages/ChatBarrier/StreamingBarrier";
 import { RetryBarrier } from "@/browser/features/Messages/ChatBarrier/RetryBarrier";
 import { PinnedTodoList } from "../PinnedTodoList/PinnedTodoList";
+import { HydrationStablePane } from "./HydrationStablePane";
 import { VIM_ENABLED_KEY } from "@/common/constants/storage";
 import { ChatInput, type ChatInputAPI } from "@/browser/features/ChatInput/index";
 import type { QueueDispatchMode } from "@/browser/features/ChatInput/types";
@@ -1018,6 +1019,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
               projectName={projectName}
               workspaceName={workspaceName}
               isStreamStarting={isStreamStarting}
+              isHydratingTranscript={isHydratingTranscript}
               runtimeConfig={runtimeConfig}
               isQueuedAgentTask={isQueuedAgentTask}
               isCompacting={isCompacting}
@@ -1069,6 +1071,7 @@ interface ChatInputPaneProps {
   isQueuedAgentTask: boolean;
   isCompacting: boolean;
   isStreamStarting: boolean;
+  isHydratingTranscript: boolean;
   canInterrupt: boolean;
   autoCompactionResult: ReturnType<typeof checkAutoCompaction>;
   shouldShowCompactionWarning: boolean;
@@ -1093,7 +1096,12 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
   const { reviews } = props;
 
   return (
-    <div className="flex flex-col">
+    <HydrationStablePane
+      workspaceId={props.workspaceId}
+      isHydrating={props.isHydratingTranscript}
+      className="flex flex-col"
+      dataComponent="ChatInputPane"
+    >
       {/*
         Keep optional banners/warnings on one shared stack so spacing above the chat input
         stays consistent as background bash, review, queued-send, and TODO UI appear or disappear.
@@ -1156,6 +1164,6 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
         onDeleteReview={reviews.removeReview}
         onUpdateReviewNote={reviews.updateReviewNote}
       />
-    </div>
+    </HydrationStablePane>
   );
 };

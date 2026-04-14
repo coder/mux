@@ -352,7 +352,71 @@ describe("MockAiStreamPlayer", () => {
     );
     await new Promise((resolve) => setTimeout(resolve, 350));
 
+    const replacementPartial = await historyService.readPartial(workspaceId);
+    expect(replacementPartial).not.toBeNull();
     expect(errorEvents).toHaveLength(0);
+
+    await player.stop(workspaceId);
+    await waitForCondition(() => !player.isStreaming(workspaceId), 1000);
+  });
+
+  test("does not let stale stream-end cleanup delete a replacement stream partial", async () => {
+    const aiServiceStub = new EventEmitter();
+
+    const player = new MockAiStreamPlayer({
+      historyService,
+      aiService: aiServiceStub as unknown as AIService,
+    });
+
+    const originalDeletePartial = historyService.deletePartial.bind(historyService);
+    let deletePartialCallCount = 0;
+    spyOn(historyService, "deletePartial").mockImplementation(async (workspaceIdToDelete) => {
+      deletePartialCallCount += 1;
+      if (deletePartialCallCount === 1) {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+      return await originalDeletePartial(workspaceIdToDelete);
+    });
+
+    const workspaceId = "workspace-stale-stream-end";
+    const firstUserMessage = createMuxMessage(
+      "user-stream-end-first",
+      "user",
+      "[mock:list-languages] List 3 programming languages",
+      {
+        timestamp: Date.now(),
+      }
+    );
+
+    const firstPlayResult = await player.play([firstUserMessage], workspaceId);
+    expect(firstPlayResult.success).toBe(true);
+
+    await waitForCondition(() => deletePartialCallCount >= 1, 1000);
+
+    const replacementUserMessage = createMuxMessage(
+      "user-stream-end-second",
+      "user",
+      "[force] replacement stream after completed turn",
+      {
+        timestamp: Date.now(),
+      }
+    );
+
+    const replacementPlayResult = await player.play([replacementUserMessage], workspaceId);
+    expect(replacementPlayResult.success).toBe(true);
+
+    await waitForCondition(
+      async () => (await historyService.readPartial(workspaceId)) !== null,
+      1500
+    );
+    const replacementPartial = await historyService.readPartial(workspaceId);
+    expect(replacementPartial).not.toBeNull();
+
+    await new Promise((resolve) => setTimeout(resolve, 350));
+
+    const partialAfterStaleCleanup = await historyService.readPartial(workspaceId);
+    expect(partialAfterStaleCleanup).not.toBeNull();
+    expect(partialAfterStaleCleanup?.id).toBe(replacementPartial?.id);
 
     await player.stop(workspaceId);
     await waitForCondition(() => !player.isStreaming(workspaceId), 1000);

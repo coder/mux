@@ -254,6 +254,10 @@ export class MockAiStreamPlayer {
     await this.stopActiveStream(workspaceId);
   }
 
+  private isCurrentActiveStream(workspaceId: string, active: ActiveStream): boolean {
+    return !active.cancelled && this.activeStreams.get(workspaceId) === active;
+  }
+
   async play(
     messages: MuxMessage[],
     workspaceId: string,
@@ -721,6 +725,10 @@ export class MockAiStreamPlayer {
       }
       case "stream-error": {
         const payload: MockStreamErrorEvent = event;
+        if (!this.isCurrentActiveStream(workspaceId, active)) {
+          return;
+        }
+
         const deletePartialResult = await this.deps.historyService.deletePartial(workspaceId);
         if (!deletePartialResult.success) {
           log.error(`Failed to clear mock partial for ${messageId}: ${deletePartialResult.error}`);
@@ -728,7 +736,7 @@ export class MockAiStreamPlayer {
 
         // Replacement streams can cancel this handler while deletePartial() is in flight.
         // Ignore the stale error once the original active stream has been cancelled or replaced.
-        if (active.cancelled || this.activeStreams.get(workspaceId) !== active) {
+        if (!this.isCurrentActiveStream(workspaceId, active)) {
           return;
         }
 
@@ -788,12 +796,16 @@ export class MockAiStreamPlayer {
             }
           }
         }
+        if (!this.isCurrentActiveStream(workspaceId, active)) {
+          return;
+        }
+
         const deletePartialResult = await this.deps.historyService.deletePartial(workspaceId);
         if (!deletePartialResult.success) {
           log.error(`Failed to clear mock partial for ${messageId}: ${deletePartialResult.error}`);
         }
 
-        if (active.cancelled) return;
+        if (!this.isCurrentActiveStream(workspaceId, active)) return;
 
         this.deps.aiService.emit("stream-end", payload);
         this.cleanup(workspaceId);
