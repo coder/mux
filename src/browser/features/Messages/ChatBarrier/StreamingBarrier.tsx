@@ -51,6 +51,7 @@ const STATUS_DISPLAY_DELAY_MS = 1000;
  * the barrier hides promptly when the stream ends.
  */
 function useStabilizedStreamingStatusText(
+  workspaceId: string,
   phase: StreamingPhase | null,
   rawStatusText: string | null
 ): string | null {
@@ -64,6 +65,17 @@ function useStabilizedStreamingStatusText(
       if (pendingTimerRef.current) clearTimeout(pendingTimerRef.current);
     };
   }, []);
+
+  // Reset immediately on workspace switch so stale status from a previous
+  // workspace doesn't leak while the trailing-edge timer runs. ChatPane stays
+  // mounted across workspace changes (WorkspaceShell), so hook state persists.
+  React.useEffect(() => {
+    if (pendingTimerRef.current) {
+      clearTimeout(pendingTimerRef.current);
+      pendingTimerRef.current = null;
+    }
+    setDisplayStatusText(null);
+  }, [workspaceId]);
 
   React.useEffect(() => {
     if (pendingTimerRef.current) {
@@ -174,7 +186,7 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({
         return modelName ? `${modelName} streaming...` : "streaming...";
     }
   })();
-  const statusText = useStabilizedStreamingStatusText(phase, rawStatusText);
+  const statusText = useStabilizedStreamingStatusText(workspaceId, phase, rawStatusText);
 
   if (!phase || statusText == null) {
     return null;

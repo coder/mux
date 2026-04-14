@@ -359,6 +359,32 @@ describe("StreamingBarrier", () => {
     });
   });
 
+  test("resets debounced status when workspace changes", async () => {
+    currentWorkspaceState = createWorkspaceState({
+      canInterrupt: true,
+      currentModel: "anthropic:claude-opus-4-6",
+    });
+
+    const view = render(<StreamingBarrier workspaceId="ws-1" />);
+    await sleep(STATUS_DISPLAY_DELAY_MS + 50);
+    expect(view.getByText("claude-opus-4-6 streaming...")).toBeTruthy();
+
+    // Switch workspace — old status should be cleared immediately, even
+    // though the new workspace also has an active stream.
+    currentWorkspaceState = createWorkspaceState({
+      canInterrupt: true,
+      currentModel: "openai:gpt-4o-mini",
+    });
+    view.rerender(<StreamingBarrier workspaceId="ws-2" />);
+
+    // Old workspace text gone; new text not yet promoted.
+    expect(view.queryByText("claude-opus-4-6 streaming...")).toBeNull();
+    expect(view.queryByText("gpt-4o-mini streaming...")).toBeNull();
+
+    await sleep(STATUS_DISPLAY_DELAY_MS + 50);
+    expect(view.getByText("gpt-4o-mini streaming...")).toBeTruthy();
+  });
+
   test("awaiting-input phase keeps cancel hint non-interactive", async () => {
     currentWorkspaceState = createWorkspaceState({
       canInterrupt: true,
