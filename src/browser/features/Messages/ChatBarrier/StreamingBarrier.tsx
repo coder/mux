@@ -36,19 +36,27 @@ interface StreamingBarrierProps {
   onCancelCompaction?: () => void;
 }
 
-// Don't show a new status until it has been the current value for this long.
-// Transient phase labels that pass through quickly are suppressed entirely —
-// the user only sees states that actually persist.
+// Debounce delay for transient startup/streaming/compacting label churn.
+// Only text that survives this long gets promoted to the display.
 const STATUS_DISPLAY_DELAY_MS = 1000;
+
+// Phases whose status text is debounced (transient startup breadcrumbs, etc).
+// "interrupting" and "awaiting-input" are high-signal control-flow states that
+// should reflect immediately so cancel/input handoff feels responsive.
+const DEBOUNCED_PHASES: ReadonlySet<StreamingPhase> = new Set([
+  "starting",
+  "streaming",
+  "compacting",
+]);
 
 /**
  * Trailing-edge debounce for streaming status text.
  *
- * Each new text/phase change restarts a timer. Only values that survive for
- * STATUS_DISPLAY_DELAY_MS are promoted to the display. Rapid breadcrumb
- * cycling during startup or quick phase transitions are never shown — the
- * user sees only the settled state. Disappearance is always immediate so
- * the barrier hides promptly when the stream ends.
+ * - Debounced phases (starting/streaming/compacting): text changes restart a
+ *   timer; only the value that survives STATUS_DISPLAY_DELAY_MS is shown.
+ *   The first appearance and workspace switches show text immediately.
+ * - Non-debounced phases (interrupting/awaiting-input): always immediate.
+ * - Disappearance: always immediate so the barrier hides promptly.
  */
 function useStabilizedStreamingStatusText(
   workspaceId: string,
@@ -58,48 +66,51 @@ function useStabilizedStreamingStatusText(
   // Seed with the raw text so the very first render has content when a stream
   // phase is already active — avoids a single null-frame that would drop the
   // barrier/stop control before the effect fires.
-  const [displayStatusText, setDisplayStatusText] = React.useState<string | null>(rawStatusText);
+  const [debouncedText, setDebouncedText] = React.useState<string | null>(rawStatusText);
   const pendingTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-  const activeWorkspaceRef = React.useRef(workspaceId);
+  const prevWorkspaceRef = React.useRef(workspaceId);
   const latestRawRef = React.useRef(rawStatusText);
   latestRawRef.current = rawStatusText;
 
-  // Single effect handles all transitions — workspace switches, phase/text
-  // changes, and disappearance. Including workspaceId in the deps ensures the
-  // timer restarts even when the new workspace has the same phase+text as the
-  // old one (ChatPane stays mounted across workspace changes via WorkspaceShell).
+  // Detect workspace switch at render time so the returned value is correct
+  // on the same render frame — no post-paint flash of stale text.
+  const isWorkspaceSwitch = prevWorkspaceRef.current !== workspaceId;
+  if (isWorkspaceSwitch) {
+    prevWorkspaceRef.current = workspaceId;
+    if (pendingTimerRef.current) {
+      clearTimeout(pendingTimerRef.current);
+      pendingTimerRef.current = null;
+    }
+  }
+
   React.useEffect(() => {
     if (pendingTimerRef.current) {
       clearTimeout(pendingTimerRef.current);
       pendingTimerRef.current = null;
     }
 
-    const isWorkspaceSwitch = activeWorkspaceRef.current !== workspaceId;
-    activeWorkspaceRef.current = workspaceId;
-
-    // Disappearance is always immediate so the barrier hides promptly.
+    // Disappearance is always immediate.
     if (phase == null || rawStatusText == null) {
-      setDisplayStatusText(null);
+      setDebouncedText(null);
       return;
     }
 
-    // First appearance (barrier not yet visible) is immediate so the barrier
-    // mounts right away. Without this, the empty-transcript placeholder
-    // ("No Messages Yet") would flash through during the debounce window.
-    // On workspace switch, reset to the new workspace's text immediately so
-    // stale labels from the previous workspace don't leak.
-    if (isWorkspaceSwitch) {
-      setDisplayStatusText(rawStatusText);
-    } else {
-      setDisplayStatusText((prev) => prev ?? rawStatusText);
+    // Non-debounced phases are always immediate.
+    if (!DEBOUNCED_PHASES.has(phase)) {
+      setDebouncedText(rawStatusText);
+      return;
     }
+
+    // First appearance is immediate so the barrier/stop control mounts right
+    // away and the empty-transcript placeholder doesn't flash through.
+    setDebouncedText((prev) => prev ?? rawStatusText);
 
     // Each new value restarts the stability timer. Only text that survives
     // the full delay is promoted to the display, so rapid status label
     // cycling (breadcrumbs, quick phase transitions) is coalesced.
     pendingTimerRef.current = setTimeout(() => {
       pendingTimerRef.current = null;
-      setDisplayStatusText(latestRawRef.current);
+      setDebouncedText(latestRawRef.current);
     }, STATUS_DISPLAY_DELAY_MS);
 
     return () => {
@@ -110,7 +121,13 @@ function useStabilizedStreamingStatusText(
     };
   }, [workspaceId, phase, rawStatusText]);
 
-  return displayStatusText;
+  // On workspace switch, return the new workspace's text synchronously so
+  // the render frame never shows the previous workspace's label.
+  if (isWorkspaceSwitch) {
+    return rawStatusText;
+  }
+
+  return debouncedText;
 }
 
 /**
