@@ -11,7 +11,6 @@ import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools"
 import {
   discoverAgentSkills,
   getDefaultAgentSkillsRoots,
-  type AgentSkillsRoots,
 } from "@/node/services/agentSkills/agentSkillsService";
 import { parseSkillMarkdown } from "@/node/services/agentSkills/parseSkillMarkdown";
 import { resolveSkillStorageContext } from "@/node/services/agentSkills/skillStorageContext";
@@ -164,16 +163,12 @@ export const createAgentSkillListTool: ToolFactory = (config: ToolConfiguration)
         });
 
         if (skillCtx.kind === "project-runtime") {
-          // Only enumerate roots that paired mutation tools (write/delete) can target.
-          // Excludes .agents/skills and ~/.agents/skills which are read-only legacy roots.
-          const writableRoots: AgentSkillsRoots = {
-            projectRoot: skillCtx.runtime.normalizePath(".mux/skills", skillCtx.workspacePath),
-            globalRoot: getDefaultAgentSkillsRoots(skillCtx.runtime, skillCtx.workspacePath)
-              .globalRoot,
-          };
+          // Runtime discovery mirrors the shared default roots contract so project-runtime
+          // listings include .mux/skills and .agents/skills plus ~/.mux/skills and ~/.agents/skills.
+          const roots = getDefaultAgentSkillsRoots(skillCtx.runtime, skillCtx.workspacePath);
 
           const discovered = await discoverAgentSkills(skillCtx.runtime, skillCtx.workspacePath, {
-            roots: writableRoots,
+            roots,
             containment: skillCtx.containment,
             dedupeByName: false,
           });
