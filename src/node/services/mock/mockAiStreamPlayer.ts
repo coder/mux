@@ -550,6 +550,7 @@ export class MockAiStreamPlayer {
           return;
         }
         await this.writePartialFromActiveStream(workspaceId, current);
+        await this.clearStalePartialAfterWrite(workspaceId, current);
       });
     }, MOCK_PARTIAL_WRITE_THROTTLE_MS);
   }
@@ -581,6 +582,25 @@ export class MockAiStreamPlayer {
     const writeResult = await this.deps.historyService.writePartial(workspaceId, partialMessage);
     if (!writeResult.success) {
       log.error(`Failed to write mock partial for ${active.messageId}: ${writeResult.error}`);
+    }
+  }
+
+  private async clearStalePartialAfterWrite(
+    workspaceId: string,
+    active: ActiveStream
+  ): Promise<void> {
+    if (this.isCurrentActiveStream(workspaceId, active)) {
+      return;
+    }
+
+    // stopActiveStream()/replacement can cancel the stream after the pre-write ownership check
+    // but before the async partial write finishes. Re-check here so a stale write cannot
+    // recreate partial.json after an interrupt or replacement already cleared it.
+    const deletePartialResult = await this.deps.historyService.deletePartial(workspaceId);
+    if (!deletePartialResult.success) {
+      log.error(
+        `Failed to clear stale mock partial after write for ${active.messageId}: ${deletePartialResult.error}`
+      );
     }
   }
 

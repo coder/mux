@@ -228,6 +228,56 @@ describe("MockAiStreamPlayer", () => {
     );
   });
 
+  test("cleans up a delayed partial write after stop cancels the stream", async () => {
+    const aiServiceStub = new EventEmitter();
+
+    const player = new MockAiStreamPlayer({
+      historyService,
+      aiService: aiServiceStub as unknown as AIService,
+    });
+
+    const originalWritePartial = historyService.writePartial.bind(historyService);
+    let releaseFirstWrite!: () => void;
+    const firstWriteGate = new Promise<void>((resolve) => {
+      releaseFirstWrite = () => resolve();
+    });
+    let writePartialCallCount = 0;
+    spyOn(historyService, "writePartial").mockImplementation(
+      async (workspaceIdToWrite, message) => {
+        writePartialCallCount += 1;
+        if (writePartialCallCount === 1) {
+          await firstWriteGate;
+        }
+        return await originalWritePartial(workspaceIdToWrite, message);
+      }
+    );
+
+    const workspaceId = "workspace-stale-partial-after-stop";
+    const userMessage = createMuxMessage("user-stale-partial", "user", "[force] keep streaming", {
+      timestamp: Date.now(),
+    });
+
+    try {
+      const playResult = await player.play([userMessage], workspaceId);
+      expect(playResult.success).toBe(true);
+
+      await waitForCondition(() => writePartialCallCount >= 1, 1000);
+
+      await player.stop(workspaceId);
+      expect(player.isStreaming(workspaceId)).toBe(false);
+      expect(await historyService.readPartial(workspaceId)).toBeNull();
+
+      releaseFirstWrite();
+      await waitForCondition(
+        async () => (await historyService.readPartial(workspaceId)) === null,
+        1000
+      );
+    } finally {
+      releaseFirstWrite();
+      await player.stop(workspaceId);
+    }
+  });
+
   test("waits for partial cleanup before a replacement stream starts writing its own partial", async () => {
     const aiServiceStub = new EventEmitter();
 
