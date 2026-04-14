@@ -60,23 +60,10 @@ function useStabilizedStreamingStatusText(
   const latestRawRef = React.useRef(rawStatusText);
   latestRawRef.current = rawStatusText;
 
-  React.useEffect(() => {
-    return () => {
-      if (pendingTimerRef.current) clearTimeout(pendingTimerRef.current);
-    };
-  }, []);
-
-  // Reset immediately on workspace switch so stale status from a previous
-  // workspace doesn't leak while the trailing-edge timer runs. ChatPane stays
-  // mounted across workspace changes (WorkspaceShell), so hook state persists.
-  React.useEffect(() => {
-    if (pendingTimerRef.current) {
-      clearTimeout(pendingTimerRef.current);
-      pendingTimerRef.current = null;
-    }
-    setDisplayStatusText(null);
-  }, [workspaceId]);
-
+  // Single effect handles all transitions — workspace switches, phase/text
+  // changes, and disappearance. Including workspaceId in the deps ensures the
+  // timer restarts even when the new workspace has the same phase+text as the
+  // old one (ChatPane stays mounted across workspace changes via WorkspaceShell).
   React.useEffect(() => {
     if (pendingTimerRef.current) {
       clearTimeout(pendingTimerRef.current);
@@ -89,13 +76,24 @@ function useStabilizedStreamingStatusText(
       return;
     }
 
+    // Clear stale text from a previous workspace/phase immediately so the
+    // barrier disappears while the stability timer runs.
+    setDisplayStatusText(null);
+
     // Each new value restarts the stability timer. Only text that survives
     // the full delay is promoted to the display.
     pendingTimerRef.current = setTimeout(() => {
       pendingTimerRef.current = null;
       setDisplayStatusText(latestRawRef.current);
     }, STATUS_DISPLAY_DELAY_MS);
-  }, [phase, rawStatusText]);
+
+    return () => {
+      if (pendingTimerRef.current) {
+        clearTimeout(pendingTimerRef.current);
+        pendingTimerRef.current = null;
+      }
+    };
+  }, [workspaceId, phase, rawStatusText]);
 
   return displayStatusText;
 }
