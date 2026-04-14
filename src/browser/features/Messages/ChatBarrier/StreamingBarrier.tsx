@@ -57,6 +57,7 @@ function useStabilizedStreamingStatusText(
 ): string | null {
   const [displayStatusText, setDisplayStatusText] = React.useState<string | null>(null);
   const pendingTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activeWorkspaceRef = React.useRef(workspaceId);
   const latestRawRef = React.useRef(rawStatusText);
   latestRawRef.current = rawStatusText;
 
@@ -70,18 +71,29 @@ function useStabilizedStreamingStatusText(
       pendingTimerRef.current = null;
     }
 
+    const isWorkspaceSwitch = activeWorkspaceRef.current !== workspaceId;
+    activeWorkspaceRef.current = workspaceId;
+
     // Disappearance is always immediate so the barrier hides promptly.
     if (phase == null || rawStatusText == null) {
       setDisplayStatusText(null);
       return;
     }
 
-    // Clear stale text from a previous workspace/phase immediately so the
-    // barrier disappears while the stability timer runs.
-    setDisplayStatusText(null);
+    // First appearance (barrier not yet visible) is immediate so the barrier
+    // mounts right away. Without this, the empty-transcript placeholder
+    // ("No Messages Yet") would flash through during the debounce window.
+    // On workspace switch, reset to the new workspace's text immediately so
+    // stale labels from the previous workspace don't leak.
+    if (isWorkspaceSwitch) {
+      setDisplayStatusText(rawStatusText);
+    } else {
+      setDisplayStatusText((prev) => prev ?? rawStatusText);
+    }
 
     // Each new value restarts the stability timer. Only text that survives
-    // the full delay is promoted to the display.
+    // the full delay is promoted to the display, so rapid status label
+    // cycling (breadcrumbs, quick phase transitions) is coalesced.
     pendingTimerRef.current = setTimeout(() => {
       pendingTimerRef.current = null;
       setDisplayStatusText(latestRawRef.current);
