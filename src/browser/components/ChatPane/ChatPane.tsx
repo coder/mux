@@ -19,7 +19,7 @@ import { EditCutoffBarrier } from "@/browser/features/Messages/ChatBarrier/EditC
 import { StreamingBarrier } from "@/browser/features/Messages/ChatBarrier/StreamingBarrier";
 import { RetryBarrier } from "@/browser/features/Messages/ChatBarrier/RetryBarrier";
 import { PinnedTodoList } from "../PinnedTodoList/PinnedTodoList";
-import { HydrationStablePane } from "./HydrationStablePane";
+import { ChatInputDecorationStack } from "./ChatInputDecorationStack";
 import { VIM_ENABLED_KEY } from "@/common/constants/storage";
 import { ChatInput, type ChatInputAPI } from "@/browser/features/ChatInput/index";
 import type { QueueDispatchMode } from "@/browser/features/ChatInput/types";
@@ -74,6 +74,7 @@ import {
   useBackgroundBashActions,
   useBackgroundBashError,
 } from "@/browser/contexts/BackgroundBashContext";
+import { useBackgroundProcesses } from "@/browser/stores/BackgroundBashStore";
 import {
   buildEditingStateFromDisplayed,
   normalizeQueuedMessage,
@@ -188,6 +189,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   const aggregator = useWorkspaceAggregator(workspaceId);
   const workspaceUsage = useWorkspaceUsage(workspaceId);
   const reviews = useReviews(workspaceId);
+  const backgroundProcesses = useBackgroundProcesses(workspaceId);
   const { autoBackgroundOnSend } = useBackgroundBashActions();
   const { clearError: clearBackgroundBashError } = useBackgroundBashError();
 
@@ -275,6 +277,11 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     hasOlderHistory,
     loadingOlderHistory,
   } = workspaceState;
+  const shouldShowPinnedTodoList = workspaceState.todos.length > 0;
+  const shouldShowBackgroundProcessesBanner = backgroundProcesses.some(
+    (process) => process.status === "running"
+  );
+  const shouldShowReviewsBanner = reviews.reviews.length > 0;
   const shouldRenderLoadOlderMessagesButton = hasOlderHistory && !isChromaticStorybookEnvironment();
   const loadOlderMessagesShortcutLabel = formatKeybind(KEYBINDS.LOAD_OLDER_MESSAGES);
 
@@ -1023,6 +1030,9 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
               runtimeConfig={runtimeConfig}
               isQueuedAgentTask={isQueuedAgentTask}
               isCompacting={isCompacting}
+              shouldShowPinnedTodoList={shouldShowPinnedTodoList}
+              shouldShowBackgroundProcessesBanner={shouldShowBackgroundProcessesBanner}
+              shouldShowReviewsBanner={shouldShowReviewsBanner}
               canInterrupt={canInterrupt}
               autoCompactionResult={autoCompactionResult}
               shouldShowCompactionWarning={shouldShowCompactionWarning}
@@ -1072,6 +1082,9 @@ interface ChatInputPaneProps {
   isCompacting: boolean;
   isStreamStarting: boolean;
   isHydratingTranscript: boolean;
+  shouldShowPinnedTodoList: boolean;
+  shouldShowBackgroundProcessesBanner: boolean;
+  shouldShowReviewsBanner: boolean;
   canInterrupt: boolean;
   autoCompactionResult: ReturnType<typeof checkAutoCompaction>;
   shouldShowCompactionWarning: boolean;
@@ -1094,47 +1107,78 @@ interface ChatInputPaneProps {
 
 const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
   const { reviews } = props;
+  const decorationItems: React.ReactNode[] = [];
+
+  // Keep optional banners/warnings on one shared lane so the seam right above the textarea is
+  // owned by a single component boundary. That lets hydration reserve only the volatile
+  // workspace-specific decoration stack instead of the whole composer pane.
+  if (props.shouldShowCompactionWarning) {
+    decorationItems.push(
+      <CompactionWarning
+        key="compaction-warning"
+        usagePercentage={props.autoCompactionResult.usagePercentage}
+        thresholdPercentage={props.autoCompactionResult.thresholdPercentage}
+        isStreaming={props.canInterrupt}
+      />
+    );
+  }
+
+  if (props.contextSwitchWarning) {
+    decorationItems.push(
+      <ContextSwitchWarningBanner
+        key="context-switch-warning"
+        warning={props.contextSwitchWarning}
+        onCompact={props.onContextSwitchCompact}
+        onDismiss={props.onContextSwitchDismiss}
+      />
+    );
+  }
+
+  if (props.shouldShowPinnedTodoList) {
+    decorationItems.push(<PinnedTodoList key="pinned-todo-list" workspaceId={props.workspaceId} />);
+  }
+
+  if (props.shouldShowBackgroundProcessesBanner) {
+    decorationItems.push(
+      <BackgroundProcessesBanner key="background-processes" workspaceId={props.workspaceId} />
+    );
+  }
+
+  if (props.shouldShowReviewsBanner) {
+    decorationItems.push(<ReviewsBanner key="reviews-banner" workspaceId={props.workspaceId} />);
+  }
+
+  if (props.queuedMessage) {
+    decorationItems.push(
+      <QueuedMessage
+        key="queued-message"
+        message={props.queuedMessage}
+        onEdit={() => void props.onEditQueuedMessage()}
+        onSendImmediately={props.onSendQueuedImmediately}
+      />
+    );
+  }
+
+  if (props.isQueuedAgentTask) {
+    decorationItems.push(
+      <div
+        key="queued-agent-task"
+        className="border-border-medium bg-background-secondary text-muted rounded-md border px-3 py-2 text-xs"
+      >
+        This agent task is queued and will start automatically when a parallel slot is available.
+      </div>
+    );
+  }
 
   return (
-    <HydrationStablePane
-      workspaceId={props.workspaceId}
-      isHydrating={props.isHydratingTranscript}
-      className="flex flex-col"
-      dataComponent="ChatInputPane"
-    >
-      {/*
-        Keep optional banners/warnings on one shared stack so spacing above the chat input
-        stays consistent as background bash, review, queued-send, and TODO UI appear or disappear.
-      */}
-      {props.shouldShowCompactionWarning && (
-        <CompactionWarning
-          usagePercentage={props.autoCompactionResult.usagePercentage}
-          thresholdPercentage={props.autoCompactionResult.thresholdPercentage}
-          isStreaming={props.canInterrupt}
-        />
-      )}
-      {props.contextSwitchWarning && (
-        <ContextSwitchWarningBanner
-          warning={props.contextSwitchWarning}
-          onCompact={props.onContextSwitchCompact}
-          onDismiss={props.onContextSwitchDismiss}
-        />
-      )}
-      <PinnedTodoList workspaceId={props.workspaceId} />
-      <BackgroundProcessesBanner workspaceId={props.workspaceId} />
-      <ReviewsBanner workspaceId={props.workspaceId} />
-      {props.queuedMessage && (
-        <QueuedMessage
-          message={props.queuedMessage}
-          onEdit={() => void props.onEditQueuedMessage()}
-          onSendImmediately={props.onSendQueuedImmediately}
-        />
-      )}
-      {props.isQueuedAgentTask && (
-        <div className="border-border-medium bg-background-secondary text-muted rounded-md border px-3 py-2 text-xs">
-          This agent task is queued and will start automatically when a parallel slot is available.
-        </div>
-      )}
+    <>
+      <ChatInputDecorationStack
+        workspaceId={props.workspaceId}
+        isHydrating={props.isHydratingTranscript}
+        className="flex flex-col"
+        dataComponent="ChatInputDecorationStack"
+        items={decorationItems}
+      />
       <ChatInput
         key={props.workspaceId}
         variant="workspace"
@@ -1164,6 +1208,6 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
         onDeleteReview={reviews.removeReview}
         onUpdateReviewNote={reviews.updateReviewNote}
       />
-    </HydrationStablePane>
+    </>
   );
 };
