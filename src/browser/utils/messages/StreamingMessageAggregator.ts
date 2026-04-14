@@ -423,6 +423,17 @@ export class StreamingMessageAggregator {
     truncatedLines?: number; // Lines dropped from middle when output exceeded limit
   } | null = null;
 
+  // When reconnect replay re-emits init-start for the same running init, keep the existing row and
+  // treat replayed init-output as a continuation. Snapshot the already-visible prefix so replay can
+  // skip only those previously rendered lines without collapsing legitimate duplicates later on.
+  private replayInitVisiblePrefix: Array<{ line: string; isError: boolean }> | null = null;
+  private replayInitVisiblePrefixIndex = 0;
+
+  // Replay reconnects apply the same init events twice: once immediately before caught-up and
+  // once again from the buffered catch-up pass. Track replay event identity so the second pass can
+  // skip the exact same event object without collapsing legitimate duplicate log lines.
+  private appliedReplayInitEvents = new WeakSet<object>();
+
   // Throttle init-output cache invalidation to avoid re-render per line during fast streaming
   private initOutputThrottleTimer: ReturnType<typeof setTimeout> | null = null;
   private static readonly INIT_OUTPUT_THROTTLE_MS = 100;
@@ -2399,9 +2410,69 @@ export class StreamingMessageAggregator {
     this.invalidateCache();
   }
 
+  private clearReplayInitVisiblePrefix(): void {
+    this.replayInitVisiblePrefix = null;
+    this.replayInitVisiblePrefixIndex = 0;
+  }
+
+  private shouldSkipVisibleReplayInitOutput(line: string, isError: boolean): boolean {
+    const prefix = this.replayInitVisiblePrefix;
+    if (!prefix) {
+      return false;
+    }
+
+    const nextVisibleLine = prefix[this.replayInitVisiblePrefixIndex];
+    if (nextVisibleLine?.line !== line || nextVisibleLine?.isError !== isError) {
+      this.clearReplayInitVisiblePrefix();
+      return false;
+    }
+
+    this.replayInitVisiblePrefixIndex += 1;
+    if (this.replayInitVisiblePrefixIndex >= prefix.length) {
+      this.clearReplayInitVisiblePrefix();
+    }
+
+    return true;
+  }
+
+  private shouldSkipReplayInitEvent(data: WorkspaceChatMessage): boolean {
+    if (
+      (data as { replay?: boolean }).replay !== true ||
+      (!isInitStart(data) && !isInitOutput(data) && !isInitEnd(data))
+    ) {
+      return false;
+    }
+
+    if (this.appliedReplayInitEvents.has(data as object)) {
+      return true;
+    }
+
+    this.appliedReplayInitEvents.add(data as object);
+    return false;
+  }
+
   handleMessage(data: WorkspaceChatMessage): void {
     // Handle init hook events (ephemeral, not persisted to history)
+    if (this.shouldSkipReplayInitEvent(data)) {
+      return;
+    }
+
     if (isInitStart(data)) {
+      const isReplay = (data as { replay?: boolean }).replay === true;
+      if (
+        isReplay &&
+        this.initState?.status === "running" &&
+        this.initState.hookPath === data.hookPath &&
+        this.initState.startTime === data.timestamp
+      ) {
+        // Reconnect replay re-emits init-start before replayed lines. Treat the same running init
+        // as a no-op so switching back never clears the visible SSH/setup output mid-replay.
+        this.replayInitVisiblePrefix = [...this.initState.lines];
+        this.replayInitVisiblePrefixIndex = 0;
+        return;
+      }
+
+      this.clearReplayInitVisiblePrefix();
       this.initState = {
         status: "running",
         hookPath: data.hookPath,
@@ -2425,6 +2496,10 @@ export class StreamingMessageAggregator {
       }
       const line = data.line.trimEnd();
       const isError = data.isError === true;
+      const isReplay = (data as { replay?: boolean }).replay === true;
+      if (isReplay && this.shouldSkipVisibleReplayInitOutput(line, isError)) {
+        return;
+      }
 
       // Truncation: keep only the most recent MAX_LINES (matches backend)
       if (this.initState.lines.length >= INIT_HOOK_MAX_LINES) {
@@ -2442,6 +2517,7 @@ export class StreamingMessageAggregator {
     }
 
     if (isInitEnd(data)) {
+      this.clearReplayInitVisiblePrefix();
       if (!this.initState) {
         console.error("Received init-end without init-start", { data });
         return;

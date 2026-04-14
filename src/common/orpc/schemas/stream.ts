@@ -482,6 +482,10 @@ export const InitStartEventSchema = z.object({
   type: z.literal("init-start"),
   hookPath: z.string(),
   timestamp: z.number(),
+  replay: z
+    .boolean()
+    .optional()
+    .meta({ description: "True when this event is emitted during init replay" }),
 });
 
 export const InitOutputEventSchema = z.object({
@@ -489,12 +493,26 @@ export const InitOutputEventSchema = z.object({
   line: z.string(),
   timestamp: z.number(),
   isError: z.boolean().optional(),
+  lineNumber: z
+    .number()
+    .int()
+    .nonnegative()
+    .optional()
+    .meta({ description: "Monotonic line index within the current init run" }),
+  replay: z
+    .boolean()
+    .optional()
+    .meta({ description: "True when this event is emitted during init replay" }),
 });
 
 export const InitEndEventSchema = z.object({
   type: z.literal("init-end"),
   exitCode: z.number(),
   timestamp: z.number(),
+  replay: z
+    .boolean()
+    .optional()
+    .meta({ description: "True when this event is emitted during init replay" }),
   /** Number of lines dropped from middle when output exceeded limit (omitted if 0) */
   truncatedLines: z.number().optional(),
 });

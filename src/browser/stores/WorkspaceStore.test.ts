@@ -1812,7 +1812,7 @@ describe("WorkspaceStore", () => {
       expect(stayedVisibleAfterCaughtUp).toBe(true);
     });
 
-    it("shows replayed init output before caught-up when switching back to a workspace", async () => {
+    it("keeps existing init logs visible while reconnect replay catches up", async () => {
       const workspaceId = "workspace-init-replay";
       const otherWorkspaceId = "workspace-init-other";
       const firstLine = "Preparing workspace...";
@@ -1866,7 +1866,15 @@ describe("WorkspaceStore", () => {
         yield {
           type: "init-start",
           hookPath: "/tmp/project/.mux/init",
-          timestamp: 2_000,
+          timestamp: 1_000,
+          replay: true,
+        };
+        yield {
+          type: "init-output",
+          line: firstLine,
+          isError: false,
+          timestamp: 1_001,
+          replay: true,
         };
         await new Promise<void>((resolve) => {
           releaseSecondInitOutput = resolve;
@@ -1876,6 +1884,7 @@ describe("WorkspaceStore", () => {
           line: replayedLine,
           isError: false,
           timestamp: 2_001,
+          replay: true,
         };
         await new Promise<void>((resolve) => {
           releaseSecondCaughtUp = resolve;
@@ -1899,21 +1908,7 @@ describe("WorkspaceStore", () => {
       createAndAddWorkspace(store, otherWorkspaceId);
       store.setActiveWorkspaceId(workspaceId);
 
-      const sawEmptyReconnectInit = await waitUntil(() => {
-        const { state, initMessage } = getInitMessage();
-        return (
-          subscriptionCount >= 2 &&
-          state.loading === false &&
-          state.isHydratingTranscript === false &&
-          initMessage?.status === "running" &&
-          initMessage.lines.length === 0
-        );
-      });
-      expect(sawEmptyReconnectInit).toBe(true);
-
-      releaseSecondInitOutput?.();
-
-      const replayedInitBeforeCaughtUp = await waitUntil(() => {
+      const preservedReconnectInit = await waitUntil(() => {
         const { state, initMessage } = getInitMessage();
         return (
           subscriptionCount >= 2 &&
@@ -1921,10 +1916,27 @@ describe("WorkspaceStore", () => {
           state.isHydratingTranscript === false &&
           initMessage?.status === "running" &&
           initMessage.lines.length === 1 &&
-          initMessage.lines[0]?.line === replayedLine
+          initMessage.lines[0]?.line === firstLine
         );
       });
-      expect(replayedInitBeforeCaughtUp).toBe(true);
+      expect(preservedReconnectInit).toBe(true);
+
+      releaseSecondInitOutput?.();
+
+      const replayedTailVisibleBeforeCaughtUp = await waitUntil(() => {
+        const { state, initMessage } = getInitMessage();
+        return (
+          subscriptionCount >= 2 &&
+          releaseSecondCaughtUp !== undefined &&
+          state.loading === false &&
+          state.isHydratingTranscript === false &&
+          initMessage?.status === "running" &&
+          initMessage.lines.length === 2 &&
+          initMessage.lines[0]?.line === firstLine &&
+          initMessage.lines[1]?.line === replayedLine
+        );
+      });
+      expect(replayedTailVisibleBeforeCaughtUp).toBe(true);
 
       releaseSecondCaughtUp?.();
 
@@ -1933,7 +1945,9 @@ describe("WorkspaceStore", () => {
         return (
           !state.loading &&
           initMessage?.status === "running" &&
-          initMessage.lines[0]?.line === replayedLine
+          initMessage.lines.length === 2 &&
+          initMessage.lines[0]?.line === firstLine &&
+          initMessage.lines[1]?.line === replayedLine
         );
       });
       expect(stayedVisibleAfterCaughtUp).toBe(true);

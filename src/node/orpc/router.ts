@@ -3666,7 +3666,7 @@ export const router = (authToken?: string) => {
           // 1. Subscribe to new events (including those triggered by replay)
           //
           // IMPORTANT: We subscribe before replay so we can receive stream replay (`replayStream()`)
-          // and init replay events (which do not set `replay: true`).
+          // and init replay events (which now set `replay: true` like other replayed payloads).
           //
           // Live stream deltas can overlap with replayed deltas on reconnect. Buffer live stream
           // events during replay and flush after `caught-up`, skipping any deltas already delivered

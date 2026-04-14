@@ -60,6 +60,95 @@ describe("Init display after cleanup changes", () => {
     expect((messages[0] as InitDisplayedMessage).exitCode).toBe(0);
   });
 
+  it("should treat replayed init-start/output for the same running init as idempotent", () => {
+    const aggregator = new StreamingMessageAggregator("2024-01-01T00:00:00.000Z");
+
+    aggregator.handleMessage({
+      type: "init-start",
+      hookPath: "/test/.mux/init",
+      timestamp: 1_000,
+    });
+    aggregator.handleMessage({
+      type: "init-output",
+      line: "Installing dependencies...",
+      timestamp: 1_001,
+      isError: false,
+    });
+    aggregator.flushPendingInitOutput();
+
+    aggregator.handleMessage({
+      type: "init-start",
+      hookPath: "/test/.mux/init",
+      timestamp: 1_000,
+      replay: true,
+    });
+    aggregator.handleMessage({
+      type: "init-output",
+      line: "Installing dependencies...",
+      timestamp: 1_001,
+      isError: false,
+      replay: true,
+    });
+    aggregator.handleMessage({
+      type: "init-output",
+      line: "Syncing repository over SSH...",
+      timestamp: 1_002,
+      isError: false,
+      replay: true,
+    });
+    aggregator.flushPendingInitOutput();
+
+    const messages = aggregator.getDisplayedMessages();
+    const initMsg = messages[0] as InitDisplayedMessage;
+
+    expect(initMsg.lines).toEqual([
+      { line: "Installing dependencies...", isError: false },
+      { line: "Syncing repository over SSH...", isError: false },
+    ]);
+  });
+
+  it("should preserve duplicate replayed init lines that share a timestamp", () => {
+    const aggregator = new StreamingMessageAggregator("2024-01-01T00:00:00.000Z");
+
+    aggregator.handleMessage({
+      type: "init-start",
+      hookPath: "/test/.mux/init",
+      timestamp: 1_000,
+    });
+
+    const duplicateReplayLineA = {
+      type: "init-output" as const,
+      line: "duplicate line",
+      timestamp: 1_001,
+      isError: false,
+      replay: true,
+    };
+    const duplicateReplayLineB = {
+      type: "init-output" as const,
+      line: "duplicate line",
+      timestamp: 1_001,
+      isError: false,
+      replay: true,
+    };
+
+    aggregator.handleMessage(duplicateReplayLineA);
+    aggregator.handleMessage(duplicateReplayLineB);
+    aggregator.flushPendingInitOutput();
+
+    // Simulate the buffered catch-up pass reusing the exact same replay event objects.
+    aggregator.handleMessage(duplicateReplayLineA);
+    aggregator.handleMessage(duplicateReplayLineB);
+    aggregator.flushPendingInitOutput();
+
+    const messages = aggregator.getDisplayedMessages();
+    const initMsg = messages[0] as InitDisplayedMessage;
+
+    expect(initMsg.lines).toEqual([
+      { line: "duplicate line", isError: false },
+      { line: "duplicate line", isError: false },
+    ]);
+  });
+
   it("should handle init-output without init-start (defensive)", () => {
     const aggregator = new StreamingMessageAggregator("2024-01-01T00:00:00.000Z");
 

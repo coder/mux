@@ -1,33 +1,57 @@
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
 
-type ReplayBufferedStreamMessage = Extract<
+type ReplayBufferedSessionMessage = Extract<
   WorkspaceChatMessage,
   {
-    type: "stream-delta" | "reasoning-delta" | "stream-end" | "stream-abort" | "stream-error";
+    type:
+      | "stream-delta"
+      | "reasoning-delta"
+      | "stream-end"
+      | "stream-abort"
+      | "stream-error"
+      | "init-start"
+      | "init-output"
+      | "init-end";
   }
 >;
 
 type ReplayBufferedDeltaMessage = Extract<
-  ReplayBufferedStreamMessage,
+  ReplayBufferedSessionMessage,
   { type: "stream-delta" | "reasoning-delta" }
 >;
 
-function isReplayBufferedStreamMessage(
+function isReplayBufferedSessionMessage(
   message: WorkspaceChatMessage
-): message is ReplayBufferedStreamMessage {
+): message is ReplayBufferedSessionMessage {
   return (
     message.type === "stream-delta" ||
     message.type === "reasoning-delta" ||
     message.type === "stream-end" ||
     message.type === "stream-abort" ||
-    message.type === "stream-error"
+    message.type === "stream-error" ||
+    message.type === "init-start" ||
+    message.type === "init-output" ||
+    message.type === "init-end"
   );
 }
 
 function isReplayBufferedDeltaMessage(
-  message: ReplayBufferedStreamMessage
+  message: ReplayBufferedSessionMessage
 ): message is ReplayBufferedDeltaMessage {
   return message.type === "stream-delta" || message.type === "reasoning-delta";
+}
+
+type ReplayBufferedInitMessage = Extract<
+  ReplayBufferedSessionMessage,
+  { type: "init-start" | "init-output" | "init-end" }
+>;
+
+function isReplayBufferedInitMessage(
+  message: ReplayBufferedSessionMessage
+): message is ReplayBufferedInitMessage {
+  return (
+    message.type === "init-start" || message.type === "init-output" || message.type === "init-end"
+  );
 }
 
 function isReplayMessage(message: WorkspaceChatMessage): boolean {
@@ -38,6 +62,28 @@ function replayBufferedDeltaKey(message: ReplayBufferedDeltaMessage): string {
   return JSON.stringify([message.type, message.messageId, message.timestamp, message.delta]);
 }
 
+function replayBufferedInitKey(message: ReplayBufferedInitMessage): string {
+  switch (message.type) {
+    case "init-start":
+      return JSON.stringify([message.type, message.hookPath, message.timestamp]);
+    case "init-output":
+      return JSON.stringify([
+        message.type,
+        message.lineNumber ?? null,
+        message.line,
+        message.isError === true,
+        message.timestamp,
+      ]);
+    case "init-end":
+      return JSON.stringify([
+        message.type,
+        message.exitCode,
+        message.truncatedLines ?? null,
+        message.timestamp,
+      ]);
+  }
+}
+
 export function createReplayBufferedStreamMessageRelay(
   push: (message: WorkspaceChatMessage) => void
 ): {
@@ -45,14 +91,20 @@ export function createReplayBufferedStreamMessageRelay(
   finishReplay: () => void;
 } {
   let isReplaying = true;
-  const bufferedLiveStreamMessages: ReplayBufferedStreamMessage[] = [];
+  const bufferedLiveSessionMessages: ReplayBufferedSessionMessage[] = [];
 
-  // Counter (not a Set) so we don't drop more buffered events than were replayed.
+  // Counters (not Sets) so we don't drop more buffered events than were replayed.
   const replayedDeltaKeyCounts = new Map<string, number>();
+  const replayedInitKeyCounts = new Map<string, number>();
 
   const noteReplayedDelta = (message: ReplayBufferedDeltaMessage) => {
     const key = replayBufferedDeltaKey(message);
     replayedDeltaKeyCounts.set(key, (replayedDeltaKeyCounts.get(key) ?? 0) + 1);
+  };
+
+  const noteReplayedInit = (message: ReplayBufferedInitMessage) => {
+    const key = replayBufferedInitKey(message);
+    replayedInitKeyCounts.set(key, (replayedInitKeyCounts.get(key) ?? 0) + 1);
   };
 
   const shouldDropBufferedDelta = (message: ReplayBufferedDeltaMessage): boolean => {
@@ -69,19 +121,35 @@ export function createReplayBufferedStreamMessageRelay(
     return true;
   };
 
+  const shouldDropBufferedInit = (message: ReplayBufferedInitMessage): boolean => {
+    const key = replayBufferedInitKey(message);
+    const remaining = replayedInitKeyCounts.get(key) ?? 0;
+    if (remaining <= 0) {
+      return false;
+    }
+    if (remaining === 1) {
+      replayedInitKeyCounts.delete(key);
+    } else {
+      replayedInitKeyCounts.set(key, remaining - 1);
+    }
+    return true;
+  };
+
   const handleSessionMessage = (message: WorkspaceChatMessage) => {
-    if (isReplaying && isReplayBufferedStreamMessage(message)) {
+    if (isReplaying && isReplayBufferedSessionMessage(message)) {
       if (!isReplayMessage(message)) {
-        // Preserve stream event order during replay buffering (P1): if we buffer only deltas,
-        // terminal events like stream-end can overtake them and flip the message back to partial
-        // in the frontend event processor.
-        bufferedLiveStreamMessages.push(message);
+        // Preserve live ordering during replay buffering. Init events need the same isolation as
+        // stream events so reconnect replay cannot blank the row or drop lines due to reordering.
+        bufferedLiveSessionMessages.push(message);
         return;
       }
 
-      // Track replayed deltas so we can skip replay/live duplicates (P2).
+      // Track replayed deltas/init events so buffered live events from the same window do not
+      // double-apply after `caught-up`.
       if (isReplayBufferedDeltaMessage(message)) {
         noteReplayedDelta(message);
+      } else if (isReplayBufferedInitMessage(message)) {
+        noteReplayedInit(message);
       }
     }
 
@@ -89,9 +157,12 @@ export function createReplayBufferedStreamMessageRelay(
   };
 
   const finishReplay = () => {
-    // Flush buffered live stream messages after replay (`caught-up` already queued by replayHistory).
-    for (const message of bufferedLiveStreamMessages) {
+    // Flush buffered live session messages after replay (`caught-up` already queued by replayHistory).
+    for (const message of bufferedLiveSessionMessages) {
       if (isReplayBufferedDeltaMessage(message) && shouldDropBufferedDelta(message)) {
+        continue;
+      }
+      if (isReplayBufferedInitMessage(message) && shouldDropBufferedInit(message)) {
         continue;
       }
       push(message);
@@ -99,9 +170,10 @@ export function createReplayBufferedStreamMessageRelay(
 
     isReplaying = false;
 
-    // Avoid retaining replay delta keys (including delta text) for the lifetime of the subscription.
+    // Avoid retaining replay keys for the lifetime of the subscription.
     replayedDeltaKeyCounts.clear();
-    bufferedLiveStreamMessages.length = 0;
+    replayedInitKeyCounts.clear();
+    bufferedLiveSessionMessages.length = 0;
   };
 
   return { handleSessionMessage, finishReplay };

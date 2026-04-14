@@ -111,6 +111,7 @@ export class InitStateManager extends EventEmitter {
       workspaceId,
       hookPath: state.hookPath,
       timestamp: state.startTime,
+      replay: true,
     });
 
     // Emit init-output for each accumulated line with original timestamps
@@ -128,7 +129,7 @@ export class InitStateManager extends EventEmitter {
       );
     }
 
-    for (const timedLine of lines) {
+    for (const [index, timedLine] of lines.entries()) {
       // Skip malformed entries (missing required fields)
       if (typeof timedLine.line !== "string" || typeof timedLine.timestamp !== "number") {
         log.warn(`[InitStateManager] Skipping malformed init-output:`, timedLine);
@@ -140,6 +141,8 @@ export class InitStateManager extends EventEmitter {
         line: timedLine.line,
         isError: timedLine.isError,
         timestamp: timedLine.timestamp, // Use original timestamp for replay
+        lineNumber: truncatedLines + index,
+        replay: true,
       });
     }
 
@@ -150,6 +153,7 @@ export class InitStateManager extends EventEmitter {
         workspaceId,
         exitCode: state.exitCode,
         timestamp: state.endTime ?? state.startTime,
+        replay: true,
         // Include truncation info so frontend can show indicator
         ...(truncatedLines ? { truncatedLines } : {}),
       });
@@ -249,6 +253,7 @@ export class InitStateManager extends EventEmitter {
     }
 
     const timestamp = Date.now();
+    const lineNumber = (state.truncatedLines ?? 0) + state.lines.length;
     const timedLine: TimedLine = { line, isError, timestamp };
 
     // Truncation: keep only the most recent MAX_LINES
@@ -265,6 +270,7 @@ export class InitStateManager extends EventEmitter {
       line,
       isError,
       timestamp,
+      lineNumber,
     } satisfies WorkspaceInitEvent & { workspaceId: string });
   }
 

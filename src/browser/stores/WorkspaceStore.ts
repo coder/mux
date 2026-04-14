@@ -3628,17 +3628,19 @@ export class WorkspaceStore {
     }
 
     if (!transient.caughtUp && this.isBufferedEvent(data)) {
-      if (
+      const shouldApplyImmediately =
         isStreamLifecycle(data) ||
         isStreamAbort(data) ||
         isRuntimeStatus(data) ||
         isInitStart(data) ||
         isInitOutput(data) ||
-        isInitEnd(data)
-      ) {
+        isInitEnd(data);
+
+      if (shouldApplyImmediately) {
         // SSH/Coder init replay can be the only transcript content for a new workspace.
-        // Apply it immediately so switching back mid-init shows the latest backend output
-        // instead of only a generic loading placeholder until caught-up lands.
+        // Apply it immediately so reconnects show the latest init snapshot before caught-up;
+        // the aggregator treats replayed init-start/output as idempotent, so the buffered
+        // catch-up pass can reuse the same events without blanking or duplicating the row.
         applyWorkspaceChatEventToAggregator(aggregator, data, { allowSideEffects: false });
         if (isInitOutput(data)) {
           aggregator.flushPendingInitOutput();
