@@ -75,6 +75,8 @@ function useStabilizedStreamingStatusText(
 
   // Detect context changes at render time so the returned value is correct
   // on the same render frame — no post-paint flash of stale text.
+  // Refs are updated in a post-commit effect (not render) to stay stable
+  // across React StrictMode double-renders and concurrent replays.
   const isWorkspaceSwitch = prevWorkspaceRef.current !== workspaceId;
   const isPhaseChange = prevPhaseRef.current !== phase;
   // Only debounce within-phase text churn; cross-phase transitions should
@@ -82,14 +84,11 @@ function useStabilizedStreamingStatusText(
   const shouldDebounce =
     phase != null && DEBOUNCED_PHASES.has(phase) && !isWorkspaceSwitch && !isPhaseChange;
 
-  if (isWorkspaceSwitch) {
+  // Commit refs after render so detection is stable across double-renders.
+  React.useEffect(() => {
     prevWorkspaceRef.current = workspaceId;
-    if (pendingTimerRef.current) {
-      clearTimeout(pendingTimerRef.current);
-      pendingTimerRef.current = null;
-    }
-  }
-  prevPhaseRef.current = phase;
+    prevPhaseRef.current = phase;
+  });
 
   React.useEffect(() => {
     if (pendingTimerRef.current) {
