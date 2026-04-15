@@ -218,6 +218,32 @@ describe("ChatInputDecorationStack", () => {
 
     const hydratingStack = await waitForHydratingStack(view.container, 184);
     expect(hydratingStack.style.minHeight).toBe("184px");
+
+    view.rerender(
+      <ChatInputDecorationStack
+        workspaceId="workspace-b"
+        isHydrating={false}
+        dataComponent="stable-stack"
+        items={[<span key="idle-decoration" hidden />]}
+      />
+    );
+
+    await waitFor(() => {
+      expect(getRenderedStack(view.container).style.minHeight).toBe("");
+    });
+
+    view.rerender(
+      <ChatInputDecorationStack
+        workspaceId="workspace-c"
+        isHydrating={true}
+        dataComponent="stable-stack"
+        items={[<span key="idle-decoration" hidden />]}
+      />
+    );
+
+    await waitFor(() => {
+      expect(getRenderedStack(view.container).style.minHeight).toBe("");
+    });
   });
 
   it("clears settled empty-lane measurements from both the workspace cache and fallback", async () => {

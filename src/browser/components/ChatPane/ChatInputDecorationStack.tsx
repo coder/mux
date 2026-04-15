@@ -67,6 +67,29 @@ export const ChatInputDecorationStack: React.FC<ChatInputDecorationStackProps> =
     };
   }, [hasDecorationEntries, props.isHydrating, props.workspaceId]);
 
+  useLayoutEffect(() => {
+    if (props.isHydrating) {
+      return;
+    }
+
+    if (!hasDecorationEntries) {
+      lastMeasuredStackHeightRef.current = 0;
+      stackHeightByWorkspaceIdRef.current.set(props.workspaceId, 0);
+      return;
+    }
+
+    const content = contentRef.current;
+    if (!content) {
+      return;
+    }
+
+    const settledHeightPx = Math.max(0, Math.round(content.getBoundingClientRect().height));
+    if (settledHeightPx === 0) {
+      lastMeasuredStackHeightRef.current = 0;
+      stackHeightByWorkspaceIdRef.current.set(props.workspaceId, 0);
+    }
+  }, [hasDecorationEntries, props.isHydrating, props.workspaceId]);
+
   // Keep the workspace-specific decoration lane steady while hydration catches up. Reserving the
   // whole composer pane let the textarea float inside a tall wrapper, which still looked like a
   // vertical tear. Scope the reservation to the lane above the input and keep the lane bottom-
