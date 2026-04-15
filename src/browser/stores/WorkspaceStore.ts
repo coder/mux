@@ -3687,8 +3687,10 @@ export class WorkspaceStore {
       // failure classification/copy as the live session, then replay them again after
       // history loads so full-replay replacement does not wipe the error back out.
       applyWorkspaceChatEventToAggregator(aggregator, data, { allowSideEffects: false });
-      this.states.bump(workspaceId);
       transient.pendingStreamEvents.push(data);
+      // WorkspaceState may now clear its buffered active-stream fallback based on the appended
+      // terminal error, so invalidate after the pending-events snapshot is up to date.
+      this.states.bump(workspaceId);
       return;
     }
 

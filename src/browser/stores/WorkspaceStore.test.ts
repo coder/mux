@@ -1828,6 +1828,53 @@ describe("WorkspaceStore", () => {
       releaseCaughtUp();
     });
 
+    it("refreshes cached state when replayed stream-error clears buffered stream-start during hydration", async () => {
+      const workspaceId = "buffered-stream-error-clears-stream-start";
+      const streamModel = "anthropic:claude-opus-4-6";
+
+      mockOnChat.mockImplementation(async function* (
+        _input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        if (options?.signal?.aborted) {
+          yield { type: "caught-up" };
+        }
+        await waitForAbortSignal(options?.signal);
+      });
+
+      recreateStore();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      createAndAddWorkspace(store, workspaceId);
+
+      const rawStore = store as unknown as {
+        handleChatMessage: (workspaceId: string, data: WorkspaceChatMessage) => void;
+      };
+
+      rawStore.handleChatMessage(workspaceId, {
+        type: "stream-start",
+        workspaceId,
+        messageId: "buffered-stream-error-message",
+        model: streamModel,
+        historySequence: 1,
+        startTime: 1_000,
+      });
+
+      const initialState = store.getWorkspaceState(workspaceId);
+      expect(initialState.canInterrupt).toBe(true);
+      expect(initialState.currentModel).toBe(streamModel);
+
+      rawStore.handleChatMessage(workspaceId, {
+        type: "stream-error",
+        messageId: "buffered-stream-error-message",
+        error: "Mock replayed failure",
+        errorType: "unknown",
+        replay: true,
+      });
+
+      const clearedState = store.getWorkspaceState(workspaceId);
+      expect(clearedState.canInterrupt).toBe(false);
+    });
+
     it("prefers buffered stream-start state over stale non-streaming activity during hydration", async () => {
       const workspaceId = "buffered-stream-start-over-activity";
       const staleActivityModel = "openai:gpt-4o-mini";
