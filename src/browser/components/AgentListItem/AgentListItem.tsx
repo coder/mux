@@ -1025,9 +1025,11 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                 data-workspace-id={workspaceId}
               />
             ) : (
-              <div className="flex min-w-0 items-center gap-1">
+              <div className="flex min-w-0 items-baseline gap-1">
                 {/* Group label (variant name or A/B/C letter) rendered as a non-shrinkable
-                    badge so it stays visible even when the sidebar is narrow. */}
+                    badge so it stays visible even when the sidebar is narrow.
+                    items-baseline keeps the 12px label on the same text baseline as the
+                    14px title so they look naturally aligned despite the size difference. */}
                 {groupLabel && (
                   <span className="text-muted shrink-0 text-[12px] leading-6">{groupLabel}</span>
                 )}
