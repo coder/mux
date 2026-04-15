@@ -180,6 +180,46 @@ describe("ChatInputDecorationStack", () => {
     });
   });
 
+  it("ignores zero-height observations from non-rendering decorations during hydration", async () => {
+    const view = render(
+      <ChatInputDecorationStack
+        workspaceId="workspace-a"
+        isHydrating={false}
+        dataComponent="stable-stack"
+        items={[<div key="workspace-a">workspace A</div>]}
+      />
+    );
+
+    const initialContent = getStackContent(view.container);
+    await waitForResizeObservation(initialContent);
+    emitResize(initialContent, 184);
+
+    view.rerender(
+      <ChatInputDecorationStack
+        workspaceId="workspace-b"
+        isHydrating={true}
+        dataComponent="stable-stack"
+        items={[<span key="idle-decoration" hidden />]}
+      />
+    );
+
+    const hydratingContent = getStackContent(view.container);
+    await waitForResizeObservation(hydratingContent);
+    emitResize(hydratingContent, 0);
+
+    view.rerender(
+      <ChatInputDecorationStack
+        workspaceId="workspace-b"
+        isHydrating={true}
+        dataComponent="stable-stack"
+        items={[<span key="idle-decoration" hidden />]}
+      />
+    );
+
+    const hydratingStack = await waitForHydratingStack(view.container, 184);
+    expect(hydratingStack.style.minHeight).toBe("184px");
+  });
+
   it("reserves only the decoration lane so the input can stay outside the measured wrapper", async () => {
     const view = render(
       <div>

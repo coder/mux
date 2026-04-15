@@ -26,7 +26,7 @@ export const ChatInputDecorationStack: React.FC<ChatInputDecorationStackProps> =
   const contentRef = useRef<HTMLDivElement>(null);
   const stackHeightByWorkspaceIdRef = useRef(new Map<string, number>());
   const lastMeasuredStackHeightRef = useRef(0);
-  const hasVisibleItems = props.items.length > 0;
+  const hasDecorationEntries = props.items.length > 0;
   const reservedStackHeightPx = getReservedStackHeightPx({
     workspaceId: props.workspaceId,
     isHydrating: props.isHydrating,
@@ -36,7 +36,7 @@ export const ChatInputDecorationStack: React.FC<ChatInputDecorationStackProps> =
 
   useLayoutEffect(() => {
     const content = contentRef.current;
-    if (!content || !hasVisibleItems) {
+    if (!content || !hasDecorationEntries) {
       return;
     }
 
@@ -45,6 +45,13 @@ export const ChatInputDecorationStack: React.FC<ChatInputDecorationStackProps> =
         0,
         Math.round(entries[0]?.contentRect.height ?? content.getBoundingClientRect().height)
       );
+      if (nextHeight === 0) {
+        return;
+      }
+
+      // Some decoration owners stay mounted while temporarily rendering nothing (for example,
+      // background process dialogs). Ignore zero-height observations so a transient empty lane
+      // cannot overwrite the last real measurement and drop the hydration reservation early.
       lastMeasuredStackHeightRef.current = nextHeight;
       stackHeightByWorkspaceIdRef.current.set(props.workspaceId, nextHeight);
     });
@@ -53,13 +60,13 @@ export const ChatInputDecorationStack: React.FC<ChatInputDecorationStackProps> =
     return () => {
       observer.disconnect();
     };
-  }, [hasVisibleItems, props.workspaceId]);
+  }, [hasDecorationEntries, props.workspaceId]);
 
   // Keep the workspace-specific decoration lane steady while hydration catches up. Reserving the
   // whole composer pane let the textarea float inside a tall wrapper, which still looked like a
   // vertical tear. Scope the reservation to the lane above the input and keep the lane bottom-
   // aligned so the textarea seam stays put while TODO/review/queued banners repopulate.
-  if (!hasVisibleItems && reservedStackHeightPx === null) {
+  if (!hasDecorationEntries && reservedStackHeightPx === null) {
     return null;
   }
 
