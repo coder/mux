@@ -220,6 +220,47 @@ describe("ChatInputDecorationStack", () => {
     expect(hydratingStack.style.minHeight).toBe("184px");
   });
 
+  it("clears the workspace cache after a settled empty decoration lane", async () => {
+    const view = render(
+      <ChatInputDecorationStack
+        workspaceId="workspace-a"
+        isHydrating={false}
+        dataComponent="stable-stack"
+        items={[<div key="workspace-a">workspace A</div>]}
+      />
+    );
+
+    const initialContent = getStackContent(view.container);
+    await waitForResizeObservation(initialContent);
+    emitResize(initialContent, 184);
+
+    view.rerender(
+      <ChatInputDecorationStack
+        workspaceId="workspace-a"
+        isHydrating={false}
+        dataComponent="stable-stack"
+        items={[<span key="idle-decoration" hidden />]}
+      />
+    );
+
+    const settledEmptyContent = getStackContent(view.container);
+    await waitForResizeObservation(settledEmptyContent);
+    emitResize(settledEmptyContent, 0);
+
+    view.rerender(
+      <ChatInputDecorationStack
+        workspaceId="workspace-a"
+        isHydrating={true}
+        dataComponent="stable-stack"
+        items={[<span key="idle-decoration" hidden />]}
+      />
+    );
+
+    await waitFor(() => {
+      expect(getRenderedStack(view.container).style.minHeight).toBe("");
+    });
+  });
+
   it("reserves only the decoration lane so the input can stay outside the measured wrapper", async () => {
     const view = render(
       <div>

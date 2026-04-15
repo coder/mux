@@ -46,12 +46,16 @@ export const ChatInputDecorationStack: React.FC<ChatInputDecorationStackProps> =
         Math.round(entries[0]?.contentRect.height ?? content.getBoundingClientRect().height)
       );
       if (nextHeight === 0) {
+        if (!props.isHydrating) {
+          stackHeightByWorkspaceIdRef.current.set(props.workspaceId, 0);
+        }
         return;
       }
 
       // Some decoration owners stay mounted while temporarily rendering nothing (for example,
-      // background process dialogs). Ignore zero-height observations so a transient empty lane
-      // cannot overwrite the last real measurement and drop the hydration reservation early.
+      // background process dialogs). Ignore zero-height observations during hydration so a
+      // transient empty lane cannot overwrite the last real measurement and drop the temporary
+      // reservation early, but still remember settled zero-height states after hydration ends.
       lastMeasuredStackHeightRef.current = nextHeight;
       stackHeightByWorkspaceIdRef.current.set(props.workspaceId, nextHeight);
     });
@@ -60,7 +64,7 @@ export const ChatInputDecorationStack: React.FC<ChatInputDecorationStackProps> =
     return () => {
       observer.disconnect();
     };
-  }, [hasDecorationEntries, props.workspaceId]);
+  }, [hasDecorationEntries, props.isHydrating, props.workspaceId]);
 
   // Keep the workspace-specific decoration lane steady while hydration catches up. Reserving the
   // whole composer pane let the textarea float inside a tall wrapper, which still looked like a
