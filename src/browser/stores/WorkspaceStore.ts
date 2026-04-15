@@ -48,6 +48,7 @@ import {
   type StreamAbortEvent,
   type StreamAbortReasonSnapshot,
   type StreamEndEvent,
+  type StreamStartEvent,
   type RuntimeStatusEvent,
 } from "@/common/types/stream";
 import { MapStore } from "./MapStore";
@@ -239,6 +240,42 @@ function createInitialHistoryPaginationState(): WorkspaceHistoryPaginationState 
     nextCursor: null,
     hasOlder: false,
     loading: false,
+  };
+}
+
+function getBufferedActiveStreamStart(
+  events: WorkspaceChatMessage[]
+): Pick<StreamStartEvent, "model" | "thinkingLevel"> | null {
+  let activeStreamStart: StreamStartEvent | null = null;
+
+  for (const event of events) {
+    if (!("type" in event)) {
+      continue;
+    }
+
+    if (event.type === "stream-start") {
+      activeStreamStart = event;
+      continue;
+    }
+
+    if (
+      activeStreamStart !== null &&
+      (event.type === "stream-end" ||
+        event.type === "stream-abort" ||
+        event.type === "stream-error") &&
+      event.messageId === activeStreamStart.messageId
+    ) {
+      activeStreamStart = null;
+    }
+  }
+
+  if (!activeStreamStart) {
+    return null;
+  }
+
+  return {
+    model: activeStreamStart.model,
+    thinkingLevel: activeStreamStart.thinkingLevel,
   };
 }
 
@@ -1558,11 +1595,18 @@ export class WorkspaceStore {
       const metadata = this.workspaceMetadata.get(workspaceId);
       const pendingStreamStartTime = aggregator.getPendingStreamStartTime();
       const streamLifecycle = aggregator.getStreamLifecycle();
+      const bufferedActiveStreamStart =
+        isActiveWorkspace && !transient.caughtUp
+          ? getBufferedActiveStreamStart(transient.pendingStreamEvents)
+          : null;
       // Trust the live aggregator only when it is both active AND has finished
       // replaying historical events (caughtUp). During the replay window after a
       // workspace switch, the aggregator is cleared and re-hydrating; fall back to
-      // the activity snapshot so the UI continues to reflect the last known state
-      // (e.g., canInterrupt stays true for a workspace that is still streaming).
+      // the activity snapshot so the UI continues to reflect the last known state.
+      //
+      // Replayed stream-start events arrive on onChat before the authoritative caught-up marker.
+      // Surface that buffered active-stream context immediately so the transcript tail can show the
+      // live streaming barrier during hydration instead of inserting it a moment later.
       //
       // For non-active workspaces, the aggregator's activeStreams may be stale since
       // they don't receive stream-end events when unsubscribed from onChat. Prefer the
@@ -1571,13 +1615,21 @@ export class WorkspaceStore {
       const useAggregatorState = isActiveWorkspace && transient.caughtUp;
       const canInterrupt = useAggregatorState
         ? activeStreams.length > 0
-        : (activity?.streaming ?? activeStreams.length > 0);
+        : bufferedActiveStreamStart !== null ||
+          activity?.streaming === true ||
+          activeStreams.length > 0;
       const currentModel = useAggregatorState
         ? (aggregator.getCurrentModel() ?? null)
-        : (activity?.lastModel ?? aggregator.getCurrentModel() ?? null);
+        : (bufferedActiveStreamStart?.model ??
+          activity?.lastModel ??
+          aggregator.getCurrentModel() ??
+          null);
       const currentThinkingLevel = useAggregatorState
         ? (aggregator.getCurrentThinkingLevel() ?? null)
-        : (activity?.lastThinkingLevel ?? aggregator.getCurrentThinkingLevel() ?? null);
+        : (bufferedActiveStreamStart?.thinkingLevel ??
+          activity?.lastThinkingLevel ??
+          aggregator.getCurrentThinkingLevel() ??
+          null);
       const hasAuthoritativeStreamLifecycle =
         streamLifecycle !== null && streamLifecycle.phase !== "idle";
       const activePendingStreamStartTime = isActiveWorkspace ? pendingStreamStartTime : null;
