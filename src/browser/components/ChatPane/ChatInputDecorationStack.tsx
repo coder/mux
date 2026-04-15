@@ -47,6 +47,7 @@ export const ChatInputDecorationStack: React.FC<ChatInputDecorationStackProps> =
       );
       if (nextHeight === 0) {
         if (!props.isHydrating) {
+          lastMeasuredStackHeightRef.current = 0;
           stackHeightByWorkspaceIdRef.current.set(props.workspaceId, 0);
         }
         return;
