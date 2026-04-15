@@ -1615,9 +1615,9 @@ export class WorkspaceStore {
       const useAggregatorState = isActiveWorkspace && transient.caughtUp;
       const canInterrupt = useAggregatorState
         ? activeStreams.length > 0
-        : bufferedActiveStreamStart !== null ||
-          activity?.streaming === true ||
-          activeStreams.length > 0;
+        : bufferedActiveStreamStart !== null
+          ? true
+          : (activity?.streaming ?? activeStreams.length > 0);
       const currentModel = useAggregatorState
         ? (aggregator.getCurrentModel() ?? null)
         : (bufferedActiveStreamStart?.model ??

@@ -2467,6 +2467,36 @@ describe("WorkspaceStore", () => {
       expect(state.recencyTimestamp).toBe(activitySnapshot.recency);
     });
 
+    it("keeps activity snapshots authoritative for non-active stream state", async () => {
+      const workspaceId = "activity-false-over-stale-aggregator";
+      const activitySnapshot: WorkspaceActivitySnapshot = {
+        recency: new Date("2024-01-04T08:00:00.000Z").getTime(),
+        streaming: false,
+        lastModel: "claude-sonnet-4",
+        lastThinkingLevel: null,
+      };
+
+      recreateStore();
+      mockActivityList.mockResolvedValue({ [workspaceId]: activitySnapshot });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      createAndAddWorkspace(store, workspaceId, { createdAt: "2020-01-01T00:00:00.000Z" }, false);
+
+      const aggregator = store.getAggregator(workspaceId);
+      expect(aggregator).toBeDefined();
+      aggregator?.handleStreamStart({
+        type: "stream-start",
+        workspaceId,
+        messageId: "stale-active-stream",
+        model: "claude-sonnet-4",
+        historySequence: 1,
+        startTime: 1_000,
+      });
+
+      const state = store.getWorkspaceState(workspaceId);
+      expect(state.canInterrupt).toBe(false);
+    });
+
     it("falls back to persisted activity todoStatus for active workspaces when replayed todos are absent", async () => {
       const workspaceId = "active-activity-todo-fallback";
       const activitySnapshot: WorkspaceActivitySnapshot = {
