@@ -249,14 +249,6 @@ export function getAutoRetryKey(workspaceId: string): string {
 }
 
 /**
- * Get storage key for cancelled compaction tracking.
- * Stores compaction-request user message ID to verify freshness across reloads.
- */
-export function getCancelledCompactionKey(workspaceId: string): string {
-  return `workspace:${workspaceId}:cancelled-compaction`;
-}
-
-/**
  * Get the localStorage key for the selected agent definition id for a scope.
  * Format: "agentId:{scopeId}"
  */
@@ -661,7 +653,6 @@ export function getPostCompactionStateKey(workspaceId: string): string {
  * Additional ephemeral keys to delete on workspace removal (not copied on fork)
  */
 const EPHEMERAL_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string> = [
-  getCancelledCompactionKey,
   getPendingWorkspaceSendErrorKey,
   getPlanContentKey, // Cache only, no need to preserve on fork
   getPostCompactionStateKey, // Cache only, no need to preserve on fork
