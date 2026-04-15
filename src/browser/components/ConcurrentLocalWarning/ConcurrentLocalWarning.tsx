@@ -6,43 +6,48 @@ import { isLocalProjectRuntime } from "@/common/types/runtime";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { useSyncExternalStore } from "react";
 
-/**
- * Subtle indicator shown when a local project-dir workspace has another workspace
- * for the same project that is currently streaming.
- */
-export const ConcurrentLocalWarning: React.FC<{
+interface ConcurrentLocalWarningProps {
   workspaceId: string;
   projectPath: string;
   runtimeConfig?: RuntimeConfig;
-}> = (props) => {
-  // Only show for local project-dir runtimes (not worktree or SSH)
-  const isLocalProject = isLocalProjectRuntime(props.runtimeConfig);
+}
 
+/**
+ * Returns the name of another local-project workspace that is actively streaming in the same
+ * project directory, or null when there is no conflicting local stream to warn about.
+ */
+export function useConcurrentLocalStreamingWorkspaceName(
+  props: ConcurrentLocalWarningProps
+): string | null {
+  const isLocalProject = isLocalProjectRuntime(props.runtimeConfig);
   const { workspaceMetadata } = useWorkspaceContext();
   const store = useWorkspaceStoreRaw();
 
-  // Find other local project-dir workspaces for the same project
   const otherLocalWorkspaceIds = useMemo(() => {
-    if (!isLocalProject) return [];
+    if (!isLocalProject) {
+      return [];
+    }
 
     const result: string[] = [];
     for (const [id, meta] of workspaceMetadata) {
-      // Skip current workspace
-      if (id === props.workspaceId) continue;
-      // Must be same project
-      if (meta.projectPath !== props.projectPath) continue;
-      // Must also be local project-dir runtime
-      if (!isLocalProjectRuntime(meta.runtimeConfig)) continue;
+      if (id === props.workspaceId) {
+        continue;
+      }
+      if (meta.projectPath !== props.projectPath) {
+        continue;
+      }
+      if (!isLocalProjectRuntime(meta.runtimeConfig)) {
+        continue;
+      }
       result.push(id);
     }
     return result;
-  }, [isLocalProject, workspaceMetadata, props.workspaceId, props.projectPath]);
+  }, [isLocalProject, props.projectPath, props.workspaceId, workspaceMetadata]);
 
-  // Subscribe to streaming state of other local workspaces
-  const streamingWorkspaceName = useSyncExternalStore(
+  return useSyncExternalStore(
     (listener) => {
       const unsubscribers = otherLocalWorkspaceIds.map((id) => store.subscribeKey(id, listener));
-      return () => unsubscribers.forEach((unsub) => unsub());
+      return () => unsubscribers.forEach((unsubscribe) => unsubscribe());
     },
     () => {
       for (const id of otherLocalWorkspaceIds) {
@@ -53,22 +58,34 @@ export const ConcurrentLocalWarning: React.FC<{
             return meta?.name ?? id;
           }
         } catch {
-          // Workspace may not be registered yet, skip
+          // Workspace may not be registered yet, skip.
         }
       }
       return null;
-    }
+    },
+    () => null
   );
+}
 
-  if (!isLocalProject || !streamingWorkspaceName) {
-    return null;
-  }
-
+export const ConcurrentLocalWarningView: React.FC<{ streamingWorkspaceName: string }> = (props) => {
   return (
     <div className="text-center text-xs text-yellow-600/80">
       <AlertTriangle aria-hidden="true" className="mr-1 inline-block h-3 w-3 align-[-2px]" />
-      <span className="text-yellow-500">{streamingWorkspaceName}</span> is also running in this
-      project directory — agents may interfere
+      <span className="text-yellow-500">{props.streamingWorkspaceName}</span> is also running in
+      this project directory — agents may interfere
     </div>
   );
+};
+
+/**
+ * Subtle indicator shown when a local project-dir workspace has another workspace
+ * for the same project that is currently streaming.
+ */
+export const ConcurrentLocalWarning: React.FC<ConcurrentLocalWarningProps> = (props) => {
+  const streamingWorkspaceName = useConcurrentLocalStreamingWorkspaceName(props);
+  if (!streamingWorkspaceName) {
+    return null;
+  }
+
+  return <ConcurrentLocalWarningView streamingWorkspaceName={streamingWorkspaceName} />;
 };

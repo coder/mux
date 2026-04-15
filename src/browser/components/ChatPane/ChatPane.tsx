@@ -20,6 +20,8 @@ import { StreamingBarrier } from "@/browser/features/Messages/ChatBarrier/Stream
 import { RetryBarrier } from "@/browser/features/Messages/ChatBarrier/RetryBarrier";
 import { PinnedTodoList } from "../PinnedTodoList/PinnedTodoList";
 import { ChatInputDecorationStack } from "./ChatInputDecorationStack";
+import { TranscriptTailStack } from "./TranscriptTailStack";
+import { getLayoutStackSignature, type LayoutStackItem } from "./layoutStack";
 import { VIM_ENABLED_KEY } from "@/common/constants/storage";
 import { ChatInput, type ChatInputAPI } from "@/browser/features/ChatInput/index";
 import type { QueueDispatchMode } from "@/browser/features/ChatInput/types";
@@ -54,7 +56,10 @@ import { useAIViewKeybinds } from "@/browser/hooks/useAIViewKeybinds";
 import { QueuedMessage } from "@/browser/features/Messages/QueuedMessage";
 import { CompactionWarning } from "../CompactionWarning/CompactionWarning";
 import { ContextSwitchWarning as ContextSwitchWarningBanner } from "../ContextSwitchWarning/ContextSwitchWarning";
-import { ConcurrentLocalWarning } from "../ConcurrentLocalWarning/ConcurrentLocalWarning";
+import {
+  ConcurrentLocalWarningView,
+  useConcurrentLocalStreamingWorkspaceName,
+} from "../ConcurrentLocalWarning/ConcurrentLocalWarning";
 import { BackgroundProcessesBanner } from "../BackgroundProcessesBanner/BackgroundProcessesBanner";
 import { checkAutoCompaction } from "@/common/utils/compaction/autoCompactionCheck";
 import { cancelCompaction } from "@/browser/utils/compaction/handler";
@@ -203,6 +208,11 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
       : null;
   const shouldShowQueuedAgentTaskPrompt =
     Boolean(queuedAgentTaskPrompt) && (workspaceState?.messages.length ?? 0) === 0;
+  const concurrentLocalStreamingWorkspaceName = useConcurrentLocalStreamingWorkspaceName({
+    workspaceId,
+    projectPath,
+    runtimeConfig,
+  });
 
   const { has1MContext } = useProviderOptions();
   // Resolve 1M context per-model (uses the pending model for the current workspace)
@@ -677,26 +687,83 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   const shouldMountRetryBarrier = !suppressRetryBarrier;
   const showRetryBarrierUI = showRetryBarrier && !suppressRetryBarrier;
 
-  // Keep the transcript bottom pinned before paint when the tail changes.
-  // Sending a message can append a new user row and mount footer UI (streaming/retry/TODO)
-  // in the same turn; synchronizing here avoids a visible jump before the async
-  // ResizeObserver / streaming auto-scroll path runs.
+  // Derive inline transcript chrome once so row rendering and layout pinning share the exact same
+  // visibility decision. This keeps late interrupted markers from sneaking in through a second code
+  // path after hydration or auto-retry state changes.
+  const interruptedBarrierMessageIds = new Set<string>();
+  for (const message of deferredMessages) {
+    if (
+      shouldShowInterruptedBarrier(message, {
+        isHydratingTranscript,
+        isAutoRetryActive,
+      })
+    ) {
+      interruptedBarrierMessageIds.add(message.id);
+    }
+  }
+  const interruptedBarrierLayoutSignature = Array.from(interruptedBarrierMessageIds).join("|");
+
+  const shouldShowStreamingBarrier = isStreamStarting || canInterrupt;
+  const transcriptTailItems: LayoutStackItem[] = [];
+  if (shouldMountRetryBarrier) {
+    transcriptTailItems.push({
+      key: "retry-barrier",
+      layoutKey: `retry-barrier:${showRetryBarrierUI ? "visible" : "hidden"}`,
+      node: <RetryBarrier workspaceId={workspaceId} visible={showRetryBarrierUI} />,
+    });
+  }
+  if (shouldShowStreamingBarrier) {
+    transcriptTailItems.push({
+      key: "streaming-barrier",
+      node: (
+        <StreamingBarrier
+          workspaceId={workspaceId}
+          vimEnabled={vimEnabled}
+          onCancelCompaction={handleCancelCompactionFromBarrier}
+        />
+      ),
+    });
+  }
+  if (shouldShowQueuedAgentTaskPrompt) {
+    transcriptTailItems.push({
+      key: "queued-agent-prompt",
+      node: (
+        <div className="mt-4 mb-1 ml-auto w-fit max-w-full">
+          <div className="rounded-lg border border-[var(--color-user-border)] bg-[var(--color-user-surface)] px-3 py-2 text-sm">
+            <div className="text-muted mb-1 text-[11px] font-medium">Queued</div>
+            <MarkdownRenderer
+              content={queuedAgentTaskPrompt ?? ""}
+              className="user-message-markdown text-foreground"
+              preserveLineBreaks
+              style={{ overflowWrap: "break-word", wordBreak: "break-word" }}
+            />
+          </div>
+        </div>
+      ),
+    });
+  }
+  if (concurrentLocalStreamingWorkspaceName) {
+    transcriptTailItems.push({
+      key: "concurrent-local-warning",
+      layoutKey: `concurrent-local-warning:${concurrentLocalStreamingWorkspaceName}`,
+      node: (
+        <ConcurrentLocalWarningView
+          streamingWorkspaceName={concurrentLocalStreamingWorkspaceName}
+        />
+      ),
+    });
+  }
+
+  // Keep inline transcript rows pinned before paint when they change height inside the viewport.
+  // The tail and composer decoration lanes own their own layout signatures; this effect only covers
+  // layout that is inserted directly between message rows (new transcript rows, interrupted markers).
   useLayoutEffect(() => {
     if (!autoScroll || !contentRef.current) {
       return;
     }
 
     contentRef.current.scrollTop = contentRef.current.scrollHeight;
-  }, [
-    autoScroll,
-    contentRef,
-    latestMessageId,
-    workspaceState?.todos.length,
-    showRetryBarrierUI,
-    workspaceState?.isStreamStarting,
-    workspaceState?.canInterrupt,
-    shouldShowQueuedAgentTaskPrompt,
-  ]);
+  }, [autoScroll, contentRef, latestMessageId, interruptedBarrierLayoutSignature]);
 
   const handleLoadOlderHistory = useCallback(() => {
     if (!shouldRenderLoadOlderMessagesButton || loadingOlderHistory) {
@@ -950,49 +1017,21 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                               />
                             )}
                             {isAtCutoff && <EditCutoffBarrier />}
-                            {shouldShowInterruptedBarrier(msg, {
-                              isHydratingTranscript,
-                              isAutoRetryActive,
-                            }) && <InterruptedBarrier />}
+                            {interruptedBarrierMessageIds.has(msg.id) && <InterruptedBarrier />}
                           </React.Fragment>
                         );
                       })}
                     </>
                   </MessageListProvider>
                 )}
-                <div style={{ overflowAnchor: "none" }}>
-                  {/*
-                    Keep the dynamic transcript tail out of the browser's scroll-anchoring heuristics.
-                    ChatPane explicitly pins the bottom when auto-scroll is enabled, so anchoring to
-                    the streaming/retry barrier chrome causes a brief visible jump on send.
-                  */}
-                  {shouldMountRetryBarrier && (
-                    <RetryBarrier workspaceId={workspaceId} visible={showRetryBarrierUI} />
-                  )}
-                  <StreamingBarrier
-                    workspaceId={workspaceId}
-                    vimEnabled={vimEnabled}
-                    onCancelCompaction={handleCancelCompactionFromBarrier}
-                  />
-                  {shouldShowQueuedAgentTaskPrompt && (
-                    <div className="mt-4 mb-1 ml-auto w-fit max-w-full">
-                      <div className="rounded-lg border border-[var(--color-user-border)] bg-[var(--color-user-surface)] px-3 py-2 text-sm">
-                        <div className="text-muted mb-1 text-[11px] font-medium">Queued</div>
-                        <MarkdownRenderer
-                          content={queuedAgentTaskPrompt ?? ""}
-                          className="user-message-markdown text-foreground"
-                          preserveLineBreaks
-                          style={{ overflowWrap: "break-word", wordBreak: "break-word" }}
-                        />
-                      </div>
-                    </div>
-                  )}
-                  <ConcurrentLocalWarning
-                    workspaceId={workspaceId}
-                    projectPath={projectPath}
-                    runtimeConfig={runtimeConfig}
-                  />
-                </div>
+                <TranscriptTailStack
+                  workspaceId={workspaceId}
+                  isHydrating={isHydratingTranscript}
+                  autoScroll={autoScroll}
+                  transcriptViewportRef={contentRef}
+                  dataComponent="TranscriptTailStack"
+                  items={transcriptTailItems}
+                />
               </div>
             </div>
             {transcriptContextMenu.menu}
@@ -1028,6 +1067,8 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
               shouldShowPinnedTodoList={shouldShowPinnedTodoList}
               shouldShowReviewsBanner={shouldShowReviewsBanner}
               canInterrupt={canInterrupt}
+              autoScroll={autoScroll}
+              transcriptViewportRef={contentRef}
               autoCompactionResult={autoCompactionResult}
               shouldShowCompactionWarning={shouldShowCompactionWarning}
               contextSwitchWarning={contextSwitchWarning}
@@ -1079,6 +1120,8 @@ interface ChatInputPaneProps {
   shouldShowPinnedTodoList: boolean;
   shouldShowReviewsBanner: boolean;
   canInterrupt: boolean;
+  autoScroll: boolean;
+  transcriptViewportRef: React.RefObject<HTMLDivElement | null>;
   autoCompactionResult: ReturnType<typeof checkAutoCompaction>;
   shouldShowCompactionWarning: boolean;
   contextSwitchWarning: ContextSwitchWarning | null;
@@ -1104,47 +1147,85 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
   // Keep optional banners/warnings on one shared lane so the seam right above the textarea is
   // owned by a single component boundary. That lets hydration reserve only the volatile
   // workspace-specific decoration stack instead of the whole composer pane.
-  const decorationItems: React.ReactNode[] = [
-    props.shouldShowCompactionWarning ? (
-      <CompactionWarning
-        key="compaction-warning"
-        usagePercentage={props.autoCompactionResult.usagePercentage}
-        thresholdPercentage={props.autoCompactionResult.thresholdPercentage}
-        isStreaming={props.canInterrupt}
-      />
-    ) : null,
-    props.contextSwitchWarning ? (
-      <ContextSwitchWarningBanner
-        key="context-switch-warning"
-        warning={props.contextSwitchWarning}
-        onCompact={props.onContextSwitchCompact}
-        onDismiss={props.onContextSwitchDismiss}
-      />
-    ) : null,
-    props.shouldShowPinnedTodoList ? (
-      <PinnedTodoList key="pinned-todo-list" workspaceId={props.workspaceId} />
-    ) : null,
-    <BackgroundProcessesBanner key="background-processes" workspaceId={props.workspaceId} />,
-    props.shouldShowReviewsBanner ? (
-      <ReviewsBanner key="reviews-banner" workspaceId={props.workspaceId} />
-    ) : null,
-    props.queuedMessage ? (
-      <QueuedMessage
-        key="queued-message"
-        message={props.queuedMessage}
-        onEdit={() => void props.onEditQueuedMessage()}
-        onSendImmediately={props.onSendQueuedImmediately}
-      />
-    ) : null,
-    props.isQueuedAgentTask ? (
-      <div
-        key="queued-agent-task"
-        className="border-border-medium bg-background-secondary text-muted rounded-md border px-3 py-2 text-xs"
-      >
-        This agent task is queued and will start automatically when a parallel slot is available.
-      </div>
-    ) : null,
-  ].filter((value) => value !== null);
+  const decorationEntries: LayoutStackItem[] = [];
+  if (props.shouldShowCompactionWarning) {
+    decorationEntries.push({
+      key: "compaction-warning",
+      node: (
+        <CompactionWarning
+          usagePercentage={props.autoCompactionResult.usagePercentage}
+          thresholdPercentage={props.autoCompactionResult.thresholdPercentage}
+          isStreaming={props.canInterrupt}
+        />
+      ),
+    });
+  }
+  if (props.contextSwitchWarning) {
+    decorationEntries.push({
+      key: "context-switch-warning",
+      node: (
+        <ContextSwitchWarningBanner
+          warning={props.contextSwitchWarning}
+          onCompact={props.onContextSwitchCompact}
+          onDismiss={props.onContextSwitchDismiss}
+        />
+      ),
+    });
+  }
+  if (props.shouldShowPinnedTodoList) {
+    decorationEntries.push({
+      key: "pinned-todo-list",
+      node: <PinnedTodoList workspaceId={props.workspaceId} />,
+    });
+  }
+  decorationEntries.push({
+    key: "background-processes",
+    node: <BackgroundProcessesBanner workspaceId={props.workspaceId} />,
+  });
+  if (props.shouldShowReviewsBanner) {
+    decorationEntries.push({
+      key: "reviews-banner",
+      node: <ReviewsBanner workspaceId={props.workspaceId} />,
+    });
+  }
+  if (props.queuedMessage) {
+    decorationEntries.push({
+      key: "queued-message",
+      node: (
+        <QueuedMessage
+          message={props.queuedMessage}
+          onEdit={() => void props.onEditQueuedMessage()}
+          onSendImmediately={props.onSendQueuedImmediately}
+        />
+      ),
+    });
+  }
+  if (props.isQueuedAgentTask) {
+    decorationEntries.push({
+      key: "queued-agent-task",
+      node: (
+        <div className="border-border-medium bg-background-secondary text-muted rounded-md border px-3 py-2 text-xs">
+          This agent task is queued and will start automatically when a parallel slot is available.
+        </div>
+      ),
+    });
+  }
+  const decorationLayoutSignature = getLayoutStackSignature(decorationEntries);
+
+  // The decoration lane changes the transcript viewport height from below, so let the lane owner
+  // report one layout signature instead of teaching ChatPane about every individual banner.
+  useLayoutEffect(() => {
+    if (!props.autoScroll) {
+      return;
+    }
+
+    const transcriptViewport = props.transcriptViewportRef.current;
+    if (!transcriptViewport) {
+      return;
+    }
+
+    transcriptViewport.scrollTop = transcriptViewport.scrollHeight;
+  }, [decorationLayoutSignature, props.autoScroll, props.transcriptViewportRef]);
 
   return (
     <>
@@ -1152,7 +1233,7 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
         workspaceId={props.workspaceId}
         isHydrating={props.isHydratingTranscript}
         dataComponent="ChatInputDecorationStack"
-        items={decorationItems}
+        items={decorationEntries.map((entry) => entry.node)}
       />
       <ChatInput
         key={props.workspaceId}
