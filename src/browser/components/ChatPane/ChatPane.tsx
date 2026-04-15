@@ -21,7 +21,11 @@ import { RetryBarrier } from "@/browser/features/Messages/ChatBarrier/RetryBarri
 import { PinnedTodoList } from "../PinnedTodoList/PinnedTodoList";
 import { ChatInputDecorationStack } from "./ChatInputDecorationStack";
 import { TranscriptTailStack } from "./TranscriptTailStack";
-import { getLayoutStackSignature, type LayoutStackItem } from "./layoutStack";
+import {
+  getLayoutStackSignature,
+  scrollElementToBottom,
+  type LayoutStackItem,
+} from "./layoutStack";
 import { VIM_ENABLED_KEY } from "@/common/constants/storage";
 import { ChatInput, type ChatInputAPI } from "@/browser/features/ChatInput/index";
 import type { QueueDispatchMode } from "@/browser/features/ChatInput/types";
@@ -621,7 +625,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
         return;
       }
 
-      transcriptViewport.scrollTop = transcriptViewport.scrollHeight;
+      scrollElementToBottom(transcriptViewport);
     });
 
     observer.observe(transcriptViewport);
@@ -763,7 +767,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
       return;
     }
 
-    contentRef.current.scrollTop = contentRef.current.scrollHeight;
+    scrollElementToBottom(contentRef.current);
   }, [autoScroll, contentRef, latestMessageId, interruptedBarrierLayoutSignature]);
 
   const handleLoadOlderHistory = useCallback(() => {
@@ -1230,7 +1234,7 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
       return;
     }
 
-    transcriptViewport.scrollTop = transcriptViewport.scrollHeight;
+    scrollElementToBottom(transcriptViewport);
   }, [decorationLayoutSignature, props.autoScroll, props.transcriptViewportRef]);
 
   return (

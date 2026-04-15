@@ -1,5 +1,13 @@
 import React, { useLayoutEffect, useRef } from "react";
-import { getLayoutStackSignature, type LayoutStackItem } from "./layoutStack";
+import {
+  clearLayoutStackHeight,
+  getLayoutStackSignature,
+  getReservedLayoutStackHeightPx,
+  measureLayoutStackHeightPx,
+  rememberLayoutStackHeight,
+  scrollElementToBottom,
+  type LayoutStackItem,
+} from "./layoutStack";
 
 interface TranscriptTailStackProps {
   workspaceId: string;
@@ -10,21 +18,6 @@ interface TranscriptTailStackProps {
   dataComponent?: string;
 }
 
-function getReservedStackHeightPx(props: {
-  workspaceId: string;
-  isHydrating: boolean;
-  stackHeightByWorkspaceId: Map<string, number>;
-  fallbackStackHeightPx: number;
-}): number | null {
-  if (!props.isHydrating) {
-    return null;
-  }
-
-  const reservedStackHeight =
-    props.stackHeightByWorkspaceId.get(props.workspaceId) ?? props.fallbackStackHeightPx;
-  return reservedStackHeight > 0 ? reservedStackHeight : null;
-}
-
 export const TranscriptTailStack: React.FC<TranscriptTailStackProps> = (props) => {
   const contentRef = useRef<HTMLDivElement>(null);
   const stackHeightByWorkspaceIdRef = useRef(new Map<string, number>());
@@ -33,7 +26,7 @@ export const TranscriptTailStack: React.FC<TranscriptTailStackProps> = (props) =
   const previousLayoutSignatureRef = useRef<string | null>(null);
   const hasItems = props.items.length > 0;
   const layoutSignature = `${props.workspaceId}:${getLayoutStackSignature(props.items)}`;
-  const reservedStackHeightPx = getReservedStackHeightPx({
+  const reservedStackHeightPx = getReservedLayoutStackHeightPx({
     workspaceId: props.workspaceId,
     isHydrating: props.isHydrating,
     stackHeightByWorkspaceId: stackHeightByWorkspaceIdRef.current,
@@ -50,12 +43,7 @@ export const TranscriptTailStack: React.FC<TranscriptTailStackProps> = (props) =
       return;
     }
 
-    const transcriptViewport = props.transcriptViewportRef.current;
-    if (!transcriptViewport) {
-      return;
-    }
-
-    transcriptViewport.scrollTop = transcriptViewport.scrollHeight;
+    scrollElementToBottom(props.transcriptViewportRef.current);
   }, [layoutSignature, props.autoScroll, props.transcriptViewportRef]);
 
   useLayoutEffect(() => {
@@ -66,21 +54,25 @@ export const TranscriptTailStack: React.FC<TranscriptTailStackProps> = (props) =
     }
 
     const observer = new ResizeObserver((entries) => {
-      const nextHeight = Math.max(
-        0,
-        Math.round(entries[0]?.contentRect.height ?? content.getBoundingClientRect().height)
-      );
+      const nextHeight = measureLayoutStackHeightPx(content, entries[0]?.contentRect.height);
       const previousObservedHeight = observedHeightRef.current;
       observedHeightRef.current = nextHeight;
 
       if (nextHeight === 0) {
         if (!props.isHydrating) {
-          lastMeasuredStackHeightRef.current = 0;
-          stackHeightByWorkspaceIdRef.current.set(props.workspaceId, 0);
+          clearLayoutStackHeight(
+            props.workspaceId,
+            stackHeightByWorkspaceIdRef.current,
+            lastMeasuredStackHeightRef
+          );
         }
       } else {
-        lastMeasuredStackHeightRef.current = nextHeight;
-        stackHeightByWorkspaceIdRef.current.set(props.workspaceId, nextHeight);
+        rememberLayoutStackHeight(
+          props.workspaceId,
+          nextHeight,
+          stackHeightByWorkspaceIdRef.current,
+          lastMeasuredStackHeightRef
+        );
       }
 
       if (
@@ -91,25 +83,14 @@ export const TranscriptTailStack: React.FC<TranscriptTailStackProps> = (props) =
         return;
       }
 
-      const transcriptViewport = props.transcriptViewportRef.current;
-      if (!transcriptViewport) {
-        return;
-      }
-
-      transcriptViewport.scrollTop = transcriptViewport.scrollHeight;
+      scrollElementToBottom(props.transcriptViewportRef.current);
     });
 
     observer.observe(content);
     return () => {
       observer.disconnect();
     };
-  }, [
-    hasItems,
-    props.autoScroll,
-    props.isHydrating,
-    props.transcriptViewportRef,
-    props.workspaceId,
-  ]);
+  }, [props.autoScroll, props.isHydrating, props.transcriptViewportRef, props.workspaceId]);
 
   useLayoutEffect(() => {
     if (props.isHydrating) {
@@ -118,8 +99,11 @@ export const TranscriptTailStack: React.FC<TranscriptTailStackProps> = (props) =
 
     if (!hasItems) {
       observedHeightRef.current = 0;
-      lastMeasuredStackHeightRef.current = 0;
-      stackHeightByWorkspaceIdRef.current.set(props.workspaceId, 0);
+      clearLayoutStackHeight(
+        props.workspaceId,
+        stackHeightByWorkspaceIdRef.current,
+        lastMeasuredStackHeightRef
+      );
       return;
     }
 
@@ -128,11 +112,14 @@ export const TranscriptTailStack: React.FC<TranscriptTailStackProps> = (props) =
       return;
     }
 
-    const settledHeightPx = Math.max(0, Math.round(content.getBoundingClientRect().height));
+    const settledHeightPx = measureLayoutStackHeightPx(content);
     observedHeightRef.current = settledHeightPx;
     if (settledHeightPx === 0) {
-      lastMeasuredStackHeightRef.current = 0;
-      stackHeightByWorkspaceIdRef.current.set(props.workspaceId, 0);
+      clearLayoutStackHeight(
+        props.workspaceId,
+        stackHeightByWorkspaceIdRef.current,
+        lastMeasuredStackHeightRef
+      );
     }
   }, [hasItems, props.isHydrating, props.workspaceId]);
 
