@@ -73,6 +73,44 @@ function emitResize(target: Element, height: number) {
   }
 }
 
+function getRenderedStack(container: HTMLElement): HTMLDivElement {
+  const stack = container.querySelector('[data-component="stable-stack"]');
+  expect(stack).toBeTruthy();
+  if (stack?.tagName !== "DIV") {
+    throw new Error("Expected stack to exist");
+  }
+  return stack as HTMLDivElement;
+}
+
+function getStackContent(container: HTMLElement): Element {
+  const content = getRenderedStack(container).firstElementChild;
+  expect(content).toBeTruthy();
+  if (!content) {
+    throw new Error("Expected content to exist");
+  }
+  return content;
+}
+
+async function waitForResizeObservation(target: Element): Promise<void> {
+  await waitFor(() => {
+    const callbacks = resizeCallbacks.get(target);
+    if (!callbacks || callbacks.length === 0) {
+      throw new Error("Resize observer is not attached yet");
+    }
+  });
+}
+
+async function waitForHydratingStack(
+  container: HTMLElement,
+  minHeightPx: number
+): Promise<HTMLDivElement> {
+  return waitFor(() => {
+    const stack = getRenderedStack(container);
+    expect(stack.style.minHeight).toBe(`${minHeightPx}px`);
+    return stack;
+  });
+}
+
 describe("ChatInputDecorationStack", () => {
   beforeEach(() => {
     cleanupDom = installDom();
@@ -112,24 +150,9 @@ describe("ChatInputDecorationStack", () => {
       />
     );
 
-    const stack = view.container.querySelector('[data-component="stable-stack"]');
-    expect(stack).toBeTruthy();
-    if (!stack) {
-      throw new Error("Expected stack to exist");
-    }
+    const content = getStackContent(view.container);
 
-    const content = stack.firstElementChild;
-    expect(content).toBeTruthy();
-    if (!content) {
-      throw new Error("Expected content to exist");
-    }
-
-    await waitFor(() => {
-      const callbacks = resizeCallbacks.get(content);
-      if (!callbacks || callbacks.length === 0) {
-        throw new Error("Resize observer is not attached yet");
-      }
-    });
+    await waitForResizeObservation(content);
     emitResize(content, 184);
 
     view.rerender(
@@ -141,14 +164,7 @@ describe("ChatInputDecorationStack", () => {
       />
     );
 
-    const hydratingStack = await waitFor(() => {
-      const nextStack = view.container.querySelector('[data-component="stable-stack"]');
-      if (!nextStack) {
-        throw new Error("Expected hydrating stack to exist");
-      }
-      expect((nextStack as HTMLDivElement).style.minHeight).toBe("184px");
-      return nextStack as HTMLDivElement;
-    });
+    const hydratingStack = await waitForHydratingStack(view.container, 184);
 
     view.rerender(
       <ChatInputDecorationStack
@@ -177,24 +193,9 @@ describe("ChatInputDecorationStack", () => {
       </div>
     );
 
-    const stack = view.container.querySelector('[data-component="stable-stack"]');
-    expect(stack).toBeTruthy();
-    if (!stack) {
-      throw new Error("Expected stack to exist");
-    }
+    const content = getStackContent(view.container);
 
-    const content = stack.firstElementChild;
-    expect(content).toBeTruthy();
-    if (!content) {
-      throw new Error("Expected content to exist");
-    }
-
-    await waitFor(() => {
-      const callbacks = resizeCallbacks.get(content);
-      if (!callbacks || callbacks.length === 0) {
-        throw new Error("Resize observer is not attached yet");
-      }
-    });
+    await waitForResizeObservation(content);
     emitResize(content, 120);
 
     view.rerender(
@@ -209,14 +210,7 @@ describe("ChatInputDecorationStack", () => {
       </div>
     );
 
-    const hydratingStack = await waitFor(() => {
-      const nextStack = view.container.querySelector('[data-component="stable-stack"]');
-      if (!nextStack) {
-        throw new Error("Expected hydrating stack to exist");
-      }
-      expect((nextStack as HTMLDivElement).style.minHeight).toBe("120px");
-      return nextStack as HTMLDivElement;
-    });
+    const hydratingStack = await waitForHydratingStack(view.container, 120);
 
     const inputSection = view.container.querySelector('[data-component="ChatInputSection"]');
     expect(inputSection).toBeTruthy();

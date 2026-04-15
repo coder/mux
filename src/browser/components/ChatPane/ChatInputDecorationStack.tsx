@@ -1,20 +1,38 @@
-import React, { useLayoutEffect, useRef, useState } from "react";
-import { cn } from "@/common/lib/utils";
+import React, { useLayoutEffect, useRef } from "react";
 
 interface ChatInputDecorationStackProps {
   workspaceId: string;
   isHydrating: boolean;
   items: React.ReactNode[];
-  className?: string;
   dataComponent?: string;
+}
+
+function getReservedStackHeightPx(props: {
+  workspaceId: string;
+  isHydrating: boolean;
+  stackHeightByWorkspaceId: Map<string, number>;
+  fallbackStackHeightPx: number;
+}): number | null {
+  if (!props.isHydrating) {
+    return null;
+  }
+
+  const reservedStackHeight =
+    props.stackHeightByWorkspaceId.get(props.workspaceId) ?? props.fallbackStackHeightPx;
+  return reservedStackHeight > 0 ? reservedStackHeight : null;
 }
 
 export const ChatInputDecorationStack: React.FC<ChatInputDecorationStackProps> = (props) => {
   const contentRef = useRef<HTMLDivElement>(null);
   const stackHeightByWorkspaceIdRef = useRef(new Map<string, number>());
   const lastMeasuredStackHeightRef = useRef(0);
-  const [reservedStackHeightPx, setReservedStackHeightPx] = useState<number | null>(null);
   const hasVisibleItems = props.items.length > 0;
+  const reservedStackHeightPx = getReservedStackHeightPx({
+    workspaceId: props.workspaceId,
+    isHydrating: props.isHydrating,
+    stackHeightByWorkspaceId: stackHeightByWorkspaceIdRef.current,
+    fallbackStackHeightPx: lastMeasuredStackHeightRef.current,
+  });
 
   useLayoutEffect(() => {
     const content = contentRef.current;
@@ -37,30 +55,17 @@ export const ChatInputDecorationStack: React.FC<ChatInputDecorationStackProps> =
     };
   }, [hasVisibleItems, props.workspaceId]);
 
-  useLayoutEffect(() => {
-    if (!props.isHydrating) {
-      setReservedStackHeightPx(null);
-      return;
-    }
-
-    const cachedStackHeight = stackHeightByWorkspaceIdRef.current.get(props.workspaceId);
-    const fallbackStackHeight = lastMeasuredStackHeightRef.current;
-    const reservedStackHeight = cachedStackHeight ?? fallbackStackHeight;
-
-    // Keep the workspace-specific decoration lane steady while hydration catches up. Reserving the
-    // whole composer pane let the textarea float inside a tall wrapper, which still looked like a
-    // vertical tear. Scope the reservation to the lane above the input and keep the lane bottom-
-    // aligned so the textarea seam stays put while TODO/review/queued banners repopulate.
-    setReservedStackHeightPx(reservedStackHeight > 0 ? reservedStackHeight : null);
-  }, [props.workspaceId, props.isHydrating]);
-
+  // Keep the workspace-specific decoration lane steady while hydration catches up. Reserving the
+  // whole composer pane let the textarea float inside a tall wrapper, which still looked like a
+  // vertical tear. Scope the reservation to the lane above the input and keep the lane bottom-
+  // aligned so the textarea seam stays put while TODO/review/queued banners repopulate.
   if (!hasVisibleItems && reservedStackHeightPx === null) {
     return null;
   }
 
   return (
     <div
-      className={cn("flex flex-col justify-end", props.className)}
+      className="flex flex-col justify-end"
       data-component={props.dataComponent}
       style={
         reservedStackHeightPx !== null ? { minHeight: `${reservedStackHeightPx}px` } : undefined

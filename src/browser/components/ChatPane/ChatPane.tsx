@@ -1100,73 +1100,57 @@ interface ChatInputPaneProps {
 
 const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
   const { reviews } = props;
-  const decorationItems: React.ReactNode[] = [];
 
   // Keep optional banners/warnings on one shared lane so the seam right above the textarea is
   // owned by a single component boundary. That lets hydration reserve only the volatile
   // workspace-specific decoration stack instead of the whole composer pane.
-  if (props.shouldShowCompactionWarning) {
-    decorationItems.push(
+  const decorationItems: React.ReactNode[] = [
+    props.shouldShowCompactionWarning ? (
       <CompactionWarning
         key="compaction-warning"
         usagePercentage={props.autoCompactionResult.usagePercentage}
         thresholdPercentage={props.autoCompactionResult.thresholdPercentage}
         isStreaming={props.canInterrupt}
       />
-    );
-  }
-
-  if (props.contextSwitchWarning) {
-    decorationItems.push(
+    ) : null,
+    props.contextSwitchWarning ? (
       <ContextSwitchWarningBanner
         key="context-switch-warning"
         warning={props.contextSwitchWarning}
         onCompact={props.onContextSwitchCompact}
         onDismiss={props.onContextSwitchDismiss}
       />
-    );
-  }
-
-  if (props.shouldShowPinnedTodoList) {
-    decorationItems.push(<PinnedTodoList key="pinned-todo-list" workspaceId={props.workspaceId} />);
-  }
-
-  decorationItems.push(
-    <BackgroundProcessesBanner key="background-processes" workspaceId={props.workspaceId} />
-  );
-
-  if (props.shouldShowReviewsBanner) {
-    decorationItems.push(<ReviewsBanner key="reviews-banner" workspaceId={props.workspaceId} />);
-  }
-
-  if (props.queuedMessage) {
-    decorationItems.push(
+    ) : null,
+    props.shouldShowPinnedTodoList ? (
+      <PinnedTodoList key="pinned-todo-list" workspaceId={props.workspaceId} />
+    ) : null,
+    <BackgroundProcessesBanner key="background-processes" workspaceId={props.workspaceId} />,
+    props.shouldShowReviewsBanner ? (
+      <ReviewsBanner key="reviews-banner" workspaceId={props.workspaceId} />
+    ) : null,
+    props.queuedMessage ? (
       <QueuedMessage
         key="queued-message"
         message={props.queuedMessage}
         onEdit={() => void props.onEditQueuedMessage()}
         onSendImmediately={props.onSendQueuedImmediately}
       />
-    );
-  }
-
-  if (props.isQueuedAgentTask) {
-    decorationItems.push(
+    ) : null,
+    props.isQueuedAgentTask ? (
       <div
         key="queued-agent-task"
         className="border-border-medium bg-background-secondary text-muted rounded-md border px-3 py-2 text-xs"
       >
         This agent task is queued and will start automatically when a parallel slot is available.
       </div>
-    );
-  }
+    ) : null,
+  ].filter((value) => value !== null);
 
   return (
     <>
       <ChatInputDecorationStack
         workspaceId={props.workspaceId}
         isHydrating={props.isHydratingTranscript}
-        className="flex flex-col"
         dataComponent="ChatInputDecorationStack"
         items={decorationItems}
       />
