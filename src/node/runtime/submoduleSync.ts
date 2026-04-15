@@ -3,6 +3,7 @@ import * as path from "node:path";
 
 import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
 import { getErrorMessage } from "@/common/utils/errors";
+import { hasErrorCode } from "@/node/services/tools/skillFileUtils";
 import { GIT_NO_HOOKS_ENV } from "@/node/utils/gitNoHooksEnv";
 import { execBuffered } from "@/node/utils/runtime/helpers";
 
@@ -48,10 +49,6 @@ function formatSubmoduleSyncError(error: unknown): Error {
 
 function formatGitmodulesProbeError(error: unknown): Error {
   return new Error(`Failed to probe .gitmodules before submodule sync: ${getErrorMessage(error)}`);
-}
-
-function hasErrorCode(error: unknown, code: string): boolean {
-  return Boolean(error && typeof error === "object" && "code" in error && error.code === code);
 }
 
 async function runSubmoduleCommand(args: {
