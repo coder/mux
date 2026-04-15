@@ -1,9 +1,10 @@
 import React, { useLayoutEffect, useRef } from "react";
+import type { LayoutStackItem } from "./layoutStack";
 
 interface ChatInputDecorationStackProps {
   workspaceId: string;
   isHydrating: boolean;
-  items: React.ReactNode[];
+  items: readonly LayoutStackItem[];
   dataComponent?: string;
 }
 
@@ -106,7 +107,11 @@ export const ChatInputDecorationStack: React.FC<ChatInputDecorationStackProps> =
         reservedStackHeightPx !== null ? { minHeight: `${reservedStackHeightPx}px` } : undefined
       }
     >
-      <div ref={contentRef}>{props.items}</div>
+      <div ref={contentRef}>
+        {props.items.map((item) => (
+          <React.Fragment key={item.key}>{item.node}</React.Fragment>
+        ))}
+      </div>
     </div>
   );
 };

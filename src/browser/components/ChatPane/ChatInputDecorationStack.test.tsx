@@ -5,6 +5,7 @@ import { cleanup, render, waitFor } from "@testing-library/react";
 import { installDom } from "../../../../tests/ui/dom";
 
 import { ChatInputDecorationStack } from "./ChatInputDecorationStack";
+import type { LayoutStackItem } from "./layoutStack";
 
 let cleanupDom: (() => void) | null = null;
 let originalResizeObserver: typeof ResizeObserver | undefined;
@@ -111,6 +112,20 @@ async function waitForHydratingStack(
   });
 }
 
+function createTextDecoration(key: string, text: string): LayoutStackItem {
+  return {
+    key,
+    node: <div>{text}</div>,
+  };
+}
+
+function createHiddenDecoration(key = "idle-decoration"): LayoutStackItem {
+  return {
+    key,
+    node: <span hidden />,
+  };
+}
+
 describe("ChatInputDecorationStack", () => {
   beforeEach(() => {
     cleanupDom = installDom();
@@ -146,7 +161,7 @@ describe("ChatInputDecorationStack", () => {
         workspaceId="workspace-a"
         isHydrating={false}
         dataComponent="stable-stack"
-        items={[<div key="workspace-a">workspace A</div>]}
+        items={[createTextDecoration("workspace-a", "workspace A")]}
       />
     );
 
@@ -171,7 +186,7 @@ describe("ChatInputDecorationStack", () => {
         workspaceId="workspace-b"
         isHydrating={false}
         dataComponent="stable-stack"
-        items={[<div key="workspace-b">workspace B</div>]}
+        items={[createTextDecoration("workspace-b", "workspace B")]}
       />
     );
 
@@ -186,7 +201,7 @@ describe("ChatInputDecorationStack", () => {
         workspaceId="workspace-a"
         isHydrating={false}
         dataComponent="stable-stack"
-        items={[<div key="workspace-a">workspace A</div>]}
+        items={[createTextDecoration("workspace-a", "workspace A")]}
       />
     );
 
@@ -199,7 +214,7 @@ describe("ChatInputDecorationStack", () => {
         workspaceId="workspace-b"
         isHydrating={true}
         dataComponent="stable-stack"
-        items={[<span key="idle-decoration" hidden />]}
+        items={[createHiddenDecoration()]}
       />
     );
 
@@ -212,7 +227,7 @@ describe("ChatInputDecorationStack", () => {
         workspaceId="workspace-b"
         isHydrating={true}
         dataComponent="stable-stack"
-        items={[<span key="idle-decoration" hidden />]}
+        items={[createHiddenDecoration()]}
       />
     );
 
@@ -224,7 +239,7 @@ describe("ChatInputDecorationStack", () => {
         workspaceId="workspace-b"
         isHydrating={false}
         dataComponent="stable-stack"
-        items={[<span key="idle-decoration" hidden />]}
+        items={[createHiddenDecoration()]}
       />
     );
 
@@ -237,7 +252,7 @@ describe("ChatInputDecorationStack", () => {
         workspaceId="workspace-c"
         isHydrating={true}
         dataComponent="stable-stack"
-        items={[<span key="idle-decoration" hidden />]}
+        items={[createHiddenDecoration()]}
       />
     );
 
@@ -252,7 +267,7 @@ describe("ChatInputDecorationStack", () => {
         workspaceId="workspace-a"
         isHydrating={false}
         dataComponent="stable-stack"
-        items={[<div key="workspace-a">workspace A</div>]}
+        items={[createTextDecoration("workspace-a", "workspace A")]}
       />
     );
 
@@ -265,7 +280,7 @@ describe("ChatInputDecorationStack", () => {
         workspaceId="workspace-a"
         isHydrating={false}
         dataComponent="stable-stack"
-        items={[<span key="idle-decoration" hidden />]}
+        items={[createHiddenDecoration()]}
       />
     );
 
@@ -278,7 +293,7 @@ describe("ChatInputDecorationStack", () => {
         workspaceId="workspace-a"
         isHydrating={true}
         dataComponent="stable-stack"
-        items={[<span key="idle-decoration" hidden />]}
+        items={[createHiddenDecoration()]}
       />
     );
 
@@ -291,7 +306,7 @@ describe("ChatInputDecorationStack", () => {
         workspaceId="workspace-b"
         isHydrating={true}
         dataComponent="stable-stack"
-        items={[<span key="idle-decoration" hidden />]}
+        items={[createHiddenDecoration()]}
       />
     );
 
@@ -307,7 +322,7 @@ describe("ChatInputDecorationStack", () => {
           workspaceId="workspace-a"
           isHydrating={false}
           dataComponent="stable-stack"
-          items={[<div key="workspace-a">workspace A</div>]}
+          items={[createTextDecoration("workspace-a", "workspace A")]}
         />
         <div data-component="ChatInputSection">Input</div>
       </div>
