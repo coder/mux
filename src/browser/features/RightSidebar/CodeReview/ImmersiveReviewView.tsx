@@ -122,6 +122,8 @@ const MAX_HIGHLIGHTED_DIFF_LINES = 4000;
 const ACTIVE_LINE_OUTLINE = "1px solid hsl(from var(--color-review-accent) h s l / 0.45)";
 const LIKE_NOTE_PREFIX = "I like this change";
 const DISLIKE_NOTE_PREFIX = "I don't like this change";
+const EMPTY_REVIEWS: Review[] = [];
+const EMPTY_COMMENT_LINE_INDICES = new Set<number>();
 
 function getFileBaseName(filePath: string): string {
   const segments = filePath.split(/[\\/]/);
@@ -392,25 +394,38 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     onMarkFileAsRead,
     onExit,
     onReviewNote,
+    isRead,
     isTouchImmersive,
   } = props;
   const isTouchExperience = isTouchImmersive === true;
 
   // Flatten file tree into ordered file list
   const fileList = useMemo(() => flattenFileTreeLeaves(fileTree), [fileTree]);
-  const reviewedHunkCount = allHunks.filter((item) => props.isRead(item.id)).length;
-  // Weight immersive progress by changed LoC so a large hunk moves the bar more than a one-line nit.
-  const totalChangedLineCount = allHunks.reduce(
-    (count, hunk) => count + getChangedLineCount(hunk),
-    0
-  );
-  const reviewedChangedLineCount = allHunks.reduce((count, hunk) => {
-    if (!props.isRead(hunk.id)) {
-      return count;
+  const reviewProgress = useMemo(() => {
+    // Cursor movement should stay lightweight even in large diff-heavy files, so memoize
+    // the per-hunk diff parsing instead of rescanning every hunk on each immersive render.
+    let reviewedHunkCount = 0;
+    let totalChangedLineCount = 0;
+    let reviewedChangedLineCount = 0;
+
+    for (const hunk of allHunks) {
+      const changedLineCount = getChangedLineCount(hunk);
+      totalChangedLineCount += changedLineCount;
+      if (isRead(hunk.id)) {
+        reviewedHunkCount += 1;
+        reviewedChangedLineCount += changedLineCount;
+      }
     }
 
-    return count + getChangedLineCount(hunk);
-  }, 0);
+    return {
+      reviewedHunkCount,
+      totalChangedLineCount,
+      reviewedChangedLineCount,
+    };
+  }, [allHunks, isRead]);
+  const reviewedHunkCount = reviewProgress.reviewedHunkCount;
+  const totalChangedLineCount = reviewProgress.totalChangedLineCount;
+  const reviewedChangedLineCount = reviewProgress.reviewedChangedLineCount;
   const reviewCompletionWidthPercent =
     totalChangedLineCount === 0 ? 0 : (reviewedChangedLineCount / totalChangedLineCount) * 100;
   const reviewCompletionPercent = Math.round(reviewCompletionWidthPercent);
@@ -646,17 +661,26 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         }),
     [props.reviewsByFilePath]
   );
+  const activeFileReviews = useMemo(
+    () =>
+      activeFilePath
+        ? (props.reviewsByFilePath.get(activeFilePath) ?? EMPTY_REVIEWS)
+        : EMPTY_REVIEWS,
+    [activeFilePath, props.reviewsByFilePath]
+  );
 
-  // Map review line ranges → diff line indices for minimap comment indicators
-  const commentLineIndices: ReadonlySet<number> = (() => {
-    if (!activeFilePath || overlayData.content.length === 0) return new Set<number>();
-    const reviews = props.reviewsByFilePath.get(activeFilePath);
-    if (!reviews || reviews.length === 0) return new Set<number>();
+  // Map review line ranges → diff line indices for minimap comment indicators.
+  // Memoize the line-number lookups so cursor movement does not rebuild multi-thousand-line
+  // maps when neither the rendered overlay nor the file's review set changed.
+  const commentLineIndices = useMemo<ReadonlySet<number>>(() => {
+    if (overlayData.content.length === 0 || activeFileReviews.length === 0) {
+      return EMPTY_COMMENT_LINE_INDICES;
+    }
 
     const newLineMap = buildNewLineNumberToIndexMap(overlayData.content);
     let oldLineMap: Map<number, number> | null = null;
     const indices = new Set<number>();
-    for (const review of reviews) {
+    for (const review of activeFileReviews) {
       const parsed = parseReviewLineRange(review.data.lineRange);
       if (!parsed) continue;
 
@@ -680,7 +704,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       }
     }
     return indices;
-  })();
+  }, [activeFileReviews, overlayData.content]);
 
   const [inlineComposerRequest, setInlineComposerRequest] = useState<InlineComposerRequest | null>(
     null
@@ -824,7 +848,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   const activeLineIndexRef = useRef<number | null>(null);
   const selectedLineRangeRef = useRef<SelectedLineRange | null>(null);
   const selectedHunkIdRef = useRef<string | null>(selectedHunkId);
-  const isReadRef = useRef(props.isRead);
+  const isReadRef = useRef(isRead);
   const onToggleReadRef = useRef(onToggleRead);
   const onSelectHunkRef = useRef(onSelectHunk);
   const allHunksRef = useRef(allHunks);
@@ -844,8 +868,8 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   }, [selectedHunkId]);
 
   useEffect(() => {
-    isReadRef.current = props.isRead;
-  }, [props.isRead]);
+    isReadRef.current = isRead;
+  }, [isRead]);
 
   useEffect(() => {
     onToggleReadRef.current = onToggleRead;
@@ -1739,12 +1763,12 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
             type="button"
             className={cn(
               "text-muted hover:text-read flex shrink-0 cursor-pointer items-center border-none bg-transparent p-0 transition-colors duration-150 sm:hidden",
-              props.isRead(selectedHunk.id) && "text-read"
+              isRead(selectedHunk.id) && "text-read"
             )}
             onClick={() => handleToggleReadWithUndo(selectedHunk.id)}
-            aria-label={props.isRead(selectedHunk.id) ? "Mark hunk as unread" : "Mark hunk as read"}
+            aria-label={isRead(selectedHunk.id) ? "Mark hunk as unread" : "Mark hunk as read"}
           >
-            {props.isRead(selectedHunk.id) ? (
+            {isRead(selectedHunk.id) ? (
               <Check aria-hidden="true" className="h-3 w-3" />
             ) : (
               <Circle aria-hidden="true" className="h-3 w-3" />
@@ -1763,14 +1787,14 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
                     type="button"
                     className={cn(
                       "text-muted hover:text-read flex cursor-pointer items-center border-none bg-transparent p-0 transition-colors duration-150",
-                      props.isRead(selectedHunk.id) && "text-read"
+                      isRead(selectedHunk.id) && "text-read"
                     )}
                     onClick={() => handleToggleReadWithUndo(selectedHunk.id)}
                     aria-label={
-                      props.isRead(selectedHunk.id) ? "Mark hunk as unread" : "Mark hunk as read"
+                      isRead(selectedHunk.id) ? "Mark hunk as unread" : "Mark hunk as read"
                     }
                   >
-                    {props.isRead(selectedHunk.id) ? (
+                    {isRead(selectedHunk.id) ? (
                       <Check aria-hidden="true" className="h-3 w-3" />
                     ) : (
                       <Circle aria-hidden="true" className="h-3 w-3" />
@@ -1890,9 +1914,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
                     <SelectableDiffRenderer
                       content={overlayData.content}
                       filePath={activeFilePath ?? currentFileHunks[0].filePath}
-                      inlineReviews={
-                        activeFilePath ? props.reviewsByFilePath.get(activeFilePath) : undefined
-                      }
+                      inlineReviews={activeFileReviews}
                       oldStart={1}
                       newStart={1}
                       fontSize="11px"
