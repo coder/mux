@@ -23,12 +23,11 @@ import type { InitStateManager } from "./initStateManager";
 import type { SendMessageError } from "@/common/types/errors";
 import { getToolsForModel, type AdvisorStepCaptureRef } from "@/common/utils/tools/tools";
 import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
-import { createRuntime } from "@/node/runtime/runtimeFactory";
 import {
   createRuntimeContextForWorkspace,
   resolveWorkspaceExecutionPath,
 } from "@/node/runtime/runtimeHelpers";
-import { getWorkspacePathHintForProject } from "@/node/services/workspaceProjectRepos";
+import { createRuntimeForWorkspaceProject } from "@/node/services/workspaceProjectRepos";
 import { MultiProjectRuntime } from "@/node/runtime/multiProjectRuntime";
 import { getMuxEnv, getRuntimeType } from "@/node/runtime/initHook";
 import { getSrcBaseDir, isSSHRuntime } from "@/common/types/runtime";
@@ -966,6 +965,14 @@ export class AIService extends EventEmitter {
         return multiProjectExecutionGate;
       }
 
+      const workspaceProjectRuntimeParams = {
+        workspaceName: metadata.name,
+        workspacePath: workspace.workspacePath,
+        runtimeConfig: metadata.runtimeConfig,
+        projectPath: metadata.projectPath,
+        projectName: metadata.projectName,
+        projects: metadata.projects,
+      };
       const singleProjectContext = isMultiProject(metadata)
         ? undefined
         : createRuntimeContextForWorkspace(metadataWithPath);
@@ -976,24 +983,10 @@ export class AIService extends EventEmitter {
             getProjects(metadata).map((project) => ({
               projectPath: project.projectPath,
               projectName: project.projectName,
-              runtime: createRuntime(metadata.runtimeConfig, {
-                projectPath: project.projectPath,
-                workspaceName: metadata.name,
-                workspacePath: isSSHRuntime(metadata.runtimeConfig)
-                  ? getWorkspacePathHintForProject(
-                      {
-                        workspaceId,
-                        workspaceName: metadata.name,
-                        workspacePath: workspace.workspacePath,
-                        runtimeConfig: metadata.runtimeConfig,
-                        projectPath: metadata.projectPath,
-                        projectName: metadata.projectName,
-                        projects: metadata.projects,
-                      },
-                      project.projectPath
-                    )
-                  : undefined,
-              }),
+              runtime: createRuntimeForWorkspaceProject(
+                workspaceProjectRuntimeParams,
+                project.projectPath
+              ),
             })),
             metadata.name
           );

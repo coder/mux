@@ -1,13 +1,16 @@
 import { describe, expect, it } from "bun:test";
 
+import type { RuntimeConfig } from "@/common/types/runtime";
 import {
   buildLegacyRemoteProjectLayout,
   buildRemoteProjectLayout,
   getRemoteWorkspacePath,
 } from "@/node/runtime/remoteProjectLayout";
 import {
+  createRuntimeForWorkspaceProject,
   getWorkspacePathHintForProject,
   getWorkspaceProjectRepos,
+  resolveWorkspacePathForProject,
 } from "@/node/services/workspaceProjectRepos";
 
 describe("getWorkspaceProjectRepos", () => {
@@ -74,6 +77,93 @@ describe("getWorkspaceProjectRepos", () => {
     expect(repos[0]?.repoCwd).toBe(workspacePath);
   });
 
+  it("recreates single-project SSH runtimes from the persisted workspace path", () => {
+    const runtimeConfig = {
+      type: "ssh",
+      host: "example.com",
+      srcBaseDir: "/tmp/src",
+    } as const;
+    const projectPath = "/tmp/projects/main";
+    const workspaceName = "main";
+    const workspacePath = getRemoteWorkspacePath(
+      buildLegacyRemoteProjectLayout(runtimeConfig.srcBaseDir, projectPath),
+      workspaceName
+    );
+    const runtime = createRuntimeForWorkspaceProject(
+      {
+        workspaceName,
+        workspacePath,
+        runtimeConfig,
+        projectPath,
+        projectName: "main",
+      },
+      projectPath
+    );
+
+    expect(runtime.getWorkspacePath(projectPath, workspaceName)).toBe(workspacePath);
+    expect(
+      resolveWorkspacePathForProject(
+        {
+          workspaceName,
+          workspacePath,
+          runtimeConfig,
+          projectPath,
+          projectName: "main",
+        },
+        projectPath,
+        runtime
+      )
+    ).toBe(workspacePath);
+  });
+
+  it("resolves single-project paths without constructing a runtime", () => {
+    expect(
+      resolveWorkspacePathForProject(
+        {
+          workspaceName: "main",
+          workspacePath: "/tmp/workspaces/main",
+          runtimeConfig: { type: "made-up-runtime" } as unknown as RuntimeConfig,
+          projectPath: "/tmp/projects/main",
+          projectName: "main",
+        },
+        "/tmp/projects/main"
+      )
+    ).toBe("/tmp/workspaces/main");
+  });
+
+  it("resolves canonical sibling paths when a multi-project SSH workspace has no recognized layout hint", () => {
+    const runtimeConfig = {
+      type: "ssh",
+      host: "example.com",
+      srcBaseDir: "/tmp/src",
+    } as const;
+    const workspaceName = "main";
+    const primaryProjectPath = "/tmp/projects/main";
+    const secondaryProjectPath = "/tmp/projects/other";
+
+    expect(
+      resolveWorkspacePathForProject(
+        {
+          workspaceName,
+          workspacePath: "/tmp/src/containers/main",
+          runtimeConfig,
+          projectPath: primaryProjectPath,
+          projectName: "main",
+          projects: [
+            { projectPath: primaryProjectPath, projectName: "main" },
+            { projectPath: secondaryProjectPath, projectName: "other" },
+          ],
+        },
+        secondaryProjectPath
+      )
+    ).toBe(
+      getRemoteWorkspacePath(
+        buildRemoteProjectLayout(runtimeConfig.srcBaseDir, secondaryProjectPath),
+        workspaceName
+      )
+    );
+  });
+
   it("derives hashed SSH paths for secondary multi-project repos", () => {
     const runtimeConfig = {
       type: "ssh",
@@ -116,7 +206,6 @@ describe("getWorkspaceProjectRepos", () => {
 
     const hint = getWorkspacePathHintForProject(
       {
-        workspaceId: "workspace-1",
         workspaceName,
         workspacePath: getRemoteWorkspacePath(
           buildLegacyRemoteProjectLayout(runtimeConfig.srcBaseDir, primaryProjectPath),
@@ -151,7 +240,6 @@ describe("getWorkspaceProjectRepos", () => {
 
     const hint = getWorkspacePathHintForProject(
       {
-        workspaceId: "workspace-1",
         workspaceName: "main",
         workspacePath: "/tmp/src/containers/main",
         runtimeConfig,

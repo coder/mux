@@ -4,6 +4,7 @@ import * as path from "node:path";
 import type { ProjectRef } from "@/common/types/workspace";
 import { isSSHRuntime, type RuntimeConfig } from "@/common/types/runtime";
 import { PlatformPaths } from "@/common/utils/paths";
+import type { Runtime } from "@/node/runtime/Runtime";
 import {
   buildLegacyRemoteProjectLayout,
   buildRemoteProjectLayout,
@@ -18,14 +19,17 @@ export interface WorkspaceProjectRepo {
   repoCwd: string;
 }
 
-interface WorkspaceProjectRepoParams {
-  workspaceId: string;
+export interface WorkspaceProjectRuntimeParams {
   workspaceName: string;
   workspacePath: string;
   runtimeConfig: RuntimeConfig;
   projectPath: string;
   projectName?: string;
   projects?: ProjectRef[];
+}
+
+interface WorkspaceProjectRepoParams extends WorkspaceProjectRuntimeParams {
+  workspaceId: string;
 }
 
 interface WorkspaceProjectStorageKeyParams {
@@ -138,8 +142,14 @@ export function getWorkspaceProjectStorageKeys(
   return storageKeys;
 }
 
+function hasMultipleWorkspaceProjects(
+  params: Pick<WorkspaceProjectRuntimeParams, "projects">
+): boolean {
+  return (params.projects?.length ?? 0) > 1;
+}
+
 export function getWorkspacePathHintForProject(
-  params: WorkspaceProjectRepoParams,
+  params: WorkspaceProjectRuntimeParams,
   targetProjectPath: string
 ): string | undefined {
   if (!isSSHRuntime(params.runtimeConfig)) {
@@ -172,6 +182,50 @@ export function getWorkspacePathHintForProject(
   return undefined;
 }
 
+/**
+ * Recreate the runtime for one project inside an existing workspace.
+ *
+ * Why: multi-project SSH workspaces sometimes need a sibling checkout hint derived from the
+ * persisted workspace root, while single-project workspaces should always keep using their exact
+ * checkout path from config.
+ */
+export function createRuntimeForWorkspaceProject(
+  params: WorkspaceProjectRuntimeParams,
+  targetProjectPath: string
+): Runtime {
+  const workspacePath = hasMultipleWorkspaceProjects(params)
+    ? getWorkspacePathHintForProject(params, targetProjectPath)
+    : params.workspacePath;
+
+  return createRuntime(params.runtimeConfig, {
+    projectPath: targetProjectPath,
+    workspaceName: params.workspaceName,
+    workspacePath,
+  });
+}
+
+export function resolveWorkspacePathForProject(
+  params: WorkspaceProjectRuntimeParams,
+  targetProjectPath: string,
+  runtime?: Runtime
+): string {
+  if (!hasMultipleWorkspaceProjects(params)) {
+    assert(
+      params.workspacePath.trim().length > 0,
+      "resolveWorkspacePathForProject: workspacePath must be non-empty"
+    );
+    return params.workspacePath;
+  }
+
+  const projectRuntime = runtime ?? createRuntimeForWorkspaceProject(params, targetProjectPath);
+  const workspacePath = projectRuntime.getWorkspacePath(targetProjectPath, params.workspaceName);
+  assert(
+    workspacePath.trim().length > 0,
+    `resolveWorkspacePathForProject: workspacePath missing for ${targetProjectPath}`
+  );
+  return workspacePath;
+}
+
 export function getWorkspaceProjectRepos(
   params: WorkspaceProjectRepoParams
 ): WorkspaceProjectRepo[] {
@@ -197,25 +251,9 @@ export function getWorkspaceProjectRepos(
     projectName: params.projectName,
     projects: params.projects,
   });
-  const isMultiProject = projectStorageKeys.length > 1;
 
   const repos = projectStorageKeys.map((project) => {
-    const sshWorkspacePathHint = isMultiProject
-      ? getWorkspacePathHintForProject(params, project.projectPath)
-      : undefined;
-
-    const repoCwd = !isMultiProject
-      ? params.workspacePath
-      : (sshWorkspacePathHint ??
-        createRuntime(params.runtimeConfig, {
-          projectPath: project.projectPath,
-          workspaceName: params.workspaceName,
-        }).getWorkspacePath(project.projectPath, params.workspaceName));
-
-    assert(
-      repoCwd.trim().length > 0,
-      `getWorkspaceProjectRepos: repoCwd missing for ${project.projectName}`
-    );
+    const repoCwd = resolveWorkspacePathForProject(params, project.projectPath);
 
     return {
       projectPath: project.projectPath,
