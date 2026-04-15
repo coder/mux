@@ -1770,6 +1770,64 @@ describe("WorkspaceStore", () => {
       releaseCaughtUp();
     });
 
+    it("refreshes cached state when buffered stream-start arrives during hydration", async () => {
+      const workspaceId = "buffered-stream-start-cache-bump";
+      const streamModel = "anthropic:claude-opus-4-6";
+      let releaseStreamStart!: () => void;
+      const streamStartReady = new Promise<void>((resolve) => {
+        releaseStreamStart = resolve;
+      });
+      let releaseCaughtUp!: () => void;
+      const caughtUpReady = new Promise<void>((resolve) => {
+        releaseCaughtUp = resolve;
+      });
+
+      mockOnChat.mockImplementation(async function* (
+        input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        if (input?.workspaceId !== workspaceId) {
+          await waitForAbortSignal(options?.signal);
+          return;
+        }
+
+        await streamStartReady;
+        yield {
+          type: "stream-start",
+          workspaceId,
+          messageId: "buffered-stream-start-cache-bump-message",
+          model: streamModel,
+          historySequence: 1,
+          startTime: 1_000,
+        };
+        await caughtUpReady;
+        yield { type: "caught-up", replay: "full" };
+        await waitForAbortSignal(options?.signal);
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const initialState = store.getWorkspaceState(workspaceId);
+      expect(initialState.loading).toBe(true);
+      expect(initialState.canInterrupt).toBe(false);
+      expect(initialState.currentModel).toBeNull();
+
+      releaseStreamStart();
+
+      const updatedStreamingState = await waitUntil(() => {
+        const state = store.getWorkspaceState(workspaceId);
+        return (
+          state.loading === true &&
+          state.isHydratingTranscript === true &&
+          state.canInterrupt === true &&
+          state.currentModel === streamModel
+        );
+      });
+      expect(updatedStreamingState).toBe(true);
+
+      releaseCaughtUp();
+    });
+
     it("prefers buffered stream-start state over stale non-streaming activity during hydration", async () => {
       const workspaceId = "buffered-stream-start-over-activity";
       const staleActivityModel = "openai:gpt-4o-mini";

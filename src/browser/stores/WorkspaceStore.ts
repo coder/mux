@@ -3502,6 +3502,19 @@ export class WorkspaceStore {
     return this.aggregators.get(workspaceId)!;
   }
 
+  private shouldBumpStateForBufferedStreamFallback(data: WorkspaceChatMessage): boolean {
+    if (!("type" in data)) {
+      return false;
+    }
+
+    return (
+      data.type === "stream-start" ||
+      data.type === "stream-end" ||
+      data.type === "stream-abort" ||
+      data.type === "stream-error"
+    );
+  }
+
   /**
    * Check if data is a buffered event type by checking the handler map.
    * This ensures isStreamEvent() and processStreamEvent() can never fall out of sync.
@@ -3703,6 +3716,11 @@ export class WorkspaceStore {
       }
 
       transient.pendingStreamEvents.push(data);
+      if (this.shouldBumpStateForBufferedStreamFallback(data)) {
+        // WorkspaceState now derives the streaming barrier fallback from pending stream events,
+        // so buffered start/terminal transitions must invalidate the memoized hydration snapshot.
+        this.states.bump(workspaceId);
+      }
       return;
     }
 
