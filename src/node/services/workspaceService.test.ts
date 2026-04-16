@@ -7,6 +7,7 @@ import * as fsPromises from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
 import { Err, Ok, type Result } from "@/common/types/result";
+import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
 import type { SendMessageError } from "@/common/types/errors";
 import type { ProjectsConfig } from "@/common/types/project";
 import type { Config } from "@/node/config";
@@ -3222,6 +3223,10 @@ describe("WorkspaceService remove preserved descendants", () => {
           },
         ],
       ]),
+      taskSettings: {
+        ...DEFAULT_TASK_SETTINGS,
+        preserveSubagentsUntilArchive: true,
+      },
     };
 
     const mockAIService: AIService = {
@@ -3329,6 +3334,50 @@ describe("WorkspaceService remove preserved descendants", () => {
       expect(createRuntimeSpy).not.toHaveBeenCalled();
       expect(deleteWorkspaceMock).not.toHaveBeenCalled();
       expect(removeWorkspaceMock).not.toHaveBeenCalled();
+    } finally {
+      createRuntimeSpy.mockRestore();
+    }
+  });
+
+  test("remove() allows removal when preserve toggle is off even with completed descendants", async () => {
+    const workspaceEntry = configState.projects.get(projectPath)?.workspaces[0];
+    expect(workspaceEntry).toBeDefined();
+    if (!workspaceEntry) {
+      return;
+    }
+
+    workspaceEntry.archivedAt = "2026-03-10T00:00:00.000Z";
+    workspaceEntry.unarchivedAt = undefined;
+    configState.taskSettings = {
+      ...DEFAULT_TASK_SETTINGS,
+      preserveSubagentsUntilArchive: false,
+    };
+
+    const hasPreservedCompletedDescendants = mock(() => true);
+    const hasCompletedDescendants = mock(() => true);
+    workspaceService.setTaskService({
+      hasPreservedCompletedDescendants,
+      hasCompletedDescendants,
+    } as unknown as TaskService);
+    const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockReturnValue({
+      deleteWorkspace: deleteWorkspaceMock,
+    } as unknown as ReturnType<typeof runtimeFactory.createRuntime>);
+
+    try {
+      const result = await workspaceService.remove(workspaceId);
+
+      expect(result.success).toBe(true);
+      expect(hasPreservedCompletedDescendants).not.toHaveBeenCalled();
+      expect(hasCompletedDescendants).not.toHaveBeenCalled();
+      expect(stopStreamMock).toHaveBeenCalledTimes(1);
+      expect(deleteWorkspaceMock).toHaveBeenCalledWith(
+        projectPath,
+        "ws-remove-preserved",
+        false,
+        undefined,
+        false
+      );
+      expect(removeWorkspaceMock).toHaveBeenCalledWith(workspaceId);
     } finally {
       createRuntimeSpy.mockRestore();
     }
