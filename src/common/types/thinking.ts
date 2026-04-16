@@ -36,13 +36,12 @@ export function getThinkingDisplayLabel(level: ThinkingLevel, modelString?: stri
   if ((level === "xhigh" || level === "max") && modelString) {
     const normalized = modelString.trim().toLowerCase();
     const withoutPrefix = normalized.replace(/^[a-z0-9_-]+:\s*/, "");
-    const withoutProviderNamespace = withoutPrefix.replace(/^[a-z0-9_-]+\//, "");
 
     // OpenAI: both xhigh and max resolve to "xhigh" reasoning effort
     if (normalized.startsWith("openai:") || withoutPrefix.startsWith("openai/")) return "XHIGH";
 
     // Anthropic Opus 4.7+: xhigh is a distinct effort level from max
-    if (level === "xhigh" && withoutProviderNamespace.includes("opus-4-7")) return "XHIGH";
+    if (level === "xhigh" && anthropicSupportsNativeXhigh(modelString)) return "XHIGH";
   }
   return THINKING_DISPLAY_LABELS[level];
 }
