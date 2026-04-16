@@ -3,7 +3,7 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { XaiProviderOptions } from "@ai-sdk/xai";
 import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
 import { wrapLanguageModel, type LanguageModel } from "ai";
-import type { ThinkingLevel } from "@/common/types/thinking";
+import { anthropicSupportsNativeXhigh, type ThinkingLevel } from "@/common/types/thinking";
 import { Ok, Err } from "@/common/types/result";
 import type { Result } from "@/common/types/result";
 import type { SendMessageError } from "@/common/types/errors";
@@ -333,9 +333,10 @@ export function wrapFetchWithAnthropicCacheControl(
       //   with the model exposed via the ai-model-id header.
       const directModel = typeof json.model === "string" ? json.model : "";
       const headerModelId = incomingHeaders.get("ai-model-id") ?? "";
-      const targetsOpus47OrNewer = [directModel, headerModelId].some((candidate) =>
-        /claude-opus-(?:4-(?:[7-9]|\d{2,})|[5-9]|\d{2,})/i.test(candidate)
-      );
+      // Reuse the shared Opus 4.7+ detector so the wire-level regex stays in
+      // one place (src/common/types/thinking.ts) — it also normalizes provider
+      // prefixes (e.g., `anthropic/claude-opus-4-7`).
+      const targetsOpus47OrNewer = [directModel, headerModelId].some(anthropicSupportsNativeXhigh);
 
       const directThinking = isRecord(json.thinking) ? json.thinking : undefined;
       const providerOpts = isRecord(json.providerOptions) ? json.providerOptions : undefined;
