@@ -338,9 +338,11 @@ export function wrapFetchWithAnthropicCacheControl(
       if (targetsOpus47OrNewer) {
         if (directThinking?.type === "adaptive") {
           directThinking.display ??= "summarized";
+          log.debug("Anthropic wrapper: injected thinking.display=summarized (direct body)");
         }
         if (gatewayThinking?.type === "adaptive") {
           gatewayThinking.display ??= "summarized";
+          log.debug("Anthropic wrapper: injected thinking.display=summarized (gateway body)");
         }
       }
 
