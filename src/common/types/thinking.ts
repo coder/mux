@@ -201,6 +201,9 @@ export function getAnthropicEffort(level: ThinkingLevel): AnthropicEffortLevel {
 /**
  * Whether the given Anthropic model is Opus 4.7 or newer and supports the
  * native "xhigh" API effort level (distinct from "max").
+ *
+ * Matches `claude-opus-4-7`, `claude-opus-4-8`, ... `claude-opus-4-99`, and
+ * any future Opus 5+ (which we assume preserves or exceeds 4.7's capabilities).
  */
 export function anthropicSupportsNativeXhigh(modelString: string): boolean {
   const withoutPrefix = modelString
@@ -208,7 +211,8 @@ export function anthropicSupportsNativeXhigh(modelString: string): boolean {
     .toLowerCase()
     .replace(/^[a-z0-9_-]+:\s*/, "")
     .replace(/^[a-z0-9_-]+\//, "");
-  return withoutPrefix.includes("opus-4-7");
+  // Opus 4.7+ (4-7, 4-8, 4-9, 4-10, 4-11, ...) or any Opus 5+.
+  return /claude-opus-(?:4-(?:[7-9]|\d{2,})|[5-9]|\d{2,})/.test(withoutPrefix);
 }
 
 /**

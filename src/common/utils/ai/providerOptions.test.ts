@@ -887,9 +887,22 @@ describe("buildRequestHeaders", () => {
       expect(result).toEqual({ [MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER]: "xhigh" });
     });
 
-    test("emits override header for gateway-routed Opus 4.7 with xhigh", () => {
+    test("emits override header for gateway-routed Opus 4.7 with xhigh (passthrough)", () => {
       const result = buildRequestHeaders(
         "mux-gateway:anthropic/claude-opus-4-7",
+        undefined,
+        undefined,
+        undefined,
+        "mux-gateway",
+        "xhigh"
+      );
+      expect(result).toEqual({ [MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER]: "xhigh" });
+    });
+
+    test("emits override header for hypothetical Opus 4.8", () => {
+      // Detection should match future versions so xhigh doesn't silently collapse to max.
+      const result = buildRequestHeaders(
+        "anthropic:claude-opus-4-8",
         undefined,
         undefined,
         undefined,
@@ -919,6 +932,21 @@ describe("buildRequestHeaders", () => {
         undefined,
         undefined,
         undefined,
+        "xhigh"
+      );
+      expect(result).toBeUndefined();
+    });
+
+    test("does not emit override header for non-passthrough gateway (openrouter)", () => {
+      // Non-passthrough gateways (OpenRouter/Bedrock) must not receive this
+      // Mux-internal header because they don't run through our Anthropic fetch
+      // wrapper that strips it; it would leak to upstream proxies.
+      const result = buildRequestHeaders(
+        "anthropic:claude-opus-4-7",
+        undefined,
+        undefined,
+        undefined,
+        "openrouter",
         "xhigh"
       );
       expect(result).toBeUndefined();

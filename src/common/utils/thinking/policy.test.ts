@@ -308,6 +308,45 @@ describe("getThinkingPolicyForModel", () => {
     ]);
   });
 
+  test("returns all 6 levels for Opus 4.7 (native xhigh effort)", () => {
+    expect(getThinkingPolicyForModel("anthropic:claude-opus-4-7")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+    expect(getThinkingPolicyForModel("anthropic:claude-opus-4-7-20260416")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+  });
+
+  test("returns all 6 levels for future Opus versions (4.8+, 5+)", () => {
+    // Detection should extend forward so future models don't regress to the default policy.
+    expect(getThinkingPolicyForModel("anthropic:claude-opus-4-8")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+    expect(getThinkingPolicyForModel("anthropic:claude-opus-5-0")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+  });
+
   test("returns 5 levels including xhigh for Sonnet 4.6", () => {
     expect(getThinkingPolicyForModel("anthropic:claude-sonnet-4-6")).toEqual([
       "off",

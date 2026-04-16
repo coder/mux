@@ -14,6 +14,7 @@
 
 import {
   THINKING_LEVELS,
+  anthropicSupportsNativeXhigh,
   type ThinkingLevel,
   type ParsedThinkingInput,
 } from "@/common/types/thinking";
@@ -50,8 +51,8 @@ export function getThinkingPolicyForModel(modelString: string): ThinkingPolicy {
   //   mux-gateway:openai/gpt-5.4-pro -> openai/gpt-5.4-pro -> gpt-5.4-pro
   const withoutProviderNamespace = withoutPrefix.replace(/^[a-z0-9_-]+\//, "");
 
-  // Opus 4.7 supports all 6 levels: xhigh is a native API effort level distinct from max.
-  if (withoutProviderNamespace.includes("opus-4-7")) {
+  // Opus 4.7+ supports all 6 levels: xhigh is a native API effort level distinct from max.
+  if (anthropicSupportsNativeXhigh(modelString)) {
     return ["off", "low", "medium", "high", "xhigh", "max"];
   }
 

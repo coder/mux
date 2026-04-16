@@ -277,9 +277,9 @@ export function buildProviderOptions(
     // Opus 4.5 uses enabled thinking with a budgetTokens ceiling.
     const isOpus45 = capModelName?.includes("opus-4-5") ?? false;
     const isOpus46 = capModelName?.includes("opus-4-6") ?? false;
-    const isOpus47 = anthropicSupportsNativeXhigh(capabilityModel);
+    const isOpus47Plus = anthropicSupportsNativeXhigh(capabilityModel);
     const isSonnet46 = capModelName?.includes("sonnet-4-6") ?? false;
-    const usesAdaptiveThinking = isOpus46 || isOpus47 || isSonnet46;
+    const usesAdaptiveThinking = isOpus46 || isOpus47Plus || isSonnet46;
 
     if (isOpus45 || usesAdaptiveThinking) {
       // Map to SDK-accepted effort. For Opus 4.7 + xhigh ThinkingLevel, the SDK
@@ -594,8 +594,14 @@ export function buildRequestHeaders(
   // Opus 4.7 introduced a native "xhigh" effort level that the @ai-sdk/anthropic
   // Zod schema doesn't accept yet. Emit a Mux-internal header so the Anthropic
   // fetch wrapper can rewrite `output_config.effort` to "xhigh" on the wire.
+  //
+  // Only emit when the route will pass through our Anthropic fetch wrapper
+  // (direct Anthropic or passthrough gateways like mux-gateway). Non-passthrough
+  // gateways (OpenRouter, Bedrock, github-copilot) must not see this header —
+  // they would forward it externally verbatim and strict proxies may reject it.
   if (
     origin === "anthropic" &&
+    routePassesHeaders &&
     thinkingLevel === "xhigh" &&
     anthropicSupportsNativeXhigh(modelString)
   ) {

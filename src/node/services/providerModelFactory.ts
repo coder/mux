@@ -315,10 +315,12 @@ function wrapFetchWithAnthropicCacheControl(
 
       // Opus 4.7 and newer require `thinking.display: "summarized"` to return
       // thinking content in the response. Inject it on the wire for any adaptive
-      // thinking request when the model is Opus 4.7+.
+      // thinking request when the model is Opus 4.7+ (matches 4-7..4-99 + Opus 5+).
       // See https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking#summarized-thinking
       const modelValue = typeof json.model === "string" ? json.model : "";
-      const targetsOpus47OrNewer = /claude-opus-4-(?:7|[89]|\d{2,})/i.test(modelValue);
+      const targetsOpus47OrNewer = /claude-opus-(?:4-(?:[7-9]|\d{2,})|[5-9]|\d{2,})/i.test(
+        modelValue
+      );
       if (targetsOpus47OrNewer && isRecord(json.thinking) && json.thinking.type === "adaptive") {
         json.thinking.display ??= "summarized";
       }
