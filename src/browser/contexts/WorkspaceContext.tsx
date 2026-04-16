@@ -157,6 +157,12 @@ function migrateLocalGatewayPrefsToBackend(
   }
 }
 
+function shouldSeedWorkspaceAgentIdFromBackend(metadata: FrontendWorkspaceMetadata): boolean {
+  // Main workspaces own their live agent selection in localStorage. Child/task
+  // workspaces are backend-defined and locked, so they must re-seed from metadata.
+  return metadata.parentWorkspaceId != null;
+}
+
 /**
  * Seed per-workspace localStorage from backend workspace metadata.
  *
@@ -170,10 +176,12 @@ function seedWorkspaceLocalStorageFromBackend(metadata: FrontendWorkspaceMetadat
 
   const workspaceId = metadata.id;
 
-  // Seed the workspace agentId (tasks/subagents) so the UI renders correctly on reload.
-  // Main workspaces default to the locally-selected agentId (stored in localStorage).
   const metadataAgentId = metadata.agentId ?? metadata.agentType;
-  if (typeof metadataAgentId === "string" && metadataAgentId.trim().length > 0) {
+  if (
+    shouldSeedWorkspaceAgentIdFromBackend(metadata) &&
+    typeof metadataAgentId === "string" &&
+    metadataAgentId.trim().length > 0
+  ) {
     const key = getAgentIdKey(workspaceId);
     const normalized = normalizeAgentId(metadataAgentId);
     const existing = readPersistedState<string | undefined>(key, undefined);

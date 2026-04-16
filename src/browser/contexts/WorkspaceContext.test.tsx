@@ -11,6 +11,7 @@ import {
   LAST_VISITED_ROUTE_KEY,
   LAUNCH_BEHAVIOR_KEY,
   SELECTED_WORKSPACE_KEY,
+  getAgentIdKey,
   getModelKey,
   getRightSidebarLayoutKey,
   getTerminalTitlesKey,
@@ -488,6 +489,80 @@ describe("WorkspaceContext", () => {
       "xhigh"
     );
   });
+  test("stale metadata does not override a main workspace agent selection", async () => {
+    const workspaceId = "ws-agent-main";
+    let emitMetadata:
+      | ((event: { workspaceId: string; metadata: FrontendWorkspaceMetadata | null }) => void)
+      | null = null;
+
+    createMockAPI({
+      workspace: {
+        list: () => Promise.resolve([createWorkspaceMetadata({ id: workspaceId })]),
+        onMetadata: () =>
+          Promise.resolve(
+            (async function* () {
+              const event = await new Promise<{
+                workspaceId: string;
+                metadata: FrontendWorkspaceMetadata | null;
+              }>((resolve) => {
+                emitMetadata = resolve;
+              });
+              yield event;
+            })() as unknown as Awaited<ReturnType<APIClient["workspace"]["onMetadata"]>>
+          ),
+      },
+      localStorage: {
+        [getAgentIdKey(workspaceId)]: JSON.stringify("exec"),
+      },
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().workspaceMetadata.size).toBe(1));
+    await waitFor(() => expect(emitMetadata).toBeTruthy());
+
+    act(() => {
+      emitMetadata?.({
+        workspaceId,
+        metadata: createWorkspaceMetadata({ id: workspaceId, agentId: "plan" }),
+      });
+    });
+
+    await waitFor(() =>
+      expect(readPersistedState<string | undefined>(getAgentIdKey(workspaceId), undefined)).toBe(
+        "exec"
+      )
+    );
+  });
+
+  test("child workspace metadata still seeds the locked backend agent", async () => {
+    const workspaceId = "ws-agent-child";
+
+    createMockAPI({
+      workspace: {
+        list: () =>
+          Promise.resolve([
+            createWorkspaceMetadata({
+              id: workspaceId,
+              parentWorkspaceId: "ws-parent",
+              agentType: "plan",
+            }),
+          ]),
+      },
+      localStorage: {
+        [getAgentIdKey(workspaceId)]: JSON.stringify("exec"),
+      },
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().workspaceMetadata.size).toBe(1));
+
+    expect(readPersistedState<string | undefined>(getAgentIdKey(workspaceId), undefined)).toBe(
+      "plan"
+    );
+  });
+
   test("loads workspace metadata on mount", async () => {
     const initialWorkspaces: FrontendWorkspaceMetadata[] = [
       createWorkspaceMetadata({
