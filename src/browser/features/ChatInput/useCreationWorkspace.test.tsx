@@ -1048,7 +1048,7 @@ describe("useCreationWorkspace", () => {
     expect(onWorkspaceCreated.mock.calls.length).toBe(1);
     expect(onWorkspaceCreated.mock.calls[0][1]).toEqual({
       autoNavigate: true,
-      pendingStreamModel: "anthropic:claude-opus-4-6",
+      pendingStreamModel: "anthropic:claude-opus-4-7",
     });
   });
 
