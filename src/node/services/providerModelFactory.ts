@@ -286,7 +286,7 @@ export function countAnthropicCacheBreakpoints(requestBody: unknown): number {
  * 1. Last tool (caches all tool definitions)
  * 2. Last message's last content part (caches entire conversation)
  */
-function wrapFetchWithAnthropicCacheControl(
+export function wrapFetchWithAnthropicCacheControl(
   baseFetch: typeof fetch,
   cacheTtl?: AnthropicCacheTtl | null,
   options?: { injectCacheControl?: boolean }
@@ -317,20 +317,44 @@ function wrapFetchWithAnthropicCacheControl(
       // thinking content in the response. Inject it on the wire for any adaptive
       // thinking request when the model is Opus 4.7+ (matches 4-7..4-99 + Opus 5+).
       // See https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking#summarized-thinking
-      const modelValue = typeof json.model === "string" ? json.model : "";
-      const targetsOpus47OrNewer = /claude-opus-(?:4-(?:[7-9]|\d{2,})|[5-9]|\d{2,})/i.test(
-        modelValue
+      //
+      // Two body shapes to handle:
+      // - Direct Anthropic API:   `{ model, thinking: { type: "adaptive" }, output_config }`
+      // - AI SDK gateway (mux-gateway): `{ prompt, providerOptions: { anthropic: { thinking } } }`
+      //   with the model exposed via the ai-model-id header.
+      const directModel = typeof json.model === "string" ? json.model : "";
+      const headerModelId = incomingHeaders.get("ai-model-id") ?? "";
+      const targetsOpus47OrNewer = [directModel, headerModelId].some((candidate) =>
+        /claude-opus-(?:4-(?:[7-9]|\d{2,})|[5-9]|\d{2,})/i.test(candidate)
       );
-      if (targetsOpus47OrNewer && isRecord(json.thinking) && json.thinking.type === "adaptive") {
-        json.thinking.display ??= "summarized";
+
+      const directThinking = isRecord(json.thinking) ? json.thinking : undefined;
+      const providerOpts = isRecord(json.providerOptions) ? json.providerOptions : undefined;
+      const anthropicOpts =
+        providerOpts && isRecord(providerOpts.anthropic) ? providerOpts.anthropic : undefined;
+      const gatewayThinking =
+        anthropicOpts && isRecord(anthropicOpts.thinking) ? anthropicOpts.thinking : undefined;
+
+      if (targetsOpus47OrNewer) {
+        if (directThinking?.type === "adaptive") {
+          directThinking.display ??= "summarized";
+        }
+        if (gatewayThinking?.type === "adaptive") {
+          gatewayThinking.display ??= "summarized";
+        }
       }
 
       // Opus 4.7 introduced a native "xhigh" effort level. The @ai-sdk/anthropic
       // Zod schema still rejects "xhigh", so providerOptions sends "max" through
-      // the SDK and we rewrite `output_config.effort` here based on the
-      // Mux-internal override header.
-      if (effortOverride && isRecord(json.output_config)) {
-        json.output_config.effort = effortOverride;
+      // the SDK and we rewrite effort here based on the Mux-internal override
+      // header — for both direct and gateway body shapes.
+      if (effortOverride) {
+        if (isRecord(json.output_config)) {
+          json.output_config.effort = effortOverride;
+        }
+        if (anthropicOpts) {
+          anthropicOpts.effort = effortOverride;
+        }
       }
 
       // Inject cache_control on the last tool if tools array exists.

@@ -17,7 +17,9 @@ import {
   MUX_AI_PROVIDER_USER_AGENT,
   normalizeCodexResponsesBody,
   resolveAIProviderHeaderSource,
+  wrapFetchWithAnthropicCacheControl,
 } from "./providerModelFactory";
+import { MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER } from "@/common/utils/ai/providerOptions";
 import { CodexOauthService } from "./codexOauthService";
 import { ProviderService } from "./providerService";
 
@@ -1150,5 +1152,150 @@ describe("buildAIProviderRequestHeaders", () => {
     expect(result.get("x-custom")).toBe("value");
     expect(result.get("user-agent")).toBe(MUX_AI_PROVIDER_USER_AGENT);
     expect(existing).toEqual(existingSnapshot);
+  });
+});
+
+interface CapturedFetchCall {
+  url: string;
+  init: RequestInit;
+}
+
+function createCapturingFetch(): { calls: CapturedFetchCall[]; fakeFetch: typeof fetch } {
+  const calls: CapturedFetchCall[] = [];
+  const fakeFetchImpl = (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : "";
+    calls.push({ url, init: init ?? {} });
+    return Promise.resolve(new Response("{}", { status: 200 }));
+  };
+  // Preserve Bun's fetch extensions (preconnect, certificate) expected by `typeof fetch`.
+  const fakeFetch = Object.assign(fakeFetchImpl, fetch) as typeof fetch;
+  return { calls, fakeFetch };
+}
+
+function parseSentBody(call: CapturedFetchCall): Record<string, unknown> {
+  return JSON.parse(call.init.body as string) as Record<string, unknown>;
+}
+
+describe("wrapFetchWithAnthropicCacheControl — Opus 4.7 wire transforms", () => {
+  it("injects thinking.display=summarized for Opus 4.7 adaptive thinking", async () => {
+    const { calls, fakeFetch } = createCapturingFetch();
+    const wrapped = wrapFetchWithAnthropicCacheControl(fakeFetch);
+    const body = JSON.stringify({
+      model: "claude-opus-4-7",
+      thinking: { type: "adaptive" },
+      output_config: { effort: "medium" },
+    });
+    await wrapped("https://api.anthropic.com/v1/messages", { method: "POST", body });
+    expect(calls.length).toBe(1);
+    const sent = parseSentBody(calls[0]);
+    expect(sent.thinking).toEqual({ type: "adaptive", display: "summarized" });
+  });
+
+  it("preserves a user-supplied display value on Opus 4.7", async () => {
+    const { calls, fakeFetch } = createCapturingFetch();
+    const wrapped = wrapFetchWithAnthropicCacheControl(fakeFetch);
+    const body = JSON.stringify({
+      model: "claude-opus-4-7",
+      thinking: { type: "adaptive", display: "omitted" },
+    });
+    await wrapped("https://api.anthropic.com/v1/messages", { method: "POST", body });
+    const sent = parseSentBody(calls[0]) as { thinking: { display: string } };
+    expect(sent.thinking.display).toBe("omitted");
+  });
+
+  it("rewrites output_config.effort to xhigh when override header is present", async () => {
+    const { calls, fakeFetch } = createCapturingFetch();
+    const wrapped = wrapFetchWithAnthropicCacheControl(fakeFetch);
+    const body = JSON.stringify({
+      model: "claude-opus-4-7",
+      thinking: { type: "adaptive" },
+      output_config: { effort: "max" },
+    });
+    await wrapped("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      body,
+      headers: { [MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER]: "xhigh" },
+    });
+    const sent = parseSentBody(calls[0]) as { output_config: { effort: string } };
+    expect(sent.output_config.effort).toBe("xhigh");
+    // Override header is stripped before forwarding
+    const outHeaders = new Headers(calls[0].init.headers);
+    expect(outHeaders.get(MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER)).toBeNull();
+  });
+
+  it("does not inject display for Opus 4.6 adaptive thinking", async () => {
+    const { calls, fakeFetch } = createCapturingFetch();
+    const wrapped = wrapFetchWithAnthropicCacheControl(fakeFetch);
+    const body = JSON.stringify({
+      model: "claude-opus-4-6",
+      thinking: { type: "adaptive" },
+    });
+    await wrapped("https://api.anthropic.com/v1/messages", { method: "POST", body });
+    const sent = parseSentBody(calls[0]);
+    expect(sent.thinking).toEqual({ type: "adaptive" });
+  });
+
+  it("does not inject display when thinking is disabled", async () => {
+    const { calls, fakeFetch } = createCapturingFetch();
+    const wrapped = wrapFetchWithAnthropicCacheControl(fakeFetch);
+    const body = JSON.stringify({
+      model: "claude-opus-4-7",
+      thinking: { type: "disabled" },
+    });
+    await wrapped("https://api.anthropic.com/v1/messages", { method: "POST", body });
+    const sent = parseSentBody(calls[0]);
+    expect(sent.thinking).toEqual({ type: "disabled" });
+  });
+});
+
+describe("wrapFetchWithAnthropicCacheControl — gateway (AI SDK) body shape", () => {
+  it("injects display=summarized into providerOptions.anthropic.thinking for Opus 4.7 via gateway", async () => {
+    const { calls, fakeFetch } = createCapturingFetch();
+    const wrapped = wrapFetchWithAnthropicCacheControl(fakeFetch, null, {
+      injectCacheControl: false,
+    });
+    const body = JSON.stringify({
+      prompt: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+      providerOptions: {
+        anthropic: { thinking: { type: "adaptive" }, effort: "medium" },
+      },
+    });
+    await wrapped("https://gateway.example.com/v1/language-model", {
+      method: "POST",
+      body,
+      headers: { "ai-model-id": "anthropic/claude-opus-4-7" },
+    });
+    const sent = parseSentBody(calls[0]) as {
+      providerOptions: { anthropic: { thinking: unknown } };
+    };
+    expect(sent.providerOptions.anthropic.thinking).toEqual({
+      type: "adaptive",
+      display: "summarized",
+    });
+  });
+
+  it("rewrites providerOptions.anthropic.effort to xhigh via gateway", async () => {
+    const { calls, fakeFetch } = createCapturingFetch();
+    const wrapped = wrapFetchWithAnthropicCacheControl(fakeFetch, null, {
+      injectCacheControl: false,
+    });
+    const body = JSON.stringify({
+      prompt: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+      providerOptions: {
+        anthropic: { thinking: { type: "adaptive" }, effort: "max" },
+      },
+    });
+    await wrapped("https://gateway.example.com/v1/language-model", {
+      method: "POST",
+      body,
+      headers: {
+        "ai-model-id": "anthropic/claude-opus-4-7",
+        [MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER]: "xhigh",
+      },
+    });
+    const sent = parseSentBody(calls[0]) as {
+      providerOptions: { anthropic: { effort: string } };
+    };
+    expect(sent.providerOptions.anthropic.effort).toBe("xhigh");
   });
 });
