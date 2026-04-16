@@ -1738,7 +1738,8 @@ export class AIService extends EventEmitter {
         effectiveMuxProviderOptions,
         workspaceId,
         this.providerService.getConfig(),
-        routeProvider
+        routeProvider,
+        effectiveThinkingLevel
       );
 
       // --- Model parameter overrides from providers.jsonc ---

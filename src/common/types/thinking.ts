@@ -163,13 +163,15 @@ export const ANTHROPIC_THINKING_BUDGETS: Record<ThinkingLevel, number> = {
 };
 
 /**
- * Anthropic effort type.
+ * Anthropic effort type - matches SDK's AnthropicProviderOptions["effort"].
  *
- * The SDK's AnthropicProviderOptions["effort"] currently defines "low" | "medium" | "high" | "max".
- * Opus 4.7 introduced a native "xhigh" effort level between "high" and "max"; the SDK hasn't
- * caught up yet, so we include it here and use a type assertion at the SDK boundary.
+ * Note: Opus 4.7 introduced a native "xhigh" effort level in the API, but the
+ * SDK's Zod validator still rejects "xhigh". Mux handles this by sending "max"
+ * through the SDK and rewriting `output_config.effort` to "xhigh" in a fetch
+ * wrapper for Opus 4.7 when the user selected the xhigh ThinkingLevel.
+ * See `wrapFetchWithAnthropicCacheControl` and `buildRequestHeaders`.
  */
-export type AnthropicEffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
+export type AnthropicEffortLevel = "low" | "medium" | "high" | "max";
 
 /**
  * Anthropic effort parameter mapping (Opus 4.5+)
@@ -177,40 +179,36 @@ export type AnthropicEffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
  * The effort parameter controls how much computational work the model applies.
  * - Opus 4.5 supports: low, medium, high (policy clamps xhigh → high)
  * - Opus 4.6 supports: low, medium, high, max (xhigh maps to "max" effort)
- * - Opus 4.7 supports: low, medium, high, xhigh, max (xhigh is a native API effort level)
+ * - Opus 4.7 supports: low, medium, high, xhigh, max (xhigh requires wire override)
+ *
+ * Because the @ai-sdk/anthropic Zod schema doesn't accept "xhigh" yet, we send
+ * "max" through the SDK for xhigh-on-4.7 and rewrite `output_config.effort` to
+ * "xhigh" in the Anthropic fetch wrapper.
  */
 const ANTHROPIC_EFFORT: Record<ThinkingLevel, AnthropicEffortLevel> = {
   off: "low",
   low: "low",
   medium: "medium",
   high: "high",
-  xhigh: "max", // Default for Opus 4.6; overridden to native "xhigh" for Opus 4.7
+  xhigh: "max", // SDK placeholder; fetch wrapper rewrites to "xhigh" on Opus 4.7
   max: "max",
 };
 
-/**
- * Get the Anthropic effort level for a thinking level.
- *
- * Opus 4.7 introduced a native "xhigh" effort level in the API, so our ThinkingLevel
- * "xhigh" maps to Anthropic effort "xhigh" on Opus 4.7. On Opus 4.6, "xhigh" maps
- * to "max" effort (they were synonyms).
- */
-export function getAnthropicEffort(
-  level: ThinkingLevel,
-  modelString?: string
-): AnthropicEffortLevel {
-  if (level === "xhigh" && modelString) {
-    const withoutPrefix = modelString
-      .trim()
-      .toLowerCase()
-      .replace(/^[a-z0-9_-]+:\s*/, "")
-      .replace(/^[a-z0-9_-]+\//, "");
-    // Opus 4.7+ supports native xhigh effort between high and max
-    if (withoutPrefix.includes("opus-4-7")) {
-      return "xhigh";
-    }
-  }
+export function getAnthropicEffort(level: ThinkingLevel): AnthropicEffortLevel {
   return ANTHROPIC_EFFORT[level];
+}
+
+/**
+ * Whether the given Anthropic model is Opus 4.7 or newer and supports the
+ * native "xhigh" API effort level (distinct from "max").
+ */
+export function anthropicSupportsNativeXhigh(modelString: string): boolean {
+  const withoutPrefix = modelString
+    .trim()
+    .toLowerCase()
+    .replace(/^[a-z0-9_-]+:\s*/, "")
+    .replace(/^[a-z0-9_-]+\//, "");
+  return withoutPrefix.includes("opus-4-7");
 }
 
 /**

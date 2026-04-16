@@ -37,7 +37,10 @@ import type { DevToolsService } from "@/node/services/devToolsService";
 import { captureAndStripDevToolsHeader } from "@/node/services/devToolsHeaderCapture";
 import { createDevToolsMiddleware } from "@/node/services/devToolsMiddleware";
 import { log } from "@/node/services/log";
-import { resolveProviderOptionsNamespaceKey } from "@/common/utils/ai/providerOptions";
+import {
+  MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER,
+  resolveProviderOptionsNamespaceKey,
+} from "@/common/utils/ai/providerOptions";
 import { resolveRoute, type RouteContext } from "@/common/routing";
 import {
   getExplicitGatewayPrefix as getExplicitGatewayProvider,
@@ -285,8 +288,10 @@ export function countAnthropicCacheBreakpoints(requestBody: unknown): number {
  */
 function wrapFetchWithAnthropicCacheControl(
   baseFetch: typeof fetch,
-  cacheTtl?: AnthropicCacheTtl | null
+  cacheTtl?: AnthropicCacheTtl | null,
+  options?: { injectCacheControl?: boolean }
 ): typeof fetch {
+  const injectCacheControl = options?.injectCacheControl ?? true;
   const cachingFetch = async (
     input: Parameters<typeof fetch>[0],
     init?: Parameters<typeof fetch>[1]
@@ -296,13 +301,40 @@ function wrapFetchWithAnthropicCacheControl(
       return baseFetch(input, init);
     }
 
+    // Detect and strip Mux-internal headers before forwarding.
+    const incomingHeaders = new Headers(init.headers);
+    const effortOverride = incomingHeaders.get(MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER);
+    let headersModified = false;
+    if (effortOverride != null) {
+      incomingHeaders.delete(MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER);
+      headersModified = true;
+    }
+
     try {
       const json = JSON.parse(init.body) as Record<string, unknown>;
+
+      // Opus 4.7 and newer require `thinking.display: "summarized"` to return
+      // thinking content in the response. Inject it on the wire for any adaptive
+      // thinking request when the model is Opus 4.7+.
+      // See https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking#summarized-thinking
+      const modelValue = typeof json.model === "string" ? json.model : "";
+      const targetsOpus47OrNewer = /claude-opus-4-(?:7|[89]|\d{2,})/i.test(modelValue);
+      if (targetsOpus47OrNewer && isRecord(json.thinking) && json.thinking.type === "adaptive") {
+        json.thinking.display ??= "summarized";
+      }
+
+      // Opus 4.7 introduced a native "xhigh" effort level. The @ai-sdk/anthropic
+      // Zod schema still rejects "xhigh", so providerOptions sends "max" through
+      // the SDK and we rewrite `output_config.effort` here based on the
+      // Mux-internal override header.
+      if (effortOverride && isRecord(json.output_config)) {
+        json.output_config.effort = effortOverride;
+      }
 
       // Inject cache_control on the last tool if tools array exists.
       // If the SDK already populated cache_control, preserve it but override ttl
       // when a higher-level cacheTtl is configured.
-      if (Array.isArray(json.tools) && json.tools.length > 0) {
+      if (injectCacheControl && Array.isArray(json.tools) && json.tools.length > 0) {
         const lastTool = json.tools[json.tools.length - 1] as Record<string, unknown>;
         lastTool.cache_control = mergeAnthropicCacheControl(lastTool.cache_control, cacheTtl);
       }
@@ -312,11 +344,12 @@ function wrapFetchWithAnthropicCacheControl(
       // Handle both formats:
       // - Direct Anthropic provider: json.messages (Anthropic API format)
       // - Gateway provider: json.prompt (AI SDK internal format)
-      const messages = Array.isArray(json.messages)
-        ? json.messages
-        : Array.isArray(json.prompt)
-          ? json.prompt
-          : null;
+      const messages =
+        injectCacheControl && Array.isArray(json.messages)
+          ? json.messages
+          : injectCacheControl && Array.isArray(json.prompt)
+            ? json.prompt
+            : null;
 
       if (messages && messages.length >= 1) {
         const lastMsg = messages[messages.length - 1] as Record<string, unknown>;
@@ -344,11 +377,15 @@ function wrapFetchWithAnthropicCacheControl(
 
       // Update body with modified JSON
       const newBody = JSON.stringify(json);
-      const headers = new Headers(init?.headers);
-      headers.delete("content-length"); // Body size changed
-      return baseFetch(input, { ...init, headers, body: newBody });
+      const outHeaders = incomingHeaders;
+      outHeaders.delete("content-length"); // Body size changed
+      return baseFetch(input, { ...init, headers: outHeaders, body: newBody });
     } catch {
-      // If parsing fails, pass through unchanged
+      // If JSON parsing fails we can't touch the body, but we still need to
+      // strip Mux-internal headers if any were present so Anthropic doesn't see them.
+      if (headersModified) {
+        return baseFetch(input, { ...init, headers: incomingHeaders });
+      }
       return baseFetch(input, init);
     }
   };
@@ -984,9 +1021,13 @@ export class ProviderModelFactory {
         // Use getProviderFetch to preserve any user-configured custom fetch (e.g., proxies)
         const baseFetch = getProviderFetch(providerConfig);
         const disableBeta = muxProviderOptions?.anthropic?.disableBetaFeatures === true;
-        const fetchWithCacheControl = disableBeta
-          ? baseFetch
-          : wrapFetchWithAnthropicCacheControl(baseFetch, effectiveAnthropicCacheTtl);
+        // Always wrap to apply Opus 4.7 wire-level transforms (display + effort
+        // override); skip cache_control injection when beta features are off.
+        const fetchWithCacheControl = wrapFetchWithAnthropicCacheControl(
+          baseFetch,
+          effectiveAnthropicCacheTtl,
+          { injectCacheControl: !disableBeta }
+        );
         const providerFetch = fetchWithCacheControl;
         const provider = createAnthropic({
           ...normalizedConfig,
@@ -1482,10 +1523,13 @@ export class ProviderModelFactory {
         const baseFetch = getProviderFetch(providerConfig);
         const isAnthropicModel = modelId.startsWith("anthropic/");
         const disableBeta = muxProviderOptions?.anthropic?.disableBetaFeatures === true;
-        const fetchWithCacheControl =
-          isAnthropicModel && !disableBeta
-            ? wrapFetchWithAnthropicCacheControl(baseFetch, effectiveAnthropicCacheTtl)
-            : baseFetch;
+        // For Anthropic models via gateway, always wrap to apply Opus 4.7 wire
+        // transforms; skip cache_control injection when beta features are off.
+        const fetchWithCacheControl = isAnthropicModel
+          ? wrapFetchWithAnthropicCacheControl(baseFetch, effectiveAnthropicCacheTtl, {
+              injectCacheControl: !disableBeta,
+            })
+          : baseFetch;
         const fetchWithAutoLogout = wrapFetchWithMuxGatewayAutoLogout(
           fetchWithCacheControl,
           this.providerService

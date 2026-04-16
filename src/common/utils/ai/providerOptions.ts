@@ -14,9 +14,10 @@ import type { XaiProviderOptions } from "@ai-sdk/xai";
 import { PROVIDER_DEFINITIONS, type ProviderName } from "@/common/constants/providers";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
-import type { AnthropicEffortLevel, ThinkingLevel } from "@/common/types/thinking";
+import type { ThinkingLevel } from "@/common/types/thinking";
 import {
   getAnthropicEffort,
+  anthropicSupportsNativeXhigh,
   ANTHROPIC_THINKING_BUDGETS,
   GEMINI_THINKING_BUDGETS,
   OPENAI_REASONING_EFFORT,
@@ -26,6 +27,15 @@ import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import { log } from "@/node/services/log";
 import type { MuxMessage } from "@/common/types/message";
 import { normalizeToCanonical, supports1MContext } from "./models";
+
+/**
+ * Request header used to override Anthropic's `output_config.effort` at the
+ * wire level. The @ai-sdk/anthropic Zod schema rejects "xhigh", so for
+ * Opus 4.7 + xhigh ThinkingLevel we send "max" through the SDK and ask the
+ * fetch wrapper to rewrite it to "xhigh" via this header (which is then stripped
+ * before the request reaches Anthropic).
+ */
+export const MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER = "x-mux-anthropic-effort";
 
 /**
  * OpenRouter reasoning options
@@ -46,21 +56,10 @@ type OpenAICompatibleGatewayProviderOptions = Pick<
 >;
 
 /**
- * Extended Anthropic options to accommodate API features the SDK hasn't typed yet.
- *
- * Opus 4.7 introduced a native "xhigh" effort level and "display" field on adaptive
- * thinking. The @ai-sdk/anthropic types don't include these yet, so we widen the
- * effort field to accept our full AnthropicEffortLevel.
- */
-type AnthropicProviderOptionsExtended = Omit<AnthropicProviderOptions, "effort"> & {
-  effort?: AnthropicEffortLevel;
-};
-
-/**
  * Provider-specific options structure for AI SDK
  */
 type ProviderOptions =
-  | { anthropic: AnthropicProviderOptionsExtended }
+  | { anthropic: AnthropicProviderOptions }
   | { openai: OpenAIResponsesProviderOptions }
   | { google: GoogleGenerativeAIProviderOptions }
   | { openrouter: OpenRouterReasoningOptions }
@@ -278,28 +277,25 @@ export function buildProviderOptions(
     // Opus 4.5 uses enabled thinking with a budgetTokens ceiling.
     const isOpus45 = capModelName?.includes("opus-4-5") ?? false;
     const isOpus46 = capModelName?.includes("opus-4-6") ?? false;
-    const isOpus47 = capModelName?.includes("opus-4-7") ?? false;
+    const isOpus47 = anthropicSupportsNativeXhigh(capabilityModel);
     const isSonnet46 = capModelName?.includes("sonnet-4-6") ?? false;
     const usesAdaptiveThinking = isOpus46 || isOpus47 || isSonnet46;
 
     if (isOpus45 || usesAdaptiveThinking) {
-      // Opus 4.7 maps xhigh → native "xhigh" effort; older models map xhigh → "max"
-      const effortLevel = getAnthropicEffort(effectiveThinking, capabilityModel);
+      // Map to SDK-accepted effort. For Opus 4.7 + xhigh ThinkingLevel, the SDK
+      // gets "max" as a placeholder and the Anthropic fetch wrapper rewrites
+      // `output_config.effort` to "xhigh" via the X-Mux-Anthropic-Effort header
+      // (added in buildRequestHeaders).
+      const effortLevel = getAnthropicEffort(effectiveThinking);
       const budgetTokens = ANTHROPIC_THINKING_BUDGETS[effectiveThinking];
       // Opus 4.6+ / Sonnet 4.6: adaptive thinking when on, disabled when off
       // Opus 4.5: enabled thinking with budgetTokens ceiling (only when not "off")
-      // Opus 4.7: explicitly request display: "summarized" to receive thinking content
-      //
-      // The SDK doesn't type "display" on adaptive thinking or "xhigh" as an effort
-      // level yet, so we build the raw config and widen to AnthropicProviderOptions.
-      const thinking = usesAdaptiveThinking
+      const thinking: AnthropicProviderOptions["thinking"] = usesAdaptiveThinking
         ? effectiveThinking === "off"
-          ? { type: "disabled" as const }
-          : isOpus47
-            ? { type: "adaptive" as const, display: "summarized" as const }
-            : { type: "adaptive" as const }
+          ? { type: "disabled" }
+          : { type: "adaptive" }
         : budgetTokens > 0
-          ? { type: "enabled" as const, budgetTokens }
+          ? { type: "enabled", budgetTokens }
           : undefined;
 
       log.debug("buildProviderOptions: Anthropic effort model config", {
@@ -308,7 +304,11 @@ export function buildProviderOptions(
         thinkingLevel: effectiveThinking,
       });
 
-      const anthropicOptions: AnthropicProviderOptionsExtended = {
+      // Note: Opus 4.7 requires `thinking.display: "summarized"` to receive
+      // thinking content, but the SDK's Zod schema strips unknown keys so we
+      // can't add it here. The Anthropic fetch wrapper injects `display` on the
+      // wire for Opus 4.7 + adaptive thinking requests.
+      const anthropicOptions: AnthropicProviderOptions = {
         disableParallelToolUse: false,
         sendReasoning: true,
         ...(thinking && { thinking }),
@@ -567,7 +567,8 @@ export function buildRequestHeaders(
   muxProviderOptions?: MuxProviderOptions,
   workspaceId?: string,
   providersConfig?: ProvidersConfigMap | null,
-  routeProvider?: ProviderName
+  routeProvider?: ProviderName,
+  thinkingLevel?: ThinkingLevel
 ): Record<string, string> | undefined {
   const headers: Record<string, string> = {};
 
@@ -588,6 +589,17 @@ export function buildRequestHeaders(
     isAnthropic1MEffectivelyEnabled(modelString, muxProviderOptions, providersConfig)
   ) {
     headers["anthropic-beta"] = ANTHROPIC_1M_CONTEXT_HEADER;
+  }
+
+  // Opus 4.7 introduced a native "xhigh" effort level that the @ai-sdk/anthropic
+  // Zod schema doesn't accept yet. Emit a Mux-internal header so the Anthropic
+  // fetch wrapper can rewrite `output_config.effort` to "xhigh" on the wire.
+  if (
+    origin === "anthropic" &&
+    thinkingLevel === "xhigh" &&
+    anthropicSupportsNativeXhigh(modelString)
+  ) {
+    headers[MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER] = "xhigh";
   }
 
   return Object.keys(headers).length > 0 ? headers : undefined;

@@ -13,6 +13,7 @@ import {
   preserveAnthropic1MContextForFollowUp,
   resolveProviderOptionsNamespaceKey,
   ANTHROPIC_1M_CONTEXT_HEADER,
+  MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER,
   MUX_WORKSPACE_ID_HEADER,
 } from "./providerOptions";
 
@@ -871,6 +872,57 @@ describe("buildRequestHeaders", () => {
       anthropic: { use1MContext: false },
     });
     expect(result).toBeUndefined();
+  });
+
+  describe("Opus 4.7 xhigh effort override", () => {
+    test("emits override header when thinkingLevel=xhigh for Opus 4.7", () => {
+      const result = buildRequestHeaders(
+        "anthropic:claude-opus-4-7",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        "xhigh"
+      );
+      expect(result).toEqual({ [MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER]: "xhigh" });
+    });
+
+    test("emits override header for gateway-routed Opus 4.7 with xhigh", () => {
+      const result = buildRequestHeaders(
+        "mux-gateway:anthropic/claude-opus-4-7",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        "xhigh"
+      );
+      expect(result).toEqual({ [MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER]: "xhigh" });
+    });
+
+    test("does not emit override header for Opus 4.7 with thinkingLevel=max", () => {
+      const result = buildRequestHeaders(
+        "anthropic:claude-opus-4-7",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        "max"
+      );
+      expect(result).toBeUndefined();
+    });
+
+    test("does not emit override header for Opus 4.6 with xhigh", () => {
+      // Opus 4.6 maps xhigh -> "max" effort; SDK accepts "max" so no wire rewrite needed.
+      const result = buildRequestHeaders(
+        "anthropic:claude-opus-4-6",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        "xhigh"
+      );
+      expect(result).toBeUndefined();
+    });
   });
 
   test("should include X-Mux-Workspace-Id for non-Anthropic provider when workspaceId provided", () => {
