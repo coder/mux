@@ -2725,8 +2725,34 @@ export class WorkspaceService extends EventEmitter {
       this.initAbortControllers.delete(workspaceId);
     }
 
+    const persistedWorkspace = this.config.findWorkspace(workspaceId);
+
     // Try to remove from runtime (filesystem)
     try {
+      // Block direct removal of unarchived workspaces while preserved completed descendants still exist.
+      // Archiving first persists archivedAt, which lets TaskService descendant cleanup proceed safely.
+      if (
+        !force &&
+        persistedWorkspace &&
+        this.taskService?.hasPreservedCompletedDescendants?.(workspaceId)
+      ) {
+        const config = this.config.loadConfigOrDefault();
+        const projectConfig = config.projects.get(persistedWorkspace.projectPath);
+        const workspaceEntry =
+          projectConfig?.workspaces.find((workspace) => workspace.id === workspaceId) ??
+          projectConfig?.workspaces.find(
+            (workspace) => workspace.path === persistedWorkspace.workspacePath
+          );
+        if (
+          workspaceEntry &&
+          !isWorkspaceArchived(workspaceEntry.archivedAt, workspaceEntry.unarchivedAt)
+        ) {
+          return Err(
+            "This workspace has preserved completed sub-agent workspaces. Archive the workspace first to trigger cleanup, then try removing it."
+          );
+        }
+      }
+
       // Stop any active stream before deleting metadata/config to avoid tool calls racing with removal.
       //
       // IMPORTANT: AIService forwards "stream-abort" asynchronously after partial cleanup. If we roll up
@@ -2807,7 +2833,7 @@ export class WorkspaceService extends EventEmitter {
         const metadata = metadataResult.data;
         const configSnapshot = this.config.loadConfigOrDefault();
 
-        const persistedWorkspacePath = this.config.findWorkspace(workspaceId)?.workspacePath;
+        const persistedWorkspacePath = persistedWorkspace?.workspacePath;
 
         if (isMultiProject(metadata)) {
           const projects = getProjects(metadata);
@@ -4163,6 +4189,13 @@ export class WorkspaceService extends EventEmitter {
           });
           await this.emitCurrentWorkspaceMetadata(workspaceId);
         }
+      }
+
+      // Best-effort cleanup of preserved completed descendants after archive persistence succeeds.
+      try {
+        await this.taskService?.cleanupReportedDescendantsAfterArchive?.(workspaceId);
+      } catch (error) {
+        log.error("Failed to cleanup reported descendants after archive", { workspaceId, error });
       }
 
       return Ok({ kind: "archived" as const });
