@@ -43,6 +43,7 @@ import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { Ok, Err, type Result } from "@/common/types/result";
 import {
   DEFAULT_TASK_SETTINGS,
+  normalizeTaskSettings,
   type PlanSubagentExecutorRouting,
   type TaskSettings,
 } from "@/common/types/tasks";
@@ -87,6 +88,7 @@ import { secretsToRecord, type ExternalSecretResolver } from "@/common/types/sec
 import { getErrorMessage } from "@/common/utils/errors";
 import { isNonRetryableStreamError } from "@/common/utils/messages/retryEligibility";
 import { hasCompletedAgentReport } from "@/common/utils/agentTaskCompletion";
+import { isWorkspaceArchived } from "@/common/utils/archive";
 
 export type TaskKind = "agent";
 
@@ -1689,6 +1691,50 @@ export class TaskService {
     return interruptedTaskIds;
   }
 
+  async cleanupReportedDescendantsAfterArchive(workspaceId: string): Promise<void> {
+    assert(
+      workspaceId.length > 0,
+      "cleanupReportedDescendantsAfterArchive: workspaceId must be non-empty"
+    );
+
+    const cfg = this.config.loadConfigOrDefault();
+    const index = this.buildAgentTaskIndex(cfg);
+    const completedDescendants = this.listCompletedDescendantAgentTaskIds(index, workspaceId);
+    if (completedDescendants.length === 0) {
+      return;
+    }
+
+    const depthById = new Map<string, number>();
+    for (const descendantId of completedDescendants) {
+      depthById.set(descendantId, this.getTaskDepthFromParentById(index.parentById, descendantId));
+    }
+    completedDescendants.sort((a, b) => {
+      const depthDelta = (depthById.get(b) ?? 0) - (depthById.get(a) ?? 0);
+      return depthDelta !== 0 ? depthDelta : a.localeCompare(b);
+    });
+
+    log.debug("cleanupReportedDescendantsAfterArchive: rechecking completed descendants", {
+      workspaceId,
+      descendantCount: completedDescendants.length,
+    });
+
+    for (const descendantId of completedDescendants) {
+      try {
+        log.debug("cleanupReportedDescendantsAfterArchive: rechecking descendant", {
+          workspaceId,
+          descendantWorkspaceId: descendantId,
+        });
+        await this.cleanupReportedLeafTask(descendantId);
+      } catch (error: unknown) {
+        log.error("cleanupReportedDescendantsAfterArchive: failed to clean up descendant", {
+          workspaceId,
+          descendantWorkspaceId: descendantId,
+          error,
+        });
+      }
+    }
+  }
+
   private async rollbackFailedTaskCreate(
     runtime: Runtime,
     projectPath: string,
@@ -2132,6 +2178,25 @@ export class TaskService {
     return this.hasActiveDescendantAgentTasks(cfg, workspaceId);
   }
 
+  hasPreservedCompletedDescendants(workspaceId: string): boolean {
+    assert(
+      workspaceId.length > 0,
+      "hasPreservedCompletedDescendants: workspaceId must be non-empty"
+    );
+
+    const cfg = this.config.loadConfigOrDefault();
+    const taskSettings = normalizeTaskSettings(cfg.taskSettings);
+    if (!taskSettings.preserveSubagentsUntilArchive) {
+      return false;
+    }
+
+    const index = this.buildAgentTaskIndex(cfg);
+    const completedDescendants = this.listCompletedDescendantAgentTaskIds(index, workspaceId);
+    return completedDescendants.some(
+      (descendantId) => !this.hasArchivedAncestor(index, cfg, descendantId)
+    );
+  }
+
   listActiveDescendantAgentTaskIds(workspaceId: string): string[] {
     assert(
       workspaceId.length > 0,
@@ -2296,6 +2361,16 @@ export class TaskService {
     return result;
   }
 
+  private listCompletedDescendantAgentTaskIds(
+    index: AgentTaskIndex,
+    workspaceId: string
+  ): string[] {
+    return this.listDescendantAgentTaskIdsFromIndex(index, workspaceId).filter((taskId) => {
+      const entry = index.byId.get(taskId);
+      return entry != null && hasCompletedAgentReport(entry);
+    });
+  }
+
   async isDescendantAgentTask(ancestorWorkspaceId: string, taskId: string): Promise<boolean> {
     assert(ancestorWorkspaceId.length > 0, "isDescendantAgentTask: ancestorWorkspaceId required");
     assert(taskId.length > 0, "isDescendantAgentTask: taskId required");
@@ -2391,6 +2466,24 @@ export class TaskService {
     }
 
     return { byId, childrenByParent, parentById };
+  }
+
+  private hasArchivedAncestor(
+    index: AgentTaskIndex,
+    config: ReturnType<Config["loadConfigOrDefault"]>,
+    workspaceId: string
+  ): boolean {
+    const ancestorWorkspaceIds = this.listAncestorWorkspaceIdsUsingParentById(
+      index.parentById,
+      workspaceId
+    );
+    return ancestorWorkspaceIds.some((ancestorWorkspaceId) => {
+      const entry = findWorkspaceEntry(config, ancestorWorkspaceId);
+      return (
+        entry != null &&
+        isWorkspaceArchived(entry.workspace.archivedAt, entry.workspace.unarchivedAt)
+      );
+    });
   }
 
   private countActiveAgentTasks(config: ReturnType<Config["loadConfigOrDefault"]>): number {
@@ -4759,6 +4852,14 @@ export class TaskService {
         parentWorkspaceId,
       });
       return { ok: false, reason: "patch_pending" };
+    }
+
+    const taskSettings = normalizeTaskSettings(config.taskSettings);
+    if (
+      taskSettings.preserveSubagentsUntilArchive &&
+      !this.hasArchivedAncestor(index, config, workspaceId)
+    ) {
+      return { ok: false, reason: "preserved_until_archive" };
     }
 
     return { ok: true, parentWorkspaceId };
