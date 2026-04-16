@@ -2729,26 +2729,36 @@ export class WorkspaceService extends EventEmitter {
 
     // Try to remove from runtime (filesystem)
     try {
-      // Block direct removal of unarchived workspaces while preserved completed descendants still exist.
-      // Archiving first persists archivedAt, which lets TaskService descendant cleanup proceed safely.
-      if (
-        !force &&
-        persistedWorkspace &&
-        this.taskService?.hasPreservedCompletedDescendants?.(workspaceId)
-      ) {
-        const config = this.config.loadConfigOrDefault();
-        const projectConfig = config.projects.get(persistedWorkspace.projectPath);
-        const workspaceEntry =
-          projectConfig?.workspaces.find((workspace) => workspace.id === workspaceId) ??
-          projectConfig?.workspaces.find(
-            (workspace) => workspace.path === persistedWorkspace.workspacePath
-          );
-        if (
-          workspaceEntry &&
-          !isWorkspaceArchived(workspaceEntry.archivedAt, workspaceEntry.unarchivedAt)
-        ) {
+      if (!force) {
+        // Block direct removal of unarchived workspaces while preserved completed descendants still exist.
+        // Archiving first persists archivedAt, which lets TaskService descendant cleanup proceed safely.
+        if (this.taskService?.hasPreservedCompletedDescendants?.(workspaceId)) {
+          const config = this.config.loadConfigOrDefault();
+          const projectConfig = persistedWorkspace
+            ? config.projects.get(persistedWorkspace.projectPath)
+            : undefined;
+          const workspaceEntry = persistedWorkspace
+            ? (projectConfig?.workspaces.find((workspace) => workspace.id === workspaceId) ??
+              projectConfig?.workspaces.find(
+                (workspace) => workspace.path === persistedWorkspace.workspacePath
+              ))
+            : undefined;
+          if (
+            workspaceEntry &&
+            !isWorkspaceArchived(workspaceEntry.archivedAt, workspaceEntry.unarchivedAt)
+          ) {
+            return Err(
+              "This workspace has preserved completed sub-agent workspaces. Archive the workspace first to trigger cleanup, then try removing it."
+            );
+          }
+        }
+
+        // Archived parents can still retain completed descendants while cleanup waits on
+        // prerequisites like pending patch artifacts. Keep removal blocked until that cleanup
+        // finishes so descendants do not lose the archived ancestor that makes them eligible.
+        if (this.taskService?.hasCompletedDescendants?.(workspaceId)) {
           return Err(
-            "This workspace has preserved completed sub-agent workspaces. Archive the workspace first to trigger cleanup, then try removing it."
+            "This workspace still has completed sub-agent workspaces pending cleanup. Wait for cleanup to finish, or force-remove the workspace."
           );
         }
       }

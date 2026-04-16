@@ -2197,6 +2197,28 @@ export class TaskService {
     );
   }
 
+  // This ignores archive state and preserveSubagentsUntilArchive so callers can detect
+  // completed descendants that are still waiting on cleanup prerequisites.
+  hasCompletedDescendants(workspaceId: string): boolean {
+    assert(workspaceId.length > 0, "hasCompletedDescendants: workspaceId must be non-empty");
+
+    const cfg = this.config.loadConfigOrDefault();
+    const index = this.buildAgentTaskIndex(cfg);
+    const stack: string[] = [...(index.childrenByParent.get(workspaceId) ?? [])];
+    while (stack.length > 0) {
+      const next = stack.pop()!;
+      const entry = index.byId.get(next);
+      if (entry && hasCompletedAgentReport(entry)) {
+        return true;
+      }
+      const children = index.childrenByParent.get(next);
+      if (children) {
+        stack.push(...children);
+      }
+    }
+    return false;
+  }
+
   listActiveDescendantAgentTaskIds(workspaceId: string): string[] {
     assert(
       workspaceId.length > 0,

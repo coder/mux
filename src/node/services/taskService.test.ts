@@ -8935,6 +8935,56 @@ describe("TaskService", () => {
       ]);
     });
 
+    test("hasCompletedDescendants returns true when archived parent has pending-cleanup descendants", async () => {
+      const childTaskId = "child-333";
+      const { config, taskService, rootWorkspaceId } = await setupReportedTaskChain({
+        taskChain: [
+          {
+            id: childTaskId,
+            directoryName: "child-task",
+            name: "agent_explore_child",
+            agentType: "explore",
+            taskStatus: "reported",
+          },
+        ],
+      });
+
+      await archiveWorkspaceInTestConfig(config, rootWorkspaceId);
+
+      const pendingArtifact: Awaited<
+        ReturnType<typeof subagentGitPatchArtifacts.readSubagentGitPatchArtifact>
+      > = {
+        childTaskId,
+        parentWorkspaceId: rootWorkspaceId,
+        createdAtMs: 1,
+        status: "pending",
+        projectArtifacts: [
+          {
+            projectPath: path.join(rootDir, "repo"),
+            projectName: "repo",
+            storageKey: "repo",
+            status: "pending",
+          },
+        ],
+        readyProjectCount: 0,
+        failedProjectCount: 0,
+        skippedProjectCount: 0,
+        totalCommitCount: 0,
+      };
+      const patchArtifactSpy = spyOn(
+        subagentGitPatchArtifacts,
+        "readSubagentGitPatchArtifact"
+      ).mockResolvedValue(pendingArtifact);
+
+      try {
+        await taskService.cleanupReportedDescendantsAfterArchive(rootWorkspaceId);
+
+        expect(taskService.hasCompletedDescendants(rootWorkspaceId)).toBe(true);
+      } finally {
+        patchArtifactSpy.mockRestore();
+      }
+    });
+
     test("hasPreservedCompletedDescendants returns true when descendants exist and toggle is on", async () => {
       const { taskService, rootWorkspaceId } = await setupReportedTaskChain();
 
