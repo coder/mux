@@ -520,6 +520,7 @@ describe("WorkspaceContext", () => {
 
     await waitFor(() => expect(ctx().workspaceMetadata.size).toBe(1));
     await waitFor(() => expect(emitMetadata).toBeTruthy());
+    expect(ctx().workspaceMetadata.get(workspaceId)?.agentId).toBeUndefined();
 
     act(() => {
       emitMetadata?.({
@@ -528,10 +529,9 @@ describe("WorkspaceContext", () => {
       });
     });
 
-    await waitFor(() =>
-      expect(readPersistedState<string | undefined>(getAgentIdKey(workspaceId), undefined)).toBe(
-        "exec"
-      )
+    await waitFor(() => expect(ctx().workspaceMetadata.get(workspaceId)?.agentId).toBe("plan"));
+    expect(readPersistedState<string | undefined>(getAgentIdKey(workspaceId), undefined)).toBe(
+      "exec"
     );
   });
 
