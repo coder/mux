@@ -3128,6 +3128,7 @@ describe("WorkspaceService remove desktop session cleanup", () => {
       getSessionDir: mock((id: string) => path.join(tempRoot, "sessions", id)),
       removeWorkspace: removeWorkspaceMock,
       findWorkspace: mock(() => null),
+      loadConfigOrDefault: mock(() => ({ projects: new Map() })),
     };
 
     workspaceService = new WorkspaceService(
@@ -3269,9 +3270,9 @@ describe("WorkspaceService remove preserved descendants", () => {
   });
 
   test("remove() blocks direct removal of unarchived workspace with preserved completed descendants", async () => {
-    const hasPreservedCompletedDescendants = mock(() => true);
+    const hasCompletedDescendants = mock(() => true);
     workspaceService.setTaskService({
-      hasPreservedCompletedDescendants,
+      hasCompletedDescendants,
     } as unknown as TaskService);
     const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockReturnValue({
       deleteWorkspace: deleteWorkspaceMock,
@@ -3285,8 +3286,50 @@ describe("WorkspaceService remove preserved descendants", () => {
           "This workspace has preserved completed sub-agent workspaces. Archive the workspace first to trigger cleanup, then try removing it."
         )
       );
-      expect(hasPreservedCompletedDescendants).toHaveBeenCalledTimes(1);
-      expect(hasPreservedCompletedDescendants).toHaveBeenCalledWith(workspaceId);
+      expect(hasCompletedDescendants).toHaveBeenCalledTimes(1);
+      expect(hasCompletedDescendants).toHaveBeenCalledWith(workspaceId);
+      expect(stopStreamMock).not.toHaveBeenCalled();
+      expect(getWorkspaceMetadataMock).not.toHaveBeenCalled();
+      expect(createRuntimeSpy).not.toHaveBeenCalled();
+      expect(deleteWorkspaceMock).not.toHaveBeenCalled();
+      expect(removeWorkspaceMock).not.toHaveBeenCalled();
+    } finally {
+      createRuntimeSpy.mockRestore();
+    }
+  });
+
+  test("remove() blocks intermediate ancestor removal when descendants exist", async () => {
+    const workspaceEntry = configState.projects.get(projectPath)?.workspaces[0];
+    expect(workspaceEntry).toBeDefined();
+    if (!workspaceEntry) {
+      return;
+    }
+
+    workspaceEntry.parentWorkspaceId = "ws-grandparent";
+    configState.projects.get(projectPath)?.workspaces.push({
+      path: path.join(tempRoot, "child"),
+      id: "ws-child",
+      parentWorkspaceId: workspaceId,
+    });
+
+    const hasCompletedDescendants = mock(() => true);
+    workspaceService.setTaskService({
+      hasCompletedDescendants,
+    } as unknown as TaskService);
+    const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockReturnValue({
+      deleteWorkspace: deleteWorkspaceMock,
+    } as unknown as ReturnType<typeof runtimeFactory.createRuntime>);
+
+    try {
+      const result = await workspaceService.remove(workspaceId);
+
+      expect(result).toEqual(
+        Err(
+          "This workspace has preserved completed sub-agent workspaces. Archive the workspace first to trigger cleanup, then try removing it."
+        )
+      );
+      expect(hasCompletedDescendants).toHaveBeenCalledTimes(1);
+      expect(hasCompletedDescendants).toHaveBeenCalledWith(workspaceId);
       expect(stopStreamMock).not.toHaveBeenCalled();
       expect(getWorkspaceMetadataMock).not.toHaveBeenCalled();
       expect(createRuntimeSpy).not.toHaveBeenCalled();
@@ -3307,10 +3350,8 @@ describe("WorkspaceService remove preserved descendants", () => {
     workspaceEntry.archivedAt = "2026-03-10T00:00:00.000Z";
     workspaceEntry.unarchivedAt = undefined;
 
-    const hasPreservedCompletedDescendants = mock(() => false);
     const hasCompletedDescendants = mock(() => true);
     workspaceService.setTaskService({
-      hasPreservedCompletedDescendants,
       hasCompletedDescendants,
     } as unknown as TaskService);
     const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockReturnValue({
@@ -3325,8 +3366,6 @@ describe("WorkspaceService remove preserved descendants", () => {
           "This workspace still has completed sub-agent workspaces pending cleanup. Wait for cleanup to finish, or force-remove the workspace."
         )
       );
-      expect(hasPreservedCompletedDescendants).toHaveBeenCalledTimes(1);
-      expect(hasPreservedCompletedDescendants).toHaveBeenCalledWith(workspaceId);
       expect(hasCompletedDescendants).toHaveBeenCalledTimes(1);
       expect(hasCompletedDescendants).toHaveBeenCalledWith(workspaceId);
       expect(stopStreamMock).not.toHaveBeenCalled();
@@ -3353,10 +3392,8 @@ describe("WorkspaceService remove preserved descendants", () => {
       preserveSubagentsUntilArchive: false,
     };
 
-    const hasPreservedCompletedDescendants = mock(() => true);
     const hasCompletedDescendants = mock(() => true);
     workspaceService.setTaskService({
-      hasPreservedCompletedDescendants,
       hasCompletedDescendants,
     } as unknown as TaskService);
     const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockReturnValue({
@@ -3367,7 +3404,6 @@ describe("WorkspaceService remove preserved descendants", () => {
       const result = await workspaceService.remove(workspaceId);
 
       expect(result.success).toBe(true);
-      expect(hasPreservedCompletedDescendants).not.toHaveBeenCalled();
       expect(hasCompletedDescendants).not.toHaveBeenCalled();
       expect(stopStreamMock).toHaveBeenCalledTimes(1);
       expect(deleteWorkspaceMock).toHaveBeenCalledWith(
@@ -3393,10 +3429,8 @@ describe("WorkspaceService remove preserved descendants", () => {
     workspaceEntry.archivedAt = "2026-03-10T00:00:00.000Z";
     workspaceEntry.unarchivedAt = undefined;
 
-    const hasPreservedCompletedDescendants = mock(() => false);
     const hasCompletedDescendants = mock(() => false);
     workspaceService.setTaskService({
-      hasPreservedCompletedDescendants,
       hasCompletedDescendants,
     } as unknown as TaskService);
     const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockReturnValue({
@@ -3407,8 +3441,6 @@ describe("WorkspaceService remove preserved descendants", () => {
       const result = await workspaceService.remove(workspaceId);
 
       expect(result.success).toBe(true);
-      expect(hasPreservedCompletedDescendants).toHaveBeenCalledTimes(1);
-      expect(hasPreservedCompletedDescendants).toHaveBeenCalledWith(workspaceId);
       expect(hasCompletedDescendants).toHaveBeenCalledTimes(1);
       expect(hasCompletedDescendants).toHaveBeenCalledWith(workspaceId);
       expect(stopStreamMock).toHaveBeenCalledTimes(1);
@@ -3426,9 +3458,9 @@ describe("WorkspaceService remove preserved descendants", () => {
   });
 
   test("remove() allows removal when force is true even with preserved descendants", async () => {
-    const hasPreservedCompletedDescendants = mock(() => true);
+    const hasCompletedDescendants = mock(() => true);
     workspaceService.setTaskService({
-      hasPreservedCompletedDescendants,
+      hasCompletedDescendants,
     } as unknown as TaskService);
     const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockReturnValue({
       deleteWorkspace: deleteWorkspaceMock,
@@ -3438,7 +3470,7 @@ describe("WorkspaceService remove preserved descendants", () => {
       const result = await workspaceService.remove(workspaceId, true);
 
       expect(result.success).toBe(true);
-      expect(hasPreservedCompletedDescendants).not.toHaveBeenCalled();
+      expect(hasCompletedDescendants).not.toHaveBeenCalled();
       expect(stopStreamMock).toHaveBeenCalledTimes(1);
       expect(deleteWorkspaceMock).toHaveBeenCalledWith(
         projectPath,
