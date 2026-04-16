@@ -30,6 +30,7 @@ export const TaskSettingsSchema = z.object({
     .max(TASK_SETTINGS_LIMITS.maxTaskNestingDepth.max)
     .optional(),
   proposePlanImplementReplacesChatHistory: z.boolean().optional(),
+  preserveSubagentsUntilArchive: z.boolean().optional(),
   planSubagentExecutorRouting: PlanSubagentExecutorRoutingSchema.optional(),
   planSubagentDefaultsToOrchestrator: z.boolean().optional(),
   bashOutputCompactionMinLines: z

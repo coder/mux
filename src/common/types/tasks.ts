@@ -29,6 +29,7 @@ export const DEFAULT_TASK_SETTINGS: TaskSettings = {
   maxParallelAgentTasks: TASK_SETTINGS_LIMITS.maxParallelAgentTasks.default,
   maxTaskNestingDepth: TASK_SETTINGS_LIMITS.maxTaskNestingDepth.default,
   proposePlanImplementReplacesChatHistory: false,
+  preserveSubagentsUntilArchive: false,
   planSubagentExecutorRouting: "auto",
   planSubagentDefaultsToOrchestrator: false,
 
@@ -111,6 +112,11 @@ export function normalizeTaskSettings(raw: unknown): TaskSettings {
       ? record.proposePlanImplementReplacesChatHistory
       : (DEFAULT_TASK_SETTINGS.proposePlanImplementReplacesChatHistory ?? false);
 
+  const preserveSubagentsUntilArchive =
+    typeof record.preserveSubagentsUntilArchive === "boolean"
+      ? record.preserveSubagentsUntilArchive
+      : DEFAULT_TASK_SETTINGS.preserveSubagentsUntilArchive;
+
   const normalizedPlanSubagentExecutorRouting = isPlanSubagentExecutorRouting(
     record.planSubagentExecutorRouting
   )
@@ -168,6 +174,7 @@ export function normalizeTaskSettings(raw: unknown): TaskSettings {
     maxParallelAgentTasks,
     maxTaskNestingDepth,
     proposePlanImplementReplacesChatHistory,
+    preserveSubagentsUntilArchive,
     planSubagentExecutorRouting,
     planSubagentDefaultsToOrchestrator,
     bashOutputCompactionMinLines,
@@ -189,6 +196,10 @@ export function normalizeTaskSettings(raw: unknown): TaskSettings {
   assert(
     typeof proposePlanImplementReplacesChatHistory === "boolean",
     "normalizeTaskSettings: proposePlanImplementReplacesChatHistory must be a boolean"
+  );
+  assert(
+    typeof preserveSubagentsUntilArchive === "boolean",
+    "normalizeTaskSettings: preserveSubagentsUntilArchive must be a boolean"
   );
 
   assert(

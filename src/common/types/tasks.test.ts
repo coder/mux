@@ -13,6 +13,21 @@ describe("normalizeTaskSettings", () => {
     expect(normalizeTaskSettings({})).toEqual(DEFAULT_TASK_SETTINGS);
   });
 
+  test("defaults include preserveSubagentsUntilArchive: false", () => {
+    const normalized = normalizeTaskSettings(undefined);
+    expect(normalized.preserveSubagentsUntilArchive).toBe(false);
+  });
+
+  test("explicit preserveSubagentsUntilArchive true survives normalization", () => {
+    const normalized = normalizeTaskSettings({ preserveSubagentsUntilArchive: true });
+    expect(normalized.preserveSubagentsUntilArchive).toBe(true);
+  });
+
+  test("missing preserveSubagentsUntilArchive falls back to default", () => {
+    const normalized = normalizeTaskSettings({});
+    expect(normalized.preserveSubagentsUntilArchive).toBe(false);
+  });
+
   test("clamps values into valid ranges", () => {
     const normalized = normalizeTaskSettings({
       maxParallelAgentTasks: 999,
