@@ -2204,19 +2204,7 @@ export class TaskService {
 
     const cfg = this.config.loadConfigOrDefault();
     const index = this.buildAgentTaskIndex(cfg);
-    const stack: string[] = [...(index.childrenByParent.get(workspaceId) ?? [])];
-    while (stack.length > 0) {
-      const next = stack.pop()!;
-      const entry = index.byId.get(next);
-      if (entry && hasCompletedAgentReport(entry)) {
-        return true;
-      }
-      const children = index.childrenByParent.get(next);
-      if (children) {
-        stack.push(...children);
-      }
-    }
-    return false;
+    return this.listCompletedDescendantAgentTaskIds(index, workspaceId).length > 0;
   }
 
   listActiveDescendantAgentTaskIds(workspaceId: string): string[] {
