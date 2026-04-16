@@ -120,6 +120,7 @@ export type Anthropic1MContextMode = "none" | "beta" | "native";
 
 const OPTIONAL_VERSION_SUFFIX = String.raw`(?:-(?:\d{8}|\d{4}-\d{2}-\d{2}))?`;
 const ANTHROPIC_NATIVE_1M_PATTERNS = [
+  new RegExp(`^claude-opus-4-7${OPTIONAL_VERSION_SUFFIX}$`, "i"),
   new RegExp(`^claude-opus-4-6${OPTIONAL_VERSION_SUFFIX}$`, "i"),
   new RegExp(`^claude-sonnet-4-6${OPTIONAL_VERSION_SUFFIX}$`, "i"),
 ];

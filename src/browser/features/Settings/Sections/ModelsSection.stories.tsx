@@ -76,7 +76,7 @@ export const ModelsConfigured: Story = {
               isEnabled: true,
               isConfigured: true,
               baseUrl: "",
-              models: ["claude-sonnet-4-20250514", "claude-opus-4-6"],
+              models: ["claude-sonnet-4-20250514", "claude-opus-4-7"],
             },
             openai: {
               apiKeySet: true,

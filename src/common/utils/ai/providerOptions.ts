@@ -14,7 +14,7 @@ import type { XaiProviderOptions } from "@ai-sdk/xai";
 import { PROVIDER_DEFINITIONS, type ProviderName } from "@/common/constants/providers";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
-import type { ThinkingLevel } from "@/common/types/thinking";
+import type { AnthropicEffortLevel, ThinkingLevel } from "@/common/types/thinking";
 import {
   getAnthropicEffort,
   ANTHROPIC_THINKING_BUDGETS,
@@ -46,10 +46,21 @@ type OpenAICompatibleGatewayProviderOptions = Pick<
 >;
 
 /**
+ * Extended Anthropic options to accommodate API features the SDK hasn't typed yet.
+ *
+ * Opus 4.7 introduced a native "xhigh" effort level and "display" field on adaptive
+ * thinking. The @ai-sdk/anthropic types don't include these yet, so we widen the
+ * effort field to accept our full AnthropicEffortLevel.
+ */
+type AnthropicProviderOptionsExtended = Omit<AnthropicProviderOptions, "effort"> & {
+  effort?: AnthropicEffortLevel;
+};
+
+/**
  * Provider-specific options structure for AI SDK
  */
 type ProviderOptions =
-  | { anthropic: AnthropicProviderOptions }
+  | { anthropic: AnthropicProviderOptionsExtended }
   | { openai: OpenAIResponsesProviderOptions }
   | { google: GoogleGenerativeAIProviderOptions }
   | { openrouter: OpenRouterReasoningOptions }
@@ -263,25 +274,32 @@ export function buildProviderOptions(
     // breakpoint on direct Anthropic requests.
 
     // Opus 4.5+ and Sonnet 4.6 use the effort parameter for reasoning control.
-    // Opus 4.6 / Sonnet 4.6 use adaptive thinking (model decides when/how much to think).
+    // Opus 4.6+ / Sonnet 4.6 use adaptive thinking (model decides when/how much to think).
     // Opus 4.5 uses enabled thinking with a budgetTokens ceiling.
     const isOpus45 = capModelName?.includes("opus-4-5") ?? false;
     const isOpus46 = capModelName?.includes("opus-4-6") ?? false;
+    const isOpus47 = capModelName?.includes("opus-4-7") ?? false;
     const isSonnet46 = capModelName?.includes("sonnet-4-6") ?? false;
-    const usesAdaptiveThinking = isOpus46 || isSonnet46;
+    const usesAdaptiveThinking = isOpus46 || isOpus47 || isSonnet46;
 
     if (isOpus45 || usesAdaptiveThinking) {
-      // xhigh maps to "max" effort; policy clamps Opus 4.5 to "high" max
-      const effortLevel = getAnthropicEffort(effectiveThinking);
+      // Opus 4.7 maps xhigh → native "xhigh" effort; older models map xhigh → "max"
+      const effortLevel = getAnthropicEffort(effectiveThinking, capabilityModel);
       const budgetTokens = ANTHROPIC_THINKING_BUDGETS[effectiveThinking];
-      // Opus 4.6 / Sonnet 4.6: adaptive thinking when on, disabled when off
+      // Opus 4.6+ / Sonnet 4.6: adaptive thinking when on, disabled when off
       // Opus 4.5: enabled thinking with budgetTokens ceiling (only when not "off")
-      const thinking: AnthropicProviderOptions["thinking"] = usesAdaptiveThinking
+      // Opus 4.7: explicitly request display: "summarized" to receive thinking content
+      //
+      // The SDK doesn't type "display" on adaptive thinking or "xhigh" as an effort
+      // level yet, so we build the raw config and widen to AnthropicProviderOptions.
+      const thinking = usesAdaptiveThinking
         ? effectiveThinking === "off"
-          ? { type: "disabled" }
-          : { type: "adaptive" }
+          ? { type: "disabled" as const }
+          : isOpus47
+            ? { type: "adaptive" as const, display: "summarized" as const }
+            : { type: "adaptive" as const }
         : budgetTokens > 0
-          ? { type: "enabled", budgetTokens }
+          ? { type: "enabled" as const, budgetTokens }
           : undefined;
 
       log.debug("buildProviderOptions: Anthropic effort model config", {
@@ -290,16 +308,14 @@ export function buildProviderOptions(
         thinkingLevel: effectiveThinking,
       });
 
-      const options = {
-        anthropic: {
-          disableParallelToolUse: false,
-          sendReasoning: true,
-          ...(thinking && { thinking }),
-          effort: effortLevel,
-        },
-      } satisfies { anthropic: AnthropicProviderOptions };
+      const anthropicOptions: AnthropicProviderOptionsExtended = {
+        disableParallelToolUse: false,
+        sendReasoning: true,
+        ...(thinking && { thinking }),
+        effort: effortLevel,
+      };
 
-      return options;
+      return { anthropic: anthropicOptions };
     }
 
     // Other Anthropic models: Use thinking parameter with budgetTokens

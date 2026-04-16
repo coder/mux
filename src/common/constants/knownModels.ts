@@ -29,9 +29,11 @@ interface KnownModel extends KnownModelDefinition {
 const MODEL_DEFINITIONS = {
   OPUS: {
     provider: "anthropic",
-    providerModelId: "claude-opus-4-6",
+    providerModelId: "claude-opus-4-7",
     aliases: ["opus"],
     warm: true,
+    // Opus 4.7 tokenizer not yet available upstream; reuse 4.6 for approximate counting
+    tokenizerOverride: "anthropic/claude-opus-4.5",
   },
   SONNET: {
     provider: "anthropic",

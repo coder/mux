@@ -71,6 +71,6 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           bunx mux@next run \
-            --model anthropic:claude-opus-4-6 \
+            --model anthropic:claude-opus-4-7 \
             --thinking xhigh \
             < .github/prompts/auto-cleanup.md
