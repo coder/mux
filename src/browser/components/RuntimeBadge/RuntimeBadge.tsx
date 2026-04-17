@@ -49,7 +49,9 @@ function TooltipRow({
   return (
     <div className="flex items-center gap-1.5 min-w-0">
       <span className="text-muted shrink-0 text-xs">{label}</span>
-      <span className="font-mono text-xs truncate min-w-0" title={value}>{value}</span>
+      <span className="font-mono text-xs truncate min-w-0" title={value}>
+        {value}
+      </span>
       {copyable && (
         <button
           onClick={(e) => {
