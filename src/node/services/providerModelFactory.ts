@@ -675,6 +675,33 @@ const CODEX_ALLOWED_PARAMS = new Set([
 ]);
 
 // ---------------------------------------------------------------------------
+// Fetch input helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract a URL string from the `input` argument of a `fetch`-compatible call.
+ * Handles the three shapes AI SDK providers pass through: plain string, `URL`,
+ * and `Request`-like objects that expose a `url` property. Returns an empty
+ * string when the URL cannot be determined so callers can fall through to
+ * normal fetch behavior without throwing.
+ */
+function getFetchInputUrl(input: Parameters<typeof fetch>[0]): string {
+  if (typeof input === "string") {
+    return input;
+  }
+  if (input instanceof URL) {
+    return input.toString();
+  }
+  if (typeof input === "object" && input !== null && "url" in input) {
+    const possibleUrl = (input as { url?: unknown }).url;
+    if (typeof possibleUrl === "string") {
+      return possibleUrl;
+    }
+  }
+  return "";
+}
+
+// ---------------------------------------------------------------------------
 // Content extraction
 // ---------------------------------------------------------------------------
 
@@ -1278,21 +1305,7 @@ export class ProviderModelFactory {
             init?: Parameters<typeof fetch>[1]
           ): Promise<Response> => {
             try {
-              const urlString = (() => {
-                if (typeof input === "string") {
-                  return input;
-                }
-                if (input instanceof URL) {
-                  return input.toString();
-                }
-                if (typeof input === "object" && input !== null && "url" in input) {
-                  const possibleUrl = (input as { url?: unknown }).url;
-                  if (typeof possibleUrl === "string") {
-                    return possibleUrl;
-                  }
-                }
-                return "";
-              })();
+              const urlString = getFetchInputUrl(input);
 
               const method = (init?.method ?? "GET").toUpperCase();
               const isOpenAIResponses = /\/v1\/responses(\?|$)/.test(urlString);
@@ -1752,21 +1765,7 @@ export class ProviderModelFactory {
           headers.set("Authorization", `Bearer ${resolvedApiKey ?? ""}`);
           headers.set("Openai-Intent", "conversation-edits");
 
-          const urlString = (() => {
-            if (typeof input === "string") {
-              return input;
-            }
-            if (input instanceof URL) {
-              return input.toString();
-            }
-            if (typeof input === "object" && input !== null && "url" in input) {
-              const possibleUrl = (input as { url?: unknown }).url;
-              if (typeof possibleUrl === "string") {
-                return possibleUrl;
-              }
-            }
-            return "";
-          })();
+          const urlString = getFetchInputUrl(input);
 
           const method = (
             init?.method ?? (input instanceof Request ? input.method : "GET")
