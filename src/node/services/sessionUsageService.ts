@@ -78,6 +78,14 @@ export interface SessionUsageFile {
  * per-model usage breakdowns. Usage is accumulated on stream-end, never
  * subtracted, making costs immune to message deletion.
  */
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isPersistedToolModelUsage(value: unknown): value is PersistedToolModelUsage {
+  return isPlainRecord(value) && typeof value.model === "string" && isPlainRecord(value.usage);
+}
+
 export class SessionUsageService {
   private readonly SESSION_USAGE_FILE = "session-usage.json";
   private readonly fileLocks = workspaceFileLocks;
@@ -411,17 +419,28 @@ export class SessionUsageService {
       result.byModel[model] = existing ? sumUsageHistory([existing, usage])! : usage;
     };
 
-    const rebuildToolModelUsage = (toolModelUsage: PersistedToolModelUsage): void => {
-      const rawModel = toolModelUsage.model?.trim();
+    const rebuildToolModelUsage = (toolModelUsage: unknown): void => {
+      // History on disk is not schema-validated, so skip malformed tool snapshots instead of
+      // letting one bad entry abort the entire rebuild.
+      if (!isPersistedToolModelUsage(toolModelUsage)) {
+        return;
+      }
+
+      const rawModel = toolModelUsage.model.trim();
       if (!rawModel) {
         return;
       }
 
+      const providerMetadata = isPlainRecord(toolModelUsage.providerMetadata)
+        ? toolModelUsage.providerMetadata
+        : undefined;
+      const metadataModel =
+        typeof toolModelUsage.metadataModel === "string" ? toolModelUsage.metadataModel : undefined;
       const usage = createDisplayUsage(
         toolModelUsage.usage,
         rawModel,
-        toolModelUsage.providerMetadata,
-        toolModelUsage.metadataModel
+        providerMetadata,
+        metadataModel
       );
       if (!usage) {
         return;

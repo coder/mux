@@ -559,10 +559,6 @@ function extractIngestEvents(params: {
   }
 
   const usage = parseUsage(metadata.usage);
-  if (!usage) {
-    return [];
-  }
-
   const sequence = toFiniteInteger(metadata.historySequence) ?? params.lineNumber;
   const timestamp =
     toFiniteNumber(metadata.timestamp) ?? parseCreatedAtTimestamp(params.message.createdAt) ?? null;
@@ -575,39 +571,42 @@ function extractIngestEvents(params: {
     responseIndex: params.responseIndex,
     isSubAgent: (params.workspaceMeta.parentWorkspaceId ?? "").length > 0,
   };
+  const events: IngestEvent[] = [];
 
-  const parentRow = buildIngestEventRow({
-    inheritedContext,
-    model: toOptionalString(metadata.model) ?? null,
-    metadataModel: toOptionalString(metadata.metadataModel),
-    usage,
-    providerMetadata: isRecord(metadata.providerMetadata) ? metadata.providerMetadata : undefined,
-    toolName: null,
-    timestamp,
-    durationMs,
-    ttftMs: extractTtftMs(metadata),
-    outputTps: null,
-  });
-  if (!parentRow.parsed.success) {
-    log.warn("[analytics-etl] Skipping invalid analytics row", {
-      workspaceId: params.workspaceId,
-      lineNumber: params.lineNumber,
-      issues: parentRow.parsed.error.issues,
+  // Tool usage snapshots can survive even when the parent assistant usage payload is missing.
+  // Keep ingesting those rows so malformed or partial history does not drop tool costs.
+  if (usage) {
+    const parentRow = buildIngestEventRow({
+      inheritedContext,
+      model: toOptionalString(metadata.model) ?? null,
+      metadataModel: toOptionalString(metadata.metadataModel),
+      usage,
+      providerMetadata: isRecord(metadata.providerMetadata) ? metadata.providerMetadata : undefined,
+      toolName: null,
+      timestamp,
+      durationMs,
+      ttftMs: extractTtftMs(metadata),
+      outputTps: null,
     });
-    return [];
-  }
+    if (!parentRow.parsed.success) {
+      log.warn("[analytics-etl] Skipping invalid analytics row", {
+        workspaceId: params.workspaceId,
+        lineNumber: params.lineNumber,
+        issues: parentRow.parsed.error.issues,
+      });
+    } else {
+      if (durationMs !== null && durationMs > 0) {
+        parentRow.parsed.data.output_tps =
+          parentRow.parsed.data.output_tokens / (durationMs / 1000);
+      }
 
-  if (durationMs !== null && durationMs > 0) {
-    parentRow.parsed.data.output_tps = parentRow.parsed.data.output_tokens / (durationMs / 1000);
+      events.push({
+        row: parentRow.parsed.data,
+        sequence,
+        date: parentRow.date,
+      });
+    }
   }
-
-  const events: IngestEvent[] = [
-    {
-      row: parentRow.parsed.data,
-      sequence,
-      date: parentRow.date,
-    },
-  ];
 
   const toolModelUsages = metadata.toolModelUsages;
   if (!Array.isArray(toolModelUsages)) {

@@ -487,6 +487,144 @@ describe("appendEvents", () => {
     expect(advisorRow.output_tps).toBeNull();
   });
 
+  test("emits tool rows when assistant usage is missing", async () => {
+    const sessionDir = await createTempSessionDir();
+    const assistantTimestamp = 1_700_000_000_000;
+    const bashToolUsage = {
+      toolName: "bash",
+      toolCallId: "tool-call-1",
+      timestamp: assistantTimestamp + 25,
+      model: "openai:gpt-4",
+      usage: { inputTokens: 36, outputTokens: 12, totalTokens: 48 },
+      providerMetadata: { openai: { reasoningTokens: 3 } },
+    };
+    const advisorToolUsage = {
+      toolName: "advisor",
+      toolCallId: "tool-call-2",
+      model: "anthropic:claude-sonnet-4-20250514",
+      usage: {
+        inputTokens: 96,
+        cachedInputTokens: 10,
+        outputTokens: 18,
+        totalTokens: 114,
+      },
+      providerMetadata: { anthropic: { cacheCreationInputTokens: 4 } },
+    };
+
+    await writeMetadataJson(sessionDir, {
+      projectPath: "/proj",
+      projectName: "my-proj",
+      name: "workspace-name",
+      parentWorkspaceId: "parent-workspace",
+    });
+    await writeChatJsonl(sessionDir, [
+      makeUserLine(),
+      JSON.stringify({
+        role: "assistant",
+        content: "response",
+        metadata: {
+          model: "openai:gpt-4",
+          historySequence: 1,
+          timestamp: assistantTimestamp,
+          agentId: "exec",
+          toolModelUsages: [bashToolUsage, advisorToolUsage],
+        },
+      }),
+    ]);
+
+    const parsed = await parseWorkspaceFromDisk("ws-tool-only-rows", sessionDir, {});
+    expect(parsed).not.toBeNull();
+    assert(parsed, "tool-only row test expected parseWorkspaceFromDisk to parse workspace");
+    expect(parsed.events).toHaveLength(2);
+
+    const rows = parsed.events
+      .map((event) => event.row as Record<string, unknown>)
+      .sort((left, right) => {
+        const leftToolName = typeof left.tool_name === "string" ? left.tool_name : "";
+        const rightToolName = typeof right.tool_name === "string" ? right.tool_name : "";
+        return (
+          leftToolName.localeCompare(rightToolName) ||
+          Number(left.timestamp) - Number(right.timestamp)
+        );
+      });
+
+    expect(rows.filter((row) => row.tool_name == null)).toHaveLength(0);
+
+    const expectedBashToolUsage = createDisplayUsage(
+      bashToolUsage.usage,
+      bashToolUsage.model,
+      bashToolUsage.providerMetadata
+    );
+    const expectedAdvisorToolUsage = createDisplayUsage(
+      advisorToolUsage.usage,
+      advisorToolUsage.model,
+      advisorToolUsage.providerMetadata
+    );
+    expect(expectedBashToolUsage).toBeDefined();
+    expect(expectedAdvisorToolUsage).toBeDefined();
+    if (!expectedBashToolUsage || !expectedAdvisorToolUsage) {
+      throw new Error("Expected tool-only ETL test to compute display usage");
+    }
+
+    const bashRow = rows.find((row) => row.tool_name === "bash");
+    const advisorRow = rows.find((row) => row.tool_name === "advisor");
+    expect(bashRow).toBeDefined();
+    expect(advisorRow).toBeDefined();
+    if (!bashRow || !advisorRow) {
+      throw new Error("Expected bash and advisor analytics rows when assistant usage is missing");
+    }
+
+    for (const row of [bashRow, advisorRow]) {
+      expect(row.workspace_id).toBe("ws-tool-only-rows");
+      expect(row.project_path).toBe("/proj");
+      expect(row.project_name).toBe("my-proj");
+      expect(row.workspace_name).toBe("workspace-name");
+      expect(row.parent_workspace_id).toBe("parent-workspace");
+      expect(row.agent_id).toBe("exec");
+      expect(row.is_sub_agent).toBe(true);
+    }
+
+    expect(parseInteger(bashRow.timestamp, "bash timestamp")).toBe(assistantTimestamp + 25);
+    expect(bashRow.model).toBe("openai:gpt-4");
+    expect(parseInteger(bashRow.input_tokens, "bash input_tokens")).toBe(
+      expectedBashToolUsage.input.tokens
+    );
+    expect(parseInteger(bashRow.output_tokens, "bash output_tokens")).toBe(
+      expectedBashToolUsage.output.tokens
+    );
+    expect(parseInteger(bashRow.reasoning_tokens, "bash reasoning_tokens")).toBe(
+      expectedBashToolUsage.reasoning.tokens
+    );
+    expect(Number(bashRow.total_cost_usd)).toBeCloseTo(
+      (expectedBashToolUsage.input.cost_usd ?? 0) +
+        (expectedBashToolUsage.output.cost_usd ?? 0) +
+        (expectedBashToolUsage.reasoning.cost_usd ?? 0) +
+        (expectedBashToolUsage.cached.cost_usd ?? 0) +
+        (expectedBashToolUsage.cacheCreate.cost_usd ?? 0),
+      12
+    );
+
+    expect(parseInteger(advisorRow.timestamp, "advisor timestamp")).toBe(assistantTimestamp);
+    expect(advisorRow.model).toBe("anthropic:claude-sonnet-4-20250514");
+    expect(parseInteger(advisorRow.input_tokens, "advisor input_tokens")).toBe(
+      expectedAdvisorToolUsage.input.tokens
+    );
+    expect(parseInteger(advisorRow.cached_tokens, "advisor cached_tokens")).toBe(
+      expectedAdvisorToolUsage.cached.tokens
+    );
+    expect(parseInteger(advisorRow.cache_create_tokens, "advisor cache_create_tokens")).toBe(
+      expectedAdvisorToolUsage.cacheCreate.tokens
+    );
+    expect(Number(advisorRow.total_cost_usd)).toBeCloseTo(
+      (expectedAdvisorToolUsage.input.cost_usd ?? 0) +
+        (expectedAdvisorToolUsage.output.cost_usd ?? 0) +
+        (expectedAdvisorToolUsage.reasoning.cost_usd ?? 0) +
+        (expectedAdvisorToolUsage.cached.cost_usd ?? 0) +
+        (expectedAdvisorToolUsage.cacheCreate.cost_usd ?? 0),
+      12
+    );
+  });
+
   test("is a no-op when events is empty", async () => {
     const conn = await createTestConn();
 

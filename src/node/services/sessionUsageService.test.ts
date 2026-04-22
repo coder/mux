@@ -625,6 +625,88 @@ describe("SessionUsageService", () => {
       );
     });
 
+    it("should skip malformed tool model usage entries during rebuild", async () => {
+      const workspaceId = "tool-usage-rebuild-skips-malformed";
+      const sameModel = "openai:gpt-4";
+      const otherModel = "anthropic:claude-sonnet-4-20250514";
+      const validSameModelToolUsage = {
+        toolName: "bash",
+        toolCallId: "tool-call-valid-1",
+        timestamp: 1_700_000_000_025,
+        model: sameModel,
+        usage: {
+          inputTokens: 36,
+          outputTokens: 12,
+          totalTokens: 48,
+        },
+        providerMetadata: {
+          openai: { reasoningTokens: 3 },
+        },
+      };
+      const validOtherModelToolUsage = {
+        toolName: "advisor",
+        toolCallId: "tool-call-valid-2",
+        timestamp: 1_700_000_000_050,
+        model: otherModel,
+        usage: {
+          inputTokens: 96,
+          cachedInputTokens: 10,
+          outputTokens: 18,
+          totalTokens: 114,
+        },
+        providerMetadata: {
+          anthropic: { cacheCreationInputTokens: 4 },
+        },
+      };
+
+      const assistantMessage = createMuxMessage("msg-tool-usage-malformed", "assistant", "Hello", {
+        historySequence: 1,
+        timestamp: 1_700_000_000_000,
+      });
+      Object.assign((assistantMessage.metadata ??= {}), {
+        toolModelUsages: [
+          validSameModelToolUsage,
+          null,
+          42,
+          {},
+          { model: "m" },
+          { model: "m", usage: null },
+          validOtherModelToolUsage,
+        ],
+      });
+
+      await service.rebuildFromMessages(workspaceId, [assistantMessage]);
+
+      const result = await service.getSessionUsage(workspaceId);
+      expect(result).toBeDefined();
+      expect(result?.lastRequest).toBeUndefined();
+
+      const canonicalSameModel = normalizeToCanonical(sameModel);
+      const canonicalOtherModel = normalizeToCanonical(otherModel);
+      expect(Object.keys(result?.byModel ?? {}).sort()).toEqual(
+        [canonicalOtherModel, canonicalSameModel].sort()
+      );
+
+      const expectedSameModelUsage = createDisplayUsage(
+        validSameModelToolUsage.usage,
+        validSameModelToolUsage.model,
+        validSameModelToolUsage.providerMetadata
+      );
+      const expectedOtherModelUsage = createDisplayUsage(
+        validOtherModelToolUsage.usage,
+        validOtherModelToolUsage.model,
+        validOtherModelToolUsage.providerMetadata
+      );
+      expect(expectedSameModelUsage).toBeDefined();
+      expect(expectedOtherModelUsage).toBeDefined();
+      if (!expectedSameModelUsage || !expectedOtherModelUsage || !result) {
+        throw new Error("Expected malformed tool usage rebuild test to compute display usage");
+      }
+
+      expect(result.byModel[canonicalSameModel]).toEqual(expectedSameModelUsage);
+      expect(result.byModel[canonicalOtherModel]).toEqual(expectedOtherModelUsage);
+    });
+
     it("should include historicalUsage from legacy compaction summaries", async () => {
       const workspaceId = "test-workspace";
 
