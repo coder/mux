@@ -555,7 +555,6 @@ describe("SessionUsageService", () => {
       expect(result!.byModel["claude-sonnet-4-20250514"].input.tokens).toBe(100);
     });
 
-
     it("should rebuild same-model totals from assistant usage and tool model usages", async () => {
       const workspaceId = "tool-usage-rebuild-workspace";
       const model = "anthropic:claude-sonnet-4-20250514";
@@ -591,7 +590,7 @@ describe("SessionUsageService", () => {
         usage: parentUsage,
         providerMetadata: parentProviderMetadata,
       });
-      Object.assign(assistantMessage.metadata ??= {}, {
+      Object.assign((assistantMessage.metadata ??= {}), {
         toolModelUsages: [toolUsage],
       });
 
@@ -603,7 +602,11 @@ describe("SessionUsageService", () => {
       expect(Object.keys(result?.byModel ?? {})).toEqual([canonicalModel]);
 
       const expectedParentUsage = createDisplayUsage(parentUsage, model, parentProviderMetadata);
-      const expectedToolUsage = createDisplayUsage(toolUsage.usage, toolUsage.model, toolUsage.providerMetadata);
+      const expectedToolUsage = createDisplayUsage(
+        toolUsage.usage,
+        toolUsage.model,
+        toolUsage.providerMetadata
+      );
       expect(expectedParentUsage).toBeDefined();
       expect(expectedToolUsage).toBeDefined();
       if (!expectedParentUsage || !expectedToolUsage || !result) {

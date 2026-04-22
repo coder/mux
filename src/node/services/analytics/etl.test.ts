@@ -324,7 +324,6 @@ describe("appendEvents", () => {
     expect(Number(rows[0].total_cost_usd)).toBeGreaterThan(0);
   });
 
-
   test("emits one assistant row plus one row per tool model usage with inherited context", async () => {
     const sessionDir = await createTempSessionDir();
     const parentTimestamp = 1_700_000_000_000;
@@ -379,7 +378,10 @@ describe("appendEvents", () => {
       .sort((left, right) => {
         const leftToolName = typeof left.tool_name === "string" ? left.tool_name : "";
         const rightToolName = typeof right.tool_name === "string" ? right.tool_name : "";
-        return leftToolName.localeCompare(rightToolName) || Number(left.timestamp) - Number(right.timestamp);
+        return (
+          leftToolName.localeCompare(rightToolName) ||
+          Number(left.timestamp) - Number(right.timestamp)
+        );
       });
 
     const expectedAssistantUsage = createDisplayUsage(parentUsage, "openai:gpt-4");

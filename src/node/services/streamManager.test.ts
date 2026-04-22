@@ -1904,7 +1904,6 @@ describe("StreamManager - TTFT metadata persistence", () => {
     expect(updatedMessage.metadata?.routedThroughGateway).toBe(true);
   });
 
-
   test("persists per-invocation tool model usages on the final assistant message", async () => {
     const startTime = Date.now() - 1000;
     const firstToolUsage = createToolModelUsageEvent({
@@ -1970,9 +1969,9 @@ describe("StreamManager - TTFT metadata persistence", () => {
     });
 
     expect(readToolModelUsages(updatedMessage)).toBeUndefined();
-    expect(Object.prototype.hasOwnProperty.call(updatedMessage.metadata ?? {}, "toolModelUsages")).toBe(
-      false
-    );
+    expect(
+      Object.prototype.hasOwnProperty.call(updatedMessage.metadata ?? {}, "toolModelUsages")
+    ).toBe(false);
   });
 
   test("scopes tool model usage accumulation to the active assistant turn", async () => {
