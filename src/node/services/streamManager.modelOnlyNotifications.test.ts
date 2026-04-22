@@ -80,6 +80,7 @@ describe("StreamManager - model-only tool notifications", () => {
       cumulativeProviderMetadata: undefined,
       lastStepUsage: undefined,
       lastStepProviderMetadata: undefined,
+      toolModelUsages: [],
     };
 
     const method = Reflect.get(streamManager, "processStreamWithCleanup") as unknown;
@@ -158,6 +159,7 @@ describe("StreamManager - model-only tool notifications", () => {
       cumulativeProviderMetadata: undefined,
       lastStepUsage: undefined,
       lastStepProviderMetadata: undefined,
+      toolModelUsages: [],
     };
 
     const method = Reflect.get(streamManager, "processStreamWithCleanup") as unknown;
