@@ -33,6 +33,7 @@ INSERT INTO events (
   timestamp,
   date,
   model,
+  tool_name,
   thinking_level,
   input_tokens,
   output_tokens,
@@ -52,9 +53,9 @@ INSERT INTO events (
   response_index,
   is_sub_agent
 ) VALUES (
-  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-  ?, ?, ?, ?, ?, ?, ?
+  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+  ?, ?, ?, ?, ?, ?
 )
 `;
 
@@ -130,6 +131,7 @@ export async function appendEvents(conn: DuckDBConnection, events: IngestEvent[]
       appendBigIntOrNull(appender, row.timestamp);
       appendDateOrNull(appender, event.date);
       appendVarcharOrNull(appender, row.model);
+      appendVarcharOrNull(appender, row.tool_name);
       appendVarcharOrNull(appender, row.thinking_level);
       appender.appendInteger(row.input_tokens);
       appender.appendInteger(row.output_tokens);
@@ -468,25 +470,25 @@ function parsePersistedMessage(
   }
 }
 
-function extractIngestEvent(params: {
+function extractIngestEvents(params: {
   workspaceId: string;
   workspaceMeta: WorkspaceMeta;
   message: PersistedMessage;
   lineNumber: number;
   responseIndex: number;
-}): IngestEvent | null {
+}): IngestEvent[] {
   if (params.message.role !== "assistant") {
-    return null;
+    return [];
   }
 
   const metadata = isRecord(params.message.metadata) ? params.message.metadata : null;
   if (!metadata) {
-    return null;
+    return [];
   }
 
   const usage = parseUsage(metadata.usage);
   if (!usage) {
-    return null;
+    return [];
   }
 
   const sequence = toFiniteInteger(metadata.historySequence) ?? params.lineNumber;
@@ -535,6 +537,7 @@ function extractIngestEvent(params: {
     agent_id: toOptionalString(metadata.agentId) ?? null,
     timestamp,
     model: model ?? null,
+    tool_name: null,
     thinking_level: toOptionalString(metadata.thinkingLevel) ?? null,
     input_tokens: inputTokens,
     output_tokens: outputTokens,
@@ -562,14 +565,103 @@ function extractIngestEvent(params: {
       lineNumber: params.lineNumber,
       issues: parsedEvent.error.issues,
     });
-    return null;
+    return [];
   }
 
-  return {
-    row: parsedEvent.data,
-    sequence,
-    date: dateBucket,
-  };
+  const events: IngestEvent[] = [
+    {
+      row: parsedEvent.data,
+      sequence,
+      date: dateBucket,
+    },
+  ];
+
+  const toolModelUsages = metadata.toolModelUsages;
+  if (!Array.isArray(toolModelUsages)) {
+    return events;
+  }
+
+  for (const rawToolModelUsage of toolModelUsages) {
+    if (!isRecord(rawToolModelUsage)) {
+      continue;
+    }
+
+    const toolName = toOptionalString(rawToolModelUsage.toolName);
+    const toolModel = toOptionalString(rawToolModelUsage.model);
+    const toolUsage = parseUsage(rawToolModelUsage.usage);
+    if (!toolName || !toolModel || !toolUsage) {
+      continue;
+    }
+
+    const toolProviderMetadata = isRecord(rawToolModelUsage.providerMetadata)
+      ? rawToolModelUsage.providerMetadata
+      : undefined;
+    const toolMetadataModel = toOptionalString(rawToolModelUsage.metadataModel);
+    const toolDisplayUsage = createDisplayUsage(
+      toolUsage,
+      toolModel,
+      toolProviderMetadata,
+      toolMetadataModel
+    );
+    if (!toolDisplayUsage) {
+      continue;
+    }
+
+    const toolTimestamp = toFiniteNumber(rawToolModelUsage.timestamp) ?? timestamp;
+    const toolCachedCostUsd =
+      (toolDisplayUsage.cached.cost_usd ?? 0) + (toolDisplayUsage.cacheCreate.cost_usd ?? 0);
+    const maybeToolEvent = {
+      workspace_id: params.workspaceId,
+      project_path: params.workspaceMeta.projectPath ?? null,
+      project_name: params.workspaceMeta.projectName ?? null,
+      workspace_name: params.workspaceMeta.workspaceName ?? null,
+      parent_workspace_id: params.workspaceMeta.parentWorkspaceId ?? null,
+      agent_id: toOptionalString(metadata.agentId) ?? null,
+      timestamp: toolTimestamp,
+      model: toolModel,
+      tool_name: toolName,
+      thinking_level: toOptionalString(metadata.thinkingLevel) ?? null,
+      input_tokens: toolDisplayUsage.input.tokens,
+      output_tokens: toolDisplayUsage.output.tokens,
+      reasoning_tokens: toolDisplayUsage.reasoning.tokens,
+      cached_tokens: toolDisplayUsage.cached.tokens,
+      cache_create_tokens: toolDisplayUsage.cacheCreate.tokens,
+      input_cost_usd: toolDisplayUsage.input.cost_usd ?? 0,
+      output_cost_usd: toolDisplayUsage.output.cost_usd ?? 0,
+      reasoning_cost_usd: toolDisplayUsage.reasoning.cost_usd ?? 0,
+      cached_cost_usd: toolCachedCostUsd,
+      total_cost_usd:
+        (toolDisplayUsage.input.cost_usd ?? 0) +
+        (toolDisplayUsage.output.cost_usd ?? 0) +
+        (toolDisplayUsage.reasoning.cost_usd ?? 0) +
+        toolCachedCostUsd,
+      duration_ms: null,
+      ttft_ms: null,
+      streaming_ms: null,
+      tool_execution_ms: null,
+      output_tps: null,
+      response_index: params.responseIndex,
+      is_sub_agent: (params.workspaceMeta.parentWorkspaceId ?? "").length > 0,
+    };
+
+    const parsedToolEvent = EventRowSchema.safeParse(maybeToolEvent);
+    if (!parsedToolEvent.success) {
+      log.warn("[analytics-etl] Skipping invalid tool analytics row", {
+        workspaceId: params.workspaceId,
+        lineNumber: params.lineNumber,
+        issues: parsedToolEvent.error.issues,
+      });
+      continue;
+    }
+
+    events.push({
+      row: parsedToolEvent.data,
+      sequence,
+      date: dateBucketFromTimestamp(toolTimestamp),
+    });
+  }
+
+  return events;
 }
 
 async function readWatermark(
@@ -672,6 +764,7 @@ async function readPersistedWorkspaceHeadSignature(
     SELECT timestamp, model, total_cost_usd
     FROM events
     WHERE workspace_id = ?
+      AND tool_name IS NULL
     ORDER BY response_index ASC NULLS LAST
     LIMIT 1
     `,
@@ -793,6 +886,7 @@ async function replaceEventsByResponseIndex(
         row.timestamp,
         event.date,
         row.model,
+        row.tool_name,
         row.thinking_level,
         row.input_tokens,
         row.output_tokens,
@@ -846,6 +940,7 @@ async function replaceWorkspaceEvents(
         row.timestamp,
         event.date,
         row.model,
+        row.tool_name,
         row.thinking_level,
         row.input_tokens,
         row.output_tokens,
@@ -957,24 +1052,26 @@ export async function ingestWorkspace(
       continue;
     }
 
-    const event = extractIngestEvent({
+    const events = extractIngestEvents({
       workspaceId,
       workspaceMeta,
       message,
       lineNumber,
       responseIndex,
     });
-    if (!event) {
+    if (events.length === 0) {
       continue;
     }
 
-    assert(
-      Number.isInteger(event.sequence),
-      "ingestWorkspace: expected assistant event sequence to be an integer"
-    );
+    for (const event of events) {
+      assert(
+        Number.isInteger(event.sequence),
+        "ingestWorkspace: expected assistant event sequence to be an integer"
+      );
+      parsedEvents.push(event);
+    }
 
     responseIndex += 1;
-    parsedEvents.push(event);
   }
 
   const parsedMaxSequence = getMaxSequence(parsedEvents);
@@ -1385,19 +1482,19 @@ export async function parseWorkspaceFromDisk(
       continue;
     }
 
-    const event = extractIngestEvent({
+    const extractedEvents = extractIngestEvents({
       workspaceId,
       workspaceMeta,
       message,
       lineNumber: i + 1,
       responseIndex,
     });
-    if (!event) {
+    if (extractedEvents.length === 0) {
       continue;
     }
 
     responseIndex += 1;
-    events.push(event);
+    events.push(...extractedEvents);
   }
 
   const delegationRollupRaw = await readDelegationRollupFilesFromDisk(sessionDir);

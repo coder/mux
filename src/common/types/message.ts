@@ -408,6 +408,17 @@ export function isCompactionSummaryMetadata(
   return metadata?.type === "compaction-summary";
 }
 
+export interface PersistedToolModelUsage {
+  toolName: string;
+  toolCallId?: string;
+  timestamp?: number;
+  model: string;
+  /** Resolved pricing model for token/cost metadata lookups when the tool model uses Treat as mapping. */
+  metadataModel?: string;
+  usage: LanguageModelV2Usage;
+  providerMetadata?: Record<string, unknown>;
+}
+
 // Our custom metadata type
 export interface MuxMetadata {
   historySequence?: number; // Assigned by backend for global message ordering (required when writing to history)
@@ -436,6 +447,8 @@ export interface MuxMetadata {
   contextUsage?: LanguageModelV2Usage;
   // Aggregated provider metadata across all steps (for cost calculation)
   providerMetadata?: Record<string, unknown>;
+  // Per-tool invocation usage snapshots recorded during this assistant turn.
+  toolModelUsages?: PersistedToolModelUsage[];
   // Last step's provider metadata (for context window cache display)
   contextProviderMetadata?: Record<string, unknown>;
   systemMessageTokens?: number; // Token count for system message sent with this request (calculated by AIService)

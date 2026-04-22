@@ -1732,6 +1732,7 @@ describe("StreamManager - TTFT metadata persistence", () => {
       metadataModel: params.metadataModel ?? params.model ?? KNOWN_MODELS.SONNET.id,
       historySequence: params.historySequence,
       initialMetadata: params.initialMetadata,
+      toolModelUsages: [],
       parts: params.parts,
       lastPartialWriteTime: 0,
       partialWriteTimer: undefined,

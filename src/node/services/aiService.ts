@@ -1409,6 +1409,11 @@ export class AIService extends EventEmitter {
           costsUsd: sessionCostsUsd,
         }
       );
+
+      // Create assistant message ID early so tool-side usage reporting and nested tool events
+      // stay scoped to this specific assistant turn. The placeholder is appended to history below
+      // (after the abort check).
+      const assistantMessageId = createAssistantMessageId();
       const allTools = await getToolsForModel(
         modelString,
         {
@@ -1499,54 +1504,72 @@ export class AIService extends EventEmitter {
           // External edit detection callback
           recordFileState,
           reportModelUsage: (event) => {
-            void (async () => {
-              try {
-                if (!this.sessionUsageService) {
-                  return;
+            try {
+              const eventModel = event.model.trim();
+              assert(eventModel.length > 0, "tool model usage event model must be non-empty");
+              // Persist tool-side model usage under its own model bucket so session costs keep
+              // advisor/system-side pricing separate from the parent chat model.
+              const providerMetadata = markProviderMetadataCostsIncluded(
+                event.providerMetadata,
+                toolModelCostsIncludedByModelString.get(eventModel)
+              );
+              const metadataModel = resolveModelForMetadata(
+                eventModel,
+                this.providerService.getConfig()
+              );
+              this.streamManager.recordToolModelUsage(workspaceId, assistantMessageId, {
+                toolName: event.toolName,
+                toolCallId: event.toolCallId,
+                timestamp: event.timestamp,
+                model: eventModel,
+                metadataModel,
+                usage: event.usage,
+                ...(providerMetadata != null ? { providerMetadata } : {}),
+              });
+              void (async () => {
+                try {
+                  if (!this.sessionUsageService) {
+                    return;
+                  }
+                  const displayUsage = createDisplayUsage(
+                    event.usage,
+                    eventModel,
+                    providerMetadata,
+                    metadataModel
+                  );
+                  if (!displayUsage) {
+                    return;
+                  }
+                  const canonicalModel = normalizeToCanonical(eventModel);
+                  await this.sessionUsageService.recordUsage(
+                    workspaceId,
+                    canonicalModel,
+                    displayUsage
+                  );
+                  this.emit("session-usage-delta", {
+                    type: "session-usage-delta" as const,
+                    workspaceId,
+                    sourceWorkspaceId: workspaceId,
+                    byModelDelta: { [canonicalModel]: displayUsage },
+                    timestamp: Date.now(),
+                  });
+                } catch (error) {
+                  log.warn("Failed to record tool model usage", {
+                    error,
+                    workspaceId,
+                    toolName: event.toolName,
+                    model: event.model,
+                  });
                 }
-                const eventModel = event.model.trim();
-                assert(eventModel.length > 0, "tool model usage event model must be non-empty");
-                // Persist tool-side model usage under its own model bucket so session costs keep
-                // advisor/system-side pricing separate from the parent chat model.
-                const providerMetadata = markProviderMetadataCostsIncluded(
-                  event.providerMetadata,
-                  toolModelCostsIncludedByModelString.get(eventModel)
-                );
-                const metadataModel = resolveModelForMetadata(
-                  eventModel,
-                  this.providerService.getConfig()
-                );
-                const displayUsage = createDisplayUsage(
-                  event.usage,
-                  eventModel,
-                  providerMetadata,
-                  metadataModel
-                );
-                if (!displayUsage) {
-                  return;
-                }
-                const canonicalModel = normalizeToCanonical(eventModel);
-                await this.sessionUsageService.recordUsage(
-                  workspaceId,
-                  canonicalModel,
-                  displayUsage
-                );
-                this.emit("session-usage-delta", {
-                  type: "session-usage-delta" as const,
-                  workspaceId,
-                  sourceWorkspaceId: workspaceId,
-                  byModelDelta: { [canonicalModel]: displayUsage },
-                  timestamp: Date.now(),
-                });
-              } catch (error) {
-                log.warn("Failed to record tool model usage", {
-                  error,
-                  workspaceId,
-                  toolName: event.toolName,
-                  model: event.model,
-                });
-              }
-            })();
+              })();
+            } catch (error) {
+              log.warn("Failed to record tool model usage", {
+                error,
+                workspaceId,
+                toolName: event.toolName,
+                model: event.model,
+              });
+            }
           },
           onConfigChanged: () => this.providerService.notifyConfigChanged(),
           taskService: this.taskService,
@@ -1571,10 +1594,6 @@ export class AIService extends EventEmitter {
         allTools,
         delegatedToolNames
       );
-
-      // Create assistant message ID early so the PTC callback closure captures it.
-      // The placeholder is appended to history below (after abort check).
-      const assistantMessageId = createAssistantMessageId();
 
       // Apply tool policy and PTC experiments (lazy-loads PTC dependencies only when needed).
       const applyToolPolicyAndExperimentsStartedAt = Date.now();

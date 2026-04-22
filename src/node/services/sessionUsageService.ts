@@ -10,7 +10,7 @@ import { sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import type { RolledUpChildEntry } from "@/common/orpc/schemas/chatStats";
 import type { TokenConsumer } from "@/common/types/chatStats";
-import type { MuxMessage } from "@/common/types/message";
+import type { MuxMessage, PersistedToolModelUsage } from "@/common/types/message";
 import { normalizeToCanonical } from "@/common/utils/ai/models";
 import { log } from "./log";
 
@@ -405,6 +405,31 @@ export class SessionUsageService {
     const result: SessionUsageFile = this.createEmptyUsageFile();
     let lastAssistantUsage: { model: string; usage: ChatUsageDisplay } | undefined;
 
+    const mergeUsageForModel = (rawModel: string, usage: ChatUsageDisplay): void => {
+      const model = normalizeToCanonical(rawModel);
+      const existing = result.byModel[model];
+      result.byModel[model] = existing ? sumUsageHistory([existing, usage])! : usage;
+    };
+
+    const rebuildToolModelUsage = (toolModelUsage: PersistedToolModelUsage): void => {
+      const rawModel = toolModelUsage.model?.trim();
+      if (!rawModel) {
+        return;
+      }
+
+      const usage = createDisplayUsage(
+        toolModelUsage.usage,
+        rawModel,
+        toolModelUsage.providerMetadata,
+        toolModelUsage.metadataModel
+      );
+      if (!usage) {
+        return;
+      }
+
+      mergeUsageForModel(rawModel, usage);
+    };
+
     for (const msg of messages) {
       if (msg.role === "assistant") {
         // Include historicalUsage from legacy compaction summaries.
@@ -422,17 +447,23 @@ export class SessionUsageService {
         // Extract current message's usage
         if (msg.metadata?.usage) {
           const rawModel = msg.metadata.model ?? "unknown";
-          const model = normalizeToCanonical(rawModel);
           const usage = createDisplayUsage(
             msg.metadata.usage,
             rawModel,
-            msg.metadata.providerMetadata
+            msg.metadata.providerMetadata,
+            msg.metadata.metadataModel
           );
 
           if (usage) {
-            const existing = result.byModel[model];
-            result.byModel[model] = existing ? sumUsageHistory([existing, usage])! : usage;
-            lastAssistantUsage = { model, usage };
+            mergeUsageForModel(rawModel, usage);
+            lastAssistantUsage = { model: normalizeToCanonical(rawModel), usage };
+          }
+        }
+
+        const toolModelUsages = msg.metadata?.toolModelUsages;
+        if (Array.isArray(toolModelUsages)) {
+          for (const toolModelUsage of toolModelUsages) {
+            rebuildToolModelUsage(toolModelUsage);
           }
         }
       }

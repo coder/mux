@@ -84,6 +84,10 @@ interface RawQueryData {
   sql: string;
 }
 
+const EVENTS_COLUMN_MIGRATIONS_SQL = [
+  "ALTER TABLE events ADD COLUMN IF NOT EXISTS tool_name TEXT",
+] as const;
+
 const DELEGATION_ROLLUPS_COLUMN_MIGRATIONS_SQL = [
   "ALTER TABLE delegation_rollups ADD COLUMN IF NOT EXISTS input_tokens INTEGER DEFAULT 0",
   "ALTER TABLE delegation_rollups ADD COLUMN IF NOT EXISTS output_tokens INTEGER DEFAULT 0",
@@ -127,6 +131,9 @@ async function handleInit(data: InitData): Promise<void> {
   await activeConn.run(CREATE_EVENTS_TABLE_SQL);
   await activeConn.run(CREATE_WATERMARK_TABLE_SQL);
   await activeConn.run(CREATE_DELEGATION_ROLLUPS_TABLE_SQL);
+  for (const migrationSql of EVENTS_COLUMN_MIGRATIONS_SQL) {
+    await activeConn.run(migrationSql);
+  }
   for (const migrationSql of DELEGATION_ROLLUPS_COLUMN_MIGRATIONS_SQL) {
     await activeConn.run(migrationSql);
   }

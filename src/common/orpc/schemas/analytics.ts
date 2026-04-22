@@ -143,6 +143,7 @@ export const EventRowSchema = z.object({
   agent_id: z.string().nullable(),
   timestamp: z.number().nullable(), // unix ms
   model: z.string().nullable(),
+  tool_name: z.string().nullable(),
   thinking_level: z.string().nullable(),
   input_tokens: z.number().default(0),
   output_tokens: z.number().default(0),

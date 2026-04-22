@@ -25,7 +25,7 @@ import type {
 } from "@/common/types/stream";
 
 import type { SendMessageError, StreamErrorType } from "@/common/types/errors";
-import type { MuxMetadata, MuxMessage } from "@/common/types/message";
+import type { MuxMetadata, MuxMessage, PersistedToolModelUsage } from "@/common/types/message";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { NestedToolCall } from "@/common/orpc/schemas/message";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
@@ -350,6 +350,7 @@ interface WorkspaceStreamInfo {
   /** Effective thinking level after model policy clamping */
   thinkingLevel?: string;
   initialMetadata?: Partial<MuxMetadata>;
+  toolModelUsages: PersistedToolModelUsage[];
   request: StreamRequestConfig;
   // Track last prepared step messages for safe retries after tool steps
   stepTracker: StepMessageTracker;
@@ -460,6 +461,23 @@ export class StreamManager extends EventEmitter {
 
   setMCPServerManager(manager: MCPServerManager | undefined): void {
     this.mcpServerManager = manager;
+  }
+
+  recordToolModelUsage(
+    workspaceId: string,
+    messageId: string,
+    event: PersistedToolModelUsage
+  ): void {
+    const streamInfo = this.workspaceStreams.get(workspaceId as WorkspaceId);
+    if (!streamInfo || streamInfo.messageId !== messageId) {
+      return;
+    }
+
+    streamInfo.toolModelUsages.push({
+      ...event,
+      usage: { ...event.usage },
+      ...(event.providerMetadata != null ? { providerMetadata: event.providerMetadata } : {}),
+    });
   }
 
   /**
@@ -1404,6 +1422,7 @@ export class StreamManager extends EventEmitter {
       metadataModel,
       thinkingLevel,
       initialMetadata,
+      toolModelUsages: [],
       didRetryPreviousResponseIdAtStep: false,
       didRetryAfterEmptyOutput: false,
       stepTracker,
@@ -2176,6 +2195,16 @@ export class StreamManager extends EventEmitter {
             const routedThroughGateway =
               streamInfo.initialMetadata?.routedThroughGateway ??
               streamInfo.model.startsWith("mux-gateway:");
+            const toolModelUsages =
+              streamInfo.toolModelUsages.length > 0
+                ? streamInfo.toolModelUsages.map((toolModelUsage) => ({
+                    ...toolModelUsage,
+                    usage: { ...toolModelUsage.usage },
+                    ...(toolModelUsage.providerMetadata != null
+                      ? { providerMetadata: toolModelUsage.providerMetadata }
+                      : {}),
+                  }))
+                : undefined;
 
             // Emit stream end event with parts preserved in temporal order
             const streamEndEvent: StreamEndEvent = {
@@ -2197,6 +2226,7 @@ export class StreamManager extends EventEmitter {
                 contextUsage, // Last step only (for context window display)
                 providerMetadata, // Aggregated (for cost calculation)
                 contextProviderMetadata, // Last step (for context window display)
+                ...(toolModelUsages != null ? { toolModelUsages } : {}),
                 ...(finishReason !== undefined && { finishReason }),
                 duration,
                 ...(ttftMs !== undefined && { ttftMs }),
