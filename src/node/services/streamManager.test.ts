@@ -1616,7 +1616,7 @@ describe("StreamManager - TTFT metadata persistence", () => {
     recordToolModelUsage.call(streamManager, workspaceId, messageId, event);
   }
 
-  function readToolModelUsages(message: { metadata?: Record<string, unknown> }): unknown[] | undefined {
+  function readToolModelUsages(message: { metadata?: unknown }): unknown[] | undefined {
     const metadata = message.metadata;
     if (metadata == null || typeof metadata !== "object") {
       return undefined;
@@ -1748,7 +1748,7 @@ describe("StreamManager - TTFT metadata persistence", () => {
       stepTracker: {},
     };
 
-    const workspaceStreamsValue = Reflect.get(streamManager, "workspaceStreams");
+    const workspaceStreamsValue: unknown = Reflect.get(streamManager, "workspaceStreams");
     expect(workspaceStreamsValue instanceof Map).toBe(true);
     if (!(workspaceStreamsValue instanceof Map)) {
       throw new Error("Expected StreamManager.workspaceStreams to be a Map");

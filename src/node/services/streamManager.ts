@@ -469,7 +469,7 @@ export class StreamManager extends EventEmitter {
     event: PersistedToolModelUsage
   ): void {
     const streamInfo = this.workspaceStreams.get(workspaceId as WorkspaceId);
-    if (!streamInfo || streamInfo.messageId !== messageId) {
+    if (streamInfo?.messageId !== messageId) {
       return;
     }
 

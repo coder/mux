@@ -83,7 +83,7 @@ async function insertEvent(conn: DuckDBConnection, seed: EventSeed): Promise<voi
   );
 }
 
-afterEach(async () => {
+afterEach(() => {
   for (const { conn, instance } of duckDbHandlesToClose.splice(0).reverse()) {
     try {
       conn.closeSync();

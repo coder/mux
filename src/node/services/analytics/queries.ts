@@ -33,6 +33,8 @@ const MIN_SAFE_BIGINT = BigInt(Number.MIN_SAFE_INTEGER);
 type Granularity = "hour" | "day" | "week";
 type TimingMetric = "ttft" | "duration" | "tps";
 
+const NON_TOOL_EVENTS_PREDICATE = "tool_name IS NULL";
+
 interface TimingDistributionResult {
   percentiles: TimingPercentilesRow;
   histogram: HistogramBucket[];
@@ -177,7 +179,7 @@ async function querySummary(
         SUM(input_tokens + output_tokens + reasoning_tokens + cached_tokens + cache_create_tokens),
         0
       ) AS total_tokens,
-      COALESCE(COUNT(*) FILTER (WHERE tool_name IS NULL), 0) AS total_responses
+      COALESCE(COUNT(*) FILTER (WHERE ${NON_TOOL_EVENTS_PREDICATE}), 0) AS total_responses
     FROM events
     WHERE (? IS NULL OR project_path = ?)
       AND (? IS NULL OR date >= CAST(? AS DATE))
@@ -278,7 +280,7 @@ async function querySpendByModel(
         SUM(input_tokens + output_tokens + reasoning_tokens + cached_tokens + cache_create_tokens),
         0
       ) AS token_count,
-      COALESCE(COUNT(*) FILTER (WHERE tool_name IS NULL), 0) AS response_count
+      COALESCE(COUNT(*) FILTER (WHERE ${NON_TOOL_EVENTS_PREDICATE}), 0) AS response_count
     FROM events
     WHERE (? IS NULL OR project_path = ?)
       AND (? IS NULL OR date >= CAST(? AS DATE))
@@ -311,7 +313,7 @@ async function queryTokensByModel(
         COALESCE(input_tokens, 0) + COALESCE(cached_tokens, 0) + COALESCE(cache_create_tokens, 0)
         + COALESCE(output_tokens, 0) + COALESCE(reasoning_tokens, 0)
       ), 0) AS total_tokens,
-      COALESCE(COUNT(*) FILTER (WHERE tool_name IS NULL), 0) AS request_count
+      COALESCE(COUNT(*) FILTER (WHERE ${NON_TOOL_EVENTS_PREDICATE}), 0) AS request_count
     FROM events
     WHERE (? IS NULL OR project_path = ?)
       AND (? IS NULL OR date >= CAST(? AS DATE))
@@ -349,7 +351,7 @@ async function queryTimingDistribution(
       COALESCE(PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY ${column}), 0) AS p99
     FROM events
     WHERE ${column} IS NOT NULL
-      AND tool_name IS NULL
+      AND ${NON_TOOL_EVENTS_PREDICATE}
       AND (? IS NULL OR project_path = ?)
       AND (? IS NULL OR date >= CAST(? AS DATE))
       AND (? IS NULL OR date <= CAST(? AS DATE))
@@ -375,7 +377,7 @@ async function queryTimingDistribution(
         MAX(${column}) AS raw_max_value
       FROM events
       WHERE ${column} IS NOT NULL
-        AND tool_name IS NULL
+        AND ${NON_TOOL_EVENTS_PREDICATE}
         AND (? IS NULL OR project_path = ?)
         AND (? IS NULL OR date >= CAST(? AS DATE))
         AND (? IS NULL OR date <= CAST(? AS DATE))
@@ -411,7 +413,7 @@ async function queryTimingDistribution(
       FROM events
       CROSS JOIN stats
       WHERE events.${column} IS NOT NULL
-        AND events.tool_name IS NULL
+        AND ${NON_TOOL_EVENTS_PREDICATE}
         AND (? IS NULL OR events.project_path = ?)
         AND (? IS NULL OR events.date >= CAST(? AS DATE))
         AND (? IS NULL OR events.date <= CAST(? AS DATE))
@@ -461,7 +463,7 @@ async function queryAgentCostBreakdown(
         SUM(input_tokens + output_tokens + reasoning_tokens + cached_tokens + cache_create_tokens),
         0
       ) AS token_count,
-      COALESCE(COUNT(*) FILTER (WHERE tool_name IS NULL), 0) AS response_count
+      COALESCE(COUNT(*) FILTER (WHERE ${NON_TOOL_EVENTS_PREDICATE}), 0) AS response_count
     FROM events
     WHERE (? IS NULL OR project_path = ?)
       AND (? IS NULL OR date >= CAST(? AS DATE))
@@ -487,7 +489,7 @@ async function queryCacheHitRatioByProvider(
       COALESCE(model, 'unknown') AS model,
       COALESCE(SUM(cached_tokens), 0) AS cached_tokens,
       COALESCE(SUM(input_tokens + cached_tokens + cache_create_tokens), 0) AS total_prompt_tokens,
-      COALESCE(COUNT(*) FILTER (WHERE tool_name IS NULL), 0) AS response_count
+      COALESCE(COUNT(*) FILTER (WHERE ${NON_TOOL_EVENTS_PREDICATE}), 0) AS response_count
     FROM events
     WHERE (? IS NULL OR project_path = ?)
       AND (? IS NULL OR date >= CAST(? AS DATE))
