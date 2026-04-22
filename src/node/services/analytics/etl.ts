@@ -749,7 +749,7 @@ function createEventHeadSignatureFromParsedEvent(event: IngestEvent): string {
   });
 }
 
-async function readPersistedWorkspaceHeadSignature(
+export async function readPersistedWorkspaceHeadSignature(
   conn: DuckDBConnection,
   workspaceId: string
 ): Promise<string | null> {
@@ -758,8 +758,10 @@ async function readPersistedWorkspaceHeadSignature(
     SELECT timestamp, model, total_cost_usd
     FROM events
     WHERE workspace_id = ?
-      AND tool_name IS NULL
-    ORDER BY response_index ASC NULLS LAST
+    ORDER BY
+      response_index ASC NULLS LAST,
+      CASE WHEN tool_name IS NULL THEN 0 ELSE 1 END ASC,
+      timestamp ASC
     LIMIT 1
     `,
     [workspaceId]

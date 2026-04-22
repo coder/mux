@@ -11,6 +11,7 @@ import {
   clearWorkspaceAnalyticsState,
   ingestWorkspace,
   parseWorkspaceFromDisk,
+  readPersistedWorkspaceHeadSignature,
   rebuildAll,
 } from "./etl";
 import {
@@ -122,6 +123,48 @@ function parseBooleanFromInteger(value: unknown, fieldName: string): boolean {
   const parsed = parseInteger(value, fieldName);
   assert(parsed === 0 || parsed === 1, `${fieldName} should be 0 or 1`);
   return parsed === 1;
+}
+
+function serializeHeadSignatureValue(value: string | number | null): string {
+  if (value === null) {
+    return "null";
+  }
+
+  return `${typeof value}:${String(value)}`;
+}
+
+function parseNullableFiniteNumber(value: unknown, fieldName: string): number | null {
+  if (value === null) {
+    return null;
+  }
+
+  if (typeof value === "number") {
+    assert(Number.isFinite(value), `${fieldName} should be a finite number`);
+    return value;
+  }
+
+  if (typeof value === "bigint") {
+    const coerced = Number(value);
+    assert(Number.isFinite(coerced), `${fieldName} should coerce to a finite number`);
+    return coerced;
+  }
+
+  throw new TypeError(`${fieldName} should be numeric or null`);
+}
+
+function createHeadSignatureFromRow(row: {
+  timestamp: unknown;
+  model: unknown;
+  total_cost_usd: unknown;
+}): string {
+  const model = row.model;
+  assert(model === null || typeof model === "string", "model should be a string or null");
+
+  return [
+    serializeHeadSignatureValue(parseNullableFiniteNumber(row.timestamp, "timestamp")),
+    serializeHeadSignatureValue(model),
+    serializeHeadSignatureValue(parseNullableFiniteNumber(row.total_cost_usd, "total_cost_usd")),
+  ].join("|");
 }
 
 async function createTempSessionDir(): Promise<string> {
@@ -713,6 +756,135 @@ describe("appendEvents", () => {
     await appendEvents(conn, []);
 
     expect(await queryEventCount(conn)).toBe(0);
+  });
+});
+
+describe("ingestWorkspace", () => {
+  test("repairs stale tool-only head rows when head signature drift forces a rebuild", async () => {
+    const conn = await createTestConn();
+    const sessionDir = await createTempSessionDir();
+    const workspaceId = "ws-tool-only-head-signature";
+    const headTimestamp = 1_700_000_000_000;
+    const headToolUsage = {
+      toolName: "bash",
+      toolCallId: "tool-call-1",
+      timestamp: headTimestamp + 25,
+      model: "openai:gpt-4",
+      usage: { inputTokens: 36, outputTokens: 12, totalTokens: 48 },
+      providerMetadata: { openai: { reasoningTokens: 3 } },
+    };
+    const secondToolUsage = {
+      toolName: "advisor",
+      toolCallId: "tool-call-2",
+      timestamp: headTimestamp + 1_025,
+      model: "anthropic:claude-sonnet-4-20250514",
+      usage: {
+        inputTokens: 96,
+        cachedInputTokens: 10,
+        outputTokens: 18,
+        totalTokens: 114,
+      },
+      providerMetadata: { anthropic: { cacheCreationInputTokens: 4 } },
+    };
+
+    await writeChatJsonl(sessionDir, [
+      makeUserLine(),
+      JSON.stringify({
+        role: "assistant",
+        content: "tool-only response",
+        metadata: {
+          model: "openai:gpt-4",
+          historySequence: 1,
+          timestamp: headTimestamp,
+          toolModelUsages: [headToolUsage],
+        },
+      }),
+      makeUserLine(),
+      JSON.stringify({
+        role: "assistant",
+        content: "second tool-only response",
+        metadata: {
+          model: "anthropic:claude-sonnet-4-20250514",
+          historySequence: 2,
+          timestamp: headTimestamp + 1_000,
+          toolModelUsages: [secondToolUsage],
+        },
+      }),
+    ]);
+
+    await ingestWorkspace(conn, workspaceId, sessionDir, { projectPath: "/proj" });
+
+    expect(await queryEventCount(conn, workspaceId)).toBe(2);
+    const headRows = await queryRows(
+      conn,
+      "SELECT tool_name, total_cost_usd FROM events WHERE workspace_id = ? AND response_index = 0",
+      [workspaceId]
+    );
+    expect(headRows).toHaveLength(1);
+    expect(headRows[0].tool_name).toBe("bash");
+
+    const originalHeadTotalCostUsd = Number(headRows[0].total_cost_usd);
+    expect(Number.isFinite(originalHeadTotalCostUsd)).toBe(true);
+    const mutatedHeadTotalCostUsd = originalHeadTotalCostUsd + 123;
+
+    await conn.run(
+      "UPDATE events SET total_cost_usd = ? WHERE workspace_id = ? AND response_index = 0 AND tool_name = ?",
+      [mutatedHeadTotalCostUsd, workspaceId, "bash"]
+    );
+
+    await bumpChatMtime(sessionDir);
+    await ingestWorkspace(conn, workspaceId, sessionDir, { projectPath: "/proj" });
+
+    expect(await queryEventCount(conn, workspaceId)).toBe(2);
+    const refreshedHeadRows = await queryRows(
+      conn,
+      "SELECT tool_name, total_cost_usd FROM events WHERE workspace_id = ? AND response_index = 0",
+      [workspaceId]
+    );
+    expect(refreshedHeadRows).toHaveLength(1);
+    expect(refreshedHeadRows[0].tool_name).toBe("bash");
+    expect(Number(refreshedHeadRows[0].total_cost_usd)).toBeCloseTo(originalHeadTotalCostUsd, 12);
+  });
+});
+
+describe("readPersistedWorkspaceHeadSignature", () => {
+  test("prefers the assistant row before tool rows at the same response index", async () => {
+    const conn = await createTestConn();
+    const sessionDir = await createTempSessionDir();
+    const workspaceId = "ws-head-signature-order";
+    const toolUsage = {
+      toolName: "bash",
+      toolCallId: "tool-call-1",
+      timestamp: 1_700_000_000_025,
+      model: "openai:gpt-4",
+      usage: { inputTokens: 36, outputTokens: 12, totalTokens: 48 },
+      providerMetadata: { openai: { reasoningTokens: 3 } },
+    };
+
+    await writeChatJsonl(sessionDir, [
+      makeUserLine(),
+      makeAssistantLine({
+        model: "openai:gpt-4",
+        sequence: 1,
+        timestamp: 1_700_000_000_000,
+        inputTokens: 180,
+        outputTokens: 72,
+        toolModelUsages: [toolUsage],
+      }),
+    ]);
+
+    const parsed = await parseWorkspaceFromDisk(workspaceId, sessionDir, {});
+    expect(parsed).not.toBeNull();
+    assert(parsed, "head signature order test expected parseWorkspaceFromDisk to parse workspace");
+    expect(parsed.events).toHaveLength(2);
+    expect(parsed.events.map((event) => event.row.tool_name)).toEqual([null, "bash"]);
+    expect(parsed.events.map((event) => event.row.response_index)).toEqual([0, 0]);
+
+    await appendEvents(conn, parsed.events);
+
+    const persistedHeadSignature = await readPersistedWorkspaceHeadSignature(conn, workspaceId);
+    expect(persistedHeadSignature).toBe(createHeadSignatureFromRow(parsed.events[0].row));
+    expect(persistedHeadSignature).not.toBe(createHeadSignatureFromRow(parsed.events[1].row));
   });
 });
 
