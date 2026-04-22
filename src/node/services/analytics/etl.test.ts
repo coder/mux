@@ -18,6 +18,7 @@ import {
   CREATE_EVENTS_TABLE_SQL,
   CREATE_WATERMARK_TABLE_SQL,
 } from "./schemaSql";
+import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 
 const SUBAGENT_TRANSCRIPTS_DIR_NAME = "subagent-transcripts";
 
@@ -61,6 +62,10 @@ function makeAssistantLine(
     timestamp?: number;
     inputTokens?: number;
     outputTokens?: number;
+    durationMs?: number;
+    ttftMs?: number;
+    providerMetadata?: Record<string, unknown>;
+    toolModelUsages?: unknown[];
   } = {}
 ): string {
   return JSON.stringify({
@@ -75,6 +80,10 @@ function makeAssistantLine(
       },
       historySequence: opts.sequence ?? 1,
       timestamp: opts.timestamp ?? 1700000000000,
+      ...(opts.durationMs != null ? { duration: opts.durationMs } : {}),
+      ...(opts.ttftMs != null ? { ttftMs: opts.ttftMs } : {}),
+      ...(opts.providerMetadata != null ? { providerMetadata: opts.providerMetadata } : {}),
+      ...(opts.toolModelUsages != null ? { toolModelUsages: opts.toolModelUsages } : {}),
     },
   });
 }
@@ -313,6 +322,167 @@ describe("appendEvents", () => {
     expect(Number(rows[0].input_cost_usd)).toBeGreaterThan(0);
     expect(Number(rows[0].output_cost_usd)).toBeGreaterThan(0);
     expect(Number(rows[0].total_cost_usd)).toBeGreaterThan(0);
+  });
+
+
+  test("emits one assistant row plus one row per tool model usage with inherited context", async () => {
+    const sessionDir = await createTempSessionDir();
+    const parentTimestamp = 1_700_000_000_000;
+    const parentUsage = { inputTokens: 180, outputTokens: 72, totalTokens: 252 };
+    const sameModelToolUsage = {
+      toolName: "bash",
+      toolCallId: "tool-call-1",
+      timestamp: parentTimestamp + 25,
+      model: "openai:gpt-4",
+      usage: { inputTokens: 36, outputTokens: 12, totalTokens: 48 },
+      providerMetadata: { openai: { reasoningTokens: 3 } },
+    };
+    const otherModelToolUsage = {
+      toolName: "advisor",
+      toolCallId: "tool-call-2",
+      model: "anthropic:claude-sonnet-4-20250514",
+      usage: {
+        inputTokens: 96,
+        cachedInputTokens: 10,
+        outputTokens: 18,
+        totalTokens: 114,
+      },
+      providerMetadata: { anthropic: {} },
+    };
+
+    await writeMetadataJson(sessionDir, {
+      projectPath: "/proj",
+      projectName: "my-proj",
+      name: "workspace-name",
+      parentWorkspaceId: "parent-workspace",
+    });
+    await writeChatJsonl(sessionDir, [
+      makeUserLine(),
+      makeAssistantLine({
+        model: "openai:gpt-4",
+        inputTokens: parentUsage.inputTokens,
+        outputTokens: parentUsage.outputTokens,
+        timestamp: parentTimestamp,
+        durationMs: 400,
+        ttftMs: 40,
+        toolModelUsages: [sameModelToolUsage, otherModelToolUsage],
+      }),
+    ]);
+
+    const parsed = await parseWorkspaceFromDisk("ws-tool-rows", sessionDir, {});
+    expect(parsed).not.toBeNull();
+    assert(parsed, "tool row test expected parseWorkspaceFromDisk to parse workspace");
+    expect(parsed.events).toHaveLength(3);
+
+    const rows = parsed.events
+      .map((event) => event.row as Record<string, unknown>)
+      .sort((left, right) => {
+        const leftToolName = typeof left.tool_name === "string" ? left.tool_name : "";
+        const rightToolName = typeof right.tool_name === "string" ? right.tool_name : "";
+        return leftToolName.localeCompare(rightToolName) || Number(left.timestamp) - Number(right.timestamp);
+      });
+
+    const expectedAssistantUsage = createDisplayUsage(parentUsage, "openai:gpt-4");
+    const expectedSameModelToolUsage = createDisplayUsage(
+      sameModelToolUsage.usage,
+      sameModelToolUsage.model,
+      sameModelToolUsage.providerMetadata
+    );
+    const expectedOtherModelToolUsage = createDisplayUsage(
+      otherModelToolUsage.usage,
+      otherModelToolUsage.model,
+      otherModelToolUsage.providerMetadata
+    );
+    expect(expectedAssistantUsage).toBeDefined();
+    expect(expectedSameModelToolUsage).toBeDefined();
+    expect(expectedOtherModelToolUsage).toBeDefined();
+    if (!expectedAssistantUsage || !expectedSameModelToolUsage || !expectedOtherModelToolUsage) {
+      throw new Error("Expected tool row ETL test to compute display usage");
+    }
+
+    const assistantRow = rows.find((row) => row.tool_name == null);
+    const bashRow = rows.find((row) => row.tool_name === "bash");
+    const advisorRow = rows.find((row) => row.tool_name === "advisor");
+    expect(assistantRow).toBeDefined();
+    expect(bashRow).toBeDefined();
+    expect(advisorRow).toBeDefined();
+    if (!assistantRow || !bashRow || !advisorRow) {
+      throw new Error("Expected assistant, bash, and advisor analytics rows");
+    }
+
+    for (const row of [assistantRow, bashRow, advisorRow]) {
+      expect(row.project_path).toBe("/proj");
+      expect(row.project_name).toBe("my-proj");
+      expect(row.workspace_name).toBe("workspace-name");
+      expect(row.parent_workspace_id).toBe("parent-workspace");
+      expect(row.is_sub_agent).toBe(true);
+    }
+
+    expect(parseInteger(assistantRow.timestamp, "assistant timestamp")).toBe(parentTimestamp);
+    expect(assistantRow.model).toBe("openai:gpt-4");
+    expect(parseInteger(assistantRow.input_tokens, "assistant input_tokens")).toBe(
+      expectedAssistantUsage.input.tokens
+    );
+    expect(parseInteger(assistantRow.output_tokens, "assistant output_tokens")).toBe(
+      expectedAssistantUsage.output.tokens
+    );
+    expect(Number(assistantRow.total_cost_usd)).toBeCloseTo(
+      (expectedAssistantUsage.input.cost_usd ?? 0) +
+        (expectedAssistantUsage.output.cost_usd ?? 0) +
+        (expectedAssistantUsage.reasoning.cost_usd ?? 0) +
+        (expectedAssistantUsage.cached.cost_usd ?? 0) +
+        (expectedAssistantUsage.cacheCreate.cost_usd ?? 0),
+      12
+    );
+    expect(Number(assistantRow.duration_ms)).toBe(400);
+    expect(Number(assistantRow.ttft_ms)).toBe(40);
+    expect(Number(assistantRow.output_tps)).toBeCloseTo(180, 12);
+
+    expect(parseInteger(bashRow.timestamp, "bash timestamp")).toBe(parentTimestamp + 25);
+    expect(bashRow.model).toBe("openai:gpt-4");
+    expect(parseInteger(bashRow.input_tokens, "bash input_tokens")).toBe(
+      expectedSameModelToolUsage.input.tokens
+    );
+    expect(parseInteger(bashRow.output_tokens, "bash output_tokens")).toBe(
+      expectedSameModelToolUsage.output.tokens
+    );
+    expect(parseInteger(bashRow.reasoning_tokens, "bash reasoning_tokens")).toBe(
+      expectedSameModelToolUsage.reasoning.tokens
+    );
+    expect(Number(bashRow.total_cost_usd)).toBeCloseTo(
+      (expectedSameModelToolUsage.input.cost_usd ?? 0) +
+        (expectedSameModelToolUsage.output.cost_usd ?? 0) +
+        (expectedSameModelToolUsage.reasoning.cost_usd ?? 0) +
+        (expectedSameModelToolUsage.cached.cost_usd ?? 0) +
+        (expectedSameModelToolUsage.cacheCreate.cost_usd ?? 0),
+      12
+    );
+    expect(bashRow.duration_ms).toBeNull();
+    expect(bashRow.ttft_ms).toBeNull();
+    expect(bashRow.output_tps).toBeNull();
+
+    expect(parseInteger(advisorRow.timestamp, "advisor timestamp")).toBe(parentTimestamp);
+    expect(advisorRow.model).toBe("anthropic:claude-sonnet-4-20250514");
+    expect(parseInteger(advisorRow.input_tokens, "advisor input_tokens")).toBe(
+      expectedOtherModelToolUsage.input.tokens
+    );
+    expect(parseInteger(advisorRow.cached_tokens, "advisor cached_tokens")).toBe(
+      expectedOtherModelToolUsage.cached.tokens
+    );
+    expect(parseInteger(advisorRow.cache_create_tokens, "advisor cache_create_tokens")).toBe(
+      expectedOtherModelToolUsage.cacheCreate.tokens
+    );
+    expect(Number(advisorRow.total_cost_usd)).toBeCloseTo(
+      (expectedOtherModelToolUsage.input.cost_usd ?? 0) +
+        (expectedOtherModelToolUsage.output.cost_usd ?? 0) +
+        (expectedOtherModelToolUsage.reasoning.cost_usd ?? 0) +
+        (expectedOtherModelToolUsage.cached.cost_usd ?? 0) +
+        (expectedOtherModelToolUsage.cacheCreate.cost_usd ?? 0),
+      12
+    );
+    expect(advisorRow.duration_ms).toBeNull();
+    expect(advisorRow.ttft_ms).toBeNull();
+    expect(advisorRow.output_tps).toBeNull();
   });
 
   test("is a no-op when events is empty", async () => {

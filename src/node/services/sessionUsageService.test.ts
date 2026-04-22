@@ -3,7 +3,13 @@ import { SessionUsageService, type SessionUsageTokenStatsCacheV1 } from "./sessi
 import type { HistoryService } from "./historyService";
 import type { Config } from "@/node/config";
 import { createMuxMessage } from "@/common/types/message";
-import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
+import {
+  getTotalCost,
+  sumUsageHistory,
+  type ChatUsageDisplay,
+} from "@/common/utils/tokens/usageAggregator";
+import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
+import { normalizeToCanonical } from "@/common/utils/ai/models";
 import { createTestHistoryService } from "./testHistoryService";
 import * as fs from "fs/promises";
 import * as path from "path";
@@ -547,6 +553,73 @@ describe("SessionUsageService", () => {
       // Should have rebuilt from messages
       expect(result!.byModel["claude-sonnet-4-20250514"]).toBeDefined();
       expect(result!.byModel["claude-sonnet-4-20250514"].input.tokens).toBe(100);
+    });
+
+
+    it("should rebuild same-model totals from assistant usage and tool model usages", async () => {
+      const workspaceId = "tool-usage-rebuild-workspace";
+      const model = "anthropic:claude-sonnet-4-20250514";
+      const parentUsage = {
+        inputTokens: 140,
+        cachedInputTokens: 20,
+        outputTokens: 48,
+        totalTokens: 188,
+      };
+      const parentProviderMetadata = {
+        anthropic: { cacheCreationInputTokens: 10 },
+      };
+      const toolUsage = {
+        toolName: "advisor",
+        toolCallId: "tool-call-1",
+        timestamp: Date.now(),
+        model,
+        usage: {
+          inputTokens: 70,
+          cachedInputTokens: 8,
+          outputTokens: 24,
+          totalTokens: 94,
+        },
+        providerMetadata: {
+          anthropic: { cacheCreationInputTokens: 4 },
+        },
+      };
+
+      const assistantMessage = createMuxMessage("msg-tool-usage", "assistant", "Hello", {
+        historySequence: 1,
+        timestamp: Date.now(),
+        model,
+        usage: parentUsage,
+        providerMetadata: parentProviderMetadata,
+      });
+      Object.assign(assistantMessage.metadata ??= {}, {
+        toolModelUsages: [toolUsage],
+      });
+
+      await service.rebuildFromMessages(workspaceId, [assistantMessage]);
+
+      const result = await service.getSessionUsage(workspaceId);
+      expect(result).toBeDefined();
+      const canonicalModel = normalizeToCanonical(model);
+      expect(Object.keys(result?.byModel ?? {})).toEqual([canonicalModel]);
+
+      const expectedParentUsage = createDisplayUsage(parentUsage, model, parentProviderMetadata);
+      const expectedToolUsage = createDisplayUsage(toolUsage.usage, toolUsage.model, toolUsage.providerMetadata);
+      expect(expectedParentUsage).toBeDefined();
+      expect(expectedToolUsage).toBeDefined();
+      if (!expectedParentUsage || !expectedToolUsage || !result) {
+        throw new Error("Expected tool usage rebuild test to compute display usage and result");
+      }
+      const expectedMergedUsage = sumUsageHistory([expectedParentUsage, expectedToolUsage]);
+      expect(expectedMergedUsage).toBeDefined();
+      if (!expectedMergedUsage) {
+        throw new Error("Expected merged tool usage to be defined");
+      }
+
+      expect(result.byModel[canonicalModel]).toEqual(expectedMergedUsage);
+      expect(getTotalCost(result.byModel[canonicalModel])).toBeCloseTo(
+        getTotalCost(expectedMergedUsage) ?? 0,
+        12
+      );
     });
 
     it("should include historicalUsage from legacy compaction summaries", async () => {

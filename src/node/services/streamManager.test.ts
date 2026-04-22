@@ -1585,6 +1585,65 @@ describe("StreamManager - empty stream completions", () => {
 describe("StreamManager - TTFT metadata persistence", () => {
   const runtime = createRuntime({ type: "local", srcBaseDir: "/tmp" });
 
+  interface ToolModelUsageEventForTests {
+    toolName: string;
+    toolCallId?: string;
+    timestamp?: number;
+    model: string;
+    usage: {
+      inputTokens: number;
+      outputTokens: number;
+      totalTokens: number;
+      reasoningTokens?: number;
+      cachedInputTokens?: number;
+    };
+    providerMetadata?: Record<string, unknown>;
+    metadataModel?: string;
+  }
+
+  function recordToolModelUsageForTests(
+    streamManager: StreamManager,
+    workspaceId: string,
+    messageId: string,
+    event: ToolModelUsageEventForTests
+  ): void {
+    const recordToolModelUsage = Reflect.get(streamManager, "recordToolModelUsage");
+    expect(typeof recordToolModelUsage).toBe("function");
+    if (typeof recordToolModelUsage !== "function") {
+      throw new Error("Expected StreamManager.recordToolModelUsage to exist");
+    }
+
+    recordToolModelUsage.call(streamManager, workspaceId, messageId, event);
+  }
+
+  function readToolModelUsages(message: { metadata?: Record<string, unknown> }): unknown[] | undefined {
+    const metadata = message.metadata;
+    if (metadata == null || typeof metadata !== "object") {
+      return undefined;
+    }
+
+    const toolModelUsages = (metadata as Record<string, unknown>).toolModelUsages;
+    return Array.isArray(toolModelUsages) ? toolModelUsages : undefined;
+  }
+
+  function createToolModelUsageEvent(
+    overrides: Partial<ToolModelUsageEventForTests> = {}
+  ): ToolModelUsageEventForTests {
+    return {
+      toolName: overrides.toolName ?? "advisor",
+      toolCallId: overrides.toolCallId ?? "tool-call-1",
+      timestamp: overrides.timestamp ?? Date.now(),
+      model: overrides.model ?? "anthropic:claude-sonnet-4-20250514",
+      usage: overrides.usage ?? {
+        inputTokens: 40,
+        outputTokens: 12,
+        totalTokens: 52,
+      },
+      providerMetadata: overrides.providerMetadata,
+      ...(overrides.metadataModel != null ? { metadataModel: overrides.metadataModel } : {}),
+    };
+  }
+
   async function finalizeStreamAndReadMessage(params: {
     workspaceId: string;
     messageId: string;
@@ -1603,8 +1662,14 @@ describe("StreamManager - TTFT metadata persistence", () => {
     };
     model?: string;
     metadataModel?: string;
+    streamManager?: StreamManager;
+    beforeProcess?: (params: {
+      streamManager: StreamManager;
+      workspaceId: string;
+      messageId: string;
+    }) => Promise<void> | void;
   }) {
-    const streamManager = new StreamManager(historyService);
+    const streamManager = params.streamManager ?? new StreamManager(historyService);
     // Suppress error events from bubbling up as uncaught exceptions during tests
     streamManager.on("error", () => undefined);
 
@@ -1681,6 +1746,22 @@ describe("StreamManager - TTFT metadata persistence", () => {
       currentStepStartIndex: 0,
       stepTracker: {},
     };
+
+    const workspaceStreamsValue = Reflect.get(streamManager, "workspaceStreams");
+    expect(workspaceStreamsValue instanceof Map).toBe(true);
+    if (!(workspaceStreamsValue instanceof Map)) {
+      throw new Error("Expected StreamManager.workspaceStreams to be a Map");
+    }
+    const workspaceStreams = workspaceStreamsValue as Map<string, unknown>;
+    workspaceStreams.set(params.workspaceId, streamInfo);
+
+    if (params.beforeProcess) {
+      await params.beforeProcess({
+        streamManager,
+        workspaceId: params.workspaceId,
+        messageId: params.messageId,
+      });
+    }
 
     if (params.emitStartEvent) {
       const emitStreamStart = Reflect.get(streamManager, "emitStreamStart") as (
@@ -1820,6 +1901,157 @@ describe("StreamManager - TTFT metadata persistence", () => {
     });
     expect(updatedMessage.metadata?.routeProvider).toBe("openrouter");
     expect(updatedMessage.metadata?.routedThroughGateway).toBe(true);
+  });
+
+
+  test("persists per-invocation tool model usages on the final assistant message", async () => {
+    const startTime = Date.now() - 1000;
+    const firstToolUsage = createToolModelUsageEvent({
+      toolName: "advisor",
+      toolCallId: "tool-call-1",
+      timestamp: startTime + 50,
+      model: "openai:gpt-4",
+      usage: {
+        inputTokens: 60,
+        outputTokens: 18,
+        totalTokens: 78,
+      },
+      providerMetadata: { openai: { reasoningTokens: 4 } },
+    });
+    const secondToolUsage = createToolModelUsageEvent({
+      toolName: "advisor",
+      toolCallId: "tool-call-2",
+      timestamp: startTime + 90,
+      model: "openai:gpt-4",
+      usage: {
+        inputTokens: 30,
+        outputTokens: 9,
+        totalTokens: 39,
+      },
+      providerMetadata: { anthropic: { cacheCreationInputTokens: 3 } },
+    });
+
+    const updatedMessage = await finalizeStreamAndReadMessage({
+      workspaceId: "tool-usage-persist-workspace",
+      messageId: "tool-usage-persist-message",
+      historySequence: 1,
+      startTime,
+      beforeProcess: ({ streamManager, workspaceId, messageId }) => {
+        recordToolModelUsageForTests(streamManager, workspaceId, messageId, firstToolUsage);
+        recordToolModelUsageForTests(streamManager, workspaceId, messageId, secondToolUsage);
+      },
+      parts: [
+        {
+          type: "text",
+          text: "final response",
+          timestamp: startTime + 200,
+        },
+      ],
+    });
+
+    expect(readToolModelUsages(updatedMessage)).toMatchObject([firstToolUsage, secondToolUsage]);
+  });
+
+  test("omits toolModelUsages when the assistant turn has no tool model usage", async () => {
+    const startTime = Date.now() - 1000;
+    const updatedMessage = await finalizeStreamAndReadMessage({
+      workspaceId: "tool-usage-empty-workspace",
+      messageId: "tool-usage-empty-message",
+      historySequence: 1,
+      startTime,
+      parts: [
+        {
+          type: "text",
+          text: "no tool usage here",
+          timestamp: startTime + 150,
+        },
+      ],
+    });
+
+    expect(readToolModelUsages(updatedMessage)).toBeUndefined();
+    expect(Object.prototype.hasOwnProperty.call(updatedMessage.metadata ?? {}, "toolModelUsages")).toBe(
+      false
+    );
+  });
+
+  test("scopes tool model usage accumulation to the active assistant turn", async () => {
+    const workspaceId = "tool-usage-scope-workspace";
+    const streamManager = new StreamManager(historyService);
+    const firstStartTime = Date.now() - 2000;
+    const firstMessage = await finalizeStreamAndReadMessage({
+      workspaceId,
+      messageId: "tool-usage-first-message",
+      historySequence: 1,
+      startTime: firstStartTime,
+      streamManager,
+      beforeProcess: ({ streamManager: activeStreamManager, workspaceId, messageId }) => {
+        recordToolModelUsageForTests(
+          activeStreamManager,
+          workspaceId,
+          messageId,
+          createToolModelUsageEvent({
+            toolName: "advisor",
+            toolCallId: "tool-call-first",
+            timestamp: firstStartTime + 25,
+            model: "anthropic:claude-sonnet-4-20250514",
+            usage: {
+              inputTokens: 24,
+              outputTokens: 6,
+              totalTokens: 30,
+            },
+          })
+        );
+      },
+      parts: [
+        {
+          type: "text",
+          text: "first response",
+          timestamp: firstStartTime + 100,
+        },
+      ],
+    });
+
+    expect(readToolModelUsages(firstMessage)).toMatchObject([
+      {
+        toolName: "advisor",
+        toolCallId: "tool-call-first",
+      },
+    ]);
+
+    const secondMessage = await finalizeStreamAndReadMessage({
+      workspaceId,
+      messageId: "tool-usage-second-message",
+      historySequence: 2,
+      startTime: firstStartTime + 500,
+      streamManager,
+      beforeProcess: ({ streamManager: activeStreamManager, workspaceId }) => {
+        recordToolModelUsageForTests(
+          activeStreamManager,
+          workspaceId,
+          "tool-usage-first-message",
+          createToolModelUsageEvent({
+            toolName: "advisor",
+            toolCallId: "tool-call-stale",
+            timestamp: firstStartTime + 525,
+            model: "anthropic:claude-sonnet-4-20250514",
+            usage: {
+              inputTokens: 12,
+              outputTokens: 3,
+              totalTokens: 15,
+            },
+          })
+        );
+      },
+      parts: [
+        {
+          type: "text",
+          text: "second response",
+          timestamp: firstStartTime + 700,
+        },
+      ],
+    });
+
+    expect(readToolModelUsages(secondMessage)).toBeUndefined();
   });
 
   describe("StreamManager - reasoning token backfill", () => {
