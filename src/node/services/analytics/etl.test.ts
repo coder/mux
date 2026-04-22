@@ -22,6 +22,13 @@ import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 
 const SUBAGENT_TRANSCRIPTS_DIR_NAME = "subagent-transcripts";
 
+const CREATE_EVENTS_TABLE_WITHOUT_TOOL_NAME_SQL = CREATE_EVENTS_TABLE_SQL.replace(
+  "\n  tool_name TEXT,",
+  ""
+)
+  .replace("\n  tool_name TEXT", "")
+  .replace(",\n)", "\n)");
+
 const tempDirsToClean: string[] = [];
 const duckDbHandlesToClose: Array<{ instance: DuckDBInstance; conn: DuckDBConnection }> = [];
 
@@ -123,12 +130,20 @@ async function createTempSessionDir(): Promise<string> {
   return sessionDir;
 }
 
-async function createTestConn(): Promise<DuckDBConnection> {
+async function createTestConn(
+  params: {
+    createEventsTableSql?: string;
+    postCreateEventsSql?: string[];
+  } = {}
+): Promise<DuckDBConnection> {
   const instance = await DuckDBInstance.create(":memory:");
   const conn = await instance.connect();
   duckDbHandlesToClose.push({ instance, conn });
 
-  await conn.run(CREATE_EVENTS_TABLE_SQL);
+  await conn.run(params.createEventsTableSql ?? CREATE_EVENTS_TABLE_SQL);
+  for (const sql of params.postCreateEventsSql ?? []) {
+    await conn.run(sql);
+  }
   await conn.run(CREATE_WATERMARK_TABLE_SQL);
   await conn.run(CREATE_DELEGATION_ROLLUPS_TABLE_SQL);
 
@@ -322,6 +337,73 @@ describe("appendEvents", () => {
     expect(Number(rows[0].input_cost_usd)).toBeGreaterThan(0);
     expect(Number(rows[0].output_cost_usd)).toBeGreaterThan(0);
     expect(Number(rows[0].total_cost_usd)).toBeGreaterThan(0);
+  });
+
+  test("keeps tool_name aligned across fresh and migrated events tables", async () => {
+    const freshConn = await createTestConn();
+    const migratedConn = await createTestConn({
+      createEventsTableSql: CREATE_EVENTS_TABLE_WITHOUT_TOOL_NAME_SQL,
+      postCreateEventsSql: ["ALTER TABLE events ADD COLUMN IF NOT EXISTS tool_name TEXT"],
+    });
+    const sessionDir = await createTempSessionDir();
+    const workspaceId = "ws-tool-column-order";
+
+    await writeChatJsonl(sessionDir, [
+      makeUserLine(),
+      makeAssistantLine({
+        model: "openai:gpt-4",
+        inputTokens: 180,
+        outputTokens: 72,
+        timestamp: 1_700_000_000_000,
+        toolModelUsages: [
+          {
+            toolName: "bash",
+            toolCallId: "tool-call-1",
+            timestamp: 1_700_000_000_025,
+            model: "openai:gpt-4",
+            usage: { inputTokens: 36, outputTokens: 12, totalTokens: 48 },
+            providerMetadata: { openai: { reasoningTokens: 3 } },
+          },
+        ],
+      }),
+    ]);
+
+    const parsed = await parseWorkspaceFromDisk(workspaceId, sessionDir, {});
+    expect(parsed).not.toBeNull();
+    assert(parsed, "column-order test expected parseWorkspaceFromDisk to parse workspace");
+
+    const toolEvents = parsed.events.filter((event) => event.row.tool_name != null);
+    expect(toolEvents).toHaveLength(1);
+
+    await appendEvents(freshConn, toolEvents);
+    await appendEvents(migratedConn, toolEvents);
+
+    const normalizeSelectedRow = (row: Record<string, unknown>) => ({
+      workspaceId: typeof row.workspace_id === "string" ? row.workspace_id : null,
+      toolName: typeof row.tool_name === "string" ? row.tool_name : null,
+      thinkingLevel: typeof row.thinking_level === "string" ? row.thinking_level : null,
+      inputTokens:
+        row.input_tokens == null ? null : parseInteger(row.input_tokens, "selected input_tokens"),
+    });
+
+    const selectedSql =
+      "SELECT workspace_id, tool_name, thinking_level, input_tokens FROM events WHERE workspace_id = ?";
+    const freshRows = (await queryRows(freshConn, selectedSql, [workspaceId])).map(
+      normalizeSelectedRow
+    );
+    const migratedRows = (await queryRows(migratedConn, selectedSql, [workspaceId])).map(
+      normalizeSelectedRow
+    );
+
+    expect(freshRows).toEqual([
+      {
+        workspaceId,
+        toolName: "bash",
+        thinkingLevel: null,
+        inputTokens: 36,
+      },
+    ]);
+    expect(migratedRows).toEqual(freshRows);
   });
 
   test("emits one assistant row plus one row per tool model usage with inherited context", async () => {

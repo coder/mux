@@ -9,7 +9,6 @@ CREATE TABLE IF NOT EXISTS events (
   timestamp BIGINT,
   date DATE,
   model VARCHAR,
-  tool_name TEXT,
   thinking_level VARCHAR,
   input_tokens INTEGER DEFAULT 0,
   output_tokens INTEGER DEFAULT 0,
@@ -27,7 +26,8 @@ CREATE TABLE IF NOT EXISTS events (
   tool_execution_ms DOUBLE,
   output_tps DOUBLE,
   response_index INTEGER,
-  is_sub_agent BOOLEAN DEFAULT false
+  is_sub_agent BOOLEAN DEFAULT false,
+  tool_name TEXT
 )
 `;
 

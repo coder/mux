@@ -131,7 +131,6 @@ export async function appendEvents(conn: DuckDBConnection, events: IngestEvent[]
       appendBigIntOrNull(appender, row.timestamp);
       appendDateOrNull(appender, event.date);
       appendVarcharOrNull(appender, row.model);
-      appendVarcharOrNull(appender, row.tool_name);
       appendVarcharOrNull(appender, row.thinking_level);
       appender.appendInteger(row.input_tokens);
       appender.appendInteger(row.output_tokens);
@@ -150,6 +149,7 @@ export async function appendEvents(conn: DuckDBConnection, events: IngestEvent[]
       appendDoubleOrNull(appender, row.output_tps);
       appendIntegerOrNull(appender, row.response_index);
       appender.appendBoolean(row.is_sub_agent);
+      appendVarcharOrNull(appender, row.tool_name);
       appender.endRow();
     }
 
