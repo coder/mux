@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
-import { formatTranscriptTextAsQuote, getTranscriptContextMenuText } from "./transcriptContextMenu";
+import {
+  formatTranscriptTextAsQuote,
+  getTranscriptContextMenuLink,
+  getTranscriptContextMenuText,
+} from "./transcriptContextMenu";
 
 function createTranscriptRoot(markup: string): HTMLElement {
   const transcriptRoot = document.createElement("div");
@@ -386,5 +390,85 @@ describe("transcriptContextMenu", () => {
     expect(formatTranscriptTextAsQuote("\n\nLeading\n\n")).toBe("> Leading\n\n");
     expect(formatTranscriptTextAsQuote("  indented\nline\n")).toBe(">   indented\n> line\n\n");
     expect(formatTranscriptTextAsQuote("\n  \n")).toBe("");
+  });
+
+  describe("getTranscriptContextMenuLink", () => {
+    test("returns the href when target is an anchor inside the transcript", () => {
+      const transcriptRoot = createTranscriptRoot(
+        createQuoteableTranscriptMessage(
+          `<a id="message-link" href="https://example.com/path?q=1#x">Example</a>`
+        )
+      );
+      const link = transcriptRoot.querySelector("#message-link");
+      expect(link).not.toBeNull();
+
+      expect(getTranscriptContextMenuLink({ transcriptRoot, target: link })).toBe(
+        "https://example.com/path?q=1#x"
+      );
+    });
+
+    test("returns the href when target is a descendant text/element inside the anchor", () => {
+      const transcriptRoot = createTranscriptRoot(
+        createQuoteableTranscriptMessage(
+          `<a id="message-link" href="https://example.com"><span id="link-label">Example</span></a>`
+        )
+      );
+      const label = transcriptRoot.querySelector("#link-label");
+      expect(label).not.toBeNull();
+
+      const labelTextNode = getFirstTextNode(label);
+
+      expect(getTranscriptContextMenuLink({ transcriptRoot, target: label })).toBe(
+        "https://example.com"
+      );
+      expect(getTranscriptContextMenuLink({ transcriptRoot, target: labelTextNode })).toBe(
+        "https://example.com"
+      );
+    });
+
+    test("returns null when target is outside the transcript", () => {
+      const transcriptRoot = createTranscriptRoot(
+        createQuoteableTranscriptMessage(
+          `<a id="message-link" href="https://example.com">Example</a>`
+        )
+      );
+
+      const outsideLink = document.createElement("a");
+      outsideLink.href = "https://outside.example.com";
+      outsideLink.textContent = "Outside";
+      document.body.appendChild(outsideLink);
+
+      expect(getTranscriptContextMenuLink({ transcriptRoot, target: outsideLink })).toBeNull();
+    });
+
+    test("returns null when target is not an anchor", () => {
+      const transcriptRoot = createTranscriptRoot(
+        createQuoteableTranscriptMessage(`<p id="message">Plain text</p>`)
+      );
+      const paragraph = transcriptRoot.querySelector("#message");
+      expect(paragraph).not.toBeNull();
+
+      expect(getTranscriptContextMenuLink({ transcriptRoot, target: paragraph })).toBeNull();
+    });
+
+    test("returns null for anchors without an href attribute", () => {
+      const transcriptRoot = createTranscriptRoot(
+        createQuoteableTranscriptMessage(`<a id="anchor-no-href">No link</a>`)
+      );
+      const anchor = transcriptRoot.querySelector("#anchor-no-href");
+      expect(anchor).not.toBeNull();
+
+      expect(getTranscriptContextMenuLink({ transcriptRoot, target: anchor })).toBeNull();
+    });
+
+    test("returns null for anchors with blank href values", () => {
+      const transcriptRoot = createTranscriptRoot(
+        createQuoteableTranscriptMessage(`<a id="empty-href" href="   ">Blank</a>`)
+      );
+      const anchor = transcriptRoot.querySelector("#empty-href");
+      expect(anchor).not.toBeNull();
+
+      expect(getTranscriptContextMenuLink({ transcriptRoot, target: anchor })).toBeNull();
+    });
   });
 });

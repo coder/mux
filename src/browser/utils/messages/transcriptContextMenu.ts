@@ -240,6 +240,41 @@ export interface TranscriptContextMenuTextOptions {
   selection: Selection | null;
 }
 
+export interface TranscriptContextMenuLinkOptions {
+  transcriptRoot: HTMLElement;
+  target: EventTarget | null;
+}
+
+/**
+ * Resolve an anchor href for right-click link actions (e.g. "Copy link").
+ *
+ * Returns the rendered href string when the right-click target is inside an
+ * anchor within the transcript; otherwise null. This complements
+ * `getTranscriptContextMenuText` so the transcript can offer link-specific
+ * actions on anchors (which would otherwise bypass the text resolver).
+ */
+export function getTranscriptContextMenuLink(
+  options: TranscriptContextMenuLinkOptions
+): string | null {
+  const targetElement = getEventTargetElement(options.target);
+  if (!targetElement || !options.transcriptRoot.contains(targetElement)) {
+    return null;
+  }
+
+  const anchor = targetElement.closest("a[href]");
+  if (!anchor || !options.transcriptRoot.contains(anchor)) {
+    return null;
+  }
+
+  const href = anchor.getAttribute("href");
+  if (href === null) {
+    return null;
+  }
+
+  const trimmedHref = href.trim();
+  return trimmedHref.length > 0 ? trimmedHref : null;
+}
+
 /**
  * Resolve transcript text for right-click actions.
  *
