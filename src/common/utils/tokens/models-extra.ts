@@ -134,20 +134,33 @@ export const modelsExtra: Record<string, ModelData> = {
     knowledge_cutoff: "2025-08-31",
   },
 
-  // GPT-5.5 - currently reachable via the Codex route with a 400K context window.
-  // Published pricing: $5/M input, $30/M output, $0.50/M cached input.
+  // GPT-5.5
+  // Native model window is 1.05M context with 128K max output, but today Mux can only
+  // route GPT-5.5 through the Codex OAuth path and that route caps prompts at 400K.
+  // Keep max_input_tokens aligned to the routable cap, not the underlying model window,
+  // so pre-send compaction triggers before the OAuth route rejects 400K+ requests; when
+  // a non-OAuth API route becomes available, we can raise this to the published window.
+  // Base pricing: $5/M input, $30/M output, $0.50/M cached input.
+  // Above 272K prompt tokens (still reachable within the 400K OAuth cap): $10/M input,
+  // $45/M output, $1/M cached input.
   "gpt-5.5": {
     max_input_tokens: 400000,
     max_output_tokens: 128000,
-    input_cost_per_token: 0.000005, // $5 per million input tokens
-    output_cost_per_token: 0.00003, // $30 per million output tokens
-    cache_read_input_token_cost: 0.0000005, // $0.50 per million cached input tokens
+    input_cost_per_token: 0.000005, // $5 per million input tokens (<272K prompt tokens)
+    input_cost_per_token_above_200k_tokens: 0.00001, // $10 per million input tokens (>272K)
+    output_cost_per_token: 0.00003, // $30 per million output tokens (<272K prompt tokens)
+    output_cost_per_token_above_200k_tokens: 0.000045, // $45 per million output tokens (>272K)
+    cache_read_input_token_cost: 0.0000005, // $0.50 per million cached input tokens (<272K)
+    cache_read_input_token_cost_above_200k_tokens: 0.000001, // $1 per million cached input tokens (>272K)
+    // OpenAI's published long-context boundary is 272K even though LiteLLM's field names say 200K.
+    tiered_pricing_threshold_tokens: 272000,
     litellm_provider: "openai",
     mode: "chat",
     supports_function_calling: true,
     supports_vision: true,
     supports_reasoning: true,
     supports_response_schema: true,
+    knowledge_cutoff: "2025-08-31",
   },
 
   // GPT-5.4 mini - Released March 11, 2026
