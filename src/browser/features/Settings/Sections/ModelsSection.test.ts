@@ -11,6 +11,14 @@ describe("shouldShowModelInSettings", () => {
     expect(shouldShowModelInSettings(KNOWN_MODELS.GPT_53_CODEX_SPARK.id, true)).toBe(true);
   });
 
+  test("hides GPT-5.5 when OpenAI OAuth is not configured", () => {
+    expect(shouldShowModelInSettings(KNOWN_MODELS.GPT_55.id, false)).toBe(false);
+  });
+
+  test("shows GPT-5.5 when OpenAI OAuth is configured", () => {
+    expect(shouldShowModelInSettings(KNOWN_MODELS.GPT_55.id, true)).toBe(true);
+  });
+
   test("does not gate non-OpenAI models that share the same model id", () => {
     expect(shouldShowModelInSettings("openrouter:gpt-5.3-codex-spark", false)).toBe(true);
   });

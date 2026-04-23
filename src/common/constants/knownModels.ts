@@ -57,6 +57,13 @@ const MODEL_DEFINITIONS = {
     warm: true,
     tokenizerOverride: "openai/gpt-5",
   },
+  GPT_55: {
+    provider: "openai",
+    providerModelId: "gpt-5.5",
+    aliases: ["gpt-5.5"],
+    warm: true,
+    tokenizerOverride: "openai/gpt-5",
+  },
   // GPT Pro alias tracks the latest GPT-5 Pro tier.
   GPT_PRO: {
     provider: "openai",
