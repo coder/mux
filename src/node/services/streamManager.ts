@@ -323,6 +323,19 @@ function buildUsageDeltaEvent(opts: {
   };
 }
 
+/**
+ * Deep-clone a PersistedToolModelUsage so the stored copy is independent of the caller's object
+ * (usage/providerMetadata are nested references the caller may mutate). Keeps providerMetadata
+ * optional so the cloned object only carries the field when defined.
+ */
+function clonePersistedToolModelUsage(event: PersistedToolModelUsage): PersistedToolModelUsage {
+  return {
+    ...event,
+    usage: { ...event.usage },
+    ...(event.providerMetadata != null ? { providerMetadata: event.providerMetadata } : {}),
+  };
+}
+
 // Comprehensive stream info
 interface WorkspaceStreamInfo {
   state: StreamState;
@@ -473,11 +486,7 @@ export class StreamManager extends EventEmitter {
       return;
     }
 
-    streamInfo.toolModelUsages.push({
-      ...event,
-      usage: { ...event.usage },
-      ...(event.providerMetadata != null ? { providerMetadata: event.providerMetadata } : {}),
-    });
+    streamInfo.toolModelUsages.push(clonePersistedToolModelUsage(event));
   }
 
   /**
@@ -2197,13 +2206,7 @@ export class StreamManager extends EventEmitter {
               streamInfo.model.startsWith("mux-gateway:");
             const toolModelUsages =
               streamInfo.toolModelUsages.length > 0
-                ? streamInfo.toolModelUsages.map((toolModelUsage) => ({
-                    ...toolModelUsage,
-                    usage: { ...toolModelUsage.usage },
-                    ...(toolModelUsage.providerMetadata != null
-                      ? { providerMetadata: toolModelUsage.providerMetadata }
-                      : {}),
-                  }))
+                ? streamInfo.toolModelUsages.map(clonePersistedToolModelUsage)
                 : undefined;
 
             // Emit stream end event with parts preserved in temporal order
