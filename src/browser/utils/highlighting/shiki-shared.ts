@@ -15,7 +15,11 @@ export function mapToShikiLang(detectedLang: string): string {
   const mapping: Record<string, string> = {
     text: "plaintext",
     sh: "bash",
-    // Add more mappings as needed
+    // Shiki does not bundle a Starlark/Bazel grammar, so use Python's close-enough
+    // grammar to keep fenced code blocks highlighted instead of warning and falling back.
+    starlark: "python",
+    bazel: "python",
+    bzl: "python",
   };
   return mapping[detectedLang] || detectedLang;
 }

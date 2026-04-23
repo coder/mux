@@ -17,6 +17,11 @@
       let
         pkgs = import nixpkgs {
           inherit system;
+          # package.json pins Electron 38.x, but nixpkgs marks that branch
+          # end-of-life ("insecure"). Let any electron* package evaluate so
+          # the devShell and production build keep working until we bump
+          # Electron upstream in package.json.
+          config.allowInsecurePredicate = attrs: builtins.match "electron.*" (attrs.pname or "") != null;
         };
 
         mux = pkgs.stdenv.mkDerivation rec {
@@ -35,7 +40,10 @@
           ];
 
           buildInputs = with pkgs; [
-            electron
+            # Pin the major Electron version explicitly so `pkgs.electron`
+            # floating to a new major doesn't silently ship the wrong
+            # Node.js ABI for our prebuilt native modules.
+            electron_38
             stdenv.cc.cc.lib # Provides libstdc++ for native modules like sharp
           ];
 
@@ -121,7 +129,7 @@
                         # Create wrapper script. When running in Nix, mux doesn't know that
                         # it's packaged. Use MUX_E2E_LOAD_DIST to force using compiled
                         # assets instead of a dev server.
-                        makeWrapper ${pkgs.electron}/bin/electron $out/bin/mux \
+                        makeWrapper ${pkgs.electron_38}/bin/electron $out/bin/mux \
                           --add-flags "$out/lib/mux/dist/cli/index.js" \
                           --set MUX_E2E_LOAD_DIST "1" \
                           --prefix LD_LIBRARY_PATH : "${pkgs.stdenv.cc.cc.lib}/lib" \
@@ -207,11 +215,27 @@
               asciinema
               ffmpeg
             ]
-            ++ lib.optionals stdenv.isLinux [ docker ];
+            ++ lib.optionals stdenv.isLinux [
+              docker
+              # The Electron binary shipped in node_modules/electron/dist
+              # is dynamically linked against standard FHS paths
+              # (libglib-2.0.so.0, libnss3.so, etc.) that don't exist on
+              # NixOS, so `make start` / `make dev` fail with "error while
+              # loading shared libraries". Expose Nix's autoPatchelf'd
+              # Electron and redirect the npm wrapper to it via
+              # ELECTRON_OVERRIDE_DIST_PATH below.
+              electron_38
+            ];
 
           # Bun does not carry libstdc++ on Linux, so native modules like @duckdb/node-bindings
           # fail to dlopen during tests unless we expose the GCC runtime in the shell.
           LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [ pkgs.stdenv.cc.cc.lib ];
+
+          # Point `node_modules/electron/cli.js` at the Nix-patched Electron
+          # binary on Linux so `bunx electron` (used by `make start`/`make dev`)
+          # finds its shared libraries on NixOS without needing an FHS wrapper.
+          # Left unset on Darwin where the npm-shipped binary runs as-is.
+          ELECTRON_OVERRIDE_DIST_PATH = pkgs.lib.optionalString pkgs.stdenv.isLinux "${pkgs.electron_38}/libexec/electron";
         };
       }
     );

@@ -5,7 +5,11 @@
 
 import * as Comlink from "comlink";
 import { createHighlighter, type Highlighter } from "shiki";
-import { SHIKI_DARK_THEME, SHIKI_LIGHT_THEME } from "../utils/highlighting/shiki-shared";
+import {
+  mapToShikiLang,
+  SHIKI_DARK_THEME,
+  SHIKI_LIGHT_THEME,
+} from "../utils/highlighting/shiki-shared";
 
 // Singleton highlighter instance within worker
 let highlighter: Highlighter | null = null;
@@ -23,15 +27,6 @@ async function getHighlighter(): Promise<Highlighter> {
   }
   highlighter = await highlighterPromise;
   return highlighter;
-}
-
-// Map detected language to Shiki language ID
-function mapToShikiLang(detectedLang: string): string {
-  const mapping: Record<string, string> = {
-    text: "plaintext",
-    sh: "bash",
-  };
-  return mapping[detectedLang] || detectedLang;
 }
 
 const api = {

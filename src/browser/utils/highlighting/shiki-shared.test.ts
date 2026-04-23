@@ -1,6 +1,14 @@
 import { describe, expect, test } from "bun:test";
 
-import { extractShikiLines } from "./shiki-shared";
+import { extractShikiLines, mapToShikiLang } from "./shiki-shared";
+
+describe("mapToShikiLang", () => {
+  test("maps unsupported Bazel/Starlark fences to Python highlighting", () => {
+    expect(mapToShikiLang("starlark")).toBe("python");
+    expect(mapToShikiLang("bazel")).toBe("python");
+    expect(mapToShikiLang("bzl")).toBe("python");
+  });
+});
 
 describe("extractShikiLines", () => {
   test("removes trailing visually-empty Shiki line (e.g. <span></span>)", () => {
