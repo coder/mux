@@ -639,7 +639,7 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
     }
   });
 
-  it("returns oauth_not_connected for gpt-5.5 when OAuth and API key are missing", async () => {
+  it("returns api_key_not_found for gpt-5.5 when OAuth and API key are missing", async () => {
     using muxHome = new DisposableTempDir("codex-gpt-5-5-missing-auth");
 
     await writeProvidersConfig(muxHome.path, {
@@ -654,7 +654,7 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
 
       expect(result.success).toBe(false);
       if (!result.success) {
-        expect(result.error).toEqual({ type: "oauth_not_connected", provider: "openai" });
+        expect(result.error).toEqual({ type: "api_key_not_found", provider: "openai" });
       }
     } finally {
       if (savedKey !== undefined) {

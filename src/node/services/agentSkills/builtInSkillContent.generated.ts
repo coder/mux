@@ -2294,6 +2294,7 @@ export const BUILTIN_SKILL_FILES: Record<string, Record<string, string>> = {
       "| Haiku 4.5              | anthropic:claude-haiku-4-5    | `haiku`                                  |         |",
       "| GPT-5.4                | openai:gpt-5.4                | `gpt`                                    |         |",
       "| GPT-5.5                | openai:gpt-5.5                | `gpt-5.5`                                |         |",
+      "| GPT-5.5 Pro            | openai:gpt-5.5-pro            | `gpt-5.5-pro`                            |         |",
       "| GPT-5.4 Pro            | openai:gpt-5.4-pro            | `gpt-pro`                                |         |",
       "| GPT-5.4 Mini           | openai:gpt-5.4-mini           | `gpt-mini`                               |         |",
       "| GPT-5.4 Nano           | openai:gpt-5.4-nano           | `gpt-nano`                               |         |",

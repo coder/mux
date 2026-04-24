@@ -134,17 +134,14 @@ export const modelsExtra: Record<string, ModelData> = {
     knowledge_cutoff: "2025-08-31",
   },
 
-  // GPT-5.5
-  // Native model window is 1.05M context with 128K max output, but today Mux can only
-  // route GPT-5.5 through the Codex OAuth path and that route caps prompts at 400K.
-  // Keep max_input_tokens aligned to the routable cap, not the underlying model window,
-  // so pre-send compaction triggers before the OAuth route rejects 400K+ requests; when
-  // a non-OAuth API route becomes available, we can raise this to the published window.
+  // GPT-5.5 - Released April 23, 2026
+  // Public API support covers Responses, Chat Completions, and Batch with a native
+  // 1.05M context window and 128K max output. When routed through Codex OAuth, the
+  // effective per-request cap remains 400K because of a routing-layer constraint.
   // Base pricing: $5/M input, $30/M output, $0.50/M cached input.
-  // Above 272K prompt tokens (still reachable within the 400K OAuth cap): $10/M input,
-  // $45/M output, $1/M cached input.
+  // Above 272K prompt tokens: $10/M input, $45/M output, $1/M cached input.
   "gpt-5.5": {
-    max_input_tokens: 400000,
+    max_input_tokens: 1050000,
     max_output_tokens: 128000,
     input_cost_per_token: 0.000005, // $5 per million input tokens (<272K prompt tokens)
     input_cost_per_token_above_200k_tokens: 0.00001, // $10 per million input tokens (>272K)
@@ -161,6 +158,28 @@ export const modelsExtra: Record<string, ModelData> = {
     supports_reasoning: true,
     supports_response_schema: true,
     knowledge_cutoff: "2025-08-31",
+  },
+
+  // GPT-5.5 Pro - Released April 23, 2026
+  // Native 1.05M context, 128K max output; Responses API only.
+  // Base pricing: $30/M input, $180/M output; OpenAI has not published cached-input pricing.
+  // Above 272K prompt tokens: $60/M input, $270/M output.
+  "gpt-5.5-pro": {
+    max_input_tokens: 1050000,
+    max_output_tokens: 128000,
+    input_cost_per_token: 0.00003, // $30 per million input tokens (<272K prompt tokens)
+    input_cost_per_token_above_200k_tokens: 0.00006, // $60 per million input tokens (>272K)
+    output_cost_per_token: 0.00018, // $180 per million output tokens (<272K prompt tokens)
+    output_cost_per_token_above_200k_tokens: 0.00027, // $270 per million output tokens (>272K)
+    tiered_pricing_threshold_tokens: 272000,
+    knowledge_cutoff: "2025-08-31",
+    litellm_provider: "openai",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_vision: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+    supported_endpoints: ["/v1/responses"],
   },
 
   // GPT-5.4 mini - Released March 11, 2026
