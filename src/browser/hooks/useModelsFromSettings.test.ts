@@ -275,6 +275,7 @@ describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
     const { result } = renderHook(() => useModelsFromSettings());
 
     expect(result.current.models).toContain(KNOWN_MODELS.GPT.id);
+    expect(result.current.models).toContain(KNOWN_MODELS.GPT_55.id);
     expect(result.current.models).not.toContain(KNOWN_MODELS.GPT_PRO.id);
     expect(result.current.models).toContain("openai:gpt-5.2-codex");
     expect(result.current.models).toContain(KNOWN_MODELS.GPT_53_CODEX.id);
@@ -299,6 +300,7 @@ describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
     expect(result.current.models).toContain("openai:gpt-5.2-codex");
     expect(result.current.models).toContain("openai:gpt-5.2-pro");
     expect(result.current.models).toContain(KNOWN_MODELS.GPT_53_CODEX.id);
+    expect(result.current.models).not.toContain(KNOWN_MODELS.GPT_55.id);
     expect(result.current.models).not.toContain("openai:gpt-5.3-codex-spark");
   });
 
@@ -319,6 +321,7 @@ describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
     expect(result.current.models).toContain("openai:gpt-5.2-codex");
     expect(result.current.models).toContain("openai:gpt-5.2-pro");
     expect(result.current.models).toContain(KNOWN_MODELS.GPT_53_CODEX.id);
+    expect(result.current.models).toContain(KNOWN_MODELS.GPT_55.id);
     expect(result.current.models).toContain("openai:gpt-5.3-codex-spark");
   });
 
@@ -339,6 +342,7 @@ describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
     expect(result.current.models).toContain("openai:gpt-5.2-codex");
     expect(result.current.models).toContain("openai:gpt-5.2-pro");
     expect(result.current.models).toContain(KNOWN_MODELS.GPT_53_CODEX.id);
+    expect(result.current.models).not.toContain(KNOWN_MODELS.GPT_55.id);
     expect(result.current.models).not.toContain("openai:gpt-5.3-codex-spark");
   });
 

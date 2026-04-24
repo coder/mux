@@ -94,6 +94,7 @@ export const CODEX_OAUTH_ALLOWED_MODELS = new Set<string>([
   "gpt-5.2",
   "gpt-5.4-mini",
   "gpt-5.4",
+  "gpt-5.5",
   "gpt-5.2-codex",
   "gpt-5.3-codex",
   "gpt-5.3-codex-spark",
@@ -111,6 +112,8 @@ export const CODEX_OAUTH_ALLOWED_MODELS = new Set<string>([
 export const CODEX_OAUTH_REQUIRED_MODELS = new Set<string>([
   // Spark variants still require ChatGPT OAuth routing.
   "gpt-5.3-codex-spark",
+  // GPT-5.5 remains OAuth-required until OpenAI exposes API support.
+  "gpt-5.5",
 ]);
 
 function normalizeCodexOauthModelId(modelId: string): string {

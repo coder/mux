@@ -176,6 +176,16 @@ describe("getThinkingPolicyForModel", () => {
     ]);
   });
 
+  test("returns 5 levels including xhigh for gpt-5.5", () => {
+    expect(getThinkingPolicyForModel("openai:gpt-5.5")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+  });
+
   test("returns 5 levels including xhigh for gpt-5.4-mini", () => {
     expect(getThinkingPolicyForModel("openai:gpt-5.4-mini")).toEqual([
       "off",
