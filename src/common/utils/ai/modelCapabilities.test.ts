@@ -34,7 +34,7 @@ describe("getModelCapabilities", () => {
   });
 
   it("infers PDF support for OpenAI vision models when models-extra omits the flag", () => {
-    const caps = getModelCapabilities("openai:gpt-5.4");
+    const caps = getModelCapabilities("openai:gpt-5.5");
     expect(caps).not.toBeNull();
     expect(caps?.supportsPdfInput).toBe(true);
     expect(caps?.supportsVision).toBe(true);
@@ -60,7 +60,7 @@ describe("getSupportedInputMediaTypes", () => {
   });
 
   it("includes pdf for OpenAI vision models that rely on the fallback", () => {
-    const supported = getSupportedInputMediaTypes("openai:gpt-5.4");
+    const supported = getSupportedInputMediaTypes("openai:gpt-5.5");
     expect(supported).not.toBeNull();
     expect(supported?.has("pdf")).toBe(true);
   });

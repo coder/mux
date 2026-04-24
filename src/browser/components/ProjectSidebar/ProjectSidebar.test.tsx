@@ -413,7 +413,7 @@ function installProjectSidebarTestDoubles() {
       }) as unknown as ReturnType<typeof WorkspaceContextModule.useWorkspaceActions>
   );
   spyOn(WorkspaceFallbackModelModule, "useWorkspaceFallbackModel").mockImplementation(
-    () => "openai:gpt-5.4"
+    () => "openai:gpt-5.5"
   );
   spyOn(WorkspaceUnreadModule, "useWorkspaceUnread").mockImplementation(() => ({
     isUnread: false,

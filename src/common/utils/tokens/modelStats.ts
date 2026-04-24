@@ -82,7 +82,7 @@ function extractModelStats(data: RawModelData): ModelStats {
     parseOptionalNumber(data.tiered_pricing_threshold_tokens) ??
     // LiteLLM names long-context rates with `_above_200k_tokens` but does not ship a
     // separate threshold field. Keep 200K as the compatibility default unless an override
-    // (like GPT-5.4's published 272K boundary) is provided explicitly.
+    // (like GPT-5.5's published 272K boundary) is provided explicitly.
     (hasTieredPricing(data) ? DEFAULT_TIERED_PRICING_THRESHOLD_TOKENS : undefined);
 
   return {
@@ -138,7 +138,7 @@ function generateLookupKeys(modelString: string): string[] {
   if (provider) {
     keys.push(`${litellmProvider}/${modelName}`, `${litellmProvider}/${modelName}-cloud`);
 
-    // Version-pinned model IDs like gpt-5.4-2026-03-05 should fall back to the
+    // Version-pinned model IDs like gpt-5.5-2026-04-23 should fall back to the
     // base model entry when models-extra/models.json only publish the family key.
     if (unversionedModelName !== modelName) {
       keys.push(

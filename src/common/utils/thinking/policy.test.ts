@@ -160,8 +160,8 @@ describe("getThinkingPolicyForModel", () => {
     ]);
   });
 
-  test("returns 5 levels including xhigh for gpt-5.4", () => {
-    expect(getThinkingPolicyForModel("openai:gpt-5.4")).toEqual([
+  test("returns 5 levels including xhigh for gpt-5.5", () => {
+    expect(getThinkingPolicyForModel("openai:gpt-5.5")).toEqual([
       "off",
       "low",
       "medium",
@@ -170,8 +170,8 @@ describe("getThinkingPolicyForModel", () => {
     ]);
   });
 
-  test("returns 5 levels including xhigh for gpt-5.4 with version suffix", () => {
-    expect(getThinkingPolicyForModel("openai:gpt-5.4-2026-03-05")).toEqual([
+  test("returns 5 levels including xhigh for gpt-5.5 with version suffix", () => {
+    expect(getThinkingPolicyForModel("openai:gpt-5.5-2026-04-23")).toEqual([
       "off",
       "low",
       "medium",
@@ -485,13 +485,13 @@ describe("enforceThinkingPolicy", () => {
     });
   });
 
-  describe("GPT-5.4 (5 levels including xhigh)", () => {
+  describe("GPT-5.5 (5 levels including xhigh)", () => {
     test("allows xhigh for base model", () => {
-      expect(enforceThinkingPolicy("openai:gpt-5.4", "xhigh")).toBe("xhigh");
+      expect(enforceThinkingPolicy("openai:gpt-5.5", "xhigh")).toBe("xhigh");
     });
 
     test("allows xhigh for versioned model", () => {
-      expect(enforceThinkingPolicy("openai:gpt-5.4-2026-03-05", "xhigh")).toBe("xhigh");
+      expect(enforceThinkingPolicy("openai:gpt-5.5-2026-04-23", "xhigh")).toBe("xhigh");
     });
 
     test("allows xhigh for mini and nano variants", () => {

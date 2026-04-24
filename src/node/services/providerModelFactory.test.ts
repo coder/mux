@@ -161,7 +161,7 @@ describe("ProviderModelFactory.createModel", () => {
 });
 
 describe("ProviderModelFactory GitHub Copilot", () => {
-  it("creates routed gpt-5.4 models with the chat completions API mode", async () => {
+  it("creates routed gpt-5.5 models with the chat completions API mode", async () => {
     await withTempConfig(async (config, factory) => {
       const originalOpenAIRegistry = PROVIDER_REGISTRY.openai;
       let capturedProviderName: string | undefined;
@@ -169,7 +169,7 @@ describe("ProviderModelFactory GitHub Copilot", () => {
       config.saveProvidersConfig({
         "github-copilot": {
           apiKey: "copilot-token",
-          models: ["gpt-5.4"],
+          models: ["gpt-5.5"],
         },
       });
 
@@ -191,7 +191,7 @@ describe("ProviderModelFactory GitHub Copilot", () => {
           routePriority: ["github-copilot", "direct"],
         });
 
-        const result = await factory.resolveAndCreateModel("openai:gpt-5.4", "off");
+        const result = await factory.resolveAndCreateModel("openai:gpt-5.5", "off");
         expect(result.success).toBe(true);
         if (!result.success) {
           return;
@@ -202,7 +202,7 @@ describe("ProviderModelFactory GitHub Copilot", () => {
         );
         expect((result.data.model as { provider?: unknown }).provider).toBe("github-copilot.chat");
         expect(result.data.routeProvider).toBe("github-copilot");
-        expect(result.data.effectiveModelString).toBe("github-copilot:gpt-5.4");
+        expect(result.data.effectiveModelString).toBe("github-copilot:gpt-5.5");
         expect(result.data.model.constructor.name).toBe("OpenAIChatLanguageModel");
       } finally {
         PROVIDER_REGISTRY.openai = originalOpenAIRegistry;
@@ -444,7 +444,7 @@ describe("ProviderModelFactory GitHub Copilot", () => {
         },
       });
 
-      const result = await factory.createModel("github-copilot:gpt-5.4");
+      const result = await factory.createModel("github-copilot:gpt-5.5");
 
       expect(result.success).toBe(false);
       if (!result.success) {
@@ -465,14 +465,14 @@ describe("ProviderModelFactory GitHub Copilot", () => {
         },
       });
 
-      const result = await factory.createModel("github-copilot:gpt-5.4");
+      const result = await factory.createModel("github-copilot:gpt-5.5");
 
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.error).toEqual({
           type: "model_not_available",
           provider: "github-copilot",
-          modelId: "gpt-5.4",
+          modelId: "gpt-5.5",
         });
       }
     });
@@ -487,7 +487,7 @@ describe("ProviderModelFactory GitHub Copilot", () => {
         },
       } as unknown as Parameters<Config["saveProvidersConfig"]>[0]);
 
-      const result = await factory.createModel("github-copilot:gpt-5.4");
+      const result = await factory.createModel("github-copilot:gpt-5.5");
 
       expect(result.success).toBe(true);
       if (!result.success) {
@@ -507,7 +507,7 @@ describe("ProviderModelFactory GitHub Copilot", () => {
         },
       } as unknown as Parameters<Config["saveProvidersConfig"]>[0]);
 
-      const result = await factory.createModel("github-copilot:gpt-5.4");
+      const result = await factory.createModel("github-copilot:gpt-5.5");
 
       expect(result.success).toBe(true);
       if (!result.success) {
@@ -527,7 +527,7 @@ describe("ProviderModelFactory GitHub Copilot", () => {
         },
       });
 
-      const result = await factory.createModel("github-copilot:gpt-5.4");
+      const result = await factory.createModel("github-copilot:gpt-5.5");
 
       expect(result.success).toBe(true);
       if (!result.success) {
@@ -637,13 +637,13 @@ describe("ProviderModelFactory routing", () => {
         routePriority: ["github-copilot", "direct"],
       });
 
-      const result = await factory.resolveAndCreateModel("openai:gpt-5.4", "off");
+      const result = await factory.resolveAndCreateModel("openai:gpt-5.5", "off");
       expect(result.success).toBe(true);
       if (!result.success) {
         return;
       }
 
-      expect(result.data.effectiveModelString).toBe("openai:gpt-5.4");
+      expect(result.data.effectiveModelString).toBe("openai:gpt-5.5");
       expect(result.data.routeProvider).toBe("openai");
       expect(result.data.routedThroughGateway).toBe(false);
     });

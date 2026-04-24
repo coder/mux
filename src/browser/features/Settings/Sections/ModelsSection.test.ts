@@ -12,7 +12,7 @@ describe("shouldShowModelInSettings", () => {
   });
 
   test("shows GPT-5.5 when OpenAI OAuth is not configured", () => {
-    expect(shouldShowModelInSettings(KNOWN_MODELS.GPT_55.id, false)).toBe(true);
+    expect(shouldShowModelInSettings(KNOWN_MODELS.GPT.id, false)).toBe(true);
   });
 
   test("shows GPT-5.5 Pro when OpenAI OAuth is not configured", () => {

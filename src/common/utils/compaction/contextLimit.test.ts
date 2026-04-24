@@ -40,7 +40,7 @@ describe("getEffectiveContextLimit", () => {
     expect(limit).toBe(mappedStats?.max_input_tokens ?? null);
   });
 
-  test("uses GPT-5.4's native 1.05M context without the 1M toggle", () => {
+  test("uses GPT-5.5's native 1.05M context without the 1M toggle", () => {
     const baseLimit = getEffectiveContextLimit(KNOWN_MODELS.GPT.id, false, null);
     const toggledLimit = getEffectiveContextLimit(KNOWN_MODELS.GPT.id, true, null);
 

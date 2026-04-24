@@ -21,7 +21,7 @@ describe("getModelStats", () => {
   });
 
   test.each([
-    ["openai:gpt-5.4-2026-03-05", "openai:gpt-5.4"],
+    ["openai:gpt-5.5-2026-04-23", "openai:gpt-5.5"],
     ["mux-gateway:openai/gpt-5.5-pro-2026-04-23", "openai:gpt-5.5-pro"],
     ["mux-gateway:openai/gpt-5.4-mini-2026-03-11", "openai:gpt-5.4-mini"],
     ["mux-gateway:openai/gpt-5.4-nano-2026-03-17", "openai:gpt-5.4-nano"],

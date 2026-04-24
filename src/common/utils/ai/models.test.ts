@@ -48,7 +48,7 @@ describe("normalizeToCanonical", () => {
   });
 
   it("leaves github-copilot model IDs unchanged", () => {
-    expect(normalizeToCanonical("github-copilot:gpt-5.4")).toBe("github-copilot:gpt-5.4");
+    expect(normalizeToCanonical("github-copilot:gpt-5.5")).toBe("github-copilot:gpt-5.5");
   });
 
   it("leaves direct provider model IDs unchanged", () => {
@@ -137,11 +137,11 @@ describe("Anthropic 1M context classification", () => {
   it("returns none for models without Anthropic 1M support", () => {
     expect(getAnthropic1MContextMode("anthropic:claude-opus-4-5")).toBe("none");
     expect(getAnthropic1MContextMode("anthropic:claude-haiku-4-5")).toBe("none");
-    expect(getAnthropic1MContextMode("openai:gpt-5.4")).toBe("none");
+    expect(getAnthropic1MContextMode("openai:gpt-5.5")).toBe("none");
     expect(getAnthropic1MContextMode("openai:gpt-5.2")).toBe("none");
-    expect(supports1MContext("openai:gpt-5.4")).toBe(false);
+    expect(supports1MContext("openai:gpt-5.5")).toBe(false);
     expect(supports1MContext("anthropic:claude-haiku-4-5")).toBe(false);
-    expect(hasNative1MContext("openai:gpt-5.4")).toBe(false);
+    expect(hasNative1MContext("openai:gpt-5.5")).toBe(false);
   });
 });
 

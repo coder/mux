@@ -71,7 +71,7 @@ function extractModelCapabilities(data: RawModelCapabilitiesData): ModelCapabili
     // Treat maxPdfSizeMb as a strong signal that PDF input is supported.
     // OpenAI's vision-capable models also accept PDFs, but our local GPT-5 metadata in
     // models-extra.ts currently omits supports_pdf_input. Infer support here so users
-    // don't get a false "does not support PDF input" block for models like openai:gpt-5.4.
+    // don't get a false "does not support PDF input" block for models like openai:gpt-5.5.
     supportsPdfInput:
       data.supports_pdf_input === true ||
       maxPdfSizeMb !== undefined ||

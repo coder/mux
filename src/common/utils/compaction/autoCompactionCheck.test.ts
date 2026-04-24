@@ -227,7 +227,7 @@ describe("checkAutoCompaction", () => {
       expect(result.shouldShowWarning).toBe(true);
     });
 
-    test("uses GPT-5.4's native 1.05M limit without relying on the 1M toggle", () => {
+    test("uses GPT-5.5's native 1.05M limit without relying on the 1M toggle", () => {
       const usage = createMockUsage(600_000, undefined, KNOWN_MODELS.GPT.id);
       const result = checkAutoCompaction(usage, KNOWN_MODELS.GPT.id, false);
 

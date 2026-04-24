@@ -589,7 +589,7 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
       }),
     } as unknown as BackgroundProcessManager;
 
-    const compactionModel = "openai:gpt-5.4";
+    const compactionModel = "openai:gpt-5.5";
     const config = {
       srcDir: "/tmp",
       getSessionDir: (_workspaceId: string) => "/tmp",

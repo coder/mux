@@ -1986,7 +1986,7 @@ export function ProvidersSection() {
                               </label>
                               <p className="text-muted text-xs">
                                 Applies to models that support both ChatGPT OAuth and API keys (e.g.{" "}
-                                <code className="text-accent">gpt-5.4</code>).
+                                <code className="text-accent">gpt-5.5</code>).
                               </p>
                             </div>
 

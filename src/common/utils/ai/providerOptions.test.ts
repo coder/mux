@@ -727,14 +727,14 @@ describe("buildProviderOptions - OpenAI", () => {
   });
 
   describe("OpenAI conversation state management", () => {
-    test("does not reuse previousResponseId when Mux already sends explicit GPT-5.4 history", () => {
+    test("does not reuse previousResponseId when Mux already sends explicit GPT-5.5 history", () => {
       const messages = [
         createMuxMessage("assistant-1", "assistant", "", {
-          model: "mux-gateway:openai/gpt-5.4",
+          model: "mux-gateway:openai/gpt-5.5",
           providerMetadata: { openai: { responseId: "resp_123" } },
         }),
       ];
-      const result = buildProviderOptions("mux-gateway:openai/gpt-5.4", "medium", messages);
+      const result = buildProviderOptions("mux-gateway:openai/gpt-5.5", "medium", messages);
       const openai = getOpenAIOptions(result);
 
       expect(openai).toBeDefined();

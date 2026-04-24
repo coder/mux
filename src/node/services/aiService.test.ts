@@ -650,7 +650,7 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
     delete process.env.OPENAI_API_KEY;
     try {
       const service = createService(muxHome.path);
-      const result = await service.createModel(KNOWN_MODELS.GPT_55.id);
+      const result = await service.createModel(KNOWN_MODELS.GPT.id);
 
       expect(result.success).toBe(false);
       if (!result.success) {

@@ -49,7 +49,7 @@ describe("WorkspaceStatusIndicator", () => {
     });
 
     const view = render(
-      <WorkspaceStatusIndicator workspaceId="workspace-idle" fallbackModel="openai:gpt-5.4" />
+      <WorkspaceStatusIndicator workspaceId="workspace-idle" fallbackModel="openai:gpt-5.5" />
     );
 
     const icon = view.container.querySelector("svg");
@@ -64,7 +64,7 @@ describe("WorkspaceStatusIndicator", () => {
     });
 
     const view = render(
-      <WorkspaceStatusIndicator workspaceId="workspace-streaming" fallbackModel="openai:gpt-5.4" />
+      <WorkspaceStatusIndicator workspaceId="workspace-streaming" fallbackModel="openai:gpt-5.5" />
     );
 
     const icon = view.container.querySelector("svg");

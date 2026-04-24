@@ -5,10 +5,10 @@ import { isCopilotModelAccessible } from "../utils/copilot/modelRouting";
 import { availableRoutes, isModelAvailable, resolveRoute } from "./resolve";
 
 const MODEL = "anthropic:claude-opus-4-6";
-const OPENAI_MODEL = "openai:gpt-5.4";
+const OPENAI_MODEL = "openai:gpt-5.5";
 
 const EXPLICIT_GATEWAY_MODEL = "openrouter:openai/gpt-5";
-const EXPLICIT_COPILOT_MODEL = "github-copilot:gpt-5.4";
+const EXPLICIT_COPILOT_MODEL = "github-copilot:gpt-5.5";
 
 function createIsConfigured(configuredProviders: string[]): (provider: string) => boolean {
   const configuredSet = new Set(configuredProviders);
@@ -86,11 +86,11 @@ describe("resolveRoute", () => {
       ["github-copilot", "direct"],
       {},
       createIsConfigured(["github-copilot", "openai"]),
-      createIsGatewayModelAccessible([["github-copilot", "gpt-5.4"]])
+      createIsGatewayModelAccessible([["github-copilot", "gpt-5.5"]])
     );
 
     expect(resolved.routeProvider).toBe("openai");
-    expect(resolved.routeModelId).toBe("gpt-5.4");
+    expect(resolved.routeModelId).toBe("gpt-5.5");
   });
 
   test("selects GitHub Copilot when the gateway accepts the model", () => {
@@ -103,7 +103,7 @@ describe("resolveRoute", () => {
     );
 
     expect(resolved.routeProvider).toBe("github-copilot");
-    expect(resolved.routeModelId).toBe("gpt-5.4");
+    expect(resolved.routeModelId).toBe("gpt-5.5");
   });
 
   test("routes Anthropic models through GitHub Copilot when the catalog stores a dot-form model ID", () => {
@@ -128,7 +128,7 @@ describe("resolveRoute", () => {
     );
 
     expect(resolved.routeProvider).toBe("github-copilot");
-    expect(resolved.routeModelId).toBe("gpt-5.4");
+    expect(resolved.routeModelId).toBe("gpt-5.5");
   });
 
   test("preserves explicit gateway-scoped OpenAI routes without double-prefixing", () => {
@@ -214,7 +214,7 @@ describe("resolveRoute", () => {
     );
 
     expect(resolved.routeProvider).toBe("github-copilot");
-    expect(resolved.routeModelId).toBe("gpt-5.4");
+    expect(resolved.routeModelId).toBe("gpt-5.5");
   });
 
   test("direct override still resolves directly when origin is configured", () => {
@@ -377,7 +377,7 @@ describe("isModelAvailable", () => {
         modelId: EXPLICIT_COPILOT_MODEL,
         configuredProviders: ["github-copilot"],
         routePriority: ["direct"],
-        isGatewayModelAccessible: createIsGatewayModelAccessible([["github-copilot", "gpt-5.4"]]),
+        isGatewayModelAccessible: createIsGatewayModelAccessible([["github-copilot", "gpt-5.5"]]),
       })
     ).toBe(false);
   });
@@ -428,7 +428,7 @@ describe("isModelAvailable", () => {
         modelId: OPENAI_MODEL,
         configuredProviders: ["github-copilot"],
         routePriority: ["github-copilot"],
-        isGatewayModelAccessible: createIsGatewayModelAccessible([["github-copilot", "gpt-5.4"]]),
+        isGatewayModelAccessible: createIsGatewayModelAccessible([["github-copilot", "gpt-5.5"]]),
       })
     ).toBe(false);
   });
@@ -594,7 +594,7 @@ describe("availableRoutes", () => {
     const routes = availableRoutes(
       EXPLICIT_COPILOT_MODEL,
       createIsConfigured(["github-copilot"]),
-      createIsGatewayModelAccessible([["github-copilot", "gpt-5.4"]])
+      createIsGatewayModelAccessible([["github-copilot", "gpt-5.5"]])
     );
 
     expect(routes).toEqual([]);
@@ -604,7 +604,7 @@ describe("availableRoutes", () => {
     const routes = availableRoutes(
       OPENAI_MODEL,
       createIsConfigured(["github-copilot"]),
-      createIsGatewayModelAccessible([["github-copilot", "gpt-5.4"]])
+      createIsGatewayModelAccessible([["github-copilot", "gpt-5.5"]])
     );
 
     expect(routes).toEqual([

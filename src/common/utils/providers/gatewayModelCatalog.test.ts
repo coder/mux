@@ -15,14 +15,14 @@ describe("gatewayModelCatalog", () => {
   });
 
   test("treats an empty Copilot catalog as permissive", () => {
-    expect(isProviderModelAccessibleFromAuthoritativeCatalog("github-copilot", "gpt-5.4", [])).toBe(
+    expect(isProviderModelAccessibleFromAuthoritativeCatalog("github-copilot", "gpt-5.5", [])).toBe(
       true
     );
   });
 
   test("treats malformed Copilot catalog entries as missing", () => {
     expect(
-      isProviderModelAccessibleFromAuthoritativeCatalog("github-copilot", "gpt-5.4", [
+      isProviderModelAccessibleFromAuthoritativeCatalog("github-copilot", "gpt-5.5", [
         null as unknown as string,
       ])
     ).toBe(true);
@@ -30,7 +30,7 @@ describe("gatewayModelCatalog", () => {
 
   test("treats blank Copilot catalog strings as missing", () => {
     expect(
-      isProviderModelAccessibleFromAuthoritativeCatalog("github-copilot", "gpt-5.4", ["   "])
+      isProviderModelAccessibleFromAuthoritativeCatalog("github-copilot", "gpt-5.5", ["   "])
     ).toBe(true);
   });
 
@@ -52,7 +52,7 @@ describe("gatewayModelCatalog", () => {
 
   test("rejects direct Copilot model ids missing from the authoritative catalog", () => {
     expect(
-      isProviderModelAccessibleFromAuthoritativeCatalog("github-copilot", "gpt-5.4", [
+      isProviderModelAccessibleFromAuthoritativeCatalog("github-copilot", "gpt-5.5", [
         "gpt-5.4-mini",
       ])
     ).toBe(false);
@@ -68,7 +68,7 @@ describe("gatewayModelCatalog", () => {
 
   test("keeps the gateway-specific helper behavior aligned", () => {
     expect(
-      isGatewayModelAccessibleFromAuthoritativeCatalog("github-copilot", "gpt-5.4", [
+      isGatewayModelAccessibleFromAuthoritativeCatalog("github-copilot", "gpt-5.5", [
         "gpt-5.4-mini",
       ])
     ).toBe(false);

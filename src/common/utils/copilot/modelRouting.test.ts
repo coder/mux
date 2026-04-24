@@ -16,7 +16,7 @@ describe("COPILOT_MODEL_PREFIXES", () => {
 
 describe("isCopilotRoutableModel", () => {
   it("keeps non-Codex models routable through Copilot", () => {
-    expect(isCopilotRoutableModel("gpt-5.4")).toBe(true);
+    expect(isCopilotRoutableModel("gpt-5.5")).toBe(true);
     expect(isCopilotRoutableModel("claude-opus-4-6")).toBe(true);
   });
 
@@ -34,7 +34,7 @@ describe("selectCopilotApiMode", () => {
   });
 
   it("routes GPT-5 and other Copilot families to chat completions", () => {
-    expect(selectCopilotApiMode("gpt-5.4")).toBe("chatCompletions");
+    expect(selectCopilotApiMode("gpt-5.5")).toBe("chatCompletions");
     expect(selectCopilotApiMode("gpt-5.5-pro")).toBe("chatCompletions");
     expect(selectCopilotApiMode("claude-opus-4-6")).toBe("chatCompletions");
     expect(selectCopilotApiMode("claude-sonnet-4-6")).toBe("chatCompletions");
@@ -65,7 +65,7 @@ describe("normalizeCopilotModelId", () => {
   });
 
   it("leaves non-Claude ids unchanged", () => {
-    expect(normalizeCopilotModelId("gpt-5.4")).toBe("gpt-5.4");
+    expect(normalizeCopilotModelId("gpt-5.5")).toBe("gpt-5.5");
   });
 
   it("strips provider prefixes before normalizing Claude ids", () => {
@@ -88,7 +88,7 @@ describe("toCopilotModelId", () => {
   });
 
   it("leaves non-Claude ids unchanged", () => {
-    expect(toCopilotModelId("gpt-5.4")).toBe("gpt-5.4");
+    expect(toCopilotModelId("gpt-5.5")).toBe("gpt-5.5");
   });
 
   it("strips provider prefixes before restoring Claude ids", () => {
@@ -98,7 +98,7 @@ describe("toCopilotModelId", () => {
 
 describe("isCopilotModelAccessible", () => {
   it("returns true when the model is present in the fetched Copilot list", () => {
-    expect(isCopilotModelAccessible("gpt-5.4", ["gpt-5.4", "claude-sonnet-4-6"])).toBe(true);
+    expect(isCopilotModelAccessible("gpt-5.5", ["gpt-5.5", "claude-sonnet-4-6"])).toBe(true);
   });
 
   it("returns true when Claude ids match after normalization", () => {
@@ -106,15 +106,15 @@ describe("isCopilotModelAccessible", () => {
   });
 
   it("returns false when the model is absent from a non-empty Copilot list", () => {
-    expect(isCopilotModelAccessible("gpt-5.5-pro", ["gpt-5.4", "claude-sonnet-4-6"])).toBe(false);
+    expect(isCopilotModelAccessible("gpt-5.5-pro", ["gpt-5.5", "claude-sonnet-4-6"])).toBe(false);
   });
 
   it("returns true when no Copilot model list has been persisted yet", () => {
-    expect(isCopilotModelAccessible("gpt-5.4", [])).toBe(true);
+    expect(isCopilotModelAccessible("gpt-5.5", [])).toBe(true);
   });
 
   it("uses exact string matching instead of prefix matching after normalization", () => {
-    expect(isCopilotModelAccessible("gpt-5.4", ["gpt-5"])).toBe(false);
-    expect(isCopilotModelAccessible("", ["gpt-5.4"])).toBe(false);
+    expect(isCopilotModelAccessible("gpt-5.5", ["gpt-5"])).toBe(false);
+    expect(isCopilotModelAccessible("", ["gpt-5.5"])).toBe(false);
   });
 });
