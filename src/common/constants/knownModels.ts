@@ -53,7 +53,7 @@ const MODEL_DEFINITIONS = {
   GPT: {
     provider: "openai",
     providerModelId: "gpt-5.5",
-    aliases: ["gpt"],
+    aliases: ["gpt", "gpt-5.5"],
     warm: true,
     tokenizerOverride: "openai/gpt-5",
   },
@@ -61,7 +61,7 @@ const MODEL_DEFINITIONS = {
   GPT_PRO: {
     provider: "openai",
     providerModelId: "gpt-5.5-pro",
-    aliases: ["gpt-pro"],
+    aliases: ["gpt-pro", "gpt-5.5-pro"],
     warm: true,
     tokenizerOverride: "openai/gpt-5",
   },
