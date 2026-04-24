@@ -66,9 +66,10 @@ const THEME_COLORS: Record<ThemeMode, string> = {
   "flexoki-dark": "#100f0f",
 };
 
+// Keep hrefs relative so a server-injected <base> preserves path-app prefixes.
 const FAVICON_BY_SCHEME: Record<"light" | "dark", string> = {
-  light: "/favicon.ico",
-  dark: "/favicon-dark.ico",
+  light: "favicon.ico",
+  dark: "favicon-dark.ico",
 };
 
 /** Map theme mode to CSS color-scheme value */
