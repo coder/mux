@@ -8,6 +8,7 @@
 
 import type { RouterClient } from "@orpc/server";
 import type { AppRouter } from "@/node/orpc/router";
+import { resolveBrowserAssetUrl } from "@/browser/utils/frontendBasePath";
 
 type APIClient = RouterClient<AppRouter>;
 
@@ -37,8 +38,9 @@ export function openTerminalPopout(api: APIClient, workspaceId: string, sessionI
     // In browser mode, we must open the window client-side
     // The backend cannot open a window on the user's client
     const params = new URLSearchParams({ workspaceId, sessionId });
+    const terminalUrl = resolveBrowserAssetUrl(`terminal.html?${params.toString()}`);
     window.open(
-      `/terminal.html?${params.toString()}`,
+      terminalUrl,
       `terminal-${workspaceId}-${Date.now()}`,
       "width=1000,height=600,popup=yes"
     );

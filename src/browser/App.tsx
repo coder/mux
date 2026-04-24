@@ -100,6 +100,7 @@ import { createProjectRefs } from "@/common/utils/multiProject";
 import { MULTI_PROJECT_SIDEBAR_SECTION_ID } from "@/common/constants/multiProject";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
+import { prependInitialAppProxyBasePath } from "@/browser/utils/frontendBasePath";
 import { LoadingScreen } from "@/browser/components/LoadingScreen/LoadingScreen";
 
 function RootRouteShell(props: {
@@ -871,7 +872,10 @@ function AppInner() {
     const handlePopState = () => {
       // Re-push the correct URL from MemoryRouter, not the popped browser URL
       const { pathname, search, hash } = locationRef.current;
-      const correctUrl = `${window.location.origin}${pathname}${search}${hash}`;
+      const correctUrl = new URL(
+        prependInitialAppProxyBasePath(`${pathname}${search}${hash}`),
+        window.location.origin
+      );
       window.history.pushState({ mux: true }, "", correctUrl);
     };
 

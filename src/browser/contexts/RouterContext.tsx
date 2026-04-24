@@ -10,6 +10,10 @@ import {
 import { MemoryRouter, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import {
+  prependInitialAppProxyBasePath,
+  stripInitialAppProxyBasePathFromPathname,
+} from "@/browser/utils/frontendBasePath";
+import {
   LAST_VISITED_ROUTE_KEY,
   LAUNCH_BEHAVIOR_KEY,
   SELECTED_WORKSPACE_KEY,
@@ -177,7 +181,8 @@ function isRestorableRoute(route: unknown): route is string {
 
 /** Get the initial route, falling back to the compatibility root entrypoint when needed. */
 function getInitialRoute(): string {
-  const isStorybook = window.location.pathname.endsWith("iframe.html");
+  const routePathname = stripInitialAppProxyBasePathFromPathname(window.location.pathname);
+  const isStorybook = routePathname.endsWith("iframe.html");
   const isStandalone = isStandalonePwa();
   const navigationType = getStartupNavigationType();
   const launchBehavior = !isStandalone
@@ -195,7 +200,7 @@ function getInitialRoute(): string {
   // routes are special: fresh launches may ignore them, but explicit restore-style navigations
   // such as hard reload/back-forward should reopen the same chat.
   if (window.location.protocol !== "file:" && !isStorybook) {
-    const url = window.location.pathname + window.location.search;
+    const url = routePathname + window.location.search;
     // Only use URL if it's a valid route (starts with /, not just "/" or empty)
     if (url.startsWith("/") && url !== "/") {
       if (!url.startsWith("/workspace/")) {
@@ -254,13 +259,15 @@ function useUrlSync(): void {
       updatePersistedState(LAST_VISITED_ROUTE_KEY, url);
     }
 
+    const currentRoutePathname = stripInitialAppProxyBasePathFromPathname(window.location.pathname);
     // Skip in Storybook (conflicts with story navigation)
-    if (window.location.pathname.endsWith("iframe.html")) return;
+    if (currentRoutePathname.endsWith("iframe.html")) return;
     // Skip in Electron (file:// reloads always boot through index.html; we restore via localStorage above)
     if (window.location.protocol === "file:") return;
 
-    if (url !== window.location.pathname + window.location.search + window.location.hash) {
-      window.history.replaceState(null, "", url);
+    const browserUrl = prependInitialAppProxyBasePath(url);
+    if (browserUrl !== window.location.pathname + window.location.search + window.location.hash) {
+      window.history.replaceState(null, "", browserUrl);
     }
   }, [location.pathname, location.search, location.hash]);
 }

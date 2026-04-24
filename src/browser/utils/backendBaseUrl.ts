@@ -10,25 +10,9 @@
  * prefix, so the frontend must include it when constructing URLs.
  */
 
-// Non-greedy so we match the *first* "/apps/<slug>" segment in nested routes.
-const APP_PROXY_BASE_PATH_RE = /(.*?\/apps\/[^/]+)(?:\/|$)/;
+import { getAppProxyBasePathFromPathname } from "@/common/appProxyBasePath";
 
-/**
- * Returns the path prefix up to and including `/apps/<slug>`.
- *
- * Examples:
- * - "/@u/ws/apps/mux/" -> "/@u/ws/apps/mux"
- * - "/@u/ws/apps/mux/settings" -> "/@u/ws/apps/mux"
- */
-export function getAppProxyBasePathFromPathname(pathname: string): string | null {
-  const match = APP_PROXY_BASE_PATH_RE.exec(pathname);
-  if (!match) {
-    return null;
-  }
-
-  const basePath = match[1];
-  return basePath.endsWith("/") ? basePath.slice(0, -1) : basePath;
-}
+export { getAppProxyBasePathFromPathname } from "@/common/appProxyBasePath";
 
 function stripTrailingSlashes(url: string): string {
   return url.replace(/\/+$/, "");

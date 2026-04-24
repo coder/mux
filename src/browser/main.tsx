@@ -5,6 +5,7 @@ import { installWindowOpenLocalhostProxyNormalization } from "@/browser/utils/wi
 import { AppLoader } from "@/browser/components/AppLoader/AppLoader";
 import { initTelemetry, trackAppStarted } from "@/common/telemetry";
 import { initTitlebarInsets } from "@/browser/hooks/useDesktopTitlebar";
+import { resolveBrowserAssetUrl } from "@/browser/utils/frontendBasePath";
 
 // Initialize telemetry on app startup
 try {
@@ -56,7 +57,7 @@ if ("serviceWorker" in navigator) {
   if (isHttpProtocol) {
     window.addEventListener("load", () => {
       navigator.serviceWorker
-        .register("/service-worker.js")
+        .register(resolveBrowserAssetUrl("service-worker.js"))
         .then((registration) => {
           console.log("Service Worker registered:", registration);
         })
