@@ -148,6 +148,62 @@ async function withProxyUriTemplateEnv<T>(
   }
 }
 
+const APP_PROXY_BASE_PATH = "/@u/ws/apps/mux";
+const APP_PROXY_BASE_PATH_ALT = "/@alice/dev/apps/mux";
+
+function countOccurrences(value: string, needle: string): number {
+  return value.split(needle).length - 1;
+}
+
+async function createStaticTestServer(
+  options: {
+    files?: Record<string, string>;
+    context?: Partial<ORPCContext>;
+    authToken?: string;
+  } = {}
+): Promise<{
+  server: Awaited<ReturnType<typeof createOrpcServer>>;
+  tempDir: string;
+  close: () => Promise<void>;
+}> {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-static-app-proxy-"));
+  const files = {
+    "index.html":
+      "<!doctype html><html><head><title>mux</title></head><body><div>ok</div></body></html>",
+    ...options.files,
+  };
+
+  for (const [filePath, contents] of Object.entries(files)) {
+    const absolutePath = path.join(tempDir, filePath);
+    await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+    await fs.writeFile(absolutePath, contents, "utf-8");
+  }
+
+  let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
+  try {
+    server = await createOrpcServer({
+      host: "127.0.0.1",
+      port: 0,
+      context: (options.context ?? {}) as ORPCContext,
+      authToken: options.authToken,
+      serveStatic: true,
+      staticDir: tempDir,
+    });
+  } catch (error) {
+    await fs.rm(tempDir, { recursive: true, force: true });
+    throw error;
+  }
+
+  return {
+    server,
+    tempDir,
+    close: async () => {
+      await server?.close();
+      await fs.rm(tempDir, { recursive: true, force: true });
+    },
+  };
+}
+
 describe("createOrpcServer", () => {
   test("serveStatic fallback does not swallow /api routes", async () => {
     // Minimal context stub - router won't be exercised by this test.
@@ -182,6 +238,212 @@ describe("createOrpcServer", () => {
     } finally {
       await server?.close();
       await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("serves SPA base href from the detected public base path per request", async () => {
+    const { server, close } = await createStaticTestServer();
+
+    try {
+      const rootRes = await fetch(`${server.baseUrl}/`);
+      expect(rootRes.status).toBe(200);
+      const rootHtml = await rootRes.text();
+      expect(countOccurrences(rootHtml, '<base href="/" />')).toBe(1);
+
+      const forwardedPrefixRes = await fetch(`${server.baseUrl}/some/spa/route`, {
+        headers: { "X-Forwarded-Prefix": APP_PROXY_BASE_PATH },
+      });
+      expect(forwardedPrefixRes.status).toBe(200);
+      const forwardedPrefixHtml = await forwardedPrefixRes.text();
+      expect(forwardedPrefixHtml).toContain(`<base href="${APP_PROXY_BASE_PATH}/" />`);
+
+      const originalUriRes = await fetch(`${server.baseUrl}/`, {
+        headers: { "X-Original-Uri": `${APP_PROXY_BASE_PATH}/` },
+      });
+      expect(originalUriRes.status).toBe(200);
+      const originalUriHtml = await originalUriRes.text();
+      expect(originalUriHtml).toContain(`<base href="${APP_PROXY_BASE_PATH}/" />`);
+
+      const firstPrefixRes = await fetch(`${server.baseUrl}/one`, {
+        headers: { "X-Forwarded-Prefix": APP_PROXY_BASE_PATH },
+      });
+      const secondPrefixRes = await fetch(`${server.baseUrl}/two`, {
+        headers: { "X-Forwarded-Prefix": APP_PROXY_BASE_PATH_ALT },
+      });
+      expect(await firstPrefixRes.text()).toContain(`<base href="${APP_PROXY_BASE_PATH}/" />`);
+      expect(await secondPrefixRes.text()).toContain(`<base href="${APP_PROXY_BASE_PATH_ALT}/" />`);
+    } finally {
+      await close();
+    }
+  });
+
+  test("routes direct app-proxy HTTP requests to root-mounted handlers", async () => {
+    const mainJs = "console.log('prefixed asset');";
+    const authContext: Partial<ORPCContext> = {
+      serverAuthService: {
+        isGithubDeviceFlowEnabled: () => true,
+      } as unknown as ORPCContext["serverAuthService"],
+    };
+    const { server, close } = await createStaticTestServer({
+      files: { "assets/main.js": mainJs },
+      context: authContext,
+    });
+
+    try {
+      const rootAssetRes = await fetch(`${server.baseUrl}/assets/main.js`);
+      const prefixedAssetRes = await fetch(
+        `${server.baseUrl}${APP_PROXY_BASE_PATH}/assets/main.js`
+      );
+      expect(prefixedAssetRes.status).toBe(200);
+      expect(await prefixedAssetRes.text()).toBe(await rootAssetRes.text());
+
+      const prefixedSpaRes = await fetch(`${server.baseUrl}${APP_PROXY_BASE_PATH}/settings`);
+      expect(prefixedSpaRes.status).toBe(200);
+      expect(await prefixedSpaRes.text()).toContain(`<base href="${APP_PROXY_BASE_PATH}/" />`);
+
+      const specRes = await fetch(`${server.baseUrl}${APP_PROXY_BASE_PATH}/api/spec.json`);
+      expect(specRes.status).toBe(200);
+      expect(specRes.headers.get("content-type")).toContain("application/json");
+      const spec = (await specRes.json()) as { servers?: Array<{ url?: string }> };
+      expect(spec.servers?.[0]?.url).toBe(`${APP_PROXY_BASE_PATH}/api`);
+
+      const docsRes = await fetch(`${server.baseUrl}${APP_PROXY_BASE_PATH}/api/docs`);
+      expect(docsRes.status).toBe(200);
+      expect(await docsRes.text()).toContain(`${APP_PROXY_BASE_PATH}/api/spec.json`);
+
+      const authRes = await fetch(
+        `${server.baseUrl}${APP_PROXY_BASE_PATH}/auth/server-login/options`
+      );
+      expect(authRes.status).toBe(200);
+      expect(await authRes.json()).toEqual({ githubDeviceFlowEnabled: true });
+
+      const client = createHttpClient(`${server.baseUrl}${APP_PROXY_BASE_PATH}`);
+      const pingResult = await Promise.resolve(client.general.ping("app-proxy"));
+      expect(pingResult).toBe("Pong: app-proxy");
+
+      const falsePositiveRes = await fetch(`${server.baseUrl}/projects/apps/other`);
+      expect(falsePositiveRes.status).toBe(200);
+      expect(await falsePositiveRes.text()).toContain('<base href="/" />');
+    } finally {
+      await close();
+    }
+  });
+
+  test("keeps origin validation active after direct app-proxy prefix stripping", async () => {
+    const stubContext: Partial<ORPCContext> = {};
+    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
+
+    try {
+      server = await createOrpcServer({
+        host: "127.0.0.1",
+        port: 0,
+        context: stubContext as ORPCContext,
+      });
+
+      const rootResponse = await fetch(`${server.baseUrl}/orpc`, {
+        headers: { Origin: "https://evil.example.com" },
+      });
+      const prefixedResponse = await fetch(`${server.baseUrl}${APP_PROXY_BASE_PATH}/orpc`, {
+        headers: { Origin: "https://evil.example.com" },
+      });
+
+      expect(rootResponse.status).toBe(403);
+      expect(prefixedResponse.status).toBe(rootResponse.status);
+    } finally {
+      await server?.close();
+    }
+  });
+
+  test("serves Scalar docs with request-specific spec URLs", async () => {
+    const { server, close } = await createStaticTestServer();
+
+    try {
+      const rootDocsRes = await fetch(`${server.baseUrl}/api/docs`);
+      expect(rootDocsRes.status).toBe(200);
+      expect(await rootDocsRes.text()).toContain('url: "/api/spec.json"');
+
+      const forwardedDocsRes = await fetch(`${server.baseUrl}/api/docs`, {
+        headers: { "X-Forwarded-Prefix": APP_PROXY_BASE_PATH },
+      });
+      expect(forwardedDocsRes.status).toBe(200);
+      expect(await forwardedDocsRes.text()).toContain(
+        `url: "${APP_PROXY_BASE_PATH}/api/spec.json"`
+      );
+
+      const directDocsRes = await fetch(`${server.baseUrl}${APP_PROXY_BASE_PATH}/api/docs`);
+      expect(directDocsRes.status).toBe(200);
+      expect(await directDocsRes.text()).toContain(`url: "${APP_PROXY_BASE_PATH}/api/spec.json"`);
+    } finally {
+      await close();
+    }
+  });
+
+  test("accepts direct app-proxy WebSocket upgrades", async () => {
+    const stubContext: Partial<ORPCContext> = {};
+    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
+    let ws: WebSocket | null = null;
+
+    try {
+      server = await createOrpcServer({
+        host: "127.0.0.1",
+        port: 0,
+        context: stubContext as ORPCContext,
+      });
+
+      ws = new WebSocket(
+        `${server.baseUrl.replace(/^http/, "ws")}${APP_PROXY_BASE_PATH}/orpc/ws?token=test-token`
+      );
+
+      await waitForWebSocketOpen(ws);
+      await closeWebSocket(ws);
+      ws = null;
+    } finally {
+      ws?.terminate();
+      await server?.close();
+    }
+  });
+
+  test("includes app-proxy base paths in OAuth redirect and callback return URLs", async () => {
+    let muxGatewayRedirectUri = "";
+    const stubContext: Partial<ORPCContext> = {
+      muxGatewayOauthService: {
+        startServerFlow: (input: { redirectUri: string }) => {
+          muxGatewayRedirectUri = input.redirectUri;
+          return { authorizeUrl: "https://gateway.example.com/auth", state: "state-gateway" };
+        },
+        handleServerCallbackAndExchange: () => Promise.resolve({ success: true, data: undefined }),
+      } as unknown as ORPCContext["muxGatewayOauthService"],
+    };
+    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
+
+    try {
+      server = await createOrpcServer({
+        host: "127.0.0.1",
+        port: 0,
+        context: stubContext as ORPCContext,
+        authToken: "test-token",
+      });
+
+      const startResponse = await fetch(`${server.baseUrl}/auth/mux-gateway/start`, {
+        headers: {
+          Authorization: "Bearer test-token",
+          "X-Forwarded-Prefix": APP_PROXY_BASE_PATH,
+        },
+      });
+      expect(startResponse.status).toBe(200);
+      expect(muxGatewayRedirectUri).toBe(
+        `${server.baseUrl}${APP_PROXY_BASE_PATH}/auth/mux-gateway/callback`
+      );
+
+      const callbackResponse = await fetch(
+        `${server.baseUrl}${APP_PROXY_BASE_PATH}/auth/mux-gateway/callback?state=test&code=test`
+      );
+      expect(callbackResponse.status).toBe(200);
+      const callbackHtml = await callbackResponse.text();
+      expect(callbackHtml).toContain(`href="${APP_PROXY_BASE_PATH}/"`);
+      expect(callbackHtml).toContain(`window.location.replace("${APP_PROXY_BASE_PATH}/")`);
+    } finally {
+      await server?.close();
     }
   });
 

@@ -31,6 +31,7 @@ import { attachStreamErrorHandler, isIgnorableStreamError } from "@/node/utils/s
 import { getErrorMessage } from "@/common/utils/errors";
 import { escapeHtml } from "@/node/utils/oauthUtils";
 import { assert } from "@/common/utils/assert";
+import { getAppProxyBasePathFromPathname, stripAppProxyBasePath } from "@/common/appProxyBasePath";
 
 type AliveWebSocket = WebSocket & { isAlive?: boolean };
 
@@ -113,6 +114,15 @@ function extractBearerToken(header: string | undefined): string | null {
   const token = header.slice(7).trim();
   return token.length ? token : null;
 }
+function escapeHtmlAttribute(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
 function injectBaseHref(indexHtml: string, baseHref: string): string {
   // Avoid double-injecting if the HTML already has a base tag.
   if (/<base\b/i.test(indexHtml)) {
@@ -120,7 +130,11 @@ function injectBaseHref(indexHtml: string, baseHref: string): string {
   }
 
   // Insert immediately after the opening <head> tag (supports <head> and <head ...attrs>).
-  return indexHtml.replace(/<head[^>]*>/i, (match) => `${match}\n    <base href="${baseHref}" />`);
+  const escapedBaseHref = escapeHtmlAttribute(baseHref);
+  return indexHtml.replace(
+    /<head[^>]*>/i,
+    (match) => `${match}\n    <base href="${escapedBaseHref}" />`
+  );
 }
 
 function escapeJsonForHtmlScript(value: unknown): string {
@@ -150,7 +164,10 @@ type OriginValidationRequest = Pick<http.IncomingMessage, "headers" | "socket"> 
   protocol?: string;
 };
 
-function getFirstHeaderValue(req: OriginValidationRequest, headerName: string): string | null {
+function getFirstHeaderValue(
+  req: Pick<http.IncomingMessage, "headers">,
+  headerName: string
+): string | null {
   const rawValue = req.headers[headerName.toLowerCase()];
   const value = Array.isArray(rawValue) ? rawValue[0] : rawValue;
 
@@ -412,20 +429,250 @@ function isOriginAllowed(
   );
 }
 
-function getPathnameFromRequestUrl(requestUrl: string | undefined): string | null {
-  if (!requestUrl) {
+const URL_PATHNAME_RE = /^[A-Za-z0-9._~!$&'()*+,;=:@%/-]+$/;
+const PUBLIC_BASE_PATH_VARY_HEADERS = [
+  "X-Forwarded-Prefix",
+  "X-Forwarded-Uri",
+  "X-Original-Uri",
+  "X-Original-Url",
+  "Referer",
+] as const;
+
+interface PublicBasePathLocals {
+  publicBasePath?: string;
+}
+
+type PublicBasePathRequest = Pick<http.IncomingMessage, "headers" | "url"> & {
+  originalUrl?: string;
+};
+
+function isValidUrlPathname(value: string): boolean {
+  return (
+    value.length > 0 &&
+    value.startsWith("/") &&
+    !value.startsWith("//") &&
+    URL_PATHNAME_RE.test(value)
+  );
+}
+
+function normalizePublicBasePath(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.startsWith("//")) {
+    return null;
+  }
+
+  const withLeadingSlash = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+  const withoutTrailingSlash =
+    withLeadingSlash === "/" ? withLeadingSlash : withLeadingSlash.replace(/\/+$/, "");
+
+  return isValidUrlPathname(withoutTrailingSlash) ? withoutTrailingSlash : null;
+}
+
+function parsePathnameFromRequestValue(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.startsWith("//")) {
     return null;
   }
 
   try {
-    return new URL(requestUrl, "http://localhost").pathname;
+    const pathname = trimmed.startsWith("/")
+      ? new URL(trimmed, "http://localhost").pathname
+      : new URL(trimmed).pathname;
+    return isValidUrlPathname(pathname) ? pathname : null;
   } catch {
     return null;
   }
 }
 
-// Non-greedy so we match the first "/apps/<slug>" segment in nested routes.
-const APP_PROXY_BASE_PATH_RE = /(.*?\/apps\/[^/]+)(?:\/|$)/;
+function getPathnameFromRequestUrl(requestUrl: string | undefined): string | null {
+  return parsePathnameFromRequestValue(requestUrl);
+}
+
+function getRequestPublicBasePath(
+  req: PublicBasePathRequest,
+  options: { allowReferer?: boolean } = {}
+): string {
+  const forwardedPrefix = normalizePublicBasePath(getFirstHeaderValue(req, "x-forwarded-prefix"));
+  if (forwardedPrefix) {
+    return forwardedPrefix;
+  }
+
+  for (const headerName of ["x-forwarded-uri", "x-original-uri", "x-original-url"] as const) {
+    const headerPathname = parsePathnameFromRequestValue(getFirstHeaderValue(req, headerName));
+    const headerBasePath = headerPathname ? getAppProxyBasePathFromPathname(headerPathname) : null;
+    if (headerBasePath) {
+      return headerBasePath;
+    }
+  }
+
+  for (const requestValue of [req.originalUrl, req.url]) {
+    const requestPathname = parsePathnameFromRequestValue(requestValue);
+    const requestBasePath = requestPathname
+      ? getAppProxyBasePathFromPathname(requestPathname)
+      : null;
+    if (requestBasePath) {
+      return requestBasePath;
+    }
+  }
+
+  // Browser mode requests include Referer by default, so this keeps cookie scope
+  // and generated app links aligned when a proxy strips the public prefix.
+  if (options.allowReferer) {
+    const refererPathname = parsePathnameFromRequestValue(getFirstHeaderValue(req, "referer"));
+    const refererBasePath = refererPathname
+      ? getAppProxyBasePathFromPathname(refererPathname)
+      : null;
+    if (refererBasePath) {
+      return refererBasePath;
+    }
+  }
+
+  return "/";
+}
+
+function setResponsePublicBasePath(res: express.Response, publicBasePath: string): void {
+  (res.locals as PublicBasePathLocals).publicBasePath = publicBasePath;
+}
+
+function getResponsePublicBasePath(res: express.Response): string | null {
+  const publicBasePath = (res.locals as PublicBasePathLocals).publicBasePath;
+  return typeof publicBasePath === "string" ? publicBasePath : null;
+}
+
+function getPublicBasePathForRequest(
+  req: express.Request,
+  res: express.Response,
+  options: { allowReferer?: boolean } = {}
+): string {
+  return getResponsePublicBasePath(res) ?? getRequestPublicBasePath(req, options);
+}
+
+function joinPublicBasePath(publicBasePath: string, routePathname: string): string {
+  const normalizedBasePath = normalizePublicBasePath(publicBasePath) ?? "/";
+  const normalizedRoutePathname = routePathname.startsWith("/")
+    ? routePathname
+    : `/${routePathname}`;
+
+  return normalizedBasePath === "/"
+    ? normalizedRoutePathname
+    : `${normalizedBasePath}${normalizedRoutePathname}`;
+}
+
+function getDirectAppProxyHandlerPrefix(
+  req: express.Request,
+  routePrefix: `/${string}`
+): `/${string}` {
+  const originalPathname = parsePathnameFromRequestValue(req.originalUrl);
+  const directBasePath = originalPathname
+    ? getAppProxyBasePathFromPathname(originalPathname)
+    : null;
+  return directBasePath
+    ? (joinPublicBasePath(directBasePath, routePrefix) as `/${string}`)
+    : routePrefix;
+}
+
+function getPublicBaseHref(req: express.Request, res: express.Response): string {
+  const publicBasePath = getPublicBasePathForRequest(req, res, { allowReferer: true });
+  return publicBasePath === "/" ? "/" : `${publicBasePath}/`;
+}
+
+function getPublicAppRootPath(req: express.Request, res: express.Response): string {
+  return joinPublicBasePath(getPublicBasePathForRequest(req, res, { allowReferer: true }), "/");
+}
+
+function varyPublicBasePathHeaders(res: express.Response): void {
+  for (const header of PUBLIC_BASE_PATH_VARY_HEADERS) {
+    res.vary(header);
+  }
+}
+
+function splitRequestUrlPathAndQuery(
+  requestUrl: string | undefined
+): { pathname: string; querySuffix: string } | null {
+  if (!requestUrl) {
+    return null;
+  }
+
+  const queryStart = requestUrl.indexOf("?");
+  if (queryStart === -1) {
+    return { pathname: requestUrl, querySuffix: "" };
+  }
+
+  return {
+    pathname: requestUrl.slice(0, queryStart),
+    querySuffix: requestUrl.slice(queryStart),
+  };
+}
+
+function getNormalizedUpgradeRoute(
+  requestUrl: string | undefined
+): { routePathname: string; routeUrl: string } | null {
+  const publicPathname = getPathnameFromRequestUrl(requestUrl);
+  if (!publicPathname) {
+    return null;
+  }
+
+  const { routePathname } = stripAppProxyBasePath(publicPathname);
+  const querySuffix = splitRequestUrlPathAndQuery(requestUrl)?.querySuffix ?? "";
+  return { routePathname, routeUrl: `${routePathname}${querySuffix}` };
+}
+
+function isSafeHttpHostHeader(host: string): boolean {
+  if (host.trim().length === 0 || host.includes("/") || host.includes("\\")) {
+    return false;
+  }
+
+  for (const character of host) {
+    const codePoint = character.codePointAt(0);
+    if (codePoint !== undefined && (codePoint < 0x20 || codePoint === 0x7f)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function getValidatedPublicHost(req: express.Request, protocol: "http" | "https"): string | null {
+  for (const headerName of ["x-forwarded-host", "host"] as const) {
+    const host = getFirstHeaderValue(req, headerName);
+    if (!host || !isSafeHttpHostHeader(host)) {
+      continue;
+    }
+
+    const normalizedHost = normalizeHostForProtocol(host, protocol);
+    if (normalizedHost) {
+      return normalizedHost;
+    }
+  }
+
+  return null;
+}
+
+function buildPublicAbsoluteUrl(
+  req: express.Request,
+  routePathname: string,
+  allowHttpOrigin: boolean
+): string | null {
+  const protocol = getPreferredPublicProtocol(req, allowHttpOrigin);
+  const host = getValidatedPublicHost(req, protocol);
+  if (!host) {
+    return null;
+  }
+
+  const publicRoutePathname = joinPublicBasePath(
+    getRequestPublicBasePath(req, { allowReferer: true }),
+    routePathname
+  );
+  return `${protocol}://${host}${publicRoutePathname}`;
+}
 
 const OAUTH_CALLBACK_ORIGIN_BYPASS_PATHS = new Set<string>([
   "/auth/mux-gateway/callback",
@@ -490,6 +737,26 @@ export async function createOrpcServer({
 }: OrpcServerOptions): Promise<OrpcServer> {
   // Express app setup
   const app = express();
+  app.use((req, res, next) => {
+    const requestPath = splitRequestUrlPathAndQuery(req.url);
+    if (requestPath && isValidUrlPathname(requestPath.pathname)) {
+      const { basePath, routePathname } = stripAppProxyBasePath(requestPath.pathname);
+      if (basePath) {
+        setResponsePublicBasePath(res, basePath);
+        req.url = `${routePathname}${requestPath.querySuffix}`;
+        next();
+        return;
+      }
+    }
+
+    const publicBasePath = getRequestPublicBasePath(req);
+    if (publicBasePath !== "/") {
+      setResponsePublicBasePath(res, publicBasePath);
+    }
+
+    next();
+  });
+
   app.use((req, res, next) => {
     if (!shouldEnforceOriginValidation(req)) {
       next();
@@ -560,15 +827,13 @@ export async function createOrpcServer({
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ extended: false }));
 
-  let spaIndexHtml: string | null = null;
+  let rawSpaIndexHtml: string | null = null;
 
   // Static file serving (optional)
   if (serveStatic) {
     try {
       const indexHtmlPath = path.join(staticDir, "index.html");
-      const indexHtml = await fs.readFile(indexHtmlPath, "utf8");
-      const indexHtmlWithBaseHref = injectBaseHref(indexHtml, "/");
-      spaIndexHtml = injectProxyUriTemplate(indexHtmlWithBaseHref, getBrowserProxyUriTemplate());
+      rawSpaIndexHtml = await fs.readFile(indexHtmlPath, "utf8");
     } catch (error) {
       log.error("Failed to read index.html for SPA fallback:", error);
     }
@@ -611,88 +876,8 @@ export async function createOrpcServer({
     return getPreferredPublicProtocol(req, allowHttpOrigin) === "https";
   }
 
-  function parsePathnameFromRequestValue(value: string | null | undefined): string | null {
-    if (!value) {
-      return null;
-    }
-
-    const trimmed = value.trim();
-    if (!trimmed) {
-      return null;
-    }
-
-    try {
-      if (trimmed.startsWith("/")) {
-        return new URL(trimmed, "http://localhost").pathname;
-      }
-
-      return new URL(trimmed).pathname;
-    } catch {
-      return null;
-    }
-  }
-
-  function normalizeCookiePath(pathname: string | null): string | null {
-    if (!pathname) {
-      return null;
-    }
-
-    const trimmed = pathname.trim();
-    if (!trimmed) {
-      return null;
-    }
-
-    const withLeadingSlash = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
-    const withoutTrailing = withLeadingSlash.replace(/\/+$/, "");
-
-    return withoutTrailing.length > 0 ? withoutTrailing : "/";
-  }
-
-  function getAppProxyBasePathFromPathname(pathname: string | null): string | null {
-    if (!pathname) {
-      return null;
-    }
-
-    const match = APP_PROXY_BASE_PATH_RE.exec(pathname);
-    if (!match) {
-      return null;
-    }
-
-    return normalizeCookiePath(match[1]);
-  }
-
   function getServerSessionCookiePath(req: express.Request): string {
-    const forwardedPrefix = normalizeCookiePath(getFirstHeaderValue(req, "x-forwarded-prefix"));
-    if (forwardedPrefix) {
-      return forwardedPrefix;
-    }
-
-    const forwardedUriPath = parsePathnameFromRequestValue(
-      getFirstHeaderValue(req, "x-forwarded-uri") ?? getFirstHeaderValue(req, "x-original-uri")
-    );
-    const forwardedUriBasePath = getAppProxyBasePathFromPathname(forwardedUriPath);
-    if (forwardedUriBasePath) {
-      return forwardedUriBasePath;
-    }
-
-    const originalUrlBasePath = getAppProxyBasePathFromPathname(
-      parsePathnameFromRequestValue(req.originalUrl)
-    );
-    if (originalUrlBasePath) {
-      return originalUrlBasePath;
-    }
-
-    // Browser mode requests include Referer by default; this keeps cookie scope
-    // aligned with app-proxy base paths even when the reverse proxy strips prefixes
-    // before forwarding to mux.
-    const refererBasePath = getAppProxyBasePathFromPathname(
-      parsePathnameFromRequestValue(req.header("referer"))
-    );
-    if (refererBasePath) {
-      return refererBasePath;
-    }
-
-    return "/";
+    return getRequestPublicBasePath(req, { allowReferer: true });
   }
 
   function buildServerSessionCookie(
@@ -834,19 +1019,11 @@ export async function createOrpcServer({
       return;
     }
 
-    const hostHeader = req.get("x-forwarded-host") ?? req.get("host");
-    const host = hostHeader?.split(",")[0]?.trim();
-    if (!host) {
-      res.status(400).json({ error: "Missing Host header" });
+    const redirectUri = buildPublicAbsoluteUrl(req, "/auth/mux-gateway/callback", allowHttpOrigin);
+    if (!redirectUri) {
+      res.status(400).json({ error: "Missing or invalid Host header" });
       return;
     }
-
-    // Keep callback scheme selection aligned with origin compatibility handling.
-    // Some proxy chains overwrite X-Forwarded-Proto to http on the final hop
-    // even when the browser-visible origin is https.
-    const protocol = getPreferredPublicProtocol(req, allowHttpOrigin);
-    const callbackHost = normalizeHostForProtocol(host, protocol) ?? host;
-    const redirectUri = `${protocol}://${callbackHost}/auth/mux-gateway/callback`;
     const { authorizeUrl, state } = context.muxGatewayOauthService.startServerFlow({ redirectUri });
     res.json({ authorizeUrl, state });
   });
@@ -885,6 +1062,9 @@ export async function createOrpcServer({
       : payload.error
         ? escapeHtml(payload.error)
         : "An unknown error occurred.";
+    const returnPath = getPublicAppRootPath(req, res);
+    const returnPathJson = escapeJsonForHtmlScript(returnPath);
+    const returnPathHref = escapeHtmlAttribute(returnPath);
 
     const html = `<!doctype html>
 <html lang="en">
@@ -910,7 +1090,7 @@ export async function createOrpcServer({
             <h1>${title}</h1>
             <p>${description}</p>
             ${result.success ? '<p class="muted">This tab should close automatically.</p>' : ""}
-            <p><a class="btn primary" href="/">Return to Mux</a></p>
+            <p><a class="btn primary" href="${returnPathHref}">Return to Mux</a></p>
           </div>
         </div>
       </main>
@@ -957,7 +1137,7 @@ export async function createOrpcServer({
 
         setTimeout(() => {
           try {
-            window.location.replace("/");
+            window.location.replace(${returnPathJson});
           } catch {
             // Ignore navigation failures.
           }
@@ -986,16 +1166,11 @@ export async function createOrpcServer({
       return;
     }
 
-    const hostHeader = req.get("x-forwarded-host") ?? req.get("host");
-    const host = hostHeader?.split(",")[0]?.trim();
-    if (!host) {
-      res.status(400).json({ error: "Missing Host header" });
+    const redirectUri = buildPublicAbsoluteUrl(req, "/auth/mux-governor/callback", allowHttpOrigin);
+    if (!redirectUri) {
+      res.status(400).json({ error: "Missing or invalid Host header" });
       return;
     }
-
-    const protocol = getPreferredPublicProtocol(req, allowHttpOrigin);
-    const callbackHost = normalizeHostForProtocol(host, protocol) ?? host;
-    const redirectUri = `${protocol}://${callbackHost}/auth/mux-governor/callback`;
     const result = context.muxGovernorOauthService.startServerFlow({
       governorOrigin: governorUrl,
       redirectUri,
@@ -1050,6 +1225,9 @@ export async function createOrpcServer({
       : payload.error
         ? escapeHtml(payload.error)
         : "An unknown error occurred.";
+    const returnPath = getPublicAppRootPath(req, res);
+    const returnPathJson = escapeJsonForHtmlScript(returnPath);
+    const returnPathHref = escapeHtmlAttribute(returnPath);
 
     const html = `<!doctype html>
 <html lang="en">
@@ -1069,7 +1247,7 @@ export async function createOrpcServer({
     <h1>${title}</h1>
     <p>${description}</p>
     ${result.success ? '<p class="muted">This tab should close automatically.</p>' : ""}
-    <p><a class="btn" href="/">Return to Mux</a></p>
+    <p><a class="btn" href="${returnPathHref}">Return to Mux</a></p>
 
     <script>
       (() => {
@@ -1112,7 +1290,7 @@ export async function createOrpcServer({
 
         setTimeout(() => {
           try {
-            window.location.replace("/");
+            window.location.replace(${returnPathJson});
           } catch {
             // Ignore navigation failures.
           }
@@ -1163,6 +1341,9 @@ export async function createOrpcServer({
       : payload.error
         ? escapeHtml(payload.error)
         : "An unknown error occurred.";
+    const returnPath = getPublicAppRootPath(req, res);
+    const returnPathJson = escapeJsonForHtmlScript(returnPath);
+    const returnPathHref = escapeHtmlAttribute(returnPath);
 
     const html = `<!doctype html>
 <html lang="en">
@@ -1188,7 +1369,7 @@ export async function createOrpcServer({
             <h1>${title}</h1>
             <p>${description}</p>
             ${result.success ? '<p class="muted">This tab should close automatically.</p>' : ""}
-            <p><a class="btn primary" href="/">Return to Mux</a></p>
+            <p><a class="btn primary" href="${returnPathHref}">Return to Mux</a></p>
           </div>
         </div>
       </main>
@@ -1235,7 +1416,7 @@ export async function createOrpcServer({
 
         setTimeout(() => {
           try {
-            window.location.replace("/");
+            window.location.replace(${returnPathJson});
           } catch {
             // Ignore navigation failures.
           }
@@ -1258,10 +1439,14 @@ export async function createOrpcServer({
   });
 
   // OpenAPI spec endpoint
-  app.get("/api/spec.json", async (_req, res) => {
+  app.get("/api/spec.json", async (req, res) => {
     const versionRecord = VERSION as Record<string, unknown>;
     const gitDescribe =
       typeof versionRecord.git_describe === "string" ? versionRecord.git_describe : "unknown";
+    const publicApiPath = joinPublicBasePath(
+      getPublicBasePathForRequest(req, res, { allowReferer: true }),
+      "/api"
+    );
 
     const spec = await openAPIGenerator.generate(orpcRouter, {
       info: {
@@ -1269,7 +1454,7 @@ export async function createOrpcServer({
         version: gitDescribe,
         description: "API for Mux",
       },
-      servers: [{ url: "/api" }],
+      servers: [{ url: publicApiPath }],
       security: authToken ? [{ bearerAuth: [] }] : undefined,
       components: authToken
         ? {
@@ -1282,11 +1467,17 @@ export async function createOrpcServer({
           }
         : undefined,
     });
+    varyPublicBasePathHeaders(res);
     res.json(spec);
   });
 
   // Scalar API reference UI
-  app.get("/api/docs", (_req, res) => {
+  app.get("/api/docs", (req, res) => {
+    const specPath = joinPublicBasePath(
+      getPublicBasePathForRequest(req, res, { allowReferer: true }),
+      "/api/spec.json"
+    );
+    const specPathJson = escapeJsonForHtmlScript(specPath);
     const html = `<!doctype html>
 <html>
   <head>
@@ -1299,13 +1490,15 @@ export async function createOrpcServer({
     <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
     <script>
       Scalar.createApiReference('#app', {
-        url: '/api/spec.json',
+        url: ${specPathJson},
         ${authToken ? "authentication: { securitySchemes: { bearerAuth: { token: '' } } }," : ""}
       })
     </script>
   </body>
 </html>`;
+    varyPublicBasePathHeaders(res);
     res.setHeader("Content-Type", "text/html");
+    res.setHeader("Cache-Control", "no-store");
     res.send(html);
   });
 
@@ -1320,7 +1513,7 @@ export async function createOrpcServer({
       return next();
     }
     const { matched } = await openAPIHandler.handle(req, res, {
-      prefix: "/api",
+      prefix: getDirectAppProxyHandlerPrefix(req, "/api"),
       context: { ...context, headers: req.headers },
     });
     if (matched) return;
@@ -1335,7 +1528,7 @@ export async function createOrpcServer({
   // Mount ORPC handler on /orpc and all subpaths
   app.use("/orpc", async (req, res, next) => {
     const { matched } = await orpcHandler.handle(req, res, {
-      prefix: "/orpc",
+      prefix: getDirectAppProxyHandlerPrefix(req, "/orpc"),
       context: { ...context, headers: req.headers },
     });
     if (matched) return;
@@ -1350,8 +1543,14 @@ export async function createOrpcServer({
         return next();
       }
 
-      if (spaIndexHtml !== null) {
+      if (rawSpaIndexHtml !== null) {
+        const spaIndexHtml = injectProxyUriTemplate(
+          injectBaseHref(rawSpaIndexHtml, getPublicBaseHref(req, res)),
+          getBrowserProxyUriTemplate()
+        );
+        varyPublicBasePathHeaders(res);
         res.setHeader("Content-Type", "text/html");
+        res.setHeader("Cache-Control", "no-store");
         res.send(spaIndexHtml);
         return;
       }
@@ -1394,8 +1593,15 @@ export async function createOrpcServer({
   const wsServer = new WebSocketServer({ noServer: true });
 
   httpServer.on("upgrade", (req, socket, head) => {
-    const pathname = getPathnameFromRequestUrl(req.url);
-    if (pathname === ORPC_WS_PATH) {
+    const normalizedRoute = getNormalizedUpgradeRoute(req.url);
+    if (!normalizedRoute) {
+      socket.destroy();
+      return;
+    }
+
+    const { routePathname, routeUrl } = normalizedRoute;
+    if (routePathname === ORPC_WS_PATH) {
+      req.url = routeUrl;
       const expectedOrigins = getExpectedOrigins(req, allowHttpOrigin);
       if (!isOriginAllowed(req, expectedOrigins)) {
         log.warn("Blocked cross-origin WebSocket upgrade request", {
@@ -1419,9 +1625,10 @@ export async function createOrpcServer({
       return;
     }
 
-    if (pathname === BROWSER_BRIDGE_WS_PATH) {
+    if (routePathname === BROWSER_BRIDGE_WS_PATH) {
+      req.url = routeUrl;
       assert(
-        pathname === BROWSER_BRIDGE_WS_PATH,
+        routePathname === BROWSER_BRIDGE_WS_PATH,
         "Browser relay upgrades must use BROWSER_BRIDGE_WS_PATH"
       );
       assert(
@@ -1432,8 +1639,9 @@ export async function createOrpcServer({
       return;
     }
 
-    if (pathname === DESKTOP_WS_PATH) {
-      assert(pathname === DESKTOP_WS_PATH, "Desktop relay upgrades must use DESKTOP_WS_PATH");
+    if (routePathname === DESKTOP_WS_PATH) {
+      req.url = routeUrl;
+      assert(routePathname === DESKTOP_WS_PATH, "Desktop relay upgrades must use DESKTOP_WS_PATH");
       assert(
         desktopBridgeServer,
         "createOrpcServer requires desktopBridgeServer for desktop relay upgrades"
