@@ -7951,7 +7951,7 @@ describe("TaskService", () => {
                 parentWorkspaceId: parentId,
                 agentType: "explore",
                 taskStatus: "running",
-                taskModelString: "openai:gpt-5.4-pro",
+                taskModelString: "openai:gpt-5.5-pro",
               },
             ],
           },
@@ -7972,7 +7972,7 @@ describe("TaskService", () => {
       type: "stream-end",
       workspaceId: childId,
       messageId: "assistant-child",
-      metadata: { model: "openai:gpt-5.4-pro" },
+      metadata: { model: "openai:gpt-5.5-pro" },
       parts: [],
     });
 
@@ -8040,7 +8040,7 @@ describe("TaskService", () => {
                 parentWorkspaceId: parentId,
                 agentType: "explore",
                 taskStatus: "running",
-                taskModelString: "openai:gpt-5.4-pro",
+                taskModelString: "openai:gpt-5.5-pro",
               },
             ],
           },
@@ -8061,7 +8061,7 @@ describe("TaskService", () => {
       type: "stream-end",
       workspaceId: childId,
       messageId: "assistant-child",
-      metadata: { model: "openai:gpt-5.4-pro" },
+      metadata: { model: "openai:gpt-5.5-pro" },
       parts: [],
     });
 

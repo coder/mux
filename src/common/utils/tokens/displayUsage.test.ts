@@ -285,7 +285,7 @@ describe("createDisplayUsage", () => {
       });
     });
 
-    test("recomputes persisted GPT-5.4 Pro usage with the higher long-context tier", () => {
+    test("recomputes persisted GPT-5.5 Pro usage with the higher long-context tier", () => {
       const result = recomputeUsageCosts(
         {
           input: { tokens: 280000 },
@@ -293,9 +293,9 @@ describe("createDisplayUsage", () => {
           cacheCreate: { tokens: 0 },
           output: { tokens: 1000 },
           reasoning: { tokens: 500 },
-          model: "openai:gpt-5.4-pro",
+          model: "openai:gpt-5.5-pro",
         },
-        "openai:gpt-5.4-pro"
+        "openai:gpt-5.5-pro"
       );
 
       expect(result.input.cost_usd).toBeCloseTo(16.8);

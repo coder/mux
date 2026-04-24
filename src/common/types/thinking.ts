@@ -106,7 +106,7 @@ export function parseThinkingInput(value: string): ParsedThinkingInput | undefin
   if (named) return named;
 
   // Numeric index — resolved later against the model's thinking policy
-  // (e.g., 0 = lowest allowed level, which is "medium" for gpt-5.4-pro)
+  // (e.g., 0 = lowest allowed level, which is "medium" for gpt-5.5-pro)
   const num = parseInt(normalized, 10);
   if (!Number.isNaN(num) && String(num) === normalized && num >= 0 && num <= MAX_THINKING_INDEX) {
     return num;

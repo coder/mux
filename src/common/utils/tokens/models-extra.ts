@@ -218,28 +218,6 @@ export const modelsExtra: Record<string, ModelData> = {
     knowledge_cutoff: "2025-08-31",
   },
 
-  // GPT-5.4 Pro - Released March 5, 2026
-  // Native 1.05M context, 128K max output; same rationale as GPT-5.4 above.
-  // Base pricing: $30/M input, $180/M output; OpenAI has not published cached-input pricing.
-  // Above 272K prompt tokens: $60/M input, $270/M output.
-  "gpt-5.4-pro": {
-    max_input_tokens: 1050000,
-    max_output_tokens: 128000,
-    input_cost_per_token: 0.00003, // $30 per million input tokens (<272K prompt tokens)
-    input_cost_per_token_above_200k_tokens: 0.00006, // $60 per million input tokens (>272K)
-    output_cost_per_token: 0.00018, // $180 per million output tokens (<272K prompt tokens)
-    output_cost_per_token_above_200k_tokens: 0.00027, // $270 per million output tokens (>272K)
-    tiered_pricing_threshold_tokens: 272000,
-    knowledge_cutoff: "2025-08-31",
-    litellm_provider: "openai",
-    mode: "chat",
-    supports_function_calling: true,
-    supports_vision: true,
-    supports_reasoning: true,
-    supports_response_schema: true,
-    supported_endpoints: ["/v1/responses"],
-  },
-
   // GPT-5.2 / GPT-5.2 Codex - keep aligned
   // LiteLLM reports 400k context for Codex, but it should match GPT-5.2 (272k)
   // $1.75/M input, $14/M output

@@ -35,7 +35,7 @@ describe("selectCopilotApiMode", () => {
 
   it("routes GPT-5 and other Copilot families to chat completions", () => {
     expect(selectCopilotApiMode("gpt-5.4")).toBe("chatCompletions");
-    expect(selectCopilotApiMode("gpt-5.4-pro")).toBe("chatCompletions");
+    expect(selectCopilotApiMode("gpt-5.5-pro")).toBe("chatCompletions");
     expect(selectCopilotApiMode("claude-opus-4-6")).toBe("chatCompletions");
     expect(selectCopilotApiMode("claude-sonnet-4-6")).toBe("chatCompletions");
     expect(selectCopilotApiMode("gemini-3.1-pro-preview")).toBe("chatCompletions");
@@ -106,7 +106,7 @@ describe("isCopilotModelAccessible", () => {
   });
 
   it("returns false when the model is absent from a non-empty Copilot list", () => {
-    expect(isCopilotModelAccessible("gpt-5.4-pro", ["gpt-5.4", "claude-sonnet-4-6"])).toBe(false);
+    expect(isCopilotModelAccessible("gpt-5.5-pro", ["gpt-5.4", "claude-sonnet-4-6"])).toBe(false);
   });
 
   it("returns true when no Copilot model list has been persisted yet", () => {
