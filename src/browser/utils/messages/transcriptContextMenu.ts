@@ -256,13 +256,14 @@ export interface TranscriptContextMenuLinkOptions {
 export function getTranscriptContextMenuLink(
   options: TranscriptContextMenuLinkOptions
 ): string | null {
-  const targetElement = getEventTargetElement(options.target);
-  if (!targetElement || !options.transcriptRoot.contains(targetElement)) {
-    return null;
-  }
-
-  const anchor = targetElement.closest("a[href]");
-  if (!anchor || !options.transcriptRoot.contains(anchor)) {
+  // Reuse the shared ancestor helper so the null/contains guards for the target
+  // element and the resolved anchor stay in one place.
+  const anchor = getClosestTranscriptAncestor(
+    options.transcriptRoot,
+    getEventTargetElement(options.target),
+    "a[href]"
+  );
+  if (!anchor) {
     return null;
   }
 
