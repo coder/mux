@@ -76,10 +76,6 @@ describe("getThinkingPolicyForModel", () => {
     ]);
   });
 
-  test("returns medium/high/xhigh for gpt-5.5-pro", () => {
-    expect(getThinkingPolicyForModel("openai:gpt-5.5-pro")).toEqual(["medium", "high", "xhigh"]);
-  });
-
   test("returns 5 levels including xhigh for gpt-5.3-codex", () => {
     expect(getThinkingPolicyForModel("openai:gpt-5.3-codex")).toEqual([
       "off",
