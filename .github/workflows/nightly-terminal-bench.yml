@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       models:
-        description: 'Models to test (comma-separated, or "all" for opus-4-7 + gpt-5.3-codex + gpt-5.5 + google/gemini-3-pro-preview + google/gemini-3-flash-preview)'
+        description: 'Models to test (comma-separated, or "all" for opus-4-7 + gpt-5.5 + google/gemini-3-pro-preview + google/gemini-3-flash-preview)'
         required: false
         default: "all"
         type: string
@@ -120,7 +120,7 @@ jobs:
           INPUT_MODELS: ${{ inputs.models }}
         run: |
           if [ "$INPUT_MODELS" = "all" ] || [ -z "$INPUT_MODELS" ]; then
-            echo 'models=["anthropic/claude-opus-4-7","openai/gpt-5.3-codex","openai/gpt-5.5","google/gemini-3-pro-preview","google/gemini-3-flash-preview"]' >> "$GITHUB_OUTPUT"
+            echo 'models=["anthropic/claude-opus-4-7","openai/gpt-5.5","google/gemini-3-pro-preview","google/gemini-3-flash-preview"]' >> "$GITHUB_OUTPUT"
           else
             # Convert comma-separated to JSON array
             models_json=$(echo "$INPUT_MODELS" | jq -R -s -c 'split(",") | map(gsub("^\\s+|\\s+$"; ""))')
@@ -138,8 +138,8 @@ jobs:
     uses: ./.github/workflows/terminal-bench.yml
     with:
       model_name: ${{ matrix.model }}
-      # gpt-5 class and any Claude Opus (4.6/4.7/future) use xhigh thinking; others use high
-      mux_run_args: "--thinking ${{ (contains(matrix.model, 'gpt-5') || contains(matrix.model, 'claude-opus')) && 'xhigh' || 'high' }}"
+      # GPT-5.5 and Claude Opus use xhigh thinking; others use high.
+      mux_run_args: "--thinking ${{ (contains(matrix.model, 'gpt-5.5') || contains(matrix.model, 'claude-opus')) && 'xhigh' || 'high' }}"
       dataset: "terminal-bench@2.0"
       concurrency: "48"
       env: "daytona"

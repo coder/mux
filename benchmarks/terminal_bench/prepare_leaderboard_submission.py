@@ -102,7 +102,14 @@ MODEL_METADATA = {
         "model_org_display_name": "Anthropic",
         "folder_name": "Claude-Opus-4.6",
     },
-    # Keep historical GPT-5.2 metadata alongside the new GPT-5.4 bench target
+    "anthropic/claude-opus-4-7": {
+        "model_name": "claude-opus-4-7",
+        "model_provider": "anthropic",
+        "model_display_name": "Claude Opus 4.7",
+        "model_org_display_name": "Anthropic",
+        "folder_name": "Claude-Opus-4.7",
+    },
+    # Keep historical GPT metadata alongside the current GPT-5.5 bench target
     # so mixed or older artifact sets still map to the canonical leaderboard names.
     "openai/gpt-5.2": {
         "model_name": "gpt-5.2",
@@ -117,6 +124,13 @@ MODEL_METADATA = {
         "model_display_name": "GPT-5.4",
         "model_org_display_name": "OpenAI",
         "folder_name": "GPT-5.4",
+    },
+    "openai/gpt-5.5": {
+        "model_name": "gpt-5.5",
+        "model_provider": "openai",
+        "model_display_name": "GPT-5.5",
+        "model_org_display_name": "OpenAI",
+        "folder_name": "GPT-5.5",
     },
     "openai/gpt-5-codex": {
         "model_name": "gpt-5-codex",
@@ -428,7 +442,7 @@ def main():
     parser.add_argument(
         "--models",
         nargs="+",
-        help="Only process specific models (e.g., anthropic/claude-opus-4-5)",
+        help="Only process specific models (e.g., anthropic/claude-opus-4-7, openai/gpt-5.5)",
     )
     args = parser.parse_args()
 
