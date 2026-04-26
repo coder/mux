@@ -509,6 +509,13 @@ function getPathnameFromRequestUrl(requestUrl: string | undefined): string | nul
   return parsePathnameFromRequestValue(requestUrl);
 }
 
+// Combines pathname parsing + app-proxy prefix detection so request-value
+// shaped inputs (raw URLs, header values) can be classified in a single call.
+function getAppProxyBasePathFromRequestValue(value: string | null | undefined): string | null {
+  const pathname = parsePathnameFromRequestValue(value);
+  return pathname ? getAppProxyBasePathFromPathname(pathname) : null;
+}
+
 function getRequestPublicBasePath(
   req: PublicBasePathRequest,
   options: { allowReferer?: boolean } = {}
@@ -519,18 +526,16 @@ function getRequestPublicBasePath(
   }
 
   for (const headerName of ["x-forwarded-uri", "x-original-uri", "x-original-url"] as const) {
-    const headerPathname = parsePathnameFromRequestValue(getFirstHeaderValue(req, headerName));
-    const headerBasePath = headerPathname ? getAppProxyBasePathFromPathname(headerPathname) : null;
+    const headerBasePath = getAppProxyBasePathFromRequestValue(
+      getFirstHeaderValue(req, headerName)
+    );
     if (headerBasePath) {
       return headerBasePath;
     }
   }
 
   for (const requestValue of [req.originalUrl, req.url]) {
-    const requestPathname = parsePathnameFromRequestValue(requestValue);
-    const requestBasePath = requestPathname
-      ? getAppProxyBasePathFromPathname(requestPathname)
-      : null;
+    const requestBasePath = getAppProxyBasePathFromRequestValue(requestValue);
     if (requestBasePath) {
       return requestBasePath;
     }
@@ -539,10 +544,9 @@ function getRequestPublicBasePath(
   // Browser mode requests include Referer by default, so this keeps cookie scope
   // and generated app links aligned when a proxy strips the public prefix.
   if (options.allowReferer) {
-    const refererPathname = parsePathnameFromRequestValue(getFirstHeaderValue(req, "referer"));
-    const refererBasePath = refererPathname
-      ? getAppProxyBasePathFromPathname(refererPathname)
-      : null;
+    const refererBasePath = getAppProxyBasePathFromRequestValue(
+      getFirstHeaderValue(req, "referer")
+    );
     if (refererBasePath) {
       return refererBasePath;
     }
@@ -583,10 +587,7 @@ function getDirectAppProxyHandlerPrefix(
   req: express.Request,
   routePrefix: `/${string}`
 ): `/${string}` {
-  const originalPathname = parsePathnameFromRequestValue(req.originalUrl);
-  const directBasePath = originalPathname
-    ? getAppProxyBasePathFromPathname(originalPathname)
-    : null;
+  const directBasePath = getAppProxyBasePathFromRequestValue(req.originalUrl);
   return directBasePath
     ? (joinPublicBasePath(directBasePath, routePrefix) as `/${string}`)
     : routePrefix;
