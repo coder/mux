@@ -1,6 +1,6 @@
 // mux Service Worker for PWA support
-const CACHE_NAME = "mux-v1";
-const urlsToCache = ["/", "/index.html"];
+const CACHE_NAME = "mux-v2";
+const urlsToCache = ["./", "./index.html"];
 
 // Install event - cache core assets
 self.addEventListener("install", (event) => {

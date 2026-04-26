@@ -155,6 +155,13 @@ function countOccurrences(value: string, needle: string): number {
   return value.split(needle).length - 1;
 }
 
+function expectSlashlessRootRedirectBeforeBase(html: string, baseHref: string): void {
+  const redirectIndex = html.indexOf("location.replace(location.origin+pathname");
+  const baseIndex = html.indexOf(`<base href="${baseHref}"`);
+  expect(redirectIndex).toBeGreaterThanOrEqual(0);
+  expect(baseIndex).toBeGreaterThan(redirectIndex);
+}
+
 async function createStaticTestServer(
   options: {
     files?: Record<string, string>;
@@ -231,7 +238,7 @@ describe("createOrpcServer", () => {
       expect(uiRes.status).toBe(200);
       const uiText = await uiRes.text();
       expect(uiText).toContain("mux");
-      expect(uiText).toContain('<base href="/"');
+      expect(uiText).toContain('<base href="./../../"');
 
       const apiRes = await fetch(`${server.baseUrl}/api/not-a-real-route`);
       expect(apiRes.status).toBe(404);
@@ -248,7 +255,23 @@ describe("createOrpcServer", () => {
       const rootRes = await fetch(`${server.baseUrl}/`);
       expect(rootRes.status).toBe(200);
       const rootHtml = await rootRes.text();
-      expect(countOccurrences(rootHtml, '<base href="/" />')).toBe(1);
+      expect(countOccurrences(rootHtml, '<base href="./" />')).toBe(1);
+      expectSlashlessRootRedirectBeforeBase(rootHtml, "./");
+
+      const doubleSlashRes = await fetch(`${server.baseUrl}//attacker.example`);
+      expect(doubleSlashRes.status).toBe(200);
+      const doubleSlashHtml = await doubleSlashRes.text();
+      expect(doubleSlashHtml).not.toContain("location.replace(location.origin+pathname");
+
+      const deepRouteRes = await fetch(`${server.baseUrl}/some/spa/route`);
+      expect(deepRouteRes.status).toBe(200);
+      const deepRouteHtml = await deepRouteRes.text();
+      expect(deepRouteHtml).toContain('<base href="./../../" />');
+      expect(deepRouteHtml).not.toContain("location.replace(location.pathname");
+
+      const directoryRouteRes = await fetch(`${server.baseUrl}/some/spa/route/`);
+      expect(directoryRouteRes.status).toBe(200);
+      expect(await directoryRouteRes.text()).toContain('<base href="./../../../" />');
 
       const forwardedPrefixRes = await fetch(`${server.baseUrl}/some/spa/route`, {
         headers: { "X-Forwarded-Prefix": APP_PROXY_BASE_PATH },
@@ -297,6 +320,23 @@ describe("createOrpcServer", () => {
       expect(prefixedAssetRes.status).toBe(200);
       expect(await prefixedAssetRes.text()).toBe(await rootAssetRes.text());
 
+      const prefixedRootRes = await fetch(`${server.baseUrl}${APP_PROXY_BASE_PATH}`);
+      expect(prefixedRootRes.status).toBe(200);
+      const prefixedRootHtml = await prefixedRootRes.text();
+      expect(prefixedRootHtml).toContain(`<base href="${APP_PROXY_BASE_PATH}/" />`);
+      expectSlashlessRootRedirectBeforeBase(prefixedRootHtml, `${APP_PROXY_BASE_PATH}/`);
+
+      const coderUrlRes = await fetch(
+        `${server.baseUrl}/@admin/mux-workspace-095801.main/apps/mux/?token=redacted`
+      );
+      expect(coderUrlRes.status).toBe(200);
+      const coderUrlHtml = await coderUrlRes.text();
+      expect(coderUrlHtml).toContain('<base href="/@admin/mux-workspace-095801.main/apps/mux/" />');
+      expectSlashlessRootRedirectBeforeBase(
+        coderUrlHtml,
+        "/@admin/mux-workspace-095801.main/apps/mux/"
+      );
+
       const prefixedSpaRes = await fetch(`${server.baseUrl}${APP_PROXY_BASE_PATH}/settings`);
       expect(prefixedSpaRes.status).toBe(200);
       expect(await prefixedSpaRes.text()).toContain(`<base href="${APP_PROXY_BASE_PATH}/" />`);
@@ -323,7 +363,7 @@ describe("createOrpcServer", () => {
 
       const falsePositiveRes = await fetch(`${server.baseUrl}/projects/apps/other`);
       expect(falsePositiveRes.status).toBe(200);
-      expect(await falsePositiveRes.text()).toContain('<base href="/" />');
+      expect(await falsePositiveRes.text()).toContain('<base href="./../../" />');
     } finally {
       await close();
     }
@@ -477,8 +517,10 @@ describe("createOrpcServer", () => {
           expect(uiRes.status).toBe(200);
           const uiText = await uiRes.text();
 
+          expect(rootHtml).toContain('<base href="./"');
+          expect(uiText).toContain('<base href="./../../"');
+
           for (const html of [rootHtml, uiText]) {
-            expect(html).toContain('<base href="/"');
             expect(html).toContain("window.__MUX_PROXY_URI_TEMPLATE__ =");
             expect(html).toContain(
               'window.__MUX_PROXY_URI_TEMPLATE__ = "https://proxy-{{port}}.example.test/path\\u003c/script>";'

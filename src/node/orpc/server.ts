@@ -123,17 +123,30 @@ function escapeHtmlAttribute(value: string): string {
     .replaceAll(">", "&gt;");
 }
 
-function injectBaseHref(indexHtml: string, baseHref: string): string {
+const SLASHLESS_ROOT_REDIRECT_SCRIPT =
+  '<script>(()=>{const pathname=location.pathname;if(pathname.startsWith("//")||pathname.endsWith("/"))return;location.replace(location.origin+pathname+"/"+location.search+location.hash);})();</script>';
+
+function injectBaseHref(
+  indexHtml: string,
+  baseHref: string,
+  options: { includeSlashlessRootRedirect?: boolean } = {}
+): string {
   // Avoid double-injecting if the HTML already has a base tag.
   if (/<base\b/i.test(indexHtml)) {
     return indexHtml;
   }
 
+  // The redirect must precede the base tag so slashless app-root URLs become
+  // directory URLs before the browser resolves relative assets.
+  const slashlessRootRedirect = options.includeSlashlessRootRedirect
+    ? `\n    ${SLASHLESS_ROOT_REDIRECT_SCRIPT}`
+    : "";
+
   // Insert immediately after the opening <head> tag (supports <head> and <head ...attrs>).
   const escapedBaseHref = escapeHtmlAttribute(baseHref);
   return indexHtml.replace(
     /<head[^>]*>/i,
-    (match) => `${match}\n    <base href="${escapedBaseHref}" />`
+    (match) => `${match}${slashlessRootRedirect}\n    <base href="${escapedBaseHref}" />`
   );
 }
 
@@ -579,9 +592,31 @@ function getDirectAppProxyHandlerPrefix(
     : routePrefix;
 }
 
+function getRoutePathnameForBaseHref(req: express.Request): string | null {
+  return getPathnameFromRequestUrl(req.url);
+}
+
+function getRelativeBaseHrefFromRoutePathname(routePathname: string): string {
+  const pathname = routePathname.startsWith("/") ? routePathname : `/${routePathname}`;
+  const segments = pathname.split("/").slice(1);
+  const depth = Math.max(0, segments.length - 1);
+  return depth === 0 ? "./" : `./${"../".repeat(depth)}`;
+}
+
+function shouldInjectSlashlessRootRedirect(req: express.Request): boolean {
+  return getRoutePathnameForBaseHref(req) === "/";
+}
+
 function getPublicBaseHref(req: express.Request, res: express.Response): string {
   const publicBasePath = getPublicBasePathForRequest(req, res, { allowReferer: true });
-  return publicBasePath === "/" ? "/" : `${publicBasePath}/`;
+  if (publicBasePath !== "/") {
+    return `${publicBasePath}/`;
+  }
+
+  // User rationale: when a reverse proxy strips the app prefix without forwarding
+  // headers, a relative climb still lets the browser resolve assets from the
+  // public app root. Root-hosted deep links resolve correctly too.
+  return getRelativeBaseHrefFromRoutePathname(getRoutePathnameForBaseHref(req) ?? "/");
 }
 
 function getPublicAppRootPath(req: express.Request, res: express.Response): string {
@@ -1545,7 +1580,9 @@ export async function createOrpcServer({
 
       if (rawSpaIndexHtml !== null) {
         const spaIndexHtml = injectProxyUriTemplate(
-          injectBaseHref(rawSpaIndexHtml, getPublicBaseHref(req, res)),
+          injectBaseHref(rawSpaIndexHtml, getPublicBaseHref(req, res), {
+            includeSlashlessRootRedirect: shouldInjectSlashlessRootRedirect(req),
+          }),
           getBrowserProxyUriTemplate()
         );
         varyPublicBasePathHeaders(res);
