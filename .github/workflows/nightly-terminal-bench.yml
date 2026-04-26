@@ -138,8 +138,8 @@ jobs:
     uses: ./.github/workflows/terminal-bench.yml
     with:
       model_name: ${{ matrix.model }}
-      # GPT-5.5 and Claude Opus use xhigh thinking; others use high.
-      mux_run_args: "--thinking ${{ (contains(matrix.model, 'gpt-5.5') || contains(matrix.model, 'claude-opus')) && 'xhigh' || 'high' }}"
+      # Claude Opus uses xhigh; GPT-5.5 stays high because xhigh timed out in TBench.
+      mux_run_args: "--thinking ${{ contains(matrix.model, 'claude-opus') && 'xhigh' || 'high' }}"
       dataset: "terminal-bench@2.0"
       concurrency: "48"
       env: "daytona"

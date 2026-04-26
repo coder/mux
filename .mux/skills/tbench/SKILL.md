@@ -103,20 +103,20 @@ gh workflow run terminal-bench.yml \
   -f model_name=anthropic/claude-opus-4-7 \
   -f mux_run_args="--thinking xhigh --use-1m"
 
-# Run with budget cap
+# Run GPT-5.5 with budget cap and high thinking
 gh workflow run terminal-bench.yml \
   -f model_name=openai/gpt-5.5 \
-  -f mux_run_args="--thinking xhigh --budget 5.00"
+  -f mux_run_args="--thinking high --budget 5.00"
 ```
 
 **Local runs:**
 
 ```bash
 # Pass flags via MUX_RUN_ARGS env var
-MUX_RUN_ARGS="--thinking xhigh --use-1m" make benchmark-terminal
+MUX_RUN_ARGS="--thinking high --use-1m" make benchmark-terminal
 
 # Model and experiments via TB_ARGS
-make benchmark-terminal TB_ARGS="--agent-kwarg model_name=openai/gpt-5.5 --agent-kwarg experiments=programmatic-tool-calling"
+MUX_RUN_ARGS="--thinking high" make benchmark-terminal TB_ARGS="--agent-kwarg model_name=openai/gpt-5.5 --agent-kwarg experiments=programmatic-tool-calling"
 ```
 
 ## Results
