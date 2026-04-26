@@ -27,7 +27,7 @@
       "name": "New Workspace",
       "short_name": "New",
       "description": "Create a new workspace",
-      "url": "?action=new",
+      "url": "./?action=new",
       "icons": []
     }
   ]
