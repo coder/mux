@@ -593,10 +593,6 @@ function getDirectAppProxyHandlerPrefix(
     : routePrefix;
 }
 
-function getRoutePathnameForBaseHref(req: express.Request): string | null {
-  return getPathnameFromRequestUrl(req.url);
-}
-
 function getRelativeBaseHrefFromRoutePathname(routePathname: string): string {
   const pathname = routePathname.startsWith("/") ? routePathname : `/${routePathname}`;
   const segments = pathname.split("/").slice(1);
@@ -605,7 +601,7 @@ function getRelativeBaseHrefFromRoutePathname(routePathname: string): string {
 }
 
 function shouldInjectSlashlessRootRedirect(req: express.Request): boolean {
-  return getRoutePathnameForBaseHref(req) === "/";
+  return getPathnameFromRequestUrl(req.url) === "/";
 }
 
 function getPublicBaseHref(req: express.Request, res: express.Response): string {
@@ -617,7 +613,7 @@ function getPublicBaseHref(req: express.Request, res: express.Response): string 
   // User rationale: when a reverse proxy strips the app prefix without forwarding
   // headers, a relative climb still lets the browser resolve assets from the
   // public app root. Root-hosted deep links resolve correctly too.
-  return getRelativeBaseHrefFromRoutePathname(getRoutePathnameForBaseHref(req) ?? "/");
+  return getRelativeBaseHrefFromRoutePathname(getPathnameFromRequestUrl(req.url) ?? "/");
 }
 
 function getPublicAppRootPath(req: express.Request, res: express.Response): string {
