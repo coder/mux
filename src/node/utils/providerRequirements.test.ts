@@ -8,6 +8,7 @@ import type { ProvidersConfig } from "@/node/config";
 import {
   hasAnyConfiguredProvider,
   isProviderAutoRouteEligible,
+  resolveCustomProviderCredentials,
   resolveProviderCredentials,
 } from "./providerRequirements";
 
@@ -112,6 +113,29 @@ describe("hasAnyConfiguredProvider", () => {
     expect(resolveProviderCredentials("ollama", providers.ollama ?? {}, {}).isConfigured).toBe(
       true
     );
+  });
+
+  it("returns true for enabled custom OpenAI-compatible providers with only a base URL", () => {
+    const providers: ProvidersConfig = {
+      "local-vllm": {
+        providerType: "openai-compatible",
+        baseUrl: "http://localhost:8000/v1",
+      },
+    };
+
+    expect(hasAnyConfiguredProvider(providers)).toBe(true);
+  });
+
+  it("returns false for disabled custom OpenAI-compatible providers", () => {
+    const providers: ProvidersConfig = {
+      "local-vllm": {
+        providerType: "openai-compatible",
+        baseUrl: "http://localhost:8000/v1",
+        enabled: false,
+      },
+    };
+
+    expect(hasAnyConfiguredProvider(providers)).toBe(false);
   });
 });
 
@@ -224,6 +248,75 @@ describe("resolveProviderCredentials base URL source", () => {
   });
 });
 
+describe("resolveCustomProviderCredentials", () => {
+  it("succeeds with no API key when only baseUrl is set", async () => {
+    const result = await resolveCustomProviderCredentials("local-vllm", {
+      providerType: "openai-compatible",
+      baseUrl: "http://localhost:8000/v1",
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      baseURL: "http://localhost:8000/v1",
+      resolvedFrom: "none",
+    });
+  });
+
+  it("returns a typed missing_base_url error without a base URL", async () => {
+    const result = await resolveCustomProviderCredentials("local-vllm", {
+      providerType: "openai-compatible",
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toEqual({ code: "missing_base_url", providerId: "local-vllm" });
+    }
+  });
+
+  it("resolves apiKeyFile", async () => {
+    const tmpDir = mkdtempSync(path.join(os.tmpdir(), "mux-test-"));
+    const keyFilePath = path.join(tmpDir, "api-key");
+    writeFileSync(keyFilePath, "sk-from-file\n", "utf-8");
+
+    try {
+      const result = await resolveCustomProviderCredentials("local-vllm", {
+        providerType: "openai-compatible",
+        baseUrl: "http://localhost:8000/v1",
+        apiKeyFile: keyFilePath,
+      });
+
+      expect(result).toEqual({
+        ok: true,
+        apiKey: "sk-from-file",
+        baseURL: "http://localhost:8000/v1",
+        resolvedFrom: "file",
+      });
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("resolves op references with the provided resolver", async () => {
+    const opRef = "op://Personal/Local vLLM/api-key";
+    const result = await resolveCustomProviderCredentials(
+      "local-vllm",
+      {
+        providerType: "openai-compatible",
+        baseUrl: "http://localhost:8000/v1",
+        apiKey: opRef,
+      },
+      (ref) => Promise.resolve(ref === opRef ? "sk-from-op" : undefined)
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      apiKey: "sk-from-op",
+      baseURL: "http://localhost:8000/v1",
+      resolvedFrom: "op",
+    });
+  });
+
+});
 describe("resolveProviderCredentials - apiKeyFile", () => {
   let tmpDir: string;
   let keyFilePath: string;

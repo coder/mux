@@ -5,6 +5,7 @@ import {
   SUPPORTED_PROVIDERS,
   type ProviderName,
 } from "@/common/constants/providers";
+import type { BaseProviderConfig } from "@/common/config/schemas/providersConfig";
 import type { Result } from "@/common/types/result";
 import type {
   AWSCredentialStatus,
@@ -13,6 +14,10 @@ import type {
   ProvidersConfigMap,
 } from "@/common/orpc/types";
 import { isProviderDisabledInConfig } from "@/common/utils/providers/isProviderDisabled";
+import {
+  getCustomOpenAICompatibleProviderIds,
+  isCustomOpenAICompatibleProviderConfig,
+} from "@/common/utils/providers/customProviders";
 import { isOpReference } from "@/common/utils/opRef";
 import {
   getProviderModelEntryId,
@@ -45,6 +50,40 @@ function filterProviderModelsByPolicy(
   }
 
   return models.filter((entry) => allowedModels.includes(getProviderModelEntryId(entry)));
+}
+
+function resolveConfigBaseUrl(
+  config: Pick<BaseProviderConfig, "baseUrl" | "baseURL">
+): string | undefined {
+  const rawBaseUrl =
+    (typeof config.baseUrl === "string" ? config.baseUrl : undefined) ??
+    (typeof config.baseURL === "string" ? config.baseURL : undefined);
+  const trimmed = rawBaseUrl?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  return trimmed;
+}
+
+function buildCustomProviderConfigInfo(config: BaseProviderConfig): ProviderConfigInfo {
+  const baseUrl = resolveConfigBaseUrl(config);
+  const apiKeyIsOpRef = isOpReference(config.apiKey);
+  const isEnabled = !isProviderDisabledInConfig(config);
+
+  return {
+    apiKeySet: typeof config.apiKey === "string" && config.apiKey.trim().length > 0,
+    apiKeyIsOpRef: apiKeyIsOpRef || undefined,
+    apiKeyOpRef: apiKeyIsOpRef ? config.apiKey : undefined,
+    apiKeyOpLabel: apiKeyIsOpRef ? config.apiKeyOpLabel : undefined,
+    apiKeyFile: typeof config.apiKeyFile === "string" ? config.apiKeyFile : undefined,
+    baseUrl,
+    models: normalizeProviderModelEntries(config.models),
+    displayName: config.displayName,
+    providerType: "openai-compatible",
+    isCustom: true,
+    isEnabled,
+    isConfigured: isEnabled && baseUrl !== undefined,
+  };
 }
 
 const DENIED_KEY_PATH_SEGMENTS = new Set(["__proto__", "prototype", "constructor"]);
@@ -81,15 +120,21 @@ export class ProviderService {
     this.emitter.emit("configChanged");
   }
 
-  public list(): ProviderName[] {
+  private listBuiltInProviders(): ProviderName[] {
+    const providers = [...SUPPORTED_PROVIDERS];
+
+    if (this.policyService?.isEnforced()) {
+      return providers.filter((p) => this.policyService!.isProviderAllowed(p));
+    }
+
+    return providers;
+  }
+
+  public list(): string[] {
     try {
-      const providers = [...SUPPORTED_PROVIDERS];
-
-      if (this.policyService?.isEnforced()) {
-        return providers.filter((p) => this.policyService!.isProviderAllowed(p));
-      }
-
-      return providers;
+      const providers = this.listBuiltInProviders();
+      const providersConfig = this.config.loadProvidersConfig() ?? {};
+      return [...providers, ...getCustomOpenAICompatibleProviderIds(providersConfig)];
     } catch (error) {
       log.error("Failed to list providers:", error);
       return [];
@@ -104,7 +149,7 @@ export class ProviderService {
     const mainConfig = this.config.loadConfigOrDefault();
     const result: ProvidersConfigMap = {};
 
-    for (const provider of this.list()) {
+    for (const provider of this.listBuiltInProviders()) {
       const config = (providersConfig[provider] ?? {}) as {
         apiKey?: string;
         apiKeyFile?: string;
@@ -252,6 +297,15 @@ export class ProviderService {
       }
 
       result[provider] = providerInfo;
+    }
+
+    for (const providerId of getCustomOpenAICompatibleProviderIds(providersConfig)) {
+      const providerConfig = providersConfig[providerId];
+      if (!isCustomOpenAICompatibleProviderConfig(providerConfig)) {
+        continue;
+      }
+
+      result[providerId] = buildCustomProviderConfigInfo(providerConfig);
     }
 
     return result;

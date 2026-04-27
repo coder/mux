@@ -371,6 +371,90 @@ describe("ProviderService.getConfig", () => {
       }
     );
   });
+
+  it("surfaces keyless custom OpenAI-compatible providers", () => {
+    withTempConfig((config, service) => {
+      config.saveProvidersConfig({
+        "local-vllm": {
+          providerType: "openai-compatible",
+          displayName: "Local vLLM",
+          baseUrl: "http://localhost:8000/v1",
+        },
+      });
+
+      const cfg = service.getConfig();
+
+      expect(cfg["local-vllm"]).toEqual({
+        apiKeySet: false,
+        apiKeyIsOpRef: undefined,
+        apiKeyOpRef: undefined,
+        apiKeyOpLabel: undefined,
+        apiKeyFile: undefined,
+        baseUrl: "http://localhost:8000/v1",
+        models: [],
+        displayName: "Local vLLM",
+        providerType: "openai-compatible",
+        isCustom: true,
+        isEnabled: true,
+        isConfigured: true,
+      });
+    });
+  });
+
+  it("surfaces disabled custom providers as unconfigured", () => {
+    withTempConfig((config, service) => {
+      config.saveProvidersConfig({
+        "local-vllm": {
+          providerType: "openai-compatible",
+          baseUrl: "http://localhost:8000/v1",
+          enabled: false,
+        },
+      });
+
+      const cfg = service.getConfig();
+
+      expect(cfg["local-vllm"].isCustom).toBe(true);
+      expect(cfg["local-vllm"].isEnabled).toBe(false);
+      expect(cfg["local-vllm"].isConfigured).toBe(false);
+    });
+  });
+
+  it("omits unknown provider keys without a custom providerType", () => {
+    withTempConfig((config, service) => {
+      config.saveProvidersConfig({
+        "future-provider": {
+          apiKey: "sk-future",
+          baseUrl: "https://future.example/v1",
+        },
+      });
+
+      const cfg = service.getConfig();
+
+      expect(Object.prototype.hasOwnProperty.call(cfg, "future-provider")).toBe(false);
+    });
+  });
+
+  it("keeps built-in providers alongside custom providers", () => {
+    withTempConfig((config, service) => {
+      config.saveProvidersConfig({
+        openai: {
+          apiKey: "sk-test",
+        },
+        "local-vllm": {
+          providerType: "openai-compatible",
+          baseURL: "http://localhost:8000/v1",
+        },
+      });
+
+      const cfg = service.getConfig();
+
+      expect(cfg.openai.apiKeySet).toBe(true);
+      expect(cfg.openai.isConfigured).toBe(true);
+      expect(cfg["local-vllm"].baseUrl).toBe("http://localhost:8000/v1");
+      expect(cfg["local-vllm"].isConfigured).toBe(true);
+      expect(service.list()).toContain("local-vllm");
+    });
+  });
 });
 
 describe("ProviderService model normalization", () => {

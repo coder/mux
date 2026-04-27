@@ -12,12 +12,16 @@ import os from "node:os";
 import path from "node:path";
 
 import { PROVIDER_DEFINITIONS, type ProviderName } from "@/common/constants/providers";
+import { isOpReference } from "@/common/utils/opRef";
 import { isProviderDisabledInConfig } from "@/common/utils/providers/isProviderDisabled";
+import { isCustomOpenAICompatibleProviderConfig } from "@/common/utils/providers/customProviders";
 import type {
+  BaseProviderConfig,
   BedrockProviderConfig,
   MuxGatewayProviderConfig,
   OpenAIProviderConfig,
 } from "@/common/config/schemas/providersConfig";
+import type { ExternalSecretResolver } from "@/common/types/secrets";
 import type { ProviderConfig, ProvidersConfig } from "@/node/config";
 import { parseCodexOauthAuth } from "@/node/utils/codexOauthAuth";
 
@@ -151,8 +155,52 @@ export type ProviderConfigCheck = Pick<
   | "baseUrlSource"
 >;
 
+export type ProviderRequirementError =
+  | { code: "missing_base_url"; providerId: string }
+  | {
+      code: "api_key_file_unreadable";
+      path: string;
+      reason: "missing" | "not_file" | "too_large" | "empty" | "read_failed";
+    }
+  | {
+      code: "op_resolution_failed";
+      ref: string;
+      reason: "unavailable" | "unresolved" | "threw";
+    };
+
+export type CustomProviderCredentialSource = "inline" | "file" | "op" | "none";
+
+export type ResolvedCustomProviderCredentials =
+  | {
+      ok: true;
+      apiKey?: string;
+      baseURL: string;
+      resolvedFrom: CustomProviderCredentialSource;
+    }
+  | {
+      ok: false;
+      apiKey?: string;
+      baseURL?: string;
+      resolvedFrom: CustomProviderCredentialSource;
+      error: ProviderRequirementError;
+    };
+
+type ResolvedApiKeyCandidate =
+  | { kind: "resolved"; apiKey: string; source: "config" | "file" | "env" }
+  | { kind: "missing" }
+  | { kind: "error"; error: ProviderRequirementError };
+
+type ApiKeyFileResolution =
+  | { kind: "not_configured" }
+  | { kind: "resolved"; apiKey: string }
+  | { kind: "error"; error: ProviderRequirementError };
+
+function expandHomePath(filePath: string): string {
+  return filePath.startsWith("~") ? path.join(os.homedir(), filePath.slice(1)) : filePath;
+}
+
 /** Resolve a non-empty base URL saved in provider config. */
-export function resolveConfiguredBaseUrl(config: ProviderConfigRaw): string | undefined {
+export function resolveConfiguredBaseUrl(config: { baseUrl?: unknown; baseURL?: unknown }): string | undefined {
   if (hasNonEmptyString(config.baseUrl)) {
     // The settings UI writes the canonical `baseUrl` key. Prefer it over
     // SDK-style `baseURL` so saved edits cannot be shadowed by stale aliases.
@@ -182,24 +230,81 @@ function resolveBaseUrl(
 
 /**
  * Read an API key from a file path. Supports ~ for home directory.
- * Returns null if the file doesn't exist, is empty, or is not a regular file.
  */
-function resolveApiKeyFile(filePath: string | undefined): string | null {
-  if (typeof filePath !== "string" || !filePath) return null;
+function resolveApiKeyFileDetailed(filePath: unknown): ApiKeyFileResolution {
+  if (typeof filePath !== "string" || filePath.trim().length === 0) {
+    return { kind: "not_configured" };
+  }
 
-  // Expand ~ to home directory
-  const expanded = filePath.startsWith("~") ? path.join(os.homedir(), filePath.slice(1)) : filePath;
+  const expanded = expandHomePath(filePath);
 
   try {
-    // Guard against non-regular files (FIFOs, devices) that could block indefinitely
+    // Guard against non-regular files (FIFOs, devices) that could block indefinitely.
     const stat = statSync(expanded);
-    if (!stat.isFile() || stat.size > 65536) return null;
+    if (!stat.isFile()) {
+      return {
+        kind: "error",
+        error: { code: "api_key_file_unreadable", path: filePath, reason: "not_file" },
+      };
+    }
+    if (stat.size > 65536) {
+      return {
+        kind: "error",
+        error: { code: "api_key_file_unreadable", path: filePath, reason: "too_large" },
+      };
+    }
+
     const content = readFileSync(expanded, "utf-8").trim();
-    return content || null;
-  } catch {
-    return null;
+    if (!content) {
+      return {
+        kind: "error",
+        error: { code: "api_key_file_unreadable", path: filePath, reason: "empty" },
+      };
+    }
+
+    return { kind: "resolved", apiKey: content };
+  } catch (error) {
+    const reason =
+      typeof error === "object" && error !== null && (error as { code?: unknown }).code === "ENOENT"
+        ? "missing"
+        : "read_failed";
+    return {
+      kind: "error",
+      error: { code: "api_key_file_unreadable", path: filePath, reason },
+    };
   }
 }
+
+function resolveApiKeyCandidate(
+  config: { apiKey?: unknown; apiKeyFile?: unknown },
+  options: {
+    envApiKeys?: string[];
+    env?: Record<string, string | undefined>;
+    fileErrors: "ignore" | "return";
+  }
+): ResolvedApiKeyCandidate {
+  const configKey =
+    typeof config.apiKey === "string" && config.apiKey.trim().length > 0 ? config.apiKey : null;
+  if (configKey) {
+    return { kind: "resolved", apiKey: configKey, source: "config" };
+  }
+
+  const fileResult = resolveApiKeyFileDetailed(config.apiKeyFile);
+  if (fileResult.kind === "resolved") {
+    return { kind: "resolved", apiKey: fileResult.apiKey, source: "file" };
+  }
+  if (fileResult.kind === "error" && options.fileErrors === "return") {
+    return { kind: "error", error: fileResult.error };
+  }
+
+  const envKey = resolveEnv(options.envApiKeys, options.env ?? {});
+  if (envKey) {
+    return { kind: "resolved", apiKey: envKey, source: "env" };
+  }
+
+  return { kind: "missing" };
+}
+
 
 // ============================================================================
 // Credential resolution
@@ -245,11 +350,14 @@ export function resolveProviderCredentials(
 
   // Standard API key providers: check config first, then apiKeyFile, then env vars
   const envMapping = PROVIDER_ENV_VARS[provider];
-  const configKey =
-    typeof config.apiKey === "string" && config.apiKey.trim().length > 0 ? config.apiKey : null;
-  const fileKey = configKey ? null : resolveApiKeyFile(config.apiKeyFile as string | undefined);
-  const envKey = configKey || fileKey ? undefined : resolveEnv(envMapping?.apiKey, env);
-  const apiKey = configKey ?? fileKey ?? envKey;
+  const apiKeyResult = resolveApiKeyCandidate(
+    { apiKey: config.apiKey, apiKeyFile: config.apiKeyFile },
+    {
+      envApiKeys: envMapping?.apiKey,
+      env,
+      fileErrors: "ignore",
+    }
+  );
   const baseUrlInfo = resolveBaseUrl(provider, config, env);
   // Config organization takes precedence over env var (user's explicit choice)
   const configOrganization =
@@ -258,15 +366,103 @@ export function resolveProviderCredentials(
       : undefined;
   const organization = configOrganization ?? resolveEnv(envMapping?.organization, env);
 
-  if (apiKey) {
-    const apiKeySource: "config" | "file" | "env" = configKey ? "config" : fileKey ? "file" : "env";
+  if (apiKeyResult.kind === "resolved") {
     const configuredBaseUrlInfo = baseUrlInfo.baseUrlResolved
       ? { ...baseUrlInfo, baseUrl: baseUrlInfo.baseUrlResolved }
       : baseUrlInfo;
-    return { isConfigured: true, apiKey, organization, apiKeySource, ...configuredBaseUrlInfo };
+    return {
+      isConfigured: true,
+      apiKey: apiKeyResult.apiKey,
+      organization,
+      apiKeySource: apiKeyResult.source,
+      ...configuredBaseUrlInfo,
+    };
   }
 
   return { isConfigured: false, missingRequirement: "api_key", ...baseUrlInfo };
+}
+
+function customCredentialSourceFromApiKeySource(
+  source: Extract<ResolvedApiKeyCandidate, { kind: "resolved" }>["source"]
+): Exclude<CustomProviderCredentialSource, "op" | "none"> {
+  return source === "file" ? "file" : "inline";
+}
+
+export async function resolveCustomProviderCredentials(
+  providerId: string,
+  providerConfig: BaseProviderConfig,
+  opResolver?: ExternalSecretResolver
+): Promise<ResolvedCustomProviderCredentials> {
+  const baseURL = resolveConfiguredBaseUrl(providerConfig);
+  if (!baseURL) {
+    return {
+      ok: false,
+      resolvedFrom: "none",
+      error: { code: "missing_base_url", providerId },
+    };
+  }
+
+  const apiKeyResult = resolveApiKeyCandidate(providerConfig, {
+    fileErrors: "return",
+  });
+
+  if (apiKeyResult.kind === "error") {
+    return {
+      ok: false,
+      baseURL,
+      resolvedFrom: "file",
+      error: apiKeyResult.error,
+    };
+  }
+
+  if (apiKeyResult.kind === "missing") {
+    return { ok: true, baseURL, resolvedFrom: "none" };
+  }
+
+  const rawApiKey = apiKeyResult.apiKey;
+  if (!isOpReference(rawApiKey)) {
+    return {
+      ok: true,
+      apiKey: rawApiKey,
+      baseURL,
+      resolvedFrom: customCredentialSourceFromApiKeySource(apiKeyResult.source),
+    };
+  }
+
+  if (!opResolver) {
+    return {
+      ok: false,
+      baseURL,
+      resolvedFrom: "op",
+      error: { code: "op_resolution_failed", ref: rawApiKey, reason: "unavailable" },
+    };
+  }
+
+  try {
+    const resolvedApiKey = await opResolver(rawApiKey);
+    if (!hasNonEmptyString(resolvedApiKey)) {
+      return {
+        ok: false,
+        baseURL,
+        resolvedFrom: "op",
+        error: { code: "op_resolution_failed", ref: rawApiKey, reason: "unresolved" },
+      };
+    }
+
+    return {
+      ok: true,
+      apiKey: resolvedApiKey,
+      baseURL,
+      resolvedFrom: "op",
+    };
+  } catch {
+    return {
+      ok: false,
+      baseURL,
+      resolvedFrom: "op",
+      error: { code: "op_resolution_failed", ref: rawApiKey, reason: "threw" },
+    };
+  }
 }
 
 /**
@@ -412,6 +608,14 @@ export function hasAnyConfiguredProvider(providers: ProvidersConfig | null | und
     }
 
     if (!(providerKey in PROVIDER_DEFINITIONS)) {
+      if (
+        isCustomOpenAICompatibleProviderConfig(rawConfig) &&
+        !isProviderDisabledInConfig(rawConfig) &&
+        resolveConfiguredBaseUrl(rawConfig) !== undefined
+      ) {
+        return true;
+      }
+
       // Be permissive for unknown providers written by future versions.
       const apiKey = (rawConfig as { apiKey?: unknown }).apiKey;
       if (typeof apiKey === "string" && apiKey.trim().length > 0) {
