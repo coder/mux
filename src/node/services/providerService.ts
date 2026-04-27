@@ -239,9 +239,9 @@ export class ProviderService {
       const configCheck = checkProviderConfigured(provider, config);
       providerInfo.isConfigured = providerInfo.isEnabled && configCheck.isConfigured;
       providerInfo.apiKeySource = configCheck.apiKeySource;
-      if (forcedBaseUrl === undefined && configCheck.baseUrlSource && configCheck.baseUrl) {
+      if (forcedBaseUrl === undefined && configCheck.baseUrlSource && configCheck.baseUrlResolved) {
         providerInfo.baseUrlSource = configCheck.baseUrlSource;
-        providerInfo.baseUrlResolved = configCheck.baseUrl;
+        providerInfo.baseUrlResolved = configCheck.baseUrlResolved;
       }
 
       if (provider === "openai" && isEnabled && codexOauthSet) {

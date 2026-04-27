@@ -189,7 +189,8 @@ describe("resolveProviderCredentials base URL source", () => {
     expect(result.isConfigured).toBe(false);
     expect(result.missingRequirement).toBe("api_key");
     expect(result.apiKeySource).toBeUndefined();
-    expect(result.baseUrl).toBe("https://env.openai.test");
+    expect(result.baseUrl).toBeUndefined();
+    expect(result.baseUrlResolved).toBe("https://env.openai.test");
     expect(result.baseUrlSource).toBe("env");
   });
 });

@@ -271,6 +271,25 @@ describe("ProviderService.getConfig", () => {
     );
   });
 
+  it("returns env sourced base URL metadata when OpenAI API key is missing", () => {
+    withProviderEnv(
+      {
+        OPENAI_BASE_URL: "https://env.openai.test",
+      },
+      () => {
+        withTempConfig((_config, service) => {
+          const cfg = service.getConfig();
+
+          expect(cfg.openai.isConfigured).toBe(false);
+          expect(cfg.openai.apiKeySource).toBeUndefined();
+          expect(cfg.openai.baseUrl).toBeUndefined();
+          expect(cfg.openai.baseUrlSource).toBe("env");
+          expect(cfg.openai.baseUrlResolved).toBe("https://env.openai.test");
+        });
+      }
+    );
+  });
+
   it("returns config sourced Anthropic base URL ahead of env", () => {
     withProviderEnv(
       {

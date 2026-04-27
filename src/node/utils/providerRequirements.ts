@@ -133,7 +133,8 @@ export interface ResolvedCredentials {
   apiKey?: string; // anthropic, openai, etc.
   region?: string; // bedrock
   couponCode?: string; // mux-gateway
-  baseUrl?: string; // from config or env
+  baseUrl?: string; // runtime value from config or env when API-key auth is active
+  baseUrlResolved?: string; // display-only metadata, including when API key auth is missing
   organization?: string; // openai
   apiKeySource?: "config" | "file" | "env";
   baseUrlSource?: "config" | "env";
@@ -142,7 +143,12 @@ export interface ResolvedCredentials {
 /** Legacy alias for backward compatibility */
 export type ProviderConfigCheck = Pick<
   ResolvedCredentials,
-  "isConfigured" | "missingRequirement" | "apiKeySource" | "baseUrl" | "baseUrlSource"
+  | "isConfigured"
+  | "missingRequirement"
+  | "apiKeySource"
+  | "baseUrl"
+  | "baseUrlResolved"
+  | "baseUrlSource"
 >;
 
 /** Resolve a non-empty base URL saved in provider config. */
@@ -162,14 +168,14 @@ function resolveBaseUrl(
   provider: ProviderName,
   config: ProviderConfigRaw,
   env: Record<string, string | undefined>
-): Pick<ResolvedCredentials, "baseUrl" | "baseUrlSource"> {
+): Pick<ResolvedCredentials, "baseUrlResolved" | "baseUrlSource"> {
   const configBaseUrl = resolveConfiguredBaseUrl(config);
   if (configBaseUrl) {
-    return { baseUrl: configBaseUrl, baseUrlSource: "config" };
+    return { baseUrlResolved: configBaseUrl, baseUrlSource: "config" };
   }
 
   const envBaseUrl = resolveEnv(PROVIDER_ENV_VARS[provider]?.baseUrl, env);
-  return envBaseUrl ? { baseUrl: envBaseUrl, baseUrlSource: "env" } : {};
+  return envBaseUrl ? { baseUrlResolved: envBaseUrl, baseUrlSource: "env" } : {};
 }
 
 /**
@@ -251,7 +257,10 @@ export function resolveProviderCredentials(
 
   if (apiKey) {
     const apiKeySource: "config" | "file" | "env" = configKey ? "config" : fileKey ? "file" : "env";
-    return { isConfigured: true, apiKey, organization, apiKeySource, ...baseUrlInfo };
+    const configuredBaseUrlInfo = baseUrlInfo.baseUrlResolved
+      ? { ...baseUrlInfo, baseUrl: baseUrlInfo.baseUrlResolved }
+      : baseUrlInfo;
+    return { isConfigured: true, apiKey, organization, apiKeySource, ...configuredBaseUrlInfo };
   }
 
   return { isConfigured: false, missingRequirement: "api_key", ...baseUrlInfo };
@@ -304,9 +313,22 @@ export function checkProviderConfigured(
   config: ProviderConfigRaw,
   env: Record<string, string | undefined> = process.env
 ): ProviderConfigCheck {
-  const { isConfigured, missingRequirement, apiKeySource, baseUrl, baseUrlSource } =
-    resolveProviderCredentials(provider, config, env);
-  return { isConfigured, missingRequirement, apiKeySource, baseUrl, baseUrlSource };
+  const {
+    isConfigured,
+    missingRequirement,
+    apiKeySource,
+    baseUrl,
+    baseUrlResolved,
+    baseUrlSource,
+  } = resolveProviderCredentials(provider, config, env);
+  return {
+    isConfigured,
+    missingRequirement,
+    apiKeySource,
+    baseUrl,
+    baseUrlResolved,
+    baseUrlSource,
+  };
 }
 
 // ============================================================================
