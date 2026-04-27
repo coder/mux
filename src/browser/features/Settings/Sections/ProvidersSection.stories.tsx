@@ -1,4 +1,4 @@
-import { lightweightMeta } from "@/browser/stories/meta.js";
+import { CHROMATIC_DISABLED, lightweightMeta } from "@/browser/stories/meta.js";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { userEvent, waitFor, within } from "@storybook/test";
 import { ProvidersSection } from "./ProvidersSection.js";
@@ -82,6 +82,9 @@ export const ProvidersEnvSourced: Story = {
       <ProvidersSection />
     </SettingsSectionStory>
   ),
+  parameters: {
+    chromatic: CHROMATIC_DISABLED,
+  },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
