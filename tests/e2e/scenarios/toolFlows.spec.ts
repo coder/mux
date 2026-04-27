@@ -182,11 +182,7 @@ test.describe("tool and reasoning flows", () => {
       .first();
     await expect(reasoningPreview).toBeVisible();
 
-    const ellipsisIndicator = transcript.getByTestId("reasoning-ellipsis").first();
-    await expect(ellipsisIndicator).toBeVisible();
-
-    await reasoningPreview.click();
-
+    await expect(transcript.getByTestId("reasoning-ellipsis")).toHaveCount(0);
     await expect(
       transcript.getByText("Plan: explain pivot selection, partitioning, recursion, base case.")
     ).toBeVisible();
