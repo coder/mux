@@ -1,5 +1,6 @@
 import { describe, expect, it, spyOn } from "bun:test";
 import * as fs from "fs";
+import { writeFile } from "node:fs/promises";
 import * as os from "os";
 import * as path from "path";
 import type { ProviderModelEntry } from "@/common/orpc/types";
@@ -66,6 +67,39 @@ function withProviderEnv(
         process.env[key] = previousValue;
       }
     }
+  }
+}
+
+async function withTempPolicyProviderService(
+  policy: unknown,
+  run: (
+    config: Config,
+    service: ProviderService,
+    policyService: PolicyService
+  ) => Promise<void> | void
+): Promise<void> {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "mux-provider-service-"));
+  const policyPath = path.join(tmpDir, "policy.json");
+  const prevPolicyFileEnv = process.env.MUX_POLICY_FILE;
+  let policyService: PolicyService | null = null;
+
+  try {
+    const config = new Config(tmpDir);
+    await writeFile(policyPath, JSON.stringify(policy), "utf-8");
+    process.env.MUX_POLICY_FILE = policyPath;
+
+    policyService = new PolicyService(config);
+    await policyService.initialize();
+    const service = new ProviderService(config, policyService);
+    await run(config, service, policyService);
+  } finally {
+    policyService?.dispose();
+    if (prevPolicyFileEnv === undefined) {
+      delete process.env.MUX_POLICY_FILE;
+    } else {
+      process.env.MUX_POLICY_FILE = prevPolicyFileEnv;
+    }
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 }
 
@@ -454,6 +488,50 @@ describe("ProviderService.getConfig", () => {
       expect(cfg["local-vllm"].isConfigured).toBe(true);
       expect(service.list()).toContain("local-vllm");
     });
+  });
+
+  it("filters custom providers by enforced provider policy", async () => {
+    await withTempPolicyProviderService(
+      {
+        policy_format_version: "0.1",
+        provider_access: [
+          { id: "openai" },
+          {
+            id: "local-vllm",
+            base_url: "http://policy.local/v1",
+            model_access: ["llama-3"],
+          },
+        ],
+      },
+      (config, service) => {
+        config.saveProvidersConfig({
+          "local-vllm": {
+            providerType: "openai-compatible",
+            baseUrl: "http://localhost:8000/v1",
+            models: ["llama-3", "mistral"],
+          },
+          "another-custom": {
+            providerType: "openai-compatible",
+            baseUrl: "http://localhost:8001/v1",
+            models: ["other-model"],
+          },
+        });
+
+        const cfg = service.getConfig();
+        expect(cfg.openai).toBeDefined();
+        expect(cfg["local-vllm"].baseUrl).toBe("http://policy.local/v1");
+        expect(cfg["local-vllm"].models).toEqual(["llama-3"]);
+        expect(cfg["another-custom"]).toBeUndefined();
+        expect(service.list()).toContain("local-vllm");
+        expect(service.list()).not.toContain("another-custom");
+
+        const result = service.setModels("another-custom", ["other-model"]);
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(result.error).toContain("not allowed by policy");
+        }
+      }
+    );
   });
 });
 

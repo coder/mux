@@ -65,8 +65,15 @@ function resolveConfigBaseUrl(
   return trimmed;
 }
 
-function buildCustomProviderConfigInfo(config: BaseProviderConfig): ProviderConfigInfo {
-  const baseUrl = resolveConfigBaseUrl(config);
+function buildCustomProviderConfigInfo(
+  config: BaseProviderConfig,
+  policy?: { forcedBaseUrl?: string; allowedModels?: string[] | null }
+): ProviderConfigInfo {
+  const baseUrl = policy?.forcedBaseUrl ?? resolveConfigBaseUrl(config);
+  const models = filterProviderModelsByPolicy(
+    normalizeProviderModelEntries(config.models),
+    policy?.allowedModels ?? null
+  );
   const apiKeyIsOpRef = isOpReference(config.apiKey);
   const isEnabled = !isProviderDisabledInConfig(config);
 
@@ -77,7 +84,7 @@ function buildCustomProviderConfigInfo(config: BaseProviderConfig): ProviderConf
     apiKeyOpLabel: apiKeyIsOpRef ? config.apiKeyOpLabel : undefined,
     apiKeyFile: typeof config.apiKeyFile === "string" ? config.apiKeyFile : undefined,
     baseUrl,
-    models: normalizeProviderModelEntries(config.models),
+    models,
     displayName: config.displayName,
     providerType: "openai-compatible",
     isCustom: true,
@@ -134,7 +141,11 @@ export class ProviderService {
     try {
       const providers = this.listBuiltInProviders();
       const providersConfig = this.config.loadProvidersConfig() ?? {};
-      return [...providers, ...getCustomOpenAICompatibleProviderIds(providersConfig)];
+      const customProviderIds = getCustomOpenAICompatibleProviderIds(providersConfig);
+      const allowedCustomProviderIds = this.policyService?.isEnforced()
+        ? customProviderIds.filter((p) => this.policyService?.isProviderAllowed(p) ?? false)
+        : customProviderIds;
+      return [...providers, ...allowedCustomProviderIds];
     } catch (error) {
       log.error("Failed to list providers:", error);
       return [];
@@ -305,7 +316,20 @@ export class ProviderService {
         continue;
       }
 
-      result[providerId] = buildCustomProviderConfigInfo(providerConfig);
+      if (this.policyService?.isEnforced() && !this.policyService.isProviderAllowed(providerId)) {
+        continue;
+      }
+
+      const providerPolicy = this.policyService?.isEnforced()
+        ? this.policyService
+            .getEffectivePolicy()
+            ?.providerAccess?.find((p) => p.id === providerId)
+        : undefined;
+
+      result[providerId] = buildCustomProviderConfigInfo(providerConfig, {
+        forcedBaseUrl: providerPolicy?.forcedBaseUrl,
+        allowedModels: providerPolicy?.allowedModels ?? null,
+      });
     }
 
     return result;
@@ -319,14 +343,14 @@ export class ProviderService {
       const normalizedModels = normalizeProviderModelEntries(models);
 
       if (this.policyService?.isEnforced()) {
-        if (!this.policyService.isProviderAllowed(provider as ProviderName)) {
+        if (!this.policyService.isProviderAllowed(provider)) {
           return { success: false, error: `Provider ${provider} is not allowed by policy` };
         }
 
         const allowedModels =
           this.policyService
             .getEffectivePolicy()
-            ?.providerAccess?.find((p) => p.id === (provider as ProviderName))?.allowedModels ??
+            ?.providerAccess?.find((p) => p.id === provider)?.allowedModels ??
           null;
 
         if (Array.isArray(allowedModels)) {
@@ -433,11 +457,11 @@ export class ProviderService {
       const providersConfig = this.config.loadProvidersConfig() ?? {};
 
       if (this.policyService?.isEnforced()) {
-        if (!this.policyService.isProviderAllowed(provider as ProviderName)) {
+        if (!this.policyService.isProviderAllowed(provider)) {
           return { success: false, error: `Provider ${provider} is not allowed by policy` };
         }
 
-        const forcedBaseUrl = this.policyService.getForcedBaseUrl(provider as ProviderName);
+        const forcedBaseUrl = this.policyService.getForcedBaseUrl(provider);
         const isBaseUrlEdit = keyPath.length === 1 && keyPath[0] === "baseUrl";
         if (isBaseUrlEdit && forcedBaseUrl) {
           return { success: false, error: `Provider ${provider} base URL is locked by policy` };
@@ -505,11 +529,11 @@ export class ProviderService {
       const providersConfig = this.config.loadProvidersConfig() ?? {};
 
       if (this.policyService?.isEnforced()) {
-        if (!this.policyService.isProviderAllowed(provider as ProviderName)) {
+        if (!this.policyService.isProviderAllowed(provider)) {
           return { success: false, error: `Provider ${provider} is not allowed by policy` };
         }
 
-        const forcedBaseUrl = this.policyService.getForcedBaseUrl(provider as ProviderName);
+        const forcedBaseUrl = this.policyService.getForcedBaseUrl(provider);
         const isBaseUrlEdit = keyPath.length === 1 && keyPath[0] === "baseUrl";
         if (isBaseUrlEdit && forcedBaseUrl) {
           return { success: false, error: `Provider ${provider} base URL is locked by policy` };

@@ -1,13 +1,20 @@
 import { z } from "zod";
-import { SUPPORTED_PROVIDERS, type ProviderName } from "@/common/constants/providers";
+import {
+  isBuiltInProvider,
+  isValidCustomProviderId,
+} from "@/common/utils/providers/customProviders";
 
 export const PolicyFormatVersionSchema = z.literal("0.1");
 export type PolicyFormatVersion = z.infer<typeof PolicyFormatVersionSchema>;
 
-export const PolicyProviderNameSchema = z.enum(
-  SUPPORTED_PROVIDERS as [ProviderName, ...ProviderName[]]
+export const PolicyProviderIdSchema = z.string().refine(
+  (id) => isBuiltInProvider(id) || isValidCustomProviderId(id),
+  { message: "Invalid provider id" }
 );
-export type PolicyProviderName = z.infer<typeof PolicyProviderNameSchema>;
+export type PolicyProviderId = z.infer<typeof PolicyProviderIdSchema>;
+
+export const PolicyProviderNameSchema = PolicyProviderIdSchema;
+export type PolicyProviderName = PolicyProviderId;
 
 export const PolicyProviderAccessSchema = z
   .object({

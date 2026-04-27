@@ -10,7 +10,6 @@ import {
   type PolicyRuntimeId,
   type PolicySource,
 } from "@/common/orpc/schemas/policy";
-import type { ProviderName } from "@/common/constants/providers";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import type { MCPServerTransport } from "@/common/types/mcp";
 import { compareVersions } from "@/node/services/coderService";
@@ -253,7 +252,7 @@ export class PolicyService {
     return this.status.state !== "disabled";
   }
 
-  isProviderAllowed(provider: ProviderName): boolean {
+  isProviderAllowed(provider: string): boolean {
     if (this.status.state === "blocked") {
       return false;
     }
@@ -266,11 +265,11 @@ export class PolicyService {
     return access.some((p) => p.id === provider);
   }
 
-  getForcedBaseUrl(provider: ProviderName): string | undefined {
+  getForcedBaseUrl(provider: string): string | undefined {
     return this.effectivePolicy?.providerAccess?.find((p) => p.id === provider)?.forcedBaseUrl;
   }
 
-  isModelAllowed(provider: ProviderName, modelId: string): boolean {
+  isModelAllowed(provider: string, modelId: string): boolean {
     if (this.status.state === "blocked") {
       return false;
     }

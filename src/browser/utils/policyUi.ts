@@ -1,6 +1,8 @@
 import { SUPPORTED_PROVIDERS, type ProviderName } from "@/common/constants/providers";
 import { RUNTIME_MODE, type ParsedRuntime, type RuntimeMode } from "@/common/types/runtime";
 import type { EffectivePolicy, PolicyRuntimeId } from "@/common/orpc/types";
+import type { ProvidersConfig } from "@/common/config/schemas/providersConfig";
+import { getCustomOpenAICompatibleProviderIds } from "@/common/utils/providers/customProviders";
 
 /**
  * Parse a model string into provider and modelId.
@@ -52,14 +54,28 @@ export function isModelAllowedByPolicy(
   return allowedModels.includes(parsed.modelId);
 }
 
-export function getAllowedProvidersForUi(policy: EffectivePolicy | null): ProviderName[] {
+export function getAllowedProvidersForUi(policy: EffectivePolicy | null): ProviderName[];
+export function getAllowedProvidersForUi(
+  policy: EffectivePolicy | null,
+  providersConfig: ProvidersConfig | null | undefined
+): string[];
+export function getAllowedProvidersForUi(
+  policy: EffectivePolicy | null,
+  providersConfig?: ProvidersConfig | null
+): string[] {
+  const customProviders = providersConfig
+    ? getCustomOpenAICompatibleProviderIds(providersConfig)
+    : [];
   const access = policy?.providerAccess;
   if (access == null) {
-    return [...SUPPORTED_PROVIDERS];
+    return [...SUPPORTED_PROVIDERS, ...customProviders];
   }
 
   const allowed = new Set(access.map((p) => p.id));
-  return SUPPORTED_PROVIDERS.filter((p) => allowed.has(p));
+  return [
+    ...SUPPORTED_PROVIDERS.filter((p) => allowed.has(p)),
+    ...customProviders.filter((p) => allowed.has(p)),
+  ];
 }
 
 export function getPolicyRuntimeIdFromParsedRuntime(runtime: ParsedRuntime): PolicyRuntimeId {

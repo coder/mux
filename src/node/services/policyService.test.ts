@@ -103,6 +103,69 @@ describe("PolicyService", () => {
     service.dispose();
   });
 
+  test("allows listed custom providers and denies unlisted custom providers", async () => {
+    config.saveProvidersConfig({
+      "local-vllm": {
+        providerType: "openai-compatible",
+        baseUrl: "http://localhost:8000/v1",
+      },
+      "another-custom": {
+        providerType: "openai-compatible",
+        baseUrl: "http://localhost:8001/v1",
+      },
+    });
+
+    await writeFile(
+      policyPath,
+      JSON.stringify({
+        policy_format_version: "0.1",
+        provider_access: [
+          { id: "openai" },
+          {
+            id: "local-vllm",
+            base_url: "http://policy.local/v1",
+            model_access: ["llama-3"],
+          },
+        ],
+      }),
+      "utf-8"
+    );
+    process.env.MUX_POLICY_FILE = policyPath;
+
+    const service = new PolicyService(config);
+    await service.initialize();
+
+    expect(service.isEnforced()).toBe(true);
+    expect(service.isProviderAllowed("openai")).toBe(true);
+    expect(service.isProviderAllowed("local-vllm")).toBe(true);
+    expect(service.isProviderAllowed("another-custom")).toBe(false);
+    expect(service.getForcedBaseUrl("local-vllm")).toBe("http://policy.local/v1");
+    expect(service.isModelAllowed("local-vllm", "llama-3")).toBe(true);
+    expect(service.isModelAllowed("local-vllm", "mistral")).toBe(false);
+    expect(service.isModelAllowed("another-custom", "anything")).toBe(false);
+
+    service.dispose();
+  });
+
+  test("allows custom providers by default when provider policy is not configured", async () => {
+    delete process.env.MUX_POLICY_FILE;
+    config.saveProvidersConfig({
+      "local-vllm": {
+        providerType: "openai-compatible",
+        baseUrl: "http://localhost:8000/v1",
+      },
+    });
+
+    const service = new PolicyService(config);
+    await service.initialize();
+
+    expect(service.getStatus()).toEqual({ state: "disabled" });
+    expect(service.isProviderAllowed("local-vllm")).toBe(true);
+    expect(service.isModelAllowed("local-vllm", "llama-3")).toBe(true);
+
+    service.dispose();
+  });
+
   test("treats empty model_access as allow-all for that provider", async () => {
     await writeFile(
       policyPath,

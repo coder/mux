@@ -35,6 +35,39 @@ describe("policyUi", () => {
     expect(getAllowedProvidersForUi(policy)).toEqual(["anthropic", "openai"]);
   });
 
+  test("getAllowedProvidersForUi appends policy-allowed custom providers in config order", () => {
+    const policy = buildPolicy({
+      providerAccess: [
+        { id: "local-vllm", allowedModels: null },
+        { id: "anthropic", allowedModels: null },
+        { id: "llama_cpp", allowedModels: null },
+      ],
+    });
+
+    const providersConfig = {
+      llama_cpp: {
+        providerType: "openai-compatible" as const,
+        baseUrl: "http://localhost:8001/v1",
+      },
+      openai: {
+        apiKey: "sk-test",
+      },
+      "local-vllm": {
+        providerType: "openai-compatible" as const,
+        baseUrl: "http://localhost:8000/v1",
+      },
+      "not-custom": {
+        baseUrl: "http://localhost:8002/v1",
+      },
+    };
+
+    expect(getAllowedProvidersForUi(policy, providersConfig)).toEqual([
+      "anthropic",
+      "llama_cpp",
+      "local-vllm",
+    ]);
+  });
+
   test("getAllowedRuntimeModesForUi treats runtimes=null as allow-all", () => {
     expect(getAllowedRuntimeModesForUi(buildPolicy({}))).toEqual({
       allowedModes: null,
