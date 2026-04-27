@@ -1,34 +1,12 @@
-import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
 import { ThemeProvider } from "@/browser/contexts/ThemeContext";
 import { MessageListProvider } from "./MessageListContext";
-import { markdownComponents } from "./MarkdownComponents";
-
-interface HighlightRequest {
-  code: string;
-  language: string;
-  theme: string;
-  resolve: (html: string) => void;
-  reject: (error: Error) => void;
-}
-
-const highlightRequests: HighlightRequest[] = [];
-
-void mock.module("@/browser/utils/highlighting/highlightWorkerClient", () => ({
-  highlightCode: (code: string, language: string, theme: string) =>
-    new Promise<string>((resolve, reject) => {
-      highlightRequests.push({ code, language, theme, resolve, reject });
-    }),
-}));
-
-void mock.module("@/browser/utils/highlighting/shiki-shared", () => ({
-  extractShikiLines: (html: string) => html.split("\n"),
-}));
+import { getCurrentHighlightedCodeBlockLines, markdownComponents } from "./MarkdownComponents";
 
 describe("MarkdownComponents command code blocks", () => {
   beforeEach(() => {
-    highlightRequests.length = 0;
     globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
     globalThis.document = globalThis.window.document;
   });
@@ -244,41 +222,33 @@ describe("MarkdownComponents command code blocks", () => {
     expect(queryByRole("button", { name: "Run command" })).toBeNull();
   });
 
-  test("renders current plain code immediately while a new highlight is pending", async () => {
-    const firstElement = markdownComponents.code({
-      inline: false,
-      className: "language-typescript",
-      children: "const oldValue = 1;\n",
-    });
+  test("ignores highlighted lines from a previous code block revision", () => {
+    const highlighted = {
+      code: "const oldValue = 1;",
+      shikiLanguage: "typescript",
+      theme: "dark" as const,
+      lines: ["<span>highlighted old value</span>"],
+    };
 
-    const view = render(<ThemeProvider forcedTheme="dark">{firstElement}</ThemeProvider>);
-
-    await waitFor(() => expect(highlightRequests).toHaveLength(1));
-    act(() => {
-      highlightRequests[0].resolve("<span>highlighted old value</span>");
-    });
-    await waitFor(() => expect(view.container.textContent).toContain("highlighted old value"));
-
-    const nextElement = markdownComponents.code({
-      inline: false,
-      className: "language-typescript",
-      children: "const nextValue = 2;\nconsole.log(nextValue);\n",
-    });
-    view.rerender(<ThemeProvider forcedTheme="dark">{nextElement}</ThemeProvider>);
-
-    // The previous Shiki result has a different code key, so the same commit that
-    // receives the new streaming chunk falls back to current plain text instead of
-    // showing stale highlighted content/height until the highlighter effect clears.
-    expect(view.container.textContent).not.toContain("highlighted old value");
-    expect(view.container.textContent).toContain("const nextValue = 2;");
-    expect(view.container.textContent).toContain("console.log(nextValue);");
-    expect(view.container.querySelectorAll(".line-number")).toHaveLength(2);
+    // A streaming code fence can receive a new chunk while Shiki output for the
+    // previous chunk is still cached. The renderer should fall back to current
+    // plain text until highlight output catches up to this exact code/theme tuple.
+    expect(
+      getCurrentHighlightedCodeBlockLines(
+        highlighted,
+        "const nextValue = 2;\nconsole.log(nextValue);",
+        "typescript",
+        "dark"
+      )
+    ).toBeNull();
+    expect(
+      getCurrentHighlightedCodeBlockLines(highlighted, "const oldValue = 1;", "typescript", "dark")
+    ).toEqual(["<span>highlighted old value</span>"]);
   });
 });
 
 describe("MarkdownComponents anchors", () => {
   beforeEach(() => {
-    highlightRequests.length = 0;
     globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
     globalThis.document = globalThis.window.document;
   });

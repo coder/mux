@@ -130,11 +130,28 @@ interface CodeBlockProps {
   highlightLanguage?: string;
 }
 
-interface HighlightedCodeBlockLines {
+export interface HighlightedCodeBlockLines {
   code: string;
   shikiLanguage: string;
   theme: "light" | "dark";
   lines: string[];
+}
+
+export function getCurrentHighlightedCodeBlockLines(
+  highlighted: HighlightedCodeBlockLines | null,
+  code: string,
+  shikiLanguage: string,
+  theme: "light" | "dark"
+): string[] | null {
+  if (
+    highlighted?.code === code &&
+    highlighted.shikiLanguage === shikiLanguage &&
+    highlighted.theme === theme
+  ) {
+    return highlighted.lines;
+  }
+
+  return null;
 }
 
 /**
@@ -194,12 +211,12 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ code, language, highlightLanguage
   // Ignore highlighted output from a previous stream chunk until the async highlighter
   // catches up to the current code/theme. Otherwise streaming code fences briefly render
   // stale highlighted lines with the old height, then flash to the current content.
-  const highlightedLines =
-    highlighted?.code === code &&
-    highlighted.shikiLanguage === shikiLanguage &&
-    highlighted.theme === theme
-      ? highlighted.lines
-      : null;
+  const highlightedLines = getCurrentHighlightedCodeBlockLines(
+    highlighted,
+    code,
+    shikiLanguage,
+    theme
+  );
   const lines = highlightedLines ?? plainLines;
   const isSingleLine = lines.length === 1;
 
