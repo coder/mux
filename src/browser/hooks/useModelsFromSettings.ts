@@ -11,6 +11,7 @@ import { useRouting } from "./useRouting";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { useAPI } from "@/browser/contexts/API";
 import { isValidProvider } from "@/common/constants/providers";
+import { isCustomOpenAICompatibleProviderConfig } from "@/common/utils/providers/customProviders";
 import { isModelAllowedByPolicy } from "@/browser/utils/policyUi";
 import {
   getExplicitGatewayPrefix,
@@ -67,6 +68,20 @@ function getAllCustomModels(config: ProvidersConfigMap | null): string[] {
   }
 
   return models;
+}
+
+function isSupportedSettingsProvider(
+  provider: string,
+  providerConfig: ProvidersConfigMap
+): boolean {
+  if (isValidProvider(provider)) {
+    return true;
+  }
+
+  const info = providerConfig[provider];
+  // Custom OpenAI-compatible providers accept arbitrary model IDs, but unknown strings
+  // should not create provider settings entries.
+  return info?.isCustom === true && isCustomOpenAICompatibleProviderConfig(info);
 }
 
 export function filterHiddenModels(models: string[], hiddenModels: string[]): string[] {
@@ -350,10 +365,11 @@ export function useModelsFromSettings() {
       const provider = selectedModel.slice(0, colonIndex);
       const modelId = selectedModel.slice(colonIndex + 1);
       if (!provider || !modelId) return;
-      if (!isValidProvider(provider)) return;
 
       const run = async () => {
         const providerConfig = config ?? (await api.providers.getConfig());
+        if (!isSupportedSettingsProvider(provider, providerConfig)) return;
+
         const existingModels: ProviderModelEntry[] = providerConfig[provider]?.models ?? [];
         if (existingModels.some((entry) => getProviderModelEntryId(entry) === modelId)) return;
 

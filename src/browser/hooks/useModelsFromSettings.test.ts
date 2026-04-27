@@ -8,7 +8,11 @@ import {
   useModelsFromSettings,
 } from "./useModelsFromSettings";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
-import type { ProvidersConfigMap } from "@/common/orpc/types";
+import type {
+  ProviderConfigInfo,
+  ProviderModelEntry,
+  ProvidersConfigMap,
+} from "@/common/orpc/types";
 import { DEFAULT_MODEL_KEY, HIDDEN_MODELS_KEY } from "@/common/constants/storage";
 
 function countOccurrences(haystack: string[], needle: string): number {
@@ -24,6 +28,19 @@ const OPENROUTER_OPENAI_CUSTOM_MODEL = "openrouter:openai/gpt-5";
 // Seed a couple of non-built-in OpenAI entries so these tests exercise real filtering logic
 // instead of vacuous "not present because it was never suggested" assertions.
 const SEEDED_OPENAI_CUSTOM_MODELS = ["gpt-5.2-codex", "gpt-5.2-pro"];
+
+function customOpenAICompatibleProviderConfig(
+  models: ProviderModelEntry[] = []
+): ProviderConfigInfo {
+  return {
+    apiKeySet: true,
+    isEnabled: true,
+    isConfigured: true,
+    isCustom: true,
+    providerType: "openai-compatible",
+    models,
+  };
+}
 
 interface TestApi {
   config?: {
@@ -213,7 +230,56 @@ describe("useModelsFromSettings selected model preservation", () => {
 
     act(() => {
       result.current.ensureModelInSettings("openrouter:anthropic/custom-model");
+      result.current.ensureModelInSettings("mux-gateway:anthropic/custom-model");
     });
+
+    expect(setModels).not.toHaveBeenCalled();
+  });
+
+  test("ensureModelInSettings syncs custom OpenAI-compatible provider models", async () => {
+    const setModels = mock(() => Promise.resolve(undefined));
+    providersConfig = {
+      "local-vllm": customOpenAICompatibleProviderConfig(),
+    };
+    apiMock = {
+      providers: {
+        getConfig: () => Promise.resolve(providersConfig ?? {}),
+        setModels,
+      },
+    };
+
+    const { result } = renderHook(() => useModelsFromSettings());
+
+    act(() => {
+      result.current.ensureModelInSettings("local-vllm:any-model");
+    });
+
+    await waitFor(() =>
+      expect(setModels).toHaveBeenCalledWith({
+        provider: "local-vllm",
+        models: ["any-model"],
+      })
+    );
+  });
+
+  test("ensureModelInSettings skips unknown provider models", async () => {
+    const setModels = mock(() => Promise.resolve(undefined));
+    providersConfig = {
+      "local-vllm": customOpenAICompatibleProviderConfig(),
+    };
+    apiMock = {
+      providers: {
+        getConfig: () => Promise.resolve(providersConfig ?? {}),
+        setModels,
+      },
+    };
+
+    const { result } = renderHook(() => useModelsFromSettings());
+
+    act(() => {
+      result.current.ensureModelInSettings("missing-provider:any-model");
+    });
+    await Promise.resolve();
 
     expect(setModels).not.toHaveBeenCalled();
   });
