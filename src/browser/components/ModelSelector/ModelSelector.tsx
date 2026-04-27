@@ -22,8 +22,8 @@ import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { useRouting } from "@/browser/hooks/useRouting";
 
 import { stopKeyboardPropagation } from "@/browser/utils/events";
-import { PROVIDER_DISPLAY_NAMES } from "@/common/constants/providers";
 import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
+import { formatProviderDisplayName } from "@/common/utils/providers/customProviders";
 import {
   getExplicitGatewayPrefix,
   getModelName,
@@ -139,6 +139,17 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
 
     // Track which models are hidden (for rendering)
     const hiddenSet = new Set(hiddenModels);
+
+    const seenModelNames = new Set<string>();
+    const duplicateModelNames = new Set<string>();
+    for (const model of filteredModels) {
+      const modelName = getModelName(model);
+      if (seenModelNames.has(modelName)) {
+        duplicateModelNames.add(modelName);
+      } else {
+        seenModelNames.add(modelName);
+      }
+    }
 
     // If the list shrinks (e.g., a model is hidden), keep the highlight in-bounds.
     useEffect(() => {
@@ -272,7 +283,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
     // of resolving route priority from the canonical (gateway-stripped) model.
     const routeInfo = hasValue && !explicitGateway ? routing.resolveRoute(canonicalValue) : null;
     const routedViaDisplayName = explicitGateway
-      ? PROVIDER_DISPLAY_NAMES[explicitGateway]
+      ? formatProviderDisplayName(explicitGateway)
       : routeInfo && routeInfo.route !== "direct"
         ? routeInfo.displayName
         : null;
@@ -349,123 +360,137 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
               {filteredModels.length === 0 ? (
                 <div className="text-muted py-2 text-center text-[10px]">No matching models</div>
               ) : (
-                filteredModels.map((model, index) => (
-                  <div
-                    key={model}
-                    data-highlighted={index === highlightedIndex}
-                    onMouseEnter={() => setHighlightedIndex(index)}
-                    className={cn(
-                      "flex w-full items-center gap-1.5 rounded-sm px-2 py-0.5 text-xs cursor-pointer",
-                      index === highlightedIndex ? "bg-hover" : "hover:bg-hover",
-                      hiddenSet.has(model) && "opacity-50"
-                    )}
-                    onClick={() => handleSelectModel(model)}
-                    role="option"
-                    aria-selected={value === model}
-                  >
-                    <Check
+                filteredModels.map((model, index) => {
+                  const modelName = getModelName(model);
+                  const modelProvider = getModelProvider(model);
+                  const showProviderLabel =
+                    modelProvider.length > 0 && duplicateModelNames.has(modelName);
+
+                  return (
+                    <div
+                      key={model}
+                      data-highlighted={index === highlightedIndex}
+                      onMouseEnter={() => setHighlightedIndex(index)}
                       className={cn(
-                        "h-3 w-3 shrink-0",
-                        value === model ? "opacity-100" : "opacity-0"
+                        "flex w-full items-center gap-1.5 rounded-sm px-2 py-0.5 text-xs cursor-pointer",
+                        index === highlightedIndex ? "bg-hover" : "hover:bg-hover",
+                        hiddenSet.has(model) && "opacity-50"
                       )}
-                    />
-                    <ProviderIcon
-                      provider={getModelProvider(model)}
-                      className="text-muted h-3 w-3 shrink-0"
-                    />
-                    <span className="min-w-0 flex-1 truncate">
-                      {formatModelDisplayName(getModelName(model))}
-                    </span>
+                      onClick={() => handleSelectModel(model)}
+                      role="option"
+                      aria-selected={value === model}
+                    >
+                      <Check
+                        className={cn(
+                          "h-3 w-3 shrink-0",
+                          value === model ? "opacity-100" : "opacity-0"
+                        )}
+                      />
+                      <ProviderIcon
+                        provider={modelProvider}
+                        className="text-muted h-3 w-3 shrink-0"
+                      />
+                      <span className="flex min-w-0 flex-1 items-baseline gap-1">
+                        <span className="min-w-0 truncate">
+                          {formatModelDisplayName(modelName)}
+                        </span>
+                        {showProviderLabel && (
+                          <span className="text-muted shrink-0 text-[10px]">
+                            {formatProviderDisplayName(modelProvider)}
+                          </span>
+                        )}
+                      </span>
 
-                    {/* Visibility toggle - Eye with line-through when hidden */}
-                    {(onHideModel ?? onUnhideModel) && (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            type="button"
-                            onMouseDown={(e) => e.preventDefault()}
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              if (hiddenSet.has(model)) {
-                                onUnhideModel?.(model);
-                              } else {
-                                onHideModel?.(model);
-                              }
-                            }}
-                            className={cn(
-                              "relative flex h-5 w-5 items-center justify-center rounded-sm border transition-colors duration-150",
-                              hiddenSet.has(model)
-                                ? "text-muted-light border-muted-light/40"
-                                : "text-muted-light border-border-light/40 hover:border-foreground/60 hover:text-foreground"
-                            )}
-                            aria-label={
-                              hiddenSet.has(model)
-                                ? "Show model in selector"
-                                : "Hide model from selector"
-                            }
-                          >
-                            <Eye
-                              className={cn(
-                                "h-4 w-4 md:h-3 md:w-3",
-                                hiddenSet.has(model) ? "opacity-30" : "opacity-70"
-                              )}
-                            />
-                            {hiddenSet.has(model) && (
-                              <span className="bg-muted-light absolute h-px w-3 rotate-45" />
-                            )}
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent align="center">
-                          {hiddenSet.has(model)
-                            ? "Show model in selector"
-                            : "Hide model from selector"}
-                        </TooltipContent>
-                      </Tooltip>
-                    )}
-
-                    {/* Default star */}
-                    {onSetDefaultModel ? (
-                      hiddenSet.has(model) ? (
-                        <span className="h-5 w-5" />
-                      ) : (
+                      {/* Visibility toggle - Eye with line-through when hidden */}
+                      {(onHideModel ?? onUnhideModel) && (
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <button
                               type="button"
                               onMouseDown={(e) => e.preventDefault()}
-                              onClick={(e) => handleSetDefault(e, model)}
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                if (hiddenSet.has(model)) {
+                                  onUnhideModel?.(model);
+                                } else {
+                                  onHideModel?.(model);
+                                }
+                              }}
                               className={cn(
-                                "flex h-5 w-5 items-center justify-center rounded-sm transition-colors duration-150 cursor-pointer",
-                                defaultModel === model
-                                  ? "text-yellow-400 cursor-default"
-                                  : "text-muted-light hover:text-foreground"
+                                "relative flex h-5 w-5 items-center justify-center rounded-sm border transition-colors duration-150",
+                                hiddenSet.has(model)
+                                  ? "text-muted-light border-muted-light/40"
+                                  : "text-muted-light border-border-light/40 hover:border-foreground/60 hover:text-foreground"
                               )}
                               aria-label={
-                                defaultModel === model
-                                  ? "Current default model"
-                                  : "Set as default model"
+                                hiddenSet.has(model)
+                                  ? "Show model in selector"
+                                  : "Hide model from selector"
                               }
-                              disabled={defaultModel === model}
                             >
-                              <Star
-                                className="h-4 w-4 md:h-3 md:w-3"
-                                fill={defaultModel === model ? "currentColor" : "none"}
+                              <Eye
+                                className={cn(
+                                  "h-4 w-4 md:h-3 md:w-3",
+                                  hiddenSet.has(model) ? "opacity-30" : "opacity-70"
+                                )}
                               />
+                              {hiddenSet.has(model) && (
+                                <span className="bg-muted-light absolute h-px w-3 rotate-45" />
+                              )}
                             </button>
                           </TooltipTrigger>
                           <TooltipContent align="center">
-                            {defaultModel === model
-                              ? "Current default model"
-                              : "Set as default model"}
+                            {hiddenSet.has(model)
+                              ? "Show model in selector"
+                              : "Hide model from selector"}
                           </TooltipContent>
                         </Tooltip>
-                      )
-                    ) : (
-                      <span className="h-5 w-5" />
-                    )}
-                  </div>
-                ))
+                      )}
+
+                      {/* Default star */}
+                      {onSetDefaultModel ? (
+                        hiddenSet.has(model) ? (
+                          <span className="h-5 w-5" />
+                        ) : (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <button
+                                type="button"
+                                onMouseDown={(e) => e.preventDefault()}
+                                onClick={(e) => handleSetDefault(e, model)}
+                                className={cn(
+                                  "flex h-5 w-5 items-center justify-center rounded-sm transition-colors duration-150 cursor-pointer",
+                                  defaultModel === model
+                                    ? "text-yellow-400 cursor-default"
+                                    : "text-muted-light hover:text-foreground"
+                                )}
+                                aria-label={
+                                  defaultModel === model
+                                    ? "Current default model"
+                                    : "Set as default model"
+                                }
+                                disabled={defaultModel === model}
+                              >
+                                <Star
+                                  className="h-4 w-4 md:h-3 md:w-3"
+                                  fill={defaultModel === model ? "currentColor" : "none"}
+                                />
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent align="center">
+                              {defaultModel === model
+                                ? "Current default model"
+                                : "Set as default model"}
+                            </TooltipContent>
+                          </Tooltip>
+                        )
+                      ) : (
+                        <span className="h-5 w-5" />
+                      )}
+                    </div>
+                  );
+                })
               )}
             </div>
 

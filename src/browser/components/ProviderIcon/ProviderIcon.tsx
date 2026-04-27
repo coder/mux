@@ -1,4 +1,5 @@
 import React from "react";
+import { Server } from "lucide-react";
 import AnthropicIcon from "@/browser/assets/icons/anthropic.svg?react";
 import OpenAIIcon from "@/browser/assets/icons/openai.svg?react";
 import GoogleIcon from "@/browser/assets/icons/google.svg?react";
@@ -46,30 +47,30 @@ export interface ProviderIconProps {
 }
 
 /**
- * Renders a provider's icon if one exists, otherwise returns null.
+ * Renders a provider's icon with a neutral fallback for custom providers.
  * Icons are sized to 1em by default to match surrounding text.
  */
 export function ProviderIcon(props: ProviderIconProps) {
   const providerName = props.provider as ProviderName;
   const IconComponent = PROVIDER_ICONS[providerName];
-  if (!IconComponent) return null;
 
-  // Check if this provider uses stroke-based icon styling (from PROVIDER_DEFINITIONS)
+  // Check if this provider uses stroke-based icon styling (from PROVIDER_DEFINITIONS).
+  // Unknown custom providers use the fallback lucide icon, which is stroke based.
   const def = PROVIDER_DEFINITIONS[providerName] as { strokeBasedIcon?: boolean } | undefined;
-  const isStrokeBased = def?.strokeBasedIcon ?? false;
+  const isStrokeBased = IconComponent ? (def?.strokeBasedIcon ?? false) : true;
 
   return (
     <span
       className={cn(
         "inline-block h-[1em] w-[1em] align-[-0.125em] [&_svg]:block [&_svg]:h-full [&_svg]:w-full",
-        // Stroke-based icons (like GatewayIcon) use stroke for color, others use fill
+        // Stroke-based icons (like GatewayIcon) use stroke for color, others use fill.
         isStrokeBased
           ? "[&_svg]:stroke-current [&_svg]:fill-none"
           : "[&_svg]:fill-current [&_svg_.st0]:fill-current",
         props.className
       )}
     >
-      <IconComponent />
+      {IconComponent ? <IconComponent /> : <Server />}
     </span>
   );
 }
@@ -83,8 +84,8 @@ export interface ProviderWithIconProps {
 }
 
 /**
- * Renders a provider name with its icon (if available).
- * Falls back to just the name if no icon exists for the provider.
+ * Renders a provider name with its icon.
+ * Custom providers use the neutral fallback icon.
  */
 export function ProviderWithIcon(props: ProviderWithIconProps) {
   const name = props.displayName
