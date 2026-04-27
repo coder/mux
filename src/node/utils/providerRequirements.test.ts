@@ -273,6 +273,21 @@ describe("resolveCustomProviderCredentials", () => {
     }
   });
 
+  it("resolves inline apiKey from config", async () => {
+    const result = await resolveCustomProviderCredentials("local-vllm", {
+      providerType: "openai-compatible",
+      baseUrl: "http://localhost:8000/v1",
+      apiKey: "sk-test",
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      apiKey: "sk-test",
+      baseURL: "http://localhost:8000/v1",
+      resolvedFrom: "inline",
+    });
+  });
+
   it("resolves apiKeyFile", async () => {
     const tmpDir = mkdtempSync(path.join(os.tmpdir(), "mux-test-"));
     const keyFilePath = path.join(tmpDir, "api-key");

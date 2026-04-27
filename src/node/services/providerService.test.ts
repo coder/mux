@@ -4,6 +4,7 @@ import { writeFile } from "node:fs/promises";
 import * as os from "os";
 import * as path from "path";
 import type { ProviderModelEntry } from "@/common/orpc/types";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { Config } from "@/node/config";
 import { PolicyService } from "@/node/services/policyService";
 import { ProviderService } from "./providerService";
@@ -1046,17 +1047,67 @@ describe("ProviderService custom provider mutations", () => {
       if (!project) {
         throw new Error("Expected seeded project to reload");
       }
-      expect(project.workspaces[0].aiSettings).toBeUndefined();
+      expect(project.workspaces[0].aiSettings).toEqual({
+        model: WORKSPACE_DEFAULTS.model,
+        thinkingLevel: "high",
+      });
       expect(project.workspaces[0].aiSettingsByAgent).toEqual({
+        exec: { model: WORKSPACE_DEFAULTS.model, thinkingLevel: "medium" },
         plan: { model: "openai:gpt-5", thinkingLevel: "low" },
       });
       expect(project.workspaces[1].aiSettings).toEqual({
         model: "openai:gpt-5",
         thinkingLevel: "low",
       });
-      expect(project.workspaces[1].aiSettingsByAgent).toBeUndefined();
+      expect(project.workspaces[1].aiSettingsByAgent).toEqual({
+        exec: { model: WORKSPACE_DEFAULTS.model, thinkingLevel: "medium" },
+      });
       expect(project.workspaces[2].aiSettingsByAgent).toEqual({
         exec: { model: "other-custom:model", thinkingLevel: "medium" },
+      });
+    });
+  });
+
+  it("preserves workspace thinking level when repairing a removed provider model", async () => {
+    await withTempConfigAsync(async (config, service) => {
+      const provider = "local-vllm";
+      config.saveProvidersConfig({
+        [provider]: {
+          providerType: "openai-compatible",
+          baseUrl: "http://localhost:8000/v1",
+        },
+      });
+      await writeFile(
+        path.join(config.rootDir, "config.json"),
+        JSON.stringify({
+          projects: [
+            [
+              "/tmp/project",
+              {
+                workspaces: [
+                  {
+                    path: "/tmp/project/workspace-a",
+                    id: "workspace-a",
+                    aiSettings: {
+                      model: `${provider}:workspace-model`,
+                      thinkingLevel: "high",
+                    },
+                  },
+                ],
+              },
+            ],
+          ],
+        })
+      );
+
+      const result = await service.removeCustomProvider(provider);
+
+      expect(result.success).toBe(true);
+      const freshConfig = new Config(config.rootDir).loadConfigOrDefault();
+      const workspace = freshConfig.projects.get("/tmp/project")?.workspaces[0];
+      expect(workspace?.aiSettings).toEqual({
+        model: WORKSPACE_DEFAULTS.model,
+        thinkingLevel: "high",
       });
     });
   });

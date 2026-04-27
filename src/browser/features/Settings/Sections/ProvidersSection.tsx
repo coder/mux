@@ -1076,6 +1076,7 @@ export function ProvidersSection() {
   const [customProviderApiKeyFile, setCustomProviderApiKeyFile] = useState("");
   const [customProviderInitialModelId, setCustomProviderInitialModelId] = useState("");
   const [customProviderSubmitError, setCustomProviderSubmitError] = useState<string | null>(null);
+  const [customProviderNotice, setCustomProviderNotice] = useState<string | null>(null);
   const [customProviderSubmitAttempted, setCustomProviderSubmitAttempted] = useState(false);
   const [customProviderTouchedFields, setCustomProviderTouchedFields] = useState({
     providerId: false,
@@ -1435,23 +1436,34 @@ export function ProvidersSection() {
 
     setCustomProviderSubmitting(true);
     setCustomProviderSubmitError(null);
+    setCustomProviderNotice(null);
     try {
       const result = await api.providers.addCustomOpenAICompatibleProvider(input);
       if (!result.success) {
         setCustomProviderSubmitError(result.error.message);
         return;
       }
-
-      clearCustomProviderForm();
-      setCustomProviderFormOpen(false);
-      await refresh();
-      setExpandedProvider(provider);
-      setProvidersExpandedProvider(provider);
     } catch {
       setCustomProviderSubmitError("Failed to add custom provider.");
+      return;
     } finally {
       setCustomProviderSubmitting(false);
     }
+
+    clearCustomProviderForm();
+    setCustomProviderFormOpen(false);
+    setCustomProviderSubmitError(null);
+
+    try {
+      await refresh();
+    } catch {
+      setCustomProviderNotice(
+        "Provider added, but refreshing the provider list failed. It may appear after reopening settings."
+      );
+    }
+
+    setExpandedProvider(provider);
+    setProvidersExpandedProvider(provider);
   }, [
     api,
     customProviderApiKey,
@@ -1496,6 +1508,7 @@ export function ProvidersSection() {
       }
 
       clearCustomProviderRemoveError(provider);
+      setCustomProviderNotice(null);
       setCustomProviderRemoving(provider);
       try {
         const result = await api.providers.removeCustomProvider({ provider });
@@ -1505,6 +1518,11 @@ export function ProvidersSection() {
             [provider]: result.error.message,
           }));
           return;
+        }
+        if (!result.success && result.error.code === "config_repair_failed") {
+          setCustomProviderNotice(
+            "Provider removed, but updating saved preferences failed. You may need to clear stale model defaults manually."
+          );
         }
 
         try {
@@ -1557,6 +1575,12 @@ export function ProvidersSection() {
         <div className="border-border-medium bg-background-secondary/50 text-muted flex items-center gap-2 rounded-md border px-3 py-2 text-xs">
           <ShieldCheck className="h-4 w-4" aria-hidden />
           <span>Your settings are controlled by a policy.</span>
+        </div>
+      )}
+
+      {customProviderNotice && (
+        <div className="border-warning/40 bg-warning/10 text-warning rounded-md border px-3 py-2 text-xs">
+          {customProviderNotice}
         </div>
       )}
 

@@ -115,7 +115,7 @@ function patchProviderMethods(client: APIClient, providersConfig: ProvidersConfi
       return Promise.resolve({ success: true as const, data: providerInfo });
     }
   );
-  const removeCustomProvider = mock((input: { provider: string }) => {
+  const removeCustomProvider = mock<APIClient["providers"]["removeCustomProvider"]>((input) => {
     delete providersConfig[input.provider];
     return Promise.resolve({ success: true as const, data: undefined });
   });
@@ -258,6 +258,34 @@ describe("ProvidersSection", () => {
     expect(view.getByRole("button", { name: "Add provider" })).toBeTruthy();
   });
 
+  test("closes the add form and shows a notice when refresh fails after add", async () => {
+    providersRefreshMock.mockImplementationOnce(() => Promise.reject(new Error("refresh failed")));
+    const view = renderProvidersSection();
+
+    fireEvent.click(await view.findByRole("button", { name: "Add provider" }));
+
+    await userEvent.type(view.getByPlaceholderText("acme-openai"), "team-openai");
+    await userEvent.type(view.getByPlaceholderText("Acme OpenAI"), "Team OpenAI");
+    await userEvent.type(
+      view.getByPlaceholderText("https://api.acme.test/v1"),
+      "https://team.example/v1"
+    );
+    fireEvent.click(view.getByRole("button", { name: "Add custom provider" }));
+
+    await waitFor(() => {
+      expect(view.addCustomOpenAICompatibleProvider).toHaveBeenCalled();
+    });
+    await waitFor(() => {
+      expect(view.queryByRole("button", { name: "Add custom provider" })).toBeNull();
+    });
+    expect(view.queryByText("Failed to add custom provider.")).toBeNull();
+    expect(
+      await view.findByText(
+        "Provider added, but refreshing the provider list failed. It may appear after reopening settings."
+      )
+    ).toBeTruthy();
+  });
+
   test("shows remove only for expanded custom provider cards", async () => {
     const view = renderProvidersSection();
     const customButton = await view.findByRole("button", { name: /Acme OpenAI/ });
@@ -272,6 +300,38 @@ describe("ProvidersSection", () => {
     expect(
       within(getProviderCard(openAiButton)).queryByRole("button", { name: "Remove" })
     ).toBeNull();
+  });
+
+  test("removes the custom provider row and warns when config repair fails", async () => {
+    const view = renderProvidersSection();
+    const confirmMock = mock(() => true);
+    window.confirm = confirmMock;
+    view.removeCustomProvider.mockImplementationOnce((input: { provider: string }) => {
+      delete view.providersConfig[input.provider];
+      return Promise.resolve({
+        success: false as const,
+        error: {
+          code: "config_repair_failed" as const,
+          message: "Provider removed, but saved model references could not be repaired.",
+        },
+      });
+    });
+
+    const customButton = await view.findByRole("button", { name: /Acme OpenAI/ });
+    fireEvent.click(customButton);
+    fireEvent.click(within(getProviderCard(customButton)).getByRole("button", { name: "Remove" }));
+
+    await waitFor(() => {
+      expect(view.removeCustomProvider).toHaveBeenCalledWith({ provider: CUSTOM_PROVIDER_ID });
+    });
+    await waitFor(() => {
+      expect(view.queryByRole("button", { name: /Acme OpenAI/ })).toBeNull();
+    });
+    expect(
+      await view.findByText(
+        "Provider removed, but updating saved preferences failed. You may need to clear stale model defaults manually."
+      )
+    ).toBeTruthy();
   });
 
   test("calls the custom provider remove mutation after confirmation", async () => {

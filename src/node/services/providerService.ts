@@ -39,6 +39,7 @@ import {
 import { parseCodexOauthAuth } from "@/node/utils/codexOauthAuth";
 import type { PolicyService } from "@/node/services/policyService";
 import { getErrorMessage } from "@/common/utils/errors";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 // Re-export types for backward compatibility
 export type { AWSCredentialStatus, ProviderConfigInfo, ProvidersConfigMap };
@@ -683,18 +684,20 @@ export class ProviderService {
           workspace.aiSettings &&
           modelStringStartsWithProvider(workspace.aiSettings.model, provider)
         ) {
-          delete workspace.aiSettings;
+          workspace.aiSettings = {
+            ...workspace.aiSettings,
+            model: WORKSPACE_DEFAULTS.model,
+          };
         }
 
         if (workspace.aiSettingsByAgent) {
           for (const [agentId, settings] of Object.entries(workspace.aiSettingsByAgent)) {
             if (modelStringStartsWithProvider(settings.model, provider)) {
-              delete workspace.aiSettingsByAgent[agentId];
+              workspace.aiSettingsByAgent[agentId] = {
+                ...settings,
+                model: WORKSPACE_DEFAULTS.model,
+              };
             }
-          }
-
-          if (Object.keys(workspace.aiSettingsByAgent).length === 0) {
-            delete workspace.aiSettingsByAgent;
           }
         }
       }
