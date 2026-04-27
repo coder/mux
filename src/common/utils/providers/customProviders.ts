@@ -95,5 +95,7 @@ export function formatProviderDisplayName(
     return PROVIDER_DISPLAY_NAMES[provider];
   }
 
-  return config?.displayName ?? provider;
+  // Empty custom display names should fall back to the provider id.
+  // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
+  return config?.displayName || provider;
 }

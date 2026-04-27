@@ -262,6 +262,11 @@ export const CustomProviderMutationErrorSchema = z.discriminatedUnion("code", [
     reason: z.string().optional(),
   }),
   z.object({
+    code: z.literal("config_repair_failed"),
+    message: z.string(),
+    reason: z.string().optional(),
+  }),
+  z.object({
     code: z.literal("persistence_failed"),
     message: z.string(),
     reason: z.string().optional(),

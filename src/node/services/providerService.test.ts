@@ -884,6 +884,44 @@ describe("ProviderService custom provider mutations", () => {
     });
   });
 
+  it("reports partial success and notifies when config repair fails after deletion", async () => {
+    await withTempConfigAsync(async (config, service) => {
+      config.saveProvidersConfig({
+        "local-vllm": {
+          providerType: "openai-compatible",
+          baseUrl: "http://localhost:8000/v1",
+        },
+      });
+      await config.saveConfig({
+        ...config.loadConfigOrDefault(),
+        defaultModel: "local-vllm:qwen3-coder",
+      });
+      let configChangedCount = 0;
+      const unsubscribe = service.onConfigChanged(() => {
+        configChangedCount += 1;
+      });
+      const editConfigSpy = spyOn(config, "editConfig");
+      editConfigSpy.mockImplementationOnce(() => {
+        throw new Error("config write failed");
+      });
+
+      try {
+        const result = await service.removeCustomProvider("local-vllm");
+
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(result.error.code).toBe("config_repair_failed");
+        }
+        expect(config.loadProvidersConfig()?.["local-vllm"]).toBeUndefined();
+        expect(config.loadConfigOrDefault().defaultModel).toBe("local-vllm:qwen3-coder");
+        expect(configChangedCount).toBe(1);
+      } finally {
+        editConfigSpy.mockRestore();
+        unsubscribe();
+      }
+    });
+  });
+
   it("repairs durable app config references when removing a custom provider", async () => {
     await withTempConfigAsync(async (config, service) => {
       const provider = "local-vllm";

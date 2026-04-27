@@ -228,6 +228,36 @@ describe("ProvidersSection", () => {
     });
   });
 
+  test("submits and closes the custom provider add form", async () => {
+    const view = renderProvidersSection();
+
+    fireEvent.click(await view.findByRole("button", { name: "Add provider" }));
+
+    await userEvent.type(view.getByPlaceholderText("acme-openai"), "team-openai");
+    await userEvent.type(view.getByPlaceholderText("Acme OpenAI"), "Team OpenAI");
+    await userEvent.type(
+      view.getByPlaceholderText("https://api.acme.test/v1"),
+      "https://team.example/v1"
+    );
+    await userEvent.type(view.getByPlaceholderText("gpt-4o-mini"), "qwen3-coder");
+    fireEvent.click(view.getByRole("button", { name: "Add custom provider" }));
+
+    await waitFor(() => {
+      expect(view.addCustomOpenAICompatibleProvider).toHaveBeenCalledWith({
+        provider: "team-openai",
+        displayName: "Team OpenAI",
+        baseUrl: "https://team.example/v1",
+        apiKey: undefined,
+        apiKeyFile: undefined,
+        models: ["qwen3-coder"],
+      });
+    });
+    await waitFor(() => {
+      expect(view.queryByRole("button", { name: "Add custom provider" })).toBeNull();
+    });
+    expect(view.getByRole("button", { name: "Add provider" })).toBeTruthy();
+  });
+
   test("shows remove only for expanded custom provider cards", async () => {
     const view = renderProvidersSection();
     const customButton = await view.findByRole("button", { name: /Acme OpenAI/ });

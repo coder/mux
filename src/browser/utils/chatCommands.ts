@@ -211,10 +211,12 @@ export async function processSlashCommand(
 
     try {
       let providersConfig: ProvidersConfigMap | null = null;
+      let providersConfigLoadFailed = false;
       if (activeClient) {
         try {
           providersConfig = await activeClient.providers.getConfig();
         } catch (error) {
+          providersConfigLoadFailed = true;
           console.error("Failed to load provider settings:", error);
         }
       }
@@ -224,7 +226,9 @@ export async function processSlashCommand(
         setToast({
           id: Date.now().toString(),
           type: "error",
-          message: `Unknown provider "${provider}"`,
+          message: providersConfigLoadFailed
+            ? `Could not verify provider "${provider}": backend unreachable. Please retry.`
+            : `Unknown provider "${provider}"`,
         });
         return { clearInput: false, toastShown: true };
       }

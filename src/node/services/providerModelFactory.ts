@@ -2032,16 +2032,23 @@ export class ProviderModelFactory {
       return canonicalModelString;
     }
 
-    if (
-      originProviderName === "mux-gateway" ||
-      !Object.hasOwn(PROVIDER_REGISTRY, originProviderName)
-    ) {
+    if (originProviderName === "mux-gateway") {
+      return canonicalModelString;
+    }
+
+    const providersConfig = this.config.loadProvidersConfig() ?? {};
+    if (isCustomOpenAICompatibleProviderConfig(providersConfig[originProviderName])) {
+      // Manual providers.jsonc edits can shadow a built-in provider id. Custom providers
+      // are direct-only, so keep the user's model pointed at the custom endpoint.
+      return canonicalModelString;
+    }
+
+    if (!Object.hasOwn(PROVIDER_REGISTRY, originProviderName)) {
       return canonicalModelString;
     }
 
     const originProvider = originProviderName as ProviderName;
     const config = this.config.loadConfigOrDefault();
-    const providersConfig = this.config.loadProvidersConfig() ?? {};
     const isGatewayModelAccessible = createGatewayModelAccessibilityChecker(providersConfig);
     const routeContext =
       typeof modelKeyOrRouteContext === "object" && modelKeyOrRouteContext != null

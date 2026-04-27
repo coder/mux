@@ -1499,7 +1499,7 @@ export function ProvidersSection() {
       setCustomProviderRemoving(provider);
       try {
         const result = await api.providers.removeCustomProvider({ provider });
-        if (!result.success) {
+        if (!result.success && result.error.code !== "config_repair_failed") {
           setCustomProviderRemoveErrors((prev) => ({
             ...prev,
             [provider]: result.error.message,

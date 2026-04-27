@@ -249,6 +249,31 @@ describe("ProviderModelFactory.createModel", () => {
     );
   });
 
+  it("denies policy-denied custom OpenAI-compatible providers when policy is enforced", async () => {
+    await withTempPolicyProviderFactory(
+      {
+        policy_format_version: "0.1",
+        provider_access: [{ id: "openai" }],
+      },
+      async (config, factory) => {
+        config.saveProvidersConfig({
+          "local-vllm": {
+            providerType: "openai-compatible",
+            baseUrl: "http://localhost:8000/v1",
+            models: ["qwen3-coder"],
+          },
+        });
+
+        const result = await factory.createModel("local-vllm:qwen3-coder");
+
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(result.error.type).toBe("policy_denied");
+        }
+      }
+    );
+  });
+
   it("returns provider_disabled for disabled custom OpenAI-compatible providers", async () => {
     await withTempConfig(async (config, factory) => {
       config.saveProvidersConfig({
@@ -939,6 +964,30 @@ describe("ProviderModelFactory routing", () => {
 
       const resolved = factory.resolveGatewayModelString("openai:gpt-5", "openai:gpt-5");
       expect(resolved).toBe("mux-gateway:openai/gpt-5");
+    });
+  });
+
+  it("keeps shadowed custom OpenAI-compatible providers on the direct route", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        openai: {
+          providerType: "openai-compatible",
+          baseUrl: "http://localhost:8000/v1",
+        },
+        "mux-gateway": {
+          couponCode: "test-coupon",
+        },
+      });
+
+      const projectConfig = config.loadConfigOrDefault();
+      await config.saveConfig({
+        ...projectConfig,
+        muxGatewayEnabled: true,
+        routePriority: ["mux-gateway", "direct"],
+      });
+
+      const resolved = factory.resolveGatewayModelString("openai:gpt-5", "openai:gpt-5");
+      expect(resolved).toBe("openai:gpt-5");
     });
   });
 

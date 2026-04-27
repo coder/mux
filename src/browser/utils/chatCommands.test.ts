@@ -1,4 +1,4 @@
-import { describe, expect, test, beforeEach, mock } from "bun:test";
+import { describe, expect, test, beforeEach, mock, spyOn } from "bun:test";
 import type { SendMessageOptions } from "@/common/orpc/types";
 import { EXPERIMENT_IDS, getExperimentKey } from "@/common/constants/experiments";
 import {
@@ -183,6 +183,63 @@ describe("parseRuntimeString", () => {
     expect(() => parseRuntimeString("kubernetes", workspaceName)).toThrow(
       "Unknown runtime type: 'kubernetes'. Use 'ssh <host>', 'docker <image>', 'devcontainer <config>', 'worktree', or 'local'"
     );
+  });
+});
+
+describe("processSlashCommand - model-set", () => {
+  const createModelSetContext = (api: SlashCommandContext["api"]): SlashCommandContext => ({
+    api,
+    workspaceId: "test-ws",
+    variant: "workspace",
+    projectPath: "/tmp/project",
+    setPreferredModel: mock(() => undefined),
+    setVimEnabled: mock((cb: (prev: boolean) => boolean) => cb(false)),
+    resetInputHeight: mock(() => undefined),
+    onTruncateHistory: mock(() => Promise.resolve(undefined)),
+    onMessageSent: mock(() => undefined),
+    onCheckReviews: mock(() => undefined),
+    attachedReviewIds: [],
+    openSettings: mock(() => undefined),
+    sendMessageOptions: {
+      model: "anthropic:claude-3-5-sonnet",
+      thinkingLevel: "off",
+      toolPolicy: [],
+      agentId: "exec",
+    },
+    setInput: mock(() => undefined),
+    setToast: mock(() => undefined),
+    setAttachments: mock(() => undefined),
+    setSendingState: mock(() => undefined),
+  });
+
+  test("reports backend verification failure for custom providers when config loading fails", async () => {
+    const getConfig = mock(() => Promise.reject(new Error("backend offline")));
+    const context = createModelSetContext({
+      providers: {
+        getConfig,
+      },
+    } as unknown as SlashCommandContext["api"]);
+    const consoleErrorSpy = spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      const result = await processSlashCommand(
+        { type: "model-set", modelString: "local-vllm:qwen3-coder" },
+        context
+      );
+
+      expect(result).toEqual({ clearInput: false, toastShown: true });
+      expect(context.setToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "error",
+          message: 'Could not verify provider "local-vllm": backend unreachable. Please retry.',
+        })
+      );
+      expect(context.setToast).not.toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'Unknown provider "local-vllm"' })
+      );
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
   });
 });
 

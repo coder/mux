@@ -106,6 +106,10 @@ describe("formatProviderDisplayName", () => {
     );
   });
 
+  test("falls back to custom provider id for an empty display name", () => {
+    expect(formatProviderDisplayName("local-vllm", { displayName: "" })).toBe("local-vllm");
+  });
+
   test("falls back to custom provider id", () => {
     expect(formatProviderDisplayName("local-vllm")).toBe("local-vllm");
   });

@@ -592,11 +592,6 @@ export class ProviderService {
 
       delete latestProvidersConfig[provider];
       this.config.saveProvidersConfig(latestProvidersConfig);
-      await this.config.editConfig((config) =>
-        this.repairRemovedCustomProviderReferences(config, provider)
-      );
-      this.notifyConfigChanged();
-      return { success: true, data: undefined };
     } catch (error) {
       return {
         success: false,
@@ -606,6 +601,29 @@ export class ProviderService {
         ),
       };
     }
+
+    try {
+      await this.config.editConfig((config) =>
+        this.repairRemovedCustomProviderReferences(config, provider)
+      );
+    } catch (error) {
+      // The provider is already deleted from providers.jsonc. Notify subscribers so they
+      // re-sync even when durable model reference cleanup needs another attempt.
+      this.notifyConfigChanged();
+      return {
+        success: false,
+        error: addErrorReason(
+          {
+            code: "config_repair_failed",
+            message: `Provider ${provider} was removed, but saved model references could not be repaired.`,
+          },
+          getErrorMessage(error)
+        ),
+      };
+    }
+
+    this.notifyConfigChanged();
+    return { success: true, data: undefined };
   }
 
   private repairRemovedCustomProviderReferences(
