@@ -16,6 +16,7 @@ import type {
   ProvidersConfigMap,
 } from "@/common/orpc/types";
 import { isProviderDisabledInConfig } from "@/common/utils/providers/isProviderDisabled";
+import { resolveConfigBaseUrl } from "@/common/utils/providers/baseUrl";
 import {
   getCustomOpenAICompatibleProviderIds,
   isBuiltInProvider,
@@ -31,7 +32,6 @@ import { log } from "@/node/services/log";
 import {
   checkProviderConfigured,
   isProviderAutoRouteEligible,
-  resolveConfiguredBaseUrl,
   resolveProviderCredentials,
 } from "@/node/utils/providerRequirements";
 import { parseCodexOauthAuth } from "@/node/utils/codexOauthAuth";
@@ -54,19 +54,6 @@ function filterProviderModelsByPolicy(
   }
 
   return models.filter((entry) => allowedModels.includes(getProviderModelEntryId(entry)));
-}
-
-function resolveConfigBaseUrl(
-  config: Pick<BaseProviderConfig, "baseUrl" | "baseURL">
-): string | undefined {
-  const rawBaseUrl =
-    (typeof config.baseUrl === "string" ? config.baseUrl : undefined) ??
-    (typeof config.baseURL === "string" ? config.baseURL : undefined);
-  const trimmed = rawBaseUrl?.trim();
-  if (!trimmed) {
-    return undefined;
-  }
-  return trimmed;
 }
 
 function buildCustomProviderConfigInfo(
@@ -251,7 +238,7 @@ export class ProviderService {
         isEnabled = false;
       }
 
-      const explicitBaseUrl = resolveConfiguredBaseUrl(config);
+      const explicitBaseUrl = resolveConfigBaseUrl(config);
 
       const providerInfo: ProviderConfigInfo = {
         apiKeySet: !!config.apiKey,

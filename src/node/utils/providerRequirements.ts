@@ -13,6 +13,7 @@ import path from "node:path";
 
 import { PROVIDER_DEFINITIONS, type ProviderName } from "@/common/constants/providers";
 import { isOpReference } from "@/common/utils/opRef";
+import { resolveConfigBaseUrl } from "@/common/utils/providers/baseUrl";
 import { isProviderDisabledInConfig } from "@/common/utils/providers/isProviderDisabled";
 import { isCustomOpenAICompatibleProviderConfig } from "@/common/utils/providers/customProviders";
 import type {
@@ -199,27 +200,12 @@ function expandHomePath(filePath: string): string {
   return filePath.startsWith("~") ? path.join(os.homedir(), filePath.slice(1)) : filePath;
 }
 
-/** Resolve a non-empty base URL saved in provider config. */
-export function resolveConfiguredBaseUrl(config: { baseUrl?: unknown; baseURL?: unknown }): string | undefined {
-  if (hasNonEmptyString(config.baseUrl)) {
-    // The settings UI writes the canonical `baseUrl` key. Prefer it over
-    // SDK-style `baseURL` so saved edits cannot be shadowed by stale aliases.
-    return config.baseUrl.trim();
-  }
-
-  if (hasNonEmptyString(config.baseURL)) {
-    return config.baseURL.trim();
-  }
-
-  return undefined;
-}
-
 function resolveBaseUrl(
   provider: ProviderName,
   config: ProviderConfigRaw,
   env: Record<string, string | undefined>
 ): Pick<ResolvedCredentials, "baseUrlResolved" | "baseUrlSource"> {
-  const configBaseUrl = resolveConfiguredBaseUrl(config);
+  const configBaseUrl = resolveConfigBaseUrl(config);
   if (configBaseUrl) {
     return { baseUrlResolved: configBaseUrl, baseUrlSource: "config" };
   }
@@ -305,7 +291,6 @@ function resolveApiKeyCandidate(
   return { kind: "missing" };
 }
 
-
 // ============================================================================
 // Credential resolution
 // ============================================================================
@@ -344,7 +329,7 @@ export function resolveProviderCredentials(
   const def = PROVIDER_DEFINITIONS[provider];
   if (!def.requiresApiKey) {
     const hasConfiguredModels = (config.models?.length ?? 0) > 0;
-    const hasExplicitConfig = Boolean(resolveConfiguredBaseUrl(config) ?? hasConfiguredModels);
+    const hasExplicitConfig = Boolean(resolveConfigBaseUrl(config) ?? hasConfiguredModels);
     return { isConfigured: hasExplicitConfig };
   }
 
@@ -393,7 +378,7 @@ export async function resolveCustomProviderCredentials(
   providerConfig: BaseProviderConfig,
   opResolver?: ExternalSecretResolver
 ): Promise<ResolvedCustomProviderCredentials> {
-  const baseURL = resolveConfiguredBaseUrl(providerConfig);
+  const baseURL = resolveConfigBaseUrl(providerConfig);
   if (!baseURL) {
     return {
       ok: false,
@@ -611,7 +596,7 @@ export function hasAnyConfiguredProvider(providers: ProvidersConfig | null | und
       if (
         isCustomOpenAICompatibleProviderConfig(rawConfig) &&
         !isProviderDisabledInConfig(rawConfig) &&
-        resolveConfiguredBaseUrl(rawConfig) !== undefined
+        resolveConfigBaseUrl(rawConfig) !== undefined
       ) {
         return true;
       }

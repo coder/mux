@@ -19,6 +19,7 @@ import { ProviderIcon } from "../ProviderIcon/ProviderIcon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
+import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { useRouting } from "@/browser/hooks/useRouting";
 
 import { stopKeyboardPropagation } from "@/browser/utils/events";
@@ -78,6 +79,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
     const policyState = usePolicy();
     const policyEnforced = policyState.status.state === "enforced";
     const routing = useRouting();
+    const { config: providersConfig } = useProvidersConfig();
     const [isOpen, setIsOpen] = useState(false);
     const [inputValue, setInputValue] = useState("");
     const [error, setError] = useState<string | null>(null);
@@ -283,7 +285,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
     // of resolving route priority from the canonical (gateway-stripped) model.
     const routeInfo = hasValue && !explicitGateway ? routing.resolveRoute(canonicalValue) : null;
     const routedViaDisplayName = explicitGateway
-      ? formatProviderDisplayName(explicitGateway)
+      ? formatProviderDisplayName(explicitGateway, providersConfig?.[explicitGateway])
       : routeInfo && routeInfo.route !== "direct"
         ? routeInfo.displayName
         : null;
@@ -396,7 +398,10 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                         </span>
                         {showProviderLabel && (
                           <span className="text-muted shrink-0 text-[10px]">
-                            {formatProviderDisplayName(modelProvider)}
+                            {formatProviderDisplayName(
+                              modelProvider,
+                              providersConfig?.[modelProvider]
+                            )}
                           </span>
                         )}
                       </span>

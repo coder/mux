@@ -973,22 +973,14 @@ export class ProviderModelFactory {
       }
 
       if (this.policyService?.isEnforced()) {
-        if (!providerIsBuiltIn) {
+        if (!this.policyService.isProviderAllowed(providerName)) {
           return Err({
             type: "policy_denied",
             message: `Provider ${providerName} is not allowed by policy`,
           });
         }
 
-        const provider = providerName;
-        if (!this.policyService.isProviderAllowed(provider)) {
-          return Err({
-            type: "policy_denied",
-            message: `Provider ${providerName} is not allowed by policy`,
-          });
-        }
-
-        if (!this.policyService.isModelAllowed(provider, modelId)) {
+        if (!this.policyService.isModelAllowed(providerName, modelId)) {
           return Err({
             type: "policy_denied",
             message: `Model ${providerName}:${modelId} is not allowed by policy`,

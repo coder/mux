@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { writeFile } from "node:fs/promises";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -21,6 +22,7 @@ import {
 } from "./providerModelFactory";
 import { MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER } from "@/common/utils/ai/providerOptions";
 import { CodexOauthService } from "./codexOauthService";
+import { PolicyService } from "./policyService";
 import { ProviderService } from "./providerService";
 
 async function withTempConfig(
@@ -34,6 +36,40 @@ async function withTempConfig(
     const factory = new ProviderModelFactory(config, providerService);
     await run(config, factory);
   } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+async function withTempPolicyProviderFactory(
+  policy: unknown,
+  run: (
+    config: Config,
+    factory: ProviderModelFactory,
+    policyService: PolicyService
+  ) => Promise<void> | void
+): Promise<void> {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "mux-provider-model-factory-"));
+  const policyPath = path.join(tmpDir, "policy.json");
+  const prevPolicyFileEnv = process.env.MUX_POLICY_FILE;
+  let policyService: PolicyService | null = null;
+
+  try {
+    const config = new Config(tmpDir);
+    await writeFile(policyPath, JSON.stringify(policy), "utf-8");
+    process.env.MUX_POLICY_FILE = policyPath;
+
+    policyService = new PolicyService(config);
+    await policyService.initialize();
+    const providerService = new ProviderService(config, policyService);
+    const factory = new ProviderModelFactory(config, providerService, policyService);
+    await run(config, factory, policyService);
+  } finally {
+    policyService?.dispose();
+    if (prevPolicyFileEnv === undefined) {
+      delete process.env.MUX_POLICY_FILE;
+    } else {
+      process.env.MUX_POLICY_FILE = prevPolicyFileEnv;
+    }
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 }
@@ -186,6 +222,31 @@ describe("ProviderModelFactory.createModel", () => {
 
       expect((unlistedModel.data as { provider?: unknown }).provider).toBe("local-vllm.chat");
     });
+  });
+
+  it("allows policy-allowed custom OpenAI-compatible providers when policy is enforced", async () => {
+    await withTempPolicyProviderFactory(
+      {
+        policy_format_version: "0.1",
+        provider_access: [{ id: "local-vllm" }],
+      },
+      async (config, factory) => {
+        config.saveProvidersConfig({
+          "local-vllm": {
+            providerType: "openai-compatible",
+            baseUrl: "http://localhost:8000/v1",
+            models: ["qwen3-coder"],
+          },
+        });
+
+        const result = await factory.createModel("local-vllm:qwen3-coder");
+
+        expect(result.success).toBe(true);
+        if (!result.success) {
+          expect(result.error.type).not.toBe("policy_denied");
+        }
+      }
+    );
   });
 
   it("returns provider_disabled for disabled custom OpenAI-compatible providers", async () => {
