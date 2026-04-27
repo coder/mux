@@ -32,8 +32,9 @@ import { createEditKeyHandler } from "@/browser/utils/ui/keybinds";
 import { getBrowserBackendBaseUrl } from "@/browser/utils/backendBaseUrl";
 import { PROVIDER_DEFINITIONS, type ProviderName } from "@/common/constants/providers";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
+import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { getAllowedProvidersForUi } from "@/browser/utils/policyUi";
-import { ProviderWithIcon } from "@/browser/components/ProviderIcon/ProviderIcon";
+import { ProviderIcon, ProviderWithIcon } from "@/browser/components/ProviderIcon/ProviderIcon";
 import { getStoredAuthToken } from "@/browser/components/AuthTokenModal/AuthTokenModal";
 import { useAPI } from "@/browser/contexts/API";
 import { useSettings } from "@/browser/contexts/SettingsContext";
@@ -66,6 +67,18 @@ import {
 } from "@/browser/components/Tooltip/Tooltip";
 import { getErrorMessage } from "@/common/utils/errors";
 
+import { repairLocalModelPreferencesForRemovedProvider } from "@/browser/utils/modelPreferenceRepair";
+import {
+  formatProviderDisplayName,
+  isBuiltInProvider,
+  isCustomOpenAICompatibleProviderConfig,
+  validateCustomProviderId,
+} from "@/common/utils/providers/customProviders";
+import type {
+  AddCustomOpenAICompatibleProviderInput,
+  ProviderConfigInfo,
+} from "@/common/orpc/types";
+
 type MuxGatewayLoginStatus = "idle" | "starting" | "waiting" | "success" | "error";
 type CodexOauthFlowStatus = "idle" | "starting" | "waiting" | "error";
 type CopilotLoginStatus = "idle" | "starting" | "waiting" | "success" | "error";
@@ -96,11 +109,59 @@ interface FieldConfig {
   optional?: boolean;
 }
 
+function isCustomOpenAICompatibleProviderInfo(
+  providerInfo: ProviderConfigInfo | undefined
+): providerInfo is ProviderConfigInfo & {
+  isCustom: true;
+  providerType: "openai-compatible";
+} {
+  return (
+    providerInfo?.isCustom === true &&
+    providerInfo.providerType === "openai-compatible" &&
+    isCustomOpenAICompatibleProviderConfig(providerInfo)
+  );
+}
+
 /**
  * Get provider-specific field configuration.
  * Most providers use API Key + Base URL, but some (like Bedrock) have different needs.
  */
-function getProviderFields(provider: ProviderName): FieldConfig[] {
+function getProviderFields(provider: string, providerInfo?: ProviderConfigInfo): FieldConfig[] {
+  if (!isBuiltInProvider(provider)) {
+    if (!isCustomOpenAICompatibleProviderInfo(providerInfo)) {
+      return [];
+    }
+
+    return [
+      {
+        key: "displayName",
+        label: "Display name",
+        placeholder: "My OpenAI-compatible provider",
+        type: "text",
+      },
+      {
+        key: "apiKey",
+        label: "API key",
+        placeholder: "Enter API key",
+        type: "secret",
+        optional: true,
+      },
+      {
+        key: "apiKeyFile",
+        label: "API key file",
+        placeholder: "~/.config/coder/session_token",
+        type: "text",
+        optional: true,
+      },
+      {
+        key: "baseUrl",
+        label: "Base URL",
+        placeholder: "https://api.example.com/v1",
+        type: "text",
+      },
+    ];
+  }
+
   if (provider === "bedrock") {
     return [
       { key: "region", label: "Region", placeholder: "us-east-1", type: "text" },
@@ -304,15 +365,16 @@ export function ProvidersSection() {
   const policyState = usePolicy();
   const effectivePolicy =
     policyState.status.state === "enforced" ? (policyState.policy ?? null) : null;
-  const visibleProviders = useMemo(
-    () => getAllowedProvidersForUi(effectivePolicy),
-    [effectivePolicy]
-  );
 
   const { providersExpandedProvider, setProvidersExpandedProvider } = useSettings();
 
   const { api } = useAPI();
   const { config, refresh, updateOptimistically } = useProvidersConfig();
+  const { workspaceMetadata, selectedWorkspace, refreshWorkspaceMetadata } = useWorkspaceContext();
+  const visibleProviders = useMemo(
+    () => getAllowedProvidersForUi(effectivePolicy, config),
+    [effectivePolicy, config]
+  );
   const {
     data: muxGatewayAccountStatus,
     error: muxGatewayAccountError,
@@ -323,22 +385,36 @@ export function ProvidersSection() {
   const routing = useRouting();
 
   const providerGroups = useMemo(() => {
-    const groups: Record<"direct" | "gateway" | "local", ProviderName[]> = {
+    const groups: Record<"direct" | "gateway" | "local" | "custom", string[]> = {
       direct: [],
       gateway: [],
       local: [],
+      custom: [],
     };
+    const policyAllowedSet = new Set(visibleProviders);
 
     for (const provider of visibleProviders) {
+      if (!isBuiltInProvider(provider)) {
+        continue;
+      }
+
       groups[PROVIDER_DEFINITIONS[provider].kind].push(provider);
     }
 
+    for (const [provider, providerInfo] of Object.entries(config ?? {})) {
+      if (!policyAllowedSet.has(provider) || !isCustomOpenAICompatibleProviderInfo(providerInfo)) {
+        continue;
+      }
+
+      groups.custom.push(provider);
+    }
+
     return groups;
-  }, [visibleProviders]);
+  }, [config, visibleProviders]);
 
   const displayedRoutePriority = useMemo(() => {
     const priority = routing.routePriority.filter(
-      (route) => route === "direct" || providerGroups.gateway.includes(route as ProviderName)
+      (route) => route === "direct" || providerGroups.gateway.includes(route)
     );
 
     if (!priority.includes("direct")) {
@@ -989,6 +1065,20 @@ export function ProvidersSection() {
   const [opAvailable, setOpAvailable] = useState(false);
   const [opPickerProvider, setOpPickerProvider] = useState<string | null>(null);
 
+  const [customProviderFormOpen, setCustomProviderFormOpen] = useState(false);
+  const [customProviderId, setCustomProviderId] = useState("");
+  const [customProviderDisplayName, setCustomProviderDisplayName] = useState("");
+  const [customProviderBaseUrl, setCustomProviderBaseUrl] = useState("");
+  const [customProviderApiKey, setCustomProviderApiKey] = useState("");
+  const [customProviderApiKeyFile, setCustomProviderApiKeyFile] = useState("");
+  const [customProviderInitialModelId, setCustomProviderInitialModelId] = useState("");
+  const [customProviderSubmitError, setCustomProviderSubmitError] = useState<string | null>(null);
+  const [customProviderSubmitting, setCustomProviderSubmitting] = useState(false);
+  const [customProviderRemoveErrors, setCustomProviderRemoveErrors] = useState<
+    Record<string, string>
+  >({});
+  const [customProviderRemoving, setCustomProviderRemoving] = useState<string | null>(null);
+
   useEffect(() => {
     if (!api) {
       setOpAvailable(false);
@@ -1106,6 +1196,8 @@ export function ProvidersSection() {
         apiKeyOpLabel: undefined,
         apiKeySource: editValue !== "" ? "config" : undefined,
       });
+    } else if (field === "displayName") {
+      updateOptimistically(provider, { displayName: editValue || undefined });
     } else if (field === "baseUrl") {
       const nextBaseUrl = editValue || undefined;
       updateOptimistically(provider, {
@@ -1244,6 +1336,197 @@ export function ProvidersSection() {
     return !!getFieldValue(provider, field);
   };
 
+  const trimmedCustomProviderId = customProviderId.trim();
+  const customProviderIdValidation = validateCustomProviderId(trimmedCustomProviderId);
+  const trimmedCustomProviderDisplayName = customProviderDisplayName.trim();
+  const customProviderDisplayNameError =
+    trimmedCustomProviderDisplayName.length === 0 ? "Display name is required." : null;
+  const trimmedCustomProviderBaseUrl = customProviderBaseUrl.trim();
+  const customProviderBaseUrlError =
+    trimmedCustomProviderBaseUrl.length === 0
+      ? "Base URL is required."
+      : trimmedCustomProviderBaseUrl.startsWith("http://") ||
+          trimmedCustomProviderBaseUrl.startsWith("https://")
+        ? null
+        : "Base URL must start with http:// or https://.";
+
+  const clearCustomProviderForm = useCallback(() => {
+    setCustomProviderId("");
+    setCustomProviderDisplayName("");
+    setCustomProviderBaseUrl("");
+    setCustomProviderApiKey("");
+    setCustomProviderApiKeyFile("");
+    setCustomProviderInitialModelId("");
+    setCustomProviderSubmitError(null);
+  }, []);
+
+  const clearCustomProviderRemoveError = useCallback((provider: string) => {
+    setCustomProviderRemoveErrors((prev) => {
+      if (!Object.hasOwn(prev, provider)) {
+        return prev;
+      }
+
+      const next = { ...prev };
+      delete next[provider];
+      return next;
+    });
+  }, []);
+
+  const handleAddCustomProvider = useCallback(async () => {
+    if (!api) {
+      setCustomProviderSubmitError("Mux API not connected.");
+      return;
+    }
+
+    const provider = customProviderId.trim();
+    const displayName = customProviderDisplayName.trim();
+    const baseUrl = customProviderBaseUrl.trim();
+    const apiKey = customProviderApiKey.trim();
+    const apiKeyFile = customProviderApiKeyFile.trim();
+    const initialModelId = customProviderInitialModelId.trim();
+    const providerIdValidation = validateCustomProviderId(provider);
+    if (!providerIdValidation.ok) {
+      setCustomProviderSubmitError(providerIdValidation.reason);
+      return;
+    }
+    if (displayName.length === 0) {
+      setCustomProviderSubmitError("Display name is required.");
+      return;
+    }
+    if (baseUrl.length === 0) {
+      setCustomProviderSubmitError("Base URL is required.");
+      return;
+    }
+    if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
+      setCustomProviderSubmitError("Base URL must start with http:// or https://.");
+      return;
+    }
+
+    const models: AddCustomOpenAICompatibleProviderInput["models"] = initialModelId
+      ? [initialModelId]
+      : undefined;
+    const input: AddCustomOpenAICompatibleProviderInput = {
+      provider,
+      displayName,
+      baseUrl,
+      apiKey: apiKey || undefined,
+      apiKeyFile: apiKeyFile || undefined,
+      models,
+    };
+
+    setCustomProviderSubmitting(true);
+    setCustomProviderSubmitError(null);
+    try {
+      const result = await api.providers.addCustomOpenAICompatibleProvider(input);
+      if (!result.success) {
+        setCustomProviderSubmitError(result.error.message);
+        return;
+      }
+
+      clearCustomProviderForm();
+      setCustomProviderFormOpen(false);
+      await refresh();
+      setExpandedProvider(provider);
+      setProvidersExpandedProvider(provider);
+    } catch {
+      setCustomProviderSubmitError("Failed to add custom provider.");
+    } finally {
+      setCustomProviderSubmitting(false);
+    }
+  }, [
+    api,
+    customProviderApiKey,
+    customProviderApiKeyFile,
+    customProviderBaseUrl,
+    customProviderDisplayName,
+    customProviderId,
+    customProviderInitialModelId,
+    clearCustomProviderForm,
+    refresh,
+    setProvidersExpandedProvider,
+  ]);
+
+  const handleCustomProviderFormSubmit = useCallback(
+    (event: React.FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      void handleAddCustomProvider();
+    },
+    [handleAddCustomProvider]
+  );
+
+  const handleRemoveCustomProvider = useCallback(
+    async (provider: string) => {
+      if (!api) {
+        setCustomProviderRemoveErrors((prev) => ({
+          ...prev,
+          [provider]: "Mux API not connected.",
+        }));
+        return;
+      }
+
+      const confirmed = window.confirm(
+        `Remove custom provider "${provider}"? This deletes its saved settings.`
+      );
+      if (!confirmed) {
+        return;
+      }
+
+      const workspaceIds = new Set(workspaceMetadata.keys());
+      if (selectedWorkspace && workspaceMetadata.has(selectedWorkspace.workspaceId)) {
+        workspaceIds.add(selectedWorkspace.workspaceId);
+      }
+
+      clearCustomProviderRemoveError(provider);
+      setCustomProviderRemoving(provider);
+      try {
+        const result = await api.providers.removeCustomProvider({ provider });
+        if (!result.success) {
+          setCustomProviderRemoveErrors((prev) => ({
+            ...prev,
+            [provider]: result.error.message,
+          }));
+          return;
+        }
+
+        try {
+          try {
+            await refresh();
+          } catch {
+            // Browser cache repair still needs to run after backend removal succeeds.
+          }
+          try {
+            await refreshWorkspaceMetadata();
+          } catch {
+            // Browser cache repair still needs to run after backend removal succeeds.
+          }
+        } finally {
+          repairLocalModelPreferencesForRemovedProvider(provider, workspaceIds);
+        }
+
+        setExpandedProvider((prev) => (prev === provider ? null : prev));
+        setProvidersExpandedProvider(null);
+        setEditingField((prev) => (prev?.provider === provider ? null : prev));
+        setOpPickerProvider((prev) => (prev === provider ? null : prev));
+      } catch {
+        setCustomProviderRemoveErrors((prev) => ({
+          ...prev,
+          [provider]: "Failed to remove custom provider.",
+        }));
+      } finally {
+        setCustomProviderRemoving((prev) => (prev === provider ? null : prev));
+      }
+    },
+    [
+      api,
+      clearCustomProviderRemoveError,
+      refresh,
+      refreshWorkspaceMetadata,
+      selectedWorkspace,
+      setProvidersExpandedProvider,
+      workspaceMetadata,
+    ]
+  );
+
   return (
     <div className="space-y-2">
       <p className="text-muted mb-4 text-xs">
@@ -1263,9 +1546,10 @@ export function ProvidersSection() {
           { key: "direct", label: "Direct Providers", providers: providerGroups.direct },
           { key: "gateway", label: "Gateways", providers: providerGroups.gateway },
           { key: "local", label: "Local", providers: providerGroups.local },
+          { key: "custom", label: "Custom providers", providers: providerGroups.custom },
         ] as const
       ).map((section) => {
-        if (section.providers.length === 0) {
+        if (section.providers.length === 0 && section.key !== "custom") {
           return null;
         }
 
@@ -1281,14 +1565,22 @@ export function ProvidersSection() {
               />
             )}
             {section.providers.map((provider) => {
+              const providerInfo = config?.[provider];
               const isExpanded = expandedProvider === provider;
               const enabled = isEnabled(provider);
               const configured = isConfigured(provider);
-              const fields = getProviderFields(provider);
-              const providerDefinition = PROVIDER_DEFINITIONS[provider];
-              const apiKeySource = config?.[provider]?.apiKeySource;
+              const fields = getProviderFields(provider, providerInfo);
+              const providerDefinition = isBuiltInProvider(provider)
+                ? PROVIDER_DEFINITIONS[provider]
+                : null;
+              const providerDisplayName = formatProviderDisplayName(provider, providerInfo);
+              const providerKeyUrl = isBuiltInProvider(provider)
+                ? PROVIDER_KEY_URLS[provider]
+                : undefined;
+              const apiKeySource = providerInfo?.apiKeySource;
               const gatewayRouteTargets =
-                providerDefinition.kind === "gateway" ? (providerDefinition.routes ?? []) : [];
+                providerDefinition?.kind === "gateway" ? (providerDefinition.routes ?? []) : [];
+              const isCustomOpenAICompatible = isCustomOpenAICompatibleProviderInfo(providerInfo);
               const statusDotColor = !enabled
                 ? "bg-warning"
                 : configured
@@ -1317,11 +1609,10 @@ export function ProvidersSection() {
                       ) : (
                         <ChevronRight className="text-muted h-4 w-4" />
                       )}
-                      <ProviderWithIcon
-                        provider={provider}
-                        displayName
-                        className="text-foreground text-sm font-medium"
-                      />
+                      <span className="text-foreground inline-flex items-center gap-1 text-sm font-medium whitespace-nowrap">
+                        <ProviderIcon provider={provider} />
+                        <span>{providerDisplayName}</span>
+                      </span>
                     </div>
                     <TooltipProvider>
                       <Tooltip>
@@ -1361,10 +1652,10 @@ export function ProvidersSection() {
                       )}
 
                       {/* Quick link to get API key */}
-                      {PROVIDER_KEY_URLS[provider] && (
+                      {providerKeyUrl && (
                         <div className="space-y-1">
                           <a
-                            href={PROVIDER_KEY_URLS[provider]}
+                            href={providerKeyUrl}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="text-muted hover:text-accent inline-flex items-center gap-1 text-xs transition-colors"
@@ -2238,11 +2529,162 @@ export function ProvidersSection() {
                           </div>
                         </div>
                       )}
+
+                      {isCustomOpenAICompatible && (
+                        <div className="border-border-light space-y-2 border-t pt-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <label className="text-foreground block text-xs font-medium">
+                                Remove custom provider
+                              </label>
+                              <span className="text-muted text-xs">
+                                Delete this provider from saved settings.
+                              </span>
+                            </div>
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => {
+                                void handleRemoveCustomProvider(provider);
+                              }}
+                              disabled={!api || customProviderRemoving === provider}
+                            >
+                              {customProviderRemoving === provider ? "Removing..." : "Remove"}
+                            </Button>
+                          </div>
+                          {customProviderRemoveErrors[provider] && (
+                            <p className="text-destructive text-xs">
+                              {customProviderRemoveErrors[provider]}
+                            </p>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
               );
             })}
+            {section.key === "custom" && (
+              <div className="border-border-medium bg-background-secondary/50 space-y-3 rounded-md border px-3 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-foreground text-xs font-medium">
+                      OpenAI-compatible providers
+                    </div>
+                    <div className="text-muted text-xs">
+                      Add providers that expose an OpenAI-compatible API.
+                    </div>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => {
+                      setCustomProviderFormOpen((prev) => {
+                        const next = !prev;
+                        if (!next) {
+                          clearCustomProviderForm();
+                        } else {
+                          setCustomProviderSubmitError(null);
+                        }
+                        return next;
+                      });
+                    }}
+                  >
+                    {customProviderFormOpen ? "Cancel" : "Add provider"}
+                  </Button>
+                </div>
+
+                {customProviderFormOpen && (
+                  <form className="space-y-3" onSubmit={handleCustomProviderFormSubmit}>
+                    <label className="block space-y-1">
+                      <span className="text-muted text-xs">Provider ID</span>
+                      <input
+                        value={customProviderId}
+                        onChange={(event) => setCustomProviderId(event.target.value)}
+                        placeholder="acme-openai"
+                        className="bg-modal-bg border-border-medium focus:border-accent w-full rounded border px-2 py-1.5 font-mono text-xs focus:outline-none"
+                      />
+                      {!customProviderIdValidation.ok && (
+                        <span className="text-destructive block text-xs">
+                          {customProviderIdValidation.reason}
+                        </span>
+                      )}
+                    </label>
+
+                    <label className="block space-y-1">
+                      <span className="text-muted text-xs">Display name</span>
+                      <input
+                        value={customProviderDisplayName}
+                        onChange={(event) => setCustomProviderDisplayName(event.target.value)}
+                        placeholder="Acme OpenAI"
+                        className="bg-modal-bg border-border-medium focus:border-accent w-full rounded border px-2 py-1.5 text-xs focus:outline-none"
+                      />
+                      {customProviderDisplayNameError && (
+                        <span className="text-destructive block text-xs">
+                          {customProviderDisplayNameError}
+                        </span>
+                      )}
+                    </label>
+
+                    <label className="block space-y-1">
+                      <span className="text-muted text-xs">Base URL</span>
+                      <input
+                        value={customProviderBaseUrl}
+                        onChange={(event) => setCustomProviderBaseUrl(event.target.value)}
+                        placeholder="https://api.acme.test/v1"
+                        className="bg-modal-bg border-border-medium focus:border-accent w-full rounded border px-2 py-1.5 font-mono text-xs focus:outline-none"
+                      />
+                      {customProviderBaseUrlError && (
+                        <span className="text-destructive block text-xs">
+                          {customProviderBaseUrlError}
+                        </span>
+                      )}
+                    </label>
+
+                    <label className="block space-y-1">
+                      <span className="text-muted text-xs">API key (optional)</span>
+                      <input
+                        type="password"
+                        value={customProviderApiKey}
+                        onChange={(event) => setCustomProviderApiKey(event.target.value)}
+                        placeholder="Enter API key"
+                        className="bg-modal-bg border-border-medium focus:border-accent w-full rounded border px-2 py-1.5 font-mono text-xs focus:outline-none"
+                      />
+                    </label>
+
+                    <label className="block space-y-1">
+                      <span className="text-muted text-xs">API key file (optional)</span>
+                      <input
+                        value={customProviderApiKeyFile}
+                        onChange={(event) => setCustomProviderApiKeyFile(event.target.value)}
+                        placeholder="~/.config/provider/token"
+                        className="bg-modal-bg border-border-medium focus:border-accent w-full rounded border px-2 py-1.5 font-mono text-xs focus:outline-none"
+                      />
+                    </label>
+
+                    <label className="block space-y-1">
+                      <span className="text-muted text-xs">Initial model ID (optional)</span>
+                      <input
+                        value={customProviderInitialModelId}
+                        onChange={(event) => setCustomProviderInitialModelId(event.target.value)}
+                        placeholder="gpt-4o-mini"
+                        className="bg-modal-bg border-border-medium focus:border-accent w-full rounded border px-2 py-1.5 font-mono text-xs focus:outline-none"
+                      />
+                    </label>
+
+                    {customProviderSubmitError && (
+                      <p className="text-destructive text-xs">{customProviderSubmitError}</p>
+                    )}
+
+                    <div className="flex justify-end">
+                      <Button type="submit" size="sm" disabled={!api || customProviderSubmitting}>
+                        {customProviderSubmitting ? "Adding..." : "Add custom provider"}
+                      </Button>
+                    </div>
+                  </form>
+                )}
+              </div>
+            )}
           </div>
         );
       })}
