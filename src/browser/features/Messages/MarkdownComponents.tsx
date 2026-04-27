@@ -130,15 +130,24 @@ interface CodeBlockProps {
   highlightLanguage?: string;
 }
 
+interface HighlightedCodeBlockLines {
+  code: string;
+  shikiLanguage: string;
+  theme: "light" | "dark";
+  lines: string[];
+}
+
 /**
  * CodeBlock component with async Shiki highlighting
  * Displays code with line numbers in a CSS grid
  */
 const CodeBlock: React.FC<CodeBlockProps> = ({ code, language, highlightLanguage }) => {
-  const [highlightedLines, setHighlightedLines] = useState<string[] | null>(null);
+  const [highlighted, setHighlighted] = useState<HighlightedCodeBlockLines | null>(null);
 
   const shikiLanguage = highlightLanguage ?? language;
   const { theme: themeMode } = useTheme();
+  const isLight = themeMode === "light" || themeMode.endsWith("-light");
+  const theme = isLight ? "light" : "dark";
 
   // Split code into lines, removing trailing empty line
   const plainLines = code
@@ -147,10 +156,6 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ code, language, highlightLanguage
 
   useEffect(() => {
     let cancelled = false;
-    const isLight = themeMode === "light" || themeMode.endsWith("-light");
-    const theme = isLight ? "light" : "dark";
-
-    setHighlightedLines(null);
 
     async function highlight() {
       try {
@@ -162,11 +167,15 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ code, language, highlightLanguage
           const filteredLines = lines.filter(
             (line, idx, arr) => idx < arr.length - 1 || line.trim() !== ""
           );
-          setHighlightedLines(filteredLines.length > 0 ? filteredLines : null);
+          if (filteredLines.length > 0) {
+            setHighlighted({ code, shikiLanguage, theme, lines: filteredLines });
+          } else {
+            setHighlighted(null);
+          }
         }
       } catch (error) {
         console.warn(`Failed to highlight code block (${shikiLanguage}):`, error);
-        if (!cancelled) setHighlightedLines(null);
+        if (!cancelled) setHighlighted(null);
       }
     }
 
@@ -174,7 +183,7 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ code, language, highlightLanguage
     return () => {
       cancelled = true;
     };
-  }, [code, shikiLanguage, themeMode]);
+  }, [code, shikiLanguage, theme]);
 
   const messageListContext = useOptionalMessageListContext();
   const openTerminal = messageListContext?.openTerminal;
@@ -182,6 +191,15 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ code, language, highlightLanguage
     ? normalizeSuggestedShellCommand(code)
     : "";
   const showRunButton = Boolean(openTerminal) && runnableCommand.length > 0;
+  // Ignore highlighted output from a previous stream chunk until the async highlighter
+  // catches up to the current code/theme. Otherwise streaming code fences briefly render
+  // stale highlighted lines with the old height, then flash to the current content.
+  const highlightedLines =
+    highlighted?.code === code &&
+    highlighted.shikiLanguage === shikiLanguage &&
+    highlighted.theme === theme
+      ? highlighted.lines
+      : null;
   const lines = highlightedLines ?? plainLines;
   const isSingleLine = lines.length === 1;
 

@@ -28,8 +28,6 @@ export function useAutoScroll() {
   const autoScrollRef = useRef<boolean>(true);
   // Track the ResizeObserver so we can disconnect it when the element unmounts
   const observerRef = useRef<ResizeObserver | null>(null);
-  // Track pending RAF to coalesce rapid resize events
-  const rafIdRef = useRef<number | null>(null);
   // Debounce timer for "scroll settled" detection — fires after scrolling stops
   // to catch cases where iOS momentum/inertial scrolling reaches the bottom but
   // the user-interaction window (100ms after last touchmove) has already expired.
@@ -43,14 +41,11 @@ export function useAutoScroll() {
   autoScrollRef.current = autoScroll;
 
   // Callback ref for the inner content wrapper - sets up ResizeObserver when element mounts.
-  // ResizeObserver fires when the content size changes (Shiki highlighting, Mermaid, images, etc.),
-  // allowing us to scroll to bottom even when async content renders after the initial mount.
+  // ResizeObserver fires after layout and before paint when the transcript's content size changes
+  // (streamed markdown wrapping to a new line, Shiki highlighting, Mermaid SVG insertion, images,
+  // live tool output, etc.). Pin synchronously in that callback: deferring the write to RAF leaves
+  // one paint at the old scrollTop, which is exactly the vertical tear users notice at the tail.
   const innerRef = useCallback((element: HTMLDivElement | null) => {
-    // Cleanup previous observer and pending RAF
-    if (rafIdRef.current !== null) {
-      cancelAnimationFrame(rafIdRef.current);
-      rafIdRef.current = null;
-    }
     if (observerRef.current) {
       observerRef.current.disconnect();
       observerRef.current = null;
@@ -59,18 +54,10 @@ export function useAutoScroll() {
     if (!element) return;
 
     const observer = new ResizeObserver(() => {
-      // Skip if auto-scroll is disabled (user scrolled up)
-      if (!autoScrollRef.current || !contentRef.current) return;
+      const scrollContainer = contentRef.current;
+      if (!autoScrollRef.current || !scrollContainer) return;
 
-      // Coalesce all resize events in a frame into one scroll operation.
-      // Without this, rapid resize events (Shiki highlighting, etc.) cause
-      // multiple scrolls per frame with slightly different scrollHeight values.
-      rafIdRef.current ??= requestAnimationFrame(() => {
-        rafIdRef.current = null;
-        if (autoScrollRef.current && contentRef.current) {
-          contentRef.current.scrollTop = contentRef.current.scrollHeight;
-        }
-      });
+      scrollContainer.scrollTop = scrollContainer.scrollHeight;
     });
 
     observer.observe(element);
@@ -186,7 +173,6 @@ export function useAutoScroll() {
     contentRef,
     innerRef,
     autoScroll,
-    setAutoScroll,
     disableAutoScroll,
     jumpToBottom,
     handleScroll,

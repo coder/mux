@@ -2344,6 +2344,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           muxMetadata,
         };
 
+        props.onMessageSendStarted?.(overrides?.queueDispatchMode ?? "tool-end");
+
         const result = await api.workspace.sendMessage({
           workspaceId: props.workspaceId,
           message: finalMessageText,

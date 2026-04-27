@@ -384,7 +384,6 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     contentRef,
     innerRef,
     autoScroll,
-    setAutoScroll,
     disableAutoScroll,
     jumpToBottom,
     handleScroll,
@@ -568,6 +567,14 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     setEditingMessage(undefined);
   }, [setEditingMessage]);
 
+  const handleMessageSendStarted = useCallback(() => {
+    // Re-arm and pin before the send request crosses the IPC boundary. Waiting for
+    // send success can be too late because the backend may not resolve until the
+    // stream has already produced rows, leaving the first deltas offscreen when the
+    // user had previously scrolled up.
+    jumpToBottom();
+  }, [jumpToBottom]);
+
   const handleMessageSent = useCallback(
     (dispatchMode: QueueDispatchMode = "tool-end") => {
       // Only background foreground bashes for "tool-end" sends (Enter).
@@ -577,21 +584,22 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
         autoBackgroundOnSend();
       }
 
-      // Enable auto-scroll when user sends a message
-      setAutoScroll(true);
+      // Slash-command send paths still report after backend success; keep this
+      // harmless duplicate pin so those paths also re-arm auto-scroll.
+      jumpToBottom();
     },
-    [setAutoScroll, autoBackgroundOnSend]
+    [autoBackgroundOnSend, jumpToBottom]
   );
 
   const handleClearHistory = useCallback(
     async (percentage = 1.0) => {
-      // Enable auto-scroll after clearing
-      setAutoScroll(true);
+      // Re-arm the tail before clearing so the empty/starting state owns the bottom.
+      jumpToBottom();
 
       // Truncate history in backend
       await api?.workspace.truncateHistory({ workspaceId, percentage });
     },
-    [workspaceId, setAutoScroll, api]
+    [workspaceId, jumpToBottom, api]
   );
 
   const openInEditor = useOpenInEditor();
@@ -630,7 +638,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
 
   // Intentionally no message/todo-driven auto-scroll effect here. Bottom pinning is
   // owned by the ResizeObserver on `innerRef` inside `useAutoScroll` (pins on any
-  // content-size change, RAF-coalesced), plus explicit layout-signature pins on the
+  // content-size change before paint), plus explicit layout-signature pins on the
   // tail/decoration lanes and the viewport resize observer below. Calling
   // `performAutoScroll` as a separate double-RAF on every delta used to race the RO
   // pin, occasionally painting one frame at the wrong scrollTop (visible as a brief
@@ -638,17 +646,12 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
 
   const hasLoadedTranscriptRows = !workspaceState.loading && workspaceState.messages.length > 0;
 
-  // Reset transcript scroll ownership when switching workspaces. If the target workspace already
-  // has cached rows, pin to the bottom before paint; otherwise just re-arm auto-scroll so the
-  // next hydrated/streaming updates own the tail instead of showing the prior workspace's state.
+  // Reset transcript scroll ownership when switching workspaces. `jumpToBottom` both re-arms
+  // the ref-backed auto-scroll flag and pins any cached rows before paint; if rows are still
+  // hydrating, the next content resize owns the tail instead of showing the prior workspace's state.
   useLayoutEffect(() => {
-    if (hasLoadedTranscriptRows) {
-      jumpToBottom();
-      return;
-    }
-
-    setAutoScroll(true);
-  }, [hasLoadedTranscriptRows, jumpToBottom, setAutoScroll, workspaceId]);
+    jumpToBottom();
+  }, [hasLoadedTranscriptRows, jumpToBottom, workspaceId]);
 
   // Compute showRetryBarrier once for both keybinds and UI.
   // Track if last message was interrupted or errored (for RetryBarrier).
@@ -1079,6 +1082,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
               onContextSwitchCompact={handleContextSwitchCompact}
               onContextSwitchDismiss={handleContextSwitchDismiss}
               onModelChange={handleModelChange}
+              onMessageSendStarted={handleMessageSendStarted}
               onMessageSent={handleMessageSent}
               onTruncateHistory={handleClearHistory}
               editingMessage={editingMessage}
@@ -1133,6 +1137,7 @@ interface ChatInputPaneProps {
   onContextSwitchCompact: () => void;
   onContextSwitchDismiss: () => void;
   onModelChange?: (model: string) => void;
+  onMessageSendStarted: (dispatchMode: QueueDispatchMode) => void;
   onMessageSent: (dispatchMode: QueueDispatchMode) => void;
   onTruncateHistory: (percentage?: number) => Promise<void>;
   editingMessage: EditingMessageState | undefined;
@@ -1242,6 +1247,7 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
         variant="workspace"
         workspaceId={props.workspaceId}
         runtimeType={getRuntimeTypeForTelemetry(props.runtimeConfig)}
+        onMessageSendStarted={props.onMessageSendStarted}
         onMessageSent={props.onMessageSent}
         onTruncateHistory={props.onTruncateHistory}
         onModelChange={props.onModelChange}

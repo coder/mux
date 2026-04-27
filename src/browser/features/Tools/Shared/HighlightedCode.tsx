@@ -17,6 +17,13 @@ interface HighlightedCodeProps {
  * Renders code with syntax highlighting using Shiki (via web worker)
  * Falls back to plain text on first render or if highlighting fails
  */
+interface HighlightedLines {
+  code: string;
+  language: string;
+  theme: "light" | "dark";
+  lines: string[];
+}
+
 export const HighlightedCode: React.FC<HighlightedCodeProps> = ({
   code,
   language,
@@ -24,16 +31,14 @@ export const HighlightedCode: React.FC<HighlightedCodeProps> = ({
   showLineNumbers = false,
   startLineNumber = 1,
 }) => {
-  const [highlightedLines, setHighlightedLines] = useState<string[] | null>(null);
+  const [highlighted, setHighlighted] = useState<HighlightedLines | null>(null);
   const { theme: themeMode } = useTheme();
+  const theme = themeMode === "light" || themeMode.endsWith("-light") ? "light" : "dark";
 
   const plainLines = code.split("\n").filter((line, i, arr) => i < arr.length - 1 || line !== "");
 
   useEffect(() => {
     let cancelled = false;
-    const theme = themeMode === "light" || themeMode.endsWith("-light") ? "light" : "dark";
-
-    setHighlightedLines(null);
 
     async function highlight() {
       try {
@@ -41,11 +46,15 @@ export const HighlightedCode: React.FC<HighlightedCodeProps> = ({
         if (!cancelled) {
           const lines = extractShikiLines(html);
           const filtered = lines.filter((l, i, a) => i < a.length - 1 || l.trim() !== "");
-          setHighlightedLines(filtered.length > 0 ? filtered : null);
+          if (filtered.length > 0) {
+            setHighlighted({ code, language, theme, lines: filtered });
+          } else {
+            setHighlighted(null);
+          }
         }
       } catch (error) {
         console.warn(`Failed to highlight ${language}:`, error);
-        if (!cancelled) setHighlightedLines(null);
+        if (!cancelled) setHighlighted(null);
       }
     }
 
@@ -53,8 +62,14 @@ export const HighlightedCode: React.FC<HighlightedCodeProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [code, language, themeMode]);
+  }, [code, language, theme]);
 
+  // Do not reuse Shiki lines from a previous code/theme tuple: tool result panes can
+  // update in-place, and stale highlighted content briefly changes both text and height.
+  const highlightedLines =
+    highlighted?.code === code && highlighted.language === language && highlighted.theme === theme
+      ? highlighted.lines
+      : null;
   const lines = highlightedLines ?? plainLines;
 
   if (showLineNumbers) {

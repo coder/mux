@@ -63,12 +63,14 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, cla
   const showEllipsis = isCollapsible && !isExpanded;
   const showExpandedContent = isExpanded && !isSingleLineTrace;
 
-  // Capture expanded height before collapsing to enable smooth transitions
+  // Capture expanded height before settled collapse/expand transitions. During live
+  // streaming the container is height:auto and doesn't use this value, so skip the
+  // synchronous scrollHeight read on every token delta.
   useLayoutEffect(() => {
-    if (contentRef.current && isExpanded && !isSingleLineTrace) {
+    if (!isStreaming && contentRef.current && isExpanded && !isSingleLineTrace) {
       setExpandedHeight(contentRef.current.scrollHeight);
     }
-  }, [isExpanded, isSingleLineTrace, content]);
+  }, [isStreaming, isExpanded, isSingleLineTrace, content]);
 
   const wasStreamingRef = useRef(isStreaming);
   const isLastPartOfMessage =

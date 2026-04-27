@@ -138,7 +138,7 @@ describe("New chat streaming flash regression", () => {
       },
     });
 
-    let sawCatchingUpPlaceholder = false;
+    let sawHydrationPlaceholder = false;
     let sawNoMessagesYetPlaceholder = false;
     let startedCreationSend = false;
     const observer = new MutationObserver(() => {
@@ -146,8 +146,8 @@ describe("New chat streaming flash regression", () => {
         return;
       }
       const text = app.view.container.textContent ?? "";
-      if (text.includes("Catching up with the agent...")) {
-        sawCatchingUpPlaceholder = true;
+      if (app.view.container.querySelector('[data-testid="transcript-hydration-placeholder"]')) {
+        sawHydrationPlaceholder = true;
       }
       if (text.includes("No Messages Yet")) {
         sawNoMessagesYetPlaceholder = true;
@@ -189,13 +189,15 @@ describe("New chat streaming flash regression", () => {
         () => {
           const text = app.view.container.textContent ?? "";
           expect(text.toLowerCase()).toContain("starting");
-          expect(text).not.toContain("Catching up with the agent...");
+          expect(
+            app.view.container.querySelector('[data-testid="transcript-hydration-placeholder"]')
+          ).toBeNull();
           expect(text).not.toContain("No Messages Yet");
         },
         { timeout: 5_000 }
       );
 
-      expect(sawCatchingUpPlaceholder).toBe(false);
+      expect(sawHydrationPlaceholder).toBe(false);
       expect(sawNoMessagesYetPlaceholder).toBe(false);
 
       releaseSend();

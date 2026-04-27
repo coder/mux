@@ -220,7 +220,6 @@ const DiagramModal: React.FC<{ children: ReactNode; onClose: () => void }> = ({
 // Mermaid diagram component
 export const Mermaid: React.FC<{ chart: string }> = ({ chart }) => {
   const { isStreaming } = useContext(StreamingContext);
-  const containerRef = useRef<HTMLDivElement>(null);
   const modalContainerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -280,11 +279,6 @@ export const Mermaid: React.FC<{ chart: string }> = ({ chart }) => {
         lastValidSvgRef.current = sanitizedSvg;
         setSvg(sanitizedSvg);
         setError(null);
-        if (containerRef.current) {
-          // SECURITY AUDIT: sanitizedSvg is produced by sanitizeMermaidSvg(),
-          // which strips active SVG/HTML content before insertion.
-          containerRef.current.innerHTML = sanitizedSvg;
-        }
       } catch (err) {
         if (cancelled) return;
 
@@ -311,39 +305,25 @@ export const Mermaid: React.FC<{ chart: string }> = ({ chart }) => {
     }
   }, [isModalOpen, svg]);
 
-  // During streaming errors, show last valid SVG if available, otherwise placeholder
-  if (error) {
-    if (isStreaming && lastValidSvgRef.current) {
-      // Keep showing last valid render while streaming
-      // Fall through to render the container with lastValidSvgRef content
-    } else if (isStreaming) {
-      return (
-        <div
-          style={{
-            color: "var(--color-text-secondary)",
-            background: "var(--color-code-bg)",
-            padding: "12px",
-            fontStyle: "italic",
-          }}
-        >
-          Rendering diagram...
-        </div>
-      );
-    } else {
-      // Not streaming - show actual error
-      return (
-        <pre
-          style={{
-            color: "var(--color-syntax-error)",
-            background: "hsl(from var(--color-syntax-error) h s l / 0.1)",
-            padding: "12px",
-          }}
-        >
-          Mermaid Error: {error}
-        </pre>
-      );
-    }
+  if (error && !isStreaming) {
+    return (
+      <pre
+        style={{
+          color: "var(--color-syntax-error)",
+          background: "hsl(from var(--color-syntax-error) h s l / 0.1)",
+          padding: "12px",
+        }}
+      >
+        Mermaid Error: {error}
+      </pre>
+    );
   }
+
+  // Keep one stable diagram frame while streaming or while the async Mermaid render is pending.
+  // When no SVG has rendered yet, reserve the normal minimum diagram height so the transcript
+  // doesn't expand from a short placeholder to a full diagram after debounce/parse/render.
+  const displaySvg = svg || (isStreaming ? lastValidSvgRef.current : "");
+  const showPendingPlaceholder = !displaySvg;
 
   return (
     <>
@@ -390,14 +370,29 @@ export const Mermaid: React.FC<{ chart: string }> = ({ chart }) => {
           </TooltipIfPresent>
         </div>
         <div
-          ref={containerRef}
           className="mermaid-container"
           style={{
             maxWidth: "70%",
             margin: "0 auto",
             ["--diagram-max-height" as string]: `${diagramMaxHeight}px`,
+            ...(showPendingPlaceholder
+              ? {
+                  minHeight: `${MIN_HEIGHT}px`,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: "var(--color-text-secondary)",
+                  fontStyle: "italic",
+                }
+              : {}),
           }}
-        />
+          // SECURITY AUDIT: displaySvg is produced by sanitizeMermaidSvg(), which strips
+          // active SVG/HTML content before insertion. React children are used for the
+          // pending placeholder so untrusted chart text is never rendered as HTML.
+          {...(!showPendingPlaceholder ? { dangerouslySetInnerHTML: { __html: displaySvg } } : {})}
+        >
+          {showPendingPlaceholder ? "Rendering diagram..." : null}
+        </div>
       </div>
       {isModalOpen && (
         <DiagramModal onClose={() => setIsModalOpen(false)}>

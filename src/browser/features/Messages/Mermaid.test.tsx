@@ -1,89 +1,111 @@
-/**
- * Unit tests for Mermaid error handling
- *
- * These tests verify that:
- * 1. Syntax errors are caught and handled gracefully
- * 2. Error messages are cleaned up from the DOM
- * 3. Previous diagrams are cleared when errors occur
- */
+import { cleanup, render, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { GlobalWindow } from "happy-dom";
+import { StreamingContext } from "./StreamingContext";
+import { Mermaid } from "./Mermaid";
 
-describe("Mermaid error handling", () => {
-  it("should validate mermaid syntax before rendering", () => {
-    // The component now calls mermaid.parse() before mermaid.render()
-    // This validates syntax without creating DOM elements
+const DEFAULT_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" /></svg>';
 
-    // Valid syntax examples
-    const validDiagrams = [
-      "graph TD\nA-->B",
-      "sequenceDiagram\nAlice->>Bob: Hello",
-      "classDiagram\nClass01 <|-- Class02",
-    ];
+const mermaidInitialize = mock(() => undefined);
+const mermaidParse = mock((_chart: string) => Promise.resolve());
+const mermaidRender = mock((_id: string, _chart: string) => Promise.resolve({ svg: DEFAULT_SVG }));
 
-    // Invalid syntax examples that should be caught by parse()
-    const invalidDiagrams = [
-      "graph TD\nINVALID SYNTAX HERE",
-      "not a valid diagram",
-      "graph TD\nA->>", // Incomplete
-    ];
+void mock.module("mermaid", () => ({
+  default: {
+    initialize: mermaidInitialize,
+    parse: (chart: string) => mermaidParse(chart),
+    render: (id: string, chart: string) => mermaidRender(id, chart),
+  },
+}));
 
-    expect(validDiagrams.length).toBeGreaterThan(0);
-    expect(invalidDiagrams.length).toBeGreaterThan(0);
+function renderMermaid(props: { chart?: string; isStreaming?: boolean } = {}) {
+  return render(
+    <StreamingContext.Provider value={{ isStreaming: props.isStreaming ?? false }}>
+      <Mermaid chart={props.chart ?? "graph TD\nA-->B"} />
+    </StreamingContext.Provider>
+  );
+}
+
+describe("Mermaid layout stability", () => {
+  let originalWindow: typeof globalThis.window;
+  let originalDocument: typeof globalThis.document;
+  let originalDOMParser: typeof globalThis.DOMParser;
+
+  beforeEach(() => {
+    originalWindow = globalThis.window;
+    originalDocument = globalThis.document;
+    originalDOMParser = globalThis.DOMParser;
+
+    const domWindow = new GlobalWindow() as unknown as Window & typeof globalThis;
+    globalThis.window = domWindow;
+    globalThis.document = domWindow.document;
+    globalThis.DOMParser = domWindow.DOMParser;
+
+    mermaidParse.mockImplementation(() => Promise.resolve());
+    mermaidRender.mockImplementation(() => Promise.resolve({ svg: DEFAULT_SVG }));
   });
 
-  it("should clean up error elements with specific ID patterns", () => {
-    // The component looks for elements with IDs matching [id^="d"][id*="mermaid"]
-    // and removes those containing "Syntax error"
+  afterEach(() => {
+    cleanup();
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+    globalThis.DOMParser = originalDOMParser;
+    mermaidParse.mockClear();
+    mermaidRender.mockClear();
+  });
 
-    const errorPatterns = ["dmermaid-123", "d-mermaid-456", "d1-mermaid-789"];
+  test("reserves diagram height while a streaming diagram is still rendering", () => {
+    mermaidParse.mockImplementation(
+      () =>
+        new Promise<never>((resolve) => {
+          void resolve;
+        })
+    );
 
-    const shouldMatch = errorPatterns.every((id) => {
-      // Verify our CSS selector would match these
-      return id.startsWith("d") && id.includes("mermaid");
+    const view = renderMermaid({ isStreaming: true });
+
+    const container = view.container.querySelector<HTMLElement>(".mermaid-container");
+    expect(container).not.toBeNull();
+    expect(container?.style.minHeight).toBe("300px");
+    expect(container?.textContent).toBe("Rendering diagram...");
+  });
+
+  test("keeps the stable diagram frame for streaming parse errors", async () => {
+    mermaidParse.mockImplementation(() => Promise.reject(new Error("diagram is incomplete")));
+
+    const view = renderMermaid({ isStreaming: true });
+
+    await waitFor(() => expect(mermaidParse).toHaveBeenCalled());
+    const container = view.container.querySelector<HTMLElement>(".mermaid-container");
+    expect(container).not.toBeNull();
+    expect(container?.style.minHeight).toBe("300px");
+    expect(view.container.textContent).toContain("Rendering diagram...");
+    expect(view.container.textContent).not.toContain("Mermaid Error");
+  });
+
+  test("shows parse errors after streaming settles", async () => {
+    mermaidParse.mockImplementation(() => Promise.reject(new Error("bad diagram")));
+
+    const view = renderMermaid({ isStreaming: false });
+
+    await waitFor(() => expect(view.container.textContent).toContain("Mermaid Error: bad diagram"));
+    expect(view.container.querySelector(".mermaid-container")).toBeNull();
+  });
+
+  test("renders sanitized SVG inside the stable container", async () => {
+    mermaidRender.mockImplementation(() =>
+      Promise.resolve({
+        svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><script>alert(1)</script><rect width="10" height="10" /></svg>',
+      })
+    );
+
+    const view = renderMermaid();
+
+    await waitFor(() => {
+      const svg = view.container.querySelector(".mermaid-container svg");
+      expect(svg).not.toBeNull();
     });
-
-    expect(shouldMatch).toBe(true);
-  });
-
-  it("should clear container innerHTML on error", () => {
-    // When an error occurs, the component should:
-    // 1. Set svg to empty string
-    // 2. Clear containerRef.current.innerHTML
-
-    const errorBehavior = {
-      clearsSvgState: true,
-      clearsContainer: true,
-      removesErrorElements: true,
-    };
-
-    expect(errorBehavior.clearsSvgState).toBe(true);
-    expect(errorBehavior.clearsContainer).toBe(true);
-    expect(errorBehavior.removesErrorElements).toBe(true);
-  });
-
-  it("should show different messages during streaming vs not streaming", () => {
-    // During streaming: "Rendering diagram..."
-    // Not streaming: "Mermaid Error: {message}"
-
-    const errorStates = {
-      streaming: "Rendering diagram...",
-      notStreaming: "Mermaid Error:",
-    };
-
-    expect(errorStates.streaming).toBe("Rendering diagram...");
-    expect(errorStates.notStreaming).toContain("Error");
-  });
-
-  it("should cleanup on unmount", () => {
-    // The useEffect cleanup function should remove any elements
-    // with the generated mermaid ID
-
-    const cleanupBehavior = {
-      hasCleanupFunction: true,
-      removesElementById: true,
-      runsOnUnmount: true,
-    };
-
-    expect(cleanupBehavior.hasCleanupFunction).toBe(true);
-    expect(cleanupBehavior.removesElementById).toBe(true);
+    expect(view.container.querySelector("script")).toBeNull();
   });
 });

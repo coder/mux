@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo } from "react";
 import {
   CodeIcon,
   TerminalIcon,
@@ -15,8 +15,7 @@ import { NestedToolsContainer } from "./Shared/NestedToolsContainer";
 import type { CodeExecutionResult, NestedToolCall } from "./Shared/codeExecutionTypes";
 import { cn } from "@/common/lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/Tooltip/Tooltip";
-
-type ViewMode = "tools" | "result" | "code" | "console";
+import { resolveCodeExecutionViewMode, type CodeExecutionViewMode } from "./codeExecutionViewMode";
 
 interface CodeExecutionToolCallProps {
   args: { code: string };
@@ -74,23 +73,29 @@ export const CodeExecutionToolCall: React.FC<CodeExecutionToolCallProps> = ({
   const hasToolCalls = toolCalls.length > 0;
   const isComplete = status === "completed" || status === "failed";
 
-  const [viewMode, setViewMode] = useState<ViewMode>("tools");
+  const [viewMode, setViewMode] = useState<CodeExecutionViewMode>("tools");
 
   // Determine the appropriate default view for no-tool-calls case
   const hasFailed = isComplete && result && !result.success;
   const noToolCallsDefaultView = hasFailed ? "result" : "code";
 
-  // When execution completes with no tool calls, switch to appropriate view
-  useEffect(() => {
-    if (isComplete && !hasToolCalls && viewMode === "tools") {
-      setViewMode(noToolCallsDefaultView);
-    }
-  }, [isComplete, hasToolCalls, viewMode, noToolCallsDefaultView]);
+  const effectiveViewMode = resolveCodeExecutionViewMode(viewMode, {
+    isComplete,
+    hasToolCalls,
+    noToolCallsDefaultView,
+  });
 
-  const toggleView = (mode: ViewMode) => {
-    // When toggling off, return to tools if available, otherwise the no-tool-calls default
+  const toggleView = (mode: CodeExecutionViewMode) => {
+    // When toggling off, return to tools if available, otherwise the no-tool-calls default.
+    // Resolve the current mode first so a completed execution with no nested tools doesn't
+    // render an empty fieldset for one commit before an effect switches tabs.
     const defaultView = hasToolCalls || !isComplete ? "tools" : noToolCallsDefaultView;
-    setViewMode((prev) => (prev === mode ? defaultView : mode));
+    setViewMode((prev) =>
+      resolveCodeExecutionViewMode(prev, { isComplete, hasToolCalls, noToolCallsDefaultView }) ===
+      mode
+        ? defaultView
+        : mode
+    );
   };
 
   // Format result for display
@@ -122,7 +127,7 @@ export const CodeExecutionToolCall: React.FC<CodeExecutionToolCallProps> = ({
         <div className="flex items-center">
           <div className="mr-0.5">
             <ViewToggle
-              active={viewMode === "result"}
+              active={effectiveViewMode === "result"}
               onClick={() => toggleView("result")}
               tooltip="Show Result"
               variant={resultVariant}
@@ -141,14 +146,14 @@ export const CodeExecutionToolCall: React.FC<CodeExecutionToolCallProps> = ({
             </ViewToggle>
           </div>
           <ViewToggle
-            active={viewMode === "code"}
+            active={effectiveViewMode === "code"}
             onClick={() => toggleView("code")}
             tooltip="Show Code"
           >
             <CodeIcon className="h-3.5 w-3.5" />
           </ViewToggle>
           <ViewToggle
-            active={viewMode === "console"}
+            active={effectiveViewMode === "console"}
             onClick={() => toggleView("console")}
             tooltip="Show Console"
           >
@@ -158,17 +163,17 @@ export const CodeExecutionToolCall: React.FC<CodeExecutionToolCallProps> = ({
       </legend>
 
       {/* Content based on view mode */}
-      {viewMode === "tools" && hasToolCalls && (
+      {effectiveViewMode === "tools" && hasToolCalls && (
         <NestedToolsContainer calls={toolCalls} parentInterrupted={isInterrupted} />
       )}
 
-      {viewMode === "code" && (
+      {effectiveViewMode === "code" && (
         <div className="border-foreground/10 bg-code-bg rounded border p-2">
           <HighlightedCode language="javascript" code={args.code.trim()} />
         </div>
       )}
 
-      {viewMode === "console" && (
+      {effectiveViewMode === "console" && (
         <div className="border-foreground/10 bg-code-bg rounded border p-2">
           {consoleOutput.length > 0 ? (
             <ConsoleOutputDisplay output={consoleOutput} />
@@ -178,7 +183,7 @@ export const CodeExecutionToolCall: React.FC<CodeExecutionToolCallProps> = ({
         </div>
       )}
 
-      {viewMode === "result" &&
+      {effectiveViewMode === "result" &&
         (isComplete && result ? (
           result.success ? (
             formattedResult ? (

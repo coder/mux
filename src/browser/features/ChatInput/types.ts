@@ -28,6 +28,8 @@ export interface ChatInputWorkspaceVariant {
   workspaceId: string;
   /** Runtime type for the workspace (for telemetry) - no sensitive details like SSH host */
   runtimeType?: TelemetryRuntimeType;
+  /** Fires once a regular workspace send has passed validation, before IPC/streaming begins. */
+  onMessageSendStarted?: (dispatchMode: QueueDispatchMode) => void;
   onMessageSent?: (dispatchMode: QueueDispatchMode) => void;
   onTruncateHistory: (percentage?: number) => Promise<void>;
   onModelChange?: (model: string) => void;

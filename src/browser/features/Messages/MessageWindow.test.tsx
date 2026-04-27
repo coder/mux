@@ -14,7 +14,7 @@ void mock.module("@/browser/contexts/ChatHostContext", () => ({
 void mock.module("@/browser/components/Tooltip/Tooltip", () => ({
   Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   TooltipTrigger: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  TooltipContent: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  TooltipContent: () => null,
 }));
 
 // Minimal message factory covering the three flag combinations we care about.
