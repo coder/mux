@@ -77,22 +77,6 @@ export function useAutoScroll() {
     observerRef.current = observer;
   }, []);
 
-  const performAutoScroll = useCallback(() => {
-    if (!contentRef.current) return;
-
-    // Double RAF: First frame for DOM updates (e.g., DiffRenderer async highlighting),
-    // second frame to scroll after layout is complete
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        // Check ref.current not state - avoids race condition where queued frames
-        // execute after user scrolls up but still see old autoScroll=true
-        if (contentRef.current && autoScrollRef.current) {
-          contentRef.current.scrollTop = contentRef.current.scrollHeight;
-        }
-      });
-    });
-  }, []); // No deps - ref ensures we always check current value
-
   const jumpToBottom = useCallback(() => {
     // Enable auto-scroll first so ResizeObserver will handle subsequent changes
     setAutoScroll(true);
@@ -204,7 +188,6 @@ export function useAutoScroll() {
     autoScroll,
     setAutoScroll,
     disableAutoScroll,
-    performAutoScroll,
     jumpToBottom,
     handleScroll,
     markUserInteraction,

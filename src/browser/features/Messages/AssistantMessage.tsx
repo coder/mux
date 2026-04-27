@@ -21,7 +21,6 @@ import { forkWorkspace } from "@/browser/utils/chatCommands";
 import React, { useState } from "react";
 import { CompactingMessageContent } from "./CompactingMessageContent";
 import { CompactionBackground } from "./CompactionBackground";
-import { MarkdownRenderer } from "./MarkdownRenderer";
 import type { ButtonConfig } from "./MessageWindow";
 import { MessageWindow } from "./MessageWindow";
 import { ModelDisplay } from "./ModelDisplay";
@@ -151,28 +150,12 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
       return <div className="font-primary text-secondary italic">Waiting for response...</div>;
     }
 
-    // Streaming text gets typewriter effect
-    if (isStreaming) {
-      const contentElement = (
-        <TypewriterMarkdown
-          deltas={[content]}
-          isComplete={false}
-          streamKey={message.historyId}
-          streamSource={message.streamPresentation?.source}
-        />
-      );
-
-      // Wrap streaming compaction in special container
-      if (isStreamingCompaction) {
-        return <CompactingMessageContent>{contentElement}</CompactingMessageContent>;
-      }
-
-      return contentElement;
+    if (!content) {
+      return null;
     }
 
-    // Completed text renders as static content so hydrated history never replays via typewriter.
-    return content ? (
-      showRaw ? (
+    if (!isStreaming && showRaw) {
+      return (
         <div className="relative">
           <pre className="text-text bg-code-bg m-0 rounded-sm p-2 pb-8 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap">
             {content}
@@ -190,10 +173,30 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
             </Button>
           </div>
         </div>
-      ) : (
-        <MarkdownRenderer content={content} />
-      )
-    ) : null;
+      );
+    }
+
+    // Use TypewriterMarkdown for both streaming and settled content. Swapping to a
+    // different component identity at stream end (previously MarkdownRenderer) caused
+    // the entire markdown subtree to unmount/remount — visible as a flash where Shiki
+    // highlighting and Mermaid diagrams had to re-run and briefly showed unhighlighted
+    // source. isComplete={!isStreaming} makes TypewriterMarkdown bypass smoothing and
+    // renders parseIncompleteMarkdown=false, matching the prior static render exactly.
+    const contentElement = (
+      <TypewriterMarkdown
+        deltas={[content]}
+        isComplete={!isStreaming}
+        streamKey={message.historyId}
+        streamSource={message.streamPresentation?.source}
+      />
+    );
+
+    // Wrap streaming compaction in special container
+    if (isStreamingCompaction) {
+      return <CompactingMessageContent>{contentElement}</CompactingMessageContent>;
+    }
+
+    return contentElement;
   };
 
   // Create label with model name and compacted indicator if applicable

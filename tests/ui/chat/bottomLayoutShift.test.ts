@@ -190,10 +190,13 @@ describe("Chat bottom layout stability", () => {
         { timeout: 10_000 }
       );
 
-      // The layout-fix path should pin the transcript immediately, even while async RAF-based
-      // auto-scroll work is still queued.
+      // The layout-fix path pins the transcript immediately via a useLayoutEffect on
+      // the latest message id — no RAF hop required. We intentionally do not assert
+      // on `queuedAnimationFrames.length` anymore: the previous code added a
+      // double-RAF performAutoScroll that raced the sync pin and occasionally painted
+      // one frame at the wrong scrollTop. The sync-pin assertion below is the
+      // actual correctness property.
       expect(scrollTop).toBe(scrollHeight);
-      expect(queuedAnimationFrames.length).toBeGreaterThan(0);
 
       app.env.services.aiService.releaseMockStreamStartGate(app.workspaceId);
       await app.chat.expectStreamComplete();

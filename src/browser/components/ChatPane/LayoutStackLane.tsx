@@ -5,25 +5,54 @@ import {
   getReservedLayoutStackHeightPx,
   measureLayoutStackHeightPx,
   rememberLayoutStackHeight,
-  scrollElementToBottom,
   type LayoutStackItem,
 } from "./layoutStack";
 
-interface TranscriptTailStackProps {
+/**
+ * Shared lane for a stack of layout-affecting transcript chrome. Previously split
+ * into `TranscriptTailStack` (top-aligned, scroll-pinning) and
+ * `ChatInputDecorationStack` (bottom-aligned, measurement-only) which shared ~85%
+ * of their machinery — the per-workspace reserved-height memory, the RO settle
+ * dance, and the hydration bookkeeping.
+ *
+ * Differences are now expressed as props:
+ *  - `align` picks between `justify-start` (tail, above the composer's opposite
+ *    side of the transcript) and `justify-end` (composer decoration).
+ *  - `overflowAnchor="none"` opts the tail lane out of browser scroll anchoring
+ *    so a newly-inserted tail row (streaming barrier, etc.) can't win the anchor
+ *    heuristic and flash the layout underneath.
+ *  - `onStickToBottom` is called whenever the lane's layout signature or its
+ *    measured content height changes. Callers use it to pin the transcript
+ *    viewport to the bottom; omitting it makes this a pure measurement lane.
+ */
+interface LayoutStackLaneProps {
   workspaceId: string;
   isHydrating: boolean;
-  autoScroll: boolean;
-  transcriptViewportRef: React.RefObject<HTMLDivElement | null>;
   items: readonly LayoutStackItem[];
+  align: "start" | "end";
+  overflowAnchor?: "none";
+  /**
+   * Optional pin callback invoked when the lane's identity/height changes. The
+   * lane doesn't care how the caller pins (usually `scrollElementToBottom`);
+   * it only fires the signal synchronously from a layout effect so the pin
+   * runs before paint.
+   */
+  onStickToBottom?: () => void;
   dataComponent?: string;
 }
 
-export const TranscriptTailStack: React.FC<TranscriptTailStackProps> = (props) => {
+export const LayoutStackLane: React.FC<LayoutStackLaneProps> = (props) => {
   const contentRef = useRef<HTMLDivElement>(null);
   const stackHeightByWorkspaceIdRef = useRef(new Map<string, number>());
   const lastMeasuredStackHeightRef = useRef(0);
   const observedHeightRef = useRef<number | null>(null);
   const previousLayoutSignatureRef = useRef<string | null>(null);
+
+  // Hide the callback inside a ref so the RO effect's dep list doesn't depend
+  // on a function identity that callers re-create every render.
+  const onStickToBottomRef = useRef(props.onStickToBottom);
+  onStickToBottomRef.current = props.onStickToBottom;
+
   const hasItems = props.items.length > 0;
   const layoutSignature = `${props.workspaceId}:${getLayoutStackSignature(props.items)}`;
   const reservedStackHeightPx = getReservedLayoutStackHeightPx({
@@ -33,18 +62,14 @@ export const TranscriptTailStack: React.FC<TranscriptTailStackProps> = (props) =
     fallbackStackHeightPx: lastMeasuredStackHeightRef.current,
   });
 
+  // Pin on layout-signature changes (a new item appeared/disappeared or reordered).
   useLayoutEffect(() => {
     if (previousLayoutSignatureRef.current === layoutSignature) {
       return;
     }
     previousLayoutSignatureRef.current = layoutSignature;
-
-    if (!props.autoScroll) {
-      return;
-    }
-
-    scrollElementToBottom(props.transcriptViewportRef.current);
-  }, [layoutSignature, props.autoScroll, props.transcriptViewportRef]);
+    onStickToBottomRef.current?.();
+  }, [layoutSignature]);
 
   useLayoutEffect(() => {
     const content = contentRef.current;
@@ -59,6 +84,10 @@ export const TranscriptTailStack: React.FC<TranscriptTailStackProps> = (props) =
       observedHeightRef.current = nextHeight;
 
       if (nextHeight === 0) {
+        // Some owners (e.g. background-process dialogs) stay mounted while
+        // rendering nothing. Only drop the reservation after hydration ends —
+        // transient zero-height observations during hydration must not clobber
+        // the remembered real height.
         if (!props.isHydrating) {
           clearLayoutStackHeight(
             props.workspaceId,
@@ -75,23 +104,20 @@ export const TranscriptTailStack: React.FC<TranscriptTailStackProps> = (props) =
         );
       }
 
-      if (
-        !props.autoScroll ||
-        previousObservedHeight === null ||
-        previousObservedHeight === nextHeight
-      ) {
+      if (previousObservedHeight === null || previousObservedHeight === nextHeight) {
         return;
       }
-
-      scrollElementToBottom(props.transcriptViewportRef.current);
+      onStickToBottomRef.current?.();
     });
 
     observer.observe(content);
     return () => {
       observer.disconnect();
     };
-  }, [props.autoScroll, props.isHydrating, props.transcriptViewportRef, props.workspaceId]);
+  }, [props.isHydrating, props.workspaceId]);
 
+  // Post-hydration settle: once we're no longer hydrating and have no items, clear
+  // any cached height so the next hydration doesn't reserve stale space.
   useLayoutEffect(() => {
     if (props.isHydrating) {
       return;
@@ -123,22 +149,25 @@ export const TranscriptTailStack: React.FC<TranscriptTailStackProps> = (props) =
     }
   }, [hasItems, props.isHydrating, props.workspaceId]);
 
-  // Keep all volatile transcript-tail chrome on one seam owner. The message list sits above this
-  // lane, so top-align the contents inside any reserved hydration space to keep the seam under the
-  // last transcript row stationary while retry/streaming/warning rows repopulate.
   if (!hasItems && reservedStackHeightPx === null) {
     return null;
   }
 
+  const style: React.CSSProperties = {};
+  if (reservedStackHeightPx !== null) {
+    style.minHeight = `${reservedStackHeightPx}px`;
+  }
+  if (props.overflowAnchor === "none") {
+    style.overflowAnchor = "none";
+  }
+
   return (
     <div
-      className="flex flex-col justify-start"
-      data-component={props.dataComponent}
-      style={
-        reservedStackHeightPx !== null
-          ? { minHeight: `${reservedStackHeightPx}px`, overflowAnchor: "none" }
-          : { overflowAnchor: "none" }
+      className={
+        props.align === "end" ? "flex flex-col justify-end" : "flex flex-col justify-start"
       }
+      data-component={props.dataComponent}
+      style={style}
     >
       <div ref={contentRef}>
         {props.items.map((item) => (

@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef, useLayoutEffect } from "react";
 import type { DisplayedMessage } from "@/common/types/message";
-import { MarkdownRenderer } from "./MarkdownRenderer";
 import { TypewriterMarkdown } from "./TypewriterMarkdown";
 import { normalizeReasoningMarkdown } from "./MarkdownStyles";
 import { cn } from "@/common/lib/utils";
@@ -72,17 +71,24 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, cla
   }, [isExpanded, isSingleLineTrace, content]);
 
   const wasStreamingRef = useRef(isStreaming);
+  const isLastPartOfMessage =
+    "isLastPartOfMessage" in message ? message.isLastPartOfMessage : false;
 
-  // Auto-collapse only when a stream transitions from active -> completed.
-  // Keep user-triggered expansion working for completed messages.
+  // Auto-collapse only when reasoning reached *natural* completion — i.e. the
+  // stream ended while this reasoning part was still the terminal block of the
+  // message. When another part (text/tool) follows the reasoning, its
+  // `isLastPartOfMessage` flips false in the same aggregator snapshot that turns
+  // `isStreaming` off, which used to trigger a mid-turn 200ms height→0 animation
+  // (a very visible vertical tear). Keeping the reasoning expanded in that case
+  // lets the user continue reading it while the assistant moves on.
   useEffect(() => {
     const wasStreaming = wasStreamingRef.current;
     wasStreamingRef.current = isStreaming;
 
-    if (wasStreaming && !isStreaming) {
+    if (wasStreaming && !isStreaming && isLastPartOfMessage) {
       setIsExpanded(false);
     }
-  }, [isStreaming]);
+  }, [isStreaming, isLastPartOfMessage]);
 
   const toggleExpanded = () => {
     if (!isCollapsible) {
@@ -99,28 +105,27 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, cla
       return <div className="text-thinking-mode opacity-60">Thinking...</div>;
     }
 
+    if (!content) {
+      return null;
+    }
+
     // Preserve single newlines so short section headers (e.g. "Fixing …") don't get
     // collapsed into the previous paragraph by the markdown renderer.
     //
-    // Also apply a small heuristic fixup for providers that omit a leading newline
-    // before bold section headers (e.g. `...!**Deciding...**\n\n`).
-    // Streaming text gets typewriter effect.
-    if (isStreaming) {
-      return (
-        <TypewriterMarkdown
-          deltas={[normalizeReasoningMarkdown(content)]}
-          isComplete={false}
-          preserveLineBreaks
-          streamKey={message.historyId}
-          streamSource={message.streamPresentation?.source}
-        />
-      );
-    }
-
-    // Completed text renders as static content
-    return content ? (
-      <MarkdownRenderer content={normalizeReasoningMarkdown(content)} preserveLineBreaks />
-    ) : null;
+    // Use TypewriterMarkdown for both streaming and settled reasoning so the component
+    // identity is stable across stream completion — swapping to MarkdownRenderer at
+    // stream end would unmount/remount the markdown subtree and visibly flash the
+    // content. isComplete={!isStreaming} cleanly bypasses the smoothing engine once
+    // the stream ends, matching the prior static-render behavior.
+    return (
+      <TypewriterMarkdown
+        deltas={[normalizeReasoningMarkdown(content)]}
+        isComplete={!isStreaming}
+        preserveLineBreaks
+        streamKey={message.historyId}
+        streamSource={message.streamPresentation?.source}
+      />
+    );
   };
 
   return (
@@ -187,18 +192,26 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, cla
       </div>
 
       {/* Always render the content container to prevent layout shifts.
-          Use CSS transitions for smooth height changes instead of conditional rendering. */}
+          Use CSS transitions only for user-initiated collapse/expand of *settled*
+          reasoning. During live streaming we leave the container uncontrolled
+          (height: auto, no transition); otherwise each incoming delta re-targets
+          scrollHeight through a 200ms height animation, which clips newly arrived
+          tokens and produces a slow drip-in effect that reads as jitter. */}
       <div
         ref={contentRef}
         className={cn(
           REASONING_FONT_CLASSES,
           "italic opacity-85 [&_p]:mt-0 [&_p]:mb-1 [&_p:last-child]:mb-0",
-          "overflow-hidden transition-[height,opacity] duration-200 ease-in-out"
+          !isStreaming && "overflow-hidden transition-[height,opacity] duration-200 ease-in-out"
         )}
-        style={{
-          height: showExpandedContent ? (expandedHeight ?? "auto") : 0,
-          opacity: showExpandedContent ? 1 : 0,
-        }}
+        style={
+          isStreaming
+            ? undefined
+            : {
+                height: showExpandedContent ? (expandedHeight ?? "auto") : 0,
+                opacity: showExpandedContent ? 1 : 0,
+              }
+        }
         aria-hidden={!showExpandedContent}
       >
         {isStreaming || showExpandedContent ? renderContent() : null}

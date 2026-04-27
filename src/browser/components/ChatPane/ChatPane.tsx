@@ -19,13 +19,8 @@ import { EditCutoffBarrier } from "@/browser/features/Messages/ChatBarrier/EditC
 import { StreamingBarrier } from "@/browser/features/Messages/ChatBarrier/StreamingBarrier";
 import { RetryBarrier } from "@/browser/features/Messages/ChatBarrier/RetryBarrier";
 import { PinnedTodoList } from "../PinnedTodoList/PinnedTodoList";
-import { ChatInputDecorationStack } from "./ChatInputDecorationStack";
-import { TranscriptTailStack } from "./TranscriptTailStack";
-import {
-  getLayoutStackSignature,
-  scrollElementToBottom,
-  type LayoutStackItem,
-} from "./layoutStack";
+import { LayoutStackLane } from "./LayoutStackLane";
+import { scrollElementToBottom, type LayoutStackItem } from "./layoutStack";
 import { VIM_ENABLED_KEY } from "@/common/constants/storage";
 import { ChatInput, type ChatInputAPI } from "@/browser/features/ChatInput/index";
 import type { QueueDispatchMode } from "@/browser/features/ChatInput/types";
@@ -391,7 +386,6 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     autoScroll,
     setAutoScroll,
     disableAutoScroll,
-    performAutoScroll,
     jumpToBottom,
     handleScroll,
     markUserInteraction,
@@ -634,12 +628,13 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     };
   }, [autoScroll, contentRef]);
 
-  // Auto-scroll when messages or todos update (during streaming)
-  useEffect(() => {
-    if (autoScroll) {
-      performAutoScroll();
-    }
-  }, [workspaceState?.messages, workspaceState?.todos, autoScroll, performAutoScroll]);
+  // Intentionally no message/todo-driven auto-scroll effect here. Bottom pinning is
+  // owned by the ResizeObserver on `innerRef` inside `useAutoScroll` (pins on any
+  // content-size change, RAF-coalesced), plus explicit layout-signature pins on the
+  // tail/decoration lanes and the viewport resize observer below. Calling
+  // `performAutoScroll` as a separate double-RAF on every delta used to race the RO
+  // pin, occasionally painting one frame at the wrong scrollTop (visible as a brief
+  // downward jitter during fast reasoning).
 
   const hasLoadedTranscriptRows = !workspaceState.loading && workspaceState.messages.length > 0;
 
@@ -1029,11 +1024,14 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                     </>
                   </MessageListProvider>
                 )}
-                <TranscriptTailStack
+                <LayoutStackLane
                   workspaceId={workspaceId}
                   isHydrating={isHydratingTranscript}
-                  autoScroll={autoScroll}
-                  transcriptViewportRef={contentRef}
+                  align="start"
+                  overflowAnchor="none"
+                  onStickToBottom={
+                    autoScroll ? () => scrollElementToBottom(contentRef.current) : undefined
+                  }
                   dataComponent="TranscriptTailStack"
                   items={transcriptTailItems}
                 />
@@ -1220,28 +1218,22 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
       ),
     });
   }
-  const decorationLayoutSignature = getLayoutStackSignature(decorationEntries);
-
-  // The decoration lane changes the transcript viewport height from below, so let the lane owner
-  // report one layout signature instead of teaching ChatPane about every individual banner.
-  useLayoutEffect(() => {
-    if (!props.autoScroll) {
-      return;
-    }
-
-    const transcriptViewport = props.transcriptViewportRef.current;
-    if (!transcriptViewport) {
-      return;
-    }
-
-    scrollElementToBottom(transcriptViewport);
-  }, [decorationLayoutSignature, props.autoScroll, props.transcriptViewportRef]);
+  // The decoration lane changes the transcript viewport height from below. Pinning
+  // happens inside LayoutStackLane via the `onStickToBottom` hook — both on layout
+  // signature changes and on measured height changes — so the parent pane doesn't
+  // need its own duplicate layout-signature effect.
 
   return (
     <>
-      <ChatInputDecorationStack
+      <LayoutStackLane
         workspaceId={props.workspaceId}
         isHydrating={props.isHydratingTranscript}
+        align="end"
+        onStickToBottom={
+          props.autoScroll
+            ? () => scrollElementToBottom(props.transcriptViewportRef.current)
+            : undefined
+        }
         dataComponent="ChatInputDecorationStack"
         items={decorationEntries}
       />

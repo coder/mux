@@ -56,18 +56,24 @@ export const MessageWindow: React.FC<MessageWindowProps> = ({
     [timestamp]
   );
 
-  const isLastPartOfMessage = useMemo(() => {
-    if ("isLastPartOfMessage" in message && message.isLastPartOfMessage && !message.isPartial) {
-      return true;
-    }
-    return false;
+  // Meta-row visibility must be settled before we commit it, otherwise every new part
+  // arriving mid-turn (text -> tool, reasoning -> text, etc.) flips the previous part's
+  // `isLastPartOfMessage` from true to false and tears ~36-40px of meta-row + margin
+  // out of the transcript in a single commit. Require the part to have also stopped
+  // streaming — that flag flips in the same aggregator snapshot as `isLastPartOfMessage`,
+  // so checking both here keeps the meta row hidden throughout the turn and only reveals
+  // it once, on the genuine terminal part after the turn has completed.
+  const isSettledLastPart = useMemo(() => {
+    if (!("isLastPartOfMessage" in message)) return false;
+    if (!message.isLastPartOfMessage) return false;
+    if (message.isPartial) return false;
+    if ("isStreaming" in message && message.isStreaming) return false;
+    return true;
   }, [message]);
 
   // We do not want to display these on every message, otherwise it spams the UI
   // with buttons and timestamps
-  const showMetaRow = useMemo(() => {
-    return variant === "user" || isLastPartOfMessage;
-  }, [variant, isLastPartOfMessage]);
+  const showMetaRow = variant === "user" || isSettledLastPart;
 
   return (
     <div
@@ -75,7 +81,10 @@ export const MessageWindow: React.FC<MessageWindowProps> = ({
         "mt-4 mb-1 flex flex-col relative isolate",
         variant === "user" && "ml-auto w-fit max-w-full",
         variant === "assistant" && "w-full text-foreground",
-        isLastPartOfMessage && "mb-4"
+        // Pair the extra bottom margin with the meta row so the surrounding transcript
+        // space only changes at the same (settled) moment as the meta row appearing,
+        // avoiding a second separate tear step.
+        isSettledLastPart && "mb-4"
       )}
       data-message-block
     >
