@@ -7,10 +7,11 @@ import {
 export const PolicyFormatVersionSchema = z.literal("0.1");
 export type PolicyFormatVersion = z.infer<typeof PolicyFormatVersionSchema>;
 
-export const PolicyProviderIdSchema = z.string().refine(
-  (id) => isBuiltInProvider(id) || isValidCustomProviderId(id),
-  { message: "Invalid provider id" }
-);
+export const PolicyProviderIdSchema = z
+  .string()
+  .refine((id) => isBuiltInProvider(id) || isValidCustomProviderId(id), {
+    message: "Invalid provider id",
+  });
 export type PolicyProviderId = z.infer<typeof PolicyProviderIdSchema>;
 
 export const PolicyProviderNameSchema = PolicyProviderIdSchema;
