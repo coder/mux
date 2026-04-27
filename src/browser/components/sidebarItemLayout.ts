@@ -4,12 +4,21 @@ const SIDEBAR_BASE_PADDING_LEFT_PX = 10;
 const SIDEBAR_DEPTH_INDENT_PX = 8;
 export const SIDEBAR_LEADING_SLOT_SIZE_PX = 16;
 const SIDEBAR_LEADING_SLOT_CENTER_OFFSET_PX = SIDEBAR_LEADING_SLOT_SIZE_PX / 2;
-const TASK_GROUP_MEMBER_PARENT_RAIL_OFFSET_PX = 4;
+const TASK_GROUP_MEMBER_DEPTH_OFFSET = 1.5;
+const TASK_GROUP_MEMBER_PARENT_RAIL_OFFSET_PX = SIDEBAR_LEADING_SLOT_CENTER_OFFSET_PX;
 const TASK_GROUP_MEMBER_ANCESTOR_RAIL_OFFSET_PX = 6;
 
 export function getSidebarItemPaddingLeft(depth?: number): number {
   const safeDepth = typeof depth === "number" && Number.isFinite(depth) ? Math.max(0, depth) : 0;
   return SIDEBAR_BASE_PADDING_LEFT_PX + Math.min(32, safeDepth) * SIDEBAR_DEPTH_INDENT_PX;
+}
+
+export function getTaskGroupMemberDepth(taskGroupDepth: number): number {
+  // Expanded variants/best-of members sit under a task-group header that has a
+  // disclosure chevron before its group icon. One-and-a-half grid steps puts
+  // member status dots under that group icon while keeping member labels aligned
+  // with the task-group title.
+  return taskGroupDepth + TASK_GROUP_MEMBER_DEPTH_OFFSET;
 }
 
 export function getSidebarLeadingSlotCenterX(depth: number): number {

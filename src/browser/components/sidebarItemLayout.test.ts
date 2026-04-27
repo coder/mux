@@ -6,6 +6,7 @@ import {
   getSidebarItemPaddingLeft,
   getSubAgentChildStatusCenterX,
   getSubAgentParentRailX,
+  getTaskGroupMemberDepth,
 } from "./sidebarItemLayout";
 
 describe("sidebarItemLayout", () => {
@@ -24,7 +25,15 @@ describe("sidebarItemLayout", () => {
   });
 
   test("keeps grouped members on their dedicated shared rail", () => {
-    expect(getSubAgentParentRailX(2, "task-group-member")).toBe(30);
-    expect(getAncestorRailX(2, "task-group-member")).toBe(32);
+    const groupDepth = 1;
+    const memberDepth = getTaskGroupMemberDepth(groupDepth);
+
+    expect(memberDepth).toBe(2.5);
+    // The task-group header has a disclosure chevron before its group icon, so
+    // expanded variants/best-of members use a half-step offset that keeps both
+    // the connector rail and child status dot under the group icon.
+    expect(getSubAgentParentRailX(memberDepth, "task-group-member")).toBe(38);
+    expect(getSubAgentChildStatusCenterX(memberDepth)).toBe(38);
+    expect(getAncestorRailX(memberDepth, "task-group-member")).toBe(36);
   });
 });

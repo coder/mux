@@ -70,6 +70,7 @@ import { ProjectDeleteConfirmationModal } from "../ProjectDeleteConfirmationModa
 import { useSettings } from "@/browser/contexts/SettingsContext";
 
 import { AgentListItem, type WorkspaceSelection } from "../AgentListItem/AgentListItem";
+import { getTaskGroupMemberDepth } from "../sidebarItemLayout";
 import { TaskGroupListItem } from "./TaskGroupListItem";
 import { TitleEditProvider, useTitleEdit } from "@/browser/contexts/WorkspaceTitleEditContext";
 import { useConfirmDialog } from "@/browser/contexts/ConfirmDialogContext";
@@ -2325,7 +2326,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                           member,
                                           sectionId,
                                           rowMetaByWorkspaceId.get(member.id) ?? null,
-                                          depth + 1,
+                                          getTaskGroupMemberDepth(depth),
                                           `task-group-member:${taskGroupId}:${member.id}`,
                                           "task-group-member"
                                         )

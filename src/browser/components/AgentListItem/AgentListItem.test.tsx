@@ -168,6 +168,10 @@ function installAgentListItemTestDoubles() {
     }),
   }));
 
+  void mock.module("../WorkspaceHeartbeatModal", () => ({
+    WorkspaceHeartbeatModal: () => null,
+  }));
+
   void mock.module("@/browser/hooks/useContextMenuPosition", () => ({
     ...actualContextMenuPosition,
     useContextMenuPosition: () => ({
@@ -218,6 +222,7 @@ function renderWorkspaceItem(
     isArchiving?: boolean;
     depth?: number;
     rowRenderMeta?: AgentRowRenderMeta;
+    subAgentConnectorLayout?: "default" | "task-group-member";
     completedChildrenExpanded?: boolean;
     onToggleCompletedChildren?: (workspaceId: string) => void;
   } = {}
@@ -232,6 +237,7 @@ function renderWorkspaceItem(
       isArchiving={options.isArchiving}
       depth={options.depth ?? options.rowRenderMeta?.depth}
       rowRenderMeta={options.rowRenderMeta}
+      subAgentConnectorLayout={options.subAgentConnectorLayout}
       completedChildrenExpanded={options.completedChildrenExpanded}
       onToggleCompletedChildren={options.onToggleCompletedChildren}
       onSelectWorkspace={() => undefined}
@@ -327,6 +333,31 @@ describe("AgentListItem", () => {
     expect(topSegment.getAttribute("style")).toContain("left: 18px");
     expect(elbow.getAttribute("style")).toContain("left: 18px");
     expect(elbow.getAttribute("style")).toContain("width: 8px");
+  });
+
+  test("anchors task-group member connectors to the task-group rail", () => {
+    const { view } = renderWorkspaceItem({
+      depth: 2.5,
+      subAgentConnectorLayout: "task-group-member",
+      rowRenderMeta: {
+        depth: 1,
+        rowKind: "subagent",
+        connectorPosition: "single",
+        connectorStartsAtParent: true,
+        sharedTrunkActiveThroughRow: false,
+        sharedTrunkActiveBelowRow: false,
+        ancestorTrunks: [],
+        hasHiddenCompletedChildren: false,
+        visibleCompletedChildrenCount: 0,
+      },
+    });
+
+    const topSegment = view.getByTestId("subagent-connector-top-segment");
+    const elbow = view.getByTestId("subagent-connector-elbow");
+
+    expect(topSegment.getAttribute("style")).toContain("left: 38px");
+    expect(elbow.getAttribute("style")).toContain("left: 38px");
+    expect(elbow.getAttribute("style")).toContain("width: 1px");
   });
 
   test("does not render a heartbeat icon fallback when completed children indicator is shown", () => {

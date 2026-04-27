@@ -94,6 +94,7 @@ interface MockAgentListItemProps {
   };
   depth?: number;
   rowRenderMeta?: AgentRowRenderMeta;
+  subAgentConnectorLayout?: "default" | "task-group-member";
   completedChildrenExpanded?: boolean;
   onToggleCompletedChildren?: (workspaceId: string) => void;
   onArchiveWorkspace?: (workspaceId: string, button: HTMLElement) => Promise<void>;
@@ -230,6 +231,7 @@ function installProjectSidebarTestDoubles() {
           data-testid={agentItemTestId(metadata.id)}
           data-depth={String(props.depth ?? -1)}
           data-row-kind={props.rowRenderMeta?.rowKind ?? "unknown"}
+          data-connector-layout={props.subAgentConnectorLayout ?? "default"}
           data-completed-expanded={String(props.completedChildrenExpanded ?? false)}
         >
           <span>{displayTitle}</span>
@@ -862,6 +864,13 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
       expect(view.getByText("frontend · Split review")).toBeTruthy();
       expect(view.getByText("backend · Split review")).toBeTruthy();
     });
+
+    const childOneRow = view.getByTestId(agentItemTestId("child-1"));
+    const childTwoRow = view.getByTestId(agentItemTestId("child-2"));
+    expect(childOneRow.dataset.depth).toBe("2.5");
+    expect(childOneRow.dataset.connectorLayout).toBe("task-group-member");
+    expect(childTwoRow.dataset.depth).toBe("2.5");
+    expect(childTwoRow.dataset.connectorLayout).toBe("task-group-member");
   });
 
   test("does not coalesce a best-of group when one candidate still has hidden child tasks", () => {
