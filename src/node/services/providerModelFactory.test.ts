@@ -158,6 +158,101 @@ describe("ProviderModelFactory.createModel", () => {
       }
     });
   });
+
+  it("creates keyless custom OpenAI-compatible models and does not treat models as an allowlist", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        "local-vllm": {
+          providerType: "openai-compatible",
+          baseUrl: "http://localhost:8000/v1",
+          models: ["qwen3-coder"],
+        },
+      });
+
+      const listedModel = await factory.createModel("local-vllm:qwen3-coder");
+      expect(listedModel.success).toBe(true);
+      if (!listedModel.success) {
+        return;
+      }
+
+      expect((listedModel.data as { provider?: unknown }).provider).toBe("local-vllm.chat");
+      expect(listedModel.data.constructor.name).toBe("OpenAICompatibleChatLanguageModel");
+
+      const unlistedModel = await factory.createModel("local-vllm:any-other-id");
+      expect(unlistedModel.success).toBe(true);
+      if (!unlistedModel.success) {
+        return;
+      }
+
+      expect((unlistedModel.data as { provider?: unknown }).provider).toBe("local-vllm.chat");
+    });
+  });
+
+  it("returns provider_disabled for disabled custom OpenAI-compatible providers", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        "local-vllm": {
+          providerType: "openai-compatible",
+          baseUrl: "http://localhost:8000/v1",
+          enabled: false,
+        },
+      });
+
+      const result = await factory.createModel("local-vllm:qwen3-coder");
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toEqual({
+          type: "provider_disabled",
+          provider: "local-vllm",
+        });
+      }
+    });
+  });
+
+  it("returns a clear missing_base_url error for custom OpenAI-compatible providers without a base URL", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        "local-vllm": {
+          providerType: "openai-compatible",
+          models: ["qwen3-coder"],
+        },
+      });
+
+      const result = await factory.createModel("local-vllm:qwen3-coder");
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.type).toBe("unknown");
+        if (result.error.type === "unknown") {
+          expect(result.error.raw).toContain("missing_base_url");
+          expect(result.error.raw).toContain("local-vllm");
+          expect(result.error.raw).toContain("baseUrl");
+        }
+      }
+    });
+  });
+
+  it("returns provider_not_supported for unknown provider entries without a custom provider type", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        "local-vllm": {
+          baseUrl: "http://localhost:8000/v1",
+          models: ["qwen3-coder"],
+        },
+      });
+
+      const result = await factory.createModel("local-vllm:qwen3-coder");
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toEqual({
+          type: "provider_not_supported",
+          provider: "local-vllm",
+        });
+      }
+    });
+  });
 });
 
 describe("ProviderModelFactory GitHub Copilot", () => {
