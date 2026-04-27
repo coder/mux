@@ -95,9 +95,12 @@ interface SetupSettingsStoryOptions {
     string,
     {
       apiKeySet: boolean;
+      apiKeySource?: "config" | "file" | "env";
       isEnabled: boolean;
       isConfigured: boolean;
       baseUrl?: string;
+      baseUrlSource?: "config" | "env";
+      baseUrlResolved?: string;
       models?: string[];
     }
   >;

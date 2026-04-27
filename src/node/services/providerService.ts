@@ -22,6 +22,7 @@ import { log } from "@/node/services/log";
 import {
   checkProviderConfigured,
   isProviderAutoRouteEligible,
+  resolveConfiguredBaseUrl,
   resolveProviderCredentials,
 } from "@/node/utils/providerRequirements";
 import { parseCodexOauthAuth } from "@/node/utils/codexOauthAuth";
@@ -151,6 +152,8 @@ export class ProviderService {
         isEnabled = false;
       }
 
+      const explicitBaseUrl = resolveConfiguredBaseUrl(config);
+
       const providerInfo: ProviderConfigInfo = {
         apiKeySet: !!config.apiKey,
         apiKeyIsOpRef: apiKeyIsOpRef || undefined,
@@ -159,7 +162,7 @@ export class ProviderService {
         // Users can disable providers without removing credentials from providers.jsonc.
         isEnabled,
         isConfigured: false, // computed below
-        baseUrl: forcedBaseUrl ?? config.baseUrl,
+        baseUrl: forcedBaseUrl ?? explicitBaseUrl,
         apiKeyFile: typeof config.apiKeyFile === "string" ? config.apiKeyFile : undefined,
         models: filteredModels,
       };
@@ -485,6 +488,12 @@ export class ProviderService {
       if (keyPath.length > 0) {
         const lastKey = keyPath[keyPath.length - 1];
         const isProviderEnabledToggle = keyPath.length === 1 && lastKey === "enabled";
+        const isCanonicalBaseUrlEdit = keyPath.length === 1 && lastKey === "baseUrl";
+        if (isCanonicalBaseUrlEdit) {
+          // The UI writes `baseUrl`. Remove the SDK-style alias so old `baseURL`
+          // values cannot keep shadowing user edits or clears after save.
+          delete current.baseURL;
+        }
 
         if (isProviderEnabledToggle) {
           // Persist only `enabled: false` and delete on enable so providers.jsonc stays minimal.

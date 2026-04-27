@@ -153,6 +153,22 @@ describe("resolveProviderCredentials base URL source", () => {
     expect(result.baseUrlSource).toBe("config");
   });
 
+  it("prefers canonical baseUrl over legacy baseURL when both are set", () => {
+    const result = resolveProviderCredentials(
+      "openai",
+      {
+        apiKey: "sk-from-config",
+        baseUrl: "https://canonical.openai.test",
+        baseURL: "https://legacy.openai.test",
+      },
+      {}
+    );
+
+    expect(result.baseUrl).toBe("https://canonical.openai.test");
+    expect(result.baseUrlResolved).toBe("https://canonical.openai.test");
+    expect(result.baseUrlSource).toBe("config");
+  });
+
   it("keeps config base URL ahead of env base URL", () => {
     const result = resolveProviderCredentials(
       "openai",

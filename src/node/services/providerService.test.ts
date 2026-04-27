@@ -290,6 +290,23 @@ describe("ProviderService.getConfig", () => {
     );
   });
 
+  it("returns legacy baseURL config as editable baseUrl", () => {
+    withTempConfig((config, service) => {
+      config.saveProvidersConfig({
+        openai: {
+          apiKey: "sk-test",
+          baseURL: "https://legacy.openai.test",
+        },
+      });
+
+      const cfg = service.getConfig();
+
+      expect(cfg.openai.baseUrl).toBe("https://legacy.openai.test");
+      expect(cfg.openai.baseUrlSource).toBe("config");
+      expect(cfg.openai.baseUrlResolved).toBe("https://legacy.openai.test");
+    });
+  });
+
   it("returns config sourced Anthropic base URL ahead of env", () => {
     withProviderEnv(
       {
@@ -417,6 +434,38 @@ describe("ProviderService.setConfig", () => {
         "openai/gpt-5.5",
       ]);
       expect(providersConfig?.["mux-gateway"]?.models).not.toContain("openai/gpt-5.2-codex");
+    });
+  });
+
+  it("removes legacy baseURL alias when editing canonical baseUrl", async () => {
+    await withTempConfigAsync(async (config, service) => {
+      config.saveProvidersConfig({
+        openai: {
+          apiKey: "sk-test",
+          baseURL: "https://legacy.openai.test",
+        },
+      });
+
+      const updateResult = await service.setConfig(
+        "openai",
+        ["baseUrl"],
+        "https://canonical.openai.test"
+      );
+      expect(updateResult.success).toBe(true);
+      expect(config.loadProvidersConfig()?.openai?.baseURL).toBeUndefined();
+      expect(config.loadProvidersConfig()?.openai?.baseUrl).toBe("https://canonical.openai.test");
+
+      config.saveProvidersConfig({
+        openai: {
+          apiKey: "sk-test",
+          baseURL: "https://legacy.openai.test",
+        },
+      });
+
+      const clearResult = await service.setConfig("openai", ["baseUrl"], "");
+      expect(clearResult.success).toBe(true);
+      expect(config.loadProvidersConfig()?.openai?.baseURL).toBeUndefined();
+      expect(config.loadProvidersConfig()?.openai?.baseUrl).toBeUndefined();
     });
   });
 

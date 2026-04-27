@@ -152,13 +152,15 @@ export type ProviderConfigCheck = Pick<
 >;
 
 /** Resolve a non-empty base URL saved in provider config. */
-function resolveConfiguredBaseUrl(config: ProviderConfigRaw): string | undefined {
-  if (hasNonEmptyString(config.baseURL)) {
-    return config.baseURL.trim();
+export function resolveConfiguredBaseUrl(config: ProviderConfigRaw): string | undefined {
+  if (hasNonEmptyString(config.baseUrl)) {
+    // The settings UI writes the canonical `baseUrl` key. Prefer it over
+    // SDK-style `baseURL` so saved edits cannot be shadowed by stale aliases.
+    return config.baseUrl.trim();
   }
 
-  if (hasNonEmptyString(config.baseUrl)) {
-    return config.baseUrl.trim();
+  if (hasNonEmptyString(config.baseURL)) {
+    return config.baseURL.trim();
   }
 
   return undefined;

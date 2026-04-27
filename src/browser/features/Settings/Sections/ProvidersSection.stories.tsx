@@ -61,6 +61,42 @@ export const ProvidersConfigured: Story = {
   },
 };
 
+export const ProvidersEnvSourced: Story = {
+  render: () => (
+    <SettingsSectionStory
+      setup={() =>
+        setupSettingsStory({
+          providersConfig: {
+            openai: {
+              apiKeySet: false,
+              apiKeySource: "env",
+              isEnabled: true,
+              isConfigured: true,
+              baseUrlSource: "env",
+              baseUrlResolved: "https://env.openai.test/v1",
+            },
+          },
+        })
+      }
+    >
+      <ProvidersSection />
+    </SettingsSectionStory>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    const openaiButton = await canvas.findByRole("button", { name: /openai/i });
+    await userEvent.click(openaiButton);
+
+    await canvas.findByText("https://env.openai.test/v1");
+    await waitFor(() => {
+      if (canvas.queryAllByText(/Set by env vars\./i).length < 2) {
+        throw new Error("Expected env source labels for OpenAI key and base URL");
+      }
+    });
+  },
+};
+
 export const ProvidersExpanded: Story = {
   render: () => (
     <SettingsSectionStory
