@@ -155,7 +155,8 @@ export const AskUserQuestionToolResultSchema = z.union([
 
 export const AdvisorToolInputSchema = z
   .object({
-    question: z.string().min(1).max(500).nullish(),
+    // Advisor prompts often need tradeoff context; keep bounded while allowing a compact brief.
+    question: z.string().min(1).max(2000).nullish(),
   })
   .strict();
 
