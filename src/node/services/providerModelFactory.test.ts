@@ -286,12 +286,73 @@ describe("ProviderModelFactory.createModel", () => {
       if (!result.success) {
         expect(result.error.type).toBe("unknown");
         if (result.error.type === "unknown") {
-          expect(result.error.raw).toContain("missing_base_url");
+          expect(result.error.raw).not.toContain("missing_base_url");
           expect(result.error.raw).toContain("local-vllm");
           expect(result.error.raw).toContain("baseUrl");
+          expect(result.error.raw).not.toContain("baseURL");
         }
       }
     });
+  });
+
+  it("returns a path-specific API key file error for custom providers", async () => {
+    await withTempConfig(async (config, factory) => {
+      const missingPath = path.join(os.tmpdir(), "mux-missing-custom-provider-key");
+      config.saveProvidersConfig({
+        "local-vllm": {
+          providerType: "openai-compatible",
+          baseUrl: "http://localhost:8000/v1",
+          apiKeyFile: missingPath,
+          models: ["qwen3-coder"],
+        },
+      });
+
+      const result = await factory.createModel("local-vllm:qwen3-coder");
+
+      expect(result.success).toBe(false);
+      if (!result.success && result.error.type === "unknown") {
+        expect(result.error.raw).toContain(missingPath);
+        expect(result.error.raw).toContain("the file does not exist");
+        expect(result.error.raw).not.toContain("not_file");
+        expect(result.error.raw).not.toContain("too_large");
+      }
+    });
+  });
+
+  it("returns the op reference when custom provider secret resolution fails", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "mux-provider-model-factory-"));
+    try {
+      const config = new Config(tmpDir);
+      const providerService = new ProviderService(config);
+      const opRef = "op://Personal/Local/api-key";
+      const factory = new ProviderModelFactory(
+        config,
+        providerService,
+        undefined,
+        undefined,
+        undefined,
+        () => Promise.resolve(undefined)
+      );
+      config.saveProvidersConfig({
+        "local-vllm": {
+          providerType: "openai-compatible",
+          baseUrl: "http://localhost:8000/v1",
+          apiKey: opRef,
+          models: ["qwen3-coder"],
+        },
+      });
+
+      const result = await factory.createModel("local-vllm:qwen3-coder");
+
+      expect(result.success).toBe(false);
+      if (!result.success && result.error.type === "unknown") {
+        expect(result.error.raw).toContain(opRef);
+        expect(result.error.raw).toContain("did not resolve");
+        expect(result.error.raw).not.toContain("threw");
+      }
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 
   it("returns provider_not_supported for unknown provider entries without a custom provider type", async () => {

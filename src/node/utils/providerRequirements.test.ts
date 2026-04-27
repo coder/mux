@@ -315,7 +315,6 @@ describe("resolveCustomProviderCredentials", () => {
       resolvedFrom: "op",
     });
   });
-
 });
 describe("resolveProviderCredentials - apiKeyFile", () => {
   let tmpDir: string;

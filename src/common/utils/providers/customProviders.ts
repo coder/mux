@@ -71,7 +71,7 @@ export function getCustomOpenAICompatibleProviderIds(providersConfig: ProvidersC
   const providerIds: string[] = [];
 
   for (const [provider, config] of Object.entries(providersConfig)) {
-    if (isBuiltInProvider(provider) || !isCustomOpenAICompatibleProviderConfig(config)) {
+    if (!isCustomOpenAICompatibleProviderConfig(config)) {
       continue;
     }
 
@@ -79,6 +79,12 @@ export function getCustomOpenAICompatibleProviderIds(providersConfig: ProvidersC
   }
 
   return providerIds;
+}
+
+export function getShadowedCustomOpenAICompatibleProviderIds(
+  providersConfig: ProvidersConfig
+): string[] {
+  return getCustomOpenAICompatibleProviderIds(providersConfig).filter(isBuiltInProvider);
 }
 
 export function formatProviderDisplayName(

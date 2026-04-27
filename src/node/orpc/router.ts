@@ -750,10 +750,17 @@ export const router = (authToken?: string) => {
         .input(schemas.config.updateRoutePreferences.input)
         .output(schemas.config.updateRoutePreferences.output)
         .handler(async ({ context, input }) => {
+          const routeOverrides =
+            input.routeOverrides ?? context.config.loadConfigOrDefault().routeOverrides ?? {};
+          const validation = context.providerService.validateRouteOverrides(routeOverrides);
+          if (!validation.success) {
+            throw new Error(validation.error);
+          }
+
           await context.config.editConfig((config) => ({
             ...config,
             routePriority: input.routePriority,
-            routeOverrides: input.routeOverrides ?? config.routeOverrides,
+            routeOverrides,
           }));
         }),
       updateModelPreferences: t

@@ -16,9 +16,11 @@ import type {
   ProvidersConfigMap,
 } from "@/common/orpc/types";
 import { isProviderDisabledInConfig } from "@/common/utils/providers/isProviderDisabled";
+import { modelStringStartsWithProvider } from "@/common/utils/providers/modelString";
 import { resolveConfigBaseUrl } from "@/common/utils/providers/baseUrl";
 import {
   getCustomOpenAICompatibleProviderIds,
+  getShadowedCustomOpenAICompatibleProviderIds,
   isBuiltInProvider,
   isCustomOpenAICompatibleProviderConfig,
   validateCustomProviderId,
@@ -66,14 +68,17 @@ function buildCustomProviderConfigInfo(
     policy?.allowedModels ?? null
   );
   const apiKeyIsOpRef = isOpReference(config.apiKey);
+  const apiKeySet = typeof config.apiKey === "string" && config.apiKey.trim().length > 0;
+  const apiKeyFile = typeof config.apiKeyFile === "string" ? config.apiKeyFile : undefined;
   const isEnabled = !isProviderDisabledInConfig(config);
 
   return {
-    apiKeySet: typeof config.apiKey === "string" && config.apiKey.trim().length > 0,
+    apiKeySet,
     apiKeyIsOpRef: apiKeyIsOpRef || undefined,
     apiKeyOpRef: apiKeyIsOpRef ? config.apiKey : undefined,
     apiKeyOpLabel: apiKeyIsOpRef ? config.apiKeyOpLabel : undefined,
-    apiKeyFile: typeof config.apiKeyFile === "string" ? config.apiKeyFile : undefined,
+    apiKeyFile,
+    apiKeySource: apiKeySet ? "config" : apiKeyFile ? "file" : "keyless",
     baseUrl,
     models,
     displayName: config.displayName,
@@ -102,10 +107,6 @@ function addErrorReason<T extends CustomProviderMutationError>(
   }
 
   return { ...error, reason };
-}
-
-function modelStringStartsWithProvider(modelString: string | undefined, provider: string): boolean {
-  return modelString?.startsWith(`${provider}:`) ?? false;
 }
 
 function isValidHttpBaseUrl(baseUrl: string): boolean {
@@ -172,10 +173,16 @@ export class ProviderService {
       const providers = this.listBuiltInProviders();
       const providersConfig = this.config.loadProvidersConfig() ?? {};
       const customProviderIds = getCustomOpenAICompatibleProviderIds(providersConfig);
+      const shadowedProviderIds = getShadowedCustomOpenAICompatibleProviderIds(providersConfig);
+      if (shadowedProviderIds.length > 0) {
+        log.warn(
+          `Custom provider ids shadow built-in providers and will keep using custom config: ${shadowedProviderIds.join(", ")}`
+        );
+      }
       const allowedCustomProviderIds = this.policyService?.isEnforced()
         ? customProviderIds.filter((p) => this.policyService?.isProviderAllowed(p) ?? false)
         : customProviderIds;
-      return [...providers, ...allowedCustomProviderIds];
+      return Array.from(new Set([...providers, ...allowedCustomProviderIds]));
     } catch (error) {
       log.error("Failed to list providers:", error);
       return [];
@@ -189,8 +196,19 @@ export class ProviderService {
     const providersConfig = this.config.loadProvidersConfig() ?? {};
     const mainConfig = this.config.loadConfigOrDefault();
     const result: ProvidersConfigMap = {};
+    const shadowedCustomProviderIds = new Set(
+      getShadowedCustomOpenAICompatibleProviderIds(providersConfig)
+    );
+    if (shadowedCustomProviderIds.size > 0) {
+      log.warn(
+        `Custom provider ids shadow built-in providers and will keep using custom config: ${Array.from(shadowedCustomProviderIds).join(", ")}`
+      );
+    }
 
     for (const provider of this.listBuiltInProviders()) {
+      if (shadowedCustomProviderIds.has(provider)) {
+        continue;
+      }
       const config = (providersConfig[provider] ?? {}) as {
         apiKey?: string;
         apiKeyFile?: string;
@@ -425,7 +443,7 @@ export class ProviderService {
 
     try {
       const providersConfig = getProviderConfigRecord(this.config.loadProvidersConfig() ?? {});
-      if (Object.prototype.hasOwnProperty.call(providersConfig, provider)) {
+      if (Object.hasOwn(providersConfig, provider)) {
         return {
           success: false,
           error: {
@@ -541,7 +559,7 @@ export class ProviderService {
     }
 
     const providersConfig = getProviderConfigRecord(this.config.loadProvidersConfig() ?? {});
-    if (!Object.prototype.hasOwnProperty.call(providersConfig, provider)) {
+    if (!Object.hasOwn(providersConfig, provider)) {
       return {
         success: false,
         error: { code: "unknown_provider", message: `Provider ${provider} does not exist.` },
@@ -559,11 +577,24 @@ export class ProviderService {
     }
 
     try {
+      const latestProvidersConfig = getProviderConfigRecord(
+        this.config.loadProvidersConfig() ?? {}
+      );
+      if (!isCustomOpenAICompatibleProviderConfig(latestProvidersConfig[provider])) {
+        return {
+          success: false,
+          error: {
+            code: "not_custom_provider",
+            message: `Provider ${provider} is not a custom OpenAI-compatible provider.`,
+          },
+        };
+      }
+
+      delete latestProvidersConfig[provider];
+      this.config.saveProvidersConfig(latestProvidersConfig);
       await this.config.editConfig((config) =>
         this.repairRemovedCustomProviderReferences(config, provider)
       );
-      delete providersConfig[provider];
-      this.config.saveProvidersConfig(providersConfig);
       this.notifyConfigChanged();
       return { success: true, data: undefined };
     } catch (error) {
@@ -779,7 +810,8 @@ export class ProviderService {
         }
 
         const forcedBaseUrl = this.policyService.getForcedBaseUrl(provider);
-        const isBaseUrlEdit = keyPath.length === 1 && keyPath[0] === "baseUrl";
+        const isBaseUrlEdit =
+          keyPath.length === 1 && (keyPath[0] === "baseUrl" || keyPath[0] === "baseURL");
         if (isBaseUrlEdit && forcedBaseUrl) {
           return { success: false, error: `Provider ${provider} base URL is locked by policy` };
         }
@@ -851,9 +883,19 @@ export class ProviderService {
         }
 
         const forcedBaseUrl = this.policyService.getForcedBaseUrl(provider);
-        const isBaseUrlEdit = keyPath.length === 1 && keyPath[0] === "baseUrl";
+        const isBaseUrlEdit =
+          keyPath.length === 1 && (keyPath[0] === "baseUrl" || keyPath[0] === "baseURL");
         if (isBaseUrlEdit && forcedBaseUrl) {
           return { success: false, error: `Provider ${provider} base URL is locked by policy` };
+        }
+      }
+
+      const isOpenAICompatibleProviderTypeEdit =
+        keyPath.length === 1 && keyPath[0] === "providerType" && value === "openai-compatible";
+      if (isOpenAICompatibleProviderTypeEdit) {
+        const validation = validateCustomProviderId(provider);
+        if (!validation.ok) {
+          return { success: false, error: `Invalid custom provider id: ${validation.reason}` };
         }
       }
 
@@ -928,5 +970,20 @@ export class ProviderService {
       const message = getErrorMessage(error);
       return { success: false, error: `Failed to set provider config: ${message}` };
     }
+  }
+
+  public validateRouteOverrides(routeOverrides: Record<string, string>): Result<void, string> {
+    const providersConfig = this.config.loadProvidersConfig() ?? {};
+    for (const routeTarget of Object.values(routeOverrides)) {
+      const targetConfig = providersConfig[routeTarget];
+      if (isCustomOpenAICompatibleProviderConfig(targetConfig)) {
+        return {
+          success: false,
+          error: `Custom providers are direct-only and cannot be the target of a routeOverride: ${routeTarget}.`,
+        };
+      }
+    }
+
+    return { success: true, data: undefined };
   }
 }

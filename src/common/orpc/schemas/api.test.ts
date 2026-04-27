@@ -107,6 +107,7 @@ describe("ProviderConfigInfoSchema conformance", () => {
       isEnabled: true,
       isConfigured: true,
       baseUrl: "https://custom.endpoint.com",
+      apiKeySource: "keyless",
       baseUrlSource: "config",
       baseUrlResolved: "https://custom.endpoint.com",
       providerType: "openai-compatible",
@@ -140,6 +141,7 @@ describe("ProviderConfigInfoSchema conformance", () => {
     expect(parsed.apiKeyOpRef).toBe(full.apiKeyOpRef);
     expect(parsed.isEnabled).toBe(full.isEnabled);
     expect(parsed.baseUrl).toBe(full.baseUrl);
+    expect(parsed.apiKeySource).toBe(full.apiKeySource);
     expect(parsed.baseUrlSource).toBe(full.baseUrlSource);
     expect(parsed.baseUrlResolved).toBe(full.baseUrlResolved);
     expect(parsed.providerType).toBe(full.providerType);

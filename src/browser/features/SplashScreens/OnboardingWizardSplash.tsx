@@ -38,14 +38,14 @@ import {
 } from "@/browser/hooks/useMuxGatewayAccountStatus";
 import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 import { getAgentsInitNudgeKey } from "@/common/constants/storage";
-import {
-  PROVIDER_DEFINITIONS,
-  PROVIDER_DISPLAY_NAMES,
-  type ProviderName,
-} from "@/common/constants/providers";
+import { PROVIDER_DEFINITIONS, type ProviderName } from "@/common/constants/providers";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { getAllowedProvidersForUi } from "@/browser/utils/policyUi";
 import { getErrorMessage } from "@/common/utils/errors";
+import {
+  formatProviderDisplayName,
+  isBuiltInProvider,
+} from "@/common/utils/providers/customProviders";
 
 interface OAuthMessage {
   type?: unknown;
@@ -201,11 +201,11 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
   const policyState = usePolicy();
   const effectivePolicy =
     policyState.status.state === "enforced" ? (policyState.policy ?? null) : null;
-  const visibleProviders = useMemo(
-    () => getAllowedProvidersForUi(effectivePolicy),
-    [effectivePolicy]
-  );
   const { config: providersConfig, loading: providersLoading } = useProvidersConfig();
+  const visibleProviders = useMemo(
+    () => getAllowedProvidersForUi(effectivePolicy, providersConfig),
+    [effectivePolicy, providersConfig]
+  );
   const { addProject, userProjects } = useProjectContext();
 
   const projectAddFormRef = useRef<ProjectAddFormHandle | null>(null);
@@ -507,11 +507,16 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
 
   const onboardingProviders = useMemo(() => {
     const gatewayPriority: ProviderName[] = ["mux-gateway", "openrouter"];
-    const directProviders: ProviderName[] = [];
-    const localProviders: ProviderName[] = [];
-    const otherGateways: ProviderName[] = [];
+    const directProviders: string[] = [];
+    const localProviders: string[] = [];
+    const otherGateways: string[] = [];
 
     for (const provider of visibleProviders) {
+      if (!isBuiltInProvider(provider)) {
+        directProviders.push(provider);
+        continue;
+      }
+
       const providerDef = PROVIDER_DEFINITIONS[provider];
       if (providerDef.kind === "direct") {
         directProviders.push(provider);
@@ -539,8 +544,10 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
       return null;
     }
 
-    return configuredProviders.map((p) => PROVIDER_DISPLAY_NAMES[p]).join(", ");
-  }, [configuredProviders]);
+    return configuredProviders
+      .map((provider) => formatProviderDisplayName(provider, providersConfig?.[provider]))
+      .join(", ");
+  }, [configuredProviders, providersConfig]);
 
   const [hasConfiguredProvidersAtStart, setHasConfiguredProvidersAtStart] = useState<
     boolean | null

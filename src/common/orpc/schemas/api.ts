@@ -190,8 +190,8 @@ export const ProviderConfigInfoSchema = z.object({
   /** Whether this provider is configured and ready to use */
   isConfigured: z.boolean(),
   apiKeyFile: z.string().optional(),
-  /** Where the API key was actually resolved from (config, file, or env) */
-  apiKeySource: z.enum(["config", "file", "env"]).optional(),
+  /** Where the API key was actually resolved from (config, file, env, or keyless) */
+  apiKeySource: z.enum(["config", "file", "env", "keyless"]).optional(),
   baseUrl: z.string().optional(),
   /** Where the active base URL was resolved from (config or env) */
   baseUrlSource: z.enum(["config", "env"]).nullish(),

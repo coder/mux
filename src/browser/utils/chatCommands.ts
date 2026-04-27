@@ -8,7 +8,12 @@
 
 import type { RouterClient } from "@orpc/server";
 import type { AppRouter } from "@/node/orpc/router";
-import type { FilePart, ProviderModelEntry, SendMessageOptions } from "@/common/orpc/types";
+import type {
+  FilePart,
+  ProviderModelEntry,
+  ProvidersConfigMap,
+  SendMessageOptions,
+} from "@/common/orpc/types";
 import {
   type MuxMessageMetadata,
   type CompactionRequestData,
@@ -45,6 +50,8 @@ import { dispatchWorkspaceSwitch } from "./workspaceEvents";
 import { getRuntimeKey, copyWorkspaceStorage } from "@/common/constants/storage";
 import { buildCompactionMessageText } from "@/common/utils/compaction/compactionPrompt";
 import { getProviderModelEntryId } from "@/common/utils/providers/modelEntries";
+import { isCustomOpenAICompatibleProviderConfig } from "@/common/utils/providers/customProviders";
+import { isValidProvider } from "@/common/constants/providers";
 import { openInEditor } from "@/browser/utils/openInEditor";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
@@ -203,9 +210,17 @@ export async function processSlashCommand(
     const explicitGateway = getExplicitGatewayPrefix(selectedModel);
 
     try {
-      // Validate provider is supported
-      const { isValidProvider } = await import("@/common/constants/providers");
-      if (!isValidProvider(provider)) {
+      let providersConfig: ProvidersConfigMap | null = null;
+      if (activeClient) {
+        try {
+          providersConfig = await activeClient.providers.getConfig();
+        } catch (error) {
+          console.error("Failed to load provider settings:", error);
+        }
+      }
+
+      const providerConfig = providersConfig?.[provider];
+      if (!isValidProvider(provider) && !isCustomOpenAICompatibleProviderConfig(providerConfig)) {
         setToast({
           id: Date.now().toString(),
           type: "error",
@@ -215,10 +230,14 @@ export async function processSlashCommand(
       }
 
       // Align with settings behavior: only persist non-built-in direct-provider models.
-      if (activeClient && !BUILT_IN_MODEL_SET.has(canonicalModel) && !explicitGateway) {
+      if (
+        activeClient &&
+        providersConfig &&
+        !BUILT_IN_MODEL_SET.has(canonicalModel) &&
+        !explicitGateway
+      ) {
         try {
-          const config = await activeClient.providers.getConfig();
-          const existingModels: ProviderModelEntry[] = config[provider]?.models ?? [];
+          const existingModels: ProviderModelEntry[] = providerConfig?.models ?? [];
           if (!existingModels.some((entry) => getProviderModelEntryId(entry) === modelId)) {
             // Add model via the same API as settings
             await activeClient.providers.setModels({

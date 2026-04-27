@@ -20,6 +20,48 @@ void mock.module("@/browser/utils/modelPreferenceRepair", () => ({
   ) => repairRemovedProviderMock(provider, workspaceIds),
 }));
 
+let providersConfigMock: ProvidersConfigMap | null = null;
+let apiMock: APIClient | null = null;
+const providersRefreshMock = mock(() => Promise.resolve());
+const updateOptimisticallyMock = mock((provider: string, updates: Partial<ProviderConfigInfo>) => {
+  if (!providersConfigMock?.[provider]) {
+    return;
+  }
+  providersConfigMock[provider] = { ...providersConfigMock[provider], ...updates };
+});
+
+void mock.module("@/browser/hooks/useProvidersConfig", () => ({
+  useProvidersConfig: () => ({
+    config: providersConfigMock,
+    loading: false,
+    refresh: providersRefreshMock,
+    updateOptimistically: updateOptimisticallyMock,
+  }),
+}));
+
+void mock.module("@/browser/hooks/useRouting", () => ({
+  useRouting: () => ({
+    routePriority: ["direct"],
+    routeOverrides: {},
+    resolveRoute: () => ({ route: "direct", isAuto: true, displayName: "Direct" }),
+    availableRoutes: () => [],
+    setRoutePreferences: () => undefined,
+    setRoutePriority: () => undefined,
+    setRouteOverride: () => undefined,
+  }),
+}));
+
+void mock.module("@/browser/contexts/API", () => ({
+  useAPI: () => ({ api: apiMock }),
+}));
+
+void mock.module("@/browser/contexts/PolicyContext", () => ({
+  usePolicy: () => ({
+    status: { state: "disabled" as const },
+    policy: null,
+  }),
+}));
+
 import { ProvidersSection } from "./ProvidersSection";
 import { SettingsSectionStory, setupSettingsStory } from "./settingsStoryUtils";
 
@@ -95,7 +137,9 @@ function patchProviderMethods(client: APIClient, providersConfig: ProvidersConfi
 
 function renderProvidersSection() {
   const providersConfig = createProvidersConfig();
+  providersConfigMock = providersConfig;
   const client = setupSettingsStory({ providersConfig: {} });
+  apiMock = client;
   const providerMocks = patchProviderMethods(client, providersConfig);
   const view = render(
     <SettingsSectionStory setup={() => client}>
@@ -122,11 +166,17 @@ describe("ProvidersSection", () => {
     repairRemovedProviderMock = mock(
       (_provider: string, _workspaceIds: Iterable<string>) => undefined
     );
+    providersConfigMock = null;
+    apiMock = null;
+    providersRefreshMock.mockClear();
+    updateOptimisticallyMock.mockClear();
   });
 
   afterEach(() => {
     cleanup();
     mock.restore();
+    providersConfigMock = null;
+    apiMock = null;
     restoreDom?.();
     restoreDom = null;
   });
@@ -165,7 +215,7 @@ describe("ProvidersSection", () => {
 
     fireEvent.click(await view.findByRole("button", { name: "Add provider" }));
 
-    expect(await view.findByText("Custom provider id is required.")).toBeTruthy();
+    expect(view.queryByText("Custom provider id is required.")).toBeNull();
 
     const providerIdInput = view.getByPlaceholderText("acme-openai") as HTMLInputElement;
     await userEvent.type(providerIdInput, "openai");

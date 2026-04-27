@@ -424,6 +424,7 @@ describe("ProviderService.getConfig", () => {
         apiKeyOpRef: undefined,
         apiKeyOpLabel: undefined,
         apiKeyFile: undefined,
+        apiKeySource: "keyless",
         baseUrl: "http://localhost:8000/v1",
         models: [],
         displayName: "Local vLLM",
@@ -487,6 +488,25 @@ describe("ProviderService.getConfig", () => {
       expect(cfg["local-vllm"].baseUrl).toBe("http://localhost:8000/v1");
       expect(cfg["local-vllm"].isConfigured).toBe(true);
       expect(service.list()).toContain("local-vllm");
+    });
+  });
+
+  it("prefers shadowed custom provider config over a built-in provider id", () => {
+    withTempConfig((config, service) => {
+      config.saveProvidersConfig({
+        openai: {
+          providerType: "openai-compatible",
+          displayName: "Shadowed OpenAI",
+          baseUrl: "http://localhost:8000/v1",
+        },
+      });
+
+      const cfg = service.getConfig();
+
+      expect(cfg.openai.isCustom).toBe(true);
+      expect(cfg.openai.displayName).toBe("Shadowed OpenAI");
+      expect(cfg.openai.apiKeySource).toBe("keyless");
+      expect(service.list().filter((provider) => provider === "openai")).toHaveLength(1);
     });
   });
 
@@ -835,6 +855,35 @@ describe("ProviderService custom provider mutations", () => {
     });
   });
 
+  it("does not repair app config if provider deletion fails", async () => {
+    await withTempConfigAsync(async (config, service) => {
+      config.saveProvidersConfig({
+        "local-vllm": {
+          providerType: "openai-compatible",
+          baseUrl: "http://localhost:8000/v1",
+        },
+      });
+      await config.saveConfig({
+        ...config.loadConfigOrDefault(),
+        defaultModel: "local-vllm:qwen3-coder",
+      });
+      const saveProvidersConfigSpy = spyOn(config, "saveProvidersConfig");
+      saveProvidersConfigSpy.mockImplementationOnce(() => {
+        throw new Error("disk is read-only");
+      });
+
+      try {
+        const result = await service.removeCustomProvider("local-vllm");
+
+        expect(result.success).toBe(false);
+        expect(config.loadConfigOrDefault().defaultModel).toBe("local-vllm:qwen3-coder");
+        expect(config.loadProvidersConfig()?.["local-vllm"]).toBeDefined();
+      } finally {
+        saveProvidersConfigSpy.mockRestore();
+      }
+    });
+  });
+
   it("repairs durable app config references when removing a custom provider", async () => {
     await withTempConfigAsync(async (config, service) => {
       const provider = "local-vllm";
@@ -1047,6 +1096,54 @@ describe("ProviderService.setConfig", () => {
       expect(afterEnable?.openai?.apiKey).toBe("sk-test");
       expect(afterEnable?.openai?.baseUrl).toBe("https://api.openai.com/v1");
       expect(afterEnable?.openai?.enabled).toBeUndefined();
+    });
+  });
+
+  it("rejects baseURL edits when policy forces a base URL", async () => {
+    await withTempPolicyProviderService(
+      {
+        policy_format_version: "0.1",
+        provider_access: [{ id: "openai", base_url: "https://forced.openai.test" }],
+      },
+      async (_config, service) => {
+        const result = await service.setConfig("openai", ["baseURL"], "https://other.openai.test");
+
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(result.error).toContain("base URL is locked by policy");
+        }
+      }
+    );
+  });
+
+  it("rejects invalid ids when setConfig creates an OpenAI-compatible provider", async () => {
+    await withTempConfigAsync(async (config, service) => {
+      const result = await service.setConfig("bad provider", ["providerType"], "openai-compatible");
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toContain("Invalid custom provider id");
+      }
+      expect(config.loadProvidersConfig()?.["bad provider"]).toBeUndefined();
+    });
+  });
+
+  it("rejects custom providers as route override targets", () => {
+    withTempConfig((config, service) => {
+      config.saveProvidersConfig({
+        "local-vllm": {
+          providerType: "openai-compatible",
+          baseUrl: "http://localhost:8000/v1",
+        },
+      });
+
+      const result = service.validateRouteOverrides({ "openai:gpt-5": "local-vllm" });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toContain("Custom providers are direct-only");
+        expect(result.error).toContain("local-vllm");
+      }
     });
   });
 

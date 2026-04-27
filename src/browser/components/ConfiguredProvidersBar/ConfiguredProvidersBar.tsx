@@ -1,6 +1,6 @@
 import { Check, Settings } from "lucide-react";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
-import { PROVIDER_DISPLAY_NAMES } from "@/common/constants/providers";
+import { formatProviderDisplayName } from "@/common/utils/providers/customProviders";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { getAllowedProvidersForUi } from "@/browser/utils/policyUi";
 import { hasProviderIcon, ProviderIcon } from "../ProviderIcon/ProviderIcon";
@@ -19,7 +19,7 @@ export function ConfiguredProvidersBar(props: ConfiguredProvidersBarProps) {
   const policyState = usePolicy();
   const effectivePolicy =
     policyState.status.state === "enforced" ? (policyState.policy ?? null) : null;
-  const visibleProviders = getAllowedProvidersForUi(effectivePolicy);
+  const visibleProviders = getAllowedProvidersForUi(effectivePolicy, props.providersConfig);
 
   const settings = useSettings();
   const configuredProviders = visibleProviders.filter(
@@ -30,7 +30,9 @@ export function ConfiguredProvidersBar(props: ConfiguredProvidersBarProps) {
     settings.open("providers");
   };
 
-  const tooltipText = configuredProviders.map((p) => PROVIDER_DISPLAY_NAMES[p]).join(", ");
+  const tooltipText = configuredProviders
+    .map((p) => formatProviderDisplayName(p, props.providersConfig[p]))
+    .join(", ");
 
   return (
     <div className="text-muted-foreground flex items-center justify-center gap-2 py-1.5 text-sm">
@@ -44,7 +46,7 @@ export function ConfiguredProvidersBar(props: ConfiguredProvidersBarProps) {
                   <ProviderIcon key={provider} provider={provider} />
                 ) : (
                   <span key={provider} className="text-muted-foreground text-xs font-medium">
-                    {PROVIDER_DISPLAY_NAMES[provider]}
+                    {formatProviderDisplayName(provider, props.providersConfig[provider])}
                   </span>
                 )
               )}

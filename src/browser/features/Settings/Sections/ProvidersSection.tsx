@@ -127,11 +127,7 @@ function isCustomOpenAICompatibleProviderInfo(
  * Most providers use API Key + Base URL, but some (like Bedrock) have different needs.
  */
 function getProviderFields(provider: string, providerInfo?: ProviderConfigInfo): FieldConfig[] {
-  if (!isBuiltInProvider(provider)) {
-    if (!isCustomOpenAICompatibleProviderInfo(providerInfo)) {
-      return [];
-    }
-
+  if (isCustomOpenAICompatibleProviderInfo(providerInfo)) {
     return [
       {
         key: "displayName",
@@ -160,6 +156,10 @@ function getProviderFields(provider: string, providerInfo?: ProviderConfigInfo):
         type: "text",
       },
     ];
+  }
+
+  if (!isBuiltInProvider(provider)) {
+    return [];
   }
 
   if (provider === "bedrock") {
@@ -394,7 +394,10 @@ export function ProvidersSection() {
     const policyAllowedSet = new Set(visibleProviders);
 
     for (const provider of visibleProviders) {
-      if (!isBuiltInProvider(provider)) {
+      if (
+        !isBuiltInProvider(provider) ||
+        isCustomOpenAICompatibleProviderInfo(config?.[provider])
+      ) {
         continue;
       }
 
@@ -1073,6 +1076,12 @@ export function ProvidersSection() {
   const [customProviderApiKeyFile, setCustomProviderApiKeyFile] = useState("");
   const [customProviderInitialModelId, setCustomProviderInitialModelId] = useState("");
   const [customProviderSubmitError, setCustomProviderSubmitError] = useState<string | null>(null);
+  const [customProviderSubmitAttempted, setCustomProviderSubmitAttempted] = useState(false);
+  const [customProviderTouchedFields, setCustomProviderTouchedFields] = useState({
+    providerId: false,
+    displayName: false,
+    baseUrl: false,
+  });
   const [customProviderSubmitting, setCustomProviderSubmitting] = useState(false);
   const [customProviderRemoveErrors, setCustomProviderRemoveErrors] = useState<
     Record<string, string>
@@ -1336,6 +1345,10 @@ export function ProvidersSection() {
     return !!getFieldValue(provider, field);
   };
 
+  const markCustomProviderFieldTouched = (field: keyof typeof customProviderTouchedFields) => {
+    setCustomProviderTouchedFields((prev) => (prev[field] ? prev : { ...prev, [field]: true }));
+  };
+
   const trimmedCustomProviderId = customProviderId.trim();
   const customProviderIdValidation = validateCustomProviderId(trimmedCustomProviderId);
   const trimmedCustomProviderDisplayName = customProviderDisplayName.trim();
@@ -1349,6 +1362,15 @@ export function ProvidersSection() {
           trimmedCustomProviderBaseUrl.startsWith("https://")
         ? null
         : "Base URL must start with http:// or https://.";
+  const showCustomProviderIdError =
+    !customProviderIdValidation.ok &&
+    (customProviderTouchedFields.providerId || customProviderSubmitAttempted);
+  const showCustomProviderDisplayNameError =
+    customProviderDisplayNameError != null &&
+    (customProviderTouchedFields.displayName || customProviderSubmitAttempted);
+  const showCustomProviderBaseUrlError =
+    customProviderBaseUrlError != null &&
+    (customProviderTouchedFields.baseUrl || customProviderSubmitAttempted);
 
   const clearCustomProviderForm = useCallback(() => {
     setCustomProviderId("");
@@ -1358,6 +1380,8 @@ export function ProvidersSection() {
     setCustomProviderApiKeyFile("");
     setCustomProviderInitialModelId("");
     setCustomProviderSubmitError(null);
+    setCustomProviderSubmitAttempted(false);
+    setCustomProviderTouchedFields({ providerId: false, displayName: false, baseUrl: false });
   }, []);
 
   const clearCustomProviderRemoveError = useCallback((provider: string) => {
@@ -1373,6 +1397,8 @@ export function ProvidersSection() {
   }, []);
 
   const handleAddCustomProvider = useCallback(async () => {
+    setCustomProviderSubmitAttempted(true);
+
     if (!api) {
       setCustomProviderSubmitError("Mux API not connected.");
       return;
@@ -1385,20 +1411,13 @@ export function ProvidersSection() {
     const apiKeyFile = customProviderApiKeyFile.trim();
     const initialModelId = customProviderInitialModelId.trim();
     const providerIdValidation = validateCustomProviderId(provider);
-    if (!providerIdValidation.ok) {
-      setCustomProviderSubmitError(providerIdValidation.reason);
-      return;
-    }
-    if (displayName.length === 0) {
-      setCustomProviderSubmitError("Display name is required.");
-      return;
-    }
-    if (baseUrl.length === 0) {
-      setCustomProviderSubmitError("Base URL is required.");
-      return;
-    }
-    if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
-      setCustomProviderSubmitError("Base URL must start with http:// or https://.");
+    if (
+      !providerIdValidation.ok ||
+      displayName.length === 0 ||
+      baseUrl.length === 0 ||
+      (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://"))
+    ) {
+      setCustomProviderSubmitError(null);
       return;
     }
 
@@ -1472,7 +1491,7 @@ export function ProvidersSection() {
       }
 
       const workspaceIds = new Set(workspaceMetadata.keys());
-      if (selectedWorkspace && workspaceMetadata.has(selectedWorkspace.workspaceId)) {
+      if (selectedWorkspace) {
         workspaceIds.add(selectedWorkspace.workspaceId);
       }
 
@@ -1630,6 +1649,12 @@ export function ProvidersSection() {
                   {/* Provider settings */}
                   {isExpanded && (
                     <div className="border-border-medium space-y-3 border-t px-4 py-3">
+                      {isBuiltInProvider(provider) && isCustomOpenAICompatible && (
+                        <div className="border-warning/40 bg-warning/10 text-warning rounded-md border px-3 py-2 text-xs">
+                          This custom provider id now matches a built-in provider. Mux will keep
+                          using your custom configuration.
+                        </div>
+                      )}
                       {provider !== "mux-gateway" && (
                         <div className="flex items-center justify-between gap-3">
                           <div>
@@ -1988,6 +2013,8 @@ export function ProvidersSection() {
                                         ) : (
                                           "••••••••"
                                         )
+                                      ) : config?.[provider]?.apiKeySource === "keyless" ? (
+                                        "No API key required"
                                       ) : (
                                         "Not set"
                                       )
@@ -2585,6 +2612,12 @@ export function ProvidersSection() {
                           clearCustomProviderForm();
                         } else {
                           setCustomProviderSubmitError(null);
+                          setCustomProviderSubmitAttempted(false);
+                          setCustomProviderTouchedFields({
+                            providerId: false,
+                            displayName: false,
+                            baseUrl: false,
+                          });
                         }
                         return next;
                       });
@@ -2600,11 +2633,17 @@ export function ProvidersSection() {
                       <span className="text-muted text-xs">Provider ID</span>
                       <input
                         value={customProviderId}
-                        onChange={(event) => setCustomProviderId(event.target.value)}
+                        onChange={(event) => {
+                          setCustomProviderId(event.target.value);
+                          if (event.target.value.trim().length > 0) {
+                            markCustomProviderFieldTouched("providerId");
+                          }
+                        }}
+                        onBlur={() => markCustomProviderFieldTouched("providerId")}
                         placeholder="acme-openai"
                         className="bg-modal-bg border-border-medium focus:border-accent w-full rounded border px-2 py-1.5 font-mono text-xs focus:outline-none"
                       />
-                      {!customProviderIdValidation.ok && (
+                      {showCustomProviderIdError && (
                         <span className="text-destructive block text-xs">
                           {customProviderIdValidation.reason}
                         </span>
@@ -2615,11 +2654,17 @@ export function ProvidersSection() {
                       <span className="text-muted text-xs">Display name</span>
                       <input
                         value={customProviderDisplayName}
-                        onChange={(event) => setCustomProviderDisplayName(event.target.value)}
+                        onChange={(event) => {
+                          setCustomProviderDisplayName(event.target.value);
+                          if (event.target.value.trim().length > 0) {
+                            markCustomProviderFieldTouched("displayName");
+                          }
+                        }}
+                        onBlur={() => markCustomProviderFieldTouched("displayName")}
                         placeholder="Acme OpenAI"
                         className="bg-modal-bg border-border-medium focus:border-accent w-full rounded border px-2 py-1.5 text-xs focus:outline-none"
                       />
-                      {customProviderDisplayNameError && (
+                      {showCustomProviderDisplayNameError && (
                         <span className="text-destructive block text-xs">
                           {customProviderDisplayNameError}
                         </span>
@@ -2630,11 +2675,17 @@ export function ProvidersSection() {
                       <span className="text-muted text-xs">Base URL</span>
                       <input
                         value={customProviderBaseUrl}
-                        onChange={(event) => setCustomProviderBaseUrl(event.target.value)}
+                        onChange={(event) => {
+                          setCustomProviderBaseUrl(event.target.value);
+                          if (event.target.value.trim().length > 0) {
+                            markCustomProviderFieldTouched("baseUrl");
+                          }
+                        }}
+                        onBlur={() => markCustomProviderFieldTouched("baseUrl")}
                         placeholder="https://api.acme.test/v1"
                         className="bg-modal-bg border-border-medium focus:border-accent w-full rounded border px-2 py-1.5 font-mono text-xs focus:outline-none"
                       />
-                      {customProviderBaseUrlError && (
+                      {showCustomProviderBaseUrlError && (
                         <span className="text-destructive block text-xs">
                           {customProviderBaseUrlError}
                         </span>

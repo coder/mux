@@ -68,14 +68,16 @@ export function getAllowedProvidersForUi(
     : [];
   const access = policy?.providerAccess;
   if (access == null) {
-    return [...SUPPORTED_PROVIDERS, ...customProviders];
+    return Array.from(new Set([...SUPPORTED_PROVIDERS, ...customProviders]));
   }
 
   const allowed = new Set(access.map((p) => p.id));
-  return [
-    ...SUPPORTED_PROVIDERS.filter((p) => allowed.has(p)),
-    ...customProviders.filter((p) => allowed.has(p)),
-  ];
+  return Array.from(
+    new Set([
+      ...SUPPORTED_PROVIDERS.filter((p) => allowed.has(p)),
+      ...customProviders.filter((p) => allowed.has(p)),
+    ])
+  );
 }
 
 export function getPolicyRuntimeIdFromParsedRuntime(runtime: ParsedRuntime): PolicyRuntimeId {

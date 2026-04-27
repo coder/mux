@@ -126,6 +126,8 @@ type ProviderSpecificCredentialFields = Partial<
 export type ProviderConfigRaw = Omit<ProviderConfig, "enabled" | "models"> & {
   enabled?: unknown;
   models?: unknown[];
+  baseUrl?: unknown;
+  baseURL?: unknown;
 } & ProviderSpecificCredentialFields;
 
 /** Result of resolving provider credentials */

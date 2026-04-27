@@ -4,6 +4,7 @@ import type { ProvidersConfig } from "@/common/config/schemas/providersConfig";
 import {
   formatProviderDisplayName,
   getCustomOpenAICompatibleProviderIds,
+  getShadowedCustomOpenAICompatibleProviderIds,
   isBuiltInProvider,
   isCustomOpenAICompatibleProviderConfig,
   isValidCustomProviderId,
@@ -85,9 +86,11 @@ describe("getCustomOpenAICompatibleProviderIds", () => {
     };
 
     expect(getCustomOpenAICompatibleProviderIds(providersConfig)).toEqual([
+      "openai",
       "local-vllm",
       "llama-cpp",
     ]);
+    expect(getShadowedCustomOpenAICompatibleProviderIds(providersConfig)).toEqual(["openai"]);
   });
 });
 
