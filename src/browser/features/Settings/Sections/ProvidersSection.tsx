@@ -1104,9 +1104,15 @@ export function ProvidersSection() {
         apiKeyIsOpRef: false,
         apiKeyOpRef: undefined,
         apiKeyOpLabel: undefined,
+        apiKeySource: editValue !== "" ? "config" : undefined,
       });
     } else if (field === "baseUrl") {
-      updateOptimistically(provider, { baseUrl: editValue || undefined });
+      const nextBaseUrl = editValue || undefined;
+      updateOptimistically(provider, {
+        baseUrl: nextBaseUrl,
+        baseUrlSource: nextBaseUrl ? "config" : undefined,
+        baseUrlResolved: nextBaseUrl,
+      });
     } else if (field === "apiKeyFile") {
       updateOptimistically(provider, { apiKeyFile: editValue || undefined });
     }
@@ -1132,9 +1138,14 @@ export function ProvidersSection() {
           apiKeySet: false,
           apiKeyIsOpRef: false,
           apiKeyOpRef: undefined,
+          apiKeySource: undefined,
         });
       } else if (field === "baseUrl") {
-        updateOptimistically(provider, { baseUrl: undefined });
+        updateOptimistically(provider, {
+          baseUrl: undefined,
+          baseUrlSource: undefined,
+          baseUrlResolved: undefined,
+        });
       } else if (field === "apiKeyFile") {
         updateOptimistically(provider, { apiKeyFile: undefined });
       }
@@ -1192,6 +1203,20 @@ export function ProvidersSection() {
     // For standard fields like baseUrl
     const value = providerConfig[field as keyof typeof providerConfig];
     return typeof value === "string" ? value : undefined;
+  };
+
+  const getFieldDisplayValue = (provider: string, field: string): string | undefined => {
+    const fieldValue = getFieldValue(provider, field);
+    if (field !== "baseUrl") {
+      return fieldValue;
+    }
+
+    const providerConfig = config?.[provider];
+    if (providerConfig?.baseUrlSource && typeof providerConfig.baseUrlResolved === "string") {
+      return providerConfig.baseUrlResolved;
+    }
+
+    return fieldValue;
   };
 
   const isFieldSet = (provider: string, field: string, fieldConfig: FieldConfig): boolean => {
@@ -1261,6 +1286,7 @@ export function ProvidersSection() {
               const configured = isConfigured(provider);
               const fields = getProviderFields(provider);
               const providerDefinition = PROVIDER_DEFINITIONS[provider];
+              const apiKeySource = config?.[provider]?.apiKeySource;
               const gatewayRouteTargets =
                 providerDefinition.kind === "gateway" ? (providerDefinition.routes ?? []) : [];
               const statusDotColor = !enabled
@@ -1349,11 +1375,12 @@ export function ProvidersSection() {
                           {configured &&
                             config?.[provider]?.apiKeySet === false &&
                             // OpenAI can be configured via ChatGPT OAuth, not just env vars
-                            !(provider === "openai" && codexOauthIsConnected) && (
+                            !(provider === "openai" && codexOauthIsConnected) &&
+                            (apiKeySource === "env" || apiKeySource === "file") && (
                               <div className="text-muted text-xs">
-                                {config?.[provider]?.apiKeySource === "file"
-                                  ? "Configured via API key file."
-                                  : "Configured via environment variables."}
+                                {apiKeySource === "file"
+                                  ? "Set by API key file."
+                                  : "Set by env vars."}
                               </div>
                             )}
                         </div>
@@ -1577,6 +1604,7 @@ export function ProvidersSection() {
                           editingField?.provider === provider &&
                           editingField?.field === fieldConfig.key;
                         const fieldValue = getFieldValue(provider, fieldConfig.key);
+                        const fieldDisplayValue = getFieldDisplayValue(provider, fieldConfig.key);
                         const fieldIsSet = isFieldSet(provider, fieldConfig.key, fieldConfig);
 
                         return (
@@ -1673,7 +1701,7 @@ export function ProvidersSection() {
                                         "Not set"
                                       )
                                     ) : (
-                                      (fieldValue ?? "Default")
+                                      (fieldDisplayValue ?? "Default")
                                     )}
                                   </span>
                                   <div className="flex gap-2">
@@ -1712,6 +1740,11 @@ export function ProvidersSection() {
                                     )}
                                   </div>
                                 </div>
+                                {fieldConfig.key === "baseUrl" &&
+                                  config?.[provider]?.baseUrlSource === "env" &&
+                                  config?.[provider]?.baseUrlResolved && (
+                                    <div className="text-muted mt-1 text-xs">Set by env vars.</div>
+                                  )}
                                 {opPickerProvider === provider && fieldConfig.key === "apiKey" && (
                                   <OnePasswordPicker
                                     onSelect={(opRef, opLabel) => {

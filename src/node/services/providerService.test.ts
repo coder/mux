@@ -4,6 +4,7 @@ import * as os from "os";
 import * as path from "path";
 import type { ProviderModelEntry } from "@/common/orpc/types";
 import { Config } from "@/node/config";
+import { PolicyService } from "@/node/services/policyService";
 import { ProviderService } from "./providerService";
 
 function withTempConfig(run: (config: Config, service: ProviderService) => void): void {
@@ -27,6 +28,44 @@ async function withTempConfigAsync(
     await run(config, service);
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+const PROVIDER_ENV_KEYS = [
+  "OPENAI_API_KEY",
+  "OPENAI_BASE_URL",
+  "OPENAI_API_BASE",
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_AUTH_TOKEN",
+  "ANTHROPIC_BASE_URL",
+] as const;
+
+function withProviderEnv(
+  updates: Partial<Record<(typeof PROVIDER_ENV_KEYS)[number], string>>,
+  run: () => void
+): void {
+  const previous = new Map<string, string | undefined>();
+  for (const key of PROVIDER_ENV_KEYS) {
+    previous.set(key, process.env[key]);
+    const nextValue = updates[key];
+    if (nextValue === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = nextValue;
+    }
+  }
+
+  try {
+    run();
+  } finally {
+    for (const key of PROVIDER_ENV_KEYS) {
+      const previousValue = previous.get(key);
+      if (previousValue === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = previousValue;
+      }
+    }
   }
 }
 
@@ -210,6 +249,91 @@ describe("ProviderService.getConfig", () => {
       expect(cfg.openai.isEnabled).toBe(false);
       expect(cfg.openai.isConfigured).toBe(false);
     });
+  });
+
+  it("returns env sourced OpenAI base URL without saving it as baseUrl", () => {
+    withProviderEnv(
+      {
+        OPENAI_API_KEY: "sk-env",
+        OPENAI_BASE_URL: "https://env.openai.test",
+      },
+      () => {
+        withTempConfig((_config, service) => {
+          const cfg = service.getConfig();
+
+          expect(cfg.openai.isConfigured).toBe(true);
+          expect(cfg.openai.apiKeySource).toBe("env");
+          expect(cfg.openai.baseUrl).toBeUndefined();
+          expect(cfg.openai.baseUrlSource).toBe("env");
+          expect(cfg.openai.baseUrlResolved).toBe("https://env.openai.test");
+        });
+      }
+    );
+  });
+
+  it("returns config sourced Anthropic base URL ahead of env", () => {
+    withProviderEnv(
+      {
+        ANTHROPIC_API_KEY: "sk-ant-env",
+        ANTHROPIC_BASE_URL: "https://env.anthropic.test",
+      },
+      () => {
+        withTempConfig((config, service) => {
+          config.saveProvidersConfig({
+            anthropic: {
+              apiKey: "sk-ant-config",
+              baseUrl: "https://config.anthropic.test",
+            },
+          });
+
+          const cfg = service.getConfig();
+
+          expect(cfg.anthropic.isConfigured).toBe(true);
+          expect(cfg.anthropic.apiKeySource).toBe("config");
+          expect(cfg.anthropic.baseUrl).toBe("https://config.anthropic.test");
+          expect(cfg.anthropic.baseUrlSource).toBe("config");
+          expect(cfg.anthropic.baseUrlResolved).toBe("https://config.anthropic.test");
+        });
+      }
+    );
+  });
+
+  it("does not label forced base URL as env sourced", () => {
+    withProviderEnv(
+      {
+        OPENAI_API_KEY: "sk-env",
+        OPENAI_BASE_URL: "https://env.openai.test",
+      },
+      () => {
+        withTempConfig((config) => {
+          const policyService = new PolicyService(config);
+          const isEnforcedSpy = spyOn(policyService, "isEnforced").mockReturnValue(true);
+          const isProviderAllowedSpy = spyOn(policyService, "isProviderAllowed").mockReturnValue(
+            true
+          );
+          const getForcedBaseUrlSpy = spyOn(policyService, "getForcedBaseUrl").mockReturnValue(
+            "https://forced.openai.test"
+          );
+          const getEffectivePolicySpy = spyOn(policyService, "getEffectivePolicy").mockReturnValue(
+            null
+          );
+          const service = new ProviderService(config, policyService);
+
+          try {
+            const cfg = service.getConfig();
+
+            expect(cfg.openai.baseUrl).toBe("https://forced.openai.test");
+            expect(cfg.openai.baseUrlSource).toBeUndefined();
+            expect(cfg.openai.baseUrlResolved).toBeUndefined();
+          } finally {
+            isEnforcedSpy.mockRestore();
+            isProviderAllowedSpy.mockRestore();
+            getForcedBaseUrlSpy.mockRestore();
+            getEffectivePolicySpy.mockRestore();
+          }
+        });
+      }
+    );
   });
 });
 

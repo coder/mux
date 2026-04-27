@@ -102,6 +102,98 @@ describe("hasAnyConfiguredProvider", () => {
   });
 });
 
+describe("resolveProviderCredentials base URL source", () => {
+  it("marks OpenAI base URL from OPENAI_BASE_URL as env sourced", () => {
+    const result = resolveProviderCredentials(
+      "openai",
+      {},
+      { OPENAI_API_KEY: "sk-from-env", OPENAI_BASE_URL: "https://env.openai.test" }
+    );
+
+    expect(result.isConfigured).toBe(true);
+    expect(result.apiKeySource).toBe("env");
+    expect(result.baseUrl).toBe("https://env.openai.test");
+    expect(result.baseUrlSource).toBe("env");
+  });
+
+  it("marks Anthropic base URL from ANTHROPIC_BASE_URL as env sourced", () => {
+    const result = resolveProviderCredentials(
+      "anthropic",
+      {},
+      { ANTHROPIC_API_KEY: "sk-ant-env", ANTHROPIC_BASE_URL: "https://env.anthropic.test" }
+    );
+
+    expect(result.isConfigured).toBe(true);
+    expect(result.apiKeySource).toBe("env");
+    expect(result.baseUrl).toBe("https://env.anthropic.test");
+    expect(result.baseUrlSource).toBe("env");
+  });
+
+  it("marks baseUrl from config as config sourced", () => {
+    const result = resolveProviderCredentials(
+      "openai",
+      { apiKey: "sk-from-config", baseUrl: "https://config.openai.test" },
+      { OPENAI_BASE_URL: "https://env.openai.test" }
+    );
+
+    expect(result.apiKeySource).toBe("config");
+    expect(result.baseUrl).toBe("https://config.openai.test");
+    expect(result.baseUrlSource).toBe("config");
+  });
+
+  it("marks baseURL from config as config sourced", () => {
+    const result = resolveProviderCredentials(
+      "anthropic",
+      { apiKey: "sk-ant-config", baseURL: "https://config.anthropic.test" },
+      { ANTHROPIC_BASE_URL: "https://env.anthropic.test" }
+    );
+
+    expect(result.apiKeySource).toBe("config");
+    expect(result.baseUrl).toBe("https://config.anthropic.test");
+    expect(result.baseUrlSource).toBe("config");
+  });
+
+  it("keeps config base URL ahead of env base URL", () => {
+    const result = resolveProviderCredentials(
+      "openai",
+      { apiKey: "sk-from-config", baseUrl: "https://config.openai.test" },
+      { OPENAI_BASE_URL: "https://env.openai.test" }
+    );
+
+    expect(result.baseUrl).toBe("https://config.openai.test");
+    expect(result.baseUrlSource).toBe("config");
+  });
+
+  it("keeps OPENAI_BASE_URL ahead of OPENAI_API_BASE", () => {
+    const result = resolveProviderCredentials(
+      "openai",
+      {},
+      {
+        OPENAI_API_KEY: "sk-from-env",
+        OPENAI_BASE_URL: "https://openai-base-url.test",
+        OPENAI_API_BASE: "https://openai-api-base.test",
+      }
+    );
+
+    expect(result.baseUrl).toBe("https://openai-base-url.test");
+    expect(result.baseUrlSource).toBe("env");
+  });
+
+  it("returns base URL metadata even when API key is missing", () => {
+    const result = resolveProviderCredentials(
+      "openai",
+      {},
+      { OPENAI_BASE_URL: "https://env.openai.test" }
+    );
+
+    expect(result.isConfigured).toBe(false);
+    expect(result.missingRequirement).toBe("api_key");
+    expect(result.apiKeySource).toBeUndefined();
+    expect(result.baseUrl).toBe("https://env.openai.test");
+    expect(result.baseUrlSource).toBe("env");
+  });
+});
+
 describe("resolveProviderCredentials - apiKeyFile", () => {
   let tmpDir: string;
   let keyFilePath: string;

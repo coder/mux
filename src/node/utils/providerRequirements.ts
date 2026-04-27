@@ -136,13 +136,41 @@ export interface ResolvedCredentials {
   baseUrl?: string; // from config or env
   organization?: string; // openai
   apiKeySource?: "config" | "file" | "env";
+  baseUrlSource?: "config" | "env";
 }
 
 /** Legacy alias for backward compatibility */
 export type ProviderConfigCheck = Pick<
   ResolvedCredentials,
-  "isConfigured" | "missingRequirement" | "apiKeySource"
+  "isConfigured" | "missingRequirement" | "apiKeySource" | "baseUrl" | "baseUrlSource"
 >;
+
+/** Resolve a non-empty base URL saved in provider config. */
+function resolveConfiguredBaseUrl(config: ProviderConfigRaw): string | undefined {
+  if (hasNonEmptyString(config.baseURL)) {
+    return config.baseURL.trim();
+  }
+
+  if (hasNonEmptyString(config.baseUrl)) {
+    return config.baseUrl.trim();
+  }
+
+  return undefined;
+}
+
+function resolveBaseUrl(
+  provider: ProviderName,
+  config: ProviderConfigRaw,
+  env: Record<string, string | undefined>
+): Pick<ResolvedCredentials, "baseUrl" | "baseUrlSource"> {
+  const configBaseUrl = resolveConfiguredBaseUrl(config);
+  if (configBaseUrl) {
+    return { baseUrl: configBaseUrl, baseUrlSource: "config" };
+  }
+
+  const envBaseUrl = resolveEnv(PROVIDER_ENV_VARS[provider]?.baseUrl, env);
+  return envBaseUrl ? { baseUrl: envBaseUrl, baseUrlSource: "env" } : {};
+}
 
 /**
  * Read an API key from a file path. Supports ~ for home directory.
@@ -211,12 +239,9 @@ export function resolveProviderCredentials(
   const configKey =
     typeof config.apiKey === "string" && config.apiKey.trim().length > 0 ? config.apiKey : null;
   const fileKey = configKey ? null : resolveApiKeyFile(config.apiKeyFile as string | undefined);
-  const apiKey = configKey ?? fileKey ?? resolveEnv(envMapping?.apiKey, env);
-  const configBaseUrl =
-    (typeof config.baseURL === "string" && config.baseURL) ||
-    (typeof config.baseUrl === "string" && config.baseUrl) ||
-    undefined;
-  const baseUrl = configBaseUrl ?? resolveEnv(envMapping?.baseUrl, env);
+  const envKey = configKey || fileKey ? undefined : resolveEnv(envMapping?.apiKey, env);
+  const apiKey = configKey ?? fileKey ?? envKey;
+  const baseUrlInfo = resolveBaseUrl(provider, config, env);
   // Config organization takes precedence over env var (user's explicit choice)
   const configOrganization =
     typeof config.organization === "string" && config.organization
@@ -226,10 +251,10 @@ export function resolveProviderCredentials(
 
   if (apiKey) {
     const apiKeySource: "config" | "file" | "env" = configKey ? "config" : fileKey ? "file" : "env";
-    return { isConfigured: true, apiKey, baseUrl, organization, apiKeySource };
+    return { isConfigured: true, apiKey, organization, apiKeySource, ...baseUrlInfo };
   }
 
-  return { isConfigured: false, missingRequirement: "api_key" };
+  return { isConfigured: false, missingRequirement: "api_key", ...baseUrlInfo };
 }
 
 /**
@@ -279,8 +304,9 @@ export function checkProviderConfigured(
   config: ProviderConfigRaw,
   env: Record<string, string | undefined> = process.env
 ): ProviderConfigCheck {
-  const { isConfigured, missingRequirement } = resolveProviderCredentials(provider, config, env);
-  return { isConfigured, missingRequirement };
+  const { isConfigured, missingRequirement, apiKeySource, baseUrl, baseUrlSource } =
+    resolveProviderCredentials(provider, config, env);
+  return { isConfigured, missingRequirement, apiKeySource, baseUrl, baseUrlSource };
 }
 
 // ============================================================================

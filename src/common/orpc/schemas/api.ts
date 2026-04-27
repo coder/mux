@@ -193,6 +193,10 @@ export const ProviderConfigInfoSchema = z.object({
   /** Where the API key was actually resolved from (config, file, or env) */
   apiKeySource: z.enum(["config", "file", "env"]).optional(),
   baseUrl: z.string().optional(),
+  /** Where the active base URL was resolved from (config or env) */
+  baseUrlSource: z.enum(["config", "env"]).nullish(),
+  /** Active base URL for display only. Env values must not be persisted from this field. */
+  baseUrlResolved: z.string().nullish(),
   models: z.array(ProviderModelEntrySchema).optional(),
   /** OpenAI-specific fields */
   serviceTier: ServiceTierSchema.optional(),

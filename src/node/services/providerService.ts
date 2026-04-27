@@ -109,6 +109,7 @@ export class ProviderService {
         apiKeyFile?: string;
         apiKeyOpLabel?: string;
         baseUrl?: string;
+        baseURL?: string;
         models?: unknown[];
         serviceTier?: string;
         wireFormat?: string;
@@ -238,6 +239,10 @@ export class ProviderService {
       const configCheck = checkProviderConfigured(provider, config);
       providerInfo.isConfigured = providerInfo.isEnabled && configCheck.isConfigured;
       providerInfo.apiKeySource = configCheck.apiKeySource;
+      if (forcedBaseUrl === undefined && configCheck.baseUrlSource && configCheck.baseUrl) {
+        providerInfo.baseUrlSource = configCheck.baseUrlSource;
+        providerInfo.baseUrlResolved = configCheck.baseUrl;
+      }
 
       if (provider === "openai" && isEnabled && codexOauthSet) {
         providerInfo.isConfigured = true;

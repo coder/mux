@@ -41,6 +41,8 @@ describe("ProviderConfigInfoSchema conformance", () => {
       isEnabled: true,
       isConfigured: true,
       baseUrl: "https://api.example.com",
+      baseUrlSource: "config",
+      baseUrlResolved: "https://api.example.com",
       models: ["model-a", "model-b"],
     };
 
@@ -105,6 +107,8 @@ describe("ProviderConfigInfoSchema conformance", () => {
       isEnabled: true,
       isConfigured: true,
       baseUrl: "https://custom.endpoint.com",
+      baseUrlSource: "config",
+      baseUrlResolved: "https://custom.endpoint.com",
       models: ["claude-3-opus", "claude-3-sonnet"],
       serviceTier: "flex",
       store: false,
@@ -133,6 +137,8 @@ describe("ProviderConfigInfoSchema conformance", () => {
     expect(parsed.apiKeyOpRef).toBe(full.apiKeyOpRef);
     expect(parsed.isEnabled).toBe(full.isEnabled);
     expect(parsed.baseUrl).toBe(full.baseUrl);
+    expect(parsed.baseUrlSource).toBe(full.baseUrlSource);
+    expect(parsed.baseUrlResolved).toBe(full.baseUrlResolved);
     expect(parsed.models).toEqual(full.models);
     expect(parsed.serviceTier).toBe(full.serviceTier);
     expect(parsed.store).toBe(full.store);
@@ -156,6 +162,8 @@ describe("ProviderConfigInfoSchema conformance", () => {
         apiKeySet: true,
         isEnabled: true,
         isConfigured: true,
+        baseUrlSource: "env",
+        baseUrlResolved: "https://env.openai.test",
         serviceTier: "auto",
         codexOauthSet: true,
         codexOauthDefaultAuth: "oauth",
