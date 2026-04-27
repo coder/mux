@@ -97,13 +97,94 @@ For advanced options not exposed in the UI, edit `~/.mux/providers.jsonc` direct
 }
 ```
 
+### Custom OpenAI-compatible providers
+
+Custom OpenAI-compatible providers let you keep the built-in `openai` provider for OpenAI and
+Codex, while also adding named local or remote endpoints such as llama.cpp, vLLM, LM Studio,
+or proxies.
+
+Add each endpoint as a top-level provider in `~/.mux/providers.jsonc`:
+
+```jsonc
+{
+  "local-vllm": {
+    "providerType": "openai-compatible",
+    "displayName": "Local vLLM",
+    "baseUrl": "http://localhost:8000/v1",
+    "models": ["qwen3-coder"],
+  },
+}
+```
+
+| Option         | Required | Description                                                                           |
+| -------------- | -------- | ------------------------------------------------------------------------------------- |
+| `providerType` | Yes      | Must be `"openai-compatible"` for custom OpenAI-compatible providers.                 |
+| `baseUrl`      | Yes      | The OpenAI-compatible API base URL. Most servers require the `/v1` suffix.            |
+| `apiKey`       | No       | Optional API key. Keyless local servers do not need a placeholder key.                |
+| `displayName`  | No       | Optional UI label shown instead of the provider ID.                                   |
+| `models`       | No       | Discovery list shown in the model picker. You can still type any model ID at runtime. |
+
+Provider IDs must use lowercase letters, digits, `_`, and `-`. They must not collide with
+built-in provider names, and cannot contain `.`, `:`, `/`, or whitespace. Good examples are
+`local-vllm`, `llama-cpp`, and `lm-studio`.
+
+#### llama.cpp
+
+```jsonc
+{
+  "llama-cpp": {
+    "providerType": "openai-compatible",
+    "displayName": "llama.cpp",
+    "baseUrl": "http://localhost:8080/v1",
+    "models": ["qwen3-coder"],
+  },
+}
+```
+
+#### vLLM
+
+```jsonc
+{
+  "local-vllm": {
+    "providerType": "openai-compatible",
+    "displayName": "Local vLLM",
+    "baseUrl": "http://localhost:8000/v1",
+    "models": ["qwen3-coder"],
+  },
+}
+```
+
+#### LM Studio
+
+```jsonc
+{
+  "lm-studio": {
+    "providerType": "openai-compatible",
+    "displayName": "LM Studio",
+    "baseUrl": "http://localhost:1234/v1",
+    "models": ["local-model"],
+  },
+}
+```
+
+Operational notes:
+
+- `baseUrl` is resolved from the Mux backend process. In desktop mode, this is your local
+  machine. In server mode, the endpoint must be reachable from the server.
+- Most OpenAI-compatible servers require the `/v1` suffix in the URL.
+- Custom providers use Chat Completions via `@ai-sdk/openai-compatible`.
+- Keep the official `openai` provider for the Responses API, Codex OAuth, and OpenAI service
+  tiers. Custom providers do not inherit those features.
+- Custom providers are direct-only and do not participate in gateway routing.
+- You no longer need to set a fake `apiKey` to point Mux at a keyless local server.
+
 ### Bedrock Authentication
 
 Bedrock supports multiple authentication methods (tried in order):
 
-1. **Bearer Token** — Single API key via `bearerToken` config or `AWS_BEARER_TOKEN_BEDROCK` env var
-2. **Explicit Credentials** — `accessKeyId` + `secretAccessKey` in config
-3. **AWS Credential Chain** — Automatic resolution from environment, `~/.aws/credentials`, SSO, EC2/ECS roles
+1. **Bearer Token** - Single API key via `bearerToken` config or `AWS_BEARER_TOKEN_BEDROCK` env var
+2. **Explicit Credentials** - `accessKeyId` + `secretAccessKey` in config
+3. **AWS Credential Chain** - Automatic resolution from environment, `~/.aws/credentials`, SSO, EC2/ECS roles
 
 If you're already authenticated with AWS CLI (`aws sso login`), Mux uses those credentials automatically.
 
@@ -164,12 +245,12 @@ Any unrecognized key is passed through as a provider-specific option (for exampl
 
 When multiple entries could match, the **first match wins** (no merging across tiers):
 
-1. **Effective model ID** — a dated snapshot like `claude-sonnet-4-5-20250929`
-2. **Canonical model ID** — the model you selected, e.g. `claude-sonnet-4-5`
-3. **Wildcard `"*"`** — catch-all for that provider
+1. **Effective model ID** - a dated snapshot like `claude-sonnet-4-5-20250929`
+2. **Canonical model ID** - the model you selected, e.g. `claude-sonnet-4-5`
+3. **Wildcard `"*"`** - catch-all for that provider
 
 For example, if you configure both `"claude-sonnet-4-5"` and `"*"` with different temperatures,
-requesting `claude-sonnet-4-5` uses the specific entry — the wildcard is not merged in.
+requesting `claude-sonnet-4-5` uses the specific entry - the wildcard is not merged in.
 
 #### Priority with other settings
 
@@ -179,7 +260,7 @@ For `max_output_tokens` specifically, the priority chain is:
 2. `modelParameters` config value
 3. Model's built-in default
 
-This means model parameters act as a **default** — they never override explicit per-message choices.
+This means model parameters act as a **default** - they never override explicit per-message choices.
 
 <Warning>
   Some providers require specific parameter values when extended thinking is enabled. For example,
