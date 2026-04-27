@@ -27,12 +27,31 @@ describe("ProvidersConfigSchema", () => {
     expect(ProvidersConfigSchema.safeParse(valid).success).toBe(true);
   });
 
-  it("allows unknown provider keys via catchall", () => {
+  it("allows unknown provider keys with custom OpenAI-compatible metadata", () => {
     const valid = {
-      "custom-provider": { apiKey: "key", baseUrl: "http://localhost:8080" },
+      "custom-provider": {
+        apiKey: "key",
+        baseUrl: "http://localhost:8080",
+        providerType: "openai-compatible",
+        displayName: "Custom Provider",
+      },
     };
 
-    expect(ProvidersConfigSchema.safeParse(valid).success).toBe(true);
+    const parsed = ProvidersConfigSchema.safeParse(valid);
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data["custom-provider"]?.providerType).toBe("openai-compatible");
+      expect(parsed.data["custom-provider"]?.displayName).toBe("Custom Provider");
+    }
+  });
+
+  it("rejects empty custom provider display names", () => {
+    const invalid = {
+      "custom-provider": { providerType: "openai-compatible", displayName: "" },
+    };
+
+    expect(ProvidersConfigSchema.safeParse(invalid).success).toBe(false);
   });
 
   it("rejects invalid cacheTtl for anthropic", () => {

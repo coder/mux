@@ -197,6 +197,9 @@ export const ProviderConfigInfoSchema = z.object({
   baseUrlSource: z.enum(["config", "env"]).nullish(),
   /** Active base URL for display only. Env values must not be persisted from this field. */
   baseUrlResolved: z.string().nullish(),
+  providerType: z.literal("openai-compatible").optional(),
+  displayName: z.string().optional(),
+  isCustom: z.boolean().optional(),
   models: z.array(ProviderModelEntrySchema).optional(),
   /** OpenAI-specific fields */
   serviceTier: ServiceTierSchema.optional(),

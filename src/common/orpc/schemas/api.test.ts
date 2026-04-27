@@ -109,6 +109,9 @@ describe("ProviderConfigInfoSchema conformance", () => {
       baseUrl: "https://custom.endpoint.com",
       baseUrlSource: "config",
       baseUrlResolved: "https://custom.endpoint.com",
+      providerType: "openai-compatible",
+      displayName: "Local vLLM",
+      isCustom: true,
       models: ["claude-3-opus", "claude-3-sonnet"],
       serviceTier: "flex",
       store: false,
@@ -139,6 +142,9 @@ describe("ProviderConfigInfoSchema conformance", () => {
     expect(parsed.baseUrl).toBe(full.baseUrl);
     expect(parsed.baseUrlSource).toBe(full.baseUrlSource);
     expect(parsed.baseUrlResolved).toBe(full.baseUrlResolved);
+    expect(parsed.providerType).toBe(full.providerType);
+    expect(parsed.displayName).toBe(full.displayName);
+    expect(parsed.isCustom).toBe(full.isCustom);
     expect(parsed.models).toEqual(full.models);
     expect(parsed.serviceTier).toBe(full.serviceTier);
     expect(parsed.store).toBe(full.store);
