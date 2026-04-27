@@ -228,6 +228,7 @@ export {
   mcpOauth,
   mcp,
   secrets,
+  CustomProviderMutationErrorSchema,
   ProviderConfigInfoSchema,
   ProviderModelEntrySchema,
   muxGateway,

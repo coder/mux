@@ -1,5 +1,5 @@
 import { EventEmitter } from "events";
-import type { Config } from "@/node/config";
+import type { Config, ProjectsConfig } from "@/node/config";
 import {
   PROVIDER_DEFINITIONS,
   SUPPORTED_PROVIDERS,
@@ -8,7 +8,9 @@ import {
 import type { BaseProviderConfig } from "@/common/config/schemas/providersConfig";
 import type { Result } from "@/common/types/result";
 import type {
+  AddCustomOpenAICompatibleProviderInput,
   AWSCredentialStatus,
+  CustomProviderMutationError,
   ProviderConfigInfo,
   ProviderModelEntry,
   ProvidersConfigMap,
@@ -16,7 +18,9 @@ import type {
 import { isProviderDisabledInConfig } from "@/common/utils/providers/isProviderDisabled";
 import {
   getCustomOpenAICompatibleProviderIds,
+  isBuiltInProvider,
   isCustomOpenAICompatibleProviderConfig,
+  validateCustomProviderId,
 } from "@/common/utils/providers/customProviders";
 import { isOpReference } from "@/common/utils/opRef";
 import {
@@ -94,6 +98,45 @@ function buildCustomProviderConfigInfo(
 }
 
 const DENIED_KEY_PATH_SEGMENTS = new Set(["__proto__", "prototype", "constructor"]);
+
+type CustomProviderMutationResult<T> = Result<T, CustomProviderMutationError>;
+
+interface ProviderPolicy {
+  forcedBaseUrl?: string;
+  allowedModels?: string[] | null;
+}
+
+function addErrorReason<T extends CustomProviderMutationError>(
+  error: T,
+  reason: string | undefined
+): T {
+  if (reason === undefined) {
+    return error;
+  }
+
+  return { ...error, reason };
+}
+
+function modelStringStartsWithProvider(modelString: string | undefined, provider: string): boolean {
+  return modelString?.startsWith(`${provider}:`) ?? false;
+}
+
+function isValidHttpBaseUrl(baseUrl: string): boolean {
+  try {
+    const url = new URL(baseUrl);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function getProviderConfigRecord(config: unknown): Record<string, BaseProviderConfig> {
+  if (typeof config !== "object" || config === null || Array.isArray(config)) {
+    return {};
+  }
+
+  return config as Record<string, BaseProviderConfig>;
+}
 
 export class ProviderService {
   private readonly policyService: PolicyService | null;
@@ -321,9 +364,7 @@ export class ProviderService {
       }
 
       const providerPolicy = this.policyService?.isEnforced()
-        ? this.policyService
-            .getEffectivePolicy()
-            ?.providerAccess?.find((p) => p.id === providerId)
+        ? this.policyService.getEffectivePolicy()?.providerAccess?.find((p) => p.id === providerId)
         : undefined;
 
       result[providerId] = buildCustomProviderConfigInfo(providerConfig, {
@@ -333,6 +374,297 @@ export class ProviderService {
     }
 
     return result;
+  }
+
+  private getProviderPolicy(provider: string): ProviderPolicy {
+    if (!this.policyService?.isEnforced()) {
+      return {};
+    }
+
+    const providerPolicy = this.policyService
+      .getEffectivePolicy()
+      ?.providerAccess?.find((entry) => entry.id === provider);
+    return {
+      forcedBaseUrl: providerPolicy?.forcedBaseUrl,
+      allowedModels: providerPolicy?.allowedModels ?? null,
+    };
+  }
+
+  private getPolicyDeniedError(message: string, reason?: string): CustomProviderMutationError {
+    return addErrorReason({ code: "policy_denied", message }, reason);
+  }
+
+  private getDisallowedModelsByPolicy(provider: string, models: ProviderModelEntry[]): string[] {
+    if (!this.policyService?.isEnforced()) {
+      return [];
+    }
+
+    const allowedModels = this.getProviderPolicy(provider).allowedModels ?? null;
+    if (!Array.isArray(allowedModels)) {
+      return [];
+    }
+
+    return models
+      .map((entry) => getProviderModelEntryId(entry))
+      .filter((modelId) => !allowedModels.includes(modelId));
+  }
+
+  public addCustomOpenAICompatibleProvider(
+    input: AddCustomOpenAICompatibleProviderInput
+  ): CustomProviderMutationResult<ProviderConfigInfo> {
+    const provider = input.provider.trim();
+    if (isBuiltInProvider(provider)) {
+      return {
+        success: false,
+        error: {
+          code: "built_in_provider",
+          message: `Provider ${provider} is built in and cannot be added as custom.`,
+        },
+      };
+    }
+
+    const validation = validateCustomProviderId(provider);
+    if (!validation.ok) {
+      return {
+        success: false,
+        error: addErrorReason(
+          { code: "invalid_provider_id", message: "Invalid custom provider id." },
+          validation.reason
+        ),
+      };
+    }
+
+    const baseUrl = input.baseUrl.trim();
+
+    try {
+      const providersConfig = getProviderConfigRecord(this.config.loadProvidersConfig() ?? {});
+      if (Object.prototype.hasOwnProperty.call(providersConfig, provider)) {
+        return {
+          success: false,
+          error: {
+            code: "duplicate_provider",
+            message: `Provider ${provider} already exists in providers config.`,
+          },
+        };
+      }
+
+      if (!baseUrl || !isValidHttpBaseUrl(baseUrl)) {
+        return {
+          success: false,
+          error: {
+            code: "invalid_base_url",
+            message: "Custom OpenAI-compatible providers require an HTTP or HTTPS base URL.",
+          },
+        };
+      }
+
+      if (this.policyService?.isEnforced() && !this.policyService.isProviderAllowed(provider)) {
+        return {
+          success: false,
+          error: this.getPolicyDeniedError(`Provider ${provider} is not allowed by policy.`),
+        };
+      }
+
+      const providerPolicy = this.getProviderPolicy(provider);
+      const persistedBaseUrl = providerPolicy.forcedBaseUrl ?? baseUrl;
+      if (providerPolicy.forcedBaseUrl && baseUrl !== providerPolicy.forcedBaseUrl) {
+        return {
+          success: false,
+          error: this.getPolicyDeniedError(
+            `Provider ${provider} base URL is locked by policy.`,
+            `Expected ${providerPolicy.forcedBaseUrl}.`
+          ),
+        };
+      }
+
+      const normalizedModels = normalizeProviderModelEntries(input.models);
+      const disallowedModels = this.getDisallowedModelsByPolicy(provider, normalizedModels);
+      if (disallowedModels.length > 0) {
+        return {
+          success: false,
+          error: this.getPolicyDeniedError(
+            `One or more models are not allowed by policy: ${disallowedModels.join(", ")}`
+          ),
+        };
+      }
+
+      const displayName = input.displayName?.trim();
+      const apiKey = input.apiKey?.trim();
+      const apiKeyFile = input.apiKeyFile?.trim();
+      const providerConfig: BaseProviderConfig = {
+        providerType: "openai-compatible",
+        baseUrl: persistedBaseUrl,
+        enabled: true,
+        ...(displayName ? { displayName } : {}),
+        ...(apiKey ? { apiKey } : {}),
+        ...(apiKeyFile ? { apiKeyFile } : {}),
+        ...(normalizedModels.length > 0 ? { models: normalizedModels } : {}),
+      };
+
+      providersConfig[provider] = providerConfig;
+      this.config.saveProvidersConfig(providersConfig);
+
+      const providerInfo = this.getConfig()[provider];
+      if (!providerInfo) {
+        return {
+          success: false,
+          error: {
+            code: "persistence_failed",
+            message: `Provider ${provider} was saved but could not be reloaded.`,
+          },
+        };
+      }
+
+      this.notifyConfigChanged();
+      return { success: true, data: providerInfo };
+    } catch (error) {
+      return {
+        success: false,
+        error: addErrorReason(
+          { code: "persistence_failed", message: `Failed to add provider ${provider}.` },
+          getErrorMessage(error)
+        ),
+      };
+    }
+  }
+
+  public async removeCustomProvider(
+    providerInput: string
+  ): Promise<CustomProviderMutationResult<void>> {
+    const provider = providerInput.trim();
+    if (isBuiltInProvider(provider)) {
+      return {
+        success: false,
+        error: {
+          code: "built_in_provider",
+          message: `Provider ${provider} is built in and cannot be removed as custom.`,
+        },
+      };
+    }
+
+    const validation = validateCustomProviderId(provider);
+    if (!validation.ok) {
+      return {
+        success: false,
+        error: addErrorReason(
+          { code: "invalid_provider_id", message: "Invalid custom provider id." },
+          validation.reason
+        ),
+      };
+    }
+
+    const providersConfig = getProviderConfigRecord(this.config.loadProvidersConfig() ?? {});
+    if (!Object.prototype.hasOwnProperty.call(providersConfig, provider)) {
+      return {
+        success: false,
+        error: { code: "unknown_provider", message: `Provider ${provider} does not exist.` },
+      };
+    }
+
+    if (!isCustomOpenAICompatibleProviderConfig(providersConfig[provider])) {
+      return {
+        success: false,
+        error: {
+          code: "not_custom_provider",
+          message: `Provider ${provider} is not a custom OpenAI-compatible provider.`,
+        },
+      };
+    }
+
+    try {
+      await this.config.editConfig((config) =>
+        this.repairRemovedCustomProviderReferences(config, provider)
+      );
+      delete providersConfig[provider];
+      this.config.saveProvidersConfig(providersConfig);
+      this.notifyConfigChanged();
+      return { success: true, data: undefined };
+    } catch (error) {
+      return {
+        success: false,
+        error: addErrorReason(
+          { code: "persistence_failed", message: `Failed to remove provider ${provider}.` },
+          getErrorMessage(error)
+        ),
+      };
+    }
+  }
+
+  private repairRemovedCustomProviderReferences(
+    config: ProjectsConfig,
+    provider: string
+  ): ProjectsConfig {
+    // Removing a custom provider also clears durable model references so stale provider ids
+    // do not become invalid app or workspace defaults on the next startup.
+    if (modelStringStartsWithProvider(config.defaultModel, provider)) {
+      delete config.defaultModel;
+    }
+
+    if (config.hiddenModels) {
+      const hiddenModels = config.hiddenModels.filter(
+        (modelString) => !modelStringStartsWithProvider(modelString, provider)
+      );
+      if (hiddenModels.length > 0) {
+        config.hiddenModels = hiddenModels;
+      } else {
+        delete config.hiddenModels;
+      }
+    }
+
+    if (config.routeOverrides) {
+      const routeOverrides = Object.fromEntries(
+        Object.entries(config.routeOverrides).filter(
+          ([modelString, routeTarget]) =>
+            !modelStringStartsWithProvider(modelString, provider) && routeTarget !== provider
+        )
+      );
+      if (Object.keys(routeOverrides).length > 0) {
+        config.routeOverrides = routeOverrides;
+      } else {
+        delete config.routeOverrides;
+      }
+    }
+
+    if (config.agentAiDefaults) {
+      for (const entry of Object.values(config.agentAiDefaults)) {
+        if (modelStringStartsWithProvider(entry.modelString, provider)) {
+          delete entry.modelString;
+        }
+      }
+    }
+
+    if (config.subagentAiDefaults) {
+      for (const entry of Object.values(config.subagentAiDefaults)) {
+        if (modelStringStartsWithProvider(entry.modelString, provider)) {
+          delete entry.modelString;
+        }
+      }
+    }
+
+    for (const projectConfig of config.projects.values()) {
+      for (const workspace of projectConfig.workspaces) {
+        if (
+          workspace.aiSettings &&
+          modelStringStartsWithProvider(workspace.aiSettings.model, provider)
+        ) {
+          delete workspace.aiSettings;
+        }
+
+        if (workspace.aiSettingsByAgent) {
+          for (const [agentId, settings] of Object.entries(workspace.aiSettingsByAgent)) {
+            if (modelStringStartsWithProvider(settings.model, provider)) {
+              delete workspace.aiSettingsByAgent[agentId];
+            }
+          }
+
+          if (Object.keys(workspace.aiSettingsByAgent).length === 0) {
+            delete workspace.aiSettingsByAgent;
+          }
+        }
+      }
+    }
+
+    return config;
   }
 
   /**
@@ -348,10 +680,8 @@ export class ProviderService {
         }
 
         const allowedModels =
-          this.policyService
-            .getEffectivePolicy()
-            ?.providerAccess?.find((p) => p.id === provider)?.allowedModels ??
-          null;
+          this.policyService.getEffectivePolicy()?.providerAccess?.find((p) => p.id === provider)
+            ?.allowedModels ?? null;
 
         if (Array.isArray(allowedModels)) {
           const disallowed = normalizedModels

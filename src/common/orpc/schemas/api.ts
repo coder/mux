@@ -225,7 +225,67 @@ export const ProviderConfigInfoSchema = z.object({
 
 export const ProvidersConfigMapSchema = z.record(z.string(), ProviderConfigInfoSchema);
 
+export const CustomProviderMutationErrorSchema = z.discriminatedUnion("code", [
+  z.object({
+    code: z.literal("invalid_provider_id"),
+    message: z.string(),
+    reason: z.string().optional(),
+  }),
+  z.object({
+    code: z.literal("built_in_provider"),
+    message: z.string(),
+    reason: z.string().optional(),
+  }),
+  z.object({
+    code: z.literal("duplicate_provider"),
+    message: z.string(),
+    reason: z.string().optional(),
+  }),
+  z.object({
+    code: z.literal("invalid_base_url"),
+    message: z.string(),
+    reason: z.string().optional(),
+  }),
+  z.object({
+    code: z.literal("unknown_provider"),
+    message: z.string(),
+    reason: z.string().optional(),
+  }),
+  z.object({
+    code: z.literal("not_custom_provider"),
+    message: z.string(),
+    reason: z.string().optional(),
+  }),
+  z.object({
+    code: z.literal("policy_denied"),
+    message: z.string(),
+    reason: z.string().optional(),
+  }),
+  z.object({
+    code: z.literal("persistence_failed"),
+    message: z.string(),
+    reason: z.string().optional(),
+  }),
+]);
+
 export const providers = {
+  addCustomOpenAICompatibleProvider: {
+    input: z.object({
+      provider: z.string(),
+      displayName: z.string().optional(),
+      baseUrl: z.string(),
+      apiKey: z.string().optional(),
+      apiKeyFile: z.string().optional(),
+      models: z.array(ProviderModelEntrySchema).optional(),
+    }),
+    output: ResultSchema(ProviderConfigInfoSchema, CustomProviderMutationErrorSchema),
+  },
+  removeCustomProvider: {
+    input: z.object({
+      provider: z.string(),
+    }),
+    output: ResultSchema(z.void(), CustomProviderMutationErrorSchema),
+  },
   setProviderConfig: {
     input: z.object({
       provider: z.string(),

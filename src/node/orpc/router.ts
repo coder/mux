@@ -1474,6 +1474,18 @@ export const router = (authToken?: string) => {
         .input(schemas.providers.getConfig.input)
         .output(schemas.providers.getConfig.output)
         .handler(({ context }) => context.providerService.getConfig()),
+      addCustomOpenAICompatibleProvider: t
+        .input(schemas.providers.addCustomOpenAICompatibleProvider.input)
+        .output(schemas.providers.addCustomOpenAICompatibleProvider.output)
+        .handler(({ context, input }) =>
+          context.providerService.addCustomOpenAICompatibleProvider(input)
+        ),
+      removeCustomProvider: t
+        .input(schemas.providers.removeCustomProvider.input)
+        .output(schemas.providers.removeCustomProvider.output)
+        .handler(({ context, input }) =>
+          context.providerService.removeCustomProvider(input.provider)
+        ),
       setProviderConfig: t
         .input(schemas.providers.setProviderConfig.input)
         .output(schemas.providers.setProviderConfig.output)
