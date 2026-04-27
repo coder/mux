@@ -235,10 +235,11 @@ export function resolveProviderCredentials(
       : { isConfigured: false, missingRequirement: "coupon_code" };
   }
 
-  // Keyless providers (e.g., ollama): require explicit opt-in via baseUrl or models
+  // Keyless providers (e.g., ollama): require explicit opt-in via baseUrl/baseURL or models
   const def = PROVIDER_DEFINITIONS[provider];
   if (!def.requiresApiKey) {
-    const hasExplicitConfig = Boolean(config.baseUrl ?? (config.models?.length ?? 0) > 0);
+    const hasConfiguredModels = (config.models?.length ?? 0) > 0;
+    const hasExplicitConfig = Boolean(resolveConfiguredBaseUrl(config) ?? hasConfiguredModels);
     return { isConfigured: hasExplicitConfig };
   }
 

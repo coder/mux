@@ -100,6 +100,19 @@ describe("hasAnyConfiguredProvider", () => {
 
     expect(hasAnyConfiguredProvider(providers)).toBe(true);
   });
+
+  it("returns true for keyless providers with legacy baseURL config", () => {
+    const providers: ProvidersConfig = {
+      ollama: {
+        baseURL: "http://localhost:11434/api",
+      },
+    };
+
+    expect(hasAnyConfiguredProvider(providers)).toBe(true);
+    expect(resolveProviderCredentials("ollama", providers.ollama ?? {}, {}).isConfigured).toBe(
+      true
+    );
+  });
 });
 
 describe("resolveProviderCredentials base URL source", () => {
