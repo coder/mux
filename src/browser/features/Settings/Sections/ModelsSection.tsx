@@ -1,8 +1,8 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowRight, Info, Loader2, Plus, ShieldCheck } from "lucide-react";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { Button } from "@/browser/components/Button/Button";
-import { ProviderWithIcon } from "@/browser/components/ProviderIcon/ProviderIcon";
+import { ProviderIcon } from "@/browser/components/ProviderIcon/ProviderIcon";
 import {
   Select,
   SelectContent,
@@ -32,6 +32,7 @@ import {
   getProviderModelEntryId,
   getProviderModelEntryMappedTo,
 } from "@/common/utils/providers/modelEntries";
+import { formatProviderDisplayName } from "@/common/utils/providers/customProviders";
 import { ModelRow } from "./ModelRow";
 
 // Providers to exclude from the custom models UI (handled specially or internal)
@@ -120,10 +121,6 @@ export function ModelsSection() {
   const policyState = usePolicy();
   const effectivePolicy =
     policyState.status.state === "enforced" ? (policyState.policy ?? null) : null;
-  const visibleProviders = useMemo(
-    () => getAllowedProvidersForUi(effectivePolicy),
-    [effectivePolicy]
-  );
 
   const { api } = useAPI();
   const { open: openSettings } = useSettings();
@@ -133,9 +130,23 @@ export function ModelsSection() {
   const [editing, setEditing] = useState<EditingState | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const selectableProviders = visibleProviders.filter(
-    (provider) => !HIDDEN_PROVIDERS.has(provider)
+  const allowedProviders = useMemo(
+    () =>
+      getAllowedProvidersForUi(effectivePolicy, config).filter(
+        (provider) => !HIDDEN_PROVIDERS.has(provider)
+      ),
+    [effectivePolicy, config]
   );
+
+  useEffect(() => {
+    if (config === null || !lastProvider || allowedProviders.includes(lastProvider)) {
+      return;
+    }
+
+    // Sync persisted lastProvider to backend provider config after providers finish loading.
+    setLastProvider(allowedProviders[0] ?? "");
+  }, [config, allowedProviders, lastProvider, setLastProvider]);
+
   const { defaultModel, setDefaultModel, hiddenModels, hideModel, unhideModel } =
     useModelsFromSettings();
   const routing = useRouting();
@@ -396,9 +407,12 @@ export function ModelsSection() {
                 <SelectValue placeholder="Provider" />
               </SelectTrigger>
               <SelectContent>
-                {selectableProviders.map((provider) => (
+                {allowedProviders.map((provider) => (
                   <SelectItem key={provider} value={provider}>
-                    <ProviderWithIcon provider={provider} displayName />
+                    <span className="inline-flex items-center gap-1 whitespace-nowrap">
+                      <ProviderIcon provider={provider} />
+                      <span>{formatProviderDisplayName(provider, config?.[provider])}</span>
+                    </span>
                   </SelectItem>
                 ))}
               </SelectContent>
