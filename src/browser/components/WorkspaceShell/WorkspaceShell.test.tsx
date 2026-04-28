@@ -152,14 +152,16 @@ describe("WorkspaceShell loading placeholders", () => {
   afterEach(() => {
     cleanup();
     mock.restore();
-    cleanupDom?.();
-    cleanupDom = null;
+    // Restore window.api first while window is still installed.
     if (originalWindowApi === undefined) {
       delete window.api;
     } else {
       window.api = originalWindowApi;
     }
     originalWindowApi = undefined;
+    // Now tear down the DOM.
+    cleanupDom?.();
+    cleanupDom = null;
     workspaceState = undefined;
     openTerminalMock.mockClear();
     addReviewMock.mockClear();
