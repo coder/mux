@@ -24,6 +24,7 @@ import {
   isBuiltInProvider,
   isCustomOpenAICompatibleProviderConfig,
   validateCustomProviderId,
+  type ProvidersConfigWithProviderType,
 } from "@/common/utils/providers/customProviders";
 import { isOpReference } from "@/common/utils/opRef";
 import {
@@ -130,6 +131,7 @@ function getProviderConfigRecord(config: unknown): Record<string, BaseProviderCo
 export class ProviderService {
   private readonly policyService: PolicyService | null;
   private readonly emitter = new EventEmitter();
+  private lastWarnedShadowedCustomProviderIds: Set<string> | null = null;
 
   constructor(
     private readonly config: Config,
@@ -156,6 +158,7 @@ export class ProviderService {
    * main config changes affect provider availability (e.g. muxGatewayEnabled).
    */
   notifyConfigChanged(): void {
+    this.lastWarnedShadowedCustomProviderIds = null;
     this.emitter.emit("configChanged");
   }
 
@@ -169,17 +172,56 @@ export class ProviderService {
     return providers;
   }
 
+  private hasSameWarnedShadowedProviderIds(shadowedProviderIds: Set<string>): boolean {
+    if (this.lastWarnedShadowedCustomProviderIds === null) {
+      return false;
+    }
+
+    if (this.lastWarnedShadowedCustomProviderIds.size !== shadowedProviderIds.size) {
+      return false;
+    }
+
+    for (const providerId of shadowedProviderIds) {
+      if (!this.lastWarnedShadowedCustomProviderIds.has(providerId)) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  private detectAndLogShadowedProviders(
+    providersConfig: ProvidersConfigWithProviderType
+  ): Set<string> {
+    const shadowedProviderIds = new Set(
+      getShadowedCustomOpenAICompatibleProviderIds(providersConfig)
+    );
+
+    // list() and getConfig() can run during one UI render, so remember the
+    // last detected shadow set to avoid duplicate warning noise for that cycle.
+    if (
+      shadowedProviderIds.size > 0 &&
+      !this.hasSameWarnedShadowedProviderIds(shadowedProviderIds)
+    ) {
+      log.warn(
+        `Custom provider ids shadow built-in providers and will keep using custom config: ${Array.from(
+          shadowedProviderIds
+        )
+          .sort()
+          .join(", ")}`
+      );
+    }
+
+    this.lastWarnedShadowedCustomProviderIds = shadowedProviderIds;
+    return shadowedProviderIds;
+  }
+
   public list(): string[] {
     try {
       const providers = this.listBuiltInProviders();
       const providersConfig = this.config.loadProvidersConfig() ?? {};
       const customProviderIds = getCustomOpenAICompatibleProviderIds(providersConfig);
-      const shadowedProviderIds = getShadowedCustomOpenAICompatibleProviderIds(providersConfig);
-      if (shadowedProviderIds.length > 0) {
-        log.warn(
-          `Custom provider ids shadow built-in providers and will keep using custom config: ${shadowedProviderIds.join(", ")}`
-        );
-      }
+      this.detectAndLogShadowedProviders(providersConfig);
       const allowedCustomProviderIds = this.policyService?.isEnforced()
         ? customProviderIds.filter((p) => this.policyService?.isProviderAllowed(p) ?? false)
         : customProviderIds;
@@ -197,14 +239,7 @@ export class ProviderService {
     const providersConfig = this.config.loadProvidersConfig() ?? {};
     const mainConfig = this.config.loadConfigOrDefault();
     const result: ProvidersConfigMap = {};
-    const shadowedCustomProviderIds = new Set(
-      getShadowedCustomOpenAICompatibleProviderIds(providersConfig)
-    );
-    if (shadowedCustomProviderIds.size > 0) {
-      log.warn(
-        `Custom provider ids shadow built-in providers and will keep using custom config: ${Array.from(shadowedCustomProviderIds).join(", ")}`
-      );
-    }
+    const shadowedCustomProviderIds = this.detectAndLogShadowedProviders(providersConfig);
 
     for (const provider of this.listBuiltInProviders()) {
       if (shadowedCustomProviderIds.has(provider)) {

@@ -6,6 +6,7 @@ import * as path from "path";
 import type { ProviderModelEntry } from "@/common/orpc/types";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { Config } from "@/node/config";
+import { log } from "@/node/services/log";
 import { PolicyService } from "@/node/services/policyService";
 import { ProviderService } from "./providerService";
 
@@ -508,6 +509,33 @@ describe("ProviderService.getConfig", () => {
       expect(cfg.openai.displayName).toBe("Shadowed OpenAI");
       expect(cfg.openai.apiKeySource).toBe("keyless");
       expect(service.list().filter((provider) => provider === "openai")).toHaveLength(1);
+    });
+  });
+
+  it("logs shadowed custom provider ids once per detected set", () => {
+    withTempConfig((config, service) => {
+      config.saveProvidersConfig({
+        openai: {
+          providerType: "openai-compatible",
+          displayName: "Shadowed OpenAI",
+          baseUrl: "http://localhost:8000/v1",
+        },
+      });
+      const warnSpy = spyOn(log, "warn").mockImplementation(() => undefined);
+
+      try {
+        service.list();
+        service.getConfig();
+        service.getConfig();
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+
+        service.notifyConfigChanged();
+        service.getConfig();
+        service.list();
+        expect(warnSpy).toHaveBeenCalledTimes(2);
+      } finally {
+        warnSpy.mockRestore();
+      }
     });
   });
 
