@@ -3,6 +3,7 @@ import "../../../../tests/ui/dom";
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { cleanup, render } from "@testing-library/react";
 import { installDom } from "../../../../tests/ui/dom";
+import type * as WorkspaceStoreModule from "@/browser/stores/WorkspaceStore";
 
 interface MockWorkspaceState {
   loading?: boolean;
@@ -25,7 +26,14 @@ void mock.module("lottie-react", () => ({
   default: () => <div data-testid="lottie-animation" />,
 }));
 
+// Preserve the remaining WorkspaceStore exports because Bun mock.module state is global across test files.
+/* eslint-disable @typescript-eslint/no-require-imports */
+const actualWorkspaceStore =
+  require("@/browser/stores/WorkspaceStore?real=1") as typeof WorkspaceStoreModule;
+/* eslint-enable @typescript-eslint/no-require-imports */
+
 void mock.module("@/browser/stores/WorkspaceStore", () => ({
+  ...actualWorkspaceStore,
   useWorkspaceState: () =>
     workspaceState
       ? {
