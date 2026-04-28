@@ -404,14 +404,14 @@ export class ProviderService {
         continue;
       }
 
-      const providerPolicy = this.policyService?.isEnforced()
-        ? this.policyService.getEffectivePolicy()?.providerAccess?.find((p) => p.id === providerId)
-        : undefined;
-
-      result[providerId] = buildCustomProviderConfigInfo(providerConfig, {
-        forcedBaseUrl: providerPolicy?.forcedBaseUrl,
-        allowedModels: providerPolicy?.allowedModels ?? null,
-      });
+      // Reuse getProviderPolicy() so the "lookup providerAccess entry → narrow to
+      // { forcedBaseUrl, allowedModels }" shape lives in one place. When policy is
+      // not enforced, it returns {}, which buildCustomProviderConfigInfo handles
+      // identically (both forcedBaseUrl and allowedModels fall back to defaults).
+      result[providerId] = buildCustomProviderConfigInfo(
+        providerConfig,
+        this.getProviderPolicy(providerId)
+      );
     }
 
     return result;
