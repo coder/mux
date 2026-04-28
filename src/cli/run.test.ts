@@ -167,6 +167,14 @@ describe("mux CLI", () => {
       expect(result.stdout).toContain("anthropic:claude-opus-4-7");
     });
 
+    test("--service-tier has no default auto", async () => {
+      const result = await runCli(["run", "--help"]);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("--service-tier");
+      expect(result.stdout).not.toContain("[default: auto]");
+      expect(result.stdout).not.toContain('[default: "auto"]');
+    });
+
     test("no message shows error", async () => {
       const result = await runRunDirect([]);
       expect(result.exitCode).toBe(1);

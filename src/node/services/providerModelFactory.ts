@@ -1248,7 +1248,7 @@ export class ProviderModelFactory {
         const configWireFormat = providerConfig.wireFormat as string | undefined;
         if (configServiceTier || configWireFormat) {
           muxProviderOptions ??= {};
-          if (configServiceTier) {
+          if (configServiceTier && muxProviderOptions.openai?.serviceTier == null) {
             muxProviderOptions.openai = {
               ...muxProviderOptions.openai,
               serviceTier: configServiceTier as "auto" | "default" | "flex" | "priority",

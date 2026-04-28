@@ -358,7 +358,7 @@ export function buildProviderOptions(
     const cacheScope = promptCacheScope ?? workspaceId;
     const promptCacheKey = cacheScope ? `mux-v1-${cacheScope}` : undefined;
 
-    const serviceTier = muxProviderOptions?.openai?.serviceTier ?? "auto";
+    const serviceTier = muxProviderOptions?.openai?.serviceTier;
     const wireFormat = muxProviderOptions?.openai?.wireFormat ?? "responses";
     const store = muxProviderOptions?.openai?.store;
     const isResponses = wireFormat === "responses";
@@ -378,7 +378,7 @@ export function buildProviderOptions(
     const options = {
       openai: {
         parallelToolCalls: true, // Always enable concurrent tool execution
-        serviceTier,
+        ...(serviceTier != null && { serviceTier }),
         ...(store != null && { store }), // ZDR: pass store flag through to OpenAI SDK
         ...(isResponses && {
           // Default to disabled; allow auto truncation for compaction to avoid context errors

@@ -539,6 +539,48 @@ describe("buildProviderOptions - OpenAI", () => {
     });
   });
 
+  describe("serviceTier option", () => {
+    test("should not include serviceTier key when muxProviderOptions is omitted", () => {
+      const result = buildProviderOptions("openai:gpt-5", "medium");
+      const openai = getOpenAIOptions(result);
+
+      expect(openai).toBeDefined();
+      expect("serviceTier" in openai!).toBe(false);
+    });
+
+    test("should not include serviceTier key when muxProviderOptions.openai.serviceTier is undefined", () => {
+      const result = buildProviderOptions("openai:gpt-5", "medium", undefined, undefined, {
+        openai: { serviceTier: undefined },
+      });
+      const openai = getOpenAIOptions(result);
+
+      expect(openai).toBeDefined();
+      expect("serviceTier" in openai!).toBe(false);
+    });
+
+    test("should include serviceTier: auto when explicitly set", () => {
+      const result = buildProviderOptions("openai:gpt-5", "medium", undefined, undefined, {
+        openai: { serviceTier: "auto" },
+      });
+      const openai = getOpenAIOptions(result);
+
+      expect(openai).toBeDefined();
+      expect("serviceTier" in openai!).toBe(true);
+      expect(openai!.serviceTier).toBe("auto");
+    });
+
+    test("should include explicit non-auto serviceTier", () => {
+      const result = buildProviderOptions("openai:gpt-5", "medium", undefined, undefined, {
+        openai: { serviceTier: "flex" },
+      });
+      const openai = getOpenAIOptions(result);
+
+      expect(openai).toBeDefined();
+      expect("serviceTier" in openai!).toBe(true);
+      expect(openai!.serviceTier).toBe("flex");
+    });
+  });
+
   describe("promptCacheKey derivation", () => {
     test("should prefer promptCacheScope over workspaceId for promptCacheKey", () => {
       const result = buildProviderOptions(

@@ -259,7 +259,7 @@ program
   .option("--no-mcp-config", "ignore global + repo MCP config files (use only --mcp servers)")
   .option("-e, --experiment <id>", "enable experiment (can be repeated)", collectExperiments, [])
   .option("-b, --budget <usd>", "stop when session cost exceeds budget (USD)", parseFloat)
-  .option("--service-tier <tier>", "OpenAI service tier: auto, default, flex, priority", "auto")
+  .option("--service-tier <tier>", "OpenAI service tier: auto, default, flex, priority")
   .option("--use-1m", "enable 1M context window for supported Anthropic models")
   .option(
     "--keep-background-processes",
@@ -298,7 +298,7 @@ interface CLIOptions {
   mcpConfig: boolean;
   experiment: string[];
   budget?: number;
-  serviceTier: "auto" | "default" | "flex" | "priority";
+  serviceTier?: "auto" | "default" | "flex" | "priority";
   use1m?: boolean;
   keepBackgroundProcesses?: boolean;
 }
@@ -612,7 +612,7 @@ async function main(): Promise<number> {
     experiments,
     providerOptions: {
       ...(opts.use1m && { anthropic: { use1MContext: true } }),
-      openai: { serviceTier: opts.serviceTier },
+      ...(opts.serviceTier != null && { openai: { serviceTier: opts.serviceTier } }),
     },
     // Disable UI-only tools that have no effect in CLI mode:
     // - status_set: backend no-op, status indicator only visible in desktop UI

@@ -1226,6 +1226,23 @@ describe("ProviderService.setConfig", () => {
     });
   });
 
+  it("removes OpenAI serviceTier when set to an empty string", async () => {
+    await withTempConfigAsync(async (config, service) => {
+      config.saveProvidersConfig({
+        openai: {
+          apiKey: "sk-test",
+          serviceTier: "auto",
+        },
+      });
+
+      const result = await service.setConfig("openai", ["serviceTier"], "");
+
+      expect(result.success).toBe(true);
+      expect(config.loadProvidersConfig()?.openai?.serviceTier).toBeUndefined();
+      expect(Object.hasOwn(config.loadProvidersConfig()?.openai ?? {}, "serviceTier")).toBe(false);
+    });
+  });
+
   it("stores enabled=false without deleting existing credentials", async () => {
     await withTempConfigAsync(async (config, service) => {
       config.saveProvidersConfig({

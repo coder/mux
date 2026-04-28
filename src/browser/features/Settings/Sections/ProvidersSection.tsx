@@ -83,6 +83,15 @@ type MuxGatewayLoginStatus = "idle" | "starting" | "waiting" | "success" | "erro
 type CodexOauthFlowStatus = "idle" | "starting" | "waiting" | "error";
 type CopilotLoginStatus = "idle" | "starting" | "waiting" | "success" | "error";
 
+const OPENAI_SERVICE_TIER_UNSET = "unset";
+
+type OpenAIServiceTier = "auto" | "default" | "flex" | "priority";
+type OpenAIServiceTierSelectValue = typeof OPENAI_SERVICE_TIER_UNSET | OpenAIServiceTier;
+
+function isOpenAIServiceTier(value: string): value is OpenAIServiceTier {
+  return value === "auto" || value === "default" || value === "flex" || value === "priority";
+}
+
 interface CodexOauthDeviceFlow {
   flowId: string;
   userCode: string;
@@ -381,6 +390,9 @@ export function ProvidersSection() {
     isLoading: muxGatewayAccountLoading,
     refresh: refreshMuxGatewayAccountStatus,
   } = useMuxGatewayAccountStatus();
+
+  const [openaiServiceTierSelectOverride, setOpenaiServiceTierSelectOverride] =
+    useState<OpenAIServiceTierSelectValue | null>(null);
 
   const routing = useRouting();
 
@@ -2445,18 +2457,32 @@ export function ProvidersSection() {
                               </TooltipProvider>
                             </div>
                             <Select
-                              value={config?.openai?.serviceTier ?? "auto"}
+                              value={
+                                openaiServiceTierSelectOverride ??
+                                config?.openai?.serviceTier ??
+                                OPENAI_SERVICE_TIER_UNSET
+                              }
                               onValueChange={(next) => {
                                 if (!api) return;
-                                if (
-                                  next !== "auto" &&
-                                  next !== "default" &&
-                                  next !== "flex" &&
-                                  next !== "priority"
-                                ) {
+
+                                if (next === OPENAI_SERVICE_TIER_UNSET) {
+                                  setOpenaiServiceTierSelectOverride(OPENAI_SERVICE_TIER_UNSET);
+                                  void api.providers
+                                    .setProviderConfig({
+                                      provider: "openai",
+                                      keyPath: ["serviceTier"],
+                                      value: "",
+                                    })
+                                    .then(() => refresh())
+                                    .finally(() => setOpenaiServiceTierSelectOverride(null));
                                   return;
                                 }
 
+                                if (!isOpenAIServiceTier(next)) {
+                                  return;
+                                }
+
+                                setOpenaiServiceTierSelectOverride(null);
                                 updateOptimistically("openai", { serviceTier: next });
                                 void api.providers.setProviderConfig({
                                   provider: "openai",
@@ -2465,10 +2491,13 @@ export function ProvidersSection() {
                                 });
                               }}
                             >
-                              <SelectTrigger className="w-40">
+                              <SelectTrigger className="w-64">
                                 <SelectValue />
                               </SelectTrigger>
                               <SelectContent>
+                                <SelectItem value={OPENAI_SERVICE_TIER_UNSET}>
+                                  Not configured (omit service_tier)
+                                </SelectItem>
                                 <SelectItem value="auto">auto</SelectItem>
                                 <SelectItem value="default">default</SelectItem>
                                 <SelectItem value="flex">flex</SelectItem>
