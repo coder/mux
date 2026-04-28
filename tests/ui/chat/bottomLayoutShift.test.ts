@@ -1,6 +1,6 @@
 import "../dom";
 
-import { waitFor } from "@testing-library/react";
+import { fireEvent, waitFor } from "@testing-library/react";
 
 // App-level UI tests render the loader shell first, so stub Lottie before importing the
 // harness to keep happy-dom from tripping over lottie-web's canvas bootstrap.
@@ -10,8 +10,10 @@ jest.mock("lottie-react", () => ({
 }));
 
 import { preloadTestModules } from "../../ipc/setup";
-import { createAppHarness } from "../harness";
+import { generateBranchName } from "../../ipc/helpers";
+import { createAppHarness, ChatHarness } from "../harness";
 import { workspaceStore } from "@/browser/stores/WorkspaceStore";
+import { detectDefaultTrunkBranch } from "@/node/git";
 
 function getMessageWindow(container: HTMLElement): HTMLDivElement {
   const element = container.querySelector('[data-testid="message-window"]');
@@ -77,15 +79,16 @@ describe("Chat bottom layout stability", () => {
       await app.chat.send("Seed transcript before testing viewport resize pinning");
       await app.chat.expectStreamComplete();
       const messageWindow = getMessageWindow(app.view.container);
-      let scrollTop = 920;
       let scrollHeight = 1120;
       let clientHeight = 400;
+      const maxScrollTop = () => scrollHeight - clientHeight;
+      let scrollTop = maxScrollTop();
 
       Object.defineProperty(messageWindow, "scrollTop", {
         configurable: true,
         get: () => scrollTop,
         set: (nextValue: number) => {
-          scrollTop = nextValue;
+          scrollTop = Math.min(maxScrollTop(), Math.max(0, nextValue));
         },
       });
       Object.defineProperty(messageWindow, "scrollHeight", {
@@ -117,7 +120,7 @@ describe("Chat bottom layout stability", () => {
         );
       }
 
-      expect(scrollTop).toBe(scrollHeight);
+      expect(scrollTop).toBe(maxScrollTop());
     } finally {
       (globalThis as unknown as { ResizeObserver: typeof ResizeObserver }).ResizeObserver =
         originalResizeObserver;
@@ -125,35 +128,72 @@ describe("Chat bottom layout stability", () => {
     }
   }, 60_000);
 
-  test("keeps the transcript pinned when send-time footer UI appears", async () => {
-    const app = await createAppHarness({ branchPrefix: "bottom-layout-shift" });
-
-    const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
-    const originalWindowRequestAnimationFrame = window.requestAnimationFrame;
-    const originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
-    const originalWindowCancelAnimationFrame = window.cancelAnimationFrame;
-    const queuedAnimationFrames: FrameRequestCallback[] = [];
+  test("opens an idle chat at the transcript bottom after user-owned scroll", async () => {
+    const app = await createAppHarness({ branchPrefix: "idle-chat-bottom" });
+    let idleWorkspaceId: string | null = null;
 
     try {
-      await app.chat.send("Seed transcript before testing bottom pinning");
+      await app.chat.send("Seed source before switching to idle chat");
       await app.chat.expectStreamComplete();
-      await app.chat.expectTranscriptContains(
-        "Mock response: Seed transcript before testing bottom pinning"
-      );
 
-      // Let the previous turn's queued auto-scroll frames settle before we freeze the async path.
-      await new Promise<void>((resolve) => originalRequestAnimationFrame(() => resolve()));
-      await new Promise<void>((resolve) => originalRequestAnimationFrame(() => resolve()));
+      const trunkBranch = await detectDefaultTrunkBranch(app.repoPath);
+      const idleResult = await app.env.orpc.workspace.create({
+        projectPath: app.repoPath,
+        branchName: generateBranchName("idle-chat-bottom-target"),
+        trunkBranch,
+      });
+      if (!idleResult.success) {
+        throw new Error(`Failed to create idle workspace: ${idleResult.error}`);
+      }
+      idleWorkspaceId = idleResult.metadata.id;
+      workspaceStore.addWorkspace(idleResult.metadata);
+
+      const idleRow = await waitFor(
+        () => {
+          const row = app.view.container.querySelector(
+            `[data-workspace-id="${idleWorkspaceId}"]`
+          ) as HTMLElement | null;
+          if (!row) {
+            throw new Error("Idle workspace row not rendered");
+          }
+          if (row.getAttribute("aria-disabled") === "true") {
+            throw new Error("Idle workspace row is disabled");
+          }
+          return row;
+        },
+        { timeout: 10_000 }
+      );
+      fireEvent.click(idleRow);
+
+      const idleChat = new ChatHarness(app.view.container, idleWorkspaceId);
+      await idleChat.send("Seed idle target transcript");
+      await idleChat.expectStreamComplete();
+
+      const sourceRow = await waitFor(
+        () => {
+          const row = app.view.container.querySelector(
+            `[data-workspace-id="${app.workspaceId}"]`
+          ) as HTMLElement | null;
+          if (!row) {
+            throw new Error("Source workspace row not rendered");
+          }
+          return row;
+        },
+        { timeout: 10_000 }
+      );
+      fireEvent.click(sourceRow);
 
       const messageWindow = getMessageWindow(app.view.container);
-      let scrollTop = 1000;
-      let scrollHeight = 1000;
+      let scrollTop = 900;
+      let scrollHeight = 1800;
+      const clientHeight = 500;
+      const maxScrollTop = () => scrollHeight - clientHeight;
 
       Object.defineProperty(messageWindow, "scrollTop", {
         configurable: true,
         get: () => scrollTop,
         set: (nextValue: number) => {
-          scrollTop = nextValue;
+          scrollTop = Math.min(maxScrollTop(), Math.max(0, nextValue));
         },
       });
       Object.defineProperty(messageWindow, "scrollHeight", {
@@ -162,19 +202,61 @@ describe("Chat bottom layout stability", () => {
       });
       Object.defineProperty(messageWindow, "clientHeight", {
         configurable: true,
-        get: () => 400,
+        get: () => clientHeight,
       });
 
-      const requestAnimationFrameMock: typeof requestAnimationFrame = (callback) => {
-        queuedAnimationFrames.push(callback);
-        return queuedAnimationFrames.length;
-      };
-      const cancelAnimationFrameMock: typeof cancelAnimationFrame = () => undefined;
+      // Prove workspace-open reacquires the tail from a user-owned source scroll.
+      fireEvent.wheel(messageWindow);
+      scrollTop = 250;
+      fireEvent.scroll(messageWindow);
 
-      globalThis.requestAnimationFrame = requestAnimationFrameMock;
-      window.requestAnimationFrame = requestAnimationFrameMock;
-      globalThis.cancelAnimationFrame = cancelAnimationFrameMock;
-      window.cancelAnimationFrame = cancelAnimationFrameMock;
+      scrollHeight = 2200;
+      fireEvent.click(idleRow);
+
+      await waitFor(() => {
+        expect(scrollTop).toBe(maxScrollTop());
+      });
+    } finally {
+      if (idleWorkspaceId) {
+        await app.env.orpc.workspace
+          .remove({ workspaceId: idleWorkspaceId, options: { force: true } })
+          .catch(() => {});
+      }
+      await app.dispose();
+    }
+  }, 60_000);
+
+  test("keeps the transcript pinned when send-time footer UI appears", async () => {
+    const app = await createAppHarness({ branchPrefix: "bottom-layout-shift" });
+
+    try {
+      await app.chat.send("Seed transcript before testing bottom pinning");
+      await app.chat.expectStreamComplete();
+      await app.chat.expectTranscriptContains(
+        "Mock response: Seed transcript before testing bottom pinning"
+      );
+
+      const messageWindow = getMessageWindow(app.view.container);
+      let scrollHeight = 1000;
+      const clientHeight = 400;
+      const maxScrollTop = () => scrollHeight - clientHeight;
+      let scrollTop = maxScrollTop();
+
+      Object.defineProperty(messageWindow, "scrollTop", {
+        configurable: true,
+        get: () => scrollTop,
+        set: (nextValue: number) => {
+          scrollTop = Math.min(maxScrollTop(), Math.max(0, nextValue));
+        },
+      });
+      Object.defineProperty(messageWindow, "scrollHeight", {
+        configurable: true,
+        get: () => scrollHeight,
+      });
+      Object.defineProperty(messageWindow, "clientHeight", {
+        configurable: true,
+        get: () => clientHeight,
+      });
 
       // Simulate the extra tail height added by the send-time user row + starting barrier.
       scrollHeight = 1120;
@@ -190,21 +272,13 @@ describe("Chat bottom layout stability", () => {
         { timeout: 10_000 }
       );
 
-      // The layout-fix path pins the transcript immediately via a useLayoutEffect on
-      // the latest message id — no RAF hop required. We intentionally do not assert
-      // on `queuedAnimationFrames.length` anymore: the previous code added a
-      // double-RAF performAutoScroll that raced the sync pin and occasionally painted
-      // one frame at the wrong scrollTop. The sync-pin assertion below is the
-      // actual correctness property.
-      expect(scrollTop).toBe(scrollHeight);
+      // The bottom-lock path pins the transcript immediately via layout/resize
+      // signals; there is no timer/RAF path to race a frame at the wrong scrollTop.
+      expect(scrollTop).toBe(maxScrollTop());
 
       app.env.services.aiService.releaseMockStreamStartGate(app.workspaceId);
       await app.chat.expectStreamComplete();
     } finally {
-      globalThis.requestAnimationFrame = originalRequestAnimationFrame;
-      window.requestAnimationFrame = originalWindowRequestAnimationFrame;
-      globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
-      window.cancelAnimationFrame = originalWindowCancelAnimationFrame;
       await app.dispose();
     }
   }, 60_000);

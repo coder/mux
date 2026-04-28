@@ -385,12 +385,10 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     innerRef,
     autoScroll,
     disableAutoScroll,
-    stickToBottomIfAutoScroll,
     jumpToBottom,
     handleScroll,
     markUserInteraction,
   } = useAutoScroll();
-  const lastTranscriptViewportHeightRef = useRef<number | null>(null);
 
   // Handler to navigate (scroll) to a specific message by historyId
   const handleNavigateToMessage = useCallback(
@@ -608,42 +606,11 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     void openInEditor(workspaceId, namedWorkspacePath, runtimeConfig);
   }, [workspaceId, namedWorkspacePath, openInEditor, runtimeConfig]);
 
-  useEffect(() => {
-    const transcriptViewport = contentRef.current;
-    if (!transcriptViewport) {
-      return;
-    }
-
-    lastTranscriptViewportHeightRef.current = transcriptViewport.clientHeight;
-
-    // Sending can immediately shrink the composer below the transcript before the
-    // matching user row/streaming UI is appended. Keep the transcript pinned to the
-    // bottom when that sibling resize changes the viewport height so users don't see
-    // the tail jump between the composer collapse and the later message/tail updates.
-    const observer = new ResizeObserver((entries) => {
-      const nextHeight = entries[0]?.contentRect.height ?? transcriptViewport.clientHeight;
-      const previousHeight = lastTranscriptViewportHeightRef.current;
-      lastTranscriptViewportHeightRef.current = nextHeight;
-      if (previousHeight === null || previousHeight === nextHeight) {
-        return;
-      }
-
-      stickToBottomIfAutoScroll();
-    });
-
-    observer.observe(transcriptViewport);
-    return () => {
-      observer.disconnect();
-    };
-  }, [contentRef, stickToBottomIfAutoScroll]);
-
   // Intentionally no message/todo-driven auto-scroll effect here. Bottom pinning is
-  // owned by the ResizeObserver on `innerRef` inside `useAutoScroll` (pins on any
-  // content-size change before paint), plus explicit layout-signature pins on the
-  // tail/decoration lanes and the viewport resize observer below. Calling
-  // `performAutoScroll` as a separate double-RAF on every delta used to race the RO
-  // pin, occasionally painting one frame at the wrong scrollTop (visible as a brief
-  // downward jitter during fast reasoning).
+  // owned by the scrollport/content ResizeObservers inside `useAutoScroll`, which
+  // pins viewport or content-size changes before paint. Calling `performAutoScroll`
+  // as a separate double-RAF on every delta used to race the RO pin, occasionally
+  // painting one frame at the wrong scrollTop (visible as a brief downward jitter).
 
   const hasLoadedTranscriptRows = !workspaceState.loading && workspaceState.messages.length > 0;
 
@@ -705,14 +672,11 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
       interruptedBarrierMessageIds.add(message.id);
     }
   }
-  const interruptedBarrierLayoutSignature = Array.from(interruptedBarrierMessageIds).join("|");
-
   const shouldShowStreamingBarrier = isStreamStarting || canInterrupt;
   const transcriptTailItems: LayoutStackItem[] = [];
   if (shouldMountRetryBarrier) {
     transcriptTailItems.push({
       key: "retry-barrier",
-      layoutKey: `retry-barrier:${showRetryBarrierUI ? "visible" : "hidden"}`,
       node: <RetryBarrier workspaceId={workspaceId} visible={showRetryBarrierUI} />,
     });
   }
@@ -749,7 +713,6 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   if (concurrentLocalStreamingWorkspaceName) {
     transcriptTailItems.push({
       key: "concurrent-local-warning",
-      layoutKey: `concurrent-local-warning:${concurrentLocalStreamingWorkspaceName}`,
       node: (
         <ConcurrentLocalWarningView
           streamingWorkspaceName={concurrentLocalStreamingWorkspaceName}
@@ -757,17 +720,6 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
       ),
     });
   }
-
-  // Keep inline transcript rows pinned before paint when they change height inside the viewport.
-  // The tail and composer decoration lanes own their own layout signatures; this effect only covers
-  // layout that is inserted directly between message rows (new transcript rows, interrupted markers).
-  useLayoutEffect(() => {
-    if (!contentRef.current) {
-      return;
-    }
-
-    stickToBottomIfAutoScroll();
-  }, [contentRef, latestMessageId, interruptedBarrierLayoutSignature, stickToBottomIfAutoScroll]);
 
   const handleLoadOlderHistory = useCallback(() => {
     if (!shouldRenderLoadOlderMessagesButton || loadingOlderHistory) {
@@ -1033,7 +985,6 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                   isHydrating={isHydratingTranscript}
                   align="start"
                   overflowAnchor="none"
-                  onStickToBottom={stickToBottomIfAutoScroll}
                   dataComponent="TranscriptTailStack"
                   items={transcriptTailItems}
                 />
@@ -1073,7 +1024,6 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
               todoCount={todoCount}
               shouldShowReviewsBanner={shouldShowReviewsBanner}
               canInterrupt={canInterrupt}
-              onStickToBottom={stickToBottomIfAutoScroll}
               autoCompactionResult={autoCompactionResult}
               shouldShowCompactionWarning={shouldShowCompactionWarning}
               contextSwitchWarning={contextSwitchWarning}
@@ -1127,7 +1077,6 @@ interface ChatInputPaneProps {
   todoCount: number;
   shouldShowReviewsBanner: boolean;
   canInterrupt: boolean;
-  onStickToBottom: () => void;
   autoCompactionResult: ReturnType<typeof checkAutoCompaction>;
   shouldShowCompactionWarning: boolean;
   contextSwitchWarning: ContextSwitchWarning | null;
@@ -1182,7 +1131,6 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
   if (props.shouldShowPinnedTodoList) {
     decorationEntries.push({
       key: "pinned-todo-list",
-      layoutKey: `pinned-todo-list:${props.todoCount}`,
       node: <PinnedTodoList workspaceId={props.workspaceId} />,
     });
   }
@@ -1193,14 +1141,12 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
   if (props.shouldShowReviewsBanner) {
     decorationEntries.push({
       key: "reviews-banner",
-      layoutKey: `reviews-banner:${reviews.reviews.length}`,
       node: <ReviewsBanner workspaceId={props.workspaceId} />,
     });
   }
   if (props.queuedMessage) {
     decorationEntries.push({
       key: "queued-message",
-      layoutKey: `queued-message:${props.queuedMessage.id}`,
       node: (
         <QueuedMessage
           message={props.queuedMessage}
@@ -1220,10 +1166,8 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
       ),
     });
   }
-  // The decoration lane changes the transcript viewport height from below. Pinning
-  // happens inside LayoutStackLane via the `onStickToBottom` hook — both on layout
-  // signature changes and on measured height changes — so the parent pane doesn't
-  // need its own duplicate layout-signature effect.
+  // The decoration lane changes the transcript viewport height from below; the
+  // scrollport ResizeObserver inside useAutoScroll owns any required bottom pin.
 
   return (
     <>
@@ -1231,7 +1175,6 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
         workspaceId={props.workspaceId}
         isHydrating={props.isHydratingTranscript}
         align="end"
-        onStickToBottom={props.onStickToBottom}
         dataComponent="ChatInputDecorationStack"
         items={decorationEntries}
       />

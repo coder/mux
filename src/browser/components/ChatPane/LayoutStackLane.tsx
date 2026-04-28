@@ -1,7 +1,6 @@
 import React, { useLayoutEffect, useRef } from "react";
 import {
   clearLayoutStackHeight,
-  getLayoutStackSignature,
   getReservedLayoutStackHeightPx,
   measureLayoutStackHeightPx,
   rememberLayoutStackHeight,
@@ -21,9 +20,9 @@ import {
  *  - `overflowAnchor="none"` opts the tail lane out of browser scroll anchoring
  *    so a newly-inserted tail row (streaming barrier, etc.) can't win the anchor
  *    heuristic and flash the layout underneath.
- *  - `onStickToBottom` is called whenever the lane's layout signature or its
- *    measured content height changes. Callers use it to pin the transcript
- *    viewport to the bottom; omitting it makes this a pure measurement lane.
+ *
+ * Height changes are observed by the transcript scroll owner; this lane only
+ * handles reservation and alignment.
  */
 interface LayoutStackLaneProps {
   workspaceId: string;
@@ -31,12 +30,6 @@ interface LayoutStackLaneProps {
   items: readonly LayoutStackItem[];
   align: "start" | "end";
   overflowAnchor?: "none";
-  /**
-   * Optional pin callback invoked when the lane's identity/height changes. The
-   * lane doesn't care how the caller pins; it only fires the signal synchronously
-   * from a layout effect so the pin runs before paint.
-   */
-  onStickToBottom?: () => void;
   dataComponent?: string;
 }
 
@@ -45,30 +38,14 @@ export const LayoutStackLane: React.FC<LayoutStackLaneProps> = (props) => {
   const stackHeightByWorkspaceIdRef = useRef(new Map<string, number>());
   const lastMeasuredStackHeightRef = useRef(0);
   const observedHeightRef = useRef<number | null>(null);
-  const previousLayoutSignatureRef = useRef<string | null>(null);
-
-  // Hide the callback inside a ref so the RO effect's dep list doesn't depend
-  // on a function identity that callers re-create every render.
-  const onStickToBottomRef = useRef(props.onStickToBottom);
-  onStickToBottomRef.current = props.onStickToBottom;
 
   const hasItems = props.items.length > 0;
-  const layoutSignature = `${props.workspaceId}:${getLayoutStackSignature(props.items)}`;
   const reservedStackHeightPx = getReservedLayoutStackHeightPx({
     workspaceId: props.workspaceId,
     isHydrating: props.isHydrating,
     stackHeightByWorkspaceId: stackHeightByWorkspaceIdRef.current,
     fallbackStackHeightPx: lastMeasuredStackHeightRef.current,
   });
-
-  // Pin on layout-signature changes (a new item appeared/disappeared or reordered).
-  useLayoutEffect(() => {
-    if (previousLayoutSignatureRef.current === layoutSignature) {
-      return;
-    }
-    previousLayoutSignatureRef.current = layoutSignature;
-    onStickToBottomRef.current?.();
-  }, [layoutSignature]);
 
   useLayoutEffect(() => {
     const content = contentRef.current;
@@ -79,7 +56,6 @@ export const LayoutStackLane: React.FC<LayoutStackLaneProps> = (props) => {
 
     const observer = new ResizeObserver((entries) => {
       const nextHeight = measureLayoutStackHeightPx(content, entries[0]?.contentRect.height);
-      const previousObservedHeight = observedHeightRef.current;
       observedHeightRef.current = nextHeight;
 
       if (nextHeight === 0) {
@@ -102,18 +78,6 @@ export const LayoutStackLane: React.FC<LayoutStackLaneProps> = (props) => {
           lastMeasuredStackHeightRef
         );
       }
-
-      if (previousObservedHeight === nextHeight) {
-        return;
-      }
-      if (previousObservedHeight === null && nextHeight === 0) {
-        return;
-      }
-      // Some lane items (notably active compaction/streaming barriers during chat open)
-      // mount as zero-height placeholders and become visible before ResizeObserver has
-      // delivered an initial measurement. Treat the first non-zero observation as a
-      // layout change so the transcript still lands at the real tail.
-      onStickToBottomRef.current?.();
     });
 
     observer.observe(content);
