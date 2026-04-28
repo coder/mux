@@ -159,39 +159,6 @@ export const AdvisorToolInputSchema = z
   })
   .strict();
 
-const AdvisorToolAdviceResultSchema = z
-  .object({
-    type: z.literal("advice"),
-    advice: z.string().min(1),
-    advisorModel: z.string().min(1),
-    reasoningLevel: z.string().optional(),
-    remainingUses: z.number().int().min(0).nullable(),
-  })
-  .strict();
-
-const AdvisorToolLimitResultSchema = z
-  .object({
-    type: z.literal("limit_reached"),
-    advisorModel: z.string().min(1),
-    reasoningLevel: z.string().optional(),
-    message: z.string().min(1),
-  })
-  .strict();
-
-const AdvisorToolErrorResultSchema = z
-  .object({
-    type: z.literal("error"),
-    isError: z.literal(true).optional(),
-    message: z.string().min(1),
-  })
-  .strict();
-
-export const AdvisorToolResultSchema = z.discriminatedUnion("type", [
-  AdvisorToolAdviceResultSchema,
-  AdvisorToolLimitResultSchema,
-  AdvisorToolErrorResultSchema,
-]);
-
 // -----------------------------------------------------------------------------
 // task (sub-workspaces as subagents)
 // -----------------------------------------------------------------------------
