@@ -1,3 +1,4 @@
+import type React from "react";
 import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
@@ -73,6 +74,21 @@ void mock.module("@/browser/contexts/PolicyContext", () => ({
   usePolicy: () => ({
     status: { state: "disabled" as const },
     policy: null,
+  }),
+}));
+
+/* eslint-disable @typescript-eslint/no-require-imports */
+const actualWorkspaceContext =
+  require("@/browser/contexts/WorkspaceContext?real=1") as typeof import("@/browser/contexts/WorkspaceContext");
+/* eslint-enable @typescript-eslint/no-require-imports */
+
+void mock.module("@/browser/contexts/WorkspaceContext", () => ({
+  ...actualWorkspaceContext,
+  WorkspaceProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  useWorkspaceContext: () => ({
+    workspaceMetadata: new Map(),
+    selectedWorkspace: null,
+    refreshWorkspaceMetadata: () => Promise.resolve(),
   }),
 }));
 
@@ -176,8 +192,8 @@ describe("ProvidersSection", () => {
   let restoreDom: (() => void) | null = null;
 
   beforeEach(() => {
-    installTestDoubles();
     restoreDom = installDom();
+    installTestDoubles();
     repairRemovedProviderMock = mock(
       (_provider: string, _workspaceIds: Iterable<string>) => undefined
     );
