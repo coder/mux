@@ -317,6 +317,67 @@ describe("useAutoScroll", () => {
     }
   });
 
+  test("relocks when inertial user scroll settles at the bottom", () => {
+    const { result } = renderHook(() => useAutoScroll());
+    const scrollContainer = document.createElement("div");
+    const scrollMetrics = attachScrollMetrics(scrollContainer, {
+      initialScrollTop: 900,
+      scrollHeight: 1300,
+      clientHeight: 400,
+    });
+    const dateNowSpy = spyOn(Date, "now");
+
+    try {
+      let now = 1_000_000;
+      dateNowSpy.mockImplementation(() => now);
+      act(() => {
+        (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current =
+          scrollContainer;
+      });
+
+      scrollMetrics.setScrollTop(600);
+      act(() => {
+        result.current.markUserInteraction();
+        now += 1;
+        result.current.handleScroll(createScrollEvent(scrollContainer));
+      });
+      expect(result.current.autoScroll).toBe(false);
+
+      scrollMetrics.setScrollTop(scrollMetrics.maxScrollTop);
+      now += 1_000;
+      act(() => {
+        result.current.handleScroll(createScrollEvent(scrollContainer));
+      });
+
+      expect(result.current.autoScroll).toBe(true);
+    } finally {
+      dateNowSpy.mockRestore();
+    }
+  });
+
+  test("programmatic disable stays unlocked even if a later non-user scroll is at bottom", () => {
+    const { result } = renderHook(() => useAutoScroll());
+    const scrollContainer = document.createElement("div");
+    const scrollMetrics = attachScrollMetrics(scrollContainer, {
+      initialScrollTop: 900,
+      scrollHeight: 1300,
+      clientHeight: 400,
+    });
+
+    act(() => {
+      (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current =
+        scrollContainer;
+      result.current.disableAutoScroll();
+    });
+
+    scrollMetrics.setScrollTop(scrollMetrics.maxScrollTop);
+    act(() => {
+      result.current.handleScroll(createScrollEvent(scrollContainer));
+    });
+
+    expect(result.current.autoScroll).toBe(false);
+  });
+
   test("disableAutoScroll keeps later observed layout user-owned", () => {
     const { result } = renderHook(() => useAutoScroll());
     const scrollContainer = document.createElement("div");

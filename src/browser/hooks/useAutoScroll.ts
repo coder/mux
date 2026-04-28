@@ -28,6 +28,7 @@ export function useAutoScroll() {
   const innerObserverRef = useRef<ResizeObserver | null>(null);
   const scrollportObserverRef = useRef<ResizeObserver | null>(null);
   const autoScrollRef = useRef(true);
+  const programmaticDisableRef = useRef(false);
   const userScrollIntentUntilRef = useRef(0);
 
   const setAutoScrollEnabled = useCallback((enabled: boolean) => {
@@ -53,16 +54,19 @@ export function useAutoScroll() {
     // transcript tail. Clear stale wheel/touch/key intent before the browser emits
     // any scroll event caused by our own write.
     userScrollIntentUntilRef.current = 0;
+    programmaticDisableRef.current = false;
     setAutoScrollEnabled(true);
     stickToBottom();
   }, [setAutoScrollEnabled, stickToBottom]);
 
   const disableAutoScroll = useCallback(() => {
     userScrollIntentUntilRef.current = 0;
+    programmaticDisableRef.current = true;
     setAutoScrollEnabled(false);
   }, [setAutoScrollEnabled]);
 
   const markUserInteraction = useCallback(() => {
+    programmaticDisableRef.current = false;
     userScrollIntentUntilRef.current = Date.now() + USER_SCROLL_INTENT_WINDOW_MS;
   }, []);
 
@@ -76,6 +80,15 @@ export function useAutoScroll() {
           !isWithinBottomThreshold(scrollContainer, BOTTOM_LOCK_EPSILON_PX)
         ) {
           stickToBottom();
+          return;
+        }
+
+        if (
+          !autoScrollRef.current &&
+          !programmaticDisableRef.current &&
+          isWithinBottomThreshold(scrollContainer, USER_BOTTOM_RELOCK_THRESHOLD_PX)
+        ) {
+          setAutoScrollEnabled(true);
         }
         return;
       }
