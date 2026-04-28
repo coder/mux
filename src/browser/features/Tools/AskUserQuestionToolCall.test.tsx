@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
 
+import type * as WorkspaceStoreModule from "@/browser/stores/WorkspaceStore";
+
 let currentWorkspaceState: {
   autoRetryStatus: { type: "auto-retry-scheduled" | "auto-retry-starting" } | null;
   isStreamStarting: boolean;
@@ -66,7 +68,13 @@ void mock.module("@/browser/contexts/API", () => ({
   }),
 }));
 
+/* eslint-disable @typescript-eslint/no-require-imports */
+const actualWorkspaceStore =
+  require("@/browser/stores/WorkspaceStore?real=1") as typeof WorkspaceStoreModule;
+/* eslint-enable @typescript-eslint/no-require-imports */
+
 void mock.module("@/browser/stores/WorkspaceStore", () => ({
+  ...actualWorkspaceStore,
   useWorkspaceStoreRaw: () => ({
     subscribeKey: (_workspaceId: string, _listener: () => void) => () => undefined,
     getWorkspaceState: (_workspaceId: string) => currentWorkspaceState,

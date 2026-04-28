@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
 import { cleanup, render, waitFor } from "@testing-library/react";
 
+import type * as WorkspaceStoreModule from "@/browser/stores/WorkspaceStore";
+
 interface ExecuteBashInput {
   workspaceId: string;
   script: string;
@@ -59,7 +61,13 @@ void mock.module("@/browser/contexts/WorkspaceContext", () => ({
   }),
 }));
 
+/* eslint-disable @typescript-eslint/no-require-imports */
+const actualWorkspaceStore =
+  require("@/browser/stores/WorkspaceStore?real=1") as typeof WorkspaceStoreModule;
+/* eslint-enable @typescript-eslint/no-require-imports */
+
 void mock.module("@/browser/stores/WorkspaceStore", () => ({
+  ...actualWorkspaceStore,
   workspaceStore: {
     subscribeFileModifyingTool: () => () => undefined,
   },

@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
 
+import type * as WorkspaceStoreModule from "@/browser/stores/WorkspaceStore";
+
 interface MockWorkspaceState {
   canInterrupt: boolean;
   isCompacting: boolean;
@@ -54,7 +56,13 @@ const setAutoRetryEnabled = mock((_input: unknown) =>
 );
 const openSettings = mock((_section?: string) => undefined);
 
+/* eslint-disable @typescript-eslint/no-require-imports */
+const actualWorkspaceStore =
+  require("@/browser/stores/WorkspaceStore?real=1") as typeof WorkspaceStoreModule;
+/* eslint-enable @typescript-eslint/no-require-imports */
+
 void mock.module("@/browser/stores/WorkspaceStore", () => ({
+  ...actualWorkspaceStore,
   useWorkspaceState: () => currentWorkspaceState,
   useWorkspaceAggregator: () => ({
     hasInterruptingStream: () => hasInterruptingStream,

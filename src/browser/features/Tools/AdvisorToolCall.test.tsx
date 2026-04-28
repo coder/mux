@@ -1,5 +1,5 @@
 import type { ComponentProps } from "react";
-import type { AdvisorLivePhaseState } from "@/browser/stores/WorkspaceStore";
+import type * as WorkspaceStoreModule from "@/browser/stores/WorkspaceStore";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
@@ -10,10 +10,16 @@ const useAdvisorToolLivePhaseMock = mock(
   (
     _workspaceId: string | undefined,
     _toolCallId: string | undefined
-  ): AdvisorLivePhaseState | undefined => undefined
+  ): WorkspaceStoreModule.AdvisorLivePhaseState | undefined => undefined
 );
 
+/* eslint-disable @typescript-eslint/no-require-imports */
+const actualWorkspaceStore =
+  require("@/browser/stores/WorkspaceStore?real=1") as typeof WorkspaceStoreModule;
+/* eslint-enable @typescript-eslint/no-require-imports */
+
 void mock.module("@/browser/stores/WorkspaceStore", () => ({
+  ...actualWorkspaceStore,
   useAdvisorToolLivePhase: useAdvisorToolLivePhaseMock,
 }));
 
