@@ -10,16 +10,18 @@ import type {
   ProvidersConfigMap,
 } from "@/common/orpc/types";
 
-// Bun mock.module registrations are global across files, so keep this test
-// insulated from incomplete WorkspaceStore mocks registered by earlier files.
-/* eslint-disable @typescript-eslint/no-require-imports */
-const actualWorkspaceStore =
-  require("@/browser/stores/WorkspaceStore?real=1") as typeof WorkspaceStoreModule;
-/* eslint-enable @typescript-eslint/no-require-imports */
+function installTestDoubles() {
+  // Bun mock.module registrations are global across files, so keep this test
+  // insulated from incomplete WorkspaceStore mocks registered by earlier files.
+  /* eslint-disable @typescript-eslint/no-require-imports */
+  const actualWorkspaceStore =
+    require("@/browser/stores/WorkspaceStore?real=1") as typeof WorkspaceStoreModule;
+  /* eslint-enable @typescript-eslint/no-require-imports */
 
-void mock.module("@/browser/stores/WorkspaceStore", () => ({
-  ...actualWorkspaceStore,
-}));
+  void mock.module("@/browser/stores/WorkspaceStore", () => ({
+    ...actualWorkspaceStore,
+  }));
+}
 
 let repairRemovedProviderMock = mock(
   (_provider: string, _workspaceIds: Iterable<string>) => undefined
@@ -174,6 +176,7 @@ describe("ProvidersSection", () => {
   let restoreDom: (() => void) | null = null;
 
   beforeEach(() => {
+    installTestDoubles();
     restoreDom = installDom();
     repairRemovedProviderMock = mock(
       (_provider: string, _workspaceIds: Iterable<string>) => undefined

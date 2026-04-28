@@ -26,23 +26,25 @@ void mock.module("lottie-react", () => ({
   default: () => <div data-testid="lottie-animation" />,
 }));
 
-// Preserve the remaining WorkspaceStore exports because Bun mock.module state is global across test files.
-/* eslint-disable @typescript-eslint/no-require-imports */
-const actualWorkspaceStore =
-  require("@/browser/stores/WorkspaceStore?real=1") as typeof WorkspaceStoreModule;
-/* eslint-enable @typescript-eslint/no-require-imports */
+function installTestDoubles() {
+  // Preserve the remaining WorkspaceStore exports because Bun mock.module state is global across test files.
+  /* eslint-disable @typescript-eslint/no-require-imports */
+  const actualWorkspaceStore =
+    require("@/browser/stores/WorkspaceStore?real=1") as typeof WorkspaceStoreModule;
+  /* eslint-enable @typescript-eslint/no-require-imports */
 
-void mock.module("@/browser/stores/WorkspaceStore", () => ({
-  ...actualWorkspaceStore,
-  useWorkspaceState: () =>
-    workspaceState
-      ? {
-          messages: [],
-          queuedMessage: null,
-          ...workspaceState,
-        }
-      : workspaceState,
-}));
+  void mock.module("@/browser/stores/WorkspaceStore", () => ({
+    ...actualWorkspaceStore,
+    useWorkspaceState: () =>
+      workspaceState
+        ? {
+            messages: [],
+            queuedMessage: null,
+            ...workspaceState,
+          }
+        : workspaceState,
+  }));
+}
 
 void mock.module("../ChatPane/ChatPane", () => ({
   ChatPane: (props: { workspaceId: string }) => (
@@ -140,6 +142,7 @@ describe("estimateWorkspaceShellFallbackWidthPx", () => {
 
 describe("WorkspaceShell loading placeholders", () => {
   beforeEach(() => {
+    installTestDoubles();
     cleanupDom = installDom();
     originalWindowApi = window.api;
     delete window.api;

@@ -3,6 +3,7 @@ import "../../../../tests/ui/dom";
 import React, { type ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import type * as WorkspaceStoreModule from "@/browser/stores/WorkspaceStore";
 import type { SectionConfig } from "@/common/types/project";
 import { TooltipProvider } from "../Tooltip/Tooltip";
 import type { SectionHeader as SectionHeaderComponent } from "./SectionHeader";
@@ -15,6 +16,18 @@ const baseSection: SectionConfig = {
   color: "#6B7280",
   nextId: null,
 };
+
+function installTestDoubles() {
+  // Re-register the full WorkspaceStore mock before each test to avoid Bun's global mock leakage.
+  /* eslint-disable @typescript-eslint/no-require-imports */
+  const actualWorkspaceStore =
+    require("@/browser/stores/WorkspaceStore?real=1") as typeof WorkspaceStoreModule;
+  /* eslint-enable @typescript-eslint/no-require-imports */
+
+  void mock.module("@/browser/stores/WorkspaceStore", () => ({
+    ...actualWorkspaceStore,
+  }));
+}
 
 function renderSectionHeader(overrides: Partial<ComponentProps<typeof SectionHeader>> = {}) {
   const onToggleExpand = mock(() => undefined);
@@ -55,6 +68,7 @@ function renderSectionHeader(overrides: Partial<ComponentProps<typeof SectionHea
 }
 
 beforeEach(() => {
+  installTestDoubles();
   void mock.module("../../hooks/useContextMenuPosition", () => ({
     useContextMenuPosition: () => {
       const [isOpen, setIsOpen] = React.useState(false);
