@@ -385,7 +385,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     innerRef,
     autoScroll,
     disableAutoScroll,
-    stickToBottom,
+    stickToBottomIfAutoScroll,
     jumpToBottom,
     handleScroll,
     markUserInteraction,
@@ -624,18 +624,18 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
       const nextHeight = entries[0]?.contentRect.height ?? transcriptViewport.clientHeight;
       const previousHeight = lastTranscriptViewportHeightRef.current;
       lastTranscriptViewportHeightRef.current = nextHeight;
-      if (previousHeight === null || previousHeight === nextHeight || !autoScroll) {
+      if (previousHeight === null || previousHeight === nextHeight) {
         return;
       }
 
-      stickToBottom();
+      stickToBottomIfAutoScroll();
     });
 
     observer.observe(transcriptViewport);
     return () => {
       observer.disconnect();
     };
-  }, [autoScroll, contentRef, stickToBottom]);
+  }, [contentRef, stickToBottomIfAutoScroll]);
 
   // Intentionally no message/todo-driven auto-scroll effect here. Bottom pinning is
   // owned by the ResizeObserver on `innerRef` inside `useAutoScroll` (pins on any
@@ -762,12 +762,12 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   // The tail and composer decoration lanes own their own layout signatures; this effect only covers
   // layout that is inserted directly between message rows (new transcript rows, interrupted markers).
   useLayoutEffect(() => {
-    if (!autoScroll || !contentRef.current) {
+    if (!contentRef.current) {
       return;
     }
 
-    stickToBottom();
-  }, [autoScroll, contentRef, latestMessageId, interruptedBarrierLayoutSignature, stickToBottom]);
+    stickToBottomIfAutoScroll();
+  }, [contentRef, latestMessageId, interruptedBarrierLayoutSignature, stickToBottomIfAutoScroll]);
 
   const handleLoadOlderHistory = useCallback(() => {
     if (!shouldRenderLoadOlderMessagesButton || loadingOlderHistory) {
@@ -1033,7 +1033,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                   isHydrating={isHydratingTranscript}
                   align="start"
                   overflowAnchor="none"
-                  onStickToBottom={autoScroll ? stickToBottom : undefined}
+                  onStickToBottom={stickToBottomIfAutoScroll}
                   dataComponent="TranscriptTailStack"
                   items={transcriptTailItems}
                 />
@@ -1073,8 +1073,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
               todoCount={todoCount}
               shouldShowReviewsBanner={shouldShowReviewsBanner}
               canInterrupt={canInterrupt}
-              autoScroll={autoScroll}
-              onStickToBottom={stickToBottom}
+              onStickToBottom={stickToBottomIfAutoScroll}
               autoCompactionResult={autoCompactionResult}
               shouldShowCompactionWarning={shouldShowCompactionWarning}
               contextSwitchWarning={contextSwitchWarning}
@@ -1128,7 +1127,6 @@ interface ChatInputPaneProps {
   todoCount: number;
   shouldShowReviewsBanner: boolean;
   canInterrupt: boolean;
-  autoScroll: boolean;
   onStickToBottom: () => void;
   autoCompactionResult: ReturnType<typeof checkAutoCompaction>;
   shouldShowCompactionWarning: boolean;
@@ -1233,7 +1231,7 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
         workspaceId={props.workspaceId}
         isHydrating={props.isHydratingTranscript}
         align="end"
-        onStickToBottom={props.autoScroll ? props.onStickToBottom : undefined}
+        onStickToBottom={props.onStickToBottom}
         dataComponent="ChatInputDecorationStack"
         items={decorationEntries}
       />

@@ -275,6 +275,42 @@ describe("useAutoScroll", () => {
     expect(scrollMetrics.scrollTop).toBe(900);
   });
 
+  test("ref-guarded stick callback only pins while auto-scroll owns the transcript", () => {
+    const animationFrames = installAnimationFrameMock();
+    const { result } = renderHook(() => useAutoScroll());
+    const scrollContainer = document.createElement("div");
+    const scrollMetrics = attachScrollMetrics(scrollContainer, {
+      initialScrollTop: 900,
+      scrollHeight: 1300,
+      clientHeight: 400,
+    });
+
+    try {
+      act(() => {
+        (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current =
+          scrollContainer;
+        result.current.disableAutoScroll();
+      });
+
+      scrollMetrics.setScrollHeight(1500);
+      act(() => {
+        result.current.stickToBottomIfAutoScroll();
+      });
+      expect(scrollMetrics.scrollTop).toBe(900);
+
+      act(() => {
+        result.current.jumpToBottom();
+      });
+      scrollMetrics.setScrollHeight(1800);
+      act(() => {
+        result.current.stickToBottomIfAutoScroll();
+      });
+      expect(scrollMetrics.scrollTop).toBe(1800);
+    } finally {
+      animationFrames.restore();
+    }
+  });
+
   test("jumpToBottom keeps ownership through late chat-open layout", () => {
     const animationFrames = installAnimationFrameMock();
     const { result } = renderHook(() => useAutoScroll());

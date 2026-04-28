@@ -95,6 +95,15 @@ export function useAutoScroll() {
     lastScrollTopRef.current = scrollContainer.scrollTop;
   }, []);
 
+  const stickToBottomIfAutoScroll = useCallback(() => {
+    // Chat-open layout can be re-armed by jumpToBottom() before React has rendered
+    // autoScroll=true back through child props. Use the ref-backed ownership flag so
+    // late active-stream/compaction chrome still pins, while genuine user scrolls no-op.
+    if (!autoScrollRef.current) return;
+
+    stickToBottom();
+  }, [stickToBottom]);
+
   const scheduleJumpFollowUpPins = useCallback(() => {
     cancelJumpFollowUpPins();
 
@@ -263,6 +272,7 @@ export function useAutoScroll() {
     autoScroll,
     disableAutoScroll,
     stickToBottom,
+    stickToBottomIfAutoScroll,
     jumpToBottom,
     handleScroll,
     markUserInteraction,

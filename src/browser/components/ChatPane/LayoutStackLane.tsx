@@ -103,9 +103,16 @@ export const LayoutStackLane: React.FC<LayoutStackLaneProps> = (props) => {
         );
       }
 
-      if (previousObservedHeight === null || previousObservedHeight === nextHeight) {
+      if (previousObservedHeight === nextHeight) {
         return;
       }
+      if (previousObservedHeight === null && nextHeight === 0) {
+        return;
+      }
+      // Some lane items (notably active compaction/streaming barriers during chat open)
+      // mount as zero-height placeholders and become visible before ResizeObserver has
+      // delivered an initial measurement. Treat the first non-zero observation as a
+      // layout change so the transcript still lands at the real tail.
       onStickToBottomRef.current?.();
     });
 

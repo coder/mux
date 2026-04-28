@@ -403,6 +403,55 @@ describe("LayoutStackLane", () => {
     expect(pinCount).toBeGreaterThan(pinsBeforeHeightChange);
   });
 
+  it("fires onStickToBottom when the first measurement is newly visible content", async () => {
+    const hiddenStreamingItem: LayoutStackItem = {
+      key: "streaming-barrier",
+      node: null,
+    };
+    const visibleStreamingItem: LayoutStackItem = {
+      key: "streaming-barrier",
+      node: <div>Compacting...</div>,
+    };
+    let pinCount = 0;
+    const onStickToBottom = () => {
+      pinCount += 1;
+    };
+
+    const view = render(
+      <LayoutStackLane
+        workspaceId="workspace-a"
+        isHydrating={false}
+        align="start"
+        overflowAnchor="none"
+        onStickToBottom={onStickToBottom}
+        dataComponent="tail-lane"
+        items={[hiddenStreamingItem]}
+      />
+    );
+
+    const content = getStackContent(view.container, "tail-lane");
+    await waitForResizeObservation(content);
+    const pinsBeforeVisibleMeasurement = pinCount;
+
+    // Active compaction can mount the lane item before its inner barrier renders
+    // non-zero height. If the browser's first ResizeObserver delivery is already
+    // visible, that first non-zero measurement still needs to repin the transcript.
+    view.rerender(
+      <LayoutStackLane
+        workspaceId="workspace-a"
+        isHydrating={false}
+        align="start"
+        overflowAnchor="none"
+        onStickToBottom={onStickToBottom}
+        dataComponent="tail-lane"
+        items={[visibleStreamingItem]}
+      />
+    );
+    emitResize(content, 40);
+
+    expect(pinCount).toBeGreaterThan(pinsBeforeVisibleMeasurement);
+  });
+
   it("does not fire onStickToBottom when the callback is omitted (pure decoration lane)", async () => {
     const view = render(
       <LayoutStackLane
