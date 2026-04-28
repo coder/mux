@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { installDom } from "../../../../../tests/ui/dom";
 import type { APIClient } from "@/browser/contexts/API";
 import type * as WorkspaceStoreModule from "@/browser/stores/WorkspaceStore";
+import type * as WorkspaceContextModule from "@/browser/contexts/WorkspaceContext";
 import type {
   AddCustomOpenAICompatibleProviderInput,
   ProviderConfigInfo,
@@ -79,7 +80,7 @@ void mock.module("@/browser/contexts/PolicyContext", () => ({
 
 /* eslint-disable @typescript-eslint/no-require-imports */
 const actualWorkspaceContext =
-  require("@/browser/contexts/WorkspaceContext?real=1") as typeof import("@/browser/contexts/WorkspaceContext");
+  require("@/browser/contexts/WorkspaceContext?real=1") as typeof WorkspaceContextModule;
 /* eslint-enable @typescript-eslint/no-require-imports */
 
 void mock.module("@/browser/contexts/WorkspaceContext", () => ({
