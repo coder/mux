@@ -3,11 +3,23 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { installDom } from "../../../../../tests/ui/dom";
 import type { APIClient } from "@/browser/contexts/API";
+import type * as WorkspaceStoreModule from "@/browser/stores/WorkspaceStore";
 import type {
   AddCustomOpenAICompatibleProviderInput,
   ProviderConfigInfo,
   ProvidersConfigMap,
 } from "@/common/orpc/types";
+
+// Bun mock.module registrations are global across files, so keep this test
+// insulated from incomplete WorkspaceStore mocks registered by earlier files.
+/* eslint-disable @typescript-eslint/no-require-imports */
+const actualWorkspaceStore =
+  require("@/browser/stores/WorkspaceStore?real=1") as typeof WorkspaceStoreModule;
+/* eslint-enable @typescript-eslint/no-require-imports */
+
+void mock.module("@/browser/stores/WorkspaceStore", () => ({
+  ...actualWorkspaceStore,
+}));
 
 let repairRemovedProviderMock = mock(
   (_provider: string, _workspaceIds: Iterable<string>) => undefined
