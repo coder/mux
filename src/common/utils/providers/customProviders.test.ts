@@ -95,6 +95,15 @@ describe("getCustomOpenAICompatibleProviderIds", () => {
 });
 
 describe("formatProviderDisplayName", () => {
+  test("prefers shadowed custom display name over built-in display name", () => {
+    expect(
+      formatProviderDisplayName("openai", {
+        providerType: "openai-compatible",
+        displayName: "Shadowed OpenAI",
+      })
+    ).toBe("Shadowed OpenAI");
+  });
+
   test("uses built-in provider display names", () => {
     expect(formatProviderDisplayName("openai")).toBe("OpenAI");
     expect(formatProviderDisplayName("github-copilot")).toBe("GitHub Copilot");

@@ -94,8 +94,14 @@ export function getShadowedCustomOpenAICompatibleProviderIds(
 
 export function formatProviderDisplayName(
   provider: string,
-  config?: { displayName?: string }
+  config?: { displayName?: string; providerType?: "openai-compatible" }
 ): string {
+  // Manual providers.jsonc edits can shadow a built-in provider id, so prefer
+  // the custom OpenAI-compatible display name before consulting built-in names.
+  if (config?.providerType === "openai-compatible" && config.displayName) {
+    return config.displayName;
+  }
+
   if (isBuiltInProvider(provider)) {
     return PROVIDER_DISPLAY_NAMES[provider];
   }
