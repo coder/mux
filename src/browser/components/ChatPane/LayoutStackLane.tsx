@@ -33,9 +33,8 @@ interface LayoutStackLaneProps {
   overflowAnchor?: "none";
   /**
    * Optional pin callback invoked when the lane's identity/height changes. The
-   * lane doesn't care how the caller pins (usually `scrollElementToBottom`);
-   * it only fires the signal synchronously from a layout effect so the pin
-   * runs before paint.
+   * lane doesn't care how the caller pins; it only fires the signal synchronously
+   * from a layout effect so the pin runs before paint.
    */
   onStickToBottom?: () => void;
   dataComponent?: string;

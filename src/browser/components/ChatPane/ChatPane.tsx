@@ -20,7 +20,7 @@ import { StreamingBarrier } from "@/browser/features/Messages/ChatBarrier/Stream
 import { RetryBarrier } from "@/browser/features/Messages/ChatBarrier/RetryBarrier";
 import { PinnedTodoList } from "../PinnedTodoList/PinnedTodoList";
 import { LayoutStackLane } from "./LayoutStackLane";
-import { scrollElementToBottom, type LayoutStackItem } from "./layoutStack";
+import type { LayoutStackItem } from "./layoutStack";
 import { VIM_ENABLED_KEY } from "@/common/constants/storage";
 import { ChatInput, type ChatInputAPI } from "@/browser/features/ChatInput/index";
 import type { QueueDispatchMode } from "@/browser/features/ChatInput/types";
@@ -385,6 +385,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     innerRef,
     autoScroll,
     disableAutoScroll,
+    stickToBottom,
     jumpToBottom,
     handleScroll,
     markUserInteraction,
@@ -627,14 +628,14 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
         return;
       }
 
-      scrollElementToBottom(transcriptViewport);
+      stickToBottom();
     });
 
     observer.observe(transcriptViewport);
     return () => {
       observer.disconnect();
     };
-  }, [autoScroll, contentRef]);
+  }, [autoScroll, contentRef, stickToBottom]);
 
   // Intentionally no message/todo-driven auto-scroll effect here. Bottom pinning is
   // owned by the ResizeObserver on `innerRef` inside `useAutoScroll` (pins on any
@@ -765,8 +766,8 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
       return;
     }
 
-    scrollElementToBottom(contentRef.current);
-  }, [autoScroll, contentRef, latestMessageId, interruptedBarrierLayoutSignature]);
+    stickToBottom();
+  }, [autoScroll, contentRef, latestMessageId, interruptedBarrierLayoutSignature, stickToBottom]);
 
   const handleLoadOlderHistory = useCallback(() => {
     if (!shouldRenderLoadOlderMessagesButton || loadingOlderHistory) {
@@ -1032,9 +1033,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                   isHydrating={isHydratingTranscript}
                   align="start"
                   overflowAnchor="none"
-                  onStickToBottom={
-                    autoScroll ? () => scrollElementToBottom(contentRef.current) : undefined
-                  }
+                  onStickToBottom={autoScroll ? stickToBottom : undefined}
                   dataComponent="TranscriptTailStack"
                   items={transcriptTailItems}
                 />
@@ -1075,7 +1074,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
               shouldShowReviewsBanner={shouldShowReviewsBanner}
               canInterrupt={canInterrupt}
               autoScroll={autoScroll}
-              transcriptViewportRef={contentRef}
+              onStickToBottom={stickToBottom}
               autoCompactionResult={autoCompactionResult}
               shouldShowCompactionWarning={shouldShowCompactionWarning}
               contextSwitchWarning={contextSwitchWarning}
@@ -1130,7 +1129,7 @@ interface ChatInputPaneProps {
   shouldShowReviewsBanner: boolean;
   canInterrupt: boolean;
   autoScroll: boolean;
-  transcriptViewportRef: React.RefObject<HTMLDivElement | null>;
+  onStickToBottom: () => void;
   autoCompactionResult: ReturnType<typeof checkAutoCompaction>;
   shouldShowCompactionWarning: boolean;
   contextSwitchWarning: ContextSwitchWarning | null;
@@ -1234,11 +1233,7 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
         workspaceId={props.workspaceId}
         isHydrating={props.isHydratingTranscript}
         align="end"
-        onStickToBottom={
-          props.autoScroll
-            ? () => scrollElementToBottom(props.transcriptViewportRef.current)
-            : undefined
-        }
+        onStickToBottom={props.autoScroll ? props.onStickToBottom : undefined}
         dataComponent="ChatInputDecorationStack"
         items={decorationEntries}
       />

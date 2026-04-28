@@ -61,11 +61,3 @@ export function clearLayoutStackHeight(
   lastMeasuredStackHeightRef.current = 0;
   stackHeightByWorkspaceId.set(workspaceId, 0);
 }
-
-export function scrollElementToBottom(element: HTMLElement | null): void {
-  if (!element) {
-    return;
-  }
-
-  element.scrollTop = element.scrollHeight;
-}
