@@ -800,6 +800,43 @@ describe("ProviderService custom provider mutations", () => {
     });
   });
 
+  it("rejects removing a built-in providers config entry without a custom discriminator", async () => {
+    await withTempConfigAsync(async (config, service) => {
+      config.saveProvidersConfig({
+        openai: { apiKey: "sk-test" },
+      });
+
+      const result = await service.removeCustomProvider("openai");
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe("built_in_provider");
+      }
+      expect(config.loadProvidersConfig()?.openai?.apiKey).toBe("sk-test");
+    });
+  });
+
+  it("removes a shadowed built-in custom provider from providers config", async () => {
+    await withTempConfigAsync(async (config, service) => {
+      config.saveProvidersConfig({
+        openai: {
+          providerType: "openai-compatible",
+          baseUrl: "http://localhost:8000/v1",
+        },
+      });
+      await config.saveConfig({
+        ...config.loadConfigOrDefault(),
+        defaultModel: "openai:gpt-4.1",
+      });
+
+      const result = await service.removeCustomProvider("openai");
+
+      expect(result.success).toBe(true);
+      expect(config.loadProvidersConfig()?.openai).toBeUndefined();
+      expect(config.loadConfigOrDefault().defaultModel).toBeUndefined();
+    });
+  });
+
   it("rejects removing unknown providers", async () => {
     await withTempConfigAsync(async (config, service) => {
       const result = await service.removeCustomProvider("local-vllm");

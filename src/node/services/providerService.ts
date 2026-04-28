@@ -538,7 +538,14 @@ export class ProviderService {
     providerInput: string
   ): Promise<CustomProviderMutationResult<void>> {
     const provider = providerInput.trim();
-    if (isBuiltInProvider(provider)) {
+    const providersConfig = getProviderConfigRecord(this.config.loadProvidersConfig() ?? {});
+    const providerConfig = providersConfig[provider];
+    // Manual providers.jsonc edits can shadow a built-in id. Removing that entry
+    // restores the built-in default, so only reject bona fide built-in configs.
+    const isShadowedCustomProvider =
+      isBuiltInProvider(provider) && isCustomOpenAICompatibleProviderConfig(providerConfig);
+
+    if (isBuiltInProvider(provider) && !isShadowedCustomProvider) {
       return {
         success: false,
         error: {
@@ -548,18 +555,19 @@ export class ProviderService {
       };
     }
 
-    const validation = validateCustomProviderId(provider);
-    if (!validation.ok) {
-      return {
-        success: false,
-        error: addErrorReason(
-          { code: "invalid_provider_id", message: "Invalid custom provider id." },
-          validation.reason
-        ),
-      };
+    if (!isShadowedCustomProvider) {
+      const validation = validateCustomProviderId(provider);
+      if (!validation.ok) {
+        return {
+          success: false,
+          error: addErrorReason(
+            { code: "invalid_provider_id", message: "Invalid custom provider id." },
+            validation.reason
+          ),
+        };
+      }
     }
 
-    const providersConfig = getProviderConfigRecord(this.config.loadProvidersConfig() ?? {});
     if (!Object.hasOwn(providersConfig, provider)) {
       return {
         success: false,
