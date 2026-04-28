@@ -3,6 +3,7 @@ import "../../../../tests/ui/dom";
 import { type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { installDom } from "../../../../tests/ui/dom";
 import * as APIModule from "@/browser/contexts/API";
 import type { APIClient } from "@/browser/contexts/API";
 import type * as WorkspaceStoreModule from "@/browser/stores/WorkspaceStore";
@@ -42,6 +43,8 @@ function createWorkspace(overrides: Partial<FrontendWorkspaceMetadata>): Fronten
   };
 }
 
+let cleanupDom: (() => void) | null = null;
+
 describe("ArchivedWorkspaces", () => {
   const deleteWorktreeMock = mock(() => Promise.resolve({ success: true }));
   const getSessionUsageBatchMock = mock(() => Promise.resolve({}));
@@ -52,6 +55,7 @@ describe("ArchivedWorkspaces", () => {
 
   beforeEach(() => {
     installTestDoubles();
+    cleanupDom = installDom();
     deleteWorktreeMock.mockClear();
     getSessionUsageBatchMock.mockClear();
     unarchiveWorkspaceMock.mockClear();
@@ -109,6 +113,8 @@ describe("ArchivedWorkspaces", () => {
   afterEach(() => {
     cleanup();
     mock.restore();
+    cleanupDom?.();
+    cleanupDom = null;
   });
 
   test("shows an error when restoring an archived workspace fails", async () => {

@@ -142,8 +142,8 @@ describe("estimateWorkspaceShellFallbackWidthPx", () => {
 
 describe("WorkspaceShell loading placeholders", () => {
   beforeEach(() => {
-    installTestDoubles();
     cleanupDom = installDom();
+    installTestDoubles();
     originalWindowApi = window.api;
     delete window.api;
     workspaceState = undefined;
