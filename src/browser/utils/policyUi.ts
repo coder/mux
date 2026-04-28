@@ -1,8 +1,10 @@
 import { SUPPORTED_PROVIDERS, type ProviderName } from "@/common/constants/providers";
 import { RUNTIME_MODE, type ParsedRuntime, type RuntimeMode } from "@/common/types/runtime";
 import type { EffectivePolicy, PolicyRuntimeId } from "@/common/orpc/types";
-import type { ProvidersConfig } from "@/common/config/schemas/providersConfig";
-import { getCustomOpenAICompatibleProviderIds } from "@/common/utils/providers/customProviders";
+import {
+  getCustomOpenAICompatibleProviderIds,
+  type ProvidersConfigWithProviderType,
+} from "@/common/utils/providers/customProviders";
 
 /**
  * Parse a model string into provider and modelId.
@@ -57,11 +59,11 @@ export function isModelAllowedByPolicy(
 export function getAllowedProvidersForUi(policy: EffectivePolicy | null): ProviderName[];
 export function getAllowedProvidersForUi(
   policy: EffectivePolicy | null,
-  providersConfig: ProvidersConfig | null | undefined
+  providersConfig: ProvidersConfigWithProviderType | null | undefined
 ): string[];
 export function getAllowedProvidersForUi(
   policy: EffectivePolicy | null,
-  providersConfig?: ProvidersConfig | null
+  providersConfig?: ProvidersConfigWithProviderType | null
 ): string[] {
   const customProviders = providersConfig
     ? getCustomOpenAICompatibleProviderIds(providersConfig)

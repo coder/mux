@@ -3,7 +3,10 @@ import {
   SUPPORTED_PROVIDERS,
   type ProviderName,
 } from "@/common/constants/providers";
-import type { ProvidersConfig } from "@/common/config/schemas/providersConfig";
+export type ProvidersConfigWithProviderType = Record<
+  string,
+  (object & { providerType?: "openai-compatible" }) | undefined
+>;
 
 export const CUSTOM_PROVIDER_ID_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
 
@@ -67,7 +70,9 @@ export function isCustomOpenAICompatibleProviderConfig(config: unknown): boolean
   );
 }
 
-export function getCustomOpenAICompatibleProviderIds(providersConfig: ProvidersConfig): string[] {
+export function getCustomOpenAICompatibleProviderIds(
+  providersConfig: ProvidersConfigWithProviderType
+): string[] {
   const providerIds: string[] = [];
 
   for (const [provider, config] of Object.entries(providersConfig)) {
@@ -82,7 +87,7 @@ export function getCustomOpenAICompatibleProviderIds(providersConfig: ProvidersC
 }
 
 export function getShadowedCustomOpenAICompatibleProviderIds(
-  providersConfig: ProvidersConfig
+  providersConfig: ProvidersConfigWithProviderType
 ): string[] {
   return getCustomOpenAICompatibleProviderIds(providersConfig).filter(isBuiltInProvider);
 }
