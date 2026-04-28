@@ -216,6 +216,16 @@ describe("Chat bottom layout stability", () => {
       await waitFor(() => {
         expect(scrollTop).toBe(maxScrollTop());
       });
+
+      // Expanded tool/details panes can become the browser's preferred scroll anchor
+      // during a chat switch. Bottom-lock owns the transcript, so any non-user drift
+      // after open must be corrected instead of leaving the tail slightly hidden.
+      scrollTop = maxScrollTop() - 24;
+      fireEvent.scroll(messageWindow);
+
+      await waitFor(() => {
+        expect(scrollTop).toBe(maxScrollTop());
+      });
     } finally {
       if (idleWorkspaceId) {
         await app.env.orpc.workspace

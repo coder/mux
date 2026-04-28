@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { FileText, Info, Layers } from "lucide-react";
 import type { BashToolArgs, BashToolResult } from "@/common/types/tools";
 import { BASH_DEFAULT_TIMEOUT_SECS } from "@/common/constants/toolLimits";
@@ -89,13 +89,13 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
   const liveOutputView = liveOutput ?? EMPTY_LIVE_OUTPUT;
   const combinedLiveOutput = liveOutputView.combined;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = outputRef.current;
-    if (!el) return;
+    if (!el || !expanded) return;
     if (outputPinnedRef.current) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [combinedLiveOutput]);
+  }, [result, combinedLiveOutput, expanded]);
 
   // Track whether user manually toggled expansion to avoid fighting with auto-expand
   const userToggledRef = useRef(false);

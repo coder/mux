@@ -847,10 +847,10 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
               tabIndex={0}
               data-testid="message-window"
               data-loaded={!loading && !isHydratingTranscript}
-              // When ChatPane is driving the transcript to the bottom, disable browser scroll
-              // anchoring for the whole viewport so newly-added tail rows (like the starting
-              // streaming barrier) cannot win the anchor heuristic and flash the layout.
-              style={autoScroll ? AUTO_SCROLL_TRANSCRIPT_STYLE : undefined}
+              // The bottom-lock hook is the scroll owner. Disable browser scroll anchoring
+              // so expanded tool panes or tail rows cannot pick a competing anchor and move
+              // the transcript slightly above the real bottom during chat switches.
+              style={AUTO_SCROLL_TRANSCRIPT_STYLE}
               className="h-full overflow-x-hidden overflow-y-auto p-[15px] leading-[1.5] break-words whitespace-pre-wrap"
             >
               <div
@@ -933,7 +933,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                             : undefined;
 
                         return (
-                          <React.Fragment key={msg.id}>
+                          <React.Fragment key={`${workspaceId}:${msg.id}`}>
                             <MessageRenderer
                               message={msg}
                               onEditUserMessage={transcriptOnly ? undefined : handleEditUserMessage}
