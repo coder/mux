@@ -293,6 +293,70 @@ export function prepareUserMessageForSend(
   return { finalText, metadata };
 }
 
+export interface AgentSkillReference {
+  skillName: string;
+  scope: AgentSkillScope;
+  source: "slash" | "inline";
+}
+
+export function dedupeAgentSkillRefs(refs: AgentSkillReference[]): AgentSkillReference[] {
+  const dedupedRefs: AgentSkillReference[] = [];
+  const indexBySkillName = new Map<string, number>();
+
+  for (const ref of refs) {
+    const existingIndex = indexBySkillName.get(ref.skillName);
+    if (existingIndex === undefined) {
+      indexBySkillName.set(ref.skillName, dedupedRefs.length);
+      dedupedRefs.push(ref);
+      continue;
+    }
+
+    const existingRef = dedupedRefs[existingIndex];
+    if (!existingRef) {
+      throw new Error(`Missing agent skill ref for index ${existingIndex}`);
+    }
+
+    if (existingRef.source === "inline" && ref.source === "slash") {
+      dedupedRefs[existingIndex] = ref;
+    }
+  }
+
+  return dedupedRefs;
+}
+
+export function mergeAgentSkillRefs(
+  existing: AgentSkillReference[] | undefined,
+  additions: AgentSkillReference[]
+): AgentSkillReference[] {
+  return dedupeAgentSkillRefs([...(existing ?? []), ...additions]);
+}
+
+function getExistingAgentSkillRefs(
+  metadata: MuxMessageMetadata | undefined
+): AgentSkillReference[] | undefined {
+  const refs = metadata?.agentSkillRefs;
+  return Array.isArray(refs) ? refs : undefined;
+}
+
+export function withAgentSkillRefs(
+  metadata: MuxMessageMetadata | undefined,
+  refs: AgentSkillReference[]
+): MuxMessageMetadata | undefined {
+  const existingRefs = getExistingAgentSkillRefs(metadata);
+  if (refs.length === 0 && (!existingRefs || existingRefs.length === 0)) {
+    return metadata;
+  }
+
+  if (!metadata) {
+    return { type: "normal", agentSkillRefs: dedupeAgentSkillRefs(refs) };
+  }
+
+  return {
+    ...metadata,
+    agentSkillRefs: mergeAgentSkillRefs(existingRefs, refs),
+  };
+}
+
 export interface BuildAgentSkillMetadataOptions {
   rawCommand: string;
   skillName: string;
@@ -309,6 +373,7 @@ export function buildAgentSkillMetadata(
     commandPrefix: options.commandPrefix,
     skillName: options.skillName,
     scope: options.scope,
+    agentSkillRefs: [{ skillName: options.skillName, scope: options.scope, source: "slash" }],
   };
 }
 
@@ -325,6 +390,15 @@ interface MuxMessageMetadataBase {
    * and compaction sends instead of whatever happens to be persisted in localStorage.
    */
   requestedModel?: string;
+  /**
+   * All skills referenced in this user message turn (slash and/or inline).
+   * Backend uses this to materialize one synthetic agentSkillSnapshot per ref
+   * before the user message. Persisted refs intentionally exclude parser
+   * ranges (startIndex/endIndex) because reviews, one-shots, edits, retries,
+   * and slash rewrites make those ranges ambiguous. The ORPC schema keeps
+   * muxMetadata loose by design, so this orthogonal field needs no schema change.
+   */
+  agentSkillRefs?: AgentSkillReference[];
 }
 
 /** Status to display in sidebar during background operations */
