@@ -970,6 +970,40 @@ describe("CoderSSHRuntime.ensureReady", () => {
     expect(getWorkspaceStatus).toHaveBeenCalledTimes(1);
   });
 
+  it("expires the cross-runtime activity cache after the fast-path window", async () => {
+    let now = 1_700_000_000_000;
+    const nowSpy = spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      const getWorkspaceStatus = mock(() =>
+        Promise.resolve({ kind: "ok" as const, status: "running" as const })
+      );
+      const coderService = createMockCoderService({ getWorkspaceStatus });
+
+      const firstRuntime = createRuntime(
+        { existingWorkspace: true, workspaceName: "my-ws-expiring" },
+        coderService
+      );
+      expect(await firstRuntime.ensureReady()).toEqual({ ready: true });
+
+      const cachedRuntime = createRuntime(
+        { existingWorkspace: true, workspaceName: "my-ws-expiring" },
+        coderService
+      );
+      expect(await cachedRuntime.ensureReady()).toEqual({ ready: true });
+      expect(getWorkspaceStatus).toHaveBeenCalledTimes(1);
+
+      now += 5 * 60 * 1000 + 1;
+      const expiredRuntime = createRuntime(
+        { existingWorkspace: true, workspaceName: "my-ws-expiring" },
+        coderService
+      );
+      expect(await expiredRuntime.ensureReady()).toEqual({ ready: true });
+      expect(getWorkspaceStatus).toHaveBeenCalledTimes(2);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
   it("connects via waitForStartupScripts when status is stopped (auto-starts)", async () => {
     const getWorkspaceStatus = mock(() =>
       Promise.resolve({ kind: "ok" as const, status: "stopped" as const })

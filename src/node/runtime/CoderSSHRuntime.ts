@@ -66,6 +66,14 @@ const CODER_STATUS_POLL_INTERVAL_MS = 2_000;
 
 const coderLastActivityByService = new WeakMap<CoderService, Map<string, number>>();
 
+function pruneCoderActivityMap(activityByWorkspace: Map<string, number>, now: number): void {
+  for (const [workspaceName, lastActivityAtMs] of activityByWorkspace) {
+    if (now - lastActivityAtMs >= CODER_INACTIVITY_THRESHOLD_MS) {
+      activityByWorkspace.delete(workspaceName);
+    }
+  }
+}
+
 function getCoderActivityMap(coderService: CoderService): Map<string, number> {
   let activityByWorkspace = coderLastActivityByService.get(coderService);
   if (!activityByWorkspace) {
@@ -127,7 +135,10 @@ export class CoderSSHRuntime extends SSHRuntime {
       return;
     }
 
-    getCoderActivityMap(this.coderService).set(workspaceName, Date.now());
+    const now = Date.now();
+    const activityByWorkspace = getCoderActivityMap(this.coderService);
+    pruneCoderActivityMap(activityByWorkspace, now);
+    activityByWorkspace.set(workspaceName, now);
   }
 
   /** In-flight ensureReady promise to avoid duplicate start/wait sequences */
@@ -157,10 +168,12 @@ export class CoderSSHRuntime extends SSHRuntime {
 
     const now = Date.now();
     const activityByWorkspace = getCoderActivityMap(this.coderService);
+    pruneCoderActivityMap(activityByWorkspace, now);
     const lastActivityAtMs = activityByWorkspace.get(workspaceName) ?? 0;
 
     // Fast path: recently active, skip expensive status check. This cache intentionally lives
-    // outside the runtime instance because existing-workspace stream startup recreates runtimes.
+    // outside the runtime instance because existing-workspace stream startup recreates runtimes,
+    // and it prunes entries after the same 5-minute window to avoid unbounded workspace-name growth.
     if (lastActivityAtMs !== 0 && now - lastActivityAtMs < CODER_INACTIVITY_THRESHOLD_MS) {
       return { ready: true };
     }
