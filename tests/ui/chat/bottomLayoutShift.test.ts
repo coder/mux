@@ -180,42 +180,36 @@ describe("Chat bottom layout stability", () => {
       );
       fireEvent.click(sourceRow);
 
-      const messageWindow = getMessageWindow(app.view.container);
-      let scrollTop = 900;
-      let scrollHeight = 1800;
-      const clientHeight = 500;
-      const maxScrollTop = () => scrollHeight - clientHeight;
-
-      Object.defineProperty(messageWindow, "scrollTop", {
-        configurable: true,
-        get: () => scrollTop,
-        set: (nextValue: number) => {
-          scrollTop = Math.min(maxScrollTop(), Math.max(0, nextValue));
-        },
-      });
-      Object.defineProperty(messageWindow, "scrollHeight", {
-        configurable: true,
-        get: () => scrollHeight,
-      });
-      Object.defineProperty(messageWindow, "clientHeight", {
-        configurable: true,
-        get: () => clientHeight,
+      const sourceMessageWindow = getMessageWindow(app.view.container);
+      const sourcePort = mockScrollportMetrics(sourceMessageWindow, {
+        scrollHeight: 1800,
+        clientHeight: 500,
+        scrollTop: 900,
       });
 
       // Prove workspace-open reacquires the tail from a user-owned source scroll.
-      fireEvent.wheel(messageWindow);
-      scrollTop = 250;
-      fireEvent.scroll(messageWindow);
+      fireEvent.wheel(sourceMessageWindow);
+      sourcePort.setScrollTop(250);
+      fireEvent.scroll(sourceMessageWindow);
 
-      scrollHeight = 2200;
       fireEvent.click(idleRow);
+      await idleChat.expectTranscriptContains("Mock response: Seed idle target transcript");
 
-      // Workspace switching + transcript hydration + the layout-effect chain can
-      // take several seconds on slow CI runners, so wait long enough for the
-      // workspaceId-keyed layout effect inside ChatPane to invoke jumpToBottom.
+      // Happy DOM can preserve or replace the scrollport across the workspace switch
+      // depending on concurrent React timing. Attach metrics to the active scrollport
+      // after the switch, then simulate the browser's post-open off-bottom drift. If
+      // the workspaceId-keyed layout effect did not re-arm bottom ownership, this
+      // synthetic drift remains user-owned and the assertion times out.
+      const idleMessageWindow = getMessageWindow(app.view.container);
+      const idlePort = mockScrollportMetrics(idleMessageWindow, {
+        scrollHeight: 2200,
+        clientHeight: 500,
+        scrollTop: 250,
+      });
+
       await waitFor(
         () => {
-          expect(scrollTop).toBe(maxScrollTop());
+          expect(idlePort.getScrollTop()).toBe(idlePort.getMaxScrollTop());
         },
         { timeout: 10_000 }
       );
@@ -223,17 +217,17 @@ describe("Chat bottom layout stability", () => {
       // Expanding the last tool/details row starts with a mousedown inside transcript
       // content and can make the browser pick a new scroll anchor. The click is not
       // transcript scroll intent, so the follow-up drift must still be corrected.
-      const transcriptChild = messageWindow.firstElementChild as HTMLElement | null;
+      const transcriptChild = idleMessageWindow.firstElementChild as HTMLElement | null;
       if (!transcriptChild) {
         throw new Error("Transcript child not rendered");
       }
       fireEvent.mouseDown(transcriptChild);
-      scrollTop = maxScrollTop() - 24;
-      fireEvent.scroll(messageWindow);
+      idlePort.setScrollTop(idlePort.getMaxScrollTop() - 24);
+      fireEvent.scroll(idleMessageWindow);
 
       await waitFor(
         () => {
-          expect(scrollTop).toBe(maxScrollTop());
+          expect(idlePort.getScrollTop()).toBe(idlePort.getMaxScrollTop());
         },
         { timeout: 10_000 }
       );
