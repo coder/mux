@@ -117,6 +117,18 @@ function findNextLineStart(text: string, start: number): number {
   return text[lineEnd] === "\r" && text[lineEnd + 1] === "\n" ? lineEnd + 2 : lineEnd + 1;
 }
 
+function hasOnlySpacesOrTabsUntilLineEnd(text: string, start: number): boolean {
+  const lineEnd = findLineEnd(text, start);
+  for (let index = start; index < lineEnd; index++) {
+    const ch = text[index];
+    if (ch !== " " && ch !== "\t") {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 function findInlineCodeEnd(text: string, start: number, delimiterLength: number): number | null {
   let index = start;
   while (index < text.length) {
@@ -157,7 +169,11 @@ function collectCodeRanges(text: string): TextRange[] {
         if (
           closingFenceMarker &&
           closingFenceMarker.char === fenceMarker.char &&
-          closingFenceMarker.length >= fenceMarker.length
+          closingFenceMarker.length >= fenceMarker.length &&
+          hasOnlySpacesOrTabsUntilLineEnd(
+            text,
+            closingFenceMarker.markerStart + closingFenceMarker.length
+          )
         ) {
           index = closingFenceMarker.markerStart + closingFenceMarker.length;
           break;

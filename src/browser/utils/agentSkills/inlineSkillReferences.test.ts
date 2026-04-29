@@ -116,6 +116,25 @@ describe("extractInlineSkillReferenceCandidates", () => {
     expect(extractInlineSkillReferenceCandidates("```\n$tdd\n```")).toEqual([]);
   });
 
+  test("keeps fenced code blocks open when a candidate closer has trailing text", () => {
+    const text = "```\n```notclosing\n$tdd\n```";
+
+    expect(extractInlineSkillReferenceCandidates(text)).toEqual([]);
+  });
+
+  test("closes fenced code blocks when the closing marker has trailing spaces and tabs", () => {
+    const text = "```\n$inside\n``` \t  \n$outside";
+    const outsideIndex = text.indexOf("$outside");
+
+    expect(extractInlineSkillReferenceCandidates(text)).toEqual([
+      {
+        skillName: "outside",
+        startIndex: outsideIndex,
+        endIndex: outsideIndex + "$outside".length,
+      },
+    ]);
+  });
+
   test("skips fenced code blocks indented up to three spaces", () => {
     for (const indentation of [" ", "  ", "   "]) {
       expect(
