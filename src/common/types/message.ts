@@ -293,11 +293,11 @@ export function prepareUserMessageForSend(
   return { finalText, metadata };
 }
 
-export type InlineSkillSnapshotForDisplay = {
+export interface InlineSkillSnapshotForDisplay {
   skillName: string;
   scope: AgentSkillScope;
   snapshot: { frontmatterYaml?: string; body?: string };
-};
+}
 
 export type InlineSkillSnapshotMap = Record<string, InlineSkillSnapshotForDisplay>;
 

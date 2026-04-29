@@ -351,7 +351,7 @@ function maybeCollectAgentSkillSnapshot(
 }
 
 function deriveInlineSkillSnapshotDisplayState(
-  refs: ReadonlyArray<AgentSkillReference> | undefined,
+  refs: readonly AgentSkillReference[] | undefined,
   latestAgentSkillSnapshotByKey: ReadonlyMap<string, AgentSkillSnapshotContent>
 ): InlineSkillSnapshotDisplayState {
   if (!refs || refs.length === 0) {
