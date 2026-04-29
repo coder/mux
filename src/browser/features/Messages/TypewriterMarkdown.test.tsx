@@ -1,7 +1,12 @@
 import type { UseSmoothStreamingTextOptions } from "@/browser/hooks/useSmoothStreamingText";
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { useSmoothStreamingText as importedUseSmoothStreamingText } from "@/browser/hooks/useSmoothStreamingText";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, render } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
+import { MarkdownCore as ImportedMarkdownCore } from "./MarkdownCore";
+
+const actualMarkdownCore = ImportedMarkdownCore;
+const actualUseSmoothStreamingText = importedUseSmoothStreamingText;
 
 const mockUseSmoothStreamingText = mock(
   (options: UseSmoothStreamingTextOptions): { visibleText: string; isCaughtUp: boolean } => ({
@@ -23,6 +28,17 @@ void mock.module("@/browser/hooks/useSmoothStreamingText", () => ({
 import { TypewriterMarkdown } from "./TypewriterMarkdown";
 
 describe("TypewriterMarkdown", () => {
+  afterAll(async () => {
+    // Bun 1.3.6's mock.module() has no disposer, and mock.restore() does not undo
+    // module mocks. Restore the real exports so these stubs do not leak into later files.
+    await mock.module("./MarkdownCore", () => ({
+      MarkdownCore: actualMarkdownCore,
+    }));
+    await mock.module("@/browser/hooks/useSmoothStreamingText", () => ({
+      useSmoothStreamingText: actualUseSmoothStreamingText,
+    }));
+  });
+
   beforeEach(() => {
     globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
     globalThis.document = globalThis.window.document;
