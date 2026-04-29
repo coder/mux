@@ -849,10 +849,10 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
               tabIndex={0}
               data-testid="message-window"
               data-loaded={!loading && !isHydratingTranscript}
-              // The bottom-lock hook is the scroll owner. Disable browser scroll anchoring
-              // so expanded tool panes or tail rows cannot pick a competing anchor and move
-              // the transcript slightly above the real bottom during chat switches.
-              style={AUTO_SCROLL_TRANSCRIPT_STYLE}
+              // Disable browser scroll anchoring only while bottom-lock owns the tail.
+              // In manual reading mode, anchoring should preserve the user's viewport
+              // when async highlights/diagrams above the fold settle.
+              style={autoScroll ? AUTO_SCROLL_TRANSCRIPT_STYLE : undefined}
               className="h-full overflow-x-hidden overflow-y-auto p-[15px] leading-[1.5] break-words whitespace-pre-wrap"
             >
               <div
