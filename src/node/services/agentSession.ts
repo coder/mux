@@ -52,10 +52,12 @@ import { coerceThinkingLevel } from "@/common/types/thinking";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import {
   createMuxMessage,
+  dedupeAgentSkillRefs,
   isCompactionSummaryMetadata,
   pickPreservedSendOptions,
   pickStartupRetrySendOptions,
   prepareUserMessageForSend,
+  type AgentSkillReference,
   type CompactionFollowUpRequest,
   type MuxMessageMetadata,
   type MuxFilePart,
@@ -182,6 +184,22 @@ const SWITCH_AGENT_TARGET_UNAVAILABLE_ERROR =
 const PDF_MEDIA_TYPE = "application/pdf";
 const ACP_PROMPT_ID_METADATA_KEY = "acpPromptId";
 const ACP_DELEGATED_TOOLS_METADATA_KEY = "acpDelegatedTools";
+
+function extractAgentSkillRefs(metadata: MuxMessageMetadata | undefined): AgentSkillReference[] {
+  if (!metadata) return [];
+
+  const refs = [...(metadata.agentSkillRefs ?? [])];
+  if (metadata.type === "agent-skill") {
+    const hasLegacySlashRef = refs.some(
+      (ref) => ref.skillName === metadata.skillName && ref.source === "slash"
+    );
+    if (!hasLegacySlashRef) {
+      refs.push({ skillName: metadata.skillName, scope: metadata.scope, source: "slash" });
+    }
+  }
+
+  return dedupeAgentSkillRefs(refs);
+}
 
 function normalizeMediaType(mediaType: string): string {
   return mediaType.toLowerCase().trim().split(";")[0];
@@ -2291,9 +2309,9 @@ export class AgentSession {
     // so subsequent turns don't re-read (which would change the prompt prefix if files changed).
     // File changes after this point are surfaced via <system-file-update> diffs instead.
     const snapshotResult = await this.materializeFileAtMentionsSnapshot(trimmedMessage);
-    let skillSnapshotResult: { snapshotMessage: MuxMessage } | null = null;
+    let skillSnapshotMessages: MuxMessage[] = [];
     try {
-      skillSnapshotResult = await this.materializeAgentSkillSnapshot(
+      skillSnapshotMessages = await this.materializeAgentSkillSnapshots(
         typedMuxMetadata,
         options?.disableWorkspaceAgents
       );
@@ -2412,13 +2430,15 @@ export class AgentSession {
       }
     }
 
-    if (shouldPersistTurnSnapshots && skillSnapshotResult?.snapshotMessage) {
-      const skillSnapshotAppendResult = await this.historyService.appendToHistory(
-        this.workspaceId,
-        skillSnapshotResult.snapshotMessage
-      );
-      if (!skillSnapshotAppendResult.success) {
-        return Err(createUnknownSendMessageError(skillSnapshotAppendResult.error));
+    if (shouldPersistTurnSnapshots && skillSnapshotMessages.length > 0) {
+      for (const snapshotMessage of skillSnapshotMessages) {
+        const skillSnapshotAppendResult = await this.historyService.appendToHistory(
+          this.workspaceId,
+          snapshotMessage
+        );
+        if (!skillSnapshotAppendResult.success) {
+          return Err(createUnknownSendMessageError(skillSnapshotAppendResult.error));
+        }
       }
     }
 
@@ -2447,8 +2467,10 @@ export class AgentSession {
       this.emitChatEvent({ ...snapshotResult.snapshotMessage, type: "message" });
     }
 
-    if (shouldPersistTurnSnapshots && skillSnapshotResult?.snapshotMessage) {
-      this.emitChatEvent({ ...skillSnapshotResult.snapshotMessage, type: "message" });
+    if (shouldPersistTurnSnapshots && skillSnapshotMessages.length > 0) {
+      for (const snapshotMessage of skillSnapshotMessages) {
+        this.emitChatEvent({ ...snapshotMessage, type: "message" });
+      }
     }
 
     // When on-send compaction triggers, the original user message is NOT emitted now —
@@ -5150,27 +5172,27 @@ export class AgentSession {
     return { snapshotMessage, materializedTokens: tokens };
   }
 
-  private async materializeAgentSkillSnapshot(
+  private async materializeAgentSkillSnapshots(
     muxMetadata: MuxMessageMetadata | undefined,
     disableWorkspaceAgents: boolean | undefined
-  ): Promise<{ snapshotMessage: MuxMessage } | null> {
-    if (!muxMetadata || muxMetadata.type !== "agent-skill") {
-      return null;
+  ): Promise<MuxMessage[]> {
+    const refs = extractAgentSkillRefs(muxMetadata);
+    if (refs.length === 0) {
+      return [];
     }
 
     // Guard for test mocks that may not implement getWorkspaceMetadata.
     if (typeof this.aiService.getWorkspaceMetadata !== "function") {
-      return null;
-    }
-
-    const parsedName = SkillNameSchema.safeParse(muxMetadata.skillName);
-    if (!parsedName.success) {
-      throw new Error(`Invalid agent skill name: ${muxMetadata.skillName}`);
+      return [];
     }
 
     const metadataResult = await this.aiService.getWorkspaceMetadata(this.workspaceId);
     if (!metadataResult.success) {
-      throw new Error("Cannot materialize agent skill: workspace metadata not found");
+      const hasSlash = refs.some((ref) => ref.source === "slash");
+      if (hasSlash) {
+        throw new Error("Cannot materialize agent skill: workspace metadata not found");
+      }
+      return [];
     }
 
     const metadata = metadataResult.data;
@@ -5180,48 +5202,84 @@ export class AgentSession {
     // the worktree so skill invocation uses the same precedence/discovery root as the UI.
     const skillDiscoveryPath = disableWorkspaceAgents ? metadata.projectPath : workspacePath;
 
-    const resolved = await readAgentSkill(runtime, skillDiscoveryPath, parsedName.data);
-    const skill = resolved.package;
-
-    // Include the parsed YAML frontmatter in the hash so frontmatter-only edits (e.g. description)
-    // generate a new snapshot and keep the UI hover preview in sync.
-    const frontmatterYaml = stringifyAgentSkillFrontmatter(skill.frontmatter);
-    const snapshot = createLoadedSkillSnapshot({
-      name: skill.frontmatter.name,
-      scope: skill.scope,
-      body: skill.body,
-      frontmatterYaml,
-    });
-    const snapshotText = renderAgentSkillSnapshotText(snapshot);
-    const sha256 = snapshot.sha256;
-
-    // Dedupe: if we recently persisted the same snapshot, avoid inserting again.
-    // Only need last 5 messages — avoid full-file read.
-    const historyResult = await this.historyService.getLastMessages(this.workspaceId, 5);
+    // Dedupe per skill against recent persisted snapshots. A wider window keeps multi-skill
+    // turns from reloading snapshots that were persisted together on the previous turn.
+    const recentSnapshots: Array<{ skillName: string; sha256: string }> = [];
+    const historyResult = await this.historyService.getLastMessages(this.workspaceId, 10);
     if (historyResult.success) {
-      const recentSnapshot = [...historyResult.data]
-        .reverse()
-        .find((msg) => msg.metadata?.synthetic && msg.metadata?.agentSkillSnapshot);
-      const recentMeta = recentSnapshot?.metadata?.agentSkillSnapshot;
-
-      if (recentMeta?.skillName === skill.frontmatter.name && recentMeta.sha256 === sha256) {
-        return null;
+      for (const msg of historyResult.data) {
+        const metadata = msg.metadata;
+        if (metadata?.synthetic && metadata.agentSkillSnapshot) {
+          recentSnapshots.push({
+            skillName: metadata.agentSkillSnapshot.skillName,
+            sha256: metadata.agentSkillSnapshot.sha256,
+          });
+        }
       }
     }
 
-    const snapshotId = createAgentSkillSnapshotMessageId();
-    const snapshotMessage = createMuxMessage(snapshotId, "user", snapshotText, {
-      timestamp: Date.now(),
-      synthetic: true,
-      agentSkillSnapshot: {
-        skillName: skill.frontmatter.name,
-        scope: skill.scope,
-        sha256,
-        frontmatterYaml,
-      },
-    });
+    const snapshotMessages: MuxMessage[] = [];
+    for (const ref of refs) {
+      const parsedName = SkillNameSchema.safeParse(ref.skillName);
+      if (!parsedName.success) {
+        if (ref.source === "slash") {
+          throw new Error(`Invalid agent skill name: ${ref.skillName}`);
+        }
+        continue;
+      }
 
-    return { snapshotMessage };
+      let resolved: Awaited<ReturnType<typeof readAgentSkill>>;
+      try {
+        resolved = await readAgentSkill(runtime, skillDiscoveryPath, parsedName.data);
+      } catch (error) {
+        if (ref.source === "slash") {
+          throw error;
+        }
+        continue;
+      }
+
+      const skill = resolved.package;
+
+      // Include the parsed YAML frontmatter in the hash so frontmatter-only edits (e.g. description)
+      // generate a new snapshot and keep the UI hover preview in sync.
+      const frontmatterYaml = stringifyAgentSkillFrontmatter(skill.frontmatter);
+      const snapshot = createLoadedSkillSnapshot({
+        name: skill.frontmatter.name,
+        scope: skill.scope,
+        body: skill.body,
+        frontmatterYaml,
+      });
+      const sha256 = snapshot.sha256;
+
+      if (
+        recentSnapshots.some(
+          (recent) => recent.skillName === skill.frontmatter.name && recent.sha256 === sha256
+        )
+      ) {
+        continue;
+      }
+
+      const snapshotText = renderAgentSkillSnapshotText(snapshot);
+      const snapshotId = createAgentSkillSnapshotMessageId();
+      snapshotMessages.push(
+        createMuxMessage(snapshotId, "user", snapshotText, {
+          timestamp: Date.now(),
+          synthetic: true,
+          agentSkillSnapshot: {
+            skillName: skill.frontmatter.name,
+            scope: skill.scope,
+            sha256,
+            frontmatterYaml,
+          },
+        })
+      );
+
+      // Defense-in-depth: avoid double-loading this skill within the same turn even if
+      // future metadata shapes bypass extractAgentSkillRefs dedupe.
+      recentSnapshots.push({ skillName: skill.frontmatter.name, sha256 });
+    }
+
+    return snapshotMessages;
   }
 
   /**
