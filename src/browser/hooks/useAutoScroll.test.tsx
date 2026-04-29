@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { act, cleanup, renderHook } from "@testing-library/react";
-import type { MouseEvent, MutableRefObject, UIEvent } from "react";
+import type { KeyboardEvent, MouseEvent, MutableRefObject, UIEvent } from "react";
 import { GlobalWindow } from "happy-dom";
 
 import { useAutoScroll } from "./useAutoScroll";
@@ -287,6 +287,70 @@ describe("useAutoScroll", () => {
       flushOneFrame();
     });
 
+    expect(metrics.scrollTop).toBe(metrics.maxScrollTop);
+    expect(result.current.autoScroll).toBe(true);
+  });
+
+  test("scroll keys mark intent even when focus is on a transcript descendant", () => {
+    const { result } = renderHook(() => useAutoScroll());
+    const element = document.createElement("div");
+    const child = document.createElement("button");
+    element.append(child);
+    const metrics = attachScrollMetrics(element, {
+      scrollHeight: 1300,
+      clientHeight: 400,
+      initialScrollTop: 900,
+    });
+
+    const dateNowSpy = spyOn(Date, "now");
+    try {
+      let now = 1_000_000;
+      dateNowSpy.mockImplementation(() => now);
+
+      act(() => {
+        (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current = element;
+      });
+
+      // PageUp pressed while focus is on a transcript-internal button. Browsers
+      // still scroll the scrollport in that case, so the lock must release.
+      act(() => {
+        result.current.handleScrollContainerKeyDown({
+          target: child,
+          currentTarget: element,
+          key: "PageUp",
+        } as unknown as KeyboardEvent<HTMLDivElement>);
+        now += 1;
+        metrics.setScrollTop(500);
+        result.current.handleScroll(createScrollEvent(element));
+      });
+
+      expect(result.current.autoScroll).toBe(false);
+    } finally {
+      dateNowSpy.mockRestore();
+    }
+  });
+
+  test("non-scroll keys do not affect lock state", () => {
+    const { result } = renderHook(() => useAutoScroll());
+    const element = document.createElement("div");
+    const metrics = attachScrollMetrics(element, {
+      scrollHeight: 1300,
+      clientHeight: 400,
+    });
+
+    act(() => {
+      (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current = element;
+      result.current.handleScrollContainerKeyDown({
+        target: element,
+        currentTarget: element,
+        key: "Tab",
+      } as unknown as KeyboardEvent<HTMLDivElement>);
+    });
+
+    metrics.setScrollHeight(1600);
+    act(() => {
+      flushOneFrame();
+    });
     expect(metrics.scrollTop).toBe(metrics.maxScrollTop);
     expect(result.current.autoScroll).toBe(true);
   });

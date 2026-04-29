@@ -96,7 +96,12 @@ export function useAutoScroll() {
 
   const handleScrollContainerKeyDown = useCallback(
     (event: KeyboardEvent<HTMLDivElement>) => {
-      if (event.target !== event.currentTarget || !TRANSCRIPT_SCROLL_KEYS.has(event.key)) return;
+      // Scroll keys (PageUp/PageDown/Home/End/Arrows/Space) cause the scrollport
+      // to scroll regardless of which descendant currently has focus, so they
+      // are always user scroll intent. Filtering by `event.target === event
+      // .currentTarget` would incorrectly ignore key presses while focus is on
+      // a transcript-internal element such as a tool-row button or a link.
+      if (!TRANSCRIPT_SCROLL_KEYS.has(event.key)) return;
 
       markUserScrollIntent();
     },
