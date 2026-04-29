@@ -113,9 +113,11 @@ describe("Chat bottom layout stability", () => {
 
       // Composer grows (e.g. multi-line input), shrinking the transcript viewport.
       // The bottom-lock invariant must produce scrollTop = scrollHeight - clientHeight
-      // before the next paint, regardless of whether ResizeObserver fires. Our rAF
-      // loop in `useAutoScroll` is responsible for that and runs in happy-dom too.
+      // before the next paint when a layout signal arrives.
       port.setClientHeight(520);
+      // The mocked geometry does not notify happy-dom's ResizeObserver, so emit
+      // the scroll/layout signal that real browser anchoring commonly produces.
+      fireEvent.scroll(messageWindow);
 
       await waitFor(() => {
         expect(port.getScrollTop()).toBe(port.getMaxScrollTop());
@@ -206,6 +208,7 @@ describe("Chat bottom layout stability", () => {
         clientHeight: 500,
         scrollTop: 250,
       });
+      fireEvent.scroll(idleMessageWindow);
 
       await waitFor(
         () => {
@@ -322,12 +325,14 @@ describe("Chat bottom layout stability", () => {
 
       // Expand: real Chromium dispatches mousedown then click. The mousedown
       // targets a child of the scrollport, so the bottom lock is NOT released; the
-      // click triggers React state and the transcript grows. The rAF loop must
-      // pin to the new max regardless of whether ResizeObserver fires.
+      // click triggers React state and the transcript grows. Because the mocked
+      // geometry does not notify happy-dom's ResizeObserver, fire a scroll/layout
+      // signal after each synthetic height change.
       fireEvent.mouseDown(bashHeader);
       fireEvent.click(bashHeader);
 
       port.setScrollHeight(1300);
+      fireEvent.scroll(messageWindow);
       await waitFor(() => {
         expect(port.getScrollTop()).toBe(port.getMaxScrollTop());
       });
@@ -336,6 +341,7 @@ describe("Chat bottom layout stability", () => {
       // multiple sub-frame layout changes. Each must keep us pinned.
       for (const next of [1304, 1308, 1320]) {
         port.setScrollHeight(next);
+        fireEvent.scroll(messageWindow);
         await waitFor(() => {
           expect(port.getScrollTop()).toBe(port.getMaxScrollTop());
         });
@@ -362,9 +368,11 @@ describe("Chat bottom layout stability", () => {
 
       // Late async layout shifts (Shiki finishing highlight, fonts/images settling)
       // push scrollHeight up after the initial pin. The bottom lock must produce
-      // scrollTop = max for each step, even when no React re-render or RO fires.
+      // scrollTop = max for each step; the scroll event stands in for the browser
+      // layout/anchoring signal that mocked geometry does not deliver to RO.
       for (const newHeight of [950, 1010, 1080, 1180]) {
         port.setScrollHeight(newHeight);
+        fireEvent.scroll(messageWindow);
         await waitFor(() => {
           expect(port.getScrollTop()).toBe(port.getMaxScrollTop());
         });
