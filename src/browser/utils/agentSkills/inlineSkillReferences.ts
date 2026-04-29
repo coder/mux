@@ -25,7 +25,14 @@ interface TextRange {
   end: number;
 }
 
-const FENCE_MARKER = "```";
+const MIN_FENCE_MARKER_LENGTH = 3;
+type FenceChar = "`" | "~";
+
+interface FenceMarker {
+  char: FenceChar;
+  length: number;
+}
+
 const LEFT_BOUNDARY_BLOCKED_RE = /[\w$]/;
 
 function isSkillStartChar(ch: string | undefined): boolean {
@@ -44,13 +51,39 @@ function hasSaneLeftBoundary(text: string, dollarIndex: number): boolean {
   return !LEFT_BOUNDARY_BLOCKED_RE.test(text[dollarIndex - 1] ?? "");
 }
 
-function getBacktickRunLength(text: string, start: number): number {
+function getCharRunLength(text: string, start: number, ch: string): number {
   let end = start;
-  while (end < text.length && text[end] === "`") {
+  while (end < text.length && text[end] === ch) {
     end++;
   }
 
   return end - start;
+}
+
+function getBacktickRunLength(text: string, start: number): number {
+  return getCharRunLength(text, start, "`");
+}
+
+function isFenceChar(ch: string | undefined): ch is FenceChar {
+  return ch === "`" || ch === "~";
+}
+
+function isLineStart(text: string, index: number): boolean {
+  return index === 0 || text[index - 1] === "\n" || text[index - 1] === "\r";
+}
+
+function getFenceMarkerAtLineStart(text: string, index: number): FenceMarker | null {
+  const ch = text[index];
+  if (!isLineStart(text, index) || !isFenceChar(ch)) {
+    return null;
+  }
+
+  const length = getCharRunLength(text, index, ch);
+  if (length < MIN_FENCE_MARKER_LENGTH) {
+    return null;
+  }
+
+  return { char: ch, length };
 }
 
 function findLineEnd(text: string, start: number): number {
@@ -60,6 +93,15 @@ function findLineEnd(text: string, start: number): number {
   }
 
   return end;
+}
+
+function findNextLineStart(text: string, start: number): number {
+  const lineEnd = findLineEnd(text, start);
+  if (lineEnd >= text.length) {
+    return text.length;
+  }
+
+  return text[lineEnd] === "\r" && text[lineEnd + 1] === "\n" ? lineEnd + 2 : lineEnd + 1;
 }
 
 function findInlineCodeEnd(text: string, start: number, delimiterLength: number): number | null {
@@ -92,16 +134,23 @@ function collectCodeRanges(text: string): TextRange[] {
   let index = 0;
 
   while (index < text.length) {
-    if (text.startsWith(FENCE_MARKER, index)) {
+    const fenceMarker = getFenceMarkerAtLineStart(text, index);
+    if (fenceMarker) {
       const fenceStart = index;
-      index += FENCE_MARKER.length;
+      index = findNextLineStart(text, index);
 
-      while (index < text.length && !text.startsWith(FENCE_MARKER, index)) {
-        index++;
-      }
+      while (index < text.length) {
+        const closingFenceMarker = getFenceMarkerAtLineStart(text, index);
+        if (
+          closingFenceMarker &&
+          closingFenceMarker.char === fenceMarker.char &&
+          closingFenceMarker.length >= fenceMarker.length
+        ) {
+          index += closingFenceMarker.length;
+          break;
+        }
 
-      if (index < text.length) {
-        index += FENCE_MARKER.length;
+        index = findNextLineStart(text, index);
       }
 
       ranges.push({ start: fenceStart, end: index });

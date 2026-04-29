@@ -116,6 +116,27 @@ describe("extractInlineSkillReferenceCandidates", () => {
     expect(extractInlineSkillReferenceCandidates("```\n$tdd\n```")).toEqual([]);
   });
 
+  test("skips tilde fenced code blocks", () => {
+    expect(extractInlineSkillReferenceCandidates("~~~ts\n$tdd\n~~~")).toEqual([]);
+  });
+
+  test("skips longer tilde fenced code blocks", () => {
+    expect(extractInlineSkillReferenceCandidates("~~~~\n$tdd\n~~~~")).toEqual([]);
+  });
+
+  test("keeps mismatched tilde fences inside backtick fences", () => {
+    const text = "```\n$tdd\n~~~\n$deep-review\n```\n$outside";
+    const outsideIndex = text.indexOf("$outside");
+
+    expect(extractInlineSkillReferenceCandidates(text)).toEqual([
+      {
+        skillName: "outside",
+        startIndex: outsideIndex,
+        endIndex: outsideIndex + "$outside".length,
+      },
+    ]);
+  });
+
   test("extracts non-code references from mixed text", () => {
     expect(extractInlineSkillReferenceCandidates("$tdd `$nope` $deep-review")).toEqual([
       { skillName: "tdd", startIndex: 0, endIndex: 4 },

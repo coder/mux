@@ -188,7 +188,7 @@ const ACP_DELEGATED_TOOLS_METADATA_KEY = "acpDelegatedTools";
 function extractAgentSkillRefs(metadata: MuxMessageMetadata | undefined): AgentSkillReference[] {
   if (!metadata) return [];
 
-  const refs = [...(metadata.agentSkillRefs ?? [])];
+  const refs = Array.isArray(metadata.agentSkillRefs) ? [...metadata.agentSkillRefs] : [];
   if (metadata.type === "agent-skill") {
     const hasLegacySlashRef = refs.some(
       (ref) => ref.skillName === metadata.skillName && ref.source === "slash"

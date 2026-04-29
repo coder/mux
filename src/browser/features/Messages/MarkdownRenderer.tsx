@@ -10,7 +10,10 @@ import { MarkdownCore } from "./MarkdownCore";
 import { cn } from "@/common/lib/utils";
 import { AgentSkillBadge } from "./AgentSkillBadge";
 import { buildAgentSkillSnapshotMarkdown } from "./agentSkillSnapshotMarkdown";
-import { InlineSkillPreviewContext } from "./InlineSkillPreviewContext";
+import {
+  InlineSkillPreviewContext,
+  type InlineSkillPreviewContextValue,
+} from "./InlineSkillPreviewContext";
 
 interface MarkdownRendererProps {
   content: string;
@@ -25,6 +28,10 @@ interface MarkdownRendererProps {
   preserveLineBreaks?: boolean;
   inlineSkillSnapshots?: InlineSkillSnapshotMap;
 }
+
+const DISABLED_INLINE_SKILL_PREVIEW_CONTEXT: InlineSkillPreviewContextValue = {
+  renderInlineSkillPreview: (_skillName, label) => label,
+};
 
 export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
   content,
@@ -63,7 +70,11 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
                     side="top"
                     className="border-border-medium bg-modal-bg z-[1600] max-h-[360px] w-[520px] max-w-[80vw] overflow-auto border-2 p-3"
                   >
-                    <MarkdownRenderer content={snapshotMarkdown} preserveLineBreaks />
+                    <InlineSkillPreviewContext.Provider
+                      value={DISABLED_INLINE_SKILL_PREVIEW_CONTEXT}
+                    >
+                      <MarkdownRenderer content={snapshotMarkdown} preserveLineBreaks />
+                    </InlineSkillPreviewContext.Provider>
                   </HoverCardContent>
                 </HoverCardPortal>
               </HoverCard>

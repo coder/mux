@@ -350,11 +350,17 @@ function maybeCollectAgentSkillSnapshot(
   });
 }
 
+function isAgentSkillReferenceArray(
+  refs: readonly AgentSkillReference[] | undefined
+): refs is readonly AgentSkillReference[] {
+  return Array.isArray(refs);
+}
+
 function deriveInlineSkillSnapshotDisplayState(
   refs: readonly AgentSkillReference[] | undefined,
   latestAgentSkillSnapshotByKey: ReadonlyMap<string, AgentSkillSnapshotContent>
 ): InlineSkillSnapshotDisplayState {
-  if (!refs || refs.length === 0) {
+  if (!isAgentSkillReferenceArray(refs) || refs.length === 0) {
     return {};
   }
 
