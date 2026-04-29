@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { cleanup, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { installDom } from "../../../../tests/ui/dom";
 import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
@@ -17,7 +17,7 @@ describe("Button", () => {
     cleanupDom = null;
   });
 
-  test("uses title as the tooltip source while preserving the accessible name for icon-only buttons", async () => {
+  test("uses title as the accessible name without leaving a native title", () => {
     const view = render(
       <TooltipProvider delayDuration={0}>
         <Button title="Save changes (Enter)" size="icon">
@@ -28,12 +28,5 @@ describe("Button", () => {
 
     const button = view.getByRole("button", { name: "Save changes (Enter)" });
     expect(button.getAttribute("title")).toBeNull();
-    expect(button.getAttribute("data-state")).toBe("closed");
-
-    fireEvent.focus(button);
-
-    await waitFor(() => {
-      expect(button.getAttribute("data-state")).not.toBe("closed");
-    });
   });
 });

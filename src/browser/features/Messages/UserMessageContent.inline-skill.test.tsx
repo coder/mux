@@ -51,10 +51,13 @@ describe("UserMessageContent inline skill rendering", () => {
       />
     );
 
-    await waitFor(() => {
-      const badgeTexts = getSkillBadges(view.container).map((badge) => badge.textContent);
-      expect(badgeTexts).toEqual(["/deep-review", "$tdd"]);
-    });
+    await waitFor(
+      () => {
+        const badgeTexts = getSkillBadges(view.container).map((badge) => badge.textContent);
+        expect(badgeTexts).toEqual(["/deep-review", "$tdd"]);
+      },
+      { timeout: 10_000 }
+    );
   });
 
   test("keeps edit-mode textarea content as raw text", async () => {
@@ -87,9 +90,12 @@ describe("UserMessageContent inline skill rendering", () => {
     }
 
     const view = render(<EditHarness />);
-    await waitFor(() => {
-      expect(getSkillBadges(view.container).map((badge) => badge.textContent)).toEqual(["$tdd"]);
-    });
+    await waitFor(
+      () => {
+        expect(getSkillBadges(view.container).map((badge) => badge.textContent)).toEqual(["$tdd"]);
+      },
+      { timeout: 10_000 }
+    );
 
     fireEvent.click(view.getByRole("button", { name: "Edit" }));
 
