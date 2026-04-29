@@ -4,6 +4,8 @@ import type {
   MuxFilePart,
   DisplayedMessage,
   CompactionRequestData,
+  InlineSkillSnapshotMap,
+  AgentSkillReference,
 } from "@/common/types/message";
 import { createMuxMessage, getCompactionFollowUpContent } from "@/common/types/message";
 
@@ -300,7 +302,12 @@ function extractAgentSkillSnapshotBody(snapshotText: string): string | null {
 interface AgentSkillSnapshotContent {
   sha256?: string;
   frontmatterYaml?: string;
-  body: string;
+  body?: string;
+}
+
+interface InlineSkillSnapshotDisplayState {
+  snapshots?: InlineSkillSnapshotMap;
+  cacheKey?: string;
 }
 
 function getTextPartContent(parts: ReadonlyArray<MuxMessage["parts"][number]>): string {
@@ -343,6 +350,56 @@ function maybeCollectAgentSkillSnapshot(
   });
 }
 
+function deriveInlineSkillSnapshotDisplayState(
+  refs: ReadonlyArray<AgentSkillReference> | undefined,
+  latestAgentSkillSnapshotByKey: ReadonlyMap<string, AgentSkillSnapshotContent>
+): InlineSkillSnapshotDisplayState {
+  if (!refs || refs.length === 0) {
+    return {};
+  }
+
+  const snapshotsBySkillName: InlineSkillSnapshotMap = {};
+  const cacheEntryBySkillName = new Map<string, string>();
+
+  for (const ref of refs) {
+    if (ref.source !== "inline") {
+      continue;
+    }
+
+    const snapshot = latestAgentSkillSnapshotByKey.get(
+      getAgentSkillSnapshotKey(ref.scope, ref.skillName)
+    );
+    if (!snapshot || (snapshot.frontmatterYaml === undefined && snapshot.body === undefined)) {
+      continue;
+    }
+
+    snapshotsBySkillName[ref.skillName] = {
+      skillName: ref.skillName,
+      scope: ref.scope,
+      snapshot: {
+        frontmatterYaml: snapshot.frontmatterYaml,
+        body: snapshot.body,
+      },
+    };
+    cacheEntryBySkillName.set(
+      ref.skillName,
+      `${ref.scope}|${ref.skillName}|${snapshot.sha256 ?? ""}`
+    );
+  }
+
+  if (cacheEntryBySkillName.size === 0) {
+    return {};
+  }
+
+  return {
+    snapshots: snapshotsBySkillName,
+    cacheKey: Array.from(cacheEntryBySkillName.entries())
+      .sort(([leftSkillName], [rightSkillName]) => leftSkillName.localeCompare(rightSkillName))
+      .map(([, cacheEntry]) => cacheEntry)
+      .join("\n"),
+  };
+}
+
 export class StreamingMessageAggregator {
   private messages = new Map<string, MuxMessage>();
   private activeStreams = new Map<string, StreamingContext>();
@@ -351,7 +408,12 @@ export class StreamingMessageAggregator {
   // Adding a new cached value? Add it here and it will auto-invalidate.
   private displayedMessageCache = new Map<
     string,
-    { version: number; agentSkillSnapshotCacheKey?: string; messages: DisplayedMessage[] }
+    {
+      version: number;
+      agentSkillSnapshotCacheKey?: string;
+      inlineSkillSnapshotsCacheKey?: string;
+      messages: DisplayedMessage[];
+    }
   >();
   private messageVersions = new Map<string, number>();
   private cache: {
@@ -2708,7 +2770,8 @@ export class StreamingMessageAggregator {
 
   private buildDisplayedMessagesForMessage(
     message: MuxMessage,
-    agentSkillSnapshot?: { frontmatterYaml?: string; body?: string }
+    agentSkillSnapshot?: { frontmatterYaml?: string; body?: string },
+    inlineSkillSnapshots?: InlineSkillSnapshotMap
   ): DisplayedMessage[] {
     const displayedMessages: DisplayedMessage[] = [];
     const baseTimestamp = message.metadata?.timestamp;
@@ -2794,6 +2857,7 @@ export class StreamingMessageAggregator {
         isSynthetic: message.metadata?.synthetic === true ? true : undefined,
         timestamp: baseTimestamp,
         agentSkill,
+        inlineSkillSnapshots,
         compactionRequest,
         reviews,
       });
@@ -3025,8 +3089,8 @@ export class StreamingMessageAggregator {
 
       // Synthetic agent-skill snapshot messages are hidden from the transcript unless
       // debugLlmRequest is enabled. We still want to surface their content in the UI by
-      // attaching the resolved snapshot (frontmatterYaml + body) to the *subsequent*
-      // /{skillName} invocation message.
+      // attaching the resolved snapshot (frontmatterYaml + body) to subsequent user
+      // messages that reference skills via /{skillName} or inline $skillName tokens.
       const latestAgentSkillSnapshotByKey = new Map<string, AgentSkillSnapshotContent>();
 
       for (const message of allMessages) {
@@ -3058,20 +3122,35 @@ export class StreamingMessageAggregator {
           ? `${agentSkillSnapshot.sha256 ?? ""}\n${agentSkillSnapshot.frontmatterYaml ?? ""}`
           : undefined;
 
+        const inlineSkillSnapshotState =
+          message.role === "user"
+            ? deriveInlineSkillSnapshotDisplayState(
+                muxMeta?.agentSkillRefs,
+                latestAgentSkillSnapshotByKey
+              )
+            : undefined;
+        const inlineSkillSnapshotsCacheKey = inlineSkillSnapshotState?.cacheKey;
+
         const version = this.messageVersions.get(message.id) ?? 0;
         const cached = this.displayedMessageCache.get(message.id);
         const canReuse =
           cached?.version === version &&
-          cached.agentSkillSnapshotCacheKey === agentSkillSnapshotCacheKey;
+          cached.agentSkillSnapshotCacheKey === agentSkillSnapshotCacheKey &&
+          cached.inlineSkillSnapshotsCacheKey === inlineSkillSnapshotsCacheKey;
 
         const messageDisplay = canReuse
           ? cached.messages
-          : this.buildDisplayedMessagesForMessage(message, agentSkillSnapshotForDisplay);
+          : this.buildDisplayedMessagesForMessage(
+              message,
+              agentSkillSnapshotForDisplay,
+              inlineSkillSnapshotState?.snapshots
+            );
 
         if (!canReuse) {
           this.displayedMessageCache.set(message.id, {
             version,
             agentSkillSnapshotCacheKey,
+            inlineSkillSnapshotsCacheKey,
             messages: messageDisplay,
           });
         }

@@ -293,6 +293,14 @@ export function prepareUserMessageForSend(
   return { finalText, metadata };
 }
 
+export type InlineSkillSnapshotForDisplay = {
+  skillName: string;
+  scope: AgentSkillScope;
+  snapshot: { frontmatterYaml?: string; body?: string };
+};
+
+export type InlineSkillSnapshotMap = Record<string, InlineSkillSnapshotForDisplay>;
+
 export interface AgentSkillReference {
   skillName: string;
   scope: AgentSkillScope;
@@ -669,6 +677,11 @@ export type DisplayedMessage =
           body?: string;
         };
       };
+      /**
+       * Inline skill snapshots are derived display state from prior synthetic snapshot messages.
+       * They are not persisted on the user message itself.
+       */
+      inlineSkillSnapshots?: InlineSkillSnapshotMap;
       /** Present when this message is a /compact command */
       compactionRequest?: {
         parsed: CompactionRequestData;

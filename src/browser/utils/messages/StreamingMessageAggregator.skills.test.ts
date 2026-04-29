@@ -1,6 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import type { AgentSkillScope } from "@/common/types/agentSkill";
-import { createMuxMessage } from "@/common/types/message";
+import {
+  createMuxMessage,
+  type AgentSkillReference,
+  type DisplayedUserMessage,
+} from "@/common/types/message";
 import { StreamingMessageAggregator } from "./StreamingMessageAggregator";
 
 const TEST_CREATED_AT = "2024-01-01T00:00:00.000Z";
@@ -166,6 +170,40 @@ const createSkillInvocationMessage = ({
       scope,
     },
   });
+};
+
+const createInlineSkillMessage = ({
+  id = "inline-1",
+  content = "Use inline skills",
+  historySequence,
+  refs,
+}: {
+  id?: string;
+  content?: string;
+  historySequence: number;
+  refs: AgentSkillReference[];
+}) =>
+  createMuxMessage(id, "user", content, {
+    historySequence,
+    timestamp: 0,
+    muxMetadata: {
+      type: "normal",
+      agentSkillRefs: refs,
+    },
+  });
+
+const getSingleDisplayedUserMessage = (
+  aggregator: StreamingMessageAggregator
+): DisplayedUserMessage => {
+  const displayed = aggregator.getDisplayedMessages();
+  expect(displayed).toHaveLength(1);
+
+  const message = displayed[0];
+  if (message?.type !== "user") {
+    throw new Error("Expected displayed user message");
+  }
+
+  return message;
 };
 
 describe("Loaded skills tracking", () => {
@@ -531,6 +569,156 @@ describe("Agent skill snapshot association", () => {
     expect(secondMessage.agentSkill?.snapshot).toEqual({
       frontmatterYaml: secondFrontmatter,
       body: "# Second",
+    });
+  });
+
+  it("attaches prior snapshots for multiple inline skill refs", () => {
+    const aggregator = createAggregator();
+    const deepReviewSnapshot = createSkillSnapshotMessage({
+      id: "snapshot-deep-review",
+      skillName: "deep-review",
+      scope: "global",
+      historySequence: 1,
+      body: "# Deep review",
+      frontmatterYaml: "name: deep-review\ndescription: Review deeply",
+    });
+    const tddSnapshot = createSkillSnapshotMessage({
+      id: "snapshot-tdd",
+      skillName: "tdd",
+      scope: "project",
+      historySequence: 2,
+      body: "# TDD",
+      frontmatterYaml: "name: tdd\ndescription: Test-first changes",
+    });
+    const invocation = createInlineSkillMessage({
+      historySequence: 3,
+      content: "Use $deep-review and $tdd",
+      refs: [
+        { skillName: "deep-review", scope: "global", source: "inline" },
+        { skillName: "tdd", scope: "project", source: "inline" },
+      ],
+    });
+
+    aggregator.loadHistoricalMessages([deepReviewSnapshot, tddSnapshot, invocation]);
+
+    const message = getSingleDisplayedUserMessage(aggregator);
+    expect(Object.keys(message.inlineSkillSnapshots ?? {}).sort()).toEqual(["deep-review", "tdd"]);
+    expect(message.inlineSkillSnapshots?.["deep-review"]).toEqual({
+      skillName: "deep-review",
+      scope: "global",
+      snapshot: {
+        frontmatterYaml: "name: deep-review\ndescription: Review deeply",
+        body: "# Deep review",
+      },
+    });
+    expect(message.inlineSkillSnapshots?.tdd).toEqual({
+      skillName: "tdd",
+      scope: "project",
+      snapshot: {
+        frontmatterYaml: "name: tdd\ndescription: Test-first changes",
+        body: "# TDD",
+      },
+    });
+  });
+
+  it("collapses repeated inline refs for the same skill", () => {
+    const aggregator = createAggregator();
+    const snapshot = createSkillSnapshotMessage({
+      id: "snapshot-tdd",
+      skillName: "tdd",
+      scope: "project",
+      historySequence: 1,
+      body: "# TDD",
+    });
+    const invocation = createInlineSkillMessage({
+      historySequence: 2,
+      content: "Use $tdd and $tdd again",
+      refs: [
+        { skillName: "tdd", scope: "project", source: "inline" },
+        { skillName: "tdd", scope: "project", source: "inline" },
+      ],
+    });
+
+    aggregator.loadHistoricalMessages([snapshot, invocation]);
+
+    const message = getSingleDisplayedUserMessage(aggregator);
+    expect(Object.keys(message.inlineSkillSnapshots ?? {})).toEqual(["tdd"]);
+    expect(message.inlineSkillSnapshots?.tdd).toEqual({
+      skillName: "tdd",
+      scope: "project",
+      snapshot: { frontmatterYaml: undefined, body: "# TDD" },
+    });
+  });
+
+  it("omits inline refs that do not have an available snapshot", () => {
+    const aggregator = createAggregator();
+    const invocation = createInlineSkillMessage({
+      historySequence: 1,
+      content: "Use $missing-skill",
+      refs: [{ skillName: "missing-skill", scope: "project", source: "inline" }],
+    });
+
+    aggregator.loadHistoricalMessages([invocation]);
+
+    const message = getSingleDisplayedUserMessage(aggregator);
+    expect(message.inlineSkillSnapshots).toBeUndefined();
+  });
+
+  it("keeps slash and inline skill snapshots in separate display fields", () => {
+    const aggregator = createAggregator();
+    const slashSnapshot = createSkillSnapshotMessage({
+      id: "snapshot-pull-requests",
+      skillName: "pull-requests",
+      scope: "project",
+      historySequence: 1,
+      body: "# PR workflow",
+      frontmatterYaml: "name: pull-requests\ndescription: PR workflow",
+    });
+    const inlineSnapshot = createSkillSnapshotMessage({
+      id: "snapshot-tdd",
+      skillName: "tdd",
+      scope: "global",
+      historySequence: 2,
+      body: "# TDD global",
+      frontmatterYaml: "name: tdd\ndescription: Test-first changes",
+    });
+    const command = "/pull-requests use $tdd";
+    const invocation = createMuxMessage("mixed-invoke", "user", command, {
+      historySequence: 3,
+      timestamp: 0,
+      muxMetadata: {
+        type: "agent-skill",
+        rawCommand: command,
+        commandPrefix: "/pull-requests",
+        skillName: "pull-requests",
+        scope: "project",
+        agentSkillRefs: [
+          { skillName: "pull-requests", scope: "project", source: "slash" },
+          { skillName: "tdd", scope: "global", source: "inline" },
+        ],
+      },
+    });
+
+    aggregator.loadHistoricalMessages([slashSnapshot, inlineSnapshot, invocation]);
+
+    const message = getSingleDisplayedUserMessage(aggregator);
+    expect(message.agentSkill).toEqual({
+      skillName: "pull-requests",
+      scope: "project",
+      snapshot: {
+        frontmatterYaml: "name: pull-requests\ndescription: PR workflow",
+        body: "# PR workflow",
+      },
+    });
+    expect(message.inlineSkillSnapshots).toEqual({
+      tdd: {
+        skillName: "tdd",
+        scope: "global",
+        snapshot: {
+          frontmatterYaml: "name: tdd\ndescription: Test-first changes",
+          body: "# TDD global",
+        },
+      },
     });
   });
 });
