@@ -43,12 +43,19 @@ async function restoreTypewriterMarkdownModuleMocks() {
 }
 
 describe("TypewriterMarkdown", () => {
+  let originalWindow: typeof globalThis.window;
+  let originalDocument: typeof globalThis.document;
+
   afterAll(async () => {
     await restoreTypewriterMarkdownModuleMocks();
   });
 
   beforeEach(async () => {
-    globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
+    originalWindow = globalThis.window;
+    originalDocument = globalThis.document;
+
+    globalThis.window = new GlobalWindow({ url: "http://localhost" }) as unknown as Window &
+      typeof globalThis;
     globalThis.document = globalThis.window.document;
     await installTypewriterMarkdownModuleMocks();
     mockUseSmoothStreamingText.mockClear();
@@ -58,8 +65,8 @@ describe("TypewriterMarkdown", () => {
     cleanup();
     await restoreTypewriterMarkdownModuleMocks();
     mock.restore();
-    globalThis.window = undefined as unknown as Window & typeof globalThis;
-    globalThis.document = undefined as unknown as Document;
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
   });
 
   test("passes smoothed visible text to MarkdownCore when streaming", () => {

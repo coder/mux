@@ -30,7 +30,6 @@ import * as TooltipModule from "../Tooltip/Tooltip";
 import * as SidebarCollapseButtonModule from "../SidebarCollapseButton/SidebarCollapseButton";
 import * as ConfirmationModalModule from "../ConfirmationModal/ConfirmationModal";
 import * as ProjectDeleteConfirmationModalModule from "../ProjectDeleteConfirmationModal/ProjectDeleteConfirmationModal";
-import * as WorkspaceStatusIndicatorModule from "../WorkspaceStatusIndicator/WorkspaceStatusIndicator";
 import * as PopoverErrorModule from "../PopoverError/PopoverError";
 import * as SectionHeaderModule from "../SectionHeader/SectionHeader";
 import * as WorkspaceSectionDropZoneModule from "../WorkspaceSectionDropZone/WorkspaceSectionDropZone";
@@ -480,9 +479,9 @@ function installProjectSidebarTestDoubles() {
         <div data-testid="project-delete-confirmation-modal">{props.projectName}</div>
       ) : null) as unknown as typeof ProjectDeleteConfirmationModalModule.ProjectDeleteConfirmationModal
   );
-  spyOn(WorkspaceStatusIndicatorModule, "WorkspaceStatusIndicator").mockImplementation((() => (
-    <div data-testid="workspace-status-indicator" />
-  )) as unknown as typeof WorkspaceStatusIndicatorModule.WorkspaceStatusIndicator);
+  void mock.module("../WorkspaceStatusIndicator/WorkspaceStatusIndicator", () => ({
+    WorkspaceStatusIndicator: () => <div data-testid="workspace-status-indicator" />,
+  }));
   spyOn(PopoverErrorModule, "PopoverError").mockImplementation(
     (() => null) as unknown as typeof PopoverErrorModule.PopoverError
   );
