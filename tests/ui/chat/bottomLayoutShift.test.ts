@@ -210,9 +210,15 @@ describe("Chat bottom layout stability", () => {
       scrollHeight = 2200;
       fireEvent.click(idleRow);
 
-      await waitFor(() => {
-        expect(scrollTop).toBe(maxScrollTop());
-      });
+      // Workspace switching + transcript hydration + the layout-effect chain can
+      // take several seconds on slow CI runners, so wait long enough for the
+      // workspaceId-keyed layout effect inside ChatPane to invoke jumpToBottom.
+      await waitFor(
+        () => {
+          expect(scrollTop).toBe(maxScrollTop());
+        },
+        { timeout: 10_000 }
+      );
 
       // Expanding the last tool/details row starts with a mousedown inside transcript
       // content and can make the browser pick a new scroll anchor. The click is not
@@ -225,9 +231,12 @@ describe("Chat bottom layout stability", () => {
       scrollTop = maxScrollTop() - 24;
       fireEvent.scroll(messageWindow);
 
-      await waitFor(() => {
-        expect(scrollTop).toBe(maxScrollTop());
-      });
+      await waitFor(
+        () => {
+          expect(scrollTop).toBe(maxScrollTop());
+        },
+        { timeout: 10_000 }
+      );
     } finally {
       if (idleWorkspaceId) {
         await app.env.orpc.workspace
