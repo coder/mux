@@ -111,10 +111,18 @@ describe("useAutoScroll", () => {
     scheduledFrames = [];
     globalThis.window = originalWindow;
     globalThis.document = originalDocument;
-    if (originalRequestAnimationFrame) {
+    // Always restore the rAF/cancel pair, including the case where the original
+    // was `undefined` (bun test environments don't always provide these globals
+    // before our mock runs). Skipping restoration leaks the deterministic mock
+    // into unrelated test files that expect real animation-frame timing.
+    if (originalRequestAnimationFrame === undefined) {
+      delete (globalThis as Partial<typeof globalThis>).requestAnimationFrame;
+    } else {
       globalThis.requestAnimationFrame = originalRequestAnimationFrame;
     }
-    if (originalCancelAnimationFrame) {
+    if (originalCancelAnimationFrame === undefined) {
+      delete (globalThis as Partial<typeof globalThis>).cancelAnimationFrame;
+    } else {
       globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
     }
   });
