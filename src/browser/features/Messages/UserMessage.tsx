@@ -156,6 +156,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
           content={content}
           commandPrefix={message.commandPrefix}
           agentSkillSnapshot={message.agentSkill?.snapshot}
+          inlineSkillSnapshots={message.inlineSkillSnapshots}
           reviews={message.reviews}
           fileParts={message.fileParts}
           variant="sent"

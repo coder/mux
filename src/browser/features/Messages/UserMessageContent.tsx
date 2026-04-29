@@ -1,8 +1,7 @@
 import React from "react";
 import { FileText } from "lucide-react";
-import type { ReviewNoteDataForDisplay } from "@/common/types/message";
+import type { InlineSkillSnapshotMap, ReviewNoteDataForDisplay } from "@/common/types/message";
 import type { FilePart } from "@/common/orpc/schemas";
-import { cn } from "@/common/lib/utils";
 import { ReviewBlockFromData } from "../Shared/ReviewBlock";
 import {
   HoverCard,
@@ -12,6 +11,8 @@ import {
 } from "@/browser/components/HoverCard/HoverCard";
 import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 import { MarkdownRenderer } from "./MarkdownRenderer";
+import { AgentSkillBadge } from "./AgentSkillBadge";
+import { buildAgentSkillSnapshotMarkdown } from "./agentSkillSnapshotMarkdown";
 
 interface UserMessageContentProps {
   content: string;
@@ -21,6 +22,7 @@ interface UserMessageContentProps {
    * When present, the command prefix badge shows a hover preview.
    */
   agentSkillSnapshot?: { frontmatterYaml?: string; body?: string };
+  inlineSkillSnapshots?: InlineSkillSnapshotMap;
   reviews?: ReviewNoteDataForDisplay[];
   fileParts?: FilePart[];
   /** Controls styling: "sent" for full styling, "queued" for muted preview */
@@ -50,26 +52,6 @@ const imageContainerStyles = {
 } as const;
 
 const markdownClassName = "user-message-markdown";
-
-function buildAgentSkillSnapshotMarkdown(
-  snapshot: UserMessageContentProps["agentSkillSnapshot"]
-): string | null {
-  if (!snapshot) return null;
-
-  const frontmatterYaml =
-    typeof snapshot.frontmatterYaml === "string" && snapshot.frontmatterYaml.trim().length > 0
-      ? snapshot.frontmatterYaml.trimEnd()
-      : undefined;
-  const body = typeof snapshot.body === "string" ? snapshot.body : undefined;
-
-  if (!frontmatterYaml && !body) {
-    return null;
-  }
-
-  const yamlBlock = frontmatterYaml ? `\`\`\`yaml\n---\n${frontmatterYaml}\n---\n\`\`\`\n\n` : "";
-
-  return `${yamlBlock}${body ?? ""}`;
-}
 
 function dataUrlToBlob(dataUrl: string): Blob | null {
   if (!dataUrl.startsWith("data:")) return null;
@@ -109,24 +91,6 @@ const imageStyles = {
   queued: "border-border-light max-h-[300px] max-w-80 rounded border",
 } as const;
 
-/** Styled command prefix (e.g., "/compact" or "/skill-name") */
-const CommandPrefixBadge = React.forwardRef<
-  HTMLSpanElement,
-  React.HTMLAttributes<HTMLSpanElement> & { prefix: string }
->(({ prefix, className, ...rest }, ref) => (
-  <span
-    ref={ref}
-    className={cn(
-      "font-mono text-[13px] font-medium text-[var(--color-plan-mode-light)]",
-      className
-    )}
-    {...rest}
-  >
-    {prefix}
-  </span>
-));
-CommandPrefixBadge.displayName = "CommandPrefixBadge";
-
 /**
  * Shared content renderer for user messages (sent and queued).
  * Handles reviews, text content, and attachments.
@@ -164,6 +128,7 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = (props) => 
           content={textContent}
           className={markdownClassName}
           style={markdownStyles[props.variant]}
+          inlineSkillSnapshots={props.inlineSkillSnapshots}
           preserveLineBreaks
         />
       );
@@ -179,7 +144,7 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = (props) => 
     const badge = snapshotMarkdown ? (
       <HoverCard openDelay={150}>
         <HoverCardTrigger asChild>
-          <CommandPrefixBadge prefix={shouldHighlightPrefix} className="cursor-help" />
+          <AgentSkillBadge className="cursor-help">{shouldHighlightPrefix}</AgentSkillBadge>
         </HoverCardTrigger>
         {/* Keep skill preview above chat chrome and fully opaque while hovering. */}
         <HoverCardPortal>
@@ -193,7 +158,7 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = (props) => 
         </HoverCardPortal>
       </HoverCard>
     ) : (
-      <CommandPrefixBadge prefix={shouldHighlightPrefix} />
+      <AgentSkillBadge>{shouldHighlightPrefix}</AgentSkillBadge>
     );
 
     // Newline after prefix: block layout (badge on own line)
@@ -207,6 +172,7 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = (props) => 
             content={remainingContent.trim()}
             className={markdownClassName}
             style={markdownStyles[props.variant]}
+            inlineSkillSnapshots={props.inlineSkillSnapshots}
             preserveLineBreaks
           />
         )}

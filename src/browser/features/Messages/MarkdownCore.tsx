@@ -11,6 +11,7 @@ import { harden } from "rehype-harden";
 import "katex/dist/katex.min.css";
 import { normalizeMarkdown } from "./MarkdownStyles";
 import { markdownComponents } from "./MarkdownComponents";
+import { INTERNAL_INLINE_SKILL_HREF_PREFIX, remarkInlineSkillLinks } from "./inlineSkillMarkdown";
 
 interface MarkdownCoreProps {
   content: string;
@@ -37,6 +38,7 @@ interface MarkdownCoreProps {
 const REMARK_PLUGINS: Pluggable[] = [
   [remarkGfm, {}],
   [remarkMath, { singleDollarTextMath: false }],
+  remarkInlineSkillLinks,
 ];
 
 // Same as above, but with remarkBreaks to preserve single newlines as <br>.
@@ -45,7 +47,10 @@ const REMARK_PLUGINS_WITH_BREAKS: Pluggable[] = [
   [remarkGfm, {}],
   remarkBreaks,
   [remarkMath, { singleDollarTextMath: false }],
+  remarkInlineSkillLinks,
 ];
+
+const INTERNAL_INLINE_SKILL_SANITIZE_PROTOCOL = INTERNAL_INLINE_SKILL_HREF_PREFIX.slice(0, -1);
 
 // Schema for rehype-sanitize that allows safe HTML elements.
 // Extends the default schema to support KaTeX math and collapsible sections.
@@ -81,6 +86,10 @@ const sanitizeSchema = {
     "details",
     "summary",
   ],
+  protocols: {
+    ...defaultSchema.protocols,
+    href: [...(defaultSchema.protocols?.href ?? []), INTERNAL_INLINE_SKILL_SANITIZE_PROTOCOL],
+  },
   attributes: {
     ...defaultSchema.attributes,
     // KaTeX uses style for coloring and positioning
@@ -104,6 +113,7 @@ const REHYPE_PLUGINS: Pluggable[] = [
       // links). Data images are allowed explicitly below.
       allowedImagePrefixes: ["*", "/"],
       allowedLinkPrefixes: ["*"],
+      allowedProtocols: [INTERNAL_INLINE_SKILL_HREF_PREFIX],
       // rehype-harden requires a defaultOrigin when any allowlist is provided.
       // We use a stable placeholder origin so relative URLs can be resolved.
       defaultOrigin: "https://mux.invalid",

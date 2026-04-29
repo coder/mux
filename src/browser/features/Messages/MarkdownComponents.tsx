@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import React, { useState, useEffect } from "react";
+import React, { useContext, useEffect, useState } from "react";
 import { Play } from "lucide-react";
 import { Mermaid } from "./Mermaid";
 import { useOptionalMessageListContext } from "./MessageListContext";
@@ -9,6 +9,8 @@ import { useTheme } from "@/browser/contexts/ThemeContext";
 import { CopyButton } from "@/browser/components/CopyButton/CopyButton";
 import { resolveBrowserLocalhostProxyTemplate } from "@/browser/utils/browserLocalhostProxyTemplate";
 import { normalizeLocalhostProxyUrl } from "@/common/utils/localhostProxyUrl";
+import { InlineSkillPreviewContext } from "./InlineSkillPreviewContext";
+import { INTERNAL_INLINE_SKILL_HREF_PREFIX } from "./inlineSkillMarkdown";
 
 interface CodeProps {
   node?: unknown;
@@ -224,33 +226,80 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ code, language, highlightLanguage
   );
 };
 
+function getTextFromReactNode(node: ReactNode): string {
+  let text = "";
+
+  React.Children.forEach(node, (child) => {
+    if (typeof child === "string" || typeof child === "number") {
+      text += String(child);
+      return;
+    }
+
+    if (React.isValidElement<{ children?: ReactNode }>(child)) {
+      text += getTextFromReactNode(child.props.children);
+    }
+  });
+
+  return text;
+}
+
+function decodeInlineSkillHref(href: string): string | null {
+  const encodedSkillName = href.slice(INTERNAL_INLINE_SKILL_HREF_PREFIX.length);
+  if (encodedSkillName.length === 0) {
+    return null;
+  }
+
+  try {
+    return decodeURIComponent(encodedSkillName);
+  } catch {
+    return null;
+  }
+}
+
+function InlineSkillAnchor(props: { href: string; children?: ReactNode }): ReactNode {
+  const inlineSkillPreview = useContext(InlineSkillPreviewContext);
+  const label = getTextFromReactNode(props.children);
+  const skillName = decodeInlineSkillHref(props.href);
+  if (!skillName) {
+    return label;
+  }
+
+  return inlineSkillPreview.renderInlineSkillPreview(skillName, label);
+}
+
+function MarkdownAnchor(props: AnchorProps): ReactNode {
+  if (typeof props.href === "string" && props.href.startsWith(INTERNAL_INLINE_SKILL_HREF_PREFIX)) {
+    return <InlineSkillAnchor href={props.href}>{props.children}</InlineSkillAnchor>;
+  }
+
+  const normalizedHref =
+    typeof props.href === "string" && typeof window !== "undefined"
+      ? normalizeLocalhostProxyUrl({
+          url: props.href,
+          localhostProxyTemplate: resolveBrowserLocalhostProxyTemplate({
+            injectedTemplate: window.__MUX_PROXY_URI_TEMPLATE__ ?? null,
+            browserProtocol: window.location.protocol,
+            browserHostname: window.location.hostname,
+            browserPort: window.location.port,
+          }),
+          browserHost: window.location.host,
+        })
+      : props.href;
+
+  return (
+    <a href={normalizedHref} target="_blank" rel="noopener noreferrer">
+      {props.children}
+    </a>
+  );
+}
+
 // Custom components for markdown rendering
 export const markdownComponents = {
   // Pass through pre element - let code component handle the wrapping
   pre: ({ children }: PreProps) => <>{children}</>,
 
   // Custom anchor to open links externally
-  a: ({ href, children }: AnchorProps) => {
-    const normalizedHref =
-      typeof href === "string" && typeof window !== "undefined"
-        ? normalizeLocalhostProxyUrl({
-            url: href,
-            localhostProxyTemplate: resolveBrowserLocalhostProxyTemplate({
-              injectedTemplate: window.__MUX_PROXY_URI_TEMPLATE__ ?? null,
-              browserProtocol: window.location.protocol,
-              browserHostname: window.location.hostname,
-              browserPort: window.location.port,
-            }),
-            browserHost: window.location.host,
-          })
-        : href;
-
-    return (
-      <a href={normalizedHref} target="_blank" rel="noopener noreferrer">
-        {children}
-      </a>
-    );
-  },
+  a: MarkdownAnchor,
 
   // Custom details/summary for collapsible sections
   details: ({ children, open }: DetailsProps) => (
