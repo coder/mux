@@ -1193,6 +1193,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     preparedPayloadMessageIds: string[][];
     preparedToolNamesForSentinel: string[][];
     streamSystemContextMuxScopes: MuxToolScope[];
+    streamSystemContextAdvisorFlags: Array<boolean | undefined>;
     startStreamCalls: unknown[][];
     getToolsForModelSpy: ReturnType<typeof spyOn<typeof toolsModule, "getToolsForModel">>;
   }
@@ -1276,6 +1277,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     const preparedPayloadMessageIds: string[][] = [];
     const preparedToolNamesForSentinel: string[][] = [];
     const streamSystemContextMuxScopes: MuxToolScope[] = [];
+    const streamSystemContextAdvisorFlags: Array<boolean | undefined> = [];
     const startStreamCalls: unknown[][] = [];
 
     const resolvedAgentResult: Awaited<ReturnType<typeof agentResolution.resolveAgentForStream>> = {
@@ -1321,6 +1323,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
         throw new Error("Expected muxScope in stream system context build args");
       }
       streamSystemContextMuxScopes.push(args.muxScope);
+      streamSystemContextAdvisorFlags.push(args.advisorToolAvailable);
       return Promise.resolve({
         agentSystemPrompt: "test-agent-prompt",
         systemMessage: "test-system-message",
@@ -1427,6 +1430,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
       preparedPayloadMessageIds,
       preparedToolNamesForSentinel,
       streamSystemContextMuxScopes,
+      streamSystemContextAdvisorFlags,
       startStreamCalls,
       getToolsForModelSpy,
     };
@@ -1434,6 +1438,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
 
   const START_STREAM_ON_CHUNK_INDEX = 22;
   const START_STREAM_ON_STEP_MESSAGES_INDEX = 23;
+  const START_STREAM_RUNTIME_TEMP_DIR_INDEX = 24;
 
   interface AdvisorRuntimeForTests {
     createModel: (modelString: string) => Promise<LanguageModel>;
@@ -1608,6 +1613,66 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
         runtimeType: "local",
       },
     ]);
+  });
+
+  it("reuses the pre-policy stream system context when advisor availability is unchanged", async () => {
+    using muxHome = new DisposableTempDir("ai-service-reuse-system-context");
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "workspace-reuse-system-context";
+    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const harness = createHarness(muxHome.path, metadata);
+
+    const result = await harness.service.streamMessage({
+      messages: [createMuxMessage("latest-user", "user", "hello")],
+      workspaceId,
+      modelString: "openai:gpt-5.2",
+      thinkingLevel: "off",
+    });
+
+    expect(result.success).toBe(true);
+    expect(harness.streamSystemContextAdvisorFlags).toEqual([false]);
+    expect(harness.startStreamCalls[0]?.[START_STREAM_RUNTIME_TEMP_DIR_INDEX]).toBe(
+      path.join(metadata.projectPath, ".tmp-stream")
+    );
+  });
+
+  it("rebuilds the stream system context when policy removes advisor guidance", async () => {
+    using muxHome = new DisposableTempDir("ai-service-rebuild-system-context-advisor");
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "workspace-rebuild-system-context-advisor";
+    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- stub for advisor availability gating
+    const stubTool: Tool = {} as never;
+    const harness = createHarness(muxHome.path, metadata, {
+      allTools: { advisor: stubTool },
+      postPolicyTools: {},
+    });
+    await harness.config.editConfig((cfg) => {
+      cfg.advisorModelString = KNOWN_MODELS.SONNET.id;
+      cfg.agentAiDefaults = {
+        ...cfg.agentAiDefaults,
+        exec: {
+          ...(cfg.agentAiDefaults?.exec ?? {}),
+          advisorEnabled: true,
+        },
+      };
+      return cfg;
+    });
+
+    const result = await harness.service.streamMessage({
+      messages: [createMuxMessage("latest-user", "user", "hello")],
+      workspaceId,
+      modelString: "openai:gpt-5.2",
+      thinkingLevel: "off",
+      experiments: { advisorTool: true },
+    });
+
+    expect(result.success).toBe(true);
+    expect(harness.streamSystemContextAdvisorFlags).toEqual([true, false]);
   });
 
   it("keeps legacy system workspaces on the global mux tool scope", async () => {

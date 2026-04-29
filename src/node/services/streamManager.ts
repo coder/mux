@@ -2897,7 +2897,8 @@ export class StreamManager extends EventEmitter {
     forceToolChoice?: boolean,
     callSettingsOverrides?: ResolvedCallSettingsOverrides,
     onChunk?: StreamTextOnChunk,
-    onStepMessages?: (messages: ModelMessage[]) => void
+    onStepMessages?: (messages: ModelMessage[]) => void,
+    providedRuntimeTempDir?: string
   ): Promise<Result<StreamToken, SendMessageError>> {
     const typedWorkspaceId = workspaceId as WorkspaceId;
 
@@ -2944,9 +2945,11 @@ export class StreamManager extends EventEmitter {
           return Ok(streamToken);
         }
 
-        // Step 3: Create temp directory for this stream using runtime
-        // If token was provided, temp dir might already exist - mkdir -p handles this
-        runtimeTempDir = await this.createTempDirForStream(streamToken, runtime);
+        // Step 3: Create temp directory for this stream using runtime.
+        // AIService pre-creates this dir so tool configuration can reference the same stable path;
+        // once startStream receives it, StreamManager owns cleanup for both success and abort paths.
+        runtimeTempDir =
+          providedRuntimeTempDir ?? (await this.createTempDirForStream(streamToken, runtime));
 
         if (streamAbortController.signal.aborted) {
           return Ok(streamToken);

@@ -949,6 +949,27 @@ describe("CoderSSHRuntime.ensureReady", () => {
     expect(events[0]?.runtimeType).toBe("ssh");
   });
 
+  it("reuses recent activity across recreated runtime instances", async () => {
+    const getWorkspaceStatus = mock(() =>
+      Promise.resolve({ kind: "ok" as const, status: "running" as const })
+    );
+    const coderService = createMockCoderService({ getWorkspaceStatus });
+
+    const firstRuntime = createRuntime(
+      { existingWorkspace: true, workspaceName: "my-ws-recreated" },
+      coderService
+    );
+    const secondRuntime = createRuntime(
+      { existingWorkspace: true, workspaceName: "my-ws-recreated" },
+      coderService
+    );
+
+    expect(await firstRuntime.ensureReady()).toEqual({ ready: true });
+    expect(await secondRuntime.ensureReady()).toEqual({ ready: true });
+
+    expect(getWorkspaceStatus).toHaveBeenCalledTimes(1);
+  });
+
   it("connects via waitForStartupScripts when status is stopped (auto-starts)", async () => {
     const getWorkspaceStatus = mock(() =>
       Promise.resolve({ kind: "ok" as const, status: "stopped" as const })

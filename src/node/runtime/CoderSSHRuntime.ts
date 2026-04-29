@@ -64,6 +64,17 @@ const CODER_INACTIVITY_THRESHOLD_MS = 5 * 60 * 1000;
 const CODER_ENSURE_READY_TIMEOUT_MS = 120_000;
 const CODER_STATUS_POLL_INTERVAL_MS = 2_000;
 
+const coderLastActivityByService = new WeakMap<CoderService, Map<string, number>>();
+
+function getCoderActivityMap(coderService: CoderService): Map<string, number> {
+  let activityByWorkspace = coderLastActivityByService.get(coderService);
+  if (!activityByWorkspace) {
+    activityByWorkspace = new Map();
+    coderLastActivityByService.set(coderService, activityByWorkspace);
+  }
+  return activityByWorkspace;
+}
+
 /**
  * SSH runtime that handles Coder workspace provisioning.
  *
@@ -74,14 +85,6 @@ const CODER_STATUS_POLL_INTERVAL_MS = 2_000;
 export class CoderSSHRuntime extends SSHRuntime {
   private coderConfig: CoderWorkspaceConfig;
   private readonly coderService: CoderService;
-
-  /**
-   * Timestamp of last time we (a) successfully used the runtime or (b) decided not
-   * to block the user (unknown Coder CLI error).
-   * Used to avoid running expensive status checks on every message while still
-   * catching auto-stopped workspaces after long inactivity.
-   */
-  private lastActivityAtMs = 0;
 
   /**
    * Flags for WorkspaceService to customize create flow:
@@ -119,6 +122,14 @@ export class CoderSSHRuntime extends SSHRuntime {
     this.coderService = coderService;
   }
 
+  private markActivity(workspaceName = this.coderConfig.workspaceName): void {
+    if (!workspaceName) {
+      return;
+    }
+
+    getCoderActivityMap(this.coderService).set(workspaceName, Date.now());
+  }
+
   /** In-flight ensureReady promise to avoid duplicate start/wait sequences */
   private ensureReadyPromise: Promise<EnsureReadyResult> | null = null;
 
@@ -145,12 +156,12 @@ export class CoderSSHRuntime extends SSHRuntime {
     }
 
     const now = Date.now();
+    const activityByWorkspace = getCoderActivityMap(this.coderService);
+    const lastActivityAtMs = activityByWorkspace.get(workspaceName) ?? 0;
 
-    // Fast path: recently active, skip expensive status check
-    if (
-      this.lastActivityAtMs !== 0 &&
-      now - this.lastActivityAtMs < CODER_INACTIVITY_THRESHOLD_MS
-    ) {
+    // Fast path: recently active, skip expensive status check. This cache intentionally lives
+    // outside the runtime instance because existing-workspace stream startup recreates runtimes.
+    if (lastActivityAtMs !== 0 && now - lastActivityAtMs < CODER_INACTIVITY_THRESHOLD_MS) {
       return { ready: true };
     }
 
@@ -214,7 +225,7 @@ export class CoderSSHRuntime extends SSHRuntime {
         return repoCheck;
       }
 
-      this.lastActivityAtMs = Date.now();
+      this.markActivity(workspaceName);
       emitStatus("ready");
       return { ready: true };
     }
@@ -274,7 +285,7 @@ export class CoderSSHRuntime extends SSHRuntime {
             return repoCheck;
           }
 
-          this.lastActivityAtMs = Date.now();
+          this.markActivity(workspaceName);
           emitStatus("ready");
           return { ready: true };
         }
@@ -331,7 +342,7 @@ export class CoderSSHRuntime extends SSHRuntime {
         return repoCheck;
       }
 
-      this.lastActivityAtMs = Date.now();
+      this.markActivity(workspaceName);
       emitStatus("ready");
       return { ready: true };
     } catch (error) {
@@ -843,7 +854,5 @@ export class CoderSSHRuntime extends SSHRuntime {
       initLogger.logStderr(`Failed to prepare workspace directory: ${errorMsg}`);
       throw new Error(`Failed to prepare workspace directory: ${errorMsg}`);
     }
-
-    this.lastActivityAtMs = Date.now();
   }
 }
