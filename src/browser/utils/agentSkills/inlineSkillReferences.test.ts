@@ -88,6 +88,30 @@ describe("extractInlineSkillReferenceCandidates", () => {
     expect(extractInlineSkillReferenceCandidates("use `$tdd` here")).toEqual([]);
   });
 
+  test("skips double-backtick inline code spans", () => {
+    expect(extractInlineSkillReferenceCandidates("use ``$tdd`` here")).toEqual([]);
+  });
+
+  test("skips triple-backtick inline code spans", () => {
+    expect(extractInlineSkillReferenceCandidates("use ```$tdd``` here")).toEqual([]);
+  });
+
+  test("skips multi-backtick inline code containing shorter backtick runs", () => {
+    expect(
+      extractInlineSkillReferenceCandidates("``code with `single` backtick `$tdd` ``")
+    ).toEqual([]);
+  });
+
+  test("skips unterminated multi-backtick spans conservatively", () => {
+    expect(extractInlineSkillReferenceCandidates("``$tdd`")).toEqual([]);
+  });
+
+  test("extracts references between inline code spans", () => {
+    expect(extractInlineSkillReferenceCandidates("`a` $tdd `b`")).toEqual([
+      { skillName: "tdd", startIndex: 4, endIndex: 8 },
+    ]);
+  });
+
   test("skips fenced code blocks", () => {
     expect(extractInlineSkillReferenceCandidates("```\n$tdd\n```")).toEqual([]);
   });

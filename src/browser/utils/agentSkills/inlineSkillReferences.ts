@@ -44,15 +44,56 @@ function hasSaneLeftBoundary(text: string, dollarIndex: number): boolean {
   return !LEFT_BOUNDARY_BLOCKED_RE.test(text[dollarIndex - 1] ?? "");
 }
 
+function getBacktickRunLength(text: string, start: number): number {
+  let end = start;
+  while (end < text.length && text[end] === "`") {
+    end++;
+  }
+
+  return end - start;
+}
+
+function findLineEnd(text: string, start: number): number {
+  let end = start;
+  while (end < text.length && text[end] !== "\n" && text[end] !== "\r") {
+    end++;
+  }
+
+  return end;
+}
+
+function findInlineCodeEnd(text: string, start: number, delimiterLength: number): number | null {
+  let index = start;
+  while (index < text.length) {
+    const ch = text[index];
+    if (ch === "\n" || ch === "\r") {
+      return null;
+    }
+
+    if (ch !== "`") {
+      index++;
+      continue;
+    }
+
+    const runLength = getBacktickRunLength(text, index);
+    index += runLength;
+
+    // Markdown inline code spans close only on the first backtick run of the same length.
+    if (runLength === delimiterLength) {
+      return index;
+    }
+  }
+
+  return null;
+}
+
 function collectCodeRanges(text: string): TextRange[] {
   const ranges: TextRange[] = [];
-  let inlineCodeStart: number | null = null;
   let index = 0;
 
   while (index < text.length) {
     if (text.startsWith(FENCE_MARKER, index)) {
       const fenceStart = index;
-      inlineCodeStart = null;
       index += FENCE_MARKER.length;
 
       while (index < text.length && !text.startsWith(FENCE_MARKER, index)) {
@@ -69,18 +110,29 @@ function collectCodeRanges(text: string): TextRange[] {
 
     const ch = text[index];
     if (ch === "\n" || ch === "\r") {
-      inlineCodeStart = null;
       index++;
       continue;
     }
 
     if (ch === "`") {
-      if (inlineCodeStart === null) {
-        inlineCodeStart = index;
-      } else {
-        ranges.push({ start: inlineCodeStart, end: index + 1 });
-        inlineCodeStart = null;
+      const rangeStart = index;
+      const delimiterLength = getBacktickRunLength(text, index);
+      index += delimiterLength;
+
+      const rangeEnd = findInlineCodeEnd(text, index, delimiterLength);
+      if (rangeEnd !== null) {
+        ranges.push({ start: rangeStart, end: rangeEnd });
+        index = rangeEnd;
+        continue;
       }
+
+      if (delimiterLength > 1) {
+        const lineEnd = findLineEnd(text, index);
+        ranges.push({ start: rangeStart, end: lineEnd });
+        index = lineEnd;
+      }
+
+      continue;
     }
 
     index++;
