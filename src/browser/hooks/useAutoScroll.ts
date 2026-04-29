@@ -138,24 +138,23 @@ export function useAutoScroll() {
 
   // Frame-aligned bottom-lock enforcer.
   //
-  // The body is a no-op when `autoScroll` is off or when the scrollport is
-  // already at its maximum, so steady-state cost is one read per frame. When
-  // anything changes layout — bash/tool expansion, async syntax highlighting,
-  // mermaid render, font swap, image load, scroll-anchor rebalancing — the next
-  // animation frame corrects the position before paint. This makes the bottom
-  // lock independent of any specific layout signal source.
+  // The loop only runs while the lock is held, so manual reading sessions pay
+  // no per-frame cost. While locked, every animation frame writes
+  // `scrollTop = scrollHeight - clientHeight` (cheap no-op when already there).
+  // This makes the bottom lock independent of any single layout signal source —
+  // bash/tool expansion, async syntax highlighting, mermaid render, font swap,
+  // image load, scroll-anchor rebalancing all converge before the next paint.
   useEffect(() => {
+    if (!autoScroll) return;
     if (typeof requestAnimationFrame !== "function") return;
 
     let rafId = requestAnimationFrame(function tick() {
-      if (autoScrollRef.current) {
-        stickToBottom();
-      }
+      stickToBottom();
       rafId = requestAnimationFrame(tick);
     });
 
     return () => cancelAnimationFrame(rafId);
-  }, [stickToBottom]);
+  }, [autoScroll, stickToBottom]);
 
   return {
     contentRef,

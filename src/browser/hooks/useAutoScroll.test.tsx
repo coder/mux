@@ -417,6 +417,45 @@ describe("useAutoScroll", () => {
     expect(result.current.autoScroll).toBe(false);
   });
 
+  test("rAF loop only runs while bottom-lock is held", () => {
+    const { result } = renderHook(() => useAutoScroll());
+    const element = document.createElement("div");
+    const metrics = attachScrollMetrics(element, {
+      scrollHeight: 1000,
+      clientHeight: 400,
+    });
+
+    act(() => {
+      (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current = element;
+    });
+
+    // Initial render: autoScroll = true, the loop is scheduling.
+    expect(scheduledFrames.length).toBeGreaterThan(0);
+
+    // User scrolls up — disable lock. The loop must stop entirely so manual
+    // reading sessions don't pay a per-frame cost.
+    act(() => {
+      result.current.disableAutoScroll();
+    });
+    while (scheduledFrames.length > 0) {
+      flushOneFrame();
+    }
+    expect(scheduledFrames.length).toBe(0);
+
+    metrics.setScrollHeight(1500);
+    metrics.setScrollTop(0);
+    act(() => {
+      flushFrames(3);
+    });
+    expect(metrics.scrollTop).toBe(0);
+
+    // Reacquiring the lock (e.g., jumpToBottom) restarts the loop.
+    act(() => {
+      result.current.jumpToBottom();
+    });
+    expect(scheduledFrames.length).toBeGreaterThan(0);
+  });
+
   test("rAF loop is torn down on unmount and stops scheduling new frames", () => {
     const { result, unmount } = renderHook(() => useAutoScroll());
     const element = document.createElement("div");
