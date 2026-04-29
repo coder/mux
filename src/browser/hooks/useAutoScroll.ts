@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 const BOTTOM_LOCK_EPSILON_PX = 1;
 const USER_BOTTOM_RELOCK_THRESHOLD_PX = 8;
 const USER_SCROLL_INTENT_WINDOW_MS = 750;
+const BOTTOM_LOCK_SETTLE_FRAME_LIMIT = 60;
 const TRANSCRIPT_SCROLL_KEYS = new Set([
   "ArrowDown",
   "ArrowUp",
@@ -29,15 +30,13 @@ function isWithinBottomThreshold(element: HTMLElement, thresholdPx: number): boo
 
 /**
  * Bottom-lock invariant: while `autoScroll` is true the transcript `scrollTop`
- * equals `scrollHeight - clientHeight`. The invariant is enforced on every
- * animation frame instead of relying on `ResizeObserver` delivery: real browsers
- * have several layout sources (sub-pixel CSS transitions, async font/image
- * settling, scroll-anchor races inside expanding tool panes) that don't always
- * fire RO in time for the upcoming paint, leaving the transcript a few pixels
- * above the true bottom. `requestAnimationFrame` runs once per rendering cycle
- * before paint, so any layout that could affect the next frame is corrected
- * before the user sees it. User input releases the lock; an explicit action
- * (open chat, send, jump-to-bottom) or geometric return-to-bottom reacquires it.
+ * equals `scrollHeight - clientHeight`. Layout signals such as ResizeObserver,
+ * open-chat, send, and geometric relock arm a short requestAnimationFrame settle
+ * window instead of polling forever. The rAF tick lands just before paint, so
+ * sub-pixel CSS transitions, async font/image settling, and scroll-anchor races
+ * inside expanding tool panes converge without adding continuous idle work.
+ * User input releases the lock; an explicit action (open chat, send,
+ * jump-to-bottom) or geometric return-to-bottom reacquires it.
  */
 export function useAutoScroll() {
   const [autoScroll, setAutoScroll] = useState(true);
@@ -61,6 +60,47 @@ export function useAutoScroll() {
     }
   }, []);
 
+  const frameLoopRef = useRef<{ id: number | null; framesRemaining: number }>({
+    id: null,
+    framesRemaining: 0,
+  });
+
+  const stopBottomLockFrameLoop = useCallback(() => {
+    const frameId = frameLoopRef.current.id;
+    if (frameId !== null && typeof window !== "undefined") {
+      const cancelFrame = window.cancelAnimationFrame?.bind(window);
+      cancelFrame?.(frameId);
+    }
+    frameLoopRef.current.id = null;
+    frameLoopRef.current.framesRemaining = 0;
+  }, []);
+
+  const startBottomLockFrameLoop = useCallback(() => {
+    if (!autoScrollRef.current) return;
+    const win = typeof window !== "undefined" ? window : undefined;
+    const raf = win?.requestAnimationFrame?.bind(win);
+    if (!raf) return;
+
+    frameLoopRef.current.framesRemaining = BOTTOM_LOCK_SETTLE_FRAME_LIMIT;
+    if (frameLoopRef.current.id !== null) return;
+
+    const tick = () => {
+      frameLoopRef.current.id = null;
+      if (!autoScrollRef.current || frameLoopRef.current.framesRemaining <= 0) {
+        frameLoopRef.current.framesRemaining = 0;
+        return;
+      }
+
+      stickToBottom();
+      frameLoopRef.current.framesRemaining -= 1;
+      if (frameLoopRef.current.framesRemaining > 0) {
+        frameLoopRef.current.id = raf(tick);
+      }
+    };
+
+    frameLoopRef.current.id = raf(tick);
+  }, [stickToBottom]);
+
   const jumpToBottom = useCallback(() => {
     // Opening/sending is an explicit transfer of scroll ownership back to the
     // transcript tail. Clear stale wheel/touch/key intent before the browser emits
@@ -69,13 +109,15 @@ export function useAutoScroll() {
     programmaticDisableRef.current = false;
     setAutoScrollEnabled(true);
     stickToBottom();
-  }, [setAutoScrollEnabled, stickToBottom]);
+    startBottomLockFrameLoop();
+  }, [setAutoScrollEnabled, startBottomLockFrameLoop, stickToBottom]);
 
   const disableAutoScroll = useCallback(() => {
     userScrollIntentUntilRef.current = 0;
     programmaticDisableRef.current = true;
     setAutoScrollEnabled(false);
-  }, [setAutoScrollEnabled]);
+    stopBottomLockFrameLoop();
+  }, [setAutoScrollEnabled, stopBottomLockFrameLoop]);
 
   const markUserScrollIntent = useCallback(() => {
     programmaticDisableRef.current = false;
@@ -118,6 +160,7 @@ export function useAutoScroll() {
           !isWithinBottomThreshold(scrollContainer, BOTTOM_LOCK_EPSILON_PX)
         ) {
           stickToBottom();
+          startBottomLockFrameLoop();
           return;
         }
 
@@ -127,6 +170,7 @@ export function useAutoScroll() {
           isWithinBottomThreshold(scrollContainer, USER_BOTTOM_RELOCK_THRESHOLD_PX)
         ) {
           setAutoScrollEnabled(true);
+          startBottomLockFrameLoop();
         }
         return;
       }
@@ -134,39 +178,51 @@ export function useAutoScroll() {
       // Keep momentum/scrollbar drags in the user-owned window without direction
       // bookkeeping. The geometry alone determines whether the tail is owned.
       userScrollIntentUntilRef.current = now + USER_SCROLL_INTENT_WINDOW_MS;
-      setAutoScrollEnabled(
-        isWithinBottomThreshold(scrollContainer, USER_BOTTOM_RELOCK_THRESHOLD_PX)
+      const shouldEnableBottomLock = isWithinBottomThreshold(
+        scrollContainer,
+        USER_BOTTOM_RELOCK_THRESHOLD_PX
       );
+      setAutoScrollEnabled(shouldEnableBottomLock);
+      if (shouldEnableBottomLock) {
+        startBottomLockFrameLoop();
+      }
     },
-    [setAutoScrollEnabled, stickToBottom]
+    [setAutoScrollEnabled, startBottomLockFrameLoop, stickToBottom]
   );
 
   // Frame-aligned bottom-lock enforcer.
   //
-  // The loop only runs while the lock is held, so manual reading sessions pay
-  // no per-frame cost. While locked, every animation frame writes
-  // `scrollTop = scrollHeight - clientHeight` (cheap no-op when already there).
-  // This makes the bottom lock independent of any single layout signal source —
-  // bash/tool expansion, async syntax highlighting, mermaid render, font swap,
-  // image load, scroll-anchor rebalancing all converge before the next paint.
-  //
-  // Resolve rAF/cAF from `window` rather than bare globals so happy-dom-driven
-  // tests can install a deterministic scheduler on a per-test window without
-  // polluting `globalThis` (which would leak the mock into unrelated tests).
+  // The rAF work is bounded: open-chat/send/relock/resize signals arm a short
+  // settle window, and the loop stops once that budget is exhausted or the user
+  // releases the lock. That keeps the paint-aligned correction without continuous
+  // idle polling in long-lived chats.
+  useEffect(() => {
+    if (autoScroll) {
+      startBottomLockFrameLoop();
+      return stopBottomLockFrameLoop;
+    }
+
+    stopBottomLockFrameLoop();
+    return undefined;
+  }, [autoScroll, startBottomLockFrameLoop, stopBottomLockFrameLoop]);
+
   useEffect(() => {
     if (!autoScroll) return;
-    const win = typeof window !== "undefined" ? window : undefined;
-    const raf = win?.requestAnimationFrame?.bind(win);
-    const caf = win?.cancelAnimationFrame?.bind(win);
-    if (!raf || !caf) return;
+    const scrollContainer = contentRef.current;
+    const ResizeObserverCtor = typeof window !== "undefined" ? window.ResizeObserver : undefined;
+    if (!scrollContainer || !ResizeObserverCtor) return;
 
-    let rafId = raf(function tick() {
-      stickToBottom();
-      rafId = raf(tick);
+    const observer = new ResizeObserverCtor(() => {
+      startBottomLockFrameLoop();
     });
+    observer.observe(scrollContainer);
+    const content = scrollContainer.firstElementChild;
+    if (content) {
+      observer.observe(content);
+    }
 
-    return () => caf(rafId);
-  }, [autoScroll, stickToBottom]);
+    return () => observer.disconnect();
+  }, [autoScroll, startBottomLockFrameLoop]);
 
   return {
     contentRef,

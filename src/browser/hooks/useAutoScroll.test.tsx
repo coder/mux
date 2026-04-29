@@ -507,6 +507,28 @@ describe("useAutoScroll", () => {
     expect(scheduledFrames.length).toBeGreaterThan(0);
   });
 
+  test("rAF settle loop stops after the idle frame budget", () => {
+    const { result } = renderHook(() => useAutoScroll());
+    const element = document.createElement("div");
+    attachScrollMetrics(element, {
+      scrollHeight: 1000,
+      clientHeight: 400,
+    });
+
+    act(() => {
+      (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current = element;
+    });
+
+    expect(scheduledFrames.length).toBeGreaterThan(0);
+
+    act(() => {
+      flushFrames(100);
+    });
+
+    expect(result.current.autoScroll).toBe(true);
+    expect(scheduledFrames.length).toBe(0);
+  });
+
   test("rAF loop is torn down on unmount and stops scheduling new frames", () => {
     const { result, unmount } = renderHook(() => useAutoScroll());
     const element = document.createElement("div");

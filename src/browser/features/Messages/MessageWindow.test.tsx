@@ -1,8 +1,8 @@
 import React from "react";
 import { afterEach, beforeEach, describe, expect, test, mock } from "bun:test";
 import { cleanup, render } from "@testing-library/react";
-import { GlobalWindow } from "happy-dom";
 import type { MuxMessage } from "@/common/types/message";
+import { installDom } from "../../../../tests/ui/dom";
 import { MessageWindow } from "./MessageWindow";
 
 void mock.module("@/browser/contexts/ChatHostContext", () => ({
@@ -37,15 +37,16 @@ function createAssistantMessage(overrides: {
 }
 
 describe("MessageWindow meta-row stability", () => {
+  let cleanupDom: (() => void) | null = null;
+
   beforeEach(() => {
-    globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
-    globalThis.document = globalThis.window.document;
+    cleanupDom = installDom();
   });
 
   afterEach(() => {
     cleanup();
-    globalThis.window = undefined as unknown as Window & typeof globalThis;
-    globalThis.document = undefined as unknown as Document;
+    cleanupDom?.();
+    cleanupDom = null;
   });
 
   test("hides the meta row while an assistant part is still streaming", () => {
