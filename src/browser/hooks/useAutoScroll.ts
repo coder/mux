@@ -1,8 +1,19 @@
+import type { KeyboardEvent, MouseEvent, UIEvent } from "react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 const BOTTOM_LOCK_EPSILON_PX = 1;
 const USER_BOTTOM_RELOCK_THRESHOLD_PX = 8;
 const USER_SCROLL_INTENT_WINDOW_MS = 750;
+const TRANSCRIPT_SCROLL_KEYS = new Set([
+  "ArrowDown",
+  "ArrowUp",
+  "End",
+  "Home",
+  "PageDown",
+  "PageUp",
+  " ",
+  "Spacebar",
+]);
 
 function getMaxScrollTop(element: HTMLElement): number {
   return Math.max(0, element.scrollHeight - element.clientHeight);
@@ -65,13 +76,34 @@ export function useAutoScroll() {
     setAutoScrollEnabled(false);
   }, [setAutoScrollEnabled]);
 
-  const markUserInteraction = useCallback(() => {
+  const markUserScrollIntent = useCallback(() => {
     programmaticDisableRef.current = false;
     userScrollIntentUntilRef.current = Date.now() + USER_SCROLL_INTENT_WINDOW_MS;
   }, []);
 
+  const handleScrollContainerMouseDown = useCallback(
+    (event: MouseEvent<HTMLDivElement>) => {
+      // Expanding transcript chrome (for example the last bash tool) starts with a
+      // content mousedown and then changes layout. That click is not scroll intent:
+      // only a mousedown on the scrollport itself can represent a scrollbar drag.
+      if (event.target !== event.currentTarget) return;
+
+      markUserScrollIntent();
+    },
+    [markUserScrollIntent]
+  );
+
+  const handleScrollContainerKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLDivElement>) => {
+      if (event.target !== event.currentTarget || !TRANSCRIPT_SCROLL_KEYS.has(event.key)) return;
+
+      markUserScrollIntent();
+    },
+    [markUserScrollIntent]
+  );
+
   const handleScroll = useCallback(
-    (e: React.UIEvent<HTMLDivElement>) => {
+    (e: UIEvent<HTMLDivElement>) => {
       const scrollContainer = e.currentTarget;
       const now = Date.now();
       if (now > userScrollIntentUntilRef.current) {
@@ -149,6 +181,8 @@ export function useAutoScroll() {
     disableAutoScroll,
     jumpToBottom,
     handleScroll,
-    markUserInteraction,
+    markUserScrollIntent,
+    handleScrollContainerMouseDown,
+    handleScrollContainerKeyDown,
   };
 }

@@ -89,14 +89,6 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
   const liveOutputView = liveOutput ?? EMPTY_LIVE_OUTPUT;
   const combinedLiveOutput = liveOutputView.combined;
 
-  useLayoutEffect(() => {
-    const el = outputRef.current;
-    if (!el || !expanded) return;
-    if (outputPinnedRef.current) {
-      el.scrollTop = el.scrollHeight;
-    }
-  }, [result, combinedLiveOutput, expanded]);
-
   // Track whether user manually toggled expansion to avoid fighting with auto-expand
   const userToggledRef = useRef(false);
   // Track whether this bash was auto-expanded (so we know to auto-collapse it)
@@ -150,6 +142,14 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
 
   const showLiveOutput =
     !isBackground && (status === "executing" || (Boolean(liveOutput) && !resultHasOutput));
+
+  useLayoutEffect(() => {
+    const el = outputRef.current;
+    if (!el || !expanded || !showLiveOutput) return;
+    if (outputPinnedRef.current) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [combinedLiveOutput, expanded, showLiveOutput]);
 
   const canSendToBackground = Boolean(
     toolCallId && workspaceId && foregroundBashToolCallIds.has(toolCallId)

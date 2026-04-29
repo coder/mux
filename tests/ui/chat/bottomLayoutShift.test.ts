@@ -217,9 +217,14 @@ describe("Chat bottom layout stability", () => {
         expect(scrollTop).toBe(maxScrollTop());
       });
 
-      // Expanded tool/details panes can become the browser's preferred scroll anchor
-      // during a chat switch. Bottom-lock owns the transcript, so any non-user drift
-      // after open must be corrected instead of leaving the tail slightly hidden.
+      // Expanding the last tool/details row starts with a mousedown inside transcript
+      // content and can make the browser pick a new scroll anchor. The click is not
+      // transcript scroll intent, so the follow-up drift must still be corrected.
+      const transcriptChild = messageWindow.firstElementChild as HTMLElement | null;
+      if (!transcriptChild) {
+        throw new Error("Transcript child not rendered");
+      }
+      fireEvent.mouseDown(transcriptChild);
       scrollTop = maxScrollTop() - 24;
       fireEvent.scroll(messageWindow);
 

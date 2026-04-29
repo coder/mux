@@ -387,7 +387,9 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     disableAutoScroll,
     jumpToBottom,
     handleScroll,
-    markUserInteraction,
+    markUserScrollIntent,
+    handleScrollContainerMouseDown,
+    handleScrollContainerKeyDown,
   } = useAutoScroll();
 
   // Handler to navigate (scroll) to a specific message by historyId
@@ -834,10 +836,10 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
           <div className="mobile-header-spacer relative flex-1 overflow-hidden">
             <div
               ref={contentRef}
-              onWheel={markUserInteraction}
-              onMouseDown={markUserInteraction}
-              onTouchMove={markUserInteraction}
-              onKeyDown={markUserInteraction}
+              onWheel={markUserScrollIntent}
+              onMouseDown={handleScrollContainerMouseDown}
+              onTouchMove={markUserScrollIntent}
+              onKeyDown={handleScrollContainerKeyDown}
               onScroll={handleScroll}
               onContextMenu={transcriptContextMenu.onContextMenu}
               role="log"

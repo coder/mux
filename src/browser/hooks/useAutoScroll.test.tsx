@@ -1,12 +1,19 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { act, cleanup, renderHook } from "@testing-library/react";
-import type { MutableRefObject, UIEvent } from "react";
+import type { MouseEvent, MutableRefObject, UIEvent } from "react";
 import { GlobalWindow } from "happy-dom";
 
 import { useAutoScroll } from "./useAutoScroll";
 
 function createScrollEvent(element: HTMLDivElement): UIEvent<HTMLDivElement> {
   return { currentTarget: element } as unknown as UIEvent<HTMLDivElement>;
+}
+
+function createMouseEvent(
+  element: HTMLDivElement,
+  target: EventTarget = element
+): MouseEvent<HTMLDivElement> {
+  return { currentTarget: element, target } as unknown as MouseEvent<HTMLDivElement>;
 }
 
 function attachScrollMetrics(
@@ -157,6 +164,59 @@ describe("useAutoScroll", () => {
     expect(result.current.autoScroll).toBe(true);
   });
 
+  test("does not release bottom lock for transcript content clicks", () => {
+    const { result } = renderHook(() => useAutoScroll());
+    const scrollContainer = document.createElement("div");
+    const child = document.createElement("button");
+    scrollContainer.append(child);
+    const scrollMetrics = attachScrollMetrics(scrollContainer, {
+      initialScrollTop: 900,
+      scrollHeight: 1300,
+      clientHeight: 400,
+    });
+
+    act(() => {
+      (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current =
+        scrollContainer;
+      result.current.handleScrollContainerMouseDown(createMouseEvent(scrollContainer, child));
+    });
+
+    // Opening an expanded tool grows the transcript and the browser can emit an
+    // anchoring scroll event before ResizeObserver settles. Since the click was not
+    // scroll intent, the bottom-lock invariant must correct the drift immediately.
+    scrollMetrics.setScrollHeight(1500);
+    act(() => {
+      result.current.handleScroll(createScrollEvent(scrollContainer));
+    });
+
+    expect(scrollMetrics.scrollTop).toBe(scrollMetrics.maxScrollTop);
+    expect(result.current.autoScroll).toBe(true);
+  });
+
+  test("releases bottom lock for scrollbar drags that start on the scrollport", () => {
+    const { result } = renderHook(() => useAutoScroll());
+    const scrollContainer = document.createElement("div");
+    const scrollMetrics = attachScrollMetrics(scrollContainer, {
+      initialScrollTop: 900,
+      scrollHeight: 1300,
+      clientHeight: 400,
+    });
+
+    act(() => {
+      (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current =
+        scrollContainer;
+      result.current.handleScrollContainerMouseDown(createMouseEvent(scrollContainer));
+    });
+
+    scrollMetrics.setScrollTop(600);
+    act(() => {
+      result.current.handleScroll(createScrollEvent(scrollContainer));
+    });
+
+    expect(scrollMetrics.scrollTop).toBe(600);
+    expect(result.current.autoScroll).toBe(false);
+  });
+
   test("disables auto-scroll after a recent user-owned upward scroll", () => {
     const { result } = renderHook(() => useAutoScroll());
     const element = document.createElement("div");
@@ -174,7 +234,7 @@ describe("useAutoScroll", () => {
       scrollMetrics.setScrollTop(600);
 
       act(() => {
-        result.current.markUserInteraction();
+        result.current.markUserScrollIntent();
         now += 1;
         result.current.handleScroll(createScrollEvent(element));
       });
@@ -292,7 +352,7 @@ describe("useAutoScroll", () => {
 
       scrollMetrics.setScrollTop(600);
       act(() => {
-        result.current.markUserInteraction();
+        result.current.markUserScrollIntent();
         now += 1;
         result.current.handleScroll(createScrollEvent(scrollContainer));
       });
@@ -300,7 +360,7 @@ describe("useAutoScroll", () => {
 
       scrollMetrics.setScrollTop(scrollMetrics.maxScrollTop - 4);
       act(() => {
-        result.current.markUserInteraction();
+        result.current.markUserScrollIntent();
         now += 1;
         result.current.handleScroll(createScrollEvent(scrollContainer));
       });
@@ -337,7 +397,7 @@ describe("useAutoScroll", () => {
 
       scrollMetrics.setScrollTop(600);
       act(() => {
-        result.current.markUserInteraction();
+        result.current.markUserScrollIntent();
         now += 1;
         result.current.handleScroll(createScrollEvent(scrollContainer));
       });
@@ -421,7 +481,7 @@ describe("useAutoScroll", () => {
         (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current =
           scrollContainer;
         result.current.handleScroll(createScrollEvent(scrollContainer));
-        result.current.markUserInteraction();
+        result.current.markUserScrollIntent();
         result.current.jumpToBottom();
       });
 
