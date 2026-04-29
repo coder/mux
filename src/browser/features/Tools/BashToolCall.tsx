@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, { useLayoutEffect, useRef, useState } from "react";
 import { FileText, Info, Layers } from "lucide-react";
 import type { BashToolArgs, BashToolResult } from "@/common/types/tools";
 import { BASH_DEFAULT_TIMEOUT_SECS } from "@/common/constants/toolLimits";
@@ -16,6 +16,7 @@ import {
   ExitCodeBadge,
 } from "./Shared/ToolPrimitives";
 import { useToolExpansion, getStatusDisplay, type ToolStatus } from "./Shared/toolUtils";
+import { useBashAutoExpand } from "./Shared/useBashAutoExpand";
 import { formatDuration } from "@/common/utils/formatDuration";
 import { cn } from "@/common/lib/utils";
 import { ElapsedTimeDisplay } from "./Shared/ElapsedTimeDisplay";
@@ -89,46 +90,15 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
   const liveOutputView = liveOutput ?? EMPTY_LIVE_OUTPUT;
   const combinedLiveOutput = liveOutputView.combined;
 
-  // Track whether user manually toggled expansion to avoid fighting with auto-expand
+  // Track whether user manually toggled expansion to avoid fighting with auto-expand.
   const userToggledRef = useRef(false);
-  // Track whether this bash was auto-expanded (so we know to auto-collapse it)
-  const wasAutoExpandedRef = useRef(false);
-  // Timer for delayed auto-expand
-  const expandTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Auto-expand after a delay when this is the latest streaming bash.
-  // Delay prevents layout flash for fast-completing commands.
-  // Auto-collapse when a NEW bash starts streaming (but not on completion).
-  useEffect(() => {
-    if (userToggledRef.current) return; // Don't override user's choice
-
-    if (isLatestStreamingBash && status === "executing") {
-      // Delay expansion - if command completes quickly, we skip the expand entirely
-      expandTimerRef.current = setTimeout(() => {
-        if (!userToggledRef.current) {
-          setExpanded(true);
-          wasAutoExpandedRef.current = true;
-        }
-      }, 300);
-    } else {
-      // Clear pending expand if command finished before delay
-      if (expandTimerRef.current) {
-        clearTimeout(expandTimerRef.current);
-        expandTimerRef.current = null;
-      }
-      // Collapse if a NEW bash took over (latestStreamingBashId is not null and not us)
-      if (wasAutoExpandedRef.current && latestStreamingBashId !== null) {
-        setExpanded(false);
-        wasAutoExpandedRef.current = false;
-      }
-    }
-
-    return () => {
-      if (expandTimerRef.current) {
-        clearTimeout(expandTimerRef.current);
-      }
-    };
-  }, [isLatestStreamingBash, latestStreamingBashId, status, setExpanded]);
+  useBashAutoExpand({
+    isLatestStreamingBash,
+    latestStreamingBashId,
+    status,
+    setExpanded,
+    userToggledRef,
+  });
 
   const isPending = status === "executing" || status === "pending";
   const backgroundProcessId =
