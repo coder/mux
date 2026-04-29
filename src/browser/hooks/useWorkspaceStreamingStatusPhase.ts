@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import { WORKSPACE_STREAMING_STATUS_TRANSITION_MS } from "@/constants/streaming";
 
 export type WorkspaceStreamingStatusPhase = "starting" | "streaming";
+export type WorkspaceStreamingStatusPhaseSource = "streaming" | "pre-stream" | "provisioning";
 
 interface WorkspaceStreamingStatusPhaseOptions {
   canInterrupt: boolean;
@@ -33,37 +34,36 @@ function clearTimer(timerIdRef: MutableRefObject<number | null>): void {
  * Keep the sidebar's streaming label mounted across brief state handoffs so the row
  * does not blink out when startup and active-stream flags settle on adjacent renders.
  */
-export function useWorkspaceStreamingStatusPhase(phase: WorkspaceStreamingStatusPhase | null): {
+export function useWorkspaceStreamingStatusPhase(
+  phase: WorkspaceStreamingStatusPhase | null,
+  phaseSource: WorkspaceStreamingStatusPhaseSource | null = null
+): {
   displayPhase: WorkspaceStreamingStatusPhase | null;
-  shouldCollapsePhaseSlot: boolean;
+  displayPhaseSource: WorkspaceStreamingStatusPhaseSource | null;
 } {
   const [heldPhaseSnapshot, setHeldPhaseSnapshot] = useState<WorkspaceStreamingStatusPhase | null>(
     phase
   );
+  const [heldPhaseSourceSnapshot, setHeldPhaseSourceSnapshot] =
+    useState<WorkspaceStreamingStatusPhaseSource | null>(phaseSource);
   const heldPhaseSnapshotRef = useRef(heldPhaseSnapshot);
-  const [isCollapsingPhaseSlot, setIsCollapsingPhaseSlot] = useState(false);
-  const previousDisplayPhaseRef = useRef<WorkspaceStreamingStatusPhase | null>(phase);
+  const heldPhaseSourceSnapshotRef = useRef(heldPhaseSourceSnapshot);
   const hideTimerIdRef = useRef<number | null>(null);
-  const collapseTimerIdRef = useRef<number | null>(null);
 
   const displayPhase = phase ?? heldPhaseSnapshot;
-  const shouldCollapsePhaseSlot =
-    phase !== null &&
-    (isCollapsingPhaseSlot ||
-      (previousDisplayPhaseRef.current === "starting" && displayPhase === "streaming"));
+  const displayPhaseSource = phase !== null ? phaseSource : heldPhaseSourceSnapshot;
 
   useEffect(() => {
     heldPhaseSnapshotRef.current = heldPhaseSnapshot;
   }, [heldPhaseSnapshot]);
 
   useEffect(() => {
-    previousDisplayPhaseRef.current = displayPhase;
-  }, [displayPhase]);
+    heldPhaseSourceSnapshotRef.current = heldPhaseSourceSnapshot;
+  }, [heldPhaseSourceSnapshot]);
 
   useEffect(() => {
     return () => {
       clearTimer(hideTimerIdRef);
-      clearTimer(collapseTimerIdRef);
     };
   }, []);
 
@@ -71,9 +71,6 @@ export function useWorkspaceStreamingStatusPhase(phase: WorkspaceStreamingStatus
     clearTimer(hideTimerIdRef);
 
     if (phase === null) {
-      clearTimer(collapseTimerIdRef);
-      setIsCollapsingPhaseSlot(false);
-
       if (heldPhaseSnapshotRef.current === null) {
         return;
       }
@@ -81,7 +78,9 @@ export function useWorkspaceStreamingStatusPhase(phase: WorkspaceStreamingStatus
       hideTimerIdRef.current = window.setTimeout(() => {
         hideTimerIdRef.current = null;
         heldPhaseSnapshotRef.current = null;
+        heldPhaseSourceSnapshotRef.current = null;
         setHeldPhaseSnapshot(null);
+        setHeldPhaseSourceSnapshot(null);
       }, WORKSPACE_STREAMING_STATUS_TRANSITION_MS);
       return;
     }
@@ -90,22 +89,14 @@ export function useWorkspaceStreamingStatusPhase(phase: WorkspaceStreamingStatus
       heldPhaseSnapshotRef.current = phase;
       setHeldPhaseSnapshot(phase);
     }
-
-    clearTimer(collapseTimerIdRef);
-    const shouldCollapse = previousDisplayPhaseRef.current === "starting" && phase === "streaming";
-    setIsCollapsingPhaseSlot(shouldCollapse);
-    if (!shouldCollapse) {
-      return;
+    if (heldPhaseSourceSnapshotRef.current !== phaseSource) {
+      heldPhaseSourceSnapshotRef.current = phaseSource;
+      setHeldPhaseSourceSnapshot(phaseSource);
     }
-
-    collapseTimerIdRef.current = window.setTimeout(() => {
-      collapseTimerIdRef.current = null;
-      setIsCollapsingPhaseSlot(false);
-    }, WORKSPACE_STREAMING_STATUS_TRANSITION_MS);
-  }, [phase]);
+  }, [phase, phaseSource]);
 
   return {
     displayPhase,
-    shouldCollapsePhaseSlot,
+    displayPhaseSource,
   };
 }

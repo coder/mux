@@ -89,9 +89,49 @@ describe("WorkspaceStatusIndicator", () => {
     expect(view.container.textContent?.toLowerCase()).toContain("streaming");
   });
 
-  test("holds the starting layout through a brief idle gap before streaming lands", async () => {
+  test("keeps provisioning-only startup distinct from active streaming through teardown", () => {
+    mockSidebarState({
+      isStarting: false,
+      pendingStreamModel: "openai:gpt-4o-mini",
+    });
+
+    const workspaceId = "workspace-provisioning";
+    const fallbackModel = "anthropic:claude-sonnet-4-5";
+    const view = render(
+      <WorkspaceStatusIndicator
+        workspaceId={workspaceId}
+        fallbackModel={fallbackModel}
+        isCreating
+      />
+    );
+
+    const expectProvisioningChrome = () => {
+      const phaseSlot = view.container.querySelector("[data-phase-slot]");
+      expect(phaseSlot).toBeTruthy();
+      expect(phaseSlot?.querySelector("svg")?.getAttribute("class") ?? "").toContain(
+        "animate-spin"
+      );
+      expect(view.container.textContent?.toLowerCase()).toContain("starting");
+      expect(view.container.textContent?.toLowerCase()).not.toContain("streaming");
+    };
+
+    expectProvisioningChrome();
+
+    view.rerender(
+      <WorkspaceStatusIndicator
+        workspaceId={workspaceId}
+        fallbackModel={fallbackModel}
+        isCreating={false}
+      />
+    );
+
+    expectProvisioningChrome();
+  });
+
+  test("uses the steady streaming layout during pre-stream startup and the idle handoff gap", () => {
     const pendingModel = "openai:gpt-4o-mini";
     const fallbackModel = "anthropic:claude-sonnet-4-5";
+    const pendingDisplayName = formatModelDisplayName(getModelName(pendingModel));
     const state: WorkspaceStoreModule.WorkspaceSidebarState = {
       canInterrupt: false,
       isStarting: true,
@@ -114,11 +154,15 @@ describe("WorkspaceStatusIndicator", () => {
     );
 
     const getPhaseSlot = () => view.container.querySelector("[data-phase-slot]");
-    const getPhaseIcon = () => getPhaseSlot()?.querySelector("svg");
+    const getModelDisplay = () => view.container.querySelector("[data-model-display]");
+    const expectStreamingChrome = () => {
+      expect(getPhaseSlot()).toBeNull();
+      expect(getModelDisplay()?.textContent ?? "").toContain(pendingDisplayName);
+      expect(view.container.textContent?.toLowerCase()).toContain("streaming");
+      expect(view.container.textContent?.toLowerCase()).not.toContain("starting");
+    };
 
-    expect(getPhaseSlot()?.getAttribute("class") ?? "").toContain("w-3");
-    expect(getPhaseIcon()?.getAttribute("class") ?? "").toContain("animate-spin");
-    expect(view.container.textContent?.toLowerCase()).toContain("starting");
+    expectStreamingChrome();
 
     state.isStarting = false;
     view.rerender(
@@ -129,9 +173,7 @@ describe("WorkspaceStatusIndicator", () => {
       />
     );
 
-    expect(getPhaseSlot()?.getAttribute("class") ?? "").toContain("w-3");
-    expect(getPhaseIcon()?.getAttribute("class") ?? "").toContain("animate-spin");
-    expect(view.container.textContent?.toLowerCase()).toContain("starting");
+    expectStreamingChrome();
 
     state.canInterrupt = true;
     state.currentModel = pendingModel;
@@ -140,13 +182,10 @@ describe("WorkspaceStatusIndicator", () => {
       <WorkspaceStatusIndicator workspaceId={workspaceId} fallbackModel={fallbackModel} />
     );
 
-    await waitFor(() => {
-      expect(view.container.textContent?.toLowerCase()).toContain("streaming");
-      expect(getPhaseIcon()?.getAttribute("class") ?? "").not.toContain("animate-spin");
-    });
+    expectStreamingChrome();
   });
 
-  test("keeps the model label anchored when starting hands off to streaming", async () => {
+  test("keeps the model label anchored when pre-stream startup hands off to streaming", async () => {
     const pendingModel = "openai:gpt-4o-mini";
     const fallbackModel = "anthropic:claude-sonnet-4-5";
     const pendingDisplayName = formatModelDisplayName(getModelName(pendingModel));
@@ -172,16 +211,13 @@ describe("WorkspaceStatusIndicator", () => {
       <WorkspaceStatusIndicator workspaceId={workspaceId} fallbackModel={fallbackModel} />
     );
 
-    const getPhaseSlot = () => view.container.querySelector("[data-phase-slot]");
-    const getPhaseIcon = () => getPhaseSlot()?.querySelector("svg");
     const getModelDisplay = () => view.container.querySelector("[data-model-display]");
 
-    expect(getPhaseSlot()?.getAttribute("class") ?? "").toContain("w-3");
-    expect(getPhaseSlot()?.getAttribute("class") ?? "").toContain("mr-1.5");
-    expect(getPhaseIcon()?.getAttribute("class") ?? "").toContain("animate-spin");
+    expect(view.container.querySelector("[data-phase-slot]")).toBeNull();
     expect(getModelDisplay()?.textContent ?? "").toContain(pendingDisplayName);
     expect(getModelDisplay()?.textContent ?? "").not.toContain(fallbackDisplayName);
-    expect(view.container.textContent?.toLowerCase()).toContain("starting");
+    expect(view.container.textContent?.toLowerCase()).toContain("streaming");
+    expect(view.container.textContent?.toLowerCase()).not.toContain("starting");
 
     state.isStarting = false;
     state.canInterrupt = true;
@@ -198,8 +234,9 @@ describe("WorkspaceStatusIndicator", () => {
     await waitFor(() => {
       expect(getModelDisplay()?.textContent ?? "").toContain(pendingDisplayName);
       expect(getModelDisplay()?.textContent ?? "").not.toContain(fallbackDisplayName);
-      expect(getPhaseIcon()?.getAttribute("class") ?? "").not.toContain("animate-spin");
+      expect(view.container.querySelector("[data-phase-slot]")).toBeNull();
       expect(view.container.textContent?.toLowerCase()).toContain("streaming");
+      expect(view.container.textContent?.toLowerCase()).not.toContain("starting");
     });
   });
 });

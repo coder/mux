@@ -12,8 +12,8 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 export const WorkspaceStatusIndicator = memo<{
   workspaceId: string;
   fallbackModel: string;
-  /** When true the workspace is still being provisioned (show "starting…"). Passed as
-   *  a prop so this component doesn't need to subscribe to the full WorkspaceContext. */
+  /** When true the workspace is still being provisioned. Passed as a prop so this
+   *  component doesn't need to subscribe to the full WorkspaceContext. */
   isCreating?: boolean;
 }>(({ workspaceId, fallbackModel, isCreating }) => {
   const {
@@ -30,7 +30,14 @@ export const WorkspaceStatusIndicator = memo<{
     isStarting,
     isCreating,
   });
-  const { displayPhase, shouldCollapsePhaseSlot } = useWorkspaceStreamingStatusPhase(phase);
+  const phaseSource = canInterrupt
+    ? "streaming"
+    : isStarting
+      ? "pre-stream"
+      : isCreating === true
+        ? "provisioning"
+        : null;
+  const { displayPhase, displayPhaseSource } = useWorkspaceStreamingStatusPhase(phase, phaseSource);
 
   // Show prompt when ask_user_question is pending - make it prominent
   if (awaitingUserQuestion) {
@@ -92,58 +99,31 @@ export const WorkspaceStatusIndicator = memo<{
     displayPhase === "starting"
       ? (pendingStreamModel ?? fallbackModel)
       : (currentModel ?? pendingStreamModel ?? fallbackModel);
-  const suffix = displayPhase === "starting" ? "- starting..." : "- streaming...";
-
-  if (displayPhase === "streaming" && !shouldCollapsePhaseSlot) {
-    return (
-      <div className="text-muted flex min-w-0 items-center gap-1.5 text-xs">
-        {modelToShow ? (
-          <>
-            <span className="min-w-0 truncate">
-              <ModelDisplay modelString={modelToShow} showTooltip={false} />
-            </span>
-            <span className="shrink-0 opacity-70">{suffix}</span>
-          </>
-        ) : (
-          <span className="min-w-0 truncate">Assistant - streaming...</span>
-        )}
-      </div>
-    );
-  }
+  // displayPhaseSource is held alongside displayPhase, so the provisioning teardown hold
+  // stays labeled "starting" instead of being re-derived from live isCreating=false.
+  const isProvisioningOnlyStartup =
+    displayPhase === "starting" && displayPhaseSource === "provisioning";
+  // User-facing sidebar state should look like active streaming during pre-stream send
+  // startup, but keep workspace provisioning distinct because no assistant turn is running yet.
+  const suffix = isProvisioningOnlyStartup ? "- starting..." : "- streaming...";
 
   return (
-    <div className="text-muted flex min-w-0 items-center text-xs">
-      {/* Keep the old steady-state layout, but hold the spinner slot just long enough to
-          animate the start -> stream handoff instead of flashing the label left. */}
-      {(displayPhase === "starting" || shouldCollapsePhaseSlot) && (
-        <span
-          className={
-            displayPhase === "starting"
-              ? "mr-1.5 inline-flex w-3 shrink-0 overflow-hidden opacity-100"
-              : "mr-0 inline-flex w-0 shrink-0 overflow-hidden opacity-0 transition-[margin,width,opacity] duration-150 ease-out"
-          }
-          data-phase-slot
-        >
-          <Loader2
-            aria-hidden="true"
-            className={
-              displayPhase === "starting"
-                ? "h-3 w-3 shrink-0 animate-spin opacity-70"
-                : "h-3 w-3 shrink-0"
-            }
-          />
+    <div className="text-muted flex min-w-0 items-center gap-1.5 text-xs">
+      {isProvisioningOnlyStartup && (
+        <span className="inline-flex w-3 shrink-0 overflow-hidden opacity-100" data-phase-slot>
+          <Loader2 aria-hidden="true" className="h-3 w-3 shrink-0 animate-spin opacity-70" />
         </span>
       )}
       {modelToShow ? (
-        <div className="flex min-w-0 items-center gap-1.5">
+        <>
           <span className="min-w-0 truncate">
             <ModelDisplay modelString={modelToShow} showTooltip={false} />
           </span>
           <span className="shrink-0 opacity-70">{suffix}</span>
-        </div>
+        </>
       ) : (
         <span className="min-w-0 truncate">
-          {displayPhase === "starting" ? "Assistant - starting..." : "Assistant - streaming..."}
+          {isProvisioningOnlyStartup ? "Assistant - starting..." : "Assistant - streaming..."}
         </span>
       )}
     </div>

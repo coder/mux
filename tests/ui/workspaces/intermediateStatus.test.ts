@@ -1,8 +1,8 @@
 /**
  * UI integration test for the “working but no todo-derived status yet” intermediate state.
  *
- * Expectation: While a stream is starting and the agent has not written a todo list yet,
- * the workspace sidebar row should show provider icon + model name + starting label.
+ * Expectation: While a send is in pre-stream startup and the agent has not written a todo
+ * list yet, the workspace sidebar row should show provider icon + model name + streaming label.
  */
 
 import "../dom";
@@ -15,7 +15,9 @@ import { createAppHarness } from "../harness";
 import { workspaceStore } from "@/browser/stores/WorkspaceStore";
 
 function getWorkspaceElement(container: HTMLElement, workspaceId: string): HTMLElement {
-  const el = container.querySelector(`[data-workspace-id="${workspaceId}"]`) as HTMLElement | null;
+  const el = container.querySelector(
+    `[role="button"][data-workspace-id="${workspaceId}"]`
+  ) as HTMLElement | null;
   if (!el) {
     throw new Error(`Workspace element not found for ${workspaceId}`);
   }
@@ -27,7 +29,7 @@ describe("Workspace intermediate status (mock AI router)", () => {
     await preloadTestModules();
   });
 
-  test("shows model + starting while stream is starting and before todos appear", async () => {
+  test("shows model + streaming while send is starting and before todos appear", async () => {
     const app = await createAppHarness({ branchPrefix: "status-intermediate" });
 
     const collector = createStreamCollector(app.env.orpc, app.workspaceId);
@@ -67,7 +69,8 @@ describe("Workspace intermediate status (mock AI router)", () => {
           }
 
           const text = wsEl.textContent ?? "";
-          expect(text.toLowerCase()).toContain("starting");
+          expect(text.toLowerCase()).toContain("streaming");
+          expect(text.toLowerCase()).not.toContain("starting");
         },
         { timeout: 10_000 }
       );
