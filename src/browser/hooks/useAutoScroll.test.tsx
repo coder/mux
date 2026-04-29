@@ -254,10 +254,11 @@ describe("useAutoScroll", () => {
     }
   });
 
-  test("content-targeted mousedown does not release the lock", () => {
+  test("interactive content mousedown does not release the lock", () => {
     const { result } = renderHook(() => useAutoScroll());
     const element = document.createElement("div");
-    const child = document.createElement("button");
+    const child = document.createElement("div");
+    child.dataset.scrollIntent = "ignore";
     element.append(child);
     const metrics = attachScrollMetrics(element, {
       scrollHeight: 1000,
@@ -276,6 +277,40 @@ describe("useAutoScroll", () => {
 
     expect(metrics.scrollTop).toBe(metrics.maxScrollTop);
     expect(result.current.autoScroll).toBe(true);
+  });
+
+  test("non-interactive content mousedown preserves selection autoscroll intent", () => {
+    const { result } = renderHook(() => useAutoScroll());
+    const element = document.createElement("div");
+    const child = document.createElement("span");
+    element.append(child);
+    const metrics = attachScrollMetrics(element, {
+      scrollHeight: 1300,
+      clientHeight: 400,
+      initialScrollTop: 900,
+    });
+
+    const dateNowSpy = spyOn(Date, "now");
+    try {
+      let now = 1_000_000;
+      dateNowSpy.mockImplementation(() => now);
+
+      act(() => {
+        (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current = element;
+        result.current.handleScrollContainerMouseDown(createMouseEvent(element, child));
+      });
+
+      metrics.setScrollTop(500);
+      act(() => {
+        now += 1;
+        result.current.handleScroll(createScrollEvent(element));
+      });
+
+      expect(metrics.scrollTop).toBe(500);
+      expect(result.current.autoScroll).toBe(false);
+    } finally {
+      dateNowSpy.mockRestore();
+    }
   });
 
   test("scroll keys mark intent even when focus is on a transcript descendant", () => {

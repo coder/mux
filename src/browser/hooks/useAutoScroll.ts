@@ -16,6 +16,19 @@ const TRANSCRIPT_SCROLL_KEYS = new Set([
   "Spacebar",
 ]);
 
+const TRANSCRIPT_SCROLL_INTENT_EXEMPT_SELECTOR = [
+  "button",
+  "a",
+  "input",
+  "textarea",
+  "select",
+  "summary",
+  '[role="button"]',
+  '[role="link"]',
+  '[contenteditable="true"]',
+  '[data-scroll-intent="ignore"]',
+].join(",");
+
 function getMaxScrollTop(element: HTMLElement): number {
   return Math.max(0, element.scrollHeight - element.clientHeight);
 }
@@ -26,6 +39,16 @@ function getDistanceFromBottom(element: HTMLElement): number {
 
 function isWithinBottomThreshold(element: HTMLElement, thresholdPx: number): boolean {
   return getDistanceFromBottom(element) <= thresholdPx;
+}
+
+function isMouseDownExemptFromScrollIntent(
+  target: EventTarget | null,
+  currentTarget: HTMLElement
+): boolean {
+  if (!(target instanceof Element)) return false;
+
+  const exemptElement = target.closest(TRANSCRIPT_SCROLL_INTENT_EXEMPT_SELECTOR);
+  return exemptElement !== null && currentTarget.contains(exemptElement);
 }
 
 /**
@@ -126,10 +149,16 @@ export function useAutoScroll() {
 
   const handleScrollContainerMouseDown = useCallback(
     (event: MouseEvent<HTMLDivElement>) => {
-      // Expanding transcript chrome (for example the last bash tool) starts with a
-      // content mousedown and then changes layout. That click is not scroll intent:
-      // only a mousedown on the scrollport itself can represent a scrollbar drag.
-      if (event.target !== event.currentTarget) return;
+      // Scrollbar drags target the scrollport itself. Non-interactive transcript
+      // content can also become user scroll intent via drag-to-select autoscroll.
+      // Interactive transcript chrome (tool headers/buttons/links) is exempt so
+      // expanding the last bash/tool row keeps bottom ownership.
+      if (
+        event.target !== event.currentTarget &&
+        isMouseDownExemptFromScrollIntent(event.target, event.currentTarget)
+      ) {
+        return;
+      }
 
       markUserScrollIntent();
     },

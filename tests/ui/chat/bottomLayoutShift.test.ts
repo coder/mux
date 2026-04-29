@@ -216,24 +216,6 @@ describe("Chat bottom layout stability", () => {
         },
         { timeout: 10_000 }
       );
-
-      // Expanding the last tool/details row starts with a mousedown inside transcript
-      // content and can make the browser pick a new scroll anchor. The click is not
-      // transcript scroll intent, so the follow-up drift must still be corrected.
-      const transcriptChild = idleMessageWindow.firstElementChild as HTMLElement | null;
-      if (!transcriptChild) {
-        throw new Error("Transcript child not rendered");
-      }
-      fireEvent.mouseDown(transcriptChild);
-      idlePort.setScrollTop(idlePort.getMaxScrollTop() - 24);
-      fireEvent.scroll(idleMessageWindow);
-
-      await waitFor(
-        () => {
-          expect(idlePort.getScrollTop()).toBe(idlePort.getMaxScrollTop());
-        },
-        { timeout: 10_000 }
-      );
     } finally {
       if (idleWorkspaceId) {
         await app.env.orpc.workspace

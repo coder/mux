@@ -63,6 +63,7 @@ export const ToolHeader: React.FC<React.HTMLAttributes<HTMLDivElement>> = ({
   ...props
 }) => (
   <ToolChrome
+    data-scroll-intent="ignore"
     className={cn(
       "flex items-center gap-2 cursor-pointer select-none text-secondary hover:text-foreground",
       className
