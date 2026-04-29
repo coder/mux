@@ -143,105 +143,103 @@ describe("findInlineSkillReferenceAtCursor", () => {
 
 describe("resolveInlineSkillReferences", () => {
   test("returns an empty list for empty candidates", async () => {
-    await expect(
-      resolveInlineSkillReferences({
+    expect(
+      await resolveInlineSkillReferences({
         candidates: [],
         agentSkillDescriptors: [descriptor("tdd")],
         api: null,
         discovery: null,
       })
-    ).resolves.toEqual([]);
+    ).toEqual([]);
   });
 
   test("resolves known local descriptors", async () => {
-    await expect(
-      resolveInlineSkillReferences({
+    expect(
+      await resolveInlineSkillReferences({
         candidates: [candidate("tdd")],
         agentSkillDescriptors: [descriptor("tdd", "project")],
         api: null,
         discovery: null,
       })
-    ).resolves.toEqual([{ skillName: "tdd", scope: "project", source: "inline" }]);
+    ).toEqual([{ skillName: "tdd", scope: "project", source: "inline" }]);
   });
 
   test("collapses duplicate candidates", async () => {
-    await expect(
-      resolveInlineSkillReferences({
+    expect(
+      await resolveInlineSkillReferences({
         candidates: [candidate("tdd"), candidate("tdd", 5)],
         agentSkillDescriptors: [descriptor("tdd")],
         api: null,
         discovery: null,
       })
-    ).resolves.toEqual([{ skillName: "tdd", scope: "global", source: "inline" }]);
+    ).toEqual([{ skillName: "tdd", scope: "global", source: "inline" }]);
   });
 
   test("silently drops unknown skills without an api", async () => {
-    await expect(
-      resolveInlineSkillReferences({
+    expect(
+      await resolveInlineSkillReferences({
         candidates: [candidate("unknown")],
         agentSkillDescriptors: [],
         api: null,
         discovery: null,
       })
-    ).resolves.toEqual([]);
+    ).toEqual([]);
   });
 
   test("silently drops skills when the api throws", async () => {
-    const api = apiClient(async () => {
-      throw new Error("not found");
-    });
+    const api = apiClient(() => Promise.reject(new Error("not found")));
 
-    await expect(
-      resolveInlineSkillReferences({
+    expect(
+      await resolveInlineSkillReferences({
         candidates: [candidate("unknown")],
         agentSkillDescriptors: [],
         api,
         discovery: { kind: "project", projectPath: "/repo" },
       })
-    ).resolves.toEqual([]);
+    ).toEqual([]);
   });
 
   test("uses backend package name and scope when remote resolution succeeds", async () => {
-    const api = apiClient(async () => skillPackage("backend-skill", "built-in"));
+    const api = apiClient(() => Promise.resolve(skillPackage("backend-skill", "built-in")));
 
-    await expect(
-      resolveInlineSkillReferences({
+    expect(
+      await resolveInlineSkillReferences({
         candidates: [candidate("remote-skill")],
         agentSkillDescriptors: [],
         api,
         discovery: { kind: "project", projectPath: "/repo" },
       })
-    ).resolves.toEqual([{ skillName: "backend-skill", scope: "built-in", source: "inline" }]);
+    ).toEqual([{ skillName: "backend-skill", scope: "built-in", source: "inline" }]);
   });
 
   test("passes project discovery targets to the api", async () => {
     const calls: AgentSkillsGetInput[] = [];
-    const api = apiClient(async (input) => {
+    const api = apiClient((input) => {
       calls.push(input);
-      return skillPackage("remote-skill", "project");
+      return Promise.resolve(skillPackage("remote-skill", "project"));
     });
 
-    await expect(
-      resolveInlineSkillReferences({
+    expect(
+      await resolveInlineSkillReferences({
         candidates: [candidate("remote-skill")],
         agentSkillDescriptors: [],
         api,
         discovery: { kind: "project", projectPath: "/repo" },
       })
-    ).resolves.toEqual([{ skillName: "remote-skill", scope: "project", source: "inline" }]);
+    ).toEqual([{ skillName: "remote-skill", scope: "project", source: "inline" }]);
 
     expect(calls).toEqual([{ projectPath: "/repo", skillName: "remote-skill" }]);
   });
 
   test("passes workspace discovery targets and disableWorkspaceAgents to the api", async () => {
     const calls: AgentSkillsGetInput[] = [];
-    const api = apiClient(async (input) => {
+    const api = apiClient((input) => {
       calls.push(input);
-      return skillPackage("workspace-skill", "global");
+      return Promise.resolve(skillPackage("workspace-skill", "global"));
     });
 
-    await expect(
-      resolveInlineSkillReferences({
+    expect(
+      await resolveInlineSkillReferences({
         candidates: [candidate("workspace-skill")],
         agentSkillDescriptors: [],
         api,
@@ -251,7 +249,7 @@ describe("resolveInlineSkillReferences", () => {
           disableWorkspaceAgents: true,
         },
       })
-    ).resolves.toEqual([{ skillName: "workspace-skill", scope: "global", source: "inline" }]);
+    ).toEqual([{ skillName: "workspace-skill", scope: "global", source: "inline" }]);
 
     expect(calls).toEqual([
       {

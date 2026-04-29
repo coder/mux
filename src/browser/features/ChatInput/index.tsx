@@ -1366,12 +1366,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     });
     setSkillSuggestions(nextSuggestions);
     setShowSkillSuggestions(nextSuggestions.length > 0);
-  }, [
-    input,
-    showAtMentionSuggestions,
-    agentSkillDescriptors,
-    atMentionCursorNonce,
-  ]);
+  }, [input, showAtMentionSuggestions, agentSkillDescriptors, atMentionCursorNonce]);
 
   // Watch input for slash commands
   useEffect(() => {
@@ -1995,8 +1990,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       // Add a separating space only when the following text does not already provide one.
       const after = input.slice(match.endIndex);
       const trailing = after.length === 0 || /\s/.test(after[0] ?? "") ? "" : " ";
-      const next =
-        input.slice(0, match.startIndex) + suggestion.replacement + trailing + after;
+      const next = input.slice(0, match.startIndex) + suggestion.replacement + trailing + after;
 
       setInput(next);
       setSkillSuggestions([]);
