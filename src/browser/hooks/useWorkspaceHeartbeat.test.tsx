@@ -1,6 +1,8 @@
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
+import * as APIModule from "@/browser/contexts/API";
+import * as WorkspaceContextModule from "@/browser/contexts/WorkspaceContext";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { HeartbeatFormSettings } from "./useWorkspaceHeartbeat";
 
@@ -33,15 +35,30 @@ const setWorkspaceMetadataMock = mock((update: WorkspaceMetadataUpdater) => {
   capturedWorkspaceMetadataUpdate = update;
 });
 
-void mock.module("@/browser/contexts/API", () => ({
-  useAPI: () => ({ api: apiMock }),
-}));
+const actualAPIModule = { ...APIModule };
+const actualWorkspaceContextModule = { ...WorkspaceContextModule };
 
-void mock.module("@/browser/contexts/WorkspaceContext", () => ({
-  useWorkspaceActions: () => ({
-    setWorkspaceMetadata: setWorkspaceMetadataMock,
-  }),
-}));
+// Keep module mocks inside test hooks: Bun loads test files before afterAll runs, so
+// file-scope mock.module() calls can pollute unrelated files during collection.
+async function installWorkspaceHeartbeatModuleMocks() {
+  await mock.module("@/browser/contexts/API", () => ({
+    ...actualAPIModule,
+    useAPI: () => ({ api: apiMock }),
+  }));
+  await mock.module("@/browser/contexts/WorkspaceContext", () => ({
+    ...actualWorkspaceContextModule,
+    useWorkspaceActions: () => ({
+      setWorkspaceMetadata: setWorkspaceMetadataMock,
+    }),
+  }));
+}
+
+async function restoreWorkspaceHeartbeatModuleMocks() {
+  // Bun 1.3.6's mock.module() has no disposer, and mock.restore() does not undo
+  // module mocks. Restore the real exports so these stubs do not leak into later files.
+  await mock.module("@/browser/contexts/API", () => actualAPIModule);
+  await mock.module("@/browser/contexts/WorkspaceContext", () => actualWorkspaceContextModule);
+}
 
 import { useWorkspaceHeartbeat } from "./useWorkspaceHeartbeat";
 
@@ -82,17 +99,23 @@ describe("useWorkspaceHeartbeat", () => {
   let originalWindow: typeof globalThis.window;
   let originalDocument: typeof globalThis.document;
 
-  beforeEach(() => {
+  afterAll(async () => {
+    await restoreWorkspaceHeartbeatModuleMocks();
+  });
+
+  beforeEach(async () => {
     originalWindow = globalThis.window;
     originalDocument = globalThis.document;
     globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
     globalThis.document = globalThis.window.document;
+    await installWorkspaceHeartbeatModuleMocks();
     capturedWorkspaceMetadataUpdate = null;
     setWorkspaceMetadataMock.mockClear();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     cleanup();
+    await restoreWorkspaceHeartbeatModuleMocks();
     mock.restore();
     apiMock = null;
     capturedWorkspaceMetadataUpdate = null;
