@@ -14,7 +14,7 @@ export interface InlineSkillCandidate {
 }
 
 /** Active candidate when the cursor is inside a `$partial` token (used by autocomplete). */
-export interface InlineSkillCursorMatch {
+interface InlineSkillCursorMatch {
   partial: string;
   startIndex: number;
   endIndex: number;
@@ -335,7 +335,7 @@ export function findInlineSkillReferenceAtCursor(
   };
 }
 
-export interface InlineSkillResolveOptions {
+interface InlineSkillResolveOptions {
   candidates: InlineSkillCandidate[];
   agentSkillDescriptors: AgentSkillDescriptor[];
   api: APIClient | null;

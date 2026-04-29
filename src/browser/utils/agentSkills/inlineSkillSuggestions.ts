@@ -1,14 +1,14 @@
 import type { SlashSuggestion } from "@/browser/utils/slashCommands/types";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 
-export interface InlineSkillSuggestionContext {
+interface InlineSkillSuggestionContext {
   /** The token typed after `$`. Empty string is allowed (just typed `$`). */
   partial: string;
   /** Already-loaded descriptors for current discovery target. */
   descriptors: AgentSkillDescriptor[];
 }
 
-export interface InlineSkillSuggestionRefreshContext {
+interface InlineSkillSuggestionRefreshContext {
   inputChanged: boolean;
   previousPartial: string | null;
   partial: string;
