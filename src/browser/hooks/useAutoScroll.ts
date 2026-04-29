@@ -149,16 +149,23 @@ export function useAutoScroll() {
   // This makes the bottom lock independent of any single layout signal source —
   // bash/tool expansion, async syntax highlighting, mermaid render, font swap,
   // image load, scroll-anchor rebalancing all converge before the next paint.
+  //
+  // Resolve rAF/cAF from `window` rather than bare globals so happy-dom-driven
+  // tests can install a deterministic scheduler on a per-test window without
+  // polluting `globalThis` (which would leak the mock into unrelated tests).
   useEffect(() => {
     if (!autoScroll) return;
-    if (typeof requestAnimationFrame !== "function") return;
+    const win = typeof window !== "undefined" ? window : undefined;
+    const raf = win?.requestAnimationFrame?.bind(win);
+    const caf = win?.cancelAnimationFrame?.bind(win);
+    if (!raf || !caf) return;
 
-    let rafId = requestAnimationFrame(function tick() {
+    let rafId = raf(function tick() {
       stickToBottom();
-      rafId = requestAnimationFrame(tick);
+      rafId = raf(tick);
     });
 
-    return () => cancelAnimationFrame(rafId);
+    return () => caf(rafId);
   }, [autoScroll, stickToBottom]);
 
   return {

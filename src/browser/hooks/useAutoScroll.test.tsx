@@ -63,8 +63,6 @@ function attachScrollMetrics(
   };
 }
 
-let originalRequestAnimationFrame: typeof globalThis.requestAnimationFrame | undefined;
-let originalCancelAnimationFrame: typeof globalThis.cancelAnimationFrame | undefined;
 let scheduledFrames: Array<{ id: number; callback: FrameRequestCallback }> = [];
 let nextFrameId = 1;
 
@@ -87,23 +85,23 @@ describe("useAutoScroll", () => {
   beforeEach(() => {
     originalWindow = globalThis.window;
     originalDocument = globalThis.document;
-    originalRequestAnimationFrame = globalThis.requestAnimationFrame;
-    originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
     scheduledFrames = [];
     nextFrameId = 1;
 
     const domWindow = new GlobalWindow() as unknown as Window & typeof globalThis;
-    globalThis.window = domWindow;
-    globalThis.document = domWindow.document;
-
-    globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+    // Install the deterministic scheduler on the per-test `window` rather than
+    // `globalThis` so this mock never leaks into downstream test files. The
+    // hook resolves rAF/cAF from `window` for exactly this reason.
+    domWindow.requestAnimationFrame = ((callback: FrameRequestCallback) => {
       const id = nextFrameId++;
       scheduledFrames.push({ id, callback });
       return id;
-    }) as typeof globalThis.requestAnimationFrame;
-    globalThis.cancelAnimationFrame = ((id: number) => {
+    }) as typeof window.requestAnimationFrame;
+    domWindow.cancelAnimationFrame = ((id: number) => {
       scheduledFrames = scheduledFrames.filter((frame) => frame.id !== id);
-    }) as typeof globalThis.cancelAnimationFrame;
+    }) as typeof window.cancelAnimationFrame;
+    globalThis.window = domWindow;
+    globalThis.document = domWindow.document;
   });
 
   afterEach(() => {
@@ -111,21 +109,6 @@ describe("useAutoScroll", () => {
     scheduledFrames = [];
     globalThis.window = originalWindow;
     globalThis.document = originalDocument;
-    // Prefer the happy-dom GlobalWindow's rAF for downstream tests when bun's
-    // own globalThis didn't define one (typical bun test runtime). Falling back
-    // to `delete` would strip rAF for unrelated tests that read it as a bare
-    // global (Radix Tooltip, etc.).
-    const restoreRaf =
-      originalRequestAnimationFrame ??
-      (originalWindow as Window | undefined)?.requestAnimationFrame;
-    const restoreCancel =
-      originalCancelAnimationFrame ?? (originalWindow as Window | undefined)?.cancelAnimationFrame;
-    if (restoreRaf) {
-      globalThis.requestAnimationFrame = restoreRaf.bind(originalWindow);
-    }
-    if (restoreCancel) {
-      globalThis.cancelAnimationFrame = restoreCancel.bind(originalWindow);
-    }
   });
 
   test("rAF tick pins to bottom whenever layout grows under bottom lock", () => {
