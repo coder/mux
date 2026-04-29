@@ -60,7 +60,11 @@ import { Button } from "@/browser/components/Button/Button";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { findAtMentionAtCursor } from "@/common/utils/atMentions";
 import { findInlineSkillReferenceAtCursor } from "@/browser/utils/agentSkills/inlineSkillReferences";
-import { getInlineSkillSuggestions } from "@/browser/utils/agentSkills/inlineSkillSuggestions";
+import {
+  getInlineSkillInsertionTrailingText,
+  getInlineSkillSuggestions,
+  shouldRefreshInlineSkillSuggestions,
+} from "@/browser/utils/agentSkills/inlineSkillSuggestions";
 import { getCommandGhostHint } from "@/browser/utils/slashCommands/registry";
 import {
   getSlashCommandSuggestions,
@@ -291,6 +295,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const lastAtMentionInputRef = useRef<string>(input);
   const lastSkillInputRef = useRef<string | null>(null);
   const lastSkillQueryRef = useRef<string | null>(null);
+  const lastSkillDescriptorsRef = useRef<AgentSkillDescriptor[] | null>(null);
   const [showCommandSuggestions, setShowCommandSuggestions] = useState(false);
 
   const [commandSuggestions, setCommandSuggestions] = useState<SlashSuggestion[]>([]);
@@ -1352,9 +1357,17 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       return;
     }
 
-    // Avoid recomputing on caret movement within the same partial. Moving out of a token
-    // clears lastSkillQueryRef above, so moving back into an existing token can reopen.
-    if (!inputChanged && lastSkillQueryRef.current === match.partial) {
+    // Avoid recomputing on caret movement within the same partial, but still refresh when
+    // skill discovery finishes asynchronously for already-typed `$partial` input.
+    if (
+      !shouldRefreshInlineSkillSuggestions({
+        inputChanged,
+        previousPartial: lastSkillQueryRef.current,
+        partial: match.partial,
+        previousDescriptors: lastSkillDescriptorsRef.current,
+        descriptors: agentSkillDescriptors,
+      })
+    ) {
       return;
     }
 
@@ -1364,6 +1377,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       partial: match.partial,
       descriptors: agentSkillDescriptors,
     });
+    lastSkillDescriptorsRef.current = agentSkillDescriptors;
     setSkillSuggestions(nextSuggestions);
     setShowSkillSuggestions(nextSuggestions.length > 0);
   }, [input, showAtMentionSuggestions, agentSkillDescriptors, atMentionCursorNonce]);
@@ -1989,7 +2003,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
       // Add a separating space only when the following text does not already provide one.
       const after = input.slice(match.endIndex);
-      const trailing = after.length === 0 || /\s/.test(after[0] ?? "") ? "" : " ";
+      const trailing = getInlineSkillInsertionTrailingText(after);
       const next = input.slice(0, match.startIndex) + suggestion.replacement + trailing + after;
 
       setInput(next);

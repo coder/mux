@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
-import { getInlineSkillSuggestions } from "./inlineSkillSuggestions";
+import {
+  getInlineSkillInsertionTrailingText,
+  getInlineSkillSuggestions,
+  shouldRefreshInlineSkillSuggestions,
+} from "./inlineSkillSuggestions";
 
 function descriptor(name: string, description = `${name} description`): AgentSkillDescriptor {
   return { name, description, scope: "global" };
@@ -83,5 +87,56 @@ describe("getInlineSkillSuggestions", () => {
         descriptors: [descriptor("deep-review"), descriptor("tdd"), descriptor("clear")],
       }).map((suggestion) => suggestion.display)
     ).toEqual(["$deep-review", "$tdd", "$clear"]);
+  });
+});
+
+describe("shouldRefreshInlineSkillSuggestions", () => {
+  test("refreshes when descriptor discovery updates an unchanged partial", () => {
+    const previousDescriptors: AgentSkillDescriptor[] = [];
+    const descriptors = [descriptor("deep-review")];
+
+    expect(
+      shouldRefreshInlineSkillSuggestions({
+        inputChanged: false,
+        previousPartial: "dee",
+        partial: "dee",
+        previousDescriptors,
+        descriptors,
+      })
+    ).toBe(true);
+  });
+
+  test("skips only when input, partial, and descriptor list identity are unchanged", () => {
+    const descriptors = [descriptor("deep-review")];
+
+    expect(
+      shouldRefreshInlineSkillSuggestions({
+        inputChanged: false,
+        previousPartial: "dee",
+        partial: "dee",
+        previousDescriptors: descriptors,
+        descriptors,
+      })
+    ).toBe(false);
+  });
+});
+
+describe("getInlineSkillInsertionTrailingText", () => {
+  test("does not add a space before punctuation that should bind to the skill", () => {
+    const punctuation = [",", ".", ";", ":", "!", "?", ")", "]", "}", ">", '"', "'", "`"];
+
+    for (const nextCharacter of punctuation) {
+      expect(getInlineSkillInsertionTrailingText(nextCharacter)).toBe("");
+    }
+  });
+
+  test("preserves existing whitespace and end-of-line behavior", () => {
+    expect(getInlineSkillInsertionTrailingText("")).toBe("");
+    expect(getInlineSkillInsertionTrailingText(" next")).toBe("");
+    expect(getInlineSkillInsertionTrailingText("\nnext")).toBe("");
+  });
+
+  test("adds a separator before adjacent text", () => {
+    expect(getInlineSkillInsertionTrailingText("next")).toBe(" ");
   });
 });
