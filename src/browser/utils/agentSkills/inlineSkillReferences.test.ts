@@ -1,0 +1,264 @@
+import { describe, expect, test } from "bun:test";
+import type { APIClient } from "@/browser/contexts/API";
+import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
+import {
+  extractInlineSkillReferenceCandidates,
+  findInlineSkillReferenceAtCursor,
+  resolveInlineSkillReferences,
+  type InlineSkillCandidate,
+} from "./inlineSkillReferences";
+
+type AgentSkillsGetInput = Parameters<APIClient["agentSkills"]["get"]>[0];
+type AgentSkillsGetOutput = Awaited<ReturnType<APIClient["agentSkills"]["get"]>>;
+
+function descriptor(
+  name: string,
+  scope: AgentSkillDescriptor["scope"] = "global"
+): AgentSkillDescriptor {
+  return { name, description: `${name} description`, scope };
+}
+
+function candidate(skillName: string, startIndex = 0): InlineSkillCandidate {
+  return { skillName, startIndex, endIndex: startIndex + skillName.length + 1 };
+}
+
+function skillPackage(
+  name: string,
+  scope: AgentSkillDescriptor["scope"] = "global"
+): AgentSkillsGetOutput {
+  return {
+    scope,
+    directoryName: name,
+    frontmatter: { name, description: `${name} description` },
+    body: `${name} body`,
+  };
+}
+
+function apiClient(get: APIClient["agentSkills"]["get"]): APIClient {
+  return { agentSkills: { get } } as unknown as APIClient;
+}
+
+describe("extractInlineSkillReferenceCandidates", () => {
+  test("returns an empty list for empty input", () => {
+    expect(extractInlineSkillReferenceCandidates("")).toEqual([]);
+  });
+
+  test("extracts a single skill reference", () => {
+    expect(extractInlineSkillReferenceCandidates("Use $tdd")).toEqual([
+      { skillName: "tdd", startIndex: 4, endIndex: 8 },
+    ]);
+  });
+
+  test("extracts multiple skill references in order", () => {
+    expect(extractInlineSkillReferenceCandidates("$tdd and $deep-review")).toEqual([
+      { skillName: "tdd", startIndex: 0, endIndex: 4 },
+      { skillName: "deep-review", startIndex: 9, endIndex: 21 },
+    ]);
+  });
+
+  test("keeps duplicate parser candidates", () => {
+    expect(extractInlineSkillReferenceCandidates("$tdd $tdd")).toEqual([
+      { skillName: "tdd", startIndex: 0, endIndex: 4 },
+      { skillName: "tdd", startIndex: 5, endIndex: 9 },
+    ]);
+  });
+
+  test("accepts punctuation boundaries", () => {
+    expect(extractInlineSkillReferenceCandidates("($tdd) $tdd, $tdd.")).toEqual([
+      { skillName: "tdd", startIndex: 1, endIndex: 5 },
+      { skillName: "tdd", startIndex: 7, endIndex: 11 },
+      { skillName: "tdd", startIndex: 13, endIndex: 17 },
+    ]);
+  });
+
+  test("rejects unsupported token starts and left boundaries", () => {
+    expect(extractInlineSkillReferenceCandidates("foo$tdd")).toEqual([]);
+    expect(extractInlineSkillReferenceCandidates("$100")).toEqual([]);
+    expect(extractInlineSkillReferenceCandidates("$PATH")).toEqual([]);
+    expect(extractInlineSkillReferenceCandidates("$-bad")).toEqual([]);
+  });
+
+  test("strips one trailing hyphen before validation", () => {
+    expect(extractInlineSkillReferenceCandidates("$bad-")).toEqual([
+      { skillName: "bad", startIndex: 0, endIndex: 4 },
+    ]);
+  });
+
+  test("skips inline code spans", () => {
+    expect(extractInlineSkillReferenceCandidates("use `$tdd` here")).toEqual([]);
+  });
+
+  test("skips fenced code blocks", () => {
+    expect(extractInlineSkillReferenceCandidates("```\n$tdd\n```")).toEqual([]);
+  });
+
+  test("extracts non-code references from mixed text", () => {
+    expect(extractInlineSkillReferenceCandidates("$tdd `$nope` $deep-review")).toEqual([
+      { skillName: "tdd", startIndex: 0, endIndex: 4 },
+      { skillName: "deep-review", startIndex: 13, endIndex: 25 },
+    ]);
+  });
+});
+
+describe("findInlineSkillReferenceAtCursor", () => {
+  test("finds a partial skill reference at the end of input", () => {
+    expect(findInlineSkillReferenceAtCursor("Use $td", 7)).toEqual({
+      partial: "td",
+      startIndex: 4,
+      endIndex: 7,
+    });
+  });
+
+  test("finds an empty partial after a bare dollar sign", () => {
+    expect(findInlineSkillReferenceAtCursor("$", 1)).toEqual({
+      partial: "",
+      startIndex: 0,
+      endIndex: 1,
+    });
+  });
+
+  test("finds the active token when the cursor is inside the skill name", () => {
+    expect(findInlineSkillReferenceAtCursor("Use $tdd more", 6)).toEqual({
+      partial: "tdd",
+      startIndex: 4,
+      endIndex: 8,
+    });
+  });
+
+  test("returns null when the cursor is out of bounds", () => {
+    expect(findInlineSkillReferenceAtCursor("$tdd", -1)).toBeNull();
+    expect(findInlineSkillReferenceAtCursor("$tdd", 5)).toBeNull();
+  });
+
+  test("returns null when the cursor is inside inline code", () => {
+    const text = "use `$td` here";
+    expect(findInlineSkillReferenceAtCursor(text, text.indexOf("$td") + 3)).toBeNull();
+  });
+
+  test("returns null when the cursor is inside a fenced code block", () => {
+    const text = "```\n$td\n```";
+    expect(findInlineSkillReferenceAtCursor(text, text.indexOf("$td") + 3)).toBeNull();
+  });
+});
+
+describe("resolveInlineSkillReferences", () => {
+  test("returns an empty list for empty candidates", async () => {
+    await expect(
+      resolveInlineSkillReferences({
+        candidates: [],
+        agentSkillDescriptors: [descriptor("tdd")],
+        api: null,
+        discovery: null,
+      })
+    ).resolves.toEqual([]);
+  });
+
+  test("resolves known local descriptors", async () => {
+    await expect(
+      resolveInlineSkillReferences({
+        candidates: [candidate("tdd")],
+        agentSkillDescriptors: [descriptor("tdd", "project")],
+        api: null,
+        discovery: null,
+      })
+    ).resolves.toEqual([{ skillName: "tdd", scope: "project", source: "inline" }]);
+  });
+
+  test("collapses duplicate candidates", async () => {
+    await expect(
+      resolveInlineSkillReferences({
+        candidates: [candidate("tdd"), candidate("tdd", 5)],
+        agentSkillDescriptors: [descriptor("tdd")],
+        api: null,
+        discovery: null,
+      })
+    ).resolves.toEqual([{ skillName: "tdd", scope: "global", source: "inline" }]);
+  });
+
+  test("silently drops unknown skills without an api", async () => {
+    await expect(
+      resolveInlineSkillReferences({
+        candidates: [candidate("unknown")],
+        agentSkillDescriptors: [],
+        api: null,
+        discovery: null,
+      })
+    ).resolves.toEqual([]);
+  });
+
+  test("silently drops skills when the api throws", async () => {
+    const api = apiClient(async () => {
+      throw new Error("not found");
+    });
+
+    await expect(
+      resolveInlineSkillReferences({
+        candidates: [candidate("unknown")],
+        agentSkillDescriptors: [],
+        api,
+        discovery: { kind: "project", projectPath: "/repo" },
+      })
+    ).resolves.toEqual([]);
+  });
+
+  test("uses backend package name and scope when remote resolution succeeds", async () => {
+    const api = apiClient(async () => skillPackage("backend-skill", "built-in"));
+
+    await expect(
+      resolveInlineSkillReferences({
+        candidates: [candidate("remote-skill")],
+        agentSkillDescriptors: [],
+        api,
+        discovery: { kind: "project", projectPath: "/repo" },
+      })
+    ).resolves.toEqual([{ skillName: "backend-skill", scope: "built-in", source: "inline" }]);
+  });
+
+  test("passes project discovery targets to the api", async () => {
+    const calls: AgentSkillsGetInput[] = [];
+    const api = apiClient(async (input) => {
+      calls.push(input);
+      return skillPackage("remote-skill", "project");
+    });
+
+    await expect(
+      resolveInlineSkillReferences({
+        candidates: [candidate("remote-skill")],
+        agentSkillDescriptors: [],
+        api,
+        discovery: { kind: "project", projectPath: "/repo" },
+      })
+    ).resolves.toEqual([{ skillName: "remote-skill", scope: "project", source: "inline" }]);
+
+    expect(calls).toEqual([{ projectPath: "/repo", skillName: "remote-skill" }]);
+  });
+
+  test("passes workspace discovery targets and disableWorkspaceAgents to the api", async () => {
+    const calls: AgentSkillsGetInput[] = [];
+    const api = apiClient(async (input) => {
+      calls.push(input);
+      return skillPackage("workspace-skill", "global");
+    });
+
+    await expect(
+      resolveInlineSkillReferences({
+        candidates: [candidate("workspace-skill")],
+        agentSkillDescriptors: [],
+        api,
+        discovery: {
+          kind: "workspace",
+          workspaceId: "workspace-1",
+          disableWorkspaceAgents: true,
+        },
+      })
+    ).resolves.toEqual([{ skillName: "workspace-skill", scope: "global", source: "inline" }]);
+
+    expect(calls).toEqual([
+      {
+        workspaceId: "workspace-1",
+        disableWorkspaceAgents: true,
+        skillName: "workspace-skill",
+      },
+    ]);
+  });
+});
