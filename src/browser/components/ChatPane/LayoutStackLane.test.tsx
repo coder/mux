@@ -238,6 +238,48 @@ describe("LayoutStackLane", () => {
     });
   });
 
+  it("attaches ResizeObserver when items mount after an empty null lane", async () => {
+    const view = render(
+      <LayoutStackLane
+        workspaceId="workspace-a"
+        isHydrating={false}
+        align="end"
+        dataComponent="stable-stack"
+        items={[]}
+      />
+    );
+
+    expect(view.container.querySelector('[data-component="stable-stack"]')).toBeNull();
+
+    view.rerender(
+      <LayoutStackLane
+        workspaceId="workspace-a"
+        isHydrating={false}
+        align="end"
+        dataComponent="stable-stack"
+        items={[createTextItem("workspace-a", "workspace A")]}
+      />
+    );
+
+    const mountedContent = getStackContent(view.container, "stable-stack");
+    await waitForResizeObservation(mountedContent);
+    emitResize(mountedContent, 123);
+
+    view.rerender(
+      <LayoutStackLane
+        workspaceId="workspace-b"
+        isHydrating={true}
+        align="end"
+        dataComponent="stable-stack"
+        items={[]}
+      />
+    );
+
+    await waitFor(() => {
+      expect(getRenderedStack(view.container, "stable-stack").style.minHeight).toBe("123px");
+    });
+  });
+
   it("clears settled empty-lane measurements from both the workspace cache and fallback", async () => {
     const view = render(
       <LayoutStackLane

@@ -84,7 +84,7 @@ export const LayoutStackLane: React.FC<LayoutStackLaneProps> = (props) => {
     return () => {
       observer.disconnect();
     };
-  }, [props.isHydrating, props.workspaceId]);
+  }, [hasItems, props.isHydrating, props.workspaceId]);
 
   // Post-hydration settle: once we're no longer hydrating and have no items, clear
   // any cached height so the next hydration doesn't reserve stale space.
