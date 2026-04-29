@@ -10,6 +10,7 @@ export const EXPERIMENT_IDS = {
   PROGRAMMATIC_TOOL_CALLING_EXCLUSIVE: "programmatic-tool-calling-exclusive",
   CONFIGURABLE_BIND_URL: "configurable-bind-url",
   SYSTEM_1: "system-1",
+  LSP_QUERY: "lsp-query",
   EXEC_SUBAGENT_HARD_RESTART: "exec-subagent-hard-restart",
   MUX_GOVERNOR: "mux-governor",
   MULTI_PROJECT_WORKSPACES: "multi-project-workspaces",
@@ -78,6 +79,15 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     id: EXPERIMENT_IDS.SYSTEM_1,
     name: "System 1",
     description: "Context optimization helpers inspired by Thinking, Fast and Slow (Kahneman)",
+    enabledByDefault: false,
+    userOverridable: true,
+    showInSettings: true,
+  },
+  [EXPERIMENT_IDS.LSP_QUERY]: {
+    id: EXPERIMENT_IDS.LSP_QUERY,
+    name: "LSP Query Tool",
+    description:
+      "Enable the built-in lsp_query tool for definitions, references, hover, and symbol lookup",
     enabledByDefault: false,
     userOverridable: true,
     showInSettings: true,

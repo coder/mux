@@ -39,6 +39,7 @@ import {
 } from "./terminal";
 import { BashToolResultSchema, FileTreeNodeSchema } from "./tools";
 import { WorkspaceStatsSnapshotSchema } from "./workspaceStats";
+import { WorkspaceLspDiagnosticsSnapshotSchema } from "./workspaceLsp";
 import {
   FrontendWorkspaceMetadataSchema,
   GitStatusSchema,
@@ -78,6 +79,7 @@ import { PolicyGetResponseSchema } from "./policy";
 import {
   AgentAiDefaultsSchema,
   SubagentAiDefaultsSchema,
+  LspProvisioningModeSchema,
   UpdateChannelSchema,
 } from "../../config/schemas/appConfigOnDisk";
 import {
@@ -1472,6 +1474,16 @@ export const workspace = {
       output: ResultSchema(z.void(), z.string()),
     },
   },
+  lsp: {
+    listDiagnostics: {
+      input: z.object({ workspaceId: z.string() }),
+      output: WorkspaceLspDiagnosticsSnapshotSchema,
+    },
+    subscribeDiagnostics: {
+      input: z.object({ workspaceId: z.string() }),
+      output: eventIterator(WorkspaceLspDiagnosticsSnapshotSchema),
+    },
+  },
   getSessionUsage: {
     input: z.object({ workspaceId: z.string() }),
     output: SessionUsageFileSchema.optional(),
@@ -1837,6 +1849,7 @@ export const config = {
       worktreeArchiveBehavior: z.enum(WORKTREE_ARCHIVE_BEHAVIORS),
       runtimeEnablement: z.record(z.string(), z.boolean()),
       defaultRuntime: z.string().nullable(),
+      lspProvisioningMode: LspProvisioningModeSchema,
       agentAiDefaults: AgentAiDefaultsSchema,
       // Legacy fields (downgrade compatibility)
       subagentAiDefaults: SubagentAiDefaultsSchema,
@@ -1917,6 +1930,14 @@ export const config = {
         runtimeEnablement: z.record(z.string(), z.boolean()).nullish(),
         defaultRuntime: RuntimeEnablementIdSchema.nullish(),
         runtimeOverridesEnabled: z.boolean().nullish(),
+      })
+      .strict(),
+    output: z.void(),
+  },
+  updateLspProvisioningMode: {
+    input: z
+      .object({
+        mode: LspProvisioningModeSchema,
       })
       .strict(),
     output: z.void(),

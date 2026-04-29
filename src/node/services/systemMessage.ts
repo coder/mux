@@ -256,6 +256,7 @@ export function extractToolInstructions(
   options?: {
     enableAgentReport?: boolean;
     enableMuxGlobalAgentsTools?: boolean;
+    enableLspQuery?: boolean;
     agentInstructions?: string;
   }
 ): Record<string, string> {
@@ -293,7 +294,8 @@ export async function readToolInstructions(
   runtime: Runtime,
   workspacePath: string,
   modelString: string,
-  agentInstructions?: string
+  agentInstructions?: string,
+  options?: { enableLspQuery?: boolean }
 ): Promise<Record<string, string>> {
   const [globalInstructions, contextInstructions] = await readInstructionSources(
     metadata,
@@ -305,6 +307,7 @@ export async function readToolInstructions(
     ...getToolAvailabilityOptions({
       workspaceId: metadata.id,
       parentWorkspaceId: metadata.parentWorkspaceId,
+      enableLspQuery: options?.enableLspQuery,
     }),
     agentInstructions,
   });

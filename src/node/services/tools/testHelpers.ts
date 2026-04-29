@@ -59,6 +59,7 @@ export function createTestToolConfig(
     sessionsDir?: string;
     runtime?: Runtime;
     muxScope?: MuxToolScope;
+    onFilesMutated?: (params: { filePaths: string[] }) => Promise<string | undefined>;
   }
 ): ToolConfiguration {
   return {
@@ -67,6 +68,7 @@ export function createTestToolConfig(
     runtime: options?.runtime ?? new LocalRuntime(tempDir),
     runtimeTempDir: tempDir,
     workspaceId: options?.workspaceId ?? "test-workspace",
+    onFilesMutated: options?.onFilesMutated,
     muxScope: options?.muxScope ?? {
       type: "global",
       muxHome: tempDir,

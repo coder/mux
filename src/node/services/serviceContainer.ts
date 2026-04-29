@@ -85,6 +85,7 @@ export class ServiceContainer {
   public readonly providerService: CoreServices["providerService"];
   public readonly mcpConfigService: CoreServices["mcpConfigService"];
   public readonly mcpServerManager: CoreServices["mcpServerManager"];
+  public readonly lspManager: CoreServices["lspManager"];
   public readonly sessionUsageService: CoreServices["sessionUsageService"];
   private readonly extensionMetadata: CoreServices["extensionMetadata"];
   private readonly backgroundProcessManager: CoreServices["backgroundProcessManager"];
@@ -208,6 +209,7 @@ export class ServiceContainer {
     this.providerService = core.providerService;
     this.mcpConfigService = core.mcpConfigService;
     this.mcpServerManager = core.mcpServerManager;
+    this.lspManager = core.lspManager;
     this.sessionUsageService = core.sessionUsageService;
     this.extensionMetadata = core.extensionMetadata;
     this.backgroundProcessManager = core.backgroundProcessManager;
@@ -478,6 +480,7 @@ export class ServiceContainer {
       telemetryService: this.telemetryService,
       experimentsService: this.experimentsService,
       sessionUsageService: this.sessionUsageService,
+      lspManager: this.lspManager,
       devToolsService: this.devToolsService,
       browserSessionDiscoveryService: this.browserSessionDiscoveryService,
       browserBridgeTokenManager: this.browserBridgeTokenManager,
@@ -536,6 +539,7 @@ export class ServiceContainer {
     await this.analyticsService.dispose();
     this.policyService.dispose();
     this.mcpServerManager.dispose();
+    await this.lspManager.dispose();
     await this.mcpOauthService.dispose();
     await this.muxGatewayOauthService.dispose();
     await this.muxGovernorOauthService.dispose();

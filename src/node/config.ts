@@ -17,8 +17,10 @@ import type {
   ProjectConfig,
   ProjectsConfig,
   FeatureFlagOverride,
+  LspProvisioningMode,
   UpdateChannel,
 } from "@/common/types/project";
+import { DEFAULT_LSP_PROVISIONING_MODE } from "@/common/config/schemas/appConfigOnDisk";
 import type {
   AppConfigOnDisk,
   BaseProviderConfig as ProviderConfig,
@@ -106,6 +108,18 @@ function parseUpdateChannel(value: unknown): UpdateChannel | undefined {
   }
 
   return undefined;
+}
+
+function parseLspProvisioningMode(value: unknown): LspProvisioningMode | undefined {
+  if (value === "manual" || value === "auto") {
+    return value;
+  }
+
+  return undefined;
+}
+
+function getLspProvisioningModeEnvOverride(): LspProvisioningMode | undefined {
+  return parseLspProvisioningMode(process.env.MUX_LSP_PROVISIONING_MODE);
 }
 
 function parseCoderWorkspaceArchiveBehavior(
@@ -480,7 +494,19 @@ export class Config {
     return priority.length > 1 ? priority : undefined;
   }
 
-  loadConfigOrDefault(): ProjectsConfig {
+  private applyLspProvisioningModeEnvOverride(config: ProjectsConfig): ProjectsConfig {
+    const lspProvisioningMode = getLspProvisioningModeEnvOverride();
+    if (lspProvisioningMode == null) {
+      return config;
+    }
+
+    return {
+      ...config,
+      lspProvisioningMode,
+    };
+  }
+
+  private loadPersistedConfigOrDefault(): ProjectsConfig {
     try {
       if (fs.existsSync(this.configFile)) {
         const data = fs.readFileSync(this.configFile, "utf-8");
@@ -719,6 +745,7 @@ export class Config {
 
         const runtimeEnablement = normalizeRuntimeEnablementOverrides(parsed.runtimeEnablement);
         const defaultRuntime = normalizeRuntimeEnablementId(parsed.defaultRuntime);
+        const lspProvisioningMode = parseLspProvisioningMode(parsed.lspProvisioningMode);
 
         const agentAiDefaults =
           parsed.agentAiDefaults !== undefined
@@ -773,6 +800,7 @@ export class Config {
           updateChannel,
           defaultRuntime,
           runtimeEnablement,
+          lspProvisioningMode,
           onePasswordAccountName: parseOptionalNonEmptyString(parsed.onePasswordAccountName),
         };
       }
@@ -791,6 +819,10 @@ export class Config {
       worktreeArchiveBehavior: DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR,
       deleteWorktreeOnArchive: false,
     };
+  }
+
+  loadConfigOrDefault(): ProjectsConfig {
+    return this.applyLspProvisioningModeEnvOverride(this.loadPersistedConfigOrDefault());
   }
 
   async saveConfig(config: ProjectsConfig): Promise<void> {
@@ -1000,6 +1032,14 @@ export class Config {
         data.defaultRuntime = defaultRuntime;
       }
 
+      const lspProvisioningMode = parseLspProvisioningMode(config.lspProvisioningMode);
+      if (
+        lspProvisioningMode !== undefined &&
+        lspProvisioningMode !== DEFAULT_LSP_PROVISIONING_MODE
+      ) {
+        data.lspProvisioningMode = lspProvisioningMode;
+      }
+
       const onePasswordAccountName = parseOptionalNonEmptyString(config.onePasswordAccountName);
       if (onePasswordAccountName) {
         data.onePasswordAccountName = onePasswordAccountName;
@@ -1016,7 +1056,7 @@ export class Config {
    * @param fn Function that takes current config and returns modified config
    */
   async editConfig(fn: (config: ProjectsConfig) => ProjectsConfig): Promise<void> {
-    const config = this.loadConfigOrDefault();
+    const config = this.loadPersistedConfigOrDefault();
     const newConfig = fn(config);
     await this.saveConfig(newConfig);
     // Backend-initiated config edits (for example gateway auth changes) use this signal
@@ -1306,7 +1346,7 @@ export class Config {
    * saved to config for subsequent loads.
    */
   async getAllWorkspaceMetadata(): Promise<FrontendWorkspaceMetadata[]> {
-    const config = this.loadConfigOrDefault();
+    const config = this.loadPersistedConfigOrDefault();
     const workspaceMetadata: FrontendWorkspaceMetadata[] = [];
     let configModified = false;
 

@@ -22,6 +22,7 @@ import type {
   MuxAgentsReadToolResultSchema,
   MuxAgentsWriteToolResultSchema,
   FileReadToolResultSchema,
+  LspQueryToolResultSchema,
   AttachFileToolResultSchema,
   TaskToolResultSchema,
   TaskAwaitToolResultSchema,
@@ -126,6 +127,9 @@ export interface ToolOutputUiOnlyFields {
 
 // FileReadToolResult derived from Zod schema (single source of truth)
 export type FileReadToolResult = z.infer<typeof FileReadToolResultSchema>;
+
+export type LspQueryToolArgs = z.infer<typeof TOOL_DEFINITIONS.lsp_query.schema>;
+export type LspQueryToolResult = z.infer<typeof LspQueryToolResultSchema>;
 
 // AttachFileToolResult derived from Zod schema (single source of truth)
 export type AttachFileToolResult = z.infer<typeof AttachFileToolResultSchema>;

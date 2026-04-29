@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import type { DesktopSessionManager } from "@/node/services/desktop/DesktopSessionManager";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
+import { LspManager } from "@/node/services/lsp/lspManager";
 import { getToolsForModel } from "./tools";
 
 const DESKTOP_TOOL_NAMES = [
@@ -156,6 +157,55 @@ describe("getToolsForModel", () => {
     );
 
     expect(Object.keys(tools).filter((toolName) => toolName.startsWith("desktop_"))).toEqual([]);
+  });
+
+  test("only includes lsp_query when the experiment is enabled and a manager is available", async () => {
+    const runtime = new LocalRuntime(process.cwd());
+    const initStateManager = createInitStateManager();
+    const lspManager = new LspManager({ registry: [] });
+    lspManager.query = mock(() =>
+      Promise.resolve({
+        operation: "hover" as const,
+        serverId: "typescript",
+        rootUri: "file:///tmp/workspace",
+        hover: "",
+      })
+    );
+
+    try {
+      const toolsWithoutLsp = await getToolsForModel(
+        "noop:model",
+        {
+          cwd: process.cwd(),
+          runtime,
+          runtimeTempDir: "/tmp",
+          lspQueryEnabled: false,
+        },
+        "ws-1",
+        initStateManager
+      );
+      expect(toolsWithoutLsp.lsp_query).toBeUndefined();
+
+      const toolsWithLsp = await getToolsForModel(
+        "noop:model",
+        {
+          cwd: process.cwd(),
+          runtime,
+          runtimeTempDir: "/tmp",
+          lspManager,
+          lspPolicyContext: {
+            provisioningMode: "manual",
+            trustedWorkspaceExecution: true,
+          },
+          lspQueryEnabled: true,
+        },
+        "ws-1",
+        initStateManager
+      );
+      expect(toolsWithLsp.lsp_query).toBeDefined();
+    } finally {
+      await lspManager.dispose();
+    }
   });
 
   test("returns tool keys in sorted order", async () => {

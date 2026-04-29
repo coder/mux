@@ -12,10 +12,15 @@ import {
   DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR,
   type WorktreeArchiveBehavior,
 } from "@/common/config/worktreeArchiveBehavior";
+import {
+  DEFAULT_LSP_PROVISIONING_MODE,
+  type LspProvisioningMode,
+} from "@/common/config/schemas/appConfigOnDisk";
 
 interface MockConfig {
   coderWorkspaceArchiveBehavior: CoderWorkspaceArchiveBehavior;
   worktreeArchiveBehavior: WorktreeArchiveBehavior;
+  lspProvisioningMode: LspProvisioningMode;
   llmDebugLogs: boolean;
 }
 
@@ -26,6 +31,7 @@ interface MockAPIClient {
       coderWorkspaceArchiveBehavior: CoderWorkspaceArchiveBehavior;
       worktreeArchiveBehavior: WorktreeArchiveBehavior;
     }) => Promise<void>;
+    updateLspProvisioningMode: (input: { mode: LspProvisioningMode }) => Promise<void>;
     updateLlmDebugLogs: (input: { enabled: boolean }) => Promise<void>;
   };
   server: {
@@ -167,6 +173,7 @@ import { GeneralSection } from "./GeneralSection";
 interface RenderGeneralSectionOptions {
   coderWorkspaceArchiveBehavior?: CoderWorkspaceArchiveBehavior;
   worktreeArchiveBehavior?: WorktreeArchiveBehavior;
+  lspProvisioningMode?: LspProvisioningMode;
 }
 
 interface MockAPISetup {
@@ -180,12 +187,16 @@ interface MockAPISetup {
       }) => Promise<void>
     >
   >;
+  updateLspProvisioningModeMock: ReturnType<
+    typeof mock<(input: { mode: LspProvisioningMode }) => Promise<void>>
+  >;
 }
 
 function createMockAPI(configOverrides: Partial<MockConfig> = {}): MockAPISetup {
   const config: MockConfig = {
     coderWorkspaceArchiveBehavior: DEFAULT_CODER_ARCHIVE_BEHAVIOR,
     worktreeArchiveBehavior: DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR,
+    lspProvisioningMode: DEFAULT_LSP_PROVISIONING_MODE,
     llmDebugLogs: false,
     ...configOverrides,
   };
@@ -202,12 +213,18 @@ function createMockAPI(configOverrides: Partial<MockConfig> = {}): MockAPISetup 
       return Promise.resolve();
     }
   );
+  const updateLspProvisioningModeMock = mock(({ mode }: { mode: LspProvisioningMode }) => {
+    config.lspProvisioningMode = mode;
+
+    return Promise.resolve();
+  });
 
   return {
     api: {
       config: {
         getConfig: getConfigMock,
         updateCoderPrefs: updateCoderPrefsMock,
+        updateLspProvisioningMode: updateLspProvisioningModeMock,
         updateLlmDebugLogs: mock(({ enabled }: { enabled: boolean }) => {
           config.llmDebugLogs = enabled;
 
@@ -225,6 +242,7 @@ function createMockAPI(configOverrides: Partial<MockConfig> = {}): MockAPISetup 
     },
     getConfigMock,
     updateCoderPrefsMock,
+    updateLspProvisioningModeMock,
   };
 }
 
@@ -247,9 +265,10 @@ describe("GeneralSection", () => {
   });
 
   function renderGeneralSection(options: RenderGeneralSectionOptions = {}) {
-    const { api, updateCoderPrefsMock } = createMockAPI({
+    const { api, updateCoderPrefsMock, updateLspProvisioningModeMock } = createMockAPI({
       coderWorkspaceArchiveBehavior: options.coderWorkspaceArchiveBehavior,
       worktreeArchiveBehavior: options.worktreeArchiveBehavior,
+      lspProvisioningMode: options.lspProvisioningMode,
     });
     mockApi = api;
 
@@ -259,7 +278,7 @@ describe("GeneralSection", () => {
       </ThemeProvider>
     );
 
-    return { updateCoderPrefsMock, view };
+    return { updateCoderPrefsMock, updateLspProvisioningModeMock, view };
   }
 
   function getSelectTrigger(view: ReturnType<typeof render>, label: string): HTMLElement {
@@ -277,6 +296,10 @@ describe("GeneralSection", () => {
     return trigger;
   }
 
+  function getLspProvisioningModeTrigger(view: ReturnType<typeof render>): HTMLElement {
+    return view.getByRole("combobox", { name: "LSP provisioning mode" });
+  }
+
   function chooseSelectOption(
     view: ReturnType<typeof render>,
     label: string,
@@ -285,8 +308,144 @@ describe("GeneralSection", () => {
     const trigger = getSelectTrigger(view, label);
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
     const portalRoot = view.baseElement.ownerDocument.body;
-    fireEvent.click(within(portalRoot).getByText(optionText));
+    const optionButton = within(portalRoot)
+      .getAllByText(optionText)
+      .find((element) => element.tagName === "BUTTON");
+    if (!(optionButton instanceof window.HTMLElement)) {
+      throw new Error(`Could not find select option ${optionText} for ${label}`);
+    }
+    fireEvent.click(optionButton);
   }
+
+  test("loads the saved LSP provisioning mode", async () => {
+    const { view } = renderGeneralSection({
+      lspProvisioningMode: "auto",
+    });
+
+    await waitFor(() => {
+      expect(getSelectTrigger(view, "LSP provisioning mode").textContent).toContain("Auto");
+    });
+  });
+
+  test("adds an accessible name and restart warning for the LSP provisioning mode control", async () => {
+    const { view } = renderGeneralSection();
+
+    await waitFor(() => {
+      expect(getLspProvisioningModeTrigger(view).textContent).toContain("Manual");
+    });
+
+    expect(
+      view.getByText(/supported ones\. changing this restarts active lsp clients\./i)
+    ).toBeTruthy();
+  });
+
+  test("persists the selected LSP provisioning mode", async () => {
+    const { updateLspProvisioningModeMock, view } = renderGeneralSection({
+      lspProvisioningMode: DEFAULT_LSP_PROVISIONING_MODE,
+    });
+
+    await waitFor(() => {
+      expect(getSelectTrigger(view, "LSP provisioning mode").textContent).toContain("Manual");
+    });
+
+    chooseSelectOption(view, "LSP provisioning mode", "Auto");
+
+    await waitFor(() => {
+      expect(updateLspProvisioningModeMock).toHaveBeenCalledWith({ mode: "auto" });
+      expect(getSelectTrigger(view, "LSP provisioning mode").textContent).toContain("Auto");
+    });
+  });
+
+  test("serializes rapid LSP provisioning mode changes so only the latest value is persisted", async () => {
+    const { api, updateLspProvisioningModeMock } = createMockAPI({
+      lspProvisioningMode: DEFAULT_LSP_PROVISIONING_MODE,
+    });
+    let resolveFirstUpdate: (() => void) | undefined;
+    let resolveSecondUpdate: (() => void) | undefined;
+
+    api.config.updateLspProvisioningMode = updateLspProvisioningModeMock.mockImplementation(
+      ({ mode: _mode }: { mode: LspProvisioningMode }) =>
+        new Promise<void>((resolve) => {
+          if (!resolveFirstUpdate) {
+            resolveFirstUpdate = resolve;
+            return;
+          }
+
+          resolveSecondUpdate = resolve;
+        })
+    );
+    mockApi = api;
+
+    const view = render(
+      <ThemeProvider forcedTheme="dark">
+        <GeneralSection />
+      </ThemeProvider>
+    );
+
+    await waitFor(() => {
+      expect(getLspProvisioningModeTrigger(view).textContent).toContain("Manual");
+    });
+
+    chooseSelectOption(view, "LSP provisioning mode", "Auto");
+
+    await waitFor(() => {
+      expect(updateLspProvisioningModeMock).toHaveBeenCalledTimes(1);
+      expect(updateLspProvisioningModeMock).toHaveBeenNthCalledWith(1, { mode: "auto" });
+    });
+
+    chooseSelectOption(view, "LSP provisioning mode", "Manual");
+    expect(updateLspProvisioningModeMock).toHaveBeenCalledTimes(1);
+
+    resolveFirstUpdate?.();
+
+    await waitFor(() => {
+      expect(updateLspProvisioningModeMock).toHaveBeenCalledTimes(2);
+      expect(updateLspProvisioningModeMock).toHaveBeenNthCalledWith(2, { mode: "manual" });
+      expect(getLspProvisioningModeTrigger(view).textContent).toContain("Manual");
+    });
+
+    resolveSecondUpdate?.();
+  });
+
+  test("re-enables LSP provisioning mode with the default after config load errors", async () => {
+    const { api, updateLspProvisioningModeMock } = createMockAPI({
+      lspProvisioningMode: DEFAULT_LSP_PROVISIONING_MODE,
+    });
+    let rejectGetConfig: ((error?: unknown) => void) | undefined;
+    api.config.getConfig = mock(
+      () =>
+        new Promise<MockConfig>((_resolve, reject) => {
+          rejectGetConfig = reject;
+        })
+    );
+    mockApi = api;
+
+    const view = render(
+      <ThemeProvider forcedTheme="dark">
+        <GeneralSection />
+      </ThemeProvider>
+    );
+
+    await waitFor(() => {
+      expect(rejectGetConfig).toBeDefined();
+    });
+
+    const trigger = getSelectTrigger(view, "LSP provisioning mode");
+    expect(trigger.hasAttribute("disabled")).toBe(true);
+
+    rejectGetConfig?.(new Error("config read failed"));
+
+    await waitFor(() => {
+      expect(trigger.hasAttribute("disabled")).toBe(false);
+      expect(trigger.textContent).toContain("Manual");
+    });
+
+    chooseSelectOption(view, "LSP provisioning mode", "Auto");
+
+    await waitFor(() => {
+      expect(updateLspProvisioningModeMock).toHaveBeenCalledWith({ mode: "auto" });
+    });
+  });
 
   test("renders the worktree archive behavior copy and loads the saved value", async () => {
     const { view } = renderGeneralSection({

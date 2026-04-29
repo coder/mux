@@ -73,6 +73,60 @@ describe("executeFileEditOperation", () => {
   });
 });
 
+describe("executeFileEditOperation post-mutation warnings", () => {
+  test("should append post-mutation warnings after a successful edit", async () => {
+    using tempDir = new TestTempDir("post-mutation-warning");
+
+    const testFile = path.join(tempDir.path, "main.ts");
+    await fs.writeFile(testFile, "const value = 1;\n");
+    const onFilesMutated = jest
+      .fn<(params: { filePaths: string[] }) => Promise<string | undefined>>()
+      .mockResolvedValue("Post-edit LSP diagnostics:\n- main.ts:1:1 error TS1000: broken");
+
+    const result = await executeFileEditOperation({
+      config: {
+        cwd: tempDir.path,
+        runtime: new LocalRuntime(tempDir.path),
+        runtimeTempDir: tempDir.path,
+        onFilesMutated,
+      },
+      filePath: testFile,
+      operation: () => ({ success: true, newContent: "const value = 2;\n", metadata: {} }),
+    });
+
+    expect(result.success).toBe(true);
+    expect(onFilesMutated).toHaveBeenCalledTimes(1);
+    expect(onFilesMutated).toHaveBeenCalledWith({ filePaths: [testFile] });
+    if (result.success) {
+      expect(result.warning).toContain("Post-edit LSP diagnostics:");
+    }
+  });
+
+  test("should not call onFilesMutated when the edit fails before writing", async () => {
+    using tempDir = new TestTempDir("post-mutation-warning-failure");
+
+    const testFile = path.join(tempDir.path, "main.ts");
+    await fs.writeFile(testFile, "const value = 1;\n");
+    const onFilesMutated = jest
+      .fn<(params: { filePaths: string[] }) => Promise<string | undefined>>()
+      .mockResolvedValue("unused");
+
+    const result = await executeFileEditOperation({
+      config: {
+        cwd: tempDir.path,
+        runtime: new LocalRuntime(tempDir.path),
+        runtimeTempDir: tempDir.path,
+        onFilesMutated,
+      },
+      filePath: testFile,
+      operation: () => ({ success: false, error: "no-op" }),
+    });
+
+    expect(result.success).toBe(false);
+    expect(onFilesMutated).not.toHaveBeenCalled();
+  });
+});
+
 describe("executeFileEditOperation outside-cwd access", () => {
   test("should allow traversal outside cwd", async () => {
     using tempDir = new TestTempDir("outside-cwd-traversal");

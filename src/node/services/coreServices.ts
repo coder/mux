@@ -13,6 +13,7 @@ import { BackgroundProcessManager } from "@/node/services/backgroundProcessManag
 import { SessionUsageService } from "@/node/services/sessionUsageService";
 import { MCPConfigService } from "@/node/services/mcpConfigService";
 import { MCPServerManager, type MCPServerManagerOptions } from "@/node/services/mcpServerManager";
+import { LspManager } from "@/node/services/lsp/lspManager";
 import { ExtensionMetadataService } from "@/node/services/ExtensionMetadataService";
 import { WorkspaceService } from "@/node/services/workspaceService";
 import { TaskService } from "@/node/services/taskService";
@@ -49,6 +50,7 @@ export interface CoreServices {
   aiService: AIService;
   mcpConfigService: MCPConfigService;
   mcpServerManager: MCPServerManager;
+  lspManager: LspManager;
   extensionMetadata: ExtensionMetadataService;
   workspaceService: WorkspaceService;
   taskService: TaskService;
@@ -88,6 +90,8 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
     opts.policyService
   );
   aiService.setMCPServerManager(mcpServerManager);
+  const lspManager = new LspManager();
+  aiService.setLspManager(lspManager);
 
   const extensionMetadata = new ExtensionMetadataService(extensionMetadataPath);
 
@@ -106,6 +110,7 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
     opts.opResolver
   );
   workspaceService.setMCPServerManager(mcpServerManager);
+  workspaceService.setLspManager(lspManager);
 
   const taskService = new TaskService(
     config,
@@ -127,6 +132,7 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
     aiService,
     mcpConfigService,
     mcpServerManager,
+    lspManager,
     extensionMetadata,
     workspaceService,
     taskService,

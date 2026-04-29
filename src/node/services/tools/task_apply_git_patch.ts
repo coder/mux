@@ -171,6 +171,76 @@ async function getAppliedCommits(params: {
   return [];
 }
 
+function selectPathModule(filePath: string): typeof path.posix {
+  if (/^[A-Za-z]:[\\/]/.test(filePath) || filePath.includes("\\")) {
+    return path.win32;
+  }
+  return path.posix;
+}
+
+function joinRepoRelativePath(repoCwd: string, relativePath: string): string {
+  const pathModule = selectPathModule(repoCwd);
+  const normalizedSegments = relativePath.split("/").filter((segment) => segment.length > 0);
+  return pathModule.join(repoCwd, ...normalizedSegments);
+}
+
+async function getChangedFilesForAppliedCommits(params: {
+  runtime: ToolConfiguration["runtime"];
+  cwd: string;
+  appliedCommits: AppliedCommit[];
+}): Promise<string[]> {
+  const changedFiles = new Set<string>();
+  let discoveryFailed = false;
+
+  for (const commit of params.appliedCommits) {
+    if (!commit.sha) {
+      continue;
+    }
+
+    try {
+      const result = await execBuffered(
+        params.runtime,
+        `git diff-tree --root --no-commit-id --name-only -z -r ${commit.sha} --`,
+        {
+          cwd: params.cwd,
+          timeout: 30,
+        }
+      );
+      if (result.exitCode !== 0) {
+        log.debug("task_apply_git_patch: git diff-tree --name-only failed", {
+          cwd: params.cwd,
+          commitSha: commit.sha,
+          exitCode: result.exitCode,
+          stderr: result.stderr.trim(),
+          stdout: result.stdout.trim(),
+        });
+        discoveryFailed = true;
+        break;
+      }
+
+      for (const relativePath of result.stdout.split("\u0000").filter((line) => line.length > 0)) {
+        changedFiles.add(joinRepoRelativePath(params.cwd, relativePath));
+      }
+    } catch (error) {
+      log.debug("task_apply_git_patch: git diff-tree --name-only threw", {
+        cwd: params.cwd,
+        commitSha: commit.sha,
+        error,
+      });
+      discoveryFailed = true;
+      break;
+    }
+  }
+
+  if (discoveryFailed) {
+    // Post-apply diagnostics must fail closed here because a partial path list could hide
+    // diagnostics from later commits in the applied series.
+    return [];
+  }
+
+  return [...changedFiles];
+}
+
 const MAX_PARENT_WORKSPACE_DEPTH = 32;
 
 function inferMuxRootFromWorkspaceSessionDir(workspaceSessionDir: string): string | undefined {
@@ -569,6 +639,7 @@ async function applyProjectPatch(params: {
   threeWay: boolean;
   force: boolean;
   isReplay: boolean;
+  onFilesMutated?: (params: { filePaths: string[] }) => Promise<string | undefined>;
   abortSignal?: AbortSignal;
 }): Promise<{ success: boolean; projectResult: TaskApplyGitPatchProjectResult }> {
   const patchResolution = await resolvePatchPath({
@@ -865,6 +936,27 @@ async function applyProjectPatch(params: {
     includeSha: true,
   });
 
+  let postMutationNote: string | undefined;
+  if (params.onFilesMutated) {
+    const changedFiles = await getChangedFilesForAppliedCommits({
+      runtime: params.runtime,
+      cwd: params.repoCwd,
+      appliedCommits,
+    });
+    if (changedFiles.length > 0) {
+      try {
+        postMutationNote = await params.onFilesMutated({ filePaths: changedFiles });
+      } catch (error) {
+        log.debug("task_apply_git_patch: failed to collect post-apply warnings", {
+          taskId: params.taskId,
+          workspaceId: params.workspaceId,
+          cwd: params.repoCwd,
+          error,
+        });
+      }
+    }
+  }
+
   if (!params.isReplay) {
     await markSubagentGitPatchArtifactApplied({
       workspaceId: params.artifactWorkspaceId,
@@ -883,7 +975,7 @@ async function applyProjectPatch(params: {
       status: "applied",
       appliedCommits,
       headCommitSha,
-      note: patchResolution.note,
+      note: mergeNotes(patchResolution.note, postMutationNote),
     },
   };
 }
@@ -1071,6 +1163,7 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
           threeWay,
           force,
           isReplay,
+          onFilesMutated: config.onFilesMutated,
           abortSignal,
         });
         projectResults.push(applyResult.projectResult);

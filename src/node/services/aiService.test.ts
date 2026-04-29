@@ -2625,6 +2625,29 @@ describe("AIService.streamMessage multi-project trust gating", () => {
     mock.restore();
   });
 
+  it("enables lsp_query for a request-scoped experiment override", async () => {
+    using muxHome = new DisposableTempDir("ai-service-lsp-query-request-override");
+    const projectPath = path.join(muxHome.path, "project-a");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "workspace-lsp-query-request-override";
+    const metadata = createTrustMetadata(workspaceId, [projectPath]);
+    const harness = createHarness(muxHome.path, metadata);
+
+    const result = await harness.service.streamMessage({
+      messages: [createMuxMessage("user-message", "user", "hello")],
+      workspaceId,
+      modelString: "openai:gpt-5.2",
+      thinkingLevel: "off",
+      experiments: { lspQuery: true },
+    });
+
+    expect(result.success).toBe(true);
+    const toolConfig = harness.getToolsForModelSpy.mock.calls[0]?.[1];
+    expect(toolConfig).toBeDefined();
+    expect(toolConfig?.lspQueryEnabled).toBe(true);
+  });
+
   it("marks multi-project tool execution untrusted when any secondary project is untrusted", async () => {
     using muxHome = new DisposableTempDir("ai-service-multi-project-trust-gating");
     const projectAPath = path.join(muxHome.path, "project-a");

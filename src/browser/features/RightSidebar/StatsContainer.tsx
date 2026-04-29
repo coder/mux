@@ -5,13 +5,14 @@
  * - "Cost" — renders CostsTab
  * - "Timing" — renders TimingPanel from StatsTab
  * - "Models" — renders ModelBreakdownPanel from StatsTab
+ * - "Diagnostics" — renders DiagnosticsPanel from StatsTab
  */
 
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { CostsTab } from "./CostsTab";
-import { TimingPanel, ModelBreakdownPanel } from "./StatsTab";
+import { TimingPanel, ModelBreakdownPanel, DiagnosticsPanel } from "./StatsTab";
 
-type StatsSubTab = "cost" | "timing" | "models";
+type StatsSubTab = "cost" | "timing" | "models" | "diagnostics";
 
 interface StatsOption {
   value: StatsSubTab;
@@ -22,6 +23,7 @@ const OPTIONS: StatsOption[] = [
   { value: "cost", label: "Cost" },
   { value: "timing", label: "Timing" },
   { value: "models", label: "Models" },
+  { value: "diagnostics", label: "Diagnostics" },
 ];
 
 interface StatsContainerProps {
@@ -43,6 +45,7 @@ export function StatsContainer(props: StatsContainerProps) {
               <button
                 key={option.value}
                 type="button"
+                aria-pressed={isActive}
                 className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors ${
                   isActive
                     ? "bg-accent text-foreground"
@@ -59,6 +62,8 @@ export function StatsContainer(props: StatsContainerProps) {
       {effectiveTab === "cost" && <CostsTab workspaceId={props.workspaceId} />}
       {effectiveTab === "timing" && <TimingPanel workspaceId={props.workspaceId} />}
       {effectiveTab === "models" && <ModelBreakdownPanel workspaceId={props.workspaceId} />}
+      {/* Keep the LSP subscription inside the leaf panel so inactive Stats tabs stay unsubscribed. */}
+      {effectiveTab === "diagnostics" && <DiagnosticsPanel workspaceId={props.workspaceId} />}
     </div>
   );
 }

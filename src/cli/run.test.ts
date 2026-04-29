@@ -10,6 +10,8 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "path";
 
+import { buildEphemeralRunConfig } from "./runTrust";
+
 const CLI_PATH = path.resolve(__dirname, "index.ts");
 const RUN_PATH = path.resolve(__dirname, "run.ts");
 
@@ -143,6 +145,26 @@ describe("mux CLI", () => {
       const result = await runCli(["nonexistent"]);
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain("unknown command");
+    });
+  });
+
+  describe("mux run temp config", () => {
+    test("buildEphemeralRunConfig copies the effective LSP provisioning mode", () => {
+      const projectDir = "/repo";
+      const ephemeralConfig = buildEphemeralRunConfig(
+        { projects: new Map() },
+        {
+          projects: new Map([[projectDir, { workspaces: [], trusted: true }]]),
+          lspProvisioningMode: "auto",
+        },
+        projectDir,
+        "/tmp/mux-run/src"
+      );
+
+      expect(ephemeralConfig.lspProvisioningMode).toBe("auto");
+      expect(ephemeralConfig.projects).toEqual(
+        new Map([[projectDir, { workspaces: [], trusted: true }]])
+      );
     });
   });
 

@@ -48,6 +48,14 @@ describe("AppConfigOnDiskSchema", () => {
     );
   });
 
+  it("validates lspProvisioningMode values", () => {
+    expect(AppConfigOnDiskSchema.safeParse({ lspProvisioningMode: "manual" }).success).toBe(true);
+    expect(AppConfigOnDiskSchema.safeParse({ lspProvisioningMode: "auto" }).success).toBe(true);
+    expect(AppConfigOnDiskSchema.safeParse({ lspProvisioningMode: "semi-auto" }).success).toBe(
+      false
+    );
+  });
+
   it("rejects runtimeEnablement values other than false", () => {
     expect(AppConfigOnDiskSchema.safeParse({ runtimeEnablement: { ssh: true } }).success).toBe(
       false

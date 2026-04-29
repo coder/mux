@@ -39,6 +39,10 @@ import {
   isWorktreeArchiveBehavior,
   type WorktreeArchiveBehavior,
 } from "@/common/config/worktreeArchiveBehavior";
+import {
+  DEFAULT_LSP_PROVISIONING_MODE,
+  type LspProvisioningMode,
+} from "@/common/config/schemas/appConfigOnDisk";
 
 // Guard against corrupted/old persisted settings (e.g. from a downgraded build).
 const ALLOWED_EDITOR_TYPES: ReadonlySet<EditorType> = new Set([
@@ -156,6 +160,10 @@ const WORKTREE_ARCHIVE_BEHAVIOR_OPTIONS: Array<{
   { value: "delete", label: "Delete checkout" },
   { value: "snapshot", label: "Snapshot and delete" },
 ];
+const LSP_PROVISIONING_MODE_OPTIONS: Array<{ value: LspProvisioningMode; label: string }> = [
+  { value: "manual", label: "Manual" },
+  { value: "auto", label: "Auto" },
+];
 
 // Browser mode: window.api is not set (only exists in Electron via preload)
 const isBrowserMode = typeof window !== "undefined" && !window.api;
@@ -206,6 +214,10 @@ export function GeneralSection() {
   );
   const [archiveSettingsLoaded, setArchiveSettingsLoaded] = useState(false);
   const [llmDebugLogs, setLlmDebugLogs] = useState(false);
+  const [lspProvisioningMode, setLspProvisioningMode] = useState<LspProvisioningMode>(
+    DEFAULT_LSP_PROVISIONING_MODE
+  );
+  const [lspProvisioningModeLoaded, setLspProvisioningModeLoaded] = useState(false);
   const archiveBehaviorLoadNonceRef = useRef(0);
   const archiveBehaviorRef = useRef<CoderWorkspaceArchiveBehavior>(DEFAULT_CODER_ARCHIVE_BEHAVIOR);
   const worktreeArchiveBehaviorRef = useRef<WorktreeArchiveBehavior>(
@@ -213,17 +225,20 @@ export function GeneralSection() {
   );
 
   const llmDebugLogsLoadNonceRef = useRef(0);
+  const lspProvisioningModeLoadNonceRef = useRef(0);
 
   // updateCoderPrefs writes config.json on the backend. Serialize (and coalesce) updates so rapid
   // selections can't race and persist a stale value via out-of-order writes.
   const archiveBehaviorUpdateChainRef = useRef<Promise<void>>(Promise.resolve());
   const llmDebugLogsUpdateChainRef = useRef<Promise<void>>(Promise.resolve());
+  const lspProvisioningModeUpdateChainRef = useRef<Promise<void>>(Promise.resolve());
   const archiveBehaviorPendingUpdateRef = useRef<CoderWorkspaceArchiveBehavior | undefined>(
     undefined
   );
   const worktreeArchiveBehaviorPendingUpdateRef = useRef<WorktreeArchiveBehavior | undefined>(
     undefined
   );
+  const lspProvisioningModePendingUpdateRef = useRef<LspProvisioningMode | undefined>(undefined);
 
   useEffect(() => {
     if (!api) {
@@ -231,8 +246,10 @@ export function GeneralSection() {
     }
 
     setArchiveSettingsLoaded(false);
+    setLspProvisioningModeLoaded(false);
     const archiveBehaviorNonce = ++archiveBehaviorLoadNonceRef.current;
     const llmDebugLogsNonce = ++llmDebugLogsLoadNonceRef.current;
+    const lspProvisioningModeNonce = ++lspProvisioningModeLoadNonceRef.current;
 
     void api.config
       .getConfig()
@@ -259,12 +276,23 @@ export function GeneralSection() {
         if (llmDebugLogsNonce === llmDebugLogsLoadNonceRef.current) {
           setLlmDebugLogs(cfg.llmDebugLogs === true);
         }
+
+        // Use an independent nonce so provisioning-mode changes do not discard other config updates.
+        if (lspProvisioningModeNonce === lspProvisioningModeLoadNonceRef.current) {
+          const nextLspProvisioningMode = cfg.lspProvisioningMode ?? DEFAULT_LSP_PROVISIONING_MODE;
+          setLspProvisioningMode(nextLspProvisioningMode);
+          setLspProvisioningModeLoaded(true);
+        }
       })
       .catch(() => {
         if (archiveBehaviorNonce === archiveBehaviorLoadNonceRef.current) {
           // Fall back to the safe defaults already in state so the controls can recover after a
           // config read failure and the next user change can persist a fresh value.
           setArchiveSettingsLoaded(true);
+        }
+
+        if (lspProvisioningModeNonce === lspProvisioningModeLoadNonceRef.current) {
+          setLspProvisioningModeLoaded(true);
         }
       });
   }, [api]);
@@ -340,6 +368,50 @@ export function GeneralSection() {
       queueArchiveBehaviorUpdate();
     },
     [api, archiveSettingsLoaded, queueArchiveBehaviorUpdate]
+  );
+
+  const queueLspProvisioningModeUpdate = useCallback(() => {
+    if (!api?.config?.updateLspProvisioningMode || !lspProvisioningModeLoaded) {
+      return;
+    }
+
+    lspProvisioningModeUpdateChainRef.current = lspProvisioningModeUpdateChainRef.current
+      .then(async () => {
+        for (;;) {
+          const pendingLspProvisioningMode = lspProvisioningModePendingUpdateRef.current;
+          if (pendingLspProvisioningMode === undefined) {
+            return;
+          }
+
+          // Clear before awaiting so rapid changes coalesce into a new pending value.
+          lspProvisioningModePendingUpdateRef.current = undefined;
+
+          try {
+            await api.config.updateLspProvisioningMode({ mode: pendingLspProvisioningMode });
+          } catch {
+            // Best-effort only. Swallow errors so the queue doesn't get stuck.
+          }
+        }
+      })
+      .catch(() => {
+        // Best-effort only.
+      });
+  }, [api, lspProvisioningModeLoaded]);
+
+  const handleLspProvisioningModeChange = useCallback(
+    (mode: LspProvisioningMode) => {
+      if (!lspProvisioningModeLoaded || !api?.config?.updateLspProvisioningMode) {
+        return;
+      }
+
+      // Invalidate any in-flight provisioning-mode load so it doesn't overwrite the user's choice.
+      lspProvisioningModeLoadNonceRef.current++;
+      setLspProvisioningMode(mode);
+
+      lspProvisioningModePendingUpdateRef.current = mode;
+      queueLspProvisioningModeUpdate();
+    },
+    [api, lspProvisioningModeLoaded, queueLspProvisioningModeUpdate]
   );
 
   const handleLlmDebugLogsChange = (checked: boolean) => {
@@ -607,6 +679,35 @@ export function GeneralSection() {
           )}
         </div>
       )}
+
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex-1">
+          <div className="text-foreground text-sm">LSP provisioning mode</div>
+          <div className="text-muted text-xs">
+            Choose whether mux only uses existing language servers or can also auto-provision
+            supported ones. Changing this restarts active LSP clients.
+          </div>
+        </div>
+        <Select
+          value={lspProvisioningMode}
+          onValueChange={(value) => handleLspProvisioningModeChange(value as LspProvisioningMode)}
+          disabled={!api?.config?.updateLspProvisioningMode || !lspProvisioningModeLoaded}
+        >
+          <SelectTrigger
+            aria-label="LSP provisioning mode"
+            className="border-border-medium bg-background-secondary hover:bg-hover h-9 w-auto cursor-pointer rounded-md border px-3 text-sm transition-colors"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {LSP_PROVISIONING_MODE_OPTIONS.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
 
       <div className="flex items-center justify-between gap-4">
         <div className="flex-1">

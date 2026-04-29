@@ -1,5 +1,6 @@
 import { os, ORPCError } from "@orpc/server";
 import { DEFAULT_CODER_ARCHIVE_BEHAVIOR } from "@/common/config/coderArchiveBehavior";
+import { DEFAULT_LSP_PROVISIONING_MODE } from "@/common/config/schemas/appConfigOnDisk";
 import * as schemas from "@/common/orpc/schemas";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import type { ORPCContext } from "./context";
@@ -16,6 +17,7 @@ import type {
   UpdateStatus,
   WorkspaceActivitySnapshot,
   WorkspaceChatMessage,
+  WorkspaceLspDiagnosticsSnapshot,
   WorkspaceStatsSnapshot,
   FrontendWorkspaceMetadataSchemaType,
 } from "@/common/orpc/types";
@@ -152,6 +154,47 @@ function isErrnoWithCode(error: unknown, code: string): boolean {
 
 function isTrustedProjectPath(context: ORPCContext, projectPath?: string | null): boolean {
   return isProjectTrusted(context.config, projectPath);
+}
+
+async function disposeLspWorkspacesForProjects(
+  context: ORPCContext,
+  projectPaths?: readonly string[]
+): Promise<void> {
+  const normalizedProjectPaths = projectPaths?.map((projectPath) =>
+    stripTrailingSlashes(projectPath)
+  );
+  const allWorkspaceMetadata = await context.config.getAllWorkspaceMetadata();
+  const workspaceIds = new Set(
+    allWorkspaceMetadata
+      .filter((metadata) => {
+        if (normalizedProjectPaths == null || normalizedProjectPaths.length === 0) {
+          return true;
+        }
+
+        const workspaceProjectPaths = [
+          metadata.projectPath,
+          ...(metadata.projects?.map((project) => project.projectPath) ?? []),
+        ].map((projectPath) => stripTrailingSlashes(projectPath));
+        return normalizedProjectPaths.some((projectPath) =>
+          workspaceProjectPaths.includes(projectPath)
+        );
+      })
+      .map((metadata) => metadata.id)
+  );
+
+  await Promise.all(
+    [...workspaceIds].map(async (workspaceId) => {
+      try {
+        await context.lspManager.disposeWorkspace(workspaceId);
+      } catch (error) {
+        log.debug("Failed to dispose LSP workspace after config/trust update", {
+          workspaceId,
+          projectPaths: normalizedProjectPaths,
+          error,
+        });
+      }
+    })
+  );
 }
 
 function normalizeOptionalConfigString(value: string | null | undefined): string | undefined {
@@ -622,6 +665,7 @@ export const router = (authToken?: string) => {
             worktreeArchiveBehavior: config.worktreeArchiveBehavior ?? "keep",
             runtimeEnablement: normalizeRuntimeEnablement(config.runtimeEnablement),
             defaultRuntime: config.defaultRuntime ?? null,
+            lspProvisioningMode: config.lspProvisioningMode ?? DEFAULT_LSP_PROVISIONING_MODE,
             agentAiDefaults: config.agentAiDefaults ?? {},
             // Legacy fields (downgrade compatibility)
             subagentAiDefaults: config.subagentAiDefaults ?? {},
@@ -1018,6 +1062,23 @@ export const router = (authToken?: string) => {
 
           // Re-evaluate task queue in case more slots opened up
           await context.taskService.maybeStartQueuedTasks();
+        }),
+      updateLspProvisioningMode: t
+        .input(schemas.config.updateLspProvisioningMode.input)
+        .output(schemas.config.updateLspProvisioningMode.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => {
+            const next = { ...config };
+            if (input.mode === DEFAULT_LSP_PROVISIONING_MODE) {
+              delete next.lspProvisioningMode;
+            } else {
+              next.lspProvisioningMode = input.mode;
+            }
+            return next;
+          });
+
+          // Provisioning mode changes alter launch-plan policy for every workspace.
+          await disposeLspWorkspacesForProjects(context);
         }),
       updateLlmDebugLogs: t
         .input(schemas.config.updateLlmDebugLogs.input)
@@ -2515,8 +2576,8 @@ export const router = (authToken?: string) => {
         .input(schemas.projects.setTrust.input)
         .output(schemas.projects.setTrust.output)
         .handler(async ({ context, input }) => {
+          const normalizedPath = stripTrailingSlashes(input.projectPath);
           await context.config.editConfig((config) => {
-            const normalizedPath = stripTrailingSlashes(input.projectPath);
             let project = config.projects.get(normalizedPath);
             if (!project) {
               // Create a minimal project entry so trust can be set before
@@ -2527,6 +2588,9 @@ export const router = (authToken?: string) => {
             project.trusted = input.trusted;
             return config;
           });
+
+          // Trust flips change which launch strategies are legal for this repo.
+          await disposeLspWorkspacesForProjects(context, [normalizedPath]);
         }),
       setDisplayName: t
         .input(schemas.projects.setDisplayName.input)
@@ -3997,6 +4061,51 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           return context.sessionUsageService.getSessionUsageBatch(input.workspaceIds);
         }),
+      lsp: {
+        listDiagnostics: t
+          .input(schemas.workspace.lsp.listDiagnostics.input)
+          .output(schemas.workspace.lsp.listDiagnostics.output)
+          .handler(({ context, input }) => {
+            return context.lspManager.getWorkspaceDiagnosticsSnapshot(input.workspaceId);
+          }),
+        subscribeDiagnostics: t
+          .input(schemas.workspace.lsp.subscribeDiagnostics.input)
+          .output(schemas.workspace.lsp.subscribeDiagnostics.output)
+          .handler(async function* ({ context, input, signal }) {
+            const workspaceId = input.workspaceId;
+
+            if (signal?.aborted) {
+              return;
+            }
+
+            context.lspManager.acquireLease(workspaceId);
+            const queue = createAsyncEventQueue<WorkspaceLspDiagnosticsSnapshot>();
+            const onAbort = () => {
+              queue.end();
+            };
+
+            if (signal) {
+              signal.addEventListener("abort", onAbort, { once: true });
+            }
+
+            const unsubscribe = context.lspManager.subscribeWorkspaceDiagnostics(
+              workspaceId,
+              (snapshot) => {
+                queue.push(snapshot);
+              }
+            );
+
+            try {
+              yield context.lspManager.getWorkspaceDiagnosticsSnapshot(workspaceId);
+              yield* queue.iterate();
+            } finally {
+              signal?.removeEventListener("abort", onAbort);
+              queue.end();
+              unsubscribe();
+              context.lspManager.releaseLease(workspaceId);
+            }
+          }),
+      },
       stats: {
         subscribe: t
           .input(schemas.workspace.stats.subscribe.input)

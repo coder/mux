@@ -1,9 +1,17 @@
 import React from "react";
 
-import type { WorkspaceStatsSnapshot } from "@/common/orpc/types";
+import type {
+  WorkspaceStatsSnapshot,
+  WorkspaceLspDiagnosticsSnapshot,
+  LspDiagnostic,
+  LspFileDiagnostics,
+} from "@/common/orpc/types";
 
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
-import { useWorkspaceStatsSnapshot } from "@/browser/stores/WorkspaceStore";
+import {
+  useWorkspaceStatsSnapshot,
+  useWorkspaceLspDiagnosticsViewState,
+} from "@/browser/stores/WorkspaceStore";
 import { ToggleGroup, type ToggleOption } from "@/browser/components/ToggleGroup/ToggleGroup";
 import { useTelemetry } from "@/browser/hooks/useTelemetry";
 import { computeTimingPercentages } from "@/browser/utils/timingPercentages";
@@ -28,6 +36,71 @@ const VIEW_MODE_OPTIONS: Array<ToggleOption<ViewMode>> = [
   { value: "session", label: "Session" },
   { value: "last-request", label: "Last Request" },
 ];
+
+type DiagnosticSeverityBucket = 1 | 2 | 3 | 4 | "unknown";
+
+const DIAGNOSTIC_SEVERITY_LABELS: Record<Exclude<DiagnosticSeverityBucket, "unknown">, string> = {
+  1: "Error",
+  2: "Warning",
+  3: "Information",
+  4: "Hint",
+};
+
+function getDiagnosticSeverityLabel(severity?: DiagnosticSeverityBucket): string {
+  if (severity == null || severity === "unknown") {
+    return "Unknown";
+  }
+
+  return DIAGNOSTIC_SEVERITY_LABELS[severity];
+}
+
+function formatDiagnosticLocation(line: number, character: number): string {
+  return `Line ${line + 1}, Column ${character + 1}`;
+}
+
+function getDiagnosticsFileIdentity(file: LspFileDiagnostics): string {
+  return [file.serverId, file.rootUri, file.uri].join("::");
+}
+
+function getDiagnosticIdentity(file: LspFileDiagnostics, diagnostic: LspDiagnostic): string {
+  return [
+    getDiagnosticsFileIdentity(file),
+    diagnostic.range.start.line,
+    diagnostic.range.start.character,
+    diagnostic.range.end.line,
+    diagnostic.range.end.character,
+    diagnostic.severity ?? "unknown",
+    diagnostic.source ?? "",
+    diagnostic.code ?? "",
+    diagnostic.message,
+  ].join("::");
+}
+
+function collectDiagnosticsSummary(snapshot: WorkspaceLspDiagnosticsSnapshot) {
+  const counts: Record<DiagnosticSeverityBucket, number> = {
+    1: 0,
+    2: 0,
+    3: 0,
+    4: 0,
+    unknown: 0,
+  };
+
+  const files = snapshot.diagnostics.filter((file) => file.diagnostics.length > 0);
+  let totalDiagnostics = 0;
+
+  for (const file of files) {
+    totalDiagnostics += file.diagnostics.length;
+    for (const diagnostic of file.diagnostics) {
+      counts[diagnostic.severity ?? "unknown"] += 1;
+    }
+  }
+
+  return {
+    files,
+    counts,
+    totalDiagnostics,
+  };
+}
 
 // Exported for unit tests.
 export function formatModelBreakdownLabel(entry: {
@@ -776,6 +849,125 @@ export function TimingPanel(props: TimingPanelProps) {
             ))}
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+export interface DiagnosticsPanelProps {
+  workspaceId: string;
+}
+
+/**
+ * Standalone Diagnostics panel for the Stats sub-tab.
+ * Subscribes lazily so inactive Stats tabs do not hold background LSP listeners open.
+ */
+export function DiagnosticsPanel(props: DiagnosticsPanelProps) {
+  const diagnosticsView = useWorkspaceLspDiagnosticsViewState(props.workspaceId);
+  const snapshot = diagnosticsView.snapshot;
+  const isRetrying = diagnosticsView.connection.status === "retrying";
+
+  const retryNotice = isRetrying ? (
+    <div className="border-warning/40 bg-warning/10 text-warning mb-4 rounded border px-3 py-2 text-xs">
+      <p>Retrying diagnostics subscription...</p>
+      {diagnosticsView.connection.errorMessage ? (
+        <p className="mt-1 break-words">Last error: {diagnosticsView.connection.errorMessage}</p>
+      ) : null}
+    </div>
+  ) : null;
+
+  // The workspace store uses null to mean "no snapshot yet", which is different from
+  // a valid empty payload after the LSP server reports zero diagnostics.
+  if (snapshot === null) {
+    return (
+      <div className="text-light font-primary text-[13px] leading-relaxed">
+        <div className="text-secondary px-5 py-10 text-center">
+          {isRetrying ? retryNotice : <p>Loading diagnostics...</p>}
+        </div>
+      </div>
+    );
+  }
+
+  const { files, counts, totalDiagnostics } = collectDiagnosticsSummary(snapshot);
+
+  if (totalDiagnostics === 0) {
+    return (
+      <div className="text-light font-primary text-[13px] leading-relaxed">
+        {retryNotice}
+        <div className="text-secondary px-5 py-10 text-center">
+          <p>No diagnostics for this workspace.</p>
+        </div>
+      </div>
+    );
+  }
+
+  const summaryParts = ([1, 2, 3, 4, "unknown"] as const)
+    .flatMap((severity) => {
+      const count = counts[severity];
+      if (count === 0) {
+        return [];
+      }
+
+      const label = getDiagnosticSeverityLabel(severity).toLowerCase();
+      return [`${count} ${label}${count === 1 ? "" : "s"}`];
+    })
+    .join(" · ");
+
+  return (
+    <div className="text-light font-primary text-[13px] leading-relaxed">
+      {retryNotice}
+      <div className="mb-4 flex flex-col gap-1">
+        <span className="text-foreground font-medium">Diagnostics</span>
+        <p className="text-muted-light text-xs">
+          {totalDiagnostics} diagnostic{totalDiagnostics === 1 ? "" : "s"} across {files.length}{" "}
+          file
+          {files.length === 1 ? "" : "s"}
+          {summaryParts.length > 0 ? ` · ${summaryParts}` : ""}
+        </p>
+      </div>
+
+      <div className="flex flex-col gap-4">
+        {files.map((file) => {
+          const fileIdentity = getDiagnosticsFileIdentity(file);
+          const duplicateDiagnosticCounts = new Map<string, number>();
+
+          return (
+            <section key={fileIdentity} className="border-border rounded border p-3">
+              <div className="mb-3 flex flex-col gap-1">
+                <h3 className="text-foreground font-medium break-all">{file.path}</h3>
+                <p className="text-muted text-xs">Server: {file.serverId}</p>
+              </div>
+
+              <ul className="flex flex-col gap-3">
+                {file.diagnostics.map((diagnostic) => {
+                  const metadata = [
+                    getDiagnosticSeverityLabel(diagnostic.severity),
+                    formatDiagnosticLocation(
+                      diagnostic.range.start.line,
+                      diagnostic.range.start.character
+                    ),
+                    diagnostic.source,
+                    diagnostic.code != null ? `Code ${diagnostic.code}` : undefined,
+                  ].filter((value): value is string => value != null);
+                  const diagnosticIdentity = getDiagnosticIdentity(file, diagnostic);
+                  const duplicateCount = duplicateDiagnosticCounts.get(diagnosticIdentity) ?? 0;
+                  duplicateDiagnosticCounts.set(diagnosticIdentity, duplicateCount + 1);
+                  const diagnosticKey =
+                    duplicateCount === 0
+                      ? diagnosticIdentity
+                      : `${diagnosticIdentity}::duplicate-${duplicateCount}`;
+
+                  return (
+                    <li key={diagnosticKey} className="border-border-light border-l-2 pl-3">
+                      <p className="text-foreground whitespace-pre-wrap">{diagnostic.message}</p>
+                      <p className="text-muted mt-1 text-xs">{metadata.join(" · ")}</p>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          );
+        })}
       </div>
     </div>
   );

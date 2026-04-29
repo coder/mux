@@ -34,6 +34,10 @@ export const FeatureFlagOverrideSchema = z.enum(["default", "on", "off"]);
 
 export const UpdateChannelSchema = z.enum(["stable", "nightly"]);
 
+export const LSP_PROVISIONING_MODES = ["manual", "auto"] as const;
+export const DEFAULT_LSP_PROVISIONING_MODE = "manual" satisfies (typeof LSP_PROVISIONING_MODES)[number];
+export const LspProvisioningModeSchema = z.enum(LSP_PROVISIONING_MODES);
+
 export const AppConfigOnDiskSchema = z
   .object({
     projects: z.array(z.tuple([z.string(), ProjectConfigSchema])).optional(),
@@ -81,6 +85,7 @@ export const AppConfigOnDiskSchema = z
     updateChannel: UpdateChannelSchema.optional(),
     runtimeEnablement: RuntimeEnablementOverridesSchema.optional(),
     defaultRuntime: RuntimeEnablementIdSchema.optional(),
+    lspProvisioningMode: LspProvisioningModeSchema.optional(),
     onePasswordAccountName: z.string().optional(),
   })
   .passthrough();
@@ -91,5 +96,6 @@ export type SubagentAiDefaultsEntry = z.infer<typeof SubagentAiDefaultsEntrySche
 export type SubagentAiDefaults = z.infer<typeof SubagentAiDefaultsSchema>;
 export type FeatureFlagOverride = z.infer<typeof FeatureFlagOverrideSchema>;
 export type UpdateChannel = z.infer<typeof UpdateChannelSchema>;
+export type LspProvisioningMode = z.infer<typeof LspProvisioningModeSchema>;
 
 export type AppConfigOnDisk = z.infer<typeof AppConfigOnDiskSchema>;

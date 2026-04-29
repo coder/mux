@@ -2,6 +2,7 @@ import { RUNTIME_MODE } from "@/common/types/runtime";
 import {
   buildTaskToolDescription,
   getAvailableTools,
+  LspQueryToolResultSchema,
   TaskToolArgsSchema,
   TOOL_DEFINITIONS,
 } from "./toolDefinitions";
@@ -237,6 +238,58 @@ describe("TOOL_DEFINITIONS", () => {
       expect(parsed.success).toBe(false);
     }
   );
+
+  it("accepts enriched single-root workspace symbol results", () => {
+    const parsed = LspQueryToolResultSchema.safeParse({
+      success: true,
+      operation: "workspace_symbols",
+      serverId: "typescript",
+      rootUri: "file:///workspace",
+      symbols: [
+        {
+          name: "ResourceService",
+          kind: 5,
+          kindLabel: "Class",
+          path: "/workspace/src/resource.ts",
+          uri: "file:///workspace/src/resource.ts",
+          range: {
+            start: { line: 1, character: 1 },
+            end: { line: 1, character: 16 },
+          },
+          exportInfo: {
+            isExported: true,
+            confidence: "heuristic",
+            evidence: "Found an export keyword near the declaration",
+          },
+        },
+      ],
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
+  it("accepts directory workspace symbol results with skipped roots metadata", () => {
+    const parsed = LspQueryToolResultSchema.safeParse({
+      success: true,
+      operation: "workspace_symbols",
+      results: [],
+      skippedRoots: [
+        {
+          serverId: "rust",
+          rootUri: "file:///workspace",
+          reasonCode: "unsupported_provisioning",
+          reason:
+            "rust-analyzer is not available on PATH and automatic installation is not supported yet",
+          installGuidance:
+            "Install rust-analyzer and ensure it is available on PATH, or query a representative source file for a supported language.",
+        },
+      ],
+      disambiguationHint:
+        "Multiple LSP roots returned workspace symbol matches. Compare serverId, rootUri, uri, and kindLabel before choosing.",
+    });
+
+    expect(parsed.success).toBe(true);
+  });
 
   it("asks for clarification via ask_user_question (instead of emitting open questions)", () => {
     expect(TOOL_DEFINITIONS.ask_user_question.description).toContain(

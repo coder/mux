@@ -59,6 +59,8 @@ import type {
   CoderWorkspace,
 } from "@/common/orpc/schemas/coder";
 import type { CoderWorkspaceArchiveBehavior } from "@/common/config/coderArchiveBehavior";
+import { DEFAULT_LSP_PROVISIONING_MODE } from "@/common/config/schemas/appConfigOnDisk";
+import type { LspProvisioningMode } from "@/common/config/schemas/appConfigOnDisk";
 import type { WorktreeArchiveBehavior } from "@/common/config/worktreeArchiveBehavior";
 import type { z } from "zod";
 import type { ProjectRemoveErrorSchema } from "@/common/orpc/schemas/errors";
@@ -132,6 +134,8 @@ export interface MockORPCClientOptions {
   defaultRuntime?: RuntimeEnablementId | null;
   /** Initial 1Password account name for config.getConfig */
   onePasswordAccountName?: string | null;
+  /** Initial LSP provisioning mode for config.getConfig */
+  lspProvisioningMode?: LspProvisioningMode;
   /** Initial global heartbeat default prompt for config.getConfig */
   heartbeatDefaultPrompt?: string;
   /** Initial global heartbeat default interval for config.getConfig */
@@ -351,6 +355,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     worktreeArchiveBehavior: initialWorktreeArchiveBehavior = "keep",
     runtimeEnablement: initialRuntimeEnablement,
     defaultRuntime: initialDefaultRuntime,
+    lspProvisioningMode: initialLspProvisioningMode,
     onePasswordAccountName: initialOnePasswordAccountName = null,
     heartbeatDefaultPrompt: initialHeartbeatDefaultPrompt,
     heartbeatDefaultIntervalMs: initialHeartbeatDefaultIntervalMs,
@@ -499,6 +504,8 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
   };
 
   let defaultRuntime: RuntimeEnablementId | null = initialDefaultRuntime ?? null;
+  let lspProvisioningMode: LspProvisioningMode =
+    initialLspProvisioningMode ?? DEFAULT_LSP_PROVISIONING_MODE;
   let onePasswordAccountName: string | null = initialOnePasswordAccountName;
   let heartbeatDefaultPrompt = initialHeartbeatDefaultPrompt;
   let heartbeatDefaultIntervalMs = initialHeartbeatDefaultIntervalMs;
@@ -688,6 +695,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           worktreeArchiveBehavior,
           runtimeEnablement,
           defaultRuntime,
+          lspProvisioningMode,
           agentAiDefaults,
           subagentAiDefaults,
           muxGovernorUrl,
@@ -869,6 +877,12 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         notifyConfigChanged();
         return Promise.resolve(undefined);
       },
+      updateLspProvisioningMode: (input: { mode: LspProvisioningMode }) => {
+        lspProvisioningMode = input.mode;
+        notifyConfigChanged();
+        return Promise.resolve(undefined);
+      },
+      updateLlmDebugLogs: (_input: { enabled: boolean }) => Promise.resolve(undefined),
       unenrollMuxGovernor: () => Promise.resolve(undefined),
     },
     agents: {

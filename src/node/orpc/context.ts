@@ -38,6 +38,7 @@ import type { CoderService } from "@/node/services/coderService";
 import type { ServerAuthService } from "@/node/services/serverAuthService";
 import type { SshPromptService } from "@/node/services/sshPromptService";
 import type { AnalyticsService } from "@/node/services/analytics/analyticsService";
+import type { LspManager } from "@/node/services/lsp/lspManager";
 import type { DesktopBridgeServer } from "@/node/services/desktop/DesktopBridgeServer";
 import type { DesktopSessionManager } from "@/node/services/desktop/DesktopSessionManager";
 import type { DesktopTokenManager } from "@/node/services/desktop/DesktopTokenManager";
@@ -70,6 +71,7 @@ export interface ORPCContext {
   telemetryService: TelemetryService;
   experimentsService: ExperimentsService;
   sessionUsageService: SessionUsageService;
+  lspManager: LspManager;
   devToolsService: DevToolsService;
   browserSessionDiscoveryService: AgentBrowserSessionDiscoveryService;
   browserBridgeTokenManager: BrowserBridgeTokenManager;

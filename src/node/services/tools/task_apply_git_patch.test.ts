@@ -6,6 +6,7 @@ import { execSync } from "node:child_process";
 
 import type { ToolExecutionOptions } from "ai";
 
+import type { ExecOptions, ExecStream, Runtime } from "@/node/runtime/Runtime";
 import { createTaskApplyGitPatchTool } from "@/node/services/tools/task_apply_git_patch";
 import {
   getSubagentGitPatchArtifactsFilePath,
@@ -21,6 +22,51 @@ const mockToolCallOptions: ToolExecutionOptions = {
   messages: [],
 };
 
+function createTextStream(content: string): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(content));
+      controller.close();
+    },
+  });
+}
+
+function createExecStream(stdout = "", stderr = "", exitCode = 0): ExecStream {
+  return {
+    stdout: createTextStream(stdout),
+    stderr: createTextStream(stderr),
+    stdin: new WritableStream<Uint8Array>({
+      write() {
+        return Promise.resolve();
+      },
+      close() {
+        return Promise.resolve();
+      },
+    }),
+    exitCode: Promise.resolve(exitCode),
+    duration: Promise.resolve(0),
+  };
+}
+
+function createRuntimeThatFailsNthDiffTree(
+  baseRuntime: Runtime,
+  failOnCall: number,
+  state: { diffTreeCalls: number }
+): Runtime {
+  const runtime = Object.create(baseRuntime) as Runtime;
+  runtime.exec = async (command: string, options: ExecOptions) => {
+    if (command.startsWith("git diff-tree --root --no-commit-id --name-only -z -r ")) {
+      state.diffTreeCalls += 1;
+      if (state.diffTreeCalls === failOnCall) {
+        return createExecStream("", "diff-tree failed", 1);
+      }
+    }
+
+    return await baseRuntime.exec(command, options);
+  };
+  return runtime;
+}
+
 function initGitRepo(repoPath: string): void {
   execSync("git init -b main", { cwd: repoPath, stdio: "ignore" });
   execSync('git config user.email "test@example.com"', { cwd: repoPath, stdio: "ignore" });
@@ -34,8 +80,9 @@ async function commitFile(
   content: string,
   message: string
 ): Promise<void> {
+  await fsPromises.mkdir(path.dirname(path.join(repoPath, fileName)), { recursive: true });
   await fsPromises.writeFile(path.join(repoPath, fileName), content, "utf-8");
-  execSync(`git add -- ${fileName}`, { cwd: repoPath, stdio: "ignore" });
+  execSync(`git add -- ${JSON.stringify(fileName)}`, { cwd: repoPath, stdio: "ignore" });
   execSync(`git commit -m ${JSON.stringify(message)}`, { cwd: repoPath, stdio: "ignore" });
 }
 
@@ -46,21 +93,23 @@ async function buildReadyProjectArtifact(params: {
   projectPath: string;
   projectName: string;
   childRepo: string;
-  baseSha: string;
+  baseSha?: string;
   headSha: string;
+  commitCount?: number;
+  formatPatchArgs?: string;
 }) {
   const patchPath = getSubagentGitPatchMboxPath(
     params.sessionDir,
     params.childTaskId,
     params.storageKey
   );
-  const patch = execSync(
-    `git format-patch --stdout --binary ${params.baseSha}..${params.headSha}`,
-    {
-      cwd: params.childRepo,
-      encoding: "buffer",
-    }
-  );
+  const formatPatchArgs =
+    params.formatPatchArgs ??
+    (params.baseSha ? `${params.baseSha}..${params.headSha}` : `--root ${params.headSha}`);
+  const patch = execSync(`git format-patch --stdout --binary ${formatPatchArgs}`, {
+    cwd: params.childRepo,
+    encoding: "buffer",
+  });
 
   await fsPromises.mkdir(path.dirname(patchPath), { recursive: true });
   await fsPromises.writeFile(patchPath, patch);
@@ -70,9 +119,9 @@ async function buildReadyProjectArtifact(params: {
     projectName: params.projectName,
     storageKey: params.storageKey,
     status: "ready" as const,
-    baseCommitSha: params.baseSha,
+    ...(params.baseSha ? { baseCommitSha: params.baseSha } : {}),
     headCommitSha: params.headSha,
-    commitCount: 1,
+    commitCount: params.commitCount ?? 1,
     mboxPath: patchPath,
   };
 }
@@ -147,6 +196,60 @@ async function writeWorkspaceConfig(params: {
     ),
     "utf-8"
   );
+}
+
+async function setupSingleProjectPatchFixture(rootDir: string, name: string) {
+  const childRepo = path.join(rootDir, `${name}-child`);
+  const targetRepo = path.join(rootDir, `${name}-target`);
+  for (const repo of [childRepo, targetRepo]) {
+    await fsPromises.mkdir(repo, { recursive: true });
+    initGitRepo(repo);
+  }
+
+  await commitFile(childRepo, "README.md", "hello", "base");
+  await commitFile(targetRepo, "README.md", "hello", "base");
+  const baseSha = execSync("git rev-parse HEAD", { cwd: childRepo, encoding: "utf-8" }).trim();
+
+  await commitFile(childRepo, "README.md", "hello\nupdated", "child change");
+  const headSha = execSync("git rev-parse HEAD", { cwd: childRepo, encoding: "utf-8" }).trim();
+
+  const muxRoot = path.join(rootDir, `${name}-mux`);
+  const workspaceId = `${name}-workspace`;
+  const sessionDir = path.join(muxRoot, "sessions", workspaceId);
+  await fsPromises.mkdir(sessionDir, { recursive: true });
+  await writeWorkspaceConfig({
+    muxRoot,
+    workspaceId,
+    workspaceName: name,
+    primaryProjectPath: targetRepo,
+    projects: [{ projectPath: targetRepo, projectName: name }],
+  });
+
+  const childTaskId = `${name}-task`;
+  await writePatchArtifact({
+    sessionDir,
+    workspaceId,
+    childTaskId,
+    projectArtifacts: [
+      await buildReadyProjectArtifact({
+        sessionDir,
+        childTaskId,
+        storageKey: name,
+        projectPath: targetRepo,
+        projectName: name,
+        childRepo,
+        baseSha,
+        headSha,
+      }),
+    ],
+  });
+
+  return {
+    childTaskId,
+    sessionDir,
+    targetRepo,
+    workspaceId,
+  };
 }
 
 describe("task_apply_git_patch tool", () => {
@@ -710,5 +813,230 @@ describe("task_apply_git_patch tool", () => {
     const artifact = await readSubagentGitPatchArtifact(ancestorSessionDir, childTaskId);
     expect(artifact?.projectArtifacts[0]?.appliedAtMs).toBe(appliedAtMs);
     expect(await readSubagentGitPatchArtifact(currentSessionDir, childTaskId)).toBeNull();
+  }, 20_000);
+
+  it("reports changed files across a root patch series, including paths with spaces", async () => {
+    const childRepo = path.join(rootDir, "root-series-child");
+    const targetRepo = path.join(rootDir, "root-series-target");
+    for (const repo of [childRepo, targetRepo]) {
+      await fsPromises.mkdir(repo, { recursive: true });
+      initGitRepo(repo);
+    }
+
+    await commitFile(childRepo, "README.md", "hello\n", "first change");
+    await commitFile(childRepo, "docs/file with spaces.md", "second\n", "second change");
+    const headSha = execSync("git rev-parse HEAD", { cwd: childRepo, encoding: "utf-8" }).trim();
+
+    const muxRoot = path.join(rootDir, "root-series-mux");
+    const workspaceId = "root-series-workspace";
+    const sessionDir = path.join(muxRoot, "sessions", workspaceId);
+    await fsPromises.mkdir(sessionDir, { recursive: true });
+    await writeWorkspaceConfig({
+      muxRoot,
+      workspaceId,
+      workspaceName: "root-series",
+      primaryProjectPath: targetRepo,
+      projects: [{ projectPath: targetRepo, projectName: "root-series" }],
+    });
+
+    const childTaskId = "root-series-task";
+    await writePatchArtifact({
+      sessionDir,
+      workspaceId,
+      childTaskId,
+      projectArtifacts: [
+        await buildReadyProjectArtifact({
+          sessionDir,
+          childTaskId,
+          storageKey: "root-series",
+          projectPath: targetRepo,
+          projectName: "root-series",
+          childRepo,
+          headSha,
+          commitCount: 2,
+          formatPatchArgs: `--root ${headSha}`,
+        }),
+      ],
+    });
+
+    const mutationCalls: Array<{ filePaths: string[] }> = [];
+    const tool = createTaskApplyGitPatchTool({
+      ...getTestDeps(),
+      workspaceId,
+      cwd: targetRepo,
+      runtime: createRuntime({ type: "local", srcBaseDir: "/tmp" }),
+      runtimeTempDir: "/tmp",
+      workspaceSessionDir: sessionDir,
+      onFilesMutated: (params) => {
+        mutationCalls.push(params);
+        return Promise.resolve(undefined);
+      },
+    });
+
+    const result = (await tool.execute!({ task_id: childTaskId }, mockToolCallOptions)) as {
+      success: boolean;
+      appliedCommits?: Array<{ subject: string }>;
+    };
+
+    expect(result.success).toBe(true);
+    expect(result.appliedCommits?.map((commit) => commit.subject)).toEqual([
+      "first change",
+      "second change",
+    ]);
+    expect(mutationCalls).toEqual([
+      {
+        filePaths: [
+          path.join(targetRepo, "README.md"),
+          path.join(targetRepo, "docs", "file with spaces.md"),
+        ],
+      },
+    ]);
+  }, 20_000);
+
+  it("fails closed for post-apply diagnostics when changed-file discovery fails mid-series", async () => {
+    const childRepo = path.join(rootDir, "diff-tree-child");
+    const targetRepo = path.join(rootDir, "diff-tree-target");
+    for (const repo of [childRepo, targetRepo]) {
+      await fsPromises.mkdir(repo, { recursive: true });
+      initGitRepo(repo);
+    }
+
+    await commitFile(childRepo, "README.md", "hello\n", "base");
+    await commitFile(targetRepo, "README.md", "hello\n", "base");
+    const baseSha = execSync("git rev-parse HEAD", { cwd: childRepo, encoding: "utf-8" }).trim();
+
+    await commitFile(childRepo, "README.md", "hello\nfirst\n", "first change");
+    await commitFile(childRepo, "docs/second.md", "second\n", "second change");
+    const headSha = execSync("git rev-parse HEAD", { cwd: childRepo, encoding: "utf-8" }).trim();
+
+    const muxRoot = path.join(rootDir, "diff-tree-mux");
+    const workspaceId = "diff-tree-workspace";
+    const sessionDir = path.join(muxRoot, "sessions", workspaceId);
+    await fsPromises.mkdir(sessionDir, { recursive: true });
+    await writeWorkspaceConfig({
+      muxRoot,
+      workspaceId,
+      workspaceName: "diff-tree",
+      primaryProjectPath: targetRepo,
+      projects: [{ projectPath: targetRepo, projectName: "diff-tree" }],
+    });
+
+    const childTaskId = "diff-tree-task";
+    await writePatchArtifact({
+      sessionDir,
+      workspaceId,
+      childTaskId,
+      projectArtifacts: [
+        await buildReadyProjectArtifact({
+          sessionDir,
+          childTaskId,
+          storageKey: "diff-tree",
+          projectPath: targetRepo,
+          projectName: "diff-tree",
+          childRepo,
+          baseSha,
+          headSha,
+          commitCount: 2,
+        }),
+      ],
+    });
+
+    const runtimeState = { diffTreeCalls: 0 };
+    const runtime = createRuntimeThatFailsNthDiffTree(
+      createRuntime({ type: "local", srcBaseDir: "/tmp" }),
+      2,
+      runtimeState
+    );
+    const mutationCalls: Array<{ filePaths: string[] }> = [];
+    const tool = createTaskApplyGitPatchTool({
+      ...getTestDeps(),
+      workspaceId,
+      cwd: targetRepo,
+      runtime,
+      runtimeTempDir: "/tmp",
+      workspaceSessionDir: sessionDir,
+      onFilesMutated: (params) => {
+        mutationCalls.push(params);
+        return Promise.resolve("should not run");
+      },
+    });
+
+    const result = (await tool.execute!({ task_id: childTaskId }, mockToolCallOptions)) as {
+      success: boolean;
+      note?: string;
+      appliedCommits?: Array<{ subject: string }>;
+    };
+
+    expect(result.success).toBe(true);
+    expect(result.appliedCommits?.map((commit) => commit.subject)).toEqual([
+      "first change",
+      "second change",
+    ]);
+    expect(runtimeState.diffTreeCalls).toBe(2);
+    expect(mutationCalls).toEqual([]);
+    expect(result.note ?? "").not.toContain("should not run");
+    expect(await fsPromises.readFile(path.join(targetRepo, "README.md"), "utf-8")).toBe(
+      "hello\nfirst\n"
+    );
+    expect(await fsPromises.readFile(path.join(targetRepo, "docs", "second.md"), "utf-8")).toBe(
+      "second\n"
+    );
+  }, 20_000);
+
+  it("appends post-apply diagnostics notes for real applies", async () => {
+    const fixture = await setupSingleProjectPatchFixture(rootDir, "diagnostics");
+    const mutationCalls: Array<{ filePaths: string[] }> = [];
+    const tool = createTaskApplyGitPatchTool({
+      ...getTestDeps(),
+      workspaceId: fixture.workspaceId,
+      cwd: fixture.targetRepo,
+      runtime: createRuntime({ type: "local", srcBaseDir: "/tmp" }),
+      runtimeTempDir: "/tmp",
+      workspaceSessionDir: fixture.sessionDir,
+      onFilesMutated: (params) => {
+        mutationCalls.push(params);
+        return Promise.resolve(
+          "Post-edit LSP diagnostics:\n- README.md:2:1 error TS1000: patch issue"
+        );
+      },
+    });
+
+    const result = (await tool.execute!({ task_id: fixture.childTaskId }, mockToolCallOptions)) as {
+      success: boolean;
+      note?: string;
+      projectResults: Array<{ note?: string }>;
+    };
+
+    expect(result.success).toBe(true);
+    expect(mutationCalls).toEqual([{ filePaths: [path.join(fixture.targetRepo, "README.md")] }]);
+    expect(result.note).toContain("Post-edit LSP diagnostics:");
+    expect(result.projectResults[0]?.note).toContain("Post-edit LSP diagnostics:");
+  }, 20_000);
+
+  it("does not request post-apply diagnostics for dry runs", async () => {
+    const fixture = await setupSingleProjectPatchFixture(rootDir, "dry-run");
+    const onFilesMutated = (_params: { filePaths: string[] }) => {
+      return Promise.reject(new Error("should not be called"));
+    };
+    const tool = createTaskApplyGitPatchTool({
+      ...getTestDeps(),
+      workspaceId: fixture.workspaceId,
+      cwd: fixture.targetRepo,
+      runtime: createRuntime({ type: "local", srcBaseDir: "/tmp" }),
+      runtimeTempDir: "/tmp",
+      workspaceSessionDir: fixture.sessionDir,
+      onFilesMutated,
+    });
+
+    const result = (await tool.execute!(
+      { task_id: fixture.childTaskId, dry_run: true },
+      mockToolCallOptions
+    )) as {
+      success: boolean;
+      note?: string;
+    };
+
+    expect(result.success).toBe(true);
+    expect(result.note).not.toContain("Post-edit LSP diagnostics:");
   }, 20_000);
 });

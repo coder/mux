@@ -39,6 +39,22 @@ export {
   WorkspaceStatsSnapshotSchema,
 } from "./schemas/workspaceStats";
 
+// Workspace LSP diagnostics schemas
+export {
+  LspDiagnosticSchema,
+  LspFileDiagnosticsSchema,
+  LspPositionSchema,
+  LspRangeSchema,
+  WorkspaceLspDiagnosticsSnapshotSchema,
+} from "./schemas/workspaceLsp";
+export type {
+  LspDiagnostic,
+  LspFileDiagnostics,
+  LspPosition,
+  LspRange,
+  WorkspaceLspDiagnosticsSnapshot,
+} from "./schemas/workspaceLsp";
+
 // Analytics schemas
 export {
   AgentCostRowSchema,

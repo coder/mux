@@ -51,6 +51,13 @@ export type UpdateStatus = z.infer<typeof schemas.UpdateStatusSchema>;
 export type DesktopPrereqStatus = z.infer<typeof schemas.desktop.getPrereqStatus.output>;
 export type ChatMuxMessage = z.infer<typeof schemas.ChatMuxMessageSchema>;
 export type WorkspaceStatsSnapshot = z.infer<typeof schemas.WorkspaceStatsSnapshotSchema>;
+export type LspPosition = z.infer<typeof schemas.LspPositionSchema>;
+export type LspRange = z.infer<typeof schemas.LspRangeSchema>;
+export type LspDiagnostic = z.infer<typeof schemas.LspDiagnosticSchema>;
+export type LspFileDiagnostics = z.infer<typeof schemas.LspFileDiagnosticsSchema>;
+export type WorkspaceLspDiagnosticsSnapshot = z.infer<
+  typeof schemas.WorkspaceLspDiagnosticsSnapshotSchema
+>;
 export type WorkspaceActivitySnapshot = z.infer<typeof schemas.WorkspaceActivitySnapshotSchema>;
 export type FrontendWorkspaceMetadataSchemaType = z.infer<
   typeof schemas.FrontendWorkspaceMetadataSchema

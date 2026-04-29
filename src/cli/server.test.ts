@@ -26,12 +26,15 @@ import { ServiceContainer } from "@/node/services/serviceContainer";
 import type { RouterClient } from "@orpc/server";
 import { createOrpcServer, type OrpcServer } from "@/node/orpc/server";
 import type { ProjectConfig } from "@/common/types/project";
+import type { WorkspaceLspDiagnosticsSnapshot } from "@/common/orpc/types";
+import type { LspFileDiagnostics } from "@/node/services/lsp/types";
 import { shouldExposeLaunchProject } from "@/cli/launchProject";
 
 // --- Test Server Factory ---
 
 interface TestServerHandle {
   server: OrpcServer;
+  services: ServiceContainer;
   tempDir: string;
   close: () => Promise<void>;
 }
@@ -72,9 +75,12 @@ async function createTestServer(): Promise<TestServerHandle> {
 
   return {
     server,
+    services,
     tempDir,
     close: async () => {
       await server.close();
+      await services.dispose();
+      await services.shutdown();
       // Cleanup temp directory
       await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
     },
@@ -122,6 +128,22 @@ function createProjectConfig(projectKind?: ProjectConfig["projectKind"]): Projec
     workspaces: [],
     ...(projectKind === undefined ? {} : { projectKind }),
   };
+}
+
+function setWorkspaceLspDiagnostics(
+  services: ServiceContainer,
+  snapshot: WorkspaceLspDiagnosticsSnapshot
+): void {
+  const manager = services.lspManager as unknown as {
+    workspaceDiagnostics: Map<string, Map<string, Map<string, LspFileDiagnostics>>>;
+    notifyWorkspaceDiagnosticsListeners: (workspaceId: string) => void;
+  };
+  const diagnosticsByUri = new Map<string, LspFileDiagnostics>();
+  for (const diagnostics of snapshot.diagnostics) {
+    diagnosticsByUri.set(diagnostics.uri, diagnostics);
+  }
+  manager.workspaceDiagnostics.set(snapshot.workspaceId, new Map([["typescript:file:///workspace", diagnosticsByUri]]));
+  manager.notifyWorkspaceDiagnosticsListeners(snapshot.workspaceId);
 }
 
 describe("shouldExposeLaunchProject", () => {
@@ -271,6 +293,38 @@ describe("oRPC Server Endpoints", () => {
       expect(ticks).toHaveLength(1);
       expect(ticks[0].tick).toBe(1);
     });
+
+    test("workspace.lsp.listDiagnostics returns the current workspace snapshot", async () => {
+      const client = createHttpClient(serverHandle.server.baseUrl);
+      setWorkspaceLspDiagnostics(serverHandle.services, {
+        workspaceId: "lsp-http-workspace",
+        diagnostics: [
+          {
+            uri: "file:///workspace/src/example.ts",
+            path: "/workspace/src/example.ts",
+            serverId: "typescript",
+            rootUri: "file:///workspace",
+            version: 1,
+            diagnostics: [
+              {
+                range: {
+                  start: { line: 1, character: 1 },
+                  end: { line: 1, character: 5 },
+                },
+                severity: 1,
+                source: "tsserver",
+                message: "http snapshot",
+              },
+            ],
+            receivedAtMs: 1,
+          },
+        ],
+      });
+
+      const result = await client.workspace.lsp.listDiagnostics({ workspaceId: "lsp-http-workspace" });
+      expect(result.workspaceId).toBe("lsp-http-workspace");
+      expect(result.diagnostics[0]?.diagnostics[0]?.message).toBe("http snapshot");
+    });
   });
 
   describe("WebSocket endpoint (/orpc/ws)", () => {
@@ -347,6 +401,52 @@ describe("oRPC Server Endpoints", () => {
         expect(result1).toBe("Pong: first");
         expect(result2).toBe("Pong: second");
         expect(result3).toBe("Pong: third");
+      } finally {
+        close();
+      }
+    });
+
+    test("workspace.lsp.subscribeDiagnostics emits initial and subsequent snapshots", async () => {
+      const workspaceId = "lsp-ws-workspace";
+      const { client, close } = await createWebSocketClient(serverHandle.server.wsUrl);
+      try {
+        const stream = await client.workspace.lsp.subscribeDiagnostics({ workspaceId });
+        const initial =
+          (await stream.next()) as IteratorResult<WorkspaceLspDiagnosticsSnapshot, void>;
+        expect(initial.done).toBe(false);
+        expect(initial.value?.workspaceId).toBe(workspaceId);
+        expect(initial.value?.diagnostics).toEqual([]);
+
+        setWorkspaceLspDiagnostics(serverHandle.services, {
+          workspaceId,
+          diagnostics: [
+            {
+              uri: "file:///workspace/src/example.ts",
+              path: "/workspace/src/example.ts",
+              serverId: "typescript",
+              rootUri: "file:///workspace",
+              version: 2,
+              diagnostics: [
+                {
+                  range: {
+                    start: { line: 2, character: 1 },
+                    end: { line: 2, character: 5 },
+                  },
+                  severity: 1,
+                  source: "tsserver",
+                  message: "ws snapshot",
+                },
+              ],
+              receivedAtMs: 2,
+            },
+          ],
+        });
+
+        const update =
+          (await stream.next()) as IteratorResult<WorkspaceLspDiagnosticsSnapshot, void>;
+        expect(update.done).toBe(false);
+        expect(update.value?.diagnostics[0]?.diagnostics[0]?.message).toBe("ws snapshot");
+        await stream.return?.();
       } finally {
         close();
       }

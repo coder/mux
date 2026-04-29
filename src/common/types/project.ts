@@ -5,7 +5,11 @@
 
 import type { CoderWorkspaceArchiveBehavior } from "@/common/config/coderArchiveBehavior";
 import type { WorktreeArchiveBehavior } from "@/common/config/worktreeArchiveBehavior";
-import type { FeatureFlagOverride, UpdateChannel } from "@/common/config/schemas/appConfigOnDisk";
+import type {
+  FeatureFlagOverride,
+  LspProvisioningMode,
+  UpdateChannel,
+} from "@/common/config/schemas/appConfigOnDisk";
 import type { z } from "zod";
 import type {
   ProjectConfigSchema,
@@ -24,7 +28,7 @@ export type SectionConfig = z.infer<typeof SectionConfigSchema>;
 
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
 
-export type { FeatureFlagOverride, UpdateChannel };
+export type { FeatureFlagOverride, LspProvisioningMode, UpdateChannel };
 
 export interface ProjectsConfig {
   projects: Map<string, ProjectConfig>;
@@ -160,6 +164,14 @@ export interface ProjectsConfig {
 
   /** Global default runtime for new workspaces. */
   defaultRuntime?: RuntimeEnablementId;
+
+  /**
+   * How mux should provision built-in LSP servers when they are not already available.
+   *
+   * - `"manual"`: use only trusted workspace-local binaries/modules and PATH-installed tools.
+   * - `"auto"`: also allow package-manager execution and managed installs for supported servers.
+   */
+  lspProvisioningMode?: LspProvisioningMode;
 
   /**
    * Override the default shell for local integrated terminals.

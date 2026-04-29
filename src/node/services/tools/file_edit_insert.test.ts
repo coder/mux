@@ -142,6 +142,35 @@ describe("file_edit_insert tool", () => {
     expect(await fs.readFile(newFile, "utf-8")).toBe("Hello world!\n");
   });
 
+  it("appends post-mutation warnings when creating a new file", async () => {
+    const newFile = path.join(testDir, "diagnostics.txt");
+    const mutationCalls: Array<{ filePaths: string[] }> = [];
+    const tool = createFileEditInsertTool({
+      ...getTestDeps(),
+      cwd: testDir,
+      runtime: createRuntime({ type: "local", srcBaseDir: testDir }),
+      runtimeTempDir: testDir,
+      onFilesMutated: (params) => {
+        mutationCalls.push(params);
+        return Promise.resolve(
+          "Post-edit LSP diagnostics:\n- diagnostics.txt:1:1 warning TS1000: created"
+        );
+      },
+    });
+    const args: FileEditInsertToolArgs = {
+      path: path.relative(testDir, newFile),
+      content: "Hello world!\n",
+    };
+
+    const result = (await tool.execute!(args, mockToolCallOptions)) as FileEditInsertToolResult;
+
+    expect(result.success).toBe(true);
+    expect(mutationCalls).toEqual([{ filePaths: [newFile] }]);
+    if (result.success) {
+      expect(result.warning).toContain("Post-edit LSP diagnostics:");
+    }
+  });
+
   it("fails when no guards are provided", async () => {
     const tool = createTestTool(testDir);
     const args: FileEditInsertToolArgs = {

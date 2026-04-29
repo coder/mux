@@ -154,6 +154,7 @@ import type { WorkspaceLifecycleHooks } from "@/node/services/workspaceLifecycle
 import type { TaskService } from "@/node/services/taskService";
 import { findWorkspaceEntry } from "@/node/services/taskUtils";
 import type { WorktreeArchiveSnapshotService } from "@/node/services/worktreeArchiveSnapshotService";
+import type { LspManager } from "@/node/services/lsp/lspManager";
 
 import { DisposableTempDir } from "@/node/services/tempDir";
 import { createBashTool } from "@/node/services/tools/bash";
@@ -1243,6 +1244,7 @@ export class WorkspaceService extends EventEmitter {
   private readonly telemetryService?: TelemetryService;
   private readonly experimentsService?: ExperimentsService;
   private mcpServerManager?: MCPServerManager;
+  private lspManager?: LspManager;
   // Optional services for workspace cleanup during archive/remove lifecycle operations.
   private terminalService?: TerminalService;
   private desktopSessionManager?: DesktopSessionManager;
@@ -1257,6 +1259,10 @@ export class WorkspaceService extends EventEmitter {
    */
   setMCPServerManager(manager: MCPServerManager): void {
     this.mcpServerManager = manager;
+  }
+
+  setLspManager(manager: LspManager): void {
+    this.lspManager = manager;
   }
 
   /**
@@ -1279,6 +1285,19 @@ export class WorkspaceService extends EventEmitter {
     } catch (error) {
       log.debug(
         `Failed to close desktop session during ${reason} for workspace ${workspaceId}: ${getErrorMessage(error)}`
+      );
+    }
+  }
+
+  private async disposeLspWorkspaceBestEffort(
+    workspaceId: string,
+    reason: "archive" | "remove" | "rename"
+  ): Promise<void> {
+    try {
+      await this.lspManager?.disposeWorkspace(workspaceId);
+    } catch (error) {
+      log.debug(
+        `Failed to dispose LSP state during ${reason} for workspace ${workspaceId}: ${getErrorMessage(error)}`
       );
     }
   }
@@ -1430,6 +1449,7 @@ export class WorkspaceService extends EventEmitter {
     // Archiving hides workspace UI; do not leave terminal PTYs or desktop sessions running headless.
     this.terminalService?.closeWorkspaceSessions(workspaceId);
     await this.closeDesktopSessionBestEffort(workspaceId, "archive");
+    await this.disposeLspWorkspaceBestEffort(workspaceId, "archive");
   }
 
   /**
@@ -2834,6 +2854,8 @@ export class WorkspaceService extends EventEmitter {
         }
       }
 
+      await this.disposeLspWorkspaceBestEffort(workspaceId, "remove");
+
       let parentWorkspaceId: string | null = null;
       let childTaskModelString: string | undefined;
       let childTaskThinkingLevel: ThinkingLevel | undefined;
@@ -3437,6 +3459,8 @@ export class WorkspaceService extends EventEmitter {
       if (newName === oldName) {
         return Ok({ newWorkspaceId: workspaceId });
       }
+
+      await this.disposeLspWorkspaceBestEffort(workspaceId, "rename");
 
       const allWorkspaces = await this.config.getAllWorkspaceMetadata();
       const collision = allWorkspaces.find(

@@ -14,6 +14,7 @@ import { RuntimeError } from "@/node/runtime/Runtime";
 import type { Runtime } from "@/node/runtime/Runtime";
 import { readFileString, writeFileString } from "@/node/utils/runtime/helpers";
 import { getErrorMessage } from "@/common/utils/errors";
+import { log } from "@/node/services/log";
 import { MutexMap } from "@/node/utils/concurrency/mutexMap";
 
 type FileEditOperationResult<TMetadata> =
@@ -98,6 +99,13 @@ async function waitForFileEditOrAbort<TMetadata>(
       }
     );
   });
+}
+
+export function mergeFileMutationWarnings(
+  ...warnings: Array<string | undefined>
+): string | undefined {
+  const mergedWarnings = warnings.filter((warning): warning is string => Boolean(warning?.trim()));
+  return mergedWarnings.length > 0 ? mergedWarnings.join("\n") : undefined;
 }
 
 /**
@@ -233,6 +241,18 @@ export async function executeFileEditOperation<TMetadata>({
         }
       }
 
+      let postMutationWarning: string | undefined;
+      if (config.onFilesMutated) {
+        try {
+          postMutationWarning = await config.onFilesMutated({ filePaths: [resolvedPath] });
+        } catch (error) {
+          log.debug("Failed to collect post-mutation file warnings", {
+            resolvedPath,
+            error,
+          });
+        }
+      }
+
       const diff = generateDiff(resolvedPath, originalContent, operationResult.newContent);
 
       return {
@@ -244,7 +264,9 @@ export async function executeFileEditOperation<TMetadata>({
           },
         },
         ...operationResult.metadata,
-        ...(pathWarning && { warning: pathWarning }),
+        ...(mergeFileMutationWarnings(pathWarning, postMutationWarning)
+          ? { warning: mergeFileMutationWarnings(pathWarning, postMutationWarning) }
+          : {}),
       };
     });
 

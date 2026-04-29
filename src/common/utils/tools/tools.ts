@@ -17,6 +17,7 @@ import { createTodoWriteTool, createTodoReadTool } from "@/node/services/tools/t
 import { createNotifyTool } from "@/node/services/tools/notify";
 import { createAnalyticsQueryTool } from "@/node/services/tools/analyticsQuery";
 import { createDesktopTools } from "@/node/services/tools/desktopTools";
+import { createLspQueryTool } from "@/node/services/tools/lsp_query";
 import type { MuxToolScope } from "@/common/types/toolScope";
 import { createTaskTool } from "@/node/services/tools/task";
 import { createTaskApplyGitPatchTool } from "@/node/services/tools/task_apply_git_patch";
@@ -57,6 +58,8 @@ import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { ModelMessage } from "@/common/types/message";
 import type { ProjectRef } from "@/common/types/workspace";
+import type { LspManager } from "@/node/services/lsp/lspManager";
+import type { LspPolicyContext } from "@/node/services/lsp/types";
 
 export interface ToolModelUsageEvent {
   source: "tool";
@@ -123,6 +126,8 @@ export interface ToolConfiguration {
   muxScope?: MuxToolScope;
   /** Callback to record file state for external edit detection (plan files) */
   recordFileState?: (filePath: string, state: FileState) => Promise<void>;
+  /** Optional callback for file-mutation follow-up work (for example, post-edit diagnostics). */
+  onFilesMutated?: (params: { filePaths: string[] }) => Promise<string | undefined>;
   /** Callback to notify that provider/config was written (triggers hot-reload). */
   onConfigChanged?: () => void;
   /** Best-effort callback for recording tool-initiated model usage in session totals. */
@@ -168,6 +173,12 @@ export interface ToolConfiguration {
   };
   /** Desktop session manager for desktop automation tools */
   desktopSessionManager?: DesktopSessionManager;
+  /** Shared workspace-scoped LSP manager for built-in query tooling */
+  lspManager?: LspManager;
+  /** Effective LSP launch policy context for this workspace/request. */
+  lspPolicyContext?: LspPolicyContext;
+  /** Whether the experiment-gated lsp_query tool should be exposed for this request */
+  lspQueryEnabled?: boolean;
 }
 
 /**
@@ -394,6 +405,11 @@ export async function getToolsForModel(
     agent_skill_read_file: wrap(createAgentSkillReadFileTool(config)),
     file_edit_replace_string: wrap(createFileEditReplaceStringTool(config)),
     file_edit_insert: wrap(createFileEditInsertTool(config)),
+    ...(config.lspManager && config.lspPolicyContext && config.lspQueryEnabled
+      ? {
+          lsp_query: wrap(createLspQueryTool(config)),
+        }
+      : {}),
     // DISABLED: file_edit_replace_lines - causes models (particularly GPT-5-Codex)
     // to leave repository in broken state due to issues with concurrent file modifications
     // and line number miscalculations. Use file_edit_replace_string instead.
@@ -541,6 +557,10 @@ export async function getToolsForModel(
     getAvailableTools(modelString, {
       enableAgentReport: config.enableAgentReport,
       enableAnalyticsQuery: Boolean(config.analyticsService),
+      enableLspQuery:
+        config.lspManager != null &&
+        config.lspPolicyContext != null &&
+        config.lspQueryEnabled === true,
       enableAdvisor: Boolean(config.advisorRuntime),
       // Mux global tools are always created; tool policy (agent frontmatter)
       // controls which agents can actually use them.

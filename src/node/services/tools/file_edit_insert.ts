@@ -8,12 +8,13 @@ import {
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import { generateDiff, resolvePathWithinCwd, validatePlanModeAccess } from "./fileCommon";
-import { executeFileEditOperation } from "./file_edit_operation";
+import { executeFileEditOperation, mergeFileMutationWarnings } from "./file_edit_operation";
 import { convertNewlines, detectFileEol } from "./eol";
 import { fileExists } from "@/node/utils/runtime/fileExists";
 import { writeFileString } from "@/node/utils/runtime/helpers";
 import { RuntimeError } from "@/node/runtime/Runtime";
 import { getErrorMessage } from "@/common/utils/errors";
+import { log } from "@/node/services/log";
 
 const READ_AND_RETRY_NOTE = `${EDIT_FAILED_NOTE_PREFIX} ${NOTE_READ_FILE_RETRY}`;
 
@@ -96,6 +97,18 @@ export const createFileEditInsertTool: ToolFactory = (config: ToolConfiguration)
             }
           }
 
+          let postMutationWarning: string | undefined;
+          if (config.onFilesMutated) {
+            try {
+              postMutationWarning = await config.onFilesMutated({ filePaths: [resolvedPath] });
+            } catch (error) {
+              log.debug("Failed to collect post-mutation file warnings", {
+                resolvedPath,
+                error,
+              });
+            }
+          }
+
           const diff = generateDiff(resolvedPath, "", content);
           return {
             success: true,
@@ -105,7 +118,9 @@ export const createFileEditInsertTool: ToolFactory = (config: ToolConfiguration)
                 diff,
               },
             },
-            ...(pathWarning && { warning: pathWarning }),
+            ...(mergeFileMutationWarnings(pathWarning, postMutationWarning)
+              ? { warning: mergeFileMutationWarnings(pathWarning, postMutationWarning) }
+              : {}),
           };
         }
 
