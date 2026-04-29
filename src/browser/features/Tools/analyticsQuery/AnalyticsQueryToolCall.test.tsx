@@ -1,7 +1,9 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
+import * as RouterContextModule from "@/browser/contexts/RouterContext";
+import * as UseAnalyticsModule from "@/browser/hooks/useAnalytics";
 import type { SavedQuery } from "@/common/types/savedQueries";
 
 interface SaveInput {
@@ -53,15 +55,30 @@ const useSavedQueriesMock = mock((_options?: { skipLoad?: boolean }) => ({
   refresh: () => Promise.resolve(undefined),
 }));
 
-void mock.module("@/browser/hooks/useAnalytics", () => ({
-  useSavedQueries: useSavedQueriesMock,
-}));
+const actualRouterContextModule = { ...RouterContextModule };
+const actualUseAnalyticsModule = { ...UseAnalyticsModule };
 
-void mock.module("@/browser/contexts/RouterContext", () => ({
-  useRouter: () => ({
-    navigateToAnalytics: navigateToAnalyticsMock,
-  }),
-}));
+// Keep module mocks inside test hooks: Bun loads test files before afterAll runs, so
+// file-scope mock.module() calls can pollute unrelated files during collection.
+async function installAnalyticsQueryModuleMocks() {
+  await mock.module("@/browser/hooks/useAnalytics", () => ({
+    ...actualUseAnalyticsModule,
+    useSavedQueries: useSavedQueriesMock,
+  }));
+  await mock.module("@/browser/contexts/RouterContext", () => ({
+    ...actualRouterContextModule,
+    useRouter: () => ({
+      navigateToAnalytics: navigateToAnalyticsMock,
+    }),
+  }));
+}
+
+async function restoreAnalyticsQueryModuleMocks() {
+  // Bun's mock.module() has no disposer, and mock.restore() does not undo module
+  // mocks. Restore the real exports so these stubs do not leak into later files.
+  await mock.module("@/browser/hooks/useAnalytics", () => actualUseAnalyticsModule);
+  await mock.module("@/browser/contexts/RouterContext", () => actualRouterContextModule);
+}
 
 import { AnalyticsQueryToolCall } from "./AnalyticsQueryToolCall";
 import type { AnalyticsQueryResult, AnalyticsQueryToolResult } from "./types";
@@ -97,7 +114,11 @@ describe("AnalyticsQueryToolCall", () => {
   let originalDocument: typeof globalThis.document;
   let originalResizeObserver: typeof globalThis.ResizeObserver;
 
-  beforeEach(() => {
+  afterAll(async () => {
+    await restoreAnalyticsQueryModuleMocks();
+  });
+
+  beforeEach(async () => {
     originalWindow = globalThis.window;
     originalDocument = globalThis.document;
     originalResizeObserver = globalThis.ResizeObserver;
@@ -122,6 +143,8 @@ describe("AnalyticsQueryToolCall", () => {
 
     globalThis.ResizeObserver = ResizeObserver;
 
+    await installAnalyticsQueryModuleMocks();
+
     saveBehavior = {
       type: "resolve",
       value: createSavedQuery(),
@@ -131,8 +154,9 @@ describe("AnalyticsQueryToolCall", () => {
     useSavedQueriesMock.mockClear();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     cleanup();
+    await restoreAnalyticsQueryModuleMocks();
     mock.restore();
     globalThis.window = originalWindow;
     globalThis.document = originalDocument;

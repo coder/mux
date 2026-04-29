@@ -1,6 +1,10 @@
 import type { APIClient } from "@/browser/contexts/API";
+import * as APIModule from "@/browser/contexts/API";
+import * as ProjectContextModule from "@/browser/contexts/ProjectContext";
+import * as RouterContextModule from "@/browser/contexts/RouterContext";
 import type { DraftWorkspaceSettings } from "@/browser/hooks/useDraftWorkspaceSettings";
 import * as PersistedStateModule from "@/browser/hooks/usePersistedState";
+import * as DraftWorkspaceSettingsModule from "@/browser/hooks/useDraftWorkspaceSettings";
 import type { ProjectConfig } from "@/common/types/project";
 import {
   GLOBAL_SCOPE_ID,
@@ -25,7 +29,7 @@ import type {
   WorkspaceActivitySnapshot,
 } from "@/common/types/workspace";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
 import { useCreationWorkspace, type CreationSendResult } from "./useCreationWorkspace";
 
@@ -126,9 +130,10 @@ const useDraftWorkspaceSettingsMock = mock(
   }
 );
 
-void mock.module("@/browser/hooks/useDraftWorkspaceSettings", () => ({
-  useDraftWorkspaceSettings: useDraftWorkspaceSettingsMock,
-}));
+const actualAPIModule = { ...APIModule };
+const actualDraftWorkspaceSettingsModule = { ...DraftWorkspaceSettingsModule };
+const actualProjectContextModule = { ...ProjectContextModule };
+const actualRouterContextModule = { ...RouterContextModule };
 
 let currentORPCClient: MockOrpcClient | null = null;
 const noop = () => undefined;
@@ -138,67 +143,88 @@ const routerState = {
   pendingDraftId: null as string | null,
 };
 
-void mock.module("@/browser/contexts/RouterContext", () => ({
-  useRouter: () => ({
-    navigateToWorkspace: noop,
-    navigateToProject: noop,
-    navigateToHome: noop,
-    currentWorkspaceId: routerState.currentWorkspaceId,
-    currentProjectId: routerState.currentProjectId,
-    currentProjectPathFromState: null,
-    pendingSectionId: null,
-    pendingDraftId: routerState.pendingDraftId,
-  }),
-}));
-
-void mock.module("@/browser/contexts/API", () => ({
-  useAPI: () => {
-    if (!currentORPCClient) {
-      return { api: null, status: "connecting" as const, error: null };
-    }
-    return {
-      api: currentORPCClient as APIClient,
-      status: "connected" as const,
-      error: null,
-    };
-  },
-}));
-
 // Synchronous mock for useProjectContext — eliminates the async race from
 // ProjectProvider's useEffect → refreshProjects() that caused CI-only hangs.
 // Tests that need untrusted projects set mockProjectConfigMap directly.
 let mockProjectConfigMap = new Map<string, ProjectConfig>();
 
-void mock.module("@/browser/contexts/ProjectContext", () => ({
-  useProjectContext: () => ({
-    loading: false,
-    getProjectConfig: (path: string) => mockProjectConfigMap.get(path),
-    refreshProjects: mock(() => Promise.resolve()),
-    userProjects: mockProjectConfigMap,
-    hasAnyProject: mockProjectConfigMap.size > 0,
-    systemProjectPath: null,
-    resolveProjectPath: () => null,
-    addProject: noop,
-    removeProject: mock(() => Promise.resolve({ success: true })),
-    isProjectCreateModalOpen: false,
-    openProjectCreateModal: noop,
-    closeProjectCreateModal: noop,
-    workspaceModalState: { isOpen: false },
-    openWorkspaceModal: mock(() => Promise.resolve()),
-    closeWorkspaceModal: noop,
-    getBranchesForProject: mock(() => Promise.resolve({ branches: [], recommendedTrunk: null })),
-    getSecrets: mock(() => Promise.resolve([])),
-    updateSecrets: mock(() => Promise.resolve()),
-    updateDisplayName: mock(() => Promise.resolve({ success: true })),
-    createSection: mock(() => Promise.resolve({ success: true })),
-    updateSection: mock(() => Promise.resolve({ success: true })),
-    removeSection: mock(() => Promise.resolve({ success: true })),
-    reorderSections: mock(() => Promise.resolve({ success: true })),
-    assignWorkspaceToSection: mock(() => Promise.resolve({ success: true })),
-    resolveNewChatProjectPath: () => null,
-  }),
-  ProjectProvider: (props: Record<string, unknown>) => props.children,
-}));
+// Keep module mocks inside test hooks: Bun loads test files before afterAll runs, so
+// file-scope mock.module() calls can pollute unrelated files during collection.
+async function installUseCreationWorkspaceModuleMocks() {
+  await mock.module("@/browser/hooks/useDraftWorkspaceSettings", () => ({
+    ...actualDraftWorkspaceSettingsModule,
+    useDraftWorkspaceSettings: useDraftWorkspaceSettingsMock,
+  }));
+  await mock.module("@/browser/contexts/RouterContext", () => ({
+    ...actualRouterContextModule,
+    useRouter: () => ({
+      navigateToWorkspace: noop,
+      navigateToProject: noop,
+      navigateToHome: noop,
+      currentWorkspaceId: routerState.currentWorkspaceId,
+      currentProjectId: routerState.currentProjectId,
+      currentProjectPathFromState: null,
+      pendingSectionId: null,
+      pendingDraftId: routerState.pendingDraftId,
+    }),
+  }));
+  await mock.module("@/browser/contexts/API", () => ({
+    ...actualAPIModule,
+    useAPI: () => {
+      if (!currentORPCClient) {
+        return { api: null, status: "connecting" as const, error: null };
+      }
+      return {
+        api: currentORPCClient as APIClient,
+        status: "connected" as const,
+        error: null,
+      };
+    },
+  }));
+  await mock.module("@/browser/contexts/ProjectContext", () => ({
+    ...actualProjectContextModule,
+    useProjectContext: () => ({
+      loading: false,
+      getProjectConfig: (path: string) => mockProjectConfigMap.get(path),
+      refreshProjects: mock(() => Promise.resolve()),
+      userProjects: mockProjectConfigMap,
+      hasAnyProject: mockProjectConfigMap.size > 0,
+      systemProjectPath: null,
+      resolveProjectPath: () => null,
+      addProject: noop,
+      removeProject: mock(() => Promise.resolve({ success: true })),
+      isProjectCreateModalOpen: false,
+      openProjectCreateModal: noop,
+      closeProjectCreateModal: noop,
+      workspaceModalState: { isOpen: false },
+      openWorkspaceModal: mock(() => Promise.resolve()),
+      closeWorkspaceModal: noop,
+      getBranchesForProject: mock(() => Promise.resolve({ branches: [], recommendedTrunk: null })),
+      getSecrets: mock(() => Promise.resolve([])),
+      updateSecrets: mock(() => Promise.resolve()),
+      updateDisplayName: mock(() => Promise.resolve({ success: true })),
+      createSection: mock(() => Promise.resolve({ success: true })),
+      updateSection: mock(() => Promise.resolve({ success: true })),
+      removeSection: mock(() => Promise.resolve({ success: true })),
+      reorderSections: mock(() => Promise.resolve({ success: true })),
+      assignWorkspaceToSection: mock(() => Promise.resolve({ success: true })),
+      resolveNewChatProjectPath: () => null,
+    }),
+    ProjectProvider: (props: Record<string, unknown>) => props.children,
+  }));
+}
+
+async function restoreUseCreationWorkspaceModuleMocks() {
+  // Bun's mock.module() has no disposer, and mock.restore() does not undo module
+  // mocks. Restore the real exports so these stubs do not leak into later files.
+  await mock.module(
+    "@/browser/hooks/useDraftWorkspaceSettings",
+    () => actualDraftWorkspaceSettingsModule
+  );
+  await mock.module("@/browser/contexts/RouterContext", () => actualRouterContextModule);
+  await mock.module("@/browser/contexts/API", () => actualAPIModule);
+  await mock.module("@/browser/contexts/ProjectContext", () => actualProjectContextModule);
+}
 
 const TEST_PROJECT_PATH = "/projects/demo";
 const FALLBACK_BRANCH = "main";
@@ -484,7 +510,12 @@ const TEST_METADATA: FrontendWorkspaceMetadata = {
 describe("useCreationWorkspace", () => {
   let restorePersistedStateMocks: (() => void) | null = null;
 
-  beforeEach(() => {
+  afterAll(async () => {
+    await restoreUseCreationWorkspaceModuleMocks();
+  });
+
+  beforeEach(async () => {
+    await installUseCreationWorkspaceModuleMocks();
     restorePersistedStateMocks = installPersistedStateMocks();
     mockProjectConfigMap = new Map([[TEST_PROJECT_PATH, { workspaces: [], trusted: true }]]);
     persistedPreferences = {};
@@ -497,10 +528,11 @@ describe("useCreationWorkspace", () => {
     routerState.pendingDraftId = null;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     cleanup();
     restorePersistedStateMocks?.();
     restorePersistedStateMocks = null;
+    await restoreUseCreationWorkspaceModuleMocks();
     mock.restore();
     // Reset global window/document/localStorage between tests
     // @ts-expect-error - test cleanup
