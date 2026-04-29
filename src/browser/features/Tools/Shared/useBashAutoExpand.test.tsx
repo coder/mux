@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { act, cleanup, renderHook } from "@testing-library/react";
 import type { Dispatch, SetStateAction, MutableRefObject } from "react";
 import { useState } from "react";
-import { GlobalWindow } from "happy-dom";
 
+import { installDom } from "../../../../../tests/ui/dom";
 import { useBashAutoExpand } from "./useBashAutoExpand";
 import type { ToolStatus } from "./toolUtils";
 
@@ -39,23 +39,17 @@ function useTestHarness(options: HarnessOptions): HarnessResult {
   return { expanded, setExpanded, userToggledRef };
 }
 
-let originalWindow: typeof globalThis.window;
-let originalDocument: typeof globalThis.document;
+let cleanupDom: (() => void) | null = null;
 
 describe("useBashAutoExpand", () => {
   beforeEach(() => {
-    originalWindow = globalThis.window;
-    originalDocument = globalThis.document;
-
-    const dom = new GlobalWindow() as unknown as Window & typeof globalThis;
-    globalThis.window = dom;
-    globalThis.document = dom.document;
+    cleanupDom = installDom();
   });
 
   afterEach(() => {
     cleanup();
-    globalThis.window = originalWindow;
-    globalThis.document = originalDocument;
+    cleanupDom?.();
+    cleanupDom = null;
   });
 
   test("expands immediately on chat-open when bash is already streaming", () => {

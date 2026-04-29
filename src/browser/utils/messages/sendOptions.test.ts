@@ -1,35 +1,24 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { GlobalWindow } from "happy-dom";
 import { getModelKey } from "@/common/constants/storage";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
+import { installDom } from "../../../../tests/ui/dom";
 import { getSendOptionsFromStorage } from "./sendOptions";
 import { normalizeModelPreference } from "./buildSendMessageOptions";
 
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access */
+let cleanupDom: (() => void) | null = null;
 
 describe("getSendOptionsFromStorage", () => {
   beforeEach(() => {
-    const windowInstance = new GlobalWindow();
-    (globalThis as any).window = windowInstance.window;
-    (globalThis as any).document = windowInstance.window.document;
-    (globalThis as any).location = new URL("https://example.com/");
-    (globalThis as any).StorageEvent = windowInstance.window.StorageEvent;
-    (globalThis as any).CustomEvent = windowInstance.window.CustomEvent;
-
+    cleanupDom = installDom();
     window.localStorage.clear();
     window.localStorage.setItem("model-default", JSON.stringify("openai:default"));
   });
 
   afterEach(() => {
     window.localStorage.clear();
-    (globalThis as any).window = undefined;
-    (globalThis as any).document = undefined;
-    (globalThis as any).location = undefined;
-    (globalThis as any).StorageEvent = undefined;
-    (globalThis as any).CustomEvent = undefined;
+    cleanupDom?.();
+    cleanupDom = null;
   });
-
-  /* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access */
 
   test("preserves explicit gateway-scoped stored model preferences", () => {
     const workspaceId = "ws-1";

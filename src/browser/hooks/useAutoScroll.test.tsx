@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { act, cleanup, renderHook } from "@testing-library/react";
 import type { KeyboardEvent, MouseEvent, MutableRefObject, UIEvent } from "react";
-import { GlobalWindow } from "happy-dom";
 
+import { installDom } from "../../../tests/ui/dom";
 import { useAutoScroll } from "./useAutoScroll";
 
 function createScrollEvent(element: HTMLDivElement): UIEvent<HTMLDivElement> {
@@ -79,36 +79,31 @@ function flushFrames(count: number): void {
 }
 
 describe("useAutoScroll", () => {
-  let originalWindow: typeof globalThis.window;
-  let originalDocument: typeof globalThis.document;
+  let cleanupDom: (() => void) | null = null;
 
   beforeEach(() => {
-    originalWindow = globalThis.window;
-    originalDocument = globalThis.document;
+    cleanupDom = installDom();
     scheduledFrames = [];
     nextFrameId = 1;
 
-    const domWindow = new GlobalWindow() as unknown as Window & typeof globalThis;
     // Install the deterministic scheduler on the per-test `window` rather than
     // `globalThis` so this mock never leaks into downstream test files. The
     // hook resolves rAF/cAF from `window` for exactly this reason.
-    domWindow.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+    window.requestAnimationFrame = ((callback: FrameRequestCallback) => {
       const id = nextFrameId++;
       scheduledFrames.push({ id, callback });
       return id;
     }) as typeof window.requestAnimationFrame;
-    domWindow.cancelAnimationFrame = ((id: number) => {
+    window.cancelAnimationFrame = ((id: number) => {
       scheduledFrames = scheduledFrames.filter((frame) => frame.id !== id);
     }) as typeof window.cancelAnimationFrame;
-    globalThis.window = domWindow;
-    globalThis.document = domWindow.document;
   });
 
   afterEach(() => {
     cleanup();
     scheduledFrames = [];
-    globalThis.window = originalWindow;
-    globalThis.document = originalDocument;
+    cleanupDom?.();
+    cleanupDom = null;
   });
 
   test("rAF tick pins to bottom whenever layout grows under bottom lock", () => {
