@@ -436,8 +436,6 @@ describe("AgentSession startup auto-retry recovery", () => {
           model: "anthropic:claude-sonnet-4-5",
           agentId: "exec",
           thinkingLevel: "high",
-          system1ThinkingLevel: "low",
-          system1Model: "openai:gpt-4o-mini",
           toolPolicy: [{ regex_match: "bash", action: "disable" }],
           additionalSystemInstructions: "Use one sentence.",
           maxOutputTokens: 2048,
@@ -447,7 +445,6 @@ describe("AgentSession startup auto-retry recovery", () => {
               use1MContextModels: ["anthropic:claude-sonnet-4-5"],
             },
           },
-          experiments: { system1: true },
           disableWorkspaceAgents: true,
         },
       })
@@ -477,13 +474,10 @@ describe("AgentSession startup auto-retry recovery", () => {
     expect(retryOptions.options.model).toBe("anthropic:claude-sonnet-4-5");
     expect(retryOptions.options.agentId).toBe("exec");
     expect(retryOptions.options.thinkingLevel).toBe("high");
-    expect(retryOptions.options.system1ThinkingLevel).toBe("low");
-    expect(retryOptions.options.system1Model).toBe("openai:gpt-4o-mini");
     expect(retryOptions.options.additionalSystemInstructions).toBe("Use one sentence.");
     expect(retryOptions.options.maxOutputTokens).toBe(2048);
     expect(retryOptions.options.toolPolicy).toEqual([{ regex_match: "bash", action: "disable" }]);
     expect(retryOptions.options.disableWorkspaceAgents).toBe(true);
-    expect(retryOptions.options.experiments?.system1).toBe(true);
     expect(retryOptions.options.providerOptions?.anthropic?.use1MContext).toBe(true);
 
     session.dispose();

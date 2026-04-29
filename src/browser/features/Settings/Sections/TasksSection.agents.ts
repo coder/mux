@@ -64,7 +64,6 @@ export const FALLBACK_AGENTS: AgentDefinitionDescriptor[] = [
         "task_apply_git_patch",
         "propose_plan",
         "ask_user_question",
-        "system1_keep_ranges",
         "mux_agents_.*",
         "agent_skill_write",
       ],
@@ -101,15 +100,6 @@ export const FALLBACK_AGENTS: AgentDefinitionDescriptor[] = [
     uiRoutable: true,
     subagentRunnable: false,
     base: "exec",
-  },
-  {
-    id: "system1_bash",
-    scope: "built-in",
-    name: "System1 Bash",
-    description: "Fast bash-output filtering (internal)",
-    uiSelectable: false,
-    uiRoutable: false,
-    subagentRunnable: false,
   },
 ];
 

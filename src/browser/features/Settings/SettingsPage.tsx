@@ -11,7 +11,6 @@ import {
   Keyboard,
   Layout,
   Container,
-  BrainCircuit,
   Shield,
   ShieldCheck,
   Server,
@@ -27,7 +26,6 @@ import { GeneralSection } from "./Sections/GeneralSection";
 import { TasksSection } from "./Sections/TasksSection";
 import { ProvidersSection } from "./Sections/ProvidersSection";
 import { ModelsSection } from "./Sections/ModelsSection";
-import { System1Section } from "./Sections/System1Section";
 import { GovernorSection } from "./Sections/GovernorSection";
 import { Button } from "@/browser/components/Button/Button";
 import { MCPSettingsSection } from "./Sections/MCPSettingsSection";
@@ -124,28 +122,18 @@ interface SettingsPageProps {
 export function SettingsPage(props: SettingsPageProps) {
   const { close, activeSection, setActiveSection } = useSettings();
   const onboardingPause = useOnboardingPause();
-  const system1Enabled = useExperimentValue(EXPERIMENT_IDS.SYSTEM_1);
   const governorEnabled = useExperimentValue(EXPERIMENT_IDS.MUX_GOVERNOR);
   const workspaceHeartbeatsEnabled = useExperimentValue(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS);
 
   // Keep routing on a valid section when an experiment-gated section is disabled.
   useEffect(() => {
-    if (!system1Enabled && activeSection === "system1") {
-      setActiveSection(BASE_SECTIONS[0]?.id ?? "general");
-    }
     if (!governorEnabled && activeSection === "governor") {
       setActiveSection(BASE_SECTIONS[0]?.id ?? "general");
     }
     if (!workspaceHeartbeatsEnabled && activeSection === "heartbeat") {
       setActiveSection(BASE_SECTIONS[0]?.id ?? "general");
     }
-  }, [
-    activeSection,
-    setActiveSection,
-    system1Enabled,
-    governorEnabled,
-    workspaceHeartbeatsEnabled,
-  ]);
+  }, [activeSection, setActiveSection, governorEnabled, workspaceHeartbeatsEnabled]);
 
   // Close settings on Escape. Uses bubble phase so inner surfaces (Select dropdowns,
   // Popover, Dialog) that call stopPropagation/preventDefault on Escape get first
@@ -165,17 +153,6 @@ export function SettingsPage(props: SettingsPageProps) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [close]);
   let sections: SettingsSection[] = BASE_SECTIONS;
-  if (system1Enabled) {
-    sections = [
-      ...sections,
-      {
-        id: "system1",
-        label: "System 1",
-        icon: <BrainCircuit className="h-4 w-4" />,
-        component: System1Section,
-      },
-    ];
-  }
   if (governorEnabled) {
     sections = [
       ...sections,

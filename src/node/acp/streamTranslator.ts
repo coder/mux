@@ -175,7 +175,6 @@ export class StreamTranslator {
             _meta: {
               isError: event.isError,
               source: "bash-output",
-              phase: event.phase,
               timestamp: event.timestamp,
             },
           },

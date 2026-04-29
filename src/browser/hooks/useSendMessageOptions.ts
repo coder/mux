@@ -5,15 +5,8 @@ import { usePersistedState } from "./usePersistedState";
 import {
   buildSendMessageOptions,
   normalizeModelPreference,
-  normalizeSystem1Model,
-  normalizeSystem1ThinkingLevel,
 } from "@/browser/utils/messages/buildSendMessageOptions";
-import {
-  DEFAULT_MODEL_KEY,
-  getModelKey,
-  PREFERRED_SYSTEM_1_MODEL_KEY,
-  PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY,
-} from "@/common/constants/storage";
+import { DEFAULT_MODEL_KEY, getModelKey } from "@/common/constants/storage";
 import type { SendMessageOptions } from "@/common/orpc/types";
 import { useProviderOptions } from "./useProviderOptions";
 import { useExperimentOverrideValue } from "./useExperiments";
@@ -62,22 +55,9 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWi
     EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING_EXCLUSIVE
   );
   const advisorTool = useExperimentOverrideValue(EXPERIMENT_IDS.ADVISOR_TOOL);
-  const system1 = useExperimentOverrideValue(EXPERIMENT_IDS.SYSTEM_1);
   const execSubagentHardRestart = useExperimentOverrideValue(
     EXPERIMENT_IDS.EXEC_SUBAGENT_HARD_RESTART
   );
-
-  const [preferredSystem1Model] = usePersistedState<unknown>(PREFERRED_SYSTEM_1_MODEL_KEY, "", {
-    listener: true,
-  });
-  const system1Model = normalizeSystem1Model(preferredSystem1Model);
-
-  const [preferredSystem1ThinkingLevel] = usePersistedState<unknown>(
-    PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY,
-    "off",
-    { listener: true }
-  );
-  const system1ThinkingLevel = normalizeSystem1ThinkingLevel(preferredSystem1ThinkingLevel);
 
   // Compute base model (canonical format) for UI components
   const baseModel = normalizeModelPreference(preferredModel, defaultModel);
@@ -91,11 +71,8 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWi
       programmaticToolCalling,
       programmaticToolCallingExclusive,
       advisorTool,
-      system1,
       execSubagentHardRestart,
     },
-    system1Model,
-    system1ThinkingLevel,
     disableWorkspaceAgents,
   });
 

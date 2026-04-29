@@ -74,8 +74,6 @@ export type StartupRetrySendOptions = Pick<
   | "model"
   | "agentId"
   | "thinkingLevel"
-  | "system1ThinkingLevel"
-  | "system1Model"
   | "toolPolicy"
   | "additionalSystemInstructions"
   | "maxOutputTokens"
@@ -99,8 +97,6 @@ export function pickStartupRetrySendOptions(
     model: options.model,
     agentId: options.agentId,
     thinkingLevel: options.thinkingLevel,
-    system1ThinkingLevel: options.system1ThinkingLevel,
-    system1Model: options.system1Model,
     toolPolicy: options.toolPolicy,
     additionalSystemInstructions: options.additionalSystemInstructions,
     maxOutputTokens: options.maxOutputTokens,

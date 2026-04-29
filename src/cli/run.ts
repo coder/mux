@@ -206,7 +206,6 @@ function buildExperimentsObject(experimentIds: string[]): SendMessageOptions["ex
   return {
     programmaticToolCalling: experimentIds.includes("programmatic-tool-calling"),
     programmaticToolCallingExclusive: experimentIds.includes("programmatic-tool-calling-exclusive"),
-    system1: experimentIds.includes("system-1"),
     execSubagentHardRestart: experimentIds.includes("exec-subagent-hard-restart"),
   };
 }

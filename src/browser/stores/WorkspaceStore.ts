@@ -729,19 +729,6 @@ export class WorkspaceStore {
         const output = (toolCallEnd.result as { output?: unknown } | undefined)?.output;
         if (typeof output === "string") {
           transient.liveBashOutput.delete(toolCallEnd.toolCallId);
-        } else {
-          // If we keep the tail buffer, ensure we don't get stuck in "filtering" UI state.
-          const prev = transient.liveBashOutput.get(toolCallEnd.toolCallId);
-          if (prev?.phase === "filtering") {
-            const next = appendLiveBashOutputChunk(
-              prev,
-              { text: "", isError: false, phase: "output" },
-              BASH_TRUNCATE_MAX_TOTAL_BYTES
-            );
-            if (next !== prev) {
-              transient.liveBashOutput.set(toolCallEnd.toolCallId, next);
-            }
-          }
         }
       }
 
@@ -3769,16 +3756,14 @@ export class WorkspaceStore {
     }
 
     if (isBashOutputEvent(data)) {
-      const hasText = data.text.length > 0;
-      const hasPhase = data.phase !== undefined;
-      if (!hasText && !hasPhase) return;
+      if (data.text.length === 0) return;
 
       const transient = this.assertChatTransientState(workspaceId);
 
       const prev = transient.liveBashOutput.get(data.toolCallId);
       const next = appendLiveBashOutputChunk(
         prev,
-        { text: data.text, isError: data.isError, phase: data.phase },
+        { text: data.text, isError: data.isError },
         BASH_TRUNCATE_MAX_TOTAL_BYTES
       );
 

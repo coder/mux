@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { FileText, Info, Layers, Loader2 } from "lucide-react";
+import { FileText, Info, Layers } from "lucide-react";
 import type { BashToolArgs, BashToolResult } from "@/common/types/tools";
 import { BASH_DEFAULT_TIMEOUT_SECS } from "@/common/constants/toolLimits";
 import {
@@ -41,7 +41,6 @@ const EMPTY_LIVE_OUTPUT: BashLiveOutputView = {
   stderr: "",
   combined: "",
   truncated: false,
-  phase: undefined,
 };
 
 export const BashToolCall: React.FC<BashToolCallProps> = ({
@@ -151,8 +150,6 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
 
   const showLiveOutput =
     !isBackground && (status === "executing" || (Boolean(liveOutput) && !resultHasOutput));
-
-  const isFilteringLiveOutput = showLiveOutput && liveOutputView.phase === "filtering";
 
   const canSendToBackground = Boolean(
     toolCallId && workspaceId && foregroundBashToolCallIds.has(toolCallId)
@@ -325,8 +322,7 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
                   className={cn(
                     "px-2 py-1.5",
                     (showLiveOutput ? combinedLiveOutput.length === 0 : !completedHasOutput) &&
-                      "text-muted italic",
-                    isFilteringLiveOutput && "opacity-60 blur-[1px]"
+                      "text-muted italic"
                   )}
                 >
                   {showLiveOutput
@@ -339,14 +335,6 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
                       ? completedOutput
                       : "No output"}
                 </DetailContent>
-                {isFilteringLiveOutput && (
-                  <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                    <div className="text-muted flex items-center gap-1 rounded border border-white/10 bg-[var(--color-bg-tertiary)]/80 px-2 py-1 text-[10px] backdrop-blur-sm">
-                      <Loader2 aria-hidden="true" className="h-3 w-3 animate-spin" />
-                      Compacting output…
-                    </div>
-                  </div>
-                )}
               </div>
             </DetailSection>
           )}

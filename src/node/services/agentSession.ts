@@ -1165,13 +1165,6 @@ export class AgentSession {
       coerceThinkingLevel(lastAssistantMessage?.metadata?.thinkingLevel) ??
       coerceThinkingLevel(agentSettings?.thinkingLevel);
 
-    const persistedSystem1ThinkingLevel = coerceThinkingLevel(
-      persistedRetrySendOptions?.system1ThinkingLevel
-    );
-    const persistedSystem1Model = this.normalizeStartupModel(
-      persistedRetrySendOptions?.system1Model
-    );
-
     const persistedToolPolicy =
       lastUserMessage?.metadata?.toolPolicy ?? persistedRetrySendOptions?.toolPolicy;
     const persistedDisableWorkspaceAgents =
@@ -1214,13 +1207,6 @@ export class AgentSession {
       if (persistedExperiments) {
         compactionRequest.experiments = persistedExperiments;
       }
-      if (persistedSystem1ThinkingLevel) {
-        compactionRequest.system1ThinkingLevel = persistedSystem1ThinkingLevel;
-      }
-      if (persistedSystem1Model) {
-        compactionRequest.system1Model = persistedSystem1Model;
-      }
-
       if (persistedRetrySendOptions?.agentInitiated === true) {
         compactionRequest.agentInitiated = true;
       }
@@ -1234,12 +1220,6 @@ export class AgentSession {
     };
     if (baseThinkingLevel) {
       retryRequest.thinkingLevel = baseThinkingLevel;
-    }
-    if (persistedSystem1ThinkingLevel) {
-      retryRequest.system1ThinkingLevel = persistedSystem1ThinkingLevel;
-    }
-    if (persistedSystem1Model) {
-      retryRequest.system1Model = persistedSystem1Model;
     }
     if (persistedToolPolicy) {
       retryRequest.toolPolicy = persistedToolPolicy;
@@ -3001,13 +2981,9 @@ export class AgentSession {
         : normalizeToCanonical(trimmedModelString);
     };
 
-    const system1Model = options.system1Model?.trim();
-
     return {
       ...options,
       model: normalizeModelSelection(options.model),
-      system1Model:
-        system1Model && system1Model.length > 0 ? normalizeModelSelection(system1Model) : undefined,
     };
   }
 
@@ -3188,8 +3164,6 @@ export class AgentSession {
         changedFileAttachments.length > 0 ? changedFileAttachments : undefined,
       postCompactionAttachments,
       experiments: options?.experiments,
-      system1Model: options?.system1Model,
-      system1ThinkingLevel: options?.system1ThinkingLevel,
       disableWorkspaceAgents: options?.disableWorkspaceAgents,
       hasQueuedMessage: () =>
         !this.messageQueue.isEmpty() && this.messageQueue.getQueueDispatchMode() === "tool-end",
@@ -4774,10 +4748,6 @@ export class AgentSession {
       agentId: targetAgentId,
       // Preserve relevant settings from the original request
       ...(effectiveThinkingLevel != null && { thinkingLevel: effectiveThinkingLevel }),
-      ...(currentOptions?.system1ThinkingLevel != null && {
-        system1ThinkingLevel: currentOptions.system1ThinkingLevel,
-      }),
-      ...(currentOptions?.system1Model != null && { system1Model: currentOptions.system1Model }),
       ...(followUpProviderOptions != null && {
         providerOptions: followUpProviderOptions,
       }),

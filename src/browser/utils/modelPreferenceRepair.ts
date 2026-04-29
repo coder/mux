@@ -9,7 +9,6 @@ import {
   DEFAULT_MODEL_KEY,
   HIDDEN_MODELS_KEY,
   LAST_CUSTOM_MODEL_PROVIDER_KEY,
-  PREFERRED_SYSTEM_1_MODEL_KEY,
   getModelKey,
   getWorkspaceAISettingsByAgentKey,
 } from "@/common/constants/storage";
@@ -131,7 +130,6 @@ export function repairLocalModelPreferencesForRemovedProvider(
   workspaceIds: Iterable<string>
 ): void {
   repairPersistedModelString(DEFAULT_MODEL_KEY, provider, WORKSPACE_DEFAULTS.model);
-  repairPersistedModelString(PREFERRED_SYSTEM_1_MODEL_KEY, provider, "");
   repairHiddenModels(provider);
   repairAgentAiDefaults(provider);
   repairLastCustomModelProvider(provider);

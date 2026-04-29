@@ -24,17 +24,17 @@ describe("isExperimentEnabled", () => {
   });
 
   test("returns undefined when no local override exists for a user-overridable experiment", () => {
-    expect(isExperimentEnabled(EXPERIMENT_IDS.SYSTEM_1)).toBeUndefined();
+    expect(isExperimentEnabled(EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING)).toBeUndefined();
   });
 
   test("returns boolean when local override exists", () => {
-    const key = getExperimentKey(EXPERIMENT_IDS.SYSTEM_1);
+    const key = getExperimentKey(EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING);
 
     globalThis.window.localStorage.setItem(key, JSON.stringify(true));
-    expect(isExperimentEnabled(EXPERIMENT_IDS.SYSTEM_1)).toBe(true);
+    expect(isExperimentEnabled(EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING)).toBe(true);
 
     globalThis.window.localStorage.setItem(key, JSON.stringify(false));
-    expect(isExperimentEnabled(EXPERIMENT_IDS.SYSTEM_1)).toBe(false);
+    expect(isExperimentEnabled(EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING)).toBe(false);
   });
 
   test("returns false for a platform-restricted experiment on unsupported platforms", () => {
@@ -48,16 +48,16 @@ describe("isExperimentEnabled", () => {
   });
 
   test('treats literal "undefined" as no override', () => {
-    const key = getExperimentKey(EXPERIMENT_IDS.SYSTEM_1);
+    const key = getExperimentKey(EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING);
 
     globalThis.window.localStorage.setItem(key, "undefined");
-    expect(isExperimentEnabled(EXPERIMENT_IDS.SYSTEM_1)).toBeUndefined();
+    expect(isExperimentEnabled(EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING)).toBeUndefined();
   });
 
   test("treats non-boolean stored value as no override", () => {
-    const key = getExperimentKey(EXPERIMENT_IDS.SYSTEM_1);
+    const key = getExperimentKey(EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING);
 
     globalThis.window.localStorage.setItem(key, JSON.stringify("test"));
-    expect(isExperimentEnabled(EXPERIMENT_IDS.SYSTEM_1)).toBeUndefined();
+    expect(isExperimentEnabled(EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING)).toBeUndefined();
   });
 });

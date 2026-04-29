@@ -356,10 +356,6 @@ export const BashOutputEventSchema = z.object({
   type: z.literal("bash-output"),
   workspaceId: z.string(),
   toolCallId: z.string(),
-  phase: z
-    .enum(["output", "filtering"])
-    .optional()
-    .meta({ description: "UI hint for bash output state" }),
   text: z.string(),
   isError: z.boolean().meta({ description: "True if this chunk is from stderr" }),
   timestamp: z.number().meta({ description: "When output was flushed (Date.now())" }),
@@ -643,7 +639,6 @@ export const ExperimentsSchema = z.object({
   programmaticToolCalling: z.boolean().optional(),
   programmaticToolCallingExclusive: z.boolean().optional(),
   advisorTool: z.boolean().optional(),
-  system1: z.boolean().optional(),
   execSubagentHardRestart: z.boolean().optional(),
 });
 
@@ -652,8 +647,6 @@ export const SendMessageOptionsSchema = z.object({
   editMessageId: z.string().optional(),
   thinkingLevel: ThinkingLevelSchema.optional(),
   model: z.string("No model specified"),
-  system1ThinkingLevel: ThinkingLevelSchema.optional(),
-  system1Model: z.string().optional(),
   toolPolicy: ToolPolicySchema.optional(),
   additionalSystemInstructions: z.string().optional(),
   maxOutputTokens: z.number().optional(),

@@ -136,12 +136,12 @@ describe("ExperimentsProvider", () => {
 
       if (callCount === 1) {
         return Promise.resolve({
-          [EXPERIMENT_IDS.SYSTEM_1]: { value: null, source: "cache" },
+          [EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING]: { value: null, source: "cache" },
         } satisfies Record<string, ExperimentValue>);
       }
 
       return Promise.resolve({
-        [EXPERIMENT_IDS.SYSTEM_1]: { value: "test", source: "posthog" },
+        [EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING]: { value: "test", source: "posthog" },
       } satisfies Record<string, ExperimentValue>);
     });
 
@@ -180,7 +180,7 @@ describe("ExperimentsProvider", () => {
     }) as typeof globalThis.clearTimeout;
 
     function Observer() {
-      const enabled = useExperimentValue(EXPERIMENT_IDS.SYSTEM_1);
+      const enabled = useExperimentValue(EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING);
       return <div data-testid="enabled">{String(enabled)}</div>;
     }
 

@@ -2,10 +2,7 @@ import type {
   PlanSubagentExecutorRouting,
   TaskSettings as TaskSettingsOnDisk,
 } from "@/common/config/schemas/taskSettings";
-import {
-  SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS,
-  TASK_SETTINGS_LIMITS,
-} from "@/common/config/schemas/taskSettings";
+import { TASK_SETTINGS_LIMITS } from "@/common/config/schemas/taskSettings";
 import type {
   SubagentAiDefaults,
   SubagentAiDefaultsEntry,
@@ -14,10 +11,7 @@ import assert from "@/common/utils/assert";
 import { coerceThinkingLevel, type ThinkingLevel } from "./thinking";
 
 export type { PlanSubagentExecutorRouting, SubagentAiDefaults, SubagentAiDefaultsEntry };
-export {
-  SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS,
-  TASK_SETTINGS_LIMITS,
-} from "@/common/config/schemas/taskSettings";
+export { TASK_SETTINGS_LIMITS } from "@/common/config/schemas/taskSettings";
 
 // Normalized runtime settings always include numeric task limits.
 export type TaskSettings = Required<
@@ -32,16 +26,6 @@ export const DEFAULT_TASK_SETTINGS: TaskSettings = {
   preserveSubagentsUntilArchive: false,
   planSubagentExecutorRouting: "auto",
   planSubagentDefaultsToOrchestrator: false,
-
-  bashOutputCompactionMinLines:
-    SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinLines.default,
-  bashOutputCompactionMinTotalBytes:
-    SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinTotalBytes.default,
-  bashOutputCompactionMaxKeptLines:
-    SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMaxKeptLines.default,
-  bashOutputCompactionTimeoutMs:
-    SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionTimeoutMs.default,
-  bashOutputCompactionHeuristicFallback: true,
 };
 
 export function normalizeSubagentAiDefaults(raw: unknown): SubagentAiDefaults {
@@ -139,37 +123,6 @@ export function normalizeTaskSettings(raw: unknown): TaskSettings {
   // Keep the deprecated boolean in sync for downgrade compatibility.
   const planSubagentDefaultsToOrchestrator = planSubagentExecutorRouting === "orchestrator";
 
-  const bashOutputCompactionMinLines = clampInt(
-    record.bashOutputCompactionMinLines,
-    SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinLines.default,
-    SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinLines.min,
-    SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinLines.max
-  );
-  const bashOutputCompactionMinTotalBytes = clampInt(
-    record.bashOutputCompactionMinTotalBytes,
-    SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinTotalBytes.default,
-    SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinTotalBytes.min,
-    SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinTotalBytes.max
-  );
-  const bashOutputCompactionMaxKeptLines = clampInt(
-    record.bashOutputCompactionMaxKeptLines,
-    SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMaxKeptLines.default,
-    SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMaxKeptLines.min,
-    SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMaxKeptLines.max
-  );
-  const bashOutputCompactionTimeoutMsRaw = clampInt(
-    record.bashOutputCompactionTimeoutMs,
-    SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionTimeoutMs.default,
-    SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionTimeoutMs.min,
-    SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionTimeoutMs.max
-  );
-
-  const bashOutputCompactionHeuristicFallback =
-    typeof record.bashOutputCompactionHeuristicFallback === "boolean"
-      ? record.bashOutputCompactionHeuristicFallback
-      : (DEFAULT_TASK_SETTINGS.bashOutputCompactionHeuristicFallback ?? true);
-  const bashOutputCompactionTimeoutMs = Math.floor(bashOutputCompactionTimeoutMsRaw / 1000) * 1000;
-
   const result: TaskSettings = {
     maxParallelAgentTasks,
     maxTaskNestingDepth,
@@ -177,11 +130,6 @@ export function normalizeTaskSettings(raw: unknown): TaskSettings {
     preserveSubagentsUntilArchive,
     planSubagentExecutorRouting,
     planSubagentDefaultsToOrchestrator,
-    bashOutputCompactionMinLines,
-    bashOutputCompactionMinTotalBytes,
-    bashOutputCompactionMaxKeptLines,
-    bashOutputCompactionTimeoutMs,
-    bashOutputCompactionHeuristicFallback,
   };
 
   assert(
@@ -210,32 +158,6 @@ export function normalizeTaskSettings(raw: unknown): TaskSettings {
   assert(
     typeof planSubagentDefaultsToOrchestrator === "boolean",
     "normalizeTaskSettings: planSubagentDefaultsToOrchestrator must be a boolean"
-  );
-
-  assert(
-    Number.isInteger(bashOutputCompactionMinLines),
-    "normalizeTaskSettings: bashOutputCompactionMinLines must be an integer"
-  );
-  assert(
-    Number.isInteger(bashOutputCompactionMinTotalBytes),
-    "normalizeTaskSettings: bashOutputCompactionMinTotalBytes must be an integer"
-  );
-  assert(
-    Number.isInteger(bashOutputCompactionMaxKeptLines),
-    "normalizeTaskSettings: bashOutputCompactionMaxKeptLines must be an integer"
-  );
-  assert(
-    Number.isInteger(bashOutputCompactionTimeoutMs),
-    "normalizeTaskSettings: bashOutputCompactionTimeoutMs must be an integer"
-  );
-
-  assert(
-    typeof bashOutputCompactionHeuristicFallback === "boolean",
-    "normalizeTaskSettings: bashOutputCompactionHeuristicFallback must be a boolean"
-  );
-  assert(
-    bashOutputCompactionTimeoutMs % 1000 === 0,
-    "normalizeTaskSettings: bashOutputCompactionTimeoutMs must be a whole number of seconds"
   );
 
   return result;

@@ -94,7 +94,6 @@ import type { PTCEventWithParent } from "@/node/services/tools/code_execution";
 import { MockAiStreamPlayer } from "./mock/mockAiStreamPlayer";
 import { DEVTOOLS_RUN_METADATA_ID_HEADER } from "./devToolsHeaderCapture";
 import { ProviderModelFactory, modelCostsIncluded } from "./providerModelFactory";
-import { wrapToolsWithSystem1 } from "./system1ToolWrapper";
 import { prepareMessagesForProvider } from "./messagePipeline";
 import { resolveAgentForStream } from "./agentResolution";
 import { buildPlanInstructions, buildStreamSystemContext } from "./streamContextBuilder";
@@ -137,8 +136,6 @@ export interface StreamMessageOptions {
   changedFileAttachments?: EditedFileAttachment[];
   postCompactionAttachments?: PostCompactionAttachment[] | null;
   experiments?: SendMessageOptions["experiments"];
-  system1Model?: string;
-  system1ThinkingLevel?: ThinkingLevel;
   disableWorkspaceAgents?: boolean;
   hasQueuedMessage?: () => boolean;
   openaiTruncationModeOverride?: "auto" | "disabled";
@@ -732,8 +729,6 @@ export class AIService extends EventEmitter {
       changedFileAttachments,
       postCompactionAttachments,
       experiments,
-      system1Model,
-      system1ThinkingLevel,
       disableWorkspaceAgents,
       hasQueuedMessage,
       openaiTruncationModeOverride,
@@ -1863,31 +1858,7 @@ export class AIService extends EventEmitter {
         const errMsg = getErrorMessage(error);
         workspaceLog.warn("Failed to capture debug LLM request snapshot", { error: errMsg });
       }
-      const toolsForStream =
-        experiments?.system1 === true
-          ? wrapToolsWithSystem1({
-              tools,
-              system1Model,
-              system1ThinkingLevel,
-              modelString,
-              effectiveModelString,
-              primaryModel: modelResult.data.model,
-              routeProvider,
-              muxProviderOptions: effectiveMuxProviderOptions,
-              workspaceId,
-              promptCacheScope,
-              effectiveMode,
-              planFilePath,
-              taskSettings,
-              runtimeTempDir,
-              runtime,
-              agentDiscoveryPath,
-              createModel: (ms, o, createOptions) =>
-                this.createModel(ms, o, { ...(createOptions ?? {}), workspaceId }),
-              emitBashOutput: (ev) => this.emit("bash-output", ev),
-              sessionUsageService: this.sessionUsageService,
-            })
-          : tools;
+      const toolsForStream = tools;
       // Top-level agents need a belt-and-suspenders toolChoice safety net for
       // required routing/completion tools. Sub-agents rely on taskService.ts
       // post-stream recovery when a required tool is skipped.

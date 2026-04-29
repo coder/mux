@@ -26,7 +26,7 @@ export const ExperimentsToggleOn: Story = {
     <SettingsSectionStory
       setup={() =>
         setupSettingsStory({
-          experiments: { [EXPERIMENT_IDS.SYSTEM_1]: true },
+          experiments: { [EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING]: true },
         })
       }
     >

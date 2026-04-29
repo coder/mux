@@ -43,8 +43,6 @@ tools:
     # No planning tools
     - propose_plan
     - ask_user_question
-    # Internal-only
-    - system1_keep_ranges
     # Global config and catalog tools
     - mux_agents_.*
     - agent_skill_write

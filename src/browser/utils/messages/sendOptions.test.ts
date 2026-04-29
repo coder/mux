@@ -1,10 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
-import {
-  getModelKey,
-  PREFERRED_SYSTEM_1_MODEL_KEY,
-  PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY,
-} from "@/common/constants/storage";
+import { getModelKey } from "@/common/constants/storage";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { getSendOptionsFromStorage } from "./sendOptions";
 import { normalizeModelPreference } from "./buildSendMessageOptions";
@@ -51,20 +47,6 @@ describe("getSendOptionsFromStorage", () => {
     expect(normalizeModelPreference(" openai:gpt-5.2 ", "anthropic:default")).toBe(
       "openai:gpt-5.2"
     );
-  });
-
-  test("omits system1 thinking when set to off", () => {
-    const workspaceId = "ws-2";
-
-    window.localStorage.setItem(PREFERRED_SYSTEM_1_MODEL_KEY, JSON.stringify("openai:gpt-5.2"));
-    window.localStorage.setItem(PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY, JSON.stringify("off"));
-
-    const options = getSendOptionsFromStorage(workspaceId);
-    expect(options.system1ThinkingLevel).toBeUndefined();
-
-    window.localStorage.setItem(PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY, JSON.stringify("high"));
-    const withThinking = getSendOptionsFromStorage(workspaceId);
-    expect(withThinking.system1ThinkingLevel).toBe("high");
   });
 
   test("includes Anthropic prompt cache TTL from persisted provider options", () => {

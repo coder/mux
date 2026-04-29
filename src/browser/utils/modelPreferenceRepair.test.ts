@@ -11,7 +11,6 @@ import {
   DEFAULT_MODEL_KEY,
   HIDDEN_MODELS_KEY,
   LAST_CUSTOM_MODEL_PROVIDER_KEY,
-  PREFERRED_SYSTEM_1_MODEL_KEY,
   getModelKey,
   getWorkspaceAISettingsByAgentKey,
 } from "@/common/constants/storage";
@@ -128,8 +127,7 @@ describe("repairLocalModelPreferencesForRemovedProvider", () => {
     expect(readString(LAST_CUSTOM_MODEL_PROVIDER_KEY)).toBe(OTHER_PROVIDER);
   });
 
-  test("clears preferred System 1 and agent default models for the removed provider", () => {
-    writeState(PREFERRED_SYSTEM_1_MODEL_KEY, `${REMOVED_PROVIDER}:system1-model`);
+  test("clears agent default models for the removed provider", () => {
     writeState(AGENT_AI_DEFAULTS_KEY, {
       exec: {
         modelString: `${REMOVED_PROVIDER}:exec-model`,
@@ -143,7 +141,6 @@ describe("repairLocalModelPreferencesForRemovedProvider", () => {
 
     repairLocalModelPreferencesForRemovedProvider(REMOVED_PROVIDER, []);
 
-    expect(readString(PREFERRED_SYSTEM_1_MODEL_KEY)).toBe("");
     expect(readState(AGENT_AI_DEFAULTS_KEY, {})).toEqual({
       exec: {
         thinkingLevel: "high",

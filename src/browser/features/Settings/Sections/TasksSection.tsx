@@ -181,12 +181,7 @@ function areTaskSettingsEqual(a: TaskSettings, b: TaskSettings): boolean {
     a.proposePlanImplementReplacesChatHistory === b.proposePlanImplementReplacesChatHistory &&
     a.preserveSubagentsUntilArchive === b.preserveSubagentsUntilArchive &&
     a.planSubagentExecutorRouting === b.planSubagentExecutorRouting &&
-    a.planSubagentDefaultsToOrchestrator === b.planSubagentDefaultsToOrchestrator &&
-    a.bashOutputCompactionMinLines === b.bashOutputCompactionMinLines &&
-    a.bashOutputCompactionMinTotalBytes === b.bashOutputCompactionMinTotalBytes &&
-    a.bashOutputCompactionMaxKeptLines === b.bashOutputCompactionMaxKeptLines &&
-    a.bashOutputCompactionTimeoutMs === b.bashOutputCompactionTimeoutMs &&
-    a.bashOutputCompactionHeuristicFallback === b.bashOutputCompactionHeuristicFallback
+    a.planSubagentDefaultsToOrchestrator === b.planSubagentDefaultsToOrchestrator
   );
 }
 
@@ -270,7 +265,7 @@ export function TasksSection() {
 
   // Resolve the workspace's active model so that when a sub-agent's model is
   // "Inherit", we show thinking levels for the workspace model (falling back to
-  // the global default). This mirrors the resolution chain in System1Section.
+  // the global default). This mirrors the workspace model resolution chain used when sending messages.
   const selectedWorkspaceId = selectedWorkspace?.workspaceId ?? null;
   const defaultModel = getDefaultModel();
   const workspaceModelStorageKey = selectedWorkspaceId

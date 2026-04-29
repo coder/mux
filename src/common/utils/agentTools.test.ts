@@ -44,7 +44,7 @@ describe("isExecLikeEditingCapableInResolvedChain", () => {
         id: "exec",
         tools: {
           add: [".*"],
-          remove: ["propose_plan", "ask_user_question", "system1_keep_ranges"],
+          remove: ["propose_plan", "ask_user_question"],
         },
       },
     ];

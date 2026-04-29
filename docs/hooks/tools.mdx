@@ -595,18 +595,6 @@ If a value is too large for the environment, it may be omitted (not set). Mux al
 </details>
 
 <details>
-<summary>system1_keep_ranges (4)</summary>
-
-| Env var                                     | JSON path                     | Type   | Description                                             |
-| ------------------------------------------- | ----------------------------- | ------ | ------------------------------------------------------- |
-| `MUX_TOOL_INPUT_KEEP_RANGES_<INDEX>_END`    | `keep_ranges[<INDEX>].end`    | number | 1-based end line (inclusive) in the numbered output     |
-| `MUX_TOOL_INPUT_KEEP_RANGES_<INDEX>_REASON` | `keep_ranges[<INDEX>].reason` | string | Optional short reason for keeping this range            |
-| `MUX_TOOL_INPUT_KEEP_RANGES_<INDEX>_START`  | `keep_ranges[<INDEX>].start`  | number | 1-based start line (inclusive) in the numbered output   |
-| `MUX_TOOL_INPUT_KEEP_RANGES_COUNT`          | `keep_ranges.length`          | number | Number of elements in keep_ranges (Line ranges to keep) |
-
-</details>
-
-<details>
 <summary>task (8)</summary>
 
 | Env var                            | JSON path           | Type    | Description                                                                                                                                                                                                                                                                                                                                                                  |

@@ -33,8 +33,6 @@ tools:
     # Exec mode doesn't use planning tools
     - propose_plan
     - ask_user_question
-    # Internal-only tools
-    - system1_keep_ranges
     # Global config and catalog tools stay out of general-purpose agents
     - mux_agents_.*
     - agent_skill_write

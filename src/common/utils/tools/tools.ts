@@ -36,7 +36,6 @@ import { createMuxConfigReadTool } from "@/node/services/tools/mux_config_read";
 import { createMuxConfigWriteTool } from "@/node/services/tools/mux_config_write";
 import { createAgentReportTool } from "@/node/services/tools/agent_report";
 import { createSwitchAgentTool } from "@/node/services/tools/switch_agent";
-import { createSystem1KeepRangesTool } from "@/node/services/tools/system1_keep_ranges";
 import { wrapWithInitWait } from "@/node/services/tools/wrapWithInitWait";
 import { withHooks, type HookConfig } from "@/node/services/tools/withHooks";
 import { log } from "@/node/services/log";
@@ -438,7 +437,6 @@ export async function getToolsForModel(
     // exec-derived agents see its "call me immediately" description.
     ...(config.enableAgentReport ? { agent_report: createAgentReportTool(config) } : {}),
     switch_agent: createSwitchAgentTool(config),
-    system1_keep_ranges: createSystem1KeepRangesTool(config),
     todo_write: createTodoWriteTool(config),
     todo_read: createTodoReadTool(config),
     notify: createNotifyTool(config),

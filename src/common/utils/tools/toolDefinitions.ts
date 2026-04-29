@@ -41,7 +41,6 @@ import {
   ConfigOperationsSchema,
 } from "@/common/config/schemas/configOperations";
 import { TOOL_EDIT_WARNING } from "@/common/types/tools";
-import { SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS } from "@/common/types/tasks";
 import { THINKING_LEVELS } from "@/common/types/thinking";
 
 import { zodToJsonSchema } from "zod-to-json-schema";
@@ -845,30 +844,6 @@ interface ToolSchema {
   };
 }
 
-/**
- * Schema for a single keep-range item in the system1_keep_ranges tool.
- * Extracted as a named export so internal code can derive the type via z.infer<>
- * instead of maintaining a hand-written interface.
- *
- * Note: the tool schema applies .passthrough() on top of this to tolerate extra
- * keys from models, but the inferred type is the strict shape.
- */
-export const System1KeepRangeSchema = z.object({
-  start: z.coerce
-    .number()
-    .finite()
-    .min(1)
-    .describe("1-based start line (inclusive) in the numbered output"),
-  end: z.coerce
-    .number()
-    .finite()
-    .min(1)
-    .describe("1-based end line (inclusive) in the numbered output"),
-  // .nullish() accepts both null and undefined, so the preprocess
-  // hack that mapped null→undefined is no longer needed.
-  reason: z.string().nullish().describe("Optional short reason for keeping this range"),
-});
-
 // -----------------------------------------------------------------------------
 // propose_name (workspace name generation)
 // -----------------------------------------------------------------------------
@@ -1441,26 +1416,6 @@ export const TOOL_DEFINITIONS = {
       "Only agents listed below can be targeted. " +
       "The current stream will end and a new stream will start with the selected agent.",
     schema: SwitchAgentToolArgsSchema,
-  },
-  system1_keep_ranges: {
-    description:
-      "Internal tool used by mux to record which line ranges to keep when filtering large bash output.",
-    schema: z
-      .object({
-        keep_ranges: z
-          .array(
-            System1KeepRangeSchema
-              // Providers/models sometimes include extra keys in tool arguments; be permissive and
-              // ignore them rather than failing the whole compaction call.
-              .passthrough()
-          )
-          .min(1)
-          // Allow at least as many ranges as the user can request via maxKeptLines.
-          // (In the worst case, the model may emit one 1-line range per kept line.)
-          .max(SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMaxKeptLines.max)
-          .describe("Line ranges to keep"),
-      })
-      .passthrough(),
   },
 
   todo_write: {
@@ -2130,7 +2085,6 @@ export function getAvailableTools(
     "task_list",
     ...(enableAgentReport ? ["agent_report"] : []),
     "switch_agent",
-    "system1_keep_ranges",
     "todo_write",
     "todo_read",
     "notify",

@@ -26,7 +26,7 @@ describe("ExperimentsService", () => {
         {
           version: 1,
           experiments: {
-            [EXPERIMENT_IDS.SYSTEM_1]: {
+            [EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING]: {
               value: "test",
               fetchedAtMs: Date.now(),
             },
@@ -58,12 +58,15 @@ describe("ExperimentsService", () => {
     await service.initialize();
 
     const values = service.getAll();
-    expect(values[EXPERIMENT_IDS.SYSTEM_1]).toEqual({
+    expect(values[EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING]).toEqual({
       value: "test",
       source: "cache",
     });
 
-    expect(setFeatureFlagVariant).toHaveBeenCalledWith(EXPERIMENT_IDS.SYSTEM_1, "test");
+    expect(setFeatureFlagVariant).toHaveBeenCalledWith(
+      EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING,
+      "test"
+    );
   });
 
   test("refreshExperiment updates cache and writes it to disk", async () => {
@@ -85,9 +88,9 @@ describe("ExperimentsService", () => {
     });
 
     await service.initialize();
-    await service.refreshExperiment(EXPERIMENT_IDS.SYSTEM_1);
+    await service.refreshExperiment(EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING);
 
-    const value = service.getExperimentValue(EXPERIMENT_IDS.SYSTEM_1);
+    const value = service.getExperimentValue(EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING);
     expect(value.value).toBe("test");
     expect(value.source).toBe("posthog");
 
@@ -97,10 +100,13 @@ describe("ExperimentsService", () => {
 
     expect((disk as { version: unknown }).version).toBe(1);
     expect((disk as { experiments: Record<string, unknown> }).experiments).toHaveProperty(
-      EXPERIMENT_IDS.SYSTEM_1
+      EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING
     );
 
-    expect(setFeatureFlagVariant).toHaveBeenCalledWith(EXPERIMENT_IDS.SYSTEM_1, "test");
+    expect(setFeatureFlagVariant).toHaveBeenCalledWith(
+      EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING,
+      "test"
+    );
   });
 
   test("persists backend overrides and applies them before remote gating", async () => {
@@ -220,11 +226,11 @@ describe("ExperimentsService", () => {
     await service.initialize();
 
     const values = service.getAll();
-    expect(values[EXPERIMENT_IDS.SYSTEM_1]).toEqual({
+    expect(values[EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING]).toEqual({
       value: null,
       source: "disabled",
     });
 
-    expect(service.isExperimentEnabled(EXPERIMENT_IDS.SYSTEM_1)).toBe(false);
+    expect(service.isExperimentEnabled(EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING)).toBe(false);
   });
 });
