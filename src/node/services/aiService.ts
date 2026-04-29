@@ -1617,7 +1617,19 @@ export class AIService extends EventEmitter {
 
       const advisorToolAvailable = tools.advisor !== undefined;
       const finalStreamSystemContext =
-        await buildStreamSystemContextForAdvisor(advisorToolAvailable);
+        advisorToolAvailable === advisorToolEligible
+          ? prePolicyStreamSystemContext
+          : await (async () => {
+              // Rebuild only when policy/experiments changed advisor availability. On SSH this
+              // context build scans agents, skills, and instruction files over many small remote ops.
+              const rebuildStreamSystemContextStartedAt = Date.now();
+              const rebuiltContext = await buildStreamSystemContextForAdvisor(advisorToolAvailable);
+              recordStartupPhaseTiming(
+                "rebuildStreamSystemContextMs",
+                rebuildStreamSystemContextStartedAt
+              );
+              return rebuiltContext;
+            })();
       systemMessageTokens = finalStreamSystemContext.systemMessageTokens;
       systemMessage = finalStreamSystemContext.systemMessage;
 
@@ -1960,7 +1972,8 @@ export class AIService extends EventEmitter {
               advisorStepCaptureRef.currentStepReasoning = "";
               advisorStepCaptureRef.frozenSnapshotsByToolCallId.clear();
             }
-          : undefined
+          : undefined,
+        runtimeTempDir
       );
       recordStartupPhaseTiming("startStreamMs", startStreamStartedAt);
 

@@ -1007,12 +1007,36 @@ export class SSHRuntime extends RemoteRuntime {
     );
     const gitDir = path.posix.join(workspacePath, ".git");
     const gitDirProbe = this.quoteForRemote(gitDir);
-
-    let testResult: { exitCode: number; stderr: string };
-    try {
+    const workspacePathArg = this.quoteForRemote(workspacePath);
+    const verifyWorkspaceCommand = [
       // .git is a file for worktrees; accept either file or directory so existing SSH/Coder
-      // worktree checkouts don't get flagged as setup failures.
-      testResult = await execBuffered(this, `test -d ${gitDirProbe} || test -f ${gitDirProbe}`, {
+      // worktree checkouts don't get flagged as setup failures. Keep this as one remote shell
+      // invocation because stream startup runs it before every first SSH use for a workspace.
+      `if ! (test -d ${gitDirProbe} || test -f ${gitDirProbe}); then`,
+      `  echo ${shescape.quote(`missing .git at ${gitDir}`)} >&2`,
+      "  exit 10",
+      "fi",
+      `git_dir_output=$(git -C ${workspacePathArg} rev-parse --git-dir 2>&1)`,
+      "git_dir_status=$?",
+      'if [ "$git_dir_status" -ne 0 ]; then',
+      '  printf "%s\\n" "$git_dir_output" >&2',
+      '  exit "$git_dir_status"',
+      "fi",
+      `inside_output=$(git -C ${workspacePathArg} rev-parse --is-inside-work-tree 2>&1)`,
+      "inside_status=$?",
+      'if [ "$inside_status" -ne 0 ]; then',
+      '  printf "%s\\n" "$inside_output" >&2',
+      '  exit "$inside_status"',
+      "fi",
+      'if [ "$inside_output" != "true" ]; then',
+      '  printf "not inside worktree: %s\\n" "$inside_output" >&2',
+      "  exit 11",
+      "fi",
+    ].join("\n");
+
+    let verifyResult: { exitCode: number; stderr: string; stdout: string };
+    try {
+      verifyResult = await execBuffered(this, verifyWorkspaceCommand, {
         cwd: "~",
         timeout: 10,
         abortSignal: options?.signal,
@@ -1025,51 +1049,22 @@ export class SSHRuntime extends RemoteRuntime {
       };
     }
 
-    if (testResult.exitCode !== 0) {
-      if (this.transport.isConnectionFailure(testResult.exitCode, testResult.stderr)) {
+    if (verifyResult.exitCode !== 0) {
+      const stderr = verifyResult.stderr.trim();
+      const stdout = verifyResult.stdout.trim();
+      const errorDetail = stderr || stdout || "git unavailable";
+      const isCommandMissing =
+        verifyResult.exitCode === 127 || /command not found/i.test(stderr || stdout);
+
+      if (this.transport.isConnectionFailure(verifyResult.exitCode, verifyResult.stderr)) {
         return {
           ready: false,
-          error: `Failed to reach SSH host: ${testResult.stderr || "connection failure"}`,
+          error: `Failed to reach SSH host: ${errorDetail || "connection failure"}`,
           errorType: "runtime_start_failed",
         };
       }
 
-      return {
-        ready: false,
-        error: WORKSPACE_REPO_MISSING_ERROR,
-        errorType: "runtime_not_ready",
-      };
-    }
-
-    let revResult: { exitCode: number; stderr: string; stdout: string };
-    try {
-      revResult = await execBuffered(
-        this,
-        `git -C ${this.quoteForRemote(workspacePath)} rev-parse --git-dir`,
-        {
-          cwd: "~",
-          timeout: 10,
-          abortSignal: options?.signal,
-        }
-      );
-    } catch (error) {
-      return {
-        ready: false,
-        error: `Failed to verify repository: ${getErrorMessage(error)}`,
-        errorType: "runtime_start_failed",
-      };
-    }
-
-    if (revResult.exitCode !== 0) {
-      const stderr = revResult.stderr.trim();
-      const stdout = revResult.stdout.trim();
-      const errorDetail = stderr || stdout || "git unavailable";
-      const isCommandMissing =
-        revResult.exitCode === 127 || /command not found/i.test(stderr || stdout);
-      if (
-        isCommandMissing ||
-        this.transport.isConnectionFailure(revResult.exitCode, revResult.stderr)
-      ) {
+      if (isCommandMissing) {
         return {
           ready: false,
           error: `Failed to verify repository: ${errorDetail}`,
@@ -1077,57 +1072,6 @@ export class SSHRuntime extends RemoteRuntime {
         };
       }
 
-      return {
-        ready: false,
-        error: WORKSPACE_REPO_MISSING_ERROR,
-        errorType: "runtime_not_ready",
-      };
-    }
-
-    let worktreeResult: { exitCode: number; stderr: string; stdout: string };
-    try {
-      worktreeResult = await execBuffered(
-        this,
-        `git -C ${this.quoteForRemote(workspacePath)} rev-parse --is-inside-work-tree`,
-        {
-          cwd: "~",
-          timeout: 10,
-          abortSignal: options?.signal,
-        }
-      );
-    } catch (error) {
-      return {
-        ready: false,
-        error: `Failed to verify worktree: ${getErrorMessage(error)}`,
-        errorType: "runtime_start_failed",
-      };
-    }
-
-    if (worktreeResult.exitCode !== 0) {
-      const stderr = worktreeResult.stderr.trim();
-      const stdout = worktreeResult.stdout.trim();
-      const errorDetail = stderr || stdout || "git unavailable";
-      const isCommandMissing =
-        worktreeResult.exitCode === 127 || /command not found/i.test(stderr || stdout);
-      if (
-        isCommandMissing ||
-        this.transport.isConnectionFailure(worktreeResult.exitCode, worktreeResult.stderr)
-      ) {
-        return {
-          ready: false,
-          error: `Failed to verify worktree: ${errorDetail}`,
-          errorType: "runtime_start_failed",
-        };
-      }
-
-      return {
-        ready: false,
-        error: WORKSPACE_REPO_MISSING_ERROR,
-        errorType: "runtime_not_ready",
-      };
-    }
-
-    if (worktreeResult.stdout.trim() !== "true") {
       return {
         ready: false,
         error: WORKSPACE_REPO_MISSING_ERROR,
