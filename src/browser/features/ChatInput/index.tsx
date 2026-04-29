@@ -106,6 +106,7 @@ import {
   type MuxMessageMetadata,
   type ReviewNoteDataForDisplay,
   prepareUserMessageForSend,
+  withAgentSkillRefs,
 } from "@/common/types/message";
 import type { Review } from "@/common/types/review";
 import {
@@ -138,7 +139,9 @@ import { RecordingOverlay } from "./RecordingOverlay";
 import { AttachedReviewsPanel } from "./AttachedReviewsPanel";
 import {
   buildSkillInvocationMetadata,
+  hasProjectScopedSkillRef,
   parseCommandWithSkillInvocation,
+  resolveInlineSkillRefsForSend,
   validateCreationRuntime,
   filePartsToChatAttachments,
   type SkillResolutionTarget,
@@ -1965,6 +1968,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       api,
       discovery: skillDiscovery,
     });
+    const combinedSkillRefs = await resolveInlineSkillRefsForSend({
+      messageText,
+      slashInvocation: skillInvocation,
+      agentSkillDescriptors,
+      api,
+      discovery: skillDiscovery,
+    });
 
     // Route to creation handler for creation variant
     if (variant === "creation") {
@@ -1983,14 +1993,22 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         }
 
         creationMessageTextForSend = skillInvocation.userText;
+      }
+
+      if (combinedSkillRefs.length > 0) {
+        const baseMetadata = skillInvocation
+          ? buildSkillInvocationMetadata(messageText, skillInvocation.descriptor)
+          : undefined;
+        const muxMetadata = withAgentSkillRefs(baseMetadata, combinedSkillRefs);
+        if (!muxMetadata) {
+          throw new Error("Expected skill metadata when skill refs are present");
+        }
+
         creationOptionsOverride = {
-          muxMetadata: buildSkillInvocationMetadata(messageText, skillInvocation.descriptor),
-          // In the creation flow, skills are discovered from the project path. If the skill is
-          // project-scoped (often untracked in git), it may not exist in the new worktree.
+          muxMetadata,
+          // In the creation flow, project-scoped skills may not exist in the new worktree.
           // Force project-path discovery for this send so resolution matches suggestions.
-          ...(skillInvocation.descriptor.scope === "project"
-            ? { disableWorkspaceAgents: true }
-            : {}),
+          ...(hasProjectScopedSkillRef(combinedSkillRefs) ? { disableWorkspaceAgents: true } : {}),
         };
       }
 
@@ -2120,6 +2138,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         // When editing a /compact command, regenerate the actual summarization request
         let actualMessageText = messageTextForSend;
         let muxMetadata: MuxMessageMetadata | undefined = skillMuxMetadata;
+        if (combinedSkillRefs.length > 0) {
+          muxMetadata = withAgentSkillRefs(muxMetadata, combinedSkillRefs);
+        }
         let compactionOptions: Partial<SendMessageOptions> = {};
 
         if (editMessageForSend && actualMessageText.startsWith("/")) {

@@ -1,9 +1,18 @@
 import type { ParsedCommand } from "@/browser/utils/slashCommands/types";
 import { parseCommand } from "@/browser/utils/slashCommands/parser";
 import type { APIClient } from "@/browser/contexts/API";
+import {
+  extractInlineSkillReferenceCandidates,
+  resolveInlineSkillReferences,
+} from "@/browser/utils/agentSkills/inlineSkillReferences";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { ParsedRuntime } from "@/common/types/runtime";
-import { buildAgentSkillMetadata, type MuxMessageMetadata } from "@/common/types/message";
+import {
+  buildAgentSkillMetadata,
+  dedupeAgentSkillRefs,
+  type AgentSkillReference,
+  type MuxMessageMetadata,
+} from "@/common/types/message";
 import type { FilePart } from "@/common/orpc/types";
 import type { ChatAttachment } from "@/browser/features/ChatInput/ChatAttachments";
 
@@ -123,6 +132,49 @@ export async function parseCommandWithSkillInvocation(options: {
   });
 
   return { parsed: skillInvocation ? null : parsed, skillInvocation };
+}
+
+/**
+ * Resolve inline `$skill` references found in the user's authored message text.
+ *
+ * - Parses `$skill` candidates from the original user text (not the slash-rewritten userText),
+ *   so a mixed `/deep-review Please also follow $tdd` finds both refs.
+ * - When `slashInvocation` is provided, its skill is included as a `source: "slash"` ref;
+ *   it remains first in the returned list and wins on dedupe (same name → drop inline duplicate).
+ * - Inline refs that don't resolve are silently dropped.
+ * - Output is deduped (first-appearance wins; slash beats inline). Empty array when there are none.
+ */
+export async function resolveInlineSkillRefsForSend(options: {
+  messageText: string;
+  slashInvocation: SkillInvocation | null;
+  agentSkillDescriptors: AgentSkillDescriptor[];
+  api: APIClient | null;
+  discovery: SkillResolutionTarget | null;
+}): Promise<AgentSkillReference[]> {
+  const refs: AgentSkillReference[] = [];
+
+  if (options.slashInvocation) {
+    const descriptor = options.slashInvocation.descriptor;
+    refs.push({ skillName: descriptor.name, scope: descriptor.scope, source: "slash" });
+  }
+
+  const candidates = extractInlineSkillReferenceCandidates(options.messageText);
+  if (candidates.length > 0) {
+    const inlineRefs = await resolveInlineSkillReferences({
+      candidates,
+      agentSkillDescriptors: options.agentSkillDescriptors,
+      api: options.api,
+      discovery: options.discovery,
+    });
+    refs.push(...inlineRefs);
+  }
+
+  return dedupeAgentSkillRefs(refs);
+}
+
+/** Returns true when any ref's scope is "project" (used by creation flow to force disableWorkspaceAgents). */
+export function hasProjectScopedSkillRef(refs: AgentSkillReference[]): boolean {
+  return refs.some((ref) => ref.scope === "project");
 }
 
 export function validateCreationRuntime(
