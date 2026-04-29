@@ -116,6 +116,36 @@ describe("extractInlineSkillReferenceCandidates", () => {
     expect(extractInlineSkillReferenceCandidates("```\n$tdd\n```")).toEqual([]);
   });
 
+  test("skips fenced code blocks indented up to three spaces", () => {
+    for (const indentation of [" ", "  ", "   "]) {
+      expect(
+        extractInlineSkillReferenceCandidates(`${indentation}\`\`\`\n$tdd\n${indentation}\`\`\``)
+      ).toEqual([]);
+    }
+  });
+
+  test("extracts references when code fence markers are indented four spaces", () => {
+    const text = "    ```\n$tdd\n    ```";
+    const tddIndex = text.indexOf("$tdd");
+
+    expect(extractInlineSkillReferenceCandidates(text)).toEqual([
+      { skillName: "tdd", startIndex: tddIndex, endIndex: tddIndex + "$tdd".length },
+    ]);
+  });
+
+  test("closes fenced code blocks with an indented closing marker", () => {
+    const text = "```\n$tdd\n  ```\n$outside";
+    const outsideIndex = text.indexOf("$outside");
+
+    expect(extractInlineSkillReferenceCandidates(text)).toEqual([
+      {
+        skillName: "outside",
+        startIndex: outsideIndex,
+        endIndex: outsideIndex + "$outside".length,
+      },
+    ]);
+  });
+
   test("skips tilde fenced code blocks", () => {
     expect(extractInlineSkillReferenceCandidates("~~~ts\n$tdd\n~~~")).toEqual([]);
   });

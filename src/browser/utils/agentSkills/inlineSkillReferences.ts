@@ -26,11 +26,13 @@ interface TextRange {
 }
 
 const MIN_FENCE_MARKER_LENGTH = 3;
+const MAX_FENCE_MARKER_INDENTATION = 3;
 type FenceChar = "`" | "~";
 
 interface FenceMarker {
   char: FenceChar;
   length: number;
+  markerStart: number;
 }
 
 const LEFT_BOUNDARY_BLOCKED_RE = /[\w$]/;
@@ -73,17 +75,28 @@ function isLineStart(text: string, index: number): boolean {
 }
 
 function getFenceMarkerAtLineStart(text: string, index: number): FenceMarker | null {
-  const ch = text[index];
-  if (!isLineStart(text, index) || !isFenceChar(ch)) {
+  if (!isLineStart(text, index)) {
     return null;
   }
 
-  const length = getCharRunLength(text, index, ch);
+  let markerStart = index;
+  let indentation = 0;
+  while (indentation < MAX_FENCE_MARKER_INDENTATION && text[markerStart] === " ") {
+    markerStart++;
+    indentation++;
+  }
+
+  const ch = text[markerStart];
+  if (!isFenceChar(ch)) {
+    return null;
+  }
+
+  const length = getCharRunLength(text, markerStart, ch);
   if (length < MIN_FENCE_MARKER_LENGTH) {
     return null;
   }
 
-  return { char: ch, length };
+  return { char: ch, length, markerStart };
 }
 
 function findLineEnd(text: string, start: number): number {
@@ -146,7 +159,7 @@ function collectCodeRanges(text: string): TextRange[] {
           closingFenceMarker.char === fenceMarker.char &&
           closingFenceMarker.length >= fenceMarker.length
         ) {
-          index += closingFenceMarker.length;
+          index = closingFenceMarker.markerStart + closingFenceMarker.length;
           break;
         }
 
