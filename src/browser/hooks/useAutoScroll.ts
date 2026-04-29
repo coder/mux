@@ -1,5 +1,5 @@
 import type { KeyboardEvent, MouseEvent, UIEvent } from "react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 const BOTTOM_LOCK_EPSILON_PX = 1;
 const USER_BOTTOM_RELOCK_THRESHOLD_PX = 8;
@@ -28,16 +28,20 @@ function isWithinBottomThreshold(element: HTMLElement, thresholdPx: number): boo
 }
 
 /**
- * Owns one invariant: when bottom-lock is enabled, every observed transcript layout
- * change synchronously writes the viewport to its maximum scroll position. User
- * scrolls are the only way to release the lock; explicit actions such as opening a
- * chat, sending, or pressing "Jump to bottom" reacquire it.
+ * Bottom-lock invariant: while `autoScroll` is true the transcript `scrollTop`
+ * equals `scrollHeight - clientHeight`. The invariant is enforced on every
+ * animation frame instead of relying on `ResizeObserver` delivery: real browsers
+ * have several layout sources (sub-pixel CSS transitions, async font/image
+ * settling, scroll-anchor races inside expanding tool panes) that don't always
+ * fire RO in time for the upcoming paint, leaving the transcript a few pixels
+ * above the true bottom. `requestAnimationFrame` runs once per rendering cycle
+ * before paint, so any layout that could affect the next frame is corrected
+ * before the user sees it. User input releases the lock; an explicit action
+ * (open chat, send, jump-to-bottom) or geometric return-to-bottom reacquires it.
  */
 export function useAutoScroll() {
   const [autoScroll, setAutoScroll] = useState(true);
   const contentRef = useRef<HTMLDivElement>(null);
-  const innerObserverRef = useRef<ResizeObserver | null>(null);
-  const scrollportObserverRef = useRef<ResizeObserver | null>(null);
   const autoScrollRef = useRef(true);
   const programmaticDisableRef = useRef(false);
   const userScrollIntentUntilRef = useRef(0);
@@ -51,14 +55,11 @@ export function useAutoScroll() {
     const scrollContainer = contentRef.current;
     if (!scrollContainer) return;
 
-    scrollContainer.scrollTop = getMaxScrollTop(scrollContainer);
+    const max = getMaxScrollTop(scrollContainer);
+    if (scrollContainer.scrollTop !== max) {
+      scrollContainer.scrollTop = max;
+    }
   }, []);
-
-  const stickToBottomIfAutoScroll = useCallback(() => {
-    if (!autoScrollRef.current) return;
-
-    stickToBottom();
-  }, [stickToBottom]);
 
   const jumpToBottom = useCallback(() => {
     // Opening/sending is an explicit transfer of scroll ownership back to the
@@ -135,48 +136,29 @@ export function useAutoScroll() {
     [setAutoScrollEnabled, stickToBottom]
   );
 
-  const innerRef = useCallback(
-    (element: HTMLDivElement | null) => {
-      innerObserverRef.current?.disconnect();
-      innerObserverRef.current = null;
-
-      if (!element) return;
-
-      const observer = new ResizeObserver(stickToBottomIfAutoScroll);
-      observer.observe(element);
-      innerObserverRef.current = observer;
-    },
-    [stickToBottomIfAutoScroll]
-  );
-
-  useLayoutEffect(() => {
-    const scrollContainer = contentRef.current;
-    if (!scrollContainer) return;
-
-    const observer = new ResizeObserver(stickToBottomIfAutoScroll);
-    observer.observe(scrollContainer);
-    scrollportObserverRef.current = observer;
-
-    return () => {
-      observer.disconnect();
-      if (scrollportObserverRef.current === observer) {
-        scrollportObserverRef.current = null;
-      }
-    };
-  }, [stickToBottomIfAutoScroll]);
-
+  // Frame-aligned bottom-lock enforcer.
+  //
+  // The body is a no-op when `autoScroll` is off or when the scrollport is
+  // already at its maximum, so steady-state cost is one read per frame. When
+  // anything changes layout — bash/tool expansion, async syntax highlighting,
+  // mermaid render, font swap, image load, scroll-anchor rebalancing — the next
+  // animation frame corrects the position before paint. This makes the bottom
+  // lock independent of any specific layout signal source.
   useEffect(() => {
-    return () => {
-      innerObserverRef.current?.disconnect();
-      innerObserverRef.current = null;
-      scrollportObserverRef.current?.disconnect();
-      scrollportObserverRef.current = null;
-    };
-  }, []);
+    if (typeof requestAnimationFrame !== "function") return;
+
+    let rafId = requestAnimationFrame(function tick() {
+      if (autoScrollRef.current) {
+        stickToBottom();
+      }
+      rafId = requestAnimationFrame(tick);
+    });
+
+    return () => cancelAnimationFrame(rafId);
+  }, [stickToBottom]);
 
   return {
     contentRef,
-    innerRef,
     autoScroll,
     disableAutoScroll,
     jumpToBottom,

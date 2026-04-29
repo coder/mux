@@ -14,6 +14,77 @@ import { generateBranchName } from "../../ipc/helpers";
 import { createAppHarness, ChatHarness } from "../harness";
 import { workspaceStore } from "@/browser/stores/WorkspaceStore";
 import { detectDefaultTrunkBranch } from "@/node/git";
+import { MOCK_TOOL_FLOW_PROMPTS } from "../../e2e/mockAiPrompts";
+
+interface MockedScrollPort {
+  setScrollHeight: (height: number) => void;
+  setClientHeight: (height: number) => void;
+  setScrollTop: (top: number) => void;
+  getScrollTop: () => number;
+  getMaxScrollTop: () => number;
+}
+
+function mockScrollportMetrics(
+  element: HTMLElement,
+  initial: { scrollHeight: number; clientHeight: number; scrollTop?: number }
+): MockedScrollPort {
+  let scrollHeight = initial.scrollHeight;
+  let clientHeight = initial.clientHeight;
+  const maxScrollTop = () => Math.max(0, scrollHeight - clientHeight);
+  const clamp = (value: number) => Math.min(maxScrollTop(), Math.max(0, value));
+  let scrollTop = clamp(initial.scrollTop ?? maxScrollTop());
+
+  Object.defineProperty(element, "scrollTop", {
+    configurable: true,
+    get: () => scrollTop,
+    set: (next: number) => {
+      scrollTop = clamp(next);
+    },
+  });
+  Object.defineProperty(element, "scrollHeight", {
+    configurable: true,
+    get: () => scrollHeight,
+  });
+  Object.defineProperty(element, "clientHeight", {
+    configurable: true,
+    get: () => clientHeight,
+  });
+
+  return {
+    setScrollHeight(next) {
+      scrollHeight = next;
+      scrollTop = clamp(scrollTop);
+    },
+    setClientHeight(next) {
+      clientHeight = next;
+      scrollTop = clamp(scrollTop);
+    },
+    setScrollTop(next) {
+      scrollTop = clamp(next);
+    },
+    getScrollTop() {
+      return scrollTop;
+    },
+    getMaxScrollTop: maxScrollTop,
+  };
+}
+
+async function waitForBashScriptSpan(
+  container: HTMLElement,
+  script: string
+): Promise<HTMLSpanElement> {
+  return waitFor(
+    () => {
+      const matches = Array.from(container.querySelectorAll("span")).filter(
+        (span) => span.textContent?.trim() === script
+      );
+      const span = matches[matches.length - 1];
+      if (!span) throw new Error(`Bash script span "${script}" not found yet`);
+      return span as HTMLSpanElement;
+    },
+    { timeout: 10_000 }
+  );
+}
 
 function getMessageWindow(container: HTMLElement): HTMLDivElement {
   const element = container.querySelector('[data-testid="message-window"]');
@@ -29,101 +100,27 @@ describe("Chat bottom layout stability", () => {
   });
 
   test("keeps the transcript pinned when the composer resize changes the viewport", async () => {
-    const originalResizeObserver = globalThis.ResizeObserver;
-    const resizeCallbacks = new Map<Element, ResizeObserverCallback[]>();
-
-    class ResizeObserverMock {
-      private readonly callback: ResizeObserverCallback;
-
-      constructor(callback: ResizeObserverCallback) {
-        this.callback = callback;
-      }
-
-      observe(target: Element) {
-        resizeCallbacks.set(target, [...(resizeCallbacks.get(target) ?? []), this.callback]);
-      }
-
-      unobserve(target: Element) {
-        const remainingCallbacks = (resizeCallbacks.get(target) ?? []).filter(
-          (callback) => callback !== this.callback
-        );
-        if (remainingCallbacks.length === 0) {
-          resizeCallbacks.delete(target);
-          return;
-        }
-        resizeCallbacks.set(target, remainingCallbacks);
-      }
-
-      disconnect() {
-        for (const [target, callbacks] of resizeCallbacks) {
-          const remainingCallbacks = callbacks.filter((callback) => callback !== this.callback);
-          if (remainingCallbacks.length === 0) {
-            resizeCallbacks.delete(target);
-            continue;
-          }
-          resizeCallbacks.set(target, remainingCallbacks);
-        }
-      }
-
-      takeRecords(): ResizeObserverEntry[] {
-        return [];
-      }
-    }
-
-    (globalThis as unknown as { ResizeObserver: typeof ResizeObserver }).ResizeObserver =
-      ResizeObserverMock as unknown as typeof ResizeObserver;
-
     const app = await createAppHarness({ branchPrefix: "viewport-resize-pin" });
 
     try {
       await app.chat.send("Seed transcript before testing viewport resize pinning");
       await app.chat.expectStreamComplete();
       const messageWindow = getMessageWindow(app.view.container);
-      let scrollHeight = 1120;
-      let clientHeight = 400;
-      const maxScrollTop = () => scrollHeight - clientHeight;
-      let scrollTop = maxScrollTop();
+      const port = mockScrollportMetrics(messageWindow, {
+        scrollHeight: 1120,
+        clientHeight: 400,
+      });
 
-      Object.defineProperty(messageWindow, "scrollTop", {
-        configurable: true,
-        get: () => scrollTop,
-        set: (nextValue: number) => {
-          scrollTop = Math.min(maxScrollTop(), Math.max(0, nextValue));
-        },
-      });
-      Object.defineProperty(messageWindow, "scrollHeight", {
-        configurable: true,
-        get: () => scrollHeight,
-      });
-      Object.defineProperty(messageWindow, "clientHeight", {
-        configurable: true,
-        get: () => clientHeight,
-      });
+      // Composer grows (e.g. multi-line input), shrinking the transcript viewport.
+      // The bottom-lock invariant must produce scrollTop = scrollHeight - clientHeight
+      // before the next paint, regardless of whether ResizeObserver fires. Our rAF
+      // loop in `useAutoScroll` is responsible for that and runs in happy-dom too.
+      port.setClientHeight(520);
 
       await waitFor(() => {
-        const callbacks = resizeCallbacks.get(messageWindow);
-        if (!callbacks || callbacks.length === 0) {
-          throw new Error("Transcript viewport resize observer is not attached yet");
-        }
+        expect(port.getScrollTop()).toBe(port.getMaxScrollTop());
       });
-
-      clientHeight = 520;
-      for (const callback of resizeCallbacks.get(messageWindow) ?? []) {
-        callback(
-          [
-            {
-              target: messageWindow,
-              contentRect: { height: clientHeight } as DOMRectReadOnly,
-            } as unknown as ResizeObserverEntry,
-          ],
-          {} as ResizeObserver
-        );
-      }
-
-      expect(scrollTop).toBe(maxScrollTop());
     } finally {
-      (globalThis as unknown as { ResizeObserver: typeof ResizeObserver }).ResizeObserver =
-        originalResizeObserver;
       await app.dispose();
     }
   }, 60_000);
@@ -293,6 +290,82 @@ describe("Chat bottom layout stability", () => {
 
       app.env.services.aiService.releaseMockStreamStartGate(app.workspaceId);
       await app.chat.expectStreamComplete();
+    } finally {
+      await app.dispose();
+    }
+  }, 60_000);
+
+  test("keeps the transcript pinned when the last bash tool call is expanded", async () => {
+    const app = await createAppHarness({ branchPrefix: "expand-bash-bottom" });
+
+    try {
+      await app.chat.send(MOCK_TOOL_FLOW_PROMPTS.LIST_DIRECTORY);
+      await app.chat.expectStreamComplete();
+      // Mock streaming finishes faster than the 300ms bash auto-expand timer, so the
+      // bash row settles collapsed. Clicking it is the user's "open the last bash"
+      // gesture and is the exact case the user reports as drifting above bottom.
+      await app.chat.expectTranscriptContains("Directory listing:");
+
+      const messageWindow = getMessageWindow(app.view.container);
+      const port = mockScrollportMetrics(messageWindow, {
+        scrollHeight: 1000,
+        clientHeight: 400,
+      });
+      expect(port.getScrollTop()).toBe(port.getMaxScrollTop());
+
+      const scriptSpan = await waitForBashScriptSpan(messageWindow, "ls -1");
+      const bashHeader = scriptSpan.parentElement;
+      if (!bashHeader) throw new Error("Bash tool header missing");
+
+      // Expand: real Chromium dispatches mousedown then click. The mousedown
+      // targets a child of the scrollport, so the bottom lock is NOT released; the
+      // click triggers React state and the transcript grows. The rAF loop must
+      // pin to the new max regardless of whether ResizeObserver fires.
+      fireEvent.mouseDown(bashHeader);
+      fireEvent.click(bashHeader);
+
+      port.setScrollHeight(1300);
+      await waitFor(() => {
+        expect(port.getScrollTop()).toBe(port.getMaxScrollTop());
+      });
+
+      // CSS transitions on the tool container animate padding over ~200ms, producing
+      // multiple sub-frame layout changes. Each must keep us pinned.
+      for (const next of [1304, 1308, 1320]) {
+        port.setScrollHeight(next);
+        await waitFor(() => {
+          expect(port.getScrollTop()).toBe(port.getMaxScrollTop());
+        });
+      }
+    } finally {
+      await app.dispose();
+    }
+  }, 60_000);
+
+  test("keeps the transcript pinned when async layout growth lands after settle", async () => {
+    const app = await createAppHarness({ branchPrefix: "async-growth-bottom" });
+
+    try {
+      // Drive any non-trivial response — the goal is to settle the chat at the bottom,
+      // then simulate late async layout (Shiki/Mermaid/font-swap) growing the transcript.
+      await app.chat.send("Seed transcript before testing async layout growth");
+      await app.chat.expectStreamComplete();
+
+      const messageWindow = getMessageWindow(app.view.container);
+      const port = mockScrollportMetrics(messageWindow, {
+        scrollHeight: 900,
+        clientHeight: 400,
+      });
+
+      // Late async layout shifts (Shiki finishing highlight, fonts/images settling)
+      // push scrollHeight up after the initial pin. The bottom lock must produce
+      // scrollTop = max for each step, even when no React re-render or RO fires.
+      for (const newHeight of [950, 1010, 1080, 1180]) {
+        port.setScrollHeight(newHeight);
+        await waitFor(() => {
+          expect(port.getScrollTop()).toBe(port.getMaxScrollTop());
+        });
+      }
     } finally {
       await app.dispose();
     }

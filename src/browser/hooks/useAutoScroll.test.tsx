@@ -63,57 +63,20 @@ function attachScrollMetrics(
   };
 }
 
-let originalResizeObserver: typeof ResizeObserver | undefined;
-const resizeCallbacks = new Map<Element, ResizeObserverCallback[]>();
+let originalRequestAnimationFrame: typeof globalThis.requestAnimationFrame | undefined;
+let originalCancelAnimationFrame: typeof globalThis.cancelAnimationFrame | undefined;
+let scheduledFrames: Array<{ id: number; callback: FrameRequestCallback }> = [];
+let nextFrameId = 1;
 
-class ResizeObserverMock implements ResizeObserver {
-  public readonly callback: ResizeObserverCallback;
-
-  constructor(callback: ResizeObserverCallback) {
-    this.callback = callback;
-  }
-
-  observe(target: Element): void {
-    const callbacks = resizeCallbacks.get(target) ?? [];
-    callbacks.push(this.callback);
-    resizeCallbacks.set(target, callbacks);
-  }
-
-  unobserve(target: Element): void {
-    const callbacks = resizeCallbacks.get(target);
-    if (!callbacks) return;
-    resizeCallbacks.set(
-      target,
-      callbacks.filter((callback) => callback !== this.callback)
-    );
-  }
-
-  disconnect(): void {
-    for (const [target, callbacks] of resizeCallbacks.entries()) {
-      const remaining = callbacks.filter((callback) => callback !== this.callback);
-      if (remaining.length === 0) {
-        resizeCallbacks.delete(target);
-      } else {
-        resizeCallbacks.set(target, remaining);
-      }
-    }
-  }
-
-  takeRecords(): ResizeObserverEntry[] {
-    return [];
-  }
+function flushOneFrame(): void {
+  const next = scheduledFrames.shift();
+  if (!next) return;
+  next.callback(performance.now());
 }
 
-function emitResize(target: Element): void {
-  const entry: ResizeObserverEntry = {
-    target,
-    contentRect: target.getBoundingClientRect(),
-    borderBoxSize: [],
-    contentBoxSize: [],
-    devicePixelContentBoxSize: [],
-  };
-  for (const callback of resizeCallbacks.get(target) ?? []) {
-    callback([entry], {} as ResizeObserver);
+function flushFrames(count: number): void {
+  for (let index = 0; index < count; index += 1) {
+    flushOneFrame();
   }
 }
 
@@ -124,378 +87,363 @@ describe("useAutoScroll", () => {
   beforeEach(() => {
     originalWindow = globalThis.window;
     originalDocument = globalThis.document;
-    originalResizeObserver = globalThis.ResizeObserver;
-    resizeCallbacks.clear();
+    originalRequestAnimationFrame = globalThis.requestAnimationFrame;
+    originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
+    scheduledFrames = [];
+    nextFrameId = 1;
 
     const domWindow = new GlobalWindow() as unknown as Window & typeof globalThis;
     globalThis.window = domWindow;
     globalThis.document = domWindow.document;
-    globalThis.ResizeObserver = ResizeObserverMock as unknown as typeof ResizeObserver;
+
+    globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+      const id = nextFrameId++;
+      scheduledFrames.push({ id, callback });
+      return id;
+    }) as typeof globalThis.requestAnimationFrame;
+    globalThis.cancelAnimationFrame = ((id: number) => {
+      scheduledFrames = scheduledFrames.filter((frame) => frame.id !== id);
+    }) as typeof globalThis.cancelAnimationFrame;
   });
 
   afterEach(() => {
     cleanup();
-    resizeCallbacks.clear();
+    scheduledFrames = [];
     globalThis.window = originalWindow;
     globalThis.document = originalDocument;
-    if (originalResizeObserver === undefined) {
-      delete (globalThis as Partial<typeof globalThis>).ResizeObserver;
-    } else {
-      globalThis.ResizeObserver = originalResizeObserver;
+    if (originalRequestAnimationFrame) {
+      globalThis.requestAnimationFrame = originalRequestAnimationFrame;
     }
-    originalResizeObserver = undefined;
+    if (originalCancelAnimationFrame) {
+      globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
+    }
   });
 
-  test("corrects non-user scroll drift while bottom lock is enabled", () => {
+  test("rAF tick pins to bottom whenever layout grows under bottom lock", () => {
     const { result } = renderHook(() => useAutoScroll());
     const element = document.createElement("div");
-    const scrollMetrics = attachScrollMetrics(element);
+    const metrics = attachScrollMetrics(element, {
+      scrollHeight: 1000,
+      clientHeight: 400,
+      initialScrollTop: 600,
+    });
 
     act(() => {
       (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current = element;
     });
 
-    scrollMetrics.setScrollTop(600);
+    expect(metrics.scrollTop).toBe(metrics.maxScrollTop);
+
+    metrics.setScrollHeight(1500);
+    // Browser would normally emit a paint frame; the rAF tick pins before paint.
     act(() => {
-      result.current.handleScroll(createScrollEvent(element));
+      flushOneFrame();
     });
 
-    expect(scrollMetrics.scrollTop).toBe(scrollMetrics.maxScrollTop);
-    expect(result.current.autoScroll).toBe(true);
+    expect(metrics.scrollTop).toBe(metrics.maxScrollTop);
   });
 
-  test("does not release bottom lock for transcript content clicks", () => {
+  test("rAF tick is a no-op when auto-scroll is off", () => {
     const { result } = renderHook(() => useAutoScroll());
-    const scrollContainer = document.createElement("div");
-    const child = document.createElement("button");
-    scrollContainer.append(child);
-    const scrollMetrics = attachScrollMetrics(scrollContainer, {
-      initialScrollTop: 900,
-      scrollHeight: 1300,
+    const element = document.createElement("div");
+    const metrics = attachScrollMetrics(element, {
+      scrollHeight: 1000,
       clientHeight: 400,
+      initialScrollTop: 200,
     });
 
     act(() => {
-      (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current =
-        scrollContainer;
-      result.current.handleScrollContainerMouseDown(createMouseEvent(scrollContainer, child));
+      (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current = element;
+      result.current.disableAutoScroll();
     });
 
-    // Opening an expanded tool grows the transcript and the browser can emit an
-    // anchoring scroll event before ResizeObserver settles. Since the click was not
-    // scroll intent, the bottom-lock invariant must correct the drift immediately.
-    scrollMetrics.setScrollHeight(1500);
+    metrics.setScrollHeight(1500);
     act(() => {
-      result.current.handleScroll(createScrollEvent(scrollContainer));
+      flushFrames(3);
     });
 
-    expect(scrollMetrics.scrollTop).toBe(scrollMetrics.maxScrollTop);
-    expect(result.current.autoScroll).toBe(true);
-  });
-
-  test("releases bottom lock for scrollbar drags that start on the scrollport", () => {
-    const { result } = renderHook(() => useAutoScroll());
-    const scrollContainer = document.createElement("div");
-    const scrollMetrics = attachScrollMetrics(scrollContainer, {
-      initialScrollTop: 900,
-      scrollHeight: 1300,
-      clientHeight: 400,
-    });
-
-    act(() => {
-      (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current =
-        scrollContainer;
-      result.current.handleScrollContainerMouseDown(createMouseEvent(scrollContainer));
-    });
-
-    scrollMetrics.setScrollTop(600);
-    act(() => {
-      result.current.handleScroll(createScrollEvent(scrollContainer));
-    });
-
-    expect(scrollMetrics.scrollTop).toBe(600);
+    expect(metrics.scrollTop).toBe(200);
     expect(result.current.autoScroll).toBe(false);
   });
 
-  test("disables auto-scroll after a recent user-owned upward scroll", () => {
+  test("rAF tick continues pinning across multiple frames during a CSS transition", () => {
     const { result } = renderHook(() => useAutoScroll());
     const element = document.createElement("div");
-    const scrollMetrics = attachScrollMetrics(element);
+    const metrics = attachScrollMetrics(element, {
+      scrollHeight: 1000,
+      clientHeight: 400,
+    });
 
     act(() => {
       (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current = element;
-      result.current.handleScroll(createScrollEvent(element));
+    });
+
+    for (const next of [1100, 1180, 1240, 1300]) {
+      metrics.setScrollHeight(next);
+      act(() => {
+        flushOneFrame();
+      });
+      expect(metrics.scrollTop).toBe(metrics.maxScrollTop);
+    }
+  });
+
+  test("user-owned scroll up disables the lock and survives subsequent rAF ticks", () => {
+    const { result } = renderHook(() => useAutoScroll());
+    const element = document.createElement("div");
+    const metrics = attachScrollMetrics(element, {
+      scrollHeight: 1300,
+      clientHeight: 400,
+      initialScrollTop: 900,
     });
 
     const dateNowSpy = spyOn(Date, "now");
     try {
       let now = 1_000_000;
       dateNowSpy.mockImplementation(() => now);
-      scrollMetrics.setScrollTop(600);
+      act(() => {
+        (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current = element;
+      });
 
+      metrics.setScrollTop(600);
       act(() => {
         result.current.markUserScrollIntent();
         now += 1;
         result.current.handleScroll(createScrollEvent(element));
       });
-    } finally {
-      dateNowSpy.mockRestore();
-    }
-
-    expect(result.current.autoScroll).toBe(false);
-  });
-
-  test("pins inner content resizes synchronously while auto-scroll is enabled", () => {
-    const { result } = renderHook(() => useAutoScroll());
-    const scrollContainer = document.createElement("div");
-    const inner = document.createElement("div");
-    const scrollMetrics = attachScrollMetrics(scrollContainer, {
-      initialScrollTop: 900,
-      scrollHeight: 1300,
-      clientHeight: 400,
-    });
-
-    act(() => {
-      (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current =
-        scrollContainer;
-      result.current.innerRef(inner);
-    });
-
-    scrollMetrics.setScrollHeight(1500);
-    act(() => {
-      emitResize(inner);
-    });
-
-    expect(scrollMetrics.scrollTop).toBe(scrollMetrics.maxScrollTop);
-  });
-
-  test("does not pin non-user scroll or layout drift after auto-scroll is disabled", () => {
-    const { result } = renderHook(() => useAutoScroll());
-    const scrollContainer = document.createElement("div");
-    const inner = document.createElement("div");
-    const scrollMetrics = attachScrollMetrics(scrollContainer, {
-      initialScrollTop: 900,
-      scrollHeight: 1300,
-      clientHeight: 400,
-    });
-
-    act(() => {
-      (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current =
-        scrollContainer;
-      result.current.innerRef(inner);
-      result.current.disableAutoScroll();
-    });
-
-    scrollMetrics.setScrollTop(600);
-    act(() => {
-      result.current.handleScroll(createScrollEvent(scrollContainer));
-    });
-    expect(scrollMetrics.scrollTop).toBe(600);
-
-    scrollMetrics.setScrollHeight(1500);
-    act(() => {
-      emitResize(inner);
-    });
-
-    expect(scrollMetrics.scrollTop).toBe(600);
-  });
-
-  test("jumpToBottom pins the committed chat and observed layout owns later height", () => {
-    const { result } = renderHook(() => useAutoScroll());
-    const scrollContainer = document.createElement("div");
-    const inner = document.createElement("div");
-    const scrollMetrics = attachScrollMetrics(scrollContainer, {
-      initialScrollTop: 100,
-      scrollHeight: 900,
-      clientHeight: 400,
-    });
-
-    act(() => {
-      (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current =
-        scrollContainer;
-      result.current.innerRef(inner);
-      result.current.jumpToBottom();
-    });
-
-    expect(scrollMetrics.scrollTop).toBe(scrollMetrics.maxScrollTop);
-
-    // Chat-open hydration should be proven by the bottom-lock invariant: if the
-    // committed transcript grows while the lock is held, ResizeObserver pins to
-    // the new maximum scroll position without a timer/RAF patch.
-    scrollMetrics.setScrollHeight(1500);
-    act(() => {
-      emitResize(inner);
-    });
-    expect(scrollMetrics.scrollTop).toBe(scrollMetrics.maxScrollTop);
-  });
-
-  test("user-owned scroll releases and reacquires the bottom lock by geometry", () => {
-    const { result } = renderHook(() => useAutoScroll());
-    const scrollContainer = document.createElement("div");
-    const inner = document.createElement("div");
-    const scrollMetrics = attachScrollMetrics(scrollContainer, {
-      initialScrollTop: 900,
-      scrollHeight: 1300,
-      clientHeight: 400,
-    });
-    const dateNowSpy = spyOn(Date, "now");
-
-    try {
-      let now = 1_000_000;
-      dateNowSpy.mockImplementation(() => now);
-
-      act(() => {
-        (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current =
-          scrollContainer;
-        result.current.innerRef(inner);
-      });
-
-      scrollMetrics.setScrollTop(600);
-      act(() => {
-        result.current.markUserScrollIntent();
-        now += 1;
-        result.current.handleScroll(createScrollEvent(scrollContainer));
-      });
       expect(result.current.autoScroll).toBe(false);
 
-      scrollMetrics.setScrollTop(scrollMetrics.maxScrollTop - 4);
       act(() => {
-        result.current.markUserScrollIntent();
-        now += 1;
-        result.current.handleScroll(createScrollEvent(scrollContainer));
+        flushFrames(5);
       });
-      expect(scrollMetrics.scrollTop).toBe(scrollMetrics.maxScrollTop - 4);
-      expect(result.current.autoScroll).toBe(true);
-
-      scrollMetrics.setScrollHeight(1500);
-      act(() => {
-        emitResize(inner);
-      });
-      expect(scrollMetrics.scrollTop).toBe(scrollMetrics.maxScrollTop);
+      expect(metrics.scrollTop).toBe(600);
     } finally {
       dateNowSpy.mockRestore();
     }
   });
 
-  test("relocks when inertial user scroll settles at the bottom", () => {
+  test("returning to bottom geometry re-acquires the lock and rAF resumes pinning", () => {
     const { result } = renderHook(() => useAutoScroll());
-    const scrollContainer = document.createElement("div");
-    const scrollMetrics = attachScrollMetrics(scrollContainer, {
-      initialScrollTop: 900,
+    const element = document.createElement("div");
+    const metrics = attachScrollMetrics(element, {
       scrollHeight: 1300,
       clientHeight: 400,
+      initialScrollTop: 900,
     });
-    const dateNowSpy = spyOn(Date, "now");
 
+    const dateNowSpy = spyOn(Date, "now");
     try {
       let now = 1_000_000;
       dateNowSpy.mockImplementation(() => now);
+
       act(() => {
-        (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current =
-          scrollContainer;
+        (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current = element;
       });
 
-      scrollMetrics.setScrollTop(600);
+      // User scrolls up: lock releases.
+      metrics.setScrollTop(500);
       act(() => {
         result.current.markUserScrollIntent();
         now += 1;
-        result.current.handleScroll(createScrollEvent(scrollContainer));
+        result.current.handleScroll(createScrollEvent(element));
       });
       expect(result.current.autoScroll).toBe(false);
 
-      scrollMetrics.setScrollTop(scrollMetrics.maxScrollTop);
+      // User scrolls back to within 8px of bottom; intent expires.
       now += 1_000;
+      metrics.setScrollTop(metrics.maxScrollTop - 4);
       act(() => {
-        result.current.handleScroll(createScrollEvent(scrollContainer));
+        result.current.handleScroll(createScrollEvent(element));
       });
-
       expect(result.current.autoScroll).toBe(true);
+
+      // New layout growth lands; rAF tick pins it.
+      metrics.setScrollHeight(1500);
+      act(() => {
+        flushOneFrame();
+      });
+      expect(metrics.scrollTop).toBe(metrics.maxScrollTop);
     } finally {
       dateNowSpy.mockRestore();
     }
   });
 
-  test("programmatic disable stays unlocked even if a later non-user scroll is at bottom", () => {
+  test("content-targeted mousedown does not release the lock", () => {
     const { result } = renderHook(() => useAutoScroll());
-    const scrollContainer = document.createElement("div");
-    const scrollMetrics = attachScrollMetrics(scrollContainer, {
-      initialScrollTop: 900,
-      scrollHeight: 1300,
+    const element = document.createElement("div");
+    const child = document.createElement("button");
+    element.append(child);
+    const metrics = attachScrollMetrics(element, {
+      scrollHeight: 1000,
       clientHeight: 400,
     });
 
     act(() => {
-      (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current =
-        scrollContainer;
-      result.current.disableAutoScroll();
+      (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current = element;
+      result.current.handleScrollContainerMouseDown(createMouseEvent(element, child));
     });
 
-    scrollMetrics.setScrollTop(scrollMetrics.maxScrollTop);
+    metrics.setScrollHeight(1500);
     act(() => {
-      result.current.handleScroll(createScrollEvent(scrollContainer));
+      flushOneFrame();
     });
 
-    expect(result.current.autoScroll).toBe(false);
+    expect(metrics.scrollTop).toBe(metrics.maxScrollTop);
+    expect(result.current.autoScroll).toBe(true);
   });
 
-  test("disableAutoScroll keeps later observed layout user-owned", () => {
+  test("scrollport mousedown marks scroll intent (scrollbar drag)", () => {
     const { result } = renderHook(() => useAutoScroll());
-    const scrollContainer = document.createElement("div");
-    const inner = document.createElement("div");
-    const scrollMetrics = attachScrollMetrics(scrollContainer, {
-      initialScrollTop: 100,
-      scrollHeight: 900,
+    const element = document.createElement("div");
+    const metrics = attachScrollMetrics(element, {
+      scrollHeight: 1000,
       clientHeight: 400,
     });
 
     act(() => {
-      (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current =
-        scrollContainer;
-      result.current.innerRef(inner);
-      result.current.jumpToBottom();
-      result.current.disableAutoScroll();
+      (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current = element;
+      result.current.handleScrollContainerMouseDown(createMouseEvent(element));
     });
 
-    scrollMetrics.setScrollHeight(1500);
+    metrics.setScrollTop(500);
     act(() => {
-      emitResize(inner);
+      result.current.handleScroll(createScrollEvent(element));
     });
 
-    expect(scrollMetrics.scrollTop).toBe(500);
+    expect(metrics.scrollTop).toBe(500);
     expect(result.current.autoScroll).toBe(false);
   });
 
-  test("jumpToBottom ignores stale user-scroll telemetry from the previous transcript", () => {
+  test("handleScroll corrects non-user drift while the lock is held", () => {
     const { result } = renderHook(() => useAutoScroll());
-    const scrollContainer = document.createElement("div");
-    const scrollMetrics = attachScrollMetrics(scrollContainer, {
-      initialScrollTop: 1000,
+    const element = document.createElement("div");
+    const metrics = attachScrollMetrics(element, {
+      scrollHeight: 1000,
+      clientHeight: 400,
+    });
+
+    act(() => {
+      (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current = element;
+    });
+
+    // Browser anchoring or programmatic scroll moves us off-bottom without user
+    // intent. The next scroll event should return us to the bottom synchronously.
+    metrics.setScrollTop(300);
+    act(() => {
+      result.current.handleScroll(createScrollEvent(element));
+    });
+
+    expect(metrics.scrollTop).toBe(metrics.maxScrollTop);
+    expect(result.current.autoScroll).toBe(true);
+  });
+
+  test("jumpToBottom re-arms the lock and ignores stale user telemetry", () => {
+    const { result } = renderHook(() => useAutoScroll());
+    const element = document.createElement("div");
+    const metrics = attachScrollMetrics(element, {
       scrollHeight: 1600,
       clientHeight: 400,
+      initialScrollTop: 1000,
     });
-    const dateNowSpy = spyOn(Date, "now");
 
+    const dateNowSpy = spyOn(Date, "now");
     try {
       dateNowSpy.mockImplementation(() => 1_000_000);
+
       act(() => {
-        (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current =
-          scrollContainer;
-        result.current.handleScroll(createScrollEvent(scrollContainer));
+        (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current = element;
         result.current.markUserScrollIntent();
         result.current.jumpToBottom();
       });
 
-      // Browser anchoring/layout can emit a programmatic scroll event after the jump.
-      // It must not inherit the previous transcript's recent user interaction and
-      // disable auto-scroll before observed layout can pin.
-      scrollMetrics.setScrollTop(700);
-      act(() => {
-        result.current.handleScroll(createScrollEvent(scrollContainer));
-      });
+      expect(metrics.scrollTop).toBe(metrics.maxScrollTop);
+      expect(result.current.autoScroll).toBe(true);
 
+      // Even if the browser emits a synthetic scroll event right after the jump
+      // (e.g. composer resize), the stale intent must not relock the user state.
+      metrics.setScrollTop(800);
+      act(() => {
+        result.current.handleScroll(createScrollEvent(element));
+      });
+      expect(metrics.scrollTop).toBe(metrics.maxScrollTop);
       expect(result.current.autoScroll).toBe(true);
     } finally {
       dateNowSpy.mockRestore();
     }
+  });
+
+  test("disableAutoScroll keeps later layout user-owned across rAF ticks", () => {
+    const { result } = renderHook(() => useAutoScroll());
+    const element = document.createElement("div");
+    const metrics = attachScrollMetrics(element, {
+      scrollHeight: 900,
+      clientHeight: 400,
+      initialScrollTop: 100,
+    });
+
+    act(() => {
+      (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current = element;
+      result.current.jumpToBottom();
+      result.current.disableAutoScroll();
+    });
+
+    metrics.setScrollHeight(1500);
+    act(() => {
+      flushFrames(4);
+    });
+
+    expect(metrics.scrollTop).toBe(500);
+    expect(result.current.autoScroll).toBe(false);
+  });
+
+  test("programmatic disable stays unlocked even when geometry is at bottom", () => {
+    const { result } = renderHook(() => useAutoScroll());
+    const element = document.createElement("div");
+    const metrics = attachScrollMetrics(element, {
+      scrollHeight: 1300,
+      clientHeight: 400,
+      initialScrollTop: 900,
+    });
+
+    act(() => {
+      (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current = element;
+      result.current.disableAutoScroll();
+    });
+
+    metrics.setScrollTop(metrics.maxScrollTop);
+    act(() => {
+      result.current.handleScroll(createScrollEvent(element));
+    });
+
+    expect(result.current.autoScroll).toBe(false);
+  });
+
+  test("rAF loop is torn down on unmount and stops scheduling new frames", () => {
+    const { result, unmount } = renderHook(() => useAutoScroll());
+    const element = document.createElement("div");
+    const metrics = attachScrollMetrics(element, {
+      scrollHeight: 1000,
+      clientHeight: 400,
+    });
+
+    act(() => {
+      (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current = element;
+    });
+
+    expect(scheduledFrames.length).toBeGreaterThan(0);
+
+    unmount();
+
+    // After unmount the loop should not schedule any further frames.
+    metrics.setScrollHeight(1500);
+    metrics.setScrollTop(0);
+
+    while (scheduledFrames.length > 0) {
+      flushOneFrame();
+    }
+
+    // No infinite re-scheduling happened.
+    expect(scheduledFrames.length).toBe(0);
+    // And the unmounted loop did not write to scrollTop after disposal.
+    expect(metrics.scrollTop).toBe(0);
   });
 });

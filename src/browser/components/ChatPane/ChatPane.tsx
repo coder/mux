@@ -382,7 +382,6 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   // Use auto-scroll hook for scroll management
   const {
     contentRef,
-    innerRef,
     autoScroll,
     disableAutoScroll,
     jumpToBottom,
@@ -856,7 +855,6 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
               className="h-full overflow-x-hidden overflow-y-auto p-[15px] leading-[1.5] break-words whitespace-pre-wrap"
             >
               <div
-                ref={innerRef}
                 className={cn(
                   "max-w-4xl mx-auto",
                   (showTranscriptHydrationPlaceholder || showEmptyTranscriptPlaceholder) && "h-full"
