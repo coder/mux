@@ -38,12 +38,38 @@ import * as SectionDragLayerModule from "../SectionDragLayer/SectionDragLayer";
 import * as DraggableSectionModule from "../DraggableSection/DraggableSection";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import type ProjectSidebarComponent from "./ProjectSidebar";
+import type * as WorkspaceStatusIndicatorModuleExports from "../WorkspaceStatusIndicator/WorkspaceStatusIndicator";
 
 const agentItemTestId = (workspaceId: string) => `agent-item-${workspaceId}`;
 const toggleButtonLabel = (workspaceId: string) => `toggle-completed-${workspaceId}`;
 
 function TestWrapper(props: PropsWithChildren) {
   return <>{props.children}</>;
+}
+
+const ProviderIconSvgStub = (props: React.SVGProps<SVGSVGElement>) => (
+  <svg data-testid="provider-icon-mock" {...props} />
+);
+
+function installProviderIconSvgMocks() {
+  const providerIconSvgPaths = [
+    "@/browser/assets/icons/anthropic.svg?react",
+    "@/browser/assets/icons/openai.svg?react",
+    "@/browser/assets/icons/google.svg?react",
+    "@/browser/assets/icons/xai.svg?react",
+    "@/browser/assets/icons/openrouter.svg?react",
+    "@/browser/assets/icons/ollama.svg?react",
+    "@/browser/assets/icons/deepseek.svg?react",
+    "@/browser/assets/icons/aws.svg?react",
+    "@/browser/assets/icons/github.svg?react",
+  ] as const;
+
+  for (const svgPath of providerIconSvgPaths) {
+    void mock.module(svgPath, () => ({
+      __esModule: true,
+      default: ProviderIconSvgStub,
+    }));
+  }
 }
 
 const passthroughRef = <T,>(value: T): T => value;
@@ -479,9 +505,14 @@ function installProjectSidebarTestDoubles() {
         <div data-testid="project-delete-confirmation-modal">{props.projectName}</div>
       ) : null) as unknown as typeof ProjectDeleteConfirmationModalModule.ProjectDeleteConfirmationModal
   );
-  void mock.module("../WorkspaceStatusIndicator/WorkspaceStatusIndicator", () => ({
-    WorkspaceStatusIndicator: () => <div data-testid="workspace-status-indicator" />,
-  }));
+  installProviderIconSvgMocks();
+  /* eslint-disable @typescript-eslint/no-require-imports */
+  const WorkspaceStatusIndicatorModule =
+    require("../WorkspaceStatusIndicator/WorkspaceStatusIndicator") as typeof WorkspaceStatusIndicatorModuleExports;
+  /* eslint-enable @typescript-eslint/no-require-imports */
+  spyOn(WorkspaceStatusIndicatorModule, "WorkspaceStatusIndicator").mockImplementation((() => (
+    <div data-testid="workspace-status-indicator" />
+  )) as unknown as typeof WorkspaceStatusIndicatorModule.WorkspaceStatusIndicator);
   spyOn(PopoverErrorModule, "PopoverError").mockImplementation(
     (() => null) as unknown as typeof PopoverErrorModule.PopoverError
   );
