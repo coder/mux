@@ -1,7 +1,7 @@
 import "../../../../tests/ui/dom";
 
 import type { ReactNode } from "react";
-import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterEach, afterAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { installDom } from "../../../../tests/ui/dom";
 import * as APIModule from "@/browser/contexts/API";
@@ -13,6 +13,20 @@ import {
   HEARTBEAT_DEFAULT_INTERVAL_MS,
   HEARTBEAT_DEFAULT_MESSAGE_BODY,
 } from "@/constants/heartbeat";
+import * as WorkspaceContextModule from "@/browser/contexts/WorkspaceContext";
+const actualWorkspaceContextModule = { ...WorkspaceContextModule };
+const setWorkspaceMetadataMock = mock(() => undefined);
+
+async function installWorkspaceHeartbeatModalMocks() {
+  await mock.module("@/browser/contexts/WorkspaceContext", () => ({
+    ...actualWorkspaceContextModule,
+    useWorkspaceActions: () => ({ setWorkspaceMetadata: setWorkspaceMetadataMock }),
+  }));
+}
+
+async function restoreWorkspaceHeartbeatModalMocks() {
+  await mock.module("@/browser/contexts/WorkspaceContext", () => actualWorkspaceContextModule);
+}
 
 void mock.module("@/browser/components/Dialog/Dialog", () => ({
   Dialog: (props: { open: boolean; children: ReactNode }) =>
@@ -81,7 +95,8 @@ function createConnectedUseAPIResult(api: WorkspaceHeartbeatTestAPI): ConnectedU
 const LONG_HEARTBEAT_MESSAGE = "Review pending work and summarize next steps. ".repeat(30).trim();
 
 describe("WorkspaceHeartbeatModal", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    await installWorkspaceHeartbeatModalMocks();
     cleanupDom = installDom();
     settingsByWorkspaceId = new Map<string, HeartbeatFormSettings>();
     saveCalls = [];
@@ -119,7 +134,8 @@ describe("WorkspaceHeartbeatModal", () => {
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await restoreWorkspaceHeartbeatModalMocks();
     cleanup();
     mock.restore();
     cleanupDom?.();
@@ -413,4 +429,8 @@ describe("WorkspaceHeartbeatModal", () => {
       ]);
     });
   });
+});
+
+afterAll(async () => {
+  await restoreWorkspaceHeartbeatModalMocks();
 });
