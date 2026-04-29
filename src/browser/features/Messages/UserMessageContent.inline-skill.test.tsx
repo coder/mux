@@ -2,7 +2,7 @@ import "../../../../tests/ui/dom";
 
 import React from "react";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { cleanup, fireEvent, render } from "@testing-library/react";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 
 import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 import type { DisplayedUserMessage, InlineSkillSnapshotMap } from "@/common/types/message";
@@ -39,7 +39,7 @@ describe("UserMessageContent inline skill rendering", () => {
     cleanupDom = null;
   });
 
-  test("renders slash and inline skill badges in sent user messages", () => {
+  test("renders slash and inline skill badges in sent user messages", async () => {
     const slashSnapshot = createSkillSnapshot("deep-review");
     const view = render(
       <UserMessageContent
@@ -51,11 +51,13 @@ describe("UserMessageContent inline skill rendering", () => {
       />
     );
 
-    const badgeTexts = getSkillBadges(view.container).map((badge) => badge.textContent);
-    expect(badgeTexts).toEqual(["/deep-review", "$tdd"]);
+    await waitFor(() => {
+      const badgeTexts = getSkillBadges(view.container).map((badge) => badge.textContent);
+      expect(badgeTexts).toEqual(["/deep-review", "$tdd"]);
+    });
   });
 
-  test("keeps edit-mode textarea content as raw text", () => {
+  test("keeps edit-mode textarea content as raw text", async () => {
     function EditHarness() {
       const [editingMessage, setEditingMessage] = React.useState<EditingMessageState | null>(null);
       const message: DisplayedUserMessage = {
@@ -85,7 +87,9 @@ describe("UserMessageContent inline skill rendering", () => {
     }
 
     const view = render(<EditHarness />);
-    expect(getSkillBadges(view.container).map((badge) => badge.textContent)).toEqual(["$tdd"]);
+    await waitFor(() => {
+      expect(getSkillBadges(view.container).map((badge) => badge.textContent)).toEqual(["$tdd"]);
+    });
 
     fireEvent.click(view.getByRole("button", { name: "Edit" }));
 
