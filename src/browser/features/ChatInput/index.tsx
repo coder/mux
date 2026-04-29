@@ -59,6 +59,8 @@ import {
 import { Button } from "@/browser/components/Button/Button";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { findAtMentionAtCursor } from "@/common/utils/atMentions";
+import { findInlineSkillReferenceAtCursor } from "@/browser/utils/agentSkills/inlineSkillReferences";
+import { getInlineSkillSuggestions } from "@/browser/utils/agentSkills/inlineSkillSuggestions";
 import { getCommandGhostHint } from "@/browser/utils/slashCommands/registry";
 import {
   getSlashCommandSuggestions,
@@ -279,12 +281,16 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const [hideReviewsDuringSend, setHideReviewsDuringSend] = useState(false);
   const [showAtMentionSuggestions, setShowAtMentionSuggestions] = useState(false);
   const [atMentionSuggestions, setAtMentionSuggestions] = useState<SlashSuggestion[]>([]);
+  const [showSkillSuggestions, setShowSkillSuggestions] = useState(false);
+  const [skillSuggestions, setSkillSuggestions] = useState<SlashSuggestion[]>([]);
   const agentSkillsRequestIdRef = useRef(0);
   const atMentionDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const atMentionRequestIdRef = useRef(0);
   const lastAtMentionScopeIdRef = useRef<string | null>(null);
   const lastAtMentionQueryRef = useRef<string | null>(null);
   const lastAtMentionInputRef = useRef<string>(input);
+  const lastSkillInputRef = useRef<string | null>(null);
+  const lastSkillQueryRef = useRef<string | null>(null);
   const [showCommandSuggestions, setShowCommandSuggestions] = useState(false);
 
   const [commandSuggestions, setCommandSuggestions] = useState<SlashSuggestion[]>([]);
@@ -533,6 +539,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     }
   );
   const atMentionListId = useId();
+  const skillListId = useId();
   const commandListId = useId();
   const telemetry = useTelemetry();
   const [vimEnabled, setVimEnabled] = usePersistedState<boolean>(VIM_ENABLED_KEY, false, {
@@ -1322,6 +1329,50 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     atMentionCursorNonce,
   ]);
 
+  // Watch input/cursor for inline $skill references
+  useEffect(() => {
+    if (showAtMentionSuggestions) {
+      // File mentions win precedence if an edge-case token could match both menus.
+      setSkillSuggestions((prev) => (prev.length === 0 ? prev : []));
+      setShowSkillSuggestions(false);
+      lastSkillQueryRef.current = null;
+      return;
+    }
+
+    const inputChanged = lastSkillInputRef.current !== input;
+    lastSkillInputRef.current = input;
+
+    const cursor = Math.min(inputRef.current?.selectionStart ?? input.length, input.length);
+    const match = findInlineSkillReferenceAtCursor(input, cursor);
+
+    if (!match) {
+      setSkillSuggestions([]);
+      setShowSkillSuggestions(false);
+      lastSkillQueryRef.current = null;
+      return;
+    }
+
+    // Avoid recomputing on caret movement within the same partial. Moving out of a token
+    // clears lastSkillQueryRef above, so moving back into an existing token can reopen.
+    if (!inputChanged && lastSkillQueryRef.current === match.partial) {
+      return;
+    }
+
+    lastSkillQueryRef.current = match.partial;
+
+    const nextSuggestions = getInlineSkillSuggestions({
+      partial: match.partial,
+      descriptors: agentSkillDescriptors,
+    });
+    setSkillSuggestions(nextSuggestions);
+    setShowSkillSuggestions(nextSuggestions.length > 0);
+  }, [
+    input,
+    showAtMentionSuggestions,
+    agentSkillDescriptors,
+    atMentionCursorNonce,
+  ]);
+
   // Watch input for slash commands
   useEffect(() => {
     const suggestions = getSlashCommandSuggestions(input, {
@@ -1933,6 +1984,40 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     },
     [input, setInput]
   );
+  const handleSkillSelect = useCallback(
+    (suggestion: SlashSuggestion) => {
+      const cursor = Math.min(inputRef.current?.selectionStart ?? input.length, input.length);
+      const match = findInlineSkillReferenceAtCursor(input, cursor);
+      if (!match) {
+        return;
+      }
+
+      // Add a separating space only when the following text does not already provide one.
+      const after = input.slice(match.endIndex);
+      const trailing = after.length === 0 || /\s/.test(after[0] ?? "") ? "" : " ";
+      const next =
+        input.slice(0, match.startIndex) + suggestion.replacement + trailing + after;
+
+      setInput(next);
+      setSkillSuggestions([]);
+      setShowSkillSuggestions(false);
+      lastSkillQueryRef.current = null;
+
+      requestAnimationFrame(() => {
+        const el = inputRef.current;
+        if (!el || el.disabled) {
+          return;
+        }
+
+        el.focus();
+        const newCursor = match.startIndex + suggestion.replacement.length + trailing.length;
+        el.selectionStart = newCursor;
+        el.selectionEnd = newCursor;
+      });
+    },
+    [input, setInput]
+  );
+
   const handleCommandSelect = useCallback(
     (suggestion: SlashSuggestion) => {
       setInput(suggestion.replacement);
@@ -2407,12 +2492,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
     const hasCommandSuggestionMenu = showCommandSuggestions && commandSuggestions.length > 0;
     const hasAtMentionSuggestionMenu = showAtMentionSuggestions && atMentionSuggestions.length > 0;
+    const hasSkillSuggestionMenu = showSkillSuggestions && skillSuggestions.length > 0;
 
     // Don't handle keys if suggestions are visible.
-    // Enter/Tab/arrows/Escape are handled by CommandSuggestions for both slash and @mention menus.
+    // Enter/Tab/arrows/Escape are handled by CommandSuggestions for slash, @file, and $skill menus.
     if (
       (hasCommandSuggestionMenu && COMMAND_SUGGESTION_KEYS.includes(e.key)) ||
-      (hasAtMentionSuggestionMenu && FILE_SUGGESTION_KEYS.includes(e.key))
+      (hasAtMentionSuggestionMenu && FILE_SUGGESTION_KEYS.includes(e.key)) ||
+      (hasSkillSuggestionMenu && FILE_SUGGESTION_KEYS.includes(e.key))
     ) {
       return; // Let CommandSuggestions handle it
     }
@@ -2561,6 +2648,18 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             isFileSuggestion
           />
 
+          {/* Skill suggestions ($deep-review) */}
+          <CommandSuggestions
+            suggestions={skillSuggestions}
+            onSelectSuggestion={handleSkillSelect}
+            onDismiss={() => setShowSkillSuggestions(false)}
+            isVisible={showSkillSuggestions}
+            ariaLabel="Skill suggestions"
+            listId={skillListId}
+            anchorRef={variant === "creation" ? inputRef : undefined}
+            highlightQuery={lastSkillQueryRef.current ?? ""}
+          />
+
           {/* Slash command suggestions - available in both variants */}
           {/* In creation mode, use portal (anchorRef) to escape overflow:hidden containers */}
           <CommandSuggestions
@@ -2604,9 +2703,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   suppressKeys={
                     showAtMentionSuggestions
                       ? FILE_SUGGESTION_KEYS
-                      : showCommandSuggestions
-                        ? COMMAND_SUGGESTION_KEYS
-                        : undefined
+                      : showSkillSuggestions
+                        ? FILE_SUGGESTION_KEYS
+                        : showCommandSuggestions
+                          ? COMMAND_SUGGESTION_KEYS
+                          : undefined
                   }
                   placeholder={placeholder}
                   disabled={!editingMessageForUi && (disabled || sendInFlightBlocksInput)}
@@ -2615,13 +2716,16 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   aria-controls={
                     showAtMentionSuggestions && atMentionSuggestions.length > 0
                       ? atMentionListId
-                      : showCommandSuggestions && commandSuggestions.length > 0
-                        ? commandListId
-                        : undefined
+                      : showSkillSuggestions && skillSuggestions.length > 0
+                        ? skillListId
+                        : showCommandSuggestions && commandSuggestions.length > 0
+                          ? commandListId
+                          : undefined
                   }
                   aria-expanded={
                     (showCommandSuggestions && commandSuggestions.length > 0) ||
-                    (showAtMentionSuggestions && atMentionSuggestions.length > 0)
+                    (showAtMentionSuggestions && atMentionSuggestions.length > 0) ||
+                    (showSkillSuggestions && skillSuggestions.length > 0)
                   }
                   className={variant === "creation" ? "min-h-28" : "min-h-16"}
                   trailingAction={
