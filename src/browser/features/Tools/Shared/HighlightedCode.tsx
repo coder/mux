@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { highlightCode } from "@/browser/utils/highlighting/highlightWorkerClient";
-import { extractShikiLines } from "@/browser/utils/highlighting/shiki-shared";
+import { extractShikiLines, isLightThemeMode } from "@/browser/utils/highlighting/shiki-shared";
 import { useTheme } from "@/browser/contexts/ThemeContext";
 import { cn } from "@/common/lib/utils";
 
@@ -33,7 +33,7 @@ export const HighlightedCode: React.FC<HighlightedCodeProps> = ({
 }) => {
   const [highlighted, setHighlighted] = useState<HighlightedLines | null>(null);
   const { theme: themeMode } = useTheme();
-  const theme = themeMode === "light" || themeMode.endsWith("-light") ? "light" : "dark";
+  const theme = isLightThemeMode(themeMode) ? "light" : "dark";
 
   const plainLines = code.split("\n").filter((line, i, arr) => i < arr.length - 1 || line !== "");
 

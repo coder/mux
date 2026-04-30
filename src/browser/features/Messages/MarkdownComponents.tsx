@@ -4,7 +4,7 @@ import { Play } from "lucide-react";
 import { Mermaid } from "./Mermaid";
 import { useOptionalMessageListContext } from "./MessageListContext";
 import { highlightCode } from "@/browser/utils/highlighting/highlightWorkerClient";
-import { extractShikiLines } from "@/browser/utils/highlighting/shiki-shared";
+import { extractShikiLines, isLightThemeMode } from "@/browser/utils/highlighting/shiki-shared";
 import { useTheme } from "@/browser/contexts/ThemeContext";
 import { CopyButton } from "@/browser/components/CopyButton/CopyButton";
 import { resolveBrowserLocalhostProxyTemplate } from "@/browser/utils/browserLocalhostProxyTemplate";
@@ -163,8 +163,7 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ code, language, highlightLanguage
 
   const shikiLanguage = highlightLanguage ?? language;
   const { theme: themeMode } = useTheme();
-  const isLight = themeMode === "light" || themeMode.endsWith("-light");
-  const theme = isLight ? "light" : "dark";
+  const theme = isLightThemeMode(themeMode) ? "light" : "dark";
 
   // Split code into lines, removing trailing empty line
   const plainLines = code

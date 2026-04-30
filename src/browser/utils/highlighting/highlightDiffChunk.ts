@@ -1,4 +1,5 @@
 import { highlightCode } from "./highlightWorkerClient";
+import { isLightThemeMode } from "./shiki-shared";
 import type { DiffChunk } from "./diffChunking";
 
 /**
@@ -28,11 +29,6 @@ export interface HighlightedLine {
 }
 
 import type { ThemeMode } from "@/browser/contexts/ThemeContext";
-
-/** Map theme mode to Shiki theme (light/dark only) */
-function isLightTheme(theme: ThemeMode): boolean {
-  return theme === "light" || theme.endsWith("-light");
-}
 
 export interface HighlightedChunk {
   type: DiffChunk["type"];
@@ -72,7 +68,7 @@ export async function highlightDiffChunk(
   }
 
   const code = chunk.lines.join("\n");
-  const workerTheme = isLightTheme(themeMode) ? "light" : "dark";
+  const workerTheme = isLightThemeMode(themeMode) ? "light" : "dark";
 
   try {
     // Highlight via worker (cached, off main thread)

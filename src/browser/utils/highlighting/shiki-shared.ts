@@ -8,6 +8,17 @@ export const SHIKI_DARK_THEME = "min-dark";
 export const SHIKI_LIGHT_THEME = "min-light";
 
 /**
+ * Whether a theme-mode string maps to the light Shiki theme.
+ *
+ * Accepts both base modes (`"light"`/`"dark"`) and namespaced variants
+ * (e.g. `"flexoki-light"`), keeping the variant suffix convention as the
+ * single source of truth for the light/dark mapping.
+ */
+export function isLightThemeMode(themeMode: string): boolean {
+  return themeMode === "light" || themeMode.endsWith("-light");
+}
+
+/**
  * Map language names to Shiki-compatible language IDs
  * Handles special cases where detected language differs from Shiki's name
  */
