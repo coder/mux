@@ -388,6 +388,8 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     handleScroll,
     markUserScrollIntent,
     handleScrollContainerMouseDown,
+    handleScrollContainerMouseMove,
+    handleScrollContainerMouseUp,
     handleScrollContainerKeyDown,
   } = useAutoScroll();
 
@@ -837,6 +839,8 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
               ref={contentRef}
               onWheel={markUserScrollIntent}
               onMouseDown={handleScrollContainerMouseDown}
+              onMouseMove={handleScrollContainerMouseMove}
+              onMouseUp={handleScrollContainerMouseUp}
               onTouchMove={markUserScrollIntent}
               onKeyDown={handleScrollContainerKeyDown}
               onScroll={handleScroll}

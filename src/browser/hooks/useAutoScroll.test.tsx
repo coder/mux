@@ -11,9 +11,14 @@ function createScrollEvent(element: HTMLDivElement): UIEvent<HTMLDivElement> {
 
 function createMouseEvent(
   element: HTMLDivElement,
-  target: EventTarget = element
+  target: EventTarget = element,
+  options: { buttons?: number } = {}
 ): MouseEvent<HTMLDivElement> {
-  return { currentTarget: element, target } as unknown as MouseEvent<HTMLDivElement>;
+  return {
+    currentTarget: element,
+    target,
+    buttons: options.buttons ?? 0,
+  } as unknown as MouseEvent<HTMLDivElement>;
 }
 
 function attachScrollMetrics(
@@ -279,7 +284,7 @@ describe("useAutoScroll", () => {
     expect(result.current.autoScroll).toBe(true);
   });
 
-  test("non-interactive content mousedown preserves selection autoscroll intent", () => {
+  test("non-interactive content click does not release the lock without drag", () => {
     const { result } = renderHook(() => useAutoScroll());
     const element = document.createElement("div");
     const child = document.createElement("span");
@@ -298,6 +303,43 @@ describe("useAutoScroll", () => {
       act(() => {
         (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current = element;
         result.current.handleScrollContainerMouseDown(createMouseEvent(element, child));
+      });
+
+      metrics.setScrollTop(500);
+      act(() => {
+        now += 1;
+        result.current.handleScroll(createScrollEvent(element));
+      });
+
+      expect(metrics.scrollTop).toBe(metrics.maxScrollTop);
+      expect(result.current.autoScroll).toBe(true);
+    } finally {
+      dateNowSpy.mockRestore();
+    }
+  });
+
+  test("non-interactive content drag preserves selection autoscroll intent", () => {
+    const { result } = renderHook(() => useAutoScroll());
+    const element = document.createElement("div");
+    const child = document.createElement("span");
+    element.append(child);
+    const metrics = attachScrollMetrics(element, {
+      scrollHeight: 1300,
+      clientHeight: 400,
+      initialScrollTop: 900,
+    });
+
+    const dateNowSpy = spyOn(Date, "now");
+    try {
+      let now = 1_000_000;
+      dateNowSpy.mockImplementation(() => now);
+
+      act(() => {
+        (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current = element;
+        result.current.handleScrollContainerMouseDown(createMouseEvent(element, child));
+        result.current.handleScrollContainerMouseMove(
+          createMouseEvent(element, child, { buttons: 1 })
+        );
       });
 
       metrics.setScrollTop(500);

@@ -147,23 +147,51 @@ export function useAutoScroll() {
     userScrollIntentUntilRef.current = Date.now() + USER_SCROLL_INTENT_WINDOW_MS;
   }, []);
 
+  const contentMouseDownCandidateRef = useRef(false);
+
   const handleScrollContainerMouseDown = useCallback(
     (event: MouseEvent<HTMLDivElement>) => {
-      // Scrollbar drags target the scrollport itself. Non-interactive transcript
-      // content can also become user scroll intent via drag-to-select autoscroll.
-      // Interactive transcript chrome (tool headers/buttons/links) is exempt so
-      // expanding the last bash/tool row keeps bottom ownership.
-      if (
-        event.target !== event.currentTarget &&
-        isMouseDownExemptFromScrollIntent(event.target, event.currentTarget)
-      ) {
+      contentMouseDownCandidateRef.current = false;
+
+      // Scrollbar drags target the scrollport itself and are immediately scroll intent.
+      if (event.target === event.currentTarget) {
+        markUserScrollIntent();
         return;
       }
 
+      // Interactive transcript chrome (tool headers/buttons/links) is exempt so
+      // expanding the last bash/tool row keeps bottom ownership.
+      if (isMouseDownExemptFromScrollIntent(event.target, event.currentTarget)) {
+        return;
+      }
+
+      // A simple content click is not scroll intent. It only becomes user-owned
+      // once the pointer moves with the mouse button down, which covers
+      // drag-to-select autoscroll without letting expand/collapse clicks release
+      // the bottom lock.
+      contentMouseDownCandidateRef.current = true;
+    },
+    [markUserScrollIntent]
+  );
+
+  const handleScrollContainerMouseMove = useCallback(
+    (event: MouseEvent<HTMLDivElement>) => {
+      if (!contentMouseDownCandidateRef.current) return;
+
+      if (event.buttons !== 1) {
+        contentMouseDownCandidateRef.current = false;
+        return;
+      }
+
+      contentMouseDownCandidateRef.current = false;
       markUserScrollIntent();
     },
     [markUserScrollIntent]
   );
+
+  const handleScrollContainerMouseUp = useCallback(() => {
+    contentMouseDownCandidateRef.current = false;
+  }, []);
 
   const handleScrollContainerKeyDown = useCallback(
     (event: KeyboardEvent<HTMLDivElement>) => {
@@ -261,6 +289,8 @@ export function useAutoScroll() {
     handleScroll,
     markUserScrollIntent,
     handleScrollContainerMouseDown,
+    handleScrollContainerMouseMove,
+    handleScrollContainerMouseUp,
     handleScrollContainerKeyDown,
   };
 }
