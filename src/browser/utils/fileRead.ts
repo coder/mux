@@ -3,7 +3,7 @@
  */
 
 /** Maximum file size for reading into the UI (10MB). */
-export const MAX_FILE_SIZE = 10 * 1024 * 1024;
+const MAX_FILE_SIZE = 10 * 1024 * 1024;
 
 /** Exit code for "file too large". */
 export const EXIT_CODE_TOO_LARGE = 42;
@@ -19,12 +19,12 @@ const IMAGE_MAGIC_BYTES: Array<{ bytes: number[]; mime: string }> = [
 ];
 
 /** Escapes a path for safe use in shell commands. */
-export function shellEscape(s: string): string {
+function shellEscape(s: string): string {
   return "'" + s.replaceAll("'", "'\"'\"'") + "'";
 }
 
 /** Decode a base64 string to bytes. */
-export function base64ToUint8Array(base64: string): Uint8Array {
+function base64ToUint8Array(base64: string): Uint8Array {
   const binaryString = atob(base64);
   const bytes = new Uint8Array(binaryString.length);
   for (let i = 0; i < binaryString.length; i++) {
@@ -34,7 +34,7 @@ export function base64ToUint8Array(base64: string): Uint8Array {
 }
 
 /** Detect image type from magic bytes. */
-export function detectImageType(buffer: Uint8Array): string | undefined {
+function detectImageType(buffer: Uint8Array): string | undefined {
   for (const { bytes, mime } of IMAGE_MAGIC_BYTES) {
     if (buffer.length < bytes.length) continue;
 
@@ -68,7 +68,7 @@ export function detectImageType(buffer: Uint8Array): string | undefined {
 }
 
 /** Check if file is an SVG by looking for XML/SVG markers in content. */
-export function detectSvg(buffer: Uint8Array): boolean {
+function detectSvg(buffer: Uint8Array): boolean {
   const sampleSize = Math.min(buffer.length, 1024);
   const decoder = new TextDecoder("utf-8", { fatal: true });
   try {
@@ -80,7 +80,7 @@ export function detectSvg(buffer: Uint8Array): boolean {
 }
 
 /** Check if buffer contains binary content. */
-export function detectBinary(buffer: Uint8Array): boolean {
+function detectBinary(buffer: Uint8Array): boolean {
   const sampleSize = Math.min(buffer.length, 8192);
 
   for (let i = 0; i < sampleSize; i++) {
@@ -106,7 +106,7 @@ base64 < ${file}`;
 }
 
 /** Parse the read file script output (size on first line, base64 on remaining lines). */
-export function parseReadFileOutput(output: string): { size: number; base64: string } {
+function parseReadFileOutput(output: string): { size: number; base64: string } {
   const firstNewline = output.indexOf("\n");
 
   if (firstNewline === -1) {
