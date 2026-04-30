@@ -344,7 +344,7 @@ export interface ErrorOccurredPayload {
  * This helps measure opt-out rates and understand user preferences
  */
 export interface ExperimentOverriddenPayload {
-  /** Experiment identifier (e.g., 'system-1') */
+  /** Experiment identifier (e.g., 'agent-browser') */
   experimentId: string;
   /** The variant PostHog assigned (null if not remote-controlled) */
   assignedVariant: string | boolean | null;
