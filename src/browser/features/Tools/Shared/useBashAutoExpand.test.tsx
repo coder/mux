@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { act, cleanup, renderHook } from "@testing-library/react";
-import type { Dispatch, SetStateAction, MutableRefObject } from "react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { installDom } from "../../../../../tests/ui/dom";
 import { useBashAutoExpand } from "./useBashAutoExpand";
@@ -9,7 +8,7 @@ import type { ToolStatus } from "./toolUtils";
 
 interface HarnessOptions {
   isLatestStreamingBash: boolean;
-  latestStreamingBashId: string | null;
+  hasReplacementStreamingBash?: boolean;
   status: ToolStatus;
   startedAt?: number;
   initialExpanded?: boolean;
@@ -18,27 +17,23 @@ interface HarnessOptions {
 
 interface HarnessResult {
   expanded: boolean;
-  setExpanded: Dispatch<SetStateAction<boolean>>;
-  userToggledRef: MutableRefObject<boolean>;
 }
 
 function useTestHarness(options: HarnessOptions): HarnessResult {
   const [expanded, setExpanded] = useState(options.initialExpanded ?? false);
   // Stable ref across renders so the harness simulates the parent component.
-  const userToggledRef = useState(() => ({
-    current: options.initialUserToggled ?? false,
-  }))[0] as MutableRefObject<boolean>;
+  const userToggledRef = useRef(options.initialUserToggled ?? false);
 
   useBashAutoExpand({
     isLatestStreamingBash: options.isLatestStreamingBash,
-    latestStreamingBashId: options.latestStreamingBashId,
+    hasReplacementStreamingBash: options.hasReplacementStreamingBash ?? false,
     status: options.status,
     startedAt: options.startedAt,
     setExpanded,
     userToggledRef,
   });
 
-  return { expanded, setExpanded, userToggledRef };
+  return { expanded };
 }
 
 let cleanupDom: (() => void) | null = null;
@@ -58,7 +53,6 @@ describe("useBashAutoExpand", () => {
     const { result } = renderHook(() =>
       useTestHarness({
         isLatestStreamingBash: true,
-        latestStreamingBashId: "tool-bash-1",
         status: "executing",
         startedAt: 0,
       })
@@ -73,7 +67,6 @@ describe("useBashAutoExpand", () => {
     const { result } = renderHook(() =>
       useTestHarness({
         isLatestStreamingBash: true,
-        latestStreamingBashId: "tool-bash-1",
         status: "executing",
         startedAt: Date.now(),
       })
@@ -90,7 +83,6 @@ describe("useBashAutoExpand", () => {
   test("delays expand by 300ms for new in-chat bash transitions", async () => {
     const initialProps: HarnessOptions = {
       isLatestStreamingBash: false,
-      latestStreamingBashId: null,
       status: "pending",
     };
     const { result, rerender } = renderHook((p: HarnessOptions) => useTestHarness(p), {
@@ -104,7 +96,6 @@ describe("useBashAutoExpand", () => {
     // expand immediately (flash protection).
     rerender({
       isLatestStreamingBash: true,
-      latestStreamingBashId: "tool-bash-1",
       status: "executing",
     });
     expect(result.current.expanded).toBe(false);
@@ -120,7 +111,6 @@ describe("useBashAutoExpand", () => {
     const { result } = renderHook(() =>
       useTestHarness({
         isLatestStreamingBash: true,
-        latestStreamingBashId: "tool-bash-1",
         status: "executing",
         initialUserToggled: true,
       })
@@ -132,7 +122,6 @@ describe("useBashAutoExpand", () => {
   test("auto-collapses when a different bash takes over", () => {
     const initialProps: HarnessOptions = {
       isLatestStreamingBash: true,
-      latestStreamingBashId: "tool-bash-1",
       status: "executing",
       startedAt: 0,
     };
@@ -142,10 +131,10 @@ describe("useBashAutoExpand", () => {
     expect(result.current.expanded).toBe(true);
 
     // A NEW bash starts streaming. From this row's perspective, it stops being
-    // the latest streaming bash and a non-null id replaces it.
+    // the latest streaming bash and should collapse back to its default state.
     rerender({
       isLatestStreamingBash: false,
-      latestStreamingBashId: "tool-bash-2",
+      hasReplacementStreamingBash: true,
       status: "executing",
     });
 
@@ -155,7 +144,6 @@ describe("useBashAutoExpand", () => {
   test("does NOT auto-collapse when the bash itself completes", () => {
     const initialProps: HarnessOptions = {
       isLatestStreamingBash: true,
-      latestStreamingBashId: "tool-bash-1",
       status: "executing",
       startedAt: 0,
     };
@@ -164,12 +152,10 @@ describe("useBashAutoExpand", () => {
     });
     expect(result.current.expanded).toBe(true);
 
-    // Bash finishes: latestStreamingBashId becomes null because there's no
-    // bash currently streaming. The row should keep its expanded state so the
-    // user can read the completed output without re-clicking.
+    // Bash finishes with no replacement streaming. The row should stay expanded
+    // so the user can read the completed output without re-clicking.
     rerender({
       isLatestStreamingBash: false,
-      latestStreamingBashId: null,
       status: "completed",
     });
 
@@ -180,7 +166,6 @@ describe("useBashAutoExpand", () => {
     const { result } = renderHook(() =>
       useTestHarness({
         isLatestStreamingBash: false,
-        latestStreamingBashId: null,
         status: "pending",
       })
     );

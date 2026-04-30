@@ -55,7 +55,7 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
   const { expanded, setExpanded, toggleExpanded } = useToolExpansion();
   const [outputDialogOpen, setOutputDialogOpen] = useState(false);
 
-  const resultHasOutput = typeof (result as { output?: unknown } | undefined)?.output === "string";
+  const resultHasOutput = typeof result?.output === "string";
   const shouldTrackLiveBashState = Boolean(
     workspaceId &&
     toolCallId &&
@@ -78,6 +78,7 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
     shouldTrackLatestStreamingBash ? workspaceId : undefined
   );
   const isLatestStreamingBash = latestStreamingBashId === toolCallId;
+  const hasReplacementStreamingBash = latestStreamingBashId !== null && !isLatestStreamingBash;
 
   const outputRef = useRef<HTMLPreElement>(null);
   const outputPinnedRef = useRef(true);
@@ -94,7 +95,7 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
   const userToggledRef = useRef(false);
   useBashAutoExpand({
     isLatestStreamingBash,
-    latestStreamingBashId,
+    hasReplacementStreamingBash,
     status,
     startedAt,
     setExpanded,
@@ -109,7 +110,7 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
   // Override status for backgrounded processes: the aggregator sees success=true and marks "completed",
   // but for a foreground→background migration we want to show "backgrounded"
   const effectiveStatus: ToolStatus =
-    status === "completed" && result && "backgroundProcessId" in result ? "backgrounded" : status;
+    status === "completed" && backgroundProcessId !== null ? "backgrounded" : status;
 
   const showLiveOutput =
     !isBackground && (status === "executing" || (Boolean(liveOutput) && !resultHasOutput));
@@ -134,7 +135,7 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
   const truncatedInfo = result && "truncated" in result ? result.truncated : undefined;
   const note = result && "note" in result ? result.note : undefined;
 
-  const isBackgroundResult = Boolean(result && "backgroundProcessId" in result);
+  const isBackgroundResult = backgroundProcessId !== null;
   const completedOutput = isBackgroundResult ? undefined : result?.output;
   const completedHasOutput = typeof completedOutput === "string" && completedOutput.length > 0;
   const showCompletedOutputSection = !isBackgroundResult && (completedHasOutput || Boolean(note));
@@ -311,12 +312,12 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
           )}
 
           {/* Background process info */}
-          {result && "backgroundProcessId" in result && (
+          {backgroundProcessId && (
             <div className="flex items-center gap-2 text-[11px]">
               <Layers size={12} className="text-muted shrink-0" />
               <span className="text-muted">Background process</span>
               <code className="rounded bg-[var(--color-bg-tertiary)] px-1.5 py-0.5 font-mono text-[10px]">
-                {result.backgroundProcessId}
+                {backgroundProcessId}
               </code>
             </div>
           )}

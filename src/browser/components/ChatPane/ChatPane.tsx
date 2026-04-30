@@ -284,8 +284,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     hasOlderHistory,
     loadingOlderHistory,
   } = workspaceState;
-  const todoCount = workspaceState.todos.length;
-  const shouldShowPinnedTodoList = todoCount > 0;
+  const shouldShowPinnedTodoList = workspaceState.todos.length > 0;
   const shouldShowReviewsBanner = reviews.reviews.length > 0;
   const shouldRenderLoadOlderMessagesButton = hasOlderHistory && !isChromaticStorybookEnvironment();
   const loadOlderMessagesShortcutLabel = formatKeybind(KEYBINDS.LOAD_OLDER_MESSAGES);
@@ -1025,7 +1024,6 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
               isQueuedAgentTask={isQueuedAgentTask}
               isCompacting={isCompacting}
               shouldShowPinnedTodoList={shouldShowPinnedTodoList}
-              todoCount={todoCount}
               shouldShowReviewsBanner={shouldShowReviewsBanner}
               canInterrupt={canInterrupt}
               autoCompactionResult={autoCompactionResult}
@@ -1078,7 +1076,6 @@ interface ChatInputPaneProps {
   isStreamStarting: boolean;
   isHydratingTranscript: boolean;
   shouldShowPinnedTodoList: boolean;
-  todoCount: number;
   shouldShowReviewsBanner: boolean;
   canInterrupt: boolean;
   autoCompactionResult: ReturnType<typeof checkAutoCompaction>;

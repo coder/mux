@@ -15,59 +15,7 @@ import { createAppHarness, ChatHarness } from "../harness";
 import { workspaceStore } from "@/browser/stores/WorkspaceStore";
 import { detectDefaultTrunkBranch } from "@/node/git";
 import { MOCK_TOOL_FLOW_PROMPTS } from "../../e2e/mockAiPrompts";
-
-interface MockedScrollPort {
-  setScrollHeight: (height: number) => void;
-  setClientHeight: (height: number) => void;
-  setScrollTop: (top: number) => void;
-  getScrollTop: () => number;
-  getMaxScrollTop: () => number;
-}
-
-function mockScrollportMetrics(
-  element: HTMLElement,
-  initial: { scrollHeight: number; clientHeight: number; scrollTop?: number }
-): MockedScrollPort {
-  let scrollHeight = initial.scrollHeight;
-  let clientHeight = initial.clientHeight;
-  const maxScrollTop = () => Math.max(0, scrollHeight - clientHeight);
-  const clamp = (value: number) => Math.min(maxScrollTop(), Math.max(0, value));
-  let scrollTop = clamp(initial.scrollTop ?? maxScrollTop());
-
-  Object.defineProperty(element, "scrollTop", {
-    configurable: true,
-    get: () => scrollTop,
-    set: (next: number) => {
-      scrollTop = clamp(next);
-    },
-  });
-  Object.defineProperty(element, "scrollHeight", {
-    configurable: true,
-    get: () => scrollHeight,
-  });
-  Object.defineProperty(element, "clientHeight", {
-    configurable: true,
-    get: () => clientHeight,
-  });
-
-  return {
-    setScrollHeight(next) {
-      scrollHeight = next;
-      scrollTop = clamp(scrollTop);
-    },
-    setClientHeight(next) {
-      clientHeight = next;
-      scrollTop = clamp(scrollTop);
-    },
-    setScrollTop(next) {
-      scrollTop = clamp(next);
-    },
-    getScrollTop() {
-      return scrollTop;
-    },
-    getMaxScrollTop: maxScrollTop,
-  };
-}
+import { mockScrollMetrics as mockScrollportMetrics } from "../scrollMetrics";
 
 async function waitForBashScriptSpan(
   container: HTMLElement,
@@ -114,7 +62,7 @@ describe("Chat bottom layout stability", () => {
       // Composer grows (e.g. multi-line input), shrinking the transcript viewport.
       // The bottom-lock invariant must produce scrollTop = scrollHeight - clientHeight
       // before the next paint when a layout signal arrives.
-      port.setClientHeight(520);
+      port.setClientHeight(320);
       // The mocked geometry does not notify happy-dom's ResizeObserver, so emit
       // the scroll/layout signal that real browser anchoring commonly produces.
       fireEvent.scroll(messageWindow);
@@ -237,29 +185,13 @@ describe("Chat bottom layout stability", () => {
       );
 
       const messageWindow = getMessageWindow(app.view.container);
-      let scrollHeight = 1000;
-      const clientHeight = 400;
-      const maxScrollTop = () => scrollHeight - clientHeight;
-      let scrollTop = maxScrollTop();
-
-      Object.defineProperty(messageWindow, "scrollTop", {
-        configurable: true,
-        get: () => scrollTop,
-        set: (nextValue: number) => {
-          scrollTop = Math.min(maxScrollTop(), Math.max(0, nextValue));
-        },
-      });
-      Object.defineProperty(messageWindow, "scrollHeight", {
-        configurable: true,
-        get: () => scrollHeight,
-      });
-      Object.defineProperty(messageWindow, "clientHeight", {
-        configurable: true,
-        get: () => clientHeight,
+      const port = mockScrollportMetrics(messageWindow, {
+        scrollHeight: 1000,
+        clientHeight: 400,
       });
 
       // Simulate the extra tail height added by the send-time user row + starting barrier.
-      scrollHeight = 1120;
+      port.setScrollHeight(1120);
       await app.chat.send("[mock:wait-start] Hold stream-start so the footer stays visible");
 
       await waitFor(
@@ -274,7 +206,7 @@ describe("Chat bottom layout stability", () => {
 
       // The bottom-lock path pins the transcript immediately via layout/resize
       // signals; there is no timer/RAF path to race a frame at the wrong scrollTop.
-      expect(scrollTop).toBe(maxScrollTop());
+      expect(port.getScrollTop()).toBe(port.getMaxScrollTop());
 
       app.env.services.aiService.releaseMockStreamStartGate(app.workspaceId);
       await app.chat.expectStreamComplete();

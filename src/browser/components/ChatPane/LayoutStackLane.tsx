@@ -37,7 +37,6 @@ export const LayoutStackLane: React.FC<LayoutStackLaneProps> = (props) => {
   const contentRef = useRef<HTMLDivElement>(null);
   const stackHeightByWorkspaceIdRef = useRef(new Map<string, number>());
   const lastMeasuredStackHeightRef = useRef(0);
-  const observedHeightRef = useRef<number | null>(null);
 
   const hasItems = props.items.length > 0;
   const reservedStackHeightPx = getReservedLayoutStackHeightPx({
@@ -50,14 +49,11 @@ export const LayoutStackLane: React.FC<LayoutStackLaneProps> = (props) => {
   useLayoutEffect(() => {
     const content = contentRef.current;
     if (!content) {
-      observedHeightRef.current = null;
       return;
     }
 
     const observer = new ResizeObserver((entries) => {
       const nextHeight = measureLayoutStackHeightPx(content, entries[0]?.contentRect.height);
-      observedHeightRef.current = nextHeight;
-
       if (nextHeight === 0) {
         // Some owners (e.g. background-process dialogs) stay mounted while
         // rendering nothing. Only drop the reservation after hydration ends —
@@ -94,7 +90,6 @@ export const LayoutStackLane: React.FC<LayoutStackLaneProps> = (props) => {
     }
 
     if (!hasItems) {
-      observedHeightRef.current = 0;
       clearLayoutStackHeight(
         props.workspaceId,
         stackHeightByWorkspaceIdRef.current,
@@ -109,7 +104,6 @@ export const LayoutStackLane: React.FC<LayoutStackLaneProps> = (props) => {
     }
 
     const settledHeightPx = measureLayoutStackHeightPx(content);
-    observedHeightRef.current = settledHeightPx;
     if (settledHeightPx === 0) {
       clearLayoutStackHeight(
         props.workspaceId,
