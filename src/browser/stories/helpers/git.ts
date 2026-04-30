@@ -14,45 +14,16 @@ export interface GitDiffFixture {
   untrackedFiles?: string[];
 }
 
-// Default mock file tree for explorer stories
-// Machine-readable explorer listing output - order doesn't matter, parseLsOutput sorts the result.
-const DEFAULT_LS_OUTPUT = [
-  "d\tnode_modules",
-  "d\tsrc",
-  "d\ttests",
-  "f\tREADME.md",
-  "f\tpackage.json",
-  "f\ttsconfig.json",
-].join("\n");
-
-const DEFAULT_SRC_LS_OUTPUT = ["d\tcomponents", "f\tApp.tsx", "f\tindex.ts"].join("\n");
-
 /**
  * Creates an executeBash function that returns git status and diff output for workspaces.
  * Handles: git status, git diff, git diff --numstat, git show (for read-more),
- * git ls-files --others (for untracked files), the Explorer's machine-readable directory listing script, git check-ignore
+ * git ls-files --others (for untracked files)
  */
 export function createGitStatusExecutor(
   gitStatus?: Map<string, GitStatusFixture>,
   gitDiff?: Map<string, GitDiffFixture>
 ) {
   return (workspaceId: string, script: string) => {
-    // Handle file explorer directory listings.
-    if (script.includes("shopt -s nullglob dotglob") && script.includes('for entry in "$dir"/*')) {
-      const dirMatch = /^dir=(.+)$/m.exec(script);
-      const rawDir = dirMatch?.[1]?.replaceAll("'", "") ?? ".";
-      const isRoot = rawDir === ".";
-      const output = isRoot ? DEFAULT_LS_OUTPUT : DEFAULT_SRC_LS_OUTPUT;
-      return Promise.resolve({ success: true as const, output, exitCode: 0, wall_duration_ms: 50 });
-    }
-
-    // Handle git check-ignore for empty ignored directories
-    if (script.includes("git check-ignore")) {
-      // Return node_modules as ignored if it's in the input
-      const output = script.includes("node_modules") ? "node_modules" : "";
-      return Promise.resolve({ success: true as const, output, exitCode: 0, wall_duration_ms: 50 });
-    }
-
     if (script.includes("git status")) {
       const status = gitStatus?.get(workspaceId) ?? {};
       // For git status --ignored --porcelain, add !! node_modules to mark it as ignored

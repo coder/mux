@@ -49,8 +49,6 @@ interface HunkViewerProps {
   includeUncommitted: boolean;
   /** Action callbacks for inline review notes */
   reviewActions?: ReviewActionCallbacks;
-  /** Callback to open a file in a new tab */
-  onOpenFile?: (relativePath: string) => void;
 }
 
 function renderHighlightedFilePath(
@@ -128,7 +126,6 @@ export const HunkViewer = React.memo<HunkViewerProps>(
     diffBase,
     reviewActions,
     includeUncommitted,
-    onOpenFile,
   }) => {
     // Ref for the hunk container to track visibility
     const hunkRef = React.useRef<HTMLDivElement>(null);
@@ -190,14 +187,6 @@ export const HunkViewer = React.memo<HunkViewerProps>(
     const highlightedFilePath = useMemo(
       () => renderHighlightedFilePath(hunk.filePath, searchConfig),
       [hunk.filePath, searchConfig]
-    );
-
-    const handleOpenFile = React.useCallback(
-      (event: React.MouseEvent<HTMLButtonElement>) => {
-        event.stopPropagation();
-        onOpenFile?.(hunk.filePath);
-      },
-      [onOpenFile, hunk.filePath]
     );
 
     // Persist manual expand/collapse state across remounts per workspace
@@ -337,23 +326,9 @@ export const HunkViewer = React.memo<HunkViewerProps>(
               </TooltipContent>
             </Tooltip>
           )}
-          {onOpenFile ? (
-            <TooltipIfPresent tooltip={hunk.filePath} side="top" align="start">
-              <button
-                type="button"
-                onClick={handleOpenFile}
-                className={cn(
-                  "text-foreground min-w-0 truncate bg-transparent p-0 text-left",
-                  "hover:text-link focus-visible:text-link cursor-pointer border-none"
-                )}
-                aria-label={`Open ${hunk.filePath} in new tab`}
-              >
-                <span>{highlightedFilePath}</span>
-              </button>
-            </TooltipIfPresent>
-          ) : (
+          <TooltipIfPresent tooltip={hunk.filePath} side="top" align="start">
             <div className="text-foreground min-w-0 truncate">{highlightedFilePath}</div>
-          )}
+          </TooltipIfPresent>
           <div className="text-muted ml-auto flex shrink-0 items-center gap-1.5 whitespace-nowrap">
             {!isPureRename && (
               <>

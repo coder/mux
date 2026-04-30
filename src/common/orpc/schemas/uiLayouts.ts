@@ -19,7 +19,7 @@ export const KeybindSchema = z
   })
   .strict();
 
-const RightSidebarPresetBaseTabSchema = z.enum(["costs", "review", "explorer", "stats"]);
+const RightSidebarPresetBaseTabSchema = z.enum(["costs", "review", "stats"]);
 
 export const RightSidebarPresetTabSchema: z.ZodType<RightSidebarPresetTabType> = z.union([
   RightSidebarPresetBaseTabSchema,

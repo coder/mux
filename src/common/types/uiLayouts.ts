@@ -18,7 +18,7 @@ export interface LayoutSlot {
   keybindOverride?: Keybind;
 }
 
-export type RightSidebarPresetBaseTabType = "costs" | "review" | "explorer" | "stats";
+export type RightSidebarPresetBaseTabType = "costs" | "review" | "stats";
 export type RightSidebarPresetTabType = RightSidebarPresetBaseTabType | `terminal_new:${string}`;
 
 export type RightSidebarLayoutPresetNode =
@@ -113,7 +113,7 @@ function normalizeRightSidebarWidthPreset(raw: unknown): RightSidebarWidthPreset
 
 function isPresetTabType(value: unknown): value is RightSidebarPresetTabType {
   if (typeof value !== "string") return false;
-  if (value === "costs" || value === "review" || value === "explorer" || value === "stats") {
+  if (value === "costs" || value === "review" || value === "stats") {
     return true;
   }
   return value.startsWith("terminal_new:") && value.length > "terminal_new:".length;

@@ -47,13 +47,6 @@ export function isRightSidebarLayoutState(value: unknown): value is RightSidebar
   if (typeof v.nextId !== "number") return false;
   if (typeof v.focusedTabsetId !== "string") return false;
   if (!isLayoutNode(v.root)) return false;
-  // parentTab is optional; if present, must be a Record<string, string>
-  if (v.parentTab != null) {
-    if (typeof v.parentTab !== "object" || Array.isArray(v.parentTab)) return false;
-    for (const val of Object.values(v.parentTab as Record<string, unknown>)) {
-      if (typeof val !== "string") return false;
-    }
-  }
   return findTabset(v.root, v.focusedTabsetId) !== null;
 }
 export interface RightSidebarLayoutState {
@@ -61,15 +54,11 @@ export interface RightSidebarLayoutState {
   nextId: number;
   focusedTabsetId: string;
   root: RightSidebarLayoutNode;
-  // Maps file/terminal tabs to the tab that opened them.
-  // When a tab with a parentTab entry is closed, the parent is activated
-  // instead of falling back to positional adjacency.
-  parentTab?: Record<string, string>;
 }
 
 export function getDefaultRightSidebarLayoutState(activeTab: TabType): RightSidebarLayoutState {
   // Default tabs exclude terminal - users add terminals via the "+" button
-  const baseTabs: TabType[] = ["costs", "review", "explorer"];
+  const baseTabs: TabType[] = ["costs", "review"];
   const tabs = baseTabs.includes(activeTab) ? baseTabs : [...baseTabs, activeTab];
 
   return {
@@ -85,51 +74,20 @@ export function getDefaultRightSidebarLayoutState(activeTab: TabType): RightSide
   };
 }
 
-/**
- * Recursively inject a tab into the first tabset that doesn't have it.
- * Returns true if injection happened.
- */
-function injectTabIntoLayout(node: RightSidebarLayoutNode, tab: TabType): boolean {
-  if (node.type === "tabset") {
-    if (!node.tabs.includes(tab)) {
-      node.tabs.push(tab);
-      return true;
-    }
-    return false;
-  }
-  // Split node - try first child, then second
-  return injectTabIntoLayout(node.children[0], tab) || injectTabIntoLayout(node.children[1], tab);
-}
-
-/**
- * Check if a tab exists anywhere in the layout tree.
- */
-function layoutContainsTab(node: RightSidebarLayoutNode, tab: TabType): boolean {
-  if (node.type === "tabset") {
-    return node.tabs.includes(tab);
-  }
-  return layoutContainsTab(node.children[0], tab) || layoutContainsTab(node.children[1], tab);
-}
-
 export function parseRightSidebarLayoutState(
   raw: unknown,
   activeTabFallback: TabType
 ): RightSidebarLayoutState {
-  // Pre-parse migration: strip legacy "stats" tabs from raw data before validation.
-  // The standalone "stats" tab was absorbed into the "costs" tab as sub-tabs.
-  // Must run before isRightSidebarLayoutState since isTabType now rejects "stats".
+  // Pre-parse migration: strip removed static tabs from raw data before validation.
+  // Must run before isRightSidebarLayoutState since isTabType rejects legacy tabs.
   if (raw && typeof raw === "object") {
     const r = raw as Record<string, unknown>;
     if (r.root && typeof r.root === "object") {
-      stripLegacyStatsTab(r.root as Record<string, unknown>);
+      stripRemovedStaticTabs(r.root as Record<string, unknown>);
     }
   }
 
   if (isRightSidebarLayoutState(raw)) {
-    // Migrate: inject new always-visible static tabs into persisted layouts.
-    if (!layoutContainsTab(raw.root, "explorer")) {
-      injectTabIntoLayout(raw.root, "explorer");
-    }
     return raw;
   }
 
@@ -137,23 +95,25 @@ export function parseRightSidebarLayoutState(
 }
 
 /**
- * Recursively strip legacy "stats" tabs from raw layout data.
+ * Recursively strip removed static tabs from raw layout data.
  * Mutates the object in-place before validation so isTabType doesn't reject the layout.
  */
-function stripLegacyStatsTab(node: Record<string, unknown>): void {
+function stripRemovedStaticTabs(node: Record<string, unknown>): void {
   if (node.type === "tabset") {
     if (Array.isArray(node.tabs)) {
-      const filtered = (node.tabs as unknown[]).filter((t) => t !== "stats");
+      const isRemovedTab = (tab: unknown) =>
+        tab === "stats" ||
+        tab === "explorer" ||
+        (typeof tab === "string" && tab.startsWith("file:"));
+      const filtered = (node.tabs as unknown[]).filter((tab) => !isRemovedTab(tab));
       if (filtered.length !== (node.tabs as unknown[]).length) {
-        // Ensure at least one tab remains — a stats-only tabset becomes ["costs"]
+        // Ensure at least one tab remains — a removed-only tabset becomes ["costs"].
         node.tabs = filtered.length > 0 ? filtered : ["costs"];
-        // If the active tab was "stats", map to "costs" (its semantic replacement)
-        // when present; otherwise fall back to the first remaining tab
-        if (node.activeTab === "stats") {
-          node.activeTab = (node.tabs as unknown[]).includes("costs")
-            ? "costs"
-            : ((node.tabs as unknown[])[0] ?? "costs");
-        }
+      }
+      if (isRemovedTab(node.activeTab)) {
+        node.activeTab = (node.tabs as unknown[]).includes("costs")
+          ? "costs"
+          : ((node.tabs as unknown[])[0] ?? "costs");
       }
     }
     return;
@@ -161,7 +121,7 @@ function stripLegacyStatsTab(node: Record<string, unknown>): void {
   if (node.type === "split" && Array.isArray(node.children)) {
     for (const child of node.children) {
       if (child && typeof child === "object") {
-        stripLegacyStatsTab(child as Record<string, unknown>);
+        stripRemovedStaticTabs(child as Record<string, unknown>);
       }
     }
   }
@@ -189,23 +149,16 @@ function allocId(state: RightSidebarLayoutState, prefix: "tabset" | "split") {
 
 function removeTabFromNode(
   node: RightSidebarLayoutNode,
-  tab: TabType,
-  preferredActiveTab?: string
+  tab: TabType
 ): RightSidebarLayoutNode | null {
   if (node.type === "tabset") {
     const oldIndex = node.tabs.indexOf(tab);
     const tabs = node.tabs.filter((t) => t !== tab);
     if (tabs.length === 0) return null;
 
-    // When removing the active tab, prefer the parent tab if it exists in this tabset
     let activeTab = node.activeTab;
     if (node.activeTab === tab) {
-      if (preferredActiveTab && tabs.includes(preferredActiveTab as TabType)) {
-        activeTab = preferredActiveTab as TabType;
-      } else {
-        // Fallback: positional adjacency
-        activeTab = tabs[Math.min(oldIndex, tabs.length - 1)];
-      }
+      activeTab = tabs[Math.min(oldIndex, tabs.length - 1)];
     }
     return {
       ...node,
@@ -214,8 +167,8 @@ function removeTabFromNode(
     };
   }
 
-  const left = removeTabFromNode(node.children[0], tab, preferredActiveTab);
-  const right = removeTabFromNode(node.children[1], tab, preferredActiveTab);
+  const left = removeTabFromNode(node.children[0], tab);
+  const right = removeTabFromNode(node.children[1], tab);
 
   if (!left && !right) {
     return null;
@@ -235,10 +188,7 @@ export function removeTabEverywhere(
   state: RightSidebarLayoutState,
   tab: TabType
 ): RightSidebarLayoutState {
-  // Look up parent tab before removal so we can activate it
-  const parentTab = state.parentTab?.[tab];
-
-  const nextRoot = removeTabFromNode(state.root, tab, parentTab);
+  const nextRoot = removeTabFromNode(state.root, tab);
   if (!nextRoot) {
     return getDefaultRightSidebarLayoutState("costs");
   }
@@ -248,22 +198,10 @@ export function removeTabEverywhere(
     ? state.focusedTabsetId
     : (findFirstTabsetId(nextRoot) ?? "tabset-1");
 
-  // Clean up parentTab entries:
-  // 1. Remove the entry for the closed tab itself
-  // 2. Remove any entries whose parent was the closed tab (orphaned children)
-  let nextParentTab = state.parentTab;
-  if (nextParentTab) {
-    const cleaned = Object.fromEntries(
-      Object.entries(nextParentTab).filter(([key, parent]) => key !== tab && parent !== tab)
-    );
-    nextParentTab = Object.keys(cleaned).length > 0 ? cleaned : undefined;
-  }
-
   return {
     ...state,
     root: nextRoot,
     focusedTabsetId,
-    parentTab: nextParentTab,
   };
 }
 function updateNode(

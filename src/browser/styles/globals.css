@@ -99,11 +99,6 @@
     --color-runtime-devcontainer: #10b981; /* emerald-500 */
     --color-runtime-devcontainer-text: #34d399; /* emerald-400 */
 
-    /* File explorer */
-    --color-folder-icon: #dcb67a; /* gold/yellow folder color */
-    --color-git-modified: #e2c08d; /* yellow/gold for modified files */
-    --color-git-untracked: #73c991; /* green for new/untracked files */
-
     /* Background & Layout */
     --color-background: hsl(0 0% 12%);
     --color-background-secondary: hsl(60 1% 15%);
@@ -398,12 +393,6 @@
   --color-runtime-devcontainer: #10b981; /* emerald-500 */
   --color-runtime-devcontainer-text: #059669; /* emerald-600 */
 
-  /* File explorer */
-  --color-folder-icon: #c9a227; /* darker gold for light theme */
-  /* Darken git status colors so they remain readable on light backgrounds */
-  --color-git-modified: color-mix(in srgb, var(--color-git-dirty), black 40%);
-  --color-git-untracked: color-mix(in srgb, var(--color-success), black 30%);
-
   --color-background: hsl(210 33% 98%);
   --color-background-secondary: hsl(210 36% 95%);
   --color-border: hsl(210, 24%, 82%);
@@ -649,12 +638,6 @@
   --color-thinking-mode-light: color-mix(in srgb, var(--color-thinking-mode), white 42%);
   --color-thinking-border: var(--color-thinking-mode);
 
-  /* File explorer */
-  --color-folder-icon: #ad8301; /* Flexoki yellow-600 */
-  /* Darken git status colors so they remain readable on light backgrounds */
-  --color-git-modified: color-mix(in srgb, var(--color-warning), black 25%);
-  --color-git-untracked: color-mix(in srgb, var(--color-success), black 10%);
-
   /* Runtime badges (ensure readable on light background) */
   --color-runtime-ssh-text: color-mix(in srgb, var(--color-runtime-ssh), black 20%);
   --color-runtime-worktree-text: color-mix(in srgb, var(--color-runtime-worktree), black 20%);
@@ -885,9 +868,6 @@
   --color-thinking-mode: #ce5d97; /* Flexoki magenta-400 */
   --color-thinking-mode-light: color-mix(in srgb, var(--color-thinking-mode), white 22%);
   --color-thinking-border: var(--color-thinking-mode);
-
-  /* File explorer */
-  --color-folder-icon: #d0a215; /* Flexoki yellow-400 */
 
   /* Flexoki neutrals */
   --color-background: #100f0f;

@@ -40,11 +40,8 @@ import {
   RIGHT_SIDEBAR_TABS,
   isTabType,
   isTerminalTab,
-  isFileTab,
   getTerminalSessionId,
-  getFilePath,
   makeTerminalTabType,
-  makeFileTabType,
   type TabType,
 } from "@/browser/types/rightSidebar";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
@@ -81,17 +78,13 @@ import {
 } from "@/browser/utils/terminal";
 import {
   StatsTabLabel,
-  ExplorerTabLabel,
   OutputTabLabel,
-  FileTabLabel,
   ReviewTabLabel,
   TerminalTabLabel,
   getTabContentClassName,
   type ReviewStats,
 } from "@/browser/features/RightSidebar/Tabs";
 import { BrowserTabLabel, DebugTabLabel, DesktopTabLabel } from "./Tabs/TabLabels";
-import { FileViewerTab } from "@/browser/features/RightSidebar/FileViewer";
-import { ExplorerTab } from "@/browser/features/RightSidebar/ExplorerTab";
 import {
   DndContext,
   DragOverlay,
@@ -279,10 +272,6 @@ interface RightSidebarTabsetNodeProps {
   onRequestTerminalFocus: (sessionId: string) => void;
   /** Callback to clear the auto-focus state after it's been consumed */
   onAutoFocusConsumed: () => void;
-  /** Handler to open a file in a new tab */
-  onOpenFile: (relativePath: string) => void;
-  /** Handler to close a file tab */
-  onCloseFile: (tab: TabType) => void;
 }
 
 const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) => {
@@ -351,7 +340,6 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
 
     // Show keybind for tabs 1-9 based on their position in the layout
     const isTerminal = isTerminalTab(tab);
-    const isFile = isFileTab(tab);
     const tabPosition = props.tabPositions.get(tab);
     const keybinds = [
       KEYBINDS.SIDEBAR_TAB_1,
@@ -369,19 +357,7 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
         ? formatKeybind(keybinds[tabPosition])
         : undefined;
 
-    // For file tabs, show path + keybind; for others just keybind
-    let tooltip: React.ReactNode;
-    if (isFile) {
-      const filePath = getFilePath(tab);
-      tooltip = (
-        <div className="flex flex-col">
-          <span>{filePath}</span>
-          {keybindStr && <span className="text-muted-foreground">{keybindStr}</span>}
-        </div>
-      );
-    } else {
-      tooltip = keybindStr;
-    }
+    const tooltip = keybindStr;
 
     // Build label using tab-specific label components
     let label: React.ReactNode;
@@ -390,8 +366,6 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
       label = <StatsTabLabel workspaceId={props.workspaceId} />;
     } else if (tab === "review") {
       label = <ReviewTabLabel reviewStats={props.reviewStats} />;
-    } else if (tab === "explorer") {
-      label = <ExplorerTabLabel />;
     } else if (tab === "desktop") {
       label = <DesktopTabLabel />;
     } else if (tab === "browser") {
@@ -410,9 +384,6 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
           onClose={() => props.onCloseTerminal(tab)}
         />
       );
-    } else if (isFileTab(tab)) {
-      const filePath = getFilePath(tab);
-      label = <FileTabLabel filePath={filePath ?? tab} onClose={() => props.onCloseFile(tab)} />;
     } else {
       label = tab;
     }
@@ -426,19 +397,14 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
         label,
         tooltip,
         tab,
-        // Terminal and file tabs are closeable
-        onClose: isTerminal
-          ? () => props.onCloseTerminal(tab)
-          : isFileTab(tab)
-            ? () => props.onCloseFile(tab)
-            : undefined,
+        // Terminal tabs are closeable
+        onClose: isTerminal ? () => props.onCloseTerminal(tab) : undefined,
       },
     ];
   });
 
   const costsPanelId = `${tabsetBaseId}-panel-costs`;
   const reviewPanelId = `${tabsetBaseId}-panel-review`;
-  const explorerPanelId = `${tabsetBaseId}-panel-explorer`;
   const desktopPanelId = `${tabsetBaseId}-panel-desktop`;
   const browserPanelId = `${tabsetBaseId}-panel-browser`;
   const outputPanelId = `${tabsetBaseId}-panel-output`;
@@ -446,7 +412,6 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
 
   const costsTabId = `${tabsetBaseId}-tab-costs`;
   const reviewTabId = `${tabsetBaseId}-tab-review`;
-  const explorerTabId = `${tabsetBaseId}-tab-explorer`;
   const desktopTabId = `${tabsetBaseId}-tab-desktop`;
   const browserTabId = `${tabsetBaseId}-tab-browser`;
   const outputTabId = `${tabsetBaseId}-tab-output`;
@@ -601,48 +566,6 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
           );
         })}
 
-        {props.node.activeTab === "explorer" && (
-          <div
-            role="tabpanel"
-            id={explorerPanelId}
-            aria-labelledby={explorerTabId}
-            className="h-full"
-          >
-            <ExplorerTab
-              workspaceId={props.workspaceId}
-              workspacePath={props.workspacePath}
-              onOpenFile={props.onOpenFile}
-            />
-          </div>
-        )}
-
-        {/* Render file viewer tabs */}
-        {props.node.tabs.filter(isFileTab).map((fileTab) => {
-          const filePath = getFilePath(fileTab);
-          const fileTabId = `${tabsetBaseId}-tab-${fileTab}`;
-          const filePanelId = `${tabsetBaseId}-panel-${fileTab}`;
-          const isActive = props.node.activeTab === fileTab;
-
-          return (
-            <div
-              key={filePanelId}
-              role="tabpanel"
-              id={filePanelId}
-              aria-labelledby={fileTabId}
-              className="h-full"
-              hidden={!isActive}
-            >
-              {isActive && filePath && (
-                <FileViewerTab
-                  workspaceId={props.workspaceId}
-                  relativePath={filePath}
-                  onReviewNote={props.onReviewNote}
-                />
-              )}
-            </div>
-          );
-        })}
-
         {props.node.activeTab === "review" && (
           <div role="tabpanel" id={reviewPanelId} aria-labelledby={reviewTabId} className="h-full">
             <ReviewPanel
@@ -656,7 +579,6 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
               isTouchImmersive={props.isTouchReviewImmersive}
               onTouchImmersiveChange={props.onTouchReviewImmersiveChange}
               onStatsChange={props.onReviewStatsChange}
-              onOpenFile={props.onOpenFile}
             />
           </div>
         )}
@@ -1141,8 +1063,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     [focusActiveTerminal, getBaseLayout, setLayout, terminalTitlesKey]
   );
 
-  // Keyboard shortcut for closing active tab (Ctrl/Cmd+W)
-  // Works for terminal tabs and file tabs
+  // Keyboard shortcut for closing active terminal tab (Ctrl/Cmd+W)
   React.useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!matchesKeybind(e, KEYBINDS.CLOSE_TAB)) return;
@@ -1169,14 +1090,6 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
 
         removeTerminalTab(activeTab);
         return;
-      }
-
-      // Handle file tabs
-      if (isFileTab(activeTab)) {
-        e.preventDefault();
-        const nextLayout = removeTabEverywhere(layout, activeTab);
-        setLayout(() => nextLayout);
-        focusActiveTerminal(nextLayout);
       }
     };
 
@@ -1332,81 +1245,6 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
 
   // Configure sensors with distance threshold for click vs drag disambiguation
 
-  // Handler to open a file in a new tab
-  const handleOpenFile = React.useCallback(
-    (relativePath: string) => {
-      const fileTabType = makeFileTabType(relativePath);
-
-      // Check if the file is already open
-      const allTabs = collectAllTabs(layout.root);
-      if (allTabs.includes(fileTabType)) {
-        // File already open — select it and refresh the parent to the current
-        // active tab so closing always returns to the most recent origin.
-        // Only update parentTab when the origin is in the same tabset as the
-        // file tab; a cross-tabset parent can never be activated on close.
-        const fileTabsetId = collectAllTabsWithTabset(layout.root).find(
-          (t) => t.tab === fileTabType
-        )?.tabsetId;
-        if (fileTabsetId) {
-          setLayout((prev) => {
-            const focused = findTabset(prev.root, prev.focusedTabsetId);
-            const parentTabId = focused?.type === "tabset" ? focused.activeTab : undefined;
-            const withFocus = setFocusedTabset(prev, fileTabsetId);
-            const next = selectTabInTabset(withFocus, fileTabsetId, fileTabType);
-            // Only record the parent when the origin tab lives in the same
-            // tabset as the file — cross-tabset parents would never activate.
-            // When reopening from a different tabset, clear any stale parent
-            // entry so close falls back to positional adjacency.
-            const sameTabset = prev.focusedTabsetId === fileTabsetId;
-            if (parentTabId && parentTabId !== fileTabType && sameTabset) {
-              return {
-                ...next,
-                parentTab: { ...next.parentTab, [fileTabType]: parentTabId },
-              };
-            }
-            // Cross-tabset reopen: clear stale parent to avoid jumping to
-            // an outdated origin tab on close.
-            if (!sameTabset && next.parentTab?.[fileTabType]) {
-              const { [fileTabType]: _, ...rest } = next.parentTab;
-              return {
-                ...next,
-                parentTab: Object.keys(rest).length > 0 ? rest : undefined,
-              };
-            }
-            return next;
-          });
-        }
-        return;
-      }
-
-      // Add new file tab to the focused tabset, recording the currently active
-      // tab as its parent so closing the file returns to where the user was.
-      setLayout((prev) => {
-        const focused = findTabset(prev.root, prev.focusedTabsetId);
-        const parentTabId = focused?.type === "tabset" ? focused.activeTab : undefined;
-        const next = addTabToFocusedTabset(prev, fileTabType);
-        if (parentTabId) {
-          return {
-            ...next,
-            parentTab: { ...next.parentTab, [fileTabType]: parentTabId },
-          };
-        }
-        return next;
-      });
-    },
-    [layout.root, setLayout]
-  );
-
-  // Handler to close a file tab
-  const handleCloseFile = React.useCallback(
-    (tab: TabType) => {
-      const nextLayout = removeTabEverywhere(getBaseLayout(), tab);
-      setLayout(() => nextLayout);
-      focusActiveTerminal(nextLayout);
-    },
-    [focusActiveTerminal, getBaseLayout, setLayout]
-  );
-
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
@@ -1560,8 +1398,6 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         onRequestTerminalFocus={setAutoFocusTerminalSession}
         autoFocusTerminalSession={autoFocusTerminalSession}
         onAutoFocusConsumed={() => setAutoFocusTerminalSession(null)}
-        onOpenFile={handleOpenFile}
-        onCloseFile={handleCloseFile}
       />
     );
   };

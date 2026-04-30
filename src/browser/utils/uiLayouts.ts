@@ -136,17 +136,13 @@ function toPresetTab(
   tab: TabType,
   ctx: { terminalCounter: number }
 ): RightSidebarPresetTabType | null {
-  if (tab.startsWith("file:")) {
-    return null;
-  }
-
   if (tab === "terminal" || tab.startsWith("terminal:")) {
     ctx.terminalCounter += 1;
     return createTerminalPlaceholder(ctx.terminalCounter);
   }
 
   // Base tabs are already compatible.
-  if (tab === "costs" || tab === "review" || tab === "explorer") {
+  if (tab === "costs" || tab === "review") {
     return tab;
   }
 

@@ -733,7 +733,7 @@ describe("WorkspaceContext", () => {
         root: {
           type: "tabset",
           id: "tabset-1",
-          tabs: ["costs", "explorer", "terminal:t1"],
+          tabs: ["costs", "review", "terminal:t1"],
           activeTab: "terminal:t1",
         },
       };
@@ -759,10 +759,10 @@ describe("WorkspaceContext", () => {
         throw new Error("Expected cleaned right sidebar layout to be a tabset");
       }
 
-      // "explorer" becomes active because removeTabEverywhere picks the adjacent
+      // "review" becomes active because removeTabEverywhere picks the adjacent
       // tab after the removed terminal tab.
-      expect(cleanedLayout.root.tabs).toEqual(["costs", "explorer"]);
-      expect(cleanedLayout.root.activeTab).toBe("explorer");
+      expect(cleanedLayout.root.tabs).toEqual(["costs", "review"]);
+      expect(cleanedLayout.root.activeTab).toBe("review");
       expect(
         readPersistedState<Record<string, string>>(terminalTitlesKey, { stale: "title" })
       ).toEqual({});

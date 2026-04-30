@@ -4,7 +4,7 @@
  * Uses per-entry storage keys for efficient single-entry updates,
  * and a separate index array for LRU eviction tracking.
  *
- * Pattern extracted from fileContentCache.ts and sharedUrlCache.ts.
+ * Pattern extracted from local-storage-backed caches.
  */
 
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";

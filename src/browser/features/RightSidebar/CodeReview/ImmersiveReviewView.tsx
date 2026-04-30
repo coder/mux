@@ -41,7 +41,7 @@ import {
   matchesKeybind,
 } from "@/browser/utils/ui/keybinds";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
-import { buildReadFileScript, processFileContents } from "@/browser/utils/fileExplorer";
+import { buildReadFileScript, processFileContents } from "@/browser/utils/fileRead";
 import { TooltipIfPresent } from "@/browser/components/Tooltip/Tooltip";
 import {
   parseReviewLineRange,

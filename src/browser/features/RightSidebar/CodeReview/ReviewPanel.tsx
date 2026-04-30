@@ -107,8 +107,6 @@ interface ReviewPanelProps {
   isTouchImmersive?: boolean;
   /** Allow parent to switch touch/mobile immersive affordances before entering immersive UI. */
   onTouchImmersiveChange?: (isTouch: boolean) => void;
-  /** Callback to open a file in a new tab */
-  onOpenFile?: (relativePath: string) => void;
 }
 
 interface ReviewSearchState {
@@ -344,7 +342,6 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   onStatsChange,
   isTouchImmersive = false,
   onTouchImmersiveChange,
-  onOpenFile,
 }) => {
   const originFetchRef = useRef<OriginFetchState | null>(null);
   const { api } = useAPI();
@@ -1733,7 +1730,6 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
                       diffBase={filters.diffBase}
                       includeUncommitted={filters.includeUncommitted}
                       reviewActions={reviewActions}
-                      onOpenFile={onOpenFile}
                     />
                   );
                 })

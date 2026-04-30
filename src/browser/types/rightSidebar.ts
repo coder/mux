@@ -2,7 +2,6 @@ export const RIGHT_SIDEBAR_TABS = [
   "costs",
   "review",
   "terminal",
-  "explorer",
   "desktop",
   "browser",
   // "stats" removed — absorbed into "costs" as sub-tabs
@@ -14,36 +13,16 @@ export const RIGHT_SIDEBAR_TABS = [
 export type BaseTabType = (typeof RIGHT_SIDEBAR_TABS)[number];
 
 /**
- * Extended tab type that supports multiple terminal and file instances.
+ * Extended tab type that supports multiple terminal instances.
  * - Terminal tabs: "terminal" (placeholder for new) or "terminal:<sessionId>" for real sessions
- * - File tabs: "file:<relativePath>" for file viewer panes
  */
-export type TabType = BaseTabType | `terminal:${string}` | `file:${string}`;
+export type TabType = BaseTabType | `terminal:${string}`;
 
-/** Check if a value is a valid tab type (base tab, terminal instance, or file tab) */
+/** Check if a value is a valid tab type (base tab or terminal instance) */
 export function isTabType(value: unknown): value is TabType {
   if (typeof value !== "string") return false;
   if ((RIGHT_SIDEBAR_TABS as readonly string[]).includes(value)) return true;
-  // Support terminal instances like "terminal:ws-123-1704567890"
-  if (value.startsWith("terminal:")) return true;
-  // Support file tabs like "file:src/App.tsx"
-  return value.startsWith("file:");
-}
-
-/** Check if a tab type represents a file viewer tab */
-export function isFileTab(tab: TabType): boolean {
-  return tab.startsWith("file:");
-}
-
-/** Get the relative file path from a file tab type */
-export function getFilePath(tab: TabType): string | undefined {
-  if (tab.startsWith("file:")) return tab.slice("file:".length);
-  return undefined;
-}
-
-/** Create a file tab type for a given relative path */
-export function makeFileTabType(relativePath: string): TabType {
-  return `file:${relativePath}`;
+  return value.startsWith("terminal:");
 }
 
 /** Check if a tab type represents a terminal (either base "terminal" or "terminal:<sessionId>") */
