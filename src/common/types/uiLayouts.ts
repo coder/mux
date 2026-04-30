@@ -164,6 +164,50 @@ function isRightSidebarLayoutPresetState(value: unknown): value is RightSidebarL
   return findTabset(v.root, v.focusedTabsetId) !== null;
 }
 
+function isRemovedPresetTab(value: unknown): boolean {
+  return value === "explorer" || (typeof value === "string" && value.startsWith("file:"));
+}
+
+function stripRemovedPresetTabs(node: Record<string, unknown>): void {
+  if (node.type === "tabset") {
+    if (!Array.isArray(node.tabs)) {
+      return;
+    }
+
+    const filtered = (node.tabs as unknown[]).filter((tab) => !isRemovedPresetTab(tab));
+    const tabs = filtered.length > 0 ? filtered : ["costs"];
+    node.tabs = tabs;
+
+    if (isRemovedPresetTab(node.activeTab) || !tabs.includes(node.activeTab)) {
+      node.activeTab = tabs.includes("costs") ? "costs" : (tabs[0] ?? "costs");
+    }
+    return;
+  }
+
+  if (node.type === "split" && Array.isArray(node.children)) {
+    for (const child of node.children) {
+      if (child && typeof child === "object") {
+        stripRemovedPresetTabs(child as Record<string, unknown>);
+      }
+    }
+  }
+}
+
+function normalizeRightSidebarLayoutPresetState(
+  value: unknown
+): RightSidebarLayoutPresetState | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  if (record.root && typeof record.root === "object") {
+    stripRemovedPresetTabs(record.root as Record<string, unknown>);
+  }
+
+  return isRightSidebarLayoutPresetState(record) ? record : undefined;
+}
+
 function normalizeLayoutSlot(raw: unknown): LayoutSlot | undefined {
   if (!raw || typeof raw !== "object") {
     return undefined;
@@ -257,12 +301,10 @@ function normalizeLayoutPreset(raw: unknown): LayoutPreset | undefined {
     typeof rightSidebarRecord.collapsed === "boolean" ? rightSidebarRecord.collapsed : false;
   const width = normalizeRightSidebarWidthPreset(rightSidebarRecord.width);
 
-  const layoutRaw = rightSidebarRecord.layout;
-  if (!isRightSidebarLayoutPresetState(layoutRaw)) {
+  const layout = normalizeRightSidebarLayoutPresetState(rightSidebarRecord.layout);
+  if (!layout) {
     return undefined;
   }
-
-  const layout: RightSidebarLayoutPresetState = layoutRaw;
 
   return {
     id,
