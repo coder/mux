@@ -7,7 +7,9 @@ import type {
   SubagentAiDefaults,
   SubagentAiDefaultsEntry,
 } from "@/common/config/schemas/appConfigOnDisk";
+import { AgentIdSchema } from "@/common/orpc/schemas";
 import assert from "@/common/utils/assert";
+import { normalizeAgentId } from "@/common/utils/agentIds";
 import { coerceThinkingLevel, type ThinkingLevel } from "./thinking";
 
 export type { PlanSubagentExecutorRouting, SubagentAiDefaults, SubagentAiDefaultsEntry };
@@ -34,10 +36,12 @@ export function normalizeSubagentAiDefaults(raw: unknown): SubagentAiDefaults {
   const result: SubagentAiDefaults = {};
 
   for (const [agentTypeRaw, entryRaw] of Object.entries(record)) {
-    const agentType = agentTypeRaw.trim().toLowerCase();
+    const normalizedRawAgentId = agentTypeRaw.trim().toLowerCase();
+    const agentType = normalizeAgentId(agentTypeRaw, "");
     if (!agentType) continue;
-    if (agentType === "exec") continue;
+    if (!AgentIdSchema.safeParse(agentType).success) continue;
     if (!entryRaw || typeof entryRaw !== "object") continue;
+    if (normalizedRawAgentId !== agentType && result[agentType] != null) continue;
 
     const entry = entryRaw as Record<string, unknown>;
 

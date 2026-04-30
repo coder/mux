@@ -100,6 +100,32 @@ const RAW_QUERY_USER_ERROR_PATTERNS = [
   /string literals cannot be used as table sources/i,
 ] as const;
 
+const AGENT_DEFAULT_IDS_EXCLUDED_FROM_LEGACY_SUBAGENTS = new Set(["plan", "exec", "compact"]);
+
+type NormalizedSubagentAiDefaults = ReturnType<typeof normalizeSubagentAiDefaults>;
+type NormalizedSubagentAiDefaultsEntry = NormalizedSubagentAiDefaults[string];
+
+function shouldMirrorAgentDefaultToLegacySubagent(agentId: string): boolean {
+  return !AGENT_DEFAULT_IDS_EXCLUDED_FROM_LEGACY_SUBAGENTS.has(agentId);
+}
+
+function deriveLegacySubagentAiDefaultsFromAgentDefaults(params: {
+  agentAiDefaults: Record<string, unknown>;
+  preservedExec?: NormalizedSubagentAiDefaultsEntry;
+}): NormalizedSubagentAiDefaults {
+  const legacySubagentDefaultsRaw: Record<string, unknown> = {};
+  for (const [agentId, entry] of Object.entries(params.agentAiDefaults)) {
+    if (!shouldMirrorAgentDefaultToLegacySubagent(agentId)) continue;
+    legacySubagentDefaultsRaw[agentId] = entry;
+  }
+
+  const legacySubagentDefaults = normalizeSubagentAiDefaults(legacySubagentDefaultsRaw);
+  if (params.preservedExec) {
+    legacySubagentDefaults.exec = params.preservedExec;
+  }
+  return legacySubagentDefaults;
+}
+
 function shouldExposeRawQueryError(error: unknown): boolean {
   const message = getErrorMessage(error);
   return RAW_QUERY_USER_ERROR_PATTERNS.some((pattern) => pattern.test(message));
@@ -707,15 +733,10 @@ export const router = (authToken?: string) => {
           await context.config.editConfig((config) => {
             const normalized = normalizeAgentAiDefaults(input.agentAiDefaults);
 
-            const legacySubagentDefaultsRaw: Record<string, unknown> = {};
-            for (const [agentType, entry] of Object.entries(normalized)) {
-              if (agentType === "plan" || agentType === "exec" || agentType === "compact") {
-                continue;
-              }
-              legacySubagentDefaultsRaw[agentType] = entry;
-            }
-
-            const legacySubagentDefaults = normalizeSubagentAiDefaults(legacySubagentDefaultsRaw);
+            const legacySubagentDefaults = deriveLegacySubagentAiDefaultsFromAgentDefaults({
+              agentAiDefaults: normalized,
+              preservedExec: config.subagentAiDefaults?.exec,
+            });
 
             return {
               ...config,
@@ -959,16 +980,10 @@ export const router = (authToken?: string) => {
               result.agentAiDefaults = Object.keys(normalized).length > 0 ? normalized : undefined;
 
               if (input.subagentAiDefaults === undefined) {
-                const legacySubagentDefaultsRaw: Record<string, unknown> = {};
-                for (const [agentType, entry] of Object.entries(normalized)) {
-                  if (agentType === "plan" || agentType === "exec" || agentType === "compact") {
-                    continue;
-                  }
-                  legacySubagentDefaultsRaw[agentType] = entry;
-                }
-
-                const legacySubagentDefaults =
-                  normalizeSubagentAiDefaults(legacySubagentDefaultsRaw);
+                const legacySubagentDefaults = deriveLegacySubagentAiDefaultsFromAgentDefaults({
+                  agentAiDefaults: normalized,
+                  preservedExec: config.subagentAiDefaults?.exec,
+                });
                 result.subagentAiDefaults =
                   Object.keys(legacySubagentDefaults).length > 0
                     ? legacySubagentDefaults

@@ -396,6 +396,44 @@ export class TaskService {
       workspace.aiSettings
     );
   }
+
+  private resolveTaskAISettings(params: {
+    cfg: ReturnType<Config["loadConfigOrDefault"]>;
+    parentMeta: WorkspaceMetadata;
+    agentId: string;
+    modelString?: string;
+    thinkingLevel?: ThinkingLevel;
+  }): {
+    taskModelString: string;
+    canonicalModel: string;
+    effectiveThinkingLevel: ThinkingLevel;
+  } {
+    const parentAiSettings = this.resolveWorkspaceAISettings(params.parentMeta, params.agentId);
+    // Exec needs separate UI-agent and subagent defaults. Resolve subagent defaults first,
+    // then fall back to UI defaults for compatibility when no subagent override exists.
+    const subagentDefault = params.cfg.subagentAiDefaults?.[params.agentId];
+    const agentDefault = params.cfg.agentAiDefaults?.[params.agentId];
+
+    const taskModelString =
+      coerceNonEmptyString(params.modelString) ??
+      coerceNonEmptyString(subagentDefault?.modelString) ??
+      coerceNonEmptyString(agentDefault?.modelString) ??
+      coerceNonEmptyString(parentAiSettings?.model) ??
+      defaultModel;
+    const canonicalModel = normalizeToCanonical(taskModelString).trim();
+    assert(canonicalModel.length > 0, "Task.create: resolved model must be non-empty");
+
+    const requestedThinkingLevel: ThinkingLevel =
+      params.thinkingLevel ??
+      subagentDefault?.thinkingLevel ??
+      agentDefault?.thinkingLevel ??
+      parentAiSettings?.thinkingLevel ??
+      "off";
+    const effectiveThinkingLevel = enforceThinkingPolicy(canonicalModel, requestedThinkingLevel);
+
+    return { taskModelString, canonicalModel, effectiveThinkingLevel };
+  }
+
   /**
    * Derives auto-resume send options (agentId, model, thinkingLevel) from durable
    * conversation metadata, so synthetic resumes preserve the parent's active agent.
@@ -1144,30 +1182,13 @@ export class TaskService {
       );
     }
 
-    // User-requested precedence: use global per-agent defaults when configured;
-    // otherwise inherit the parent workspace's active model/thinking.
-    const parentAiSettings = this.resolveWorkspaceAISettings(parentMeta, agentId);
-    const inheritedModelCandidate =
-      typeof args.modelString === "string" && args.modelString.trim().length > 0
-        ? args.modelString
-        : parentAiSettings?.model;
-    const parentActiveModel =
-      typeof inheritedModelCandidate === "string" && inheritedModelCandidate.trim().length > 0
-        ? inheritedModelCandidate.trim()
-        : defaultModel;
-    const globalDefault = cfg.agentAiDefaults?.[agentId];
-    const configuredModel = globalDefault?.modelString?.trim();
-    const taskModelString =
-      configuredModel && configuredModel.length > 0 ? configuredModel : parentActiveModel;
-    const canonicalModel = normalizeToCanonical(taskModelString).trim();
-    assert(canonicalModel.length > 0, "Task.create: resolved model must be non-empty");
-
-    const requestedThinkingLevel: ThinkingLevel =
-      globalDefault?.thinkingLevel ??
-      args.thinkingLevel ??
-      parentAiSettings?.thinkingLevel ??
-      "off";
-    const effectiveThinkingLevel = enforceThinkingPolicy(canonicalModel, requestedThinkingLevel);
+    const { taskModelString, canonicalModel, effectiveThinkingLevel } = this.resolveTaskAISettings({
+      cfg,
+      parentMeta,
+      agentId,
+      modelString: args.modelString,
+      thinkingLevel: args.thinkingLevel,
+    });
 
     const parentRuntimeConfig = parentMeta.runtimeConfig;
     const taskRuntimeConfig: RuntimeConfig = parentRuntimeConfig;

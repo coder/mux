@@ -1,6 +1,42 @@
 import { describe, expect, test } from "bun:test";
 
-import { DEFAULT_TASK_SETTINGS, TASK_SETTINGS_LIMITS, normalizeTaskSettings } from "./tasks";
+import {
+  DEFAULT_TASK_SETTINGS,
+  TASK_SETTINGS_LIMITS,
+  normalizeSubagentAiDefaults,
+  normalizeTaskSettings,
+} from "./tasks";
+
+describe("normalizeSubagentAiDefaults", () => {
+  test("keeps exec entries", () => {
+    expect(
+      normalizeSubagentAiDefaults({
+        exec: { modelString: " openai:gpt-5.3-codex ", thinkingLevel: "xhigh" },
+      })
+    ).toEqual({
+      exec: { modelString: "openai:gpt-5.3-codex", thinkingLevel: "xhigh" },
+    });
+  });
+
+  test("rejects invalid agent ids", () => {
+    expect(
+      normalizeSubagentAiDefaults({
+        "not valid": { modelString: "openai:gpt-5.3-codex", thinkingLevel: "high" },
+        "bad-": { modelString: "openai:gpt-5.3-codex" },
+        explore: { modelString: "openai:gpt-5.2" },
+      })
+    ).toEqual({ explore: { modelString: "openai:gpt-5.2", thinkingLevel: undefined } });
+  });
+
+  test("drops blank model strings and invalid thinking levels", () => {
+    expect(
+      normalizeSubagentAiDefaults({
+        explore: { modelString: "   ", thinkingLevel: "invalid" },
+        plan: { modelString: "   ", thinkingLevel: "medium" },
+      })
+    ).toEqual({ plan: { modelString: undefined, thinkingLevel: "medium" } });
+  });
+});
 
 describe("normalizeTaskSettings", () => {
   test("fills defaults when missing", () => {

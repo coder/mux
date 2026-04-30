@@ -30,6 +30,10 @@ export const SubagentAiDefaultsEntrySchema = z.object({
 
 export const SubagentAiDefaultsSchema = z.record(AgentIdSchema, SubagentAiDefaultsEntrySchema);
 
+export const AppConfigMigrationsSchema = z.object({
+  execSubagentDefaultsSplit: z.boolean().optional(),
+});
+
 export const FeatureFlagOverrideSchema = z.enum(["default", "on", "off"]);
 
 export const UpdateChannelSchema = z.enum(["stable", "nightly"]);
@@ -70,6 +74,7 @@ export const AppConfigOnDiskSchema = z
     preferredCompactionModel: z.string().optional(),
     agentAiDefaults: AgentAiDefaultsSchema.optional(),
     subagentAiDefaults: SubagentAiDefaultsSchema.optional(),
+    migrations: AppConfigMigrationsSchema.optional(),
     useSSH2Transport: z.boolean().optional(),
     muxGovernorUrl: z.string().optional(),
     muxGovernorToken: z.string().optional(),
@@ -85,6 +90,7 @@ export const AppConfigOnDiskSchema = z
   })
   .passthrough();
 
+export type AppConfigMigrations = z.infer<typeof AppConfigMigrationsSchema>;
 export type AgentAiDefaultsEntry = z.infer<typeof AgentAiDefaultsEntrySchema>;
 export type AgentAiDefaults = z.infer<typeof AgentAiDefaultsSchema>;
 export type SubagentAiDefaultsEntry = z.infer<typeof SubagentAiDefaultsEntrySchema>;

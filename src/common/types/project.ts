@@ -5,7 +5,11 @@
 
 import type { CoderWorkspaceArchiveBehavior } from "@/common/config/coderArchiveBehavior";
 import type { WorktreeArchiveBehavior } from "@/common/config/worktreeArchiveBehavior";
-import type { FeatureFlagOverride, UpdateChannel } from "@/common/config/schemas/appConfigOnDisk";
+import type {
+  AppConfigMigrations,
+  FeatureFlagOverride,
+  UpdateChannel,
+} from "@/common/config/schemas/appConfigOnDisk";
 import type { z } from "zod";
 import type {
   ProjectConfigSchema,
@@ -118,6 +122,8 @@ export interface ProjectsConfig {
   agentAiDefaults?: AgentAiDefaults;
   /** @deprecated Legacy per-subagent default model + thinking overrides. */
   subagentAiDefaults?: SubagentAiDefaults;
+  /** Internal one-time migration markers. Not surfaced in user-facing config UI. */
+  migrations?: AppConfigMigrations;
   /** Use built-in SSH2 library instead of system OpenSSH for remote connections (non-Windows only) */
   useSSH2Transport?: boolean;
 

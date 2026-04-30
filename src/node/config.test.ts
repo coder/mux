@@ -492,6 +492,176 @@ describe("Config", () => {
         "mux-gateway:anthropic/claude-haiku-4-5"
       );
     });
+
+    it("removes mirrored exec subagent fields on first load", () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [],
+          agentAiDefaults: {
+            exec: { modelString: "openai:gpt-5.3-codex", thinkingLevel: "xhigh" },
+          },
+          subagentAiDefaults: {
+            exec: { modelString: "openai:gpt-5.3-codex", thinkingLevel: "xhigh" },
+            worker: { modelString: "openai:gpt-5.2" },
+          },
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.subagentAiDefaults?.exec).toBeUndefined();
+      expect(loaded.subagentAiDefaults?.worker?.modelString).toBe("openai:gpt-5.2");
+      expect(loaded.migrations?.execSubagentDefaultsSplit).toBe(true);
+
+      const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
+        subagentAiDefaults?: Record<string, unknown>;
+        migrations?: { execSubagentDefaultsSplit?: boolean };
+      };
+      expect(raw.subagentAiDefaults?.exec).toBeUndefined();
+      expect(raw.migrations?.execSubagentDefaultsSplit).toBe(true);
+    });
+
+    it("preserves differing exec subagent defaults on first load", () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [],
+          agentAiDefaults: {
+            exec: { modelString: "openai:gpt-5.3-codex", thinkingLevel: "xhigh" },
+          },
+          subagentAiDefaults: {
+            exec: { modelString: "anthropic:claude-haiku-4-5", thinkingLevel: "off" },
+          },
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.subagentAiDefaults?.exec).toEqual({
+        modelString: "anthropic:claude-haiku-4-5",
+        thinkingLevel: "off",
+      });
+      expect(loaded.migrations?.execSubagentDefaultsSplit).toBe(true);
+    });
+
+    it("removes only mirrored exec subagent fields during first-load cleanup", () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [],
+          agentAiDefaults: {
+            exec: { modelString: "openai:gpt-5.3-codex", thinkingLevel: "xhigh" },
+          },
+          subagentAiDefaults: {
+            exec: { modelString: "openai:gpt-5.3-codex", thinkingLevel: "off" },
+          },
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.subagentAiDefaults?.exec).toEqual({
+        modelString: undefined,
+        thinkingLevel: "off",
+      });
+    });
+
+    it("preserves intentionally equal exec subagent defaults after migration marker is set", () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [],
+          migrations: { execSubagentDefaultsSplit: true },
+          agentAiDefaults: {
+            exec: { modelString: "openai:gpt-5.3-codex", thinkingLevel: "xhigh" },
+          },
+          subagentAiDefaults: {
+            exec: { modelString: "openai:gpt-5.3-codex", thinkingLevel: "xhigh" },
+          },
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.subagentAiDefaults?.exec).toEqual({
+        modelString: "openai:gpt-5.3-codex",
+        thinkingLevel: "xhigh",
+      });
+    });
+
+    it("does not synthesize UI exec defaults from legacy subagent-only exec defaults", () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [],
+          subagentAiDefaults: {
+            exec: { modelString: "openai:gpt-5.3-codex", thinkingLevel: "xhigh" },
+          },
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.agentAiDefaults?.exec).toBeUndefined();
+      expect(loaded.subagentAiDefaults?.exec).toEqual({
+        modelString: "openai:gpt-5.3-codex",
+        thinkingLevel: "xhigh",
+      });
+    });
+
+    it("preserves existing exec subagent defaults when saving derived legacy defaults", async () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [],
+          migrations: { execSubagentDefaultsSplit: true },
+          agentAiDefaults: {
+            exec: { modelString: "openai:gpt-5.2", thinkingLevel: "medium" },
+          },
+          subagentAiDefaults: {
+            exec: { modelString: "openai:gpt-5.3-codex", thinkingLevel: "xhigh" },
+          },
+        })
+      );
+
+      await config.editConfig((cfg) => {
+        cfg.agentAiDefaults = {
+          ...cfg.agentAiDefaults,
+          worker: { modelString: "anthropic:claude-haiku-4-5", thinkingLevel: "off" },
+        };
+        return cfg;
+      });
+
+      const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
+        subagentAiDefaults?: Record<string, unknown>;
+      };
+      expect(raw.subagentAiDefaults).toEqual({
+        exec: { modelString: "openai:gpt-5.3-codex", thinkingLevel: "xhigh" },
+        worker: { modelString: "anthropic:claude-haiku-4-5", thinkingLevel: "off" },
+      });
+    });
+
+    it("allows an explicit empty exec subagent default to delete the preserved value", async () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [],
+          migrations: { execSubagentDefaultsSplit: true },
+          agentAiDefaults: {
+            exec: { modelString: "openai:gpt-5.2", thinkingLevel: "medium" },
+          },
+          subagentAiDefaults: {
+            exec: { modelString: "openai:gpt-5.3-codex", thinkingLevel: "xhigh" },
+          },
+        })
+      );
+
+      await config.editConfig((cfg) => ({
+        ...cfg,
+        subagentAiDefaults: {},
+      }));
+
+      const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
+        subagentAiDefaults?: Record<string, unknown>;
+      };
+      expect(raw.subagentAiDefaults).toBeUndefined();
+    });
   });
   describe("route priority and overrides persistence", () => {
     it("round-trips routePriority through disk", async () => {
