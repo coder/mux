@@ -11,6 +11,7 @@ interface HarnessOptions {
   isLatestStreamingBash: boolean;
   latestStreamingBashId: string | null;
   status: ToolStatus;
+  startedAt?: number;
   initialExpanded?: boolean;
   initialUserToggled?: boolean;
 }
@@ -32,6 +33,7 @@ function useTestHarness(options: HarnessOptions): HarnessResult {
     isLatestStreamingBash: options.isLatestStreamingBash,
     latestStreamingBashId: options.latestStreamingBashId,
     status: options.status,
+    startedAt: options.startedAt,
     setExpanded,
     userToggledRef,
   });
@@ -58,11 +60,30 @@ describe("useBashAutoExpand", () => {
         isLatestStreamingBash: true,
         latestStreamingBashId: "tool-bash-1",
         status: "executing",
+        startedAt: 0,
       })
     );
 
     // The chat-open expansion happens in a layout effect, so it must be visible
     // synchronously after the initial render — no setTimeout required.
+    expect(result.current.expanded).toBe(true);
+  });
+
+  test("delays expand for a fresh executing mount inside an open chat", async () => {
+    const { result } = renderHook(() =>
+      useTestHarness({
+        isLatestStreamingBash: true,
+        latestStreamingBashId: "tool-bash-1",
+        status: "executing",
+        startedAt: Date.now(),
+      })
+    );
+
+    expect(result.current.expanded).toBe(false);
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 320));
+    });
     expect(result.current.expanded).toBe(true);
   });
 
@@ -113,6 +134,7 @@ describe("useBashAutoExpand", () => {
       isLatestStreamingBash: true,
       latestStreamingBashId: "tool-bash-1",
       status: "executing",
+      startedAt: 0,
     };
     const { result, rerender } = renderHook((p: HarnessOptions) => useTestHarness(p), {
       initialProps,
@@ -135,6 +157,7 @@ describe("useBashAutoExpand", () => {
       isLatestStreamingBash: true,
       latestStreamingBashId: "tool-bash-1",
       status: "executing",
+      startedAt: 0,
     };
     const { result, rerender } = renderHook((p: HarnessOptions) => useTestHarness(p), {
       initialProps,

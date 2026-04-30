@@ -96,6 +96,7 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
     isLatestStreamingBash,
     latestStreamingBashId,
     status,
+    startedAt,
     setExpanded,
     userToggledRef,
   });
