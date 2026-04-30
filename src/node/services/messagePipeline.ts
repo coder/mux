@@ -8,7 +8,7 @@
  * All contextual data is passed via the options object.
  */
 
-import { convertToModelMessages, type ModelMessage } from "ai";
+import { convertToModelMessages, type AssistantModelMessage, type ModelMessage } from "ai";
 import { applyToolOutputRedaction } from "@/browser/utils/messages/applyToolOutputRedaction";
 import { sanitizeToolInputs } from "@/browser/utils/messages/sanitizeToolInput";
 import { inlineSvgAsTextForProvider } from "@/node/utils/messages/inlineSvgAsTextForProvider";
@@ -210,6 +210,39 @@ export async function prepareMessagesForProvider(
   return finalMessages;
 }
 
+type AssistantContentArray = Exclude<AssistantModelMessage["content"], string>;
+type AssistantContentPart = AssistantContentArray[number];
+
+function isTextPart(
+  part: AssistantContentPart
+): part is Extract<AssistantContentPart, { type: "text" }> {
+  return part.type === "text";
+}
+
+function normalizeAssistantContent(content: AssistantContentArray): AssistantContentArray {
+  let changed = false;
+  const coalesced: AssistantContentArray = [];
+
+  for (const part of content) {
+    const lastPart = coalesced.at(-1);
+    if (isTextPart(part) && lastPart && isTextPart(lastPart)) {
+      // Preserve provider-emitted whitespace separators before filtering whitespace-only
+      // blocks; dropping a standalone "\n\n" delta can corrupt headings in future prompts.
+      lastPart.text += part.text;
+      changed = true;
+      continue;
+    }
+
+    coalesced.push(isTextPart(part) ? { ...part } : part);
+  }
+
+  const filtered = coalesced.filter(
+    (part): part is AssistantContentPart => !isTextPart(part) || part.text.trim().length > 0
+  );
+
+  return changed || filtered.length !== content.length ? filtered : content;
+}
+
 /**
  * Self-healing: filter empty or whitespace-only assistant model messages.
  *
@@ -241,20 +274,18 @@ export function sanitizeAssistantModelMessages(
       return [];
     }
 
-    const filteredContent = msg.content.filter(
-      (part) => part.type !== "text" || part.text.trim().length > 0
-    );
+    const normalizedContent = normalizeAssistantContent(msg.content);
 
-    if (filteredContent.length === 0) {
+    if (normalizedContent.length === 0) {
       return [];
     }
 
     // Avoid mutating the original message (which can be reused in debug logging).
-    if (filteredContent.length === msg.content.length) {
+    if (normalizedContent === msg.content) {
       return [msg];
     }
 
-    return [{ ...msg, content: filteredContent }];
+    return [{ ...msg, content: normalizedContent }];
   });
 
   if (result.length < messages.length) {
