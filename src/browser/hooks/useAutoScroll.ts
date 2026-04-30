@@ -41,6 +41,14 @@ function isWithinBottomThreshold(element: HTMLElement, thresholdPx: number): boo
   return getDistanceFromBottom(element) <= thresholdPx;
 }
 
+function isEditableKeyboardTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+
+  return (
+    target.closest('input, textarea, select, [contenteditable="true"], [role="textbox"]') !== null
+  );
+}
+
 function isMouseDownExemptFromScrollIntent(
   target: EventTarget | null,
   currentTarget: HTMLElement
@@ -196,11 +204,10 @@ export function useAutoScroll() {
   const handleScrollContainerKeyDown = useCallback(
     (event: KeyboardEvent<HTMLDivElement>) => {
       // Scroll keys (PageUp/PageDown/Home/End/Arrows/Space) cause the scrollport
-      // to scroll regardless of which descendant currently has focus, so they
-      // are always user scroll intent. Filtering by `event.target === event
-      // .currentTarget` would incorrectly ignore key presses while focus is on
-      // a transcript-internal element such as a tool-row button or a link.
-      if (!TRANSCRIPT_SCROLL_KEYS.has(event.key)) return;
+      // to scroll even when focus is on non-editable descendants such as tool-row
+      // buttons or links. Editable controls keep those keys local for caret/text
+      // navigation, so they must not open a transcript scroll-intent window.
+      if (!TRANSCRIPT_SCROLL_KEYS.has(event.key) || isEditableKeyboardTarget(event.target)) return;
 
       markUserScrollIntent();
     },

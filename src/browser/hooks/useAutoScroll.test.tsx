@@ -394,6 +394,44 @@ describe("useAutoScroll", () => {
     }
   });
 
+  test("scroll keys inside editable transcript controls do not mark intent", () => {
+    const { result } = renderHook(() => useAutoScroll());
+    const element = document.createElement("div");
+    const textarea = document.createElement("textarea");
+    element.append(textarea);
+    const metrics = attachScrollMetrics(element, {
+      scrollHeight: 1300,
+      clientHeight: 400,
+      initialScrollTop: 900,
+    });
+
+    const dateNowSpy = spyOn(Date, "now");
+    try {
+      let now = 1_000_000;
+      dateNowSpy.mockImplementation(() => now);
+
+      act(() => {
+        (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current = element;
+        result.current.handleScrollContainerKeyDown({
+          target: textarea,
+          currentTarget: element,
+          key: "PageUp",
+        } as unknown as KeyboardEvent<HTMLDivElement>);
+      });
+
+      metrics.setScrollTop(500);
+      act(() => {
+        now += 1;
+        result.current.handleScroll(createScrollEvent(element));
+      });
+
+      expect(metrics.scrollTop).toBe(metrics.maxScrollTop);
+      expect(result.current.autoScroll).toBe(true);
+    } finally {
+      dateNowSpy.mockRestore();
+    }
+  });
+
   test("non-scroll keys do not affect lock state", () => {
     const { result } = renderHook(() => useAutoScroll());
     const element = document.createElement("div");
