@@ -33,12 +33,8 @@ function getMaxScrollTop(element: HTMLElement): number {
   return Math.max(0, element.scrollHeight - element.clientHeight);
 }
 
-function getDistanceFromBottom(element: HTMLElement): number {
-  return getMaxScrollTop(element) - element.scrollTop;
-}
-
 function isWithinBottomThreshold(element: HTMLElement, thresholdPx: number): boolean {
-  return getDistanceFromBottom(element) <= thresholdPx;
+  return getMaxScrollTop(element) - element.scrollTop <= thresholdPx;
 }
 
 function isEditableKeyboardTarget(target: EventTarget | null): boolean {

@@ -1,33 +1,19 @@
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 
 import type { ToolStatus } from "./toolUtils";
 
 const FAST_COMMAND_FLASH_DELAY_MS = 300;
 
 /**
- * Manages auto-expand/collapse of a bash tool row based on whether it's the
- * latest streaming bash in the workspace.
- *
- * Two distinct cases:
- *
- * 1. **Chat-open with an already-streaming bash.** The row mounts with
- *    `isLatestStreamingBash && status === "executing"`. The bash has clearly
- *    been running for some time (otherwise the chat wouldn't be in this
- *    state when opened), so flash protection is not needed. Expand immediately
- *    in a layout effect so the user does not perceive a delay between the chat
- *    appearing and the bash output being readable.
- *
- * 2. **In-chat new bash.** A bash transitions to executing while the user is
- *    already mounted in the chat. Delay the expand by 300 ms so commands that
- *    complete in under that window don't briefly expand and re-collapse,
- *    preventing a layout flash for fast-completing commands.
- *
- * The hook also auto-collapses the row when a new bash takes over and respects
- * any manual user toggle (a manual click pins the row's expanded state).
+ * Keeps the latest streaming bash readable without flashing short commands:
+ * hydrated rows that already outlived the flash window expand before paint,
+ * while freshly-started rows wait for that same window before expanding.
+ * Manual user toggles pin the row, and auto-expanded rows collapse only when a
+ * different bash becomes the latest streaming bash.
  */
 export function useBashAutoExpand(options: {
   isLatestStreamingBash: boolean;
-  latestStreamingBashId: string | null;
+  hasReplacementStreamingBash: boolean;
   status: ToolStatus;
   /** Timestamp from the tool part. Used to distinguish hydrated long-running rows from fresh mounts. */
   startedAt?: number;
@@ -37,7 +23,7 @@ export function useBashAutoExpand(options: {
 }): void {
   const {
     isLatestStreamingBash,
-    latestStreamingBashId,
+    hasReplacementStreamingBash,
     status,
     startedAt,
     setExpanded,
@@ -51,60 +37,52 @@ export function useBashAutoExpand(options: {
   const isFreshMountRef = useRef(true);
 
   useLayoutEffect(() => {
+    const clearExpandTimer = () => {
+      if (expandTimerRef.current) {
+        clearTimeout(expandTimerRef.current);
+        expandTimerRef.current = null;
+      }
+    };
     const isFreshMount = isFreshMountRef.current;
     isFreshMountRef.current = false;
 
-    if (userToggledRef.current) return;
+    if (userToggledRef.current) {
+      return clearExpandTimer;
+    }
 
     if (isLatestStreamingBash && status === "executing") {
       const hasOutlivedFlashWindow =
         typeof startedAt === "number" && Date.now() - startedAt >= FAST_COMMAND_FLASH_DELAY_MS;
       if (isFreshMount && hasOutlivedFlashWindow) {
-        // Chat-open with an already-running bash: expand synchronously before paint.
-        // Fresh in-chat tool mounts have a current timestamp and still take the
-        // delayed path below to preserve fast-command flash protection.
         setExpanded(true);
         wasAutoExpandedRef.current = true;
-        return;
+        return clearExpandTimer;
       }
 
-      if (wasAutoExpandedRef.current || expandTimerRef.current) return;
-
-      // In-chat new bash: delay expand to suppress flash for fast-completing commands.
-      expandTimerRef.current = setTimeout(() => {
-        expandTimerRef.current = null;
-        if (!userToggledRef.current) {
-          setExpanded(true);
-          wasAutoExpandedRef.current = true;
-        }
-      }, FAST_COMMAND_FLASH_DELAY_MS);
-      return;
+      if (!wasAutoExpandedRef.current && !expandTimerRef.current) {
+        expandTimerRef.current = setTimeout(() => {
+          expandTimerRef.current = null;
+          if (!userToggledRef.current) {
+            setExpanded(true);
+            wasAutoExpandedRef.current = true;
+          }
+        }, FAST_COMMAND_FLASH_DELAY_MS);
+      }
+      return clearExpandTimer;
     }
 
-    // No longer the latest streaming bash: cancel any pending expand and collapse
-    // if a NEW bash took over (latestStreamingBashId !== null && !== us).
-    if (expandTimerRef.current) {
-      clearTimeout(expandTimerRef.current);
-      expandTimerRef.current = null;
-    }
-    if (wasAutoExpandedRef.current && latestStreamingBashId !== null) {
+    clearExpandTimer();
+    if (wasAutoExpandedRef.current && hasReplacementStreamingBash) {
       setExpanded(false);
       wasAutoExpandedRef.current = false;
     }
+    return undefined;
   }, [
     isLatestStreamingBash,
-    latestStreamingBashId,
+    hasReplacementStreamingBash,
     status,
     startedAt,
     setExpanded,
     userToggledRef,
   ]);
-
-  useEffect(() => {
-    return () => {
-      if (expandTimerRef.current) {
-        clearTimeout(expandTimerRef.current);
-      }
-    };
-  }, []);
 }

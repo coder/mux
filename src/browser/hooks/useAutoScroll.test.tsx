@@ -3,6 +3,7 @@ import { act, cleanup, renderHook } from "@testing-library/react";
 import type { KeyboardEvent, MouseEvent, MutableRefObject, UIEvent } from "react";
 
 import { installDom } from "../../../tests/ui/dom";
+import { mockScrollMetrics as attachScrollMetrics } from "../../../tests/ui/scrollMetrics";
 import { useAutoScroll } from "./useAutoScroll";
 
 function createScrollEvent(element: HTMLDivElement): UIEvent<HTMLDivElement> {
@@ -19,53 +20,6 @@ function createMouseEvent(
     target,
     buttons: options.buttons ?? 0,
   } as unknown as MouseEvent<HTMLDivElement>;
-}
-
-function attachScrollMetrics(
-  element: HTMLDivElement,
-  options: { initialScrollTop?: number; scrollHeight?: number; clientHeight?: number } = {}
-) {
-  let scrollHeight = options.scrollHeight ?? 1300;
-  let clientHeight = options.clientHeight ?? 400;
-  const maxScrollTop = () => Math.max(0, scrollHeight - clientHeight);
-  const clampScrollTop = (nextValue: number) => Math.min(maxScrollTop(), Math.max(0, nextValue));
-  let scrollTop = clampScrollTop(options.initialScrollTop ?? 900);
-
-  Object.defineProperty(element, "scrollTop", {
-    configurable: true,
-    get: () => scrollTop,
-    set: (nextValue: number) => {
-      scrollTop = clampScrollTop(nextValue);
-    },
-  });
-  Object.defineProperty(element, "scrollHeight", {
-    configurable: true,
-    get: () => scrollHeight,
-  });
-  Object.defineProperty(element, "clientHeight", {
-    configurable: true,
-    get: () => clientHeight,
-  });
-
-  return {
-    get maxScrollTop() {
-      return maxScrollTop();
-    },
-    get scrollTop() {
-      return scrollTop;
-    },
-    setScrollTop(nextValue: number) {
-      scrollTop = clampScrollTop(nextValue);
-    },
-    setScrollHeight(nextValue: number) {
-      scrollHeight = nextValue;
-      scrollTop = clampScrollTop(scrollTop);
-    },
-    setClientHeight(nextValue: number) {
-      clientHeight = nextValue;
-      scrollTop = clampScrollTop(scrollTop);
-    },
-  };
 }
 
 let scheduledFrames: Array<{ id: number; callback: FrameRequestCallback }> = [];
