@@ -35,8 +35,11 @@ import {
   DEFAULT_TASK_SETTINGS,
   TASK_SETTINGS_LIMITS,
   isPlanSubagentExecutorRouting,
+  normalizeSubagentAiDefaults,
   normalizeTaskSettings,
   type PlanSubagentExecutorRouting,
+  type SubagentAiDefaults,
+  type SubagentAiDefaultsEntry,
   type TaskSettings,
 } from "@/common/types/tasks";
 import { getThinkingOptionLabel, type ThinkingLevel } from "@/common/types/thinking";
@@ -84,6 +87,64 @@ function updateAgentDefaultEntry(
     delete next[normalizedId];
   } else {
     next[normalizedId] = updated;
+  }
+
+  return next;
+}
+
+function updateSubagentDefaultEntry(
+  previous: SubagentAiDefaults,
+  agentId: string,
+  update: (entry: SubagentAiDefaultsEntry) => void
+): SubagentAiDefaults {
+  const normalizedId = normalizeAgentId(agentId, WORKSPACE_DEFAULTS.agentId);
+
+  const next = { ...previous };
+  const existing = next[normalizedId] ?? {};
+  const updated: SubagentAiDefaultsEntry = { ...existing };
+  update(updated);
+
+  if (updated.modelString && updated.thinkingLevel) {
+    updated.thinkingLevel = enforceThinkingPolicy(updated.modelString, updated.thinkingLevel);
+  }
+
+  if (updated.modelString === undefined && updated.thinkingLevel === undefined) {
+    delete next[normalizedId];
+  } else {
+    next[normalizedId] = updated;
+  }
+
+  return next;
+}
+
+function getSubagentAiDefaultsForSave(
+  agentAiDefaults: AgentAiDefaults,
+  subagentAiDefaults: SubagentAiDefaults
+): SubagentAiDefaults {
+  const next: SubagentAiDefaults = { ...subagentAiDefaults };
+  const agentIds = new Set([...Object.keys(agentAiDefaults), ...Object.keys(subagentAiDefaults)]);
+
+  for (const agentId of agentIds) {
+    if (agentId === "plan" || agentId === "exec" || agentId === "compact") {
+      continue;
+    }
+
+    const entry = agentAiDefaults[agentId];
+    if (!entry) {
+      continue;
+    }
+
+    if (entry.modelString === undefined && entry.thinkingLevel === undefined) {
+      if (!(agentId in subagentAiDefaults)) {
+        delete next[agentId];
+      }
+      continue;
+    }
+
+    next[agentId] = {
+      modelString: entry.modelString,
+      thinkingLevel: entry.thinkingLevel,
+    };
   }
 
   return next;
@@ -219,8 +280,127 @@ function areAgentAiDefaultsEqual(a: AgentAiDefaults, b: AgentAiDefaults): boolea
 
   return true;
 }
+
+function areSubagentAiDefaultsEqual(a: SubagentAiDefaults, b: SubagentAiDefaults): boolean {
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) {
+    return false;
+  }
+
+  aKeys.sort();
+  bKeys.sort();
+
+  for (let i = 0; i < aKeys.length; i += 1) {
+    const key = aKeys[i];
+    if (key !== bKeys[i]) {
+      return false;
+    }
+
+    const aEntry = a[key];
+    const bEntry = b[key];
+    if ((aEntry?.modelString ?? undefined) !== (bEntry?.modelString ?? undefined)) {
+      return false;
+    }
+    if ((aEntry?.thinkingLevel ?? undefined) !== (bEntry?.thinkingLevel ?? undefined)) {
+      return false;
+    }
+  }
+
+  return true;
+}
 function coerceAgentId(value: unknown): string {
   return normalizeAgentId(value, WORKSPACE_DEFAULTS.agentId);
+}
+
+interface AiDefaultsControlsProps {
+  modelValue: string;
+  thinkingValue: string;
+  effectiveModel: string;
+  models: string[];
+  hiddenModelsForSelector: string[];
+  inheritLabel?: string;
+  resetModelLabel?: string;
+  resetThinkingLabel?: string;
+  inheritedModelDescription?: string;
+  inheritedThinkingDescription?: string;
+  showThinkingResetButton?: boolean;
+  onModelChange: (value: string) => void;
+  onThinkingChange: (value: string) => void;
+}
+
+function AiDefaultsControls(props: AiDefaultsControlsProps) {
+  const allowedThinkingLevels = getThinkingPolicyForModel(props.effectiveModel);
+  const inheritLabel = props.inheritLabel ?? "Inherit";
+  const resetModelLabel = props.resetModelLabel ?? "Reset";
+  const resetThinkingLabel = props.resetThinkingLabel ?? "Reset";
+
+  return (
+    <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+      <div className="space-y-1">
+        <div className="text-muted text-xs">Model</div>
+        <div className="flex items-center gap-2">
+          {/* Match the Reasoning dropdown styling for inherit defaults. */}
+          <ModelSelector
+            value={props.modelValue === INHERIT ? "" : props.modelValue}
+            emptyLabel={inheritLabel}
+            onChange={(value) => props.onModelChange(value.trim().length > 0 ? value : INHERIT)}
+            models={props.models}
+            hiddenModels={props.hiddenModelsForSelector}
+            variant="box"
+            className="bg-modal-bg"
+          />
+          {props.modelValue !== INHERIT ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-9 px-2"
+              onClick={() => props.onModelChange(INHERIT)}
+            >
+              {resetModelLabel}
+            </Button>
+          ) : null}
+        </div>
+        {props.modelValue === INHERIT && props.inheritedModelDescription ? (
+          <div className="text-muted text-xs">{props.inheritedModelDescription}</div>
+        ) : null}
+      </div>
+
+      <div className="space-y-1">
+        <div className="text-muted text-xs">Reasoning</div>
+        <div className="flex items-center gap-2">
+          <Select value={props.thinkingValue} onValueChange={props.onThinkingChange}>
+            <SelectTrigger className="border-border-medium bg-modal-bg h-9">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={INHERIT}>{inheritLabel}</SelectItem>
+              {allowedThinkingLevels.map((level) => (
+                <SelectItem key={level} value={level}>
+                  {getThinkingOptionLabel(level, props.effectiveModel)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {props.showThinkingResetButton === true && props.thinkingValue !== INHERIT ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-9 px-2"
+              onClick={() => props.onThinkingChange(INHERIT)}
+            >
+              {resetThinkingLabel}
+            </Button>
+          ) : null}
+        </div>
+        {props.thinkingValue === INHERIT && props.inheritedThinkingDescription ? (
+          <div className="text-muted text-xs">{props.inheritedThinkingDescription}</div>
+        ) : null}
+      </div>
+    </div>
+  );
 }
 
 export function TasksSection() {
@@ -234,6 +414,7 @@ export function TasksSection() {
 
   const [taskSettings, setTaskSettings] = useState<TaskSettings>(DEFAULT_TASK_SETTINGS);
   const [agentAiDefaults, setAgentAiDefaults] = useState<AgentAiDefaults>({});
+  const [subagentAiDefaults, setSubagentAiDefaults] = useState<SubagentAiDefaults>({});
 
   const [agents, setAgents] = useState<AgentDefinitionDescriptor[]>([]);
   const [enabledAgentIds, setEnabledAgentIds] = useState<string[]>([]);
@@ -249,6 +430,7 @@ export function TasksSection() {
   const pendingSaveRef = useRef<{
     taskSettings: TaskSettings;
     agentAiDefaults: AgentAiDefaults;
+    subagentAiDefaults: SubagentAiDefaults;
   } | null>(null);
 
   const { models, hiddenModelsForSelector } = useModelsFromSettings();
@@ -279,6 +461,7 @@ export function TasksSection() {
 
   const lastSyncedTaskSettingsRef = useRef<TaskSettings | null>(null);
   const lastSyncedAgentAiDefaultsRef = useRef<AgentAiDefaults | null>(null);
+  const lastSyncedSubagentAiDefaultsRef = useRef<SubagentAiDefaults | null>(null);
 
   useEffect(() => {
     if (!api) return;
@@ -294,11 +477,14 @@ export function TasksSection() {
         setTaskSettings(normalizedTaskSettings);
         const normalizedAgentDefaults = normalizeAgentAiDefaults(cfg.agentAiDefaults);
         setAgentAiDefaults(normalizedAgentDefaults);
+        const normalizedSubagentDefaults = normalizeSubagentAiDefaults(cfg.subagentAiDefaults);
+        setSubagentAiDefaults(normalizedSubagentDefaults);
         updatePersistedState(AGENT_AI_DEFAULTS_KEY, normalizedAgentDefaults);
 
         setLoadFailed(false);
         lastSyncedTaskSettingsRef.current = normalizedTaskSettings;
         lastSyncedAgentAiDefaultsRef.current = normalizedAgentDefaults;
+        lastSyncedSubagentAiDefaultsRef.current = normalizedSubagentDefaults;
 
         setLoaded(true);
       })
@@ -355,15 +541,26 @@ export function TasksSection() {
     if (!loaded) return;
     if (loadFailed) return;
 
-    pendingSaveRef.current = { taskSettings, agentAiDefaults };
+    const subagentAiDefaultsForSave = getSubagentAiDefaultsForSave(
+      agentAiDefaults,
+      subagentAiDefaults
+    );
+    pendingSaveRef.current = {
+      taskSettings,
+      agentAiDefaults,
+      subagentAiDefaults: subagentAiDefaultsForSave,
+    };
     const lastTaskSettings = lastSyncedTaskSettingsRef.current;
     const lastAgentDefaults = lastSyncedAgentAiDefaultsRef.current;
+    const lastSubagentDefaults = lastSyncedSubagentAiDefaultsRef.current;
 
     if (
       lastTaskSettings &&
       lastAgentDefaults &&
+      lastSubagentDefaults &&
       areTaskSettingsEqual(lastTaskSettings, taskSettings) &&
-      areAgentAiDefaultsEqual(lastAgentDefaults, agentAiDefaults)
+      areAgentAiDefaultsEqual(lastAgentDefaults, agentAiDefaults) &&
+      areSubagentAiDefaultsEqual(lastSubagentDefaults, subagentAiDefaultsForSave)
     ) {
       pendingSaveRef.current = null;
       if (saveTimerRef.current) {
@@ -395,15 +592,20 @@ export function TasksSection() {
           .saveConfig({
             taskSettings: payload.taskSettings,
             agentAiDefaults: payload.agentAiDefaults,
+            subagentAiDefaults: payload.subagentAiDefaults,
           })
           .then(() => {
             const previousAgentDefaults = lastSyncedAgentAiDefaultsRef.current;
+            const previousSubagentDefaults = lastSyncedSubagentAiDefaultsRef.current;
             const agentDefaultsChanged =
               !previousAgentDefaults ||
-              !areAgentAiDefaultsEqual(previousAgentDefaults, payload.agentAiDefaults);
+              !areAgentAiDefaultsEqual(previousAgentDefaults, payload.agentAiDefaults) ||
+              !previousSubagentDefaults ||
+              !areSubagentAiDefaultsEqual(previousSubagentDefaults, payload.subagentAiDefaults);
 
             lastSyncedTaskSettingsRef.current = payload.taskSettings;
             lastSyncedAgentAiDefaultsRef.current = payload.agentAiDefaults;
+            lastSyncedSubagentAiDefaultsRef.current = payload.subagentAiDefaults;
             setSaveError(null);
 
             if (agentDefaultsChanged) {
@@ -455,7 +657,7 @@ export function TasksSection() {
         saveTimerRef.current = null;
       }
     };
-  }, [api, agentAiDefaults, loaded, loadFailed, taskSettings]);
+  }, [api, agentAiDefaults, loaded, loadFailed, subagentAiDefaults, taskSettings]);
 
   // Flush any pending debounced save on unmount so changes aren't lost.
   useEffect(() => {
@@ -479,6 +681,7 @@ export function TasksSection() {
         .saveConfig({
           taskSettings: payload.taskSettings,
           agentAiDefaults: payload.agentAiDefaults,
+          subagentAiDefaults: payload.subagentAiDefaults,
         })
         .catch(() => undefined)
         .finally(() => {
@@ -531,7 +734,7 @@ export function TasksSection() {
   const setAgentModel = (agentId: string, value: string) => {
     setAgentAiDefaults((prev) =>
       updateAgentDefaultEntry(prev, agentId, (updated) => {
-        if (value === INHERIT) {
+        if (value === INHERIT || value.trim().length === 0) {
           delete updated.modelString;
         } else {
           updated.modelString = value;
@@ -543,6 +746,31 @@ export function TasksSection() {
   const setAgentThinking = (agentId: string, value: string) => {
     setAgentAiDefaults((prev) =>
       updateAgentDefaultEntry(prev, agentId, (updated) => {
+        if (value === INHERIT) {
+          delete updated.thinkingLevel;
+          return;
+        }
+
+        updated.thinkingLevel = value as ThinkingLevel;
+      })
+    );
+  };
+
+  const setSubagentModel = (agentId: string, value: string) => {
+    setSubagentAiDefaults((prev) =>
+      updateSubagentDefaultEntry(prev, agentId, (updated) => {
+        if (value === INHERIT || value.trim().length === 0) {
+          delete updated.modelString;
+        } else {
+          updated.modelString = value;
+        }
+      })
+    );
+  };
+
+  const setSubagentThinking = (agentId: string, value: string) => {
+    setSubagentAiDefaults((prev) =>
+      updateSubagentDefaultEntry(prev, agentId, (updated) => {
         if (value === INHERIT) {
           delete updated.thinkingLevel;
           return;
@@ -597,6 +825,10 @@ export function TasksSection() {
       }),
     [agentAiDefaults, listedAgents, portableDesktopEnabled]
   );
+  const execSubagentAgent = listedAgents.find(
+    (agent) => agent.id === "exec" && agent.subagentRunnable
+  );
+
   const newWorkspaceDefaultAgentOptions = useMemo(() => {
     const options = uiAgents.map((agent) => ({
       id: agent.id,
@@ -617,6 +849,7 @@ export function TasksSection() {
     const entry = agentAiDefaults[agent.id];
     const modelValue = entry?.modelString ?? INHERIT;
     const thinkingValue = entry?.thinkingLevel ?? INHERIT;
+    const writesSubagentAiDefaults = agent.subagentRunnable && !agent.uiSelectable;
     const enabledOverride = entry?.enabled;
     const advisorEnabledOverride = entry?.advisorEnabled;
     const advisorEnabledValue = advisorEnabledOverride ?? false;
@@ -653,7 +886,6 @@ export function TasksSection() {
     // When model is "Inherit", resolve the effective model so the dropdown
     // shows the correct thinking levels (e.g. "max" for Opus 4.6, not "xhigh").
     const effectiveModel = modelValue !== INHERIT ? modelValue : inheritedEffectiveModel;
-    const allowedThinkingLevels = getThinkingPolicyForModel(effectiveModel);
 
     const agentDefinitionPath = getAgentDefinitionPath(agent);
     const scopeNode = agentDefinitionPath ? (
@@ -775,54 +1007,73 @@ export function TasksSection() {
           </div>
         </div>
 
-        <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
-          <div className="space-y-1">
-            <div className="text-muted text-xs">Model</div>
-            <div className="flex items-center gap-2">
-              {/* Match the Reasoning dropdown styling for inherit defaults. */}
-              <ModelSelector
-                value={modelValue === INHERIT ? "" : modelValue}
-                emptyLabel="Inherit"
-                onChange={(value) => setAgentModel(agent.id, value)}
-                models={models}
-                hiddenModels={hiddenModelsForSelector}
-                variant="box"
-                className="bg-modal-bg"
-              />
-              {modelValue !== INHERIT ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-9 px-2"
-                  onClick={() => setAgentModel(agent.id, INHERIT)}
-                >
-                  Reset
-                </Button>
-              ) : null}
-            </div>
-          </div>
+        <AiDefaultsControls
+          modelValue={modelValue}
+          thinkingValue={thinkingValue}
+          effectiveModel={effectiveModel}
+          models={models}
+          hiddenModelsForSelector={hiddenModelsForSelector}
+          onModelChange={(value) => {
+            setAgentModel(agent.id, value);
+            if (writesSubagentAiDefaults) {
+              setSubagentModel(agent.id, value);
+            }
+          }}
+          onThinkingChange={(value) => {
+            setAgentThinking(agent.id, value);
+            if (writesSubagentAiDefaults) {
+              setSubagentThinking(agent.id, value);
+            }
+          }}
+        />
+      </div>
+    );
+  };
 
-          <div className="space-y-1">
-            <div className="text-muted text-xs">Reasoning</div>
-            <Select
-              value={thinkingValue}
-              onValueChange={(value) => setAgentThinking(agent.id, value)}
-            >
-              <SelectTrigger className="border-border-medium bg-modal-bg h-9">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={INHERIT}>Inherit</SelectItem>
-                {allowedThinkingLevels.map((level) => (
-                  <SelectItem key={level} value={level}>
-                    {getThinkingOptionLabel(level, effectiveModel)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+  const renderExecSubagentDefaults = (agent: AgentDefinitionDescriptor) => {
+    const entry = subagentAiDefaults.exec;
+    const modelValue = entry?.modelString ?? INHERIT;
+    const thinkingValue = entry?.thinkingLevel ?? INHERIT;
+    const uiExecEntry = agentAiDefaults.exec;
+    const inheritedExecModel = uiExecEntry?.modelString ?? inheritedEffectiveModel;
+    const effectiveModel = modelValue !== INHERIT ? modelValue : inheritedExecModel;
+    const inheritedThinkingLabel = uiExecEntry?.thinkingLevel
+      ? getThinkingOptionLabel(uiExecEntry.thinkingLevel, effectiveModel)
+      : "Inherit";
+
+    return (
+      <div
+        key="exec-subagent"
+        role="group"
+        aria-label="Exec as subagent defaults"
+        className="border-border-medium bg-background-secondary rounded-md border p-3"
+      >
+        <div className="min-w-0 flex-1">
+          <div className="text-foreground text-sm font-medium">Exec as subagent</div>
+          <div className="text-muted text-xs">
+            {agent.id} • {agent.scope} • {renderPolicySummary(agent)}
+          </div>
+          <div className="text-muted mt-1 text-xs">
+            Unset fields inherit from UI Exec defaults. Enabled and advisor settings stay shared
+            with UI Exec.
           </div>
         </div>
+
+        <AiDefaultsControls
+          modelValue={modelValue}
+          thinkingValue={thinkingValue}
+          effectiveModel={effectiveModel}
+          models={models}
+          hiddenModelsForSelector={hiddenModelsForSelector}
+          inheritLabel="Inherit from UI Exec"
+          resetModelLabel="Inherit from UI Exec"
+          resetThinkingLabel="Inherit from UI Exec"
+          inheritedModelDescription={`Inherits from UI Exec: ${inheritedExecModel}`}
+          inheritedThinkingDescription={`Inherits from UI Exec: ${inheritedThinkingLabel}`}
+          showThinkingResetButton
+          onModelChange={(value) => setSubagentModel("exec", value)}
+          onThinkingChange={(value) => setSubagentThinking("exec", value)}
+        />
       </div>
     );
   };
@@ -840,7 +1091,6 @@ export function TasksSection() {
           ? "Advisor enabled (local override)."
           : "Advisor disabled (local override).";
     const effectiveModel = modelValue !== INHERIT ? modelValue : inheritedEffectiveModel;
-    const allowedThinkingLevels = getThinkingPolicyForModel(effectiveModel);
 
     return (
       <div
@@ -882,54 +1132,15 @@ export function TasksSection() {
           ) : null}
         </div>
 
-        <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
-          <div className="space-y-1">
-            <div className="text-muted text-xs">Model</div>
-            <div className="flex items-center gap-2">
-              {/* Match the Reasoning dropdown styling for inherit defaults. */}
-              <ModelSelector
-                value={modelValue === INHERIT ? "" : modelValue}
-                emptyLabel="Inherit"
-                onChange={(value) => setAgentModel(agentId, value)}
-                models={models}
-                hiddenModels={hiddenModelsForSelector}
-                variant="box"
-                className="bg-modal-bg"
-              />
-              {modelValue !== INHERIT ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-9 px-2"
-                  onClick={() => setAgentModel(agentId, INHERIT)}
-                >
-                  Reset
-                </Button>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="space-y-1">
-            <div className="text-muted text-xs">Reasoning</div>
-            <Select
-              value={thinkingValue}
-              onValueChange={(value) => setAgentThinking(agentId, value)}
-            >
-              <SelectTrigger className="border-border-medium bg-modal-bg h-9">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={INHERIT}>Inherit</SelectItem>
-                {allowedThinkingLevels.map((level) => (
-                  <SelectItem key={level} value={level}>
-                    {getThinkingOptionLabel(level, effectiveModel)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
+        <AiDefaultsControls
+          modelValue={modelValue}
+          thinkingValue={thinkingValue}
+          effectiveModel={effectiveModel}
+          models={models}
+          hiddenModelsForSelector={hiddenModelsForSelector}
+          onModelChange={(value) => setAgentModel(agentId, value)}
+          onThinkingChange={(value) => setAgentThinking(agentId, value)}
+        />
       </div>
     );
   };
@@ -1086,10 +1297,13 @@ export function TasksSection() {
         </div>
       ) : null}
 
-      {subagents.length > 0 ? (
+      {subagents.length > 0 || execSubagentAgent ? (
         <div>
           <h4 className="text-foreground mb-3 text-sm font-medium">Sub-agents</h4>
-          <div className="space-y-4">{subagents.map(renderAgentDefaults)}</div>
+          <div className="space-y-4">
+            {execSubagentAgent ? renderExecSubagentDefaults(execSubagentAgent) : null}
+            {subagents.map(renderAgentDefaults)}
+          </div>
         </div>
       ) : null}
 
