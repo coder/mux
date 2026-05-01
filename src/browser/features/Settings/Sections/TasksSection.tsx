@@ -1045,11 +1045,11 @@ export function TasksSection() {
       <div
         key="exec-subagent"
         role="group"
-        aria-label="Exec as subagent defaults"
+        aria-label="Exec defaults"
         className="border-border-medium bg-background-secondary rounded-md border p-3"
       >
         <div className="min-w-0 flex-1">
-          <div className="text-foreground text-sm font-medium">Exec as subagent</div>
+          <div className="text-foreground text-sm font-medium">Exec</div>
           <div className="text-muted text-xs">
             {agent.id} • {agent.scope} • {renderPolicySummary(agent)}
           </div>

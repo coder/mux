@@ -111,7 +111,7 @@ function renderTasksSection(options: RenderTasksSectionOptions = {}) {
 }
 
 function getExecSubagentRow(view: ReturnType<typeof renderTasksSection>): HTMLElement {
-  return view.getByRole("group", { name: "Exec as subagent defaults" });
+  return view.getByRole("group", { name: "Exec defaults" });
 }
 
 function getLatestSavePayload(saveConfig: ReturnType<typeof mock>) {
@@ -141,8 +141,8 @@ describe("TasksSection Exec subagent defaults", () => {
   test("renders a distinct Exec subagent row", async () => {
     const view = renderTasksSection();
 
-    expect(await view.findByText("Exec as subagent")).toBeTruthy();
-    expect(getExecSubagentRow(view)).toBeTruthy();
+    await view.findByRole("group", { name: "Exec defaults" });
+    expect(within(getExecSubagentRow(view)).getByText("Exec")).toBeTruthy();
     expect(view.getByText("UI agents")).toBeTruthy();
     expect(view.getByText("Sub-agents")).toBeTruthy();
   });
@@ -155,7 +155,7 @@ describe("TasksSection Exec subagent defaults", () => {
       subagentAiDefaults: {},
     });
 
-    const row = await view.findByRole("group", { name: "Exec as subagent defaults" });
+    const row = await view.findByRole("group", { name: "Exec defaults" });
 
     expect(within(row).getByText("Inherits from UI Exec: anthropic:ui-exec")).toBeTruthy();
     expect(within(row).getByText("Inherits from UI Exec: medium")).toBeTruthy();
@@ -169,7 +169,7 @@ describe("TasksSection Exec subagent defaults", () => {
       },
       subagentAiDefaults: {},
     });
-    const row = await view.findByRole("group", { name: "Exec as subagent defaults" });
+    const row = await view.findByRole("group", { name: "Exec defaults" });
 
     fireEvent.change(within(row).getByLabelText("Model"), {
       target: { value: "openai:subagent-model" },
@@ -194,7 +194,7 @@ describe("TasksSection Exec subagent defaults", () => {
         exec: { modelString: "openai:subagent-model", thinkingLevel: "high" },
       },
     });
-    const row = await view.findByRole("group", { name: "Exec as subagent defaults" });
+    const row = await view.findByRole("group", { name: "Exec defaults" });
 
     fireEvent.click(within(row).getAllByRole("button", { name: "Inherit from UI Exec" })[0]);
 
@@ -210,7 +210,7 @@ describe("TasksSection Exec subagent defaults", () => {
         exec: { modelString: "openai:subagent-model" },
       },
     });
-    const row = await view.findByRole("group", { name: "Exec as subagent defaults" });
+    const row = await view.findByRole("group", { name: "Exec defaults" });
 
     fireEvent.click(within(row).getByRole("button", { name: "Inherit from UI Exec" }));
 
