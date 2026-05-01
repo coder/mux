@@ -98,6 +98,36 @@ describe("task tool", () => {
     expectQueuedOrRunningTaskToolResult(result, { status: "queued", taskId: "child-task" });
   });
 
+  it("does not propagate parent MUX_MODEL_STRING/MUX_THINKING_LEVEL to spawned sub-agent", async () => {
+    using tempDir = new TestTempDir("test-task-tool-parent-ai-env");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    const create = mock((_: { modelString?: unknown; thinkingLevel?: unknown }) =>
+      Ok({ taskId: "child-task", kind: "agent" as const, status: "queued" as const })
+    );
+    const waitForAgentReport = mock(() => Promise.resolve({ reportMarkdown: "ignored" }));
+    const taskService = { create, waitForAgentReport } as unknown as TaskService;
+
+    const tool = createTaskTool({
+      ...baseConfig,
+      muxEnv: { MUX_MODEL_STRING: "openai:gpt-4o-mini", MUX_THINKING_LEVEL: "high" },
+      taskService,
+    });
+
+    await Promise.resolve(
+      tool.execute!(
+        { subagent_type: "explore", prompt: "do it", title: "Child task", run_in_background: true },
+        mockToolCallOptions
+      )
+    );
+
+    expect(create).toHaveBeenCalledTimes(1);
+    const createArgs = create.mock.calls[0]?.[0];
+    expect(createArgs).toBeDefined();
+    expect(createArgs?.modelString).toBeUndefined();
+    expect(createArgs?.thinkingLevel).toBeUndefined();
+  });
+
   it("spawns best-of-n background tasks with shared grouping metadata", async () => {
     using tempDir = new TestTempDir("test-task-tool-best-of-background");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });

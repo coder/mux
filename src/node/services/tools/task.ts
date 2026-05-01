@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto";
 import { tool } from "ai";
 import type { z } from "zod";
 
-import { coerceThinkingLevel } from "@/common/types/thinking";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import {
   TaskToolResultSchema,
@@ -286,12 +285,6 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
         throw new Error('In the plan agent you may only spawn agentId: "explore" tasks.');
       }
 
-      const modelString =
-        config.muxEnv && typeof config.muxEnv.MUX_MODEL_STRING === "string"
-          ? config.muxEnv.MUX_MODEL_STRING
-          : undefined;
-      const thinkingLevel = coerceThinkingLevel(config.muxEnv?.MUX_THINKING_LEVEL);
-
       const createdTasks: SpawnedTaskInfo[] = [];
       for (const launch of taskGroupLaunches) {
         if (abortSignal?.aborted) {
@@ -306,8 +299,6 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
           agentType: requestedAgentId,
           prompt: launch.prompt,
           title,
-          modelString,
-          thinkingLevel,
           experiments: config.experiments,
           bestOf:
             taskGroupId != null
