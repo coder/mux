@@ -17,6 +17,8 @@ import { ForegroundWaitBackgroundedError } from "@/node/services/taskService";
 import { buildTaskGroupLaunches, type TaskGroupKind } from "@/common/utils/tools/taskGroups";
 import { parseToolResult, requireTaskService, requireWorkspaceId } from "./toolUtils";
 import { getErrorMessage } from "@/common/utils/errors";
+import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
+import { coerceNonEmptyString } from "@/node/services/taskUtils";
 
 /**
  * Build dynamic task tool description with runtime-specific workspace visibility
@@ -41,6 +43,22 @@ function buildTaskDescription(config: ToolConfiguration): string {
   });
 
   return `${baseDescription}\n\nAvailable sub-agents (use \`agentId\` parameter):\n${subagentLines.join("\n")}`;
+}
+
+function buildParentRuntimeAiSettings(
+  config: ToolConfiguration
+): { modelString?: string; thinkingLevel?: ThinkingLevel } | undefined {
+  const modelString = coerceNonEmptyString(config.muxEnv?.MUX_MODEL_STRING);
+  const thinkingLevel = coerceThinkingLevel(config.muxEnv?.MUX_THINKING_LEVEL);
+
+  if (modelString == null && thinkingLevel == null) {
+    return undefined;
+  }
+
+  return {
+    ...(modelString != null ? { modelString } : {}),
+    ...(thinkingLevel != null ? { thinkingLevel } : {}),
+  };
 }
 
 interface SpawnedTaskInfo {
@@ -285,6 +303,10 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
         throw new Error('In the plan agent you may only spawn agentId: "explore" tasks.');
       }
 
+      // Parent runtime model and thinking are forwarded as a low-priority fallback so
+      // unconfigured delegated runs still inherit the parent's live model. Do not
+      // restore the previous top-priority forwarding through explicit task args.
+      const parentRuntimeAiSettings = buildParentRuntimeAiSettings(config);
       const createdTasks: SpawnedTaskInfo[] = [];
       for (const launch of taskGroupLaunches) {
         if (abortSignal?.aborted) {
@@ -300,6 +322,7 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
           prompt: launch.prompt,
           title,
           experiments: config.experiments,
+          ...(parentRuntimeAiSettings != null ? { parentRuntimeAiSettings } : {}),
           bestOf:
             taskGroupId != null
               ? {

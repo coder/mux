@@ -111,6 +111,7 @@ export interface TaskCreateArgs {
   title: string;
   modelString?: string;
   thinkingLevel?: ThinkingLevel;
+  parentRuntimeAiSettings?: { modelString?: string; thinkingLevel?: ThinkingLevel };
   /** Shared grouping metadata when one tool call spawns multiple sibling tasks. */
   bestOf?: {
     groupId: string;
@@ -403,6 +404,7 @@ export class TaskService {
     agentId: string;
     modelString?: string;
     thinkingLevel?: ThinkingLevel;
+    parentRuntimeAiSettings?: { modelString?: string; thinkingLevel?: ThinkingLevel };
   }): {
     taskModelString: string;
     canonicalModel: string;
@@ -412,11 +414,13 @@ export class TaskService {
     // Sub-agent defaults take priority over UI agent defaults per field for any agent invoked as a sub-agent.
     const subagentDefault = params.cfg.subagentAiDefaults?.[params.agentId];
     const agentDefault = params.cfg.agentAiDefaults?.[params.agentId];
+    const parentRuntimeAiSettings = params.parentRuntimeAiSettings;
 
     const taskModelString =
       coerceNonEmptyString(params.modelString) ??
       coerceNonEmptyString(subagentDefault?.modelString) ??
       coerceNonEmptyString(agentDefault?.modelString) ??
+      coerceNonEmptyString(parentRuntimeAiSettings?.modelString) ??
       coerceNonEmptyString(parentAiSettings?.model) ??
       defaultModel;
     const canonicalModel = normalizeToCanonical(taskModelString).trim();
@@ -426,6 +430,7 @@ export class TaskService {
       params.thinkingLevel ??
       subagentDefault?.thinkingLevel ??
       agentDefault?.thinkingLevel ??
+      parentRuntimeAiSettings?.thinkingLevel ??
       parentAiSettings?.thinkingLevel ??
       "off";
     const effectiveThinkingLevel = enforceThinkingPolicy(canonicalModel, requestedThinkingLevel);
@@ -1187,6 +1192,7 @@ export class TaskService {
       agentId,
       modelString: args.modelString,
       thinkingLevel: args.thinkingLevel,
+      parentRuntimeAiSettings: args.parentRuntimeAiSettings,
     });
 
     const parentRuntimeConfig = parentMeta.runtimeConfig;

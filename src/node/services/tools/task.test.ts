@@ -98,19 +98,23 @@ describe("task tool", () => {
     expectQueuedOrRunningTaskToolResult(result, { status: "queued", taskId: "child-task" });
   });
 
-  it("does not propagate parent MUX_MODEL_STRING/MUX_THINKING_LEVEL to spawned sub-agent", async () => {
+  it("passes parent MUX_MODEL_STRING/MUX_THINKING_LEVEL as a runtime fallback hint", async () => {
     using tempDir = new TestTempDir("test-task-tool-parent-ai-env");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
 
-    const create = mock((_: { modelString?: unknown; thinkingLevel?: unknown }) =>
-      Ok({ taskId: "child-task", kind: "agent" as const, status: "queued" as const })
+    const create = mock(
+      (_: {
+        modelString?: unknown;
+        thinkingLevel?: unknown;
+        parentRuntimeAiSettings?: { modelString?: unknown; thinkingLevel?: unknown };
+      }) => Ok({ taskId: "child-task", kind: "agent" as const, status: "queued" as const })
     );
     const waitForAgentReport = mock(() => Promise.resolve({ reportMarkdown: "ignored" }));
     const taskService = { create, waitForAgentReport } as unknown as TaskService;
 
     const tool = createTaskTool({
       ...baseConfig,
-      muxEnv: { MUX_MODEL_STRING: "openai:gpt-4o-mini", MUX_THINKING_LEVEL: "high" },
+      muxEnv: { MUX_MODEL_STRING: "openai:gpt-4o-mini", MUX_THINKING_LEVEL: "med" },
       taskService,
     });
 
@@ -126,6 +130,10 @@ describe("task tool", () => {
     expect(createArgs).toBeDefined();
     expect(createArgs?.modelString).toBeUndefined();
     expect(createArgs?.thinkingLevel).toBeUndefined();
+    expect(createArgs?.parentRuntimeAiSettings).toEqual({
+      modelString: "openai:gpt-4o-mini",
+      thinkingLevel: "medium",
+    });
   });
 
   it("spawns best-of-n background tasks with shared grouping metadata", async () => {
