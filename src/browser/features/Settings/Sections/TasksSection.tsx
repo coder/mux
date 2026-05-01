@@ -156,6 +156,39 @@ function getSubagentAiDefaultsForSave(
   return next;
 }
 
+interface TasksSectionSavePayload {
+  taskSettings: TaskSettings;
+  agentAiDefaults: AgentAiDefaults;
+  subagentAiDefaults: SubagentAiDefaults;
+}
+
+interface TasksSectionSaveBody {
+  taskSettings: TaskSettings;
+  agentAiDefaults: AgentAiDefaults;
+  subagentAiDefaults?: SubagentAiDefaults;
+}
+
+function getTasksSectionSaveBody(
+  payload: TasksSectionSavePayload,
+  lastSyncedSubagentAiDefaults: SubagentAiDefaults | null
+): TasksSectionSaveBody {
+  const didSubagentDefaultsChange =
+    lastSyncedSubagentAiDefaults === null ||
+    !areSubagentAiDefaultsEqual(lastSyncedSubagentAiDefaults, payload.subagentAiDefaults);
+  const saveBody: TasksSectionSaveBody = {
+    taskSettings: payload.taskSettings,
+    agentAiDefaults: payload.agentAiDefaults,
+  };
+
+  // Skip unchanged legacy subagent defaults so unrelated agent toggles do not
+  // run router reconciliation and drop enabled/advisorEnabled for custom agents.
+  if (didSubagentDefaultsChange) {
+    saveBody.subagentAiDefaults = payload.subagentAiDefaults;
+  }
+
+  return saveBody;
+}
+
 function renderPolicySummary(agent: AgentDefinitionDescriptor): React.ReactNode {
   const isCompact = agent.id === "compact";
 
@@ -433,11 +466,7 @@ export function TasksSection() {
 
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savingRef = useRef(false);
-  const pendingSaveRef = useRef<{
-    taskSettings: TaskSettings;
-    agentAiDefaults: AgentAiDefaults;
-    subagentAiDefaults: SubagentAiDefaults;
-  } | null>(null);
+  const pendingSaveRef = useRef<TasksSectionSavePayload | null>(null);
 
   const { models, hiddenModelsForSelector } = useModelsFromSettings();
   const [globalDefaultAgentIdRaw, setGlobalDefaultAgentIdRaw] = usePersistedState<string>(
@@ -594,12 +623,9 @@ export function TasksSection() {
 
         pendingSaveRef.current = null;
         savingRef.current = true;
+        const saveBody = getTasksSectionSaveBody(payload, lastSyncedSubagentAiDefaultsRef.current);
         void api.config
-          .saveConfig({
-            taskSettings: payload.taskSettings,
-            agentAiDefaults: payload.agentAiDefaults,
-            subagentAiDefaults: payload.subagentAiDefaults,
-          })
+          .saveConfig(saveBody)
           .then(() => {
             const previousAgentDefaults = lastSyncedAgentAiDefaultsRef.current;
             const previousSubagentDefaults = lastSyncedSubagentAiDefaultsRef.current;
@@ -683,12 +709,9 @@ export function TasksSection() {
 
       pendingSaveRef.current = null;
       savingRef.current = true;
+      const saveBody = getTasksSectionSaveBody(payload, lastSyncedSubagentAiDefaultsRef.current);
       void api.config
-        .saveConfig({
-          taskSettings: payload.taskSettings,
-          agentAiDefaults: payload.agentAiDefaults,
-          subagentAiDefaults: payload.subagentAiDefaults,
-        })
+        .saveConfig(saveBody)
         .catch(() => undefined)
         .finally(() => {
           savingRef.current = false;

@@ -139,7 +139,7 @@ function getLatestSavePayload(saveConfig: ReturnType<typeof mock>) {
   expect(calls.length).toBeGreaterThan(0);
   return calls[calls.length - 1][0] as {
     agentAiDefaults: AgentAiDefaults;
-    subagentAiDefaults: SubagentAiDefaults;
+    subagentAiDefaults?: SubagentAiDefaults;
   };
 }
 
@@ -186,7 +186,45 @@ describe("TasksSection Exec subagent defaults", () => {
     const payload = getLatestSavePayload(view.saveConfig);
 
     expect(payload.agentAiDefaults.explore).toBeUndefined();
-    expect(payload.subagentAiDefaults.explore).toBeUndefined();
+    expect(payload.subagentAiDefaults?.explore).toBeUndefined();
+  });
+
+  test("omits unchanged subagent defaults when saving an agent-only change", async () => {
+    const view = renderTasksSection({
+      subagentAiDefaults: {
+        explore: { modelString: "openai:subagent-model" },
+      },
+    });
+
+    await view.findByText("Explore");
+    fireEvent.click(
+      within(getAgentCardByName(view, "Explore")).getByRole("switch", {
+        name: "Toggle explore enabled",
+      })
+    );
+
+    await waitFor(() => expect(view.saveConfig).toHaveBeenCalled());
+    const payload = getLatestSavePayload(view.saveConfig);
+
+    expect(payload.agentAiDefaults.explore).toEqual({ enabled: false });
+    expect("subagentAiDefaults" in payload).toBe(false);
+  });
+
+  test("includes subagent defaults when saving a subagent default change", async () => {
+    const view = renderTasksSection({ subagentAiDefaults: {} });
+    const row = await view.findByRole("group", { name: "Exec defaults" });
+
+    fireEvent.change(within(row).getByLabelText("Model"), {
+      target: { value: "openai:subagent-model" },
+    });
+
+    await waitFor(() => expect(view.saveConfig).toHaveBeenCalled());
+    const payload = getLatestSavePayload(view.saveConfig);
+
+    expect("subagentAiDefaults" in payload).toBe(true);
+    expect(payload.subagentAiDefaults).toEqual({
+      exec: { modelString: "openai:subagent-model" },
+    });
   });
 
   test("unset Exec subagent defaults inherit from UI Exec", async () => {
@@ -250,7 +288,7 @@ describe("TasksSection Exec subagent defaults", () => {
       modelString: "anthropic:ui-exec",
       thinkingLevel: "medium",
     });
-    expect(payload.subagentAiDefaults.exec?.thinkingLevel).toBeUndefined();
+    expect(payload.subagentAiDefaults?.exec?.thinkingLevel).toBeUndefined();
   });
 
   test("setting only the Exec subagent thinking writes only the sparse subagent thinking", async () => {
@@ -276,7 +314,7 @@ describe("TasksSection Exec subagent defaults", () => {
       modelString: "anthropic:ui-exec",
       thinkingLevel: "medium",
     });
-    expect("modelString" in (payload.subagentAiDefaults.exec ?? {})).toBe(false);
+    expect("modelString" in (payload.subagentAiDefaults?.exec ?? {})).toBe(false);
   });
 
   test("resetting one Exec subagent field removes only that field", async () => {
