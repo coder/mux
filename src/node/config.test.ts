@@ -593,7 +593,6 @@ describe("Config", () => {
 
       const loaded = config.loadConfigOrDefault();
       expect(loaded.subagentAiDefaults?.exec).toEqual({
-        modelString: undefined,
         thinkingLevel: "off",
       });
     });

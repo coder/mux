@@ -856,7 +856,7 @@ export function TasksSection() {
     [agentAiDefaults, listedAgents, portableDesktopEnabled]
   );
   const execSubagentAgent = listedAgents.find(
-    (agent) => agent.id === "exec" && agent.subagentRunnable
+    (agent) => agent.id === "exec" && agent.subagentRunnable && agent.uiSelectable
   );
 
   const newWorkspaceDefaultAgentOptions = useMemo(() => {

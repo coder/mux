@@ -25,7 +25,7 @@ describe("normalizeSubagentAiDefaults", () => {
         "bad-": { modelString: "openai:gpt-5.3-codex" },
         explore: { modelString: "openai:gpt-5.2" },
       })
-    ).toEqual({ explore: { modelString: "openai:gpt-5.2", thinkingLevel: undefined } });
+    ).toEqual({ explore: { modelString: "openai:gpt-5.2" } });
   });
 
   test("drops blank model strings and invalid thinking levels", () => {
@@ -34,7 +34,7 @@ describe("normalizeSubagentAiDefaults", () => {
         explore: { modelString: "   ", thinkingLevel: "invalid" },
         plan: { modelString: "   ", thinkingLevel: "medium" },
       })
-    ).toEqual({ plan: { modelString: undefined, thinkingLevel: "medium" } });
+    ).toEqual({ plan: { thinkingLevel: "medium" } });
   });
 });
 

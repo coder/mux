@@ -427,7 +427,7 @@ export class TaskService {
       coerceNonEmptyString(parentAiSettings?.model) ??
       defaultModel;
     const canonicalModel = normalizeToCanonical(taskModelString).trim();
-    assert(canonicalModel.length > 0, "Task.create: resolved model must be non-empty");
+    assert(canonicalModel.length > 0, "resolveTaskAISettings: resolved model must be non-empty");
 
     const requestedThinkingLevel: ThinkingLevel =
       params.thinkingLevel ??
