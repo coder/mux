@@ -23,6 +23,7 @@ import {
 } from "@/common/constants/storage";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { enforceThinkingPolicy, getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
 
 // Setup basic DOM environment for testing-library
 const dom = new GlobalWindow();
@@ -427,6 +428,65 @@ describe("ThinkingContext", () => {
 
     await waitFor(() => {
       expect(view.getByTestId("thinking").textContent).toBe("low:ws-1");
+    });
+  });
+
+  test("cycles thinking with metadata model before global default", async () => {
+    const workspaceId = "ws-cycle-thinking-metadata-model";
+    const metadataModel = "openai:gpt-5.5-pro";
+    const allowed = getThinkingPolicyForModel(metadataModel);
+    const currentThinkingLevel = "off";
+    const effectiveThinkingLevel = enforceThinkingPolicy(metadataModel, currentThinkingLevel);
+    const expectedThinkingLevel =
+      allowed[(allowed.indexOf(effectiveThinkingLevel) + 1) % allowed.length];
+
+    const updateAgentAISettings = mock<
+      (args: WorkspaceUpdateAgentAISettingsArgs) => Promise<WorkspaceUpdateAgentAISettingsResult>
+    >(() =>
+      Promise.resolve({
+        success: true as const,
+        data: undefined,
+      })
+    );
+    currentClientMock = {
+      workspace: { updateAgentAISettings },
+    };
+
+    setWorkspaceMetadata(
+      createWorkspaceMetadata({
+        id: workspaceId,
+        aiSettings: { model: metadataModel, thinkingLevel: currentThinkingLevel },
+      })
+    );
+
+    const view = renderWithWorkspaceMetadata({
+      workspaceId,
+      modelOverride: null,
+      children: (
+        <ThinkingProvider workspaceId={workspaceId}>
+          <TestComponent workspaceId={workspaceId} />
+        </ThinkingProvider>
+      ),
+    });
+
+    await waitFor(() => {
+      expect(view.getByTestId("thinking").textContent).toBe(
+        `${currentThinkingLevel}:${workspaceId}`
+      );
+    });
+
+    act(() => {
+      window.dispatchEvent(
+        new window.KeyboardEvent("keydown", { key: "T", ctrlKey: true, shiftKey: true })
+      );
+    });
+
+    await waitFor(() => {
+      expect(updateAgentAISettings).toHaveBeenCalledWith({
+        workspaceId,
+        agentId: "exec",
+        aiSettings: { model: metadataModel, thinkingLevel: expectedThinkingLevel },
+      });
     });
   });
 

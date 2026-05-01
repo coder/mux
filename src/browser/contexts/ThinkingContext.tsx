@@ -181,7 +181,8 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
 
       e.preventDefault();
 
-      const model = getCanonicalModelForScope(scopeId, defaultModel);
+      // Keep cycling aligned with setThinkingLevel so startup metadata uses the matching policy.
+      const model = getModelForThinkingUpdate(scopeId, metadataSettings.model, defaultModel);
       const allowed = getThinkingPolicyForModel(model);
       if (allowed.length <= 1) {
         return;
@@ -195,7 +196,7 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [defaultModel, scopeId, thinkingLevel, setThinkingLevel]);
+  }, [defaultModel, metadataSettings.model, scopeId, thinkingLevel, setThinkingLevel]);
 
   // Memoize context value to prevent unnecessary re-renders of consumers.
   const contextValue = useMemo(
