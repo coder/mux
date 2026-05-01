@@ -8011,6 +8011,7 @@ describe("TaskService", () => {
       string,
       { modelString: string; thinkingLevel: ThinkingLevel; enabled?: boolean }
     >;
+    subagentAiDefaults?: Record<string, { modelString?: string; thinkingLevel?: ThinkingLevel }>;
     sendMessageOverride?: ReturnType<typeof mock>;
     aiServiceOverrides?: Parameters<typeof createAIServiceMocks>[1];
   }) {
@@ -8097,6 +8098,7 @@ describe("TaskService", () => {
           : {}),
       },
       agentAiDefaults: Object.keys(agentAiDefaults).length > 0 ? agentAiDefaults : undefined,
+      subagentAiDefaults: options?.subagentAiDefaults,
     });
 
     const getInfo = mock(() => ({
@@ -8213,6 +8215,46 @@ describe("TaskService", () => {
         },
       },
       agentAiDefaults: {
+        exec: {
+          modelString: "openai:gpt-5.3-codex",
+          thinkingLevel: "xhigh",
+        },
+      },
+    });
+
+    await internal.handleStreamEnd(makeSuccessfulProposePlanStreamEndEvent(childId));
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith(
+      childId,
+      expect.stringContaining("Implement the plan"),
+      expect.objectContaining({
+        agentId: "exec",
+        model: "openai:gpt-5.3-codex",
+        thinkingLevel: "xhigh",
+      }),
+      expect.objectContaining({ synthetic: true })
+    );
+
+    const postCfg = config.loadConfigOrDefault();
+    const updatedTask = Array.from(postCfg.projects.values())
+      .flatMap((project) => project.workspaces)
+      .find((workspace) => workspace.id === childId);
+
+    expect(updatedTask?.agentId).toBe("exec");
+    expect(updatedTask?.taskModelString).toBe("openai:gpt-5.3-codex");
+    expect(updatedTask?.taskThinkingLevel).toBe("xhigh");
+  });
+
+  test("stream-end with propose_plan success uses subagent exec defaults before global exec defaults", async () => {
+    const { config, childId, sendMessage, internal } = await setupPlanModeStreamEndHarness({
+      agentAiDefaults: {
+        exec: {
+          modelString: "openai:gpt-5.2",
+          thinkingLevel: "medium",
+        },
+      },
+      subagentAiDefaults: {
         exec: {
           modelString: "openai:gpt-5.3-codex",
           thinkingLevel: "xhigh",
