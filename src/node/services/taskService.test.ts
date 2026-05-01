@@ -25,6 +25,7 @@ import * as runtimeFactory from "@/node/runtime/runtimeFactory";
 import * as forkOrchestrator from "@/node/services/utils/forkOrchestrator";
 import { Ok, Err, type Result } from "@/common/types/result";
 import { defaultModel } from "@/common/utils/ai/models";
+import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import type { PlanSubagentExecutorRouting } from "@/common/types/tasks";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { ErrorEvent, StreamEndEvent } from "@/common/types/stream";
@@ -1791,6 +1792,46 @@ describe("TaskService", () => {
     expect(childEntry?.taskThinkingLevel).toBe("xhigh");
   }, 20_000);
 
+  test("explicit task args outrank subagentAiDefaults exec on task create", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["aaaaaaaaaa"], "bbbbbbbbbb");
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir, {
+      subagentAiDefaults: {
+        exec: { modelString: "openai:gpt-5.3-codex", thinkingLevel: "xhigh" },
+      },
+    });
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    const created = await taskService.create({
+      parentWorkspaceId: parentId,
+      kind: "agent",
+      agentType: "exec",
+      prompt: "run exec task with explicit args",
+      title: "Test task",
+      modelString: "openai:gpt-5.2",
+      thinkingLevel: "medium",
+    });
+    expect(created.success).toBe(true);
+    if (!created.success) return;
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      created.data.taskId,
+      "run exec task with explicit args",
+      {
+        model: "openai:gpt-5.2",
+        agentId: "exec",
+        thinkingLevel: "medium",
+        experiments: undefined,
+      },
+      { agentInitiated: true }
+    );
+    const childEntry = findWorkspaceInConfig(config, created.data.taskId);
+    expect(childEntry?.taskModelString).toBe("openai:gpt-5.2");
+    expect(childEntry?.taskThinkingLevel).toBe("medium");
+  }, 20_000);
+
   test("exec subagent falls back to agentAiDefaults exec when subagent default is absent", async () => {
     const config = await createTestConfig(rootDir);
     stubStableIds(config, ["aaaaaaaaaa"], "bbbbbbbbbb");
@@ -1862,6 +1903,50 @@ describe("TaskService", () => {
       },
       { agentInitiated: true }
     );
+  }, 20_000);
+
+  test("subagent thinking defaults are clamped by the resolved model policy", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["aaaaaaaaaa"], "bbbbbbbbbb");
+    const resolvedModel = "openai:gpt-5.5-pro";
+    const requestedThinkingLevel: ThinkingLevel = "off";
+    const expectedThinkingLevel = enforceThinkingPolicy(resolvedModel, requestedThinkingLevel);
+    expect(expectedThinkingLevel).not.toBe(requestedThinkingLevel);
+
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir, {
+      parentAiSettings: { model: resolvedModel, thinkingLevel: "high" },
+      subagentAiDefaults: {
+        exec: { thinkingLevel: requestedThinkingLevel },
+      },
+    });
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    const created = await taskService.create({
+      parentWorkspaceId: parentId,
+      kind: "agent",
+      agentType: "exec",
+      prompt: "run exec task with clamped default thinking",
+      title: "Test task",
+    });
+    expect(created.success).toBe(true);
+    if (!created.success) return;
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      created.data.taskId,
+      "run exec task with clamped default thinking",
+      {
+        model: resolvedModel,
+        agentId: "exec",
+        thinkingLevel: expectedThinkingLevel,
+        experiments: undefined,
+      },
+      { agentInitiated: true }
+    );
+    const childEntry = findWorkspaceInConfig(config, created.data.taskId);
+    expect(childEntry?.taskModelString).toBe(resolvedModel);
+    expect(childEntry?.taskThinkingLevel).toBe(expectedThinkingLevel);
   }, 20_000);
 
   test("thinking policy is enforced after resolving the final subagent model", async () => {

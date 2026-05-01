@@ -409,8 +409,7 @@ export class TaskService {
     effectiveThinkingLevel: ThinkingLevel;
   } {
     const parentAiSettings = this.resolveWorkspaceAISettings(params.parentMeta, params.agentId);
-    // Exec needs separate UI-agent and subagent defaults. Resolve subagent defaults first,
-    // then fall back to UI defaults for compatibility when no subagent override exists.
+    // Sub-agent defaults take priority over UI agent defaults per field for any agent invoked as a sub-agent.
     const subagentDefault = params.cfg.subagentAiDefaults?.[params.agentId];
     const agentDefault = params.cfg.agentAiDefaults?.[params.agentId];
 

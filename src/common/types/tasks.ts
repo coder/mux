@@ -30,7 +30,7 @@ export const DEFAULT_TASK_SETTINGS: TaskSettings = {
   planSubagentDefaultsToOrchestrator: false,
 };
 
-export const AGENT_DEFAULT_IDS_EXCLUDED_FROM_LEGACY_SUBAGENTS: ReadonlySet<string> = new Set([
+const AGENT_DEFAULT_IDS_EXCLUDED_FROM_LEGACY_SUBAGENTS: ReadonlySet<string> = new Set([
   "plan",
   "exec",
   "compact",
