@@ -46,6 +46,33 @@ describe("getInlineSkillSuggestions", () => {
     ).toEqual(["$tdd", "$tdd-review"]);
   });
 
+  test("matches hyphenated skill name segments", () => {
+    expect(
+      getInlineSkillSuggestions({
+        partial: "simpl",
+        descriptors: [descriptor("tdd"), descriptor("code-simplifier")],
+      }).map((suggestion) => suggestion.display)
+    ).toEqual(["$code-simplifier"]);
+  });
+
+  test("matches later hyphenated skill name segments", () => {
+    expect(
+      getInlineSkillSuggestions({
+        partial: "review",
+        descriptors: [descriptor("tdd"), descriptor("deep-review")],
+      }).map((suggestion) => suggestion.display)
+    ).toEqual(["$deep-review"]);
+  });
+
+  test("does not match substring-only partials", () => {
+    expect(
+      getInlineSkillSuggestions({
+        partial: "view",
+        descriptors: [descriptor("deep-review")],
+      }).map((suggestion) => suggestion.display)
+    ).toEqual([]);
+  });
+
   test("matches uppercase partials against canonical lowercase names", () => {
     expect(
       getInlineSkillSuggestions({
@@ -130,8 +157,11 @@ describe("getInlineSkillInsertionTrailingText", () => {
     }
   });
 
-  test("preserves existing whitespace and end-of-line behavior", () => {
-    expect(getInlineSkillInsertionTrailingText("")).toBe("");
+  test("adds a trailing space at the end of the input", () => {
+    expect(getInlineSkillInsertionTrailingText("")).toBe(" ");
+  });
+
+  test("preserves existing whitespace", () => {
     expect(getInlineSkillInsertionTrailingText(" next")).toBe("");
     expect(getInlineSkillInsertionTrailingText("\nnext")).toBe("");
   });
