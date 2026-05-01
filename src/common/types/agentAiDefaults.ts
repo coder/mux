@@ -14,12 +14,10 @@ export function normalizeAgentAiDefaults(raw: unknown): AgentAiDefaults {
   const result: AgentAiDefaults = {};
 
   for (const [agentIdRaw, entryRaw] of Object.entries(record)) {
-    const normalizedRawAgentId = agentIdRaw.trim().toLowerCase();
     const agentId = normalizeAgentId(agentIdRaw, "");
     if (!agentId) continue;
     if (!AgentIdSchema.safeParse(agentId).success) continue;
     if (!entryRaw || typeof entryRaw !== "object") continue;
-    if (normalizedRawAgentId !== agentId && result[agentId] != null) continue;
 
     const entry = entryRaw as Record<string, unknown>;
 
