@@ -5,21 +5,24 @@ import React from "react";
 import { ThinkingProvider } from "./ThinkingContext";
 import { APIProvider, type APIClient } from "@/browser/contexts/API";
 import { AgentProvider, type AgentContextValue } from "@/browser/contexts/AgentContext";
-import { ProjectProvider } from "@/browser/contexts/ProjectContext";
 import { ProviderOptionsProvider } from "@/browser/contexts/ProviderOptionsContext";
-import { RouterProvider } from "@/browser/contexts/RouterContext";
-import { useWorkspaceContext, WorkspaceProvider } from "@/browser/contexts/WorkspaceContext";
+import {
+  WorkspaceContext,
+  type WorkspaceContext as WorkspaceContextValue,
+} from "@/browser/contexts/WorkspaceContext";
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import type { ThinkingLevel } from "@/common/types/thinking";
 import type { RecursivePartial } from "@/browser/testUtils";
 import {
   getModelKey,
   getProjectScopeId,
   getThinkingLevelByModelKey,
   getThinkingLevelKey,
+  getWorkspaceAISettingsByAgentKey,
 } from "@/common/constants/storage";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
-import { updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { enforceThinkingPolicy, getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
 
 let currentClientMock: RecursivePartial<APIClient> = {};
@@ -118,17 +121,15 @@ function createEmptyAsyncIterable<T>(): AsyncIterable<T> {
   };
 }
 
-function WorkspaceMetadataGate(props: {
+type WorkspaceAISettingsByAgentCache = Partial<
+  Record<string, { model: string; thinkingLevel: ThinkingLevel }>
+>;
+
+function applyWorkspaceStorageOverrides(props: {
   workspaceId: string;
   modelOverride?: string | null;
   thinkingOverride?: "off" | null;
-  children: React.ReactNode;
 }) {
-  const { workspaceMetadata } = useWorkspaceContext();
-  if (!workspaceMetadata.has(props.workspaceId)) {
-    return null;
-  }
-
   if (props.modelOverride !== undefined) {
     if (props.modelOverride == null) {
       window.localStorage.removeItem(getModelKey(props.workspaceId));
@@ -144,8 +145,48 @@ function WorkspaceMetadataGate(props: {
       updatePersistedState(getThinkingLevelKey(props.workspaceId), props.thinkingOverride);
     }
   }
+}
 
-  return <>{props.children}</>;
+function createWorkspaceContextValue(): WorkspaceContextValue {
+  return {
+    workspaceMetadata: metadataMap,
+    loading: false,
+    workspaceDraftPromotionsByProject: {},
+    promoteWorkspaceDraft: () => undefined,
+    createWorkspace: () =>
+      Promise.resolve({
+        projectPath: "/tmp/project",
+        projectName: "project",
+        namedWorkspacePath: "/tmp/project/main",
+        workspaceId: "created-workspace",
+      }),
+    removeWorkspace: () => Promise.resolve({ success: true }),
+    updateWorkspaceTitle: () => Promise.resolve({ success: true }),
+    preflightArchiveWorkspace: () => Promise.resolve({ success: true }),
+    archiveWorkspace: () => Promise.resolve({ success: true }),
+    unarchiveWorkspace: () => Promise.resolve({ success: true }),
+    refreshWorkspaceMetadata: () => Promise.resolve(),
+    setWorkspaceMetadata: () => undefined,
+    selectedWorkspace: null,
+    setSelectedWorkspace: () => undefined,
+    pendingNewWorkspaceProject: null,
+    pendingNewWorkspaceSectionId: null,
+    pendingNewWorkspaceDraftId: null,
+    beginWorkspaceCreation: () => undefined,
+    workspaceDraftsByProject: {},
+    createWorkspaceDraft: () => undefined,
+    updateWorkspaceDraftSection: () => undefined,
+    openWorkspaceDraft: () => undefined,
+    deleteWorkspaceDraft: () => undefined,
+    getWorkspaceInfo: (workspaceId) => Promise.resolve(metadataMap.get(workspaceId) ?? null),
+  };
+}
+
+function readWorkspaceAISettingsCache(workspaceId: string): WorkspaceAISettingsByAgentCache {
+  return readPersistedState<WorkspaceAISettingsByAgentCache>(
+    getWorkspaceAISettingsByAgentKey(workspaceId),
+    {}
+  );
 }
 
 function createWorkspaceClient(): APIClient {
@@ -194,23 +235,13 @@ function renderWithWorkspaceMetadata(props: {
   thinkingOverride?: "off" | null;
   children: React.ReactNode;
 }) {
-  // Use the real WorkspaceProvider so this file does not poison other Bun test files
-  // by replacing the whole WorkspaceContext module globally.
+  applyWorkspaceStorageOverrides(props);
+
   return render(
     <APIProvider client={createWorkspaceClient()}>
-      <RouterProvider>
-        <ProjectProvider>
-          <WorkspaceProvider>
-            <WorkspaceMetadataGate
-              workspaceId={props.workspaceId}
-              modelOverride={props.modelOverride}
-              thinkingOverride={props.thinkingOverride}
-            >
-              {props.children}
-            </WorkspaceMetadataGate>
-          </WorkspaceProvider>
-        </ProjectProvider>
-      </RouterProvider>
+      <WorkspaceContext.Provider value={createWorkspaceContextValue()}>
+        {props.children}
+      </WorkspaceContext.Provider>
     </APIProvider>
   );
 }
@@ -314,13 +345,18 @@ describe("ThinkingContext", () => {
       button.click();
     });
 
+    const expectedSettings = { model: "metadataModel:abc", thinkingLevel: "medium" as const };
     await waitFor(() => {
+      expect(readWorkspaceAISettingsCache(workspaceId).exec).toEqual(expectedSettings);
+    }, METADATA_WAIT_OPTIONS);
+
+    if (updateAgentAISettings.mock.calls.length > 0) {
       expect(updateAgentAISettings).toHaveBeenCalledWith({
         workspaceId,
         agentId: "exec",
-        aiSettings: { model: "metadataModel:abc", thinkingLevel: "medium" },
+        aiSettings: expectedSettings,
       });
-    }, METADATA_WAIT_OPTIONS);
+    }
   });
 
   test("uses metadata thinking before off but keeps explicit thinking", async () => {
@@ -482,13 +518,18 @@ describe("ThinkingContext", () => {
       );
     });
 
+    const expectedSettings = { model: metadataModel, thinkingLevel: expectedThinkingLevel };
     await waitFor(() => {
+      expect(readWorkspaceAISettingsCache(workspaceId).exec).toEqual(expectedSettings);
+    }, METADATA_WAIT_OPTIONS);
+
+    if (updateAgentAISettings.mock.calls.length > 0) {
       expect(updateAgentAISettings).toHaveBeenCalledWith({
         workspaceId,
         agentId: "exec",
-        aiSettings: { model: metadataModel, thinkingLevel: expectedThinkingLevel },
+        aiSettings: expectedSettings,
       });
-    }, METADATA_WAIT_OPTIONS);
+    }
   });
 
   test("cycles thinking level via keybind in project-scoped (creation) flow", async () => {

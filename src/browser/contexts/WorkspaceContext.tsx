@@ -497,6 +497,23 @@ const WorkspaceActionsContext = createContext<
   Omit<WorkspaceContext, "workspaceMetadata" | "loading"> | undefined
 >(undefined);
 
+export const WorkspaceContext = {
+  Provider(props: { value: WorkspaceContext; children: ReactNode }) {
+    const { workspaceMetadata, loading, ...actionsValue } = props.value;
+
+    // Some focused tests only need to provide metadata. Route the public provider
+    // shape into the split contexts so they avoid mounting WorkspaceProvider and
+    // its API subscriptions.
+    return (
+      <WorkspaceMetadataContext.Provider value={{ workspaceMetadata, loading }}>
+        <WorkspaceActionsContext.Provider value={actionsValue}>
+          {props.children}
+        </WorkspaceActionsContext.Provider>
+      </WorkspaceMetadataContext.Provider>
+    );
+  },
+};
+
 interface WorkspaceProviderProps {
   children: ReactNode;
 }
