@@ -12,9 +12,6 @@ import { useWorkspaceContext, WorkspaceProvider } from "@/browser/contexts/Works
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { RecursivePartial } from "@/browser/testUtils";
-
-let currentClientMock: RecursivePartial<APIClient> = {};
-let metadataMap = new Map<string, FrontendWorkspaceMetadata>();
 import {
   getModelKey,
   getProjectScopeId,
@@ -24,6 +21,10 @@ import {
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { enforceThinkingPolicy, getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
+
+let currentClientMock: RecursivePartial<APIClient> = {};
+let metadataMap = new Map<string, FrontendWorkspaceMetadata>();
+const METADATA_WAIT_OPTIONS = { timeout: 5000, interval: 50 };
 
 // Setup basic DOM environment for testing-library
 const dom = new GlobalWindow();
@@ -272,7 +273,7 @@ describe("ThinkingContext", () => {
 
       await waitFor(() => {
         expect(view.getByTestId("base-model").textContent).toBe(testCase.expected);
-      });
+      }, METADATA_WAIT_OPTIONS);
       cleanup();
     }
   });
@@ -308,7 +309,7 @@ describe("ThinkingContext", () => {
       ),
     });
 
-    const button = await view.findByTestId("set-thinking-medium");
+    const button = await view.findByTestId("set-thinking-medium", undefined, METADATA_WAIT_OPTIONS);
     act(() => {
       button.click();
     });
@@ -319,7 +320,7 @@ describe("ThinkingContext", () => {
         agentId: "exec",
         aiSettings: { model: "metadataModel:abc", thinkingLevel: "medium" },
       });
-    });
+    }, METADATA_WAIT_OPTIONS);
   });
 
   test("uses metadata thinking before off but keeps explicit thinking", async () => {
@@ -355,7 +356,7 @@ describe("ThinkingContext", () => {
 
       await waitFor(() => {
         expect(view.getByTestId("thinking").textContent).toBe(testCase.expected);
-      });
+      }, METADATA_WAIT_OPTIONS);
       cleanup();
     }
   });
@@ -473,7 +474,7 @@ describe("ThinkingContext", () => {
       expect(view.getByTestId("thinking").textContent).toBe(
         `${currentThinkingLevel}:${workspaceId}`
       );
-    });
+    }, METADATA_WAIT_OPTIONS);
 
     act(() => {
       window.dispatchEvent(
@@ -487,7 +488,7 @@ describe("ThinkingContext", () => {
         agentId: "exec",
         aiSettings: { model: metadataModel, thinkingLevel: expectedThinkingLevel },
       });
-    });
+    }, METADATA_WAIT_OPTIONS);
   });
 
   test("cycles thinking level via keybind in project-scoped (creation) flow", async () => {
