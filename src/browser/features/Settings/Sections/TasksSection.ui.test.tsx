@@ -191,7 +191,11 @@ describe("TasksSection Exec subagent defaults", () => {
 
   test("omits unchanged subagent defaults when saving an agent-only change", async () => {
     const view = renderTasksSection({
+      agentAiDefaults: {
+        foo: { enabled: true },
+      },
       subagentAiDefaults: {
+        foo: { modelString: "anthropic:foo" },
         explore: { modelString: "openai:subagent-model" },
       },
     });
