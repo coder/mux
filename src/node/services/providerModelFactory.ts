@@ -20,6 +20,7 @@ import {
 import { parseCodexOauthAuth } from "@/node/utils/codexOauthAuth";
 import type { Config, ProviderConfig, ProvidersConfig } from "@/node/config";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
+import type { ServiceTier } from "@/common/config/schemas/providersConfig";
 import type { ExternalSecretResolver } from "@/common/types/secrets";
 import { isOpReference } from "@/common/utils/opRef";
 import { isProviderDisabledInConfig } from "@/common/utils/providers/isProviderDisabled";
@@ -1286,7 +1287,7 @@ export class ProviderModelFactory {
           if (configServiceTier && muxProviderOptions.openai?.serviceTier == null) {
             muxProviderOptions.openai = {
               ...muxProviderOptions.openai,
-              serviceTier: configServiceTier as "auto" | "default" | "flex" | "priority",
+              serviceTier: configServiceTier as ServiceTier,
             };
           }
           if (configWireFormat === "responses" || configWireFormat === "chatCompletions") {

@@ -78,6 +78,7 @@ import type {
   AddCustomOpenAICompatibleProviderInput,
   ProviderConfigInfo,
 } from "@/common/orpc/types";
+import type { ServiceTier } from "@/common/config/schemas/providersConfig";
 
 type MuxGatewayLoginStatus = "idle" | "starting" | "waiting" | "success" | "error";
 type CodexOauthFlowStatus = "idle" | "starting" | "waiting" | "error";
@@ -85,7 +86,7 @@ type CopilotLoginStatus = "idle" | "starting" | "waiting" | "success" | "error";
 
 const OPENAI_SERVICE_TIER_UNSET = "unset";
 
-type OpenAIServiceTier = "auto" | "default" | "flex" | "priority";
+type OpenAIServiceTier = ServiceTier;
 type OpenAIServiceTierSelectValue = typeof OPENAI_SERVICE_TIER_UNSET | OpenAIServiceTier;
 
 function isOpenAIServiceTier(value: string): value is OpenAIServiceTier {

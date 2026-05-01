@@ -5,6 +5,7 @@ import { ProviderModelEntrySchema } from "./providerModelEntry";
 
 export const CacheTtlSchema = z.enum(["5m", "1h"]);
 export const ServiceTierSchema = z.enum(["auto", "default", "flex", "priority"]);
+export type ServiceTier = z.infer<typeof ServiceTierSchema>;
 export const CodexOauthDefaultAuthSchema = z.enum(["oauth", "apiKey"]);
 
 export const BaseProviderConfigSchema = z
