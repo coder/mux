@@ -2,7 +2,7 @@
  * Slash command suggestions generation
  */
 
-import { matchesHyphenatedPrefix } from "@/browser/utils/suggestionMatching";
+import { matchesNameBySegmentPrefix } from "@/browser/utils/suggestionMatching";
 import { MODEL_ABBREVIATIONS } from "@/common/constants/knownModels";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
@@ -31,7 +31,7 @@ function filterAndMapSuggestions<T extends SuggestionDefinition>(
   return definitions
     .filter((definition) => {
       if (filter && !filter(definition)) return false;
-      return matchesHyphenatedPrefix(definition.key, partial);
+      return matchesNameBySegmentPrefix(definition.key, partial);
     })
     .map((definition) => build(definition));
 }

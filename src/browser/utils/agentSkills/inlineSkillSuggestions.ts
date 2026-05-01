@@ -1,4 +1,4 @@
-import { matchesHyphenatedPrefix } from "@/browser/utils/suggestionMatching";
+import { matchesNameBySegmentPrefix } from "@/browser/utils/suggestionMatching";
 import type { SlashSuggestion } from "@/browser/utils/slashCommands/types";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 
@@ -30,8 +30,8 @@ export function shouldRefreshInlineSkillSuggestions(
 }
 
 export function getInlineSkillInsertionTrailingText(after: string): "" | " " {
-  // Characters where inserting a space before them would be wrong: whitespace,
-  // sentence punctuation, and closers that should bind to the skill reference.
+  // At end-of-input, add a space so the cursor is ready for continued typing.
+  // Before whitespace, punctuation, or closers, skip the space to avoid doubling.
   if (after.length === 0) return " ";
   if (INLINE_SKILL_INSERT_EXISTING_SEPARATOR_RE.test(after[0] ?? "")) return "";
   return " ";
@@ -51,7 +51,7 @@ export function getInlineSkillSuggestions(
   context: InlineSkillSuggestionContext
 ): SlashSuggestion[] {
   return context.descriptors
-    .filter((descriptor) => matchesHyphenatedPrefix(descriptor.name, context.partial))
+    .filter((descriptor) => matchesNameBySegmentPrefix(descriptor.name, context.partial))
     .map((descriptor) => ({
       id: `inline-skill:${descriptor.name}`,
       display: `$${descriptor.name}`,
