@@ -990,7 +990,24 @@ export const router = (authToken?: string) => {
                   continue;
                 }
                 if (!(legacyAgentType in normalizedDefaults)) {
-                  delete nextAgentAiDefaults[legacyAgentType];
+                  const existing = nextAgentAiDefaults[legacyAgentType];
+                  if (existing && typeof existing === "object") {
+                    const nonAiDefaults: Record<string, unknown> = {
+                      ...(existing as Record<string, unknown>),
+                    };
+                    delete nonAiDefaults.modelString;
+                    delete nonAiDefaults.thinkingLevel;
+
+                    // Preserve non-AI fields (enabled, advisorEnabled) when the legacy mirrored AI
+                    // entry is dropped, so customer agent enable/advisor toggles do not silently reset.
+                    if (Object.keys(nonAiDefaults).length > 0) {
+                      nextAgentAiDefaults[legacyAgentType] = nonAiDefaults;
+                    } else {
+                      delete nextAgentAiDefaults[legacyAgentType];
+                    }
+                  } else {
+                    delete nextAgentAiDefaults[legacyAgentType];
+                  }
                 }
               }
 
