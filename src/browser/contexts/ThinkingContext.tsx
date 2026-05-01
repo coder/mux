@@ -21,8 +21,10 @@ import { enforceThinkingPolicy, getThinkingPolicyForModel } from "@/common/utils
 import { useAPI } from "@/browser/contexts/API";
 import {
   clearPendingWorkspaceAiSettings,
+  getWorkspaceAiSettingsFromMetadata,
   markPendingWorkspaceAiSettings,
 } from "@/browser/utils/workspaceAiSettingsSync";
+import { useOptionalWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keybinds";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
@@ -50,21 +52,29 @@ function getCanonicalModelForScope(scopeId: string, fallbackModel: string): stri
 
 export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
   const { api } = useAPI();
+  const workspaceContext = useOptionalWorkspaceContext();
   const defaultModel = getDefaultModel();
   const scopeId = getScopeId(props.workspaceId, props.projectPath);
   const thinkingKey = getThinkingLevelKey(scopeId);
-
-  // Workspace-scoped thinking. (No longer per-model.)
-  const [thinkingLevel, setThinkingLevelInternal] = usePersistedState<ThinkingLevel>(
-    thinkingKey,
-    THINKING_LEVEL_OFF,
-    { listener: true }
+  const metadataAgentId = readPersistedState<string>(
+    getAgentIdKey(scopeId),
+    WORKSPACE_DEFAULTS.agentId
   );
+  const metadataSettings = getWorkspaceAiSettingsFromMetadata(
+    props.workspaceId ? workspaceContext?.workspaceMetadata.get(props.workspaceId) : undefined,
+    metadataAgentId
+  );
+
+  // Workspace-scoped thinking. Null means no explicit user choice has been persisted yet.
+  const [persistedThinkingLevel, setThinkingLevelInternal] =
+    usePersistedState<ThinkingLevel | null>(thinkingKey, null, { listener: true });
+  const thinkingLevel =
+    persistedThinkingLevel ?? metadataSettings.thinkingLevel ?? THINKING_LEVEL_OFF;
 
   // One-time migration: if the new workspace-scoped key is missing, seed from the legacy per-model key.
   useEffect(() => {
-    const existing = readPersistedState<ThinkingLevel | undefined>(thinkingKey, undefined);
-    if (existing !== undefined) {
+    const existing = readPersistedState<ThinkingLevel | null | undefined>(thinkingKey, undefined);
+    if (existing != null) {
       return;
     }
 

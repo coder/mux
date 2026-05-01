@@ -1,8 +1,21 @@
 import type { ThinkingLevel } from "@/common/types/thinking";
+import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 
 interface WorkspaceAiSettingsSnapshot {
   model: string;
   thinkingLevel: ThinkingLevel;
+}
+
+export function getWorkspaceAiSettingsFromMetadata(
+  metadata: FrontendWorkspaceMetadata | undefined,
+  agentId: string | undefined
+): { model: string | undefined; thinkingLevel: ThinkingLevel | undefined } {
+  const settings =
+    (agentId ? metadata?.aiSettingsByAgent?.[agentId] : undefined) ?? metadata?.aiSettings;
+  return {
+    model: settings?.model,
+    thinkingLevel: settings?.thinkingLevel,
+  };
 }
 
 const pendingAiSettingsByWorkspace = new Map<string, WorkspaceAiSettingsSnapshot>();

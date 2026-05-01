@@ -11,6 +11,8 @@ import type { SendMessageOptions } from "@/common/orpc/types";
 import { useProviderOptions } from "./useProviderOptions";
 import { useExperimentOverrideValue } from "./useExperiments";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
+import { getWorkspaceAiSettingsFromMetadata } from "@/browser/utils/workspaceAiSettingsSync";
 
 /**
  * Extended send options that includes both the canonical model used for backend routing
@@ -28,6 +30,7 @@ export interface SendMessageOptionsWithBase extends SendMessageOptions {
 export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWithBase {
   const [thinkingLevel] = useThinkingLevel();
   const { agentId, disableWorkspaceAgents } = useAgent();
+  const { workspaceMetadata } = useWorkspaceContext();
   const { options: providerOptions } = useProviderOptions();
 
   // Subscribe to the global default model preference so backend-seeded values apply
@@ -39,7 +42,7 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWi
   );
   const defaultModel = normalizeModelPreference(defaultModelPref, WORKSPACE_DEFAULTS.model);
 
-  // Workspace-scoped model preference. If unset, fall back to the global default model.
+  // Workspace-scoped model preference. If unset, fall back to metadata, then global default.
   // Note: we intentionally *don't* pass defaultModel as the usePersistedState initialValue;
   // initialValue is sticky and would lock in the fallback before startup seeding.
   const [preferredModel] = usePersistedState<string | null>(getModelKey(workspaceId), null, {
@@ -59,8 +62,15 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWi
     EXPERIMENT_IDS.EXEC_SUBAGENT_HARD_RESTART
   );
 
-  // Compute base model (canonical format) for UI components
-  const baseModel = normalizeModelPreference(preferredModel, defaultModel);
+  // Prefer metadata over the global default until workspace localStorage seeding catches up.
+  const metadataSettings = getWorkspaceAiSettingsFromMetadata(
+    workspaceMetadata.get(workspaceId),
+    agentId
+  );
+  const baseModel = normalizeModelPreference(
+    preferredModel,
+    metadataSettings.model ?? defaultModel
+  );
 
   const options = buildSendMessageOptions({
     agentId,

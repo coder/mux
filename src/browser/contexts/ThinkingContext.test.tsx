@@ -4,13 +4,20 @@ import { act, cleanup, render, waitFor } from "@testing-library/react";
 import React from "react";
 import { ThinkingProvider } from "./ThinkingContext";
 import { APIProvider, type APIClient } from "@/browser/contexts/API";
+import { AgentProvider, type AgentContextValue } from "@/browser/contexts/AgentContext";
+import { ProjectProvider } from "@/browser/contexts/ProjectContext";
+import { ProviderOptionsProvider } from "@/browser/contexts/ProviderOptionsContext";
+import { RouterProvider } from "@/browser/contexts/RouterContext";
+import { useWorkspaceContext, WorkspaceProvider } from "@/browser/contexts/WorkspaceContext";
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
+import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import {
   getModelKey,
   getProjectScopeId,
   getThinkingLevelByModelKey,
   getThinkingLevelKey,
 } from "@/common/constants/storage";
+import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import type { RecursivePartial } from "@/browser/testUtils";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 
@@ -43,8 +50,131 @@ const TestComponent: React.FC<TestProps> = (props) => {
   );
 };
 
+const agentContextValue: AgentContextValue = {
+  agentId: "exec",
+  setAgentId: () => undefined,
+  currentAgent: undefined,
+  agents: [],
+  loaded: true,
+  loadFailed: false,
+  refresh: () => Promise.resolve(),
+  refreshing: false,
+  disableWorkspaceAgents: false,
+  setDisableWorkspaceAgents: () => undefined,
+};
+
+const SendOptionsComponent: React.FC<{ workspaceId: string }> = (props) => {
+  const options = useSendMessageOptions(props.workspaceId);
+  return <div data-testid="base-model">{options.baseModel}</div>;
+};
+
 function renderWithAPI(children: React.ReactNode) {
   return render(<APIProvider client={currentClientMock as APIClient}>{children}</APIProvider>);
+}
+
+function createWorkspaceMetadata(
+  overrides: Partial<FrontendWorkspaceMetadata> & Pick<FrontendWorkspaceMetadata, "id">
+): FrontendWorkspaceMetadata {
+  return {
+    projectPath: "/tmp/project",
+    projectName: "project",
+    name: "main",
+    namedWorkspacePath: "/tmp/project/main",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    runtimeConfig: { type: "local", srcBaseDir: "/tmp/.mux/src" },
+    ...overrides,
+  };
+}
+
+function createEmptyAsyncIterable<T>(): AsyncIterable<T> {
+  return {
+    async *[Symbol.asyncIterator](): AsyncIterator<T> {
+      await Promise.resolve();
+      if (Date.now() < 0) yield undefined as T;
+    },
+  };
+}
+
+function WorkspaceMetadataGate(props: {
+  workspaceId: string;
+  modelOverride?: string | null;
+  thinkingOverride?: "off" | null;
+  children: React.ReactNode;
+}) {
+  const { workspaceMetadata } = useWorkspaceContext();
+  if (!workspaceMetadata.has(props.workspaceId)) {
+    return null;
+  }
+
+  if (props.modelOverride !== undefined) {
+    if (props.modelOverride == null) {
+      window.localStorage.removeItem(getModelKey(props.workspaceId));
+    } else {
+      updatePersistedState(getModelKey(props.workspaceId), props.modelOverride);
+    }
+  }
+
+  if (props.thinkingOverride == null) {
+    window.localStorage.removeItem(getThinkingLevelKey(props.workspaceId));
+  } else {
+    updatePersistedState(getThinkingLevelKey(props.workspaceId), props.thinkingOverride);
+  }
+
+  return <>{props.children}</>;
+}
+
+function createWorkspaceClient(metadata: FrontendWorkspaceMetadata): APIClient {
+  return {
+    workspace: {
+      list: () => Promise.resolve([metadata]),
+      onMetadata: () => Promise.resolve(createEmptyAsyncIterable()),
+      onChat: () => Promise.resolve(createEmptyAsyncIterable()),
+      getSessionUsage: () => Promise.resolve(undefined),
+      updateAgentAISettings: mock(() =>
+        Promise.resolve({ success: true as const, data: undefined })
+      ),
+      activity: {
+        list: () => Promise.resolve({}),
+        subscribe: () => Promise.resolve(createEmptyAsyncIterable()),
+      },
+      truncateHistory: () => Promise.resolve({ success: true as const, data: undefined }),
+      interruptStream: () => Promise.resolve({ success: true as const, data: undefined }),
+    },
+    projects: {
+      list: () => Promise.resolve([]),
+      listBranches: () => Promise.resolve({ branches: ["main"], recommendedTrunk: "main" }),
+      secrets: {
+        get: () => Promise.resolve([]),
+      },
+    },
+  } as unknown as APIClient;
+}
+
+function renderWithWorkspaceMetadata(props: {
+  workspaceId: string;
+  metadata: FrontendWorkspaceMetadata;
+  modelOverride?: string | null;
+  thinkingOverride?: "off" | null;
+  children: React.ReactNode;
+}) {
+  const client = createWorkspaceClient(props.metadata);
+  return render(
+    <APIProvider client={client}>
+      <RouterProvider>
+        <ProjectProvider>
+          <WorkspaceProvider>
+            <WorkspaceMetadataGate
+              workspaceId={props.workspaceId}
+              modelOverride={props.modelOverride}
+              thinkingOverride={props.thinkingOverride}
+            >
+              {props.children}
+            </WorkspaceMetadataGate>
+          </WorkspaceProvider>
+        </ProjectProvider>
+      </RouterProvider>
+    </APIProvider>
+  );
 }
 
 describe("ThinkingContext", () => {
@@ -68,6 +198,80 @@ describe("ThinkingContext", () => {
   afterEach(() => {
     cleanup();
     currentClientMock = {};
+  });
+
+  test("uses metadata model before global default but keeps explicit model", async () => {
+    const cases = [
+      { workspaceId: "ws-model-metadata", override: null, expected: "openai:gpt-5.5" },
+      {
+        workspaceId: "ws-model-explicit",
+        override: "anthropic:explicit-model",
+        expected: "anthropic:explicit-model",
+      },
+    ];
+
+    for (const testCase of cases) {
+      const metadata = createWorkspaceMetadata({
+        id: testCase.workspaceId,
+        aiSettings: { model: "openai:gpt-5.5", thinkingLevel: "high" },
+      });
+      const view = renderWithWorkspaceMetadata({
+        workspaceId: testCase.workspaceId,
+        metadata,
+        modelOverride: testCase.override,
+        children: (
+          <ProviderOptionsProvider>
+            <AgentProvider value={agentContextValue}>
+              <ThinkingProvider workspaceId={testCase.workspaceId}>
+                <SendOptionsComponent workspaceId={testCase.workspaceId} />
+              </ThinkingProvider>
+            </AgentProvider>
+          </ProviderOptionsProvider>
+        ),
+      });
+
+      await waitFor(() => {
+        expect(view.getByTestId("base-model").textContent).toBe(testCase.expected);
+      });
+      cleanup();
+    }
+  });
+
+  test("uses metadata thinking before off but keeps explicit thinking", async () => {
+    const cases = [
+      {
+        workspaceId: "ws-thinking-metadata",
+        override: null,
+        expected: "high:ws-thinking-metadata",
+      },
+      {
+        workspaceId: "ws-thinking-explicit",
+        override: "off" as const,
+        expected: "off:ws-thinking-explicit",
+      },
+    ];
+
+    for (const testCase of cases) {
+      const metadata = createWorkspaceMetadata({
+        id: testCase.workspaceId,
+        aiSettings: { model: "openai:gpt-5.5", thinkingLevel: "high" },
+      });
+      const view = renderWithWorkspaceMetadata({
+        workspaceId: testCase.workspaceId,
+        metadata,
+        thinkingOverride: testCase.override,
+        children: (
+          <ThinkingProvider workspaceId={testCase.workspaceId}>
+            <TestComponent workspaceId={testCase.workspaceId} />
+          </ThinkingProvider>
+        ),
+      });
+
+      await waitFor(() => {
+        expect(view.getByTestId("thinking").textContent).toBe(testCase.expected);
+      });
+      cleanup();
+    }
   });
 
   test("switching models does not remount children", async () => {
