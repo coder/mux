@@ -27,8 +27,10 @@ import type {
 } from "@/common/config/schemas";
 import {
   DEFAULT_TASK_SETTINGS,
+  deriveLegacySubagentAiDefaultsFromAgentDefaults,
   normalizeSubagentAiDefaults,
   normalizeTaskSettings,
+  shouldMirrorAgentDefaultToLegacySubagent,
 } from "@/common/types/tasks";
 import { isLayoutPresetsConfigEmpty, normalizeLayoutPresetsConfig } from "@/common/types/uiLayouts";
 import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
@@ -301,14 +303,7 @@ function normalizeAiDefaultsModelStrings<T extends Record<string, { modelString?
 }
 
 type SubagentAiDefaultsConfig = NonNullable<ProjectsConfig["subagentAiDefaults"]>;
-type SubagentAiDefaultsConfigEntry = SubagentAiDefaultsConfig[string];
 type AgentAiDefaultsConfig = NonNullable<ProjectsConfig["agentAiDefaults"]>;
-
-const AGENT_DEFAULT_IDS_EXCLUDED_FROM_LEGACY_SUBAGENTS = new Set(["plan", "exec", "compact"]);
-
-function shouldMirrorAgentDefaultToLegacySubagent(agentId: string): boolean {
-  return !AGENT_DEFAULT_IDS_EXCLUDED_FROM_LEGACY_SUBAGENTS.has(agentId);
-}
 
 function normalizeConfigMigrations(value: unknown): AppConfigMigrations {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -379,23 +374,6 @@ function removeMirroredExecSubagentDefaults(params: {
   }
 
   return { subagentAiDefaults, modified: true };
-}
-
-function deriveLegacySubagentAiDefaultsFromAgentDefaults(params: {
-  agentAiDefaults: Record<string, unknown>;
-  preservedExec?: SubagentAiDefaultsConfigEntry;
-}): SubagentAiDefaultsConfig {
-  const legacySubagentDefaultsRaw: Record<string, unknown> = {};
-  for (const [agentId, entry] of Object.entries(params.agentAiDefaults)) {
-    if (!shouldMirrorAgentDefaultToLegacySubagent(agentId)) continue;
-    legacySubagentDefaultsRaw[agentId] = entry;
-  }
-
-  const legacySubagentDefaults = normalizeSubagentAiDefaults(legacySubagentDefaultsRaw);
-  if (params.preservedExec) {
-    legacySubagentDefaults.exec = params.preservedExec;
-  }
-  return legacySubagentDefaults;
 }
 
 function parseOptionalPort(value: unknown): number | undefined {

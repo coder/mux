@@ -30,6 +30,16 @@ export const DEFAULT_TASK_SETTINGS: TaskSettings = {
   planSubagentDefaultsToOrchestrator: false,
 };
 
+export const AGENT_DEFAULT_IDS_EXCLUDED_FROM_LEGACY_SUBAGENTS: ReadonlySet<string> = new Set([
+  "plan",
+  "exec",
+  "compact",
+]);
+
+export function shouldMirrorAgentDefaultToLegacySubagent(agentId: string): boolean {
+  return !AGENT_DEFAULT_IDS_EXCLUDED_FROM_LEGACY_SUBAGENTS.has(agentId);
+}
+
 export function normalizeSubagentAiDefaults(raw: unknown): SubagentAiDefaults {
   const record = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : ({} as const);
 
@@ -60,6 +70,23 @@ export function normalizeSubagentAiDefaults(raw: unknown): SubagentAiDefaults {
   }
 
   return result;
+}
+
+export function deriveLegacySubagentAiDefaultsFromAgentDefaults(params: {
+  agentAiDefaults: Record<string, unknown>;
+  preservedExec?: SubagentAiDefaultsEntry;
+}): SubagentAiDefaults {
+  const legacySubagentDefaultsRaw: Record<string, unknown> = {};
+  for (const [agentId, entry] of Object.entries(params.agentAiDefaults)) {
+    if (!shouldMirrorAgentDefaultToLegacySubagent(agentId)) continue;
+    legacySubagentDefaultsRaw[agentId] = entry;
+  }
+
+  const legacySubagentDefaults = normalizeSubagentAiDefaults(legacySubagentDefaultsRaw);
+  if (params.preservedExec) {
+    legacySubagentDefaults.exec = params.preservedExec;
+  }
+  return legacySubagentDefaults;
 }
 
 function clampInt(value: unknown, fallback: number, min: number, max: number): number {

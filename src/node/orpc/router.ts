@@ -49,6 +49,7 @@ import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { isValidModelFormat, normalizeSelectedModel } from "@/common/utils/ai/models";
 import {
   DEFAULT_TASK_SETTINGS,
+  deriveLegacySubagentAiDefaultsFromAgentDefaults,
   normalizeSubagentAiDefaults,
   normalizeTaskSettings,
 } from "@/common/types/tasks";
@@ -99,32 +100,6 @@ const RAW_QUERY_USER_ERROR_PATTERNS = [
   /query contains disallowed sql/i,
   /string literals cannot be used as table sources/i,
 ] as const;
-
-const AGENT_DEFAULT_IDS_EXCLUDED_FROM_LEGACY_SUBAGENTS = new Set(["plan", "exec", "compact"]);
-
-type NormalizedSubagentAiDefaults = ReturnType<typeof normalizeSubagentAiDefaults>;
-type NormalizedSubagentAiDefaultsEntry = NormalizedSubagentAiDefaults[string];
-
-function shouldMirrorAgentDefaultToLegacySubagent(agentId: string): boolean {
-  return !AGENT_DEFAULT_IDS_EXCLUDED_FROM_LEGACY_SUBAGENTS.has(agentId);
-}
-
-function deriveLegacySubagentAiDefaultsFromAgentDefaults(params: {
-  agentAiDefaults: Record<string, unknown>;
-  preservedExec?: NormalizedSubagentAiDefaultsEntry;
-}): NormalizedSubagentAiDefaults {
-  const legacySubagentDefaultsRaw: Record<string, unknown> = {};
-  for (const [agentId, entry] of Object.entries(params.agentAiDefaults)) {
-    if (!shouldMirrorAgentDefaultToLegacySubagent(agentId)) continue;
-    legacySubagentDefaultsRaw[agentId] = entry;
-  }
-
-  const legacySubagentDefaults = normalizeSubagentAiDefaults(legacySubagentDefaultsRaw);
-  if (params.preservedExec) {
-    legacySubagentDefaults.exec = params.preservedExec;
-  }
-  return legacySubagentDefaults;
-}
 
 function shouldExposeRawQueryError(error: unknown): boolean {
   const message = getErrorMessage(error);
