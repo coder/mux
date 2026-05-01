@@ -50,6 +50,16 @@ function getCanonicalModelForScope(scopeId: string, fallbackModel: string): stri
   return normalizeToCanonical(rawModel || fallbackModel);
 }
 
+function getModelForThinkingUpdate(
+  scopeId: string,
+  metadataModel: string | undefined,
+  fallbackModel: string
+): string {
+  const persistedModel = readPersistedState<string | undefined>(getModelKey(scopeId), undefined);
+  // Prefer localStorage, then metadata, then the default model to avoid clobbering startup metadata.
+  return normalizeToCanonical(persistedModel ?? metadataModel ?? fallbackModel);
+}
+
 export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
   const { api } = useAPI();
   const workspaceContext = useOptionalWorkspaceContext();
@@ -90,7 +100,7 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
 
   const setThinkingLevel = useCallback(
     (level: ThinkingLevel) => {
-      const model = getCanonicalModelForScope(scopeId, defaultModel);
+      const model = getModelForThinkingUpdate(scopeId, metadataSettings.model, defaultModel);
 
       setThinkingLevelInternal(level);
 
@@ -150,7 +160,14 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
           // Best-effort only. If offline or backend is old, the next sendMessage will persist.
         });
     },
-    [api, defaultModel, props.workspaceId, scopeId, setThinkingLevelInternal]
+    [
+      api,
+      defaultModel,
+      metadataSettings.model,
+      props.workspaceId,
+      scopeId,
+      setThinkingLevelInternal,
+    ]
   );
 
   // Global keybind: cycle thinking level (Ctrl/Cmd+Shift+T).

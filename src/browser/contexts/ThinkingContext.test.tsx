@@ -46,6 +46,13 @@ interface TestProps {
   workspaceId: string;
 }
 
+type WorkspaceUpdateAgentAISettingsArgs = Parameters<
+  APIClient["workspace"]["updateAgentAISettings"]
+>[0];
+type WorkspaceUpdateAgentAISettingsResult = Awaited<
+  ReturnType<APIClient["workspace"]["updateAgentAISettings"]>
+>;
+
 const TestComponent: React.FC<TestProps> = (props) => {
   const [thinkingLevel] = useThinkingLevel();
   return (
@@ -66,6 +73,15 @@ const agentContextValue: AgentContextValue = {
   refreshing: false,
   disableWorkspaceAgents: false,
   setDisableWorkspaceAgents: () => undefined,
+};
+
+const ThinkingSetterComponent: React.FC = () => {
+  const [, setThinkingLevel] = useThinkingLevel();
+  return (
+    <button data-testid="set-thinking-medium" onClick={() => setThinkingLevel("medium")}>
+      Set thinking
+    </button>
+  );
 };
 
 const SendOptionsComponent: React.FC<{ workspaceId: string }> = (props) => {
@@ -157,6 +173,47 @@ describe("ThinkingContext", () => {
       });
       cleanup();
     }
+  });
+
+  test("setting thinking uses metadata model before global default", async () => {
+    const workspaceId = "ws-set-thinking-metadata-model";
+    const updateAgentAISettings = mock<
+      (args: WorkspaceUpdateAgentAISettingsArgs) => Promise<WorkspaceUpdateAgentAISettingsResult>
+    >(() =>
+      Promise.resolve({
+        success: true as const,
+        data: undefined,
+      })
+    );
+    currentClientMock = {
+      workspace: { updateAgentAISettings },
+    };
+
+    setWorkspaceMetadata(
+      createWorkspaceMetadata({
+        id: workspaceId,
+        aiSettings: { model: "metadataModel:abc", thinkingLevel: "high" },
+      })
+    );
+    window.localStorage.removeItem(getModelKey(workspaceId));
+
+    const view = renderWithAPI(
+      <ThinkingProvider workspaceId={workspaceId}>
+        <ThinkingSetterComponent />
+      </ThinkingProvider>
+    );
+
+    act(() => {
+      view.getByTestId("set-thinking-medium").click();
+    });
+
+    await waitFor(() => {
+      expect(updateAgentAISettings).toHaveBeenCalledWith({
+        workspaceId,
+        agentId: "exec",
+        aiSettings: { model: "metadataModel:abc", thinkingLevel: "medium" },
+      });
+    });
   });
 
   test("uses metadata thinking before off but keeps explicit thinking", async () => {
