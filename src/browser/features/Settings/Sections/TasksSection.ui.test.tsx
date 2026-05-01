@@ -3,7 +3,10 @@ import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { installDom } from "../../../../../tests/ui/dom";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
-import type { SubagentAiDefaults } from "@/common/types/tasks";
+import {
+  shouldMirrorAgentDefaultToLegacySubagent,
+  type SubagentAiDefaults,
+} from "@/common/types/tasks";
 import { getThinkingOptionLabel } from "@/common/types/thinking";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 
@@ -189,14 +192,49 @@ describe("TasksSection Exec subagent defaults", () => {
     expect(payload.subagentAiDefaults?.explore).toBeUndefined();
   });
 
+  test("clearing mirrored agent model and thinking drops stale legacy subagent entry", async () => {
+    const customAgentId = "foo";
+    expect(shouldMirrorAgentDefaultToLegacySubagent(customAgentId)).toBe(true);
+    const view = renderTasksSection({
+      agentAiDefaults: {
+        [customAgentId]: {
+          enabled: true,
+          advisorEnabled: true,
+          modelString: "anthropic:foo",
+          thinkingLevel: "medium",
+        },
+      },
+      subagentAiDefaults: {
+        [customAgentId]: { modelString: "anthropic:foo", thinkingLevel: "medium" },
+      },
+    });
+
+    await view.findByText(customAgentId);
+    const card = getAgentCardByName(view, customAgentId);
+    fireEvent.change(within(card).getByLabelText("Model"), {
+      target: { value: "" },
+    });
+    fireEvent.change(within(card).getByLabelText("Reasoning"), {
+      target: { value: "__inherit__" },
+    });
+
+    await waitFor(() => expect(view.saveConfig).toHaveBeenCalled());
+    const payload = getLatestSavePayload(view.saveConfig);
+
+    expect(payload.agentAiDefaults[customAgentId]).toEqual({
+      enabled: true,
+      advisorEnabled: true,
+    });
+    expect(payload.subagentAiDefaults).toEqual({});
+  });
+
   test("omits unchanged subagent defaults when saving an agent-only change", async () => {
     const view = renderTasksSection({
       agentAiDefaults: {
         foo: { enabled: true },
       },
       subagentAiDefaults: {
-        foo: { modelString: "anthropic:foo" },
-        explore: { modelString: "openai:subagent-model" },
+        exec: { modelString: "openai:subagent-model" },
       },
     });
 

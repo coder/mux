@@ -141,9 +141,10 @@ function getSubagentAiDefaultsForSave(
     }
 
     if (entry.modelString === undefined && entry.thinkingLevel === undefined) {
-      if (!(agentId in subagentAiDefaults)) {
-        delete next[agentId];
-      }
+      // Legacy mirrored subagent entries are derived from agent defaults, not
+      // user-managed sparse overrides, so clearing AI fields must remove stale
+      // mirrors before router reconciliation can restore them.
+      delete next[agentId];
       continue;
     }
 
