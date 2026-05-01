@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { installDom } from "../../../../../tests/ui/dom";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import type { SubagentAiDefaults } from "@/common/types/tasks";
+import { getThinkingOptionLabel } from "@/common/types/thinking";
+import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 
 let apiMock: {
   config: {
@@ -27,7 +29,13 @@ void mock.module("@/browser/hooks/useExperiments", () => ({
 void mock.module("@/browser/hooks/useModelsFromSettings", () => ({
   getDefaultModel: () => "anthropic:workspace-default",
   useModelsFromSettings: () => ({
-    models: ["anthropic:foo", "anthropic:ui-exec", "openai:subagent-model", "xai:grok-code-fast-1"],
+    models: [
+      "anthropic:foo",
+      "anthropic:ui-exec",
+      "openai:gpt-5-pro",
+      "openai:subagent-model",
+      "xai:grok-code-fast-1",
+    ],
     hiddenModelsForSelector: [],
   }),
 }));
@@ -196,6 +204,29 @@ describe("TasksSection Exec subagent defaults", () => {
     expect(within(row).queryByRole("button", { name: "Inherit from UI Exec" })).toBeNull();
   });
 
+  test("clamps inherited Exec subagent thinking hint to the effective model policy", async () => {
+    const model = "openai:gpt-5-pro";
+    const expectedLabel = getThinkingOptionLabel(enforceThinkingPolicy(model, "xhigh"), model);
+    const unclampedLabel = getThinkingOptionLabel("xhigh", model);
+
+    const view = renderTasksSection({
+      agentAiDefaults: {
+        exec: { modelString: "anthropic:ui-exec", thinkingLevel: "xhigh" },
+      },
+      subagentAiDefaults: {
+        exec: { modelString: model },
+      },
+    });
+
+    const row = await view.findByRole("group", { name: "Exec defaults" });
+
+    expect(within(row).getByText(`Inherits from UI Exec: ${expectedLabel}`)).toBeTruthy();
+    if (unclampedLabel !== expectedLabel) {
+      expect(within(row).queryByText(`Inherits from UI Exec: ${unclampedLabel}`)).toBeNull();
+    }
+    expect(within(row).queryByText("Inherits from UI Exec: Inherit")).toBeNull();
+  });
+
   test("setting only the Exec subagent model writes only the sparse subagent model", async () => {
     const view = renderTasksSection({
       agentAiDefaults: {
@@ -220,6 +251,32 @@ describe("TasksSection Exec subagent defaults", () => {
       thinkingLevel: "medium",
     });
     expect(payload.subagentAiDefaults.exec?.thinkingLevel).toBeUndefined();
+  });
+
+  test("setting only the Exec subagent thinking writes only the sparse subagent thinking", async () => {
+    const view = renderTasksSection({
+      agentAiDefaults: {
+        exec: { modelString: "anthropic:ui-exec", thinkingLevel: "medium" },
+      },
+      subagentAiDefaults: {},
+    });
+    const row = await view.findByRole("group", { name: "Exec defaults" });
+
+    fireEvent.change(within(row).getByLabelText("Reasoning"), {
+      target: { value: "high" },
+    });
+
+    await waitFor(() => expect(view.saveConfig).toHaveBeenCalled());
+    const payload = getLatestSavePayload(view.saveConfig);
+
+    expect(payload.subagentAiDefaults).toEqual({
+      exec: { thinkingLevel: "high" },
+    });
+    expect(payload.agentAiDefaults.exec).toEqual({
+      modelString: "anthropic:ui-exec",
+      thinkingLevel: "medium",
+    });
+    expect("modelString" in (payload.subagentAiDefaults.exec ?? {})).toBe(false);
   });
 
   test("resetting one Exec subagent field removes only that field", async () => {

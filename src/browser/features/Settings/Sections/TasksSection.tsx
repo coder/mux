@@ -43,7 +43,11 @@ import {
   type SubagentAiDefaultsEntry,
   type TaskSettings,
 } from "@/common/types/tasks";
-import { getThinkingOptionLabel, type ThinkingLevel } from "@/common/types/thinking";
+import {
+  getThinkingOptionLabel,
+  THINKING_LEVEL_OFF,
+  type ThinkingLevel,
+} from "@/common/types/thinking";
 import { getErrorMessage } from "@/common/utils/errors";
 import { enforceThinkingPolicy, getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
 import { normalizeAgentId } from "@/common/utils/agentIds";
@@ -1039,9 +1043,9 @@ export function TasksSection() {
     const uiExecEntry = agentAiDefaults.exec;
     const inheritedExecModel = uiExecEntry?.modelString ?? inheritedEffectiveModel;
     const effectiveModel = modelValue !== INHERIT ? modelValue : inheritedExecModel;
-    const inheritedThinkingLabel = uiExecEntry?.thinkingLevel
-      ? getThinkingOptionLabel(uiExecEntry.thinkingLevel, effectiveModel)
-      : "Inherit";
+    const rawInheritedThinking = uiExecEntry?.thinkingLevel ?? THINKING_LEVEL_OFF;
+    const clampedInheritedThinking = enforceThinkingPolicy(effectiveModel, rawInheritedThinking);
+    const inheritedThinkingLabel = getThinkingOptionLabel(clampedInheritedThinking, effectiveModel);
 
     return (
       <div
