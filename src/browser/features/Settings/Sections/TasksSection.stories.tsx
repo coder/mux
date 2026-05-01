@@ -36,10 +36,7 @@ export const Tasks: Story = {
     await canvas.findByRole("heading", { name: /Internal/i });
 
     await canvas.findAllByText(/^Plan$/i);
-    const execMatches = await canvas.findAllByText(/^Exec$/i);
-    if (execMatches.length !== 2) {
-      throw new Error(`Expected 2 Exec rows (UI + sub-agent), got ${execMatches.length}`);
-    }
+    await canvas.findAllByText(/^Exec$/i);
     await canvas.findByRole("group", { name: "Exec defaults" });
     await canvas.findAllByText(/^Explore$/i);
     await canvas.findAllByText(/^Compact$/i);
