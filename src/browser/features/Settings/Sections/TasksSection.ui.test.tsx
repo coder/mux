@@ -27,7 +27,7 @@ void mock.module("@/browser/hooks/useExperiments", () => ({
 void mock.module("@/browser/hooks/useModelsFromSettings", () => ({
   getDefaultModel: () => "anthropic:workspace-default",
   useModelsFromSettings: () => ({
-    models: ["anthropic:ui-exec", "openai:subagent-model", "xai:grok-code-fast-1"],
+    models: ["anthropic:foo", "anthropic:ui-exec", "openai:subagent-model", "xai:grok-code-fast-1"],
     hiddenModelsForSelector: [],
   }),
 }));
@@ -114,6 +114,18 @@ function getExecSubagentRow(view: ReturnType<typeof renderTasksSection>): HTMLEl
   return view.getByRole("group", { name: "Exec defaults" });
 }
 
+function getAgentCardByName(
+  view: ReturnType<typeof renderTasksSection>,
+  name: string
+): HTMLElement {
+  const title = view.getByText(name);
+  const card = title.closest(".rounded-md");
+  if (!(card instanceof HTMLElement)) {
+    throw new Error(`Could not find ${name} agent card`);
+  }
+  return card;
+}
+
 function getLatestSavePayload(saveConfig: ReturnType<typeof mock>) {
   const calls = saveConfig.mock.calls;
   expect(calls.length).toBeGreaterThan(0);
@@ -145,6 +157,28 @@ describe("TasksSection Exec subagent defaults", () => {
     expect(within(getExecSubagentRow(view)).getByText("Exec")).toBeTruthy();
     expect(view.getByText("UI agents")).toBeTruthy();
     expect(view.getByText("Sub-agents")).toBeTruthy();
+  });
+
+  test("resetting a mirrored subagent model removes the stale mirrored entry", async () => {
+    const view = renderTasksSection({
+      agentAiDefaults: {
+        explore: { modelString: "anthropic:foo" },
+      },
+      subagentAiDefaults: {
+        explore: { modelString: "anthropic:foo" },
+      },
+    });
+
+    await view.findByText("Explore");
+    fireEvent.click(
+      within(getAgentCardByName(view, "Explore")).getByRole("button", { name: "Reset" })
+    );
+
+    await waitFor(() => expect(view.saveConfig).toHaveBeenCalled());
+    const payload = getLatestSavePayload(view.saveConfig);
+
+    expect(payload.agentAiDefaults.explore).toBeUndefined();
+    expect(payload.subagentAiDefaults.explore).toBeUndefined();
   });
 
   test("unset Exec subagent defaults inherit from UI Exec", async () => {

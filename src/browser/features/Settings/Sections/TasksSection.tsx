@@ -36,6 +36,7 @@ import {
   TASK_SETTINGS_LIMITS,
   isPlanSubagentExecutorRouting,
   normalizeSubagentAiDefaults,
+  shouldMirrorAgentDefaultToLegacySubagent,
   normalizeTaskSettings,
   type PlanSubagentExecutorRouting,
   type SubagentAiDefaults,
@@ -125,12 +126,13 @@ function getSubagentAiDefaultsForSave(
   const agentIds = new Set([...Object.keys(agentAiDefaults), ...Object.keys(subagentAiDefaults)]);
 
   for (const agentId of agentIds) {
-    if (agentId === "plan" || agentId === "exec" || agentId === "compact") {
+    if (!shouldMirrorAgentDefaultToLegacySubagent(agentId)) {
       continue;
     }
 
     const entry = agentAiDefaults[agentId];
     if (!entry) {
+      delete next[agentId];
       continue;
     }
 
