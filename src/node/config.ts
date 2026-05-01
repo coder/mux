@@ -316,7 +316,7 @@ function normalizeConfigMigrations(value: unknown): AppConfigMigrations {
   };
 }
 
-function legacySubagentDefaultsForAgentFallback(
+function extractAgentDefaultsFromLegacySubagents(
   legacySubagentAiDefaults: SubagentAiDefaultsConfig
 ): Record<string, unknown> {
   const fallbackDefaults: Record<string, unknown> = {};
@@ -563,6 +563,7 @@ export class Config {
         const data = fs.readFileSync(this.configFile, "utf-8");
         const parsed = JSON.parse(data) as Partial<AppConfigOnDisk> & Record<string, unknown>;
         let configModified = false;
+        let shouldInvalidateSessionUsageCaches = false;
 
         const normalizeNestedModelStrings = (value: unknown): boolean => {
           if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -637,6 +638,7 @@ export class Config {
 
               if (routeOverridesModified) {
                 parsed.routeOverrides = mergedRouteOverrides;
+                shouldInvalidateSessionUsageCaches = true;
               }
             }
           }
@@ -672,6 +674,7 @@ export class Config {
           if (normalized !== parsed.defaultModel) {
             parsed.defaultModel = normalized;
             configModified = true;
+            shouldInvalidateSessionUsageCaches = true;
           }
         }
 
@@ -689,14 +692,17 @@ export class Config {
           ) {
             parsed.hiddenModels = normalizedHiddenModels;
             configModified = true;
+            shouldInvalidateSessionUsageCaches = true;
           }
         }
 
         if (normalizeNestedModelStrings(parsed.agentAiDefaults)) {
           configModified = true;
+          shouldInvalidateSessionUsageCaches = true;
         }
         if (normalizeNestedModelStrings(parsed.subagentAiDefaults)) {
           configModified = true;
+          shouldInvalidateSessionUsageCaches = true;
         }
 
         // Config is stored as array of [path, config] pairs.
@@ -747,7 +753,7 @@ export class Config {
           parsed.agentAiDefaults !== undefined
             ? normalizeAgentAiDefaults(parsed.agentAiDefaults)
             : normalizeAgentAiDefaults(
-                legacySubagentDefaultsForAgentFallback(legacySubagentAiDefaults)
+                extractAgentDefaultsFromLegacySubagents(legacySubagentAiDefaults)
               );
         const configMigrations = normalizeConfigMigrations(parsed.migrations);
 
@@ -775,8 +781,8 @@ export class Config {
           configModified = true;
         }
 
-        if (configModified) {
-          // Invalidate stale usage caches: old files may contain gateway-prefixed model ids.
+        if (shouldInvalidateSessionUsageCaches) {
+          // Invalidate stale usage caches only when model id formats changed.
           try {
             if (fs.existsSync(this.sessionsDir)) {
               for (const sessionEntry of fs.readdirSync(this.sessionsDir, {
@@ -799,7 +805,9 @@ export class Config {
             // Best-effort cleanup; never fail startup on cache invalidation issues.
             log.warn("Failed to invalidate session usage cache during config migration", { error });
           }
+        }
 
+        if (configModified) {
           try {
             writeFileAtomic.sync(this.configFile, JSON.stringify(parsed, null, 2), {
               encoding: "utf-8",
@@ -862,7 +870,8 @@ export class Config {
           advisorMaxOutputTokens,
           hiddenModels,
           agentAiDefaults,
-          // Legacy fields are still parsed and returned for downgrade compatibility.
+          // Subagent defaults: exec is canonical active storage, non-exec entries
+          // support legacy mirror compatibility.
           subagentAiDefaults: legacySubagentAiDefaults,
           migrations: normalizeConfigMigrations(parsed.migrations),
           featureFlagOverrides: parsed.featureFlagOverrides,
@@ -1049,7 +1058,8 @@ export class Config {
           data.subagentAiDefaults = legacySubagent;
         }
       } else {
-        // Legacy only.
+        // Subagent-only configs keep exec as active storage. Other entries are
+        // retained for legacy fallback.
         if (config.subagentAiDefaults && Object.keys(config.subagentAiDefaults).length > 0) {
           data.subagentAiDefaults = normalizeAiDefaultsModelStrings(config.subagentAiDefaults);
         }

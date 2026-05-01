@@ -73,6 +73,12 @@ export const AppConfigOnDiskSchema = z
     hiddenModels: z.array(z.string()).optional(),
     preferredCompactionModel: z.string().optional(),
     agentAiDefaults: AgentAiDefaultsSchema.optional(),
+    /**
+     * Sparse per-agent override that wins over agentAiDefaults when an agent runs as a
+     * sub-agent. The exec key is canonical storage for the sub-agent Exec slot.
+     * Other keys are kept for legacy mirror compatibility, but new code should write
+     * to agentAiDefaults instead.
+     */
     subagentAiDefaults: SubagentAiDefaultsSchema.optional(),
     migrations: AppConfigMigrationsSchema.optional(),
     useSSH2Transport: z.boolean().optional(),

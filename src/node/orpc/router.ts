@@ -624,7 +624,8 @@ export const router = (authToken?: string) => {
             runtimeEnablement: normalizeRuntimeEnablement(config.runtimeEnablement),
             defaultRuntime: config.defaultRuntime ?? null,
             agentAiDefaults: config.agentAiDefaults ?? {},
-            // Legacy fields (downgrade compatibility)
+            // Subagent defaults: exec is canonical active storage, non-exec entries
+            // support legacy mirror compatibility.
             subagentAiDefaults: config.subagentAiDefaults ?? {},
             // Mux Governor enrollment status (safe fields only - token never exposed)
             muxGovernorUrl,
@@ -716,7 +717,8 @@ export const router = (authToken?: string) => {
             return {
               ...config,
               agentAiDefaults: Object.keys(normalized).length > 0 ? normalized : undefined,
-              // Legacy fields (downgrade compatibility)
+              // Subagent defaults: exec is canonical active storage, non-exec entries
+              // support legacy mirror compatibility.
               subagentAiDefaults:
                 Object.keys(legacySubagentDefaults).length > 0 ? legacySubagentDefaults : undefined,
             };
@@ -971,7 +973,7 @@ export const router = (authToken?: string) => {
               result.subagentAiDefaults =
                 Object.keys(normalizedDefaults).length > 0 ? normalizedDefaults : undefined;
 
-              // Downgrade compatibility: keep agentAiDefaults in sync with legacy subagentAiDefaults.
+              // Compatibility: keep agentAiDefaults in sync with non-exec subagent entries.
               // Only mutate keys previously managed by subagentAiDefaults so we don't clobber other
               // agent defaults (e.g., UI-selectable custom agents).
               const previousLegacy = config.subagentAiDefaults ?? {};

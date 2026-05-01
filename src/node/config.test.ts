@@ -521,6 +521,40 @@ describe("Config", () => {
       expect(raw.migrations?.execSubagentDefaultsSplit).toBe(true);
     });
 
+    it("preserves session usage cache when only exec-split cleanup modifies config", () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [],
+          agentAiDefaults: {
+            exec: { modelString: "openai:gpt-5.3-codex", thinkingLevel: "xhigh" },
+          },
+          subagentAiDefaults: {
+            exec: { modelString: "openai:gpt-5.3-codex", thinkingLevel: "xhigh" },
+            worker: { modelString: "openai:gpt-5.2" },
+          },
+        })
+      );
+
+      const usagePath = path.join(config.getSessionDir("workspace-1"), "session-usage.json");
+      fs.mkdirSync(path.dirname(usagePath), { recursive: true });
+      fs.writeFileSync(usagePath, JSON.stringify({ totalCost: 1.23 }));
+      expect(fs.existsSync(usagePath)).toBe(true);
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.subagentAiDefaults?.exec).toBeUndefined();
+      expect(loaded.subagentAiDefaults?.worker?.modelString).toBe("openai:gpt-5.2");
+      expect(loaded.migrations?.execSubagentDefaultsSplit).toBe(true);
+
+      const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
+        subagentAiDefaults?: Record<string, unknown>;
+        migrations?: { execSubagentDefaultsSplit?: boolean };
+      };
+      expect(raw.subagentAiDefaults?.exec).toBeUndefined();
+      expect(raw.migrations?.execSubagentDefaultsSplit).toBe(true);
+      expect(fs.existsSync(usagePath)).toBe(true);
+    });
+
     it("preserves differing exec subagent defaults on first load", () => {
       fs.writeFileSync(
         path.join(tempDir, "config.json"),
