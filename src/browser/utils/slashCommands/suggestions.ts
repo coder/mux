@@ -2,6 +2,7 @@
  * Slash command suggestions generation
  */
 
+import { matchesHyphenatedPrefix } from "@/browser/utils/suggestionMatching";
 import { MODEL_ABBREVIATIONS } from "@/common/constants/knownModels";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
@@ -27,17 +28,10 @@ function filterAndMapSuggestions<T extends SuggestionDefinition>(
   build: (definition: T) => SlashSuggestion,
   filter?: (definition: T) => boolean
 ): SlashSuggestion[] {
-  const normalizedPartial = partial.trim().toLowerCase();
-
   return definitions
     .filter((definition) => {
       if (filter && !filter(definition)) return false;
-      const normalizedKey = definition.key.toLowerCase();
-      // Keep full-prefix matches (e.g., /deep-r) alongside segment matches (e.g., /r).
-      return normalizedPartial
-        ? normalizedKey.startsWith(normalizedPartial) ||
-            normalizedKey.split("-").some((segment) => segment.startsWith(normalizedPartial))
-        : true;
+      return matchesHyphenatedPrefix(definition.key, partial);
     })
     .map((definition) => build(definition));
 }

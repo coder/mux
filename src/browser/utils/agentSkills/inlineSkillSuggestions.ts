@@ -1,3 +1,4 @@
+import { matchesHyphenatedPrefix } from "@/browser/utils/suggestionMatching";
 import type { SlashSuggestion } from "@/browser/utils/slashCommands/types";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 
@@ -31,16 +32,15 @@ export function shouldRefreshInlineSkillSuggestions(
 export function getInlineSkillInsertionTrailingText(after: string): "" | " " {
   // Characters where inserting a space before them would be wrong: whitespace,
   // sentence punctuation, and closers that should bind to the skill reference.
-  return after.length === 0 || INLINE_SKILL_INSERT_EXISTING_SEPARATOR_RE.test(after[0] ?? "")
-    ? ""
-    : " ";
+  if (after.length === 0) return " ";
+  if (INLINE_SKILL_INSERT_EXISTING_SEPARATOR_RE.test(after[0] ?? "")) return "";
+  return " ";
 }
 
 /**
  * Returns suggestions for `$skill` autocomplete.
  *
- * - Filter rule: descriptor.name.startsWith(partial). Case-sensitive skill names are
- *   canonical lowercase IDs (validated by SkillNameSchema), so normalize the user's partial.
+ * - Filter rule: full-name prefix or hyphen-segment prefix, matching slash skill commands.
  * - Empty `partial` returns the full descriptor list (so typing just `$` opens the menu).
  * - Result order: descriptors order from caller (no re-sort). Caller already lists in
  *   scope-priority order.
@@ -50,9 +50,8 @@ export function getInlineSkillInsertionTrailingText(after: string): "" | " " {
 export function getInlineSkillSuggestions(
   context: InlineSkillSuggestionContext
 ): SlashSuggestion[] {
-  const lowered = context.partial.toLowerCase();
   return context.descriptors
-    .filter((descriptor) => descriptor.name.startsWith(lowered))
+    .filter((descriptor) => matchesHyphenatedPrefix(descriptor.name, context.partial))
     .map((descriptor) => ({
       id: `inline-skill:${descriptor.name}`,
       display: `$${descriptor.name}`,
