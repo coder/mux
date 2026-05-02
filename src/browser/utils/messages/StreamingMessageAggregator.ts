@@ -2904,10 +2904,12 @@ export class StreamingMessageAggregator {
       // A part is "renderable" when getDisplayedMessages will emit a row for
       // it. Empty text parts and other unsupported types are silently skipped
       // by the loop below, so any flag derived from "what the user sees" must
-      // share this predicate to stay in sync.
+      // share this predicate to stay in sync. The text check uses a truthy
+      // test (rather than `.length > 0`) to keep self-healing behavior for
+      // malformed history entries where `part.text` may be undefined.
       const isRenderablePart = (part: (typeof mergedParts)[number]): boolean =>
         part.type === "reasoning" ||
-        (part.type === "text" && part.text.length > 0) ||
+        (part.type === "text" && Boolean(part.text)) ||
         isDynamicToolPart(part);
 
       // Find the last part that will produce a DisplayedMessage and tally

@@ -2844,6 +2844,35 @@ describe("StreamingMessageAggregator", () => {
       expect(displayed.find((m) => m.type === "assistant")).toBeUndefined();
     });
 
+    test("survives malformed text parts in persisted history", () => {
+      // Self-healing: chat.jsonl is loaded via plain JSON parse, so an entry
+      // with `type: "text"` but a missing/non-string `text` field is reachable.
+      // getDisplayedMessages must not crash on this — it should just skip the
+      // bad part and continue.
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.addMessage({
+        id: "asst-malformed",
+        role: "assistant",
+        parts: [
+          { type: "reasoning" as const, text: "thinking" },
+          // Cast through unknown to model a malformed history entry.
+          { type: "text" } as unknown as { type: "text"; text: string },
+        ],
+        metadata: {
+          historySequence: 1,
+          timestamp: 1,
+          model: "anthropic:claude-opus-4-7",
+          finishReason: "length",
+        },
+      });
+
+      // The call itself must not throw.
+      const displayed = aggregator.getDisplayedMessages();
+      expect(displayed.find((m) => m.type === "reasoning")).toBeDefined();
+      expect(displayed.find((m) => m.type === "stream-error")).toBeDefined();
+    });
+
     test("does not synthesize the row when finishReason is a normal stop", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 
