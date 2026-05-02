@@ -71,14 +71,15 @@ export const TypewriterMarkdown: React.FC<TypewriterMarkdownProps> = ({
   // React Compiler memoizes this object; no manual useMemo needed.
   const streamingContextValue = { isStreaming };
 
-  // Gate per-block fade-in (see globals.css) on LIVE streams only. Replay rows
-  // are emitted as isStreaming=true with streamSource="replay" while the
-  // backend rebuilds history on reconnect (StreamingMessageAggregator emits
-  // `streamPresentation: { source: "replay" }`); without this guard, every
-  // block of every replayed message would animate on reconnect/load. Completed
-  // messages also have isStreaming=false so the attribute is naturally absent.
-  // Using `|| undefined` keeps the attribute *off the DOM* (not "false") so
-  // the [data-streaming="true"] CSS selector simply cannot match.
+  // Gate the viewport-aware fade-in mask (see globals.css) on LIVE streams
+  // only. Replay rows are emitted as isStreaming=true with
+  // streamSource="replay" while the backend rebuilds history on reconnect
+  // (StreamingMessageAggregator emits `streamPresentation: { source: "replay" }`);
+  // without this guard, every replayed message would briefly fade in on
+  // reconnect/load. Completed messages also have isStreaming=false so the
+  // attribute is naturally absent. Using `|| undefined` keeps the attribute
+  // *off the DOM* (not "false") so the [data-streaming="true"] CSS selector
+  // simply cannot match.
   const isLiveStreaming = isStreaming && streamSource !== "replay";
 
   return (

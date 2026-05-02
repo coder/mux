@@ -12,7 +12,6 @@ import "katex/dist/katex.min.css";
 import { normalizeMarkdown } from "./MarkdownStyles";
 import { markdownComponents } from "./MarkdownComponents";
 import { INTERNAL_INLINE_SKILL_HREF_PREFIX, remarkInlineSkillLinks } from "./inlineSkillMarkdown";
-import { rehypeWrapLinesForFade } from "./rehypeWrapLinesForFade";
 
 interface MarkdownCoreProps {
   content: string;
@@ -103,7 +102,7 @@ const sanitizeSchema = {
   },
 };
 
-const REHYPE_PLUGINS_BASE: Pluggable[] = [
+const REHYPE_PLUGINS: Pluggable[] = [
   rehypeRaw, // Parse HTML elements first
   [rehypeSanitize, sanitizeSchema], // Sanitize HTML to prevent XSS (strips dangerous elements/attributes)
   [
@@ -124,12 +123,6 @@ const REHYPE_PLUGINS_BASE: Pluggable[] = [
   [rehypeKatex, { errorColor: "var(--color-muted-foreground)" }], // Render math
 ];
 
-// Streaming variant: also wraps each text node in a `<span class="sd-line">`
-// so the per-line blur-fade-in CSS rule fires once per new line at mount.
-// Order matters: rehypeKatex must run BEFORE the wrapper so .katex subtrees
-// are tagged and excluded.
-const REHYPE_PLUGINS_STREAMING: Pluggable[] = [...REHYPE_PLUGINS_BASE, rehypeWrapLinesForFade];
-
 /**
  * Core markdown rendering component that handles all markdown processing.
  * This is the single source of truth for markdown configuration.
@@ -146,14 +139,15 @@ export const MarkdownCore = React.memo<MarkdownCoreProps>(
         <Streamdown
           components={markdownComponents}
           remarkPlugins={preserveLineBreaks ? REMARK_PLUGINS_WITH_BREAKS : REMARK_PLUGINS}
-          rehypePlugins={parseIncompleteMarkdown ? REHYPE_PLUGINS_STREAMING : REHYPE_PLUGINS_BASE}
+          rehypePlugins={REHYPE_PLUGINS}
           parseIncompleteMarkdown={parseIncompleteMarkdown}
           // Use "static" mode for completed content to bypass useTransition() deferral.
           // After ORPC migration, async event boundaries let React deprioritize transitions indefinitely.
           mode={parseIncompleteMarkdown ? "streaming" : "static"}
-          // streamdown-root: stable CSS hook for per-block fade-in (see globals.css).
           // space-y-2: reduce from default space-y-4 (16px) to space-y-2 (8px).
-          className="streamdown-root space-y-2"
+          // The viewport-aware fade-in is handled by the parent .markdown-content
+          // element (mask-image gradient gated on data-streaming); see globals.css.
+          className="space-y-2"
           controls={{ table: false, code: true, mermaid: true }} // Disable table copy/download, keep code/mermaid controls
         >
           {normalizedContent}

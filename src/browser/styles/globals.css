@@ -1542,48 +1542,57 @@ code {
   white-space: normal;
 }
 
-/* Per-line blur-fade-in for streaming markdown content.
+/* Viewport-aware streaming fade: bottom-edge mask gradient.
  *
- * Each text node in a streaming message is wrapped in
- * `<span class="sd-line">` by `rehypeWrapLinesForFade` (see MarkdownCore).
- * On mount, each span animates from `filter: blur(3px); opacity: 0` to its
- * final state — giving the soft line-by-line reveal users associate with
- * modern AI chat transcripts (Grok-style settle).
+ * A vertical linear-gradient mask is applied to live streaming markdown
+ * content so the bottom edge fades to transparent. As the smoothing engine
+ * reveals characters and the message grows, each new visual row emerges
+ * from the gradient zone (transparent at the very bottom) and settles into
+ * solid as it scrolls upward through the gradient.
  *
- * Why per-line, not per-word:
- *  - Per-word animated each whitespace-bounded token independently, but
- *    several words within the same visual row mounted at slightly different
- *    times (because deltas arrive token-by-token), so each row read as a
- *    horizontal shimmer instead of a coherent line reveal.
- *  - Per-line treats one text node as one unit. As text grows inside the
- *    span, react-markdown reconciles in place — no remount, no re-fire.
- *    A new fade only fires when a real boundary is crossed: a new paragraph,
- *    a new `<br>` (reasoning content with `preserveLineBreaks=true` runs
- *    remarkBreaks, which converts `\n` → `<br>`), a new list item, etc.
+ * Why this is genuinely viewport-aware, not DOM-aware:
+ *  - The mask is applied to the rendered geometry of the message — the
+ *    actual visual rectangle the user sees — not the AST/HAST tree.
+ *  - One long paragraph that wraps to N visual rows is treated identically
+ *    to N paragraphs of one row each: all that matters is the bottom edge.
+ *  - The line breaks the model emits do not affect the fade; only what the
+ *    user sees in the transcript does.
+ *
+ * Why mask, not per-element animation:
+ *  - Per-AST-text-node animation (rehype plugin) misses long paragraphs
+ *    that grow silently inside a still-mounted span.
+ *  - Per-word animation creates horizontal jitter — words within the same
+ *    visual row mount at slightly different times because deltas arrive
+ *    token-by-token, so each row reads as a left-to-right shimmer rather
+ *    than a coherent reveal.
+ *  - The mask is GPU-accelerated, requires no JS, no DOM splitting, no
+ *    measurement, and is correct under reflow by construction.
+ *
+ * Sizing: 2em (~1.25 lines at line-height 1.6) is large enough that the
+ * trailing line is fully in the gradient and the line above is partially
+ * faded, but small enough that the rest of the message stays solid.
  *
  * Gating:
  *  - `[data-streaming="true"]` is set by TypewriterMarkdown only on LIVE
- *    streams (not replay, not completed). Historical transcripts render
- *    without the attribute and skip the rule entirely.
- *  - `prefers-reduced-motion: no-preference` honors accessibility settings:
+ *    streams — never on replay rows (the backend re-emits historical
+ *    messages with `streamPresentation.source: "replay"`) and never on
+ *    completed messages. Historical transcripts render fully solid.
+ *  - `prefers-reduced-motion: no-preference` honors accessibility settings;
  *    users who request reduced motion see instant rendering.
  *
- * `<pre>`/`<code>`/KaTeX/Mermaid subtrees are excluded by the rehype plugin,
- * so this rule never matches inside them. */
-@keyframes sd-line-blur-in {
-  from {
-    filter: blur(3px);
-    opacity: 0;
-  }
-  to {
-    filter: blur(0);
-    opacity: 1;
-  }
-}
-
+ * When a stream ends, `data-streaming` is removed and the mask disappears
+ * instantly. The trailing edge snaps to solid — barely perceptible, since
+ * the user's attention is on the bottom of the message and the smoothing
+ * engine has already finished revealing characters by then. */
 @media (prefers-reduced-motion: no-preference) {
-  .markdown-content[data-streaming="true"] .sd-line {
-    animation: sd-line-blur-in 500ms ease-out;
+  .markdown-content[data-streaming="true"] {
+    -webkit-mask-image: linear-gradient(
+      180deg,
+      black 0%,
+      black calc(100% - 2em),
+      transparent 100%
+    );
+    mask-image: linear-gradient(180deg, black 0%, black calc(100% - 2em), transparent 100%);
   }
 }
 

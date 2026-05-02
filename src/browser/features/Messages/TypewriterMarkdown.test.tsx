@@ -154,12 +154,13 @@ describe("TypewriterMarkdown", () => {
     expect(mockUseWorkspaceStreamingStats).toHaveBeenCalledWith("ws-active");
   });
 
-  // The data-streaming attribute is the gate for the per-block fade-in CSS rule
-  // (see globals.css, .markdown-content[data-streaming="true"] .streamdown-root > *).
-  // It must be present ONLY on live streaming messages. Completed messages and
-  // replay rows must not match — replay rows are emitted with isStreaming=true
-  // while the backend rebuilds history, so guarding on isStreaming alone would
-  // re-animate every block of every historical message on reconnect.
+  // The data-streaming attribute is the gate for the viewport-aware fade-in
+  // mask gradient (see globals.css: .markdown-content[data-streaming="true"]
+  // gets a linear-gradient mask-image at the bottom edge). It must be present
+  // ONLY on live streaming messages. Completed messages must not match, and
+  // critically, replay rows must not match either — replay rows are emitted
+  // with isStreaming=true while the backend rebuilds history on reconnect, so
+  // guarding on isStreaming alone would re-fade every historical message.
   test("sets data-streaming only for live streams, not replay or completed", () => {
     const live = render(
       <TypewriterMarkdown
