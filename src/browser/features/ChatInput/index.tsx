@@ -2738,27 +2738,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     (showSkillSuggestions && skillSuggestions.length > 0)
                   }
                   className={variant === "creation" ? "min-h-28" : "min-h-16"}
-                  trailingAction={
-                    <div className="flex items-center gap-1">
-                      <AttachFileButton
-                        onFiles={handleAttachFiles}
-                        disabled={disabled || sendInFlightBlocksInput || !!editingMessageForUi}
-                      />
-                      <VoiceInputButton
-                        state={voiceInput.state}
-                        isAvailable={voiceInput.isAvailable}
-                        shouldShowUI={voiceInput.shouldShowUI}
-                        requiresSecureContext={voiceInput.requiresSecureContext}
-                        onToggle={voiceInput.toggle}
-                        disabled={disabled || sendInFlightBlocksInput}
-                        agentColor={focusBorderColor}
-                      />
-                    </div>
-                  }
                 />
                 {/* Keep shortcuts visible in both creation + workspace without bloating the footer or crowding it. */}
                 {input.trim() === "" && !editingMessageForUi && (
-                  <div className="mobile-hide-shortcut-hints text-muted @container pointer-events-none absolute right-18 bottom-3 left-2 flex flex-nowrap items-center gap-4 overflow-hidden text-[11px] whitespace-nowrap">
+                  <div className="mobile-hide-shortcut-hints text-muted @container pointer-events-none absolute right-2 bottom-3 left-2 flex flex-nowrap items-center gap-4 overflow-hidden text-[11px] whitespace-nowrap">
                     <span className="shrink-0">
                       <span className="font-mono">{formatKeybind(KEYBINDS.FOCUS_CHAT)}</span>
                       <span> - focus chat</span>
@@ -2794,6 +2777,31 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
             <div className="@container flex min-w-[340px] flex-nowrap items-center gap-1.5">
               <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                {/*
+                  Input-method icons (attach, voice) live in the controls row rather than
+                  overlaying the textarea. An overlay forced reserved right-padding on every
+                  line and still allowed the bottom line of wrapped text to ride under the
+                  icons; placing them here guarantees they never intersect typed text.
+                */}
+                <div
+                  className="flex shrink-0 items-center gap-0.5"
+                  data-component="InputMethodGroup"
+                >
+                  <AttachFileButton
+                    onFiles={handleAttachFiles}
+                    disabled={disabled || sendInFlightBlocksInput || !!editingMessageForUi}
+                  />
+                  <VoiceInputButton
+                    state={voiceInput.state}
+                    isAvailable={voiceInput.isAvailable}
+                    shouldShowUI={voiceInput.shouldShowUI}
+                    requiresSecureContext={voiceInput.requiresSecureContext}
+                    onToggle={voiceInput.toggle}
+                    disabled={disabled || sendInFlightBlocksInput}
+                    agentColor={focusBorderColor}
+                  />
+                </div>
+
                 <div
                   className="flex min-w-0 items-center gap-1.5"
                   data-component="ModelSelectorGroup"
