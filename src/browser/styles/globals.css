@@ -1570,7 +1570,7 @@ code {
  * so this rule never matches inside them. */
 @keyframes sd-word-blur-in {
   from {
-    filter: blur(6px);
+    filter: blur(3px);
     opacity: 0;
   }
   to {
