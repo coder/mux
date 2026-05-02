@@ -9,6 +9,7 @@ import {
   useWorkspaceState,
   useWorkspaceAggregator,
   useWorkspaceStoreRaw,
+  useWorkspaceStreamingStats,
 } from "@/browser/stores/WorkspaceStore";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import { useSettings } from "@/browser/contexts/SettingsContext";
@@ -146,6 +147,9 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({
   const workspaceState = useWorkspaceState(workspaceId);
   const aggregator = useWorkspaceAggregator(workspaceId);
   const storeRaw = useWorkspaceStoreRaw();
+  // Subscribe directly to live streaming stats (token count + TPS) so per-delta
+  // updates re-render this leaf only, not the entire ChatPane subtree.
+  const streamingStats = useWorkspaceStreamingStats(workspaceId);
   const { api } = useAPI();
   const { open: openSettings } = useSettings();
 
@@ -172,9 +176,10 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({
   // Only show token count during active streaming/compacting
   const showTokenCount = phase === "streaming" || phase === "compacting";
 
-  // Get live streaming stats from workspace state (updated on each stream-delta)
-  const tokenCount = showTokenCount ? workspaceState.streamingTokenCount : undefined;
-  const tps = showTokenCount ? workspaceState.streamingTPS : undefined;
+  // Live streaming stats come from a leaf subscription so per-delta updates
+  // don't cascade through the full chat subtree.
+  const tokenCount = showTokenCount ? streamingStats?.tokenCount : undefined;
+  const tps = showTokenCount ? streamingStats?.tps : undefined;
 
   // Model to display:
   // - "starting" phase: prefer pendingStreamModel (from muxMetadata), then localStorage

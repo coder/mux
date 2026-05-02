@@ -52,8 +52,6 @@ function buildWorkspaceState(workspaceId: string, state: MockWorkspaceState): Wo
     pendingStreamModel: null,
     runtimeStatus: null,
     autoRetryStatus: null,
-    streamingTokenCount: undefined,
-    streamingTPS: undefined,
   };
 }
 

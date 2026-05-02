@@ -13,8 +13,6 @@ interface MockWorkspaceState {
   pendingStreamStartTime: number | null;
   pendingStreamModel: string | null;
   runtimeStatus: { phase: string; detail?: string } | null;
-  streamingTokenCount: number | undefined;
-  streamingTPS: number | undefined;
 }
 
 function createWorkspaceState(overrides: Partial<MockWorkspaceState> = {}): MockWorkspaceState {
@@ -27,8 +25,6 @@ function createWorkspaceState(overrides: Partial<MockWorkspaceState> = {}): Mock
     pendingStreamStartTime: null,
     pendingStreamModel: null,
     runtimeStatus: null,
-    streamingTokenCount: undefined,
-    streamingTPS: undefined,
     ...overrides,
   };
 
@@ -39,10 +35,17 @@ function createWorkspaceState(overrides: Partial<MockWorkspaceState> = {}): Mock
   return state;
 }
 
+interface MockStreamingStats {
+  tokenCount: number;
+  tps: number;
+  charsPerSec: number;
+}
+
 const STATUS_DISPLAY_DELAY_MS = 1000;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 let currentWorkspaceState = createWorkspaceState();
+let currentStreamingStats: MockStreamingStats | null = null;
 let hasInterruptingStream = false;
 const setInterrupting = mock((_workspaceId: string) => undefined);
 const interruptStream = mock((_input: unknown) =>
@@ -70,6 +73,7 @@ void mock.module("@/browser/stores/WorkspaceStore", () => ({
   useWorkspaceStoreRaw: () => ({
     setInterrupting,
   }),
+  useWorkspaceStreamingStats: () => currentStreamingStats,
 }));
 
 void mock.module("@/browser/contexts/API", () => ({
@@ -119,6 +123,7 @@ describe("StreamingBarrier", () => {
     globalThis.document = globalThis.window.document;
 
     currentWorkspaceState = createWorkspaceState();
+    currentStreamingStats = null;
     hasInterruptingStream = false;
     setInterrupting.mockClear();
     interruptStream.mockClear();
@@ -289,9 +294,8 @@ describe("StreamingBarrier", () => {
     currentWorkspaceState = createWorkspaceState({
       canInterrupt: true,
       currentModel: "anthropic:claude-opus-4-6",
-      streamingTokenCount: 42,
-      streamingTPS: 18,
     });
+    currentStreamingStats = { tokenCount: 42, tps: 18, charsPerSec: 72 };
     view.rerender(<StreamingBarrier workspaceId="ws-1" />);
 
     expect(view.getByText("claude-opus-4-6 streaming...")).toBeTruthy();
