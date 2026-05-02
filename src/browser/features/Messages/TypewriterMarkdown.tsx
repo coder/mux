@@ -84,12 +84,25 @@ export const TypewriterMarkdown: React.FC<TypewriterMarkdownProps> = ({
 
   // Temporal fade-in for newly-completed visual lines.
   //
-  // The CSS mask in globals.css always hides the bottom ~1 visual line (the
-  // line currently being typed). When the rendered height GROWS — because a
-  // visual line wrapped, a new paragraph was added, etc. — we briefly push
-  // the transparent strip up by `delta` so the just-revealed content is
-  // initially also covered, then animate `--reveal-y` back to 0 over 250ms.
-  // The mask gradient sweeps past the new content, fading it in.
+  // The CSS mask in globals.css hides the bottom ~1 visual line (the line
+  // currently being typed) — but only when there's a completed line above it
+  // to look at. We toggle `data-stream-hide-tail` to gate the mask:
+  //  - Below ~1.5 line-heights of rendered content (single-line streams),
+  //    the attribute is absent and the message renders fully visible. This
+  //    avoids blanking out short replies before they wrap.
+  //  - Once content reaches ~1.5+ lines, the attribute is set and the mask
+  //    hides the in-progress line. Subsequent wraps fade in the previously
+  //    in-progress line as it becomes a completed line.
+  //
+  // When the rendered height GROWS while above-threshold — because a visual
+  // line wrapped, a new paragraph was added, etc. — we briefly push the
+  // transparent strip up by `delta` so the just-revealed content is initially
+  // also covered, then animate `--reveal-y` back to 0 over 250ms. The mask
+  // gradient sweeps past the new content, fading it in.
+  //
+  // The first-time threshold crossing (1 line → 2 lines) does NOT pulse,
+  // because the about-to-be-completed line was already visible without a
+  // mask; a pulse would briefly hide it and re-fade it in (a flicker).
   //
   // Why ResizeObserver and not the visibleText prop:
   //  - Height growth is the right signal because it directly tracks visual
@@ -119,15 +132,41 @@ export const TypewriterMarkdown: React.FC<TypewriterMarkdownProps> = ({
     // is a pure presentation concern, so degrade silently. Real browsers
     // (Electron Chromium) always have it.
     if (typeof ResizeObserver === "undefined") return;
-    // Seed the baseline so the first observed callback (which fires once
-    // synchronously when observe() is called in modern browsers) does not
-    // misinterpret the initial height as a delta.
+
+    // Threshold below which the mask is disabled entirely. Computed from the
+    // element's actual computed line-height so it scales with font-size and
+    // line-height overrides. 1.5 × line-height puts the threshold between
+    // 1-line and 2-line content, with a small margin for sub-pixel rounding.
+    const lineHeightPx = parseFloat(getComputedStyle(el).lineHeight) || 22.4;
+    const hideTailThresholdPx = lineHeightPx * 1.5;
+
+    const applyHideTail = (h: number) => {
+      el.toggleAttribute("data-stream-hide-tail", h >= hideTailThresholdPx);
+    };
+
+    // Seed the baseline AND the initial attribute synchronously, before the
+    // browser paints, so a multi-line message that re-mounts (e.g., navigating
+    // back to a streaming workspace) doesn't flash without the mask.
     lastHeightRef.current = el.offsetHeight;
+    applyHideTail(lastHeightRef.current);
+
     const ro = new ResizeObserver(() => {
       const newHeight = el.offsetHeight;
-      const delta = newHeight - lastHeightRef.current;
+      const oldHeight = lastHeightRef.current;
+      const delta = newHeight - oldHeight;
       lastHeightRef.current = newHeight;
+
+      const wasAbove = oldHeight >= hideTailThresholdPx;
+      const isAbove = newHeight >= hideTailThresholdPx;
+      if (wasAbove !== isAbove) applyHideTail(newHeight);
+
       if (delta <= 0) return;
+      // Pulse only when the mask was already on AND the element grew further.
+      // The first-time threshold crossing doesn't pulse: the just-completed
+      // first line was already visible without a mask, and a pulse would
+      // briefly hide and re-reveal it (flicker).
+      if (!wasAbove || !isAbove) return;
+
       // Cancel any in-flight pulse so consecutive wraps don't stack and
       // produce visual jitter; the most recent delta wins.
       activeAnimationRef.current?.cancel();
@@ -147,6 +186,7 @@ export const TypewriterMarkdown: React.FC<TypewriterMarkdownProps> = ({
       ro.disconnect();
       activeAnimationRef.current?.cancel();
       activeAnimationRef.current = null;
+      el.removeAttribute("data-stream-hide-tail");
     };
   }, [isLiveStreaming]);
 

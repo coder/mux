@@ -1593,8 +1593,16 @@ code {
   initial-value: 0px;
 }
 
+/* The mask is gated on `data-stream-hide-tail`, set by JS only when the
+ * rendered height is at least ~1.5 visual lines. Below that threshold —
+ * notably at stream start, when the first line is still being typed — we
+ * leave the message fully visible so a short reply isn't blanked out
+ * waiting for a wrap or stream end. The threshold transition (1 line → 2
+ * lines) happens once per message and is handled in JS without a pulse
+ * (the just-completed first line was already visible without the mask, so
+ * a fade-in would re-flicker it). */
 @media (prefers-reduced-motion: no-preference) {
-  .markdown-content[data-streaming="true"] {
+  .markdown-content[data-streaming="true"][data-stream-hide-tail="true"] {
     -webkit-mask-image: linear-gradient(
       180deg,
       black 0%,
