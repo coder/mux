@@ -44,8 +44,6 @@ function guardFailure(error: string): InsertOperationFailure {
   };
 }
 
-type GuardAnchors = Pick<InsertContentOptions, "insert_before" | "insert_after">;
-
 export const createFileEditInsertTool: ToolFactory = (config: ToolConfiguration) => {
   return tool({
     description: TOOL_DEFINITIONS.file_edit_insert.description,
@@ -175,7 +173,7 @@ function insertContent(
 function insertWithGuards(
   originalContent: string,
   contentToInsert: string,
-  anchors: GuardAnchors
+  anchors: InsertContentOptions
 ): InsertOperationSuccess | InsertOperationFailure {
   const anchorResult = resolveGuardAnchor(originalContent, anchors);
   if (!anchorResult.success) {
@@ -216,7 +214,7 @@ function findUniqueSubstringIndex(
 
 function resolveGuardAnchor(
   originalContent: string,
-  { insert_before, insert_after }: GuardAnchors
+  { insert_before, insert_after }: InsertContentOptions
 ): GuardResolutionSuccess | InsertOperationFailure {
   const fileEol = detectFileEol(originalContent);
 
