@@ -1,11 +1,13 @@
-import React, { useMemo } from "react";
+import React from "react";
 import { useSmoothStreamingText } from "@/browser/hooks/useSmoothStreamingText";
+import { useWorkspaceStreamingStats } from "@/browser/stores/WorkspaceStore";
 import { cn } from "@/common/lib/utils";
 import { MarkdownCore } from "./MarkdownCore";
 import { StreamingContext } from "./StreamingContext";
 
 interface TypewriterMarkdownProps {
-  deltas: string[];
+  /** Full text to render. During streaming this grows monotonically. */
+  content: string;
   isComplete: boolean;
   className?: string;
   /**
@@ -18,31 +20,56 @@ interface TypewriterMarkdownProps {
   streamKey?: string;
   /** Whether this stream originated from live tokens or replay. Defaults to "live". */
   streamSource?: "live" | "replay";
+  /**
+   * Workspace this content belongs to. When provided, the smoothing engine is
+   * fed the live model emission rate so the visible cursor tracks the model's
+   * actual output rather than the constant BASE rate. Optional because some
+   * surfaces (storybook, preview popovers) render markdown without a workspace.
+   */
+  workspaceId?: string;
 }
 
-// Use React.memo to prevent unnecessary re-renders from parent
-export const TypewriterMarkdown = React.memo<TypewriterMarkdownProps>(function TypewriterMarkdown({
-  deltas,
+// React Compiler memoizes this component automatically based on prop changes;
+// no manual React.memo wrapper. The previous deltas: string[] shape forced a new
+// array literal on every parent render and defeated the memo anyway.
+export const TypewriterMarkdown: React.FC<TypewriterMarkdownProps> = ({
+  content,
   isComplete,
   className,
   preserveLineBreaks,
   streamKey,
   streamSource = "live",
-}) {
-  const fullContent = deltas.join("");
-  const isStreaming = !isComplete && fullContent.length > 0;
+  workspaceId,
+}) => {
+  const isStreaming = !isComplete && content.length > 0;
 
-  // Two-clock streaming: ingestion (fullContent) vs presentation (visibleText).
+  // Read the live model emission rate (chars/sec) for the active stream of this
+  // workspace. The hook subscribes to its own MapStore so per-delta updates
+  // re-render this component WITHOUT cascading through the parent — see
+  // useWorkspaceStreamingStats.
+  //
+  // Subscribe to the real workspace key ONLY while this message is actively
+  // streaming. Completed historical messages subscribe to the stable empty-key
+  // sentinel, which is never bumped — so a long transcript of finished
+  // assistant messages does not re-render on every delta of a new stream.
+  // (Hooks must run unconditionally; we toggle the key, not the call site.)
+  const subscriptionKey = isStreaming && workspaceId ? workspaceId : "";
+  const streamingStats = useWorkspaceStreamingStats(subscriptionKey);
+  const liveCharsPerSec = isStreaming && workspaceId ? (streamingStats?.charsPerSec ?? 0) : 0;
+
+  // Two-clock streaming: ingestion (content) vs presentation (visibleText).
   // The jitter buffer reveals text at a steady cadence instead of bursty token clumps.
   // Replay and completed streams bypass smoothing entirely.
   const { visibleText } = useSmoothStreamingText({
-    fullText: fullContent,
+    fullText: content,
     isStreaming,
     bypassSmoothing: streamSource === "replay",
     streamKey: streamKey ?? "",
+    liveCharsPerSec,
   });
 
-  const streamingContextValue = useMemo(() => ({ isStreaming }), [isStreaming]);
+  // React Compiler memoizes this object; no manual useMemo needed.
+  const streamingContextValue = { isStreaming };
 
   return (
     <StreamingContext.Provider value={streamingContextValue}>
@@ -55,4 +82,4 @@ export const TypewriterMarkdown = React.memo<TypewriterMarkdownProps>(function T
       </div>
     </StreamingContext.Provider>
   );
-});
+};

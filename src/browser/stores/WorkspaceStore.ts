@@ -78,6 +78,7 @@ import {
   getPinnedTodoExpandedKey,
 } from "@/common/constants/storage";
 import { DEFAULT_AUTO_COMPACTION_THRESHOLD_PERCENT } from "@/common/constants/ui";
+import { APPROX_CHARS_PER_TOKEN } from "@/constants/streaming";
 import { trackStreamCompleted } from "@/common/telemetry";
 
 export type AutoRetryStatus = Extract<
@@ -114,9 +115,28 @@ export interface WorkspaceState {
   // Current pre-stream startup breadcrumb (runtime readiness, tool loading, etc.)
   runtimeStatus: RuntimeStatusEvent | null;
   autoRetryStatus: AutoRetryStatus | null;
-  // Live streaming stats (updated on each stream-delta)
-  streamingTokenCount: number | undefined;
-  streamingTPS: number | undefined;
+}
+
+/**
+ * Live streaming stats snapshot for the active stream of a workspace.
+ *
+ * Exposed via {@link useWorkspaceStreamingStats} as a leaf subscription so
+ * components that display tokens-per-second / token count (e.g. StreamingBarrier)
+ * re-render on each delta WITHOUT cascading through the full WorkspaceState
+ * snapshot. Keeping these out of WorkspaceState is what lets the streaming
+ * smoothing engine actually run smoothly: otherwise the per-delta TPS read
+ * (which uses Date.now()) makes the snapshot unstable on every microtask and
+ * forces ChatPane to reconcile faster than the RAF presentation clock can
+ * draw.
+ */
+export interface WorkspaceStreamingStats {
+  tokenCount: number;
+  /** Tokens-per-second over a trailing window. */
+  tps: number;
+  /** Approximate characters-per-second the model is producing. Used by the
+   *  smoothing engine to target the model's actual emission rate rather than
+   *  the legacy fixed BASE rate. */
+  charsPerSec: number;
 }
 
 /**
@@ -599,10 +619,24 @@ export class WorkspaceStore {
   private fileModifyingToolMs = new Map<string, number>();
   private fileModifyingToolSubs = new MapStore<string, void>();
 
-  // Idle callback handles for high-frequency delta events to reduce re-renders during streaming.
+  // Idle callback handles for high-frequency, terminal-style output (init logs).
   // Data is always updated immediately in the aggregator; only UI notification is scheduled.
   // Using requestIdleCallback adapts to actual CPU availability rather than a fixed timer.
+  // NOTE: Streaming text/reasoning/tool deltas do NOT use this — they use
+  // scheduleStreamingStateBump() (microtask coalescing) so the smoothing engine's
+  // RAF presentation clock isn't competing with a 100ms ingestion clock.
   private deltaIdleHandles = new Map<string, number>();
+
+  // Microtask coalescing for streaming deltas. Many deltas can arrive in the same
+  // task pump (ORPC iterator drain); we collapse them into a single states.bump()
+  // at the microtask tail so React reconciles once per pump instead of once per chunk.
+  private pendingStreamingBump = new Set<string>();
+
+  // Live streaming stats (tokens/sec) — exposed via useWorkspaceStreamingStats() as a
+  // leaf subscription. Updated on every stream-delta in the same coalesced microtask
+  // as states.bump(), but separate so changes only re-render the StreamingBarrier
+  // pill and not the entire ChatPane subtree.
+  private streamingStatsStore = new MapStore<string, WorkspaceStreamingStats | null>();
 
   /**
    * Map of event types to their handlers. This is the single source of truth for:
@@ -640,7 +674,7 @@ export class WorkspaceStore {
     },
     "stream-delta": (workspaceId, aggregator, data) => {
       applyWorkspaceChatEventToAggregator(aggregator, data);
-      this.scheduleIdleStateBump(workspaceId);
+      this.scheduleStreamingStateBump(workspaceId);
     },
     "stream-end": (workspaceId, aggregator, data) => {
       const streamEndData = data as StreamEndEvent;
@@ -681,7 +715,9 @@ export class WorkspaceStore {
 
       // Flush any pending debounced bump before final bump to avoid double-bump
       this.cancelPendingIdleBump(workspaceId);
+      this.cancelPendingStreamingBump(workspaceId);
       this.states.bump(workspaceId);
+      this.streamingStatsStore.bump(workspaceId);
       this.checkAndBumpRecencyIfChanged();
       this.finalizeUsageStats(workspaceId, streamEndData.metadata);
     },
@@ -708,7 +744,9 @@ export class WorkspaceStore {
 
       // Flush any pending debounced bump before final bump to avoid double-bump
       this.cancelPendingIdleBump(workspaceId);
+      this.cancelPendingStreamingBump(workspaceId);
       this.states.bump(workspaceId);
+      this.streamingStatsStore.bump(workspaceId);
       this.finalizeUsageStats(workspaceId, streamAbortData.metadata);
     },
     "tool-call-start": (workspaceId, aggregator, data) => {
@@ -717,7 +755,7 @@ export class WorkspaceStore {
     },
     "tool-call-delta": (workspaceId, aggregator, data) => {
       applyWorkspaceChatEventToAggregator(aggregator, data);
-      this.scheduleIdleStateBump(workspaceId);
+      this.scheduleStreamingStateBump(workspaceId);
     },
     "tool-call-end": (workspaceId, aggregator, data) => {
       const toolCallEnd = data as Extract<WorkspaceChatMessage, { type: "tool-call-end" }>;
@@ -755,7 +793,7 @@ export class WorkspaceStore {
     },
     "reasoning-delta": (workspaceId, aggregator, data) => {
       applyWorkspaceChatEventToAggregator(aggregator, data);
-      this.scheduleIdleStateBump(workspaceId);
+      this.scheduleStreamingStateBump(workspaceId);
     },
     "reasoning-end": (workspaceId, aggregator, data) => {
       applyWorkspaceChatEventToAggregator(aggregator, data);
@@ -1320,6 +1358,65 @@ export class WorkspaceStore {
   }
 
   /**
+   * Coalesce streaming state bumps to a single microtask per workspace.
+   *
+   * Streaming text/reasoning/tool deltas land in the aggregator immediately, but
+   * the React notification is deferred to the microtask tail of the current
+   * task pump. Many deltas can arrive in the same pump (the ORPC iterator
+   * drains a queue) — we want React to reconcile once per pump, not once per
+   * chunk.
+   *
+   * Why microtask and not requestIdleCallback? The smoothing engine
+   * ({@link useSmoothStreamingText}) is the presentation clock — pacing the
+   * visible reveal at RAF frequency. The ingestion clock should be deterministic
+   * and prompt; an idle-callback ingestion delay (~100ms) just means the
+   * smoothing engine has to absorb burstier inputs and is more likely to hit
+   * its visual-lag safety net.
+   */
+  private scheduleStreamingStateBump(workspaceId: string): void {
+    if (this.pendingStreamingBump.has(workspaceId)) return;
+    this.pendingStreamingBump.add(workspaceId);
+    queueMicrotask(() => {
+      // Cleared by cancelPendingStreamingBump (e.g. on stream-end) — skip the bump
+      // so we don't double-notify after the terminal event already bumped state.
+      if (!this.pendingStreamingBump.delete(workspaceId)) return;
+      this.states.bump(workspaceId);
+      this.streamingStatsStore.bump(workspaceId);
+    });
+  }
+
+  private cancelPendingStreamingBump(workspaceId: string): void {
+    this.pendingStreamingBump.delete(workspaceId);
+  }
+
+  /**
+   * Get current live streaming stats for a workspace, or null if no stream is active.
+   *
+   * Cached per MapStore version: changes only when {@link streamingStatsStore} is
+   * bumped (every coalesced delta + on stream end). Reading uses Date.now() at
+   * the bump point, so the trailing-window TPS is always current relative to the
+   * latest delta.
+   */
+  getWorkspaceStreamingStats(workspaceId: string): WorkspaceStreamingStats | null {
+    return this.streamingStatsStore.get(workspaceId, () => {
+      const aggregator = this.aggregators.get(workspaceId);
+      if (!aggregator) return null;
+      const messageId = aggregator.getActiveStreamMessageId();
+      if (!messageId) return null;
+      const tokenCount = aggregator.getStreamingTokenCount(messageId);
+      const tps = aggregator.getStreamingTPS(messageId);
+      // Approximate chars-per-token of 4 — good enough for the smoothing engine
+      // to target the model's emit rate; exact tokenization isn't needed.
+      const charsPerSec = tps * APPROX_CHARS_PER_TOKEN;
+      return { tokenCount, tps, charsPerSec };
+    });
+  }
+
+  subscribeStreamingStats(workspaceId: string, listener: () => void): () => void {
+    return this.streamingStatsStore.subscribeKey(workspaceId, listener);
+  }
+
+  /**
    * Subscribe to backend timing stats snapshots for a workspace.
    */
 
@@ -1651,15 +1748,6 @@ export class WorkspaceStore {
       const fallbackAgentStatus = useAggregatorState ? aggregator.getAgentStatus() : undefined;
       const agentStatus = displayStatus ?? todoStatus ?? fallbackAgentStatus;
 
-      // Live streaming stats
-      const activeStreamMessageId = aggregator.getActiveStreamMessageId();
-      const streamingTokenCount = activeStreamMessageId
-        ? aggregator.getStreamingTokenCount(activeStreamMessageId)
-        : undefined;
-      const streamingTPS = activeStreamMessageId
-        ? aggregator.getStreamingTPS(activeStreamMessageId)
-        : undefined;
-
       return {
         name: metadata?.name ?? workspaceId, // Fall back to ID if metadata missing
         messages: displayedMessages,
@@ -1685,8 +1773,6 @@ export class WorkspaceStore {
         pendingStreamModel: aggregator.getPendingStreamModel(),
         autoRetryStatus: transient.autoRetryStatus,
         runtimeStatus: aggregator.getRuntimeStatus(),
-        streamingTokenCount,
-        streamingTPS,
       };
     });
   }
@@ -2858,6 +2944,7 @@ export class WorkspaceStore {
 
     // Clear any pending UI bumps from deltas - we're about to rebuild the message list.
     this.cancelPendingIdleBump(workspaceId);
+    this.cancelPendingStreamingBump(workspaceId);
 
     // Preserve last-known usage while replay rebuilds the aggregator.
     // Without this, getWorkspaceUsage() can briefly return an empty state and hide
@@ -3283,6 +3370,8 @@ export class WorkspaceStore {
 
     // Clean up idle callback to prevent stale callbacks
     this.cancelPendingIdleBump(workspaceId);
+    this.cancelPendingStreamingBump(workspaceId);
+    this.streamingStatsStore.delete(workspaceId);
 
     if (this.activeWorkspaceId === workspaceId) {
       this.activeWorkspaceId = null;
@@ -3741,7 +3830,15 @@ export class WorkspaceStore {
 
       applyWorkspaceChatEventToAggregator(aggregator, data, { allowSideEffects });
 
+      // stream-error is a terminal stream event, just like stream-end/stream-abort.
+      // Mirror their cleanup so subscribers don't see stale streaming stats from the
+      // failed stream — applyWorkspaceChatEventToAggregator already cleared token
+      // state; we now flush any pending coalesced bump and invalidate the
+      // streamingStatsStore cache so useWorkspaceStreamingStats returns null.
+      this.cancelPendingIdleBump(workspaceId);
+      this.cancelPendingStreamingBump(workspaceId);
       this.states.bump(workspaceId);
+      this.streamingStatsStore.bump(workspaceId);
       return;
     }
 
@@ -4119,6 +4216,29 @@ export function useWorkspaceUsage(workspaceId: string): WorkspaceUsageState {
     (listener) => store.subscribeUsage(workspaceId, listener),
     () => store.getWorkspaceUsage(workspaceId)
   );
+}
+
+/**
+ * Hook for the live token-count / TPS pill during streaming.
+ *
+ * Subscribed as a separate leaf so the streaming pill can update on every
+ * coalesced stream-delta WITHOUT cascading a re-render through the entire
+ * chat subtree. Returns null when no stream is active.
+ *
+ * This is the cure for the "TPS makes WorkspaceState unstable" jitter source —
+ * see {@link WorkspaceStreamingStats}.
+ */
+export function useWorkspaceStreamingStats(workspaceId: string): WorkspaceStreamingStats | null {
+  const store = getStoreInstance();
+  const subscribe = useCallback(
+    (listener: () => void) => store.subscribeStreamingStats(workspaceId, listener),
+    [store, workspaceId]
+  );
+  const getSnapshot = useCallback(
+    () => store.getWorkspaceStreamingStats(workspaceId),
+    [store, workspaceId]
+  );
+  return useSyncExternalStore(subscribe, getSnapshot);
 }
 
 /**

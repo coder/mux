@@ -1898,12 +1898,22 @@ export class StreamingMessageAggregator {
       }
     }
 
-    // Append each delta as a new part (merging happens at display time)
-    message.parts.push({
-      type: "text",
-      text: data.delta,
-      timestamp: data.timestamp,
-    });
+    // Compact-on-append: when the previous part is text (the common case during
+    // a text run), append into it in place instead of growing parts unbounded.
+    // For a 10k-char reply this drops parts.length from thousands to one and
+    // shrinks per-render mergeAdjacentParts cost from O(N) to O(1). The on-disk
+    // format is unaffected — partial.json/chat.jsonl persistence happens
+    // backend-side; this aggregator's parts are pure in-memory display state.
+    const lastPart = message.parts[message.parts.length - 1];
+    if (lastPart?.type === "text") {
+      lastPart.text += data.delta;
+    } else {
+      message.parts.push({
+        type: "text",
+        text: data.delta,
+        timestamp: data.timestamp,
+      });
+    }
 
     // Track delta for token counting and TPS calculation
     this.trackDelta(data.messageId, data.tokens, data.timestamp, "text");
@@ -2459,12 +2469,17 @@ export class StreamingMessageAggregator {
       }
     }
 
-    // Append each delta as a new part (merging happens at display time)
-    message.parts.push({
-      type: "reasoning",
-      text: data.delta,
-      timestamp: data.timestamp,
-    });
+    // Compact-on-append for reasoning runs (same rationale as handleStreamDelta).
+    const lastPart = message.parts[message.parts.length - 1];
+    if (lastPart?.type === "reasoning") {
+      lastPart.text += data.delta;
+    } else {
+      message.parts.push({
+        type: "reasoning",
+        text: data.delta,
+        timestamp: data.timestamp,
+      });
+    }
 
     // Track delta for token counting and TPS calculation
     this.trackDelta(data.messageId, data.tokens, data.timestamp, "reasoning");

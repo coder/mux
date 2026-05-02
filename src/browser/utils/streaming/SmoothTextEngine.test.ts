@@ -68,11 +68,14 @@ describe("SmoothTextEngine", () => {
 
   it("flushes immediately when streaming ends", () => {
     const engine = new SmoothTextEngine();
-    const fullText = makeText(120);
+    // Use a long text so 5 ticks aren't enough to fully reveal even at the
+    // catch-up rate ceiling — the test cares about the snap-to-full behavior
+    // when streaming stops, not the steady-state cadence.
+    const fullText = makeText(2000);
 
     engine.update(fullText, true, false);
 
-    for (let i = 0; i < 15; i++) {
+    for (let i = 0; i < 5; i++) {
       engine.tick(16);
     }
 
@@ -112,7 +115,8 @@ describe("SmoothTextEngine", () => {
     const engine = new SmoothTextEngine();
     // With a 1-char backlog, adaptive rate is at floor (~24 cps).
     // At 4ms per tick: 24 * 0.004 = 0.096 budget per tick.
-    // Budget reaches 1.0 after ceil(1 / 0.096) ≈ 11 ticks.
+    // The required-char gate is min(MIN_FRAME_CHARS, backlog) = min(2, 1) = 1
+    // for this 1-char stream, so it reveals once budget reaches 1.0.
     engine.update("x", true, false);
 
     // First tick at 4ms should not reveal (budget ~0.10).
@@ -129,6 +133,59 @@ describe("SmoothTextEngine", () => {
       engine.tick(4);
     }
     expect(engine.visibleLength).toBeGreaterThan(0);
+  });
+
+  it("targets the live model rate when provided", () => {
+    // With a model rate of 200 cps the engine should reveal materially faster
+    // than at the BASE rate of 72 cps for the same backlog.
+    const baseEngine = new SmoothTextEngine();
+    const modelAwareEngine = new SmoothTextEngine();
+
+    baseEngine.update(makeText(50), true, false);
+    modelAwareEngine.update(makeText(50), true, false, 200);
+
+    for (let i = 0; i < 10; i++) {
+      baseEngine.tick(16);
+      modelAwareEngine.tick(16);
+    }
+
+    expect(modelAwareEngine.visibleLength).toBeGreaterThan(baseEngine.visibleLength);
+  });
+
+  it("soft-catches-up large lag without a hard snap", () => {
+    const engine = new SmoothTextEngine();
+
+    // Catch up on a small initial chunk first.
+    engine.update(makeText(40), true, false);
+    while (!engine.isCaughtUp) {
+      engine.tick(16);
+    }
+
+    // Now jump the ingested length by 200 chars — well above SOFT_CATCHUP_LAG_CHARS
+    // (60) but well below the hard snap threshold (1024). The engine should NOT
+    // snap forward; it should keep visibleLength at the previous position so the
+    // soft catch-up ramp can drain the lag over the next few ticks.
+    const prevVisible = engine.visibleLength;
+    engine.update(makeText(240), true, false);
+    expect(engine.visibleLength).toBe(prevVisible);
+
+    // After enough ticks the soft ramp should drain the lag fully.
+    for (let i = 0; i < 60; i++) {
+      engine.tick(16);
+    }
+    expect(engine.isCaughtUp).toBe(true);
+  });
+
+  it("hard-snaps when lag exceeds the safety threshold", () => {
+    const engine = new SmoothTextEngine();
+    // A pathological burst — well above MAX_VISUAL_LAG_CHARS — must snap
+    // forward to keep the user from staring at a hidden tail.
+    const burstSize = STREAM_SMOOTHING.MAX_VISUAL_LAG_CHARS + 500;
+    engine.update(makeText(burstSize), true, false);
+
+    expect(burstSize - engine.visibleLength).toBeLessThanOrEqual(
+      STREAM_SMOOTHING.MAX_VISUAL_LAG_CHARS
+    );
   });
 
   it("keeps reveal near frame-rate invariant over equal wall time", () => {

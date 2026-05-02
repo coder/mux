@@ -184,10 +184,11 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
     // renders parseIncompleteMarkdown=false, matching the prior static render exactly.
     const contentElement = (
       <TypewriterMarkdown
-        deltas={[content]}
+        content={content}
         isComplete={!isStreaming}
         streamKey={message.historyId}
         streamSource={message.streamPresentation?.source}
+        workspaceId={workspaceId}
       />
     );
 

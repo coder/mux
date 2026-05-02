@@ -9,6 +9,12 @@ import { Lightbulb } from "lucide-react";
 interface ReasoningMessageProps {
   message: DisplayedMessage & { type: "reasoning" };
   className?: string;
+  /**
+   * Workspace this reasoning belongs to. Forwarded to TypewriterMarkdown so the
+   * smoothing engine can target the model's live emission rate. Optional —
+   * tests render this component without a workspace context.
+   */
+  workspaceId?: string;
 }
 
 const REASONING_FONT_CLASSES = "font-primary text-[12px] leading-[18px]";
@@ -40,7 +46,11 @@ function parseLeadingBoldSummary(
   };
 }
 
-export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, className }) => {
+export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({
+  message,
+  className,
+  workspaceId,
+}) => {
   const [isExpanded, setIsExpanded] = useState(message.isStreaming);
   // Track the height when expanded to reserve space during collapse transitions
   const [expandedHeight, setExpandedHeight] = useState<number | null>(null);
@@ -119,13 +129,18 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, cla
     // stream end would unmount/remount the markdown subtree and visibly flash the
     // content. isComplete={!isStreaming} cleanly bypasses the smoothing engine once
     // the stream ends, matching the prior static-render behavior.
+    // React Compiler auto-memoizes this normalize call between renders that
+    // share the same `content` value; no manual useMemo needed.
+    const normalizedContent = normalizeReasoningMarkdown(content);
+
     return (
       <TypewriterMarkdown
-        deltas={[normalizeReasoningMarkdown(content)]}
+        content={normalizedContent}
         isComplete={!isStreaming}
         preserveLineBreaks
         streamKey={message.historyId}
         streamSource={message.streamPresentation?.source}
+        workspaceId={workspaceId}
       />
     );
   };

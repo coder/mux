@@ -171,6 +171,10 @@ export function applyWorkspaceChatEventToAggregator(
     }
 
     aggregator.handleStreamError(event);
+    // Match stream-end / stream-abort: drop the per-message deltaHistory entry
+    // so a subsequent stream isn't influenced by leaked TPS/token state from
+    // the errored one.
+    aggregator.clearTokenState(event.messageId);
     return "immediate";
   }
 
