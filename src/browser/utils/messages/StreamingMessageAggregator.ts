@@ -2921,6 +2921,14 @@ export class StreamingMessageAggregator {
         displayedMessages.push(this.createCompactionBoundaryRow(message, historySequence));
       }
 
+      // A turn that contains *only* reasoning (no text, no tool calls) is the
+      // visible signature of a max_tokens truncation mid-thinking. We pass this
+      // hint down so ReasoningMessage can skip its auto-collapse — otherwise the
+      // user is left looking at a single collapsed "Thinking" header with no other
+      // output to read.
+      const isReasoningOnlyMessage =
+        mergedParts.length > 0 && mergedParts.every((p) => p.type === "reasoning");
+
       mergedParts.forEach((part, partIndex) => {
         const isLastPart = partIndex === lastPartIndex;
         // Part is streaming if: active stream exists AND this is the last part
@@ -2938,6 +2946,7 @@ export class StreamingMessageAggregator {
             isStreaming,
             isPartial,
             isLastPartOfMessage: isLastPart,
+            isOnlyMessageContent: isReasoningOnlyMessage,
             timestamp: part.timestamp ?? baseTimestamp,
             streamPresentation: isStreaming
               ? { source: streamContext?.isReplay ? "replay" : "live" }
@@ -3054,6 +3063,31 @@ export class StreamingMessageAggregator {
           historyId: message.id,
           error: message.metadata.error,
           errorType: message.metadata.errorType ?? "unknown",
+          historySequence,
+          model: message.metadata.model,
+          routedThroughGateway: message.metadata?.routedThroughGateway,
+          timestamp: baseTimestamp,
+        });
+      } else if (
+        // Stream ended cleanly *but* the provider truncated us at max_tokens.
+        // The backend's stream-end path treats this as a successful completion
+        // (no error metadata), so without this synthesis the chat appears to
+        // silently end — especially painful for reasoning-only turns where
+        // ReasoningMessage would otherwise auto-collapse the only output.
+        // Skip while still streaming: finishReason is only authoritative once
+        // the stream has settled.
+        message.role === "assistant" &&
+        !hasActiveStream &&
+        message.metadata?.finishReason === "length"
+      ) {
+        displayedMessages.push({
+          type: "stream-error",
+          id: `${message.id}-length`,
+          historyId: message.id,
+          error:
+            "The model hit its max output token limit before finishing this response. " +
+            "Lower the thinking level (or split the turn into smaller steps) to give it more headroom.",
+          errorType: "max_output_tokens",
           historySequence,
           model: message.metadata.model,
           routedThroughGateway: message.metadata?.routedThroughGateway,

@@ -85,6 +85,13 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({
   const wasStreamingRef = useRef(isStreaming);
   const isLastPartOfMessage =
     "isLastPartOfMessage" in message ? message.isLastPartOfMessage : false;
+  // When the parent message contains *only* reasoning (e.g. the stream was
+  // truncated at max_tokens before any text/tool emerged), collapsing leaves
+  // the user staring at a single "Thinking" header and nothing else. Skip the
+  // auto-collapse in that case so the work the model did is still readable;
+  // the accompanying stream-error row from SMA explains why the turn stopped.
+  const isOnlyMessageContent =
+    "isOnlyMessageContent" in message ? message.isOnlyMessageContent === true : false;
 
   // Auto-collapse only when reasoning reached *natural* completion — i.e. the
   // stream ended while this reasoning part was still the terminal block of the
@@ -97,10 +104,10 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({
     const wasStreaming = wasStreamingRef.current;
     wasStreamingRef.current = isStreaming;
 
-    if (wasStreaming && !isStreaming && isLastPartOfMessage) {
+    if (wasStreaming && !isStreaming && isLastPartOfMessage && !isOnlyMessageContent) {
       setIsExpanded(false);
     }
-  }, [isStreaming, isLastPartOfMessage]);
+  }, [isStreaming, isLastPartOfMessage, isOnlyMessageContent]);
 
   const toggleExpanded = () => {
     if (!isCollapsible) {

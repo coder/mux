@@ -745,6 +745,11 @@ export type DisplayedMessage =
       isStreaming: boolean;
       isPartial: boolean; // Whether the parent message was interrupted
       isLastPartOfMessage?: boolean; // True if this is the last part of a multi-part message
+      /** True when this is the only renderable content in the parent assistant message
+       *  (no text or tool parts). Used to suppress auto-collapse so a reasoning-only
+       *  turn (e.g. one truncated mid-thinking by max_tokens) doesn't visually disappear
+       *  the moment the stream ends. */
+      isOnlyMessageContent?: boolean;
       timestamp?: number;
       tokens?: number; // Reasoning tokens if available
       /** Presentation hint for smooth streaming — indicates if this is live or replayed content. */
