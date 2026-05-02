@@ -3830,7 +3830,15 @@ export class WorkspaceStore {
 
       applyWorkspaceChatEventToAggregator(aggregator, data, { allowSideEffects });
 
+      // stream-error is a terminal stream event, just like stream-end/stream-abort.
+      // Mirror their cleanup so subscribers don't see stale streaming stats from the
+      // failed stream — applyWorkspaceChatEventToAggregator already cleared token
+      // state; we now flush any pending coalesced bump and invalidate the
+      // streamingStatsStore cache so useWorkspaceStreamingStats returns null.
+      this.cancelPendingIdleBump(workspaceId);
+      this.cancelPendingStreamingBump(workspaceId);
       this.states.bump(workspaceId);
+      this.streamingStatsStore.bump(workspaceId);
       return;
     }
 

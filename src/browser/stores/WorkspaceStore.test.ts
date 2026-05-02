@@ -1875,6 +1875,77 @@ describe("WorkspaceStore", () => {
       expect(clearedState.canInterrupt).toBe(false);
     });
 
+    it("invalidates streaming-stats cache on stream-error so subscribers don't see stale TPS", async () => {
+      const workspaceId = "stream-error-invalidates-stats";
+      const streamModel = "anthropic:claude-opus-4-6";
+
+      mockOnChat.mockImplementation(async function* (
+        _input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        if (options?.signal?.aborted) {
+          yield { type: "caught-up" };
+        }
+        await waitForAbortSignal(options?.signal);
+      });
+
+      recreateStore();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      createAndAddWorkspace(store, workspaceId);
+
+      const rawStore = store as unknown as {
+        handleChatMessage: (workspaceId: string, data: WorkspaceChatMessage) => void;
+      };
+
+      // Open a stream and feed a delta so streaming stats become non-null.
+      // stream events are buffered until a caught-up event flushes them onto
+      // the aggregator, so we send caught-up before reading the live stats.
+      const messageId = "stream-error-message";
+      rawStore.handleChatMessage(workspaceId, {
+        type: "stream-start",
+        workspaceId,
+        messageId,
+        model: streamModel,
+        historySequence: 1,
+        startTime: 1_000,
+      });
+      rawStore.handleChatMessage(workspaceId, {
+        type: "stream-delta",
+        workspaceId,
+        messageId,
+        delta: "hello world ",
+        tokens: 3,
+        timestamp: 1_500,
+      });
+      rawStore.handleChatMessage(workspaceId, { type: "caught-up" });
+
+      // Subscribe so stale-cache regression would surface as a missed bump.
+      let notifications = 0;
+      const unsubscribe = store.subscribeStreamingStats(workspaceId, () => {
+        notifications += 1;
+      });
+
+      const before = store.getWorkspaceStreamingStats(workspaceId);
+      expect(before).not.toBeNull();
+
+      rawStore.handleChatMessage(workspaceId, {
+        type: "stream-error",
+        messageId,
+        error: "Mock provider failure",
+        errorType: "network",
+      });
+
+      // The terminal stream-error must bump streamingStatsStore so listeners
+      // re-read; once recomputed, getActiveStreamMessageId returns undefined
+      // and the snapshot collapses to null. Without the bump, the cache would
+      // keep returning `before` (stale TPS leaking into the next stream).
+      expect(notifications).toBeGreaterThanOrEqual(1);
+      const after = store.getWorkspaceStreamingStats(workspaceId);
+      expect(after).toBeNull();
+
+      unsubscribe();
+    });
+
     it("prefers buffered stream-start state over stale non-streaming activity during hydration", async () => {
       const workspaceId = "buffered-stream-start-over-activity";
       const staleActivityModel = "openai:gpt-4o-mini";
