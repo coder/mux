@@ -386,6 +386,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     jumpToBottom,
     handleScroll,
     markUserScrollIntent,
+    handleScrollContainerWheel,
     handleScrollContainerMouseDown,
     handleScrollContainerMouseMove,
     handleScrollContainerMouseUp,
@@ -836,7 +837,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
           <div className="mobile-header-spacer relative flex-1 overflow-hidden">
             <div
               ref={contentRef}
-              onWheel={markUserScrollIntent}
+              onWheel={handleScrollContainerWheel}
               onMouseDown={handleScrollContainerMouseDown}
               onMouseMove={handleScrollContainerMouseMove}
               onMouseUp={handleScrollContainerMouseUp}

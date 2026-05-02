@@ -1,4 +1,4 @@
-import type { KeyboardEvent, MouseEvent, UIEvent } from "react";
+import type { KeyboardEvent, MouseEvent, UIEvent, WheelEvent } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 const BOTTOM_LOCK_EPSILON_PX = 1;
@@ -142,6 +142,12 @@ export function useAutoScroll() {
     programmaticDisableRef.current = false;
     setAutoScrollEnabled(true);
     stickToBottom();
+    // Seed the direction baseline used by handleScroll's released-branch
+    // user-intent path. stickToBottom doesn't always emit a scroll event
+    // (it skips the write when scrollTop is already max), so without this
+    // seed the next user-driven scroll event could compare against a stale
+    // value carried across workspace switches or earlier sessions.
+    lastScrollTopRef.current = contentRef.current?.scrollTop ?? 0;
     startBottomLockFrameLoop();
   }, [setAutoScrollEnabled, startBottomLockFrameLoop, stickToBottom]);
 
@@ -149,6 +155,14 @@ export function useAutoScroll() {
     userScrollIntentUntilRef.current = 0;
     programmaticDisableRef.current = true;
     setAutoScrollEnabled(false);
+    // Seed the direction baseline. The released-branch user-intent path in
+    // handleScroll compares the next scroll event's scrollTop against
+    // lastScrollTopRef. disableAutoScroll never fires a scroll event itself,
+    // so without this seed a small wheel-up notch following a programmatic
+    // disable would be misread as "moving toward bottom" (because
+    // previousScrollTop was 0 or some unrelated earlier value), spuriously
+    // relocking the lock that was just disabled.
+    lastScrollTopRef.current = contentRef.current?.scrollTop ?? 0;
     stopBottomLockFrameLoop();
   }, [setAutoScrollEnabled, stopBottomLockFrameLoop]);
 
@@ -156,6 +170,21 @@ export function useAutoScroll() {
     programmaticDisableRef.current = false;
     userScrollIntentUntilRef.current = Date.now() + USER_SCROLL_INTENT_WINDOW_MS;
   }, []);
+
+  const handleScrollContainerWheel = useCallback(
+    (event: WheelEvent<HTMLDivElement>) => {
+      // Filter delta-0 wheel events before opening a scroll-intent window.
+      // Modifier-key wheel (Cmd-wheel browser zoom on macOS, Shift-wheel for
+      // horizontal-only on some setups), pinch gestures, and Bluetooth-mouse
+      // jitter all dispatch wheel events with deltaY === 0 (and often
+      // deltaX === 0). Without this filter every such phantom wheel would
+      // clear programmaticDisableRef and refresh the 750 ms intent window,
+      // weakening every downstream gate that relies on those refs.
+      if (event.deltaY === 0 && event.deltaX === 0) return;
+      markUserScrollIntent();
+    },
+    [markUserScrollIntent]
+  );
 
   const contentMouseDownCandidateRef = useRef(false);
 
@@ -322,6 +351,7 @@ export function useAutoScroll() {
     jumpToBottom,
     handleScroll,
     markUserScrollIntent,
+    handleScrollContainerWheel,
     handleScrollContainerMouseDown,
     handleScrollContainerMouseMove,
     handleScrollContainerMouseUp,
