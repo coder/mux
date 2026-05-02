@@ -208,6 +208,24 @@ describe("applyWorkspaceChatEventToAggregator", () => {
     expect(aggregator.calls).toEqual(["clearTokenState:msg-1", "handleStreamAbort:msg-1"]);
   });
 
+  test("stream-error clears token state after calling handleStreamError", () => {
+    const aggregator = new StubAggregator();
+
+    const event: WorkspaceChatMessage = {
+      type: "stream-error",
+      messageId: "msg-1",
+      error: "boom",
+      errorType: "network",
+    };
+
+    const hint = applyWorkspaceChatEventToAggregator(aggregator, event);
+
+    expect(hint).toBe("immediate");
+    // Without the clearTokenState call, the next stream's TPS/token-count
+    // calculation could draw from the errored message's leaked deltaHistory.
+    expect(aggregator.calls).toEqual(["handleStreamError:msg-1", "clearTokenState:msg-1"]);
+  });
+
   test("tool-call-delta routes to handleToolCallDelta and is throttled", () => {
     const aggregator = new StubAggregator();
 

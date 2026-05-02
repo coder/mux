@@ -81,12 +81,45 @@ describe("StreamingTPSCalculator", () => {
       expect(calculateTPS(deltas, now)).toBe(15);
     });
 
-    test("returns 0 when time span is zero", () => {
+    test("uses minimum 1s window when time span is zero", () => {
       const now = 1000;
       const deltas: DeltaRecord[] = [
         { tokens: 100, timestamp: 1000, type: "text" }, // Same timestamp as now
       ];
+      // 100 tokens divided by the 1s minimum window = 100 t/s.
+      // (Floor avoids the divide-by-tiny-window artifact that otherwise reports
+      // tens of thousands of t/s when only one chunk has arrived.)
+      expect(calculateTPS(deltas, now)).toBe(100);
+    });
+
+    test("returns 0 when time span is negative (clock skew)", () => {
+      const now = 500;
+      const deltas: DeltaRecord[] = [
+        { tokens: 100, timestamp: 1000, type: "text" }, // future-dated, treat as invalid
+      ];
       expect(calculateTPS(deltas, now)).toBe(0);
+    });
+
+    test("floors tiny time spans to the 1s minimum to avoid inflated rates", () => {
+      // Realistic scenario: first delta of a fresh stream — only a few ms have
+      // elapsed between the chunk's timestamp and the read.
+      const now = 1005;
+      const deltas: DeltaRecord[] = [{ tokens: 50, timestamp: 1000, type: "text" }];
+      // Without the floor: 50 tokens / 0.005s = 10000 t/s (bogus).
+      // With the 1s floor: 50 tokens / 1s = 50 t/s.
+      expect(calculateTPS(deltas, now)).toBe(50);
+    });
+
+    test("uses raw time span once it exceeds the 1s minimum", () => {
+      // 1.5s after first delta — the floor stops applying and we return the
+      // honest rate.
+      const now = 2500;
+      const deltas: DeltaRecord[] = [
+        { tokens: 50, timestamp: 1000, type: "text" },
+        { tokens: 100, timestamp: 2000, type: "text" },
+      ];
+      // 150 tokens over 1.5s = 100 t/s.
+      expect(calculateTPS(deltas, now)).toBe(100);
     });
 
     test("uses current time by default", () => {
