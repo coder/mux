@@ -188,6 +188,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
         isComplete={!isStreaming}
         streamKey={message.historyId}
         streamSource={message.streamPresentation?.source}
+        workspaceId={workspaceId}
       />
     );
 

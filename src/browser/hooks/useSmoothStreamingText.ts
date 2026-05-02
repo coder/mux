@@ -7,6 +7,13 @@ export interface UseSmoothStreamingTextOptions {
   bypassSmoothing: boolean;
   /** Changing this resets the engine (new stream). */
   streamKey: string;
+  /**
+   * Optional hint at the source's current emission rate (chars/sec). When
+   * supplied, the smoothing engine targets this rate instead of the BASE
+   * fallback so the visible cursor tracks the model's actual output. Pass 0
+   * (or omit) when unknown.
+   */
+  liveCharsPerSec?: number;
 }
 
 export interface UseSmoothStreamingTextResult {
@@ -66,7 +73,16 @@ export function useSmoothStreamingText(
   }
 
   const engine = engineRef.current;
-  engine.update(options.fullText, options.isStreaming, options.bypassSmoothing);
+  // engine.update is idempotent (pure projection of inputs onto engine state),
+  // so calling it during render is safe — including under StrictMode double-render.
+  // Keeping it inline lets the returned visibleText reflect the very latest fullText
+  // on the same render the stream ends, avoiding a one-frame visual lag at the seam.
+  engine.update(
+    options.fullText,
+    options.isStreaming,
+    options.bypassSmoothing,
+    options.liveCharsPerSec ?? 0
+  );
 
   const [visibleLength, setVisibleLength] = useState(() => engine.visibleLength);
   const visibleLengthRef = useRef(visibleLength);
@@ -113,7 +129,14 @@ export function useSmoothStreamingText(
     ) {
       rafIdRef.current = requestAnimationFrame(frameRef.current);
     }
-  }, [engine, options.fullText, options.isStreaming, options.bypassSmoothing, options.streamKey]);
+  }, [
+    engine,
+    options.fullText,
+    options.isStreaming,
+    options.bypassSmoothing,
+    options.streamKey,
+    options.liveCharsPerSec,
+  ]);
 
   // Lifecycle: stop RAF when streaming ends or stream key changes, and on unmount.
   useEffect(() => {

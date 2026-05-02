@@ -121,7 +121,9 @@ export const MessageRenderer = React.memo<MessageRendererProps>(
         );
         break;
       case "reasoning":
-        renderedMessage = <ReasoningMessage message={message} className={className} />;
+        renderedMessage = (
+          <ReasoningMessage message={message} className={className} workspaceId={workspaceId} />
+        );
         break;
       case "stream-error":
         renderedMessage = <StreamErrorMessage message={message} className={className} />;

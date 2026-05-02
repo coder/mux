@@ -1,5 +1,6 @@
 import React, { useMemo } from "react";
 import { useSmoothStreamingText } from "@/browser/hooks/useSmoothStreamingText";
+import { useWorkspaceStreamingStats } from "@/browser/stores/WorkspaceStore";
 import { cn } from "@/common/lib/utils";
 import { MarkdownCore } from "./MarkdownCore";
 import { StreamingContext } from "./StreamingContext";
@@ -18,6 +19,13 @@ interface TypewriterMarkdownProps {
   streamKey?: string;
   /** Whether this stream originated from live tokens or replay. Defaults to "live". */
   streamSource?: "live" | "replay";
+  /**
+   * Workspace this content belongs to. When provided, the smoothing engine is
+   * fed the live model emission rate so the visible cursor tracks the model's
+   * actual output rather than the constant BASE rate. Optional because some
+   * surfaces (storybook, preview popovers) render markdown without a workspace.
+   */
+  workspaceId?: string;
 }
 
 // Use React.memo to prevent unnecessary re-renders from parent
@@ -28,9 +36,18 @@ export const TypewriterMarkdown = React.memo<TypewriterMarkdownProps>(function T
   preserveLineBreaks,
   streamKey,
   streamSource = "live",
+  workspaceId,
 }) {
   const fullContent = deltas.join("");
   const isStreaming = !isComplete && fullContent.length > 0;
+
+  // Read the live model emission rate (chars/sec) for the active stream of this
+  // workspace. The hook subscribes to its own MapStore so per-delta updates
+  // re-render this component WITHOUT cascading through the parent — see
+  // useWorkspaceStreamingStats. Hooks must run unconditionally; pass an empty
+  // string when no workspace is provided so the subscription is a stable no-op.
+  const streamingStats = useWorkspaceStreamingStats(workspaceId ?? "");
+  const liveCharsPerSec = isStreaming && workspaceId ? (streamingStats?.charsPerSec ?? 0) : 0;
 
   // Two-clock streaming: ingestion (fullContent) vs presentation (visibleText).
   // The jitter buffer reveals text at a steady cadence instead of bursty token clumps.
@@ -40,6 +57,7 @@ export const TypewriterMarkdown = React.memo<TypewriterMarkdownProps>(function T
     isStreaming,
     bypassSmoothing: streamSource === "replay",
     streamKey: streamKey ?? "",
+    liveCharsPerSec,
   });
 
   const streamingContextValue = useMemo(() => ({ isStreaming }), [isStreaming]);

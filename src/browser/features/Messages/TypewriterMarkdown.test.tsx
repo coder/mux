@@ -90,6 +90,7 @@ describe("TypewriterMarkdown", () => {
       isStreaming: true,
       bypassSmoothing: false,
       streamKey: "msg-1",
+      liveCharsPerSec: 0,
     });
   });
 
