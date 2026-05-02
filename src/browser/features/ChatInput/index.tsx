@@ -2777,31 +2777,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
             <div className="@container flex min-w-[340px] flex-nowrap items-center gap-1.5">
               <div className="flex min-w-0 flex-1 items-center gap-1.5">
-                {/*
-                  Input-method icons (attach, voice) live in the controls row rather than
-                  overlaying the textarea. An overlay forced reserved right-padding on every
-                  line and still allowed the bottom line of wrapped text to ride under the
-                  icons; placing them here guarantees they never intersect typed text.
-                */}
-                <div
-                  className="flex shrink-0 items-center gap-0.5"
-                  data-component="InputMethodGroup"
-                >
-                  <AttachFileButton
-                    onFiles={handleAttachFiles}
-                    disabled={disabled || sendInFlightBlocksInput || !!editingMessageForUi}
-                  />
-                  <VoiceInputButton
-                    state={voiceInput.state}
-                    isAvailable={voiceInput.isAvailable}
-                    shouldShowUI={voiceInput.shouldShowUI}
-                    requiresSecureContext={voiceInput.requiresSecureContext}
-                    onToggle={voiceInput.toggle}
-                    disabled={disabled || sendInFlightBlocksInput}
-                    agentColor={focusBorderColor}
-                  />
-                </div>
-
                 <div
                   className="flex min-w-0 items-center gap-1.5"
                   data-component="ModelSelectorGroup"
@@ -2873,7 +2848,34 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   />
                 </div>
 
-                <div ref={sendModeMenuContainerRef} className="relative">
+                {/*
+                  Input-method icons (attach, voice) cluster tightly with the Send button so
+                  the trailing actions read as one unit, rather than as small icons stranded
+                  inside the row's gap-1.5 cadence. They live below the textarea (not as an
+                  absolute overlay) so they can never visually intersect typed/wrapped text.
+                */}
+                <div className="flex shrink-0 items-center gap-0" data-component="InputMethodGroup">
+                  <AttachFileButton
+                    onFiles={handleAttachFiles}
+                    disabled={disabled || sendInFlightBlocksInput || !!editingMessageForUi}
+                  />
+                  <VoiceInputButton
+                    state={voiceInput.state}
+                    isAvailable={voiceInput.isAvailable}
+                    shouldShowUI={voiceInput.shouldShowUI}
+                    requiresSecureContext={voiceInput.requiresSecureContext}
+                    onToggle={voiceInput.toggle}
+                    disabled={disabled || sendInFlightBlocksInput}
+                    agentColor={focusBorderColor}
+                  />
+                </div>
+
+                {/*
+                  Pull the Send button flush against the input-method icons (override the
+                  parent's gap-1.5 with a negative margin) so they form a single trailing
+                  cluster.
+                */}
+                <div ref={sendModeMenuContainerRef} className="relative -ml-1.5">
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
