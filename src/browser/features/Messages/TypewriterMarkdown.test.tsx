@@ -156,23 +156,42 @@ describe("TypewriterMarkdown", () => {
 
   // The data-streaming attribute is the gate for the per-block fade-in CSS rule
   // (see globals.css, .markdown-content[data-streaming="true"] .streamdown-root > *).
-  // It must only be present on the wrapper while the message is actively streaming
-  // — otherwise historical/replayed transcripts would re-trigger the animation
-  // every time their content prop changes.
-  test("sets data-streaming on the wrapper only while streaming", () => {
-    const streaming = render(
-      <TypewriterMarkdown content="Live" isComplete={false} streamKey="msg-anim-live" />
+  // It must be present ONLY on live streaming messages. Completed messages and
+  // replay rows must not match — replay rows are emitted with isStreaming=true
+  // while the backend rebuilds history, so guarding on isStreaming alone would
+  // re-animate every block of every historical message on reconnect.
+  test("sets data-streaming only for live streams, not replay or completed", () => {
+    const live = render(
+      <TypewriterMarkdown
+        content="Live"
+        isComplete={false}
+        streamKey="msg-anim-live"
+        streamSource="live"
+      />
+    );
+    expect(live.container.querySelector(".markdown-content")?.getAttribute("data-streaming")).toBe(
+      "true"
+    );
+    live.unmount();
+
+    // Replay row (still streaming, but source=replay) — must not animate.
+    const replay = render(
+      <TypewriterMarkdown
+        content="Replayed"
+        isComplete={false}
+        streamKey="msg-anim-replay"
+        streamSource="replay"
+      />
     );
     expect(
-      streaming.container.querySelector(".markdown-content")?.getAttribute("data-streaming")
-    ).toBe("true");
-    streaming.unmount();
+      replay.container.querySelector(".markdown-content")?.getAttribute("data-streaming")
+    ).toBeNull();
+    replay.unmount();
 
+    // Completed message — must not animate either.
     const completed = render(
       <TypewriterMarkdown content="Done" isComplete={true} streamKey="msg-anim-done" />
     );
-    // Absent (not "false") on completed messages so the CSS selector
-    // [data-streaming="true"] cannot match.
     expect(
       completed.container.querySelector(".markdown-content")?.getAttribute("data-streaming")
     ).toBeNull();
