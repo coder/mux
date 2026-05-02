@@ -10,8 +10,8 @@ import {
 // ═══════════════════════════════════════════════════════════════════════════════
 export interface WorkspaceDraftFixture {
   draftId: string;
-  /** Optional: section ID the draft belongs to */
-  sectionId?: string | null;
+  /** Optional: sub-project path the draft belongs to */
+  subProjectPath?: string | null;
   /** Optional: draft prompt text */
   prompt?: string;
   /** Optional: workspace name (either manual or generated) */
@@ -28,11 +28,14 @@ export function setWorkspaceDrafts(projectPath: string, drafts: WorkspaceDraftFi
   // Set the drafts index
   const draftsByProject = JSON.parse(
     localStorage.getItem(WORKSPACE_DRAFTS_BY_PROJECT_KEY) ?? "{}"
-  ) as Record<string, Array<{ draftId: string; sectionId?: string | null; createdAt?: number }>>;
+  ) as Record<
+    string,
+    Array<{ draftId: string; subProjectPath?: string | null; createdAt?: number }>
+  >;
 
   draftsByProject[projectPath] = drafts.map((d) => ({
     draftId: d.draftId,
-    sectionId: d.sectionId,
+    subProjectPath: d.subProjectPath,
     createdAt: d.createdAt ?? Date.now(),
   }));
 

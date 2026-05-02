@@ -133,9 +133,8 @@ export const CreateWorkspaceMultipleProjects: AppStory = {
 };
 
 /**
- * Creation view with project sections configured.
- * On desktop the section selector is inline / right-aligned in the header row.
- * On mobile it drops to its own row below the header.
+ * Creation view with sub-projects configured.
+ * Sub-projects are shown in the sidebar rather than in a creation-time section selector.
  *
  * Includes mobile chromatic modes: the sidebar starts expanded via
  * localStorage so the play function can click the project row, then
@@ -161,15 +160,32 @@ export const CreateWorkspaceWithSections: AppStory = {
         localStorage.setItem(LEFT_SIDEBAR_COLLAPSED_KEY, JSON.stringify(false));
         return createMockORPCClient({
           projects: new Map([
+            ["/Users/dev/my-project", { workspaces: [] }],
             [
-              "/Users/dev/my-project",
+              "/Users/dev/my-project/frontend",
               {
+                displayName: "Frontend",
+                color: "#4f8cf7",
+                parentProjectPath: "/Users/dev/my-project",
                 workspaces: [],
-                sections: [
-                  { id: "sec_0001", name: "Frontend", color: "#4f8cf7", nextId: "sec_0002" },
-                  { id: "sec_0002", name: "Backend", color: "#f76b4f", nextId: "sec_0003" },
-                  { id: "sec_0003", name: "Infra", color: "#8b5cf6", nextId: null },
-                ],
+              },
+            ],
+            [
+              "/Users/dev/my-project/backend",
+              {
+                displayName: "Backend",
+                color: "#f76b4f",
+                parentProjectPath: "/Users/dev/my-project",
+                workspaces: [],
+              },
+            ],
+            [
+              "/Users/dev/my-project/infra",
+              {
+                displayName: "Infra",
+                color: "#8b5cf6",
+                parentProjectPath: "/Users/dev/my-project",
+                workspaces: [],
               },
             ],
           ]),
@@ -198,35 +214,15 @@ export const CreateWorkspaceWithSections: AppStory = {
         }
       }
 
-      // Wait for the section selector to be visible. Two instances exist in
-      // the DOM (one for desktop inline, one for mobile own-row via
-      // hidden/md:hidden). Find the one that's actually rendered.
+      // The creation form should stay focused on workspace setup; sub-project selection
+      // now happens by navigating to the nested project in the sidebar.
       await waitFor(
         () => {
-          const allSelectors = storyRoot.querySelectorAll<HTMLElement>(
-            "[data-testid='section-selector']"
+          const workspaceNameGroup = storyRoot.querySelector(
+            "[data-component='WorkspaceNameGroup']"
           );
-          const sectionSelector = Array.from(allSelectors).find(
-            (el) => el.offsetWidth > 0 && el.offsetHeight > 0
-          );
-          if (!sectionSelector) {
-            throw new Error("Section selector not visible");
-          }
-
-          // On narrow viewports, verify the section selector sits below
-          // the header row (mobile-only own-row layout).
-          if (window.innerWidth < 768) {
-            const headerRow = storyRoot.querySelector("[data-component='WorkspaceNameGroup']");
-            if (!headerRow) {
-              throw new Error("Workspace name header row not found");
-            }
-            const headerBottom = headerRow.getBoundingClientRect().bottom;
-            const sectionTop = sectionSelector.getBoundingClientRect().top;
-            if (sectionTop < headerBottom) {
-              throw new Error(
-                `Section selector overlaps header row (section top=${sectionTop}, header bottom=${headerBottom})`
-              );
-            }
+          if (!workspaceNameGroup) {
+            throw new Error("Workspace name header row not found");
           }
         },
         { timeout: 10000 }

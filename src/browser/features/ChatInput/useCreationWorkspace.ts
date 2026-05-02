@@ -67,8 +67,8 @@ interface UseCreationWorkspaceOptions {
   ) => void;
   /** Current message input for name generation */
   message: string;
-  /** Section ID to assign the new workspace to */
-  sectionId?: string | null;
+  /** Sub-project path to use for cwd and AGENTS.md context. */
+  subProjectPath?: string | null;
   /** Draft ID for UI-only workspace creation drafts (from URL) */
   draftId?: string | null;
   /** User's currently selected model (for name generation fallback) */
@@ -207,7 +207,7 @@ export function useCreationWorkspace({
   projectPath,
   onWorkspaceCreated,
   message,
-  sectionId,
+  subProjectPath,
   draftId,
   userModel,
 }: UseCreationWorkspaceOptions): UseCreationWorkspaceReturn {
@@ -495,7 +495,7 @@ export function useCreationWorkspace({
           trunkBranch: settings.trunkBranch,
           title: createTitle,
           runtimeConfig,
-          sectionId: sectionId ?? undefined,
+          subProjectPath: subProjectPath ?? undefined,
         });
 
         if (!createResult.success) {
@@ -644,7 +644,7 @@ export function useCreationWorkspace({
       waitForGeneration,
       workspaceNameState.autoGenerate,
       workspaceNameState.name,
-      sectionId,
+      subProjectPath,
       draftId,
       promoteWorkspaceDraft,
       deleteWorkspaceDraft,

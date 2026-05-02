@@ -221,24 +221,6 @@ function getSystemDirectory(): string {
 }
 
 /**
- * Search instruction sources in priority order: agent → context → global.
- * Returns the first non-null result from the extractor function.
- */
-function searchInstructionSources<T>(
-  sources: { agent?: string | null; context?: string | null; global?: string | null },
-  extractor: (source: string) => T | null
-): T | null {
-  // Priority: agent definition → workspace/project AGENTS.md → global AGENTS.md
-  for (const src of [sources.agent, sources.context, sources.global]) {
-    if (src) {
-      const result = extractor(src);
-      if (result !== null) return result;
-    }
-  }
-  return null;
-}
-
-/**
  * Extract tool-specific instructions from instruction sources.
  * Searches agent instructions first, then context (workspace/project), then global.
  *
@@ -268,9 +250,11 @@ export function extractToolInstructions(
   };
 
   for (const toolName of availableTools) {
-    const content = searchInstructionSources(sources, (src) => extractToolSection(src, toolName));
-    if (content) {
-      toolInstructions[toolName] = content;
+    const segments = [sources.agent, sources.context, sources.global]
+      .map((src) => (src ? extractToolSection(src, toolName) : null))
+      .filter((content): content is string => content != null && content.trim().length > 0);
+    if (segments.length > 0) {
+      toolInstructions[toolName] = segments.join("\n\n");
     }
   }
 
@@ -345,6 +329,22 @@ async function readMultiProjectContextInstructions(
   return contextSegments.length > 0 ? contextSegments.join("\n\n") : null;
 }
 
+async function readSingleProjectContextInstructions(
+  metadata: WorkspaceMetadata,
+  runtime: Runtime,
+  workspacePath: string
+): Promise<string | null> {
+  const projectSegments = await Promise.all([
+    readInstructionSet(metadata.projectPath),
+    metadata.subProjectPath ? readInstructionSet(metadata.subProjectPath) : Promise.resolve(null),
+    readInstructionSetFromRuntime(runtime, workspacePath),
+  ]);
+  const contextSegments = projectSegments.filter(
+    (segment): segment is string => segment != null && segment.trim().length > 0
+  );
+  return contextSegments.length > 0 ? contextSegments.join("\n\n") : null;
+}
+
 /**
  * Read instruction sets from global and context sources.
  * Internal helper for buildSystemMessage and extractToolInstructions.
@@ -366,8 +366,7 @@ async function readInstructionSources(
   const globalInstructions = await readInstructionSet(getSystemDirectory());
   const contextInstructions = isMultiProject(metadata)
     ? await readMultiProjectContextInstructions(metadata, runtime, workspacePath)
-    : ((await readInstructionSetFromRuntime(runtime, workspacePath)) ??
-      (await readInstructionSet(metadata.projectPath)));
+    : await readSingleProjectContextInstructions(metadata, runtime, workspacePath);
 
   return [globalInstructions, contextInstructions];
 }
@@ -435,7 +434,7 @@ export async function buildSystemMessage(
 
   const agentPrompt = options?.agentSystemPrompt?.trim() ?? null;
 
-  // Combine: global + context (workspace takes precedence over project) after stripping scoped sections
+  // Combine: global + concatenated project/sub-project/workspace after stripping scoped sections.
   // Also strip scoped sections from agent prompt for consistency
   const sanitizeScopedInstructions = (input?: string | null): string | undefined => {
     if (!input) return undefined;
@@ -456,10 +455,10 @@ export async function buildSystemMessage(
 
   // Extract model-specific section based on active model identifier
   const modelContent = modelString
-    ? searchInstructionSources(
-        { agent: agentPrompt, context: contextInstructions, global: globalInstructions },
-        (src) => extractModelSection(src, modelString)
-      )
+    ? [agentPrompt, contextInstructions, globalInstructions]
+        .map((src) => (src ? extractModelSection(src, modelString) : null))
+        .filter((content): content is string => content != null && content.trim().length > 0)
+        .join("\n\n")
     : null;
 
   if (customInstructions) {

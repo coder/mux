@@ -1,3 +1,4 @@
+import * as path from "path";
 import assert from "@/common/utils/assert";
 import {
   isDockerRuntime,
@@ -17,6 +18,7 @@ export interface WorkspaceMetadataForRuntime {
   projectPath: string;
   name: string;
   namedWorkspacePath?: string;
+  subProjectPath?: string;
 }
 
 /**
@@ -33,17 +35,38 @@ export function resolveWorkspaceExecutionPath(
   metadata: WorkspaceMetadataForRuntime,
   runtime: Runtime
 ): string {
+  const appendSubProjectRelativePath = (workspaceRoot: string): string => {
+    const subProjectPath = metadata.subProjectPath?.trim();
+    if (!subProjectPath) {
+      return workspaceRoot;
+    }
+
+    const relativeSubProjectPath = path.relative(metadata.projectPath, subProjectPath);
+    assert(
+      relativeSubProjectPath &&
+        !relativeSubProjectPath.startsWith("..") &&
+        !path.isAbsolute(relativeSubProjectPath),
+      `Sub-project ${subProjectPath} is not inside project ${metadata.projectPath}`
+    );
+
+    const runtimeRelativeSubProjectPath = relativeSubProjectPath.replace(/\\/g, "/");
+
+    // Use the runtime path normalizer so SSH/Docker/devcontainer cwd paths use the
+    // target runtime's separator semantics instead of host-only path joining.
+    return runtime.normalizePath(runtimeRelativeSubProjectPath, workspaceRoot);
+  };
+
   if (metadata.projectPath === metadata.name) {
     // In-place workspaces (CLI/benchmarks) execute directly in their project root instead of a
     // named sibling checkout, so deriving a worktree path would be reconstructing the wrong shape.
-    return metadata.projectPath;
+    return appendSubProjectRelativePath(metadata.projectPath);
   }
 
   const runtimeWorkspacePath = runtime.getWorkspacePath(metadata.projectPath, metadata.name);
   assert(runtimeWorkspacePath, `Workspace ${metadata.name} resolved to an empty runtime path`);
 
   if (isDockerRuntime(metadata.runtimeConfig)) {
-    return runtimeWorkspacePath;
+    return appendSubProjectRelativePath(runtimeWorkspacePath);
   }
 
   const persistedWorkspacePath = metadata.namedWorkspacePath?.trim();
@@ -57,7 +80,7 @@ export function resolveWorkspaceExecutionPath(
 
     // Other runtimes can still fall back to their canonical derived path when only identity metadata
     // is available (for example in narrow unit tests).
-    return runtimeWorkspacePath;
+    return appendSubProjectRelativePath(runtimeWorkspacePath);
   }
 
   if (isLocalProjectRuntime(metadata.runtimeConfig)) {
@@ -68,7 +91,7 @@ export function resolveWorkspaceExecutionPath(
     );
   }
 
-  return persistedWorkspacePath;
+  return appendSubProjectRelativePath(persistedWorkspacePath);
 }
 
 export interface WorkspaceRuntimeContext {

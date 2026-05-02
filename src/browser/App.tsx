@@ -141,7 +141,7 @@ function AppInner() {
     selectedWorkspace,
     setSelectedWorkspace,
     pendingNewWorkspaceProject,
-    pendingNewWorkspaceSectionId,
+    pendingNewWorkspaceSubProjectPath,
     pendingNewWorkspaceDraftId,
     beginWorkspaceCreation,
   } = useWorkspaceContext();
@@ -169,6 +169,7 @@ function AppInner() {
     refreshProjects,
     removeProject,
     openProjectCreateModal,
+    projectCreateInitialPath,
     isProjectCreateModalOpen,
     closeProjectCreateModal,
     addProject,
@@ -1154,7 +1155,7 @@ function AppInner() {
                     projectName={projectName}
                     leftSidebarCollapsed={sidebarCollapsed}
                     onToggleLeftSidebarCollapsed={handleToggleSidebar}
-                    pendingSectionId={pendingNewWorkspaceSectionId}
+                    pendingSubProjectPath={pendingNewWorkspaceSubProjectPath}
                     pendingDraftId={pendingNewWorkspaceDraftId}
                     onWorkspaceCreated={(metadata, options) => {
                       // IMPORTANT: Add workspace to store FIRST (synchronous) to ensure
@@ -1217,6 +1218,7 @@ function AppInner() {
         </div>
         <CommandPalette getSlashContext={() => ({ workspaceId: selectedWorkspace?.workspaceId })} />
         <ProjectCreateModal
+          initialPath={projectCreateInitialPath}
           isOpen={isProjectCreateModalOpen}
           onClose={closeProjectCreateModal}
           onSuccess={(normalizedPath, projectConfig) => {

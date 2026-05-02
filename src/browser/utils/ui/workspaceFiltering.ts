@@ -1,10 +1,11 @@
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import type { ProjectConfig, SectionConfig } from "@/common/types/project";
+import type { ProjectConfig } from "@/common/types/project";
 import { hasCompletedAgentReport } from "@/common/utils/agentTaskCompletion";
 import { assert } from "@/common/utils/assert";
 
-// Re-export shared section sorting utility
-export { sortSectionsByLinkedList } from "@/common/utils/sections";
+interface WorkspaceGroupConfig {
+  id: string;
+}
 
 function flattenWorkspaceTree(
   workspaces: FrontendWorkspaceMetadata[]
@@ -555,7 +556,7 @@ interface SectionPartitionResult {
  */
 export function partitionWorkspacesBySection(
   workspaces: FrontendWorkspaceMetadata[],
-  sections: SectionConfig[]
+  sections: WorkspaceGroupConfig[]
 ): SectionPartitionResult {
   const sectionIds = new Set(sections.map((s) => s.id));
   const unsectioned: FrontendWorkspaceMetadata[] = [];
@@ -574,8 +575,8 @@ export function partitionWorkspacesBySection(
 
   // Resolve effective section for a workspace (inherit from parent if unset)
   const resolveSection = (workspace: FrontendWorkspaceMetadata): string | undefined => {
-    if (workspace.sectionId && sectionIds.has(workspace.sectionId)) {
-      return workspace.sectionId;
+    if (workspace.subProjectPath && sectionIds.has(workspace.subProjectPath)) {
+      return workspace.subProjectPath;
     }
     // Inherit from parent if child has no section
     if (workspace.parentWorkspaceId) {

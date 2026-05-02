@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { useAPI } from "@/browser/contexts/API";
-import type { ProjectConfig, SectionConfig } from "@/common/types/project";
+import type { ProjectConfig } from "@/common/types/project";
 import type { BranchListResult } from "@/common/orpc/types";
 import type { z } from "zod";
 import type { ProjectRemoveErrorSchema } from "@/common/orpc/schemas/errors";
@@ -75,8 +75,9 @@ export interface ProjectContext {
   removeProject: (path: string, options?: { force?: boolean }) => Promise<ProjectRemoveResult>;
 
   // Project creation modal
+  projectCreateInitialPath?: string;
   isProjectCreateModalOpen: boolean;
-  openProjectCreateModal: () => void;
+  openProjectCreateModal: (options?: { initialPath?: string }) => void;
   closeProjectCreateModal: () => void;
 
   // Workspace modal state
@@ -91,23 +92,10 @@ export interface ProjectContext {
   updateDisplayName: (projectPath: string, displayName: string | null) => Promise<Result<void>>;
   updateColor: (projectPath: string, color: string | null) => Promise<Result<void>>;
 
-  // Section operations
-  createSection: (
-    projectPath: string,
-    name: string,
-    color?: string
-  ) => Promise<Result<SectionConfig>>;
-  updateSection: (
-    projectPath: string,
-    sectionId: string,
-    updates: { name?: string; color?: string }
-  ) => Promise<Result<void>>;
-  removeSection: (projectPath: string, sectionId: string) => Promise<Result<void>>;
-  reorderSections: (projectPath: string, sectionIds: string[]) => Promise<Result<void>>;
-  assignWorkspaceToSection: (
+  assignWorkspaceToSubProject: (
     projectPath: string,
     workspaceId: string,
-    sectionId: string | null
+    subProjectPath: string | null
   ) => Promise<Result<void>>;
   /** Whether any project (user or system) is loaded. */
   hasAnyProject: boolean;
@@ -147,6 +135,7 @@ export function ProjectProvider(props: { children: ReactNode }) {
     [allProjectsInternal]
   );
   const [loading, setLoading] = useState(true);
+  const [projectCreateInitialPath, setProjectCreateInitialPath] = useState<string | undefined>();
   const [isProjectCreateModalOpen, setProjectCreateModalOpen] = useState(false);
   const [workspaceModalState, setWorkspaceModalState] = useState<WorkspaceModalState>({
     isOpen: false,
@@ -258,6 +247,7 @@ export function ProjectProvider(props: { children: ReactNode }) {
             }
           }
 
+          await refreshProjects();
           return { success: true };
         }
 
@@ -279,7 +269,7 @@ export function ProjectProvider(props: { children: ReactNode }) {
         };
       }
     },
-    [api]
+    [api, refreshProjects]
   );
 
   const resolveProjectPath = useCallback(
@@ -486,70 +476,17 @@ export function ProjectProvider(props: { children: ReactNode }) {
     [api, refreshProjects]
   );
 
-  // Section operations
-  const createSection = useCallback(
-    async (projectPath: string, name: string, color?: string): Promise<Result<SectionConfig>> => {
-      if (!api) return { success: false, error: "API not connected" };
-      const result = await api.projects.sections.create({ projectPath, name, color });
-      if (result.success) {
-        await refreshProjects();
-      }
-      return result;
-    },
-    [api, refreshProjects]
-  );
-
-  const updateSection = useCallback(
-    async (
-      projectPath: string,
-      sectionId: string,
-      updates: { name?: string; color?: string }
-    ): Promise<Result<void>> => {
-      if (!api) return { success: false, error: "API not connected" };
-      const result = await api.projects.sections.update({ projectPath, sectionId, ...updates });
-      if (result.success) {
-        await refreshProjects();
-      }
-      return result;
-    },
-    [api, refreshProjects]
-  );
-
-  const removeSection = useCallback(
-    async (projectPath: string, sectionId: string): Promise<Result<void>> => {
-      if (!api) return { success: false, error: "API not connected" };
-      const result = await api.projects.sections.remove({ projectPath, sectionId });
-      if (result.success) {
-        await refreshProjects();
-      }
-      return result;
-    },
-    [api, refreshProjects]
-  );
-
-  const reorderSections = useCallback(
-    async (projectPath: string, sectionIds: string[]): Promise<Result<void>> => {
-      if (!api) return { success: false, error: "API not connected" };
-      const result = await api.projects.sections.reorder({ projectPath, sectionIds });
-      if (result.success) {
-        await refreshProjects();
-      }
-      return result;
-    },
-    [api, refreshProjects]
-  );
-
-  const assignWorkspaceToSection = useCallback(
+  const assignWorkspaceToSubProject = useCallback(
     async (
       projectPath: string,
       workspaceId: string,
-      sectionId: string | null
+      subProjectPath: string | null
     ): Promise<Result<void>> => {
       if (!api) return { success: false, error: "API not connected" };
-      const result = await api.projects.sections.assignWorkspace({
+      const result = await api.projects.subProjects.assignWorkspace({
         projectPath,
         workspaceId,
-        sectionId,
+        subProjectPath,
       });
       if (result.success) {
         await refreshProjects();
@@ -571,9 +508,16 @@ export function ProjectProvider(props: { children: ReactNode }) {
       refreshProjects,
       addProject,
       removeProject,
+      projectCreateInitialPath,
       isProjectCreateModalOpen,
-      openProjectCreateModal: () => setProjectCreateModalOpen(true),
-      closeProjectCreateModal: () => setProjectCreateModalOpen(false),
+      openProjectCreateModal: (options?: { initialPath?: string }) => {
+        setProjectCreateInitialPath(options?.initialPath);
+        setProjectCreateModalOpen(true);
+      },
+      closeProjectCreateModal: () => {
+        setProjectCreateModalOpen(false);
+        setProjectCreateInitialPath(undefined);
+      },
       workspaceModalState,
       openWorkspaceModal,
       closeWorkspaceModal,
@@ -582,11 +526,7 @@ export function ProjectProvider(props: { children: ReactNode }) {
       updateSecrets,
       updateDisplayName,
       updateColor,
-      createSection,
-      updateSection,
-      removeSection,
-      reorderSections,
-      assignWorkspaceToSection,
+      assignWorkspaceToSubProject,
     }),
     [
       userProjects,
@@ -599,6 +539,7 @@ export function ProjectProvider(props: { children: ReactNode }) {
       refreshProjects,
       addProject,
       removeProject,
+      projectCreateInitialPath,
       isProjectCreateModalOpen,
       workspaceModalState,
       openWorkspaceModal,
@@ -608,11 +549,7 @@ export function ProjectProvider(props: { children: ReactNode }) {
       updateSecrets,
       updateDisplayName,
       updateColor,
-      createSection,
-      updateSection,
-      removeSection,
-      reorderSections,
-      assignWorkspaceToSection,
+      assignWorkspaceToSubProject,
     ]
   );
 

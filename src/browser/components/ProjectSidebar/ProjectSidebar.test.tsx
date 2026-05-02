@@ -187,12 +187,7 @@ function createProjectContextValue(
     updateSecrets: () => Promise.resolve(),
     updateDisplayName: () => resolveVoidResult(),
     updateColor: () => resolveVoidResult(),
-    createSection: () =>
-      Promise.resolve({ success: true, data: { id: "section-1", name: "Section" } }),
-    updateSection: () => resolveVoidResult(),
-    removeSection: () => resolveVoidResult(),
-    reorderSections: () => resolveVoidResult(),
-    assignWorkspaceToSection: () => resolveVoidResult(),
+    assignWorkspaceToSubProject: () => resolveVoidResult(),
     hasAnyProject: false,
     resolveNewChatProjectPath: () => null,
     ...overrides,
@@ -747,12 +742,7 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
       updateSecrets: () => Promise.resolve(),
       updateDisplayName: () => resolveVoidResult(),
       updateColor: () => resolveVoidResult(),
-      createSection: () =>
-        Promise.resolve({ success: true, data: { id: "section-1", name: "Section" } }),
-      updateSection: () => resolveVoidResult(),
-      removeSection: () => resolveVoidResult(),
-      reorderSections: () => resolveVoidResult(),
-      assignWorkspaceToSection: () => resolveVoidResult(),
+      assignWorkspaceToSubProject: () => resolveVoidResult(),
       hasAnyProject: true,
       resolveNewChatProjectPath: () => "/projects/demo-project",
     }));
@@ -858,12 +848,7 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
       updateSecrets: () => Promise.resolve(),
       updateDisplayName: () => resolveVoidResult(),
       updateColor: () => resolveVoidResult(),
-      createSection: () =>
-        Promise.resolve({ success: true, data: { id: "section-1", name: "Section" } }),
-      updateSection: () => resolveVoidResult(),
-      removeSection: () => resolveVoidResult(),
-      reorderSections: () => resolveVoidResult(),
-      assignWorkspaceToSection: () => resolveVoidResult(),
+      assignWorkspaceToSubProject: () => resolveVoidResult(),
       hasAnyProject: true,
       resolveNewChatProjectPath: () => "/projects/demo-project",
     }));
@@ -974,12 +959,7 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
       updateSecrets: () => Promise.resolve(),
       updateDisplayName: () => resolveVoidResult(),
       updateColor: () => resolveVoidResult(),
-      createSection: () =>
-        Promise.resolve({ success: true, data: { id: "section-1", name: "Section" } }),
-      updateSection: () => resolveVoidResult(),
-      removeSection: () => resolveVoidResult(),
-      reorderSections: () => resolveVoidResult(),
-      assignWorkspaceToSection: () => resolveVoidResult(),
+      assignWorkspaceToSubProject: () => resolveVoidResult(),
       hasAnyProject: true,
       resolveNewChatProjectPath: () => "/projects/demo-project",
     }));
@@ -1491,7 +1471,7 @@ describe("ProjectSidebar project actions menu", () => {
     const menuButtons = within(menu).getAllByRole("button");
     expect(menuButtons.map((button) => button.textContent)).toEqual([
       "Edit name",
-      "Add sub-folder",
+      "Add sub-project",
       "Manage secrets",
       "Change color",
       "Delete...",
@@ -1633,118 +1613,10 @@ describe("ProjectSidebar project actions menu", () => {
     expect(inputAfterRefresh?.value).toBe("#123456");
   });
 
-  test("Add sub-folder expands collapsed project before auto-editing", async () => {
-    window.localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify([]));
-    const createSection = mock(() =>
-      Promise.resolve({
-        success: true as const,
-        data: { id: "new-section", name: "New sub-folder", color: "#6B7280", nextId: null },
-      })
-    );
-    projectContextValue = createProjectContextValue({
-      userProjects: new Map([
-        [
-          demoProjectPath,
-          {
-            workspaces: [],
-            sections: [
-              { id: "new-section", name: "New sub-folder", color: "#6B7280", nextId: null },
-            ],
-          },
-        ],
-      ]),
-      createSection,
-    });
-
-    const view = renderSidebar();
-    expect(view.getByRole("button", { name: "Expand project demo-project" })).toBeTruthy();
-
-    fireEvent.click(view.getByRole("button", { name: "Project options for demo-project" }));
-    fireEvent.click(view.getByRole("button", { name: "Add sub-folder" }));
-
-    await waitFor(() => {
-      expect(createSection).toHaveBeenCalledWith(demoProjectPath, "New sub-folder");
-      expect(view.getByRole("button", { name: "Collapse project demo-project" })).toBeTruthy();
-    });
-  });
-
-  test("Add sub-folder abandon reuses section-delete confirmation before removing", async () => {
-    const createSection = mock(() =>
-      Promise.resolve({
-        success: true as const,
-        data: { id: "new-section", name: "New sub-folder", color: "#6B7280", nextId: null },
-      })
-    );
-    const removeSection = mock(() => resolveVoidResult());
-    projectContextValue = createProjectContextValue({
-      userProjects: new Map([
-        [
-          demoProjectPath,
-          {
-            workspaces: [
-              {
-                path: `${demoProjectPath}/ws-in-section`,
-                sectionId: "new-section",
-              },
-            ],
-            sections: [
-              { id: "new-section", name: "New sub-folder", color: "#6B7280", nextId: null },
-            ],
-          },
-        ],
-      ]),
-      createSection,
-      removeSection,
-    });
-
-    const view = renderSidebar();
-
-    fireEvent.click(view.getByRole("button", { name: "Project options for demo-project" }));
-    fireEvent.click(view.getByRole("button", { name: "Add sub-folder" }));
-
-    await waitFor(() => {
-      expect(createSection).toHaveBeenCalledWith(demoProjectPath, "New sub-folder");
-    });
-
-    let autoEditProps:
-      | (Parameters<typeof SectionHeaderModule.SectionHeader>[0] & {
-          onAutoCreateAbandon?: () => void;
-          autoStartEditing?: boolean;
-        })
-      | null = null;
-    const sectionHeaderCalls = (
-      SectionHeaderModule.SectionHeader as unknown as {
-        mock: {
-          calls: Array<[Parameters<typeof SectionHeaderModule.SectionHeader>[0]]>;
-        };
-      }
-    ).mock.calls;
-    for (const [props] of sectionHeaderCalls) {
-      if (props.autoStartEditing) {
-        autoEditProps = props;
-      }
-    }
-
-    expect(autoEditProps?.autoStartEditing).toBe(true);
-    expect(typeof autoEditProps?.onAutoCreateAbandon).toBe("function");
-
-    autoEditProps?.onAutoCreateAbandon?.();
-
-    await waitFor(() => {
-      expect(confirmDialogMock).toHaveBeenCalledWith({
-        title: "Delete section?",
-        description: "1 workspace(s) in this section will be moved to unsectioned.",
-        confirmLabel: "Delete",
-        confirmVariant: "destructive",
-      });
-      expect(removeSection).toHaveBeenCalledWith(demoProjectPath, "new-section");
-    });
-  });
-
   test("marks section attention when a promoted draft workspace needs attention", () => {
     const promotedWorkspace = {
       ...createWorkspace("promoted-workspace", { title: "Promoted workspace" }),
-      sectionId: "section-1",
+      subProjectPath: "section-1",
       isInitializing: true,
     };
 
@@ -1756,10 +1628,18 @@ describe("ProjectSidebar project actions menu", () => {
             workspaces: [
               {
                 path: `${demoProjectPath}/promoted-workspace`,
-                sectionId: "section-1",
+                subProjectPath: "section-1",
               },
             ],
-            sections: [{ id: "section-1", name: "Section 1", color: "#6B7280", nextId: null }],
+          },
+        ],
+        [
+          "section-1",
+          {
+            displayName: "Section 1",
+            color: "#6B7280",
+            parentProjectPath: demoProjectPath,
+            workspaces: [],
           },
         ],
       ]),
@@ -1781,7 +1661,7 @@ describe("ProjectSidebar project actions menu", () => {
             [demoProjectPath]: [
               {
                 draftId: "draft-promoted",
-                sectionId: "section-1",
+                subProjectPath: "section-1",
                 createdAt: Date.now(),
               },
             ],
@@ -1895,7 +1775,7 @@ describe("ProjectSidebar project actions menu", () => {
             [demoProjectPath]: [
               {
                 draftId: "draft-hidden-empty",
-                sectionId: null,
+                subProjectPath: null,
                 createdAt: Date.now(),
               },
             ],
@@ -1931,7 +1811,7 @@ describe("ProjectSidebar project actions menu", () => {
             [demoProjectPath]: [
               {
                 draftId,
-                sectionId: null,
+                subProjectPath: null,
                 createdAt: Date.now(),
               },
             ],

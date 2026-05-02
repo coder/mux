@@ -56,7 +56,6 @@ import {
   getTierKey,
   getSectionExpandedKey,
   getSectionTierKey,
-  sortSectionsByLinkedList,
   type AgentRowRenderMeta,
 } from "@/browser/utils/ui/workspaceFiltering";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
@@ -104,7 +103,7 @@ import { SectionDragLayer } from "../SectionDragLayer/SectionDragLayer";
 import { DraggableSection } from "../DraggableSection/DraggableSection";
 import { Separator } from "../Separator/Separator";
 import { ScrollArea } from "../ScrollArea/ScrollArea";
-import type { SectionConfig } from "@/common/types/project";
+import { getProjectDisplayName, getSubProjectsForParent } from "@/common/utils/subProjects";
 import { getErrorMessage } from "@/common/utils/errors";
 import { isMultiProject } from "@/common/utils/multiProject";
 import { MULTI_PROJECT_SIDEBAR_SECTION_ID } from "@/common/constants/multiProject";
@@ -115,6 +114,12 @@ import { useExperimentValue } from "@/browser/hooks/useExperiments";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { HexColorPicker } from "react-colorful";
 import { resolveSectionColor, SECTION_COLOR_PALETTE } from "@/common/constants/ui";
+
+interface SectionConfig {
+  id: string;
+  name: string;
+  color?: string;
+}
 
 // Re-export WorkspaceSelection for backwards compatibility
 export type { WorkspaceSelection } from "../AgentListItem/AgentListItem";
@@ -656,11 +661,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     removeProject: onRemoveProject,
     updateDisplayName,
     updateColor: updateProjectColor,
-    createSection,
-    updateSection,
-    removeSection,
-    reorderSections,
-    assignWorkspaceToSection,
+    assignWorkspaceToSubProject,
   } = useProjectContext();
 
   // Theme for logo variant
@@ -670,7 +671,6 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
   // Mobile breakpoint for auto-closing sidebar
   const MOBILE_BREAKPOINT = 768;
-  const NEW_SUB_FOLDER_PLACEHOLDER_NAME = "New sub-folder";
   const projectListScrollRef = useRef<HTMLDivElement | null>(null);
   const mobileScrollTopRef = useRef(0);
   const wasCollapsedRef = useRef(collapsed);
@@ -739,8 +739,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
   // Wrapper to close sidebar on mobile after adding workspace
   const handleAddWorkspace = useCallback(
-    (projectPath: string, sectionId?: string) => {
-      createWorkspaceDraft(projectPath, sectionId);
+    (projectPath: string, subProjectPath?: string) => {
+      createWorkspaceDraft(projectPath, subProjectPath);
       if (window.innerWidth <= MOBILE_BREAKPOINT && !collapsed) {
         persistMobileSidebarScrollTop(mobileScrollTopRef.current);
         onToggleCollapsed();
@@ -1270,10 +1270,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
   const handleRemoveSection = async (
     projectPath: string,
-    sectionId: string,
+    subProjectPath: string,
     buttonElement?: HTMLElement
   ) => {
-    // Capture the anchor location up front because the section action menu unmounts its
+    // Capture the anchor location up front because the sub-project action menu unmounts its
     // button immediately after click; failures still need stable error placement.
     const anchor =
       buttonElement != null
@@ -1286,17 +1286,16 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
           })()
         : undefined;
 
-    // removeSection unsections every workspace in the project (including archived),
-    // so confirmation needs to count from the full project config.
+    // Removing a sub-project unregisters it and clears the cwd pointer from its workspaces.
     const workspacesInSection = (userProjects.get(projectPath)?.workspaces ?? []).filter(
-      (workspace) => workspace.sectionId === sectionId
+      (workspace) => workspace.subProjectPath === subProjectPath
     );
 
     if (workspacesInSection.length > 0) {
       const ok = await confirmDialog({
-        title: "Delete section?",
-        description: `${workspacesInSection.length} workspace(s) in this section will be moved to unsectioned.`,
-        confirmLabel: "Delete",
+        title: "Remove sub-project?",
+        description: `${workspacesInSection.length} workspace(s) in this sub-project will move back to the parent project.`,
+        confirmLabel: "Remove",
         confirmVariant: "destructive",
       });
       if (!ok) {
@@ -1304,10 +1303,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
       }
     }
 
-    const result = await removeSection(projectPath, sectionId);
+    const result = await onRemoveProject(subProjectPath);
     if (!result.success) {
-      const error = result.error ?? "Failed to remove section";
-      sectionRemoveError.showError(sectionId, error, anchor);
+      const error = getErrorMessage(result.error) || "Failed to remove sub-project";
+      sectionRemoveError.showError(subProjectPath, error, anchor);
     }
   };
 
@@ -1456,36 +1455,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   );
 
   const handleProjectMenuAddSubFolder = useCallback(() => {
-    if (!projectMenuTargetPath) {
-      return;
-    }
-
-    const targetProjectPath = projectMenuTargetPath;
     closeProjectContextMenu();
-    void (async () => {
-      const result = await createSection(targetProjectPath, NEW_SUB_FOLDER_PLACEHOLDER_NAME);
-      if (!result.success) {
-        return;
-      }
-      setExpandedProjectsArray((prev) => {
-        const expanded = Array.isArray(prev) ? prev : [];
-        if (expanded.includes(targetProjectPath)) {
-          return expanded;
-        }
-        return [...expanded, targetProjectPath];
-      });
-      // New sub-folders should immediately open inline rename and stay visible.
-      const key = getSectionExpandedKey(targetProjectPath, result.data.id);
-      setExpandedSections((prev) => ({ ...prev, [key]: true }));
-      setAutoEditingSection({ projectPath: targetProjectPath, sectionId: result.data.id });
-    })();
-  }, [
-    closeProjectContextMenu,
-    createSection,
-    projectMenuTargetPath,
-    setExpandedProjectsArray,
-    setExpandedSections,
-  ]);
+    onAddProject(projectMenuTargetPath ? { initialPath: projectMenuTargetPath } : undefined);
+  }, [closeProjectContextMenu, onAddProject, projectMenuTargetPath]);
 
   const projectMenuTargetConfig = projectMenuTargetPath
     ? (userProjects.get(projectMenuTargetPath) ?? null)
@@ -1576,7 +1548,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   // Memoize sorted project PATHS (not entries) to avoid capturing stale config objects.
   // Sorting depends only on keys + order; we read configs from the live Map during render.
   const sortedProjectPaths = React.useMemo(
-    () => sortProjectsByOrder(userProjects, projectOrder).map(([p]) => p),
+    () =>
+      sortProjectsByOrder(userProjects, projectOrder)
+        .filter(([, config]) => !config.parentProjectPath)
+        .map(([p]) => p),
     // projectPathsSignature captures projects Map keys
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [projectPathsSignature, projectOrder]
@@ -1681,7 +1656,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                   </button>
                 </div>
                 <button
-                  onClick={onAddProject}
+                  onClick={() => onAddProject()}
                   aria-label="Add project"
                   className="text-secondary hover:bg-hover hover:border-border-light flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded border border-transparent bg-transparent px-1.5 text-xs transition-all duration-200"
                 >
@@ -1771,7 +1746,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                   <div className="px-4 py-8 text-center">
                     <p className="text-muted mb-4 text-[13px]">No projects</p>
                     <button
-                      onClick={onAddProject}
+                      onClick={() => onAddProject()}
                       className="bg-accent hover:bg-accent-dark cursor-pointer rounded border-none px-4 py-2 text-[13px] text-white transition-colors duration-200"
                     >
                       Add Project
@@ -2012,7 +1987,14 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               const workspacesForNormalRendering = allWorkspaces.filter(
                                 (workspace) => !promotedWorkspaceIds.has(workspace.id)
                               );
-                              const sections = sortSectionsByLinkedList(config.sections ?? []);
+                              const sections: SectionConfig[] = getSubProjectsForParent(
+                                projectPath,
+                                userProjects
+                              ).map(([subProjectPath, subProjectConfig]) => ({
+                                id: subProjectPath,
+                                name: getProjectDisplayName(subProjectPath, subProjectConfig),
+                                color: subProjectConfig.color,
+                              }));
                               const depthByWorkspaceId = computeWorkspaceDepthMap(allWorkspaces);
                               const visibleWorkspacesForNormalRendering = filterVisibleAgentRows(
                                 workspacesForNormalRendering,
@@ -2045,9 +2027,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               const normalizeDraftSectionId = (
                                 draft: (typeof sortedDrafts)[number]
                               ): string | null => {
-                                return typeof draft.sectionId === "string" &&
-                                  sectionIds.has(draft.sectionId)
-                                  ? draft.sectionId
+                                return typeof draft.subProjectPath === "string" &&
+                                  sectionIds.has(draft.subProjectPath)
+                                  ? draft.subProjectPath
                                   : null;
                               };
 
@@ -2397,7 +2379,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                             normalizeDraftSectionId(fallback)
                                           );
                                         } else {
-                                          navigateToProject(projectPath, sectionId ?? undefined);
+                                          navigateToProject(sectionId ?? projectPath);
                                         }
                                       }
 
@@ -2672,7 +2654,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 targetSectionId: string | null
                               ) => {
                                 void (async () => {
-                                  const result = await assignWorkspaceToSection(
+                                  const result = await assignWorkspaceToSubProject(
                                     projectPath,
                                     workspaceId,
                                     targetSectionId
@@ -2684,27 +2666,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 })();
                               };
 
-                              // Handle section reorder (drag section onto another section)
-                              const handleSectionReorder = (
-                                draggedSectionId: string,
-                                targetSectionId: string
-                              ) => {
-                                void (async () => {
-                                  // Compute new order: move dragged section to position of target
-                                  const currentOrder = sections.map((s) => s.id);
-                                  const draggedIndex = currentOrder.indexOf(draggedSectionId);
-                                  const targetIndex = currentOrder.indexOf(targetSectionId);
-
-                                  if (draggedIndex === -1 || targetIndex === -1) return;
-
-                                  // Remove dragged from current position
-                                  const newOrder = [...currentOrder];
-                                  newOrder.splice(draggedIndex, 1);
-                                  // Insert at target position
-                                  newOrder.splice(targetIndex, 0, draggedSectionId);
-
-                                  await reorderSections(projectPath, newOrder);
-                                })();
+                              // Sub-project ordering is path/display-name derived in v1; no manual reorder.
+                              const handleSectionReorder = () => {
+                                // Sub-project ordering is alphabetical by display name in v1.
                               };
 
                               // Render section with its workspaces
@@ -2765,10 +2729,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                           if (shouldAutoEditSection) {
                                             setAutoEditingSection(null);
                                           }
-                                          void updateSection(projectPath, section.id, { name });
+                                          void updateDisplayName(section.id, name);
                                         }}
                                         onChangeColor={(color) => {
-                                          void updateSection(projectPath, section.id, { color });
+                                          void updateProjectColor(section.id, color);
                                         }}
                                         autoStartEditing={shouldAutoEditSection}
                                         onAutoCreateAbandon={
@@ -2814,7 +2778,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                             )
                                           ) : sectionDrafts.length === 0 ? (
                                             <div className="text-muted px-3 py-2 text-center text-xs italic">
-                                              No chats in this sub-folder
+                                              No chats in this sub-project
                                             </div>
                                           ) : null}
                                         </div>
@@ -2901,7 +2865,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
             />
             <PositionedMenuItem
               icon={<Plus className="h-4 w-4 shrink-0" strokeWidth={1.8} />}
-              label="Add sub-folder"
+              label="Add sub-project"
               disabled={!hasProjectMenuTarget}
               onClick={() => {
                 handleProjectMenuAddSubFolder();
@@ -3044,7 +3008,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
           />
           <PopoverError
             error={sectionRemoveError.error}
-            prefix="Failed to remove section"
+            prefix="Failed to remove sub-project"
             onDismiss={sectionRemoveError.clearError}
           />
           {!(isDesktopMode() && collapsed) && (

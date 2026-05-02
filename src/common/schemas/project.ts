@@ -15,25 +15,6 @@ import { z } from "zod";
 import { RuntimeEnablementIdSchema } from "./ids";
 import { RuntimeEnablementOverridesSchema } from "./runtimeEnablement";
 
-/**
- * Section schema for organizing workspaces within a project.
- * Sections are project-scoped and persist to config.json.
- */
-export const SectionConfigSchema = z.object({
-  id: z.string().meta({
-    description: "Unique section ID (8 hex chars)",
-  }),
-  name: z.string().meta({
-    description: "Display name for the section",
-  }),
-  color: z.string().optional().meta({
-    description: "Accent color (hex value like #ff6b6b or preset name)",
-  }),
-  nextId: z.string().nullable().optional().meta({
-    description: "ID of the next section in display order (null = last, undefined treated as null)",
-  }),
-});
-
 export const WorktreeArchiveSnapshotProjectSchema = z.object({
   projectPath: z.string().meta({
     description: "Absolute path to the project repo that this archive snapshot entry restores.",
@@ -183,8 +164,9 @@ export const WorkspaceConfigSchema = z.object({
       "Durable restore metadata captured before archive-time worktree deletion. Present only while an archived snapshot is awaiting restore.",
   }),
   projects: z.array(ProjectRefSchema).optional(),
-  sectionId: z.string().optional().meta({
-    description: "ID of the section this workspace belongs to (optional, unsectioned if absent)",
+  subProjectPath: z.string().optional().meta({
+    description:
+      "Sub-project path that provides cwd and AGENTS.md context while sharing the parent project's worktree.",
   }),
 });
 
@@ -195,10 +177,15 @@ export const ProjectConfigSchema = z.object({
   color: z.string().optional().meta({
     description: "Project folder accent color (hex value like #5a9bd4 or preset name)",
   }),
-  workspaces: z.array(WorkspaceConfigSchema),
-  sections: z.array(SectionConfigSchema).optional().meta({
-    description: "Sections for organizing workspaces within this project",
+  /**
+   * Parent project path when this project is a one-level sub-project. Parentage is
+   * re-derived from registered paths during project load/list so stale persisted
+   * values never become the source of truth.
+   */
+  parentProjectPath: z.string().optional().meta({
+    description: "Absolute path to the top-level parent project for one-level sub-projects",
   }),
+  workspaces: z.array(WorkspaceConfigSchema),
   idleCompactionHours: z.number().min(1).nullable().optional().meta({
     description:
       "Hours of inactivity before auto-compacting workspaces. null/undefined = disabled.",

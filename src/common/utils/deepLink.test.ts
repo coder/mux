@@ -4,7 +4,7 @@ import { parseMuxDeepLink, resolveProjectPathFromProjectQuery } from "./deepLink
 describe("parseMuxDeepLink", () => {
   test("parses mux://chat/new", () => {
     const payload = parseMuxDeepLink(
-      "mux://chat/new/?project=mux&projectPath=%2Ftmp%2Frepo&projectId=proj_123&prompt=hello%20world&sectionId=sec_456"
+      "mux://chat/new/?project=mux&projectPath=%2Ftmp%2Frepo&projectId=proj_123&prompt=hello%20world"
     );
 
     expect(payload).toEqual({
@@ -13,7 +13,6 @@ describe("parseMuxDeepLink", () => {
       projectPath: "/tmp/repo",
       projectId: "proj_123",
       prompt: "hello world",
-      sectionId: "sec_456",
     });
   });
 

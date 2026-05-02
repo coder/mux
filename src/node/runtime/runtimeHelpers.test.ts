@@ -120,6 +120,24 @@ describe("resolveWorkspaceExecutionPath", () => {
   });
 });
 
+it("appends sub-project relative paths to the execution root", () => {
+  const metadata = {
+    runtimeConfig: {
+      type: "worktree",
+      srcBaseDir: "/tmp/src",
+    } satisfies RuntimeConfig,
+    projectPath: "/repo",
+    name: "feature",
+    namedWorkspacePath: "/mux/src/repo/feature",
+    subProjectPath: "/repo/packages/api",
+  };
+  const runtime = createRuntimeForWorkspace(metadata);
+
+  expect(resolveWorkspaceExecutionPath(metadata, runtime)).toBe(
+    "/mux/src/repo/feature/packages/api"
+  );
+});
+
 describe("createRuntimeContextForWorkspace", () => {
   it("returns a runtime together with the resolved execution path", () => {
     const metadata = {

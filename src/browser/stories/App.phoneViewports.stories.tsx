@@ -248,7 +248,7 @@ export const IPhone16eSidebarWithSections: AppStory = {
     <AppWithMocks
       setup={() => {
         const projectPath = "/home/user/projects/my-app";
-        const sectionId = "sec00001";
+        const sectionId = `${projectPath}/features`;
 
         const workspaces = [
           createWorkspace({
@@ -264,7 +264,7 @@ export const IPhone16eSidebarWithSections: AppStory = {
               projectName: "my-app",
               projectPath,
             }),
-            sectionId,
+            subProjectPath: sectionId,
           },
           {
             ...createWorkspace({
@@ -273,16 +273,17 @@ export const IPhone16eSidebarWithSections: AppStory = {
               projectName: "my-app",
               projectPath,
             }),
-            sectionId,
+            subProjectPath: sectionId,
           },
         ];
 
-        // Build project config with a custom section
+        // Build project config with a nested sub-project.
         const projects = groupWorkspacesByProject(workspaces);
-        const projectConfig = projects.get(projectPath)!;
-        projects.set(projectPath, {
-          ...projectConfig,
-          sections: [{ id: sectionId, name: "Features", color: "#6366f1", nextId: null }],
+        projects.set(sectionId, {
+          displayName: "Features",
+          color: "#6366f1",
+          parentProjectPath: projectPath,
+          workspaces: [],
         });
 
         // Sidebar open with no workspace selected so the sidebar content is visible
@@ -308,17 +309,20 @@ export const IPhone16eSidebarWithSections: AppStory = {
     },
   },
   play: async ({ canvasElement }) => {
+    const projectPath = "/home/user/projects/my-app";
     // No workspace is selected so there's no ChatInput to wait for;
     // skip stabilizePhoneViewportStory and wait for the section directly.
     await waitFor(
       () => {
-        const sectionHeader = canvasElement.querySelector('[data-section-id="sec00001"]');
-        if (!sectionHeader) throw new Error("Section header not found");
+        const sectionHeader = canvasElement.querySelector(
+          `[data-section-id="${projectPath}/features"]`
+        );
+        if (!sectionHeader) throw new Error("Sub-project header not found");
         // Verify the section header action buttons are in the DOM.
         // The actual visibility assertion (opacity via CSS media query) is
         // validated by the Chromatic snapshot in touch mode — the Storybook
         // test runner doesn't emulate pointer:coarse media queries.
-        within(sectionHeader as HTMLElement).getByLabelText("New chat in section");
+        within(sectionHeader as HTMLElement).getByLabelText("New chat in sub-project");
       },
       { timeout: 10_000 }
     );

@@ -19,5 +19,4 @@ export interface MuxDeepLinkPayload {
   projectId?: string;
 
   prompt?: string;
-  sectionId?: string;
 }

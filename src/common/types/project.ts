@@ -11,11 +11,7 @@ import type {
   UpdateChannel,
 } from "@/common/config/schemas/appConfigOnDisk";
 import type { z } from "zod";
-import type {
-  ProjectConfigSchema,
-  SectionConfigSchema,
-  WorkspaceConfigSchema,
-} from "../orpc/schemas";
+import type { ProjectConfigSchema, WorkspaceConfigSchema } from "../orpc/schemas";
 import type { AgentAiDefaults } from "./agentAiDefaults";
 import type { RuntimeEnablementId } from "./runtime";
 import type { TaskSettings, SubagentAiDefaults } from "./tasks";
@@ -23,8 +19,6 @@ import type { LayoutPresetsConfig } from "./uiLayouts";
 import type { ThinkingLevel } from "./thinking";
 
 export type Workspace = z.infer<typeof WorkspaceConfigSchema>;
-
-export type SectionConfig = z.infer<typeof SectionConfigSchema>;
 
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
 
