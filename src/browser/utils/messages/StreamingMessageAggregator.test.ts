@@ -2811,6 +2811,39 @@ describe("StreamingMessageAggregator", () => {
       }
     });
 
+    test("treats reasoning + skipped (empty-text) parts as reasoning-only", () => {
+      // Regression: assistant turns can contain non-renderable parts like empty
+      // text (the renderer's predicate filters them out). The
+      // `isOnlyMessageContent` flag must use that same predicate, otherwise a
+      // turn that visually consists of only a reasoning block still gets
+      // auto-collapsed when it ends — exactly the silent-end UX this PR fixes.
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.addMessage({
+        id: "asst-reasoning-and-empty-text",
+        role: "assistant",
+        parts: [
+          { type: "reasoning" as const, text: "thinking..." },
+          { type: "text" as const, text: "" },
+        ],
+        metadata: {
+          historySequence: 1,
+          timestamp: 1,
+          model: "anthropic:claude-opus-4-7",
+          finishReason: "length",
+        },
+      });
+
+      const displayed = aggregator.getDisplayedMessages();
+      const reasoningRow = displayed.find((m) => m.type === "reasoning");
+      expect(reasoningRow).toBeDefined();
+      if (reasoningRow?.type === "reasoning") {
+        expect(reasoningRow.isOnlyMessageContent).toBe(true);
+      }
+      // Empty text part should not produce an assistant row at all.
+      expect(displayed.find((m) => m.type === "assistant")).toBeUndefined();
+    });
+
     test("does not synthesize the row when finishReason is a normal stop", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 

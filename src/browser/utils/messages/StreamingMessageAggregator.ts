@@ -2901,19 +2901,27 @@ export class StreamingMessageAggregator {
       // Merge adjacent text/reasoning parts for display
       const mergedParts = mergeAdjacentParts(message.parts);
 
-      // Find the last part that will produce a DisplayedMessage
-      // (reasoning, text parts with content, OR tool parts)
+      // A part is "renderable" when getDisplayedMessages will emit a row for
+      // it. Empty text parts and other unsupported types are silently skipped
+      // by the loop below, so any flag derived from "what the user sees" must
+      // share this predicate to stay in sync.
+      const isRenderablePart = (part: (typeof mergedParts)[number]): boolean =>
+        part.type === "reasoning" ||
+        (part.type === "text" && part.text.length > 0) ||
+        isDynamicToolPart(part);
+
+      // Find the last part that will produce a DisplayedMessage and tally
+      // renderable parts to detect reasoning-only turns. Done in a single
+      // pass so the two derivations can't drift.
       let lastPartIndex = -1;
-      for (let i = mergedParts.length - 1; i >= 0; i--) {
+      let renderableCount = 0;
+      let renderableReasoningCount = 0;
+      for (let i = 0; i < mergedParts.length; i++) {
         const part = mergedParts[i];
-        if (
-          part.type === "reasoning" ||
-          (part.type === "text" && part.text) ||
-          isDynamicToolPart(part)
-        ) {
-          lastPartIndex = i;
-          break;
-        }
+        if (!isRenderablePart(part)) continue;
+        lastPartIndex = i;
+        renderableCount++;
+        if (part.type === "reasoning") renderableReasoningCount++;
       }
 
       const isCompactionBoundarySummary = this.isCompactionBoundarySummaryMessage(message);
@@ -2921,13 +2929,13 @@ export class StreamingMessageAggregator {
         displayedMessages.push(this.createCompactionBoundaryRow(message, historySequence));
       }
 
-      // A turn that contains *only* reasoning (no text, no tool calls) is the
-      // visible signature of a max_tokens truncation mid-thinking. We pass this
-      // hint down so ReasoningMessage can skip its auto-collapse — otherwise the
-      // user is left looking at a single collapsed "Thinking" header with no other
-      // output to read.
+      // A turn whose *renderable* parts are entirely reasoning (no text, no tool
+      // calls) is the visible signature of a max_tokens truncation mid-thinking.
+      // We pass this hint down so ReasoningMessage can skip its auto-collapse —
+      // otherwise the user is left looking at a single collapsed "Thinking"
+      // header with no other output to read.
       const isReasoningOnlyMessage =
-        mergedParts.length > 0 && mergedParts.every((p) => p.type === "reasoning");
+        renderableCount > 0 && renderableCount === renderableReasoningCount;
 
       mergedParts.forEach((part, partIndex) => {
         const isLastPart = partIndex === lastPartIndex;
