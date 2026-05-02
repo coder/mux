@@ -91,6 +91,17 @@ export type TaskKind = "agent";
 
 export type AgentTaskStatus = NonNullable<WorkspaceConfigEntry["taskStatus"]>;
 
+/**
+ * Resolved per-agent AI settings (canonical model + optional thinking level).
+ *
+ * `thinkingLevel` is optional because internal callers read these settings off of
+ * partial workspace metadata where the field may be missing on older entries.
+ */
+interface ResolvedWorkspaceAiSettings {
+  model: string;
+  thinkingLevel?: ThinkingLevel;
+}
+
 export interface AgentTaskStatusLookup {
   exists: boolean;
   taskStatus: AgentTaskStatus | null;
@@ -388,11 +399,11 @@ export class TaskService {
   // fall back to legacy workspace settings for older configs.
   private resolveWorkspaceAISettings(
     workspace: {
-      aiSettingsByAgent?: Record<string, { model: string; thinkingLevel?: ThinkingLevel }>;
-      aiSettings?: { model: string; thinkingLevel?: ThinkingLevel };
+      aiSettingsByAgent?: Record<string, ResolvedWorkspaceAiSettings>;
+      aiSettings?: ResolvedWorkspaceAiSettings;
     },
     agentId: string | undefined
-  ): { model: string; thinkingLevel?: ThinkingLevel } | undefined {
+  ): ResolvedWorkspaceAiSettings | undefined {
     const normalizedAgentId =
       typeof agentId === "string" && agentId.trim().length > 0
         ? normalizeAgentId(agentId, "")
@@ -406,8 +417,8 @@ export class TaskService {
   private resolveTaskAISettings(params: {
     cfg: ReturnType<Config["loadConfigOrDefault"]>;
     parentMeta: {
-      aiSettingsByAgent?: Record<string, { model: string; thinkingLevel?: ThinkingLevel }>;
-      aiSettings?: { model: string; thinkingLevel?: ThinkingLevel };
+      aiSettingsByAgent?: Record<string, ResolvedWorkspaceAiSettings>;
+      aiSettings?: ResolvedWorkspaceAiSettings;
     };
     agentId: string;
     modelString?: string;
@@ -456,8 +467,8 @@ export class TaskService {
     parentWorkspaceId: string,
     parentEntry: {
       workspace: {
-        aiSettingsByAgent?: Record<string, { model: string; thinkingLevel?: ThinkingLevel }>;
-        aiSettings?: { model: string; thinkingLevel?: ThinkingLevel };
+        aiSettingsByAgent?: Record<string, ResolvedWorkspaceAiSettings>;
+        aiSettings?: ResolvedWorkspaceAiSettings;
       };
     },
     fallbackModel: string,
