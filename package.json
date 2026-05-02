@@ -316,6 +316,9 @@
     "npmRebuild": false,
     "buildDependenciesFromSource": false
   },
+  "overrides": {
+    "@smithy/util-retry": "<=4.3.6"
+  },
   "trustedDependencies": [
     "@swc/core",
     "core-js",
