@@ -142,6 +142,20 @@ describe("file_edit_insert tool", () => {
     expect(await fs.readFile(newFile, "utf-8")).toBe("Hello world!\n");
   });
 
+  it("populates an empty existing file without requiring guards", async () => {
+    const emptyFile = path.join(testDir, "empty.txt");
+    await fs.writeFile(emptyFile, "");
+    const tool = createTestTool(testDir);
+    const args: FileEditInsertToolArgs = {
+      path: path.relative(testDir, emptyFile),
+      content: "Hello empty!\n",
+    };
+
+    const result = (await tool.execute!(args, mockToolCallOptions)) as FileEditInsertToolResult;
+    expect(result.success).toBe(true);
+    expect(await fs.readFile(emptyFile, "utf-8")).toBe("Hello empty!\n");
+  });
+
   it("fails when no guards are provided", async () => {
     const tool = createTestTool(testDir);
     const args: FileEditInsertToolArgs = {

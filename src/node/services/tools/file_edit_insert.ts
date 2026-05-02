@@ -149,6 +149,15 @@ function insertContent(
   }
 
   if (insert_before == null && insert_after == null) {
+    // Empty existing files have no anchors to match against, so allow guardless
+    // inserts that simply populate the file (mirrors the create-on-missing path).
+    if (originalContent.length === 0) {
+      return {
+        success: true,
+        newContent: contentToInsert,
+        metadata: {},
+      };
+    }
     return guardFailure(
       "Provide either insert_before or insert_after guard when editing existing files."
     );
