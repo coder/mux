@@ -32,6 +32,7 @@ import {
 } from "@/common/types/stream";
 import { GOAL_BUDGET_LIMIT_KIND, GOAL_CONTINUATION_KIND } from "@/constants/goals";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
+import type { StreamErrorType } from "@/common/types/errors";
 import type { TodoItem, StatusSetToolResult, NotifyToolResult } from "@/common/types/tools";
 import { completeInProgressTodoItems } from "@/common/utils/todoList";
 import { getToolOutputUiOnly } from "@/common/utils/tools/toolOutputUiOnly";
@@ -3118,20 +3119,37 @@ export class StreamingMessageAggregator {
         }
       });
 
-      // Create stream-error DisplayedMessage if message has error metadata
-      // This happens after all parts are displayed, so error appears at the end
-      if (message.metadata?.error) {
+      // Both stream-error rows (real error metadata + synthesized
+      // max_tokens truncation) share the same parent-message-derived
+      // fields. Capture them in one place so adding a new branch later
+      // can't accidentally drift on `model` / `routedThroughGateway` /
+      // `historySequence` / `timestamp`.
+      const pushStreamErrorRow = (
+        idSuffix: string,
+        error: string,
+        errorType: StreamErrorType
+      ): void => {
         displayedMessages.push({
           type: "stream-error",
-          id: `${message.id}-error`,
+          id: `${message.id}-${idSuffix}`,
           historyId: message.id,
-          error: message.metadata.error,
-          errorType: message.metadata.errorType ?? "unknown",
+          error,
+          errorType,
           historySequence,
-          model: message.metadata.model,
+          model: message.metadata?.model,
           routedThroughGateway: message.metadata?.routedThroughGateway,
           timestamp: baseTimestamp,
         });
+      };
+
+      // Create stream-error DisplayedMessage if message has error metadata
+      // This happens after all parts are displayed, so error appears at the end
+      if (message.metadata?.error) {
+        pushStreamErrorRow(
+          "error",
+          message.metadata.error,
+          message.metadata.errorType ?? "unknown"
+        );
       } else if (
         // Stream ended cleanly *but* the provider truncated us at max_tokens.
         // The backend's stream-end path treats this as a successful completion
@@ -3144,19 +3162,12 @@ export class StreamingMessageAggregator {
         !hasActiveStream &&
         message.metadata?.finishReason === "length"
       ) {
-        displayedMessages.push({
-          type: "stream-error",
-          id: `${message.id}-length`,
-          historyId: message.id,
-          error:
-            "The model hit its max output token limit before finishing this response. " +
+        pushStreamErrorRow(
+          "length",
+          "The model hit its max output token limit before finishing this response. " +
             "Lower the thinking level (or split the turn into smaller steps) to give it more headroom.",
-          errorType: "max_output_tokens",
-          historySequence,
-          model: message.metadata.model,
-          routedThroughGateway: message.metadata?.routedThroughGateway,
-          timestamp: baseTimestamp,
-        });
+          "max_output_tokens"
+        );
       }
     }
 
