@@ -1602,7 +1602,9 @@ code {
  * (the just-completed first line was already visible without the mask, so
  * a fade-in would re-flicker it). */
 @media (prefers-reduced-motion: no-preference) {
-  .markdown-content[data-streaming="true"][data-stream-hide-tail="true"] {
+  /* Presence selector — JS sets the attribute via toggleAttribute() which
+   * adds it with an empty value; matching on `="true"` would never fire. */
+  .markdown-content[data-streaming="true"][data-stream-hide-tail] {
     -webkit-mask-image: linear-gradient(
       180deg,
       black 0%,
