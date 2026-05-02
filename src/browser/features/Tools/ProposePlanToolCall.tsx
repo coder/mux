@@ -69,7 +69,6 @@ import {
   Pencil,
   Play,
   Sparkles,
-  Workflow,
   X,
 } from "lucide-react";
 import { ShareMessagePopover } from "@/browser/components/ShareMessagePopover/ShareMessagePopover";
@@ -165,20 +164,17 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
   const { expanded, toggleExpanded } = useToolExpansion(true); // Expand by default
   const [showRaw, setShowRaw] = useState(false);
   const [annotateMode, setAnnotateMode] = useState(false);
-  const [isStartingOrchestrator, setIsStartingOrchestrator] = useState(false);
   const [isImplementing, setIsImplementing] = useState(false);
   const [isContinuingInAuto, setIsContinuingInAuto] = useState(false);
   const [implementReplacesChatHistory, setImplementReplacesChatHistory] = useState(false);
 
-  // On small screens, render the primary plan actions (Implement / Start Orchestrator /
-  // Continue in Auto) as shortcut icons alongside the other action buttons to avoid
-  // right-side overflow.
+  // On small screens, render the primary plan actions (Implement / Continue in Auto) as
+  // shortcut icons alongside the other action buttons to avoid right-side overflow.
   const [isNarrowScreen, setIsNarrowScreen] = useState(() => {
     if (typeof window === "undefined") return false;
     return window.innerWidth <= 768;
   });
 
-  const isStartingOrchestratorRef = useRef(false);
   const isImplementingRef = useRef(false);
   const isContinuingInAutoRef = useRef(false);
   const isMountedRef = useRef(true);
@@ -471,7 +467,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
   // uses the target agent defaults instead of stale planning-mode preferences.
   const resolveAndPersistTargetAgentSettings = (args: {
     workspaceId: string;
-    targetAgentId: "auto" | "exec" | "orchestrator";
+    targetAgentId: "auto" | "exec";
   }): { resolvedModel: string; resolvedThinking: ThinkingLevel } => {
     const modelKey = getModelKey(args.workspaceId);
     const thinkingKey = getThinkingLevelKey(args.workspaceId);
@@ -507,61 +503,6 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     }
 
     return { resolvedModel, resolvedThinking };
-  };
-
-  const handleStartOrchestrator = async () => {
-    if (!workspaceId || !api) return;
-    if (isStartingOrchestratorRef.current) return;
-
-    isStartingOrchestratorRef.current = true;
-    if (isMountedRef.current) {
-      setIsStartingOrchestrator(true);
-    }
-
-    try {
-      let shouldReplaceChatHistory = false;
-
-      try {
-        const cfg = await api.config.getConfig();
-        shouldReplaceChatHistory =
-          cfg.taskSettings.proposePlanImplementReplacesChatHistory ?? false;
-      } catch {
-        // Ignore config read errors (we'll default to old behavior).
-      }
-
-      if (shouldReplaceChatHistory) {
-        await replaceChatHistoryWithPlan({
-          idPrefix: "start-orchestrator",
-          errorContext: "Failed to replace chat history before starting orchestrator:",
-        });
-      }
-
-      const targetAgentId = "orchestrator";
-      const { resolvedModel, resolvedThinking } = resolveAndPersistTargetAgentSettings({
-        workspaceId,
-        targetAgentId,
-      });
-
-      const sendMessageOptions = getSendOptionsFromStorage(workspaceId);
-
-      await api.workspace.sendMessage({
-        workspaceId,
-        message: "Start orchestrating the implementation of this plan.",
-        options: {
-          ...sendMessageOptions,
-          agentId: targetAgentId,
-          model: resolvedModel,
-          thinkingLevel: resolvedThinking,
-        },
-      });
-    } catch (err) {
-      console.error("Failed to start orchestrator:", err);
-    } finally {
-      isStartingOrchestratorRef.current = false;
-      if (isMountedRef.current) {
-        setIsStartingOrchestrator(false);
-      }
-    }
   };
 
   const handleImplement = async () => {
@@ -739,24 +680,11 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
       ? {
           label: "Implement",
           onClick: () => void handleImplement(),
-          disabled: !api || isImplementing || isStartingOrchestrator || isContinuingInAuto,
+          disabled: !api || isImplementing || isContinuingInAuto,
           icon: <Play className="size-4" />,
           tooltip: implementReplacesChatHistory
             ? "Replace chat history with this plan, switch to Exec, and start implementing"
             : "Switch to Exec and start implementing",
-        }
-      : null;
-
-  const orchestratorButton: ButtonConfig | null =
-    shouldShowPrimaryActions && !isAutoMode
-      ? {
-          label: "Start Orchestrator",
-          onClick: () => void handleStartOrchestrator(),
-          disabled: !api || isStartingOrchestrator || isImplementing || isContinuingInAuto,
-          icon: <Workflow className="size-4" />,
-          tooltip: implementReplacesChatHistory
-            ? "Replace chat history with this plan, switch to Orchestrator, and start delegating"
-            : "Switch to Orchestrator and start delegating",
         }
       : null;
 
@@ -765,7 +693,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
       ? {
           label: "Continue in Auto",
           onClick: () => void handleContinueInAuto(),
-          disabled: !api || isContinuingInAuto || isImplementing || isStartingOrchestrator,
+          disabled: !api || isContinuingInAuto || isImplementing,
           icon: <Sparkles className="size-4" />,
           tooltip: implementReplacesChatHistory
             ? "Replace chat history with this plan, switch to Auto, and let it decide the executor"
@@ -918,15 +846,14 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
         </div>
 
         {/* Mobile: icon-only plan actions, right-aligned, white */}
-        {isNarrowScreen && (implementButton ?? orchestratorButton ?? autoButton) && (
+        {isNarrowScreen && (implementButton ?? autoButton) && (
           <div className="[&_button]:text-foreground ml-auto flex items-center gap-0.5">
             {implementButton && <IconActionButton button={implementButton} />}
-            {orchestratorButton && <IconActionButton button={orchestratorButton} />}
             {autoButton && <IconActionButton button={autoButton} />}
           </div>
         )}
 
-        {!isNarrowScreen && (implementButton ?? orchestratorButton ?? autoButton) && (
+        {!isNarrowScreen && (implementButton ?? autoButton) && (
           <div className="ml-auto flex items-center gap-1">
             {implementButton && (
               <Tooltip>
@@ -945,27 +872,6 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
                 </TooltipTrigger>
                 <TooltipContent align="center">
                   {implementButton.tooltip ?? implementButton.label}
-                </TooltipContent>
-              </Tooltip>
-            )}
-
-            {orchestratorButton && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-7 gap-1"
-                    onClick={orchestratorButton.onClick}
-                    disabled={orchestratorButton.disabled}
-                  >
-                    {orchestratorButton.icon}
-                    <span className="leading-none">{orchestratorButton.label}</span>
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent align="center">
-                  {orchestratorButton.tooltip ?? orchestratorButton.label}
                 </TooltipContent>
               </Tooltip>
             )}

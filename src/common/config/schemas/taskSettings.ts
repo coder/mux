@@ -5,10 +5,6 @@ export const TASK_SETTINGS_LIMITS = {
   maxTaskNestingDepth: { min: 1, max: 5, default: 3 },
 } as const;
 
-export const PlanSubagentExecutorRoutingSchema = z.enum(["exec", "orchestrator", "auto"]);
-
-export type PlanSubagentExecutorRouting = z.infer<typeof PlanSubagentExecutorRoutingSchema>;
-
 export const TaskSettingsSchema = z.object({
   maxParallelAgentTasks: z
     .number()
@@ -24,8 +20,6 @@ export const TaskSettingsSchema = z.object({
     .optional(),
   proposePlanImplementReplacesChatHistory: z.boolean().optional(),
   preserveSubagentsUntilArchive: z.boolean().optional(),
-  planSubagentExecutorRouting: PlanSubagentExecutorRoutingSchema.optional(),
-  planSubagentDefaultsToOrchestrator: z.boolean().optional(),
 });
 
 export type TaskSettings = z.infer<typeof TaskSettingsSchema>;

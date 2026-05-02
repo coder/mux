@@ -11,8 +11,8 @@ import { HEARTBEAT_MAX_INTERVAL_MS, HEARTBEAT_MIN_INTERVAL_MS } from "@/constant
 
 export { RuntimeEnablementOverridesSchema } from "../../schemas/runtimeEnablement";
 export type { RuntimeEnablementOverrides } from "../../schemas/runtimeEnablement";
-export { PlanSubagentExecutorRoutingSchema, TaskSettingsSchema } from "./taskSettings";
-export type { PlanSubagentExecutorRouting, TaskSettings } from "./taskSettings";
+export { TaskSettingsSchema } from "./taskSettings";
+export type { TaskSettings } from "./taskSettings";
 
 export const AgentAiDefaultsEntrySchema = z.object({
   modelString: z.string().optional(),

@@ -1316,7 +1316,7 @@ export const router = (authToken?: string) => {
             input
           );
 
-          // Agents can require a plan file before they're selectable (e.g., orchestrator).
+          // Agents can require a plan file before they're selectable (via `ui.requires: ["plan"]`).
           // Fail closed: if plan state cannot be determined, treat it as missing.
           let planReady = false;
           if (input.workspaceId && metadata) {

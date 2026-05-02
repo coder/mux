@@ -21,7 +21,6 @@ const BUILT_IN_SOURCES: BuiltInSource[] = [
   { id: "desktop", content: BUILTIN_AGENT_CONTENT.desktop },
   { id: "explore", content: BUILTIN_AGENT_CONTENT.explore },
   { id: "name_workspace", content: BUILTIN_AGENT_CONTENT.name_workspace },
-  { id: "orchestrator", content: BUILTIN_AGENT_CONTENT.orchestrator },
 ];
 
 let cachedPackages: AgentDefinitionPackage[] | null = null;

@@ -155,14 +155,6 @@ const STORIES: StoryDef[] = [
     postProcess: async (pngBuffer: Buffer) =>
       sharp(pngBuffer).webp({ quality: WEBP_QUALITY }).toBuffer(),
   },
-  {
-    exportName: "OrchestrateAgents",
-    storyId: `${STORY_ID_PREFIX}orchestrate-agents`,
-    outputFile: "orchestrate-agents.webp",
-    // Narrower viewport makes the plan card + "Start Orchestrator" button more prominent
-    viewport: { width: 1200, height: 1188 },
-    clip: { x: 0, y: 0, width: 1200, height: 1000 },
-  },
 ];
 
 // ---------------------------------------------------------------------------

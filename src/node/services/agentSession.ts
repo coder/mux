@@ -4546,7 +4546,7 @@ export class AgentSession {
         return false;
       }
 
-      // Check ui.requires gating (e.g., orchestrator requires a plan file).
+      // Check ui.requires gating (e.g., a custom agent that requires a plan file).
       // This matches the router's `requiresPlan && !planReady` check.
       const requiresPlan = resolvedFrontmatter.ui?.requires?.includes("plan") ?? false;
       if (requiresPlan) {

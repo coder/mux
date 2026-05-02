@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bot, ChevronDown, Route, SquareCode, Workflow } from "lucide-react";
+import { Bot, ChevronDown, Route, SquareCode } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 import { useAgent } from "@/browser/contexts/AgentContext";
@@ -47,7 +47,6 @@ interface AgentOption {
 const AGENT_ICONS: Record<string, LucideIcon> = {
   plan: Route,
   exec: SquareCode,
-  orchestrator: Workflow,
 };
 const DEFAULT_AGENT_ICON: LucideIcon = Bot;
 

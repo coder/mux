@@ -91,16 +91,6 @@ export const FALLBACK_AGENTS: AgentDefinitionDescriptor[] = [
       require: ["propose_name"],
     },
   },
-  {
-    id: "orchestrator",
-    scope: "built-in",
-    name: "Orchestrator",
-    description: "Coordinate sub-agent implementation and apply patches",
-    uiSelectable: true,
-    uiRoutable: true,
-    subagentRunnable: false,
-    base: "exec",
-  },
 ];
 
 function compareAgentsByName(a: AgentDefinitionDescriptor, b: AgentDefinitionDescriptor): number {

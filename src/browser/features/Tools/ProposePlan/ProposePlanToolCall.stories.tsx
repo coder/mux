@@ -2,9 +2,8 @@ import type { AppStory } from "@/browser/stories/meta.js";
 import { appMeta, AppWithMocks } from "@/browser/stories/meta.js";
 import { setupSimpleChatStory } from "@/browser/stories/helpers/chatSetup";
 import { createAssistantMessage, createUserMessage } from "@/browser/stories/mocks/messages";
-import { createProposePlanTool, createTodoWriteTool } from "@/browser/stories/mocks/tools";
+import { createProposePlanTool } from "@/browser/stories/mocks/tools";
 import { STABLE_TIMESTAMP } from "@/browser/stories/mocks/workspaces";
-import { PLAN_AUTO_ROUTING_STATUS_MESSAGE } from "@/common/constants/planAutoRoutingStatus";
 
 const meta = { ...appMeta, title: "App/Chat/Tools/ProposePlan" };
 export default meta;
@@ -86,7 +85,7 @@ graph TD
 
 /**
  * Same as ProposePlan but with agent mode set to "plan".
- * Shows Implement + Start Orchestrator buttons (no Continue in Auto).
+ * Shows the Implement button (no Continue in Auto).
  */
 export const ProposePlanInPlanMode: AppStory = {
   render: () => (
@@ -154,79 +153,7 @@ graph TD
       description: {
         story:
           'Same as ProposePlan but with agent mode set to "plan". ' +
-          "Shows Implement and Start Orchestrator buttons instead of Continue in Auto.",
-      },
-    },
-  },
-};
-
-/**
- * Captures the handoff pause after a plan is presented and before the executor stream starts.
- *
- * This reproduces the visual state where the sidebar shows "Deciding execution strategy…"
- * while the proposed plan remains visible in the conversation.
- */
-export const ProposePlanAutoRoutingDecisionGap: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          workspaceId: "ws-plan-auto-routing-gap",
-          workspaceName: "feature/plan-auto-routing",
-          messages: [
-            createUserMessage(
-              "msg-1",
-              "Plan and implement a safe migration rollout for auth tokens.",
-              {
-                historySequence: 1,
-                timestamp: STABLE_TIMESTAMP - 240000,
-              }
-            ),
-            createAssistantMessage("msg-2", "Here is the implementation plan.", {
-              historySequence: 2,
-              timestamp: STABLE_TIMESTAMP - 230000,
-              toolCalls: [
-                createProposePlanTool(
-                  "call-plan-1",
-                  `# Auth Token Migration Rollout
-
-## Goals
-
-- Migrate token validation to the new signing service.
-- Maintain compatibility during rollout.
-- Keep rollback simple and low risk.
-
-## Steps
-
-1. Add dual-read token validation behind a feature flag.
-2. Ship telemetry for token verification outcomes.
-3. Enable new validator for 10% of traffic.
-4. Ramp to 100% after stability checks.
-5. Remove legacy validator once metrics stay healthy.
-
-## Rollback
-
-- Disable the rollout flag to return to legacy validation immediately.
-- Keep telemetry running to confirm recovery.`
-                ),
-              ],
-            }),
-            createAssistantMessage("msg-3", "Selecting the right executor for this plan.", {
-              historySequence: 3,
-              timestamp: STABLE_TIMESTAMP - 220000,
-              toolCalls: [createTodoWriteTool("call-status-1", PLAN_AUTO_ROUTING_STATUS_MESSAGE)],
-            }),
-          ],
-        })
-      }
-    />
-  ),
-  parameters: {
-    docs: {
-      description: {
-        story:
-          "Chromatic regression story for the plan auto-routing gap: after `propose_plan` succeeds, " +
-          "the sidebar stays in a working state with a 'Deciding execution strategy…' status before executor kickoff.",
+          "Shows the Implement button instead of Continue in Auto.",
       },
     },
   },
@@ -235,7 +162,7 @@ export const ProposePlanAutoRoutingDecisionGap: AppStory = {
 /**
  * Mobile viewport version of ProposePlan.
  *
- * Verifies that on narrow screens the primary plan actions (Implement / Start Orchestrator)
+ * Verifies that on narrow screens the primary plan actions (Implement / Continue in Auto)
  * render as shortcut icons in the left action row (instead of right-aligned buttons).
  */
 export const ProposePlanMobile: AppStory = {
@@ -246,7 +173,7 @@ export const ProposePlanMobile: AppStory = {
     docs: {
       description: {
         story:
-          "Renders ProposePlan at an iPhone-sized viewport to verify that Implement / Start Orchestrator " +
+          "Renders ProposePlan at an iPhone-sized viewport to verify that Implement / Continue in Auto " +
           "appear as shortcut icons in the left action row (preventing right-side overflow on small screens).",
       },
     },

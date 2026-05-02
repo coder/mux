@@ -3,7 +3,7 @@ import { normalizeFuzzyText, splitQueryIntoTerms } from "./fuzzySearch";
 
 describe("fuzzySearch", () => {
   test("normalizeFuzzyText lowercases and replaces common separators", () => {
-    expect(normalizeFuzzyText("Ask: check plan→orchestrator")).toBe("ask check plan orchestrator");
+    expect(normalizeFuzzyText("Ask: check plan→exec")).toBe("ask check plan exec");
   });
 
   test("splitQueryIntoTerms splits on spaces and common punctuation", () => {

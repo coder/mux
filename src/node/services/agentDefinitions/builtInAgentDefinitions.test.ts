@@ -16,20 +16,6 @@ describe("built-in agent definitions", () => {
     expect(ids).toContain("plan");
   });
 
-  test("includes orchestrator with expected flags", () => {
-    const pkgs = getBuiltInAgentDefinitions();
-    const byId = new Map(pkgs.map((pkg) => [pkg.id, pkg] as const));
-
-    const orchestrator = byId.get("orchestrator");
-    expect(orchestrator).toBeTruthy();
-    expect(orchestrator?.frontmatter.ui?.requires).toBeUndefined();
-    expect(orchestrator?.frontmatter.ui?.hidden).toBeUndefined();
-    expect(orchestrator?.frontmatter.subagent?.append_prompt).toContain(
-      "Do NOT create pull requests"
-    );
-    expect(orchestrator?.frontmatter.subagent?.runnable).toBe(false);
-  });
-
   test("includes desktop built-in with desktop automation safeguards", () => {
     const pkgs = getBuiltInAgentDefinitions();
     const byId = new Map(pkgs.map((pkg) => [pkg.id, pkg] as const));
@@ -80,17 +66,13 @@ describe("built-in agent definitions", () => {
     expect(plan?.frontmatter.tools?.remove ?? []).toContain("analytics_query");
   });
 
-  test("task_apply_git_patch is restricted to exec/orchestrator", () => {
+  test("task_apply_git_patch is restricted to exec", () => {
     const pkgs = getBuiltInAgentDefinitions();
     const byId = new Map(pkgs.map((pkg) => [pkg.id, pkg] as const));
 
     const exec = byId.get("exec");
     expect(exec).toBeTruthy();
     expect(exec?.frontmatter.tools?.remove ?? []).not.toContain("task_apply_git_patch");
-
-    const orchestrator = byId.get("orchestrator");
-    expect(orchestrator).toBeTruthy();
-    expect(orchestrator?.frontmatter.tools?.remove ?? []).not.toContain("task_apply_git_patch");
 
     const plan = byId.get("plan");
     expect(plan).toBeTruthy();

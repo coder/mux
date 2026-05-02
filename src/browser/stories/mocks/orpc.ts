@@ -448,17 +448,6 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         uiColor: "var(--color-exec-mode)",
       },
       {
-        id: "orchestrator",
-        scope: "built-in",
-        name: "Orchestrator",
-        description: "Coordinate multiple sub-agents to solve complex tasks in parallel.",
-        uiSelectable: true,
-        uiRoutable: true,
-        subagentRunnable: false,
-        base: "exec",
-        uiColor: "var(--color-exec-mode)",
-      },
-      {
         id: "compact",
         scope: "built-in",
         name: "Compact",

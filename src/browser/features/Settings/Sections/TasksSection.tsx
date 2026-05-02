@@ -34,11 +34,9 @@ import {
 import {
   DEFAULT_TASK_SETTINGS,
   TASK_SETTINGS_LIMITS,
-  isPlanSubagentExecutorRouting,
   normalizeSubagentAiDefaults,
   shouldMirrorAgentDefaultToLegacySubagent,
   normalizeTaskSettings,
-  type PlanSubagentExecutorRouting,
   type SubagentAiDefaults,
   type SubagentAiDefaultsEntry,
   type TaskSettings,
@@ -280,9 +278,7 @@ function areTaskSettingsEqual(a: TaskSettings, b: TaskSettings): boolean {
     a.maxParallelAgentTasks === b.maxParallelAgentTasks &&
     a.maxTaskNestingDepth === b.maxTaskNestingDepth &&
     a.proposePlanImplementReplacesChatHistory === b.proposePlanImplementReplacesChatHistory &&
-    a.preserveSubagentsUntilArchive === b.preserveSubagentsUntilArchive &&
-    a.planSubagentExecutorRouting === b.planSubagentExecutorRouting &&
-    a.planSubagentDefaultsToOrchestrator === b.planSubagentDefaultsToOrchestrator
+    a.preserveSubagentsUntilArchive === b.preserveSubagentsUntilArchive
   );
 }
 
@@ -742,24 +738,9 @@ export function TasksSection() {
     );
   };
 
-  const setPlanSubagentExecutorRouting = (value: string) => {
-    if (!isPlanSubagentExecutorRouting(value)) {
-      return;
-    }
-
-    setTaskSettings((prev) =>
-      normalizeTaskSettings({
-        ...prev,
-        planSubagentExecutorRouting: value,
-      })
-    );
-  };
   const setNewWorkspaceDefaultAgentId = (agentId: string) => {
     setGlobalDefaultAgentIdRaw(coerceAgentId(agentId));
   };
-
-  const planSubagentExecutorRouting: PlanSubagentExecutorRouting =
-    taskSettings.planSubagentExecutorRouting ?? "exec";
 
   const setAgentModel = (agentId: string, value: string) => {
     setAgentAiDefaults((prev) =>
@@ -1278,28 +1259,6 @@ export function TasksSection() {
               onCheckedChange={setPreserveSubagentsUntilArchive}
               aria-label="Toggle preserve subagents until archive"
             />
-          </div>
-
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex-1">
-              <div className="text-foreground text-sm">Plan sub-agents: executor routing</div>
-              <div className="text-muted text-xs">
-                Choose how plan sub-agent tasks route after propose_plan.
-              </div>
-            </div>
-            <Select
-              value={planSubagentExecutorRouting}
-              onValueChange={setPlanSubagentExecutorRouting}
-            >
-              <SelectTrigger className="border-border-medium bg-background-secondary h-9 w-44">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="exec">Exec</SelectItem>
-                <SelectItem value="orchestrator">Orchestrator</SelectItem>
-                <SelectItem value="auto">Auto (Agent chooses)</SelectItem>
-              </SelectContent>
-            </Select>
           </div>
         </div>
 

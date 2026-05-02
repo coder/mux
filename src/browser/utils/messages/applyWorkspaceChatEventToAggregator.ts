@@ -193,7 +193,7 @@ export function applyWorkspaceChatEventToAggregator(
 
     if (allowSideEffects && shouldRefreshAgentsAfterToolCallEnd(event)) {
       // Keep agent discovery in sync when propose_plan succeeds so conditionally visible
-      // agents (for example, orchestrator with ui.requires: ["plan"]) appear immediately.
+      // agents (for example, those gated by `ui.requires: ["plan"]`) appear immediately.
       dispatchAgentsRefreshRequested();
     }
 

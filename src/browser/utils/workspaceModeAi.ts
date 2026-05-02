@@ -11,7 +11,7 @@ function normalizeAgentId(agentId: string): string {
 }
 
 // Keep agent -> model/thinking precedence in one place so mode switches that send immediately
-// (like propose_plan Implement / Start Orchestrator) resolve the same settings as sync effects.
+// (like propose_plan Implement / Continue in Auto) resolve the same settings as sync effects.
 export function resolveWorkspaceAiSettingsForAgent(args: {
   agentId: string;
   agentAiDefaults: AgentAiDefaults;

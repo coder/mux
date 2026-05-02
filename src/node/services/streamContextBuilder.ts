@@ -165,10 +165,10 @@ export async function buildPlanInstructions(
       : nestingInstruction;
   }
 
-  // Read plan content for agent transition (plan-like → exec/orchestrator).
-  // Only read if switching to the built-in exec/orchestrator agent and last assistant was plan-like.
+  // Read plan content for agent transition (plan-like → exec).
+  // Only read if switching to the built-in exec agent and last assistant was plan-like.
   let planContentForTransition: string | undefined;
-  const isPlanHandoffAgent = effectiveAgentId === "exec" || effectiveAgentId === "orchestrator";
+  const isPlanHandoffAgent = effectiveAgentId === "exec";
   if (isPlanHandoffAgent && !chatHasStartHerePlanSummary) {
     const lastAssistantMessage = [...requestPayloadMessages]
       .reverse()
