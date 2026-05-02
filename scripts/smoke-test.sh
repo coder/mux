@@ -57,9 +57,6 @@ cleanup() {
 
 trap cleanup EXIT INT TERM
 
-# Capture repo root before any cd; we need to read its package.json later.
-ROOT_DIR="${ROOT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-
 # Configuration
 PACKAGE_TARBALL="${PACKAGE_TARBALL:-}"
 SERVER_PORT="${SERVER_PORT:-3000}"
@@ -95,23 +92,14 @@ log_info "Created test directory: $TEST_DIR"
 
 cd "$TEST_DIR"
 
-# Initialize a minimal package.json. Mirror the workspace package.json's
-# `overrides` block so that npm install <tarball> honors the same dependency
-# pins as a developer's local environment. Without this, transitive deps
-# (e.g. @aws-sdk/* → @smithy/* chain) can resolve to versions outside the
-# tarball's shrinkwrap, breaking `bun x mux@latest` for end users when
-# upstream publishes a broken release.
-node -e "
-  const fs = require('fs');
-  const root = JSON.parse(fs.readFileSync('$ROOT_DIR/package.json', 'utf8'));
-  const test = {
-    name: 'mux-smoke-test',
-    version: '1.0.0',
-    private: true,
-  };
-  if (root.overrides) test.overrides = root.overrides;
-  fs.writeFileSync('package.json', JSON.stringify(test, null, 2) + '\n');
-"
+# Initialize a minimal package.json to avoid npm warnings
+cat >package.json <<EOF
+{
+  "name": "mux-smoke-test",
+  "version": "1.0.0",
+  "private": true
+}
+EOF
 
 # Optionally strip shrinkwrap to simulate `bun x` / lockfile-free resolution.
 # When a user runs `bun x mux@latest`, bun ignores npm-shrinkwrap.json and resolves

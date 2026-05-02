@@ -210,9 +210,6 @@
     "cpu-features",
     "unrs-resolver",
   ],
-  "overrides": {
-    "@smithy/util-retry": "<=4.3.6",
-  },
   "packages": {
     "7zip-bin": ["7zip-bin@5.2.0", "", {}, "sha512-ukTPVhqG4jNzMro2qA9HSCSSVJN3aN7tlb+hfqYCt3ER0yWroeA2VR38MNrOHLQ/cVj+DaIMad0kFCtWWowh/A=="],
 
