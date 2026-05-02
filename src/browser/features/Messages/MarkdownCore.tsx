@@ -12,7 +12,7 @@ import "katex/dist/katex.min.css";
 import { normalizeMarkdown } from "./MarkdownStyles";
 import { markdownComponents } from "./MarkdownComponents";
 import { INTERNAL_INLINE_SKILL_HREF_PREFIX, remarkInlineSkillLinks } from "./inlineSkillMarkdown";
-import { rehypeSplitWordsForFade } from "./rehypeSplitWordsForFade";
+import { rehypeWrapLinesForFade } from "./rehypeWrapLinesForFade";
 
 interface MarkdownCoreProps {
   content: string;
@@ -124,11 +124,11 @@ const REHYPE_PLUGINS_BASE: Pluggable[] = [
   [rehypeKatex, { errorColor: "var(--color-muted-foreground)" }], // Render math
 ];
 
-// Streaming variant: also splits each whitespace-bounded word into a
-// `<span class="sd-word">` so the per-word blur-fade-in CSS rule fires once per
-// new word at mount. Order matters: rehypeKatex must run BEFORE the splitter so
-// .katex subtrees are tagged and excluded.
-const REHYPE_PLUGINS_STREAMING: Pluggable[] = [...REHYPE_PLUGINS_BASE, rehypeSplitWordsForFade];
+// Streaming variant: also wraps each text node in a `<span class="sd-line">`
+// so the per-line blur-fade-in CSS rule fires once per new line at mount.
+// Order matters: rehypeKatex must run BEFORE the wrapper so .katex subtrees
+// are tagged and excluded.
+const REHYPE_PLUGINS_STREAMING: Pluggable[] = [...REHYPE_PLUGINS_BASE, rehypeWrapLinesForFade];
 
 /**
  * Core markdown rendering component that handles all markdown processing.

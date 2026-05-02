@@ -1542,22 +1542,24 @@ code {
   white-space: normal;
 }
 
-/* Per-word blur-fade-in for streaming markdown content.
+/* Per-line blur-fade-in for streaming markdown content.
  *
- * Each whitespace-bounded word in a streaming message is wrapped in
- * `<span class="sd-word">` by `rehypeSplitWordsForFade` (see MarkdownCore).
- * On mount, each span animates from `filter: blur(6px); opacity: 0` to its
- * final state — giving the soft per-word reveal users associate with modern
- * AI chat transcripts (Grok, flowtoken, etc.).
+ * Each text node in a streaming message is wrapped in
+ * `<span class="sd-line">` by `rehypeWrapLinesForFade` (see MarkdownCore).
+ * On mount, each span animates from `filter: blur(3px); opacity: 0` to its
+ * final state — giving the soft line-by-line reveal users associate with
+ * modern AI chat transcripts (Grok-style settle).
  *
- * Why per-word, not per-block:
- *  - Per-block fired once per paragraph at mount, then text grew silently
- *    inside. Reasoning/thinking blocks are typically one big paragraph, so the
- *    effect was invisible there.
- *  - Per-word also animates inside an already-mounted paragraph: each new
- *    whitespace boundary mounts a fresh span → animation fires once for that
- *    word and only that word. Stable identity at every word position keeps
- *    completed words static while only new words fade in.
+ * Why per-line, not per-word:
+ *  - Per-word animated each whitespace-bounded token independently, but
+ *    several words within the same visual row mounted at slightly different
+ *    times (because deltas arrive token-by-token), so each row read as a
+ *    horizontal shimmer instead of a coherent line reveal.
+ *  - Per-line treats one text node as one unit. As text grows inside the
+ *    span, react-markdown reconciles in place — no remount, no re-fire.
+ *    A new fade only fires when a real boundary is crossed: a new paragraph,
+ *    a new `<br>` (reasoning content with `preserveLineBreaks=true` runs
+ *    remarkBreaks, which converts `\n` → `<br>`), a new list item, etc.
  *
  * Gating:
  *  - `[data-streaming="true"]` is set by TypewriterMarkdown only on LIVE
@@ -1568,7 +1570,7 @@ code {
  *
  * `<pre>`/`<code>`/KaTeX/Mermaid subtrees are excluded by the rehype plugin,
  * so this rule never matches inside them. */
-@keyframes sd-word-blur-in {
+@keyframes sd-line-blur-in {
   from {
     filter: blur(3px);
     opacity: 0;
@@ -1580,8 +1582,8 @@ code {
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  .markdown-content[data-streaming="true"] .sd-word {
-    animation: sd-word-blur-in 500ms ease-out;
+  .markdown-content[data-streaming="true"] .sd-line {
+    animation: sd-line-blur-in 500ms ease-out;
   }
 }
 
