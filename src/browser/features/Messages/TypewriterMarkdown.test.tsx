@@ -77,7 +77,7 @@ describe("TypewriterMarkdown", () => {
 
     const view = render(
       <TypewriterMarkdown
-        deltas={["Hello world"]}
+        content="Hello world"
         isComplete={false}
         streamKey="msg-1"
         streamSource="live"
@@ -97,7 +97,7 @@ describe("TypewriterMarkdown", () => {
   test("bypasses smoothing for replay streams", () => {
     render(
       <TypewriterMarkdown
-        deltas={["Replayed content"]}
+        content="Replayed content"
         isComplete={false}
         streamKey="msg-2"
         streamSource="replay"

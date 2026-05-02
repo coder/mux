@@ -129,9 +129,13 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({
     // stream end would unmount/remount the markdown subtree and visibly flash the
     // content. isComplete={!isStreaming} cleanly bypasses the smoothing engine once
     // the stream ends, matching the prior static-render behavior.
+    // React Compiler auto-memoizes this normalize call between renders that
+    // share the same `content` value; no manual useMemo needed.
+    const normalizedContent = normalizeReasoningMarkdown(content);
+
     return (
       <TypewriterMarkdown
-        deltas={[normalizeReasoningMarkdown(content)]}
+        content={normalizedContent}
         isComplete={!isStreaming}
         preserveLineBreaks
         streamKey={message.historyId}
