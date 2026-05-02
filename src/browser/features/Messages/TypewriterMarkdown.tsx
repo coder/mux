@@ -46,9 +46,15 @@ export const TypewriterMarkdown: React.FC<TypewriterMarkdownProps> = ({
   // Read the live model emission rate (chars/sec) for the active stream of this
   // workspace. The hook subscribes to its own MapStore so per-delta updates
   // re-render this component WITHOUT cascading through the parent — see
-  // useWorkspaceStreamingStats. Hooks must run unconditionally; pass an empty
-  // string when no workspace is provided so the subscription is a stable no-op.
-  const streamingStats = useWorkspaceStreamingStats(workspaceId ?? "");
+  // useWorkspaceStreamingStats.
+  //
+  // Subscribe to the real workspace key ONLY while this message is actively
+  // streaming. Completed historical messages subscribe to the stable empty-key
+  // sentinel, which is never bumped — so a long transcript of finished
+  // assistant messages does not re-render on every delta of a new stream.
+  // (Hooks must run unconditionally; we toggle the key, not the call site.)
+  const subscriptionKey = isStreaming && workspaceId ? workspaceId : "";
+  const streamingStats = useWorkspaceStreamingStats(subscriptionKey);
   const liveCharsPerSec = isStreaming && workspaceId ? (streamingStats?.charsPerSec ?? 0) : 0;
 
   // Two-clock streaming: ingestion (content) vs presentation (visibleText).

@@ -1,5 +1,6 @@
 import type { UseSmoothStreamingTextOptions } from "@/browser/hooks/useSmoothStreamingText";
 import { useSmoothStreamingText as importedUseSmoothStreamingText } from "@/browser/hooks/useSmoothStreamingText";
+import { useWorkspaceStreamingStats as importedUseWorkspaceStreamingStats } from "@/browser/stores/WorkspaceStore";
 import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, render } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
@@ -8,6 +9,7 @@ import { TypewriterMarkdown } from "./TypewriterMarkdown";
 
 const actualMarkdownCore = ImportedMarkdownCore;
 const actualUseSmoothStreamingText = importedUseSmoothStreamingText;
+const actualUseWorkspaceStreamingStats = importedUseWorkspaceStreamingStats;
 
 const mockUseSmoothStreamingText = mock(
   (options: UseSmoothStreamingTextOptions): { visibleText: string; isCaughtUp: boolean } => ({
@@ -15,6 +17,8 @@ const mockUseSmoothStreamingText = mock(
     isCaughtUp: !options.isStreaming,
   })
 );
+
+const mockUseWorkspaceStreamingStats = mock((_workspaceId: string) => null);
 
 function MarkdownCoreStub(props: { content: string }) {
   return <div data-testid="markdown-core">{props.content}</div>;
@@ -29,6 +33,9 @@ async function installTypewriterMarkdownModuleMocks() {
   await mock.module("@/browser/hooks/useSmoothStreamingText", () => ({
     useSmoothStreamingText: mockUseSmoothStreamingText,
   }));
+  await mock.module("@/browser/stores/WorkspaceStore", () => ({
+    useWorkspaceStreamingStats: mockUseWorkspaceStreamingStats,
+  }));
 }
 
 async function restoreTypewriterMarkdownModuleMocks() {
@@ -39,6 +46,9 @@ async function restoreTypewriterMarkdownModuleMocks() {
   }));
   await mock.module("@/browser/hooks/useSmoothStreamingText", () => ({
     useSmoothStreamingText: actualUseSmoothStreamingText,
+  }));
+  await mock.module("@/browser/stores/WorkspaceStore", () => ({
+    useWorkspaceStreamingStats: actualUseWorkspaceStreamingStats,
   }));
 }
 
@@ -59,6 +69,7 @@ describe("TypewriterMarkdown", () => {
     globalThis.document = globalThis.window.document;
     await installTypewriterMarkdownModuleMocks();
     mockUseSmoothStreamingText.mockClear();
+    mockUseWorkspaceStreamingStats.mockClear();
   });
 
   afterEach(async () => {
@@ -107,5 +118,39 @@ describe("TypewriterMarkdown", () => {
     expect(mockUseSmoothStreamingText).toHaveBeenCalledWith(
       expect.objectContaining({ bypassSmoothing: true })
     );
+  });
+
+  // Regression: completed historical messages must not subscribe to live
+  // streaming stats for their workspace, otherwise every assistant message in a
+  // long transcript re-renders on every stream-delta of an active stream and
+  // re-introduces the cascade jitter this PR is supposed to eliminate.
+  test("completed messages subscribe with empty key (no live-stats updates)", () => {
+    render(
+      <TypewriterMarkdown
+        content="Historical reply"
+        isComplete={true}
+        streamKey="msg-old"
+        streamSource="live"
+        workspaceId="ws-active"
+      />
+    );
+
+    // Hook still runs (rules of hooks), but the key must be the no-op sentinel.
+    expect(mockUseWorkspaceStreamingStats).toHaveBeenCalledWith("");
+    expect(mockUseWorkspaceStreamingStats).not.toHaveBeenCalledWith("ws-active");
+  });
+
+  test("streaming messages subscribe with the real workspace key", () => {
+    render(
+      <TypewriterMarkdown
+        content="Streaming reply"
+        isComplete={false}
+        streamKey="msg-live"
+        streamSource="live"
+        workspaceId="ws-active"
+      />
+    );
+
+    expect(mockUseWorkspaceStreamingStats).toHaveBeenCalledWith("ws-active");
   });
 });
