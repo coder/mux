@@ -1542,6 +1542,60 @@ code {
   white-space: normal;
 }
 
+/* Per-block fade-in for streaming content.
+ *
+ * Streamdown gives us per-block element identity for free: each top-level
+ * markdown block (paragraph, heading, list, fence, blockquote, table, hr) is
+ * keyed by its index inside Streamdown's render and reconciled in place when
+ * its content grows. So a CSS animation on a freshly-mounted child fires
+ * exactly once per new top-level block — never for text appended inside a
+ * still-open block. This gives users the "line-by-line fade-in" feel without
+ * any JS bookkeeping.
+ *
+ * Gating:
+ *  - data-streaming="true" is set by TypewriterMarkdown only while isStreaming.
+ *    Historical/replay messages render without the attribute and skip the rule.
+ *  - prefers-reduced-motion: no-preference scopes the rule to users who haven't
+ *    asked for reduced motion. Reduced-motion users see instant rendering.
+ *
+ * Selector scope:
+ *  - Block-level descendants only — explicitly enumerated. Inline elements
+ *    (<strong>/<em>/<a>) are intentionally excluded because parseIncompleteMarkdown
+ *    can transiently insert/remove them mid-stream as remend repairs unterminated
+ *    tokens, which would over-fire the animation and look glitchy.
+ *  - `> X` for top-level blocks; bare `li` so list items inside any (possibly
+ *    nested) <ul>/<ol> still animate as they arrive.
+ */
+@keyframes stream-block-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .markdown-content[data-streaming="true"] .streamdown-root > p,
+  .markdown-content[data-streaming="true"] .streamdown-root > h1,
+  .markdown-content[data-streaming="true"] .streamdown-root > h2,
+  .markdown-content[data-streaming="true"] .streamdown-root > h3,
+  .markdown-content[data-streaming="true"] .streamdown-root > h4,
+  .markdown-content[data-streaming="true"] .streamdown-root > h5,
+  .markdown-content[data-streaming="true"] .streamdown-root > h6,
+  .markdown-content[data-streaming="true"] .streamdown-root > ul,
+  .markdown-content[data-streaming="true"] .streamdown-root > ol,
+  .markdown-content[data-streaming="true"] .streamdown-root > blockquote,
+  .markdown-content[data-streaming="true"] .streamdown-root > pre,
+  .markdown-content[data-streaming="true"] .streamdown-root > hr,
+  .markdown-content[data-streaming="true"] .streamdown-root > table,
+  .markdown-content[data-streaming="true"] .streamdown-root li {
+    animation: stream-block-fade-in 180ms ease-out;
+  }
+}
+
 .markdown-content h1,
 .markdown-content h2,
 .markdown-content h3,

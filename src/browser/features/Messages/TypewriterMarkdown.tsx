@@ -73,7 +73,12 @@ export const TypewriterMarkdown: React.FC<TypewriterMarkdownProps> = ({
 
   return (
     <StreamingContext.Provider value={streamingContextValue}>
-      <div className={cn("markdown-content", className)}>
+      {/*
+       * data-streaming is the gate for per-block fade-in (see globals.css). The
+       * `|| undefined` keeps the attribute absent on completed messages so the
+       * CSS rule never matches them (and historical transcripts never animate).
+       */}
+      <div className={cn("markdown-content", className)} data-streaming={isStreaming || undefined}>
         <MarkdownCore
           content={visibleText}
           parseIncompleteMarkdown={isStreaming}

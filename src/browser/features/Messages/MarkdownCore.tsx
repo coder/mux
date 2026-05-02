@@ -144,7 +144,9 @@ export const MarkdownCore = React.memo<MarkdownCoreProps>(
           // Use "static" mode for completed content to bypass useTransition() deferral.
           // After ORPC migration, async event boundaries let React deprioritize transitions indefinitely.
           mode={parseIncompleteMarkdown ? "streaming" : "static"}
-          className="space-y-2" // Reduce from default space-y-4 (16px) to space-y-2 (8px)
+          // streamdown-root: stable CSS hook for per-block fade-in (see globals.css).
+          // space-y-2: reduce from default space-y-4 (16px) to space-y-2 (8px).
+          className="streamdown-root space-y-2"
           controls={{ table: false, code: true, mermaid: true }} // Disable table copy/download, keep code/mermaid controls
         >
           {normalizedContent}

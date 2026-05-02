@@ -153,4 +153,28 @@ describe("TypewriterMarkdown", () => {
 
     expect(mockUseWorkspaceStreamingStats).toHaveBeenCalledWith("ws-active");
   });
+
+  // The data-streaming attribute is the gate for the per-block fade-in CSS rule
+  // (see globals.css, .markdown-content[data-streaming="true"] .streamdown-root > *).
+  // It must only be present on the wrapper while the message is actively streaming
+  // — otherwise historical/replayed transcripts would re-trigger the animation
+  // every time their content prop changes.
+  test("sets data-streaming on the wrapper only while streaming", () => {
+    const streaming = render(
+      <TypewriterMarkdown content="Live" isComplete={false} streamKey="msg-anim-live" />
+    );
+    expect(
+      streaming.container.querySelector(".markdown-content")?.getAttribute("data-streaming")
+    ).toBe("true");
+    streaming.unmount();
+
+    const completed = render(
+      <TypewriterMarkdown content="Done" isComplete={true} streamKey="msg-anim-done" />
+    );
+    // Absent (not "false") on completed messages so the CSS selector
+    // [data-streaming="true"] cannot match.
+    expect(
+      completed.container.querySelector(".markdown-content")?.getAttribute("data-streaming")
+    ).toBeNull();
+  });
 });
