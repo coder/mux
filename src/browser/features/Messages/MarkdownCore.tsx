@@ -12,6 +12,7 @@ import "katex/dist/katex.min.css";
 import { normalizeMarkdown } from "./MarkdownStyles";
 import { markdownComponents } from "./MarkdownComponents";
 import { INTERNAL_INLINE_SKILL_HREF_PREFIX, remarkInlineSkillLinks } from "./inlineSkillMarkdown";
+import { rehypeSplitWordsForFade } from "./rehypeSplitWordsForFade";
 
 interface MarkdownCoreProps {
   content: string;
@@ -102,7 +103,7 @@ const sanitizeSchema = {
   },
 };
 
-const REHYPE_PLUGINS: Pluggable[] = [
+const REHYPE_PLUGINS_BASE: Pluggable[] = [
   rehypeRaw, // Parse HTML elements first
   [rehypeSanitize, sanitizeSchema], // Sanitize HTML to prevent XSS (strips dangerous elements/attributes)
   [
@@ -123,6 +124,12 @@ const REHYPE_PLUGINS: Pluggable[] = [
   [rehypeKatex, { errorColor: "var(--color-muted-foreground)" }], // Render math
 ];
 
+// Streaming variant: also splits each whitespace-bounded word into a
+// `<span class="sd-word">` so the per-word blur-fade-in CSS rule fires once per
+// new word at mount. Order matters: rehypeKatex must run BEFORE the splitter so
+// .katex subtrees are tagged and excluded.
+const REHYPE_PLUGINS_STREAMING: Pluggable[] = [...REHYPE_PLUGINS_BASE, rehypeSplitWordsForFade];
+
 /**
  * Core markdown rendering component that handles all markdown processing.
  * This is the single source of truth for markdown configuration.
@@ -139,7 +146,7 @@ export const MarkdownCore = React.memo<MarkdownCoreProps>(
         <Streamdown
           components={markdownComponents}
           remarkPlugins={preserveLineBreaks ? REMARK_PLUGINS_WITH_BREAKS : REMARK_PLUGINS}
-          rehypePlugins={REHYPE_PLUGINS}
+          rehypePlugins={parseIncompleteMarkdown ? REHYPE_PLUGINS_STREAMING : REHYPE_PLUGINS_BASE}
           parseIncompleteMarkdown={parseIncompleteMarkdown}
           // Use "static" mode for completed content to bypass useTransition() deferral.
           // After ORPC migration, async event boundaries let React deprioritize transitions indefinitely.

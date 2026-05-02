@@ -1542,57 +1542,46 @@ code {
   white-space: normal;
 }
 
-/* Per-block fade-in for streaming content.
+/* Per-word blur-fade-in for streaming markdown content.
  *
- * Streamdown gives us per-block element identity for free: each top-level
- * markdown block (paragraph, heading, list, fence, blockquote, table, hr) is
- * keyed by its index inside Streamdown's render and reconciled in place when
- * its content grows. So a CSS animation on a freshly-mounted child fires
- * exactly once per new top-level block — never for text appended inside a
- * still-open block. This gives users the "line-by-line fade-in" feel without
- * any JS bookkeeping.
+ * Each whitespace-bounded word in a streaming message is wrapped in
+ * `<span class="sd-word">` by `rehypeSplitWordsForFade` (see MarkdownCore).
+ * On mount, each span animates from `filter: blur(6px); opacity: 0` to its
+ * final state — giving the soft per-word reveal users associate with modern
+ * AI chat transcripts (Grok, flowtoken, etc.).
+ *
+ * Why per-word, not per-block:
+ *  - Per-block fired once per paragraph at mount, then text grew silently
+ *    inside. Reasoning/thinking blocks are typically one big paragraph, so the
+ *    effect was invisible there.
+ *  - Per-word also animates inside an already-mounted paragraph: each new
+ *    whitespace boundary mounts a fresh span → animation fires once for that
+ *    word and only that word. Stable identity at every word position keeps
+ *    completed words static while only new words fade in.
  *
  * Gating:
- *  - data-streaming="true" is set by TypewriterMarkdown only while isStreaming.
- *    Historical/replay messages render without the attribute and skip the rule.
- *  - prefers-reduced-motion: no-preference scopes the rule to users who haven't
- *    asked for reduced motion. Reduced-motion users see instant rendering.
+ *  - `[data-streaming="true"]` is set by TypewriterMarkdown only on LIVE
+ *    streams (not replay, not completed). Historical transcripts render
+ *    without the attribute and skip the rule entirely.
+ *  - `prefers-reduced-motion: no-preference` honors accessibility settings:
+ *    users who request reduced motion see instant rendering.
  *
- * Selector scope:
- *  - Block-level descendants only — explicitly enumerated. Inline elements
- *    (<strong>/<em>/<a>) are intentionally excluded because parseIncompleteMarkdown
- *    can transiently insert/remove them mid-stream as remend repairs unterminated
- *    tokens, which would over-fire the animation and look glitchy.
- *  - `> X` for top-level blocks; bare `li` so list items inside any (possibly
- *    nested) <ul>/<ol> still animate as they arrive.
- */
-@keyframes stream-block-fade-in {
+ * `<pre>`/`<code>`/KaTeX/Mermaid subtrees are excluded by the rehype plugin,
+ * so this rule never matches inside them. */
+@keyframes sd-word-blur-in {
   from {
+    filter: blur(6px);
     opacity: 0;
-    transform: translateY(2px);
   }
   to {
+    filter: blur(0);
     opacity: 1;
-    transform: translateY(0);
   }
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  .markdown-content[data-streaming="true"] .streamdown-root > p,
-  .markdown-content[data-streaming="true"] .streamdown-root > h1,
-  .markdown-content[data-streaming="true"] .streamdown-root > h2,
-  .markdown-content[data-streaming="true"] .streamdown-root > h3,
-  .markdown-content[data-streaming="true"] .streamdown-root > h4,
-  .markdown-content[data-streaming="true"] .streamdown-root > h5,
-  .markdown-content[data-streaming="true"] .streamdown-root > h6,
-  .markdown-content[data-streaming="true"] .streamdown-root > ul,
-  .markdown-content[data-streaming="true"] .streamdown-root > ol,
-  .markdown-content[data-streaming="true"] .streamdown-root > blockquote,
-  .markdown-content[data-streaming="true"] .streamdown-root > pre,
-  .markdown-content[data-streaming="true"] .streamdown-root > hr,
-  .markdown-content[data-streaming="true"] .streamdown-root > table,
-  .markdown-content[data-streaming="true"] .streamdown-root li {
-    animation: stream-block-fade-in 180ms ease-out;
+  .markdown-content[data-streaming="true"] .sd-word {
+    animation: sd-word-blur-in 500ms ease-out;
   }
 }
 
