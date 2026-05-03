@@ -667,6 +667,14 @@ export class WorkspaceStore {
       this.states.bump(workspaceId);
       // Bump usage store so liveUsage is recomputed with new activeStreamId
       this.usageStore.bump(workspaceId);
+      // Invalidate cached streaming stats so the pill never displays the prior
+      // turn's TPS at the start of a new one. Stream-end / stream-abort /
+      // stream-error already bump on terminal events, but those bumps can be
+      // skipped on reconnect/hydration paths that drop activeStreams via
+      // aggregator.clearActiveStreams() without notifying this store. Bumping
+      // on stream-start makes the cache invariant: every new turn forces a
+      // fresh recompute regardless of how the previous one was wound down.
+      this.streamingStatsStore.bump(workspaceId);
     },
     "stream-lifecycle": (workspaceId, aggregator, data) => {
       applyWorkspaceChatEventToAggregator(aggregator, data);
@@ -1393,9 +1401,9 @@ export class WorkspaceStore {
    * Get current live streaming stats for a workspace, or null if no stream is active.
    *
    * Cached per MapStore version: changes only when {@link streamingStatsStore} is
-   * bumped (every coalesced delta + on stream end). Reading uses Date.now() at
-   * the bump point, so the trailing-window TPS is always current relative to the
-   * latest delta.
+   * bumped (stream-start + every coalesced delta + every terminal stream event).
+   * Reading uses Date.now() at the bump point, so the trailing-window TPS is
+   * always current relative to the latest delta.
    */
   getWorkspaceStreamingStats(workspaceId: string): WorkspaceStreamingStats | null {
     return this.streamingStatsStore.get(workspaceId, () => {

@@ -1946,6 +1946,106 @@ describe("WorkspaceStore", () => {
       unsubscribe();
     });
 
+    it("invalidates streaming-stats cache on stream-start so the new turn never displays the prior turn's TPS", async () => {
+      // Repro for "Streaming TPS starts with stale value": reconnect / hydration
+      // paths drop aggregator.activeStreams via clearActiveStreams() WITHOUT
+      // bumping streamingStatsStore. If the next stream-start also doesn't bump,
+      // useWorkspaceStreamingStats keeps returning the previous turn's cached
+      // stats until the first delta of the new turn. The fix is to bump on
+      // stream-start so every new turn forces a fresh recompute.
+      const workspaceId = "stream-start-invalidates-stats";
+      const streamModel = "anthropic:claude-opus-4-6";
+
+      mockOnChat.mockImplementation(async function* (
+        _input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        if (options?.signal?.aborted) {
+          yield { type: "caught-up" };
+        }
+        await waitForAbortSignal(options?.signal);
+      });
+
+      recreateStore();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      createAndAddWorkspace(store, workspaceId);
+
+      const rawStore = store as unknown as {
+        handleChatMessage: (workspaceId: string, data: WorkspaceChatMessage) => void;
+      };
+
+      // Stream A: start + delta + caught-up so the streaming-stats cache is
+      // populated with non-null stats reflecting A's TPS / token count.
+      const messageIdA = "stream-a";
+      rawStore.handleChatMessage(workspaceId, {
+        type: "stream-start",
+        workspaceId,
+        messageId: messageIdA,
+        model: streamModel,
+        historySequence: 1,
+        startTime: 1_000,
+      });
+      rawStore.handleChatMessage(workspaceId, {
+        type: "stream-delta",
+        workspaceId,
+        messageId: messageIdA,
+        delta: "hello world ",
+        tokens: 3,
+        timestamp: 1_500,
+      });
+      rawStore.handleChatMessage(workspaceId, { type: "caught-up" });
+
+      const beforeA = store.getWorkspaceStreamingStats(workspaceId);
+      expect(beforeA).not.toBeNull();
+      expect(beforeA?.tokenCount).toBe(3);
+
+      // Simulate a reconnect / hydration path: aggregator.clearActiveStreams()
+      // drops the active stream WITHOUT bumping streamingStatsStore (the four
+      // call sites in WorkspaceStore that do this on caught-up / background
+      // streaming-stop / activity-driven generation advance / addWorkspace).
+      const aggregator = store.getAggregator(workspaceId);
+      if (!aggregator) {
+        throw new Error(`Missing aggregator for ${workspaceId}`);
+      }
+      aggregator.clearActiveStreams();
+
+      // Pre-fix: no bump has happened, so the cached A-stats remain visible to
+      // any subscriber that reads at this point — that's the literal "stale TPS"
+      // the user sees during the new turn's first frames.
+      expect(store.getWorkspaceStreamingStats(workspaceId)).toEqual(beforeA);
+
+      // Subscribe so the missing stream-start bump would surface as a missed
+      // notification on regression.
+      let notifications = 0;
+      const unsubscribe = store.subscribeStreamingStats(workspaceId, () => {
+        notifications += 1;
+      });
+
+      // Stream B starts via the buffered handler. With the fix, this bumps
+      // streamingStatsStore and the cache is invalidated.
+      rawStore.handleChatMessage(workspaceId, {
+        type: "stream-start",
+        workspaceId,
+        messageId: "stream-b",
+        model: streamModel,
+        historySequence: 2,
+        startTime: 2_000,
+      });
+
+      expect(notifications).toBeGreaterThanOrEqual(1);
+
+      // After stream-start, the cache must no longer reflect stream A. B has
+      // received no deltas yet, so the recomputed stats are a fresh zeroed
+      // snapshot — the important property is that A's stats are gone.
+      expect(store.getWorkspaceStreamingStats(workspaceId)).toEqual({
+        tokenCount: 0,
+        tps: 0,
+        charsPerSec: 0,
+      });
+
+      unsubscribe();
+    });
+
     it("prefers buffered stream-start state over stale non-streaming activity during hydration", async () => {
       const workspaceId = "buffered-stream-start-over-activity";
       const staleActivityModel = "openai:gpt-4o-mini";
