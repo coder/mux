@@ -832,10 +832,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           onSetDefaultRuntime: creationState.setDefaultRuntimeChoice,
           disabled: isSendInFlight,
           projectPath: creationParentProjectPath || props.projectPath,
-          // Surface the route-level project (possibly a sub-project) to the
-          // dropdown so the trigger label reflects what the user actually
-          // picked, while runtime/settings scoping stays on the parent above.
-          selectedProjectPath: props.projectPath,
+          // Surface the actually-targeted project (possibly a sub-project) to
+          // the dropdown so the trigger label reflects what the user picked,
+          // while runtime/settings scoping stays on the parent above. When
+          // creating from the sidebar's "+ New chat" on a sub-project header,
+          // the URL/route is the parent project and the sub-project comes via
+          // the draft (pendingSubProjectPath / creationSubProjectPath); both
+          // routes (deep link to a sub-project, or sidebar "+") collapse here.
+          selectedProjectPath: creationSubProjectPath ?? props.projectPath,
           projectName: props.projectName,
           nameState: creationState.nameState,
           runtimeAvailabilityState: creationState.runtimeAvailabilityState,
