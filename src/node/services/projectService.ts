@@ -2,7 +2,12 @@ import type { Config, ProjectConfig } from "@/node/config";
 import { formatSshEndpoint } from "@/common/utils/ssh/formatSshEndpoint";
 import { spawn } from "child_process";
 import { createHash, randomBytes } from "crypto";
-import { validateProjectPath, isGitRepository, stripTrailingSlashes } from "@/node/utils/pathUtils";
+import {
+  validateProjectPath,
+  isGitRepository,
+  isInsideGitRepository,
+  stripTrailingSlashes,
+} from "@/node/utils/pathUtils";
 import { listLocalBranches, detectDefaultTrunkBranch } from "@/node/git";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
@@ -1129,8 +1134,11 @@ export class ProjectService {
       }
       const normalizedPath = validation.expandedPath!;
 
-      // Non-git repos return empty branches - they're restricted to local runtime only
-      if (!(await isGitRepository(normalizedPath))) {
+      // Non-git repos return empty branches - they're restricted to local runtime only.
+      // Use `git rev-parse --is-inside-work-tree` so sub-projects (whose .git lives
+      // in a parent directory) still surface the surrounding repo's branches and
+      // don't trigger the "git init" banner.
+      if (!(await isInsideGitRepository(normalizedPath))) {
         return { branches: [], recommendedTrunk: null };
       }
 

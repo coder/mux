@@ -1,5 +1,6 @@
 import * as fs from "fs/promises";
 import * as path from "path";
+import { execFileAsync } from "./disposableExec";
 import { PlatformPaths } from "./paths.main";
 
 /**
@@ -102,6 +103,25 @@ export async function isGitRepository(projectPath: string): Promise<boolean> {
   try {
     await fs.stat(gitPath);
     return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Check whether `projectPath` lies inside a git work tree, even if `.git`
+ * lives in an ancestor directory. This matters for sub-projects: the
+ * sub-project directory itself has no `.git`, but it still belongs to the
+ * parent project's git work tree, so we should treat it as a git repo for
+ * UX (e.g. branch listing, suppressing the "git init" banner).
+ *
+ * @param projectPath - Path to check (should be already validated/normalized)
+ */
+export async function isInsideGitRepository(projectPath: string): Promise<boolean> {
+  try {
+    using proc = execFileAsync("git", ["-C", projectPath, "rev-parse", "--is-inside-work-tree"]);
+    const { stdout } = await proc.result;
+    return stdout.trim() === "true";
   } catch {
     return false;
   }

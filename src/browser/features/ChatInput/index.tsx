@@ -832,6 +832,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           onSetDefaultRuntime: creationState.setDefaultRuntimeChoice,
           disabled: isSendInFlight,
           projectPath: creationParentProjectPath || props.projectPath,
+          // Surface the route-level project (possibly a sub-project) to the
+          // dropdown so the trigger label reflects what the user actually
+          // picked, while runtime/settings scoping stays on the parent above.
+          selectedProjectPath: props.projectPath,
           projectName: props.projectName,
           nameState: creationState.nameState,
           runtimeAvailabilityState: creationState.runtimeAvailabilityState,

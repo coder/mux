@@ -21,8 +21,8 @@ import {
   SelectValue,
 } from "@/browser/components/SelectPrimitive/SelectPrimitive";
 import { Blocks, Cog, GitBranch, Loader2, Wand2 } from "lucide-react";
-import { PlatformPaths } from "@/common/utils/paths";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
+import { formatProjectHierarchyLabel } from "@/common/utils/subProjects";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { RuntimeConfigInput } from "@/browser/components/RuntimeConfigInput/RuntimeConfigInput";
@@ -116,8 +116,16 @@ interface CreationControlsProps {
   onSelectedRuntimeChange: (runtime: ParsedRuntime) => void;
   onSetDefaultRuntime: (mode: RuntimeChoice) => void;
   disabled: boolean;
-  /** Project path to display (and used for project selector) */
+  /** Owning project path used for runtime/settings scoping (always the parent). */
   projectPath: string;
+  /**
+   * Path of the project actually selected by the user. May be a sub-project
+   * even when {@link projectPath} is its parent, since workspace creation is
+   * always owned by the top-level parent. Used for the dropdown's selected
+   * value/label so sub-projects render correctly. Falls back to
+   * {@link projectPath} when omitted.
+   */
+  selectedProjectPath?: string;
   /** Project name to display as header */
   projectName: string;
   /** Workspace name/title generation state and actions */
@@ -725,41 +733,54 @@ export function CreationControls(props: CreationControlsProps) {
         className={cn("flex gap-y-2", nameState.error ? "items-start" : "items-center")}
         data-component="WorkspaceNameGroup"
       >
-        {userProjects.size > 1 ? (
-          <RadixSelect
-            value={props.projectPath}
-            onValueChange={(path: string) => beginWorkspaceCreation(path)}
-          >
+        {(() => {
+          // Reflect the actual project the user picked (possibly a sub-project)
+          // even though workspace creation is owned by the parent — otherwise
+          // selecting "gbot/bbot" would show "gbot" because props.projectPath
+          // is normalized to the owning parent for runtime/config scoping.
+          const selected = props.selectedProjectPath ?? props.projectPath;
+          const selectedLabel = formatProjectHierarchyLabel(selected, userProjects);
+          return userProjects.size > 1 ? (
+            <RadixSelect
+              value={selected}
+              onValueChange={(path: string) => beginWorkspaceCreation(path)}
+            >
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <SelectTrigger
+                    aria-label="Select project"
+                    data-testid="project-selector"
+                    className="text-foreground hover:bg-toggle-bg/70 h-7 w-auto max-w-[280px] shrink-0 border-transparent bg-transparent px-0 text-lg font-semibold shadow-none"
+                  >
+                    {/*
+                     * Render the hierarchy label as the explicit child instead of
+                     * relying on Radix's <SelectValue/> mirror of the matched
+                     * <SelectItem/> text. This keeps the trigger label in sync
+                     * with the SelectItem labels (which also use the hierarchy
+                     * label) and avoids fallbacks to bare basenames.
+                     */}
+                    <SelectValue placeholder={selectedLabel}>{selectedLabel}</SelectValue>
+                  </SelectTrigger>
+                </TooltipTrigger>
+                <TooltipContent align="start">{selected}</TooltipContent>
+              </Tooltip>
+              <SelectContent>
+                {Array.from(userProjects.keys()).map((path) => (
+                  <SelectItem key={path} value={path}>
+                    {formatProjectHierarchyLabel(path, userProjects)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </RadixSelect>
+          ) : (
             <Tooltip>
               <TooltipTrigger asChild>
-                <SelectTrigger
-                  aria-label="Select project"
-                  data-testid="project-selector"
-                  className="text-foreground hover:bg-toggle-bg/70 h-7 w-auto max-w-[280px] shrink-0 border-transparent bg-transparent px-0 text-lg font-semibold shadow-none"
-                >
-                  <SelectValue placeholder={props.projectName} />
-                </SelectTrigger>
+                <h2 className="text-foreground shrink-0 text-lg font-semibold">{selectedLabel}</h2>
               </TooltipTrigger>
-              <TooltipContent align="start">{props.projectPath}</TooltipContent>
+              <TooltipContent align="start">{selected}</TooltipContent>
             </Tooltip>
-            <SelectContent>
-              {Array.from(userProjects.keys()).map((path) => (
-                <SelectItem key={path} value={path}>
-                  {PlatformPaths.basename(path)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </RadixSelect>
-        ) : (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <h2 className="text-foreground shrink-0 text-lg font-semibold">
-                {props.projectName}
-              </h2>
-            </TooltipTrigger>
-            <TooltipContent align="start">{props.projectPath}</TooltipContent>
-          </Tooltip>
-        )}
+          );
+        })()}
         <span className="text-muted-foreground mx-2 text-lg">/</span>
 
         {/* Keep generation errors stacked with the name field so remediation appears directly below it. */}
