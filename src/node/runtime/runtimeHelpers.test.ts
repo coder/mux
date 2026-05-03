@@ -138,6 +138,26 @@ it("appends sub-project relative paths to the execution root", () => {
   );
 });
 
+it("self-heals to the workspace root when sub-project metadata is no longer a descendant", () => {
+  // Persisted metadata can drift: the project may be removed/re-added at a new
+  // path, or the user may edit ~/.mux/config.json by hand. Rather than throwing
+  // (which would break workspace startup until manual recovery), we should drop
+  // the bad sub-project path and execute in the workspace root.
+  const metadata = {
+    runtimeConfig: {
+      type: "worktree",
+      srcBaseDir: "/tmp/src",
+    } satisfies RuntimeConfig,
+    projectPath: "/repo",
+    name: "feature",
+    namedWorkspacePath: "/mux/src/repo/feature",
+    subProjectPath: "/elsewhere/api",
+  };
+  const runtime = createRuntimeForWorkspace(metadata);
+
+  expect(resolveWorkspaceExecutionPath(metadata, runtime)).toBe("/mux/src/repo/feature");
+});
+
 describe("createRuntimeContextForWorkspace", () => {
   it("returns a runtime together with the resolved execution path", () => {
     const metadata = {

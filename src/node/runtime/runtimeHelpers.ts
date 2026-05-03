@@ -41,13 +41,20 @@ export function resolveWorkspaceExecutionPath(
       return workspaceRoot;
     }
 
+    // Self-heal stale persisted state: project paths can change (e.g. project
+    // removed/re-added at a new location, config edited by hand). When the
+    // recorded sub-project path is no longer a descendant of the workspace's
+    // owning project, fall back to the workspace root rather than throwing —
+    // a wrong cwd is recoverable, a thrown error here breaks workspace
+    // startup/commands until the user manually edits the config.
     const relativeSubProjectPath = path.relative(metadata.projectPath, subProjectPath);
-    assert(
-      relativeSubProjectPath &&
-        !relativeSubProjectPath.startsWith("..") &&
-        !path.isAbsolute(relativeSubProjectPath),
-      `Sub-project ${subProjectPath} is not inside project ${metadata.projectPath}`
-    );
+    if (
+      !relativeSubProjectPath ||
+      relativeSubProjectPath.startsWith("..") ||
+      path.isAbsolute(relativeSubProjectPath)
+    ) {
+      return workspaceRoot;
+    }
 
     const runtimeRelativeSubProjectPath = relativeSubProjectPath.replace(/\\/g, "/");
 
