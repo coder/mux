@@ -345,10 +345,17 @@ async function readSingleProjectContextInstructions(
     ? deriveSubProjectRelativePath(metadata.projectPath, metadata.subProjectPath)
     : null;
 
+  // path.relative emits host-native separators (e.g., "packages\\api" on Windows),
+  // but SSH/Docker/devcontainer runtimes read files via POSIX paths. Normalize to
+  // forward slashes and let the runtime joiner produce a runtime-correct path.
+  const subProjectInstructionsDir = subProjectRelativePath
+    ? runtime.normalizePath(subProjectRelativePath.replace(/\\/g, "/"), workspacePath)
+    : null;
+
   const [parentInstructions, subProjectInstructions] = await Promise.all([
     readInstructionSetFromRuntime(runtime, workspacePath),
-    subProjectRelativePath
-      ? readInstructionSetFromRuntime(runtime, path.join(workspacePath, subProjectRelativePath))
+    subProjectInstructionsDir
+      ? readInstructionSetFromRuntime(runtime, subProjectInstructionsDir)
       : Promise.resolve(null),
   ]);
 
