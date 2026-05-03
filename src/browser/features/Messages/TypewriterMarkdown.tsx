@@ -171,9 +171,14 @@ export const TypewriterMarkdown: React.FC<TypewriterMarkdownProps> = ({
       // produce visual jitter; the most recent delta wins.
       activeAnimationRef.current?.cancel();
       try {
+        // 400ms with an out-quart curve: longer duration + smoother
+        // deceleration than ease-out. Ease-out is front-loaded (most of
+        // the visible motion in the first ~80ms), which made each row
+        // feel like a flash; out-quart spreads the motion more evenly
+        // and lets the fade settle in.
         activeAnimationRef.current = el.animate(
           [{ "--reveal-y": `${delta}px` }, { "--reveal-y": "0px" }],
-          { duration: 250, easing: "ease-out", fill: "none" }
+          { duration: 400, easing: "cubic-bezier(0.22, 1, 0.36, 1)", fill: "none" }
         );
       } catch {
         // Older runtimes without @property-typed-custom-property support

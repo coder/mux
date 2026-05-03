@@ -1553,8 +1553,10 @@ code {
  *
  * Implementation:
  *  - A linear-gradient mask hides the bottom 1.6em (~1 visual line at
- *    line-height 1.6). A thin 0.4em fade band right above the boundary
- *    softens the edge so completed lines don't snap with a hard cutoff.
+ *    line-height 1.6). A 0.8em fade band right above the boundary softens
+ *    the edge so completed lines don't snap with a hard cutoff. (A wider
+ *    band feels "smoother" because each row spends proportionally more of
+ *    the pulse duration partially faded as the mask sweeps past.)
  *  - `--reveal-y` is an extra offset that pushes the transparent strip
  *    upward. Resting value is 0px (only the in-progress line is hidden).
  *    JS (TypewriterMarkdown's useLayoutEffect) observes height growth via
@@ -1608,13 +1610,13 @@ code {
     -webkit-mask-image: linear-gradient(
       180deg,
       black 0%,
-      black calc(100% - 1.6em - var(--reveal-y, 0px) - 0.4em),
+      black calc(100% - 1.6em - var(--reveal-y, 0px) - 0.8em),
       transparent calc(100% - 1.6em - var(--reveal-y, 0px))
     );
     mask-image: linear-gradient(
       180deg,
       black 0%,
-      black calc(100% - 1.6em - var(--reveal-y, 0px) - 0.4em),
+      black calc(100% - 1.6em - var(--reveal-y, 0px) - 0.8em),
       transparent calc(100% - 1.6em - var(--reveal-y, 0px))
     );
   }
