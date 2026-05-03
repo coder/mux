@@ -53,27 +53,25 @@ beforeEach(() => {
 });
 
 describe("parseRuntimeString", () => {
-  const workspaceName = "test-workspace";
-
   test("returns undefined for undefined runtime (default to worktree)", () => {
-    expect(parseRuntimeString(undefined, workspaceName)).toBeUndefined();
+    expect(parseRuntimeString(undefined)).toBeUndefined();
   });
 
   test("returns undefined for explicit 'worktree' runtime", () => {
-    expect(parseRuntimeString("worktree", workspaceName)).toBeUndefined();
-    expect(parseRuntimeString("WORKTREE", workspaceName)).toBeUndefined();
-    expect(parseRuntimeString(" worktree ", workspaceName)).toBeUndefined();
+    expect(parseRuntimeString("worktree")).toBeUndefined();
+    expect(parseRuntimeString("WORKTREE")).toBeUndefined();
+    expect(parseRuntimeString(" worktree ")).toBeUndefined();
   });
 
   test("returns local config for explicit 'local' runtime", () => {
     // "local" now returns project-dir runtime config (no srcBaseDir)
-    expect(parseRuntimeString("local", workspaceName)).toEqual({ type: "local" });
-    expect(parseRuntimeString("LOCAL", workspaceName)).toEqual({ type: "local" });
-    expect(parseRuntimeString(" local ", workspaceName)).toEqual({ type: "local" });
+    expect(parseRuntimeString("local")).toEqual({ type: "local" });
+    expect(parseRuntimeString("LOCAL")).toEqual({ type: "local" });
+    expect(parseRuntimeString(" local ")).toEqual({ type: "local" });
   });
 
   test("parses valid SSH runtime", () => {
-    const result = parseRuntimeString("ssh user@host", workspaceName);
+    const result = parseRuntimeString("ssh user@host");
     expect(result).toEqual({
       type: "ssh",
       host: "user@host",
@@ -82,7 +80,7 @@ describe("parseRuntimeString", () => {
   });
 
   test("preserves case in SSH host", () => {
-    const result = parseRuntimeString("ssh User@Host.Example.Com", workspaceName);
+    const result = parseRuntimeString("ssh User@Host.Example.Com");
     expect(result).toEqual({
       type: "ssh",
       host: "User@Host.Example.Com",
@@ -91,7 +89,7 @@ describe("parseRuntimeString", () => {
   });
 
   test("handles extra whitespace", () => {
-    const result = parseRuntimeString("  ssh   user@host  ", workspaceName);
+    const result = parseRuntimeString("  ssh   user@host  ");
     expect(result).toEqual({
       type: "ssh",
       host: "user@host",
@@ -100,12 +98,12 @@ describe("parseRuntimeString", () => {
   });
 
   test("throws error for SSH without host", () => {
-    expect(() => parseRuntimeString("ssh", workspaceName)).toThrow("SSH runtime requires host");
-    expect(() => parseRuntimeString("ssh ", workspaceName)).toThrow("SSH runtime requires host");
+    expect(() => parseRuntimeString("ssh")).toThrow("SSH runtime requires host");
+    expect(() => parseRuntimeString("ssh ")).toThrow("SSH runtime requires host");
   });
 
   test("accepts SSH with hostname only (user will be inferred)", () => {
-    const result = parseRuntimeString("ssh hostname", workspaceName);
+    const result = parseRuntimeString("ssh hostname");
     // Uses tilde path - backend will resolve it via runtime.resolvePath()
     expect(result).toEqual({
       type: "ssh",
@@ -115,7 +113,7 @@ describe("parseRuntimeString", () => {
   });
 
   test("accepts SSH with hostname.domain only", () => {
-    const result = parseRuntimeString("ssh dev.example.com", workspaceName);
+    const result = parseRuntimeString("ssh dev.example.com");
     // Uses tilde path - backend will resolve it via runtime.resolvePath()
     expect(result).toEqual({
       type: "ssh",
@@ -125,7 +123,7 @@ describe("parseRuntimeString", () => {
   });
 
   test("uses tilde path for root user too", () => {
-    const result = parseRuntimeString("ssh root@hostname", workspaceName);
+    const result = parseRuntimeString("ssh root@hostname");
     // Backend will resolve ~ to /root for root user
     expect(result).toEqual({
       type: "ssh",
@@ -135,7 +133,7 @@ describe("parseRuntimeString", () => {
   });
 
   test("parses docker runtime with image", () => {
-    const result = parseRuntimeString("docker ubuntu:22.04", workspaceName);
+    const result = parseRuntimeString("docker ubuntu:22.04");
     expect(result).toEqual({
       type: "docker",
       image: "ubuntu:22.04",
@@ -143,10 +141,7 @@ describe("parseRuntimeString", () => {
   });
 
   test("parses devcontainer runtime with config path", () => {
-    const result = parseRuntimeString(
-      "devcontainer .devcontainer/devcontainer.json",
-      workspaceName
-    );
+    const result = parseRuntimeString("devcontainer .devcontainer/devcontainer.json");
     expect(result).toEqual({
       type: "devcontainer",
       configPath: ".devcontainer/devcontainer.json",
@@ -154,13 +149,13 @@ describe("parseRuntimeString", () => {
   });
 
   test("throws error for devcontainer without config path", () => {
-    expect(() => parseRuntimeString("devcontainer", workspaceName)).toThrow(
+    expect(() => parseRuntimeString("devcontainer")).toThrow(
       "Dev container runtime requires a config path"
     );
   });
 
   test("parses docker with registry image", () => {
-    const result = parseRuntimeString("docker ghcr.io/myorg/dev:latest", workspaceName);
+    const result = parseRuntimeString("docker ghcr.io/myorg/dev:latest");
     expect(result).toEqual({
       type: "docker",
       image: "ghcr.io/myorg/dev:latest",
@@ -168,19 +163,15 @@ describe("parseRuntimeString", () => {
   });
 
   test("throws error for docker without image", () => {
-    expect(() => parseRuntimeString("docker", workspaceName)).toThrow(
-      "Docker runtime requires image"
-    );
-    expect(() => parseRuntimeString("docker ", workspaceName)).toThrow(
-      "Docker runtime requires image"
-    );
+    expect(() => parseRuntimeString("docker")).toThrow("Docker runtime requires image");
+    expect(() => parseRuntimeString("docker ")).toThrow("Docker runtime requires image");
   });
 
   test("throws error for unknown runtime type", () => {
-    expect(() => parseRuntimeString("remote", workspaceName)).toThrow(
+    expect(() => parseRuntimeString("remote")).toThrow(
       "Unknown runtime type: 'remote'. Use 'ssh <host>', 'docker <image>', 'devcontainer <config>', 'worktree', or 'local'"
     );
-    expect(() => parseRuntimeString("kubernetes", workspaceName)).toThrow(
+    expect(() => parseRuntimeString("kubernetes")).toThrow(
       "Unknown runtime type: 'kubernetes'. Use 'ssh <host>', 'docker <image>', 'devcontainer <config>', 'worktree', or 'local'"
     );
   });

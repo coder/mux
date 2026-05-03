@@ -1012,10 +1012,7 @@ async function handleForkCommand(
  * - "devcontainer <configPath>" -> Dev container runtime
  * - undefined -> Worktree runtime (default)
  */
-export function parseRuntimeString(
-  runtime: string | undefined,
-  _workspaceName: string
-): RuntimeConfig | undefined {
+export function parseRuntimeString(runtime: string | undefined): RuntimeConfig | undefined {
   // Use shared parser from common/types/runtime
   const parsed = parseRuntimeModeAndHost(runtime);
 
@@ -1128,13 +1125,8 @@ export async function createNewWorkspace(
     }
   }
 
-  // Parse runtime config if provided. Use a placeholder when no caller-provided
-  // workspace name is available (auto-name path); parseRuntimeString only uses
-  // the name for error reporting context.
-  const runtimeConfig = parseRuntimeString(
-    effectiveRuntime,
-    options.workspaceName ?? "(auto-generated)"
-  );
+  // Parse runtime config if provided.
+  const runtimeConfig = parseRuntimeString(effectiveRuntime);
 
   const result = await options.client.workspace.create({
     projectPath: options.projectPath,
