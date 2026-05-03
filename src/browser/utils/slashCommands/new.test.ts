@@ -1,113 +1,35 @@
 import { parseCommand } from "./parser";
 
+// /new mirrors /fork: there is no required workspace name. Everything after
+// `/new` becomes the optional start message; the backend auto-generates the
+// branch name and (when a start message is provided) fills in the title.
 describe("/new command", () => {
-  it("should return undefined workspaceName when no arguments provided (opens modal)", () => {
-    const result = parseCommand("/new");
-    expect(result).toEqual({
+  it("parses bare /new as a no-arg seamless creation", () => {
+    expect(parseCommand("/new")).toEqual({ type: "new" });
+  });
+
+  it("treats trailing whitespace as no start message", () => {
+    expect(parseCommand("/new   ")).toEqual({ type: "new" });
+  });
+
+  it("captures the rest of the line as the start message", () => {
+    expect(parseCommand("/new Build authentication system")).toEqual({
       type: "new",
-      workspaceName: undefined,
-      trunkBranch: undefined,
-      startMessage: undefined,
+      startMessage: "Build authentication system",
     });
   });
 
-  it("should parse /new with workspace name", () => {
-    const result = parseCommand("/new feature-branch");
-    expect(result).toEqual({
+  it("preserves multiline start messages", () => {
+    expect(parseCommand("/new Build feature X\nWith follow-up details")).toEqual({
       type: "new",
-      workspaceName: "feature-branch",
-      trunkBranch: undefined,
-      startMessage: undefined,
+      startMessage: "Build feature X\nWith follow-up details",
     });
   });
 
-  it("should parse /new with workspace name and trunk via -t flag", () => {
-    const result = parseCommand("/new feature-branch -t main");
-    expect(result).toEqual({
+  it("supports start messages on the line below /new", () => {
+    expect(parseCommand("/new\nStart implementing feature X")).toEqual({
       type: "new",
-      workspaceName: "feature-branch",
-      trunkBranch: "main",
-      startMessage: undefined,
-    });
-  });
-
-  it("should parse /new with workspace name and start message", () => {
-    const result = parseCommand("/new feature-branch\nStart implementing feature X");
-    expect(result).toEqual({
-      type: "new",
-      workspaceName: "feature-branch",
-      trunkBranch: undefined,
       startMessage: "Start implementing feature X",
-    });
-  });
-
-  it("should parse /new with workspace name, trunk via -t, and start message", () => {
-    const result = parseCommand("/new feature-branch -t main\nStart implementing feature X");
-    expect(result).toEqual({
-      type: "new",
-      workspaceName: "feature-branch",
-      trunkBranch: "main",
-      startMessage: "Start implementing feature X",
-    });
-  });
-
-  it("should handle multiline start messages", () => {
-    const result = parseCommand("/new feature-branch\nLine 1\nLine 2\nLine 3");
-    expect(result).toEqual({
-      type: "new",
-      workspaceName: "feature-branch",
-      trunkBranch: undefined,
-      startMessage: "Line 1\nLine 2\nLine 3",
-    });
-  });
-
-  it("should return undefined workspaceName for extra positional arguments (opens modal)", () => {
-    const result = parseCommand("/new feature-branch extra");
-    expect(result).toEqual({
-      type: "new",
-      workspaceName: undefined,
-      trunkBranch: undefined,
-      startMessage: undefined,
-    });
-  });
-
-  it("should handle quoted workspace names", () => {
-    const result = parseCommand('/new "my feature"');
-    expect(result).toEqual({
-      type: "new",
-      workspaceName: "my feature",
-      trunkBranch: undefined,
-      startMessage: undefined,
-    });
-  });
-
-  it("should return undefined workspaceName for unknown flags (opens modal)", () => {
-    const result = parseCommand("/new feature-branch -x invalid");
-    expect(result).toEqual({
-      type: "new",
-      workspaceName: undefined,
-      trunkBranch: undefined,
-      startMessage: undefined,
-    });
-  });
-
-  it("should handle -t flag with quoted branch name", () => {
-    const result = parseCommand('/new feature-branch -t "release/v1.0"');
-    expect(result).toEqual({
-      type: "new",
-      workspaceName: "feature-branch",
-      trunkBranch: "release/v1.0",
-      startMessage: undefined,
-    });
-  });
-
-  it("should handle -t flag before workspace name", () => {
-    const result = parseCommand("/new -t main feature-branch");
-    expect(result).toEqual({
-      type: "new",
-      workspaceName: "feature-branch",
-      trunkBranch: "main",
-      startMessage: undefined,
     });
   });
 });

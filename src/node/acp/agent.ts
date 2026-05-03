@@ -902,19 +902,23 @@ export class MuxAgent implements Agent {
           );
         }
 
-        let trunkBranch = parsedCommand.trunkBranch;
-        if (trunkBranch == null || trunkBranch.trim().length === 0) {
-          const branchInfo = await this.server.client.projects.listBranches({
-            projectPath: workspaceInfo.projectPath,
-          });
-          trunkBranch = branchInfo.recommendedTrunk ?? DEFAULT_TRUNK_BRANCH;
-        }
+        // Resolve trunk from project defaults — /new no longer accepts overrides
+        // (it now mirrors /fork's seamless flow).
+        const branchInfo = await this.server.client.projects.listBranches({
+          projectPath: workspaceInfo.projectPath,
+        });
+        const trunkBranch = branchInfo.recommendedTrunk ?? DEFAULT_TRUNK_BRANCH;
+
+        const hasStartMessage =
+          parsedCommand.startMessage != null && parsedCommand.startMessage.trim().length > 0;
 
         const createResult = await this.server.client.workspace.create({
           projectPath: workspaceInfo.projectPath,
-          branchName: parsedCommand.workspaceName,
+          // branchName intentionally omitted — backend auto-generates (like /fork).
           trunkBranch,
-          runtimeConfig: parsedCommand.runtimeConfig,
+          // Mirror /fork: when a start message accompanies /new, defer the title
+          // selection until the first message can drive LLM-based generation.
+          pendingAutoTitle: hasStartMessage,
         });
 
         if (!createResult.success) {
@@ -925,9 +929,10 @@ export class MuxAgent implements Agent {
         }
 
         const newWorkspaceId = createResult.metadata.id;
-        let response = `Created workspace \`${parsedCommand.workspaceName}\` (id: \`${newWorkspaceId}\`).`;
+        const displayName = createResult.metadata.title ?? createResult.metadata.name;
+        let response = `Created workspace \`${displayName}\` (id: \`${newWorkspaceId}\`).`;
 
-        if (parsedCommand.startMessage != null && parsedCommand.startMessage.trim().length > 0) {
+        if (hasStartMessage && parsedCommand.startMessage != null) {
           const startMessageResult = await this.server.client.workspace.sendMessage({
             workspaceId: newWorkspaceId,
             message: parsedCommand.startMessage,

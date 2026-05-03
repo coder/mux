@@ -135,89 +135,30 @@ describe("ACP slash command support", () => {
     expect(parsed.continueMessage).toBe("continue in 2 steps");
   });
 
-  it("rejects invalid /new runtime arguments", () => {
-    const invalid = parseAcpSlashCommand("/new feature-branch -r ssh", mapSkillsByName(skills));
-    expect(invalid?.kind).toBe("invalid");
-
-    const parsed = parseAcpSlashCommand(
-      '/new feature-branch -t main -r "ssh user@example.com"\nStart by summarizing the branch',
-      mapSkillsByName(skills)
-    );
-
-    expect(parsed?.kind).toBe("new");
-    if (parsed == null || parsed.kind !== "new") {
-      throw new Error("Expected /new command to parse");
-    }
-
-    expect(parsed.workspaceName).toBe("feature-branch");
-    expect(parsed.trunkBranch).toBe("main");
-    expect(parsed.runtimeConfig?.type).toBe("ssh");
-    if (parsed.runtimeConfig?.type === "ssh") {
-      expect(parsed.runtimeConfig.host).toBe("user@example.com");
-    }
-    expect(parsed.startMessage).toBe("Start by summarizing the branch");
+  // /new now mirrors /fork — there is no workspace name argument and no
+  // -t/-r flags. Everything after `/new` is the optional start message and
+  // the backend handles auto-naming + pendingAutoTitle.
+  it("parses /new with no arguments", () => {
+    expect(parseAcpSlashCommand("/new", mapSkillsByName(skills))).toEqual({
+      kind: "new",
+      startMessage: undefined,
+    });
   });
 
-  it("parses /new with one-line start message", () => {
-    const parsed = parseAcpSlashCommand(
-      '/new feature-branch -t main -r "ssh user@example.com" start by summarizing the branch',
-      mapSkillsByName(skills)
-    );
-
-    expect(parsed?.kind).toBe("new");
-    if (parsed == null || parsed.kind !== "new") {
-      throw new Error("Expected one-line /new command to parse");
-    }
-
-    expect(parsed.workspaceName).toBe("feature-branch");
-    expect(parsed.trunkBranch).toBe("main");
-    expect(parsed.runtimeConfig?.type).toBe("ssh");
-    expect(parsed.startMessage).toBe("start by summarizing the branch");
+  it("captures the rest of the input as the start message", () => {
+    expect(
+      parseAcpSlashCommand("/new Start by summarizing the branch", mapSkillsByName(skills))
+    ).toEqual({
+      kind: "new",
+      startMessage: "Start by summarizing the branch",
+    });
   });
 
-  it("parses /new with unquoted two-token runtime and one-line start message", () => {
-    const parsed = parseAcpSlashCommand(
-      "/new feature-branch -r ssh user@example.com start by summarizing the branch",
-      mapSkillsByName(skills)
-    );
-
-    expect(parsed?.kind).toBe("new");
-    if (parsed == null || parsed.kind !== "new") {
-      throw new Error("Expected unquoted two-token /new runtime to parse");
-    }
-
-    expect(parsed.workspaceName).toBe("feature-branch");
-    expect(parsed.runtimeConfig?.type).toBe("ssh");
-    if (parsed.runtimeConfig?.type === "ssh") {
-      expect(parsed.runtimeConfig.host).toBe("user@example.com");
-    }
-    expect(parsed.startMessage).toBe("start by summarizing the branch");
-  });
-
-  it("parses /new one-line start message containing numbers", () => {
-    const parsed = parseAcpSlashCommand(
-      "/new feature-branch start with step 1",
-      mapSkillsByName(skills)
-    );
-
-    expect(parsed?.kind).toBe("new");
-    if (parsed == null || parsed.kind !== "new") {
-      throw new Error("Expected numeric one-line /new command to parse");
-    }
-
-    expect(parsed.workspaceName).toBe("feature-branch");
-    expect(parsed.startMessage).toBe("start with step 1");
-  });
-
-  it("parses /new with numeric workspace name", () => {
-    const parsed = parseAcpSlashCommand("/new 123", mapSkillsByName(skills));
-
-    expect(parsed?.kind).toBe("new");
-    if (parsed == null || parsed.kind !== "new") {
-      throw new Error("Expected numeric workspace name in /new to parse");
-    }
-
-    expect(parsed.workspaceName).toBe("123");
+  it("preserves multiline start messages", () => {
+    expect(parseAcpSlashCommand("/new\nLine one\nLine two", mapSkillsByName(skills))).toEqual({
+      kind: "new",
+      startMessage: "Line one\nLine two",
+    });
   });
 
   it("maps skill slash commands to formatted prompts", () => {

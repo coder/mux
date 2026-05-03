@@ -218,11 +218,6 @@ async function handleNew(
   ctx: SlashCommandRunnerContext,
   parsed: Extract<ParsedCommand, { type: "new" }>
 ): Promise<boolean> {
-  if (!parsed.workspaceName) {
-    ctx.showError("New workspace", "Please provide a name, e.g. /new feature-branch");
-    return true;
-  }
-
   const projectPath = ctx.metadata?.projectPath;
   if (!projectPath) {
     ctx.showError("New workspace", "Current workspace project path unknown");
@@ -230,13 +225,17 @@ async function handleNew(
   }
 
   try {
-    const trunkBranch = await resolveTrunkBranch(ctx, projectPath, parsed.trunkBranch);
-    const runtimeConfig = parseRuntimeStringForMobile(parsed.runtime);
+    const trunkBranch = await resolveTrunkBranch(ctx, projectPath);
+    // Coerce blank/whitespace-only payloads to undefined; pendingAutoTitle only
+    // makes sense when there is real content for the LLM to title from.
+    const trimmedStartMessage = parsed.startMessage?.trim() ?? "";
+    const startMessage = trimmedStartMessage.length > 0 ? trimmedStartMessage : undefined;
+    // Mirror /fork: backend auto-generates the workspace name; pendingAutoTitle
+    // tells it to derive the title from the start message via LLM.
     const result = await ctx.client.workspace.create({
       projectPath,
-      branchName: parsed.workspaceName,
       trunkBranch,
-      runtimeConfig,
+      pendingAutoTitle: Boolean(startMessage),
     });
     if (!result.success) {
       ctx.showError("New workspace", result.error ?? "Failed to create workspace");
@@ -244,12 +243,12 @@ async function handleNew(
     }
 
     ctx.onNavigateToWorkspace(result.metadata.id);
-    ctx.showInfo("New workspace", `Created ${result.metadata.name}`);
+    ctx.showInfo("New workspace", `Created ${result.metadata.title ?? result.metadata.name}`);
 
-    if (parsed.startMessage) {
+    if (startMessage) {
       await ctx.client.workspace.sendMessage({
         workspaceId: result.metadata.id,
-        message: parsed.startMessage,
+        message: startMessage,
         options: ctx.sendMessageOptions,
       });
     }
@@ -263,12 +262,8 @@ async function handleNew(
 
 async function resolveTrunkBranch(
   ctx: SlashCommandRunnerContext,
-  projectPath: string,
-  explicit?: string
+  projectPath: string
 ): Promise<string> {
-  if (explicit) {
-    return explicit;
-  }
   try {
     const { recommendedTrunk, branches } = await ctx.client.projects.listBranches({ projectPath });
     return recommendedTrunk ?? branches?.[0] ?? "main";

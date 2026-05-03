@@ -257,33 +257,19 @@ describe("thinking oneshot (/model+level syntax)", () => {
   });
 });
 
-it("should preserve start message when no workspace name provided", () => {
+it("treats text after /new as the start message (no workspace name required)", () => {
   expectParse("/new\nBuild authentication system", {
     type: "new",
-    workspaceName: undefined,
-    trunkBranch: undefined,
-    runtime: undefined,
     startMessage: "Build authentication system",
   });
 });
 
-it("should preserve start message and flags when no workspace name", () => {
-  expectParse("/new -t develop\nImplement feature X", {
+it("collapses multiline /new input into a single start message", () => {
+  // /new now mirrors /fork: the entire payload is the start message and the
+  // backend handles workspace naming + (optional) auto-title generation.
+  expectParse("/new Build feature X\nWith follow-up details", {
     type: "new",
-    workspaceName: undefined,
-    trunkBranch: "develop",
-    runtime: undefined,
-    startMessage: "Implement feature X",
-  });
-});
-
-it("should preserve start message with runtime flag when no workspace name", () => {
-  expectParse('/new -r "ssh dev.example.com"\nDeploy to staging', {
-    type: "new",
-    workspaceName: undefined,
-    trunkBranch: undefined,
-    runtime: "ssh dev.example.com",
-    startMessage: "Deploy to staging",
+    startMessage: "Build feature X\nWith follow-up details",
   });
 });
 

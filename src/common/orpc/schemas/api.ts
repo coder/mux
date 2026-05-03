@@ -995,7 +995,12 @@ export const workspace = {
   create: {
     input: z.object({
       projectPath: z.string(),
-      branchName: z.string(),
+      /**
+       * Workspace branch name. When omitted, the backend auto-generates a name
+       * based on the trunk branch (e.g., "main-1", "main-2"), similar to how
+       * /fork derives a name from the parent workspace.
+       */
+      branchName: z.string().optional(),
       /** Trunk branch to fork from - only required for worktree/SSH runtimes, ignored for local */
       trunkBranch: z.string().optional(),
       /** Human-readable title (e.g., "Fix plan mode over SSH") - optional for backwards compat */
@@ -1003,6 +1008,11 @@ export const workspace = {
       runtimeConfig: RuntimeConfigSchema.optional(),
       /** Section ID to assign the new workspace to (optional) */
       sectionId: z.string().optional(),
+      /**
+       * When true, mark the workspace with `pendingAutoTitle` so the first user
+       * message triggers an LLM-generated title (mirrors the /fork flow).
+       */
+      pendingAutoTitle: z.boolean().optional(),
     }),
     output: z.discriminatedUnion("success", [
       z.object({ success: z.literal(true), metadata: FrontendWorkspaceMetadataSchema }),

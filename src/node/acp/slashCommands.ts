@@ -3,11 +3,6 @@ import type { AvailableCommand } from "@agentclientprotocol/sdk";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import { SLASH_COMMAND_HINTS } from "@/common/constants/slashCommandHints";
 import {
-  buildRuntimeConfig,
-  parseRuntimeModeAndHost,
-  type RuntimeConfig,
-} from "@/common/types/runtime";
-import {
   getExplicitGatewayPrefix,
   isValidModelFormat,
   normalizeToCanonical,
@@ -23,7 +18,6 @@ const NEW_COMMAND_NAME = "new";
 
 const TRUNCATE_USAGE = `/truncate ${SLASH_COMMAND_HINTS.truncate}`;
 const COMPACT_USAGE = `/compact ${SLASH_COMMAND_HINTS.compact}`;
-const NEW_USAGE = `/new ${SLASH_COMMAND_HINTS.new}`;
 
 interface ServerCommandDefinition {
   name: string;
@@ -55,7 +49,7 @@ const SERVER_COMMAND_DEFINITIONS: readonly ServerCommandDefinition[] = [
   {
     name: NEW_COMMAND_NAME,
     description:
-      "Create a new workspace from the current project. Supports -t <trunk-branch>, -r <runtime>, and multiline start messages.",
+      "Create a new workspace in the current project from its trunk branch. Optionally include a start message.",
     inputHint: SLASH_COMMAND_HINTS.new,
   },
 ] as const;
@@ -81,13 +75,7 @@ export type ParsedAcpSlashCommand =
       continueMessage?: string;
     }
   | { kind: "fork"; startMessage?: string }
-  | {
-      kind: "new";
-      workspaceName: string;
-      trunkBranch?: string;
-      runtimeConfig?: RuntimeConfig;
-      startMessage?: string;
-    }
+  | { kind: "new"; startMessage?: string }
   | {
       kind: "skill";
       descriptor: AgentSkillDescriptor;
@@ -333,97 +321,14 @@ function parseForkCommand(rawInput: string): ParsedAcpSlashCommand {
 }
 
 function parseNewCommand(rawInput: string): ParsedAcpSlashCommand {
-  const { tokens: firstLineTokens, message: multilineMessage } = parseMultilineCommand(rawInput);
-
-  const parsed = minimist(firstLineTokens, {
-    string: ["t", "r"],
-    unknown: (arg: string) => {
-      if (arg.startsWith("-")) {
-        return false;
-      }
-      return true;
-    },
-  });
-
-  const unknownFlags = firstLineTokens.filter(
-    (token) => token.startsWith("-") && token !== "-t" && token !== "-r"
-  );
-  if (unknownFlags.length > 0) {
-    return {
-      kind: "invalid",
-      message: `Unknown flag "${unknownFlags[0]}". Usage: ${NEW_USAGE}`,
-    };
-  }
-
-  const workspaceNameToken = coercePositionalTokenToText(parsed._[0], NEW_USAGE);
-  if (workspaceNameToken.error != null) {
-    return {
-      kind: "invalid",
-      message: workspaceNameToken.error,
-    };
-  }
-
-  if (workspaceNameToken.text == null) {
-    return {
-      kind: "invalid",
-      message: `Missing workspace name. Usage: ${NEW_USAGE}`,
-    };
-  }
-
-  const workspaceName = workspaceNameToken.text;
-  const trunkBranch =
-    typeof parsed.t === "string" && parsed.t.trim().length > 0 ? parsed.t.trim() : undefined;
-
-  let startMessageTokens = parsed._.slice(1);
-  let runtimeConfig: RuntimeConfig | undefined;
-  if (parsed.r != null) {
-    if (typeof parsed.r !== "string" || parsed.r.trim().length === 0) {
-      return {
-        kind: "invalid",
-        message: `-r expects a runtime (e.g., "ssh user@host" or "docker ubuntu:22.04").`,
-      };
-    }
-
-    const runtimeInput = parsed.r.trim();
-    let parsedRuntime = parseRuntimeInput(runtimeInput);
-
-    // Allow unquoted two-token runtime values (e.g., `-r ssh user@host`).
-    // minimist captures only the first token for `-r`, so consume the first
-    // positional token as a runtime suffix when doing so resolves parsing.
-    const runtimeSuffixToken = coercePositionalTokenToText(startMessageTokens[0], NEW_USAGE);
-    if (parsedRuntime.error != null && runtimeSuffixToken.text != null) {
-      const combinedRuntimeInput = `${runtimeInput} ${runtimeSuffixToken.text}`;
-      const combinedParsedRuntime = parseRuntimeInput(combinedRuntimeInput);
-      if (combinedParsedRuntime.error == null) {
-        parsedRuntime = combinedParsedRuntime;
-        startMessageTokens = startMessageTokens.slice(1);
-      }
-    }
-
-    if (parsedRuntime.error != null) {
-      return {
-        kind: "invalid",
-        message: parsedRuntime.error,
-      };
-    }
-
-    runtimeConfig = parsedRuntime.runtimeConfig;
-  }
-
-  const inlineStartMessage = joinPositionalMessageTokens(startMessageTokens, NEW_USAGE);
-  if (inlineStartMessage.error != null) {
-    return {
-      kind: "invalid",
-      message: inlineStartMessage.error,
-    };
-  }
+  // Mirror /fork: everything after /new is the optional start message.
+  // The backend auto-generates the workspace name (and the title from the
+  // start message) so users no longer have to provide one.
+  const startMessage = rawInput.trim();
 
   return {
     kind: "new",
-    workspaceName,
-    trunkBranch,
-    runtimeConfig,
-    startMessage: joinMultilineAndInlineMessage(multilineMessage, inlineStartMessage.message),
+    startMessage: startMessage.length > 0 ? startMessage : undefined,
   };
 }
 
@@ -450,47 +355,6 @@ function parseSkillCommand(
     rawCommand: trimmedInput,
     commandPrefix,
     formattedMessage: formatSkillInvocationText(commandName, afterPrefix.trimStart()),
-  };
-}
-
-function parseRuntimeInput(runtime: string): { runtimeConfig?: RuntimeConfig; error?: string } {
-  const parsed = parseRuntimeModeAndHost(runtime);
-  if (parsed == null) {
-    const trimmed = runtime.trim().toLowerCase();
-    if (trimmed === "ssh" || trimmed.startsWith("ssh ")) {
-      return {
-        error: 'SSH runtime requires host (e.g., "ssh hostname" or "ssh user@host").',
-      };
-    }
-
-    if (trimmed === "docker" || trimmed.startsWith("docker ")) {
-      return {
-        error: 'Docker runtime requires image (e.g., "docker ubuntu:22.04").',
-      };
-    }
-
-    if (trimmed === "devcontainer" || trimmed.startsWith("devcontainer")) {
-      return {
-        error:
-          'Dev container runtime requires a config path (e.g., "devcontainer .devcontainer/devcontainer.json").',
-      };
-    }
-
-    return {
-      error:
-        "Unknown runtime type. Use one of: worktree, local, ssh <host>, docker <image>, devcontainer <config>",
-    };
-  }
-
-  if (parsed.mode === "devcontainer" && parsed.configPath.trim().length === 0) {
-    return {
-      error:
-        'Dev container runtime requires a config path (e.g., "devcontainer .devcontainer/devcontainer.json").',
-    };
-  }
-
-  return {
-    runtimeConfig: buildRuntimeConfig(parsed),
   };
 }
 

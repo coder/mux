@@ -194,6 +194,13 @@ import { getErrorMessage } from "@/common/utils/errors";
 /** Maximum number of retry attempts when workspace name collides */
 const MAX_WORKSPACE_NAME_COLLISION_RETRIES = 3;
 
+/**
+ * Base name used when /new auto-generates a branch name. Numbered suffixes
+ * (`workspace-1`, `workspace-2`, ...) come from {@link generateForkBranchName}
+ * so the existing fork-style numbering helpers stay the single source of truth.
+ */
+const AUTO_NEW_WORKSPACE_BASE_NAME = "workspace";
+
 // Keep short to feel instant, but debounce bursts of file_edit_* tool calls.
 
 // Shared type for workspace-scoped AI settings (model + thinking)
@@ -2094,18 +2101,13 @@ export class WorkspaceService extends EventEmitter {
 
   async create(
     projectPath: string,
-    branchName: string,
+    branchName: string | undefined,
     trunkBranch: string | undefined,
     title?: string,
     runtimeConfig?: RuntimeConfig,
-    sectionId?: string
+    sectionId?: string,
+    pendingAutoTitle?: boolean
   ): Promise<Result<{ metadata: FrontendWorkspaceMetadata }>> {
-    // Validate workspace name
-    const validation = validateWorkspaceName(branchName);
-    if (!validation.valid) {
-      return Err(validation.error ?? "Invalid workspace name");
-    }
-
     // Trust gate: block workspace creation for untrusted projects.
     // The frontend shows a confirmation dialog before reaching here,
     // but this guards secondary paths (slash commands, forking).
@@ -2116,6 +2118,40 @@ export class WorkspaceService extends EventEmitter {
       return Err(
         "This project must be trusted before creating workspaces. Trust the project in Settings → Security, or create a workspace from the project page."
       );
+    }
+
+    // Auto-generate a branch name when the caller omits one (used by /new to
+    // mirror /fork's seamless creation flow). Mirrors fork's auto-naming: scan
+    // existing workspace names AND local git branches so numbering is stable.
+    let resolvedBranchName: string;
+    if (branchName == null) {
+      const existingNamesSet = new Set<string>();
+      for (const entry of projectConfig.workspaces ?? []) {
+        if (typeof entry.name === "string") {
+          existingNamesSet.add(entry.name);
+        }
+      }
+      try {
+        for (const localBranch of await listLocalBranches(projectPath)) {
+          existingNamesSet.add(localBranch);
+        }
+      } catch (error) {
+        log.debug("Failed to list local branches for /new auto-name preflight", {
+          projectPath,
+          error: getErrorMessage(error),
+        });
+      }
+      resolvedBranchName = generateForkBranchName(AUTO_NEW_WORKSPACE_BASE_NAME, [
+        ...existingNamesSet,
+      ]);
+    } else {
+      resolvedBranchName = branchName;
+    }
+
+    // Validate workspace name (covers both caller-provided and auto-generated names)
+    const validation = validateWorkspaceName(resolvedBranchName);
+    if (!validation.valid) {
+      return Err(validation.error ?? "Invalid workspace name");
     }
 
     // Generate stable workspace ID
@@ -2175,7 +2211,7 @@ export class WorkspaceService extends EventEmitter {
 
     try {
       // Create workspace with automatic collision retry
-      let finalBranchName = branchName;
+      let finalBranchName = resolvedBranchName;
       let createResult: { success: boolean; workspacePath?: string; error?: string };
 
       // If runtime uses config-level collision detection (e.g., Coder - can't reach host),
@@ -2192,7 +2228,7 @@ export class WorkspaceService extends EventEmitter {
           i++
         ) {
           log.debug(`Workspace name collision for "${finalBranchName}", adding suffix`);
-          finalBranchName = appendCollisionSuffix(branchName);
+          finalBranchName = appendCollisionSuffix(resolvedBranchName);
         }
       }
 
@@ -2221,7 +2257,7 @@ export class WorkspaceService extends EventEmitter {
           attempt < MAX_WORKSPACE_NAME_COLLISION_RETRIES
         ) {
           log.debug(`Workspace name collision for "${finalBranchName}", retrying with suffix`);
-          finalBranchName = appendCollisionSuffix(branchName);
+          finalBranchName = appendCollisionSuffix(resolvedBranchName);
           continue;
         }
         break;
@@ -2281,6 +2317,9 @@ export class WorkspaceService extends EventEmitter {
           createdAt: metadata.createdAt,
           runtimeConfig: finalRuntimeConfig,
           sectionId,
+          // Mirror /fork: when /new is invoked with a start message, defer title
+          // selection until the first message can drive LLM-based generation.
+          ...(pendingAutoTitle === true ? { pendingAutoTitle: true } : {}),
         });
         return config;
       });

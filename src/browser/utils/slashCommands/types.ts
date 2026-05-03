@@ -27,13 +27,7 @@ export type ParsedCommand =
   | { type: "truncate"; percentage: number }
   | { type: "compact"; maxOutputTokens?: number; continueMessage?: string; model?: string }
   | { type: "fork"; startMessage?: string }
-  | {
-      type: "new";
-      workspaceName?: string;
-      trunkBranch?: string;
-      runtime?: string;
-      startMessage?: string;
-    }
+  | { type: "new"; startMessage?: string }
   | { type: "vim-toggle" }
   | { type: "plan-show" }
   | { type: "plan-open" }

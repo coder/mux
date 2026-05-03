@@ -3110,7 +3110,8 @@ export const router = (authToken?: string) => {
             input.trunkBranch,
             input.title,
             input.runtimeConfig,
-            input.sectionId
+            input.sectionId,
+            input.pendingAutoTitle
           );
           if (!result.success) {
             return { success: false, error: result.error };

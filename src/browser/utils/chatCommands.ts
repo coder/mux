@@ -750,11 +750,21 @@ export function parseRuntimeString(
 export interface CreateWorkspaceOptions {
   client: RouterClient<AppRouter>;
   projectPath: string;
-  workspaceName: string;
+  /**
+   * Workspace branch name. When omitted, the backend auto-generates one
+   * (e.g., "workspace-1", "workspace-2") so /new can mirror /fork's
+   * seamless creation flow.
+   */
+  workspaceName?: string;
   trunkBranch?: string;
   runtime?: string;
   startMessage?: string;
   sendMessageOptions?: SendMessageOptions;
+  /**
+   * When true, ask the backend to mark the workspace with `pendingAutoTitle`
+   * so the start message drives LLM-based title generation (mirrors /fork).
+   */
+  pendingAutoTitle?: boolean;
 }
 
 export interface CreateWorkspaceResult {
@@ -791,14 +801,20 @@ export async function createNewWorkspace(
     }
   }
 
-  // Parse runtime config if provided
-  const runtimeConfig = parseRuntimeString(effectiveRuntime, options.workspaceName);
+  // Parse runtime config if provided. Use a placeholder when no caller-provided
+  // workspace name is available (auto-name path); parseRuntimeString only uses
+  // the name for error reporting context.
+  const runtimeConfig = parseRuntimeString(
+    effectiveRuntime,
+    options.workspaceName ?? "(auto-generated)"
+  );
 
   const result = await options.client.workspace.create({
     projectPath: options.projectPath,
     branchName: options.workspaceName,
     trunkBranch: effectiveTrunk,
     runtimeConfig,
+    pendingAutoTitle: options.pendingAutoTitle,
   });
 
   if (!result.success) {
@@ -1011,7 +1027,12 @@ export interface CommandHandlerResult {
 }
 
 /**
- * Handle /new command execution
+ * Handle /new command execution.
+ *
+ * Mirrors /fork's seamless flow: no modal, no required workspace name. The
+ * backend auto-generates a branch name, and when a start message is supplied
+ * we ask it to fill in the workspace title from that message via
+ * `pendingAutoTitle`.
  */
 export async function handleNewCommand(
   parsed: Extract<ParsedCommand, { type: "new" }>,
@@ -1026,52 +1047,32 @@ export async function handleNewCommand(
     setToast,
   } = context;
 
-  // Open modal if no workspace name provided
-  if (!parsed.workspaceName) {
-    setInput("");
-
-    // Get workspace info to extract projectPath for the modal
-    const workspaceInfo = await client.workspace.getInfo({ workspaceId });
-    if (!workspaceInfo) {
-      setToast({
-        id: Date.now().toString(),
-        type: "error",
-        title: "Error",
-        message: "Failed to get workspace info",
-      });
-      return { clearInput: false, toastShown: true };
-    }
-
-    // Dispatch event with start message, model, and optional preferences
-    const event = createCustomEvent(CUSTOM_EVENTS.START_WORKSPACE_CREATION, {
-      projectPath: workspaceInfo.projectPath,
-      startMessage: parsed.startMessage ?? "",
-      model: sendMessageOptions.model,
-      trunkBranch: parsed.trunkBranch,
-      runtime: parsed.runtime,
-    });
-    window.dispatchEvent(event);
-    return { clearInput: true, toastShown: false };
-  }
-
-  setInput("");
+  setInput(""); // Clear input immediately, like /fork.
   setSendingState(true);
 
   try {
-    // Get workspace info to extract projectPath
+    // Get workspace info to extract projectPath. /new is a workspace-only
+    // command, so the parent workspace's project becomes the new workspace's
+    // project.
     const workspaceInfo = await client.workspace.getInfo({ workspaceId });
     if (!workspaceInfo) {
       throw new Error("Failed to get workspace info");
     }
 
+    // Treat blank/whitespace-only payloads the same as no message — pendingAutoTitle
+    // only makes sense when there is real content for the LLM to title from.
+    const trimmedStartMessage = parsed.startMessage?.trim() ?? "";
+    const startMessage = trimmedStartMessage.length > 0 ? trimmedStartMessage : undefined;
+
     const createResult = await createNewWorkspace({
       client,
       projectPath: workspaceInfo.projectPath,
-      workspaceName: parsed.workspaceName,
-      trunkBranch: parsed.trunkBranch,
-      runtime: parsed.runtime,
-      startMessage: parsed.startMessage,
+      // workspaceName intentionally omitted — backend auto-generates (like /fork).
+      startMessage,
       sendMessageOptions,
+      // Match /fork: only flag pendingAutoTitle when there is a message to
+      // generate the title from.
+      pendingAutoTitle: Boolean(startMessage),
     });
 
     if (!createResult.success) {
@@ -1087,10 +1088,12 @@ export async function handleNewCommand(
     }
 
     trackCommandUsed("new");
+    const displayName =
+      createResult.workspaceInfo?.title ?? createResult.workspaceInfo?.name ?? "new workspace";
     setToast({
       id: Date.now().toString(),
       type: "success",
-      message: `Created workspace "${parsed.workspaceName}"`,
+      message: `Created workspace "${displayName}"`,
     });
     return { clearInput: true, toastShown: true };
   } catch (error) {
