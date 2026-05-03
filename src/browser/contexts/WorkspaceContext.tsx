@@ -868,11 +868,20 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   // pendingNewWorkspaceProject is derived from current project in URL/state
   const pendingNewWorkspaceProject = currentProjectPath;
   const pendingNewWorkspaceDraftId = pendingNewWorkspaceProject ? pendingDraftId : null;
-  const pendingNewWorkspaceSubProjectPath =
+  const pendingNewWorkspaceSubProjectPathRaw =
     pendingNewWorkspaceProject && pendingNewWorkspaceDraftId
       ? ((workspaceDraftsByProject[pendingNewWorkspaceProject] ?? []).find(
           (draft) => draft.draftId === pendingNewWorkspaceDraftId
         )?.subProjectPath ?? null)
+      : null;
+  // Drop the draft's stored sub-project path if the sub-project has since been
+  // removed/unregistered. WorkspaceService.create rejects unknown sub-project
+  // paths under the parent, so leaking a stale value would brick reopening a
+  // legacy draft. Coerce to null and let creation fall back to the parent cwd.
+  const pendingNewWorkspaceSubProjectPath =
+    pendingNewWorkspaceSubProjectPathRaw &&
+    getProjectConfig(pendingNewWorkspaceSubProjectPathRaw) != null
+      ? pendingNewWorkspaceSubProjectPathRaw
       : null;
 
   // selectedWorkspace is derived from currentWorkspaceId in URL + workspaceMetadata

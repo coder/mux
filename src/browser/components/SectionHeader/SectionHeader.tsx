@@ -175,9 +175,10 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
           // Clicking the sub-project name acts like clicking a top-level project row:
           // it starts a new chat scoped to this sub-project. Expand/collapse stays on
           // the chevron/folder icon to the left so the row remains a single primary
-          // action.
+          // action. Rename lives in the kebab menu — keeping double-click to rename
+          // here would race with this click handler (browsers fire click before
+          // dblclick), so a rename attempt would also create a stray draft.
           onClick={onAddWorkspace}
-          onDoubleClick={startEditing}
           className={cn(
             "min-w-0 flex-1 cursor-pointer truncate border-none bg-transparent p-0 text-left text-xs font-medium",
             hasAttention ? "text-content-primary" : "text-content-secondary"
