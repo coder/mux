@@ -2105,15 +2105,29 @@ export class WorkspaceService extends EventEmitter {
     trunkBranch: string | undefined,
     title?: string,
     runtimeConfig?: RuntimeConfig,
-    sectionId?: string,
+    subProjectPath?: string,
     pendingAutoTitle?: boolean
   ): Promise<Result<{ metadata: FrontendWorkspaceMetadata }>> {
+    const configSnapshot = this.config.loadConfigOrDefault();
+    const requestedProjectPath = stripTrailingSlashes(projectPath);
+    const requestedProjectConfig = configSnapshot.projects.get(requestedProjectPath);
+    const owningProjectPath = requestedProjectConfig?.parentProjectPath ?? requestedProjectPath;
+    const effectiveSubProjectPath = requestedProjectConfig?.parentProjectPath
+      ? requestedProjectPath
+      : subProjectPath;
+    const projectConfig = configSnapshot.projects.get(owningProjectPath);
+
+    if (
+      effectiveSubProjectPath &&
+      configSnapshot.projects.get(effectiveSubProjectPath)?.parentProjectPath !== owningProjectPath
+    ) {
+      return Err(`Sub-project not found under parent: ${effectiveSubProjectPath}`);
+    }
+
     // Trust gate: block workspace creation for untrusted projects.
     // The frontend shows a confirmation dialog before reaching here,
-    // but this guards secondary paths (slash commands, forking).
-    const projectConfig = this.config
-      .loadConfigOrDefault()
-      .projects.get(stripTrailingSlashes(projectPath));
+    // but this guards secondary paths (slash commands, forking). Sub-projects
+    // share their parent's checkout, so trust is owned by that parent project.
     if (!projectConfig?.trusted) {
       return Err(
         "This project must be trusted before creating workspaces. Trust the project in Settings → Security, or create a workspace from the project page."
@@ -2123,6 +2137,8 @@ export class WorkspaceService extends EventEmitter {
     // Auto-generate a branch name when the caller omits one (used by /new to
     // mirror /fork's seamless creation flow). Mirrors fork's auto-naming: scan
     // existing workspace names AND local git branches so numbering is stable.
+    // Branches/worktrees are owned by the parent project, so always read from
+    // owningProjectPath even when a sub-project initiated creation.
     let resolvedBranchName: string;
     if (branchName == null) {
       const existingNamesSet = new Set<string>();
@@ -2132,12 +2148,12 @@ export class WorkspaceService extends EventEmitter {
         }
       }
       try {
-        for (const localBranch of await listLocalBranches(projectPath)) {
+        for (const localBranch of await listLocalBranches(owningProjectPath)) {
           existingNamesSet.add(localBranch);
         }
       } catch (error) {
         log.debug("Failed to list local branches for /new auto-name preflight", {
-          projectPath,
+          projectPath: owningProjectPath,
           error: getErrorMessage(error),
         });
       }
@@ -2179,7 +2195,7 @@ export class WorkspaceService extends EventEmitter {
 
     let runtime;
     try {
-      runtime = createRuntime(finalRuntimeConfig, { projectPath });
+      runtime = createRuntime(finalRuntimeConfig, { projectPath: owningProjectPath });
 
       // Resolve srcBaseDir path if the config has one.
       // Skip if runtime has deferredRuntimeAccess flag (runtime doesn't exist yet, e.g., Coder).
@@ -2191,7 +2207,7 @@ export class WorkspaceService extends EventEmitter {
             ...finalRuntimeConfig,
             srcBaseDir: resolvedSrcBaseDir,
           };
-          runtime = createRuntime(finalRuntimeConfig, { projectPath });
+          runtime = createRuntime(finalRuntimeConfig, { projectPath: owningProjectPath });
         }
       }
     } catch (error) {
@@ -2200,7 +2216,7 @@ export class WorkspaceService extends EventEmitter {
     }
 
     const session = this.getOrCreateSession(workspaceId);
-    this.initStateManager.startInit(workspaceId, projectPath);
+    this.initStateManager.startInit(workspaceId, owningProjectPath);
 
     // Create abort controller immediately so workspace lifecycle operations (e.g., cancel/remove)
     // can reliably interrupt init even if the UI deletes the workspace during create().
@@ -2218,7 +2234,7 @@ export class WorkspaceService extends EventEmitter {
       // check against existing workspace names before createWorkspace.
       if (runtime.createFlags?.configLevelCollisionDetection) {
         const existingNames = new Set(
-          (this.config.loadConfigOrDefault().projects.get(projectPath)?.workspaces ?? []).map(
+          (this.config.loadConfigOrDefault().projects.get(owningProjectPath)?.workspaces ?? []).map(
             (w) => w.name
           )
         );
@@ -2233,13 +2249,13 @@ export class WorkspaceService extends EventEmitter {
       }
 
       const createEnv = await secretsToRecord(
-        this.config.getEffectiveSecrets(projectPath),
+        this.config.getEffectiveSecrets(owningProjectPath),
         this.opResolver
       );
 
       for (let attempt = 0; attempt <= MAX_WORKSPACE_NAME_COLLISION_RETRIES; attempt++) {
         createResult = await runtime.createWorkspace({
-          projectPath,
+          projectPath: owningProjectPath,
           branchName: finalBranchName,
           trunkBranch: normalizedTrunkBranch,
           directoryName: finalBranchName,
@@ -2276,7 +2292,7 @@ export class WorkspaceService extends EventEmitter {
           return Err(finalizeResult.error);
         }
         finalRuntimeConfig = finalizeResult.data;
-        runtime = createRuntime(finalRuntimeConfig, { projectPath });
+        runtime = createRuntime(finalRuntimeConfig, { projectPath: owningProjectPath });
       }
 
       // Let runtime validate before persisting (e.g., external collision checks)
@@ -2292,22 +2308,23 @@ export class WorkspaceService extends EventEmitter {
       }
 
       const projectName =
-        projectPath.split("/").pop() ?? projectPath.split("\\").pop() ?? "unknown";
+        owningProjectPath.split("/").pop() ?? owningProjectPath.split("\\").pop() ?? "unknown";
 
       const metadata = {
         id: workspaceId,
         name: finalBranchName,
         title,
         projectName,
-        projectPath,
+        projectPath: owningProjectPath,
+        subProjectPath: effectiveSubProjectPath,
         createdAt: new Date().toISOString(),
       };
 
       await this.config.editConfig((config) => {
-        let projectConfig = config.projects.get(projectPath);
+        let projectConfig = config.projects.get(owningProjectPath);
         if (!projectConfig) {
           projectConfig = { workspaces: [] };
-          config.projects.set(projectPath, projectConfig);
+          config.projects.set(owningProjectPath, projectConfig);
         }
         projectConfig.workspaces.push({
           path: createResult!.workspacePath!,
@@ -2316,7 +2333,7 @@ export class WorkspaceService extends EventEmitter {
           title,
           createdAt: metadata.createdAt,
           runtimeConfig: finalRuntimeConfig,
-          sectionId,
+          subProjectPath: effectiveSubProjectPath,
           // Mirror /fork: when /new is invoked with a start message, defer title
           // selection until the first message can drive LLM-based generation.
           ...(pendingAutoTitle === true ? { pendingAutoTitle: true } : {}),
@@ -2335,7 +2352,7 @@ export class WorkspaceService extends EventEmitter {
 
       // Background init: run postCreateSetup (if present) then initWorkspace
       const secrets = await secretsToRecord(
-        this.config.getEffectiveSecrets(projectPath),
+        this.config.getEffectiveSecrets(owningProjectPath),
         this.opResolver
       );
       // Background init: postCreateSetup (provisioning) + initWorkspace (sync/checkout/hook)
@@ -2346,7 +2363,7 @@ export class WorkspaceService extends EventEmitter {
         runBackgroundInit(
           runtime,
           {
-            projectPath,
+            projectPath: owningProjectPath,
             branchName: finalBranchName,
             trunkBranch: normalizedTrunkBranch,
             workspacePath: createResult!.workspacePath,
@@ -2404,6 +2421,17 @@ export class WorkspaceService extends EventEmitter {
       assert(primaryProject, "createMultiProject requires a primary project");
 
       const configSnapshot = this.config.loadConfigOrDefault();
+      for (const project of normalizedProjects) {
+        const projectConfig = configSnapshot.projects.get(
+          stripTrailingSlashes(project.projectPath)
+        );
+        if (projectConfig?.parentProjectPath) {
+          return Err(
+            `Sub-project ${project.projectName} cannot be added directly to a multi-project workspace. Add its parent project instead.`
+          );
+        }
+      }
+
       for (const project of normalizedProjects) {
         const projectConfig = configSnapshot.projects.get(
           stripTrailingSlashes(project.projectPath)
@@ -5289,8 +5317,8 @@ export class WorkspaceService extends EventEmitter {
         createdAt: new Date().toISOString(),
         runtimeConfig: forkedRuntimeConfig,
         namedWorkspacePath,
-        // Preserve workspace organization when forking via /fork.
-        sectionId: sourceMetadata.sectionId,
+        // Preserve sub-project cwd/prompt context when forking via /fork.
+        subProjectPath: sourceMetadata.subProjectPath,
         // Forks with a continue message stay pending until the first accepted user send
         // can generate a more specific title, unless the user edits the title first.
         pendingAutoTitle: pendingAutoTitle === true ? true : undefined,

@@ -20,6 +20,7 @@ import {
   getLayoutsConfigOrDefault,
   getPresetForSlot,
 } from "@/browser/utils/uiLayouts";
+import { formatProjectHierarchyLabel } from "@/common/utils/subProjects";
 import type { LayoutPresetsConfig, LayoutSlotNumber } from "@/common/types/uiLayouts";
 import {
   addToolToFocusedTabset,
@@ -943,7 +944,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
               getOptions: (_values) =>
                 Array.from(p.userProjects.keys()).map((projectPath) => ({
                   id: projectPath,
-                  label: projectPath.split("/").pop() ?? projectPath,
+                  label: formatProjectHierarchyLabel(projectPath, p.userProjects),
                   keywords: [projectPath],
                 })),
             },
@@ -983,11 +984,13 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
               label: "Select project",
               placeholder: "Search projects…",
               getOptions: (_values) =>
-                Array.from(p.userProjects.keys()).map((projectPath) => ({
-                  id: projectPath,
-                  label: projectPath.split("/").pop() ?? projectPath,
-                  keywords: [projectPath],
-                })),
+                Array.from(p.userProjects.entries())
+                  .filter(([, projectConfig]) => !projectConfig.parentProjectPath)
+                  .map(([projectPath]) => ({
+                    id: projectPath,
+                    label: formatProjectHierarchyLabel(projectPath, p.userProjects),
+                    keywords: [projectPath],
+                  })),
             },
           ],
           onSubmit: async (vals) => {

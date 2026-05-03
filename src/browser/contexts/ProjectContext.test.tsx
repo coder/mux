@@ -84,14 +84,17 @@ describe("ProjectContext", () => {
   });
 
   test("loads projects on mount and supports add/remove mutations", async () => {
-    const initialProjects: Array<[string, ProjectConfig]> = [
+    let projects: Array<[string, ProjectConfig]> = [
       ["/alpha", { workspaces: [] }],
       ["/beta", { workspaces: [] }],
     ];
 
     const projectsApi = createMockAPI({
-      list: () => Promise.resolve(initialProjects),
-      remove: () => Promise.resolve({ success: true as const, data: undefined }),
+      list: () => Promise.resolve(projects),
+      remove: ({ projectPath }: { projectPath: string }) => {
+        projects = projects.filter(([path]) => path !== projectPath);
+        return Promise.resolve({ success: true as const, data: undefined });
+      },
       listBranches: () => Promise.resolve({ branches: ["main"], recommendedTrunk: "main" }),
       secrets: {
         get: () => Promise.resolve([{ key: "A", value: "1" }]),

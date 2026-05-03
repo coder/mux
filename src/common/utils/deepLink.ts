@@ -36,15 +36,12 @@ export function parseMuxDeepLink(raw: string): MuxDeepLinkPayload | null {
   const projectPath = getNonEmptySearchParam(url, "projectPath");
   const projectId = getNonEmptySearchParam(url, "projectId");
   const prompt = getNonEmptySearchParam(url, "prompt");
-  const sectionId = getNonEmptySearchParam(url, "sectionId");
-
   return {
     type: "new_chat",
     ...(project ? { project } : {}),
     ...(projectPath ? { projectPath } : {}),
     ...(projectId ? { projectId } : {}),
     ...(prompt ? { prompt } : {}),
-    ...(sectionId ? { sectionId } : {}),
   };
 }
 

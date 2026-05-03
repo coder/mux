@@ -39,10 +39,10 @@ interface ProjectPageProps {
   projectName: string;
   leftSidebarCollapsed: boolean;
   onToggleLeftSidebarCollapsed: () => void;
+  /** Sub-project path for parent-owned draft creation. */
+  pendingSubProjectPath?: string | null;
   /** Draft ID for UI-only workspace creation drafts (from URL) */
   pendingDraftId?: string | null;
-  /** Section ID to pre-select when creating (from sidebar section "+" button) */
-  pendingSectionId?: string | null;
   onWorkspaceCreated: (
     metadata: FrontendWorkspaceMetadata,
     options?: WorkspaceCreatedOptions
@@ -74,8 +74,8 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
   projectName,
   leftSidebarCollapsed,
   onToggleLeftSidebarCollapsed,
+  pendingSubProjectPath,
   pendingDraftId,
-  pendingSectionId,
   onWorkspaceCreated,
 }) => {
   const { api } = useAPI();
@@ -319,7 +319,7 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
                         <ConfiguredProvidersBar providersConfig={providersConfig} />
                       )
                     )}
-                    {/* ChatInput for workspace creation - includes section selector */}
+                    {/* ChatInput for workspace creation. */}
                     <ChatInput
                       // Key by project + draft so project navigation and draft switches both remount
                       // creation-local state (including any in-flight creation overlays).
@@ -327,7 +327,7 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
                       variant="creation"
                       projectPath={projectPath}
                       projectName={projectName}
-                      pendingSectionId={pendingSectionId}
+                      pendingSubProjectPath={pendingSubProjectPath}
                       pendingDraftId={pendingDraftId}
                       onReady={handleChatReady}
                       onWorkspaceCreated={onWorkspaceCreated}

@@ -7,11 +7,9 @@ import {
   computeWorkspaceDepthMap,
   computeAgentRowRenderMeta,
   filterVisibleAgentRows,
-  partitionWorkspacesBySection,
-  sortSectionsByLinkedList,
 } from "./workspaceFiltering";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import type { ProjectConfig, SectionConfig } from "@/common/types/project";
+import type { ProjectConfig } from "@/common/types/project";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 
 describe("partitionWorkspacesByAge", () => {
@@ -981,145 +979,5 @@ describe("sub-agent row render metadata", () => {
     expect(expandedMeta.get("reported-1")?.connectorPosition).toBe("middle");
     expect(expandedMeta.get("active-2")?.connectorPosition).toBe("middle");
     expect(expandedMeta.get("reported-2")?.connectorPosition).toBe("last");
-  });
-});
-
-describe("sortSectionsByLinkedList", () => {
-  it("should sort sections by nextId linked list", () => {
-    const sections: SectionConfig[] = [
-      { id: "c", name: "C", nextId: null },
-      { id: "a", name: "A", nextId: "b" },
-      { id: "b", name: "B", nextId: "c" },
-    ];
-
-    const sorted = sortSectionsByLinkedList(sections);
-    expect(sorted.map((s) => s.id)).toEqual(["a", "b", "c"]);
-  });
-
-  it("should handle empty array", () => {
-    expect(sortSectionsByLinkedList([])).toEqual([]);
-  });
-
-  it("should handle single section", () => {
-    const sections: SectionConfig[] = [{ id: "only", name: "Only", nextId: null }];
-    const sorted = sortSectionsByLinkedList(sections);
-    expect(sorted.map((s) => s.id)).toEqual(["only"]);
-  });
-
-  it("should handle reordered sections (C, A, B order)", () => {
-    // After reorder to C->A->B, the pointers should be: C->A->B->null
-    const sections: SectionConfig[] = [
-      { id: "a", name: "A", nextId: "b" },
-      { id: "b", name: "B", nextId: null },
-      { id: "c", name: "C", nextId: "a" },
-    ];
-
-    const sorted = sortSectionsByLinkedList(sections);
-    expect(sorted.map((s) => s.id)).toEqual(["c", "a", "b"]);
-  });
-
-  it("should append orphaned sections", () => {
-    // Section "orphan" is not in the linked list
-    const sections: SectionConfig[] = [
-      { id: "a", name: "A", nextId: "b" },
-      { id: "b", name: "B", nextId: null },
-      { id: "orphan", name: "Orphan", nextId: "nonexistent" },
-    ];
-
-    const sorted = sortSectionsByLinkedList(sections);
-    expect(sorted.map((s) => s.id)).toEqual(["a", "b", "orphan"]);
-  });
-});
-
-describe("partitionWorkspacesBySection", () => {
-  const createWorkspace = (
-    id: string,
-    sectionId?: string,
-    parentWorkspaceId?: string
-  ): FrontendWorkspaceMetadata => ({
-    id,
-    name: `workspace-${id}`,
-    projectName: "test-project",
-    projectPath: "/test/project",
-    namedWorkspacePath: `/test/project/workspace-${id}`,
-    runtimeConfig: DEFAULT_RUNTIME_CONFIG,
-    sectionId,
-    parentWorkspaceId,
-  });
-
-  it("should partition workspaces by section", () => {
-    const workspaces = [
-      createWorkspace("ws1", "section-a"),
-      createWorkspace("ws2", "section-b"),
-      createWorkspace("ws3"), // unsectioned
-    ];
-    const sections: SectionConfig[] = [
-      { id: "section-a", name: "A" },
-      { id: "section-b", name: "B" },
-    ];
-
-    const result = partitionWorkspacesBySection(workspaces, sections);
-
-    expect(result.unsectioned.map((w: FrontendWorkspaceMetadata) => w.id)).toEqual(["ws3"]);
-    expect(
-      result.bySectionId.get("section-a")?.map((w: FrontendWorkspaceMetadata) => w.id)
-    ).toEqual(["ws1"]);
-    expect(
-      result.bySectionId.get("section-b")?.map((w: FrontendWorkspaceMetadata) => w.id)
-    ).toEqual(["ws2"]);
-  });
-
-  it("should keep child workspaces directly after their parent within a section", () => {
-    // Parent in section-a, child also in section-a
-    // Input order from flattenWorkspaceTree: parent, child (already correct)
-    const workspaces = [
-      createWorkspace("parent", "section-a"),
-      createWorkspace("child", "section-a", "parent"),
-    ];
-    const sections: SectionConfig[] = [{ id: "section-a", name: "A" }];
-
-    const result = partitionWorkspacesBySection(workspaces, sections);
-
-    // Child should be directly after parent
-    expect(
-      result.bySectionId.get("section-a")?.map((w: FrontendWorkspaceMetadata) => w.id)
-    ).toEqual(["parent", "child"]);
-  });
-
-  it("should keep child workspaces with parent even when child has no sectionId (inherits parent section)", () => {
-    // BUG REPRODUCTION: Parent in section-a, child has no sectionId
-    // Child should render under parent in section-a, NOT in unsectioned
-    const workspaces = [
-      createWorkspace("parent", "section-a"),
-      createWorkspace("child", undefined, "parent"), // child without sectionId
-    ];
-    const sections: SectionConfig[] = [{ id: "section-a", name: "A" }];
-
-    const result = partitionWorkspacesBySection(workspaces, sections);
-
-    // Child should inherit parent's section placement
-    expect(
-      result.bySectionId.get("section-a")?.map((w: FrontendWorkspaceMetadata) => w.id)
-    ).toEqual(["parent", "child"]);
-    // Unsectioned should be empty
-    expect(result.unsectioned).toHaveLength(0);
-  });
-
-  it("should handle nested children inheriting section from root parent", () => {
-    // Root in section-a, child1 and grandchild have no sectionId
-    const workspaces = [
-      createWorkspace("root", "section-a"),
-      createWorkspace("child1", undefined, "root"),
-      createWorkspace("grandchild", undefined, "child1"),
-    ];
-    const sections: SectionConfig[] = [{ id: "section-a", name: "A" }];
-
-    const result = partitionWorkspacesBySection(workspaces, sections);
-
-    // All should be in section-a, in tree order
-    expect(
-      result.bySectionId.get("section-a")?.map((w: FrontendWorkspaceMetadata) => w.id)
-    ).toEqual(["root", "child1", "grandchild"]);
-    expect(result.unsectioned).toHaveLength(0);
   });
 });

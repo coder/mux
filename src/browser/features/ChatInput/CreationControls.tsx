@@ -20,9 +20,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/browser/components/SelectPrimitive/SelectPrimitive";
-import { Blocks, Cog, GitBranch, Loader2, Wand2, X } from "lucide-react";
-import { PlatformPaths } from "@/common/utils/paths";
+import { Blocks, Cog, GitBranch, Loader2, Wand2 } from "lucide-react";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
+import { formatProjectHierarchyLabel } from "@/common/utils/subProjects";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { RuntimeConfigInput } from "@/browser/components/RuntimeConfigInput/RuntimeConfigInput";
@@ -40,8 +40,6 @@ import {
 
 import type { WorkspaceNameState, WorkspaceNameUIError } from "@/browser/hooks/useWorkspaceName";
 import type { CoderInfo } from "@/common/orpc/schemas/coder";
-import type { SectionConfig } from "@/common/types/project";
-import { resolveSectionColor } from "@/common/constants/ui";
 import {
   CoderAvailabilityMessage,
   CoderWorkspaceForm,
@@ -118,8 +116,16 @@ interface CreationControlsProps {
   onSelectedRuntimeChange: (runtime: ParsedRuntime) => void;
   onSetDefaultRuntime: (mode: RuntimeChoice) => void;
   disabled: boolean;
-  /** Project path to display (and used for project selector) */
+  /** Owning project path used for runtime/settings scoping (always the parent). */
   projectPath: string;
+  /**
+   * Path of the project actually selected by the user. May be a sub-project
+   * even when {@link projectPath} is its parent, since workspace creation is
+   * always owned by the top-level parent. Used for the dropdown's selected
+   * value/label so sub-projects render correctly. Falls back to
+   * {@link projectPath} when omitted.
+   */
+  selectedProjectPath?: string;
   /** Project name to display as header */
   projectName: string;
   /** Workspace name/title generation state and actions */
@@ -128,12 +134,6 @@ interface CreationControlsProps {
   runtimeAvailabilityState: RuntimeAvailabilityState;
   /** Runtime enablement toggles from Settings (hide disabled runtimes). */
   runtimeEnablement?: RuntimeEnablement;
-  /** Available sections for this project */
-  sections?: SectionConfig[];
-  /** Currently selected section ID */
-  selectedSectionId?: string | null;
-  /** Callback when section selection changes */
-  onSectionChange?: (sectionId: string | null) => void;
   /** Which runtime field (if any) is in error state for visual feedback */
   runtimeFieldError?: "docker" | "ssh" | null;
 
@@ -320,113 +320,6 @@ const resolveRuntimeButtonState = (
     isDefault: defaultMode === value,
   };
 };
-
-/** Aesthetic section picker with color accent */
-interface SectionPickerProps {
-  sections: SectionConfig[];
-  selectedSectionId: string | null;
-  onSectionChange: (sectionId: string | null) => void;
-  disabled?: boolean;
-}
-
-function SectionSelectItem(props: { section: SectionConfig }) {
-  const color = resolveSectionColor(props.section.color);
-
-  return (
-    <SelectPrimitive.Item
-      value={props.section.id}
-      className="hover:bg-hover focus:bg-hover flex cursor-default items-center gap-2.5 rounded-sm px-3 py-1.5 text-sm font-medium outline-none select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
-    >
-      <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: color }} />
-      <SelectPrimitive.ItemText>{props.section.name}</SelectPrimitive.ItemText>
-    </SelectPrimitive.Item>
-  );
-}
-
-function SectionPicker(props: SectionPickerProps) {
-  const { sections, selectedSectionId, onSectionChange, disabled } = props;
-
-  // Radix Select treats `""` as an "unselected" value; normalize any accidental
-  // empty-string IDs back to null so the UI stays consistent.
-  const normalizedSelectedSectionId =
-    selectedSectionId && selectedSectionId.trim().length > 0 ? selectedSectionId : null;
-
-  const selectedSection = normalizedSelectedSectionId
-    ? sections.find((s) => s.id === normalizedSelectedSectionId)
-    : null;
-  const sectionColor = resolveSectionColor(selectedSection?.color);
-
-  return (
-    <div
-      className="relative inline-flex items-center"
-      data-testid="section-selector"
-      data-selected-section={normalizedSelectedSectionId ?? ""}
-    >
-      <RadixSelect
-        value={normalizedSelectedSectionId ?? ""}
-        onValueChange={(value: string) => onSectionChange(value.trim() ? value : null)}
-        disabled={disabled}
-      >
-        {/* Trigger IS the full pill so Radix aligns the dropdown to it. */}
-        <SelectTrigger
-          className={cn(
-            "inline-flex h-auto w-auto items-center gap-2.5 rounded-md border bg-transparent py-1.5 pl-3 text-sm font-medium shadow-none transition-colors focus:ring-0",
-            normalizedSelectedSectionId ? "pr-8" : "pr-3",
-            selectedSection ? "text-foreground" : "text-muted"
-          )}
-          style={{
-            borderColor: selectedSection ? sectionColor : "var(--color-border-medium)",
-            borderLeftWidth: selectedSection ? "3px" : "1px",
-            backgroundColor: selectedSection ? `${sectionColor}08` : "transparent",
-          }}
-        >
-          {/* Color indicator dot */}
-          <div
-            className="size-2.5 shrink-0 rounded-full transition-colors"
-            style={{
-              backgroundColor: selectedSection ? sectionColor : "var(--color-muted)",
-              opacity: selectedSection ? 1 : 0.4,
-            }}
-          />
-          <span className="text-muted-foreground shrink-0 text-xs">Section</span>
-          <SelectValue placeholder="Select..." />
-        </SelectTrigger>
-        <SelectContent className="border-border-medium">
-          {sections.map((section) => (
-            <SectionSelectItem key={section.id} section={section} />
-          ))}
-        </SelectContent>
-      </RadixSelect>
-      {/* Clear button is a sibling (not nested in the trigger) to avoid
-          nesting interactive elements. Absolutely positioned over the
-          right padding reserved by the trigger's pr-8. */}
-      {normalizedSelectedSectionId && (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              aria-label="Clear section selection"
-              disabled={disabled}
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                onSectionChange(null);
-              }}
-              className={cn(
-                "text-muted hover:text-error absolute right-1.5 top-1/2 -translate-y-1/2 inline-flex size-5 items-center justify-center rounded-sm transition-colors",
-                "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent",
-                "disabled:pointer-events-none disabled:opacity-50"
-              )}
-            >
-              <X className="h-3 w-3" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>Clear section</TooltipContent>
-        </Tooltip>
-      )}
-    </div>
-  );
-}
 
 export function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
   const state = props.runtimeAvailabilityState;
@@ -840,41 +733,54 @@ export function CreationControls(props: CreationControlsProps) {
         className={cn("flex gap-y-2", nameState.error ? "items-start" : "items-center")}
         data-component="WorkspaceNameGroup"
       >
-        {userProjects.size > 1 ? (
-          <RadixSelect
-            value={props.projectPath}
-            onValueChange={(path: string) => beginWorkspaceCreation(path)}
-          >
+        {(() => {
+          // Reflect the actual project the user picked (possibly a sub-project)
+          // even though workspace creation is owned by the parent — otherwise
+          // selecting "gbot/bbot" would show "gbot" because props.projectPath
+          // is normalized to the owning parent for runtime/config scoping.
+          const selected = props.selectedProjectPath ?? props.projectPath;
+          const selectedLabel = formatProjectHierarchyLabel(selected, userProjects);
+          return userProjects.size > 1 ? (
+            <RadixSelect
+              value={selected}
+              onValueChange={(path: string) => beginWorkspaceCreation(path)}
+            >
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <SelectTrigger
+                    aria-label="Select project"
+                    data-testid="project-selector"
+                    className="text-foreground hover:bg-toggle-bg/70 h-7 w-auto max-w-[280px] shrink-0 border-transparent bg-transparent px-0 text-lg font-semibold shadow-none"
+                  >
+                    {/*
+                     * Render the hierarchy label as the explicit child instead of
+                     * relying on Radix's <SelectValue/> mirror of the matched
+                     * <SelectItem/> text. This keeps the trigger label in sync
+                     * with the SelectItem labels (which also use the hierarchy
+                     * label) and avoids fallbacks to bare basenames.
+                     */}
+                    <SelectValue placeholder={selectedLabel}>{selectedLabel}</SelectValue>
+                  </SelectTrigger>
+                </TooltipTrigger>
+                <TooltipContent align="start">{selected}</TooltipContent>
+              </Tooltip>
+              <SelectContent>
+                {Array.from(userProjects.keys()).map((path) => (
+                  <SelectItem key={path} value={path}>
+                    {formatProjectHierarchyLabel(path, userProjects)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </RadixSelect>
+          ) : (
             <Tooltip>
               <TooltipTrigger asChild>
-                <SelectTrigger
-                  aria-label="Select project"
-                  data-testid="project-selector"
-                  className="text-foreground hover:bg-toggle-bg/70 h-7 w-auto max-w-[280px] shrink-0 border-transparent bg-transparent px-0 text-lg font-semibold shadow-none"
-                >
-                  <SelectValue placeholder={props.projectName} />
-                </SelectTrigger>
+                <h2 className="text-foreground shrink-0 text-lg font-semibold">{selectedLabel}</h2>
               </TooltipTrigger>
-              <TooltipContent align="start">{props.projectPath}</TooltipContent>
+              <TooltipContent align="start">{selected}</TooltipContent>
             </Tooltip>
-            <SelectContent>
-              {Array.from(userProjects.keys()).map((path) => (
-                <SelectItem key={path} value={path}>
-                  {PlatformPaths.basename(path)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </RadixSelect>
-        ) : (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <h2 className="text-foreground shrink-0 text-lg font-semibold">
-                {props.projectName}
-              </h2>
-            </TooltipTrigger>
-            <TooltipContent align="start">{props.projectPath}</TooltipContent>
-          </Tooltip>
-        )}
+          );
+        })()}
         <span className="text-muted-foreground mx-2 text-lg">/</span>
 
         {/* Keep generation errors stacked with the name field so remediation appears directly below it. */}
@@ -939,34 +845,7 @@ export function CreationControls(props: CreationControlsProps) {
           </div>
           {nameState.error && <NameErrorDisplay error={nameState.error} />}
         </div>
-
-        {/* Section selector - inline on desktop, hidden on mobile (shown separately below) */}
-        {props.sections && props.sections.length > 0 && props.onSectionChange && (
-          <>
-            <div className="hidden flex-1 md:block" />
-            <div className="hidden md:block">
-              <SectionPicker
-                sections={props.sections}
-                selectedSectionId={props.selectedSectionId ?? null}
-                onSectionChange={props.onSectionChange}
-                disabled={props.disabled}
-              />
-            </div>
-          </>
-        )}
       </div>
-
-      {/* Section selector - own row on mobile only, hidden on desktop */}
-      {props.sections && props.sections.length > 0 && props.onSectionChange && (
-        <div className="md:hidden">
-          <SectionPicker
-            sections={props.sections}
-            selectedSectionId={props.selectedSectionId ?? null}
-            onSectionChange={props.onSectionChange}
-            disabled={props.disabled}
-          />
-        </div>
-      )}
 
       {/* Runtime and source branch controls */}
       <div className="flex flex-col gap-1.5" data-component="RuntimeTypeGroup">

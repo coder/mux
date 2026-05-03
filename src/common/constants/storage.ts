@@ -91,7 +91,7 @@ export const EXPANDED_PROJECTS_KEY = "expandedProjects";
 /**
  * LocalStorage key for UI-only workspace creation drafts.
  *
- * Value: Record<string, Array<{ draftId: string; sectionId: string | null; createdAt: number }>>
+ * Value: Record<string, Array<{ draftId: string; subProjectPath: string | null; createdAt: number }>>
  * Keyed by projectPath.
  */
 export const WORKSPACE_DRAFTS_BY_PROJECT_KEY = "workspaceDraftsByProject";

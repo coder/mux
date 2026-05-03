@@ -15,7 +15,7 @@ export {
 } from "./schemas/runtime";
 
 // Project schemas
-export { ProjectConfigSchema, SectionConfigSchema, WorkspaceConfigSchema } from "./schemas/project";
+export { ProjectConfigSchema, WorkspaceConfigSchema } from "./schemas/project";
 
 // Workspace schemas
 export { WorkspaceAISettingsSchema } from "./schemas/workspaceAiSettings";

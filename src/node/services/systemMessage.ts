@@ -221,24 +221,6 @@ function getSystemDirectory(): string {
 }
 
 /**
- * Search instruction sources in priority order: agent → context → global.
- * Returns the first non-null result from the extractor function.
- */
-function searchInstructionSources<T>(
-  sources: { agent?: string | null; context?: string | null; global?: string | null },
-  extractor: (source: string) => T | null
-): T | null {
-  // Priority: agent definition → workspace/project AGENTS.md → global AGENTS.md
-  for (const src of [sources.agent, sources.context, sources.global]) {
-    if (src) {
-      const result = extractor(src);
-      if (result !== null) return result;
-    }
-  }
-  return null;
-}
-
-/**
  * Extract tool-specific instructions from instruction sources.
  * Searches agent instructions first, then context (workspace/project), then global.
  *
@@ -268,9 +250,11 @@ export function extractToolInstructions(
   };
 
   for (const toolName of availableTools) {
-    const content = searchInstructionSources(sources, (src) => extractToolSection(src, toolName));
-    if (content) {
-      toolInstructions[toolName] = content;
+    const segments = [sources.agent, sources.context, sources.global]
+      .map((src) => (src ? extractToolSection(src, toolName) : null))
+      .filter((content): content is string => content != null && content.trim().length > 0);
+    if (segments.length > 0) {
+      toolInstructions[toolName] = segments.join("\n\n");
     }
   }
 
@@ -345,6 +329,57 @@ async function readMultiProjectContextInstructions(
   return contextSegments.length > 0 ? contextSegments.join("\n\n") : null;
 }
 
+async function readSingleProjectContextInstructions(
+  metadata: WorkspaceMetadata,
+  runtime: Runtime,
+  workspacePath: string
+): Promise<string | null> {
+  // Read parent + sub-project AGENTS.md from the workspace's *own* checkout
+  // (via the runtime). For worktree/SSH/Docker flows the parent project's host
+  // path is a different checkout than the workspace branch — mixing the two
+  // would inject contradictory or stale guidance and prevent workspace-branch
+  // edits from overriding parent guidance. The workspace root is by
+  // construction the parent project's checkout, and any registered
+  // sub-project's relative path is stable across checkouts of the same repo.
+  const subProjectRelativePath = metadata.subProjectPath
+    ? deriveSubProjectRelativePath(metadata.projectPath, metadata.subProjectPath)
+    : null;
+
+  // path.relative emits host-native separators (e.g., "packages\\api" on Windows),
+  // but SSH/Docker/devcontainer runtimes read files via POSIX paths. Normalize to
+  // forward slashes and let the runtime joiner produce a runtime-correct path.
+  const subProjectInstructionsDir = subProjectRelativePath
+    ? runtime.normalizePath(subProjectRelativePath.replace(/\\/g, "/"), workspacePath)
+    : null;
+
+  const [parentInstructions, subProjectInstructions] = await Promise.all([
+    readInstructionSetFromRuntime(runtime, workspacePath),
+    subProjectInstructionsDir
+      ? readInstructionSetFromRuntime(runtime, subProjectInstructionsDir)
+      : Promise.resolve(null),
+  ]);
+
+  const contextSegments = [parentInstructions, subProjectInstructions].filter(
+    (segment): segment is string => segment != null && segment.trim().length > 0
+  );
+  return contextSegments.length > 0 ? contextSegments.join("\n\n") : null;
+}
+
+/**
+ * Compute the path of `subProjectPath` relative to `projectPath` for use under
+ * the workspace's own checkout. Returns `null` if the recorded sub-project
+ * path is not actually a descendant of the parent project (stale persisted
+ * state) — callers should treat that as "no sub-project segment" and fall
+ * back to parent-only instructions rather than failing.
+ */
+function deriveSubProjectRelativePath(projectPath: string, subProjectPath: string): string | null {
+  const relative = path.relative(projectPath, subProjectPath);
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+    return null;
+  }
+  return relative;
+}
+
 /**
  * Read instruction sets from global and context sources.
  * Internal helper for buildSystemMessage and extractToolInstructions.
@@ -366,8 +401,7 @@ async function readInstructionSources(
   const globalInstructions = await readInstructionSet(getSystemDirectory());
   const contextInstructions = isMultiProject(metadata)
     ? await readMultiProjectContextInstructions(metadata, runtime, workspacePath)
-    : ((await readInstructionSetFromRuntime(runtime, workspacePath)) ??
-      (await readInstructionSet(metadata.projectPath)));
+    : await readSingleProjectContextInstructions(metadata, runtime, workspacePath);
 
   return [globalInstructions, contextInstructions];
 }
@@ -435,7 +469,7 @@ export async function buildSystemMessage(
 
   const agentPrompt = options?.agentSystemPrompt?.trim() ?? null;
 
-  // Combine: global + context (workspace takes precedence over project) after stripping scoped sections
+  // Combine: global + concatenated project/sub-project/workspace after stripping scoped sections.
   // Also strip scoped sections from agent prompt for consistency
   const sanitizeScopedInstructions = (input?: string | null): string | undefined => {
     if (!input) return undefined;
@@ -456,10 +490,10 @@ export async function buildSystemMessage(
 
   // Extract model-specific section based on active model identifier
   const modelContent = modelString
-    ? searchInstructionSources(
-        { agent: agentPrompt, context: contextInstructions, global: globalInstructions },
-        (src) => extractModelSection(src, modelString)
-      )
+    ? [agentPrompt, contextInstructions, globalInstructions]
+        .map((src) => (src ? extractModelSection(src, modelString) : null))
+        .filter((content): content is string => content != null && content.trim().length > 0)
+        .join("\n\n")
     : null;
 
   if (customInstructions) {

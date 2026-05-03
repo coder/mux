@@ -49,6 +49,8 @@ import { useAPI } from "@/browser/contexts/API";
 import { useAgent } from "@/browser/contexts/AgentContext";
 
 import { useWorkspaceActions, useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
+import { useProjectContext } from "@/browser/contexts/ProjectContext";
+import { formatProjectHierarchyLabel } from "@/common/utils/subProjects";
 import { isMultiProject } from "@/common/utils/multiProject";
 import { forkWorkspace } from "@/browser/utils/chatCommands";
 import { WORKSPACE_MENU_BAR_LEFT_SIDEBAR_COLLAPSED_PADDING_PX } from "@/constants/layout";
@@ -101,6 +103,16 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
   const runtimeStatus = useRuntimeStatus(workspaceId);
   const workspaceEntry = workspaceMetadata.get(workspaceId);
   const showMultiProjectStatus = workspaceEntry != null && isMultiProject(workspaceEntry);
+  // The workspace's metadata.projectName is the parent project (since worktrees
+  // are owned by the top-most parent). When the workspace is scoped to a
+  // sub-project we surface the hierarchy as "parent / child" so the menu bar
+  // alone reveals the sub-project context.
+  const { userProjects } = useProjectContext();
+  const subProjectPath = workspaceEntry?.subProjectPath;
+  const projectLabel =
+    subProjectPath && userProjects.has(subProjectPath)
+      ? formatProjectHierarchyLabel(subProjectPath, userProjects)
+      : projectName;
   const runtimeStatusStore = useRuntimeStatusStoreRaw();
   const { canInterrupt, isStarting, awaitingUserQuestion, loadedSkills, skillLoadErrors } =
     useWorkspaceSidebarState(workspaceId);
@@ -526,7 +538,7 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
           workspaceName={workspaceName}
           tooltipSide="bottom"
         />
-        <span className="min-w-0 truncate font-mono text-xs">{projectName}</span>
+        <span className="min-w-0 truncate font-mono text-xs">{projectLabel}</span>
         <div className="flex items-center gap-1">
           {/* BranchSelector keeps workspace-scoped local UI state (current branch fallback,
               open popover contents, remote expansion). Key it by workspace identity so

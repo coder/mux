@@ -280,7 +280,7 @@ function ensureCreatedAt(metadata: FrontendWorkspaceMetadata): void {
 
 export interface WorkspaceDraft {
   draftId: string;
-  sectionId: string | null;
+  subProjectPath: string | null;
   createdAt: number;
 }
 
@@ -291,15 +291,15 @@ type WorkspaceDraftPromotionsByProject = Record<string, Record<string, FrontendW
 function isWorkspaceDraft(value: unknown): value is WorkspaceDraft {
   if (!value || typeof value !== "object") return false;
 
-  const record = value as { draftId?: unknown; sectionId?: unknown; createdAt?: unknown };
+  const record = value as { draftId?: unknown; subProjectPath?: unknown; createdAt?: unknown };
   return (
     typeof record.draftId === "string" &&
     record.draftId.trim().length > 0 &&
     typeof record.createdAt === "number" &&
     Number.isFinite(record.createdAt) &&
-    (record.sectionId === null ||
-      record.sectionId === undefined ||
-      typeof record.sectionId === "string")
+    (record.subProjectPath === null ||
+      record.subProjectPath === undefined ||
+      typeof record.subProjectPath === "string")
   );
 }
 
@@ -317,14 +317,14 @@ function normalizeWorkspaceDraftsByProject(value: unknown): WorkspaceDraftsByPro
     for (const draft of drafts) {
       if (!isWorkspaceDraft(draft)) continue;
 
-      const normalizedSectionId =
-        typeof draft.sectionId === "string" && draft.sectionId.trim().length > 0
-          ? draft.sectionId
+      const normalizedSubProjectPath =
+        typeof draft.subProjectPath === "string" && draft.subProjectPath.trim().length > 0
+          ? draft.subProjectPath
           : null;
 
       nextDrafts.push({
         draftId: draft.draftId,
-        sectionId: normalizedSectionId,
+        subProjectPath: normalizedSubProjectPath,
         createdAt: draft.createdAt,
       });
     }
@@ -378,21 +378,21 @@ function isDraftEmpty(projectPath: string, draftId: string): boolean {
 }
 
 /**
- * Find an existing empty draft for a project (optionally within a specific section).
+ * Find an existing empty draft for a project (optionally within a specific sub-project).
  * Returns the draft ID if found, or null if no empty draft exists.
  */
 function findExistingEmptyDraft(
   workspaceDrafts: WorkspaceDraft[],
   projectPath: string,
-  sectionId?: string
+  subProjectPath?: string
 ): string | null {
-  const normalizedSectionId = sectionId ?? null;
+  const normalizedSubProjectPath = subProjectPath ?? null;
 
   for (const draft of workspaceDrafts) {
-    // Keep draft reuse scoped to the current section. When sectionId is undefined
-    // (project-level "New Workspace"), only reuse drafts with a null section so
-    // we don't silently move section-specific drafts into the root flow.
-    if ((draft.sectionId ?? null) !== normalizedSectionId) {
+    // Keep draft reuse scoped to the current sub-project. When subProjectPath is undefined
+    // (project-level "New Workspace"), only reuse drafts with a null sub-project so
+    // we don't silently move sub-project-specific drafts into the root flow.
+    if ((draft.subProjectPath ?? null) !== normalizedSubProjectPath) {
       continue;
     }
     if (isDraftEmpty(projectPath, draft.draftId)) {
@@ -467,26 +467,30 @@ export interface WorkspaceContext extends WorkspaceMetadataContextValue {
 
   // Workspace creation flow
   pendingNewWorkspaceProject: string | null;
-  /** Section ID to pre-select when creating a new workspace (from URL) */
-  pendingNewWorkspaceSectionId: string | null;
+  /** SubProject ID to pre-select when creating a new workspace (from URL) */
+  pendingNewWorkspaceSubProjectPath: string | null;
   /** Draft ID to open when creating a UI-only workspace draft (from URL) */
   pendingNewWorkspaceDraftId: string | null;
   /** Legacy entry point: open the creation screen (no new draft is created) */
-  beginWorkspaceCreation: (projectPath: string, sectionId?: string) => void;
+  beginWorkspaceCreation: (projectPath: string, subProjectPath?: string) => void;
 
   // UI-only workspace creation drafts (placeholders)
   workspaceDraftsByProject: WorkspaceDraftsByProject;
   createWorkspaceDraft: (
     projectPath: string,
-    sectionId?: string,
+    subProjectPath?: string,
     options?: { replace?: boolean }
   ) => void;
-  updateWorkspaceDraftSection: (
+  updateWorkspaceDraftSubProject: (
     projectPath: string,
     draftId: string,
-    sectionId: string | null
+    subProjectPath: string | null
   ) => void;
-  openWorkspaceDraft: (projectPath: string, draftId: string, sectionId?: string | null) => void;
+  openWorkspaceDraft: (
+    projectPath: string,
+    draftId: string,
+    subProjectPath?: string | null
+  ) => void;
   deleteWorkspaceDraft: (projectPath: string, draftId: string) => void;
 
   // Helpers
@@ -633,7 +637,6 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     currentProjectPathFromState,
     currentSettingsSection,
     isAnalyticsOpen,
-    pendingSectionId,
     pendingDraftId,
   } = useRouter();
   const location = useLocation();
@@ -719,10 +722,11 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         return;
       }
 
-      const normalizedSectionId =
-        typeof payload.sectionId === "string" && payload.sectionId.trim().length > 0
-          ? payload.sectionId
-          : null;
+      const resolvedProjectConfig = getProjectConfig(resolvedProjectPath);
+      const owningProjectPath = resolvedProjectConfig?.parentProjectPath ?? resolvedProjectPath;
+      const normalizedSubProjectPath: string | null = resolvedProjectConfig?.parentProjectPath
+        ? resolvedProjectPath
+        : null;
 
       // IMPORTANT: Deep links should always create a fresh draft, even if an existing draft
       // is empty. This keeps deep-link navigations predictable and avoids surprising reuse.
@@ -731,15 +735,15 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
       setWorkspaceDraftsByProjectState((prev) => {
         const current = normalizeWorkspaceDraftsByProject(prev);
-        const existing = current[resolvedProjectPath] ?? [];
+        const existing = current[owningProjectPath] ?? [];
 
         return {
           ...current,
-          [resolvedProjectPath]: [
+          [owningProjectPath]: [
             ...existing,
             {
               draftId,
-              sectionId: normalizedSectionId,
+              subProjectPath: normalizedSubProjectPath,
               createdAt,
             },
           ],
@@ -752,16 +756,17 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           : null;
 
       if (prompt) {
-        updatePersistedState(getInputKey(getDraftScopeId(resolvedProjectPath, draftId)), prompt);
+        updatePersistedState(getInputKey(getDraftScopeId(owningProjectPath, draftId)), prompt);
       }
 
-      navigateToProject(resolvedProjectPath, normalizedSectionId ?? undefined, draftId);
+      navigateToProject(owningProjectPath, draftId);
     },
     [
       api,
       navigateToProject,
       projectsLoading,
       resolveNewChatProjectPath,
+      getProjectConfig,
       hasAnyProject,
       setWorkspaceDraftsByProjectState,
     ]
@@ -862,9 +867,22 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
   // pendingNewWorkspaceProject is derived from current project in URL/state
   const pendingNewWorkspaceProject = currentProjectPath;
-  // pendingNewWorkspaceSectionId is derived from section URL param
-  const pendingNewWorkspaceSectionId = pendingSectionId;
   const pendingNewWorkspaceDraftId = pendingNewWorkspaceProject ? pendingDraftId : null;
+  const pendingNewWorkspaceSubProjectPathRaw =
+    pendingNewWorkspaceProject && pendingNewWorkspaceDraftId
+      ? ((workspaceDraftsByProject[pendingNewWorkspaceProject] ?? []).find(
+          (draft) => draft.draftId === pendingNewWorkspaceDraftId
+        )?.subProjectPath ?? null)
+      : null;
+  // Drop the draft's stored sub-project path if the sub-project has since been
+  // removed/unregistered. WorkspaceService.create rejects unknown sub-project
+  // paths under the parent, so leaking a stale value would brick reopening a
+  // legacy draft. Coerce to null and let creation fall back to the parent cwd.
+  const pendingNewWorkspaceSubProjectPath =
+    pendingNewWorkspaceSubProjectPathRaw &&
+    getProjectConfig(pendingNewWorkspaceSubProjectPathRaw) != null
+      ? pendingNewWorkspaceSubProjectPathRaw
+      : null;
 
   // selectedWorkspace is derived from currentWorkspaceId in URL + workspaceMetadata
   const selectedWorkspace = useMemo(() => {
@@ -1531,19 +1549,21 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     []
   );
   const beginWorkspaceCreation = useCallback(
-    (projectPath: string, sectionId?: string) => {
-      navigateToProject(projectPath, sectionId);
+    (projectPath: string, _subProjectPath?: string) => {
+      navigateToProject(projectPath);
     },
     [navigateToProject]
   );
-  // Persist section selection + URL updates so draft section switches stick across navigation.
-  const updateWorkspaceDraftSection = useCallback(
-    (projectPath: string, draftId: string, sectionId: string | null) => {
+  // Persist sub-project selection + URL updates so draft sub-project switches stick across navigation.
+  const updateWorkspaceDraftSubProject = useCallback(
+    (projectPath: string, draftId: string, subProjectPath: string | null) => {
       if (projectPath.trim().length === 0) return;
       if (draftId.trim().length === 0) return;
 
-      const normalizedSectionId =
-        typeof sectionId === "string" && sectionId.trim().length > 0 ? sectionId : null;
+      const normalizedSubProjectPath =
+        typeof subProjectPath === "string" && subProjectPath.trim().length > 0
+          ? subProjectPath
+          : null;
 
       setWorkspaceDraftsByProjectState((prev) => {
         const current = normalizeWorkspaceDraftsByProject(prev);
@@ -1557,13 +1577,13 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           if (draft.draftId !== draftId) {
             return draft;
           }
-          if (draft.sectionId === normalizedSectionId) {
+          if (draft.subProjectPath === normalizedSubProjectPath) {
             return draft;
           }
           didUpdate = true;
           return {
             ...draft,
-            sectionId: normalizedSectionId,
+            subProjectPath: normalizedSubProjectPath,
           };
         });
 
@@ -1577,13 +1597,13 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         };
       });
 
-      navigateToProject(projectPath, normalizedSectionId ?? undefined, draftId);
+      navigateToProject(projectPath, draftId);
     },
     [navigateToProject, setWorkspaceDraftsByProjectState]
   );
 
   const createWorkspaceDraft = useCallback(
-    (projectPath: string, sectionId?: string, options?: { replace?: boolean }) => {
+    (projectPath: string, subProjectPath?: string, options?: { replace?: boolean }) => {
       // Read directly from localStorage to get the freshest value, avoiding stale closure issues.
       // The React state (workspaceDraftsByProject) may be out of date if this is called rapidly.
       const freshDrafts = normalizeWorkspaceDraftsByProject(
@@ -1591,11 +1611,15 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       );
       const existingDrafts = freshDrafts[projectPath] ?? [];
 
-      // If there's an existing empty draft (optionally in the same section), reuse it
+      // If there's an existing empty draft (optionally in the same sub-project), reuse it
       // instead of creating yet another empty draft.
-      const existingEmptyDraftId = findExistingEmptyDraft(existingDrafts, projectPath, sectionId);
+      const existingEmptyDraftId = findExistingEmptyDraft(
+        existingDrafts,
+        projectPath,
+        subProjectPath
+      );
       if (existingEmptyDraftId) {
-        navigateToProject(projectPath, sectionId, existingEmptyDraftId, {
+        navigateToProject(projectPath, existingEmptyDraftId, {
           replace: options?.replace,
         });
         return;
@@ -1605,7 +1629,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       const createdAt = Date.now();
       const draft: WorkspaceDraft = {
         draftId,
-        sectionId: sectionId ?? null,
+        subProjectPath: subProjectPath ?? null,
         createdAt,
       };
 
@@ -1635,7 +1659,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         };
       });
 
-      navigateToProject(projectPath, sectionId, draftId, { replace: options?.replace });
+      navigateToProject(projectPath, draftId, { replace: options?.replace });
     },
     [navigateToProject, setWorkspaceDraftsByProjectState]
   );
@@ -1679,7 +1703,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         return;
       }
 
-      navigateToProject(fallbackProjectPath, undefined, undefined, { replace: true });
+      navigateToProject(fallbackProjectPath, undefined, { replace: true });
     };
 
     void resolveStartupRootRoute();
@@ -1708,14 +1732,12 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     const fallbackProjectPath = resolveFallbackProjectPath();
     if (!fallbackProjectPath) return;
 
-    navigateToProject(fallbackProjectPath, undefined, undefined, { replace: true });
+    navigateToProject(fallbackProjectPath, undefined, { replace: true });
   }, [loading, projectsLoading, location.pathname, resolveFallbackProjectPath, navigateToProject]);
 
   const openWorkspaceDraft = useCallback(
-    (projectPath: string, draftId: string, sectionId?: string | null) => {
-      const normalizedSectionId =
-        typeof sectionId === "string" && sectionId.trim().length > 0 ? sectionId : undefined;
-      navigateToProject(projectPath, normalizedSectionId, draftId);
+    (projectPath: string, draftId: string, _subProjectPath?: string | null) => {
+      navigateToProject(projectPath, draftId);
     },
     [navigateToProject]
   );
@@ -1779,14 +1801,14 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       selectedWorkspace,
       setSelectedWorkspace,
       pendingNewWorkspaceProject,
-      pendingNewWorkspaceSectionId,
+      pendingNewWorkspaceSubProjectPath,
       pendingNewWorkspaceDraftId,
       beginWorkspaceCreation,
       workspaceDraftsByProject,
       workspaceDraftPromotionsByProject,
       promoteWorkspaceDraft,
       createWorkspaceDraft,
-      updateWorkspaceDraftSection,
+      updateWorkspaceDraftSubProject,
       openWorkspaceDraft,
       deleteWorkspaceDraft,
       getWorkspaceInfo,
@@ -1803,14 +1825,14 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       selectedWorkspace,
       setSelectedWorkspace,
       pendingNewWorkspaceProject,
-      pendingNewWorkspaceSectionId,
+      pendingNewWorkspaceSubProjectPath,
       pendingNewWorkspaceDraftId,
       beginWorkspaceCreation,
       workspaceDraftsByProject,
       workspaceDraftPromotionsByProject,
       promoteWorkspaceDraft,
       createWorkspaceDraft,
-      updateWorkspaceDraftSection,
+      updateWorkspaceDraftSubProject,
       openWorkspaceDraft,
       deleteWorkspaceDraft,
       getWorkspaceInfo,

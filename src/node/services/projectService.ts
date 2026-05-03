@@ -1,11 +1,13 @@
 import type { Config, ProjectConfig } from "@/node/config";
-import type { SectionConfig } from "@/common/types/project";
-import { DEFAULT_SECTION_COLOR } from "@/common/constants/ui";
-import { sortSectionsByLinkedList } from "@/common/utils/sections";
 import { formatSshEndpoint } from "@/common/utils/ssh/formatSshEndpoint";
 import { spawn } from "child_process";
 import { createHash, randomBytes } from "crypto";
-import { validateProjectPath, isGitRepository, stripTrailingSlashes } from "@/node/utils/pathUtils";
+import {
+  validateProjectPath,
+  isGitRepository,
+  isInsideGitRepository,
+  stripTrailingSlashes,
+} from "@/node/utils/pathUtils";
 import { listLocalBranches, detectDefaultTrunkBranch } from "@/node/git";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
@@ -34,6 +36,7 @@ import * as path from "path";
 import { getMuxProjectsDir } from "@/common/constants/paths";
 import { expandTilde } from "@/node/runtime/tildeExpansion";
 import { getErrorMessage } from "@/common/utils/errors";
+import { deriveProjectHierarchy, isPathDescendant } from "@/common/utils/subProjects";
 import { getProjectWorkspaceCounts } from "@/common/utils/projectRemoval";
 import type { z } from "zod";
 
@@ -316,9 +319,57 @@ interface FileCompletionsCacheEntry {
   refreshing?: Promise<void>;
 }
 
+async function resolveRealProjectPath(projectPath: string): Promise<string> {
+  return stripTrailingSlashes(await fsPromises.realpath(projectPath));
+}
+
+async function readGitTopLevel(projectPath: string): Promise<string | null> {
+  try {
+    using proc = execFileAsync("git", ["-C", projectPath, "rev-parse", "--show-toplevel"]);
+    const { stdout } = await proc.result;
+    return stripTrailingSlashes(stdout.trim());
+  } catch {
+    return null;
+  }
+}
+
+function findDeepestTopLevelParentProject(
+  candidatePath: string,
+  projects: Map<string, ProjectConfig>
+): string | null {
+  let parentPath: string | null = null;
+  for (const [projectPath, projectConfig] of projects) {
+    if (projectConfig.parentProjectPath || projectPath === candidatePath) {
+      continue;
+    }
+    if (!isPathDescendant(projectPath, candidatePath)) {
+      continue;
+    }
+    if (!parentPath || projectPath.length > parentPath.length) {
+      parentPath = projectPath;
+    }
+  }
+  return parentPath;
+}
+
+function hasRegisteredSubProjectAncestor(
+  candidatePath: string,
+  projects: Map<string, ProjectConfig>
+): boolean {
+  for (const [projectPath, projectConfig] of projects) {
+    if (!projectConfig.parentProjectPath) {
+      continue;
+    }
+    if (isPathDescendant(projectPath, candidatePath)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export class ProjectService {
   private readonly fileCompletionsCache = new Map<string, FileCompletionsCacheEntry>();
-  private directoryPicker?: () => Promise<string | null>;
+  private directoryPicker?: (initialPath?: string | null) => Promise<string | null>;
   private readonly sshPromptService: SshPromptService | undefined;
   private workspaceService?: WorkspaceRemover;
 
@@ -333,13 +384,13 @@ export class ProjectService {
     this.workspaceService = workspaceService;
   }
 
-  setDirectoryPicker(picker: () => Promise<string | null>) {
+  setDirectoryPicker(picker: (initialPath?: string | null) => Promise<string | null>) {
     this.directoryPicker = picker;
   }
 
-  async pickDirectory(): Promise<string | null> {
+  async pickDirectory(initialPath?: string | null): Promise<string | null> {
     if (!this.directoryPicker) return null;
-    return this.directoryPicker();
+    return this.directoryPicker(initialPath ?? null);
   }
 
   async create(
@@ -396,11 +447,66 @@ export class ProjectService {
         return Err("Project already exists");
       }
 
-      // Create the directory if it doesn't exist (like mkdir -p)
-      await fsPromises.mkdir(normalizedPath, { recursive: true });
+      const createdDirectory = existingStat == null;
+      const cleanupCreatedDirectory = async () => {
+        if (!createdDirectory) return;
+        try {
+          await fsPromises.rm(normalizedPath, { recursive: true, force: true });
+        } catch (error) {
+          log.error(`Failed to clean up rejected project directory ${normalizedPath}:`, error);
+        }
+      };
 
-      const projectConfig: ProjectConfig = { workspaces: [] };
+      // Create the directory if it doesn't exist (like mkdir -p). Keep the user-facing
+      // path stable in config; Windows realpath may expand 8.3 short names and surprise callers.
+      await fsPromises.mkdir(normalizedPath, { recursive: true });
+      const canonicalPath = await resolveRealProjectPath(normalizedPath);
+
+      if (config.projects.has(canonicalPath)) {
+        await cleanupCreatedDirectory();
+        return Err("Project already exists");
+      }
+
+      config.projects = deriveProjectHierarchy(config.projects);
+      if (hasRegisteredSubProjectAncestor(normalizedPath, config.projects)) {
+        await cleanupCreatedDirectory();
+        return Err("Sub-projects can only be one level deep");
+      }
+
+      const parentProjectPath = findDeepestTopLevelParentProject(normalizedPath, config.projects);
+      if (parentProjectPath) {
+        const [parentGitRoot, subProjectGitRoot] = await Promise.all([
+          readGitTopLevel(parentProjectPath),
+          readGitTopLevel(normalizedPath),
+        ]);
+        if (parentGitRoot !== subProjectGitRoot) {
+          await cleanupCreatedDirectory();
+          return Err("Sub-project must be in the same git repository as its parent project");
+        }
+      }
+
+      const descendantProjectPaths = Array.from(config.projects.keys()).filter((candidatePath) =>
+        isPathDescendant(normalizedPath, candidatePath)
+      );
+      if (descendantProjectPaths.length > 0) {
+        const parentGitRoot = await readGitTopLevel(normalizedPath);
+        for (const descendantProjectPath of descendantProjectPaths) {
+          const descendantGitRoot = await readGitTopLevel(descendantProjectPath);
+          if (parentGitRoot !== descendantGitRoot) {
+            await cleanupCreatedDirectory();
+            return Err(
+              "Cannot register a parent project above an existing project from a different git repository"
+            );
+          }
+        }
+      }
+
+      const projectConfig: ProjectConfig = {
+        workspaces: [],
+        parentProjectPath: parentProjectPath ?? undefined,
+      };
       config.projects.set(normalizedPath, projectConfig);
+      config.projects = deriveProjectHierarchy(config.projects);
       await this.config.saveConfig(config);
 
       return Ok({ projectConfig, normalizedPath });
@@ -439,6 +545,11 @@ export class ProjectService {
       );
       const repoFolderName = deriveRepoFolderName(repoUrl);
       const normalizedPath = path.join(cloneParentDir, repoFolderName);
+
+      const normalizedProjects = deriveProjectHierarchy(config.projects);
+      if (findDeepestTopLevelParentProject(normalizedPath, normalizedProjects)) {
+        return Err("Cannot clone a new git repository inside an existing project tree");
+      }
 
       if (config.projects.has(normalizedPath)) {
         return Err(`Project already exists at ${normalizedPath}`);
@@ -831,6 +942,25 @@ export class ProjectService {
         return Err({ type: "project_not_found" as const });
       }
 
+      if (projectConfig.parentProjectPath) {
+        const parentProject = config.projects.get(projectConfig.parentProjectPath);
+        if (parentProject) {
+          for (const workspace of parentProject.workspaces) {
+            if (workspace.subProjectPath === normalizedPath) {
+              workspace.subProjectPath = undefined;
+            }
+          }
+        }
+        try {
+          await this.config.updateProjectSecrets(normalizedPath, []);
+        } catch (error) {
+          log.error(`Failed to clean up secrets for sub-project ${normalizedPath}:`, error);
+        }
+        config.projects.delete(normalizedPath);
+        await this.config.saveConfig(config);
+        return Ok(undefined);
+      }
+
       // Self-healing: purge workspace entries whose backing directories no longer exist.
       // This handles the case where a user manually deleted workspace dirs from ~/.mux/src/.
       // Only check local/worktree runtimes — remote runtimes (SSH, Docker, devcontainer)
@@ -952,8 +1082,23 @@ export class ProjectService {
         return Err({ type: "workspace_blockers" as const, ...counts });
       }
 
+      const removedSubProjectPaths: string[] = [];
+      for (const [candidatePath, candidateConfig] of Array.from(config.projects.entries())) {
+        if (candidateConfig.parentProjectPath === normalizedPath) {
+          removedSubProjectPaths.push(candidatePath);
+          config.projects.delete(candidatePath);
+        }
+      }
       config.projects.delete(normalizedPath);
       await this.config.saveConfig(config);
+
+      for (const subProjectPath of removedSubProjectPaths) {
+        try {
+          await this.config.updateProjectSecrets(subProjectPath, []);
+        } catch (error) {
+          log.error(`Failed to clean up secrets for sub-project ${subProjectPath}:`, error);
+        }
+      }
 
       try {
         await this.config.updateProjectSecrets(normalizedPath, []);
@@ -971,7 +1116,7 @@ export class ProjectService {
   list(): Array<[string, ProjectConfig]> {
     try {
       const config = this.config.loadConfigOrDefault();
-      return Array.from(config.projects.entries());
+      return Array.from(deriveProjectHierarchy(config.projects).entries());
     } catch (error) {
       log.error("Failed to list projects:", error);
       return [];
@@ -989,8 +1134,11 @@ export class ProjectService {
       }
       const normalizedPath = validation.expandedPath!;
 
-      // Non-git repos return empty branches - they're restricted to local runtime only
-      if (!(await isGitRepository(normalizedPath))) {
+      // Non-git repos return empty branches - they're restricted to local runtime only.
+      // Use `git rev-parse --is-inside-work-tree` so sub-projects (whose .git lives
+      // in a parent directory) still surface the surrounding repo's branches and
+      // don't trigger the "git init" banner.
+      if (!(await isInsideGitRepository(normalizedPath))) {
         return { branches: [], recommendedTrunk: null };
       }
 
@@ -1235,175 +1383,14 @@ export class ProjectService {
   // ─────────────────────────────────────────────────────────────────────────────
 
   /**
-   * List all sections for a project, sorted by linked-list order.
+   * Re-home a workspace into a sub-project (or back to the parent with null).
+   * This intentionally changes only the cwd/prompt context pointer; the parent
+   * project keeps owning the checkout and branch because sub-projects share one git repo.
    */
-  listSections(projectPath: string): SectionConfig[] {
-    try {
-      const config = this.config.loadConfigOrDefault();
-      const project = config.projects.get(projectPath);
-      if (!project) return [];
-      return sortSectionsByLinkedList(project.sections ?? []);
-    } catch (error) {
-      log.error("Failed to list sections:", error);
-      return [];
-    }
-  }
-
-  /**
-   * Create a new section in a project.
-   */
-  async createSection(
-    projectPath: string,
-    name: string,
-    color?: string
-  ): Promise<Result<SectionConfig>> {
-    try {
-      const config = this.config.loadConfigOrDefault();
-      const project = config.projects.get(projectPath);
-
-      if (!project) {
-        return Err(`Project not found: ${projectPath}`);
-      }
-
-      const sections = project.sections ?? [];
-
-      const section: SectionConfig = {
-        id: randomBytes(4).toString("hex"),
-        name,
-        color: color ?? DEFAULT_SECTION_COLOR,
-        nextId: null, // new section is last
-      };
-
-      // Find current tail (nextId is null/undefined) and point it to new section
-      const sorted = sortSectionsByLinkedList(sections);
-      if (sorted.length > 0) {
-        const tail = sorted[sorted.length - 1];
-        tail.nextId = section.id;
-      }
-
-      project.sections = [...sections, section];
-      await this.config.saveConfig(config);
-      return Ok(section);
-    } catch (error) {
-      const message = getErrorMessage(error);
-      return Err(`Failed to create section: ${message}`);
-    }
-  }
-
-  /**
-   * Update section name and/or color.
-   */
-  async updateSection(
-    projectPath: string,
-    sectionId: string,
-    updates: { name?: string; color?: string }
-  ): Promise<Result<void>> {
-    try {
-      const config = this.config.loadConfigOrDefault();
-      const project = config.projects.get(projectPath);
-
-      if (!project) {
-        return Err(`Project not found: ${projectPath}`);
-      }
-
-      const sections = project.sections ?? [];
-      const sectionIndex = sections.findIndex((s) => s.id === sectionId);
-
-      if (sectionIndex === -1) {
-        return Err(`Section not found: ${sectionId}`);
-      }
-
-      const section = sections[sectionIndex];
-      if (updates.name !== undefined) section.name = updates.name;
-      if (updates.color !== undefined) section.color = updates.color;
-
-      await this.config.saveConfig(config);
-      return Ok(undefined);
-    } catch (error) {
-      const message = getErrorMessage(error);
-      return Err(`Failed to update section: ${message}`);
-    }
-  }
-
-  /**
-   * Remove a section and unsection any workspaces assigned to it.
-   */
-  async removeSection(projectPath: string, sectionId: string): Promise<Result<void>> {
-    try {
-      const config = this.config.loadConfigOrDefault();
-      const project = config.projects.get(projectPath);
-
-      if (!project) {
-        return Err(`Project not found: ${projectPath}`);
-      }
-
-      const sections = project.sections ?? [];
-      const sectionIndex = sections.findIndex((s) => s.id === sectionId);
-
-      if (sectionIndex === -1) {
-        return Err(`Section not found: ${sectionId}`);
-      }
-
-      const workspacesInSection = project.workspaces.filter((w) => w.sectionId === sectionId);
-
-      // Unsection all workspaces in this section
-      for (const workspace of workspacesInSection) {
-        workspace.sectionId = undefined;
-      }
-
-      // Remove the section
-      project.sections = sections.filter((s) => s.id !== sectionId);
-      await this.config.saveConfig(config);
-      return Ok(undefined);
-    } catch (error) {
-      const message = getErrorMessage(error);
-      return Err(`Failed to remove section: ${message}`);
-    }
-  }
-
-  /**
-   * Reorder sections by providing the full ordered list of section IDs.
-   */
-  async reorderSections(projectPath: string, sectionIds: string[]): Promise<Result<void>> {
-    try {
-      const config = this.config.loadConfigOrDefault();
-      const project = config.projects.get(projectPath);
-
-      if (!project) {
-        return Err(`Project not found: ${projectPath}`);
-      }
-
-      const sections = project.sections ?? [];
-      const sectionMap = new Map(sections.map((s) => [s.id, s]));
-
-      // Validate all IDs exist
-      for (const id of sectionIds) {
-        if (!sectionMap.has(id)) {
-          return Err(`Section not found: ${id}`);
-        }
-      }
-
-      // Update nextId pointers based on array order
-      for (let i = 0; i < sectionIds.length; i++) {
-        const section = sectionMap.get(sectionIds[i])!;
-        section.nextId = i < sectionIds.length - 1 ? sectionIds[i + 1] : null;
-      }
-
-      await this.config.saveConfig(config);
-      return Ok(undefined);
-    } catch (error) {
-      const message = getErrorMessage(error);
-      return Err(`Failed to reorder sections: ${message}`);
-    }
-  }
-
-  /**
-   * Assign a workspace to a section (or remove from section with null).
-   */
-  async assignWorkspaceToSection(
+  async assignWorkspaceToSubProject(
     projectPath: string,
     workspaceId: string,
-    sectionId: string | null
+    subProjectPath: string | null
   ): Promise<Result<void>> {
     try {
       const config = this.config.loadConfigOrDefault();
@@ -1413,26 +1400,24 @@ export class ProjectService {
         return Err(`Project not found: ${projectPath}`);
       }
 
-      // Validate section exists if not null
-      if (sectionId !== null) {
-        const sections = project.sections ?? [];
-        if (!sections.some((s) => s.id === sectionId)) {
-          return Err(`Section not found: ${sectionId}`);
+      if (subProjectPath !== null) {
+        const subProject = config.projects.get(subProjectPath);
+        if (subProject?.parentProjectPath !== projectPath) {
+          return Err(`Sub-project not found under parent: ${subProjectPath}`);
         }
       }
 
-      // Find and update workspace
       const workspace = project.workspaces.find((w) => w.id === workspaceId);
       if (!workspace) {
         return Err(`Workspace not found: ${workspaceId}`);
       }
 
-      workspace.sectionId = sectionId ?? undefined;
+      workspace.subProjectPath = subProjectPath ?? undefined;
       await this.config.saveConfig(config);
       return Ok(undefined);
     } catch (error) {
       const message = getErrorMessage(error);
-      return Err(`Failed to assign workspace to section: ${message}`);
+      return Err(`Failed to assign workspace to sub-project: ${message}`);
     }
   }
 }

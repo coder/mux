@@ -64,6 +64,7 @@ import { ensurePrivateDirSync } from "@/node/utils/fs";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { isProviderAutoRouteEligible } from "@/node/utils/providerRequirements";
 import { getContainerName as getDockerContainerName } from "@/node/runtime/DockerRuntime";
+import { deriveProjectHierarchy } from "@/common/utils/subProjects";
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
 
 // Re-export project/provider types from dedicated schema/types files (for preload usage)
@@ -476,6 +477,7 @@ function normalizeProjectRuntimeSettings(projectConfig: ProjectConfig): ProjectC
   const runtimeOverridesEnabled = record.runtimeOverridesEnabled === true ? true : undefined;
 
   const next = { ...record };
+  delete (next as ProjectConfig & { sections?: unknown }).sections;
   if (runtimeEnablement) {
     next.runtimeEnablement = runtimeEnablement;
   } else {
@@ -727,7 +729,26 @@ export class Config {
               ProjectConfig,
             ];
           });
-        const projectsMap = new Map<string, ProjectConfig>(normalizedPairs);
+        const projectsMap = deriveProjectHierarchy(new Map<string, ProjectConfig>(normalizedPairs));
+
+        for (const [projectPath, projectConfig] of projectsMap) {
+          const parentProjectPath = projectConfig.parentProjectPath;
+          if (!parentProjectPath || projectConfig.workspaces.length === 0) {
+            continue;
+          }
+          const parentProject = projectsMap.get(parentProjectPath);
+          if (!parentProject) {
+            continue;
+          }
+          parentProject.workspaces.push(
+            ...projectConfig.workspaces.map((workspace) => ({
+              ...workspace,
+              subProjectPath: workspace.subProjectPath ?? projectPath,
+            }))
+          );
+          projectConfig.workspaces = [];
+          configModified = true;
+        }
 
         const taskSettings = normalizeTaskSettings(parsed.taskSettings);
 
@@ -1494,7 +1515,7 @@ export class Config {
               archivedAt: workspace.archivedAt,
               unarchivedAt: workspace.unarchivedAt,
               projects: workspaceProjects,
-              sectionId: workspace.sectionId,
+              subProjectPath: workspace.subProjectPath,
             };
 
             // Migrate missing createdAt to config for next load
@@ -1592,8 +1613,8 @@ export class Config {
             // Preserve archived timestamps from config
             metadata.archivedAt ??= workspace.archivedAt;
             metadata.unarchivedAt ??= workspace.unarchivedAt;
-            // Preserve section assignment from config
-            metadata.sectionId ??= workspace.sectionId;
+            // Preserve sub-project assignment from config.
+            metadata.subProjectPath ??= workspace.subProjectPath;
             metadata.forkFamilyBaseName ??= workspace.forkFamilyBaseName;
 
             if (!workspace.aiSettingsByAgent && metadata.aiSettingsByAgent) {
@@ -1660,7 +1681,7 @@ export class Config {
               archivedAt: workspace.archivedAt,
               unarchivedAt: workspace.unarchivedAt,
               projects: workspaceProjects,
-              sectionId: workspace.sectionId,
+              subProjectPath: workspace.subProjectPath,
             };
 
             // Save to config for next load
@@ -1708,7 +1729,7 @@ export class Config {
             taskPrompt: workspace.taskPrompt,
             taskTrunkBranch: workspace.taskTrunkBranch,
             projects: workspaceProjects,
-            sectionId: workspace.sectionId,
+            subProjectPath: workspace.subProjectPath,
           };
 
           workspaceMetadata.push(
@@ -1778,7 +1799,7 @@ export class Config {
         archivedAt: metadata.archivedAt,
         unarchivedAt: metadata.unarchivedAt,
         projects: metadata.projects,
-        sectionId: metadata.sectionId,
+        subProjectPath: metadata.subProjectPath,
       };
 
       if (existingIndex >= 0) {

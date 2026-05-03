@@ -35,9 +35,13 @@ From agent: Use ripgrep alias.
       agentInstructions,
     });
 
-    expect(result.bash).toContain("From agent: Use ripgrep alias.");
-    expect(result.bash).not.toContain("From context");
-    expect(result.bash).not.toContain("From global");
+    expect(result.bash).toBe(
+      [
+        "From agent: Use ripgrep alias.",
+        "From context: Use fd for finding.",
+        "From global: Use rg for searching.",
+      ].join("\n\n")
+    );
   });
 
   test("falls back to context when agentInstructions has no matching tool section", () => {
@@ -55,8 +59,9 @@ From agent: Read files carefully.
       agentInstructions,
     });
 
-    expect(result.bash).toContain("From context: Use fd for finding.");
-    expect(result.bash).not.toContain("From global");
+    expect(result.bash).toBe(
+      ["From context: Use fd for finding.", "From global: Use rg for searching."].join("\n\n")
+    );
   });
 
   test("keeps every matching context tool section before falling back to global", () => {
@@ -76,9 +81,9 @@ From secondary repo: Prefer rg --files before find.
       [
         "From primary repo: Prefer git status --short.",
         "From secondary repo: Prefer rg --files before find.",
+        "From global: Use rg for searching.",
       ].join("\n\n")
     );
-    expect(result.bash).not.toContain("From global");
   });
 
   test("falls back to global when neither agentInstructions nor context has tool section", () => {
@@ -188,7 +193,7 @@ describe("buildSystemMessage", () => {
 
   test("includes general instructions in custom-instructions", async () => {
     await fs.writeFile(
-      path.join(projectDir, "AGENTS.md"),
+      path.join(workspaceDir, "AGENTS.md"),
       `# General Instructions
 Always be helpful.
 Use clear examples.
@@ -271,14 +276,14 @@ From secondary repo: prefer rg --files before find.
       [
         "From primary repo: prefer git status --short.",
         "From secondary repo: prefer rg --files before find.",
+        "From global: this should only apply when context has no bash section.",
       ].join("\n\n")
     );
-    expect(toolInstructions.bash).not.toContain("From global");
   });
 
   test("includes model-specific section when regex matches active model", async () => {
     await fs.writeFile(
-      path.join(projectDir, "AGENTS.md"),
+      path.join(workspaceDir, "AGENTS.md"),
       `# Instructions
 ## Model: sonnet
 Respond to Sonnet tickets in two sentences max.
@@ -319,7 +324,7 @@ OpenAI's GPT-5.1 Codex models already default to terse replies.
     );
 
     await fs.writeFile(
-      path.join(projectDir, "AGENTS.md"),
+      path.join(workspaceDir, "AGENTS.md"),
       `# Project Instructions
 General details only.
 `
@@ -391,7 +396,7 @@ Be extra concise when using Sonnet.
 
     test("agentSystemPrompt model section takes precedence over AGENTS.md", async () => {
       await fs.writeFile(
-        path.join(projectDir, "AGENTS.md"),
+        path.join(workspaceDir, "AGENTS.md"),
         `## Model: sonnet
 From AGENTS.md: Be verbose.
 `
@@ -419,14 +424,16 @@ From agent: Be terse.
         { agentSystemPrompt }
       );
 
-      // Agent definition's model section wins
       expect(systemMessage).toContain("From agent: Be terse.");
-      expect(systemMessage).not.toContain("From AGENTS.md: Be verbose.");
+      expect(systemMessage).toContain("From AGENTS.md: Be verbose.");
+      expect(systemMessage.indexOf("From agent: Be terse.")).toBeLessThan(
+        systemMessage.indexOf("From AGENTS.md: Be verbose.")
+      );
     });
 
     test("falls back to AGENTS.md when agentSystemPrompt has no matching model section", async () => {
       await fs.writeFile(
-        path.join(projectDir, "AGENTS.md"),
+        path.join(workspaceDir, "AGENTS.md"),
         `## Model: sonnet
 From AGENTS.md: Sonnet instructions.
 `
@@ -511,7 +518,7 @@ OpenAI-only instructions.
 
     for (const scenario of scopingScenarios) {
       test(scenario.name, async () => {
-        await fs.writeFile(path.join(projectDir, "AGENTS.md"), scenario.mdContent);
+        await fs.writeFile(path.join(workspaceDir, "AGENTS.md"), scenario.mdContent);
 
         const metadata: WorkspaceMetadata = {
           id: "test-workspace",

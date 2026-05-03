@@ -40,7 +40,9 @@ function useDirectoryPicker(params: {
   const browse = useCallback(async () => {
     if (isDesktop) {
       try {
-        const selectedPath = await api?.projects.pickDirectory();
+        // Seed the native directory picker with the user's current input so
+        // Browse opens at that path when it's already an existing directory.
+        const selectedPath = await api?.projects.pickDirectory({ initialPath });
         if (selectedPath) {
           onSelectPath(selectedPath);
         }
@@ -53,7 +55,7 @@ function useDirectoryPicker(params: {
     if (hasWebFsPicker) {
       setIsDirPickerOpen(true);
     }
-  }, [api, errorLabel, hasWebFsPicker, isDesktop, onSelectPath]);
+  }, [api, errorLabel, hasWebFsPicker, initialPath, isDesktop, onSelectPath]);
 
   const directoryPickerModal = hasWebFsPicker ? (
     <DirectoryPickerModal
@@ -68,6 +70,7 @@ function useDirectoryPicker(params: {
 }
 
 interface ProjectCreateModalProps {
+  initialPath?: string;
   isOpen: boolean;
   onClose: () => void;
   onSuccess: (normalizedPath: string, projectConfig: ProjectConfig) => void;
@@ -75,6 +78,8 @@ interface ProjectCreateModalProps {
 
 interface ProjectCreateFormProps {
   onSuccess: (normalizedPath: string, projectConfig: ProjectConfig) => void;
+  /** Optional initial path for parent-scoped sub-project creation. */
+  initialPath?: string;
   /**
    * Optional close handler for modal-style usage.
    * When provided, the form will call it on cancel and after a successful add.
@@ -102,6 +107,7 @@ export interface ProjectCreateFormHandle {
 export const ProjectCreateForm = React.forwardRef<ProjectCreateFormHandle, ProjectCreateFormProps>(
   function ProjectCreateForm(
     {
+      initialPath,
       onSuccess,
       onClose,
       showCancelButton = false,
@@ -116,9 +122,13 @@ export const ProjectCreateForm = React.forwardRef<ProjectCreateFormHandle, Proje
     ref
   ) {
     const { api } = useAPI();
-    const [path, setPath] = useState("");
+    const [path, setPath] = useState(initialPath ?? "");
     const [error, setError] = useState("");
     const [isCreating, setIsCreating] = useState(false);
+
+    useEffect(() => {
+      setPath(initialPath ?? "");
+    }, [initialPath]);
 
     const setCreating = useCallback(
       (next: boolean) => {
@@ -776,6 +786,7 @@ export interface ProjectAddFormHandle {
 }
 
 interface ProjectAddFormProps {
+  initialPath?: string;
   onSuccess: (normalizedPath: string, projectConfig: ProjectConfig) => void;
   onClose?: () => void;
   isOpen: boolean;
@@ -912,6 +923,7 @@ export const ProjectAddForm = React.forwardRef<ProjectAddFormHandle, ProjectAddF
 
           {mode === "pick-folder" ? (
             <ProjectCreateForm
+              initialPath={props.initialPath}
               ref={projectCreateFormRef}
               onSuccess={props.onSuccess}
               onClose={props.onClose}
@@ -960,6 +972,7 @@ ProjectAddForm.displayName = "ProjectAddForm";
  * validation errors inline. Modal stays open until project is successfully created or user cancels.
  */
 export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
+  initialPath,
   isOpen,
   onClose,
   onSuccess,
@@ -984,6 +997,7 @@ export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
         </DialogHeader>
 
         <ProjectAddForm
+          initialPath={initialPath}
           isOpen={isOpen}
           onSuccess={onSuccess}
           onClose={onClose}
