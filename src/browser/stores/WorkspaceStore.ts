@@ -639,6 +639,24 @@ export class WorkspaceStore {
   private streamingStatsStore = new MapStore<string, WorkspaceStreamingStats | null>();
 
   /**
+   * Replace the auto-retry banner state and notify subscribers. Shared across the
+   * three auto-retry-* event handlers below; they only differ in the discriminant
+   * which is already encoded by {@link AutoRetryStatus}.
+   *
+   * Declared as an arrow class field so it can be referenced in the
+   * {@link bufferedEventHandlers} initializer (class fields initialize top-to-bottom).
+   */
+  private readonly applyAutoRetryStatus = (
+    workspaceId: string,
+    _aggregator: StreamingMessageAggregator,
+    data: WorkspaceChatMessage
+  ): void => {
+    const transient = this.assertChatTransientState(workspaceId);
+    transient.autoRetryStatus = data as AutoRetryStatus;
+    this.states.bump(workspaceId);
+  };
+
+  /**
    * Map of event types to their handlers. This is the single source of truth for:
    * 1. Which events should be buffered during replay (the keys)
    * 2. How to process those events (the values)
@@ -813,30 +831,9 @@ export class WorkspaceStore {
       this.usageStore.bump(workspaceId);
       this.states.bump(workspaceId);
     },
-    "auto-retry-scheduled": (workspaceId, _aggregator, data) => {
-      const transient = this.assertChatTransientState(workspaceId);
-      transient.autoRetryStatus = data as Extract<
-        WorkspaceChatMessage,
-        { type: "auto-retry-scheduled" }
-      >;
-      this.states.bump(workspaceId);
-    },
-    "auto-retry-starting": (workspaceId, _aggregator, data) => {
-      const transient = this.assertChatTransientState(workspaceId);
-      transient.autoRetryStatus = data as Extract<
-        WorkspaceChatMessage,
-        { type: "auto-retry-starting" }
-      >;
-      this.states.bump(workspaceId);
-    },
-    "auto-retry-abandoned": (workspaceId, _aggregator, data) => {
-      const transient = this.assertChatTransientState(workspaceId);
-      transient.autoRetryStatus = data as Extract<
-        WorkspaceChatMessage,
-        { type: "auto-retry-abandoned" }
-      >;
-      this.states.bump(workspaceId);
-    },
+    "auto-retry-scheduled": this.applyAutoRetryStatus,
+    "auto-retry-starting": this.applyAutoRetryStatus,
+    "auto-retry-abandoned": this.applyAutoRetryStatus,
     "session-usage-delta": (workspaceId, _aggregator, data) => {
       const usageDelta = data as Extract<WorkspaceChatMessage, { type: "session-usage-delta" }>;
 
@@ -2617,6 +2614,33 @@ export class WorkspaceStore {
   }
 
   /**
+   * Wire an attempt-scoped {@link AbortController} to the two signals every
+   * subscription retry loop reacts to:
+   *  - the caller's outer cancellation signal (workspace lifecycle teardown)
+   *  - the current client-change signal (so client swaps abort in-flight attempts)
+   *
+   * Returns a release callback that detaches both listeners. Pair with
+   * {@link createStallWatchdog} inside a try/finally so the listeners and the
+   * watchdog tear down together regardless of how the attempt ends.
+   */
+  private linkAttemptToClientChange(
+    attemptController: AbortController,
+    signal: AbortSignal
+  ): () => void {
+    const onAbort = () => attemptController.abort();
+    signal.addEventListener("abort", onAbort);
+
+    const clientChangeSignal = this.clientChangeController.signal;
+    const onClientChange = () => attemptController.abort();
+    clientChangeSignal.addEventListener("abort", onClientChange, { once: true });
+
+    return () => {
+      signal.removeEventListener("abort", onAbort);
+      clientChangeSignal.removeEventListener("abort", onClientChange);
+    };
+  }
+
+  /**
    * Creates a stall watchdog that aborts the attempt when no events arrive
    * within the configured timeout. Call start() only after the subscription
    * connection is established so handshake latency isn't misclassified as
@@ -2684,13 +2708,7 @@ export class WorkspaceStore {
         }
 
         const attemptController = new AbortController();
-        const onAbort = () => attemptController.abort();
-        signal.addEventListener("abort", onAbort);
-
-        const clientChangeSignal = this.clientChangeController.signal;
-        const onClientChange = () => attemptController.abort();
-        clientChangeSignal.addEventListener("abort", onClientChange, { once: true });
-
+        const releaseAttemptListeners = this.linkAttemptToClientChange(attemptController, signal);
         const watchdog = this.createStallWatchdog(
           attemptController,
           "terminal activity subscription"
@@ -2768,8 +2786,7 @@ export class WorkspaceStore {
             console.warn("[WorkspaceStore] Error in terminal activity subscription:", error);
           }
         } finally {
-          signal.removeEventListener("abort", onAbort);
-          clientChangeSignal.removeEventListener("abort", onClientChange);
+          releaseAttemptListeners();
           watchdog.stop();
         }
 
@@ -2795,13 +2812,7 @@ export class WorkspaceStore {
       }
 
       const attemptController = new AbortController();
-      const onAbort = () => attemptController.abort();
-      signal.addEventListener("abort", onAbort);
-
-      const clientChangeSignal = this.clientChangeController.signal;
-      const onClientChange = () => attemptController.abort();
-      clientChangeSignal.addEventListener("abort", onClientChange, { once: true });
-
+      const releaseAttemptListeners = this.linkAttemptToClientChange(attemptController, signal);
       const watchdog = this.createStallWatchdog(attemptController, "activity subscription");
 
       try {
@@ -2876,8 +2887,7 @@ export class WorkspaceStore {
           console.warn("[WorkspaceStore] Error in activity subscription:", error);
         }
       } finally {
-        signal.removeEventListener("abort", onAbort);
-        clientChangeSignal.removeEventListener("abort", onClientChange);
+        releaseAttemptListeners();
         watchdog.stop();
       }
 
@@ -3079,13 +3089,7 @@ export class WorkspaceStore {
 
       // Allow us to abort only this subscription attempt (without unsubscribing the workspace).
       const attemptController = new AbortController();
-      const onAbort = () => attemptController.abort();
-      signal.addEventListener("abort", onAbort);
-
-      const clientChangeSignal = this.clientChangeController.signal;
-      const onClientChange = () => attemptController.abort();
-      clientChangeSignal.addEventListener("abort", onClientChange, { once: true });
-
+      const releaseAttemptListeners = this.linkAttemptToClientChange(attemptController, signal);
       const watchdog = this.createStallWatchdog(attemptController, `onChat(${workspaceId})`);
 
       try {
@@ -3225,8 +3229,7 @@ export class WorkspaceStore {
           console.error(`[WorkspaceStore] Error in onChat subscription for ${workspaceId}:`, error);
         }
       } finally {
-        signal.removeEventListener("abort", onAbort);
-        clientChangeSignal.removeEventListener("abort", onClientChange);
+        releaseAttemptListeners();
         watchdog.stop();
       }
 
