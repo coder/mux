@@ -334,15 +334,43 @@ async function readSingleProjectContextInstructions(
   runtime: Runtime,
   workspacePath: string
 ): Promise<string | null> {
-  const projectSegments = await Promise.all([
-    readInstructionSet(metadata.projectPath),
-    metadata.subProjectPath ? readInstructionSet(metadata.subProjectPath) : Promise.resolve(null),
+  // Read parent + sub-project AGENTS.md from the workspace's *own* checkout
+  // (via the runtime). For worktree/SSH/Docker flows the parent project's host
+  // path is a different checkout than the workspace branch — mixing the two
+  // would inject contradictory or stale guidance and prevent workspace-branch
+  // edits from overriding parent guidance. The workspace root is by
+  // construction the parent project's checkout, and any registered
+  // sub-project's relative path is stable across checkouts of the same repo.
+  const subProjectRelativePath = metadata.subProjectPath
+    ? deriveSubProjectRelativePath(metadata.projectPath, metadata.subProjectPath)
+    : null;
+
+  const [parentInstructions, subProjectInstructions] = await Promise.all([
     readInstructionSetFromRuntime(runtime, workspacePath),
+    subProjectRelativePath
+      ? readInstructionSetFromRuntime(runtime, path.join(workspacePath, subProjectRelativePath))
+      : Promise.resolve(null),
   ]);
-  const contextSegments = projectSegments.filter(
+
+  const contextSegments = [parentInstructions, subProjectInstructions].filter(
     (segment): segment is string => segment != null && segment.trim().length > 0
   );
   return contextSegments.length > 0 ? contextSegments.join("\n\n") : null;
+}
+
+/**
+ * Compute the path of `subProjectPath` relative to `projectPath` for use under
+ * the workspace's own checkout. Returns `null` if the recorded sub-project
+ * path is not actually a descendant of the parent project (stale persisted
+ * state) — callers should treat that as "no sub-project segment" and fall
+ * back to parent-only instructions rather than failing.
+ */
+function deriveSubProjectRelativePath(projectPath: string, subProjectPath: string): string | null {
+  const relative = path.relative(projectPath, subProjectPath);
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+    return null;
+  }
+  return relative;
 }
 
 /**

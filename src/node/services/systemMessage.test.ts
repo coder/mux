@@ -193,7 +193,7 @@ describe("buildSystemMessage", () => {
 
   test("includes general instructions in custom-instructions", async () => {
     await fs.writeFile(
-      path.join(projectDir, "AGENTS.md"),
+      path.join(workspaceDir, "AGENTS.md"),
       `# General Instructions
 Always be helpful.
 Use clear examples.
@@ -283,7 +283,7 @@ From secondary repo: prefer rg --files before find.
 
   test("includes model-specific section when regex matches active model", async () => {
     await fs.writeFile(
-      path.join(projectDir, "AGENTS.md"),
+      path.join(workspaceDir, "AGENTS.md"),
       `# Instructions
 ## Model: sonnet
 Respond to Sonnet tickets in two sentences max.
@@ -324,7 +324,7 @@ OpenAI's GPT-5.1 Codex models already default to terse replies.
     );
 
     await fs.writeFile(
-      path.join(projectDir, "AGENTS.md"),
+      path.join(workspaceDir, "AGENTS.md"),
       `# Project Instructions
 General details only.
 `
@@ -396,7 +396,7 @@ Be extra concise when using Sonnet.
 
     test("agentSystemPrompt model section takes precedence over AGENTS.md", async () => {
       await fs.writeFile(
-        path.join(projectDir, "AGENTS.md"),
+        path.join(workspaceDir, "AGENTS.md"),
         `## Model: sonnet
 From AGENTS.md: Be verbose.
 `
@@ -433,7 +433,7 @@ From agent: Be terse.
 
     test("falls back to AGENTS.md when agentSystemPrompt has no matching model section", async () => {
       await fs.writeFile(
-        path.join(projectDir, "AGENTS.md"),
+        path.join(workspaceDir, "AGENTS.md"),
         `## Model: sonnet
 From AGENTS.md: Sonnet instructions.
 `
@@ -518,7 +518,7 @@ OpenAI-only instructions.
 
     for (const scenario of scopingScenarios) {
       test(scenario.name, async () => {
-        await fs.writeFile(path.join(projectDir, "AGENTS.md"), scenario.mdContent);
+        await fs.writeFile(path.join(workspaceDir, "AGENTS.md"), scenario.mdContent);
 
         const metadata: WorkspaceMetadata = {
           id: "test-workspace",
