@@ -364,7 +364,7 @@ function hasRegisteredSubProjectAncestor(
 
 export class ProjectService {
   private readonly fileCompletionsCache = new Map<string, FileCompletionsCacheEntry>();
-  private directoryPicker?: () => Promise<string | null>;
+  private directoryPicker?: (initialPath?: string | null) => Promise<string | null>;
   private readonly sshPromptService: SshPromptService | undefined;
   private workspaceService?: WorkspaceRemover;
 
@@ -379,13 +379,13 @@ export class ProjectService {
     this.workspaceService = workspaceService;
   }
 
-  setDirectoryPicker(picker: () => Promise<string | null>) {
+  setDirectoryPicker(picker: (initialPath?: string | null) => Promise<string | null>) {
     this.directoryPicker = picker;
   }
 
-  async pickDirectory(): Promise<string | null> {
+  async pickDirectory(initialPath?: string | null): Promise<string | null> {
     if (!this.directoryPicker) return null;
-    return this.directoryPicker();
+    return this.directoryPicker(initialPath ?? null);
   }
 
   async create(

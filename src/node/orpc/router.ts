@@ -2489,8 +2489,8 @@ export const router = (authToken?: string) => {
       pickDirectory: t
         .input(schemas.projects.pickDirectory.input)
         .output(schemas.projects.pickDirectory.output)
-        .handler(async ({ context }) => {
-          return context.projectService.pickDirectory();
+        .handler(async ({ context, input }) => {
+          return context.projectService.pickDirectory(input?.initialPath ?? null);
         }),
       getFileCompletions: t
         .input(schemas.projects.getFileCompletions.input)

@@ -5,6 +5,7 @@ process.umask(0o077);
 // Enable source map support for better error stack traces in production
 import "source-map-support/register";
 import * as fs from "node:fs";
+import { promises as fsPromises } from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
 import {
@@ -768,15 +769,30 @@ async function loadServices(): Promise<void> {
 
   // Set TerminalWindowManager for desktop mode (pop-out terminal windows)
   const terminalWindowManager = new TerminalWindowManagerClass(config);
-  services.setProjectDirectoryPicker(async () => {
+  services.setProjectDirectoryPicker(async (initialPath) => {
     const win = BrowserWindow.getFocusedWindow();
     if (!win) return null;
+
+    // If the caller provided an existing directory, seed the picker there so the
+    // user starts inside (or alongside) the path they already typed/selected.
+    let defaultPath: string | undefined;
+    if (initialPath && initialPath.trim().length > 0) {
+      try {
+        const stat = await fsPromises.stat(initialPath);
+        if (stat.isDirectory()) {
+          defaultPath = initialPath;
+        }
+      } catch {
+        // Path doesn't exist or isn't accessible — let Electron pick a default.
+      }
+    }
 
     const res = await dialog.showOpenDialog(win, {
       // Hide hidden entries so the new-project picker stays focused on visible folders.
       properties: ["openDirectory", "createDirectory"],
       title: "Select Project Directory",
       buttonLabel: "Select Project",
+      defaultPath,
     });
 
     return res.canceled || res.filePaths.length === 0 ? null : res.filePaths[0];

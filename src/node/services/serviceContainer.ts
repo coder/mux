@@ -513,7 +513,7 @@ export class ServiceContainer {
     await this.telemetryService.shutdown();
   }
 
-  setProjectDirectoryPicker(picker: () => Promise<string | null>): void {
+  setProjectDirectoryPicker(picker: (initialPath?: string | null) => Promise<string | null>): void {
     this.projectService.setDirectoryPicker(picker);
   }
 

@@ -7,6 +7,7 @@ import { installDom } from "../../../../tests/ui/dom";
 import * as APIModule from "@/browser/contexts/API";
 import * as AgentContextModule from "@/browser/contexts/AgentContext";
 import * as WorkspaceContextModule from "@/browser/contexts/WorkspaceContext";
+import * as ProjectContextModule from "@/browser/contexts/ProjectContext";
 import * as WorkspaceStoreModule from "@/browser/stores/WorkspaceStore";
 import * as GitStatusStoreModule from "@/browser/stores/GitStatusStore";
 import * as RuntimeStatusStoreModule from "@/browser/stores/RuntimeStatusStore";
@@ -121,6 +122,12 @@ function installWorkspaceMenuBarTestDoubles() {
     () =>
       ({ workspaceMetadata: new Map() }) as unknown as ReturnType<
         typeof WorkspaceContextModule.useWorkspaceContext
+      >
+  );
+  spyOn(ProjectContextModule, "useProjectContext").mockImplementation(
+    () =>
+      ({ userProjects: new Map() }) as unknown as ReturnType<
+        typeof ProjectContextModule.useProjectContext
       >
   );
   spyOn(WorkspaceStoreModule, "useWorkspaceSidebarState").mockImplementation(

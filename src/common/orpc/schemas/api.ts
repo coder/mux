@@ -629,7 +629,7 @@ export const projects = {
     ),
   },
   pickDirectory: {
-    input: z.void(),
+    input: z.object({ initialPath: z.string().nullish() }).nullish(),
     output: z.string().nullable(),
   },
   remove: {

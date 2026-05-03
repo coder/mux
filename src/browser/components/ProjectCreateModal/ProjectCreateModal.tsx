@@ -40,7 +40,9 @@ function useDirectoryPicker(params: {
   const browse = useCallback(async () => {
     if (isDesktop) {
       try {
-        const selectedPath = await api?.projects.pickDirectory();
+        // Seed the native directory picker with the user's current input so
+        // Browse opens at that path when it's already an existing directory.
+        const selectedPath = await api?.projects.pickDirectory({ initialPath });
         if (selectedPath) {
           onSelectPath(selectedPath);
         }
@@ -53,7 +55,7 @@ function useDirectoryPicker(params: {
     if (hasWebFsPicker) {
       setIsDirPickerOpen(true);
     }
-  }, [api, errorLabel, hasWebFsPicker, isDesktop, onSelectPath]);
+  }, [api, errorLabel, hasWebFsPicker, initialPath, isDesktop, onSelectPath]);
 
   const directoryPickerModal = hasWebFsPicker ? (
     <DirectoryPickerModal
