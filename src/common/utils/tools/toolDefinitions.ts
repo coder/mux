@@ -223,7 +223,7 @@ export function buildTaskToolDescription(runtimeMode: RuntimeMode | undefined): 
     "n and variants are mutually exclusive; omit both for a single task. Leave n and variants unset unless the developer explicitly asks for parallel sibling tasks, and prefer non-interfering sub-agents for grouped runs (for example read-only agents like explore). " +
     "\n\nWhen the user explicitly asks for best-of-n work, the parent should begin with light preliminary analysis to extract shared context, constraints, or evaluation criteria that would otherwise be duplicated across children. " +
     "Keep that pre-work lightweight: frame the task and provide useful starting points, but do not pre-solve the problem or over-constrain how the children reason about it. Then delegate the substantive analysis to the spawned sub-agents. " +
-    "Do not also do a full parallel analysis in the parent. After spawning a best-of batch, the next step should usually be task_await so you can synthesize from the child reports. " +
+    "Do not also do a full parallel analysis in the parent. When you are ready to synthesize the child reports, call task_await; do not await reflexively just because tasks are running. " +
     "\n\nWhen delegating, include a compact task brief (Task / Background / Scope / Starting points / Acceptance / Deliverables / Constraints). " +
     "Avoid telling the sub-agent to read your plan file; child workspaces do not automatically have access to it. " +
     "\n\nIf run_in_background is false, waits for the sub-agent to finish and returns the completed report. When grouped sibling tasks are requested via n or variants, the completed result includes one report per spawned task. " +
@@ -888,7 +888,7 @@ export const TOOL_DEFINITIONS = {
               "Process persists until timeout_secs expires, terminated, or workspace is removed." +
               "\\n\\nFor long-running tasks like builds or compilations, prefer background mode to continue productive work in parallel. " +
               "Do not call task_await in the same parallel tool-call batch; wait for the returned taskId first. " +
-              "Check back periodically with task_await rather than blocking on completion."
+              "When you actually need the output, read it with task_await; do not poll task_await just because the process is still running."
           ),
         display_name: z
           .string()
@@ -1341,6 +1341,8 @@ export const TOOL_DEFINITIONS = {
   task_await: {
     description:
       "Wait for one or more tasks to produce output. " +
+      "\n\nWHEN TO USE: only call task_await when the current user request depends on a task's output, or when synthesis/integration of a previously-spawned task is the next logical step. " +
+      "Do not call task_await solely because active tasks exist; for unrelated user messages, respond directly and let tasks continue in the background. " +
       "\n\nIMPORTANT: Do not call task_await in the same parallel tool-call batch as task or bash — " +
       "the taskId is not available until the spawning tool returns. " +
       "Always wait for the task/bash tool result first, then call task_await in a subsequent step. " +
@@ -1368,7 +1370,7 @@ export const TOOL_DEFINITIONS = {
       "List descendant tasks for the current workspace, including status + metadata. " +
       "This includes sub-agent tasks and background bash tasks. " +
       "Use this after compaction or interruptions to rediscover which tasks are still active. " +
-      "This is a discovery tool, NOT a waiting mechanism: if you need to wait for tasks to finish, call task_await (optionally omit task_ids to await all active descendant tasks).",
+      "This is a discovery tool, NOT a waiting mechanism. If the current request actually depends on a task's output, call task_await with the specific task IDs you need; do not await all active tasks just because they appear here.",
     schema: TaskListToolArgsSchema,
   },
   agent_report: {

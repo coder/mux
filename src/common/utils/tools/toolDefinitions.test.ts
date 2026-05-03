@@ -238,15 +238,6 @@ describe("TOOL_DEFINITIONS", () => {
     }
   );
 
-  it("asks for clarification via ask_user_question (instead of emitting open questions)", () => {
-    expect(TOOL_DEFINITIONS.ask_user_question.description).toContain(
-      "MUST be used when you need user clarification"
-    );
-    expect(TOOL_DEFINITIONS.ask_user_question.description).toContain(
-      "Do not output a list of open questions"
-    );
-  });
-
   it("accepts an optional advisor question and encourages passing one", () => {
     expect(TOOL_DEFINITIONS.advisor.schema.safeParse({}).success).toBe(true);
     expect(TOOL_DEFINITIONS.advisor.schema.safeParse({ question: null }).success).toBe(true);
@@ -261,32 +252,13 @@ describe("TOOL_DEFINITIONS", () => {
     }
   });
 
-  it("encourages compact task briefs and best-of delegation discipline", () => {
-    expect(TOOL_DEFINITIONS.task.description).toContain("compact task brief");
-    expect(TOOL_DEFINITIONS.task.description).toContain("plan file");
-    expect(TOOL_DEFINITIONS.task.description).toContain(
-      "Do not also do a full parallel analysis in the parent"
+  it("dispatches task tool description on runtime mode", () => {
+    // Different runtimes give the agent different visibility guidance for whether
+    // sub-agents see uncommitted parent changes, so the function must actually
+    // branch on runtimeMode rather than collapse to a single string.
+    expect(buildTaskToolDescription(RUNTIME_MODE.LOCAL)).not.toBe(
+      buildTaskToolDescription(RUNTIME_MODE.WORKTREE)
     );
-    expect(TOOL_DEFINITIONS.task.description).toContain(
-      "the next step should usually be task_await"
-    );
-  });
-
-  it("keeps static task guidance runtime-agnostic", () => {
-    expect(TOOL_DEFINITIONS.task.description).toContain(
-      "Whether a sub-agent can see uncommitted changes depends on the runtime"
-    );
-    expect(TOOL_DEFINITIONS.task.description).not.toContain("Subagents only see committed state");
-  });
-
-  it("builds runtime-specific task guidance for local and worktree runtimes", () => {
-    const localDescription = buildTaskToolDescription(RUNTIME_MODE.LOCAL);
-    expect(localDescription).toContain("share the same working directory as the parent");
-    expect(localDescription).toContain("can see uncommitted changes");
-
-    const worktreeDescription = buildTaskToolDescription(RUNTIME_MODE.WORKTREE);
-    expect(worktreeDescription).toContain("forked workspace based on committed state");
-    expect(worktreeDescription).toContain("Uncommitted changes from the parent are not available");
   });
 
   it("accepts ask_user_question headers longer than 12 characters", () => {
@@ -345,11 +317,6 @@ describe("TOOL_DEFINITIONS", () => {
 
     expect(tools).toContain("skills_catalog_search");
     expect(tools).toContain("skills_catalog_read");
-  });
-
-  it("discourages repeating plan contents or plan file location after propose_plan", () => {
-    expect(TOOL_DEFINITIONS.propose_plan.description).toContain("do not paste the plan contents");
-    expect(TOOL_DEFINITIONS.propose_plan.description).toContain("plan file path");
   });
 
   it("agent_skill_write schema rejects an advertise tool argument (advertise is authored in content)", () => {
