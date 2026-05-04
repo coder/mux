@@ -82,45 +82,50 @@ export const TypewriterMarkdown: React.FC<TypewriterMarkdownProps> = ({
   // simply cannot match.
   const isLiveStreaming = isStreaming && streamSource !== "replay";
 
-  // Temporal fade-in for newly-completed visual lines.
+  // Shimmer-on-completion for newly-revealed visual lines.
   //
-  // The CSS mask in globals.css hides the bottom ~1 visual line (the line
-  // currently being typed) — but only when there's a completed line above it
-  // to look at. We toggle `data-stream-hide-tail` to gate the mask:
-  //  - Below ~1.5 line-heights of rendered content (single-line streams),
-  //    the attribute is absent and the message renders fully visible. This
-  //    avoids blanking out short replies before they wrap.
-  //  - Once content reaches ~1.5+ lines, the attribute is set and the mask
-  //    hides the in-progress line. Subsequent wraps fade in the previously
-  //    in-progress line as it becomes a completed line.
+  // The CSS in globals.css does two things on streaming content:
+  //  1. A static mask hides the bottom 1.6em (the visual row currently
+  //     being typed) when content is at least ~1.5 line-heights tall.
+  //     Below that threshold, the message renders fully visible so short
+  //     replies aren't blanked out.
+  //  2. A `::before` pseudo-element sits at `bottom: 1.6em; height: 1.6em`
+  //     — directly on the line above the masked-tail in-progress row —
+  //     and contains a horizontal `currentColor` gradient (transparent
+  //     edges, translucent middle) that can be swept across via
+  //     `transform: translateX(var(--stream-shimmer-x))`.
   //
-  // When the rendered height GROWS while above-threshold — because a visual
-  // line wrapped, a new paragraph was added, etc. — we briefly push the
-  // transparent strip up by `delta` so the just-revealed content is initially
-  // also covered, then animate `--reveal-y` back to 0 over 250ms. The mask
-  // gradient sweeps past the new content, fading it in.
+  // When ResizeObserver reports height growth (a visual line wrapped, a
+  // new paragraph opened, etc.), we animate `--stream-shimmer-x` from
+  // off-screen-left to off-screen-right over ~700ms. The bright band
+  // travels across the just-completed line, then disappears off-screen
+  // until the next wrap. Each line gets a brief moment of arrival before
+  // settling into a stable visual state.
   //
-  // The first-time threshold crossing (1 line → 2 lines) does NOT pulse,
-  // because the about-to-be-completed line was already visible without a
-  // mask; a pulse would briefly hide it and re-fade it in (a flicker).
+  // Why a shimmer instead of a fade-in:
+  //  - User feedback: prior fade-in (animated mask `--reveal-y` offset)
+  //    felt abrupt even after tuning duration/easing/band-width. Fade is
+  //    a global transparency change; shimmer is a local highlight that's
+  //    intrinsically gentler — the line appears at full opacity and is
+  //    just visited by a brief brightening sweep.
   //
   // Why ResizeObserver and not the visibleText prop:
   //  - Height growth is the right signal because it directly tracks visual
   //    rows in the user's viewport. Character appends within the current
-  //    in-progress row don't change height (no need to fade), but wrapping
-  //    to a new row does — and so do width-driven re-wraps from sidebar
-  //    collapse, window resize, zoom, etc.
+  //    in-progress row don't change height (no need to shimmer), but
+  //    wrapping to a new row does — and so do width-driven re-wraps from
+  //    sidebar collapse, window resize, zoom, etc.
   //  - Driving off `visibleText` would miss layout-only changes and would
   //    force a render cycle just to measure height.
   //
   // Why Element.animate() (WAAPI) instead of CSS transitions:
-  //  - We need to set --reveal-y to a value that depends on the runtime
-  //    delta (height growth in px). A CSS transition can interpolate
-  //    between two values but we'd still need JS to set the start value
-  //    before the layout commits. `animate()` runs entirely on the
-  //    compositor thread once started — no extra paint.
+  //  - We want a fresh one-shot pulse on each height-growth event, not a
+  //    transition triggered by a state change. WAAPI fires a new
+  //    animation each time we call animate(); we cancel the prior one so
+  //    consecutive wraps don't stack.
   //  - Custom property animation requires the @property declaration in
-  //    globals.css (also there) so the syntax `<length>` is interpolatable.
+  //    globals.css (also there) so the `<percentage>` syntax is
+  //    interpolatable on the compositor thread.
   const containerRef = useRef<HTMLDivElement>(null);
   const lastHeightRef = useRef<number>(0);
   const activeAnimationRef = useRef<Animation | null>(null);
@@ -128,15 +133,16 @@ export const TypewriterMarkdown: React.FC<TypewriterMarkdownProps> = ({
     if (!isLiveStreaming) return;
     const el = containerRef.current;
     if (!el) return;
-    // Test environments (happy-dom) don't provide ResizeObserver; the fade
-    // is a pure presentation concern, so degrade silently. Real browsers
-    // (Electron Chromium) always have it.
+    // Test environments (happy-dom) don't provide ResizeObserver; the
+    // shimmer is a pure presentation concern, so degrade silently. Real
+    // browsers (Electron Chromium) always have it.
     if (typeof ResizeObserver === "undefined") return;
 
-    // Threshold below which the mask is disabled entirely. Computed from the
-    // element's actual computed line-height so it scales with font-size and
-    // line-height overrides. 1.5 × line-height puts the threshold between
-    // 1-line and 2-line content, with a small margin for sub-pixel rounding.
+    // Threshold below which the mask + shimmer overlay are disabled
+    // entirely. Computed from the element's actual computed line-height
+    // so it scales with font-size and line-height overrides. 1.5 ×
+    // line-height puts the threshold between 1-line and 2-line content,
+    // with a small margin for sub-pixel rounding.
     const lineHeightPx = parseFloat(getComputedStyle(el).lineHeight) || 22.4;
     const hideTailThresholdPx = lineHeightPx * 1.5;
 
@@ -144,9 +150,10 @@ export const TypewriterMarkdown: React.FC<TypewriterMarkdownProps> = ({
       el.toggleAttribute("data-stream-hide-tail", h >= hideTailThresholdPx);
     };
 
-    // Seed the baseline AND the initial attribute synchronously, before the
-    // browser paints, so a multi-line message that re-mounts (e.g., navigating
-    // back to a streaming workspace) doesn't flash without the mask.
+    // Seed the baseline AND the initial attribute synchronously, before
+    // the browser paints, so a multi-line message that re-mounts (e.g.,
+    // navigating back to a streaming workspace) doesn't flash without
+    // the mask.
     lastHeightRef.current = el.offsetHeight;
     applyHideTail(lastHeightRef.current);
 
@@ -161,24 +168,23 @@ export const TypewriterMarkdown: React.FC<TypewriterMarkdownProps> = ({
       if (wasAbove !== isAbove) applyHideTail(newHeight);
 
       if (delta <= 0) return;
-      // Pulse only when the mask was already on AND the element grew further.
-      // The first-time threshold crossing doesn't pulse: the just-completed
-      // first line was already visible without a mask, and a pulse would
-      // briefly hide and re-reveal it (flicker).
-      if (!wasAbove || !isAbove) return;
+      // Only shimmer when the overlay is actually mounted (above
+      // threshold). Below threshold the pseudo-element doesn't exist and
+      // an animate() call on the parent would have no visible effect.
+      if (!isAbove) return;
 
-      // Cancel any in-flight pulse so consecutive wraps don't stack and
-      // produce visual jitter; the most recent delta wins.
+      // Cancel any in-flight shimmer so consecutive wraps don't stack;
+      // the most recent line gets the highlight.
       activeAnimationRef.current?.cancel();
       try {
-        // 400ms with an out-quart curve: longer duration + smoother
-        // deceleration than ease-out. Ease-out is front-loaded (most of
-        // the visible motion in the first ~80ms), which made each row
-        // feel like a flash; out-quart spreads the motion more evenly
-        // and lets the fade settle in.
+        // 700ms with Material's standard ease-in-out: gentle accel/decel
+        // so the sweep doesn't feel mechanical. The bright band starts
+        // off-screen left (translateX(-100%) = its own width = -40% of
+        // container) and exits off-screen right (translateX(250%) =
+        // +100% of container). See globals.css for the percentage math.
         activeAnimationRef.current = el.animate(
-          [{ "--reveal-y": `${delta}px` }, { "--reveal-y": "0px" }],
-          { duration: 400, easing: "cubic-bezier(0.22, 1, 0.36, 1)", fill: "none" }
+          [{ "--stream-shimmer-x": "-100%" }, { "--stream-shimmer-x": "250%" }],
+          { duration: 700, easing: "cubic-bezier(0.4, 0, 0.2, 1)", fill: "none" }
         );
       } catch {
         // Older runtimes without @property-typed-custom-property support

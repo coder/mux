@@ -1542,83 +1542,125 @@ code {
   white-space: normal;
 }
 
-/* Viewport-aware streaming reveal: hide the in-progress visual line; fade
- * completed lines in temporally as new ones begin below them.
+/* Viewport-aware streaming reveal: hide the in-progress visual line; play
+ * a brief shimmer over each completed line as it appears.
  *
  * Mental model (lines A → B → C in the rendered transcript):
  *  - While B is still being typed (its visual row hasn't filled), the user
  *    sees only A. B is hidden — no partial-line obfuscation.
- *  - When B's row completes (text wraps to row C, or stream ends), B fades
- *    in over ~250ms. No tear, no jitter, no horizontal stagger.
+ *  - When B's row completes (text wraps to row C, or stream ends), B is
+ *    immediately uncovered AND a translucent highlight band sweeps across
+ *    it (~700ms). The shimmer reads as a soft moment of arrival before
+ *    the line settles into a stable visual state.
  *
- * Implementation:
- *  - A linear-gradient mask hides the bottom 1.6em (~1 visual line at
- *    line-height 1.6). A 0.8em fade band right above the boundary softens
- *    the edge so completed lines don't snap with a hard cutoff. (A wider
- *    band feels "smoother" because each row spends proportionally more of
- *    the pulse duration partially faded as the mask sweeps past.)
- *  - `--reveal-y` is an extra offset that pushes the transparent strip
- *    upward. Resting value is 0px (only the in-progress line is hidden).
- *    JS (TypewriterMarkdown's useLayoutEffect) observes height growth via
- *    ResizeObserver and pulses `--reveal-y` from `delta` → `0` over 250ms
- *    via Element.animate(). During the pulse, the just-revealed strip is
- *    initially fully covered, then is uncovered as the property animates
- *    back — producing the temporal fade-in.
- *  - This is genuinely viewport-aware: the trigger is rendered geometry
- *    (`offsetHeight` change), not the AST/HAST tree. A long paragraph
- *    wrapping to N visual rows reveals one row at a time; a single AST
- *    text node doesn't fool the reveal.
+ * Implementation has two parts:
+ *
+ *  1. Static mask (no temporal animation): hides the bottom 1.6em
+ *     (~1 visual line at line-height 1.6). A 0.8em fade band above the
+ *     boundary softens the edge so completed lines don't appear with a
+ *     hard cutoff.
+ *
+ *  2. Shimmer overlay: a `::before` pseudo-element positioned at
+ *     `bottom: 1.6em; height: 1.6em` — i.e., directly on the line above
+ *     the masked-tail in-progress row. Background is a horizontal gradient
+ *     that's transparent at both edges with a translucent `currentColor`
+ *     highlight in the middle. JS animates `--stream-shimmer-x` (a
+ *     `<percentage>` plugged into `transform: translateX()`) from off-screen
+ *     left to off-screen right whenever ResizeObserver reports height
+ *     growth. The bright band travels across the just-completed line, then
+ *     disappears off-screen until the next wrap.
+ *
+ * Why a shimmer instead of a fade-in:
+ *  - User feedback: prior fade-in (via animated mask `--reveal-y` offset)
+ *    felt abrupt even after tuning duration / easing / band width. The
+ *    fade is a global transparency change; shimmer is a local highlight
+ *    that's intrinsically gentler — the line appears at full opacity and
+ *    is just visited by a brief brightening sweep.
+ *  - Currentcolor + 0.18 alpha adapts to themes: in dark mode the highlight
+ *    brightens text underneath; in light mode it produces a darker sweep.
+ *
+ * This is genuinely viewport-aware: the trigger is rendered geometry
+ * (`offsetHeight` change), not the AST/HAST tree. A long paragraph
+ * wrapping to N visual rows shimmers one row at a time; a single AST text
+ * node doesn't fool the reveal. Width-driven re-wraps from sidebar
+ * collapse, window resize, and zoom all participate naturally.
  *
  * Why not the prior approaches:
  *  - Per-AST-text-node span (rehype plugin) missed long paragraphs growing
  *    silently inside a still-mounted span.
  *  - Per-word splitting created left-to-right shimmer (deltas arrive
- *    token-by-token, words within a visual row mount at staggered times).
- *  - A static bottom-edge gradient (the prior commit on this branch)
- *    obfuscated the in-progress line at low opacity instead of hiding it.
+ *    token-by-token, words within a visual row mounted at staggered times).
+ *    Note: that's "shimmer" in the bad sense — a horizontal stagger artifact.
+ *    The shimmer here is a deliberate, smooth highlight sweep.
+ *  - A static bottom-edge gradient obfuscated the in-progress line at low
+ *    opacity instead of hiding it.
+ *  - The `--reveal-y` mask-pulse fade-in felt abrupt because the visible
+ *    transition was a global opacity change rather than a localized cue.
  *
  * Gating:
  *  - `[data-streaming="true"]` is set by TypewriterMarkdown only on LIVE
  *    streams — never on replay rows (the backend re-emits historical
  *    messages with `streamPresentation.source: "replay"`) and never on
  *    completed messages. Historical transcripts render fully solid.
+ *  - `[data-stream-hide-tail]` is set by JS only when rendered height
+ *    is at least ~1.5 line-heights, so single-line / short replies
+ *    aren't blanked out waiting for a wrap.
  *  - `prefers-reduced-motion: no-preference` honors accessibility settings;
- *    users who request reduced motion see instant rendering.
- *
- * When a stream ends, `data-streaming` is removed and the mask disappears
- * instantly; the previously-hidden in-progress line snaps to visible. The
- * snap is barely perceptible because the smoothing engine has already
- * finished revealing characters at that point. */
-@property --reveal-y {
-  syntax: "<length>";
+ *    users who request reduced motion see instant rendering with no
+ *    shimmer and no mask. */
+@property --stream-shimmer-x {
+  syntax: "<percentage>";
   inherits: false;
-  initial-value: 0px;
+  initial-value: -100%;
 }
 
-/* The mask is gated on `data-stream-hide-tail`, set by JS only when the
- * rendered height is at least ~1.5 visual lines. Below that threshold —
- * notably at stream start, when the first line is still being typed — we
- * leave the message fully visible so a short reply isn't blanked out
- * waiting for a wrap or stream end. The threshold transition (1 line → 2
- * lines) happens once per message and is handled in JS without a pulse
- * (the just-completed first line was already visible without the mask, so
- * a fade-in would re-flicker it). */
 @media (prefers-reduced-motion: no-preference) {
   /* Presence selector — JS sets the attribute via toggleAttribute() which
    * adds it with an empty value; matching on `="true"` would never fire. */
   .markdown-content[data-streaming="true"][data-stream-hide-tail] {
+    position: relative;
     -webkit-mask-image: linear-gradient(
       180deg,
       black 0%,
-      black calc(100% - 1.6em - var(--reveal-y, 0px) - 0.8em),
-      transparent calc(100% - 1.6em - var(--reveal-y, 0px))
+      black calc(100% - 1.6em - 0.8em),
+      transparent calc(100% - 1.6em)
     );
     mask-image: linear-gradient(
       180deg,
       black 0%,
-      black calc(100% - 1.6em - var(--reveal-y, 0px) - 0.8em),
-      transparent calc(100% - 1.6em - var(--reveal-y, 0px))
+      black calc(100% - 1.6em - 0.8em),
+      transparent calc(100% - 1.6em)
     );
+  }
+
+  /* Shimmer overlay. The 40%-wide band travels horizontally via translateX;
+   * `<percentage>` translateX is relative to the element's own width, so:
+   *   translateX(-100%): band's right edge at element's left edge — fully
+   *     off-screen left. Band covers [-40% container, 0%].
+   *   translateX(250%): band's left edge at element's right edge — fully
+   *     off-screen right. Band covers [100% container, 140%].
+   * JS interpolates between these endpoints over ~700ms when a line wraps.
+   *
+   * `currentColor` + opacity adapts to dark/light themes. transform-only
+   * animation runs on the compositor thread; @property registration of
+   * `--stream-shimmer-x` makes the percentage interpolatable. */
+  .markdown-content[data-streaming="true"][data-stream-hide-tail]::before {
+    content: "";
+    position: absolute;
+    bottom: 1.6em;
+    left: 0;
+    width: 40%;
+    height: 1.6em;
+    pointer-events: none;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      currentColor 50%,
+      transparent 100%
+    );
+    opacity: 0.18;
+    transform: translateX(var(--stream-shimmer-x, -100%));
+    will-change: transform;
   }
 }
 
