@@ -170,6 +170,70 @@ describe("SmoothTextEngine", () => {
     expect(modelAwareEngine.visibleLength).toBeGreaterThan(baseEngine.visibleLength);
   });
 
+  it("reveals at most one atom per tick even with huge budget", () => {
+    // Time-smoothing: even when budget covers many atoms (catch-up burst,
+    // very high adaptive rate), reveals must be spread across ticks so the
+    // user sees one word per animation frame. Multi-atom reveals would
+    // bypass the temporal cadence and read as bursty.
+    const engine = new SmoothTextEngine();
+    // 5-char words + space = 6-char atoms. 100 chars = ~17 atoms.
+    engine.update(makeWords(100), true, false, 1000); // very high model rate
+
+    // Even one tick at the dt clamp ceiling shouldn't reveal more than the
+    // largest possible atom (WORD_PACE_MAX_CHARS=12).
+    const before = engine.visibleLength;
+    engine.tick(33);
+    const revealed = engine.visibleLength - before;
+
+    // ≤ 12 chars (one atom max). With 6-char atoms it's exactly 6.
+    expect(revealed).toBeLessThanOrEqual(STREAM_SMOOTHING.WORD_PACE_MAX_CHARS);
+  });
+
+  it("clamps dt so a long pause doesn't burst on resume", () => {
+    // RAF gaps (tab visibility, debugger pauses) can produce multi-second
+    // dt values. Without clamping, budget = adaptiveRate * dt would balloon
+    // and feed downstream into multi-atom reveals (or in earlier engine
+    // designs, a 10s pause would dump the entire backlog in one frame).
+    const engine = new SmoothTextEngine();
+    engine.update(makeWords(200), true, false, 200);
+
+    const before = engine.visibleLength;
+    engine.tick(10_000); // 10-second "pause"
+    const revealed = engine.visibleLength - before;
+
+    // Same single-atom cap as a normal tick — the clamp ensures budget
+    // accumulated from a 10s gap is no larger than from a 33ms gap.
+    expect(revealed).toBeLessThanOrEqual(STREAM_SMOOTHING.WORD_PACE_MAX_CHARS);
+  });
+
+  it("treats Unicode whitespace as word boundaries", () => {
+    // Non-English content uses NBSP \u00A0, ideographic space \u3000, etc.
+    // The boundary scanner must recognize them or the entire stream is treated
+    // as one no-whitespace run capped at WORD_PACE_MAX_CHARS chunks. Each of
+    // these strings has a single Unicode whitespace separator at index 5.
+    const cases = [
+      "Hello\u00a0world", // NBSP
+      "Hello\u2003world", // em space
+      "Hello\u2009world", // thin space
+      "Hello\u3000world", // ideographic space
+      "Hello\u2028world", // line separator
+    ];
+
+    for (const text of cases) {
+      const engine = new SmoothTextEngine();
+      engine.update(text, true, false);
+      // Tick until "Hello<sep>" is revealed (cost = 6) — boundary scan must
+      // land at index 6, not at the WORD_PACE_MAX_CHARS cap of 12.
+      let observed = engine.visibleLength;
+      for (let i = 0; i < 50 && engine.visibleLength < 6; i++) {
+        engine.tick(16);
+        observed = engine.visibleLength;
+        if (observed >= 6 && observed < text.length) break;
+      }
+      expect(observed).toBe(6);
+    }
+  });
+
   it("reveals only at whitespace boundaries", () => {
     // Word-paced reveal: visibleLength must always land just after a
     // whitespace character (or at 0 / fullLength). Prevents mid-word reveals

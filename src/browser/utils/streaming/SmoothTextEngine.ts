@@ -2,6 +2,15 @@ import { STREAM_SMOOTHING } from "@/constants/streaming";
 import { clamp } from "@/common/utils/clamp";
 
 /**
+ * Module-level regex (compiled once, reused across ticks) for whitespace-
+ * boundary detection in word-paced reveal. `\s` covers all Unicode whitespace
+ * (per ECMA-262): ASCII space/tab/LF/CR/FF/VT, NBSP, line/paragraph
+ * separators, thin/em/ideographic spaces, etc. — so non-English text paces
+ * at proper word boundaries.
+ */
+const WHITESPACE_REGEX = /\s/;
+
+/**
  * Compute target reveal rate (chars/sec) given current backlog and a hint of how
  * fast the source is producing characters.
  *
@@ -43,17 +52,23 @@ function getAdaptiveRate(backlog: number, liveCharsPerSec: number): number {
  * The ingestion clock (incoming full text) is external; this class manages only
  * the presentation clock (visible prefix length) using a character budget model.
  *
- * **Reveal granularity is word-sized, not character-sized.** Each tick advances
- * `visibleLength` to the position immediately after the next whitespace
- * character (a "reveal atom" = one word plus its trailing whitespace). Atoms
- * are capped at {@link STREAM_SMOOTHING.WORD_PACE_MAX_CHARS} so a long
- * whitespace-free run (URL, minified identifier) still progresses incrementally.
- * Per-tick reveal is further capped at {@link STREAM_SMOOTHING.MAX_FRAME_CHARS}
- * so a sudden catch-up burst can't dump 200 chars to the renderer in one frame.
+ * **Reveal granularity is word-sized AND temporally paced.** Each tick reveals
+ * AT MOST ONE atom (a word + trailing whitespace, capped at
+ * {@link STREAM_SMOOTHING.WORD_PACE_MAX_CHARS}). Multi-atom bursts are
+ * impossible by construction — even when budget is large (catch-up after a
+ * long RAF gap, high adaptive rate during burst), reveals are spread across
+ * frames so the user sees one word per animation frame at the maximum tempo.
+ * Combined with the dt clamp ({@link STREAM_SMOOTHING.MAX_TICK_MS}), this
+ * caps cadence at ~60 words/sec on a 60Hz display.
  *
- * Why word-sized: humans parse text in word units. Character-paced reveal
- * triggers an extra decoding step the eye registers as choppy; word-paced
- * reveal matches the cadence of production chat UIs (ChatGPT, Claude.ai).
+ * Why word-sized AND time-paced:
+ *  - Word-sized: humans parse text in word units. Character-paced reveal
+ *    triggers an extra decoding step the eye registers as choppy.
+ *  - Time-paced: even at word granularity, dumping 3 atoms in one frame
+ *    reads as bursty. One atom per frame is the smoothest possible cadence
+ *    the display can express.
+ *  - Production chat UIs (ChatGPT, Claude.ai) feel smooth precisely because
+ *    they emit at word boundaries at a steady tempo.
  *
  * The engine is model-aware: callers should pass {@link update}'s
  * `liveCharsPerSec` if they know the source's emission rate. Without it the
@@ -129,15 +144,17 @@ export class SmoothTextEngine {
    * reached). Returns `min(from + WORD_PACE_MAX_CHARS, fullLength)` if no
    * whitespace is found within that span — guarantees long URLs / identifiers
    * still progress in bounded chunks.
+   *
+   * Uses `\s` (matches all Unicode whitespace: ASCII space/tab/newline/CR/FF,
+   * NBSP \u00A0, line/paragraph separators \u2028/\u2029, thin space \u2009,
+   * em space \u2003, ideographic space \u3000, etc.) so non-English content
+   * paces at proper word boundaries. CJK text without internal whitespace
+   * still falls back to the WORD_PACE_MAX_CHARS chunk cap.
    */
   private findNextRevealBoundary(from: number): number {
     const cap = Math.min(this.fullLength, from + STREAM_SMOOTHING.WORD_PACE_MAX_CHARS);
     for (let i = from; i < cap; i++) {
-      const c = this.fullText.charCodeAt(i);
-      // ASCII whitespace: space, LF, CR, tab, form-feed. Markdown source rarely
-      // contains other Unicode whitespace; the ones it does (NBSP, em-space)
-      // appear inside words and shouldn't be reveal boundaries anyway.
-      if (c === 0x20 || c === 0x0a || c === 0x0d || c === 0x09 || c === 0x0c) {
+      if (WHITESPACE_REGEX.test(this.fullText[i] ?? "")) {
         return i + 1;
       }
     }
@@ -168,27 +185,26 @@ export class SmoothTextEngine {
     const backlog = this.fullLength - this.visibleLengthValue;
     const adaptiveRate = getAdaptiveRate(backlog, this.liveCharsPerSec);
 
-    this.charBudget += adaptiveRate * (dtMs / 1000);
+    // Clamp dt to MAX_TICK_MS. A long RAF gap (tab visibility, slow frames,
+    // debugger pauses) would otherwise dump huge budget that bursts on resume,
+    // bypassing the per-tick atom cap. Backlog drains via subsequent ticks,
+    // which arrive at frame rate once RAF resumes; the hard-snap safety net
+    // (enforceMaxVisualLag) handles pathological cases beyond MAX_VISUAL_LAG_CHARS.
+    const clampedDt = Math.min(dtMs, STREAM_SMOOTHING.MAX_TICK_MS);
+    this.charBudget += adaptiveRate * (clampedDt / 1000);
 
-    // Greedy word-atom reveal: pop atoms (a word + trailing whitespace) while
-    // budget covers them. Capped per-tick at MAX_FRAME_CHARS so a sudden
-    // catch-up burst doesn't dump 200 chars in one frame. This makes cadence
-    // frame-rate invariant — a 240Hz display accumulates budget across
-    // several frames before revealing the next atom, instead of forcing
-    // ~1 char/frame at any refresh rate.
-    let revealedThisTick = 0;
-    while (revealedThisTick < STREAM_SMOOTHING.MAX_FRAME_CHARS) {
-      const nextBoundary = this.findNextRevealBoundary(this.visibleLengthValue);
-      const cost = nextBoundary - this.visibleLengthValue;
-      if (cost === 0) break;
-      // Wait for budget to cover the next atom. With Math.floor we guarantee
-      // monotone behavior across tick rates — partial budget rolls over.
-      if (Math.floor(this.charBudget) < cost) break;
-      // Don't overrun the per-tick reveal cap mid-atom; defer to next tick.
-      if (revealedThisTick + cost > STREAM_SMOOTHING.MAX_FRAME_CHARS) break;
+    // Single-atom reveal per tick. Even when budget covers multiple atoms
+    // (catch-up burst, high adaptive rate), defer to subsequent ticks so the
+    // user sees one word per animation frame. This is the smoothest possible
+    // temporal cadence the display can express; multi-atom-per-tick reveals
+    // would read as bursty even at word granularity.
+    const nextBoundary = this.findNextRevealBoundary(this.visibleLengthValue);
+    const cost = nextBoundary - this.visibleLengthValue;
+    // Math.floor guarantees monotone progress across tick rates — partial
+    // budget rolls over so a 240Hz display accumulates across several frames.
+    if (cost > 0 && Math.floor(this.charBudget) >= cost) {
       this.visibleLengthValue = nextBoundary;
       this.charBudget -= cost;
-      revealedThisTick += cost;
     }
 
     return this.visibleLengthValue;
