@@ -40,9 +40,13 @@ export const STREAM_SMOOTHING = {
   /** Max characters revealed in a single animation frame. */
   MAX_FRAME_CHARS: 48,
   /**
-   * Min characters revealed per tick once budget permits. Set to 2 so reveals
-   * coalesce to ~30 Hz at the base rate instead of ~60 Hz — equal visual
-   * smoothness to humans, half the markdown-reparse cost.
+   * Maximum characters in a single reveal "atom" when no whitespace boundary
+   * is found. The engine paces text in word-sized atoms (a run of non-whitespace
+   * plus its trailing whitespace); for a long no-whitespace run (e.g., a URL or
+   * minified identifier) we cap the atom at this length so the engine doesn't
+   * stall waiting for budget to cover an unbounded chunk. ~12 covers nearly all
+   * English words ("consideration" = 13, "JavaScript" = 10) without dumping
+   * long URLs in a single 200-char shot.
    */
-  MIN_FRAME_CHARS: 2,
+  WORD_PACE_MAX_CHARS: 12,
 } as const;

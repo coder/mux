@@ -145,8 +145,8 @@ export const MarkdownCore = React.memo<MarkdownCoreProps>(
           // After ORPC migration, async event boundaries let React deprioritize transitions indefinitely.
           mode={parseIncompleteMarkdown ? "streaming" : "static"}
           // space-y-2: reduce from default space-y-4 (16px) to space-y-2 (8px).
-          // The viewport-aware fade-in is handled by the parent .markdown-content
-          // element (mask-image gradient gated on data-streaming); see globals.css.
+          // Streaming smoothness comes from word-paced reveal in
+          // SmoothTextEngine; no DOM-level animation here.
           className="space-y-2"
           controls={{ table: false, code: true, mermaid: true }} // Disable table copy/download, keep code/mermaid controls
         >

@@ -43,6 +43,18 @@ function getAdaptiveRate(backlog: number, liveCharsPerSec: number): number {
  * The ingestion clock (incoming full text) is external; this class manages only
  * the presentation clock (visible prefix length) using a character budget model.
  *
+ * **Reveal granularity is word-sized, not character-sized.** Each tick advances
+ * `visibleLength` to the position immediately after the next whitespace
+ * character (a "reveal atom" = one word plus its trailing whitespace). Atoms
+ * are capped at {@link STREAM_SMOOTHING.WORD_PACE_MAX_CHARS} so a long
+ * whitespace-free run (URL, minified identifier) still progresses incrementally.
+ * Per-tick reveal is further capped at {@link STREAM_SMOOTHING.MAX_FRAME_CHARS}
+ * so a sudden catch-up burst can't dump 200 chars to the renderer in one frame.
+ *
+ * Why word-sized: humans parse text in word units. Character-paced reveal
+ * triggers an extra decoding step the eye registers as choppy; word-paced
+ * reveal matches the cadence of production chat UIs (ChatGPT, Claude.ai).
+ *
  * The engine is model-aware: callers should pass {@link update}'s
  * `liveCharsPerSec` if they know the source's emission rate. Without it the
  * engine targets {@link STREAM_SMOOTHING.BASE_CHARS_PER_SEC}, which can lag
@@ -50,6 +62,7 @@ function getAdaptiveRate(backlog: number, liveCharsPerSec: number): number {
  * stream ends.
  */
 export class SmoothTextEngine {
+  private fullText = "";
   private fullLength = 0;
   private visibleLengthValue = 0;
   private charBudget = 0;
@@ -86,6 +99,10 @@ export class SmoothTextEngine {
     bypassSmoothing: boolean,
     liveCharsPerSec = 0
   ): void {
+    // Retain the full text so tick() can locate whitespace boundaries for
+    // word-paced reveal. The hook (useSmoothStreamingText) already holds it,
+    // so the extra reference is "free" — JS strings are immutable and shared.
+    this.fullText = fullText;
     this.fullLength = fullText.length;
     this.isStreaming = isStreaming;
     this.bypassSmoothing = bypassSmoothing;
@@ -103,6 +120,28 @@ export class SmoothTextEngine {
     }
 
     this.enforceMaxVisualLag();
+  }
+
+  /**
+   * Find the position to advance visibleLength to from `from`. Returns the
+   * index AFTER the next whitespace character so the whitespace is included
+   * in the reveal (the next word stays hidden until its own boundary is
+   * reached). Returns `min(from + WORD_PACE_MAX_CHARS, fullLength)` if no
+   * whitespace is found within that span — guarantees long URLs / identifiers
+   * still progress in bounded chunks.
+   */
+  private findNextRevealBoundary(from: number): number {
+    const cap = Math.min(this.fullLength, from + STREAM_SMOOTHING.WORD_PACE_MAX_CHARS);
+    for (let i = from; i < cap; i++) {
+      const c = this.fullText.charCodeAt(i);
+      // ASCII whitespace: space, LF, CR, tab, form-feed. Markdown source rarely
+      // contains other Unicode whitespace; the ones it does (NBSP, em-space)
+      // appear inside words and shouldn't be reveal boundaries anyway.
+      if (c === 0x20 || c === 0x0a || c === 0x0d || c === 0x09 || c === 0x0c) {
+        return i + 1;
+      }
+    }
+    return cap;
   }
 
   /**
@@ -131,20 +170,26 @@ export class SmoothTextEngine {
 
     this.charBudget += adaptiveRate * (dtMs / 1000);
 
-    // Budget-gated reveal: require at least MIN_FRAME_CHARS to accrue. This
-    // makes cadence frame-rate invariant — a 240Hz display accumulates budget
-    // across several frames before revealing, instead of forcing 1 char/frame
-    // at any refresh rate. At the tail of a stream the requirement is capped
-    // by backlog so we always finish revealing the last 1 char.
-    const wholeCharsReady = Math.floor(this.charBudget);
-    const requiredChars = Math.min(STREAM_SMOOTHING.MIN_FRAME_CHARS, backlog);
-    if (wholeCharsReady < requiredChars) {
-      return this.visibleLengthValue;
+    // Greedy word-atom reveal: pop atoms (a word + trailing whitespace) while
+    // budget covers them. Capped per-tick at MAX_FRAME_CHARS so a sudden
+    // catch-up burst doesn't dump 200 chars in one frame. This makes cadence
+    // frame-rate invariant — a 240Hz display accumulates budget across
+    // several frames before revealing the next atom, instead of forcing
+    // ~1 char/frame at any refresh rate.
+    let revealedThisTick = 0;
+    while (revealedThisTick < STREAM_SMOOTHING.MAX_FRAME_CHARS) {
+      const nextBoundary = this.findNextRevealBoundary(this.visibleLengthValue);
+      const cost = nextBoundary - this.visibleLengthValue;
+      if (cost === 0) break;
+      // Wait for budget to cover the next atom. With Math.floor we guarantee
+      // monotone behavior across tick rates — partial budget rolls over.
+      if (Math.floor(this.charBudget) < cost) break;
+      // Don't overrun the per-tick reveal cap mid-atom; defer to next tick.
+      if (revealedThisTick + cost > STREAM_SMOOTHING.MAX_FRAME_CHARS) break;
+      this.visibleLengthValue = nextBoundary;
+      this.charBudget -= cost;
+      revealedThisTick += cost;
     }
-
-    const reveal = Math.min(wholeCharsReady, STREAM_SMOOTHING.MAX_FRAME_CHARS);
-    this.visibleLengthValue = Math.min(this.fullLength, this.visibleLengthValue + reveal);
-    this.charBudget -= reveal;
 
     return this.visibleLengthValue;
   }
@@ -161,6 +206,7 @@ export class SmoothTextEngine {
    * Reset all engine state, typically when a new stream starts.
    */
   reset(): void {
+    this.fullText = "";
     this.fullLength = 0;
     this.visibleLengthValue = 0;
     this.charBudget = 0;
