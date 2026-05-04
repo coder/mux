@@ -4,14 +4,23 @@ import json
 import os
 import shlex
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from harbor.agents.installed.base import BaseInstalledAgent, ExecInput
+from harbor.agents.installed.base import BaseInstalledAgent
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 
 from .mux_payload import build_app_archive
+
+
+@dataclass(frozen=True)
+class _AgentCommand:
+    command: str
+    env: dict[str, str]
+    cwd: str | None = None
+    timeout_sec: int | None = None
 
 
 class MuxAgent(BaseInstalledAgent):
@@ -22,6 +31,7 @@ class MuxAgent(BaseInstalledAgent):
 
     _ARCHIVE_NAME = "mux-app.tar.gz"
     _RUNNER_NAME = "mux-run.sh"
+    _SETUP_SCRIPT_NAME = "mux_setup.sh"
     _DEFAULT_MODEL = "anthropic:claude-sonnet-4-5"
     _DEFAULT_PROJECT_CANDIDATES = "/workspace:/app:/workspaces:/root/project"
     _INCLUDE_PATHS: Sequence[str] = (
@@ -194,22 +204,51 @@ class MuxAgent(BaseInstalledAgent):
             target_path=target_path,
         )
 
+    def _agent_version(self) -> str:
+        version_method = getattr(self, "version", None)
+        if callable(version_method):
+            return version_method() or ""
+        version_value = getattr(self, "_version", "")
+        return version_value if isinstance(version_value, str) else ""
+
+    def _write_setup_script(self) -> Path:
+        setup_script = self._install_agent_template_path.read_text().replace(
+            "{{ version if version is not none else '' }}",
+            self._agent_version(),
+        )
+        setup_path = self.logs_dir / self._SETUP_SCRIPT_NAME
+        setup_path.write_text(setup_script)
+        return setup_path
+
+    async def install(self, environment: BaseEnvironment) -> None:
+        """Run the staged mux setup script inside the task environment."""
+        # The setup script may install apt packages and writes under /opt, so run
+        # it as root even if Harbor's default agent user changes.
+        result = await environment.exec(
+            command=f"bash /installed-agent/{self._SETUP_SCRIPT_NAME}",
+            env=self._env,
+            user="root",
+        )
+        if result.return_code != 0:
+            raise RuntimeError(
+                "mux setup failed "
+                f"(exit {result.return_code}):\nstdout: {result.stdout}\nstderr: {result.stderr}"
+            )
+
     async def setup(self, environment: BaseEnvironment) -> None:
-        """Override setup to stage payload first, then run install template."""
+        """Stage the mux payload before installing it in the task environment."""
         env = self._env
 
-        # Create /installed-agent directory (normally done by super().setup(),
-        # but we need it to exist before uploading files)
-        await environment.exec(command="mkdir -p /installed-agent")
+        # Harbor no longer renders installed-agent templates for custom agents.
+        # Stage the rendered script ourselves so scheduled tbench runs are not
+        # coupled to Harbor internals that have changed over time.
+        await environment.exec(command="mkdir -p /installed-agent", user="root")
 
-        # Build and stage the mux app archive BEFORE super().setup() runs the
-        # install template, which extracts the archive and runs chmod on runner
         if not self._archive_bytes:
             self._archive_bytes = build_app_archive(
                 self._repo_root, self._INCLUDE_PATHS
             )
 
-        # Write archive to logs_dir and upload
         archive_path = self.logs_dir / self._ARCHIVE_NAME
         archive_path.write_bytes(self._archive_bytes)
         await environment.upload_file(
@@ -217,32 +256,29 @@ class MuxAgent(BaseInstalledAgent):
             target_path=f"/installed-agent/{self._ARCHIVE_NAME}",
         )
 
-        # Upload runner script
         await environment.upload_file(
             source_path=self._runner_path,
             target_path=f"/installed-agent/{self._RUNNER_NAME}",
         )
 
-        # Now run parent setup which executes mux_setup.sh.j2 template
-        # (extracts archive, installs bun/deps, chmod +x runner)
-        await super().setup(environment)
+        await environment.upload_file(
+            source_path=self._write_setup_script(),
+            target_path=f"/installed-agent/{self._SETUP_SCRIPT_NAME}",
+        )
+
+        await self.install(environment)
 
         # Optionally seed the sandbox with providers.jsonc from the host machine.
         # This is required for OAuth-only configs where env var API keys are absent.
         await self._stage_providers_config(environment, env)
 
-        # Store environment reference for token extraction later
+        # Store environment reference for token extraction later.
         self._last_environment = environment
 
-    def create_run_agent_commands(self, instruction: str) -> list[ExecInput]:
+    def create_run_agent_commands(self, instruction: str) -> list[_AgentCommand]:
         escaped = shlex.quote(instruction)
         command = f"bash /installed-agent/{self._RUNNER_NAME} {escaped}"
-        return [
-            ExecInput(
-                command=command,
-                env=self._env,
-            )
-        ]
+        return [_AgentCommand(command=command, env=self._env)]
 
     async def run(
         self,

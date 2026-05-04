@@ -563,8 +563,11 @@ chromatic: node_modules/.installed ## Run Chromatic for visual regression testin
 	@bun x chromatic --exit-zero-on-changes
 
 ## Benchmarks
-benchmark-terminal: ## Run Terminal-Bench 2.0 with Harbor (use TB_DATASET/TB_CONCURRENCY/TB_TIMEOUT/TB_ENV/TB_MODEL/TB_ARGS to customize)
-	@TB_DATASET=$${TB_DATASET:-terminal-bench@2.0}; \
+benchmark-terminal: ## Run Terminal-Bench 2.0 with Harbor (use TB_HARBOR_PACKAGE/TB_DATASET/TB_CONCURRENCY/TB_TIMEOUT/TB_ENV/TB_MODEL/TB_ARGS to customize)
+	@# Pin Harbor with the Daytona extra so scheduled ingestion does not break on future CLI or adapter API drift.
+	@# Harbor removed --task-name, so keep smoke-test task filtering on the current dataset filter flag.
+	@HARBOR_PACKAGE=$${TB_HARBOR_PACKAGE:-harbor[daytona]==0.6.4}; \
+	TB_DATASET=$${TB_DATASET:-terminal-bench@2.0}; \
 	TB_TIMEOUT=$${TB_TIMEOUT:-1800}; \
 	TB_CONCURRENCY=$${TB_CONCURRENCY:-4}; \
 	ENV_FLAG=$${TB_ENV:+--env $$TB_ENV}; \
@@ -572,13 +575,14 @@ benchmark-terminal: ## Run Terminal-Bench 2.0 with Harbor (use TB_DATASET/TB_CON
 	TASK_NAME_FLAGS=""; \
 	if [ -n "$$TB_TASK_NAMES" ]; then \
 		for task_name in $$TB_TASK_NAMES; do \
-			TASK_NAME_FLAGS="$$TASK_NAME_FLAGS --task-name $$task_name"; \
+			TASK_NAME_FLAGS="$$TASK_NAME_FLAGS --include-task-name $$task_name"; \
 		done; \
 	fi; \
+	echo "Using Harbor package: $$HARBOR_PACKAGE"; \
 	echo "Using timeout: $$TB_TIMEOUT seconds"; \
 	echo "Running Terminal-Bench with dataset $$TB_DATASET (concurrency: $$TB_CONCURRENCY)"; \
 	export MUX_TIMEOUT_MS=$$((TB_TIMEOUT * 1000)); \
-	uvx harbor run \
+	uvx --from "$$HARBOR_PACKAGE" harbor run \
 		--dataset "$$TB_DATASET" \
 		--agent-import-path benchmarks.terminal_bench.mux_agent:MuxAgent \
 		--agent-kwarg timeout=$$TB_TIMEOUT \

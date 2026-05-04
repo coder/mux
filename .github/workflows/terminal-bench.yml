@@ -166,16 +166,31 @@ jobs:
             exit 0
           fi
           pip install --quiet daytona
-          python3 -c "
+          python3 <<'PY' > /tmp/daytona-pre-existing.txt
           from daytona import Daytona
+
+          def list_all_sandboxes(daytona):
+              # Daytona returns paginated results. Snapshot every page so cleanup
+              # can distinguish old sandboxes from ones this run created.
+              page = 1
+              while True:
+                  result = daytona.list(page=page)
+                  yield from result.items
+                  total_pages = result.total_pages or 1
+                  if page >= total_pages:
+                      break
+                  page += 1
+
           d = Daytona()
-          ids = [sb.id for sb in d.list()]
+          ids = [sb.id for sb in list_all_sandboxes(d)]
           print('\n'.join(ids))
-          " > /tmp/daytona-pre-existing.txt
+          PY
           echo "Snapshot $(wc -l < /tmp/daytona-pre-existing.txt) pre-existing sandbox(es)"
 
       - name: Run Terminal-Bench
-        run: make benchmark-terminal 2>&1 | tee benchmark.log
+        run: |
+          set -o pipefail
+          make benchmark-terminal 2>&1 | tee benchmark.log
         env:
           UV_PYTHON: "3.12"
           TB_DATASET: ${{ inputs.dataset }}
@@ -216,15 +231,28 @@ jobs:
             exit 0
           fi
           pip install --quiet daytona
-          python3 -c "
+          python3 <<'PY'
           from daytona import Daytona
+
+          def list_all_sandboxes(daytona):
+              # Daytona returns paginated results. Cleanup must inspect every
+              # page so stopped sandboxes from high-concurrency runs do not leak.
+              page = 1
+              while True:
+                  result = daytona.list(page=page)
+                  yield from result.items
+                  total_pages = result.total_pages or 1
+                  if page >= total_pages:
+                      break
+                  page += 1
+
           with open('/tmp/daytona-pre-existing.txt') as f:
               pre_existing = {line.strip() for line in f if line.strip()}
           d = Daytona()
           # Only consider sandboxes created after our snapshot (not pre-existing)
           # and only delete ones that are no longer running (safe for parallel jobs).
           ACTIVE_STATES = {'started', 'creating', 'starting'}
-          candidates = [sb for sb in d.list() if sb.id not in pre_existing]
+          candidates = [sb for sb in list_all_sandboxes(d) if sb.id not in pre_existing]
           to_delete = [sb for sb in candidates if str(sb.state).lower() not in ACTIVE_STATES]
           skipped = len(candidates) - len(to_delete)
           if skipped:
@@ -240,7 +268,7 @@ jobs:
                       print(f'  Deleted {sb.id}')
                   except Exception as e:
                       print(f'  Failed to delete {sb.id}: {e}')
-          "
+          PY
 
       - name: Print results summary
         if: always()
