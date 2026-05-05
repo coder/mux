@@ -16,6 +16,7 @@ import { getErrorMessage } from "@/common/utils/errors";
 import {
   ForegroundWaitBackgroundedError,
   type AgentTaskStatusLookup,
+  type AgentTaskTimestamps,
 } from "@/node/services/taskService";
 
 function coerceTimeoutMs(timeoutSecs: unknown): number | undefined {
@@ -23,6 +24,31 @@ function coerceTimeoutMs(timeoutSecs: unknown): number | undefined {
   if (timeoutSecs < 0) return undefined;
   const timeoutMs = Math.floor(timeoutSecs * 1000);
   return timeoutMs;
+}
+
+function parseTimestampMs(value: string | undefined): number | undefined {
+  if (value == null) {
+    return undefined;
+  }
+
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : undefined;
+}
+
+function getAgentTaskElapsedMs(
+  timestamps: AgentTaskTimestamps | null | undefined
+): number | undefined {
+  const createdAtMs = parseTimestampMs(timestamps?.createdAt);
+  if (createdAtMs == null) {
+    return undefined;
+  }
+
+  const endAtMs = parseTimestampMs(timestamps?.reportedAt) ?? Date.now();
+  return Math.max(0, endAtMs - createdAtMs);
+}
+
+function withElapsedMs(elapsedMs: number | undefined): { elapsed_ms?: number } {
+  return elapsedMs == null ? {} : { elapsed_ms: elapsedMs };
 }
 
 function buildTaskAwaitSequencingError(taskId: string, suggestedTaskIds: string[]) {
@@ -103,6 +129,11 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
         if (!config.workspaceSessionDir) return null;
         return await readSubagentGitPatchArtifact(config.workspaceSessionDir, childTaskId);
       };
+
+      // Agent task records currently store creation/report timestamps, but not a separate
+      // running-start timestamp, so this elapsed value intentionally includes queued time.
+      const getAgentTaskElapsedField = (taskId: string) =>
+        withElapsedMs(getAgentTaskElapsedMs(taskService.getAgentTaskTimestamps?.(taskId)));
 
       const descendantAgentTaskIds =
         typeof bulkFilter === "function"
@@ -217,7 +248,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
           if (timeoutMs === 0) {
             const status = taskService.getAgentTaskStatus(taskId);
             if (status === "queued" || status === "running" || status === "awaiting_report") {
-              return { status, taskId };
+              return { status, taskId, ...getAgentTaskElapsedField(taskId) };
             }
 
             // Best-effort: the task might already have a cached report (even if its workspace was
@@ -236,6 +267,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
                 taskId,
                 reportMarkdown: report.reportMarkdown,
                 title: report.title,
+                ...getAgentTaskElapsedField(taskId),
                 ...(gitFormatPatch ? { artifacts: { gitFormatPatch } } : {}),
               };
             } catch (error: unknown) {
@@ -261,6 +293,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
               taskId,
               reportMarkdown: report.reportMarkdown,
               title: report.title,
+              ...getAgentTaskElapsedField(taskId),
               ...(gitFormatPatch ? { artifacts: { gitFormatPatch } } : {}),
             };
           } catch (error: unknown) {
@@ -275,6 +308,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
               return {
                 status: normalizedStatus,
                 taskId,
+                ...getAgentTaskElapsedField(taskId),
                 note: "Task sent to background because a new message was queued. Use task_await to monitor progress.",
               };
             }
@@ -290,7 +324,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
             if (/timed out/i.test(message)) {
               const status = taskService.getAgentTaskStatus(taskId);
               if (status === "queued" || status === "running" || status === "awaiting_report") {
-                return { status, taskId };
+                return { status, taskId, ...getAgentTaskElapsedField(taskId) };
               }
               if (!status) {
                 return { status: "not_found" as const, taskId };

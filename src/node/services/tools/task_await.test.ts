@@ -1,6 +1,6 @@
 import * as fs from "fs";
 
-import { describe, it, expect, mock } from "bun:test";
+import { describe, it, expect, mock, spyOn } from "bun:test";
 import type { ToolExecutionOptions } from "ai";
 
 import { createTaskAwaitTool } from "./task_await";
@@ -184,6 +184,74 @@ describe("task_await tool", () => {
         backgroundOnMessageQueued: true,
       })
     );
+  });
+
+  it("includes elapsed_ms for completed agent task results when timestamps are available", async () => {
+    using tempDir = new TestTempDir("test-task-await-tool-agent-elapsed-completed");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => ["t1"]),
+      isDescendantAgentTask: mock(() => Promise.resolve(true)),
+      waitForAgentReport: mock(() => Promise.resolve({ reportMarkdown: "ok" })),
+      getAgentTaskTimestamps: mock(() => ({
+        createdAt: "2026-01-01T00:00:00.000Z",
+        reportedAt: "2026-01-01T00:00:02.500Z",
+      })),
+    } as unknown as TaskService;
+
+    const tool = createTaskAwaitTool({ ...baseConfig, taskService });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ task_ids: ["t1"] }, mockToolCallOptions)
+    );
+
+    expect(result).toEqual({
+      results: [
+        {
+          status: "completed",
+          taskId: "t1",
+          reportMarkdown: "ok",
+          title: undefined,
+          elapsed_ms: 2500,
+        },
+      ],
+    });
+  });
+
+  it("includes elapsed_ms for active agent task results when timestamps are available", async () => {
+    using tempDir = new TestTempDir("test-task-await-tool-agent-elapsed-active");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+    const nowMs = Date.parse("2026-01-01T00:00:05.000Z");
+    const dateNowSpy = spyOn(Date, "now").mockReturnValue(nowMs);
+
+    try {
+      const waitForAgentReport = mock(() => {
+        throw new Error("waitForAgentReport should not be called for timeout_secs=0");
+      });
+      const taskService = {
+        listActiveDescendantAgentTaskIds: mock(() => ["t1"]),
+        isDescendantAgentTask: mock(() => Promise.resolve(true)),
+        getAgentTaskStatus: mock(() => "running" as const),
+        getAgentTaskTimestamps: mock(() => ({
+          createdAt: "2026-01-01T00:00:02.000Z",
+        })),
+        waitForAgentReport,
+      } as unknown as TaskService;
+
+      const tool = createTaskAwaitTool({ ...baseConfig, taskService });
+
+      const result: unknown = await Promise.resolve(
+        tool.execute!({ timeout_secs: 0 }, mockToolCallOptions)
+      );
+
+      expect(result).toEqual({
+        results: [{ status: "running", taskId: "t1", elapsed_ms: 3000 }],
+      });
+      expect(waitForAgentReport).toHaveBeenCalledTimes(0);
+    } finally {
+      dateNowSpy.mockRestore();
+    }
   });
 
   it("does not list background bash tasks when explicit agent task IDs are valid", async () => {

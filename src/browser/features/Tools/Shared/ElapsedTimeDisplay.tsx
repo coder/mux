@@ -3,13 +3,20 @@ import React, { useEffect, useRef } from "react";
 interface ElapsedTimeDisplayProps {
   startedAt: number | undefined;
   isActive: boolean;
+  prefix?: string;
+  separator?: string;
 }
 
 /**
  * Shared elapsed time display for tool headers.
  * Keeps requestAnimationFrame + per-second updates at the leaf so parent tool calls do not re-render.
  */
-export const ElapsedTimeDisplay: React.FC<ElapsedTimeDisplayProps> = ({ startedAt, isActive }) => {
+export const ElapsedTimeDisplay: React.FC<ElapsedTimeDisplayProps> = ({
+  startedAt,
+  isActive,
+  prefix = "",
+  separator = " • ",
+}) => {
   const elapsedRef = useRef(0);
   const frameRef = useRef<number | null>(null);
   const [, forceUpdate] = React.useReducer((x: number) => x + 1, 0);
@@ -57,5 +64,11 @@ export const ElapsedTimeDisplay: React.FC<ElapsedTimeDisplayProps> = ({ startedA
     return null;
   }
 
-  return <> • {Math.round(elapsedRef.current / 1000)}s</>;
+  return (
+    <>
+      {separator}
+      {prefix}
+      {Math.round(elapsedRef.current / 1000)}s
+    </>
+  );
 };
