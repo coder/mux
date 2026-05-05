@@ -63,11 +63,13 @@ describe("formatModelDisplayName", () => {
       expect(formatModelDisplayName("deepseek/deepseek-v4-pro")).toBe("DeepSeek V4 Pro");
     });
 
-    test("colon-suffixed Ollama IDs fall through to the size handler", () => {
-      // Locally-pulled DeepSeek models use Ollama tags like "deepseek-r1:8b". The
-      // DeepSeek brand branch must not preempt the colon-size formatter; otherwise
-      // the size renders verbatim instead of as "(8B)".
-      expect(formatModelDisplayName("deepseek-r1:8b")).toContain("(8B)");
+    test("colon-suffixed Ollama IDs preserve DeepSeek branding and size", () => {
+      // Locally-pulled DeepSeek models use Ollama tags like "deepseek-r1:8b".
+      // Both the DeepSeek brand casing and the parenthesized size suffix must
+      // be preserved; the generic digit-split formatter would otherwise render
+      // "Deepseek-r 1 (8B)".
+      expect(formatModelDisplayName("deepseek-r1:8b")).toBe("DeepSeek R1 (8B)");
+      expect(formatModelDisplayName("deepseek-coder:6.7b")).toBe("DeepSeek Coder (6.7B)");
     });
   });
 

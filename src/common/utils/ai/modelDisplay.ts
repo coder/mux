@@ -167,6 +167,14 @@ export function formatModelDisplayName(modelName: string): string {
   // Split by colon to handle quantization/size suffix
   const [baseName, size] = modelName.split(":");
   if (size) {
+    // DeepSeek IDs published as Ollama tags (e.g. "deepseek-r1:8b") need to
+    // preserve the DeepSeek brand casing before the size suffix is appended.
+    // Recurse into the formatter for the colon-stripped base so the DeepSeek
+    // branch above produces "DeepSeek R1", then append "(8B)". Without this,
+    // the generic digit-split below would render "Deepseek-r 1 (8B)".
+    if (baseName.toLowerCase().startsWith("deepseek-")) {
+      return `${formatModelDisplayName(baseName)} (${size.toUpperCase()})`;
+    }
     // "llama3.2:7b" -> "Llama 3.2 (7B)"
     // "codellama:13b" -> "Codellama (13B)"
     const formatted = baseName

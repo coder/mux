@@ -76,6 +76,25 @@ describe("getModelStats", () => {
     expect(uncached.cache_read_input_token_cost).toBeUndefined();
   });
 
+  test("resolves DeepSeek V4 pricing and limits via direct and gateway forms", () => {
+    // Direct provider id wires up to the modelsExtra entry.
+    const pro = expectStats("deepseek:deepseek-v4-pro");
+    expect(pro.max_input_tokens).toBe(1_000_000);
+    expect(pro.max_output_tokens).toBe(384_000);
+    expect(pro.input_cost_per_token).toBe(0.00000174);
+    expect(pro.output_cost_per_token).toBe(0.00000348);
+    expect(pro.cache_read_input_token_cost).toBe(0.000000174);
+
+    // OpenRouter routes "deepseek/deepseek-v4-pro" back to the direct DeepSeek
+    // entry via normalizeToCanonical, so pricing must match the direct lookup.
+    expect(expectStats("openrouter:deepseek/deepseek-v4-pro")).toEqual(pro);
+
+    const flash = expectStats("deepseek:deepseek-v4-flash");
+    expect(flash.input_cost_per_token).toBe(0.00000014);
+    expect(flash.output_cost_per_token).toBe(0.00000028);
+    expect(flash.cache_read_input_token_cost).toBe(0.000000014);
+  });
+
   test("returns null for unknown models across direct and gateway forms", () => {
     expect(getModelStats("unknown:fake-model-9000")).toBeNull();
     expect(getModelStats("ollama:this-model-does-not-exist")).toBeNull();
