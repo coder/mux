@@ -373,6 +373,16 @@ If a value is too large for the environment, it may be omitted (not set). Mux al
 </details>
 
 <details>
+<summary>complete_goal (2)</summary>
+
+| Env var                  | JSON path | Type   | Description                                                                                                                                                                                          |
+| ------------------------ | --------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MUX_TOOL_INPUT_GOAL_ID` | `goalId`  | string | Optional optimistic-concurrency token. Pass the `goalId` returned by `get_goal` to ensure the completion is rejected with a typed conflict error if the user clears or replaces the goal mid-stream. |
+| `MUX_TOOL_INPUT_SUMMARY` | `summary` | string | Required 1-2 sentence justification for completing the current goal.                                                                                                                                 |
+
+</details>
+
+<details>
 <summary>desktop_click (3)</summary>
 
 | Env var                 | JSON path | Type   | Description                                       |

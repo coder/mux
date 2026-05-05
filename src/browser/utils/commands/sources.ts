@@ -43,7 +43,16 @@ import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { BranchListResult } from "@/common/orpc/types";
 import type { WorkspaceState } from "@/browser/stores/WorkspaceStore";
 import type { RuntimeConfig } from "@/common/types/runtime";
+import type { GoalSetError, GoalStatus } from "@/common/types/goal";
 import { getErrorMessage } from "@/common/utils/errors";
+import { parseGoalBudgetCents } from "@/browser/utils/slashCommands/registry";
+import { setGoalWithConflictRetry } from "@/browser/utils/goals/setGoalWithConflictRetry";
+import { loadGoalDefaults, resolveGoalSetIntent } from "@/browser/utils/goals/resolveGoalSetIntent";
+import {
+  modelHasPricingData,
+  UNPRICED_CURRENT_MODEL_GOAL_MESSAGE,
+} from "@/common/utils/goals/budgetPricing";
+import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
 
 export interface BuildSourcesParams {
   api: APIClient | null;
@@ -68,6 +77,7 @@ export interface BuildSourcesParams {
   onStartWorkspaceCreation: (projectPath: string) => void;
   onStartMultiProjectWorkspaceCreation: () => void;
   multiProjectWorkspacesEnabled: boolean;
+  goalsEnabled: boolean;
   onArchiveMergedWorkspacesInProject: (projectPath: string) => Promise<void>;
   getBranchesForProject: (projectPath: string) => Promise<BranchListResult>;
   onSelectWorkspace: (sel: {
@@ -115,6 +125,7 @@ export const COMMAND_SECTIONS = {
   PROJECTS: "Projects",
   APPEARANCE: "Appearance",
   SETTINGS: "Settings",
+  GOALS: "Goals",
 } as const;
 
 const section = {
@@ -127,6 +138,7 @@ const section = {
   help: COMMAND_SECTIONS.HELP,
   projects: COMMAND_SECTIONS.PROJECTS,
   settings: COMMAND_SECTIONS.SETTINGS,
+  goals: COMMAND_SECTIONS.GOALS,
 };
 
 const getRightSidebarTabFallback = (): TabType => {
@@ -263,6 +275,71 @@ function buildToggleTabCommand(
       }
     },
   };
+}
+
+function getGoalSetErrorMessage(error: GoalSetError): string {
+  if (error.type === "goal_conflict") {
+    return "Goal changed in another window. Please try again.";
+  }
+  return error.message;
+}
+
+interface GoalPaletteSetGoalInput {
+  objective?: string;
+  // Palette commands only ever request user-facing transitions (pause, resume,
+  // complete); `budget_limited` is internal-only and is now excluded from the
+  // public oRPC `setGoal` input shape (Coder-agents-review nit DEREM-53).
+  status?: Exclude<GoalStatus, "budget_limited">;
+  budgetCents?: number | null;
+  turnCap?: number | null;
+  completionSummary?: string;
+}
+
+function canSetBudgetedGoalWithCurrentPaletteModel(
+  workspaceId: string,
+  selectedWorkspaceState: WorkspaceState | null | undefined,
+  budgetCents: number | null,
+  providersConfig: unknown
+): boolean {
+  if (budgetCents == null) {
+    return true;
+  }
+  const selectedModel =
+    typeof window === "undefined"
+      ? (selectedWorkspaceState?.currentModel ?? "")
+      : getSendOptionsFromStorage(workspaceId).model;
+  return selectedModel.length === 0 || modelHasPricingData(selectedModel, providersConfig);
+}
+
+function showUnpricedCurrentModelGoalFeedback(): void {
+  showCommandFeedbackToast({
+    type: "error",
+    message: UNPRICED_CURRENT_MODEL_GOAL_MESSAGE,
+  });
+}
+
+async function requireGoalSetSuccess(
+  api: APIClient,
+  workspaceId: string,
+  input: GoalPaletteSetGoalInput
+): Promise<boolean> {
+  // Shared retry helper centralized in `@/browser/utils/goals/` to avoid the
+  // three-way drift Coder-agents-review P3 DEREM-25 flagged.
+  const result = await setGoalWithConflictRetry(api, workspaceId, input);
+  if (!result.success) {
+    showCommandFeedbackToast({ type: "error", message: getGoalSetErrorMessage(result.error) });
+    return false;
+  }
+  return true;
+}
+
+function openGoalPanel(workspaceId: string, openCompleteInput = false): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.dispatchEvent(
+    createCustomEvent(CUSTOM_EVENTS.OPEN_GOAL_TAB, { workspaceId, openCompleteInput })
+  );
 }
 export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandAction[]> {
   const actions: Array<() => CommandAction[]> = [];
@@ -763,6 +840,180 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
           run: () => p.onSetTheme(opt.value),
         });
       }
+    }
+
+    return list;
+  });
+
+  // Goals
+  actions.push(() => {
+    const selected = p.selectedWorkspace;
+    if (!p.goalsEnabled || !selected) {
+      return [];
+    }
+
+    const workspaceId = selected.workspaceId;
+    const api = p.api;
+    const goal = p.selectedWorkspaceState?.goal ?? null;
+    const list: CommandAction[] = [
+      {
+        id: CommandIds.goalSetObjective(),
+        title: "Goal: Set objective",
+        section: section.goals,
+        keywords: ["target", "objective", "budget"],
+        run: () => undefined,
+        prompt: {
+          title: "Set Goal Objective",
+          fields: [
+            {
+              type: "text",
+              name: "objective",
+              label: "Goal objective",
+              placeholder: "Describe the goal…",
+              validate: (value) => (!value.trim() ? "Goal objective is required" : null),
+            },
+            {
+              type: "text",
+              name: "budget",
+              label: "Goal budget",
+              placeholder: "$5.00 or blank for no budget",
+              validate: (value) => {
+                const trimmed = value.trim();
+                if (!trimmed || parseGoalBudgetCents(trimmed) != null) {
+                  return null;
+                }
+                return "Use a budget like $5.00 or 500c";
+              },
+            },
+          ],
+          onSubmit: async (values) => {
+            assert(api, "Goal palette actions require a connected backend");
+            const objective = values.objective.trim();
+            assert(objective.length > 0, "Goal objective is required");
+            const budget = values.budget.trim();
+            const budgetCents = budget ? parseGoalBudgetCents(budget) : null;
+            assert(
+              !budget || budgetCents !== null,
+              "Goal budget must be blank or formatted like $5.00 or 500c"
+            );
+            // Apply shared defaults for turn caps, while preserving the palette
+            // field contract that a blank budget means no budget.
+            const defaults = await loadGoalDefaults(api);
+            const intent = resolveGoalSetIntent(
+              {
+                objective,
+                budgetCents,
+              },
+              defaults
+            );
+            let providersConfig: unknown = null;
+            try {
+              providersConfig = await api.providers.getConfig();
+            } catch {
+              providersConfig = null;
+            }
+            if (
+              !canSetBudgetedGoalWithCurrentPaletteModel(
+                workspaceId,
+                p.selectedWorkspaceState,
+                intent.budgetCents,
+                providersConfig
+              )
+            ) {
+              showUnpricedCurrentModelGoalFeedback();
+              return;
+            }
+            const ok = await requireGoalSetSuccess(api, workspaceId, {
+              objective: intent.objective,
+              budgetCents: intent.budgetCents,
+              ...(intent.turnCap != null ? { turnCap: intent.turnCap } : {}),
+            });
+            if (!ok) return;
+            openGoalPanel(workspaceId);
+          },
+        },
+      },
+    ];
+
+    if (goal?.status === "active") {
+      list.push({
+        id: CommandIds.goalPause(),
+        title: "Goal: Pause",
+        section: section.goals,
+        keywords: ["target", "objective"],
+        run: async () => {
+          assert(api, "Goal palette actions require a connected backend");
+          await requireGoalSetSuccess(api, workspaceId, { status: "paused" });
+        },
+      });
+    }
+
+    if (goal?.status === "paused") {
+      list.push({
+        id: CommandIds.goalResume(),
+        title: "Goal: Resume",
+        section: section.goals,
+        keywords: ["target", "objective"],
+        run: async () => {
+          assert(api, "Goal palette actions require a connected backend");
+          await requireGoalSetSuccess(api, workspaceId, { status: "active" });
+        },
+      });
+    }
+
+    if (goal?.status === "active" || goal?.status === "budget_limited") {
+      list.push({
+        id: CommandIds.goalMarkComplete(),
+        title: "Goal: Mark complete",
+        section: section.goals,
+        keywords: ["target", "objective", "summary"],
+        run: () => undefined,
+        prompt: {
+          title: "Complete Goal",
+          fields: [
+            {
+              type: "text",
+              name: "summary",
+              label: "Completion summary",
+              placeholder: "Summarize the completed goal…",
+              validate: (value) => (!value.trim() ? "Completion summary is required" : null),
+            },
+          ],
+          onSubmit: async (values) => {
+            assert(api, "Goal palette actions require a connected backend");
+            const completionSummary = values.summary.trim();
+            assert(completionSummary.length > 0, "Completion summary is required");
+            const ok = await requireGoalSetSuccess(api, workspaceId, {
+              status: "complete",
+              completionSummary,
+            });
+            if (!ok) return;
+            openGoalPanel(workspaceId);
+          },
+        },
+      });
+    }
+
+    if (goal) {
+      list.push(
+        {
+          id: CommandIds.goalClear(),
+          title: "Goal: Clear",
+          section: section.goals,
+          keywords: ["target", "objective"],
+          run: async () => {
+            assert(api, "Goal palette actions require a connected backend");
+            await api.workspace.clearGoal({ workspaceId });
+          },
+        },
+        {
+          id: CommandIds.goalOpenPanel(),
+          title: "Goal: Open panel",
+          section: section.goals,
+          keywords: ["target", "objective", "sidebar"],
+          run: () => openGoalPanel(workspaceId),
+        }
+      );
     }
 
     return list;

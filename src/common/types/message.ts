@@ -3,6 +3,7 @@ import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { StreamErrorType } from "./errors";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import type { FilePart, MuxToolPartSchema } from "@/common/orpc/schemas";
+import type { GoalSyntheticMessageKind } from "@/constants/goals";
 import type { SendMessageOptions } from "@/common/orpc/types";
 import type { z } from "zod";
 import type { AgentMode } from "./mode";
@@ -83,6 +84,8 @@ export type StartupRetrySendOptions = Pick<
 > & {
   /** Internal-only Copilot billing override for startup auto-retry. */
   agentInitiated?: boolean;
+  /** Internal goal continuation classification for startup auto-retry accounting. */
+  goalKind?: GoalSyntheticMessageKind;
 };
 
 /**
@@ -91,7 +94,8 @@ export type StartupRetrySendOptions = Pick<
  */
 export function pickStartupRetrySendOptions(
   options: SendMessageOptions,
-  agentInitiated?: boolean
+  agentInitiated?: boolean,
+  goalKind?: GoalSyntheticMessageKind
 ): StartupRetrySendOptions {
   return {
     model: options.model,
@@ -104,6 +108,7 @@ export function pickStartupRetrySendOptions(
     experiments: options.experiments,
     disableWorkspaceAgents: options.disableWorkspaceAgents,
     ...(agentInitiated === true ? { agentInitiated: true } : {}),
+    ...(goalKind != null ? { goalKind } : {}),
   };
 }
 
@@ -132,6 +137,8 @@ export interface CompactionFollowUpRequest extends CompactionFollowUpInput, Pres
   model: string;
   /** Agent ID for the follow-up message (user's original agentId, not "compact") */
   agentId: string;
+  /** Internal goal continuation classification for synthetic follow-up accounting. */
+  goalKind?: GoalSyntheticMessageKind;
   /** Internal dispatch guardrails for crash-safe follow-up recovery. */
   dispatchOptions?: CompactionFollowUpDispatchOptions;
 }
@@ -345,6 +352,9 @@ export type MuxMessageMetadata = MuxMessageMetadataBase &
         path: string;
       }
     | {
+        type: "goal-cleared-summary";
+      }
+    | {
         type: "heartbeat-request";
         /** Synthetic heartbeat follow-ups use an explicit marker so future backend dispatch stays inspectable. */
         source?: "heartbeat";
@@ -461,6 +471,9 @@ export interface MuxMetadata {
   agentId?: string; // Agent id active when this message was sent (assistant messages only)
   cmuxMetadata?: MuxMessageMetadata; // Command metadata persisted for legacy message formats
   muxMetadata?: MuxMessageMetadata; // Command metadata used by both frontend and backend message flows
+  /** Persisted discriminator for synthetic user turns created by the active-goal loop. */
+  kind?: "goal_continuation" | "goal_budget_limit";
+
   /**
    * ACP-only correlation id propagated through stream events so prompt() can
    * match terminal events to the originating ACP request in shared workspaces.
@@ -557,6 +570,10 @@ export type DisplayedMessage =
       historySequence: number; // Global ordering across all messages
       isSynthetic?: boolean;
       timestamp?: number;
+      /** True for synthetic user turns created by the active-goal continuation loop. */
+      isGoalContinuation?: boolean;
+      /** True for the one-shot wrap-up turn after a goal continuation exhausts its budget. */
+      isBudgetLimitWrapup?: boolean;
       /** Present when this message invoked an agent skill via /{skill-name} */
       agentSkill?: {
         skillName: string;

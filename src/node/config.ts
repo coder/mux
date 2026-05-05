@@ -55,6 +55,7 @@ import {
 } from "@/common/config/worktreeArchiveBehavior";
 import { PlatformPaths } from "@/common/utils/paths";
 import { HEARTBEAT_MAX_INTERVAL_MS, HEARTBEAT_MIN_INTERVAL_MS } from "@/constants/heartbeat";
+import { normalizeGoalDefaults } from "@/constants/goals";
 import {
   isValidModelFormat,
   normalizeSelectedModel,
@@ -881,6 +882,7 @@ export class Config {
           heartbeatDefaultIntervalMs: parseOptionalHeartbeatIntervalMs(
             parsed.heartbeatDefaultIntervalMs
           ),
+          goalDefaults: normalizeGoalDefaults(parsed.goalDefaults),
           muxGatewayModels,
           routePriority,
           routeOverrides,
@@ -963,6 +965,10 @@ export class Config {
       );
       if (heartbeatDefaultIntervalMs !== undefined) {
         data.heartbeatDefaultIntervalMs = heartbeatDefaultIntervalMs;
+      }
+
+      if (config.goalDefaults) {
+        data.goalDefaults = normalizeGoalDefaults(config.goalDefaults);
       }
 
       const muxGatewayModels = parseOptionalStringArray(config.muxGatewayModels);

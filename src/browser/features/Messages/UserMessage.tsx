@@ -14,7 +14,7 @@ import {
 } from "@/browser/utils/chatEditing";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { VIM_ENABLED_KEY } from "@/common/constants/storage";
-import { ChevronLeft, ChevronRight, Clipboard, ClipboardCheck, Pencil } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clipboard, ClipboardCheck, Pencil, Target } from "lucide-react";
 
 /** Navigation info for navigating between user messages */
 export interface UserMessageNavigation {
@@ -45,6 +45,8 @@ export const UserMessage: React.FC<UserMessageProps> = ({
   navigation,
 }) => {
   const isSynthetic = message.isSynthetic === true;
+  const isGoalContinuation = message.isGoalContinuation === true;
+  const isBudgetLimitWrapup = message.isBudgetLimitWrapup === true;
   const content = message.content;
   const [vimEnabled] = usePersistedState<boolean>(VIM_ENABLED_KEY, false, { listener: true });
   const isMobileTouch =
@@ -134,12 +136,33 @@ export const UserMessage: React.FC<UserMessageProps> = ({
     },
   ];
 
-  const label = isSynthetic ? (
-    <span className="bg-muted/20 text-muted rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase">
-      auto
-    </span>
-  ) : null;
-  const syntheticClassName = cn(className, isSynthetic && "opacity-70");
+  let label: React.ReactNode = null;
+  if (isBudgetLimitWrapup) {
+    label = (
+      <span className="bg-warning/10 text-warning flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase">
+        <Target aria-hidden="true" className="h-3 w-3" />
+        budget limit wrap-up
+      </span>
+    );
+  } else if (isGoalContinuation) {
+    label = (
+      <span className="bg-muted/20 text-muted flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase">
+        <Target aria-hidden="true" className="h-3 w-3" />
+        goal continuation
+      </span>
+    );
+  } else if (isSynthetic) {
+    label = (
+      <span className="bg-muted/20 text-muted rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase">
+        auto
+      </span>
+    );
+  }
+  const syntheticClassName = cn(
+    className,
+    isSynthetic && "opacity-70",
+    (isGoalContinuation || isBudgetLimitWrapup) && "italic"
+  );
 
   return (
     <MessageWindow

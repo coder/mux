@@ -47,6 +47,13 @@ const TAB_CONFIG_DEF = {
     defaultOrder: 30,
     paletteKeywords: ["agents", "agents.md", "claude.md", "instructions", "prompt", "context"],
   },
+  goal: {
+    name: "Goal",
+    contentClassName: "overflow-y-auto p-0",
+    featureFlag: EXPERIMENT_IDS.GOALS,
+    defaultOrder: 35,
+    paletteKeywords: ["goal", "target", "objective"],
+  },
   desktop: {
     name: "Desktop",
     contentClassName: "overflow-hidden p-0",

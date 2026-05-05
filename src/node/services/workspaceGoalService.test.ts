@@ -1,0 +1,2204 @@
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import * as fs from "fs/promises";
+import * as path from "path";
+import type { Config } from "@/node/config";
+import { ExtensionMetadataService } from "@/node/services/ExtensionMetadataService";
+import { WorkspaceGoalService, type GoalContinuationRuntimeBridge } from "./workspaceGoalService";
+import { IdleDispatcher } from "./idleDispatcher";
+import { createTestHistoryService } from "./testHistoryService";
+import type { HistoryService } from "./historyService";
+import type { GoalRecordV1, GoalStatus } from "@/common/types/goal";
+import { GOAL_BUDGET_LIMIT_KIND, GOAL_CONTINUATION_IDLE_CONSUMER_NAME } from "@/constants/goals";
+// Shared `drainPendingDispatches` + `waitForCondition` +
+// `enableGoalsExperimentForTest` helpers live in `./testDispatchHelpers`
+// (Coder-agents-review P3 DEREM-41 + nits DEREM-48 / DEREM-55) — import
+// instead of defining local copies so future callers cannot drift.
+import {
+  drainPendingDispatches,
+  enableGoalsExperimentForTest,
+  waitForCondition,
+} from "./testDispatchHelpers";
+
+async function setGoalOk(
+  service: WorkspaceGoalService,
+  input: Parameters<WorkspaceGoalService["setGoal"]>[0]
+): Promise<GoalRecordV1> {
+  const result = await service.setGoal(input);
+  expect(result.success).toBe(true);
+  if (!result.success) {
+    throw new Error(`Expected goal set to succeed, got ${JSON.stringify(result.error)}`);
+  }
+  return result.data;
+}
+
+const PROJECT_PATH = "/tmp/mux-goal-service-test-project";
+
+async function goalFileExists(config: Config, workspaceId: string): Promise<boolean> {
+  try {
+    await fs.access(path.join(config.getSessionDir(workspaceId), "goal.json"));
+    return true;
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+}
+
+function analyticsMock() {
+  return { recordGoalLifecycleEvent: mock(() => undefined) };
+}
+
+function continuationBridge(
+  executeGoalContinuation: GoalContinuationRuntimeBridge["executeGoalContinuation"] = () =>
+    Promise.resolve(true)
+): GoalContinuationRuntimeBridge {
+  return {
+    isGoalExperimentEnabled: () => true,
+    hasActiveDescendantTasks: () => false,
+    getRuntimeState: () => ({ isRuntimeCompatible: true }),
+    executeGoalContinuation,
+  };
+}
+
+describe("WorkspaceGoalService", () => {
+  let config: Config;
+  let historyService: HistoryService;
+  let cleanup: () => Promise<void>;
+  let extensionMetadata: ExtensionMetadataService;
+  let service: WorkspaceGoalService;
+  let analytics: ReturnType<typeof analyticsMock>;
+  const workspaceId = "goal-parent";
+
+  beforeEach(async () => {
+    ({ config, historyService, cleanup } = await createTestHistoryService());
+    await config.addWorkspace(PROJECT_PATH, {
+      id: workspaceId,
+      name: "parent",
+      projectName: "mux-goal-service-test-project",
+      projectPath: PROJECT_PATH,
+      runtimeConfig: { type: "local" },
+    });
+    extensionMetadata = new ExtensionMetadataService(
+      path.join(config.rootDir, "extensionMetadata.json")
+    );
+    analytics = analyticsMock();
+    service = new WorkspaceGoalService(config, historyService, extensionMetadata, analytics);
+  });
+
+  afterEach(async () => {
+    await cleanup();
+  });
+
+  test("creates, reads, and clears a goal while updating snapshots", async () => {
+    const created = await setGoalOk(service, { workspaceId, objective: "  Ship goal primitive  " });
+
+    expect(created.objective).toBe("Ship goal primitive");
+    expect(created.status).toBe("active");
+    expect(created.costCents).toBe(0);
+    expect(await service.getGoal(workspaceId)).toEqual(created);
+    expect(await extensionMetadata.getSnapshot(workspaceId)).toMatchObject({
+      goal: { goalId: created.goalId, objective: "Ship goal primitive", status: "active" },
+    });
+
+    const cleared = await service.clearGoal(workspaceId);
+
+    expect(cleared?.goalId).toBe(created.goalId);
+    expect(await service.getGoal(workspaceId)).toBeNull();
+    expect(await extensionMetadata.getSnapshot(workspaceId)).toMatchObject({ goal: null });
+    const history = await historyService.getLastMessages(workspaceId, 1);
+    expect(history.success).toBe(true);
+    if (!history.success) {
+      throw new Error(history.error);
+    }
+    expect(history.data[0]?.metadata?.synthetic).toBe(true);
+    expect(history.data[0]?.metadata?.uiVisible).toBe(true);
+    expect(history.data[0]?.parts[0]).toMatchObject({
+      type: "text",
+      text: 'Goal cleared: "Ship goal primitive" — spent $0.00 over 0 turns (status: active)',
+    });
+
+    expect(analytics.recordGoalLifecycleEvent).toHaveBeenCalledWith(
+      "goal_created",
+      expect.objectContaining({ objectiveLengthBucket: "10-49" })
+    );
+    expect(analytics.recordGoalLifecycleEvent).toHaveBeenCalledWith(
+      "goal_cleared",
+      expect.objectContaining({ finalStatus: "active" })
+    );
+  });
+
+  test("rejects zero-budget goals when kickoff model has no pricing", async () => {
+    const dispatcher = new IdleDispatcher();
+    service.registerGoalContinuationConsumer(dispatcher, {
+      ...continuationBridge(),
+      getKickoffSendOptions: () => ({ model: "custom:unpriced-model", agentId: "exec" }),
+    });
+
+    const result = await service.setGoal({
+      workspaceId,
+      objective: "Do not spend unpriced",
+      budgetCents: 0,
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toMatchObject({ type: "invalid_transition" });
+    }
+    expect(await service.getGoal(workspaceId)).toBeNull();
+  });
+
+  test("creates zero-budget goals as budget_limited without arming kickoff continuation", async () => {
+    const dispatcher = new IdleDispatcher();
+    const execute = mock(() => Promise.resolve(true));
+    service.registerGoalContinuationConsumer(dispatcher, continuationBridge(execute));
+
+    const created = await setGoalOk(service, {
+      workspaceId,
+      objective: "Do not spend",
+      budgetCents: 0,
+    });
+    await drainPendingDispatches();
+
+    expect(created).toMatchObject({ status: "budget_limited", budgetCents: 0 });
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  test("arms a kickoff continuation when a brand-new goal is set on an idle workspace", async () => {
+    const dispatcher = new IdleDispatcher();
+    const executed: Array<{ message: string; kind: string | undefined }> = [];
+    service.registerGoalContinuationConsumer(dispatcher, {
+      isGoalExperimentEnabled: () => true,
+      hasActiveDescendantTasks: () => false,
+      getRuntimeState: () => ({ isRuntimeCompatible: true }),
+      executeGoalContinuation: (input) => {
+        executed.push({ message: input.message, kind: input.kind });
+        return Promise.resolve(true);
+      },
+      getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+    });
+
+    await setGoalOk(service, { workspaceId, objective: "Kick off without a prior stream" });
+    await waitForCondition(() => executed.length > 0, { timeoutMs: 1_000 });
+
+    expect(executed[0]?.message).toContain("<untrusted_objective>");
+    expect(executed[0]?.kind).toBe("goal_continuation");
+  });
+
+  test("arms a kickoff continuation when resuming a paused goal on an idle workspace", async () => {
+    const dispatcher = new IdleDispatcher();
+    const executed: Array<{ message: string }> = [];
+    service.registerGoalContinuationConsumer(dispatcher, {
+      isGoalExperimentEnabled: () => true,
+      hasActiveDescendantTasks: () => false,
+      getRuntimeState: () => ({ isRuntimeCompatible: true }),
+      executeGoalContinuation: (input) => {
+        executed.push({ message: input.message });
+        return Promise.resolve(true);
+      },
+      getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+    });
+
+    await setGoalOk(service, { workspaceId, objective: "Resume after pause", status: "paused" });
+    expect(executed).toHaveLength(0);
+
+    await setGoalOk(service, { workspaceId, status: "active" });
+    await waitForCondition(() => executed.length > 0, { timeoutMs: 1_000 });
+
+    expect(executed[0]?.message).toContain("<untrusted_objective>");
+  });
+
+  test("skips the kickoff arm when no kickoff send options are available", async () => {
+    const dispatcher = new IdleDispatcher();
+    const executed: Array<{ message: string }> = [];
+    service.registerGoalContinuationConsumer(dispatcher, {
+      isGoalExperimentEnabled: () => true,
+      hasActiveDescendantTasks: () => false,
+      getRuntimeState: () => ({ isRuntimeCompatible: true }),
+      executeGoalContinuation: (input) => {
+        executed.push({ message: input.message });
+        return Promise.resolve(true);
+      },
+      getKickoffSendOptions: () => null,
+    });
+
+    // Negative assertion: the kickoff arm short-circuits synchronously when
+    // getKickoffSendOptions returns null, so no microtask hop is needed.
+    await setGoalOk(service, { workspaceId, objective: "No kickoff defaults" });
+
+    expect(executed).toHaveLength(0);
+  });
+
+  test("requestContinuationAfterStreamEnd is a no-op when the GOALS experiment is disabled", async () => {
+    // Coder-agents-review P3 DEREM-40 (sibling to DEREM-37 / DEREM-19):
+    // pin the experiment-off short-circuit so a regression that removed or
+    // inverted the gate would be caught. Without the gate, every
+    // non-compaction stream-end pays a `goal.json` ENOENT read +
+    // `extensionMetadata.json` write for users with the experiment off.
+    await setGoalOk(service, { workspaceId, objective: "Should never dispatch" });
+    const dispatcher = new IdleDispatcher();
+    const execute = mock(() => Promise.resolve(true));
+    const getGoalSpy = spyOn(service, "getGoal");
+    service.registerGoalContinuationConsumer(dispatcher, {
+      isGoalExperimentEnabled: () => false,
+      hasActiveDescendantTasks: () => false,
+      getRuntimeState: () => ({ isRuntimeCompatible: true }),
+      executeGoalContinuation: execute,
+    });
+
+    // Reset the spy *after* registration so we can prove the
+    // request-continuation call below does not read goal.json again.
+    getGoalSpy.mockClear();
+
+    await service.requestContinuationAfterStreamEnd({
+      workspaceId,
+      sendOptions: { model: "openai:gpt-4o", agentId: "exec" },
+      streamEndedAtMs: 10_000,
+    });
+
+    expect(getGoalSpy).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+    getGoalSpy.mockRestore();
+  });
+
+  test("falls back to priced kickoff options when stream options are unpriced for budgeted goals", async () => {
+    await setGoalOk(service, {
+      workspaceId,
+      objective: "Use priced fallback",
+      budgetCents: 500,
+    });
+    const dispatcher = new IdleDispatcher();
+    const seenModels: string[] = [];
+    service.registerGoalContinuationConsumer(dispatcher, {
+      ...continuationBridge((input) => {
+        seenModels.push(input.options.model);
+        return Promise.resolve(true);
+      }),
+      getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+    });
+
+    await service.requestContinuationAfterStreamEnd({
+      workspaceId,
+      sendOptions: { model: "custom:unpriced-model", agentId: "exec" },
+      streamEndedAtMs: 10_000,
+    });
+    await waitForCondition(() => seenModels.length > 0, { timeoutMs: 1_000 });
+
+    expect(seenModels).toEqual(["openai:gpt-4o"]);
+  });
+
+  test("dispatches an eligible active-goal continuation and records cooldown telemetry", async () => {
+    await setGoalOk(service, { workspaceId, objective: "Keep going until tests pass" });
+    const dispatcher = new IdleDispatcher();
+    const executed: Array<{ message: string; workspaceId: string }> = [];
+    service.registerGoalContinuationConsumer(
+      dispatcher,
+      continuationBridge((input) => {
+        executed.push({ message: input.message, workspaceId: input.workspaceId });
+        return Promise.resolve(true);
+      })
+    );
+
+    await service.requestContinuationAfterStreamEnd({
+      workspaceId,
+      sendOptions: { model: "openai:gpt-4o", agentId: "exec" },
+      streamEndedAtMs: 10_000,
+    });
+
+    expect(executed).toHaveLength(1);
+    expect(executed[0]?.workspaceId).toBe(workspaceId);
+    expect(executed[0]?.message).toContain("<untrusted_objective>");
+    const updated = await service.getGoal(workspaceId);
+    expect(typeof updated?.lastContinuationFiredAtMs).toBe("number");
+    expect(analytics.recordGoalLifecycleEvent).toHaveBeenCalledWith(
+      "goal_continuation_fired",
+      expect.objectContaining({ source: "stream_end_idle_dispatch" })
+    );
+  });
+
+  test("dispatches one budget-limit wrap-up after a continuation-origin stream exhausts the budget", async () => {
+    const created = await setGoalOk(service, {
+      workspaceId,
+      objective: "Stop cleanly after budget",
+      budgetCents: 100,
+    });
+    const dispatcher = new IdleDispatcher();
+    const executed: Array<{ kind: string | undefined; message: string }> = [];
+    service.registerGoalContinuationConsumer(
+      dispatcher,
+      continuationBridge((input) => {
+        executed.push({ kind: input.kind, message: input.message });
+        return Promise.resolve(true);
+      })
+    );
+
+    await service.recordStreamAccounting({
+      workspaceId,
+      costUsd: 1.25,
+      streamStartedAtMs: created.createdAtMs + 1,
+      streamOriginKind: "goal_continuation",
+    });
+    await service.requestContinuationAfterStreamEnd({
+      workspaceId,
+      sendOptions: { model: "openai:gpt-4o", agentId: "exec" },
+      streamEndedAtMs: 20_000,
+    });
+    await dispatcher.requestDispatch(workspaceId, GOAL_CONTINUATION_IDLE_CONSUMER_NAME);
+
+    expect(executed).toHaveLength(1);
+    expect(executed[0]).toMatchObject({ kind: GOAL_BUDGET_LIMIT_KIND });
+    expect(executed[0]?.message).toContain("The budget for this goal has been exhausted.");
+    expect(await service.getGoal(workspaceId)).toMatchObject({
+      status: "budget_limited",
+      budgetLimitInjectedForGoalId: created.goalId,
+    });
+    expect(analytics.recordGoalLifecycleEvent).toHaveBeenCalledWith(
+      "goal_wrapup_fired",
+      expect.objectContaining({ source: "stream_end_idle_dispatch", "cost-overshoot": "1-99" })
+    );
+  });
+
+  test("dispatches budget-limit wrap-up after an agent-initiated non-continuation stream exhausts the budget", async () => {
+    const created = await setGoalOk(service, {
+      workspaceId,
+      objective: "Stop cleanly after agent-initiated budget hit",
+      budgetCents: 100,
+    });
+    const dispatcher = new IdleDispatcher();
+    const executed: Array<{ kind: string | undefined; message: string }> = [];
+    service.registerGoalContinuationConsumer(
+      dispatcher,
+      continuationBridge((input) => {
+        executed.push({ kind: input.kind, message: input.message });
+        return Promise.resolve(true);
+      })
+    );
+
+    await service.recordStreamAccounting({
+      workspaceId,
+      costUsd: 1.25,
+      streamStartedAtMs: created.createdAtMs + 1,
+      streamOriginKind: "other",
+    });
+    await service.requestContinuationAfterStreamEnd({
+      workspaceId,
+      sendOptions: { model: "openai:gpt-4o", agentId: "exec" },
+      streamEndedAtMs: 20_000,
+    });
+    await dispatcher.requestDispatch(workspaceId, GOAL_CONTINUATION_IDLE_CONSUMER_NAME);
+
+    expect(executed).toHaveLength(1);
+    expect(executed[0]).toMatchObject({ kind: GOAL_BUDGET_LIMIT_KIND });
+    expect(await service.getGoal(workspaceId)).toMatchObject({
+      status: "budget_limited",
+      budgetLimitInjectedForGoalId: created.goalId,
+      budgetLimitOriginKind: "other",
+    });
+  });
+
+  test("replacing a goal while a stale continuation candidate exists arms the new goal", async () => {
+    let busy = true;
+    const dispatcher = new IdleDispatcher();
+    const executed: string[] = [];
+    service.registerGoalContinuationConsumer(dispatcher, {
+      ...continuationBridge((input) => {
+        executed.push(input.message);
+        return Promise.resolve(true);
+      }),
+      getRuntimeState: () => ({ isRuntimeCompatible: true, isBusy: busy }),
+      getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+    });
+
+    const first = await setGoalOk(service, { workspaceId, objective: "First goal" });
+    await service.requestContinuationAfterStreamEnd({
+      workspaceId,
+      sendOptions: { model: "openai:gpt-4o", agentId: "exec" },
+      streamEndedAtMs: first.createdAtMs + 1,
+    });
+    await drainPendingDispatches();
+    expect(executed).toEqual([]);
+
+    busy = false;
+    await setGoalOk(service, { workspaceId, objective: "Second goal" });
+    await waitForCondition(() => executed.length > 0, { timeoutMs: 1_000 });
+
+    expect(executed).toHaveLength(1);
+    expect(executed[0]).toContain("Second goal");
+  });
+
+  test("rejects resuming budgeted goals when kickoff model has no pricing", async () => {
+    const dispatcher = new IdleDispatcher();
+    service.registerGoalContinuationConsumer(dispatcher, {
+      ...continuationBridge(),
+      getKickoffSendOptions: () => ({ model: "custom:unpriced-model", agentId: "exec" }),
+    });
+    const created = await setGoalOk(service, {
+      workspaceId,
+      objective: "Paused budgeted goal",
+      status: "paused",
+      budgetCents: 500,
+    });
+
+    const result = await service.setGoal({
+      workspaceId,
+      objective: created.objective,
+      status: "active",
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toMatchObject({ type: "invalid_transition" });
+    }
+    expect(await service.getGoal(workspaceId)).toMatchObject({ status: "paused" });
+  });
+
+  test("explicit user resume clears the user-stop gate", async () => {
+    // Regression: lastUserStopAtMsByWorkspace was never cleared on resume, so
+    // once a user interrupted a stream after goal creation, all future
+    // continuation candidates for that goal were rejected forever as
+    // `user_stop` (the gate compares against the goal's createdAtMs, which
+    // never changes when the goal is paused/resumed).
+    const created = await setGoalOk(service, {
+      workspaceId,
+      objective: "Survive a user interruption",
+    });
+    const dispatcher = new IdleDispatcher();
+    const execute = mock(() => Promise.resolve(true));
+    service.registerGoalContinuationConsumer(dispatcher, continuationBridge(execute));
+
+    // User stops mid-stream after goal creation, then pauses.
+    await service.recordUserStoppedStream(workspaceId, created.createdAtMs + 5_000);
+    await setGoalOk(service, {
+      workspaceId,
+      objective: created.objective,
+      status: "paused",
+      initiator: "user",
+    });
+    expect(await service.getGoal(workspaceId)).toMatchObject({ status: "paused" });
+
+    // User resumes. The next continuation must fire — without the gate clear,
+    // the dispatcher would silently reject all candidates with `user_stop`.
+    await setGoalOk(service, {
+      workspaceId,
+      objective: created.objective,
+      status: "active",
+      initiator: "user",
+    });
+
+    await service.requestContinuationAfterStreamEnd({
+      workspaceId,
+      sendOptions: { model: "openai:gpt-4o", agentId: "exec" },
+      streamEndedAtMs: created.createdAtMs + 10_000,
+    });
+
+    // No kickoff path here (no getKickoffSendOptions); only the stream-end
+    // dispatch should fire — and it must, because the gate is cleared.
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  test("explicit resume re-requests a gated same-goal continuation candidate", async () => {
+    const created = await setGoalOk(service, {
+      workspaceId,
+      objective: "Resume gated candidate",
+    });
+    const dispatcher = new IdleDispatcher();
+    const execute = mock(() => Promise.resolve(true));
+    service.registerGoalContinuationConsumer(dispatcher, {
+      ...continuationBridge(execute),
+      getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+    });
+
+    await service.recordUserStoppedStream(workspaceId, created.createdAtMs + 5_000);
+    await service.requestContinuationAfterStreamEnd({
+      workspaceId,
+      sendOptions: { model: "openai:gpt-4o", agentId: "exec" },
+      streamEndedAtMs: created.createdAtMs + 6_000,
+    });
+    await drainPendingDispatches();
+    expect(execute).not.toHaveBeenCalled();
+
+    await setGoalOk(service, { workspaceId, objective: created.objective, status: "paused" });
+    await setGoalOk(service, { workspaceId, objective: created.objective, status: "active" });
+    await waitForCondition(() => execute.mock.calls.length > 0, { timeoutMs: 1_000 });
+
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  test("startup recovery does not rearm an active goal after a persisted user stop", async () => {
+    const created = await setGoalOk(service, {
+      workspaceId,
+      objective: "Stay stopped after restart",
+    });
+    await service.recordUserStoppedStream(workspaceId, created.createdAtMs + 5_000);
+
+    const restartedService = new WorkspaceGoalService(
+      config,
+      historyService,
+      extensionMetadata,
+      analytics
+    );
+    const dispatcher = new IdleDispatcher();
+    const execute = mock(() => Promise.resolve(true));
+    restartedService.registerGoalContinuationConsumer(dispatcher, {
+      ...continuationBridge(execute),
+      getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+    });
+
+    await restartedService.recoverPendingDispatchAfterRestart(workspaceId);
+    await drainPendingDispatches();
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(await restartedService.getGoal(workspaceId)).toMatchObject({
+      status: "active",
+      requireUserAcknowledgmentSinceMs: created.createdAtMs + 5_000,
+    });
+  });
+
+  test("rejected wrap-up send leaves the candidate retryable on the next dispatch", async () => {
+    // Regression: tryMarkBudgetLimitInjected used to flip permanently before the
+    // send. A transient sendMessage rejection (e.g. requireIdle race) then locked
+    // the goal into budget_limited with no wrap-up. Now we mark only after a
+    // successful send so a retry works.
+    const created = await setGoalOk(service, {
+      workspaceId,
+      objective: "Retry wrap-up after rejection",
+      budgetCents: 100,
+    });
+    const dispatcher = new IdleDispatcher();
+    // First call rejects (transient), second call accepts.
+    let callCount = 0;
+    const execute = mock(() => {
+      callCount += 1;
+      return Promise.resolve(callCount > 1);
+    });
+    service.registerGoalContinuationConsumer(dispatcher, continuationBridge(execute));
+
+    await service.recordStreamAccounting({
+      workspaceId,
+      costUsd: 1.25,
+      streamStartedAtMs: created.createdAtMs + 1,
+      streamOriginKind: "goal_continuation",
+    });
+
+    // requestContinuationAfterStreamEnd internally triggers one dispatch (the
+    // rejected one). The explicit second requestDispatch here simulates the
+    // next stream-end and exercises the retry path.
+    await service.requestContinuationAfterStreamEnd({
+      workspaceId,
+      sendOptions: { model: "openai:gpt-4o", agentId: "exec" },
+      streamEndedAtMs: 20_000,
+    });
+    await dispatcher.requestDispatch(workspaceId, GOAL_CONTINUATION_IDLE_CONSUMER_NAME);
+
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(await service.getGoal(workspaceId)).toMatchObject({
+      status: "budget_limited",
+      budgetLimitInjectedForGoalId: created.goalId,
+    });
+  });
+
+  test("suppresses budget-limit wrap-up after user-origin stream exhaustion", async () => {
+    const created = await setGoalOk(service, {
+      workspaceId,
+      objective: "User owns over-budget turn",
+      budgetCents: 100,
+    });
+    const dispatcher = new IdleDispatcher();
+    const execute = mock(() => Promise.resolve(true));
+    service.registerGoalContinuationConsumer(dispatcher, continuationBridge(execute));
+
+    await service.recordStreamAccounting({
+      workspaceId,
+      costUsd: 1.25,
+      streamStartedAtMs: created.createdAtMs + 1,
+      streamOriginKind: "user",
+    });
+    await service.requestContinuationAfterStreamEnd({
+      workspaceId,
+      sendOptions: { model: "openai:gpt-4o", agentId: "exec" },
+      streamEndedAtMs: 20_000,
+    });
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(await service.getGoal(workspaceId)).toMatchObject({
+      status: "budget_limited",
+      budgetLimitInjectedForGoalId: null,
+    });
+  });
+
+  test("recoverPendingDispatchAfterRestart re-arms a stranded budget_limited wrap-up", async () => {
+    // Regression for Coder-agents-review P2 DEREM-16. Simulates a process
+    // restart by:
+    //  1. Setting up a budgeted goal + recording a continuation-origin stream
+    //     that exhausts the budget. This puts the goal in `budget_limited`
+    //     with `budgetLimitInjectedForGoalId === null` AND an in-memory
+    //     stamp/candidate.
+    //  2. Throwing away the in-memory state by re-instantiating the service.
+    //  3. Calling `recoverPendingDispatchAfterRestart` and checking that the
+    //     wrap-up fires on the next idle dispatch.
+    const created = await setGoalOk(service, {
+      workspaceId,
+      objective: "Survive a restart with the wrap-up still owed",
+      budgetCents: 100,
+    });
+    await service.recordStreamAccounting({
+      workspaceId,
+      costUsd: 1.25,
+      streamStartedAtMs: created.createdAtMs + 1,
+      streamOriginKind: "goal_continuation",
+    });
+    expect(await service.getGoal(workspaceId)).toMatchObject({
+      status: "budget_limited",
+      budgetLimitInjectedForGoalId: null,
+    });
+
+    // Simulate restart: throw away the in-memory state.
+    const restartedService = new WorkspaceGoalService(
+      config,
+      historyService,
+      extensionMetadata,
+      analytics
+    );
+    const dispatcher = new IdleDispatcher();
+    const executed: Array<{ kind: string | undefined; message: string }> = [];
+    restartedService.registerGoalContinuationConsumer(dispatcher, {
+      isGoalExperimentEnabled: () => true,
+      hasActiveDescendantTasks: () => false,
+      getRuntimeState: () => ({ isRuntimeCompatible: true }),
+      executeGoalContinuation: (input) => {
+        executed.push({ kind: input.kind, message: input.message });
+        return Promise.resolve(true);
+      },
+      // Recovery synthesizes a candidate from scratch, which requires a
+      // kickoff send-options provider to know how to dispatch the wrap-up.
+      getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+    });
+
+    await restartedService.recoverPendingDispatchAfterRestart(workspaceId);
+    await waitForCondition(() => executed.length > 0, { timeoutMs: 1_000 });
+
+    expect(executed).toHaveLength(1);
+    expect(executed[0]).toMatchObject({ kind: GOAL_BUDGET_LIMIT_KIND });
+    expect(await restartedService.getGoal(workspaceId)).toMatchObject({
+      status: "budget_limited",
+      budgetLimitInjectedForGoalId: created.goalId,
+    });
+  });
+
+  test("recoverPendingDispatchAfterRestart skips wrap-up when the budget hit was user-origin (DEREM-54)", async () => {
+    // The pre-restart code suppressed wrap-ups when the originating stream
+    // was user-origin (`checkGoalContinuationEligibility` returns
+    // `budget_wrapup_suppressed`). After restart, in-memory
+    // `lastGoalStreamStamps` is empty, so without persisted origin info the
+    // recovery function would synthesize a GOAL_CONTINUATION_KIND stamp and
+    // bypass the suppression. Persisting `budgetLimitOriginKind` on the
+    // active→budget_limited transition fixes this.
+    const created = await setGoalOk(service, {
+      workspaceId,
+      objective: "User exhausts budget mid-clarification",
+      budgetCents: 100,
+    });
+    await service.recordStreamAccounting({
+      workspaceId,
+      costUsd: 1.25,
+      streamStartedAtMs: created.createdAtMs + 1,
+      streamOriginKind: "user",
+    });
+    const persisted = await service.getGoal(workspaceId);
+    expect(persisted).toMatchObject({
+      status: "budget_limited",
+      budgetLimitInjectedForGoalId: null,
+      budgetLimitOriginKind: "user",
+    });
+
+    // Simulate restart.
+    const restartedService = new WorkspaceGoalService(
+      config,
+      historyService,
+      extensionMetadata,
+      analytics
+    );
+    const dispatcher = new IdleDispatcher();
+    const execute = mock(() => Promise.resolve(true));
+    restartedService.registerGoalContinuationConsumer(dispatcher, {
+      isGoalExperimentEnabled: () => true,
+      hasActiveDescendantTasks: () => false,
+      getRuntimeState: () => ({ isRuntimeCompatible: true }),
+      executeGoalContinuation: execute,
+      getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+    });
+
+    await restartedService.recoverPendingDispatchAfterRestart(workspaceId);
+    await drainPendingDispatches();
+
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  test("recoverPendingDispatchAfterRestart is a no-op for already-fired wrap-ups", async () => {
+    const created = await setGoalOk(service, {
+      workspaceId,
+      objective: "Already wrapped up",
+      budgetCents: 100,
+    });
+    await service.recordStreamAccounting({
+      workspaceId,
+      costUsd: 1.25,
+      streamStartedAtMs: created.createdAtMs + 1,
+      streamOriginKind: "goal_continuation",
+    });
+    // Simulate wrap-up already firing pre-restart.
+    await setGoalOk(service, {
+      workspaceId,
+      objective: created.objective,
+      status: "complete",
+      completionSummary: "Done.",
+    });
+
+    const restartedService = new WorkspaceGoalService(
+      config,
+      historyService,
+      extensionMetadata,
+      analytics
+    );
+    const dispatcher = new IdleDispatcher();
+    const execute = mock(() => Promise.resolve(true));
+    restartedService.registerGoalContinuationConsumer(dispatcher, continuationBridge(execute));
+
+    await restartedService.recoverPendingDispatchAfterRestart(workspaceId);
+    await dispatcher.requestDispatch(workspaceId, GOAL_CONTINUATION_IDLE_CONSUMER_NAME);
+
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  test("recordUserStoppedStream drops queued goal mutations alongside continuation candidates", async () => {
+    // Regression for Coder-agents-review P2 DEREM-18: pendingGoalMutations
+    // were not cleared on user stop, so a setGoal racing with a stop would
+    // leak into the NEXT stream's stream-end via applyPendingAfterStreamEnd
+    // and bypass the lastUserStopAtMsByWorkspace gate. Auto-continuation
+    // would then fire in a context the user did not intend.
+    const created = await setGoalOk(service, {
+      workspaceId,
+      objective: "Original objective",
+    });
+
+    // Simulate a setGoal arriving mid-stream (this queues a pending
+    // mutation in `pendingGoalMutations` because the workspace is streaming).
+    // Override the private streaming check so setGoal hits the queueing path.
+    const serviceAccess = service as unknown as {
+      isWorkspaceStreaming: (workspaceId: string) => Promise<boolean>;
+    };
+    const isStreamingOriginal = serviceAccess.isWorkspaceStreaming;
+    serviceAccess.isWorkspaceStreaming = () => Promise.resolve(true);
+    try {
+      const queued = await service.setGoal({
+        workspaceId,
+        objective: "Should be dropped after user stop",
+        expectedGoalId: created.goalId,
+      });
+      expect(queued.success).toBe(true);
+    } finally {
+      serviceAccess.isWorkspaceStreaming = isStreamingOriginal;
+    }
+
+    await service.recordUserStoppedStream(workspaceId, created.createdAtMs + 5_000);
+
+    // applyPendingAfterStreamEnd should now be a no-op — the queued mutation
+    // was discarded along with the continuation candidate.
+    const applied = await service.applyPendingAfterStreamEnd(workspaceId);
+    expect(applied).toBeNull();
+    expect(await service.getGoal(workspaceId)).toMatchObject({
+      objective: "Original objective",
+    });
+  });
+
+  test("raising the budget re-arms one later continuation-origin wrap-up", async () => {
+    const created = await setGoalOk(service, {
+      workspaceId,
+      objective: "Re-arm wrap-up",
+      budgetCents: 100,
+    });
+    const dispatcher = new IdleDispatcher();
+    const executed: Array<{ kind: string | undefined }> = [];
+    service.registerGoalContinuationConsumer(
+      dispatcher,
+      continuationBridge((input) => {
+        executed.push({ kind: input.kind });
+        return Promise.resolve(true);
+      })
+    );
+
+    await service.recordStreamAccounting({
+      workspaceId,
+      costUsd: 1.25,
+      streamStartedAtMs: created.createdAtMs + 1,
+      streamOriginKind: "goal_continuation",
+    });
+    await service.requestContinuationAfterStreamEnd({
+      workspaceId,
+      sendOptions: { model: "openai:gpt-4o", agentId: "exec" },
+      streamEndedAtMs: 20_000,
+    });
+    expect(executed).toHaveLength(1);
+
+    const rearmed = await setGoalOk(service, { workspaceId, budgetCents: 200 });
+    expect(rearmed).toMatchObject({ status: "active", budgetLimitInjectedForGoalId: null });
+
+    await service.recordStreamAccounting({
+      workspaceId,
+      costUsd: 1,
+      streamStartedAtMs: rearmed.createdAtMs + 1,
+      streamOriginKind: "goal_continuation",
+    });
+    await service.requestContinuationAfterStreamEnd({
+      workspaceId,
+      sendOptions: { model: "openai:gpt-4o", agentId: "exec" },
+      streamEndedAtMs: 30_000,
+    });
+
+    expect(executed).toEqual([{ kind: GOAL_BUDGET_LIMIT_KIND }, { kind: GOAL_BUDGET_LIMIT_KIND }]);
+    expect(await service.getGoal(workspaceId)).toMatchObject({
+      status: "budget_limited",
+      budgetLimitInjectedForGoalId: created.goalId,
+    });
+  });
+
+  test("serializes four active workspaces that all request goal continuations at once", async () => {
+    const workspaceIds = [workspaceId, "goal-parent-2", "goal-parent-3", "goal-parent-4"];
+    for (const id of workspaceIds.slice(1)) {
+      await config.addWorkspace(PROJECT_PATH, {
+        id,
+        name: id,
+        projectName: "mux-goal-service-test-project",
+        projectPath: PROJECT_PATH,
+        runtimeConfig: { type: "local" },
+      });
+    }
+    for (const id of workspaceIds) {
+      await setGoalOk(service, { workspaceId: id, objective: `Keep ${id} moving` });
+    }
+
+    const dispatcher = new IdleDispatcher();
+    const events: string[] = [];
+    const releaseByWorkspaceId = new Map<string, () => void>();
+    const gateByWorkspaceId = new Map<string, Promise<void>>();
+    let activeContinuations = 0;
+    let maxActiveContinuations = 0;
+
+    for (const id of workspaceIds) {
+      gateByWorkspaceId.set(
+        id,
+        new Promise<void>((resolve) => {
+          releaseByWorkspaceId.set(id, resolve);
+        })
+      );
+    }
+
+    service.registerGoalContinuationConsumer(
+      dispatcher,
+      continuationBridge(async (input) => {
+        activeContinuations += 1;
+        maxActiveContinuations = Math.max(maxActiveContinuations, activeContinuations);
+        events.push(`start:${input.workspaceId}`);
+        const gate = gateByWorkspaceId.get(input.workspaceId);
+        if (!gate) {
+          throw new Error(`Missing continuation gate for ${input.workspaceId}`);
+        }
+        await gate;
+        events.push(`end:${input.workspaceId}`);
+        activeContinuations -= 1;
+        return true;
+      })
+    );
+
+    const requests = workspaceIds.map((id) =>
+      service.requestContinuationAfterStreamEnd({
+        workspaceId: id,
+        sendOptions: { model: "openai:gpt-4o", agentId: "exec" },
+        streamEndedAtMs: 10_000,
+      })
+    );
+    await waitForCondition(() => events.some((event) => event.startsWith("start:")));
+    // Drain so any spurious extra dispatches would surface before we assert
+    // the global concurrency cap holds. There is no clean deterministic
+    // signal here — we are asserting absence of events.
+    await drainPendingDispatches();
+    expect(events).toHaveLength(1);
+    expect(maxActiveContinuations).toBe(1);
+
+    let currentWorkspaceId = events[0]?.replace("start:", "");
+    if (!currentWorkspaceId) {
+      throw new Error("Expected a started continuation workspace");
+    }
+    for (let index = 0; index < workspaceIds.length; index += 1) {
+      const releaseCurrent = releaseByWorkspaceId.get(currentWorkspaceId);
+      if (!releaseCurrent) {
+        throw new Error(`Missing continuation release for ${currentWorkspaceId}`);
+      }
+      releaseCurrent();
+      await waitForCondition(() => events.includes(`end:${currentWorkspaceId}`));
+      const expectedStartCount = index + 2;
+      if (expectedStartCount <= workspaceIds.length) {
+        await waitForCondition(
+          () => events.filter((event) => event.startsWith("start:")).length === expectedStartCount
+        );
+        const nextWorkspaceId = events
+          .filter((event) => event.startsWith("start:"))
+          .at(-1)
+          ?.replace("start:", "");
+        if (!nextWorkspaceId) {
+          throw new Error("Expected the next started continuation workspace");
+        }
+        currentWorkspaceId = nextWorkspaceId;
+        expect(maxActiveContinuations).toBe(1);
+      }
+    }
+
+    await Promise.all(requests);
+    expect(events).toHaveLength(workspaceIds.length * 2);
+    expect(
+      events
+        .filter((event) => event.startsWith("start:"))
+        .map((event) => event.slice(6))
+        .sort()
+    ).toEqual([...workspaceIds].sort());
+    expect(
+      events
+        .filter((event) => event.startsWith("end:"))
+        .map((event) => event.slice(4))
+        .sort()
+    ).toEqual([...workspaceIds].sort());
+    expect(maxActiveContinuations).toBe(1);
+  });
+
+  test("does not dispatch stale continuation candidates after the goal changes", async () => {
+    await setGoalOk(service, { workspaceId, objective: "Original" });
+    const dispatcher = new IdleDispatcher({ debounceMs: 10 });
+    const execute = mock(() => Promise.resolve(true));
+    service.registerGoalContinuationConsumer(dispatcher, continuationBridge(execute));
+
+    const request = service.requestContinuationAfterStreamEnd({
+      workspaceId,
+      sendOptions: { model: "openai:gpt-4o", agentId: "exec" },
+      streamEndedAtMs: 10_000,
+    });
+    await setGoalOk(service, { workspaceId, objective: "Replacement" });
+    await request;
+
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  test("preserves goal id and accounting for same-objective set", async () => {
+    const created = await setGoalOk(service, { workspaceId, objective: "Same objective" });
+    await fs.writeFile(
+      path.join(config.getSessionDir(workspaceId), "goal.json"),
+      JSON.stringify({ ...created, costCents: 123, turnsUsed: 4 })
+    );
+
+    const same = await setGoalOk(service, { workspaceId, objective: "  Same objective  " });
+
+    expect(same.goalId).toBe(created.goalId);
+    expect(same.costCents).toBe(123);
+    expect(same.turnsUsed).toBe(4);
+    expect(analytics.recordGoalLifecycleEvent).toHaveBeenCalledWith(
+      "goal_replaced",
+      expect.objectContaining({ sameObjective: true })
+    );
+  });
+
+  test("replaces different objective with a new goal id and reset accounting", async () => {
+    const created = await setGoalOk(service, { workspaceId, objective: "First objective" });
+    await fs.writeFile(
+      path.join(config.getSessionDir(workspaceId), "goal.json"),
+      JSON.stringify({ ...created, costCents: 123, turnsUsed: 4 })
+    );
+
+    const replaced = await setGoalOk(service, { workspaceId, objective: "Second objective" });
+
+    expect(replaced.goalId).not.toBe(created.goalId);
+    expect(replaced.costCents).toBe(0);
+    expect(replaced.turnsUsed).toBe(0);
+    expect(replaced.objective).toBe("Second objective");
+  });
+
+  test("allows writes when expectedGoalId matches the current goal", async () => {
+    const created = await setGoalOk(service, { workspaceId, objective: "Concurrent goal" });
+
+    const result = await service.setGoal({
+      workspaceId,
+      status: "paused",
+      expectedGoalId: created.goalId,
+    });
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      throw new Error(`Expected matching goalId write to succeed: ${JSON.stringify(result.error)}`);
+    }
+    expect(result.data).toMatchObject({ goalId: created.goalId, status: "paused" });
+  });
+
+  test("returns a typed conflict when expectedGoalId explicitly expects no goal", async () => {
+    const created = await setGoalOk(service, { workspaceId, objective: "existing" });
+
+    const result = await service.setGoal({
+      workspaceId,
+      objective: "new",
+      expectedGoalId: null,
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toEqual({
+        type: "goal_conflict",
+        expectedGoalId: null,
+        actualGoalId: created.goalId,
+      });
+    }
+  });
+
+  test("returns a typed conflict when expectedGoalId does not match", async () => {
+    const created = await setGoalOk(service, { workspaceId, objective: "Original goal" });
+    const replaced = await setGoalOk(service, { workspaceId, objective: "Replacement goal" });
+
+    const result = await service.setGoal({
+      workspaceId,
+      status: "paused",
+      expectedGoalId: created.goalId,
+    });
+
+    expect(result).toEqual({
+      success: false,
+      error: {
+        type: "goal_conflict",
+        expectedGoalId: created.goalId,
+        actualGoalId: replaced.goalId,
+      },
+    });
+    expect(await service.getGoal(workspaceId)).toMatchObject({
+      goalId: replaced.goalId,
+      status: "active",
+    });
+  });
+
+  test("uses last-writer-wins when expectedGoalId is omitted", async () => {
+    const created = await setGoalOk(service, { workspaceId, objective: "First goal" });
+
+    const result = await service.setGoal({ workspaceId, objective: "Last writer goal" });
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      throw new Error(`Expected omitted goalId write to succeed: ${JSON.stringify(result.error)}`);
+    }
+    expect(result.data.goalId).not.toBe(created.goalId);
+    expect(result.data.objective).toBe("Last writer goal");
+  });
+
+  test("resolves concurrent expectedGoalId writes with one success and one conflict", async () => {
+    const created = await setGoalOk(service, { workspaceId, objective: "Race origin" });
+
+    const results = await Promise.all([
+      service.setGoal({
+        workspaceId,
+        objective: "Race winner A",
+        expectedGoalId: created.goalId,
+      }),
+      service.setGoal({
+        workspaceId,
+        objective: "Race winner B",
+        expectedGoalId: created.goalId,
+      }),
+    ]);
+
+    const successes = results.filter((result) => result.success);
+    const conflicts = results.filter((result) => !result.success);
+    expect(successes).toHaveLength(1);
+    expect(conflicts).toHaveLength(1);
+    expect(conflicts[0]).toEqual({
+      success: false,
+      error: {
+        type: "goal_conflict",
+        expectedGoalId: created.goalId,
+        actualGoalId: successes[0]?.success ? successes[0].data.goalId : null,
+      },
+    });
+  });
+
+  test("rejects child workspaces", async () => {
+    const childWorkspaceId = "goal-child";
+    await config.addWorkspace(PROJECT_PATH, {
+      id: childWorkspaceId,
+      name: "child",
+      projectName: "mux-goal-service-test-project",
+      projectPath: PROJECT_PATH,
+      runtimeConfig: { type: "local" },
+      parentWorkspaceId: workspaceId,
+    });
+
+    // DEREM-36: setGoal now catches WorkspaceGoalChildWorkspaceError and
+    // returns it as a typed Result error so the oRPC handler doesn't leak
+    // it as an unhandled 500.
+    const result = await service.setGoal({
+      workspaceId: childWorkspaceId,
+      objective: "child goal",
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.type).toBe("child_workspace");
+    }
+  });
+
+  for (const sourceStatus of [
+    "active",
+    "paused",
+    "budget_limited",
+    "complete",
+  ] satisfies GoalStatus[]) {
+    test(`inherits ${sourceStatus} goal into a paused fork with fresh accounting`, async () => {
+      const forkWorkspaceId = `goal-fork-${sourceStatus}`;
+      await config.addWorkspace(PROJECT_PATH, {
+        id: forkWorkspaceId,
+        name: `fork-${sourceStatus}`,
+        projectName: "mux-goal-service-test-project",
+        projectPath: PROJECT_PATH,
+        runtimeConfig: { type: "local" },
+      });
+
+      let parent = await setGoalOk(service, {
+        workspaceId,
+        objective: "Ship inherited goal",
+        budgetCents: 500,
+        turnCap: 7,
+      });
+      if (sourceStatus === "paused") {
+        parent = await setGoalOk(service, { workspaceId, status: "paused" });
+      } else if (sourceStatus === "budget_limited") {
+        parent = await setGoalOk(service, { workspaceId, status: "budget_limited" });
+      } else if (sourceStatus === "complete") {
+        parent = await setGoalOk(service, {
+          workspaceId,
+          status: "complete",
+          completionSummary: "Done in the parent.",
+        });
+      }
+      const parentWithAccounting: GoalRecordV1 = {
+        ...parent,
+        costCents: 123,
+        turnsUsed: 4,
+        attributedChildren: ["child-a"],
+        budgetLimitInjectedForGoalId: parent.goalId,
+        requireUserAcknowledgmentSinceMs: parent.createdAtMs + 1,
+      };
+      await fs.writeFile(
+        path.join(config.getSessionDir(workspaceId), "goal.json"),
+        `${JSON.stringify(parentWithAccounting, null, 2)}\n`
+      );
+
+      const beforeInheritMs = Date.now();
+      const inherited = await service.inheritFromFork(workspaceId, forkWorkspaceId);
+      const afterInheritMs = Date.now();
+
+      expect(inherited).toMatchObject({
+        objective: "Ship inherited goal",
+        budgetCents: 500,
+        turnCap: 7,
+        status: "paused",
+        costCents: 0,
+        turnsUsed: 0,
+        attributedChildren: [],
+        budgetLimitInjectedForGoalId: null,
+        requireUserAcknowledgmentSinceMs: null,
+      });
+      expect(inherited?.goalId).not.toBe(parent.goalId);
+      expect(inherited?.completionSummary).toBeUndefined();
+      expect(inherited?.createdAtMs).toBeGreaterThanOrEqual(beforeInheritMs);
+      expect(inherited?.updatedAtMs).toBe(inherited?.createdAtMs);
+      expect(inherited?.updatedAtMs).toBeLessThanOrEqual(afterInheritMs);
+      expect(await service.getGoal(forkWorkspaceId)).toEqual(inherited);
+      expect(await service.getGoal(workspaceId)).toEqual(parentWithAccounting);
+      expect(analytics.recordGoalLifecycleEvent).toHaveBeenCalledWith(
+        "goal_created",
+        expect.objectContaining({ viaFork: true, hasBudget: true, hasTurnCap: true })
+      );
+    });
+  }
+
+  test("leaves a fork goal-less when the parent has no goal", async () => {
+    const forkWorkspaceId = "goal-fork-empty";
+    await config.addWorkspace(PROJECT_PATH, {
+      id: forkWorkspaceId,
+      name: "fork-empty",
+      projectName: "mux-goal-service-test-project",
+      projectPath: PROJECT_PATH,
+      runtimeConfig: { type: "local" },
+    });
+
+    const inherited = await service.inheritFromFork(workspaceId, forkWorkspaceId);
+
+    expect(inherited).toBeNull();
+    expect(await goalFileExists(config, forkWorkspaceId)).toBe(false);
+  });
+
+  test("renames corrupt goal file and treats workspace as having no goal", async () => {
+    const sessionDir = config.getSessionDir(workspaceId);
+    await fs.mkdir(sessionDir, { recursive: true });
+    await fs.writeFile(path.join(sessionDir, "goal.json"), "{ not json");
+
+    expect(await service.getGoal(workspaceId)).toBeNull();
+
+    const files = await fs.readdir(sessionDir);
+    expect(files.some((file) => /^goal\.json\.corrupt-\d+$/.test(file))).toBe(true);
+    expect(await extensionMetadata.getSnapshot(workspaceId)).toMatchObject({ goal: null });
+  });
+
+  test("applyPendingAfterStreamEnd swallows invalid-transition rejections instead of crashing the process", async () => {
+    // Coder-agents-review P2 DEREM-47: the stream-abort / stream-end /
+    // error listeners in WorkspaceService invoke this method via `void`. If
+    // a queued mutation triggered a transition error inside
+    // setGoalImmediately, it would surface as an unhandled-rejection
+    // process crash under `--unhandled-rejections=throw`. The fix wraps the
+    // call in try/catch and logs+returns null so the pipeline stays alive.
+    await setGoalOk(service, { workspaceId, objective: "Original" });
+    await setGoalOk(service, { workspaceId, status: "paused" });
+
+    // Force the streaming-branch path so the next setGoal queues a
+    // pending mutation rather than applying immediately.
+    await extensionMetadata.setStreaming(workspaceId, true);
+    // Queue a no-op pause against an already-paused goal — drained from
+    // applyPendingAfterStreamEnd this would throw `WorkspaceGoalTransitionError`
+    // inside `validateStatusTransition("paused", "paused", null)`.
+    const queueResult = await service.setGoal({
+      workspaceId,
+      objective: "Original",
+      status: "paused",
+    });
+    expect(queueResult.success).toBe(true);
+    await extensionMetadata.setStreaming(workspaceId, false);
+
+    // Without the fix, this rejection would propagate out of the async
+    // function and crash. With the fix, it returns null and the goal
+    // record is unchanged.
+    const drained = await service.applyPendingAfterStreamEnd(workspaceId);
+    expect(drained).toBeNull();
+    expect(await service.getGoal(workspaceId)).toMatchObject({
+      objective: "Original",
+      status: "paused",
+    });
+  });
+
+  test("queues mid-stream objective changes and drains them after stream end", async () => {
+    await extensionMetadata.setStreaming(workspaceId, true);
+
+    const projected = await setGoalOk(service, { workspaceId, objective: "Queued goal" });
+
+    expect(projected.objective).toBe("Queued goal");
+    expect(await service.getGoal(workspaceId)).toBeNull();
+
+    await extensionMetadata.setStreaming(workspaceId, false);
+    const drained = await service.applyPendingAfterStreamEnd(workspaceId);
+
+    expect(drained?.objective).toBe("Queued goal");
+    expect(await service.getGoal(workspaceId)).toMatchObject({ objective: "Queued goal" });
+  });
+
+  test("rejects queued mid-stream budgeted goals when kickoff model has no pricing", async () => {
+    const dispatcher = new IdleDispatcher();
+    service.registerGoalContinuationConsumer(dispatcher, {
+      ...continuationBridge(),
+      getKickoffSendOptions: () => ({ model: "custom:unpriced-model", agentId: "exec" }),
+    });
+    await extensionMetadata.setStreaming(workspaceId, true);
+
+    const result = await service.setGoal({
+      workspaceId,
+      objective: "Queued budgeted goal",
+      budgetCents: 500,
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toMatchObject({ type: "invalid_transition" });
+    }
+    await extensionMetadata.setStreaming(workspaceId, false);
+    expect(await service.applyPendingAfterStreamEnd(workspaceId)).toBeNull();
+    expect(await service.getGoal(workspaceId)).toBeNull();
+  });
+
+  test("queued mid-stream goal replacement preserves expectedGoalId at drain time", async () => {
+    const created = await setGoalOk(service, { workspaceId, objective: "Original" });
+    await extensionMetadata.setStreaming(workspaceId, true);
+
+    const queued = await service.setGoal({
+      workspaceId,
+      objective: "Queued replacement",
+      expectedGoalId: created.goalId,
+    });
+    expect(queued.success).toBe(true);
+
+    await extensionMetadata.setStreaming(workspaceId, false);
+    await setGoalOk(service, { workspaceId, objective: "Concurrent replacement" });
+
+    const drained = await service.applyPendingAfterStreamEnd(workspaceId);
+
+    expect(drained).toBeNull();
+    expect(await service.getGoal(workspaceId)).toMatchObject({
+      objective: "Concurrent replacement",
+    });
+  });
+
+  test("increments accounting for non-compaction stream completions", async () => {
+    const created = await setGoalOk(service, { workspaceId, objective: "Account for stream" });
+
+    const updated = await service.recordStreamAccounting({
+      workspaceId,
+      costUsd: 1.235,
+      streamStartedAtMs: created.createdAtMs + 1,
+      streamOriginKind: "goal_continuation",
+    });
+
+    expect(updated).toMatchObject({ costCents: 124, turnsUsed: 1 });
+    expect(await service.getGoal(workspaceId)).toMatchObject({ costCents: 124, turnsUsed: 1 });
+  });
+
+  test("accumulates sub-cent stream costs across goal turns", async () => {
+    const created = await setGoalOk(service, {
+      workspaceId,
+      objective: "Accumulate tiny costs",
+      budgetCents: 1,
+    });
+
+    const first = await service.recordStreamAccounting({
+      workspaceId,
+      costUsd: 0.004,
+      streamStartedAtMs: created.createdAtMs + 1,
+      streamOriginKind: "goal_continuation",
+    });
+    const second = await service.recordStreamAccounting({
+      workspaceId,
+      costUsd: 0.004,
+      streamStartedAtMs: created.createdAtMs + 2,
+      streamOriginKind: "goal_continuation",
+    });
+    const third = await service.recordStreamAccounting({
+      workspaceId,
+      costUsd: 0.002,
+      streamStartedAtMs: created.createdAtMs + 3,
+      streamOriginKind: "goal_continuation",
+    });
+
+    expect(first).toMatchObject({ costCents: 0, costMicroCents: 400_000, status: "active" });
+    expect(second).toMatchObject({ costCents: 1, costMicroCents: 800_000, status: "active" });
+    expect(third).toMatchObject({
+      costCents: 1,
+      costMicroCents: 1_000_000,
+      status: "budget_limited",
+    });
+  });
+
+  test("paused goals ignore later stream accounting", async () => {
+    const created = await setGoalOk(service, {
+      workspaceId,
+      objective: "User clarification mid-goal",
+      turnCap: 3,
+    });
+    await setGoalOk(service, {
+      workspaceId,
+      objective: created.objective,
+      status: "paused",
+    });
+
+    const updated = await service.recordStreamAccounting({
+      workspaceId,
+      costUsd: 0.42,
+      streamStartedAtMs: created.createdAtMs + 1,
+      streamOriginKind: "user",
+    });
+
+    expect(updated).toMatchObject({ costCents: 0, turnsUsed: 0, status: "paused" });
+  });
+
+  test("completed goals ignore later stream accounting", async () => {
+    const created = await setGoalOk(service, {
+      workspaceId,
+      objective: "Already complete",
+      budgetCents: 100,
+    });
+    await setGoalOk(service, {
+      workspaceId,
+      objective: created.objective,
+      status: "complete",
+      completionSummary: "Done.",
+    });
+
+    const updated = await service.recordStreamAccounting({
+      workspaceId,
+      costUsd: 1.25,
+      streamStartedAtMs: created.createdAtMs + 1,
+      streamOriginKind: "user",
+    });
+
+    expect(updated).toMatchObject({ costCents: 0, turnsUsed: 0, status: "complete" });
+  });
+
+  test("completed goals count the completing goal-attributable stream", async () => {
+    const created = await setGoalOk(service, {
+      workspaceId,
+      objective: "Complete during continuation",
+      budgetCents: 200,
+    });
+    await setGoalOk(service, {
+      workspaceId,
+      objective: created.objective,
+      status: "complete",
+      completionSummary: "Done.",
+    });
+
+    const updated = await service.recordStreamAccounting({
+      workspaceId,
+      costUsd: 1.25,
+      streamStartedAtMs: created.createdAtMs + 1,
+      streamOriginKind: "goal_continuation",
+    });
+
+    expect(updated).toMatchObject({ costCents: 125, turnsUsed: 1, status: "complete" });
+  });
+
+  test("attributes child report cost once and persists the per-goal ledger", async () => {
+    await setGoalOk(service, { workspaceId, objective: "Account for child reports" });
+    await fs.writeFile(
+      path.join(config.getSessionDir(workspaceId), "session-usage.json"),
+      JSON.stringify({ version: 1, byModel: {}, rolledUpFrom: { "child-a": true } }, null, 2)
+    );
+
+    const first = await service.attributeChildReport({
+      parentWorkspaceId: workspaceId,
+      childWorkspaceId: "child-a",
+      childCostCents: 37,
+    });
+    const second = await service.attributeChildReport({
+      parentWorkspaceId: workspaceId,
+      childWorkspaceId: "child-a",
+      childCostCents: 37,
+    });
+
+    expect(first?.attributed).toBe(true);
+    expect(first?.goalAfter).toMatchObject({
+      costCents: 37,
+      turnsUsed: 1,
+      attributedChildren: ["child-a"],
+    });
+    expect(second?.attributed).toBe(false);
+    expect(second?.goalAfter).toMatchObject({
+      costCents: 37,
+      turnsUsed: 1,
+      attributedChildren: ["child-a"],
+    });
+
+    const goalOnDisk = JSON.parse(
+      await fs.readFile(path.join(config.getSessionDir(workspaceId), "goal.json"), "utf-8")
+    ) as GoalRecordV1;
+    expect(goalOnDisk.attributedChildren).toEqual(["child-a"]);
+
+    const sessionUsageOnDisk = JSON.parse(
+      await fs.readFile(path.join(config.getSessionDir(workspaceId), "session-usage.json"), "utf-8")
+    ) as { rolledUpFrom?: Record<string, unknown> };
+    expect(sessionUsageOnDisk.rolledUpFrom).toEqual({ "child-a": true });
+  });
+
+  test("child attribution under budget re-requests a deferred parent continuation", async () => {
+    const created = await setGoalOk(service, {
+      workspaceId,
+      objective: "Continue after child completes",
+      budgetCents: 500,
+    });
+    let hasActiveDescendantTasks = true;
+    const dispatcher = new IdleDispatcher();
+    const execute = mock(() => Promise.resolve(true));
+    service.registerGoalContinuationConsumer(dispatcher, {
+      isGoalExperimentEnabled: () => true,
+      hasActiveDescendantTasks: () => hasActiveDescendantTasks,
+      getRuntimeState: () => ({ isRuntimeCompatible: true }),
+      executeGoalContinuation: execute,
+      getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+    });
+
+    await service.requestContinuationAfterStreamEnd({
+      workspaceId,
+      sendOptions: { model: "openai:gpt-4o", agentId: "exec" },
+      streamEndedAtMs: created.createdAtMs + 1,
+    });
+    await drainPendingDispatches();
+    expect(execute).not.toHaveBeenCalled();
+
+    hasActiveDescendantTasks = false;
+    await service.attributeChildReport({
+      parentWorkspaceId: workspaceId,
+      childWorkspaceId: "child-under-budget",
+      childCostCents: 25,
+    });
+    await waitForCondition(() => execute.mock.calls.length > 0, { timeoutMs: 1_000 });
+
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  test("child attribution that flips to budget_limited arms a wrap-up dispatch", async () => {
+    // Coder-agents-review P2 DEREM-33: when child attribution drives the
+    // goal into budget_limited, the wrap-up must fire. Previously the goal
+    // would sit stuck because attribution never produced a stream-end
+    // candidate/stamp that `checkGoalContinuationEligibility` could reserve.
+    const created = await setGoalOk(service, {
+      workspaceId,
+      objective: "Drive into budget_limited via child attribution",
+      budgetCents: 100,
+    });
+    const dispatcher = new IdleDispatcher();
+    const executed: Array<{ kind: string | undefined }> = [];
+    service.registerGoalContinuationConsumer(dispatcher, {
+      isGoalExperimentEnabled: () => true,
+      hasActiveDescendantTasks: () => false,
+      getRuntimeState: () => ({ isRuntimeCompatible: true }),
+      executeGoalContinuation: (input) => {
+        executed.push({ kind: input.kind });
+        return Promise.resolve(true);
+      },
+      // Recovery / attribution paths synthesize a candidate from scratch and
+      // need a kickoff send-options provider to know how to dispatch.
+      getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+    });
+
+    const result = await service.attributeChildReport({
+      parentWorkspaceId: workspaceId,
+      childWorkspaceId: "child-wrapper",
+      childCostCents: 200,
+    });
+
+    expect(result?.causedBudgetLimit).toBe(true);
+    expect(result?.goalAfter).toMatchObject({
+      goalId: created.goalId,
+      status: "budget_limited",
+      budgetLimitInjectedForGoalId: null,
+    });
+    await waitForCondition(() => executed.length > 0, { timeoutMs: 1_000 });
+    expect(executed[0]?.kind).toBe(GOAL_BUDGET_LIMIT_KIND);
+    expect(await service.getGoal(workspaceId)).toMatchObject({
+      status: "budget_limited",
+      budgetLimitInjectedForGoalId: created.goalId,
+    });
+  });
+
+  test("child attribution that reaches turn cap arms a wrap-up dispatch", async () => {
+    const created = await setGoalOk(service, {
+      workspaceId,
+      objective: "Drive into budget_limited via child turn cap",
+      turnCap: 1,
+    });
+    const dispatcher = new IdleDispatcher();
+    const executed: Array<{ kind: string | undefined }> = [];
+    service.registerGoalContinuationConsumer(dispatcher, {
+      isGoalExperimentEnabled: () => true,
+      hasActiveDescendantTasks: () => false,
+      getRuntimeState: () => ({ isRuntimeCompatible: true }),
+      executeGoalContinuation: (input) => {
+        executed.push({ kind: input.kind });
+        return Promise.resolve(true);
+      },
+      getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+    });
+
+    const result = await service.attributeChildReport({
+      parentWorkspaceId: workspaceId,
+      childWorkspaceId: "child-turn-cap",
+      childCostCents: 0,
+    });
+
+    expect(result?.causedBudgetLimit).toBe(true);
+    expect(result?.goalAfter).toMatchObject({
+      goalId: created.goalId,
+      status: "budget_limited",
+      turnsUsed: 1,
+    });
+    await waitForCondition(() => executed.length > 0, { timeoutMs: 1_000 });
+    expect(executed[0]?.kind).toBe(GOAL_BUDGET_LIMIT_KIND);
+  });
+
+  test("child report attribution flips active goals to budget-limited once", async () => {
+    await setGoalOk(service, {
+      workspaceId,
+      objective: "Child blows budget",
+      budgetCents: 100,
+    });
+
+    const first = await service.attributeChildReport({
+      parentWorkspaceId: workspaceId,
+      childWorkspaceId: "child-a",
+      childCostCents: 125,
+    });
+    const second = await service.attributeChildReport({
+      parentWorkspaceId: workspaceId,
+      childWorkspaceId: "child-a",
+      childCostCents: 125,
+    });
+    const third = await service.attributeChildReport({
+      parentWorkspaceId: workspaceId,
+      childWorkspaceId: "child-b",
+      childCostCents: 10,
+    });
+
+    expect(first).toMatchObject({ attributed: true, causedBudgetLimit: true });
+    expect(first?.goalBefore).toMatchObject({ status: "active", costCents: 0 });
+    expect(first?.goalAfter).toMatchObject({ status: "budget_limited", costCents: 125 });
+    expect(second).toMatchObject({ attributed: false, causedBudgetLimit: false });
+    expect(third).toMatchObject({ attributed: true, causedBudgetLimit: false });
+    expect(third?.goalAfter).toMatchObject({
+      status: "budget_limited",
+      costCents: 135,
+      turnsUsed: 2,
+      attributedChildren: ["child-a", "child-b"],
+    });
+    const lifecycleCalls = analytics.recordGoalLifecycleEvent.mock.calls as unknown as Array<
+      [string, Record<string, unknown>]
+    >;
+    const budgetLimitedCalls = lifecycleCalls.filter(([event]) => event === "goal_budget_limited");
+    expect(budgetLimitedCalls).toHaveLength(1);
+    expect(analytics.recordGoalLifecycleEvent).toHaveBeenCalledWith(
+      "goal_budget_limited",
+      expect.objectContaining({ "caused-by-child": true, "cost-overshoot": "1-99" })
+    );
+  });
+
+  test("skips accounting for compaction stream completions", async () => {
+    await setGoalOk(service, { workspaceId, objective: "Ignore compaction" });
+
+    const updated = await service.recordStreamAccounting({
+      workspaceId,
+      costUsd: 2,
+      isCompaction: true,
+    });
+
+    expect(updated).toBeNull();
+    expect(await service.getGoal(workspaceId)).toMatchObject({ costCents: 0, turnsUsed: 0 });
+  });
+
+  test("counts aborted streams and one turn per counted stream", async () => {
+    await setGoalOk(service, { workspaceId, objective: "Count aborts" });
+
+    await service.recordStreamAccounting({
+      workspaceId,
+      costUsd: 0.1,
+      streamOriginKind: "goal_continuation",
+    });
+    const updated = await service.recordStreamAccounting({
+      workspaceId,
+      costUsd: 0.2,
+      streamOriginKind: "goal_continuation",
+    });
+
+    expect(updated).toMatchObject({ costCents: 30, turnsUsed: 2 });
+  });
+
+  test("ignores streams that started before the goal existed", async () => {
+    // Pin the stream timestamp explicitly to avoid racing the wall clock for
+    // ordering (the goal's createdAtMs uses Date.now() at write time).
+    await setGoalOk(service, { workspaceId, objective: "Ignore pre-goal stream" });
+    const goalAtCreation = await service.getGoal(workspaceId);
+    const streamStartedAtMs = (goalAtCreation?.createdAtMs ?? Date.now()) - 100;
+
+    const updated = await service.recordStreamAccounting({
+      workspaceId,
+      costUsd: 5,
+      streamStartedAtMs,
+    });
+
+    expect(updated).toBeNull();
+    expect(await service.getGoal(workspaceId)).toMatchObject({ costCents: 0, turnsUsed: 0 });
+  });
+
+  test("flips active goals to budget-limited when stream cost reaches the budget", async () => {
+    const created = await setGoalOk(service, {
+      workspaceId,
+      objective: "Hit cost budget",
+      budgetCents: 124,
+    });
+
+    const updated = await service.recordStreamAccounting({
+      workspaceId,
+      costUsd: 1.24,
+      streamStartedAtMs: created.createdAtMs + 1,
+      streamOriginKind: "goal_continuation",
+    });
+
+    expect(updated).toMatchObject({ costCents: 124, turnsUsed: 1, status: "budget_limited" });
+    expect(await service.getGoal(workspaceId)).toMatchObject({ status: "budget_limited" });
+    expect(analytics.recordGoalLifecycleEvent).toHaveBeenCalledWith(
+      "goal_budget_limited",
+      expect.objectContaining({ "cost-overshoot": "0" })
+    );
+  });
+
+  test("flips active goals to budget-limited when stream turns reach the cap", async () => {
+    await setGoalOk(service, {
+      workspaceId,
+      objective: "Hit turn cap",
+      turnCap: 1,
+    });
+
+    const updated = await service.recordStreamAccounting({
+      workspaceId,
+      costUsd: 0.01,
+      streamOriginKind: "goal_continuation",
+    });
+
+    expect(updated).toMatchObject({ turnsUsed: 1, status: "budget_limited" });
+    expect(analytics.recordGoalLifecycleEvent).toHaveBeenCalledWith(
+      "goal_budget_limited",
+      expect.objectContaining({ "turn-overshoot": "0" })
+    );
+  });
+
+  test("lowering active goal budget below spend arms a budget wrap-up", async () => {
+    const created = await setGoalOk(service, {
+      workspaceId,
+      objective: "Budget edit wraps",
+      budgetCents: 500,
+    });
+    await fs.writeFile(
+      path.join(config.getSessionDir(workspaceId), "goal.json"),
+      JSON.stringify({ ...created, costCents: 250, costMicroCents: 250_000_000 })
+    );
+    const dispatcher = new IdleDispatcher();
+    const execute = mock(() => Promise.resolve(true));
+    service.registerGoalContinuationConsumer(dispatcher, {
+      ...continuationBridge(execute),
+      getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+    });
+
+    const updated = await setGoalOk(service, { workspaceId, budgetCents: 200 });
+    await waitForCondition(() => execute.mock.calls.length > 0, { timeoutMs: 1_000 });
+
+    expect(updated).toMatchObject({ status: "budget_limited", budgetCents: 200 });
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  test("raising a budget-limited goal budget flips active and clears budget injection", async () => {
+    const created = await setGoalOk(service, {
+      workspaceId,
+      objective: "Re-arm on budget raise",
+      status: "budget_limited",
+      budgetCents: 100,
+    });
+    await fs.writeFile(
+      path.join(config.getSessionDir(workspaceId), "goal.json"),
+      JSON.stringify({
+        ...created,
+        costCents: 150,
+        costMicroCents: 150_000_000,
+        budgetLimitInjectedForGoalId: created.goalId,
+      })
+    );
+
+    const updated = await setGoalOk(service, { workspaceId, budgetCents: 200 });
+
+    expect(updated).toMatchObject({
+      status: "active",
+      budgetCents: 200,
+      budgetLimitInjectedForGoalId: null,
+    });
+    expect(analytics.recordGoalLifecycleEvent).toHaveBeenCalledWith(
+      "goal_budget_changed",
+      expect.objectContaining({ "budget-raised-vs-lowered": "raised" })
+    );
+    expect(analytics.recordGoalLifecycleEvent).not.toHaveBeenCalledWith(
+      "goal_resumed",
+      expect.anything()
+    );
+  });
+
+  test("removing budget from a budget-limited goal flips active", async () => {
+    await setGoalOk(service, {
+      workspaceId,
+      objective: "Remove exhausted budget",
+      status: "budget_limited",
+      budgetCents: 100,
+    });
+
+    const updated = await setGoalOk(service, { workspaceId, budgetCents: null });
+
+    expect(updated).toMatchObject({ status: "active", budgetCents: null });
+  });
+
+  test("lowering active goal budget below current spend flips budget-limited", async () => {
+    const created = await setGoalOk(service, {
+      workspaceId,
+      objective: "Tighten budget",
+      budgetCents: 500,
+    });
+    await fs.writeFile(
+      path.join(config.getSessionDir(workspaceId), "goal.json"),
+      JSON.stringify({ ...created, costCents: 250, costMicroCents: 250_000_000 })
+    );
+
+    const updated = await setGoalOk(service, { workspaceId, budgetCents: 200 });
+
+    expect(updated).toMatchObject({ status: "budget_limited", budgetCents: 200 });
+    expect(analytics.recordGoalLifecycleEvent).toHaveBeenCalledWith(
+      "goal_budget_limited",
+      expect.objectContaining({ "cost-overshoot": "1-99" })
+    );
+  });
+
+  test("setting an exhausted budget on a paused goal preserves paused status", async () => {
+    const created = await setGoalOk(service, {
+      workspaceId,
+      objective: "Paused budget edit",
+      status: "paused",
+    });
+    await fs.writeFile(
+      path.join(config.getSessionDir(workspaceId), "goal.json"),
+      JSON.stringify({ ...created, costCents: 250 })
+    );
+
+    const updated = await setGoalOk(service, { workspaceId, budgetCents: 200 });
+
+    expect(updated).toMatchObject({ status: "paused", budgetCents: 200 });
+    expect(analytics.recordGoalLifecycleEvent).not.toHaveBeenCalledWith(
+      "goal_budget_limited",
+      expect.anything()
+    );
+  });
+
+  test("emits budget telemetry when setGoal touches budget or turn caps", async () => {
+    await setGoalOk(service, {
+      workspaceId,
+      objective: "Telemetry goal",
+      budgetCents: 500,
+      turnCap: 25,
+    });
+
+    expect(analytics.recordGoalLifecycleEvent).toHaveBeenCalledWith(
+      "goal_budget_changed",
+      expect.objectContaining({
+        "budget-delta-sign": "positive",
+        "budget-raised-vs-lowered": "raised",
+        "turn-cap-delta-sign": "positive",
+        "turn-cap-raised-vs-lowered": "raised",
+      })
+    );
+  });
+
+  test("allows user lifecycle transitions and persists completion summaries", async () => {
+    const created = await setGoalOk(service, { workspaceId, objective: "Lifecycle goal" });
+
+    const paused = await setGoalOk(service, { workspaceId, status: "paused" });
+    expect(paused).toMatchObject({ goalId: created.goalId, status: "paused" });
+
+    const resumed = await setGoalOk(service, { workspaceId, status: "active" });
+    expect(resumed).toMatchObject({ goalId: created.goalId, status: "active" });
+
+    const completed = await setGoalOk(service, {
+      workspaceId,
+      status: "complete",
+      completionSummary: "Verified the goal manually.",
+    });
+    expect(completed).toMatchObject({
+      goalId: created.goalId,
+      status: "complete",
+      completionSummary: "Verified the goal manually.",
+    });
+    expect(await service.getGoal(workspaceId)).toMatchObject({
+      status: "complete",
+      completionSummary: "Verified the goal manually.",
+    });
+    expect(await extensionMetadata.getSnapshot(workspaceId)).toMatchObject({
+      goal: { status: "complete", completionSummary: "Verified the goal manually." },
+    });
+    expect(analytics.recordGoalLifecycleEvent).toHaveBeenCalledWith(
+      "goal_paused",
+      expect.objectContaining({ initiator: "user" })
+    );
+    expect(analytics.recordGoalLifecycleEvent).toHaveBeenCalledWith(
+      "goal_resumed",
+      expect.objectContaining({ initiator: "user" })
+    );
+    expect(analytics.recordGoalLifecycleEvent).toHaveBeenCalledWith(
+      "goal_completed",
+      expect.objectContaining({ initiator: "user", summaryLengthBucket: "10-49" })
+    );
+  });
+
+  test("allows budget-limited goals to be completed manually", async () => {
+    const created = await setGoalOk(service, {
+      workspaceId,
+      objective: "Wrap up over-budget goal",
+      status: "budget_limited",
+    });
+
+    const completed = await setGoalOk(service, {
+      workspaceId,
+      status: "complete",
+      completionSummary: "Stopped after hitting the budget.",
+    });
+
+    expect(completed).toMatchObject({
+      goalId: created.goalId,
+      status: "complete",
+      completionSummary: "Stopped after hitting the budget.",
+    });
+  });
+
+  test("auto initiator pause emits telemetry", async () => {
+    await setGoalOk(service, { workspaceId, objective: "Pause automatically" });
+
+    const paused = await setGoalOk(service, {
+      workspaceId,
+      status: "paused",
+      initiator: "auto",
+    });
+
+    expect(paused.status).toBe("paused");
+    expect(analytics.recordGoalLifecycleEvent).toHaveBeenCalledWith(
+      "goal_paused",
+      expect.objectContaining({ initiator: "auto" })
+    );
+  });
+
+  test("clears a pending user acknowledgment without changing status", async () => {
+    await setGoalOk(service, { workspaceId, objective: "Await user acknowledgment" });
+    await service.requireUserAcknowledgment(workspaceId, 12_345);
+
+    const acknowledged = await service.acknowledgeUser(workspaceId);
+
+    expect(acknowledged).toMatchObject({
+      status: "active",
+      requireUserAcknowledgmentSinceMs: null,
+    });
+    expect(await service.getGoal(workspaceId)).toMatchObject({
+      status: "active",
+      requireUserAcknowledgmentSinceMs: null,
+    });
+  });
+
+  test("crash-recovery acknowledgment gate only touches goal-bearing workspaces", async () => {
+    await setGoalOk(service, { workspaceId, objective: "Review crash recovery" });
+
+    const gated = await service.requireUserAcknowledgmentForCrashRecovery(workspaceId, 44_000);
+    const missing = await service.requireUserAcknowledgmentForCrashRecovery("missing-goal", 45_000);
+
+    expect(gated).toMatchObject({ requireUserAcknowledgmentSinceMs: 44_000 });
+    expect(missing).toBeNull();
+    expect(analytics.recordGoalLifecycleEvent).toHaveBeenCalledWith(
+      "goal_crash_gate_set",
+      expect.objectContaining({ workspaceIdLengthBucket: "10-49" })
+    );
+    expect(analytics.recordGoalLifecycleEvent).toHaveBeenCalledTimes(2);
+  });
+
+  test("continuation consumer rejects while acknowledgment is pending and fires after it clears", async () => {
+    await setGoalOk(service, { workspaceId, objective: "Continue after acknowledgment" });
+    await service.requireUserAcknowledgment(workspaceId, 20_000);
+    const dispatcher = new IdleDispatcher();
+    const execute = mock(() => Promise.resolve(true));
+    service.registerGoalContinuationConsumer(dispatcher, continuationBridge(execute));
+
+    await service.requestContinuationAfterStreamEnd({
+      workspaceId,
+      sendOptions: { model: "openai:gpt-4o", agentId: "exec" },
+      streamEndedAtMs: 30_000,
+    });
+    expect(execute).not.toHaveBeenCalled();
+
+    await service.acknowledgeUser(workspaceId);
+    await dispatcher.requestDispatch(workspaceId, GOAL_CONTINUATION_IDLE_CONSUMER_NAME);
+
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  test("rejects illegal user lifecycle transitions with typed errors", async () => {
+    // DEREM-36: setGoal now catches WorkspaceGoalTransitionError and returns
+    // it as a typed `invalid_transition` Result error so the oRPC handler
+    // doesn't leak it as an unhandled 500.
+    async function expectSetGoalError(
+      input: Parameters<WorkspaceGoalService["setGoal"]>[0],
+      message: string
+    ) {
+      const result = await service.setGoal(input);
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.type).toBe("invalid_transition");
+        if (result.error.type === "invalid_transition") {
+          expect(result.error.message).toBe(message);
+        }
+      }
+    }
+
+    await expectSetGoalError(
+      { workspaceId, status: "paused" },
+      "Cannot pause a goal because no goal is set."
+    );
+
+    await setGoalOk(service, { workspaceId, objective: "Illegal transitions" });
+    await expectSetGoalError(
+      { workspaceId, status: "active" },
+      "Cannot resume a goal that is not paused."
+    );
+    await expectSetGoalError(
+      { workspaceId, status: "complete" },
+      "Completion summary is required."
+    );
+
+    await setGoalOk(service, { workspaceId, status: "paused" });
+    await expectSetGoalError(
+      {
+        workspaceId,
+        status: "complete",
+        completionSummary: "Cannot complete from pause.",
+      },
+      "Cannot complete a goal that is not active or budget-limited."
+    );
+
+    await setGoalOk(service, { workspaceId, status: "active" });
+    await setGoalOk(service, {
+      workspaceId,
+      status: "complete",
+      completionSummary: "Done for good.",
+    });
+    await expectSetGoalError(
+      { workspaceId, status: "paused" },
+      "Cannot pause a completed goal. Clear it before starting another."
+    );
+    await expectSetGoalError(
+      { workspaceId, status: "active" },
+      "Cannot resume a completed goal. Clear it before starting another."
+    );
+  });
+
+  test("budget-only mutation against a missing goal returns invalid_transition (no plain Error 500)", async () => {
+    // Coder-agents-review P2 DEREM-43: simulates the race where the user
+    // clicks "Update budget" in the RightSidebar / GoalTab, another window
+    // clears the goal concurrently, and `setGoalWithConflictRetry` then
+    // calls `setGoal({ workspaceId, budgetCents: N })` against a now-empty
+    // goal slot. With no objective, no status, and no current goal, this
+    // path used to throw a plain `Error("Goal objective is required.")`
+    // that escaped the DEREM-36 wrapper as an unhandled 500. Now it throws
+    // `WorkspaceGoalTransitionError` so the wrapper turns it into a typed
+    // `invalid_transition` Result.
+    const result = await service.setGoal({ workspaceId, budgetCents: 500 });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.type).toBe("invalid_transition");
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // assertPricedModelForBudgetedGoal — canonical gate that every dispatch
+  // path delegates to. Lives on WorkspaceGoalService so WorkspaceService AND
+  // AgentSession share one implementation; that's required because queued
+  // messages dispatched via AgentSession.sendQueuedMessages() never re-enter
+  // WorkspaceService, and a budgeted goal that becomes resumable while a
+  // queued unpriced-model message waits would otherwise bypass enforcement
+  // (Codex P1 PRRT_kwDOPxxmWM5_stnS).
+  // -------------------------------------------------------------------------
+  describe("assertPricedModelForBudgetedGoal", () => {
+    const UNPRICED = "openai:not-priced-model";
+    const PRICED = "openai:gpt-4o-mini";
+
+    // Coder-agents-review P3 DEREM-52: the gate now short-circuits when the
+    // GOALS experiment is off (default in headless tests). Use the shared
+    // `enableGoalsExperimentForTest` helper to register a no-op continuation
+    // consumer with `isGoalExperimentEnabled: () => true` per test so the
+    // gate exercises the live path (DEREM-55).
+    const enableGoalsExperiment = enableGoalsExperimentForTest;
+
+    test("rejects unpriced model on a resumable budgeted goal", async () => {
+      enableGoalsExperiment(service);
+      await setGoalOk(service, {
+        workspaceId,
+        objective: "ship",
+        budgetCents: 500,
+      });
+
+      const result = await service.assertPricedModelForBudgetedGoal(workspaceId, UNPRICED);
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.type).toBe("unknown");
+        if (result.error.type === "unknown") {
+          expect(result.error.raw).toContain("Target model has no pricing data");
+        }
+      }
+    });
+
+    test("rejects on paused budgeted goals (would resume on un-pause)", async () => {
+      enableGoalsExperiment(service);
+      await setGoalOk(service, {
+        workspaceId,
+        objective: "ship",
+        budgetCents: 500,
+      });
+      await setGoalOk(service, { workspaceId, status: "paused" });
+
+      const result = await service.assertPricedModelForBudgetedGoal(workspaceId, UNPRICED);
+      expect(result.success).toBe(false);
+    });
+
+    test("short-circuits when the GOALS experiment is disabled (no disk read)", async () => {
+      // DEREM-52: don't pay `getGoal`'s disk cost on every send/resume for
+      // users who never used the GOALS feature. With no bridge registered,
+      // `isExperimentEnabled` returns false and the gate returns Ok without
+      // consulting goal.json (which would crash because no goal exists in
+      // this test setup with an unpriced model).
+      const getGoalSpy = spyOn(service, "getGoal");
+
+      const result = await service.assertPricedModelForBudgetedGoal(workspaceId, UNPRICED);
+
+      expect(result.success).toBe(true);
+      expect(getGoalSpy).not.toHaveBeenCalled();
+      getGoalSpy.mockRestore();
+    });
+
+    test("priced models short-circuit before reading goal.json", async () => {
+      // Internal compaction / heartbeat callers always pick a priced model, so
+      // they hit the early-exit and never touch goal.json. We can't observe
+      // the absence of disk I/O directly, but we can prove the goal record is
+      // never consulted: no goal exists, yet the call returns Ok and is fast.
+      const result = await service.assertPricedModelForBudgetedGoal(workspaceId, PRICED);
+      expect(result.success).toBe(true);
+    });
+
+    test("undefined model is treated as not-yet-resolved and passes through", async () => {
+      // The model-resolution cascade in WorkspaceService can return null when
+      // a workspace has no AI settings and no global default, in which case
+      // the gate must not block — the actual stream layer will pick a fallback.
+      await setGoalOk(service, {
+        workspaceId,
+        objective: "ship",
+        budgetCents: 500,
+      });
+
+      const result = await service.assertPricedModelForBudgetedGoal(workspaceId, undefined);
+      expect(result.success).toBe(true);
+    });
+
+    test("allows when no goal exists", async () => {
+      const result = await service.assertPricedModelForBudgetedGoal(workspaceId, UNPRICED);
+      expect(result.success).toBe(true);
+    });
+
+    test("allows when goal has no budget", async () => {
+      await setGoalOk(service, { workspaceId, objective: "ship" });
+      const result = await service.assertPricedModelForBudgetedGoal(workspaceId, UNPRICED);
+      expect(result.success).toBe(true);
+    });
+
+    test("allows when goal is complete (terminal)", async () => {
+      await setGoalOk(service, {
+        workspaceId,
+        objective: "ship",
+        budgetCents: 500,
+      });
+      await setGoalOk(service, {
+        workspaceId,
+        status: "complete",
+        completionSummary: "done",
+      });
+      const result = await service.assertPricedModelForBudgetedGoal(workspaceId, UNPRICED);
+      expect(result.success).toBe(true);
+    });
+  });
+});

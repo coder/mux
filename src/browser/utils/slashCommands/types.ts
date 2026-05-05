@@ -37,6 +37,13 @@ export type ParsedCommand =
   | { type: "command-invalid-args"; command: string; input: string; usage: string }
   | { type: "idle-compaction"; hours: number | null }
   | { type: "heartbeat-set"; minutes: number | null }
+  | { type: "goal-show" }
+  | { type: "goal-set"; objective: string; budgetCents?: number | null; turnCap?: number | null }
+  | { type: "goal-budget"; budgetCents: number | null }
+  | { type: "goal-pause" }
+  | { type: "goal-resume" }
+  | { type: "goal-complete"; summary?: string }
+  | { type: "goal-clear" }
   | null;
 
 export interface SuggestionsHandlerArgs {

@@ -3,6 +3,7 @@ import { EventEmitter } from "events";
 import * as fs from "fs/promises";
 import * as path from "path";
 
+import { GOAL_CONTINUATION_KIND } from "@/constants/goals";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import type {
   ProvidersConfigMap,
@@ -24,7 +25,8 @@ interface SessionInternals {
   dispatchAgentSwitch: (
     switchResult: { agentId: string; reason?: string; followUp?: string },
     currentOptions: SendMessageOptions | undefined,
-    fallbackModel: string
+    fallbackModel: string,
+    goalKind?: typeof GOAL_CONTINUATION_KIND
   ) => Promise<boolean>;
   sendMessage: (
     message: string,
@@ -178,7 +180,8 @@ describe("AgentSession switch_agent target validation", () => {
           followUp: "Create a plan.",
         },
         { model: "openai:gpt-4o-mini", agentId: "exec", thinkingLevel: "low" },
-        "openai:gpt-4o"
+        "openai:gpt-4o",
+        GOAL_CONTINUATION_KIND
       );
 
       expect(result).toBe(true);
@@ -189,13 +192,13 @@ describe("AgentSession switch_agent target validation", () => {
       const [messageArg, optionsArg, internalArg] = firstCall as unknown as [
         string,
         SendMessageOptions,
-        { synthetic?: boolean },
+        { synthetic?: boolean; goalKind?: typeof GOAL_CONTINUATION_KIND },
       ];
       expect(messageArg).toBe("Create a plan.");
       expect(optionsArg.agentId).toBe("plan");
       expect(optionsArg.model).toBe("openai:gpt-4o-mini");
       expect(optionsArg.thinkingLevel).toBe("low");
-      expect(internalArg).toEqual({ synthetic: true });
+      expect(internalArg).toEqual({ synthetic: true, goalKind: GOAL_CONTINUATION_KIND });
     } finally {
       session.dispose();
     }

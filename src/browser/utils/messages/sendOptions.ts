@@ -83,6 +83,7 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
         EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING_EXCLUSIVE
       ),
       advisorTool: isExperimentEnabled(EXPERIMENT_IDS.ADVISOR_TOOL),
+      goals: isExperimentEnabled(EXPERIMENT_IDS.GOALS),
       execSubagentHardRestart: isExperimentEnabled(EXPERIMENT_IDS.EXEC_SUBAGENT_HARD_RESTART),
     },
   });

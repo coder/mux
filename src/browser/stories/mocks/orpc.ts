@@ -3,6 +3,7 @@
  *
  * Creates a client that matches the AppRouter interface with configurable mock data.
  */
+import { DEFAULT_GOAL_DEFAULTS, normalizeGoalDefaults, type GoalDefaults } from "@/constants/goals";
 import type { APIClient } from "@/browser/contexts/API";
 import type {
   AgentDefinitionDescriptor,
@@ -136,6 +137,8 @@ export interface MockORPCClientOptions {
   heartbeatDefaultPrompt?: string;
   /** Initial global heartbeat default interval for config.getConfig */
   heartbeatDefaultIntervalMs?: number;
+  /** Initial global goal defaults for config.getConfig */
+  goalDefaults?: GoalDefaults;
   /** Initial route priority for config.getConfig */
   routePriority?: string[];
   /** Initial per-model route overrides for config.getConfig */
@@ -357,6 +360,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     onePasswordAccountName: initialOnePasswordAccountName = null,
     heartbeatDefaultPrompt: initialHeartbeatDefaultPrompt,
     heartbeatDefaultIntervalMs: initialHeartbeatDefaultIntervalMs,
+    goalDefaults: initialGoalDefaults,
     routePriority: initialRoutePriority = ["direct"],
     routeOverrides: initialRouteOverrides = {},
     agentDefinitions: initialAgentDefinitions,
@@ -494,6 +498,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
   let onePasswordAccountName: string | null = initialOnePasswordAccountName;
   let heartbeatDefaultPrompt = initialHeartbeatDefaultPrompt;
   let heartbeatDefaultIntervalMs = initialHeartbeatDefaultIntervalMs;
+  let goalDefaults = normalizeGoalDefaults(initialGoalDefaults ?? DEFAULT_GOAL_DEFAULTS);
   let routePriority = [...initialRoutePriority];
   let routeOverrides = { ...initialRouteOverrides };
   const configChangeSubscribers = new Set<(value: void) => void>();
@@ -686,6 +691,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           onePasswordAccountName,
           heartbeatDefaultPrompt,
           heartbeatDefaultIntervalMs,
+          goalDefaults,
           muxGovernorEnrolled,
           llmDebugLogs: false,
         }),
@@ -780,6 +786,11 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       },
       updateHeartbeatDefaultIntervalMs: (input: { intervalMs?: number | null }) => {
         heartbeatDefaultIntervalMs = input.intervalMs ?? undefined;
+        notifyConfigChanged();
+        return Promise.resolve(undefined);
+      },
+      updateGoalDefaults: (input: { goalDefaults: GoalDefaults }) => {
+        goalDefaults = normalizeGoalDefaults(input.goalDefaults);
         notifyConfigChanged();
         return Promise.resolve(undefined);
       },

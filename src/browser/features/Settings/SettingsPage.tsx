@@ -16,6 +16,7 @@ import {
   Server,
   Lock,
   HeartPulse,
+  Target,
 } from "lucide-react";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useOnboardingPause } from "@/browser/features/SplashScreens/SplashScreenProvider";
@@ -37,6 +38,7 @@ import { ServerAccessSection } from "./Sections/ServerAccessSection";
 import { KeybindsSection } from "./Sections/KeybindsSection";
 import { SecuritySection } from "./Sections/SecuritySection";
 import { HeartbeatSection } from "./Sections/HeartbeatSection";
+import { GoalsSection } from "./Sections/GoalsSection";
 import type { SettingsSection } from "./types";
 
 const BASE_SECTIONS: SettingsSection[] = [
@@ -124,6 +126,7 @@ export function SettingsPage(props: SettingsPageProps) {
   const onboardingPause = useOnboardingPause();
   const governorEnabled = useExperimentValue(EXPERIMENT_IDS.MUX_GOVERNOR);
   const workspaceHeartbeatsEnabled = useExperimentValue(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS);
+  const goalsEnabled = useExperimentValue(EXPERIMENT_IDS.GOALS);
 
   // Keep routing on a valid section when an experiment-gated section is disabled.
   useEffect(() => {
@@ -133,7 +136,10 @@ export function SettingsPage(props: SettingsPageProps) {
     if (!workspaceHeartbeatsEnabled && activeSection === "heartbeat") {
       setActiveSection(BASE_SECTIONS[0]?.id ?? "general");
     }
-  }, [activeSection, setActiveSection, governorEnabled, workspaceHeartbeatsEnabled]);
+    if (!goalsEnabled && activeSection === "goals") {
+      setActiveSection(BASE_SECTIONS[0]?.id ?? "general");
+    }
+  }, [activeSection, setActiveSection, governorEnabled, workspaceHeartbeatsEnabled, goalsEnabled]);
 
   // Close settings on Escape. Uses bubble phase so inner surfaces (Select dropdowns,
   // Popover, Dialog) that call stopPropagation/preventDefault on Escape get first
@@ -161,6 +167,17 @@ export function SettingsPage(props: SettingsPageProps) {
         label: "Governor",
         icon: <ShieldCheck className="h-4 w-4" />,
         component: GovernorSection,
+      },
+    ];
+  }
+  if (goalsEnabled) {
+    sections = [
+      ...sections,
+      {
+        id: "goals",
+        label: "Goals",
+        icon: <Target className="h-4 w-4" />,
+        component: GoalsSection,
       },
     ];
   }

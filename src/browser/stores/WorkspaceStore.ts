@@ -1,6 +1,7 @@
 import assert from "@/common/utils/assert";
 import type { MuxMessage, DisplayedMessage, QueuedMessage } from "@/common/types/message";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import type { GoalSnapshot } from "@/common/types/goal";
 import type {
   WorkspaceActivitySnapshot,
   WorkspaceChatMessage,
@@ -115,6 +116,7 @@ export interface WorkspaceState {
   // Current pre-stream startup breadcrumb (runtime readiness, tool loading, etc.)
   runtimeStatus: RuntimeStatusEvent | null;
   autoRetryStatus: AutoRetryStatus | null;
+  goal?: GoalSnapshot | null;
 }
 
 /**
@@ -161,6 +163,7 @@ export interface WorkspaceSidebarState {
   agentStatus: { emoji: string; message: string; url?: string } | undefined;
   terminalActiveCount: number;
   terminalSessionCount: number;
+  goal?: GoalSnapshot | null;
 }
 
 /**
@@ -578,6 +581,9 @@ export class WorkspaceStore {
   // abort/error transitions (streaming=false without recency advance).
   private activityStreamingStartRecency = new Map<string, number>();
   private activityAbortController: AbortController | null = null;
+
+  private activeGoalCount = 0;
+  private activeGoalCountStore = new MapStore<string, void>();
 
   // Per-workspace terminal activity aggregates (from terminal.activity.subscribe).
   private workspaceTerminalActivity = new Map<
@@ -1779,6 +1785,7 @@ export class WorkspaceStore {
           (activity?.hasTodos === false ? undefined : deriveTodoStatus(aggregatorTodos)));
       const agentStatus =
         displayStatus ?? liveTodoStatus ?? fallbackAgentStatus ?? persistedTodoStatus;
+      const goal = activity?.goal ?? null;
 
       return {
         name: metadata?.name ?? workspaceId, // Fall back to ID if metadata missing
@@ -1805,6 +1812,7 @@ export class WorkspaceStore {
         pendingStreamModel: aggregator.getPendingStreamModel(),
         autoRetryStatus: transient.autoRetryStatus,
         runtimeStatus: aggregator.getRuntimeStatus(),
+        goal,
       };
     });
   }
@@ -1850,7 +1858,8 @@ export class WorkspaceStore {
       cached.skillLoadErrors === fullState.skillLoadErrors &&
       cached.agentStatus === fullState.agentStatus &&
       cached.terminalActiveCount === terminalActiveCount &&
-      cached.terminalSessionCount === terminalSessionCount
+      cached.terminalSessionCount === terminalSessionCount &&
+      cached.goal === fullState.goal
     ) {
       // Even if we re-use the cached object, mark it as derived from the current
       // WorkspaceState so repeated getSnapshot() reads during this render are stable.
@@ -1872,6 +1881,7 @@ export class WorkspaceStore {
       agentStatus: fullState.agentStatus,
       terminalActiveCount,
       terminalSessionCount,
+      goal: fullState.goal,
     };
     this.sidebarStateCache.set(workspaceId, newState);
     this.sidebarStateSourceState.set(workspaceId, fullState);
@@ -1938,6 +1948,14 @@ export class WorkspaceStore {
       return timestamps;
     }) as Record<string, number>;
   }
+
+  getActiveGoalCount(): number {
+    return this.activeGoalCount;
+  }
+
+  subscribeActiveGoalCount = (listener: () => void) => {
+    return this.activeGoalCountStore.subscribeKey("count", listener);
+  };
 
   /**
    * Get aggregator for a workspace (used by components that need direct access).
@@ -2456,6 +2474,22 @@ export class WorkspaceStore {
     return this.workspaceMetadata.has(workspaceId);
   }
 
+  hasRegisteredWorkspace(workspaceId: string): boolean {
+    return workspaceId.length > 0 && this.aggregators.has(workspaceId);
+  }
+
+  private refreshActiveGoalCount(): void {
+    const nextCount = Array.from(this.workspaceActivity.values()).filter(
+      (snapshot) => snapshot.goal?.status === "active"
+    ).length;
+    if (nextCount === this.activeGoalCount) {
+      return;
+    }
+
+    this.activeGoalCount = nextCount;
+    this.activeGoalCountStore.bump("count");
+  }
+
   private applyWorkspaceActivitySnapshot(
     workspaceId: string,
     snapshot: WorkspaceActivitySnapshot | null
@@ -2468,6 +2502,8 @@ export class WorkspaceStore {
       this.workspaceActivity.delete(workspaceId);
     }
 
+    this.refreshActiveGoalCount();
+
     const changed =
       previous?.streaming !== snapshot?.streaming ||
       previous?.streamingGeneration !== snapshot?.streamingGeneration ||
@@ -2476,7 +2512,14 @@ export class WorkspaceStore {
       previous?.recency !== snapshot?.recency ||
       previous?.hasTodos !== snapshot?.hasTodos ||
       !areAgentStatusesEqual(previous?.displayStatus, snapshot?.displayStatus) ||
-      !areAgentStatusesEqual(previous?.todoStatus, snapshot?.todoStatus);
+      !areAgentStatusesEqual(previous?.todoStatus, snapshot?.todoStatus) ||
+      previous?.goal?.goalId !== snapshot?.goal?.goalId ||
+      previous?.goal?.status !== snapshot?.goal?.status ||
+      previous?.goal?.objective !== snapshot?.goal?.objective ||
+      previous?.goal?.costCents !== snapshot?.goal?.costCents ||
+      previous?.goal?.turnsUsed !== snapshot?.goal?.turnsUsed ||
+      previous?.goal?.budgetCents !== snapshot?.goal?.budgetCents ||
+      previous?.goal?.turnCap !== snapshot?.goal?.turnCap;
 
     if (!changed) {
       return;
@@ -3442,6 +3485,7 @@ export class WorkspaceStore {
     this.chatTransientState.delete(workspaceId);
     this.workspaceMetadata.delete(workspaceId);
     this.workspaceActivity.delete(workspaceId);
+    this.refreshActiveGoalCount();
     this.workspaceTerminalActivity.delete(workspaceId);
     this.activityStreamingStartRecency.delete(workspaceId);
     this.recencyCache.delete(workspaceId);
@@ -3532,6 +3576,8 @@ export class WorkspaceStore {
     this.chatTransientState.clear();
     this.workspaceMetadata.clear();
     this.workspaceActivity.clear();
+    this.activeGoalCount = 0;
+    this.activeGoalCountStore.clear();
     this.workspaceTerminalActivity.clear();
     this.activityStreamingStartRecency.clear();
     this.workspaceStats.clear();
@@ -4087,6 +4133,16 @@ export function useWorkspaceRecency(): Record<string, number> {
   return useSyncExternalStore(store.subscribeDerived, () => store.getWorkspaceRecency());
 }
 
+export function useActiveGoalCount(): number {
+  const store = getStoreInstance();
+
+  return useSyncExternalStore(
+    store.subscribeActiveGoalCount,
+    () => store.getActiveGoalCount(),
+    () => 0
+  );
+}
+
 /**
  * Hook to get sidebar-specific state for a workspace.
  * Only re-renders when sidebar-relevant fields change (not on every message).
@@ -4100,6 +4156,28 @@ export function useWorkspaceSidebarState(workspaceId: string): WorkspaceSidebarS
   return useSyncExternalStore(
     (listener) => store.subscribeKey(workspaceId, listener),
     () => store.getWorkspaceSidebarState(workspaceId)
+  );
+}
+
+export function useOptionalWorkspaceSidebarState(
+  workspaceId: string | null | undefined
+): WorkspaceSidebarState | null {
+  const store = getStoreInstance();
+  const id = workspaceId ?? "";
+
+  return useSyncExternalStore(
+    (listener) => {
+      if (!store.hasRegisteredWorkspace(id)) {
+        return () => undefined;
+      }
+      return store.subscribeKey(id, listener);
+    },
+    () => {
+      if (!store.hasRegisteredWorkspace(id)) {
+        return null;
+      }
+      return store.getWorkspaceSidebarState(id);
+    }
   );
 }
 

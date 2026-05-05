@@ -8,6 +8,7 @@ import { CODER_ARCHIVE_BEHAVIORS } from "../coderArchiveBehavior";
 import { WORKTREE_ARCHIVE_BEHAVIORS } from "../worktreeArchiveBehavior";
 import { TaskSettingsSchema } from "./taskSettings";
 import { HEARTBEAT_MAX_INTERVAL_MS, HEARTBEAT_MIN_INTERVAL_MS } from "@/constants/heartbeat";
+import { DEFAULT_GOAL_DEFAULTS } from "@/constants/goals";
 
 export { RuntimeEnablementOverridesSchema } from "../../schemas/runtimeEnablement";
 export type { RuntimeEnablementOverrides } from "../../schemas/runtimeEnablement";
@@ -29,6 +30,23 @@ export const SubagentAiDefaultsEntrySchema = z.object({
 });
 
 export const SubagentAiDefaultsSchema = z.record(AgentIdSchema, SubagentAiDefaultsEntrySchema);
+
+export const GoalDefaultsSchema = z.object({
+  defaultBudgetCents: z
+    .number()
+    .int()
+    .nonnegative()
+    .default(DEFAULT_GOAL_DEFAULTS.defaultBudgetCents),
+  defaultTurnCap: z
+    .number()
+    .int()
+    .positive()
+    .nullable()
+    .default(DEFAULT_GOAL_DEFAULTS.defaultTurnCap),
+  alwaysRequireExplicitBudget: z
+    .boolean()
+    .default(DEFAULT_GOAL_DEFAULTS.alwaysRequireExplicitBudget),
+});
 
 export const AppConfigMigrationsSchema = z.object({
   execSubagentDefaultsSplit: z.boolean().optional(),
@@ -62,6 +80,7 @@ export const AppConfigOnDiskSchema = z
       .min(HEARTBEAT_MIN_INTERVAL_MS)
       .max(HEARTBEAT_MAX_INTERVAL_MS)
       .optional(),
+    goalDefaults: GoalDefaultsSchema.optional(),
     muxGatewayModels: z.array(z.string()).optional(),
     routePriority: z.array(z.string()).optional(),
     routeOverrides: z.record(z.string(), z.string()).optional(),
@@ -101,6 +120,7 @@ export type AgentAiDefaultsEntry = z.infer<typeof AgentAiDefaultsEntrySchema>;
 export type AgentAiDefaults = z.infer<typeof AgentAiDefaultsSchema>;
 export type SubagentAiDefaultsEntry = z.infer<typeof SubagentAiDefaultsEntrySchema>;
 export type SubagentAiDefaults = z.infer<typeof SubagentAiDefaultsSchema>;
+export type GoalDefaultsConfig = z.infer<typeof GoalDefaultsSchema>;
 export type FeatureFlagOverride = z.infer<typeof FeatureFlagOverrideSchema>;
 export type UpdateChannel = z.infer<typeof UpdateChannelSchema>;
 

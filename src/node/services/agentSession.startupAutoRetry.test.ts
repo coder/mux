@@ -12,11 +12,13 @@ import { createMuxMessage } from "@/common/types/message";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { Ok } from "@/common/types/result";
+import { GOAL_CONTINUATION_KIND } from "@/constants/goals";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 interface AutoRetryResumeRequest {
   options: SendMessageOptions;
   agentInitiated?: boolean;
+  goalKind?: typeof GOAL_CONTINUATION_KIND;
 }
 
 interface SessionBundle {
@@ -432,6 +434,7 @@ describe("AgentSession startup auto-retry recovery", () => {
       workspaceId,
       createMuxMessage("user-1", "user", "Interrupted with custom send options", {
         timestamp: Date.now(),
+        kind: GOAL_CONTINUATION_KIND,
         retrySendOptions: {
           model: "anthropic:claude-sonnet-4-5",
           agentId: "exec",
@@ -478,6 +481,8 @@ describe("AgentSession startup auto-retry recovery", () => {
     expect(retryOptions.options.maxOutputTokens).toBe(2048);
     expect(retryOptions.options.toolPolicy).toEqual([{ regex_match: "bash", action: "disable" }]);
     expect(retryOptions.options.disableWorkspaceAgents).toBe(true);
+    expect(retryOptions.goalKind).toBe(GOAL_CONTINUATION_KIND);
+
     expect(retryOptions.options.providerOptions?.anthropic?.use1MContext).toBe(true);
 
     session.dispose();

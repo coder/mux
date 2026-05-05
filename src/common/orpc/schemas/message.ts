@@ -126,6 +126,7 @@ export const MuxMessageSchema = z.object({
       systemMessageTokens: z.number().optional(),
       muxMetadata: z.any().optional(),
       cmuxMetadata: z.any().optional(), // Legacy field for backward compatibility
+      kind: z.union([z.literal("goal_continuation"), z.literal("goal_budget_limit")]).optional(),
       // ACP prompt correlation id for reconnect/diagnostic continuity.
       acpPromptId: z.string().optional(),
       // Compaction source: "user" (manual), "idle" (auto), "heartbeat" (synthetic reset), or legacy boolean (true)

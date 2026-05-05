@@ -39,6 +39,8 @@ import {
   TaskTerminateToolCall,
 } from "../TaskToolCall";
 import { TaskApplyGitPatchToolCall } from "../TaskApplyGitPatchToolCall";
+import { GetGoalToolCall } from "../GetGoalToolCall";
+import { CompleteGoalToolCall } from "../CompleteGoalToolCall";
 
 /**
  * Component type that accepts any props. We use this because:
@@ -168,6 +170,11 @@ const TOOL_REGISTRY: Record<string, ToolRegistryEntry> = {
   agent_report: {
     component: AgentReportToolCall,
     schema: TOOL_DEFINITIONS.agent_report.schema,
+  },
+  get_goal: { component: GetGoalToolCall, schema: TOOL_DEFINITIONS.get_goal.schema },
+  complete_goal: {
+    component: CompleteGoalToolCall,
+    schema: TOOL_DEFINITIONS.complete_goal.schema,
   },
   // Provider-defined tool (Anthropic/OpenAI) - no TOOL_DEFINITIONS entry
   // Anthropic: args.query, OpenAI: args={}, query in result.action.query

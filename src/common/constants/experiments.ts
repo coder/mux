@@ -15,6 +15,7 @@ export const EXPERIMENT_IDS = {
   AGENT_BROWSER: "agent-browser",
   ADVISOR_TOOL: "advisor-tool",
   WORKSPACE_HEARTBEATS: "workspace-heartbeats",
+  GOALS: "goals",
   PORTABLE_DESKTOP: "portable-desktop",
 } as const;
 
@@ -118,6 +119,14 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     id: EXPERIMENT_IDS.WORKSPACE_HEARTBEATS,
     name: "Workspace Heartbeats",
     description: "Persist per-workspace heartbeat settings for future background follow-ups",
+    enabledByDefault: false,
+    userOverridable: true,
+    showInSettings: true,
+  },
+  [EXPERIMENT_IDS.GOALS]: {
+    id: EXPERIMENT_IDS.GOALS,
+    name: "Goals",
+    description: "Enable workspace goals for tracking an objective across turns",
     enabledByDefault: false,
     userOverridable: true,
     showInSettings: true,

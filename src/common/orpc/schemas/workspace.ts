@@ -3,6 +3,7 @@ import { ThinkingLevelSchema } from "../../types/thinking";
 import { RuntimeConfigSchema } from "./runtime";
 import { WorkspaceAISettingsByAgentSchema, WorkspaceAISettingsSchema } from "./workspaceAiSettings";
 import { TASK_GROUP_KIND_VALUES } from "@/common/utils/tools/taskGroups";
+import { GoalSnapshotSchema } from "./goal";
 import {
   HEARTBEAT_CONTEXT_MODE_VALUES,
   HEARTBEAT_MAX_INTERVAL_MS,
@@ -216,6 +217,9 @@ export const WorkspaceActivitySnapshotSchema = z.object({
   }),
   isIdleCompaction: z.boolean().optional().meta({
     description: "Whether the current streaming activity is an idle (background) compaction",
+  }),
+  goal: GoalSnapshotSchema.nullable().optional().meta({
+    description: "Current workspace goal snapshot for sidebar indicators and the Goal tab",
   }),
 });
 

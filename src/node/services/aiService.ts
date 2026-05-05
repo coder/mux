@@ -15,6 +15,7 @@ import type { DebugLlmRequestSnapshot } from "@/common/types/debugLlmRequest";
 import { ADVISOR_DEFAULT_MAX_USES_PER_TURN } from "@/common/constants/advisor";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 
+import type { GoalRecordV1 } from "@/common/types/goal";
 import type { ModelMessage, MuxMessage } from "@/common/types/message";
 import { createMuxMessage } from "@/common/types/message";
 import type { Config } from "@/node/config";
@@ -22,6 +23,7 @@ import { StreamManager, type StreamTextOnChunk } from "./streamManager";
 import type { InitStateManager } from "./initStateManager";
 import type { SendMessageError } from "@/common/types/errors";
 import { getToolsForModel, type AdvisorStepCaptureRef } from "@/common/utils/tools/tools";
+import { getGoalToolAvailability } from "@/common/utils/tools/toolAvailability";
 import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import {
@@ -40,6 +42,7 @@ import type { MuxToolScope } from "@/common/types/toolScope";
 import type { PolicyService } from "@/node/services/policyService";
 import type { ProviderService } from "@/node/services/providerService";
 import type { CodexOauthService } from "@/node/services/codexOauthService";
+import type { WorkspaceGoalService } from "@/node/services/workspaceGoalService";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import type { FileState, EditedFileAttachment } from "@/node/services/agentSession";
 import { log } from "./log";
@@ -143,6 +146,7 @@ export interface StreamMessageOptions {
   changedFileAttachments?: EditedFileAttachment[];
   postCompactionAttachments?: PostCompactionAttachment[] | null;
   experiments?: SendMessageOptions["experiments"];
+  workspaceGoalService?: WorkspaceGoalService;
   disableWorkspaceAgents?: boolean;
   hasQueuedMessage?: () => boolean;
   openaiTruncationModeOverride?: "auto" | "disabled";
@@ -756,6 +760,7 @@ export class AIService extends EventEmitter {
       changedFileAttachments,
       postCompactionAttachments,
       experiments,
+      workspaceGoalService,
       disableWorkspaceAgents,
       hasQueuedMessage,
       openaiTruncationModeOverride,
@@ -1126,6 +1131,7 @@ export class AIService extends EventEmitter {
         agentDefinition,
         agentDiscoveryPath,
         isSubagentWorkspace,
+        agentInheritanceChain,
         agentIsPlanLike,
         effectiveMode,
         taskSettings,
@@ -1139,6 +1145,19 @@ export class AIService extends EventEmitter {
       const advisorModelString = cfg.advisorModelString?.trim() ?? "";
       const advisorToolEligible =
         advisorExperimentEnabled && agentAdvisorEnabled && advisorModelString.length > 0;
+
+      const goalsExperimentEnabled =
+        experiments?.goals ??
+        this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.GOALS) === true;
+      let currentGoalForTools: GoalRecordV1 | null = null;
+      if (goalsExperimentEnabled && workspaceGoalService) {
+        currentGoalForTools = await workspaceGoalService.getGoal(workspaceId);
+      }
+      const goalToolAvailability = getGoalToolAvailability({
+        goalsExperimentEnabled,
+        goalStatus: currentGoalForTools?.status ?? null,
+        agentInheritanceChain,
+      });
 
       // Fetch workspace MCP overrides (for filtering servers and tools)
       // NOTE: Stored in <workspace>/.mux/mcp.local.jsonc (not ~/.mux/config.json).
@@ -1533,6 +1552,8 @@ export class AIService extends EventEmitter {
           ancestorPlanFilePaths,
           workspaceId,
           muxScope,
+          goalService: workspaceGoalService,
+          enableGoalTools: goalToolAvailability,
           // Only child workspaces (tasks) can report to a parent.
           enableAgentReport: Boolean(metadata.parentWorkspaceId),
           // External edit detection callback

@@ -17,6 +17,7 @@ import type { RuntimeEnablementId } from "./runtime";
 import type { TaskSettings, SubagentAiDefaults } from "./tasks";
 import type { LayoutPresetsConfig } from "./uiLayouts";
 import type { ThinkingLevel } from "./thinking";
+import type { GoalDefaults } from "@/constants/goals";
 
 export type Workspace = z.infer<typeof WorkspaceConfigSchema>;
 
@@ -90,6 +91,8 @@ export interface ProjectsConfig {
   heartbeatDefaultPrompt?: string;
   /** Default heartbeat interval used when a workspace heartbeat does not set its own cadence. */
   heartbeatDefaultIntervalMs?: number;
+  /** Global defaults for new workspace goals. */
+  goalDefaults?: GoalDefaults;
   muxGatewayModels?: string[];
   routePriority?: string[];
   routeOverrides?: Record<string, string>;

@@ -17,9 +17,9 @@ import type { SessionTimingService } from "./sessionTimingService";
 import { SessionUsageService } from "./sessionUsageService";
 import type { AIService } from "./aiService";
 import type { InitStateManager, InitStatus } from "./initStateManager";
-import type {
+import {
   ExtensionMetadataService,
-  ExtensionMetadataStreamingUpdate,
+  type ExtensionMetadataStreamingUpdate,
 } from "./ExtensionMetadataService";
 import type {
   FrontendWorkspaceMetadata,
@@ -40,7 +40,19 @@ import * as forkOrchestratorModule from "@/node/services/utils/forkOrchestrator"
 import * as runtimeExecHelpers from "@/node/utils/runtime/helpers";
 import * as removeManagedGitWorktreeModule from "@/node/worktree/removeManagedGitWorktree";
 import * as workspaceTitleGenerator from "./workspaceTitleGenerator";
+import { WorkspaceGoalService } from "./workspaceGoalService";
+import { IdleDispatcher } from "./idleDispatcher";
+import type { GoalRecordV1 } from "@/common/types/goal";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
+import {
+  hasBudgetedResumableGoal,
+  modelHasPricingData,
+  UNPRICED_TARGET_MODEL_GOAL_MESSAGE,
+} from "@/common/utils/goals/budgetPricing";
+// Shared `drainPendingDispatches` + `waitForCondition` helpers live in
+// `./testDispatchHelpers` (Coder-agents-review P3 DEREM-41 + nit DEREM-48 +
+// nit DEREM-50) — import instead of defining local copies.
+import { drainPendingDispatches, waitForCondition } from "./testDispatchHelpers";
 
 // Helper to access private renamingWorkspaces set
 function addToRenamingWorkspaces(service: WorkspaceService, workspaceId: string): void {
@@ -125,6 +137,18 @@ const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
   cleanup: mock(() => Promise.resolve()),
 };
 
+async function setWorkspaceGoalOk(
+  goalService: WorkspaceGoalService,
+  input: Parameters<WorkspaceGoalService["setGoal"]>[0]
+): Promise<GoalRecordV1> {
+  const result = await goalService.setGoal(input);
+  expect(result.success).toBe(true);
+  if (!result.success) {
+    throw new Error(`Expected goal set to succeed, got ${JSON.stringify(result.error)}`);
+  }
+  return result.data;
+}
+
 function createFrontendWorkspaceMetadata(
   overrides: Partial<FrontendWorkspaceMetadata> & Pick<FrontendWorkspaceMetadata, "id" | "name">
 ): FrontendWorkspaceMetadata {
@@ -139,6 +163,236 @@ function createFrontendWorkspaceMetadata(
     namedWorkspacePath: overrides.namedWorkspacePath ?? `/tmp/${overrides.id}`,
   };
 }
+
+describe("WorkspaceService truncateHistory goal acknowledgment", () => {
+  async function createServices(aiServiceOverride?: AIService) {
+    const { config, historyService, cleanup } = await createTestHistoryService();
+    const extensionMetadata = new ExtensionMetadataService(
+      path.join(config.rootDir, "extensionMetadata.json")
+    );
+    const aiService =
+      aiServiceOverride ??
+      ({
+        on: mock(() => undefined),
+        isStreaming: mock(() => false),
+      } as unknown as AIService);
+    const initStateManager = {
+      on: mock(() => undefined),
+      getInitState: mock(() => null),
+    } as unknown as InitStateManager;
+    const workspaceService = new WorkspaceService(
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      extensionMetadata,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+    const goalService = new WorkspaceGoalService(config, historyService, extensionMetadata);
+    workspaceService.setWorkspaceGoalService(goalService);
+    return { aiService, config, historyService, workspaceService, goalService, cleanup };
+  }
+
+  test("full chat clear preserves the goal and requires user acknowledgment", async () => {
+    const { config, historyService, workspaceService, goalService, cleanup } =
+      await createServices();
+    const workspaceId = "clear-goal-workspace";
+    try {
+      await config.addWorkspace("/tmp/clear-goal-project", {
+        id: workspaceId,
+        name: "clear-goal-workspace",
+        projectName: "clear-goal-project",
+        projectPath: "/tmp/clear-goal-project",
+        runtimeConfig: { type: "local" },
+      });
+      const created = await setWorkspaceGoalOk(goalService, {
+        workspaceId,
+        objective: "Keep pursuing the objective",
+      });
+      const appendResult = await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("clear-goal-message", "user", "please remember this", {})
+      );
+      expect(appendResult.success).toBe(true);
+
+      const nowSpy = spyOn(Date, "now").mockReturnValue(1_234_567);
+      try {
+        const result = await workspaceService.truncateHistory(workspaceId, 1.0);
+        expect(result.success).toBe(true);
+      } finally {
+        nowSpy.mockRestore();
+      }
+
+      expect(await goalService.getGoal(workspaceId)).toMatchObject({
+        goalId: created.goalId,
+        objective: created.objective,
+        requireUserAcknowledgmentSinceMs: 1_234_567,
+      });
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("full chat clear without a goal does not create goal state", async () => {
+    const { config, workspaceService, goalService, cleanup } = await createServices();
+    const workspaceId = "clear-without-goal-workspace";
+    try {
+      await config.addWorkspace("/tmp/clear-without-goal-project", {
+        id: workspaceId,
+        name: "clear-without-goal-workspace",
+        projectName: "clear-without-goal-project",
+        projectPath: "/tmp/clear-without-goal-project",
+        runtimeConfig: { type: "local" },
+      });
+
+      const result = await workspaceService.truncateHistory(workspaceId, 1.0);
+
+      expect(result.success).toBe(true);
+      expect(await goalService.getGoal(workspaceId)).toBeNull();
+    } finally {
+      await cleanup();
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Codex P1 (PRRT_kwDOPxxmWM5_ucm2): the WorkspaceService stream-abort
+  // listener must NOT replay queued goal mutations on user-aborted streams.
+  // `applyPendingAfterStreamEnd` consumes `pendingGoalMutations` synchronously
+  // before its first await, while `recordUserStoppedStream` (which clears the
+  // map) runs later in the AgentSession listener — so without an explicit
+  // skip, a user who interrupted a stream mid-objective-edit would still see
+  // the queued edit committed, defeating the stop-to-cancel safety contract
+  // (DEREM-18).
+  // ---------------------------------------------------------------------------
+  test("user-aborted streams do NOT replay queued goal mutations", async () => {
+    const aiEmitter = new EventEmitter();
+    const aiService = Object.assign(aiEmitter, {
+      isStreaming: mock(() => false),
+    }) as unknown as AIService;
+    const { config, workspaceService, goalService, cleanup } = await createServices(aiService);
+    const workspaceId = "user-abort-discards-mutation";
+    try {
+      await config.addWorkspace("/tmp/user-abort-test-project", {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "project",
+        projectPath: "/tmp/user-abort-test-project",
+        runtimeConfig: { type: "local" },
+      });
+      // Voids the unused-var warning; workspaceService just needs to exist.
+      void workspaceService;
+
+      const created = await setWorkspaceGoalOk(goalService, {
+        workspaceId,
+        objective: "Original objective",
+      });
+
+      // Queue a mid-stream mutation (the real flow goes through
+      // setGoal-while-streaming; we override the private streaming check
+      // directly to avoid plumbing an entire AgentSession into this test).
+      const goalServiceAccess = goalService as unknown as {
+        isWorkspaceStreaming: (workspaceId: string) => Promise<boolean>;
+      };
+      const isStreamingOriginal = goalServiceAccess.isWorkspaceStreaming;
+      goalServiceAccess.isWorkspaceStreaming = () => Promise.resolve(true);
+      try {
+        const queued = await goalService.setGoal({
+          workspaceId,
+          objective: "Should be dropped on user abort",
+          expectedGoalId: created.goalId,
+        });
+        expect(queued.success).toBe(true);
+      } finally {
+        goalServiceAccess.isWorkspaceStreaming = isStreamingOriginal;
+      }
+
+      // Mirror the real AgentSession listener: when abortReason === "user",
+      // `recordUserStoppedStream` clears `pendingGoalMutations`. The
+      // WorkspaceService stream-abort listener fires synchronously on the
+      // emit below, before this clear — so the new gate inside that listener
+      // is what prevents the replay.
+      aiService.emit("stream-abort", {
+        type: "stream-abort",
+        workspaceId,
+        messageId: "msg",
+        abortReason: "user",
+        metadata: { duration: 1 },
+        abandonPartial: true,
+      });
+      await goalService.recordUserStoppedStream(workspaceId);
+
+      // Drain pending microtasks to give any racing
+      // applyPendingAfterStreamEnd a chance to fire.
+      await drainPendingDispatches();
+
+      const persisted = await goalService.getGoal(workspaceId);
+      expect(persisted?.objective).toBe("Original objective");
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("WorkspaceService stream-abort listener leaves queued goal mutations for AgentSession", async () => {
+    // Non-user abort goal mutation drains happen in AgentSession after abort
+    // accounting. WorkspaceService must not drain here, or the aborted
+    // in-flight stream can be charged to the replacement goal.
+    const aiEmitter = new EventEmitter();
+    const aiService = Object.assign(aiEmitter, {
+      isStreaming: mock(() => false),
+    }) as unknown as AIService;
+    const { config, workspaceService, goalService, cleanup } = await createServices(aiService);
+    const workspaceId = "system-abort-replays-mutation";
+    try {
+      await config.addWorkspace("/tmp/system-abort-test-project", {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "project",
+        projectPath: "/tmp/system-abort-test-project",
+        runtimeConfig: { type: "local" },
+      });
+      void workspaceService;
+
+      const created = await setWorkspaceGoalOk(goalService, {
+        workspaceId,
+        objective: "Original objective",
+      });
+
+      const goalServiceAccess = goalService as unknown as {
+        isWorkspaceStreaming: (workspaceId: string) => Promise<boolean>;
+      };
+      const isStreamingOriginal = goalServiceAccess.isWorkspaceStreaming;
+      goalServiceAccess.isWorkspaceStreaming = () => Promise.resolve(true);
+      try {
+        const queued = await goalService.setGoal({
+          workspaceId,
+          objective: "Should commit on system abort",
+          expectedGoalId: created.goalId,
+        });
+        expect(queued.success).toBe(true);
+      } finally {
+        goalServiceAccess.isWorkspaceStreaming = isStreamingOriginal;
+      }
+
+      aiService.emit("stream-abort", {
+        type: "stream-abort",
+        workspaceId,
+        messageId: "msg",
+        abortReason: "system",
+        metadata: { duration: 1 },
+        abandonPartial: false,
+      });
+
+      // Drain pending microtasks to prove WorkspaceService did not consume the
+      // queued mutation before AgentSession has a chance to account the abort.
+      await drainPendingDispatches();
+
+      const persisted = await goalService.getGoal(workspaceId);
+      expect(persisted?.objective).toBe("Original objective");
+    } finally {
+      await cleanup();
+    }
+  });
+});
 
 describe("WorkspaceService initialize", () => {
   let workspaceService: WorkspaceService;
@@ -499,6 +753,28 @@ describe("WorkspaceService sendMessage status clearing", () => {
 
   afterEach(async () => {
     await cleanupHistory();
+  });
+
+  test("delegates manual pricing rejections to AgentSession so user input is preserved", async () => {
+    fakeSession.isBusy.mockReturnValue(false);
+    const pricingError: SendMessageError = { type: "unknown", raw: "unpriced model" };
+    workspaceService.setWorkspaceGoalService({
+      assertPricedModelForBudgetedGoal: mock(() => Promise.resolve(Err(pricingError))),
+    } as unknown as WorkspaceGoalService);
+    fakeSession.sendMessage.mockResolvedValue(Err(pricingError));
+
+    const result = await workspaceService.sendMessage("test-workspace", "please stop", {
+      model: "custom:unpriced-model",
+      agentId: "exec",
+    });
+
+    expect(result.success).toBe(false);
+    expect(fakeSession.sendMessage).toHaveBeenCalledTimes(1);
+    expect(fakeSession.sendMessage).toHaveBeenCalledWith(
+      "please stop",
+      expect.objectContaining({ model: "custom:unpriced-model", agentId: "exec" }),
+      expect.objectContaining({ synthetic: undefined })
+    );
   });
 
   test("does not clear persisted agent status directly for non-synthetic sends", async () => {
@@ -2938,6 +3214,45 @@ describe("WorkspaceService maybePersistAISettingsFromOptions", () => {
     await cleanupHistory();
   });
 
+  test("refuses unpriced model persistence for budgeted active goals", async () => {
+    workspaceService.setWorkspaceGoalService({
+      isExperimentEnabled: mock(() => true),
+      getGoal: mock(() => Promise.resolve({ status: "active", budgetCents: 500 })),
+    } as unknown as WorkspaceGoalService);
+
+    const result = await workspaceService.updateAgentAISettings("ws", "exec", {
+      model: "openai:not-priced-model",
+      thinkingLevel: "off",
+    });
+
+    expect(result).toEqual({
+      success: false,
+      error:
+        "Target model has no pricing data. Pick a priced model or remove the active goal budget with /goal budget --no-budget before switching.",
+    });
+  });
+
+  test("allows unpriced model persistence when goals experiment is disabled", async () => {
+    const persistSpy = mock(() => Promise.resolve({ success: true as const, data: true }));
+    workspaceService.setWorkspaceGoalService({
+      isExperimentEnabled: mock(() => false),
+      getGoal: mock(() => Promise.resolve({ status: "active", budgetCents: 500 })),
+    } as unknown as WorkspaceGoalService);
+    (
+      workspaceService as unknown as {
+        persistWorkspaceAISettingsForAgent: (...args: unknown[]) => unknown;
+      }
+    ).persistWorkspaceAISettingsForAgent = persistSpy;
+
+    const result = await workspaceService.updateAgentAISettings("ws", "exec", {
+      model: "openai:not-priced-model",
+      thinkingLevel: "off",
+    });
+
+    expect(result.success).toBe(true);
+    expect(persistSpy).toHaveBeenCalledTimes(1);
+  });
+
   test("persists agent AI settings for custom agent", async () => {
     const persistSpy = mock(() => Promise.resolve({ success: true as const, data: true }));
 
@@ -3059,6 +3374,185 @@ describe("WorkspaceService maybePersistAISettingsFromOptions", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// assertPricedModelForBudgetedGoal — pre-stream gate that rejects unpriced
+// models for budgeted resumable goals (active/paused/budget_limited).
+//
+// Codex P1 (PRRT_kwDOPxxmWM5_sN02) flagged that a persistence-only skip is
+// not enough: the request still flows into session.sendMessage and accounting
+// records 0 cost on an unpriced model, silently bypassing budget enforcement.
+// These tests pin the new pre-dispatch gate so a future regression that puts
+// the check back inside maybePersistAISettingsFromOptions is caught.
+// ---------------------------------------------------------------------------
+describe("WorkspaceService assertPricedModelForBudgetedGoal", () => {
+  interface GateOptions {
+    model?: string;
+    skipAiSettingsPersistence?: boolean;
+  }
+  interface GateAccess {
+    assertPricedModelForBudgetedGoal: (
+      workspaceId: string,
+      options: GateOptions | undefined
+    ) => Promise<Result<void, SendMessageError>>;
+  }
+  const UNPRICED = "openai:not-priced-model";
+  const PRICED = "openai:gpt-4o-mini";
+  let workspaceService: WorkspaceService;
+  let cleanupHistory: () => Promise<void>;
+
+  async function makeService(): Promise<WorkspaceService> {
+    const aiService = {
+      isStreaming: mock(() => false),
+      on: mock(() => undefined),
+      off: mock(() => undefined),
+    } as unknown as AIService;
+    const { historyService, cleanup } = await createTestHistoryService();
+    cleanupHistory = cleanup;
+    return new WorkspaceService(
+      {
+        srcDir: "/tmp/test",
+        getSessionDir: mock(() => "/tmp/test/sessions"),
+        generateStableId: mock(() => "test-id"),
+        findWorkspace: mock(() => null),
+      } as unknown as Config,
+      historyService,
+      aiService,
+      {
+        on: mock(() => undefined),
+        getInitState: mock(() => undefined),
+      } as unknown as InitStateManager,
+      {} as ExtensionMetadataService,
+      { cleanup: mock(() => Promise.resolve()) } as unknown as BackgroundProcessManager
+    );
+  }
+
+  function setGoal(goal: GoalRecordV1 | null): void {
+    // Mock the canonical WorkspaceGoalService.assertPricedModelForBudgetedGoal
+    // by composing the same primitives the real implementation uses (model
+    // pricing + hasBudgetedResumableGoal). This keeps the gate behaviour in
+    // one place — the test still exercises the WS-side delegation contract.
+    const fakeGoalService: Pick<
+      WorkspaceGoalService,
+      "getGoal" | "assertPricedModelForBudgetedGoal"
+    > = {
+      getGoal: mock(() => Promise.resolve(goal)),
+      assertPricedModelForBudgetedGoal: mock((_workspaceId: string, model?: string) => {
+        if (!model || modelHasPricingData(model)) {
+          return Promise.resolve(Ok(undefined));
+        }
+        if (!hasBudgetedResumableGoal(goal)) {
+          return Promise.resolve(Ok(undefined));
+        }
+        return Promise.resolve(
+          Err({ type: "unknown" as const, raw: UNPRICED_TARGET_MODEL_GOAL_MESSAGE })
+        );
+      }),
+    };
+    workspaceService.setWorkspaceGoalService(fakeGoalService as unknown as WorkspaceGoalService);
+  }
+
+  function callGate(options: GateOptions | undefined): Promise<Result<void, SendMessageError>> {
+    return (workspaceService as unknown as GateAccess).assertPricedModelForBudgetedGoal(
+      "ws",
+      options
+    );
+  }
+
+  beforeEach(async () => {
+    workspaceService = await makeService();
+  });
+
+  afterEach(async () => {
+    await cleanupHistory();
+  });
+
+  test.each([
+    ["active", { status: "active" as const, budgetCents: 500 }],
+    ["paused", { status: "paused" as const, budgetCents: 500 }],
+    ["budget_limited", { status: "budget_limited" as const, budgetCents: 500 }],
+  ])("rejects unpriced model on %s budgeted goal", async (_label, partial) => {
+    setGoal(partial as unknown as GoalRecordV1);
+    const result = await callGate({ model: UNPRICED });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const error = result.error;
+      expect(typeof error === "object" && error.type === "unknown").toBe(true);
+      if (typeof error === "object" && error.type === "unknown") {
+        expect(error.raw).toContain("Target model has no pricing data");
+      }
+    }
+  });
+
+  test("allows priced models even on budgeted active goals", async () => {
+    setGoal({ status: "active", budgetCents: 500 } as unknown as GoalRecordV1);
+    const result = await callGate({ model: PRICED });
+    expect(result.success).toBe(true);
+  });
+
+  test("allows when no goal exists", async () => {
+    setGoal(null);
+    const result = await callGate({ model: UNPRICED });
+    expect(result.success).toBe(true);
+  });
+
+  test("allows when goal has no budget", async () => {
+    setGoal({ status: "active", budgetCents: null } as unknown as GoalRecordV1);
+    const result = await callGate({ model: UNPRICED });
+    expect(result.success).toBe(true);
+  });
+
+  test("allows terminal goals (complete) regardless of model", async () => {
+    setGoal({ status: "complete", budgetCents: 500 } as unknown as GoalRecordV1);
+    const result = await callGate({ model: UNPRICED });
+    expect(result.success).toBe(true);
+  });
+
+  test("ignores client-controlled skipAiSettingsPersistence flag", async () => {
+    // Codex P1 (PRRT_kwDOPxxmWM5_sh1R): `skipAiSettingsPersistence` is part
+    // of the public SendMessageOptionsSchema and forwarded verbatim by the
+    // router, so a direct API caller could otherwise flip this single bool
+    // to disarm the gate while running an unpriced model on a budgeted goal.
+    // The gate must reject regardless of the flag.
+    setGoal({ status: "active", budgetCents: 500 } as unknown as GoalRecordV1);
+    const result = await callGate({ model: UNPRICED, skipAiSettingsPersistence: true });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const error = result.error;
+      expect(typeof error === "object" && error.type === "unknown").toBe(true);
+      if (typeof error === "object" && error.type === "unknown") {
+        expect(error.raw).toContain("Target model has no pricing data");
+      }
+    }
+  });
+
+  test("delegates to WorkspaceGoalService.assertPricedModelForBudgetedGoal", async () => {
+    // Pin the WS → WorkspaceGoalService delegation contract: WS must not
+    // re-implement the gate, otherwise we'd reintroduce the original bug
+    // where queued messages bypassed it. See workspaceGoalService.test.ts
+    // for the canonical priced-model short-circuit + rejection coverage.
+    const assertPricedModelForBudgetedGoal = mock(() =>
+      Promise.resolve(Ok(undefined) as Result<void, SendMessageError>)
+    );
+    workspaceService.setWorkspaceGoalService({
+      getGoal: mock(() => Promise.resolve(null)),
+      assertPricedModelForBudgetedGoal,
+    } as unknown as WorkspaceGoalService);
+
+    const result = await callGate({ model: PRICED });
+
+    expect(result.success).toBe(true);
+    expect(assertPricedModelForBudgetedGoal).toHaveBeenCalledTimes(1);
+    expect(assertPricedModelForBudgetedGoal).toHaveBeenCalledWith("ws", PRICED);
+  });
+
+  test("allows when no model is provided (caller will fall back later)", async () => {
+    setGoal({ status: "active", budgetCents: 500 } as unknown as GoalRecordV1);
+    const result = await callGate({});
+    expect(result.success).toBe(true);
+  });
+});
+
 describe("WorkspaceService remove timing rollup", () => {
   let historyService: HistoryService;
   let cleanupHistory: () => Promise<void>;
@@ -6329,6 +6823,136 @@ describe("WorkspaceService fork", () => {
       getOrCreateSessionSpy.mockRestore();
     }
   });
+  test("fork inherits a paused goal snapshot with fresh accounting", async () => {
+    const sourceWorkspaceId = "source-workspace";
+    const newWorkspaceId = "forked-workspace";
+    const sourceProjectPath = path.join(tempDir, "project");
+    const forkedWorkspacePath = path.join(sourceProjectPath, "fork-child");
+    const sourceMetadata: FrontendWorkspaceMetadata = {
+      id: sourceWorkspaceId,
+      name: "source-branch",
+      projectPath: sourceProjectPath,
+      projectName: "project",
+      runtimeConfig: { type: "local" },
+      namedWorkspacePath: path.join(sourceProjectPath, "source-branch"),
+    };
+
+    await fsPromises.mkdir(sourceProjectPath, { recursive: true });
+    await config.addWorkspace(sourceProjectPath, sourceMetadata);
+    await config.editConfig((current) => {
+      const project = current.projects.get(sourceProjectPath);
+      if (!project) {
+        throw new Error("Expected test project config to exist");
+      }
+      project.trusted = true;
+      return current;
+    });
+
+    const extensionMetadata = new ExtensionMetadataService(
+      path.join(config.rootDir, "extensionMetadata.json")
+    );
+    const goalService = new WorkspaceGoalService(config, historyService, extensionMetadata);
+    const parentGoal = await setWorkspaceGoalOk(goalService, {
+      workspaceId: sourceWorkspaceId,
+      objective: "Keep fork goal",
+      budgetCents: 500,
+      turnCap: 8,
+    });
+    await goalService.recordStreamAccounting({
+      workspaceId: sourceWorkspaceId,
+      costUsd: 1,
+      streamOriginKind: "goal_continuation",
+    });
+
+    const mockAIService = {
+      isStreaming: mock(() => false),
+      getWorkspaceMetadata: mock(() => Promise.resolve(Ok(sourceMetadata))),
+      on: mock(() => undefined),
+      off: mock(() => undefined),
+    } as unknown as AIService;
+
+    const mockInitStateManager: Partial<InitStateManager> = {
+      on: mock(() => undefined as unknown as InitStateManager),
+      getInitState: mock(() => ({ status: "running" }) as unknown as InitStatus),
+      startInit: mock(() => undefined),
+      endInit: mock(() => Promise.resolve()),
+      appendOutput: mock(() => undefined),
+      enterHookPhase: mock(() => undefined),
+    };
+
+    const workspaceService = new WorkspaceService(
+      config,
+      historyService,
+      mockAIService,
+      mockInitStateManager as InitStateManager,
+      extensionMetadata,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+    workspaceService.setWorkspaceGoalService(goalService);
+
+    const targetRuntime = {
+      getWorkspacePath: mock(() => forkedWorkspacePath),
+    } as unknown as ReturnType<typeof runtimeFactory.createRuntime>;
+
+    const generateStableIdSpy = spyOn(config, "generateStableId").mockReturnValue(newWorkspaceId);
+    const getOrCreateSessionSpy = spyOn(workspaceService, "getOrCreateSession").mockReturnValue({
+      emitMetadata: mock(() => undefined),
+    } as unknown as AgentSession);
+    const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockReturnValue(
+      {} as ReturnType<typeof runtimeFactory.createRuntime>
+    );
+    const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(
+      () => undefined
+    );
+    const copyPlanSpy = spyOn(runtimeExecHelpers, "copyPlanFileAcrossRuntimes").mockResolvedValue(
+      undefined
+    );
+    const orchestrateForkSpy = spyOn(forkOrchestratorModule, "orchestrateFork").mockResolvedValue(
+      Ok({
+        workspacePath: forkedWorkspacePath,
+        trunkBranch: "main",
+        forkedRuntimeConfig: { type: "local" },
+        targetRuntime,
+        forkedFromSource: true,
+        sourceRuntimeConfigUpdated: false,
+      })
+    );
+
+    try {
+      const result = await workspaceService.fork(sourceWorkspaceId, "fork-child");
+
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        throw new Error(`Expected success result, got error: ${result.error}`);
+      }
+
+      const forkGoal = await goalService.getGoal(newWorkspaceId);
+      expect(forkGoal).toMatchObject({
+        objective: "Keep fork goal",
+        budgetCents: 500,
+        turnCap: 8,
+        status: "paused",
+        costCents: 0,
+        turnsUsed: 0,
+        attributedChildren: [],
+      });
+      expect(forkGoal?.goalId).not.toBe(parentGoal.goalId);
+      expect(await goalService.getGoal(sourceWorkspaceId)).toMatchObject({
+        goalId: parentGoal.goalId,
+        status: "active",
+        costCents: 100,
+        turnsUsed: 1,
+      });
+    } finally {
+      orchestrateForkSpy.mockRestore();
+      copyPlanSpy.mockRestore();
+      runBackgroundInitSpy.mockRestore();
+      createRuntimeSpy.mockRestore();
+      getOrCreateSessionSpy.mockRestore();
+      generateStableIdSpy.mockRestore();
+    }
+  });
+
   test("resets forked session usage while preserving copied history", async () => {
     const sourceWorkspaceId = "source-workspace";
     const newWorkspaceId = "forked-workspace";
@@ -6939,5 +7563,283 @@ describe("generateForkTitle", () => {
     expect(generateForkTitle("Task", ["Task (2025 roadmap)", "Task (12abc)", "Task (2)"])).toBe(
       "Task (3)"
     );
+  });
+});
+
+// Regression: persisted completed init state must not defer goal continuations as initializing.
+describe("WorkspaceService.getGoalContinuationRuntimeState", () => {
+  async function makeService(initState: InitStatus | undefined): Promise<WorkspaceService> {
+    const mockAIService = {
+      isStreaming: mock(() => false),
+      on: mock(() => undefined),
+      off: mock(() => undefined),
+    } as unknown as AIService;
+
+    const mockConfig: Partial<Config> = {
+      srcDir: "/tmp/test",
+      findWorkspace: mock(() => ({ projectPath: "/tmp/proj", workspacePath: "/tmp/proj/ws" })),
+      getAllWorkspaceMetadata: mock(() => Promise.resolve([])),
+      getSessionDir: mock(() => "/tmp/test/sessions"),
+      generateStableId: mock(() => "test-id"),
+      loadConfigOrDefault: mock(() => ({ projects: new Map() })),
+    };
+    const mockInitStateManager: Partial<InitStateManager> = {
+      on: mock(() => undefined as unknown as InitStateManager),
+      getInitState: mock(() => initState),
+    };
+    const mockExtensionMetadataService = {};
+    const mockBackgroundProcessManager = {};
+    const { historyService } = await createTestHistoryService();
+    return new WorkspaceService(
+      mockConfig as Config,
+      historyService,
+      mockAIService,
+      mockInitStateManager as InitStateManager,
+      mockExtensionMetadataService as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+  }
+
+  test("isInitializing is false when init has finished successfully", async () => {
+    const service = await makeService({
+      status: "success",
+      hookPath: "/tmp/proj",
+      startTime: 0,
+      lines: [],
+      exitCode: 0,
+      endTime: 1,
+    });
+    expect(service.getGoalContinuationRuntimeState("ws-1").isInitializing).toBe(false);
+  });
+
+  test("isInitializing is false when no init state has ever existed", async () => {
+    const service = await makeService(undefined);
+    expect(service.getGoalContinuationRuntimeState("ws-1").isInitializing).toBe(false);
+  });
+
+  test("isInitializing is true only while init is actively running", async () => {
+    const service = await makeService({
+      status: "running",
+      hookPath: "/tmp/proj",
+      startTime: 0,
+      lines: [],
+      exitCode: null,
+      endTime: null,
+    });
+    expect(service.getGoalContinuationRuntimeState("ws-1").isInitializing).toBe(true);
+  });
+
+  test("kickoff continuation fires on a freshly-init'd workspace", async () => {
+    const workspaceId = "kickoff-after-init";
+    const service = await makeService({
+      status: "success",
+      hookPath: "/tmp/proj",
+      startTime: 0,
+      lines: [],
+      exitCode: 0,
+      endTime: 1,
+    });
+
+    const { historyService, config, cleanup } = await createTestHistoryService();
+    try {
+      await config.addWorkspace("/tmp/kickoff-proj", {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "kickoff-proj",
+        projectPath: "/tmp/kickoff-proj",
+        runtimeConfig: { type: "local" },
+      });
+      const extensionMetadata = new ExtensionMetadataService(
+        `${config.rootDir}/kickoff-extension-metadata.json`
+      );
+      const goalService = new WorkspaceGoalService(config, historyService, extensionMetadata);
+
+      const dispatcher = new IdleDispatcher();
+      const execute = mock(() => Promise.resolve(true));
+      goalService.registerGoalContinuationConsumer(dispatcher, {
+        isGoalExperimentEnabled: () => true,
+        hasActiveDescendantTasks: () => false,
+        getRuntimeState: (id) => service.getGoalContinuationRuntimeState(id),
+        executeGoalContinuation: execute,
+        getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+      });
+
+      const result = await goalService.setGoal({ workspaceId, objective: "Ship the kickoff fix" });
+      expect(result.success).toBe(true);
+
+      // Wait for the kickoff continuation dispatch via the shared
+      // `waitForCondition` helper instead of an inline `Date.now()` loop —
+      // the dispatcher worker is microtask + setTimeout-driven so we poll
+      // until it lands (Coder-agents-review nit DEREM-50).
+      await waitForCondition(() => execute.mock.calls.length > 0, { timeoutMs: 1_000 });
+
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(execute).toHaveBeenCalledWith(expect.objectContaining({ workspaceId }));
+    } finally {
+      await cleanup();
+    }
+  });
+
+  // --------------------------------------------------------------------------
+  // getGoalContinuationKickoffSendOptions — model-resolution cascade
+  // --------------------------------------------------------------------------
+
+  describe("model-resolution cascade", () => {
+    async function makeServiceWithConfig(
+      configOverrides: Partial<Config>
+    ): Promise<WorkspaceService> {
+      const mockAIService = {
+        isStreaming: mock(() => false),
+        on: mock(() => undefined),
+        off: mock(() => undefined),
+      } as unknown as AIService;
+      const mockInitStateManager: Partial<InitStateManager> = {
+        on: mock(() => undefined as unknown as InitStateManager),
+        getInitState: mock(() => undefined),
+      };
+      const mockConfig: Partial<Config> = {
+        srcDir: "/tmp/test",
+        getAllWorkspaceMetadata: mock(() => Promise.resolve([])),
+        getSessionDir: mock(() => "/tmp/test/sessions"),
+        generateStableId: mock(() => "test-id"),
+        ...configOverrides,
+      };
+      const { historyService } = await createTestHistoryService();
+      const mockExtensionMetadataService = {};
+      const mockBackgroundProcessManager = {};
+      return new WorkspaceService(
+        mockConfig as Config,
+        historyService,
+        mockAIService,
+        mockInitStateManager as InitStateManager,
+        mockExtensionMetadataService as ExtensionMetadataService,
+        mockBackgroundProcessManager as BackgroundProcessManager
+      );
+    }
+
+    test("returns null when the workspace is not found in config", async () => {
+      const service = await makeServiceWithConfig({
+        findWorkspace: mock(() => null),
+        loadConfigOrDefault: mock(() => ({ projects: new Map() })),
+      });
+      expect(service.getGoalContinuationKickoffSendOptions("ws-unknown")).toBeNull();
+    });
+
+    test("prefers per-workspace agent model over workspace default and globals", async () => {
+      const projectPath = "/tmp/proj";
+      const workspaceId = "ws-1";
+      const projects = new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              {
+                id: workspaceId,
+                path: "/tmp/proj/ws",
+                aiSettingsByAgent: {
+                  exec: { model: "anthropic:claude-haiku-4-5", thinkingLevel: "off" as const },
+                },
+                aiSettings: { model: "openai:gpt-4o", thinkingLevel: "off" as const },
+              },
+            ],
+          },
+        ],
+      ]);
+      const service = await makeServiceWithConfig({
+        findWorkspace: mock(() => ({ projectPath, workspacePath: "/tmp/proj/ws" })),
+        loadConfigOrDefault: mock(() => ({
+          projects,
+          agentAiDefaults: { exec: { modelString: "google:gemini-2.5-pro" } },
+        })),
+      });
+      const result = service.getGoalContinuationKickoffSendOptions(workspaceId);
+      expect(result?.model).toContain("haiku");
+      expect(result?.agentId).toBe("exec");
+    });
+
+    test("falls through to workspace default model when per-agent is missing", async () => {
+      const projectPath = "/tmp/proj";
+      const workspaceId = "ws-1";
+      const projects = new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              {
+                id: workspaceId,
+                path: "/tmp/proj/ws",
+                aiSettings: { model: "openai:gpt-4o", thinkingLevel: "off" as const },
+              },
+            ],
+          },
+        ],
+      ]);
+      const service = await makeServiceWithConfig({
+        findWorkspace: mock(() => ({ projectPath, workspacePath: "/tmp/proj/ws" })),
+        loadConfigOrDefault: mock(() => ({ projects })),
+      });
+      const result = service.getGoalContinuationKickoffSendOptions(workspaceId);
+      expect(result?.model).toBe("openai:gpt-4o");
+    });
+
+    test("falls through to global agent default when workspace has no model", async () => {
+      const projectPath = "/tmp/proj";
+      const workspaceId = "ws-1";
+      const projects = new Map([
+        [projectPath, { workspaces: [{ id: workspaceId, path: "/tmp/proj/ws" }] }],
+      ]);
+      const service = await makeServiceWithConfig({
+        findWorkspace: mock(() => ({ projectPath, workspacePath: "/tmp/proj/ws" })),
+        loadConfigOrDefault: mock(() => ({
+          projects,
+          agentAiDefaults: { exec: { modelString: "anthropic:claude-sonnet-4-6" } },
+        })),
+      });
+      const result = service.getGoalContinuationKickoffSendOptions(workspaceId);
+      expect(result?.model).toContain("sonnet");
+    });
+
+    test("falls through to DEFAULT_MODEL as the final fallback", async () => {
+      const projectPath = "/tmp/proj";
+      const workspaceId = "ws-1";
+      const projects = new Map([
+        [projectPath, { workspaces: [{ id: workspaceId, path: "/tmp/proj/ws" }] }],
+      ]);
+      const service = await makeServiceWithConfig({
+        findWorkspace: mock(() => ({ projectPath, workspacePath: "/tmp/proj/ws" })),
+        loadConfigOrDefault: mock(() => ({ projects })),
+      });
+      const result = service.getGoalContinuationKickoffSendOptions(workspaceId);
+      expect(result?.model).toBeTruthy();
+      expect(result?.agentId).toBe("exec");
+    });
+
+    test("skips invalid candidate strings and tries the next fallback", async () => {
+      const projectPath = "/tmp/proj";
+      const workspaceId = "ws-1";
+      const projects = new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              {
+                id: workspaceId,
+                path: "/tmp/proj/ws",
+                aiSettings: { model: "   ", thinkingLevel: "off" as const }, // whitespace-only -> skipped
+              },
+            ],
+          },
+        ],
+      ]);
+      const service = await makeServiceWithConfig({
+        findWorkspace: mock(() => ({ projectPath, workspacePath: "/tmp/proj/ws" })),
+        loadConfigOrDefault: mock(() => ({
+          projects,
+          agentAiDefaults: { exec: { modelString: "openai:gpt-4o" } },
+        })),
+      });
+      const result = service.getGoalContinuationKickoffSendOptions(workspaceId);
+      expect(result?.model).toBe("openai:gpt-4o");
+    });
   });
 });

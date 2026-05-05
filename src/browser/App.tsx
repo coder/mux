@@ -102,6 +102,7 @@ import { MULTI_PROJECT_SIDEBAR_SECTION_ID } from "@/common/constants/multiProjec
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 import { prependInitialAppProxyBasePath } from "@/browser/utils/frontendBasePath";
+import { WorkspaceActiveGoalsWarningToast } from "@/browser/components/ActiveGoalsWarningToast/ActiveGoalsWarningToast";
 import { LoadingScreen } from "@/browser/components/LoadingScreen/LoadingScreen";
 
 function RootRouteShell(props: {
@@ -187,6 +188,7 @@ function AppInner() {
   );
 
   const [isMultiProjectWorkspaceModalOpen, setMultiProjectWorkspaceModalOpen] = useState(false);
+  const goalsEnabled = useExperimentValue(EXPERIMENT_IDS.GOALS);
   const multiProjectWorkspacesEnabled = useExperimentValue(EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES);
 
   // Left sidebar is drag-resizable (mirrors RightSidebar). Width is persisted globally;
@@ -715,6 +717,7 @@ function AppInner() {
     onStartWorkspaceCreation: openNewWorkspaceFromPalette,
     onStartMultiProjectWorkspaceCreation: openNewMultiProjectWorkspaceFromPalette,
     multiProjectWorkspacesEnabled,
+    goalsEnabled,
     onArchiveMergedWorkspacesInProject: archiveMergedWorkspacesInProjectFromPalette,
     getBranchesForProject,
     onSelectWorkspace: selectWorkspaceFromPalette,
@@ -1217,6 +1220,7 @@ function AppInner() {
             )}
           </div>
         </div>
+        <WorkspaceActiveGoalsWarningToast enabled={goalsEnabled} />
         <CommandPalette getSlashContext={() => ({ workspaceId: selectedWorkspace?.workspaceId })} />
         <ProjectCreateModal
           initialPath={projectCreateInitialPath}

@@ -183,6 +183,22 @@ describe("TOOL_DEFINITIONS", () => {
     }
   });
 
+  it("requires complete_goal summary", () => {
+    expect(TOOL_DEFINITIONS.complete_goal.schema.safeParse({}).success).toBe(false);
+    expect(TOOL_DEFINITIONS.complete_goal.schema.safeParse({ summary: "Done." }).success).toBe(
+      true
+    );
+  });
+
+  it("exposes complete_goal as the single completion path only", () => {
+    const parsed = TOOL_DEFINITIONS.complete_goal.schema.safeParse({
+      summary: "Done.",
+      status: "paused",
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
   const filePathAliasCases = [
     {
       toolName: "file_read",

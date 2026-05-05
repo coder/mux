@@ -33,4 +33,5 @@ export {
   BrowserTabLabel,
   DebugTabLabel,
   DesktopTabLabel,
+  GoalTabLabel,
 } from "./TabLabels";

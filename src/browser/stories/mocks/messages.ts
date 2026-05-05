@@ -7,6 +7,11 @@ import type {
   MuxToolPart,
 } from "@/common/types/message";
 import { DEFAULT_MODEL } from "@/common/constants/knownModels";
+import {
+  GOAL_BUDGET_LIMIT_KIND,
+  GOAL_CONTINUATION_KIND,
+  type GoalSyntheticMessageKind,
+} from "@/constants/goals";
 import { STABLE_TIMESTAMP } from "./workspaces";
 
 /** Part type for message construction */
@@ -45,6 +50,43 @@ export function createUserMessage(
       ...(opts.synthetic && { synthetic: true, uiVisible: true }),
     },
   };
+}
+
+function createGoalSyntheticMessage(
+  id: string,
+  text: string,
+  opts: { historySequence: number; timestamp?: number },
+  kind: GoalSyntheticMessageKind
+): ChatMuxMessage {
+  return {
+    type: "message",
+    id,
+    role: "user",
+    parts: [{ type: "text", text }],
+    metadata: {
+      historySequence: opts.historySequence,
+      timestamp: opts.timestamp ?? STABLE_TIMESTAMP,
+      synthetic: true,
+      uiVisible: true,
+      kind,
+    },
+  };
+}
+
+export function createGoalBudgetLimitMessage(
+  id: string,
+  text: string,
+  opts: { historySequence: number; timestamp?: number }
+): ChatMuxMessage {
+  return createGoalSyntheticMessage(id, text, opts, GOAL_BUDGET_LIMIT_KIND);
+}
+
+export function createGoalContinuationMessage(
+  id: string,
+  text: string,
+  opts: { historySequence: number; timestamp?: number }
+): ChatMuxMessage {
+  return createGoalSyntheticMessage(id, text, opts, GOAL_CONTINUATION_KIND);
 }
 
 /** Create a compaction request user message (triggers shimmer effect on streaming response) */

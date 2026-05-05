@@ -8,7 +8,12 @@ import {
 } from "@/browser/stories/helpers/chatSetup";
 import { collapseLeftSidebar } from "@/browser/stories/helpers/uiState";
 import { createStaticChatHandler } from "@/browser/stories/mocks/chatHandlers";
-import { createAssistantMessage, createUserMessage } from "@/browser/stories/mocks/messages";
+import {
+  createAssistantMessage,
+  createGoalBudgetLimitMessage,
+  createGoalContinuationMessage,
+  createUserMessage,
+} from "@/browser/stories/mocks/messages";
 import {
   createFileEditTool,
   createFileReadTool,
@@ -203,6 +208,96 @@ export const SyntheticAutoResumeMessages: AppStory = {
               {
                 historySequence: 6,
                 timestamp: STABLE_TIMESTAMP - 275000,
+              }
+            ),
+          ],
+        });
+      }}
+    />
+  ),
+};
+
+export const GoalContinuationMessages: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        collapseLeftSidebar();
+        return setupSimpleChatStory({
+          workspaceId: "ws-goal-continuation",
+          messages: [
+            createUserMessage("msg-1", "begin", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 120000,
+            }),
+            createAssistantMessage("msg-2", "I'll start by inspecting the repository state.", {
+              historySequence: 2,
+              timestamp: STABLE_TIMESTAMP - 110000,
+            }),
+            createGoalContinuationMessage(
+              "msg-3",
+              "Continue working on the active workspace goal.\n\n<untrusted_objective>Ship the requested feature with tests.</untrusted_objective>",
+              {
+                historySequence: 3,
+                timestamp: STABLE_TIMESTAMP - 60000,
+              }
+            ),
+            createAssistantMessage(
+              "msg-4",
+              "Continuing from the active goal, I'll add coverage next.",
+              {
+                historySequence: 4,
+                timestamp: STABLE_TIMESTAMP - 50000,
+              }
+            ),
+          ],
+        });
+      }}
+    />
+  ),
+};
+
+export const BudgetLimitWrapupMessages: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        collapseLeftSidebar();
+        return setupSimpleChatStory({
+          workspaceId: "ws-goal-budget-wrapup",
+          messages: [
+            createUserMessage("msg-1", "begin", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 180000,
+            }),
+            createAssistantMessage("msg-2", "I'll keep working through the active goal.", {
+              historySequence: 2,
+              timestamp: STABLE_TIMESTAMP - 170000,
+            }),
+            createGoalContinuationMessage(
+              "msg-3",
+              "Continue working on the active workspace goal.\n\n<untrusted_objective>Ship the requested feature with tests.</untrusted_objective>",
+              {
+                historySequence: 3,
+                timestamp: STABLE_TIMESTAMP - 120000,
+              }
+            ),
+            createAssistantMessage("msg-4", "The continuation used the remaining budget.", {
+              historySequence: 4,
+              timestamp: STABLE_TIMESTAMP - 110000,
+            }),
+            createGoalBudgetLimitMessage(
+              "msg-5",
+              "The budget for this goal has been exhausted.\n\nBring the current line of work to a clean stopping point, summarize where things stand, and stop.",
+              {
+                historySequence: 5,
+                timestamp: STABLE_TIMESTAMP - 60000,
+              }
+            ),
+            createAssistantMessage(
+              "msg-6",
+              "Stopping here: tests are partially updated and the remaining risk is in the UI smoke coverage.",
+              {
+                historySequence: 6,
+                timestamp: STABLE_TIMESTAMP - 50000,
               }
             ),
           ],

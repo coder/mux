@@ -1426,6 +1426,37 @@ export const TOOL_DEFINITIONS = {
     schema: SwitchAgentToolArgsSchema,
   },
 
+  get_goal: {
+    description:
+      "Read the current workspace goal. Returns null when no goal is available in this turn.",
+    schema: z.object({}).strict(),
+  },
+  complete_goal: {
+    description:
+      "Mark the current workspace goal complete with a concise 1-2 sentence summary of why the goal is done. " +
+      "This tool only completes goals; it cannot pause, resume, replace, or change goal budgets. " +
+      "Pass the `goalId` returned by `get_goal` so the completion is rejected with a typed conflict " +
+      "error if the user clears or replaces the goal mid-stream rather than throwing a confusing " +
+      "validation error.",
+    schema: z
+      .object({
+        summary: z
+          .string()
+          .trim()
+          .min(1)
+          .describe("Required 1-2 sentence justification for completing the current goal."),
+        goalId: z
+          .string()
+          .nullish()
+          .describe(
+            "Optional optimistic-concurrency token. Pass the `goalId` returned by `get_goal` to " +
+              "ensure the completion is rejected with a typed conflict error if the user clears " +
+              "or replaces the goal mid-stream."
+          ),
+      })
+      .strict(),
+  },
+
   todo_write: {
     description:
       "Create or update the todo list for tracking multi-step tasks (limit: 7 items). " +
@@ -2117,6 +2148,8 @@ export function getAvailableTools(
     "task_list",
     ...(enableAgentReport ? ["agent_report"] : []),
     "switch_agent",
+    "get_goal",
+    "complete_goal",
     "todo_write",
     "todo_read",
     "notify",

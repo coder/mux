@@ -26,6 +26,11 @@ import type {
   StreamErrorMessage,
 } from "@/common/orpc/types";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
+import {
+  GOAL_BUDGET_LIMIT_KIND,
+  GOAL_CONTINUATION_KIND,
+  type GoalSyntheticMessageKind,
+} from "@/constants/goals";
 import type { SendMessageError } from "@/common/types/errors";
 import { AgentIdSchema, SkillNameSchema } from "@/common/orpc/schemas";
 import { normalizeAgentId } from "@/common/utils/agentIds";
@@ -85,6 +90,8 @@ import {
   type StreamEndEvent,
   type StreamLifecycleSnapshot,
 } from "@/common/types/stream";
+import type { GoalStreamOriginKind, WorkspaceGoalService } from "./workspaceGoalService";
+import { getTotalCost } from "@/common/utils/tokens/usageAggregator";
 import { CompactionHandler } from "./compactionHandler";
 import { RetryManager, type RetryFailureError, type RetryStatusEvent } from "./retryManager";
 import type { TelemetryService } from "./telemetryService";
@@ -167,12 +174,32 @@ interface AutoRetryResumeRequest {
   // intentionally omitted from durable startup-recovery snapshots.
   options: SendMessageOptions;
   agentInitiated?: boolean;
+  goalKind?: GoalSyntheticMessageKind;
 }
 
 interface SwitchAgentResult {
   agentId: string;
   reason?: string;
   followUp?: string;
+}
+
+function getGoalStreamOriginKind(input: {
+  isCompaction?: boolean;
+  goalKind?: GoalSyntheticMessageKind;
+  agentInitiated?: boolean;
+}): GoalStreamOriginKind {
+  if (input.isCompaction === true) return "other";
+  if (input.goalKind === GOAL_CONTINUATION_KIND) return "goal_continuation";
+  if (input.goalKind === GOAL_BUDGET_LIMIT_KIND) return "goal_budget_limit";
+  if (input.agentInitiated === true) return "other";
+  return "user";
+}
+
+function coerceGoalSyntheticMessageKind(value: unknown): GoalSyntheticMessageKind | undefined {
+  if (value === GOAL_CONTINUATION_KIND || value === GOAL_BUDGET_LIMIT_KIND) {
+    return value;
+  }
+  return undefined;
 }
 
 const MAX_CONSECUTIVE_AGENT_SWITCHES = 3;
@@ -293,6 +320,7 @@ interface AgentSessionOptions {
   initStateManager: InitStateManager;
   telemetryService?: TelemetryService;
   backgroundProcessManager: BackgroundProcessManager;
+  workspaceGoalService?: WorkspaceGoalService;
   /** When true, skip terminating background processes on dispose/compaction (for bench/CI) */
   keepBackgroundProcesses?: boolean;
   /** Called when compaction completes (e.g., to clear idle compaction pending state) */
@@ -317,6 +345,7 @@ export class AgentSession {
   private readonly aiService: AIService;
   private readonly initStateManager: InitStateManager;
   private readonly backgroundProcessManager: BackgroundProcessManager;
+  private readonly workspaceGoalService?: WorkspaceGoalService;
   private readonly keepBackgroundProcesses: boolean;
   private readonly onCompactionComplete?: () => void;
   private readonly onPostCompactionStateChange?: () => void;
@@ -403,6 +432,9 @@ export class AgentSession {
   /** Track user message ids that already hard-restarted for exec-like subagents. */
   private readonly execSubagentHardRestartAttempts = new Set<string>();
 
+  /** Backend start time for the current stream, used to avoid charging goals created mid-stream. */
+  private activeStreamStartedAtMs?: number;
+
   /** True once we see any model/tool output for the current stream (retry guard). */
   private activeStreamHadAnyDelta = false;
 
@@ -455,6 +487,7 @@ export class AgentSession {
     agentInitiated?: boolean;
     openaiTruncationModeOverride?: "auto" | "disabled";
     providersConfig: ProvidersConfigMap | null;
+    goalKind?: GoalSyntheticMessageKind;
   };
 
   private activeCompactionRequest?: {
@@ -474,6 +507,7 @@ export class AgentSession {
       initStateManager,
       telemetryService,
       backgroundProcessManager,
+      workspaceGoalService,
       keepBackgroundProcesses,
       onCompactionComplete,
       onPostCompactionStateChange,
@@ -489,6 +523,7 @@ export class AgentSession {
     this.aiService = aiService;
     this.initStateManager = initStateManager;
     this.backgroundProcessManager = backgroundProcessManager;
+    this.workspaceGoalService = workspaceGoalService;
     this.keepBackgroundProcesses = keepBackgroundProcesses ?? false;
     this.onCompactionComplete = onCompactionComplete;
     this.onPostCompactionStateChange = onPostCompactionStateChange;
@@ -741,7 +776,8 @@ export class AgentSession {
 
   private setAutoRetryResumeState(
     options: SendMessageOptions | undefined,
-    agentInitiated?: boolean
+    agentInitiated?: boolean,
+    goalKind?: GoalSyntheticMessageKind
   ): void {
     if (!options) {
       this.lastAutoRetryResumeRequest = undefined;
@@ -751,6 +787,7 @@ export class AgentSession {
     this.lastAutoRetryResumeRequest = {
       options,
       ...(agentInitiated === true ? { agentInitiated: true } : {}),
+      ...(goalKind != null ? { goalKind } : {}),
     };
   }
 
@@ -775,6 +812,7 @@ export class AgentSession {
 
     const result = await this.resumeStream(request.options, {
       agentInitiated: request.agentInitiated === true ? true : undefined,
+      goalKind: request.goalKind,
     });
     if (result.success) {
       if (!result.data.started) {
@@ -1080,6 +1118,71 @@ export class AgentSession {
     return undefined;
   }
 
+  private async requireGoalAcknowledgmentForCrashRecoveredPartial(): Promise<void> {
+    const goalService = this.workspaceGoalService;
+    if (!goalService) {
+      return;
+    }
+    if (this.isBusy() || this.isAiStreaming()) {
+      return;
+    }
+
+    // Crash recovery restores abandoned assistant partials without knowing whether
+    // the model's last action was safe to continue, so goal loops must wait for user acknowledgment.
+    const partial = await this.historyService.readPartial(this.workspaceId);
+    if (partial?.role === "assistant" && !this.isPendingAskUserQuestion(partial)) {
+      await goalService.requireUserAcknowledgmentForCrashRecovery(this.workspaceId);
+      return;
+    }
+
+    const historyResult = await this.historyService.getLastMessages(this.workspaceId, 20);
+    if (!historyResult.success) {
+      return;
+    }
+
+    const lastHistoryMessage = this.getLastNonSystemHistoryMessage(historyResult.data);
+    if (
+      lastHistoryMessage?.role === "assistant" &&
+      lastHistoryMessage.metadata?.partial === true &&
+      !this.isPendingAskUserQuestion(lastHistoryMessage)
+    ) {
+      await goalService.requireUserAcknowledgmentForCrashRecovery(this.workspaceId);
+    }
+  }
+
+  private async applyManualUserMessageGoalSafety(): Promise<void> {
+    const goalService = this.workspaceGoalService;
+    if (!goalService) {
+      return;
+    }
+
+    // One real user turn acknowledges any /clear or crash-recovery gate, then
+    // pauses active goal automation so the user explicitly resumes after intervening.
+    const goal = await goalService.acknowledgeUser(this.workspaceId);
+    if (goal?.status !== "active") {
+      return;
+    }
+
+    try {
+      const result = await goalService.setGoal({
+        workspaceId: this.workspaceId,
+        status: "paused",
+        initiator: "auto",
+      });
+      if (!result.success) {
+        log.warn("Failed to auto-pause goal for manual user message", {
+          workspaceId: this.workspaceId,
+          error: result.error,
+        });
+      }
+    } catch (error) {
+      log.warn("Failed to auto-pause goal for manual user message", {
+        workspaceId: this.workspaceId,
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
   private async getWorkspaceMetadataForRetry(): Promise<WorkspaceMetadata | undefined> {
     const aiService = this.aiService as Partial<Pick<AIService, "getWorkspaceMetadata">>;
     if (typeof aiService.getWorkspaceMetadata !== "function") {
@@ -1138,6 +1241,9 @@ export class AgentSession {
     const workspaceMetadata = await this.getWorkspaceMetadataForRetry();
 
     const persistedRetrySendOptions = lastUserMessage?.metadata?.retrySendOptions;
+    const persistedGoalKind =
+      coerceGoalSyntheticMessageKind(persistedRetrySendOptions?.goalKind) ??
+      coerceGoalSyntheticMessageKind(lastUserMessage?.metadata?.kind);
 
     const workspaceAgentId =
       this.normalizeAgentIdForRetry(workspaceMetadata?.agentId ?? workspaceMetadata?.agentType) ??
@@ -1210,6 +1316,9 @@ export class AgentSession {
       if (persistedRetrySendOptions?.agentInitiated === true) {
         compactionRequest.agentInitiated = true;
       }
+      if (persistedGoalKind != null) {
+        compactionRequest.goalKind = persistedGoalKind;
+      }
 
       return compactionRequest;
     }
@@ -1235,6 +1344,9 @@ export class AgentSession {
     }
     if (persistedExperiments) {
       retryRequest.experiments = persistedExperiments;
+    }
+    if (persistedGoalKind != null) {
+      retryRequest.goalKind = persistedGoalKind;
     }
     if (typeof persistedDisableWorkspaceAgents === "boolean") {
       retryRequest.disableWorkspaceAgents = persistedDisableWorkspaceAgents;
@@ -1381,8 +1493,8 @@ export class AgentSession {
         return "completed";
       }
 
-      const { agentInitiated, ...resumeOptions } = retryRequest;
-      this.setAutoRetryResumeState(resumeOptions, agentInitiated);
+      const { agentInitiated, goalKind, ...resumeOptions } = retryRequest;
+      this.setAutoRetryResumeState(resumeOptions, agentInitiated, goalKind);
     }
 
     // Disk reads above may race with user actions; retry once the current work settles
@@ -1499,13 +1611,22 @@ export class AgentSession {
       // a pending follow-up that was never dispatched. If so, dispatch it now.
       // This handles the case where the app crashed after compaction completed
       // but before the follow-up was sent.
-      this.startupRecoveryPromise = this.dispatchPendingFollowUp()
+      this.startupRecoveryPromise = this.requireGoalAcknowledgmentForCrashRecoveredPartial()
+        .then(() => this.dispatchPendingFollowUp())
+        .then(() =>
+          // Re-arm pending continuation / budget-wrap-up dispatches that were
+          // lost when the in-memory dispatch state was wiped on restart
+          // (Coder-agents-review P2 DEREM-16). Do this AFTER pending compaction
+          // follow-ups so goal continuations cannot reorder ahead of a saved
+          // follow-up from crash recovery.
+          this.workspaceGoalService?.recoverPendingDispatchAfterRestart(this.workspaceId)
+        )
         .then(() => {
           this.startupRecoveryScheduled = true;
         })
         .catch((error) => {
           this.startupRecoveryScheduled = false;
-          log.warn("Failed to dispatch pending follow-up during startup recovery", {
+          log.warn("Failed to run startup recovery", {
             workspaceId: this.workspaceId,
             error: getErrorMessage(error),
           });
@@ -2018,15 +2139,68 @@ export class AgentSession {
     internal?: {
       synthetic?: boolean;
       agentInitiated?: boolean;
+      goalContinuation?: boolean;
+      goalKind?: GoalSyntheticMessageKind;
       onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
     }
   ): Promise<Result<void, SendMessageError>> {
     this.assertNotDisposed("sendMessage");
 
     assert(typeof message === "string", "sendMessage requires a string message");
-    if (!internal?.synthetic) {
+
+    const isManualUserMessage = internal?.synthetic !== true;
+
+    // Last-line-of-defence pricing gate: every dispatch path (initial sends,
+    // sendQueuedMessages, dispatchPendingFollowUp, dispatchAgentSwitch,
+    // post-compaction follow-ups) lands here, so a budgeted goal that became
+    // resumable while a queued unpriced-model message waited cannot bypass
+    // enforcement. The WorkspaceService-level gate already runs first for
+    // initial calls (and prevents persisting bad AI settings), but it cannot
+    // catch goal-state changes that happen between queueing and dispatch.
+    //
+    // When rejecting a manual (user-typed) send, we MUST persist the user's
+    // message and surface a stream-error chat event before returning. The
+    // queue-dispatch flow in `sendQueuedMessages()` removes the message from
+    // the queue before calling us, so a silent `Err` here would drop the
+    // user's input without any visible feedback (Codex P1
+    // PRRT_kwDOPxxmWM5_s-jo). For synthetic sends (compaction, goal
+    // continuation, etc.) the user did not type the message, so we just
+    // return Err and let the synthetic caller log/handle it.
+    if (this.workspaceGoalService) {
+      const pricingGate = await this.workspaceGoalService.assertPricedModelForBudgetedGoal(
+        this.workspaceId,
+        options?.model
+      );
+      if (!pricingGate.success) {
+        if (isManualUserMessage) {
+          const persisted = await this.preserveRejectedManualSend(
+            message,
+            options,
+            pricingGate.error
+          );
+          // The user has explicitly intervened, so the goal-safety contract
+          // for manual sends must still apply on the rejection path: clear any
+          // pending acknowledgment gate AND auto-pause an active goal so a
+          // pending post-stream-end continuation does not fire as if the user
+          // had not interrupted (Codex P1 PRRT_kwDOPxxmWM5_tOFt). Only run the
+          // hook when an actionable manual turn was actually present — empty
+          // payloads (Codex P2 PRRT_kwDOPxxmWM5_tUsx) would otherwise silently
+          // disable goal continuation after a blank submit / invalid payload.
+          if (persisted) {
+            await this.applyManualUserMessageGoalSafety();
+          }
+        }
+        return Err(pricingGate.error);
+      }
+    }
+
+    if (isManualUserMessage) {
       this.consecutiveAgentSwitches = 0;
     }
+
+    const goalKind =
+      internal?.goalKind ??
+      (internal?.goalContinuation === true ? GOAL_CONTINUATION_KIND : undefined);
 
     const trimmedMessage = message.trim();
     const fileParts = options?.fileParts;
@@ -2288,6 +2462,10 @@ export class AgentSession {
       ...(delegatedToolNames != null ? { delegatedToolNames } : {}),
     };
 
+    if (isManualUserMessage) {
+      await this.applyManualUserMessageGoalSafety();
+    }
+
     const userMessage = createMuxMessage(
       messageId,
       "user",
@@ -2296,9 +2474,10 @@ export class AgentSession {
         timestamp: Date.now(),
         toolPolicy: typedToolPolicy,
         disableWorkspaceAgents: options?.disableWorkspaceAgents,
-        retrySendOptions: pickStartupRetrySendOptions(optionsForStream, agentInitiated),
+        retrySendOptions: pickStartupRetrySendOptions(optionsForStream, agentInitiated, goalKind),
         muxMetadata: typedMuxMetadata, // Pass through frontend metadata as black-box
         ...(acpPromptId != null ? { acpPromptId } : {}),
+        ...(goalKind != null ? { kind: goalKind } : {}),
         // Auto-resume and other system-generated messages are synthetic + UI-visible
         ...(internal?.synthetic && { synthetic: true, uiVisible: true }),
       },
@@ -2366,6 +2545,7 @@ export class AgentSession {
           options: optionsForStream,
           modelForStream,
           fileParts: followUpFileParts,
+          goalKind,
           muxMetadata: typedMuxMetadata,
         });
 
@@ -2488,7 +2668,7 @@ export class AgentSession {
     // send has passed validation + been accepted into history.
     // Synthetic/system sends (mid-stream compaction, task recovery prompts, etc.)
     // must not silently opt users back into auto-retry after they've disabled it.
-    if (internal?.synthetic !== true) {
+    if (isManualUserMessage) {
       // A fresh accepted user send supersedes any persisted startup-abandon
       // classification from previous turns.
       await this.clearStartupAutoRetryAbandon();
@@ -2499,7 +2679,7 @@ export class AgentSession {
 
     // Same-session retry should resume the exact accepted request we just finalized
     // in history, even if runtime warmup fails before streamWithHistory() starts.
-    this.setAutoRetryResumeState(optionsForStream, agentInitiated);
+    this.setAutoRetryResumeState(optionsForStream, agentInitiated, goalKind);
     const preparedTurnAbortController = new AbortController();
     this.activePreparedTurnAbortController = preparedTurnAbortController;
     this.setTurnPhase(TurnPhase.PREPARING);
@@ -2535,7 +2715,8 @@ export class AgentSession {
           undefined,
           undefined,
           agentInitiated,
-          preparedTurnAbortController.signal
+          preparedTurnAbortController.signal,
+          goalKind
         );
       } finally {
         // Success should advance via stream events; if startup never emitted any, don't leave the
@@ -2576,7 +2757,7 @@ export class AgentSession {
 
   async resumeStream(
     options: SendMessageOptions,
-    internal?: { agentInitiated?: boolean }
+    internal?: { agentInitiated?: boolean; goalKind?: GoalSyntheticMessageKind }
   ): Promise<Result<{ started: boolean }, SendMessageError>> {
     this.assertNotDisposed("resumeStream");
 
@@ -2594,9 +2775,19 @@ export class AgentSession {
       return Ok({ started: false });
     }
 
+    if (this.workspaceGoalService) {
+      const pricingGate = await this.workspaceGoalService.assertPricedModelForBudgetedGoal(
+        this.workspaceId,
+        modelForStream
+      );
+      if (!pricingGate.success) {
+        return Err(pricingGate.error);
+      }
+    }
+
     // A resumed attempt becomes the latest live resume request as soon as we
     // accept its options, even if startup fails before the stream fully begins.
-    this.setAutoRetryResumeState(optionsForStream, internal?.agentInitiated);
+    this.setAutoRetryResumeState(optionsForStream, internal?.agentInitiated, internal?.goalKind);
     this.setTurnPhase(TurnPhase.PREPARING);
     try {
       // Must await here so the finally block runs after streaming completes,
@@ -2606,7 +2797,9 @@ export class AgentSession {
         optionsForStream,
         undefined,
         undefined,
-        internal?.agentInitiated
+        internal?.agentInitiated,
+        undefined,
+        internal?.goalKind
       );
       if (!result.success) {
         return result;
@@ -2728,6 +2921,80 @@ export class AgentSession {
   }
 
   /**
+   * Persist a manual user message + emit a stream-error chat event when a
+   * pre-stream gate (e.g. the unpriced-model budget gate) rejects a send.
+   *
+   * Without this, queue-dispatched manual sends silently disappear: the
+   * caller (`sendQueuedMessages`) has already removed the message from the
+   * queue before invoking `sendMessage`, so a bare `Err` return drops the
+   * user's typed input with no visible feedback. Persisting + emitting both
+   * the user message and the stream error gives the user a chat-history
+   * record of what they sent and a clear explanation of why it was blocked.
+   *
+   * Best-effort: failures to persist/emit are logged and swallowed so the
+   * caller still gets the original gate error back, which preserves the
+   * existing turn-phase / IDLE bookkeeping in `sendQueuedMessages`.
+   *
+   * Returns `true` if an actionable user message was actually present (text
+   * and/or attachments) — the caller uses this to decide whether to run the
+   * goal-safety hook. An empty payload (blank submit / invalid options) is
+   * not a real intervention and must not pause an active goal (Codex P2
+   * PRRT_kwDOPxxmWM5_tUsx).
+   */
+  private async preserveRejectedManualSend(
+    message: string,
+    options: (SendMessageOptions & { fileParts?: FilePart[] }) | undefined,
+    rejection: SendMessageError
+  ): Promise<boolean> {
+    if (this.disposed) {
+      return false;
+    }
+    const trimmed = message.trim();
+    const fileParts = options?.fileParts ?? [];
+    const additionalParts = fileParts.map((part) => ({
+      type: "file" as const,
+      url: part.url,
+      mediaType: part.mediaType,
+      filename: part.filename,
+    }));
+    if (trimmed.length === 0 && additionalParts.length === 0) {
+      // Empty payload — nothing to preserve and no actionable intervention to
+      // attribute to the user. The empty-message rejection further down in
+      // sendMessage would normally catch this, but if the gate fires first we
+      // still need to stay defensive.
+      return false;
+    }
+    try {
+      const userMessage = createMuxMessage(
+        createUserMessageId(),
+        "user",
+        trimmed,
+        {},
+        additionalParts.length > 0 ? additionalParts : undefined
+      );
+      const appendResult = await this.historyService.appendToHistory(this.workspaceId, userMessage);
+      if (!appendResult.success) {
+        log.warn("Failed to persist user message after pre-stream gate rejection", {
+          workspaceId: this.workspaceId,
+          error: appendResult.error,
+        });
+      } else if (!this.disposed) {
+        this.emitChatEvent({ ...userMessage, type: "message" });
+      }
+    } catch (error) {
+      log.warn("Unexpected error persisting user message after pre-stream gate rejection", {
+        workspaceId: this.workspaceId,
+        error: getErrorMessage(error),
+      });
+    }
+    if (!this.disposed) {
+      const streamError = buildStreamErrorEventData(rejection);
+      this.emitChatEvent(createStreamErrorMessage(streamError));
+    }
+    return true;
+  }
+
+  /**
    * Seed `lastUsageState` from persisted history so the compaction monitor
    * can trigger on-send compaction even when no live stream has occurred yet
    * (e.g., after an app restart). Walks the last N messages backwards to find
@@ -2780,6 +3047,7 @@ export class AgentSession {
     options: SendMessageOptions;
     modelForStream: string;
     fileParts?: FilePart[];
+    goalKind?: GoalSyntheticMessageKind;
     muxMetadata?: MuxMessageMetadata;
   }): CompactionFollowUpRequest {
     const followUp: CompactionFollowUpRequest = {
@@ -2788,6 +3056,10 @@ export class AgentSession {
       agentId: params.options.agentId,
       ...pickPreservedSendOptions(params.options),
     };
+
+    if (params.goalKind != null) {
+      followUp.goalKind = params.goalKind;
+    }
 
     if (params.fileParts && params.fileParts.length > 0) {
       followUp.fileParts = params.fileParts;
@@ -2936,6 +3208,7 @@ export class AgentSession {
         // buildCompactionMessageText can hide the internal resume marker.
         messageText: "Continue",
         options: streamContext.options,
+        goalKind: streamContext.goalKind,
         modelForStream: streamContext.modelString,
       });
       const autoCompactionRequest = this.buildAutoCompactionRequest({
@@ -3039,7 +3312,8 @@ export class AgentSession {
     openaiTruncationModeOverride?: "auto" | "disabled",
     disablePostCompactionAttachments?: boolean,
     agentInitiated?: boolean,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    goalKind?: GoalSyntheticMessageKind
   ): Promise<Result<void, SendMessageError>> {
     const isStartupAbortRequested = (): boolean => abortSignal?.aborted === true;
 
@@ -3061,6 +3335,7 @@ export class AgentSession {
       options,
       agentInitiated,
       openaiTruncationModeOverride,
+      ...(goalKind != null ? { goalKind } : {}),
       providersConfig: providersConfigForCompaction,
     };
     this.activeStreamUserMessageId = undefined;
@@ -3180,6 +3455,7 @@ export class AgentSession {
       changedFileAttachments:
         changedFileAttachments.length > 0 ? changedFileAttachments : undefined,
       postCompactionAttachments,
+      workspaceGoalService: this.workspaceGoalService,
       experiments: options?.experiments,
       disableWorkspaceAgents: options?.disableWorkspaceAgents,
       hasQueuedMessage: () =>
@@ -3402,13 +3678,14 @@ export class AgentSession {
 
     // Capture attribution before finalizeCompactionRetry() clears active stream state.
     const retryAgentInitiated = this.activeStreamContext?.agentInitiated;
+    const retryGoalKind = this.activeStreamContext?.goalKind;
     const retryOptionsForResume = retryOptions ?? {
       model: context.modelString,
       agentId: WORKSPACE_DEFAULTS.agentId,
     };
 
     await this.finalizeCompactionRetry(data.messageId);
-    this.setAutoRetryResumeState(retryOptionsForResume, retryAgentInitiated);
+    this.setAutoRetryResumeState(retryOptionsForResume, retryAgentInitiated, retryGoalKind);
     this.setTurnPhase(TurnPhase.PREPARING);
     let retryResult: Result<void, SendMessageError>;
     try {
@@ -3417,7 +3694,9 @@ export class AgentSession {
         retryOptions,
         isGptClass ? "auto" : undefined,
         undefined,
-        retryAgentInitiated
+        retryAgentInitiated,
+        undefined,
+        retryGoalKind
       );
     } finally {
       if (this.turnPhase === TurnPhase.PREPARING) {
@@ -3501,7 +3780,9 @@ export class AgentSession {
         context.options,
         context.openaiTruncationModeOverride,
         true,
-        context.agentInitiated
+        context.agentInitiated,
+        undefined,
+        context.goalKind
       );
     } finally {
       if (this.turnPhase === TurnPhase.PREPARING) {
@@ -3782,7 +4063,7 @@ export class AgentSession {
           },
         };
 
-    this.setAutoRetryResumeState(retryOptions, context.agentInitiated);
+    this.setAutoRetryResumeState(retryOptions, context.agentInitiated, context.goalKind);
     this.setTurnPhase(TurnPhase.PREPARING);
     let retryResult: Result<void, SendMessageError>;
     try {
@@ -3791,7 +4072,9 @@ export class AgentSession {
         retryOptions,
         context.openaiTruncationModeOverride,
         undefined,
-        context.agentInitiated
+        context.agentInitiated,
+        undefined,
+        context.goalKind
       );
     } finally {
       if (this.turnPhase === TurnPhase.PREPARING) {
@@ -3810,9 +4093,55 @@ export class AgentSession {
     return true;
   }
 
+  private async recordGoalAccountingFromUsage(input: {
+    model: string;
+    usage: StreamEndEvent["metadata"]["usage"];
+    providerMetadata?: Record<string, unknown>;
+    metadataModel?: string;
+    isCompaction?: boolean;
+    goalKind?: GoalSyntheticMessageKind;
+    agentInitiated?: boolean;
+  }): Promise<void> {
+    if (!this.workspaceGoalService) {
+      return;
+    }
+    // Hot-path gate: when the GOALS experiment is off, skip the goal-record
+    // disk I/O entirely so the off-experiment runtime really is identical to
+    // main (Coder-agents-review P3 DEREM-19). Without this short-circuit,
+    // every stream-end pays a goal.json read (ENOENT for users without
+    // goals) + an extensionMetadata write to push a null goal snapshot.
+    if (!this.workspaceGoalService.isExperimentEnabled()) {
+      return;
+    }
+
+    const displayUsage = createDisplayUsage(
+      input.usage,
+      input.model,
+      input.providerMetadata,
+      input.metadataModel
+    );
+    const streamOriginKind = getGoalStreamOriginKind(input);
+    const costUsd = getTotalCost(displayUsage) ?? 0;
+    try {
+      await this.workspaceGoalService.recordStreamAccounting({
+        workspaceId: this.workspaceId,
+        costUsd,
+        isCompaction: input.isCompaction === true,
+        streamOriginKind,
+        streamStartedAtMs: this.activeStreamStartedAtMs ?? null,
+      });
+    } catch (error) {
+      log.warn("Failed to record goal stream accounting", {
+        workspaceId: this.workspaceId,
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
   private resetActiveStreamState(): void {
     this.activeStreamContext = undefined;
     this.activeStreamUserMessageId = undefined;
+    this.activeStreamStartedAtMs = undefined;
     this.activeStreamHadPostCompactionInjection = false;
     this.activeStreamHadAnyDelta = false;
     this.ackPendingPostCompactionStateOnStreamEnd = false;
@@ -3895,6 +4224,9 @@ export class AgentSession {
     };
 
     forward("stream-start", (payload) => {
+      if (payload.type === "stream-start") {
+        this.activeStreamStartedAtMs = payload.startTime;
+      }
       this.setTurnPhase(TurnPhase.STREAMING);
       this.emitChatEvent(payload);
     });
@@ -4009,6 +4341,9 @@ export class AgentSession {
             hadAnyOutput: false,
           });
         }
+        if (preStreamAbortReason === "user") {
+          await this.workspaceGoalService?.recordUserStoppedStream(this.workspaceId);
+        }
         await this.updateStartupAutoRetryAbandonFromAbort(
           preStreamAbortReason,
           this.activeStreamUserMessageId
@@ -4034,6 +4369,28 @@ export class AgentSession {
       const failedUserMessageId = this.activeStreamUserMessageId;
       const hadCompactionRequest = this.activeCompactionRequest !== undefined;
       const abortReason = "abortReason" in payload ? payload.abortReason : undefined;
+      if (abortReason === "user") {
+        await this.workspaceGoalService?.recordUserStoppedStream(this.workspaceId);
+      }
+      if (activeModelForAbort) {
+        // Forward goalKind / agentInitiated from the active stream context so
+        // an interrupted continuation/wrap stream is correctly classified
+        // as `goal_continuation` / `goal_budget_limit` and counts toward
+        // the turn cap. Without this, getGoalStreamOriginKind falls back to
+        // `"user"` and the interrupted synthetic turn would not consume a
+        // turn, under-enforcing limits (Codex P2 PRRT_kwDOPxxmWM5_t9Bu).
+        await this.recordGoalAccountingFromUsage({
+          model: activeModelForAbort,
+          usage: payload.metadata?.usage,
+          providerMetadata: payload.metadata?.providerMetadata,
+          goalKind: this.activeStreamContext?.goalKind,
+          agentInitiated: this.activeStreamContext?.agentInitiated,
+          isCompaction: hadCompactionRequest,
+        });
+      }
+      if (abortReason !== "user") {
+        await this.workspaceGoalService?.applyPendingAfterStreamEnd(this.workspaceId);
+      }
       this.setTerminalStreamLifecycle("interrupted", { abortReason });
       this.activeCompactionRequest = undefined;
       this.resetActiveStreamState();
@@ -4066,8 +4423,13 @@ export class AgentSession {
       await this.clearStartupAutoRetryAbandon();
 
       const streamEndPayload = payload;
+      const activeStreamGoalKind = this.activeStreamContext?.goalKind;
       const activeStreamOptions = this.activeStreamContext?.options;
 
+      let goalContinuationRequest: {
+        sendOptions: SendMessageOptions;
+        streamEndedAtMs: number;
+      } | null = null;
       let emittedStreamEnd = false;
       let handoffFailureMessage: string | undefined;
       try {
@@ -4084,6 +4446,17 @@ export class AgentSession {
         this.clearLiveUsageState();
 
         const handled = await this.compactionHandler.handleCompletion(streamEndPayload);
+
+        await this.recordGoalAccountingFromUsage({
+          model: streamEndPayload.metadata.model,
+          usage: streamEndPayload.metadata.usage,
+          providerMetadata: streamEndPayload.metadata.providerMetadata,
+          metadataModel: streamEndPayload.metadata.metadataModel,
+          goalKind: this.activeStreamContext?.goalKind,
+          agentInitiated: this.activeStreamContext?.agentInitiated,
+          isCompaction: handled,
+        });
+        await this.workspaceGoalService?.applyPendingAfterStreamEnd(this.workspaceId);
 
         if (!handled) {
           this.emitChatEvent(payload);
@@ -4135,7 +4508,8 @@ export class AgentSession {
             const dispatchedSwitchFollowUp = await this.dispatchAgentSwitch(
               switchResult,
               activeStreamOptions,
-              streamEndPayload.metadata.model
+              streamEndPayload.metadata.model,
+              activeStreamGoalKind
             );
             if (dispatchedSwitchFollowUp) {
               return;
@@ -4148,6 +4522,7 @@ export class AgentSession {
 
         // Stream end: auto-send queued messages (for user messages typed during streaming)
         // P2: if an edit is waiting, skip the queue flush so the edit truncates first.
+        const hadQueuedMessages = this.hasQueuedMessages();
         if (this.deferQueuedFlushUntilAfterEdit) {
           // Clear the queued message flag so the next turn's tools don't early-return.
           this.backgroundProcessManager.setMessageQueued(this.workspaceId, false);
@@ -4155,6 +4530,19 @@ export class AgentSession {
           // for IDLE; truncation must run before any synthetic turn resumes.
         } else {
           this.sendQueuedMessages();
+        }
+
+        if (!handled && !this.deferQueuedFlushUntilAfterEdit && !hadQueuedMessages) {
+          const sendOptions = activeStreamOptions ?? {
+            model: streamEndPayload.metadata.model,
+            agentId: WORKSPACE_DEFAULTS.agentId,
+          };
+          if (sendOptions.agentId !== "plan" && sendOptions.agentId !== "compact") {
+            goalContinuationRequest = {
+              sendOptions,
+              streamEndedAtMs: Date.now(),
+            };
+          }
         }
       } catch (error) {
         const streamEndCleanupError = getErrorMessage(error);
@@ -4188,6 +4576,13 @@ export class AgentSession {
         if (this.turnPhase === TurnPhase.COMPLETING) {
           this.resetActiveStreamState();
           this.setTurnPhase(TurnPhase.IDLE);
+          if (goalContinuationRequest != null) {
+            await this.workspaceGoalService?.requestContinuationAfterStreamEnd({
+              workspaceId: this.workspaceId,
+              sendOptions: goalContinuationRequest.sendOptions,
+              streamEndedAtMs: goalContinuationRequest.streamEndedAtMs,
+            });
+          }
         }
       }
     });
@@ -4655,7 +5050,8 @@ export class AgentSession {
   private async dispatchAgentSwitch(
     switchResult: SwitchAgentResult,
     currentOptions: SendMessageOptions | undefined,
-    fallbackModel: string
+    fallbackModel: string,
+    goalKind?: GoalSyntheticMessageKind
   ): Promise<boolean> {
     assert(
       typeof switchResult.agentId === "string" && switchResult.agentId.trim().length > 0,
@@ -4784,6 +5180,7 @@ export class AgentSession {
 
     const sendResult = await this.sendMessage(followUpText, followUpOptions, {
       synthetic: true,
+      goalKind,
     });
 
     if (!sendResult.success) {
@@ -4960,14 +5357,18 @@ export class AgentSession {
     // The compaction summary is now the source of truth for the next live resume
     // request. Pre-arm retry state from the reconstructed follow-up so failures
     // before stream startup do not fall back to the already-completed compact turn.
-    this.setAutoRetryResumeState(options);
+    this.setAutoRetryResumeState(options, undefined, followUp.goalKind);
 
     // Await sendMessage to ensure the follow-up is persisted before returning.
     // This guarantees ordering: the follow-up message is written to history
     // before sendQueuedMessages() runs, preventing race conditions.
     // Mark as synthetic so recovery/background dispatches do not implicitly
     // re-enable auto-retry after a user explicitly opted out.
-    const sendResult = await this.sendMessage(finalText, options, { synthetic: true });
+    const sendResult = await this.sendMessage(finalText, options, {
+      synthetic: true,
+      goalKind: followUp.goalKind,
+      goalContinuation: followUp.goalKind === GOAL_CONTINUATION_KIND,
+    });
     if (!sendResult.success) {
       const message = this.extractRetryFailureMessage(sendResult.error) ?? sendResult.error.type;
       throw new Error(`Failed to dispatch pending follow-up: ${message}`);

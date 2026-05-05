@@ -13,6 +13,7 @@ import {
 } from "@/node/utils/extensionMetadata";
 import { getMuxExtensionMetadataPath } from "@/common/constants/paths";
 import type { WorkspaceActivitySnapshot } from "@/common/types/workspace";
+import type { GoalSnapshot } from "@/common/types/goal";
 import { log } from "@/node/services/log";
 
 /**
@@ -84,6 +85,7 @@ export class ExtensionMetadataService {
       agentStatus: null,
       displayStatus: null,
       lastStatusUrl: null,
+      goal: null,
     };
     data.workspaces[workspaceId] = created;
     return created;
@@ -325,6 +327,15 @@ export class ExtensionMetadataService {
         // can still reuse the previous deep link.
         workspace.lastStatusUrl = previousUrl;
       }
+    });
+  }
+
+  async setGoal(
+    workspaceId: string,
+    goal: GoalSnapshot | null
+  ): Promise<WorkspaceActivitySnapshot> {
+    return this.mutateWorkspaceSnapshot(workspaceId, Date.now(), (workspace) => {
+      workspace.goal = goal;
     });
   }
 

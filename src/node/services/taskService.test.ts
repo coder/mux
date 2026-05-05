@@ -15,6 +15,10 @@ import {
   readSubagentReportArtifact,
   upsertSubagentReportArtifact,
 } from "@/node/services/subagentReportArtifacts";
+import { ExtensionMetadataService } from "@/node/services/ExtensionMetadataService";
+import { SessionUsageService } from "@/node/services/sessionUsageService";
+import { WorkspaceGoalService } from "@/node/services/workspaceGoalService";
+import { IdleDispatcher } from "@/node/services/idleDispatcher";
 import { TaskService, ForegroundWaitBackgroundedError } from "@/node/services/taskService";
 import type { WorkspaceForkParams } from "@/node/runtime/Runtime";
 import { WorktreeRuntime } from "@/node/runtime/WorktreeRuntime";
@@ -61,6 +65,18 @@ function findWorkspaceInConfig(config: Config, workspaceId: string) {
   return Array.from(config.loadConfigOrDefault().projects.values())
     .flatMap((project) => project.workspaces)
     .find((workspace) => workspace.id === workspaceId);
+}
+
+async function workspaceGoalFileExists(config: Config, workspaceId: string): Promise<boolean> {
+  try {
+    await fsPromises.access(path.join(config.getSessionDir(workspaceId), "goal.json"));
+    return true;
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
 }
 
 async function waitForWorkspaceRemoval(
@@ -238,6 +254,7 @@ function createWorkspaceServiceMocks(
     replaceHistory: ReturnType<typeof mock>;
     updateAgentStatus: ReturnType<typeof mock>;
     isExperimentEnabled: ReturnType<typeof mock>;
+    emitChatEvent: ReturnType<typeof mock>;
   }>
 ): {
   workspaceService: WorkspaceService;
@@ -251,6 +268,7 @@ function createWorkspaceServiceMocks(
   replaceHistory: ReturnType<typeof mock>;
   updateAgentStatus: ReturnType<typeof mock>;
   isExperimentEnabled: ReturnType<typeof mock>;
+  emitChatEvent: ReturnType<typeof mock>;
 } {
   const sendMessage =
     overrides?.sendMessage ?? mock((): Promise<Result<void>> => Promise.resolve(Ok(undefined)));
@@ -269,6 +287,7 @@ function createWorkspaceServiceMocks(
   const updateAgentStatus =
     overrides?.updateAgentStatus ?? mock((): Promise<void> => Promise.resolve());
   const isExperimentEnabled = overrides?.isExperimentEnabled ?? mock(() => false);
+  const emitChatEvent = overrides?.emitChatEvent ?? mock(() => undefined);
 
   return {
     workspaceService: {
@@ -282,6 +301,7 @@ function createWorkspaceServiceMocks(
       replaceHistory,
       updateAgentStatus,
       isExperimentEnabled,
+      emitChatEvent,
     } as unknown as WorkspaceService,
     sendMessage,
     resumeStream,
@@ -293,6 +313,7 @@ function createWorkspaceServiceMocks(
     replaceHistory,
     updateAgentStatus,
     isExperimentEnabled,
+    emitChatEvent,
   };
 }
 
@@ -302,6 +323,8 @@ function createTaskServiceHarness(
     aiService?: AIService;
     workspaceService?: WorkspaceService;
     initStateManager?: InitStateManager;
+    sessionUsageService?: SessionUsageService;
+    workspaceGoalService?: WorkspaceGoalService;
   }
 ): {
   historyService: HistoryService;
@@ -325,7 +348,9 @@ function createTaskServiceHarness(
     aiService,
     workspaceService,
     initStateManager,
-    undefined
+    undefined,
+    overrides?.sessionUsageService,
+    overrides?.workspaceGoalService
   );
 
   return {
@@ -1744,6 +1769,42 @@ describe("TaskService", () => {
       },
       { agentInitiated: true }
     );
+  }, 20_000);
+
+  test("task-created child workspaces do not inherit the parent's goal file", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["goalchild1"], "goalchild2");
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+    const historyService = new HistoryService(config);
+    const extensionMetadata = new ExtensionMetadataService(
+      path.join(rootDir, "task-goal-extensionMetadata.json")
+    );
+    const workspaceGoalService = new WorkspaceGoalService(
+      config,
+      historyService,
+      extensionMetadata
+    );
+    const result = await workspaceGoalService.setGoal({
+      workspaceId: parentId,
+      objective: "Parent owns the goal",
+      budgetCents: 100,
+    });
+    expect(result.success).toBe(true);
+    expect(await workspaceGoalFileExists(config, parentId)).toBe(true);
+
+    const { workspaceService } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+    const created = await taskService.create({
+      parentWorkspaceId: parentId,
+      kind: "agent",
+      agentType: "exec",
+      prompt: "child should not inherit a goal",
+      title: "No child goal",
+    });
+
+    expect(created.success).toBe(true);
+    assert(created.success);
+    expect(await workspaceGoalFileExists(config, created.data.taskId)).toBe(false);
   }, 20_000);
 
   test("parent runtime AI settings outrank persisted parent workspace settings", async () => {
@@ -6608,6 +6669,168 @@ describe("TaskService", () => {
     expect(remove).toHaveBeenCalledWith(childId, true);
     // Parent auto-resume fires after the child report is finalized at stream-end.
     expect(sendMessage).toHaveBeenCalled();
+  });
+
+  test("agent_report attributes child usage to parent goal and emits one child-budget toast", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-goal-report";
+    const childUnderId = "child-under-budget";
+    const childOverId = "child-over-budget";
+    const childModel = "openai:gpt-4o-mini";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            trusted: true,
+            workspaces: [
+              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
+              {
+                path: path.join(projectPath, "child-under"),
+                id: childUnderId,
+                name: "agent_explore_under",
+                parentWorkspaceId: parentId,
+                agentType: "explore",
+                taskStatus: "awaiting_report",
+                taskModelString: childModel,
+              },
+              {
+                path: path.join(projectPath, "child-over"),
+                id: childOverId,
+                name: "agent_explore_over",
+                parentWorkspaceId: parentId,
+                agentType: "explore",
+                taskStatus: "awaiting_report",
+                taskModelString: childModel,
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+    });
+
+    const { aiService } = createAIServiceMocks(config);
+    const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {
+      await removeWorkspaceFromTestConfig(config, workspaceId);
+      return Ok(undefined);
+    });
+    const { workspaceService, emitChatEvent } = createWorkspaceServiceMocks({ remove });
+    const historyService = new HistoryService(config);
+    const sessionUsageService = new SessionUsageService(config, historyService);
+    const extensionMetadata = new ExtensionMetadataService(
+      path.join(rootDir, "task-report-goals-extensionMetadata.json")
+    );
+    const workspaceGoalService = new WorkspaceGoalService(
+      config,
+      historyService,
+      extensionMetadata
+    );
+    workspaceGoalService.registerGoalContinuationConsumer(new IdleDispatcher(), {
+      isGoalExperimentEnabled: () => true,
+      hasActiveDescendantTasks: () => false,
+      getRuntimeState: () => ({ isRuntimeCompatible: true }),
+      executeGoalContinuation: () => Promise.resolve(true),
+    });
+    const goalResult = await workspaceGoalService.setGoal({
+      workspaceId: parentId,
+      objective: "Parent budget",
+      budgetCents: 100,
+    });
+    expect(goalResult.success).toBe(true);
+
+    const { taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+      sessionUsageService,
+      workspaceGoalService,
+    });
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+    };
+
+    async function finishChildReport(input: {
+      workspaceId: string;
+      costUsd: number;
+      messageId: string;
+      toolCallId: string;
+      reportMarkdown: string;
+      title: string;
+    }): Promise<void> {
+      await sessionUsageService.recordUsage(input.workspaceId, childModel, {
+        input: { tokens: 100, cost_usd: input.costUsd },
+        cached: { tokens: 0, cost_usd: 0 },
+        cacheCreate: { tokens: 0, cost_usd: 0 },
+        output: { tokens: 0, cost_usd: 0 },
+        reasoning: { tokens: 0, cost_usd: 0 },
+        model: childModel,
+      });
+      await internal.handleStreamEnd({
+        type: "stream-end",
+        workspaceId: input.workspaceId,
+        messageId: input.messageId,
+        metadata: { model: childModel },
+        parts: [
+          {
+            type: "dynamic-tool",
+            toolCallId: input.toolCallId,
+            toolName: "agent_report",
+            input: { reportMarkdown: input.reportMarkdown, title: input.title },
+            state: "output-available",
+            output: { success: true },
+          },
+        ],
+      });
+    }
+
+    await finishChildReport({
+      workspaceId: childUnderId,
+      costUsd: 0.37,
+      messageId: "assistant-child-under",
+      toolCallId: "agent-report-under",
+      reportMarkdown: "Under budget",
+      title: "Under",
+    });
+
+    expect(await workspaceGoalService.getGoal(parentId)).toMatchObject({
+      status: "active",
+      costCents: 37,
+      turnsUsed: 1,
+      attributedChildren: [childUnderId],
+    });
+    expect(emitChatEvent).not.toHaveBeenCalledWith(
+      parentId,
+      expect.objectContaining({ type: "goal-budget-limited" })
+    );
+
+    await finishChildReport({
+      workspaceId: childOverId,
+      costUsd: 0.75,
+      messageId: "assistant-child-over",
+      toolCallId: "agent-report-over",
+      reportMarkdown: "Over budget",
+      title: "Over",
+    });
+
+    expect(await workspaceGoalService.getGoal(parentId)).toMatchObject({
+      status: "budget_limited",
+      costCents: 112,
+      turnsUsed: 2,
+      attributedChildren: [childUnderId, childOverId],
+    });
+    expect(emitChatEvent).toHaveBeenCalledTimes(1);
+    expect(emitChatEvent).toHaveBeenCalledWith(
+      parentId,
+      expect.objectContaining({
+        type: "goal-budget-limited",
+        causedByChild: true,
+        childWorkspaceId: childOverId,
+        message: "Child workspace exceeded the parent's goal budget.",
+      })
+    );
   });
 
   test("handleStreamEnd finalizes report when task status is interrupted", async () => {

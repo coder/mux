@@ -17,6 +17,17 @@ export {
 // Project schemas
 export { ProjectConfigSchema, WorkspaceConfigSchema } from "./schemas/project";
 
+// Goal schemas
+export {
+  GoalClearInputSchema,
+  GoalGetInputSchema,
+  GoalRecordV1Schema,
+  GoalSetErrorSchema,
+  GoalSetInputSchema,
+  GoalSnapshotSchema,
+  GoalStatusSchema,
+} from "./schemas/goal";
+
 // Workspace schemas
 export { WorkspaceAISettingsSchema } from "./schemas/workspaceAiSettings";
 export {
@@ -184,6 +195,7 @@ export {
   CompletedMessagePartSchema,
   DeleteMessageSchema,
   ErrorEventSchema,
+  GoalBudgetLimitedEventSchema,
   LanguageModelV2UsageSchema,
   QueuedMessageChangedEventSchema,
   ReasoningDeltaEventSchema,

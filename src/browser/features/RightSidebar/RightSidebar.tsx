@@ -15,8 +15,14 @@ import {
   updatePersistedState,
   usePersistedState,
 } from "@/browser/hooks/usePersistedState";
+import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { useAPI } from "@/browser/contexts/API";
-
+import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
+import {
+  modelHasPricingData,
+  UNPRICED_CURRENT_MODEL_GOAL_MESSAGE,
+} from "@/common/utils/goals/budgetPricing";
+import { setGoalWithConflictRetry } from "@/browser/utils/goals/setGoalWithConflictRetry";
 import { usePopoverError } from "@/browser/hooks/usePopoverError";
 import { PopoverError } from "@/browser/components/PopoverError/PopoverError";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -39,7 +45,9 @@ import {
 import { SidebarCollapseButton } from "@/browser/components/SidebarCollapseButton/SidebarCollapseButton";
 import { cn } from "@/common/lib/utils";
 import type { ReviewNoteData } from "@/common/types/review";
+import type { GoalSetError, GoalSnapshot, GoalStatus } from "@/common/types/goal";
 import { TerminalTab } from "@/browser/features/RightSidebar/TerminalTab";
+import { useOptionalWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import {
   RIGHT_SIDEBAR_TABS,
   isTabType,
@@ -185,6 +193,13 @@ const SidebarContainer: React.FC<SidebarContainerProps> = ({
 export { RIGHT_SIDEBAR_TABS, isTabType };
 export type { TabType };
 
+function getGoalSetErrorMessage(error: GoalSetError): string {
+  if (error.type === "goal_conflict") {
+    return "Goal changed in another window. Please try again.";
+  }
+  return error.message;
+}
+
 interface RightSidebarProps {
   workspaceId: string;
   workspacePath: string;
@@ -271,6 +286,17 @@ interface RightSidebarTabsetNodeProps {
   tabPositions: Map<TabType, number>;
   /** Terminal session ID that should be auto-focused (cleared once focus lands) */
   autoFocusTerminalSession: string | null;
+  goal: GoalSnapshot | null;
+  goalCompleteInputRequest: number;
+  // RightSidebar / GoalTab UI requests user-facing transitions only;
+  // `budget_limited` is internal-only — see DEREM-53.
+  onGoalSetStatus: (
+    status: Exclude<GoalStatus, "budget_limited">,
+    completionSummary?: string
+  ) => Promise<void>;
+  onGoalUpdateBudget: (budgetCents: number | null) => Promise<void>;
+  onGoalUpdateTurnCap: (turnCap: number | null) => Promise<void>;
+  onGoalClear: () => Promise<void>;
   /** Callback to request terminal focus when a tab is selected */
   onRequestTerminalFocus: (sessionId: string) => void;
   /** Callback to clear the auto-focus state after it's been consumed */
@@ -419,6 +445,14 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
       isTouchImmersive: props.isTouchReviewImmersive,
       onTouchImmersiveChange: props.onTouchReviewImmersiveChange,
     },
+    goal: {
+      snapshot: props.goal,
+      openCompleteInputRequest: props.goalCompleteInputRequest,
+      onSetStatus: props.onGoalSetStatus,
+      onUpdateBudget: props.onGoalUpdateBudget,
+      onUpdateTurnCap: props.onGoalUpdateTurnCap,
+      onClear: props.onGoalClear,
+    },
   };
 
   return (
@@ -548,7 +582,7 @@ const RegistryTabPanel: React.FC<{
   // `contentClassName` (`overflow-hidden p-0`); those that scroll
   // (`overflow-y-auto …`) don't. Keep the `h-full` policy decision local to
   // the registry rather than the wrapper.
-  const needsFullHeight = reg.contentClassName.includes("overflow-hidden");
+  const needsFullHeight = reg.contentClassName.includes("overflow-hidden") || tabId === "goal";
   return (
     <div
       role="tabpanel"
@@ -607,10 +641,68 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   const api = apiState.api;
   const desktopExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.PORTABLE_DESKTOP);
   const browserExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.AGENT_BROWSER);
+  const goalsExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.GOALS);
+  // Safe variant: storybook stories may render before addWorkspace() runs; the
+  // optional hook returns null instead of throwing assertGet on the unregistered
+  // workspace. Real workspaces always have an aggregator by the time RightSidebar
+  // mounts, so the optional path doesn't change runtime behavior.
+  const { config: providersConfig } = useProvidersConfig();
+  const sendMessageOptions = useSendMessageOptions(workspaceId);
+  const sidebarState = useOptionalWorkspaceSidebarState(workspaceId);
+  const goal = sidebarState?.goal ?? null;
+  const [goalCompleteInputRequest, setGoalCompleteInputRequest] = React.useState(0);
   const [llmDebugLogsEnabled, setLlmDebugLogsEnabled] = React.useState<boolean | null>(null);
   const [desktopAvailable, setDesktopAvailable] = React.useState<boolean | null>(null);
   const [browserAvailable, setBrowserAvailable] = React.useState<boolean | null>(null);
   const debugLogsLocalOverrideRef = React.useRef(false);
+
+  const setGoalWithSingleConflictRetry = async (intent: {
+    // RightSidebar buttons only ever request user-facing transitions
+    // (pause / resume / complete); `budget_limited` is internal-only and is
+    // excluded from the public oRPC `setGoal` input shape (Coder-agents-
+    // review nit DEREM-53).
+    status?: Exclude<GoalStatus, "budget_limited">;
+    budgetCents?: number | null;
+    turnCap?: number | null;
+    completionSummary?: string;
+  }) => {
+    if (!api) {
+      throw new Error("Backend is not connected.");
+    }
+    // Shared retry helper centralized in `@/browser/utils/goals/` to avoid
+    // the three-way drift Coder-agents-review P3 DEREM-25 flagged.
+    const result = await setGoalWithConflictRetry(api, workspaceId, intent);
+    if (!result.success) {
+      throw new Error(getGoalSetErrorMessage(result.error));
+    }
+  };
+
+  const handleGoalSetStatus = async (
+    // The downstream `setGoal` mutation excludes `budget_limited` (internal-
+    // only) from its accepted input — see DEREM-53.
+    status: Exclude<GoalStatus, "budget_limited">,
+    completionSummary?: string
+  ) => {
+    await setGoalWithSingleConflictRetry({ status, completionSummary });
+  };
+
+  const handleGoalUpdateBudget = async (budgetCents: number | null) => {
+    if (budgetCents != null && !modelHasPricingData(sendMessageOptions.model, providersConfig)) {
+      throw new Error(UNPRICED_CURRENT_MODEL_GOAL_MESSAGE);
+    }
+    await setGoalWithSingleConflictRetry({ budgetCents });
+  };
+
+  const handleGoalUpdateTurnCap = async (turnCap: number | null) => {
+    await setGoalWithSingleConflictRetry({ turnCap });
+  };
+
+  const handleGoalClear = async () => {
+    if (!api) {
+      throw new Error("Backend is not connected.");
+    }
+    await api.workspace.clearGoal({ workspaceId });
+  };
 
   React.useEffect(() => {
     if (!api) {
@@ -786,6 +878,24 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   }, [browserAvailable, initialActiveTab, setLayoutRaw]);
 
   React.useEffect(() => {
+    setLayoutRaw((prevRaw) => {
+      const prev = parseRightSidebarLayoutState(prevRaw, initialActiveTab);
+      const hasGoal = collectAllTabs(prev.root).includes("goal");
+      const shouldShowGoal = goalsExperimentEnabled && goal != null;
+
+      if (shouldShowGoal && !hasGoal) {
+        return addTabToFocusedTabset(prev, "goal", false);
+      }
+
+      if (!shouldShowGoal && hasGoal) {
+        return removeTabEverywhere(prev, "goal");
+      }
+
+      return prev;
+    });
+  }, [goal, goalsExperimentEnabled, initialActiveTab, setLayoutRaw]);
+
+  React.useEffect(() => {
     if (!desktopExperimentEnabled) {
       setDesktopAvailable(false);
       return;
@@ -892,6 +1002,24 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     setLayout((prev) => selectOrAddTab(prev, "review"));
     _setFocusTrigger((prev) => prev + 1);
   }, [setLayout]);
+
+  React.useEffect(() => {
+    const handleOpenGoalTab = (event: Event) => {
+      const detail = (event as CustomEvent<{ workspaceId: string; openCompleteInput?: boolean }>)
+        .detail;
+      if (detail?.workspaceId !== workspaceId) {
+        return;
+      }
+      setCollapsed(false);
+      setLayout((prev) => selectOrAddTab(prev, "goal"));
+      if (detail.openCompleteInput) {
+        setGoalCompleteInputRequest((prev) => prev + 1);
+      }
+    };
+
+    window.addEventListener(CUSTOM_EVENTS.OPEN_GOAL_TAB, handleOpenGoalTab);
+    return () => window.removeEventListener(CUSTOM_EVENTS.OPEN_GOAL_TAB, handleOpenGoalTab);
+  }, [setCollapsed, setLayout, workspaceId]);
 
   React.useEffect(() => {
     const handleOpenTouchReviewImmersive = (event: Event) => {
@@ -1402,6 +1530,12 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         tabPositions={tabPositions}
         onRequestTerminalFocus={setAutoFocusTerminalSession}
         autoFocusTerminalSession={autoFocusTerminalSession}
+        goal={goal ?? null}
+        goalCompleteInputRequest={goalCompleteInputRequest}
+        onGoalSetStatus={handleGoalSetStatus}
+        onGoalUpdateBudget={handleGoalUpdateBudget}
+        onGoalUpdateTurnCap={handleGoalUpdateTurnCap}
+        onGoalClear={handleGoalClear}
         onAutoFocusConsumed={() => setAutoFocusTerminalSession(null)}
       />
     );

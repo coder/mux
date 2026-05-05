@@ -4,7 +4,9 @@ import type { ProjectConfig } from "@/node/config";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { GlobalWindow } from "happy-dom";
+import { getModelKey } from "@/common/constants/storage";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
+import type { WorkspaceState } from "@/browser/stores/WorkspaceStore";
 import type { APIClient } from "@/browser/contexts/API";
 
 const mk = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) => {
@@ -45,6 +47,7 @@ const mk = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) => {
     onSetThinkingLevel: () => undefined,
     onStartWorkspaceCreation: () => undefined,
     onStartMultiProjectWorkspaceCreation: () => undefined,
+    goalsEnabled: false,
     multiProjectWorkspacesEnabled: true,
     onArchiveMergedWorkspacesInProject: () => Promise.resolve(),
     onSelectWorkspace: () => undefined,
@@ -327,6 +330,352 @@ test("project commands exclude system projects from options", async () => {
   expect(archiveOptions.some((option) => option.id === "/repo/a/packages/api")).toBe(false);
   expect(archiveOptions.map((option) => option.id)).toEqual(["/repo/a"]);
   expect(archiveOptions.some((option) => option.id === "/repo/system")).toBe(false);
+});
+
+const makeGoalSnapshot = (status: "active" | "paused" | "budget_limited" | "complete") => ({
+  goalId: "00000000-0000-4000-8000-000000000001",
+  status,
+  objective: "Ship palette parity",
+  budgetCents: 500,
+  costCents: 125,
+  turnsUsed: 2,
+  turnCap: null,
+  startedAtMs: 1_700_000_000_000,
+});
+
+const makeGoalRecord = (status: "active" | "paused" | "budget_limited" | "complete") => ({
+  version: 1 as const,
+  goalId: "00000000-0000-4000-8000-000000000001",
+  status,
+  objective: "Ship palette parity",
+  budgetCents: 500,
+  turnCap: null,
+  costCents: 125,
+  turnsUsed: 2,
+  attributedChildren: [],
+  budgetLimitInjectedForGoalId: null,
+  requireUserAcknowledgmentSinceMs: null,
+  createdAtMs: 1_700_000_000_000,
+  updatedAtMs: 1_700_000_000_000,
+});
+
+function makeWorkspaceState(goal: WorkspaceState["goal"]): WorkspaceState {
+  return {
+    name: "feat-x",
+    messages: [],
+    queuedMessage: null,
+    canInterrupt: false,
+    isCompacting: false,
+    isStreamStarting: false,
+    awaitingUserQuestion: false,
+    loading: false,
+    isHydratingTranscript: false,
+    hasOlderHistory: false,
+    loadingOlderHistory: false,
+    muxMessages: [],
+    currentModel: null,
+    currentThinkingLevel: null,
+    recencyTimestamp: null,
+    todos: [],
+    loadedSkills: [],
+    skillLoadErrors: [],
+    agentStatus: undefined,
+    lastAbortReason: null,
+    pendingStreamStartTime: null,
+    pendingStreamModel: null,
+    runtimeStatus: null,
+    autoRetryStatus: null,
+    goal,
+  };
+}
+
+const getVisibleGoalActions = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) => {
+  const sources = mk({ goalsEnabled: true, ...over });
+  return sources
+    .flatMap((source) => source())
+    .filter((action) => action.visible?.() ?? true)
+    .filter((action) => action.title.startsWith("Goal:"));
+};
+
+const getVisibleGoalTitles = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) =>
+  getVisibleGoalActions(over)
+    .map((action) => action.title)
+    .sort();
+
+test("goal palette commands are hidden when the experiment is disabled", () => {
+  expect(getVisibleGoalTitles({ goalsEnabled: false })).toEqual([]);
+});
+
+test("goal palette commands only show set objective with no current goal", () => {
+  expect(
+    getVisibleGoalTitles({
+      selectedWorkspaceState: makeWorkspaceState(null),
+    })
+  ).toEqual(["Goal: Set objective"]);
+});
+
+test("goal palette commands match the Active lifecycle state", () => {
+  expect(
+    getVisibleGoalTitles({
+      selectedWorkspaceState: makeWorkspaceState(makeGoalSnapshot("active")),
+    })
+  ).toEqual([
+    "Goal: Clear",
+    "Goal: Mark complete",
+    "Goal: Open panel",
+    "Goal: Pause",
+    "Goal: Set objective",
+  ]);
+});
+
+test("goal palette commands match the Paused lifecycle state", () => {
+  expect(
+    getVisibleGoalTitles({
+      selectedWorkspaceState: makeWorkspaceState(makeGoalSnapshot("paused")),
+    })
+  ).toEqual(["Goal: Clear", "Goal: Open panel", "Goal: Resume", "Goal: Set objective"]);
+});
+
+test("goal palette commands match the BudgetLimited lifecycle state", () => {
+  expect(
+    getVisibleGoalTitles({
+      selectedWorkspaceState: makeWorkspaceState(makeGoalSnapshot("budget_limited")),
+    })
+  ).toEqual(["Goal: Clear", "Goal: Mark complete", "Goal: Open panel", "Goal: Set objective"]);
+});
+
+test("goal palette commands match the Complete lifecycle state", () => {
+  expect(
+    getVisibleGoalTitles({
+      selectedWorkspaceState: makeWorkspaceState(makeGoalSnapshot("complete")),
+    })
+  ).toEqual(["Goal: Clear", "Goal: Open panel", "Goal: Set objective"]);
+});
+
+test("goal set objective prompt treats blank budget as explicit no-budget", async () => {
+  // The palette placeholder promises that blank means no budget; unlike the
+  // slash-command path, there is no separate --no-budget flag in this prompt.
+  const setGoalCalls: Array<Record<string, unknown>> = [];
+  const sources = mk({
+    goalsEnabled: true,
+    selectedWorkspaceState: {
+      lifecycle: "active",
+      goal: null,
+    } as unknown as WorkspaceState,
+    api: {
+      config: {
+        // Even with default budget settings, blank palette budget means no budget.
+        getConfig: () =>
+          Promise.resolve({
+            goalDefaults: {
+              alwaysRequireExplicitBudget: true,
+              defaultBudgetCents: 800,
+              defaultTurnCap: 5,
+            },
+          }),
+      },
+      workspace: {
+        getGoal: () => Promise.resolve({ goal: null }),
+        setGoal: (input: Record<string, unknown>) => {
+          setGoalCalls.push(input);
+          return Promise.resolve({
+            success: true,
+            data: {
+              version: 1,
+              goalId: "11111111-1111-4111-8111-111111111111",
+              objective: input.objective,
+              status: "active",
+              budgetCents: input.budgetCents ?? null,
+              turnCap: input.turnCap ?? null,
+              costCents: 0,
+              turnsUsed: 0,
+              attributedChildren: [],
+              createdAtMs: 1_000,
+              updatedAtMs: 1_000,
+              budgetLimitInjectedForGoalId: null,
+              requireUserAcknowledgmentSinceMs: null,
+              lastContinuationFiredAtMs: null,
+            },
+          });
+        },
+      },
+    } as unknown as APIClient,
+  });
+  const actions = sources.flatMap((s) => s());
+  const setObjectiveAction = actions.find((action) => action.id === "goal:set-objective");
+  expect(setObjectiveAction?.prompt?.onSubmit).toBeDefined();
+
+  // Blank budget — palette should send explicit null instead of applying defaults.
+  await setObjectiveAction?.prompt?.onSubmit?.({
+    objective: "Ship the feature",
+    budget: "",
+  });
+
+  expect(setGoalCalls.length).toBe(1);
+  expect(setGoalCalls[0]).toMatchObject({
+    objective: "Ship the feature",
+    budgetCents: null,
+    turnCap: 5,
+  });
+});
+
+test("goal set objective prompt submits objective and parsed budget", async () => {
+  const getGoal = mock(() => Promise.resolve({ goal: null }));
+  const setGoal = mock(() => Promise.resolve({ success: true, data: makeGoalRecord("active") }));
+  const actions = getVisibleGoalActions({
+    api: {
+      workspace: { getGoal, setGoal },
+    } as unknown as APIClient,
+    selectedWorkspaceState: makeWorkspaceState(null),
+  });
+
+  const setObjectiveAction = actions.find((action) => action.id === "goal:set-objective");
+  expect(setObjectiveAction?.prompt?.fields.map((field) => field.name)).toEqual([
+    "objective",
+    "budget",
+  ]);
+
+  await setObjectiveAction!.prompt!.onSubmit({
+    objective: "  Finish the feature  ",
+    budget: "$5.25",
+  });
+
+  expect(setGoal).toHaveBeenCalledWith({
+    workspaceId: "w1",
+    objective: "Finish the feature",
+    expectedGoalId: null,
+    budgetCents: 525,
+  });
+});
+
+test("goal set objective prompt blocks budgeted goals on unpriced selected model", async () => {
+  const testWindow = new GlobalWindow();
+  const originalWindow = globalThis.window;
+  const originalDocument = globalThis.document;
+  globalThis.window = testWindow as unknown as Window & typeof globalThis;
+  globalThis.document = testWindow.document as unknown as Document;
+  window.localStorage.setItem(getModelKey("w1"), JSON.stringify("custom:unpriced-model"));
+
+  try {
+    const getGoal = mock(() => Promise.resolve({ goal: null }));
+    const setGoal = mock(() => Promise.resolve({ success: true, data: makeGoalRecord("active") }));
+    const state = makeWorkspaceState(null);
+    state.currentModel = "openai:gpt-4o";
+    const actions = getVisibleGoalActions({
+      api: {
+        workspace: { getGoal, setGoal },
+      } as unknown as APIClient,
+      selectedWorkspaceState: state,
+    });
+
+    const setObjectiveAction = actions.find((action) => action.id === "goal:set-objective");
+    expect(setObjectiveAction?.prompt?.onSubmit).toBeDefined();
+
+    await setObjectiveAction!.prompt!.onSubmit({
+      objective: "Ship the feature",
+      budget: "$5.25",
+    });
+
+    expect(setGoal).not.toHaveBeenCalled();
+  } finally {
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+  }
+});
+
+test("goal mark complete prompt submits completion summary", async () => {
+  const getGoal = mock(() => Promise.resolve({ goal: makeGoalRecord("active") }));
+  const setGoal = mock(() => Promise.resolve({ success: true, data: makeGoalRecord("complete") }));
+  const actions = getVisibleGoalActions({
+    api: {
+      workspace: { getGoal, setGoal },
+    } as unknown as APIClient,
+    selectedWorkspaceState: makeWorkspaceState(makeGoalSnapshot("active")),
+  });
+
+  const completeAction = actions.find((action) => action.id === "goal:mark-complete");
+  expect(completeAction?.prompt?.fields.map((field) => field.name)).toEqual(["summary"]);
+
+  await completeAction!.prompt!.onSubmit({ summary: "  Done and verified.  " });
+
+  expect(setGoal).toHaveBeenCalledWith({
+    workspaceId: "w1",
+    status: "complete",
+    completionSummary: "Done and verified.",
+    expectedGoalId: "00000000-0000-4000-8000-000000000001",
+  });
+});
+
+test("goal palette surfaces invalid transition messages without throwing", async () => {
+  const testWindow = new GlobalWindow();
+  const originalWindow = globalThis.window;
+  const originalDocument = globalThis.document;
+  const originalCustomEvent = globalThis.CustomEvent;
+  const alert = mock(() => undefined);
+  globalThis.window = testWindow as unknown as Window & typeof globalThis;
+  globalThis.document = testWindow.document as unknown as Document;
+  globalThis.CustomEvent = testWindow.CustomEvent as unknown as typeof CustomEvent;
+  window.alert = alert;
+
+  try {
+    const setGoal = mock(() =>
+      Promise.resolve({
+        success: false,
+        error: { type: "invalid_transition", message: "Cannot complete a missing goal." },
+      })
+    );
+    const actions = getVisibleGoalActions({
+      api: {
+        workspace: {
+          getGoal: mock(() => Promise.resolve({ goal: makeGoalRecord("active") })),
+          setGoal,
+        },
+      } as unknown as APIClient,
+      selectedWorkspaceState: makeWorkspaceState(makeGoalSnapshot("active")),
+    });
+
+    const completeAction = actions.find((action) => action.id === "goal:mark-complete");
+    await completeAction!.prompt!.onSubmit({ summary: "Done." });
+
+    expect(alert).toHaveBeenCalledWith("Cannot complete a missing goal.");
+  } finally {
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+    globalThis.CustomEvent = originalCustomEvent;
+  }
+});
+
+test("goal open panel command dispatches the right-sidebar goal event", async () => {
+  const testWindow = new GlobalWindow();
+  const originalWindow = globalThis.window;
+  const originalDocument = globalThis.document;
+  const originalCustomEvent = globalThis.CustomEvent;
+
+  globalThis.window = testWindow as unknown as Window & typeof globalThis;
+  globalThis.document = testWindow.document as unknown as Document;
+  globalThis.CustomEvent = testWindow.CustomEvent as unknown as typeof CustomEvent;
+
+  const receivedWorkspaceIds: string[] = [];
+  const handleOpenGoalTab = (event: Event) => {
+    receivedWorkspaceIds.push((event as CustomEvent<{ workspaceId: string }>).detail.workspaceId);
+  };
+  window.addEventListener(CUSTOM_EVENTS.OPEN_GOAL_TAB, handleOpenGoalTab);
+
+  try {
+    const actions = getVisibleGoalActions({
+      selectedWorkspaceState: makeWorkspaceState(makeGoalSnapshot("complete")),
+    });
+    const openPanelAction = actions.find((action) => action.id === "goal:open-panel");
+
+    await openPanelAction!.run();
+
+    expect(receivedWorkspaceIds).toEqual(["w1"]);
+  } finally {
+    window.removeEventListener(CUSTOM_EVENTS.OPEN_GOAL_TAB, handleOpenGoalTab);
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+    globalThis.CustomEvent = originalCustomEvent;
+  }
 });
 
 test("buildCoreSources includes rebuild analytics database action with discoverable keywords", () => {

@@ -11,6 +11,7 @@ import {
   type CompactionFollowUpRequest,
   type MuxMessage,
 } from "@/common/types/message";
+import { GOAL_CONTINUATION_KIND } from "@/constants/goals";
 import { Ok, Err } from "@/common/types/result";
 import type { Config } from "@/node/config";
 import type { AIService } from "@/node/services/aiService";
@@ -144,6 +145,51 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
     );
     expect(emittedSnapshot).toBe(false);
 
+    session.dispose();
+  });
+
+  test("preserves goal kind on auto-compaction follow-up requests", async () => {
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+    const aiEmitter = new EventEmitter();
+    const session = new AgentSession({
+      workspaceId: "ws-auto-compaction-goal-kind",
+      config: {
+        srcDir: "/tmp",
+        getSessionDir: (_workspaceId: string) => "/tmp",
+      } as unknown as Config,
+      historyService,
+      aiService: Object.assign(aiEmitter, {
+        isStreaming: mock(() => false),
+        stopStream: mock(() => Promise.resolve(Ok(undefined))),
+        streamMessage: mock(() =>
+          Promise.resolve(Ok(undefined))
+        ) as unknown as AIService["streamMessage"],
+      }) as unknown as AIService,
+      initStateManager: new EventEmitter() as unknown as InitStateManager,
+      backgroundProcessManager: {
+        cleanup: mock(() => Promise.resolve()),
+        setMessageQueued: mock(() => undefined),
+      } as unknown as BackgroundProcessManager,
+    });
+
+    const followUp = (
+      session as unknown as {
+        buildAutoCompactionFollowUp: (params: {
+          messageText: string;
+          options: SendMessageOptions;
+          modelForStream: string;
+          goalKind?: typeof GOAL_CONTINUATION_KIND;
+        }) => CompactionFollowUpRequest;
+      }
+    ).buildAutoCompactionFollowUp({
+      messageText: "Continue goal",
+      options: { model: "openai:gpt-4o", agentId: "exec" },
+      modelForStream: "openai:gpt-4o",
+      goalKind: GOAL_CONTINUATION_KIND,
+    });
+
+    expect(followUp.goalKind).toBe(GOAL_CONTINUATION_KIND);
     session.dispose();
   });
 

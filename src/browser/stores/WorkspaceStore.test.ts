@@ -2602,6 +2602,40 @@ describe("WorkspaceStore", () => {
   });
 
   describe("activity fallbacks", () => {
+    it("tracks active goals across workspace activity snapshots", async () => {
+      const makeSnapshot = (
+        workspaceId: string,
+        status: "active" | "paused"
+      ): WorkspaceActivitySnapshot => ({
+        recency: 1_000,
+        streaming: false,
+        lastModel: "claude-sonnet-4",
+        lastThinkingLevel: null,
+        goal: {
+          goalId: `00000000-0000-4000-8000-${workspaceId.padStart(12, "0")}`,
+          status,
+          objective: `Goal ${workspaceId}`,
+          budgetCents: null,
+          costCents: 0,
+          turnsUsed: 0,
+          turnCap: null,
+          startedAtMs: 1_000,
+        },
+      });
+      mockActivityList.mockResolvedValue({
+        "1": makeSnapshot("1", "active"),
+        "2": makeSnapshot("2", "active"),
+        "3": makeSnapshot("3", "active"),
+        "4": makeSnapshot("4", "active"),
+        paused: makeSnapshot("5", "paused"),
+      });
+      recreateStore();
+
+      await tick(0);
+
+      expect(store.getActiveGoalCount()).toBe(4);
+    });
+
     it("uses activity snapshots for non-active workspace sidebar fields", async () => {
       const workspaceId = "activity-fallback-workspace";
       const activityRecency = new Date("2024-01-03T12:00:00.000Z").getTime();

@@ -14,6 +14,8 @@ import { createAskUserQuestionTool } from "@/node/services/tools/ask_user_questi
 import { createAdvisorTool } from "@/node/services/tools/advisor";
 import { createProposePlanTool } from "@/node/services/tools/propose_plan";
 import { createTodoWriteTool, createTodoReadTool } from "@/node/services/tools/todo";
+import { createGetGoalTool } from "@/node/services/tools/get_goal";
+import { createCompleteGoalTool } from "@/node/services/tools/complete_goal";
 import { createNotifyTool } from "@/node/services/tools/notify";
 import { createAnalyticsQueryTool } from "@/node/services/tools/analyticsQuery";
 import { createDesktopTools } from "@/node/services/tools/desktopTools";
@@ -50,6 +52,7 @@ import type { InitStateManager } from "@/node/services/initStateManager";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import type { DesktopSessionManager } from "@/node/services/desktop/DesktopSessionManager";
 import type { TaskService } from "@/node/services/taskService";
+import type { WorkspaceGoalService } from "@/node/services/workspaceGoalService";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import type { FileState } from "@/node/services/agentSession";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
@@ -128,12 +131,20 @@ export interface ToolConfiguration {
   reportModelUsage?: (event: ToolModelUsageEvent) => void;
   /** Task orchestration for sub-agent tasks */
   taskService?: TaskService;
+  /** Workspace goal lifecycle service for model-facing goal tools. */
+  goalService?: WorkspaceGoalService;
+  /** Per-request goal tool gates derived from experiment, goal status, and agent capabilities. */
+  enableGoalTools?: {
+    getGoal: boolean;
+    completeGoal: boolean;
+  };
   /** Enable agent_report tool (only valid for child task workspaces) */
   enableAgentReport?: boolean;
   /** Experiments inherited from parent (for subagent spawning) */
   experiments?: {
     programmaticToolCalling?: boolean;
     programmaticToolCallingExclusive?: boolean;
+    goals?: boolean;
     execSubagentHardRestart?: boolean;
   };
   /** Available sub-agents for the task tool description (dynamic context) */
@@ -438,6 +449,12 @@ export async function getToolsForModel(
     // them in the default toolset would let exec-derived agents see their
     // "call me immediately" descriptions.
     ...(config.enableAgentReport ? { agent_report: createAgentReportTool(config) } : {}),
+    ...(config.goalService && config.enableGoalTools?.getGoal
+      ? { get_goal: createGetGoalTool(config) }
+      : {}),
+    ...(config.goalService && config.enableGoalTools?.completeGoal
+      ? { complete_goal: createCompleteGoalTool(config) }
+      : {}),
     switch_agent: createSwitchAgentTool(config),
     todo_write: createTodoWriteTool(config),
     todo_read: createTodoReadTool(config),

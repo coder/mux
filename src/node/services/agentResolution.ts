@@ -63,6 +63,8 @@ export interface AgentResolutionResult {
   /** Path used for agent discovery (workspace path or project path if agents disabled). */
   agentDiscoveryPath: string;
   isSubagentWorkspace: boolean;
+  /** Resolved inheritance chain in child → base order for capability checks. */
+  agentInheritanceChain: Awaited<ReturnType<typeof resolveAgentInheritanceChain>>;
   /** Whether the resolved agent inherits plan-like behavior (has propose_plan in tool chain). */
   agentIsPlanLike: boolean;
   effectiveMode: "plan" | "exec" | "compact";
@@ -240,6 +242,7 @@ export async function resolveAgentForStream(
     agentDefinition,
     agentDiscoveryPath,
     isSubagentWorkspace,
+    agentInheritanceChain: agentsForInheritance,
     agentIsPlanLike,
     effectiveMode,
     taskSettings,

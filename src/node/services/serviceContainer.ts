@@ -46,6 +46,7 @@ import { McpOauthService } from "@/node/services/mcpOauthService";
 import { HeartbeatService } from "@/node/services/heartbeatService";
 import { AgentStatusService } from "@/node/services/agentStatusService";
 import { IdleCompactionService } from "@/node/services/idleCompactionService";
+import type { IdleDispatcher } from "@/node/services/idleDispatcher";
 import { getSigningService, type SigningService } from "@/node/services/signingService";
 import { coderService, type CoderService } from "@/node/services/coderService";
 import { SshPromptService } from "@/node/services/sshPromptService";
@@ -88,6 +89,7 @@ export class ServiceContainer {
   public readonly mcpConfigService: CoreServices["mcpConfigService"];
   public readonly mcpServerManager: CoreServices["mcpServerManager"];
   public readonly sessionUsageService: CoreServices["sessionUsageService"];
+  public readonly workspaceGoalService: CoreServices["workspaceGoalService"];
   private readonly extensionMetadata: CoreServices["extensionMetadata"];
   private readonly backgroundProcessManager: CoreServices["backgroundProcessManager"];
   // Desktop-only services
@@ -129,6 +131,7 @@ export class ServiceContainer {
   public readonly sshPromptService = new SshPromptService();
   private readonly ptyService: PTYService;
   public readonly idleCompactionService: IdleCompactionService;
+  public readonly idleDispatcher: IdleDispatcher;
   public readonly heartbeatService: HeartbeatService;
   public readonly agentStatusService: AgentStatusService;
 
@@ -169,6 +172,7 @@ export class ServiceContainer {
       workspaceMcpOverridesService: this.workspaceMcpOverridesService,
       policyService: this.policyService,
       telemetryService: this.telemetryService,
+      analyticsService: this.analyticsService,
       experimentsService: this.experimentsService,
       sessionTimingService: this.sessionTimingService,
       devToolsService: this.devToolsService,
@@ -213,6 +217,7 @@ export class ServiceContainer {
     this.mcpConfigService = core.mcpConfigService;
     this.mcpServerManager = core.mcpServerManager;
     this.sessionUsageService = core.sessionUsageService;
+    this.workspaceGoalService = core.workspaceGoalService;
     this.extensionMetadata = core.extensionMetadata;
     this.backgroundProcessManager = core.backgroundProcessManager;
 
@@ -237,12 +242,17 @@ export class ServiceContainer {
       this.extensionMetadata,
       (workspaceId) => this.workspaceService.executeIdleCompaction(workspaceId)
     );
-    // Heartbeat service - periodically sends heartbeat turns to eligible idle workspaces
+    // IdleDispatcher + goal continuation bridge are owned by createCoreServices
+    // so the wiring works for `mux run` too. Share the same dispatcher with
+    // HeartbeatService — its priority ordering ensures an active goal
+    // suppresses background heartbeats.
+    this.idleDispatcher = core.idleDispatcher;
     this.heartbeatService = new HeartbeatService(
       config,
       this.extensionMetadata,
       this.workspaceService,
-      this.taskService
+      this.taskService,
+      this.idleDispatcher
     );
     this.windowService = new WindowService();
     this.mcpOauthService = new McpOauthService(
@@ -502,8 +512,10 @@ export class ServiceContainer {
       mcpServerManager: this.mcpServerManager,
       sessionTimingService: this.sessionTimingService,
       telemetryService: this.telemetryService,
+      analyticsService: this.analyticsService,
       experimentsService: this.experimentsService,
       sessionUsageService: this.sessionUsageService,
+      workspaceGoalService: this.workspaceGoalService,
       devToolsService: this.devToolsService,
       browserSessionDiscoveryService: this.browserSessionDiscoveryService,
       browserBridgeTokenManager: this.browserBridgeTokenManager,
@@ -515,7 +527,6 @@ export class ServiceContainer {
       coderService: this.coderService,
       serverAuthService: this.serverAuthService,
       sshPromptService: this.sshPromptService,
-      analyticsService: this.analyticsService,
       desktopSessionManager: this.desktopSessionManager,
       desktopTokenManager: this.desktopTokenManager,
       desktopBridgeServer: this.desktopBridgeServer,

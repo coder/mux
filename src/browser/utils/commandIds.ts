@@ -45,6 +45,14 @@ export const CommandIds = {
   // no longer need a hand-rolled CommandIds entry per tab.
   navOpenLogFile: () => "nav:open-log-file" as const,
 
+  // Goal commands
+  goalSetObjective: () => "goal:set-objective" as const,
+  goalPause: () => "goal:pause" as const,
+  goalResume: () => "goal:resume" as const,
+  goalMarkComplete: () => "goal:mark-complete" as const,
+  goalClear: () => "goal:clear" as const,
+  goalOpenPanel: () => "goal:open-panel" as const,
+
   // Chat commands
   chatClear: () => "chat:clear" as const,
   chatTruncate: (pct: number) => `${COMMAND_ID_PREFIXES.CHAT_TRUNCATE}${pct}` as const,

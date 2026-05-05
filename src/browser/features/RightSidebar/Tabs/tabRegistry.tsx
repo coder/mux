@@ -21,12 +21,15 @@ import { ReviewPanel } from "@/browser/features/RightSidebar/CodeReview/ReviewPa
 import { DesktopPanel } from "@/browser/features/desktop/DesktopPanel";
 import { BrowserTab } from "@/browser/features/RightSidebar/BrowserTab";
 import { DevToolsTab } from "@/browser/features/RightSidebar/DevToolsTab";
+import { GoalTab } from "@/browser/features/RightSidebar/GoalTab";
+import type { GoalSnapshot, GoalStatus } from "@/common/types/goal";
 import type { ReviewNoteData } from "@/common/types/review";
 import { BASE_TAB_IDS, TAB_CONFIG, type BaseTabType, type TabConfig } from "./tabConfig";
 import {
   BrowserTabLabel,
   DebugTabLabel,
   DesktopTabLabel,
+  GoalTabLabel,
   InstructionsTabLabel,
   OutputTabLabel,
   ReviewTabLabel,
@@ -73,6 +76,17 @@ export interface TabPanelContext {
     isTouchImmersive: boolean;
     onTouchImmersiveChange: (isTouch: boolean) => void;
   };
+  goal: {
+    snapshot: GoalSnapshot | null;
+    openCompleteInputRequest: number;
+    onSetStatus: (
+      status: Exclude<GoalStatus, "budget_limited">,
+      completionSummary?: string
+    ) => Promise<void>;
+    onUpdateBudget: (budgetCents: number | null) => Promise<void>;
+    onUpdateTurnCap: (turnCap: number | null) => Promise<void>;
+    onClear: () => Promise<void>;
+  };
 }
 
 /** Static description of one non-terminal tab, including UI renderers. */
@@ -114,6 +128,21 @@ const TAB_RENDERERS = {
   instructions: {
     Label: ({ workspaceId }) => <InstructionsTabLabel workspaceId={workspaceId} />,
     renderPanel: (ctx) => <InstructionsTab workspaceId={ctx.workspaceId} />,
+  },
+  goal: {
+    Label: GoalTabLabel,
+    renderPanel: (ctx) => (
+      <ErrorBoundary workspaceInfo="Goal tab">
+        <GoalTab
+          goal={ctx.goal.snapshot}
+          openCompleteInputRequest={ctx.goal.openCompleteInputRequest}
+          onSetStatus={ctx.goal.onSetStatus}
+          onUpdateBudget={ctx.goal.onUpdateBudget}
+          onUpdateTurnCap={ctx.goal.onUpdateTurnCap}
+          onClear={ctx.goal.onClear}
+        />
+      </ErrorBoundary>
+    ),
   },
   desktop: {
     Label: DesktopTabLabel,

@@ -120,6 +120,12 @@ import {
   normalizeSelectedModel,
   normalizeToCanonical,
 } from "@/common/utils/ai/models";
+import { DEFAULT_MODEL } from "@/common/constants/knownModels";
+import {
+  hasBudgetedResumableGoal,
+  modelHasPricingData,
+  UNPRICED_TARGET_MODEL_GOAL_MESSAGE,
+} from "@/common/utils/goals/budgetPricing";
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { normalizeAgentId } from "@/common/utils/agentIds";
@@ -134,6 +140,7 @@ import {
   type HeartbeatContextMode,
 } from "@/constants/heartbeat";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
+import { GOAL_CONTINUATION_KIND, type GoalSyntheticMessageKind } from "@/constants/goals";
 import type {
   StreamStartEvent,
   StreamEndEvent,
@@ -153,6 +160,10 @@ import type {
 } from "@/common/orpc/schemas/api";
 import type { SessionTimingService } from "@/node/services/sessionTimingService";
 import type { SessionUsageService } from "@/node/services/sessionUsageService";
+import type {
+  GoalContinuationRuntimeState,
+  WorkspaceGoalService,
+} from "@/node/services/workspaceGoalService";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import type { WorkspaceLifecycleHooks } from "@/node/services/workspaceLifecycleHooks";
 import type { TaskService } from "@/node/services/taskService";
@@ -1261,6 +1272,7 @@ export class WorkspaceService extends EventEmitter {
   private workspaceLifecycleHooks?: WorkspaceLifecycleHooks;
   private worktreeArchiveSnapshotService?: WorktreeArchiveSnapshotLifecycleService;
   private taskService?: TaskService;
+  private workspaceGoalService?: WorkspaceGoalService;
 
   /**
    * Set the MCP server manager for tool access.
@@ -1268,6 +1280,10 @@ export class WorkspaceService extends EventEmitter {
    */
   setMCPServerManager(manager: MCPServerManager): void {
     this.mcpServerManager = manager;
+  }
+
+  setWorkspaceGoalService(service: WorkspaceGoalService): void {
+    this.workspaceGoalService = service;
   }
 
   /**
@@ -1499,12 +1515,18 @@ export class WorkspaceService extends EventEmitter {
     this.aiService.on("stream-abort", (data: unknown) => {
       if (isStreamAbortEvent(data)) {
         void this.stopStreamingStatus(data.workspaceId);
+        // Goal mutations are drained by AgentSession after any abort accounting
+        // runs. Draining here would race ahead of AgentSession's stream-abort
+        // listener and could charge the aborted in-flight stream to a goal that
+        // was queued during that stream. User aborts are still discarded by
+        // recordUserStoppedStream in AgentSession.
       }
     });
 
     this.aiService.on("error", (data: unknown) => {
       if (isErrorEvent(data)) {
         void this.stopStreamingStatus(data.workspaceId);
+        void this.workspaceGoalService?.applyPendingAfterStreamEnd(data.workspaceId);
       }
     });
 
@@ -1694,6 +1716,9 @@ export class WorkspaceService extends EventEmitter {
     }
 
     await this.stopStreamingStatus(workspaceId, generation);
+    // Goal mutations are drained by AgentSession after stream accounting. Doing
+    // it here races with per-session stream-end listeners because EventEmitter
+    // does not await async handlers.
   }
 
   private createInitLogger(workspaceId: string) {
@@ -1842,6 +1867,7 @@ export class WorkspaceService extends EventEmitter {
       aiService: this.aiService,
       telemetryService: this.telemetryService,
       initStateManager: this.initStateManager,
+      workspaceGoalService: this.workspaceGoalService,
       backgroundProcessManager: this.backgroundProcessManager,
       onCompactionComplete: () => {
         this.schedulePostCompactionMetadataRefresh(workspaceId);
@@ -1914,6 +1940,12 @@ export class WorkspaceService extends EventEmitter {
 
     this.sessions.set(workspaceId, session);
     this.attachSessionSubscriptions(workspaceId, session);
+  }
+
+  public emitChatEvent(workspaceId: string, message: WorkspaceChatMessage): void {
+    const trimmed = workspaceId.trim();
+    assert(trimmed.length > 0, "emitChatEvent requires workspaceId");
+    this.sessions.get(trimmed)?.emitChatEvent(message);
   }
 
   public disposeSession(workspaceId: string): void {
@@ -4878,6 +4910,31 @@ export class WorkspaceService extends EventEmitter {
   }
 
   /**
+   * Pre-dispatch gate at the WorkspaceService boundary. Delegates to
+   * `WorkspaceGoalService.assertPricedModelForBudgetedGoal` so the gate
+   * lives in exactly one place; this layer exists so `sendMessage` /
+   * `resumeStream` reject before persisting an unpriced model into the
+   * workspace's AI settings (otherwise the user's stored model selection
+   * gets corrupted on a rejected request).
+   *
+   * The same gate runs again inside `AgentSession.sendMessage` to cover
+   * every dispatch path (queued messages, internal compaction/heartbeat
+   * sends, agent-switch follow-ups), so a budgeted goal that becomes
+   * resumable after queueing still cannot bypass enforcement.
+   */
+  private async assertPricedModelForBudgetedGoal(
+    workspaceId: string,
+    options: SendMessageOptions | undefined
+  ): Promise<Result<void, SendMessageError>> {
+    return (
+      (await this.workspaceGoalService?.assertPricedModelForBudgetedGoal(
+        workspaceId,
+        options?.model
+      )) ?? Ok(undefined)
+    );
+  }
+
+  /**
    * Best-effort persist AI settings from send/resume options.
    * Skips requests explicitly marked to avoid persistence.
    */
@@ -5011,6 +5068,26 @@ export class WorkspaceService extends EventEmitter {
       const normalized = this.normalizeWorkspaceAISettings(aiSettings);
       if (!normalized.success) {
         return Err(normalized.error);
+      }
+
+      if (this.workspaceGoalService?.isExperimentEnabled() === true) {
+        const goal = await this.workspaceGoalService.getGoal(workspaceId);
+        // Use the resumable check rather than active-only: a paused or
+        // budget-limited budgeted goal will resume accounting when the user
+        // un-pauses or raises the budget. Letting them switch to an unpriced
+        // model in the meantime silently records 0 cost on the next stream
+        // and budget enforcement quietly stops working.
+        if (
+          hasBudgetedResumableGoal(goal) &&
+          !modelHasPricingData(
+            normalized.data.model,
+            typeof this.config.loadProvidersConfig === "function"
+              ? this.config.loadProvidersConfig()
+              : null
+          )
+        ) {
+          return Err(UNPRICED_TARGET_MODEL_GOAL_MESSAGE);
+        }
       }
 
       const persistResult = await this.persistWorkspaceAISettingsForAgent(
@@ -5368,6 +5445,7 @@ export class WorkspaceService extends EventEmitter {
       };
 
       await this.config.addWorkspace(foundProjectPath, metadata);
+      await this.workspaceGoalService?.inheritFromFork(sourceWorkspaceId, newWorkspaceId);
 
       const enrichedMetadata = this.enrichFrontendMetadata(metadata);
       session.emitMetadata(enrichedMetadata);
@@ -5389,6 +5467,10 @@ export class WorkspaceService extends EventEmitter {
       allowQueuedAgentTask?: boolean;
       skipAutoResumeReset?: boolean;
       synthetic?: boolean;
+      /** Marks a synthetic send as an active-goal continuation turn. */
+      goalContinuation?: boolean;
+      /** Specific active-goal synthetic turn kind to persist on the user message. */
+      goalKind?: GoalSyntheticMessageKind;
       /** Force Copilot billing classification to "agent" for internal sends. */
       agentInitiated?: boolean;
       /** When true, reject instead of queueing if the workspace is busy. */
@@ -5472,6 +5554,27 @@ export class WorkspaceService extends EventEmitter {
       }
 
       const normalizedOptions = this.normalizeSendMessageAgentId(options);
+
+      // Reject before any settings persistence so an unpriced model can never
+      // be saved for a budgeted resumable goal — including via direct callers
+      // that bypass the client-side guard. Manual sends still delegate into
+      // AgentSession on rejection so it can preserve the user's interruption
+      // message and apply goal auto-pause safety.
+      const pricingGate = await this.assertPricedModelForBudgetedGoal(
+        workspaceId,
+        normalizedOptions
+      );
+      if (!pricingGate.success) {
+        if (internal?.synthetic !== true) {
+          return session.sendMessage(message, normalizedOptions, {
+            synthetic: internal?.synthetic,
+            agentInitiated: internal?.agentInitiated,
+            goalKind: internal?.goalKind,
+            goalContinuation: internal?.goalContinuation,
+          });
+        }
+        return Err(pricingGate.error);
+      }
 
       // Persist last-used model + thinking level for cross-device consistency.
       await this.maybePersistAISettingsFromOptions(workspaceId, normalizedOptions, "send");
@@ -5575,6 +5678,8 @@ export class WorkspaceService extends EventEmitter {
       const result = await session.sendMessage(message, normalizedOptions, {
         synthetic: internal?.synthetic,
         agentInitiated: internal?.agentInitiated,
+        goalKind: internal?.goalKind,
+        goalContinuation: internal?.goalContinuation,
         onAcceptedPreStreamFailure: restoreInterruptedTaskAfterAcceptedEditFailure,
       });
       if (!result.success) {
@@ -5724,6 +5829,16 @@ export class WorkspaceService extends EventEmitter {
       }
 
       const normalizedOptions = this.normalizeSendMessageAgentId(options);
+
+      // Reject before persistence/dispatch when the chosen model would silently
+      // bypass budget enforcement on a budgeted resumable goal.
+      const pricingGate = await this.assertPricedModelForBudgetedGoal(
+        workspaceId,
+        normalizedOptions
+      );
+      if (!pricingGate.success) {
+        return Err(pricingGate.error);
+      }
 
       // Persist last-used model + thinking level for cross-device consistency.
       await this.maybePersistAISettingsFromOptions(workspaceId, normalizedOptions, "resume");
@@ -6244,6 +6359,13 @@ export class WorkspaceService extends EventEmitter {
       const metadata = await this.getInfo(workspaceId);
       if (metadata) {
         await this.deletePlanFilesForWorkspace(workspaceId, metadata);
+      }
+      // A full chat clear removes the context the goal loop was using; require
+      // one user re-engagement before later continuation slices resume it.
+      try {
+        await this.workspaceGoalService?.requireUserAcknowledgment(workspaceId);
+      } catch (error) {
+        return Err(getErrorMessage(error));
       }
       this.sessions.get(workspaceId)?.clearFileState();
     }
@@ -7004,6 +7126,95 @@ export class WorkspaceService extends EventEmitter {
    */
   offBackgroundBashChange(callback: (workspaceId: string) => void): void {
     this.backgroundProcessManager.off("change", callback);
+  }
+
+  getGoalContinuationRuntimeState(workspaceId: string): GoalContinuationRuntimeState {
+    assert(workspaceId.trim().length > 0, "getGoalContinuationRuntimeState requires workspaceId");
+    const session =
+      this.sessions.get(workspaceId) ?? this.transientStartupRecoverySessions.get(workspaceId);
+    const initState = this.initStateManager.getInitState(workspaceId);
+    return {
+      // Finished init states remain cached; only "running" should block continuations.
+      isInitializing: initState?.status === "running",
+      isRuntimeCompatible: true,
+      isBusy: session?.isBusy() === true,
+      hasQueuedMessages: session?.hasQueuedMessages() === true,
+      hasPendingFollowUp: false,
+    };
+  }
+
+  getGoalContinuationKickoffSendOptions(workspaceId: string): SendMessageOptions | null {
+    assert(
+      workspaceId.trim().length > 0,
+      "getGoalContinuationKickoffSendOptions requires workspaceId"
+    );
+    const config = this.config.loadConfigOrDefault();
+    const workspaceMatch = this.config.findWorkspace(workspaceId);
+    if (!workspaceMatch) {
+      return null;
+    }
+    const project = config.projects.get(workspaceMatch.projectPath);
+    const workspaceEntry =
+      project?.workspaces.find((w) => w.id === workspaceId) ??
+      project?.workspaces.find((w) => w.path === workspaceMatch.workspacePath);
+
+    const candidates: Array<string | undefined> = [
+      workspaceEntry?.aiSettingsByAgent?.[WORKSPACE_DEFAULTS.agentId]?.model,
+      workspaceEntry?.aiSettings?.model,
+      config.agentAiDefaults?.[WORKSPACE_DEFAULTS.agentId]?.modelString,
+      DEFAULT_MODEL,
+    ];
+
+    for (const raw of candidates) {
+      if (typeof raw !== "string" || raw.trim().length === 0) {
+        continue;
+      }
+      const normalized = normalizeToCanonical(raw.trim());
+      if (isValidModelFormat(normalized)) {
+        return {
+          model: normalized,
+          agentId: WORKSPACE_DEFAULTS.agentId,
+        };
+      }
+    }
+
+    return null;
+  }
+
+  async executeGoalContinuation(input: {
+    workspaceId: string;
+    message: string;
+    kind?: GoalSyntheticMessageKind;
+    options: SendMessageOptions;
+  }): Promise<boolean> {
+    assert(input.workspaceId.trim().length > 0, "executeGoalContinuation requires workspaceId");
+    assert(input.message.trim().length > 0, "executeGoalContinuation requires message");
+
+    const sendResult = await this.sendMessage(
+      input.workspaceId,
+      input.message,
+      {
+        ...input.options,
+        editMessageId: undefined,
+      },
+      {
+        skipAutoResumeReset: true,
+        synthetic: true,
+        agentInitiated: true,
+        requireIdle: true,
+        goalKind: input.kind ?? GOAL_CONTINUATION_KIND,
+        goalContinuation: true,
+      }
+    );
+
+    if (!sendResult.success) {
+      log.info("WorkspaceService: goal continuation send skipped", {
+        workspaceId: input.workspaceId,
+        error: sendResult.error,
+      });
+      return false;
+    }
+    return true;
   }
 
   /**

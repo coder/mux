@@ -78,7 +78,10 @@ import {
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
 import { AgentModePicker } from "@/browser/components/AgentModePicker/AgentModePicker";
 import { ContextUsageIndicatorButton } from "@/browser/components/ContextUsageIndicatorButton/ContextUsageIndicatorButton";
-import { useWorkspaceUsage } from "@/browser/stores/WorkspaceStore";
+import {
+  useOptionalWorkspaceSidebarState,
+  useWorkspaceUsage,
+} from "@/browser/stores/WorkspaceStore";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { useAutoCompactionSettings } from "@/browser/hooks/useAutoCompactionSettings";
@@ -90,6 +93,11 @@ import {
   KEYBINDS,
   isEditableElement,
 } from "@/browser/utils/ui/keybinds";
+import {
+  hasBudgetedResumableGoal,
+  modelHasPricingData,
+  UNPRICED_TARGET_MODEL_GOAL_MESSAGE,
+} from "@/common/utils/goals/budgetPricing";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import {
   ModelSelector,
@@ -218,6 +226,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const [thinkingLevel] = useThinkingLevel();
   const atMentionProjectPath = variant === "creation" ? props.projectPath : null;
   const workspaceId = variant === "workspace" ? props.workspaceId : null;
+
+  const workspaceSidebarState = useOptionalWorkspaceSidebarState(workspaceId);
+  const workspaceGoal = workspaceSidebarState?.goal ?? null;
 
   // Extract workspace-specific props with defaults
   const disabled = props.disabled ?? false;
@@ -671,6 +682,19 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       >;
 
       const selectedModel = normalizeSelectedModel(model);
+      if (
+        variant === "workspace" &&
+        hasBudgetedResumableGoal(workspaceGoal) &&
+        !modelHasPricingData(selectedModel, providersConfig)
+      ) {
+        setToast({
+          id: Date.now().toString(),
+          type: "error",
+          message: UNPRICED_TARGET_MODEL_GOAL_MESSAGE,
+        });
+        return;
+      }
+
       ensureModelInSettings(selectedModel); // Ensure model exists in Settings
 
       if (onModelChange) {
@@ -735,9 +759,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       agentId,
       creationParentProjectPath,
       ensureModelInSettings,
+      providersConfig,
       onModelChange,
       thinkingLevel,
       variant,
+      workspaceGoal,
       workspaceId,
     ]
   );
@@ -1565,6 +1591,24 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       window.removeEventListener(CUSTOM_EVENTS.THINKING_LEVEL_TOAST, handler as EventListener);
   }, [variant, props, pushToast]);
 
+  // Show the backend's one-shot child-budget warning on the matching parent workspace.
+  useEffect(() => {
+    if (variant !== "workspace") return;
+
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ workspaceId: string; message: string }>).detail;
+      if (detail?.workspaceId !== workspaceId || !detail.message) {
+        return;
+      }
+
+      pushToast({ type: "error", message: detail.message });
+    };
+
+    window.addEventListener(CUSTOM_EVENTS.GOAL_CHILD_BUDGET_TOAST, handler as EventListener);
+    return () =>
+      window.removeEventListener(CUSTOM_EVENTS.GOAL_CHILD_BUDGET_TOAST, handler as EventListener);
+  }, [variant, workspaceId, pushToast]);
+
   // Show toast feedback for analytics rebuild command palette action.
   useEffect(() => {
     const handler = (event: Event) => {
@@ -1824,6 +1868,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       workspaceId: commandWorkspaceId,
       projectPath: commandProjectPath,
       openSettings: open,
+      currentModel: workspaceSidebarState?.currentModel ?? null,
       sendMessageOptions: commandSendMessageOptions,
       setInput,
       setAttachments,

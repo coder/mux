@@ -287,6 +287,7 @@ describe("ExtensionMetadataService", () => {
     expect(snapshot).toEqual({
       recency: 321,
       streaming: false,
+      goal: null,
       lastModel: null,
       lastThinkingLevel: null,
     });

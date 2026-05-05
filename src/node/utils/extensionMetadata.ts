@@ -2,6 +2,8 @@ import { readFileSync, existsSync } from "fs";
 
 import { getMuxExtensionMetadataPath } from "@/common/constants/paths";
 import type { WorkspaceActivitySnapshot } from "@/common/types/workspace";
+import type { GoalSnapshot } from "@/common/types/goal";
+import { GoalSnapshotSchema } from "@/common/orpc/schemas/goal";
 import { isThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
 import { log } from "@/node/services/log";
 
@@ -28,6 +30,7 @@ export interface ExtensionMetadata {
   // Persists the latest display-status URL so later updates without a URL
   // can still carry the last deep link even after displayStatus is cleared.
   lastStatusUrl?: string | null;
+  goal?: GoalSnapshot | null;
 }
 
 /**
@@ -70,6 +73,11 @@ export function coerceStatusUrl(url: unknown): string | null {
   return typeof url === "string" ? url : null;
 }
 
+function coerceGoalSnapshot(value: unknown): GoalSnapshot | null {
+  const parsed = GoalSnapshotSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
 export function coerceExtensionMetadata(value: unknown): ExtensionMetadata | null {
   if (typeof value !== "object" || value === null) {
     return null;
@@ -93,6 +101,13 @@ export function coerceExtensionMetadata(value: unknown): ExtensionMetadata | nul
         : (coerceAgentStatus(record.todoStatus) ?? undefined)
       : undefined;
 
+  const goal =
+    "goal" in record
+      ? record.goal === null
+        ? null
+        : (coerceGoalSnapshot(record.goal) ?? undefined)
+      : undefined;
+
   return {
     recency: record.recency,
     streaming: record.streaming,
@@ -106,6 +121,7 @@ export function coerceExtensionMetadata(value: unknown): ExtensionMetadata | nul
     ...(todoStatus !== undefined ? { todoStatus } : {}),
     ...(typeof record.hasTodos === "boolean" ? { hasTodos: record.hasTodos } : {}),
     lastStatusUrl: coerceStatusUrl(record.lastStatusUrl),
+    ...(goal !== undefined ? { goal } : {}),
   };
 }
 
@@ -133,6 +149,7 @@ export function toWorkspaceActivitySnapshot(
     ...(displayStatus ? { displayStatus } : {}),
     ...(todoStatus ? { todoStatus } : {}),
     ...(typeof metadata.hasTodos === "boolean" ? { hasTodos: metadata.hasTodos } : {}),
+    ...(metadata.goal !== undefined ? { goal: metadata.goal } : {}),
   };
 }
 

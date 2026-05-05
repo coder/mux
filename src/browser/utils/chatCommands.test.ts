@@ -186,6 +186,38 @@ describe("parseRuntimeString", () => {
   });
 });
 
+function enableGoalsExperiment(): void {
+  localStorage.setItem(getExperimentKey(EXPERIMENT_IDS.GOALS), JSON.stringify(true));
+  Object.defineProperty(window, "dispatchEvent", { value: mock(() => true), configurable: true });
+}
+
+function createGoalCommandContext(api: SlashCommandContext["api"]): SlashCommandContext {
+  return {
+    api,
+    workspaceId: "goal-ws",
+    variant: "workspace",
+    projectPath: "/tmp/project",
+    setPreferredModel: mock(() => undefined),
+    setVimEnabled: mock((cb: (prev: boolean) => boolean) => cb(false)),
+    resetInputHeight: mock(() => undefined),
+    onTruncateHistory: mock(() => Promise.resolve(undefined)),
+    onMessageSent: mock(() => undefined),
+    onCheckReviews: mock(() => undefined),
+    attachedReviewIds: [],
+    openSettings: mock(() => undefined),
+    sendMessageOptions: {
+      model: "anthropic:claude-sonnet-4-6",
+      thinkingLevel: "off",
+      toolPolicy: [],
+      agentId: "exec",
+    },
+    setInput: mock(() => undefined),
+    setToast: mock(() => undefined),
+    setAttachments: mock(() => undefined),
+    setSendingState: mock(() => undefined),
+  };
+}
+
 describe("processSlashCommand - model-set", () => {
   const createModelSetContext = (api: SlashCommandContext["api"]): SlashCommandContext => ({
     api,
@@ -201,7 +233,7 @@ describe("processSlashCommand - model-set", () => {
     attachedReviewIds: [],
     openSettings: mock(() => undefined),
     sendMessageOptions: {
-      model: "anthropic:claude-3-5-sonnet",
+      model: "anthropic:claude-sonnet-4-6",
       thinkingLevel: "off",
       toolPolicy: [],
       agentId: "exec",
@@ -241,6 +273,516 @@ describe("processSlashCommand - model-set", () => {
       consoleErrorSpy.mockRestore();
     }
   });
+
+  test("refuses switching budgeted active goals to an unpriced model", async () => {
+    enableGoalsExperiment();
+    const setPreferredModel = mock(() => undefined);
+    const context = createModelSetContext({
+      providers: {
+        getConfig: mock(() => Promise.resolve({})),
+        setModels: mock(() => Promise.resolve(undefined)),
+      },
+      workspace: {
+        getGoal: mock(() =>
+          Promise.resolve({
+            goal: {
+              goalId: "11111111-1111-4111-8111-111111111111",
+              status: "active",
+              budgetCents: 500,
+            },
+          })
+        ),
+      },
+    } as unknown as SlashCommandContext["api"]);
+    context.setPreferredModel = setPreferredModel;
+
+    const result = await processSlashCommand(
+      { type: "model-set", modelString: "openai:not-priced-model" },
+      context
+    );
+
+    expect(result).toEqual({ clearInput: false, toastShown: true });
+    expect(setPreferredModel).not.toHaveBeenCalled();
+    expect(context.setToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "error",
+        message:
+          "Target model has no pricing data. Pick a priced model or remove the active goal budget with /goal budget --no-budget before switching.",
+      })
+    );
+  });
+
+  test("allows unpriced model switch with stale budgeted goal when goals experiment is disabled", async () => {
+    const setPreferredModel = mock(() => undefined);
+    const getGoal = mock(() =>
+      Promise.resolve({
+        goal: {
+          goalId: "11111111-1111-4111-8111-111111111111",
+          status: "active",
+          budgetCents: 500,
+        },
+      })
+    );
+    const context = createModelSetContext({
+      providers: {
+        getConfig: mock(() => Promise.resolve({})),
+        setModels: mock(() => Promise.resolve(undefined)),
+      },
+      workspace: { getGoal },
+    } as unknown as SlashCommandContext["api"]);
+    context.setPreferredModel = setPreferredModel;
+
+    const result = await processSlashCommand(
+      { type: "model-set", modelString: "openai:not-priced-model" },
+      context
+    );
+
+    expect(result).toEqual({ clearInput: true, toastShown: true });
+    expect(getGoal).not.toHaveBeenCalled();
+    expect(setPreferredModel).toHaveBeenCalledWith("openai:not-priced-model");
+  });
+
+  test("allows switching unbudgeted active goals to an unpriced model", async () => {
+    const setPreferredModel = mock(() => undefined);
+    const context = createModelSetContext({
+      providers: {
+        getConfig: mock(() => Promise.resolve({})),
+        setModels: mock(() => Promise.resolve(undefined)),
+      },
+      workspace: {
+        getGoal: mock(() =>
+          Promise.resolve({
+            goal: {
+              goalId: "11111111-1111-4111-8111-111111111111",
+              status: "active",
+              budgetCents: null,
+            },
+          })
+        ),
+      },
+    } as unknown as SlashCommandContext["api"]);
+    context.setPreferredModel = setPreferredModel;
+
+    const result = await processSlashCommand(
+      { type: "model-set", modelString: "openai:not-priced-model" },
+      context
+    );
+
+    expect(result).toEqual({ clearInput: true, toastShown: true });
+    expect(setPreferredModel).toHaveBeenCalledWith("openai:not-priced-model");
+  });
+});
+
+describe("processSlashCommand - goal experiment state", () => {
+  test("allows goal commands when backend experiment assignment enables Goals", async () => {
+    const setGoal = mock(() =>
+      Promise.resolve({
+        success: true,
+        data: {
+          goalId: "33333333-3333-4333-8333-333333333333",
+          objective: "remote objective",
+        },
+      })
+    );
+    const context = createGoalCommandContext({
+      experiments: {
+        getAll: mock(() =>
+          Promise.resolve({ [EXPERIMENT_IDS.GOALS]: { value: true, source: "posthog" } })
+        ),
+      },
+      workspace: {
+        getGoal: mock(() => Promise.resolve({ goal: null })),
+        setGoal,
+        clearGoal: mock(),
+      },
+    } as unknown as SlashCommandContext["api"]);
+
+    const result = await processSlashCommand(
+      { type: "goal-set", objective: "remote objective" },
+      context
+    );
+
+    expect(result).toEqual({ clearInput: true, toastShown: true });
+    expect(setGoal).toHaveBeenCalledWith(
+      expect.objectContaining({ objective: "remote objective" })
+    );
+  });
+});
+
+describe("processSlashCommand - goal optimistic concurrency", () => {
+  test("retries once after a goal conflict and reapplies the slash command intent", async () => {
+    enableGoalsExperiment();
+    const getGoal = mock()
+      .mockResolvedValueOnce({
+        goal: {
+          goalId: "11111111-1111-4111-8111-111111111111",
+          objective: "old objective",
+        },
+      })
+      .mockResolvedValueOnce({
+        goal: {
+          goalId: "22222222-2222-4222-8222-222222222222",
+          objective: "fresh objective",
+        },
+      });
+    const setGoal = mock()
+      .mockResolvedValueOnce({
+        success: false,
+        error: {
+          type: "goal_conflict",
+          expectedGoalId: "11111111-1111-4111-8111-111111111111",
+          actualGoalId: "22222222-2222-4222-8222-222222222222",
+        },
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        data: {
+          goalId: "33333333-3333-4333-8333-333333333333",
+          objective: "new objective",
+        },
+      });
+    const context = createGoalCommandContext({
+      workspace: { getGoal, setGoal, clearGoal: mock() },
+    } as unknown as SlashCommandContext["api"]);
+
+    const result = await processSlashCommand(
+      { type: "goal-set", objective: "new objective" },
+      context
+    );
+
+    expect(result).toEqual({ clearInput: true, toastShown: true });
+    expect(getGoal).toHaveBeenCalledTimes(2);
+    expect(setGoal).toHaveBeenNthCalledWith(1, {
+      workspaceId: "goal-ws",
+      objective: "new objective",
+      budgetCents: 200,
+      turnCap: null,
+      expectedGoalId: "11111111-1111-4111-8111-111111111111",
+    });
+    expect(setGoal).toHaveBeenNthCalledWith(2, {
+      workspaceId: "goal-ws",
+      objective: "new objective",
+      budgetCents: 200,
+      turnCap: null,
+      expectedGoalId: "22222222-2222-4222-8222-222222222222",
+    });
+    expect(context.setToast).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "success", message: "Goal set: new objective" })
+    );
+  });
+
+  test("surfaces a toast and stops after two consecutive goal conflicts", async () => {
+    enableGoalsExperiment();
+    const getGoal = mock()
+      .mockResolvedValueOnce({
+        goal: {
+          goalId: "11111111-1111-4111-8111-111111111111",
+          objective: "old objective",
+        },
+      })
+      .mockResolvedValueOnce({
+        goal: {
+          goalId: "22222222-2222-4222-8222-222222222222",
+          objective: "fresh objective",
+        },
+      });
+    const setGoal = mock()
+      .mockResolvedValueOnce({
+        success: false,
+        error: {
+          type: "goal_conflict",
+          expectedGoalId: "11111111-1111-4111-8111-111111111111",
+          actualGoalId: "22222222-2222-4222-8222-222222222222",
+        },
+      })
+      .mockResolvedValueOnce({
+        success: false,
+        error: {
+          type: "goal_conflict",
+          expectedGoalId: "22222222-2222-4222-8222-222222222222",
+          actualGoalId: "33333333-3333-4333-8333-333333333333",
+        },
+      });
+    const context = createGoalCommandContext({
+      workspace: { getGoal, setGoal, clearGoal: mock() },
+    } as unknown as SlashCommandContext["api"]);
+
+    const result = await processSlashCommand(
+      { type: "goal-set", objective: "new objective" },
+      context
+    );
+
+    expect(result).toEqual({ clearInput: false, toastShown: true });
+    expect(getGoal).toHaveBeenCalledTimes(2);
+    expect(setGoal).toHaveBeenCalledTimes(2);
+    expect(context.setToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "error",
+        message: "Goal changed in another window. Please try again.",
+      })
+    );
+  });
+});
+
+describe("processSlashCommand - goal lifecycle commands", () => {
+  test("surfaces invalid transition messages for lifecycle commands", async () => {
+    enableGoalsExperiment();
+    const context = createGoalCommandContext({
+      workspace: {
+        getGoal: mock(() => Promise.resolve({ goal: null })),
+        setGoal: mock(() =>
+          Promise.resolve({
+            success: false,
+            error: { type: "invalid_transition", message: "Cannot pause a missing goal." },
+          })
+        ),
+        clearGoal: mock(),
+      },
+    } as unknown as SlashCommandContext["api"]);
+
+    const result = await processSlashCommand({ type: "goal-pause" }, context);
+
+    expect(result).toEqual({ clearInput: false, toastShown: true });
+    expect(context.setToast).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "error", message: "Cannot pause a missing goal." })
+    );
+  });
+
+  test("dispatches pause, resume, and complete goal commands", async () => {
+    enableGoalsExperiment();
+    const setGoal = mock(() =>
+      Promise.resolve({
+        success: true,
+        data: { goalId: "33333333-3333-4333-8333-333333333333", objective: "goal" },
+      })
+    );
+    const context = createGoalCommandContext({
+      providers: { getConfig: mock(() => Promise.resolve({})) },
+      workspace: {
+        getGoal: mock(() => Promise.resolve({ goal: { status: "paused", budgetCents: null } })),
+        setGoal,
+        clearGoal: mock(),
+      },
+    } as unknown as SlashCommandContext["api"]);
+
+    await processSlashCommand({ type: "goal-pause" }, context);
+    await processSlashCommand({ type: "goal-resume" }, context);
+    await processSlashCommand({ type: "goal-complete", summary: "Done." }, context);
+
+    expect(setGoal).toHaveBeenNthCalledWith(1, {
+      workspaceId: "goal-ws",
+      expectedGoalId: null,
+      status: "paused",
+    });
+    expect(setGoal).toHaveBeenNthCalledWith(2, {
+      workspaceId: "goal-ws",
+      status: "active",
+      expectedGoalId: null,
+    });
+    expect(setGoal).toHaveBeenNthCalledWith(3, {
+      workspaceId: "goal-ws",
+      status: "complete",
+      completionSummary: "Done.",
+      expectedGoalId: null,
+    });
+  });
+
+  test("refuses to resume a budgeted goal on an unpriced current model", async () => {
+    enableGoalsExperiment();
+    const setGoal = mock(() => Promise.resolve({ success: true, data: {} }));
+    const context = createGoalCommandContext({
+      providers: { getConfig: mock(() => Promise.resolve({})) },
+      workspace: {
+        getGoal: mock(() =>
+          Promise.resolve({
+            goal: {
+              goalId: "11111111-1111-4111-8111-111111111111",
+              status: "paused",
+              budgetCents: 500,
+            },
+          })
+        ),
+        setGoal,
+        clearGoal: mock(),
+      },
+    } as unknown as SlashCommandContext["api"]);
+    context.sendMessageOptions.model = "custom:unpriced-model";
+
+    const result = await processSlashCommand({ type: "goal-resume" }, context);
+
+    expect(result).toEqual({ clearInput: false, toastShown: true });
+    expect(setGoal).not.toHaveBeenCalled();
+    expect(context.setToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "error",
+        message:
+          "Current model has no pricing data. Pick a priced model, set --no-budget, or rely on --turns N only.",
+      })
+    );
+  });
+});
+
+describe("processSlashCommand - goal budgets", () => {
+  test("applies configured defaults when budget and turn cap are omitted", async () => {
+    enableGoalsExperiment();
+    const setGoal = mock().mockResolvedValueOnce({
+      success: true,
+      data: { goalId: "33333333-3333-4333-8333-333333333333", objective: "new objective" },
+    });
+    const context = createGoalCommandContext({
+      config: {
+        getConfig: mock(() =>
+          Promise.resolve({
+            goalDefaults: {
+              defaultBudgetCents: 350,
+              defaultTurnCap: 25,
+              alwaysRequireExplicitBudget: true,
+            },
+          })
+        ),
+      },
+      workspace: {
+        getGoal: mock(() => Promise.resolve({ goal: null })),
+        setGoal,
+        clearGoal: mock(),
+      },
+    } as unknown as SlashCommandContext["api"]);
+
+    await processSlashCommand({ type: "goal-set", objective: "new objective" }, context);
+
+    expect(setGoal).toHaveBeenCalledWith({
+      workspaceId: "goal-ws",
+      objective: "new objective",
+      expectedGoalId: null,
+      budgetCents: 350,
+      turnCap: 25,
+    });
+  });
+
+  test("passes explicit no-budget and turn cap through to setGoal", async () => {
+    enableGoalsExperiment();
+    const setGoal = mock().mockResolvedValueOnce({
+      success: true,
+      data: { goalId: "33333333-3333-4333-8333-333333333333", objective: "new objective" },
+    });
+    const context = createGoalCommandContext({
+      config: { getConfig: mock(() => Promise.resolve({})) },
+      workspace: {
+        getGoal: mock(() => Promise.resolve({ goal: null })),
+        setGoal,
+        clearGoal: mock(),
+      },
+    } as unknown as SlashCommandContext["api"]);
+
+    await processSlashCommand(
+      { type: "goal-set", objective: "new objective", budgetCents: null, turnCap: 10 },
+      context
+    );
+
+    expect(setGoal).toHaveBeenCalledWith({
+      workspaceId: "goal-ws",
+      objective: "new objective",
+      expectedGoalId: null,
+      budgetCents: null,
+      turnCap: 10,
+    });
+  });
+
+  test("updates an existing goal budget without applying defaults", async () => {
+    enableGoalsExperiment();
+    const currentGoal = {
+      goalId: "11111111-1111-4111-8111-111111111111",
+      objective: "existing objective",
+    };
+    const setGoal = mock().mockResolvedValueOnce({
+      success: true,
+      data: { ...currentGoal, budgetCents: 500 },
+    });
+    const context = createGoalCommandContext({
+      config: {
+        getConfig: mock(() =>
+          Promise.resolve({
+            goalDefaults: {
+              defaultBudgetCents: 350,
+              defaultTurnCap: 25,
+              alwaysRequireExplicitBudget: true,
+            },
+          })
+        ),
+      },
+      workspace: {
+        getGoal: mock(() => Promise.resolve({ goal: currentGoal })),
+        setGoal,
+        clearGoal: mock(),
+      },
+    } as unknown as SlashCommandContext["api"]);
+
+    await processSlashCommand({ type: "goal-budget", budgetCents: 500 }, context);
+
+    expect(setGoal).toHaveBeenCalledWith({
+      workspaceId: "goal-ws",
+      budgetCents: 500,
+      expectedGoalId: currentGoal.goalId,
+    });
+  });
+
+  test("passes no-budget budget updates through on unpriced current model", async () => {
+    enableGoalsExperiment();
+    const currentGoal = {
+      goalId: "11111111-1111-4111-8111-111111111111",
+      objective: "existing objective",
+    };
+    const setGoal = mock().mockResolvedValueOnce({
+      success: true,
+      data: { ...currentGoal, budgetCents: null },
+    });
+    const context = createGoalCommandContext({
+      config: { getConfig: mock(() => Promise.resolve({})) },
+      workspace: {
+        getGoal: mock(() => Promise.resolve({ goal: currentGoal })),
+        setGoal,
+        clearGoal: mock(),
+      },
+    } as unknown as SlashCommandContext["api"]);
+    context.sendMessageOptions.model = "custom-provider:no-price-model";
+
+    await processSlashCommand({ type: "goal-budget", budgetCents: null }, context);
+
+    expect(setGoal).toHaveBeenCalledWith({
+      workspaceId: "goal-ws",
+      budgetCents: null,
+      expectedGoalId: currentGoal.goalId,
+    });
+  });
+
+  test("refuses budgeted goals on an unpriced current model", async () => {
+    enableGoalsExperiment();
+    const setGoal = mock();
+    const context = createGoalCommandContext({
+      config: { getConfig: mock(() => Promise.resolve({})) },
+      workspace: {
+        getGoal: mock(() => Promise.resolve({ goal: null })),
+        setGoal,
+        clearGoal: mock(),
+      },
+    } as unknown as SlashCommandContext["api"]);
+    context.sendMessageOptions.model = "custom-provider:no-price-model";
+
+    const result = await processSlashCommand(
+      { type: "goal-set", objective: "new objective", budgetCents: 500 },
+      context
+    );
+
+    expect(result).toEqual({ clearInput: false, toastShown: true });
+    expect(setGoal).not.toHaveBeenCalled();
+    expect(context.setToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "error",
+        message:
+          "Current model has no pricing data. Pick a priced model, set --no-budget, or rely on --turns N only.",
+      })
+    );
+  });
 });
 
 describe("processSlashCommand - heartbeat-set", () => {
@@ -273,7 +815,7 @@ describe("processSlashCommand - heartbeat-set", () => {
       attachedReviewIds: [],
       openSettings: mock(() => undefined),
       sendMessageOptions: {
-        model: "anthropic:claude-3-5-sonnet",
+        model: "anthropic:claude-sonnet-4-6",
         thinkingLevel: "off",
         toolPolicy: [],
         agentId: "exec",
@@ -529,7 +1071,7 @@ describe("processSlashCommand - heartbeat-set", () => {
 
 describe("prepareCompactionMessage", () => {
   const createBaseOptions = (): SendMessageOptions => ({
-    model: "anthropic:claude-3-5-sonnet",
+    model: "anthropic:claude-sonnet-4-6",
     thinkingLevel: "medium",
     toolPolicy: [],
     agentId: "exec",
@@ -553,7 +1095,7 @@ describe("prepareCompactionMessage", () => {
 
     // followUpContent includes model/agentId from sendMessageOptions (captured for follow-up)
     expect(metadata.parsed.followUpContent?.text).toBe("Keep building");
-    expect(metadata.parsed.followUpContent?.model).toBe("anthropic:claude-3-5-sonnet");
+    expect(metadata.parsed.followUpContent?.model).toBe("anthropic:claude-sonnet-4-6");
     expect(metadata.parsed.followUpContent?.agentId).toBe("exec");
   });
 
@@ -840,7 +1382,7 @@ describe("handlePlanShowCommand", () => {
       } as unknown as CommandHandlerContext["api"],
       // Required fields for CommandHandlerContext
       sendMessageOptions: {
-        model: "anthropic:claude-3-5-sonnet",
+        model: "anthropic:claude-sonnet-4-6",
         thinkingLevel: "off",
         toolPolicy: [],
         agentId: "exec",
@@ -909,7 +1451,7 @@ describe("handlePlanOpenCommand", () => {
       } as unknown as CommandHandlerContext["api"],
       // Required fields for CommandHandlerContext
       sendMessageOptions: {
-        model: "anthropic:claude-3-5-sonnet",
+        model: "anthropic:claude-sonnet-4-6",
         thinkingLevel: "off",
         toolPolicy: [],
         agentId: "exec",
@@ -990,7 +1532,7 @@ describe("handleCompactCommand", () => {
         },
       } as unknown as CommandHandlerContext["api"],
       sendMessageOptions: {
-        model: "anthropic:claude-3-5-sonnet",
+        model: "anthropic:claude-sonnet-4-6",
         thinkingLevel: "off",
         toolPolicy: [],
         agentId: "exec",

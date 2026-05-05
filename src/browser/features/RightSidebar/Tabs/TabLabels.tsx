@@ -8,7 +8,15 @@
  */
 
 import React from "react";
-import { BugPlay, ExternalLink, Monitor, Globe, Terminal as TerminalIcon, X } from "lucide-react";
+import {
+  BugPlay,
+  ExternalLink,
+  Monitor,
+  Globe,
+  Target,
+  Terminal as TerminalIcon,
+  X,
+} from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/Tooltip/Tooltip";
 import { type ReviewStats } from "./registry";
 import { useAPI } from "@/browser/contexts/API";
@@ -108,6 +116,13 @@ export const DebugTabLabel: React.FC = () => (
   <span className="inline-flex items-center gap-1">
     <BugPlay className="h-3 w-3 shrink-0" />
     Debug
+  </span>
+);
+
+export const GoalTabLabel: React.FC = () => (
+  <span className="inline-flex items-center gap-1">
+    <Target className="h-3 w-3 shrink-0" />
+    Goal
   </span>
 );
 

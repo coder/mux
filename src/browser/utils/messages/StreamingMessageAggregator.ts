@@ -30,6 +30,7 @@ import {
   type StreamLifecycleEvent,
   type StreamLifecycleSnapshot,
 } from "@/common/types/stream";
+import { GOAL_BUDGET_LIMIT_KIND, GOAL_CONTINUATION_KIND } from "@/constants/goals";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { TodoItem, StatusSetToolResult, NotifyToolResult } from "@/common/types/tools";
 import { completeInProgressTodoItems } from "@/common/utils/todoList";
@@ -2927,6 +2928,8 @@ export class StreamingMessageAggregator {
         fileParts: fileParts.length > 0 ? fileParts : undefined,
         historySequence,
         isSynthetic: message.metadata?.synthetic === true ? true : undefined,
+        isGoalContinuation: message.metadata?.kind === GOAL_CONTINUATION_KIND ? true : undefined,
+        isBudgetLimitWrapup: message.metadata?.kind === GOAL_BUDGET_LIMIT_KIND ? true : undefined,
         timestamp: baseTimestamp,
         agentSkill,
         inlineSkillSnapshots,

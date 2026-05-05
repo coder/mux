@@ -7,6 +7,7 @@ export interface ExperimentValues {
   programmaticToolCalling: boolean | undefined;
   programmaticToolCallingExclusive: boolean | undefined;
   advisorTool: boolean | undefined;
+  goals: boolean | undefined;
   execSubagentHardRestart: boolean | undefined;
 }
 

@@ -13,14 +13,17 @@ import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import type { AgentRowRenderMeta } from "@/browser/utils/ui/workspaceFiltering";
 import { cn } from "@/common/lib/utils";
+import { formatGoalCents } from "@/common/utils/goals/budgetPricing";
 import {
   TASK_GROUP_KIND,
   getTaskGroupKindFromMetadata,
   normalizeTaskGroupLabel,
 } from "@/common/utils/tools/taskGroups";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { isDevcontainerRuntime } from "@/common/types/runtime";
 import { getWorkspaceLastReadKey } from "@/common/constants/storage";
+import type { GoalSnapshot } from "@/common/types/goal";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useDrag } from "react-dnd";
@@ -50,6 +53,7 @@ import {
   EyeOff,
   ChevronDown,
   HeartPulse,
+  Target,
 } from "lucide-react";
 import { WorkspaceStatusIndicator } from "../WorkspaceStatusIndicator/WorkspaceStatusIndicator";
 import { ArchiveIcon } from "../icons/ArchiveIcon/ArchiveIcon";
@@ -417,6 +421,31 @@ function DraftAgentListItemInner(props: DraftAgentListItemProps) {
   );
 }
 
+function getGoalPillAriaLabel(goal: GoalSnapshot, fallbackText: string): string {
+  if (goal.status === "budget_limited") {
+    const budgetText =
+      goal.budgetCents == null ? "no budget" : `${formatGoalCents(goal.budgetCents)} spent`;
+    return `Goal budget limited, ${formatGoalCents(goal.costCents)} of ${budgetText}`;
+  }
+  return fallbackText;
+}
+
+function getGoalPillText(goal: GoalSnapshot): string {
+  if (goal.status === "paused") {
+    return "Target  paused";
+  }
+  if (goal.status === "complete") {
+    return "Target  done";
+  }
+  if (goal.status === "budget_limited") {
+    return "Target  budget limited";
+  }
+  if (goal.budgetCents != null) {
+    return `Target  ${formatGoalCents(goal.costCents)} / ${formatGoalCents(goal.budgetCents)}`;
+  }
+  return `Target  ${formatGoalCents(goal.costCents)}`;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Regular Workspace Item (persisted workspace)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -444,6 +473,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
   // Destructure metadata for convenience
   const { id: workspaceId, namedWorkspacePath } = metadata;
   const workspaceHeartbeatsEnabled = useExperimentValue(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS);
+  const goalsEnabled = useExperimentValue(EXPERIMENT_IDS.GOALS);
   const isInitializing = metadata.isInitializing === true;
   const isRemoving = isRemovingProp === true || metadata.isRemoving === true;
   const isDisabled = isRemoving || isArchiving === true;
@@ -591,7 +621,10 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
     agentStatus,
     terminalActiveCount,
     lastAbortReason,
+    goal,
   } = useWorkspaceSidebarState(workspaceId);
+
+  const goalPillText = goal ? getGoalPillText(goal) : null;
 
   const fallbackModel = useWorkspaceFallbackModel(workspaceId);
   const streamingStatusPhase = getWorkspaceStreamingStatusPhase({
@@ -1048,6 +1081,24 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
 
             {!isInitializing && !isEditing && (
               <div className="flex items-center gap-1">
+                {goalsEnabled && goal && goalPillText && (
+                  <button
+                    type="button"
+                    className="border-border-light bg-surface-secondary text-muted hover:text-foreground focus-visible:ring-accent inline-flex shrink-0 items-center gap-0.5 rounded-full border px-1.5 py-0.5 text-[11px] leading-none focus-visible:ring-1 focus-visible:outline-none"
+                    aria-label={getGoalPillAriaLabel(goal, goalPillText)}
+                    data-testid={`workspace-goal-pill-${workspaceId}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      window.dispatchEvent(
+                        createCustomEvent(CUSTOM_EVENTS.OPEN_GOAL_TAB, { workspaceId })
+                      );
+                    }}
+                    onKeyDown={stopKeyboardPropagation}
+                  >
+                    <Target aria-hidden="true" className="h-3 w-3" />
+                    <span>{goalPillText}</span>
+                  </button>
+                )}
                 {shouldShowInlineArchivingStatus ? (
                   <div
                     className="text-muted flex shrink-0 items-center gap-1 text-xs whitespace-nowrap"

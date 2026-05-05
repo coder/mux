@@ -538,6 +538,15 @@ export const ReviewNoteDataSchema = z.object({
   userNote: z.string(),
 });
 
+export const GoalBudgetLimitedEventSchema = z.object({
+  type: z.literal("goal-budget-limited"),
+  workspaceId: z.string(),
+  goalId: z.string(),
+  causedByChild: z.boolean(),
+  childWorkspaceId: z.string().optional(),
+  message: z.string(),
+});
+
 export const QueuedMessageChangedEventSchema = z.object({
   type: z.literal("queued-message-changed"),
   workspaceId: z.string(),
@@ -584,6 +593,7 @@ export const WorkspaceChatMessageSchema = z.discriminatedUnion("type", [
   ReasoningEndEventSchema,
   // Error events
   ErrorEventSchema,
+  GoalBudgetLimitedEventSchema,
   // Usage and queue events
   UsageDeltaEventSchema,
   SessionUsageDeltaEventSchema,
@@ -639,6 +649,7 @@ export const ExperimentsSchema = z.object({
   programmaticToolCalling: z.boolean().optional(),
   programmaticToolCallingExclusive: z.boolean().optional(),
   advisorTool: z.boolean().optional(),
+  goals: z.boolean().optional(),
   execSubagentHardRestart: z.boolean().optional(),
 });
 

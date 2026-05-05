@@ -46,6 +46,7 @@ export type OnChatCursor = z.infer<typeof OnChatCursorSchema>;
 export type OnChatMode = z.infer<typeof OnChatModeSchema>;
 export type StreamErrorMessage = z.infer<typeof schemas.StreamErrorMessageSchema>;
 export type DeleteMessage = z.infer<typeof schemas.DeleteMessageSchema>;
+export type GoalBudgetLimitedEvent = z.infer<typeof schemas.GoalBudgetLimitedEventSchema>;
 export type WorkspaceInitEvent = z.infer<typeof schemas.WorkspaceInitEventSchema>;
 export type UpdateStatus = z.infer<typeof schemas.UpdateStatusSchema>;
 export type DesktopPrereqStatus = z.infer<typeof schemas.desktop.getPrereqStatus.output>;
@@ -153,6 +154,10 @@ export function isInitEnd(
   msg: WorkspaceChatMessage
 ): msg is Extract<WorkspaceInitEvent, { type: "init-end" }> {
   return (msg as { type?: string }).type === "init-end";
+}
+
+export function isGoalBudgetLimitedEvent(msg: WorkspaceChatMessage): msg is GoalBudgetLimitedEvent {
+  return (msg as { type?: string }).type === "goal-budget-limited";
 }
 
 export function isQueuedMessageChanged(

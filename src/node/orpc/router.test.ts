@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { createRouterClient } from "@orpc/server";
 import * as fs from "fs";
 import * as os from "os";
@@ -7,6 +7,50 @@ import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
 import { Config } from "@/node/config";
 import type { ORPCContext } from "./context";
 import { router } from "./router";
+
+describe("router workspace goal validation", () => {
+  test("goal routes do not touch goal files for unknown workspaces", async () => {
+    const getGoal = mock(() => Promise.resolve({ goalId: "should-not-read" }));
+    const clearGoal = mock(() => Promise.resolve({ goalId: "should-not-clear" }));
+    const setGoal = mock(() =>
+      Promise.resolve({ success: true, data: { goalId: "should-not-set" } })
+    );
+    const context = {
+      workspaceService: {
+        getInfo: mock(() => Promise.resolve(null)),
+      },
+      workspaceGoalService: {
+        getGoal,
+        clearGoal,
+        setGoal,
+      },
+    } as unknown as ORPCContext;
+    const client = createRouterClient(router(), { context });
+
+    const goalResult = await Promise.resolve(
+      client.workspace.getGoal({ workspaceId: "../../tmp/not-a-workspace" })
+    );
+    expect(goalResult).toEqual({ goal: null });
+    const clearResult = await Promise.resolve(
+      client.workspace.clearGoal({ workspaceId: "../../tmp/not-a-workspace" })
+    );
+    expect(clearResult).toEqual({ cleared: false });
+    const setResult = await Promise.resolve(
+      client.workspace.setGoal({
+        workspaceId: "../../tmp/not-a-workspace",
+        objective: "do not write",
+      })
+    );
+    expect(setResult).toEqual({
+      success: false,
+      error: { type: "invalid_transition", message: "Workspace not found." },
+    });
+
+    expect(getGoal).not.toHaveBeenCalled();
+    expect(setGoal).not.toHaveBeenCalled();
+    expect(clearGoal).not.toHaveBeenCalled();
+  });
+});
 
 describe("router config.saveConfig", () => {
   let tempDir: string;

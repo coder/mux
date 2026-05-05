@@ -8,6 +8,7 @@ import {
   MUX_GATEWAY_ORIGIN,
   MUX_GATEWAY_SESSION_EXPIRED_MESSAGE,
 } from "@/common/constants/muxGatewayOAuth";
+import { DEFAULT_GOAL_DEFAULTS, normalizeGoalDefaults } from "@/constants/goals";
 import { Err, Ok } from "@/common/types/result";
 import { resolveProviderCredentials } from "@/node/utils/providerRequirements";
 import { isPathInsideDir, stripTrailingSlashes } from "@/node/utils/pathUtils";
@@ -649,6 +650,7 @@ export const router = (authToken?: string) => {
             llmDebugLogs: config.llmDebugLogs === true,
             heartbeatDefaultPrompt: config.heartbeatDefaultPrompt ?? undefined,
             heartbeatDefaultIntervalMs: config.heartbeatDefaultIntervalMs ?? undefined,
+            goalDefaults: normalizeGoalDefaults(config.goalDefaults ?? DEFAULT_GOAL_DEFAULTS),
             onePasswordAccountName: config.onePasswordAccountName ?? null,
           };
         }),
@@ -1080,6 +1082,15 @@ export const router = (authToken?: string) => {
             } else {
               delete config.heartbeatDefaultIntervalMs;
             }
+            return config;
+          });
+        }),
+      updateGoalDefaults: t
+        .input(schemas.config.updateGoalDefaults.input)
+        .output(schemas.config.updateGoalDefaults.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => {
+            config.goalDefaults = normalizeGoalDefaults(input.goalDefaults);
             return config;
           });
         }),
@@ -3993,6 +4004,40 @@ export const router = (authToken?: string) => {
             input.itemId,
             input.excluded
           );
+        }),
+      getGoal: t
+        .input(schemas.workspace.getGoal.input)
+        .output(schemas.workspace.getGoal.output)
+        .handler(async ({ context, input }) => {
+          const workspace = await context.workspaceService.getInfo(input.workspaceId);
+          if (!workspace) {
+            return { goal: null };
+          }
+          return { goal: await context.workspaceGoalService.getGoal(input.workspaceId) };
+        }),
+      setGoal: t
+        .input(schemas.workspace.setGoal.input)
+        .output(schemas.workspace.setGoal.output)
+        .handler(async ({ context, input }) => {
+          const workspace = await context.workspaceService.getInfo(input.workspaceId);
+          if (!workspace) {
+            return {
+              success: false,
+              error: { type: "invalid_transition", message: "Workspace not found." },
+            };
+          }
+          return context.workspaceGoalService.setGoal(input);
+        }),
+      clearGoal: t
+        .input(schemas.workspace.clearGoal.input)
+        .output(schemas.workspace.clearGoal.output)
+        .handler(async ({ context, input }) => {
+          const workspace = await context.workspaceService.getInfo(input.workspaceId);
+          if (!workspace) {
+            return { cleared: false };
+          }
+          const cleared = await context.workspaceGoalService.clearGoal(input.workspaceId);
+          return { cleared: cleared !== null };
         }),
       getSessionUsage: t
         .input(schemas.workspace.getSessionUsage.input)

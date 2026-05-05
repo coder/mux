@@ -16,6 +16,7 @@ import { SLASH_COMMAND_HINTS } from "@/common/constants/slashCommandHints";
 import { assert } from "@/common/utils/assert";
 import { isExperimentEnabled } from "@/browser/hooks/useExperiments";
 import { normalizeModelInput } from "@/browser/utils/models/normalizeModelInput";
+import { parseGoalBudgetInputCents } from "@/common/utils/goals/budgetParser";
 import { HEARTBEAT_MAX_INTERVAL_MS, HEARTBEAT_MIN_INTERVAL_MS } from "@/constants/heartbeat";
 import { WORKSPACE_ONLY_COMMAND_KEYS } from "@/constants/slashCommands";
 
@@ -441,6 +442,192 @@ const heartbeatCommandDefinition: SlashCommandDefinition = {
   },
 };
 
+/**
+ * Slash-command-shaped wrapper around the canonical
+ * `parseGoalBudgetInputCents` parser. Returns `null` for both "no budget"
+ * (empty) and "invalid input" — slash command callers do not need to
+ * distinguish between those cases.
+ *
+ * Pre-DEREM-21 (Coder-agents-review P3) this had a stricter regex that
+ * required a `$` prefix; that has been unified with the GoalTab editor.
+ */
+export function parseGoalBudgetCents(value: unknown): number | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const parsed = parseGoalBudgetInputCents(value);
+  return typeof parsed === "number" ? parsed : null;
+}
+
+function parseGoalTurnCap(value: unknown): number | null {
+  if (typeof value !== "string" && typeof value !== "number") {
+    return null;
+  }
+
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+const GOAL_USAGE = `/goal ${SLASH_COMMAND_HINTS.goal}`;
+const GOAL_BUDGET_USAGE = "/goal budget $5|500c|--no-budget";
+
+const goalCommandDefinition: SlashCommandDefinition = {
+  key: "goal",
+  description: `Create, view, or clear a workspace goal. Usage: ${GOAL_USAGE}`,
+  inputHint: SLASH_COMMAND_HINTS.goal,
+  appendSpace: false,
+  handler: ({ cleanRemainingTokens }): ParsedCommand => {
+    if (cleanRemainingTokens.length === 0) {
+      return { type: "goal-show" };
+    }
+
+    const action = cleanRemainingTokens[0].toLowerCase();
+    if (action === "clear") {
+      return { type: "goal-clear" };
+    }
+
+    if (action === "pause") {
+      return { type: "goal-pause" };
+    }
+
+    if (action === "resume") {
+      return { type: "goal-resume" };
+    }
+
+    if (action === "complete") {
+      const parsed = minimist(cleanRemainingTokens.slice(1), {
+        string: ["summary"],
+        unknown: (arg: string) => !arg.startsWith("-"),
+      });
+      const unknownFlag = cleanRemainingTokens.slice(1).find((token) => {
+        return token.startsWith("-") && token !== "--summary";
+      });
+      if (unknownFlag) {
+        return {
+          type: "unknown-command",
+          command: "goal",
+          subcommand: `Unknown flag: ${unknownFlag}`,
+        };
+      }
+      if (parsed._.length > 0) {
+        return {
+          type: "command-invalid-args",
+          command: "goal",
+          input: parsed._.join(" "),
+          usage: `/goal complete --summary "<summary>"`,
+        };
+      }
+      const summary = typeof parsed.summary === "string" ? parsed.summary.trim() : undefined;
+      return summary ? { type: "goal-complete", summary } : { type: "goal-complete" };
+    }
+
+    if (action === "budget") {
+      const budgetTokens = cleanRemainingTokens.slice(1);
+      if (budgetTokens.length === 0) {
+        return {
+          type: "command-missing-args",
+          command: "goal",
+          usage: GOAL_BUDGET_USAGE,
+        };
+      }
+      if (budgetTokens.length > 1) {
+        return {
+          type: "command-invalid-args",
+          command: "goal",
+          input: budgetTokens.join(" "),
+          usage: GOAL_BUDGET_USAGE,
+        };
+      }
+      if (budgetTokens[0] === "--no-budget") {
+        return { type: "goal-budget", budgetCents: null };
+      }
+      const budgetCents = parseGoalBudgetCents(budgetTokens[0]);
+      if (budgetCents == null) {
+        return {
+          type: "command-invalid-args",
+          command: "goal",
+          input: budgetTokens[0],
+          usage: GOAL_BUDGET_USAGE,
+        };
+      }
+      return { type: "goal-budget", budgetCents };
+    }
+
+    const noBudget = cleanRemainingTokens.includes("--no-budget");
+    const parsed = minimist(
+      cleanRemainingTokens.filter((token) => token !== "--no-budget"),
+      {
+        string: ["budget", "turns"],
+        unknown: (arg: string) => !arg.startsWith("-"),
+      }
+    );
+    const unknownFlag = cleanRemainingTokens.find((token) => {
+      return (
+        token.startsWith("-") &&
+        token !== "--budget" &&
+        token !== "--no-budget" &&
+        token !== "--turns"
+      );
+    });
+    if (unknownFlag) {
+      return {
+        type: "unknown-command",
+        command: "goal",
+        subcommand: `Unknown flag: ${unknownFlag}`,
+      };
+    }
+
+    const objective = parsed._.join(" ").trim();
+    if (objective.length === 0) {
+      return {
+        type: "command-missing-args",
+        command: "goal",
+        usage: GOAL_USAGE,
+      };
+    }
+
+    if (parsed.budget != null && noBudget) {
+      return {
+        type: "command-invalid-args",
+        command: "goal",
+        input: "--budget --no-budget",
+        usage: GOAL_USAGE,
+      };
+    }
+
+    const result: Extract<ParsedCommand, { type: "goal-set" }> = { type: "goal-set", objective };
+    if (parsed.budget != null) {
+      const budgetCents = parseGoalBudgetCents(parsed.budget);
+      if (budgetCents == null) {
+        return {
+          type: "command-invalid-args",
+          command: "goal",
+          input: String(parsed.budget),
+          usage: GOAL_USAGE,
+        };
+      }
+      result.budgetCents = budgetCents;
+    } else if (noBudget) {
+      result.budgetCents = null;
+    }
+
+    if (parsed.turns != null) {
+      const turnCap = parseGoalTurnCap(parsed.turns);
+      if (turnCap == null) {
+        return {
+          type: "command-invalid-args",
+          command: "goal",
+          input: String(parsed.turns),
+          usage: GOAL_USAGE,
+        };
+      }
+      result.turnCap = turnCap;
+    }
+
+    return result;
+  },
+};
+
 const debugLlmRequestCommandDefinition: SlashCommandDefinition = {
   key: "debug-llm-request",
   description: "Show the last LLM request sent (debug)",
@@ -460,6 +647,7 @@ export const SLASH_COMMAND_DEFINITIONS: readonly SlashCommandDefinition[] = [
   vimCommandDefinition,
   idleCommandDefinition,
   heartbeatCommandDefinition,
+  goalCommandDefinition,
   debugLlmRequestCommandDefinition,
 ];
 
@@ -486,6 +674,16 @@ export function getCommandGhostHint(
   const commandKey = match[1];
   if (variant === "creation" && WORKSPACE_ONLY_COMMAND_KEYS.has(commandKey)) {
     return null;
+  }
+
+  if (commandKey === "goal") {
+    try {
+      if (!isExperimentEnabled(EXPERIMENT_IDS.GOALS)) {
+        return null;
+      }
+    } catch {
+      return null;
+    }
   }
 
   if (commandKey === "heartbeat") {

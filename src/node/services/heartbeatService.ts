@@ -10,6 +10,7 @@ import {
 } from "@/constants/heartbeat";
 import type { Config } from "@/node/config";
 import type { ExtensionMetadataService } from "./ExtensionMetadataService";
+import { IdleDispatcher, type IdleDispatchPayload } from "./idleDispatcher";
 import { log } from "./log";
 import type { TaskService } from "./taskService";
 import type { WorkspaceService } from "./workspaceService";
@@ -17,6 +18,8 @@ import type { WorkspaceService } from "./workspaceService";
 const STARTUP_DELAY_MS = 60 * 1000; // 60s - let startup settle
 const CHECK_INTERVAL_MS = 30 * 1000; // 30s tick
 const MAX_CONCURRENT_HEARTBEATS = 1;
+const HEARTBEAT_IDLE_CONSUMER_NAME = "heartbeat";
+const HEARTBEAT_IDLE_CONSUMER_PRIORITY = 50;
 
 interface HeartbeatEligibilityResult {
   eligible: boolean;
@@ -28,6 +31,7 @@ export class HeartbeatService {
   private readonly extensionMetadata: ExtensionMetadataService;
   private readonly workspaceService: WorkspaceService;
   private readonly taskService: TaskService;
+  private readonly idleDispatcher: IdleDispatcher;
 
   private startupTimeout: ReturnType<typeof setTimeout> | null = null;
   private checkInterval: ReturnType<typeof setInterval> | null = null;
@@ -40,6 +44,7 @@ export class HeartbeatService {
   private isProcessingQueue = false;
   private tickInFlight = false;
   private lifecycleVersion = 0;
+  private heartbeatConsumerDisposer: (() => void) | null = null;
 
   private readonly onActivity: (event: {
     workspaceId: string;
@@ -54,12 +59,14 @@ export class HeartbeatService {
     config: Config,
     extensionMetadata: ExtensionMetadataService,
     workspaceService: WorkspaceService,
-    taskService: TaskService
+    taskService: TaskService,
+    idleDispatcher?: IdleDispatcher
   ) {
     this.config = config;
     this.extensionMetadata = extensionMetadata;
     this.workspaceService = workspaceService;
     this.taskService = taskService;
+    this.idleDispatcher = idleDispatcher ?? new IdleDispatcher();
 
     this.onActivity = (event) => this.handleActivityEvent(event);
     this.onMetadata = (event) => this.handleMetadataEvent(event);
@@ -67,9 +74,18 @@ export class HeartbeatService {
 
   start(): void {
     assert(this.stopped, "HeartbeatService.start() called while already running");
+    assert(
+      this.heartbeatConsumerDisposer == null,
+      "HeartbeatService.start() called with a registered idle consumer"
+    );
     this.stopped = false;
     this.lifecycleVersion += 1;
 
+    this.heartbeatConsumerDisposer = this.idleDispatcher.registerConsumer({
+      name: HEARTBEAT_IDLE_CONSUMER_NAME,
+      priority: HEARTBEAT_IDLE_CONSUMER_PRIORITY,
+      buildPayload: (workspaceId) => this.buildHeartbeatDispatchPayload(workspaceId),
+    });
     this.workspaceService.on("activity", this.onActivity);
     this.workspaceService.on("metadata", this.onMetadata);
 
@@ -106,6 +122,8 @@ export class HeartbeatService {
 
     this.workspaceService.off("activity", this.onActivity);
     this.workspaceService.off("metadata", this.onMetadata);
+    this.heartbeatConsumerDisposer?.();
+    this.heartbeatConsumerDisposer = null;
 
     this.nextEligibleAtByWorkspaceId.clear();
     this.trackedIntervalMsByWorkspaceId.clear();
@@ -461,23 +479,9 @@ export class HeartbeatService {
         this.activeWorkspaceIds.add(workspaceId);
 
         try {
-          const eligibility = await this.checkEligibility(workspaceId, Date.now());
-          if (!eligibility.eligible) {
-            log.info("HeartbeatService: skipped queued heartbeat (ineligible)", {
-              workspaceId,
-              reason: eligibility.reason,
-            });
-            continue;
-          }
-
-          log.info("HeartbeatService: executing heartbeat", {
-            workspaceId,
-            remainingQueued: this.queuedWorkspaceIds.size,
-          });
-
-          await this.workspaceService.executeHeartbeat(workspaceId);
+          await this.idleDispatcher.requestDispatch(workspaceId, HEARTBEAT_IDLE_CONSUMER_NAME);
         } catch (error) {
-          log.error("HeartbeatService: heartbeat execution failed", { workspaceId, error });
+          log.error("HeartbeatService: heartbeat dispatch request failed", { workspaceId, error });
         } finally {
           this.activeWorkspaceIds.delete(workspaceId);
           if (!this.stopped) {
@@ -498,6 +502,26 @@ export class HeartbeatService {
         void this.processQueue();
       }
     }
+  }
+
+  private async buildHeartbeatDispatchPayload(
+    workspaceId: string
+  ): Promise<IdleDispatchPayload | null> {
+    const eligibility = await this.checkEligibility(workspaceId, Date.now());
+    if (!eligibility.eligible) {
+      log.info("HeartbeatService: skipped queued heartbeat (ineligible)", {
+        workspaceId,
+        reason: eligibility.reason,
+      });
+      return null;
+    }
+
+    return {
+      dispatch: async () => {
+        log.info("HeartbeatService: executing heartbeat", { workspaceId });
+        await this.workspaceService.executeHeartbeat(workspaceId);
+      },
+    };
   }
 
   async checkEligibility(workspaceId: string, now: number): Promise<HeartbeatEligibilityResult> {

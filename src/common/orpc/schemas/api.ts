@@ -4,6 +4,7 @@ import { z } from "zod";
 import { CODER_ARCHIVE_BEHAVIORS } from "@/common/config/coderArchiveBehavior";
 import { WORKTREE_ARCHIVE_BEHAVIORS } from "@/common/config/worktreeArchiveBehavior";
 import { HEARTBEAT_MAX_INTERVAL_MS, HEARTBEAT_MIN_INTERVAL_MS } from "@/constants/heartbeat";
+import { DEFAULT_GOAL_DEFAULTS } from "@/constants/goals";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { ChatStatsSchema, SessionUsageFileSchema } from "./chatStats";
 import { AdditionalSystemContextSchema, WorkspaceInstructionsSchema } from "./instructions";
@@ -13,6 +14,13 @@ import {
   SendMessageErrorSchema,
 } from "./errors";
 import { BranchListResultSchema, FilePartSchema, MuxMessageSchema } from "./message";
+import {
+  GoalClearInputSchema,
+  GoalGetInputSchema,
+  GoalRecordV1Schema,
+  GoalSetErrorSchema,
+  GoalSetInputSchema,
+} from "./goal";
 import { ProjectConfigSchema } from "./project";
 import { ResultSchema } from "./result";
 import { SshPromptEventSchema, SshPromptResponseInputSchema } from "./ssh";
@@ -1449,6 +1457,18 @@ export const workspace = {
       output: ResultSchema(z.void(), z.string()),
     },
   },
+  getGoal: {
+    input: GoalGetInputSchema,
+    output: z.object({ goal: GoalRecordV1Schema.nullable() }),
+  },
+  setGoal: {
+    input: GoalSetInputSchema,
+    output: ResultSchema(GoalRecordV1Schema, GoalSetErrorSchema),
+  },
+  clearGoal: {
+    input: GoalClearInputSchema,
+    output: z.object({ cleared: z.boolean() }),
+  },
   getSessionUsage: {
     input: z.object({ workspaceId: z.string() }),
     output: SessionUsageFileSchema.optional(),
@@ -1821,6 +1841,23 @@ const AdvisorThinkingLevelSchema = ThinkingLevelSchema.nullable();
 const AdvisorMaxUsesPerTurnSchema = z.number().int().positive().nullable();
 const AdvisorMaxOutputTokensSchema = z.number().int().positive().nullable();
 
+const GoalDefaultsConfigSchema = z.object({
+  defaultBudgetCents: z
+    .number()
+    .int()
+    .nonnegative()
+    .default(DEFAULT_GOAL_DEFAULTS.defaultBudgetCents),
+  defaultTurnCap: z
+    .number()
+    .int()
+    .positive()
+    .nullable()
+    .default(DEFAULT_GOAL_DEFAULTS.defaultTurnCap),
+  alwaysRequireExplicitBudget: z
+    .boolean()
+    .default(DEFAULT_GOAL_DEFAULTS.alwaysRequireExplicitBudget),
+});
+
 export const config = {
   getConfig: {
     input: z.void(),
@@ -1849,6 +1886,7 @@ export const config = {
       llmDebugLogs: z.boolean(),
       heartbeatDefaultPrompt: z.string().optional(),
       heartbeatDefaultIntervalMs: z.number().optional(),
+      goalDefaults: GoalDefaultsConfigSchema,
       onePasswordAccountName: z.string().nullish(),
     }),
   },
@@ -1949,6 +1987,14 @@ export const config = {
           .min(HEARTBEAT_MIN_INTERVAL_MS)
           .max(HEARTBEAT_MAX_INTERVAL_MS)
           .nullish(),
+      })
+      .strict(),
+    output: z.void(),
+  },
+  updateGoalDefaults: {
+    input: z
+      .object({
+        goalDefaults: GoalDefaultsConfigSchema,
       })
       .strict(),
     output: z.void(),

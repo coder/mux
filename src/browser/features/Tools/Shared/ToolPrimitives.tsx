@@ -10,6 +10,7 @@ import {
   ArrowRightLeft,
   Bell,
   BookOpen,
+  CircleCheck,
   Database,
   FileText,
   GitCommit,
@@ -27,6 +28,7 @@ import {
   Pencil,
   Sparkles,
   Square,
+  Target,
   Wrench,
 } from "lucide-react";
 import { EmojiIcon } from "@/browser/components/icons/EmojiIcon/EmojiIcon";
@@ -257,6 +259,8 @@ export const TOOL_NAME_TO_ICON: Partial<Record<string, LucideIcon>> = {
   notify: Bell,
   analytics_query: Database,
   task_apply_git_patch: GitCommit,
+  get_goal: Target,
+  complete_goal: CircleCheck,
 };
 
 export const ToolIcon: React.FC<ToolIconProps> = ({ toolName, emoji, emojiSpin, className }) => {

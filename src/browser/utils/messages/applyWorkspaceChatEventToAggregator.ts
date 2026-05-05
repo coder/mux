@@ -6,6 +6,7 @@ import {
   isBashOutputEvent,
   isCaughtUpMessage,
   isDeleteMessage,
+  isGoalBudgetLimitedEvent,
   isInitEnd,
   isInitOutput,
   isInitStart,
@@ -114,6 +115,13 @@ function dispatchSkillsRefreshRequested(): void {
   window.dispatchEvent(new CustomEvent(CUSTOM_EVENTS.SKILLS_REFRESH_REQUESTED));
 }
 
+function dispatchGoalChildBudgetToast(workspaceId: string, message: string): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(
+    createCustomEvent(CUSTOM_EVENTS.GOAL_CHILD_BUDGET_TOAST, { workspaceId, message })
+  );
+}
+
 function dispatchMuxGatewaySessionExpired(): void {
   if (typeof window === "undefined") return;
   window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.MUX_GATEWAY_SESSION_EXPIRED));
@@ -216,6 +224,13 @@ export function applyWorkspaceChatEventToAggregator(
   if (isReasoningEnd(event)) {
     aggregator.handleReasoningEnd(event);
     return "immediate";
+  }
+
+  if (isGoalBudgetLimitedEvent(event)) {
+    if (allowSideEffects && event.causedByChild) {
+      dispatchGoalChildBudgetToast(event.workspaceId, event.message);
+    }
+    return "ignored";
   }
 
   if (isStreamLifecycle(event)) {

@@ -289,6 +289,28 @@ describe("AgentListItem", () => {
     expect(rowView.queryByTestId(`workspace-secondary-row-${TEST_WORKSPACE_ID}`)).toBeNull();
   });
 
+  test("renders budget-limited goal pill with stateful aria label", () => {
+    mockWorkspaceHeartbeatsEnabled = true;
+    mockWorkspaceSidebarState = createWorkspaceSidebarState({
+      goal: {
+        goalId: "11111111-1111-4111-8111-111111111111",
+        status: "budget_limited",
+        objective: "Ship goal budgets",
+        budgetCents: 500,
+        costCents: 525,
+        turnsUsed: 4,
+        turnCap: null,
+        startedAtMs: Date.now(),
+      },
+    });
+
+    const { row } = renderWorkspaceItem();
+    const pill = within(row).getByTestId(`workspace-goal-pill-${TEST_WORKSPACE_ID}`);
+
+    expect(pill.textContent).toContain("Target  budget limited");
+    expect(pill.getAttribute("aria-label")).toBe("Goal budget limited, $5.25 of $5.00 spent");
+  });
+
   test("renders a heartbeat icon directly in the leading slot for seen rows when the heartbeat experiment is enabled", () => {
     mockWorkspaceHeartbeatsEnabled = true;
 

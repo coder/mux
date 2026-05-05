@@ -16,6 +16,8 @@ import { BackgroundProcessManager } from "@/node/services/backgroundProcessManag
 import { fireEvent } from "@testing-library/react";
 import { createAppHarness } from "../harness";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { getAutoCompactionThresholdKey } from "@/common/constants/storage";
 import { workspaceStore } from "@/browser/stores/WorkspaceStore";
 
 interface ServiceContainerPrivates {
@@ -82,6 +84,7 @@ async function setDeterministicForceCompactionThreshold(
 ): Promise<void> {
   // Keep force-compaction tests deterministic even if persisted settings enable 1M context
   // or raise the auto-compaction threshold. 10% threshold + 5% force buffer => trigger at 15%.
+  updatePersistedState(getAutoCompactionThresholdKey(WORKSPACE_DEFAULTS.model), 10);
   const result = await env.orpc.workspace.setAutoCompactionThreshold({
     workspaceId,
     threshold: 0.1,
@@ -146,8 +149,6 @@ describe("Compaction UI (mock AI router)", () => {
     const app = await createAppHarness({ branchPrefix: "compaction-ui" });
 
     try {
-      await setDeterministicForceCompactionThreshold(app.env, app.workspaceId);
-
       const seedMessage = "Seed conversation for compaction";
       const triggerMessage = "[force] Trigger force compaction";
 
@@ -158,6 +159,7 @@ describe("Compaction UI (mock AI router)", () => {
       });
       expect(seedResult.success).toBe(true);
       await app.chat.expectTranscriptContains(`Mock response: ${seedMessage}`);
+      await setDeterministicForceCompactionThreshold(app.env, app.workspaceId);
 
       const triggerResult = await app.env.orpc.workspace.sendMessage({
         workspaceId: app.workspaceId,
@@ -296,8 +298,6 @@ describe("Compaction UI (mock AI router)", () => {
     let unregister: (() => void) | undefined;
 
     try {
-      await setDeterministicForceCompactionThreshold(app.env, app.workspaceId);
-
       const manager = getBackgroundProcessManager(app.env);
 
       const toolCallId = "bash-foreground";
@@ -329,6 +329,7 @@ describe("Compaction UI (mock AI router)", () => {
       });
       expect(seedResult.success).toBe(true);
       await app.chat.expectTranscriptContains(`Mock response: ${seedMessage}`);
+      await setDeterministicForceCompactionThreshold(app.env, app.workspaceId);
 
       // Send via the UI path so the foreground bash auto-background logic runs exactly
       // as it does for real user sends, while backend mid-stream compaction handles the rest.
