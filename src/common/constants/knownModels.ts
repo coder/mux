@@ -4,7 +4,7 @@
 
 import { formatModelDisplayName } from "../utils/ai/modelDisplay";
 
-type ModelProvider = "anthropic" | "openai" | "google" | "xai";
+type ModelProvider = "anthropic" | "openai" | "google" | "xai" | "deepseek";
 
 interface KnownModelDefinition {
   /** Provider identifier used by SDK factories */
@@ -130,6 +130,27 @@ const MODEL_DEFINITIONS = {
     provider: "xai",
     providerModelId: "grok-code-fast-1",
     aliases: ["grok-code"],
+  },
+  // DeepSeek V4 Pro is the flagship V4 tier (1.6T total / 49B active params, 1M context,
+  // 384K max output). Bare `deepseek` alias points here per the convention that the
+  // shortest alias tracks each provider's flagship model (mirrors `gemini` → Gemini Pro,
+  // `grok` → Grok 4.1).
+  DEEPSEEK_V4_PRO: {
+    provider: "deepseek",
+    providerModelId: "deepseek-v4-pro",
+    aliases: ["deepseek", "deepseek-pro", "deepseek-v4", "deepseek-v4-pro"],
+    // V4 ships a custom `encoding_dsv4` tokenizer that isn't published upstream yet;
+    // reuse v3.1 (the latest available DeepSeek tokenizer in ai-tokenizer) for
+    // approximate token counting until V4 weights land in the registry.
+    tokenizerOverride: "deepseek/deepseek-v3.1",
+  },
+  // DeepSeek V4 Flash is the fast/economical V4 tier (284B total / 13B active params).
+  // Same 1M context + 384K output as Pro; lower cost, smaller scale.
+  DEEPSEEK_V4_FLASH: {
+    provider: "deepseek",
+    providerModelId: "deepseek-v4-flash",
+    aliases: ["deepseek-flash", "deepseek-v4-flash"],
+    tokenizerOverride: "deepseek/deepseek-v3.1",
   },
 } as const satisfies Record<string, KnownModelDefinition>;
 

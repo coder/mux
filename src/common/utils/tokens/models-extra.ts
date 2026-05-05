@@ -342,4 +342,41 @@ export const modelsExtra: Record<string, ModelData> = {
     supports_response_schema: true,
     supported_endpoints: ["/v1/responses"],
   },
+
+  // DeepSeek V4 Pro - Released April 24, 2026 (Preview)
+  // 1.6T total / 49B active MoE params; 1M context, 384K max output.
+  // Standard pricing: $1.74/M input, $3.48/M output (full price; an introductory 75%
+  // discount runs through 2026/05/05 but we record the post-discount baseline so
+  // billing/forecasts don't silently regress when the promo ends).
+  // Cache-hit input pricing is documented at 1/10 of input price.
+  "deepseek-v4-pro": {
+    max_input_tokens: 1000000,
+    max_output_tokens: 384000,
+    input_cost_per_token: 0.00000174, // $1.74 per million input tokens
+    output_cost_per_token: 0.00000348, // $3.48 per million output tokens
+    cache_read_input_token_cost: 0.000000174, // 1/10 of input price
+    litellm_provider: "deepseek",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+  },
+
+  // DeepSeek V4 Flash - Released April 24, 2026 (Preview)
+  // 284B total / 13B active MoE params; 1M context, 384K max output.
+  // Pricing: $0.14/M input, $0.28/M output. Cache-hit input is 1/10 of input price.
+  // Legacy `deepseek-chat` (non-thinking) and `deepseek-reasoner` (thinking) currently
+  // route to V4-Flash compatibility modes and retire 2026-07-24.
+  "deepseek-v4-flash": {
+    max_input_tokens: 1000000,
+    max_output_tokens: 384000,
+    input_cost_per_token: 0.00000014, // $0.14 per million input tokens
+    output_cost_per_token: 0.00000028, // $0.28 per million output tokens
+    cache_read_input_token_cost: 0.000000014, // 1/10 of input price
+    litellm_provider: "deepseek",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+  },
 };

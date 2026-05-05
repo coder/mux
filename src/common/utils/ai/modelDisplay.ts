@@ -143,6 +143,21 @@ export function formatModelDisplayName(modelName: string): string {
     }
   }
 
+  // DeepSeek models - keep camel-cased "DeepSeek" branding and uppercase the
+  // version segment (e.g. "v4-pro" -> "V4 Pro") since "Deepseek V4 Pro" mis-cases
+  // the brand name.
+  if (lower.startsWith("deepseek-")) {
+    const parts = lower.replace("deepseek-", "").split("-");
+    const formatted = parts
+      .map((part) => {
+        // Uppercase short tokens that look like a version tag (e.g. "v4", "r1").
+        if (/^[a-z]\d+(?:\.\d+)?$/.test(part)) return part.toUpperCase();
+        return capitalize(part);
+      })
+      .join(" ");
+    return formatted ? `DeepSeek ${formatted}` : "DeepSeek";
+  }
+
   // Ollama models - handle format like "llama3.2:7b" or "codellama:13b"
   // Split by colon to handle quantization/size suffix
   const [baseName, size] = modelName.split(":");

@@ -49,6 +49,21 @@ describe("formatModelDisplayName", () => {
     });
   });
 
+  describe("DeepSeek models", () => {
+    test("preserves DeepSeek camel-case branding and uppercases version tags", () => {
+      expect(formatModelDisplayName("deepseek-v4-pro")).toBe("DeepSeek V4 Pro");
+      expect(formatModelDisplayName("deepseek-v4-flash")).toBe("DeepSeek V4 Flash");
+      expect(formatModelDisplayName("deepseek-r1")).toBe("DeepSeek R1");
+      expect(formatModelDisplayName("deepseek-chat")).toBe("DeepSeek Chat");
+    });
+
+    test("strips provider prefix when DeepSeek model is gateway-scoped", () => {
+      // OpenRouter exposes the same models under "deepseek/deepseek-v4-pro"; the
+      // existing slash-stripping branch should route through the DeepSeek handler.
+      expect(formatModelDisplayName("deepseek/deepseek-v4-pro")).toBe("DeepSeek V4 Pro");
+    });
+  });
+
   describe("Ollama models", () => {
     test("formats Llama models with size", () => {
       expect(formatModelDisplayName("llama3.2:7b")).toBe("Llama 3.2 (7B)");
