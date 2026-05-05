@@ -22,7 +22,10 @@ interface ChatInputDecorationProps {
 export function ChatInputDecoration(props: ChatInputDecorationProps) {
   return (
     <div
-      className={cn("border-border bg-surface-primary border-t px-4", props.className)}
+      className={cn(
+        "border-border bg-surface-primary pointer-events-auto border-t px-4",
+        props.className
+      )}
       data-component={props.dataComponent}
     >
       <button

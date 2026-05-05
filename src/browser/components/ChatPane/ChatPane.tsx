@@ -1101,13 +1101,14 @@ interface ChatInputPaneProps {
 
 const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
   const { reviews } = props;
-
-  // Keep optional banners/warnings on one shared lane so the seam right above the textarea is
-  // owned by a single component boundary. That lets hydration reserve only the volatile
-  // workspace-specific decoration stack instead of the whole composer pane.
-  const decorationEntries: LayoutStackItem[] = [];
+  // Keep user-facing warnings in normal flow because they are intentional layout
+  // changes. Automatic status rows float only when they are the sole chrome above
+  // the composer, so they cannot shrink the transcript or cover action banners.
+  const topFlowDecorationEntries: LayoutStackItem[] = [];
+  const automaticDecorationEntries: LayoutStackItem[] = [];
+  const lowerFlowDecorationEntries: LayoutStackItem[] = [];
   if (props.shouldShowCompactionWarning) {
-    decorationEntries.push({
+    topFlowDecorationEntries.push({
       key: "compaction-warning",
       node: (
         <CompactionWarning
@@ -1119,7 +1120,7 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
     });
   }
   if (props.contextSwitchWarning) {
-    decorationEntries.push({
+    topFlowDecorationEntries.push({
       key: "context-switch-warning",
       node: (
         <ContextSwitchWarningBanner
@@ -1131,23 +1132,23 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
     });
   }
   if (props.shouldShowPinnedTodoList) {
-    decorationEntries.push({
+    automaticDecorationEntries.push({
       key: "pinned-todo-list",
       node: <PinnedTodoList workspaceId={props.workspaceId} />,
     });
   }
-  decorationEntries.push({
+  automaticDecorationEntries.push({
     key: "background-processes",
     node: <BackgroundProcessesBanner workspaceId={props.workspaceId} />,
   });
   if (props.shouldShowReviewsBanner) {
-    decorationEntries.push({
+    lowerFlowDecorationEntries.push({
       key: "reviews-banner",
       node: <ReviewsBanner workspaceId={props.workspaceId} />,
     });
   }
   if (props.queuedMessage) {
-    decorationEntries.push({
+    lowerFlowDecorationEntries.push({
       key: "queued-message",
       node: (
         <QueuedMessage
@@ -1159,7 +1160,7 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
     });
   }
   if (props.isQueuedAgentTask) {
-    decorationEntries.push({
+    lowerFlowDecorationEntries.push({
       key: "queued-agent-task",
       node: (
         <div className="border-border-medium bg-background-secondary text-muted rounded-md border px-3 py-2 text-xs">
@@ -1168,17 +1169,39 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
       ),
     });
   }
-  // The decoration lane changes the transcript viewport height from below; the
-  // scrollport ResizeObserver inside useAutoScroll owns any required bottom pin.
+  const hasFlowDecorations =
+    topFlowDecorationEntries.length > 0 || lowerFlowDecorationEntries.length > 0;
 
   return (
-    <>
+    <div className="relative">
       <LayoutStackLane
         workspaceId={props.workspaceId}
         isHydrating={props.isHydratingTranscript}
         align="end"
-        dataComponent="ChatInputDecorationStack"
-        items={decorationEntries}
+        dataComponent="ChatInputTopFlowDecorationStack"
+        items={topFlowDecorationEntries}
+      />
+      <div
+        className={cn(
+          !hasFlowDecorations && "pointer-events-none absolute inset-x-0 bottom-full z-10"
+        )}
+      >
+        <div>
+          <LayoutStackLane
+            workspaceId={props.workspaceId}
+            isHydrating={props.isHydratingTranscript}
+            align="end"
+            dataComponent="ChatInputAutomaticDecorationStack"
+            items={automaticDecorationEntries}
+          />
+        </div>
+      </div>
+      <LayoutStackLane
+        workspaceId={props.workspaceId}
+        isHydrating={props.isHydratingTranscript}
+        align="end"
+        dataComponent="ChatInputLowerFlowDecorationStack"
+        items={lowerFlowDecorationEntries}
       />
       <ChatInput
         key={props.workspaceId}
@@ -1210,6 +1233,6 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
         onDeleteReview={reviews.removeReview}
         onUpdateReviewNote={reviews.updateReviewNote}
       />
-    </>
+    </div>
   );
 };

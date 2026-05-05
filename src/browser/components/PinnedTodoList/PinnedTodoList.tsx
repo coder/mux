@@ -23,7 +23,9 @@ interface PinnedTodoListProps {
  * - MapStore caches WorkspaceState per version, avoiding unnecessary recomputation
  */
 export const PinnedTodoList: React.FC<PinnedTodoListProps> = ({ workspaceId }) => {
-  const [expanded, setExpanded] = usePersistedState(getPinnedTodoExpandedKey(workspaceId), true);
+  // Default to the reserved collapsed rail so a newly-created TODO list does not
+  // resize the transcript. A user's persisted expansion still wins.
+  const [expanded, setExpanded] = usePersistedState(getPinnedTodoExpandedKey(workspaceId), false);
 
   const workspaceStore = useWorkspaceStoreRaw();
   const subscribeToWorkspace = (callback: () => void) =>
