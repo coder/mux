@@ -146,7 +146,12 @@ export function formatModelDisplayName(modelName: string): string {
   // DeepSeek models - keep camel-cased "DeepSeek" branding and uppercase the
   // version segment (e.g. "v4-pro" -> "V4 Pro") since "Deepseek V4 Pro" mis-cases
   // the brand name.
-  if (lower.startsWith("deepseek-")) {
+  //
+  // Skip when the name carries a colon-suffixed size tag like "deepseek-r1:8b" —
+  // those are Ollama-style local model IDs and must fall through to the colon-size
+  // handler below so the size renders as "(8B)" rather than being concatenated
+  // verbatim.
+  if (lower.startsWith("deepseek-") && !modelName.includes(":")) {
     const parts = lower.replace("deepseek-", "").split("-");
     const formatted = parts
       .map((part) => {

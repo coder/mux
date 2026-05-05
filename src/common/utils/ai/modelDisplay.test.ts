@@ -62,6 +62,13 @@ describe("formatModelDisplayName", () => {
       // existing slash-stripping branch should route through the DeepSeek handler.
       expect(formatModelDisplayName("deepseek/deepseek-v4-pro")).toBe("DeepSeek V4 Pro");
     });
+
+    test("colon-suffixed Ollama IDs fall through to the size handler", () => {
+      // Locally-pulled DeepSeek models use Ollama tags like "deepseek-r1:8b". The
+      // DeepSeek brand branch must not preempt the colon-size formatter; otherwise
+      // the size renders verbatim instead of as "(8B)".
+      expect(formatModelDisplayName("deepseek-r1:8b")).toContain("(8B)");
+    });
   });
 
   describe("Ollama models", () => {
