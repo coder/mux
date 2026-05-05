@@ -141,6 +141,8 @@ export class ProviderService {
     // The provider config subscription may have many concurrent listeners (e.g. multiple windows).
     // Avoid noisy MaxListenersExceededWarning for normal usage.
     this.emitter.setMaxListeners(50);
+    // Notify subscribers when providers.jsonc is edited externally (e.g. manual edits).
+    this.config.watchProvidersFile(() => this.notifyConfigChanged());
   }
 
   /**
