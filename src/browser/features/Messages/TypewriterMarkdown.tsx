@@ -71,6 +71,15 @@ export const TypewriterMarkdown: React.FC<TypewriterMarkdownProps> = ({
   // React Compiler memoizes this object; no manual useMemo needed.
   const streamingContextValue = { isStreaming };
 
+  // Smoothness comes entirely from the engine's word-paced reveal cadence.
+  // No DOM-level animation, mask, or shimmer here — earlier iterations
+  // (per-block fade, per-word fade, per-line wrap, animated mask, shimmer
+  // overlay) all introduced perceptual artifacts (left-to-right shimmer,
+  // bottom-edge obfuscation, abrupt fades) that the eye registered as
+  // jitter regardless of curve/duration tuning. Word-paced reveal at the
+  // engine level (see SmoothTextEngine) matches how production chat UIs
+  // (ChatGPT, Claude.ai) feel smooth: humans parse text in word units, so
+  // the right granularity for reveal is the word, not the character.
   return (
     <StreamingContext.Provider value={streamingContextValue}>
       <div className={cn("markdown-content", className)}>

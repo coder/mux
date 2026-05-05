@@ -37,12 +37,25 @@ export const STREAM_SMOOTHING = {
    * below this.
    */
   MAX_VISUAL_LAG_CHARS: 1024,
-  /** Max characters revealed in a single animation frame. */
-  MAX_FRAME_CHARS: 48,
   /**
-   * Min characters revealed per tick once budget permits. Set to 2 so reveals
-   * coalesce to ~30 Hz at the base rate instead of ~60 Hz — equal visual
-   * smoothness to humans, half the markdown-reparse cost.
+   * Maximum characters in a single reveal "atom" when no whitespace boundary
+   * is found. The engine paces text in word-sized atoms (a run of non-whitespace
+   * plus its trailing whitespace); for a long no-whitespace run (e.g., a URL or
+   * minified identifier) we cap the atom at this length so the engine doesn't
+   * stall waiting for budget to cover an unbounded chunk. ~12 covers nearly all
+   * English words ("consideration" = 13, "JavaScript" = 10) without dumping
+   * long URLs in a single 200-char shot.
    */
-  MIN_FRAME_CHARS: 2,
+  WORD_PACE_MAX_CHARS: 12,
+  /**
+   * Upper bound on the dt fed to the engine in a single tick. Long RAF gaps
+   * (tab visibility, slow frames, debugger pauses) would otherwise accumulate
+   * huge budget that bursts on resume — bypassing the per-tick atom cap below.
+   * Clamping dt to ~2 frames at 60Hz means at the worst case (max model rate
+   * 420 cps × 33ms = 13.86 chars per tick), budget can cover at most one
+   * WORD_PACE_MAX_CHARS-sized atom per tick. Combined with the 1-atom-per-tick
+   * reveal cap, this enforces a strict temporal cadence: each visual reveal
+   * is its own animation frame.
+   */
+  MAX_TICK_MS: 33,
 } as const;
