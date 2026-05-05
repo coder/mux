@@ -1542,13 +1542,6 @@ code {
   white-space: normal;
 }
 
-/* Streaming smoothness is achieved entirely via word-paced reveal in the
- * SmoothTextEngine (see src/browser/utils/streaming/SmoothTextEngine.ts).
- * No DOM-level fade, mask, or shimmer — earlier iterations introduced
- * perceptual artifacts (bottom-edge obfuscation, abrupt fade transitions,
- * left-to-right per-word shimmer) that the eye registered as jitter
- * regardless of curve / duration tuning. */
-
 .markdown-content h1,
 .markdown-content h2,
 .markdown-content h3,
