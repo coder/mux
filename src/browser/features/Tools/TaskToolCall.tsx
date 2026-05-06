@@ -55,6 +55,8 @@ import {
   normalizeTaskGroupLabel,
   type TaskGroupKind,
 } from "@/common/utils/tools/taskGroups";
+import { formatDuration } from "@/common/utils/formatDuration";
+import { ElapsedTimeDisplay } from "./Shared/ElapsedTimeDisplay";
 
 /**
  * Clean SVG icon for task tools - represents spawning/branching work
@@ -201,8 +203,34 @@ interface TaskRowProps {
   agentType?: string;
   title?: string;
   depth?: number;
+  startedAtMs?: number;
   className?: string;
 }
+
+function isTaskRowElapsedActive(status: string): boolean {
+  return status === "queued" || status === "running" || status === "awaiting_report";
+}
+
+const TaskRowElapsed: React.FC<{ startedAtMs: number | undefined; status: string }> = (props) => {
+  if (props.startedAtMs == null) {
+    return null;
+  }
+
+  if (isTaskRowElapsedActive(props.status)) {
+    return (
+      <span className="text-muted counter-nums text-[10px]">
+        <ElapsedTimeDisplay
+          startedAt={props.startedAtMs}
+          isActive={true}
+          separator=""
+          prefix="elapsed "
+        />
+      </span>
+    );
+  }
+
+  return null;
+};
 
 const TaskRow: React.FC<TaskRowProps> = (props) => (
   <div
@@ -217,6 +245,7 @@ const TaskRow: React.FC<TaskRowProps> = (props) => (
     {typeof props.depth === "number" && props.depth > 0 && (
       <span className="text-muted text-[10px]">depth: {props.depth}</span>
     )}
+    <TaskRowElapsed startedAtMs={props.startedAtMs} status={props.status} />
   </div>
 );
 
@@ -944,6 +973,7 @@ interface TaskAwaitToolCallProps {
   args: TaskAwaitToolArgs;
   result?: TaskAwaitToolSuccessResult;
   status?: ToolStatus;
+  startedAt?: number;
   taskReportLinking?: TaskReportLinking;
 }
 
@@ -951,6 +981,7 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
   args,
   result,
   status = "pending",
+  startedAt,
   taskReportLinking,
 }) => {
   const taskIds = args.task_ids;
@@ -986,6 +1017,7 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
           status: proc ? toTaskStatusFromBackgroundProcessStatus(proc.status) : "waiting",
           title: proc?.displayName ?? proc?.id,
           depth: 1,
+          startedAtMs: proc?.startTime,
         });
         continue;
       }
@@ -1008,6 +1040,7 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
           workspaceId && workspaceMetadata
             ? computeWorkspaceDepthFromRoot(workspaceId, taskId, workspaceMetadata)
             : undefined,
+        startedAtMs: parseWorkspaceCreatedAtMs(metadata.createdAt),
       });
     }
   }
@@ -1027,6 +1060,16 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
         <ExpandIcon expanded={expanded}>▶</ExpandIcon>
         <TaskIcon toolName="task_await" />
         <ToolName>task_await</ToolName>
+        {status === "executing" && (
+          <span className="text-pending counter-nums ml-2 text-[10px] whitespace-nowrap [@container(max-width:500px)]:hidden">
+            <ElapsedTimeDisplay
+              startedAt={startedAt}
+              isActive={true}
+              separator=""
+              prefix="elapsed "
+            />
+          </span>
+        )}
         {totalCount > 0 && (
           <span className="text-muted text-[10px]">
             {completedCount}/{totalCount} completed
@@ -1128,7 +1171,11 @@ const TaskAwaitResult: React.FC<{
         <TaskStatusBadge status={result.status} />
         {title && <span className="text-foreground text-[11px] font-medium">{title}</span>}
         {exitCode !== undefined && <span className="text-muted text-[10px]">exit {exitCode}</span>}
-        {elapsedMs !== undefined && <span className="text-muted text-[10px]">{elapsedMs}ms</span>}
+        {elapsedMs !== undefined && (
+          <span className="text-muted counter-nums text-[10px]">
+            took {formatDuration(elapsedMs)}
+          </span>
+        )}
         {note && (
           <Tooltip>
             <TooltipTrigger asChild>

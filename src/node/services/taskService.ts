@@ -93,6 +93,11 @@ export interface AgentTaskStatusLookup {
   taskStatus: AgentTaskStatus | null;
 }
 
+export interface AgentTaskTimestamps {
+  createdAt?: string;
+  reportedAt?: string;
+}
+
 export interface TaskCreateArgs {
   parentWorkspaceId: string;
   kind: TaskKind;
@@ -1905,6 +1910,21 @@ export class TaskService {
     const entry = findWorkspaceEntry(cfg, taskId);
     const status = entry?.workspace.taskStatus;
     return status ?? null;
+  }
+
+  getAgentTaskTimestamps(taskId: string): AgentTaskTimestamps | null {
+    assert(taskId.length > 0, "getAgentTaskTimestamps: taskId must be non-empty");
+
+    const cfg = this.config.loadConfigOrDefault();
+    const entry = findWorkspaceEntry(cfg, taskId);
+    if (!entry) {
+      return null;
+    }
+
+    return {
+      createdAt: entry.workspace.createdAt,
+      reportedAt: entry.workspace.reportedAt,
+    };
   }
 
   getAgentTaskStatuses(taskIds: string[]): Map<string, AgentTaskStatusLookup> {
