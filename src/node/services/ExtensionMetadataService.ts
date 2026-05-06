@@ -115,6 +115,12 @@ export class ExtensionMetadataService {
   /**
    * Initialize the service by ensuring directory exists and clearing stale streaming flags.
    * Call this once on app startup.
+   *
+   * Per AGENTS.md ("Startup-time initialization must never crash the app"),
+   * we swallow disk-write failures here so a transient permission/disk-full
+   * error doesn't block app launch. The new save() throws on failure for the
+   * benefit of strict callers (AgentStatusService); this method is the
+   * startup-safety boundary that keeps that contract.
    */
   async initialize(): Promise<void> {
     // Ensure directory exists
@@ -122,11 +128,20 @@ export class ExtensionMetadataService {
     try {
       await access(dir, constants.F_OK);
     } catch {
-      await mkdir(dir, { recursive: true });
+      try {
+        await mkdir(dir, { recursive: true });
+      } catch (error) {
+        log.error("ExtensionMetadataService: failed to create metadata dir at startup", { error });
+        return;
+      }
     }
 
     // Clear stale streaming flags (from crashes)
-    await this.clearStaleStreaming();
+    try {
+      await this.clearStaleStreaming();
+    } catch (error) {
+      log.error("ExtensionMetadataService: failed to clear stale streaming at startup", { error });
+    }
   }
 
   private async load(): Promise<ExtensionMetadataFile> {

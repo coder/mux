@@ -1745,19 +1745,28 @@ export class WorkspaceStore {
         !transient.caughtUp &&
         !hasRunningInitMessage;
       const aggregatorTodos = aggregator.getCurrentTodos();
+      // `displayStatus` is the explicit transient status for an *inactive*
+      // workspace (read from the activity snapshot). For an *active* workspace,
+      // the equivalent signal is the aggregator's `getAgentStatus()` —
+      // StreamingMessageAggregator hydrates that value from
+      // `muxMetadata.displayStatus` for heartbeat / idle-compaction / background
+      // turns. We collapse them into a single `transientStatus` so the
+      // precedence works the same way for both branches and never lets a stale
+      // aiStatus mask an explicit system-set message.
       const displayStatus = useAggregatorState ? undefined : (activity?.displayStatus ?? undefined);
-      // Replaces the legacy todo-derived status as the primary sidebar signal.
-      // Produced periodically by AgentStatusService using the same "small model"
-      // path as title generation; we keep todoStatus below as a fallback while
-      // the AI status is being generated for the first time, on errors, or
-      // before the activity snapshot has caught up.
+      const fallbackAgentStatus = useAggregatorState ? aggregator.getAgentStatus() : undefined;
+      const transientStatus = displayStatus ?? fallbackAgentStatus;
+      // Replaces the legacy todo-derived status as the primary persistent
+      // sidebar signal. Produced periodically by AgentStatusService using the
+      // same "small model" path as title generation; we keep todoStatus below
+      // as a fallback while the AI status is being generated for the first
+      // time, on errors, or before the activity snapshot has caught up.
       const aiStatus = activity?.aiStatus ?? undefined;
       const todoStatus = useAggregatorState
         ? (deriveTodoStatus(aggregatorTodos) ?? activity?.todoStatus ?? undefined)
         : (activity?.todoStatus ??
           (activity?.hasTodos === false ? undefined : deriveTodoStatus(aggregatorTodos)));
-      const fallbackAgentStatus = useAggregatorState ? aggregator.getAgentStatus() : undefined;
-      const agentStatus = displayStatus ?? aiStatus ?? todoStatus ?? fallbackAgentStatus;
+      const agentStatus = transientStatus ?? aiStatus ?? todoStatus;
 
       return {
         name: metadata?.name ?? workspaceId, // Fall back to ID if metadata missing
