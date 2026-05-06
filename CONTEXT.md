@@ -26,16 +26,16 @@ _Avoid_: transport, websocket, useWebSocketTransport
 - Codex OAuth routing is not a supported **OpenAI WebSocket Transport** scope, and Mux does not add a special guard solely to protect it from an opt-in WebSocket attempt.
 - The **OpenAI WebSocket Transport** applies only to eligible streaming Responses API requests.
 - The **OpenAI WebSocket Transport** is inactive when the **Built-in OpenAI Provider** uses Chat Completions wire format.
-- Switching to Chat Completions wire format preserves `webSocketTransportEnabled` but disables the active WebSocket transport until Responses wire format is restored.
+- Switching to Chat Completions wire format preserves `webSocketTransportEnabled` but hides the UI control and disables the active WebSocket transport until Responses wire format is restored.
 - A WebSocket connection lives for one streaming model run: it can be reused by internal tool-calling steps and is closed when the run completes, errors, or is cancelled.
 - Eligible WebSocket request failures are surfaced to the user; Mux does not automatically retry them over HTTP.
 - WebSocket transport behavior is verified with deterministic config, UI, provider factory, and lifecycle tests; live OpenAI dogfooding is optional when credentials are available.
-- Mux uses the published `ai-sdk-openai-websocket-fetch` package for the **OpenAI WebSocket Transport** instead of owning the WebSocket protocol locally.
+- Mux uses the published `@vercel/ai-sdk-openai-websocket-fetch` package for the **OpenAI WebSocket Transport** instead of owning the WebSocket protocol locally.
 - Mux composes **OpenAI WebSocket Transport** through a small helper that preserves existing OpenAI fetch behavior and exposes a close hook for stream lifecycle cleanup.
 - Mux carries WebSocket cleanup on a Mux-owned language-model cleanup symbol so stream owners can run it in their existing cleanup paths without changing the provider model factory API shape.
 - Every `streamText` owner that uses `createModel()`-returned models, including main streams and workspace title generation, runs the model cleanup helper in its stream cleanup path.
 - The **OpenAI WebSocket Transport** is a persisted **Built-in OpenAI Provider** setting, not a request-level override.
-- The OpenAI provider settings UI exposes `webSocketTransportEnabled` near Wire Format and disables the control while Chat Completions wire format is selected.
+- The OpenAI provider settings UI exposes `webSocketTransportEnabled` near Wire Format only while Responses wire format is selected.
 - The OpenAI provider settings UI describes the **OpenAI WebSocket Transport** as experimental and warns that unsupported endpoints may fail.
 - The **OpenAI WebSocket Transport** does not validate configured base URLs; if the selected endpoint does not support OpenAI's Responses WebSocket path, the first eligible request fails normally.
 

@@ -5,7 +5,14 @@ import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import { StreamManager, stripEncryptedContent } from "./streamManager";
 import * as aiSdk from "ai";
-import { APICallError, RetryError, tool, type ModelMessage, type Tool } from "ai";
+import {
+  APICallError,
+  RetryError,
+  tool,
+  type LanguageModel,
+  type ModelMessage,
+  type Tool,
+} from "ai";
 import { z } from "zod";
 import * as modelStatsModule from "@/common/utils/tokens/modelStats";
 import type { HistoryService } from "./historyService";
@@ -17,6 +24,7 @@ import { shouldRunIntegrationTests, validateApiKeys } from "../../../tests/testU
 import { DisposableTempDir } from "@/node/services/tempDir";
 import type { ExecOptions, ExecStream, Runtime } from "@/node/runtime/Runtime";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
+import { attachLanguageModelCleanup } from "./languageModelCleanup";
 import { shellQuote } from "@/common/utils/shell";
 
 // Skip integration tests if TEST_INTEGRATION is not set
@@ -915,6 +923,93 @@ describe("StreamManager - call settings overrides", () => {
 
     expect(requestWithUndefined.streamCallSettings).toBeUndefined();
     expect(requestWithEmpty.streamCallSettings).toBeUndefined();
+  });
+});
+
+describe("StreamManager - language model cleanup", () => {
+  const runtime = createRuntime({ type: "local", srcBaseDir: "/tmp" });
+
+  test("runs model cleanup when stream processing finishes", async () => {
+    const streamManager = new StreamManager(historyService);
+    streamManager.on("error", () => undefined);
+    const workspaceId = "cleanup-workspace";
+    const messageId = "cleanup-message";
+    const historySequence = 1;
+    let cleanupCalls = 0;
+    const model: LanguageModel = {
+      specificationVersion: "v3",
+      provider: "test",
+      modelId: "cleanup-model",
+      supportedUrls: {},
+      doGenerate: () => Promise.reject(new Error("doGenerate is unused in cleanup tests")),
+      doStream: () => Promise.reject(new Error("doStream is unused in cleanup tests")),
+    };
+    attachLanguageModelCleanup(model, () => {
+      cleanupCalls += 1;
+    });
+
+    const appendResult = await historyService.appendToHistory(workspaceId, {
+      id: messageId,
+      role: "assistant",
+      metadata: { historySequence, partial: true },
+      parts: [],
+    });
+    expect(appendResult.success).toBe(true);
+
+    const processStreamWithCleanup = Reflect.get(streamManager, "processStreamWithCleanup") as (
+      workspaceId: string,
+      streamInfo: unknown,
+      historySequence: number
+    ) => Promise<void>;
+    expect(typeof processStreamWithCleanup).toBe("function");
+
+    const streamInfo = {
+      state: "streaming",
+      streamResult: {
+        fullStream: (async function* () {
+          await Promise.resolve();
+          yield* [] as unknown[];
+        })(),
+        totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+        usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+        providerMetadata: Promise.resolve(undefined),
+        steps: Promise.resolve([]),
+      },
+      abortController: new AbortController(),
+      messageId,
+      token: "cleanup-token",
+      startTime: Date.now(),
+      lastPartTimestamp: Date.now(),
+      toolCompletionTimestamps: new Map<string, number>(),
+      model: "openai:gpt-4.1-mini",
+      metadataModel: "openai:gpt-4.1-mini",
+      historySequence,
+      request: { model, messages: [], providerOptions: undefined },
+      toolModelUsages: [],
+      parts: [{ type: "text" as const, text: "done", timestamp: Date.now() }],
+      lastPartialWriteTime: 0,
+      partialWritePromise: undefined,
+      processingPromise: Promise.resolve(),
+      softInterrupt: { pending: false as const },
+      runtimeTempDir: "",
+      runtime,
+      cumulativeUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      cumulativeProviderMetadata: undefined,
+      didRetryPreviousResponseIdAtStep: false,
+      currentStepStartIndex: 0,
+      stepTracker: {},
+    };
+
+    const workspaceStreamsValue: unknown = Reflect.get(streamManager, "workspaceStreams");
+    expect(workspaceStreamsValue instanceof Map).toBe(true);
+    if (!(workspaceStreamsValue instanceof Map)) {
+      throw new Error("Expected StreamManager.workspaceStreams to be a Map");
+    }
+    workspaceStreamsValue.set(workspaceId, streamInfo);
+
+    await processStreamWithCleanup.call(streamManager, workspaceId, streamInfo, historySequence);
+
+    expect(cleanupCalls).toBe(1);
   });
 });
 

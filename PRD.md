@@ -4,9 +4,9 @@ Mux users who use the **Built-in OpenAI Provider** currently send OpenAI model r
 
 ## Solution
 
-Add an optional, non-breaking **Built-in OpenAI Provider** setting named `webSocketTransportEnabled`. When enabled and the provider is using Responses wire format, Mux will use OpenAI's Responses WebSocket transport for eligible streaming Responses API requests. The setting will be exposed in the OpenAI provider settings UI near Wire Format, persisted with the provider configuration, and disabled in the UI while Chat Completions wire format is selected.
+Add an optional, non-breaking **Built-in OpenAI Provider** setting named `webSocketTransportEnabled`. When enabled and the provider is using Responses wire format, Mux will use OpenAI's Responses WebSocket transport for eligible streaming Responses API requests. The setting will be exposed in the OpenAI provider settings UI near Wire Format, persisted with the provider configuration, and hidden in the UI while Chat Completions wire format is selected.
 
-The implementation will use the published OpenAI WebSocket transport package rather than implementing the protocol in Mux. Mux will compose the package through a small, testable integration helper that preserves existing OpenAI fetch behavior, including Mux attribution, timeout behavior, DevTools header handling, and existing request normalization. WebSocket connections will live for one streaming model run, can be reused by internal AI SDK tool-calling steps, and will be explicitly closed when the run completes, errors, or is cancelled.
+The implementation will use the published `@vercel/ai-sdk-openai-websocket-fetch` package rather than implementing the protocol in Mux. Mux will compose the package through a small, testable integration helper that preserves existing OpenAI fetch behavior, including Mux attribution, timeout behavior, DevTools header handling, and existing request normalization. WebSocket connections will live for one streaming model run, can be reused by internal AI SDK tool-calling steps, and will be explicitly closed when the run completes, errors, or is cancelled.
 
 ## User Stories
 
@@ -17,7 +17,7 @@ The implementation will use the published OpenAI WebSocket transport package rat
 5. As a Mux user, I want the setting to appear near Wire Format, so that I understand it is related to Responses versus Chat Completions behavior.
 6. As a Mux user, I want the UI to explain that the WebSocket transport is experimental, so that I understand the risk of endpoint failures.
 7. As a Mux user, I want the UI to warn that unsupported endpoints may fail, so that failures after enabling the setting are understandable.
-8. As a Mux user, I want the WebSocket transport control to be disabled when Chat Completions wire format is selected, so that I do not expect Chat Completions requests to use WebSockets.
+8. As a Mux user, I want the WebSocket transport control to be hidden when Chat Completions wire format is selected, so that I do not expect Chat Completions requests to use WebSockets.
 9. As a Mux user, I want switching to Chat Completions to preserve my saved WebSocket preference, so that switching back to Responses restores my intended WebSocket behavior.
 10. As a Mux user, I want the setting to be non-breaking for existing configurations, so that upgrading Mux does not change transport behavior unexpectedly.
 11. As a Mux user, I want Mux to avoid over-validating custom OpenAI base URLs, so that intentionally configured endpoints are not blocked by Mux-specific assumptions.
@@ -49,14 +49,14 @@ The implementation will use the published OpenAI WebSocket transport package rat
 - Treat absence of `webSocketTransportEnabled` as disabled so the change is non-breaking.
 - Surface valid `webSocketTransportEnabled` values through the provider configuration information consumed by settings UI.
 - Expose the setting in the OpenAI provider settings UI near Wire Format.
-- Disable the UI control when Chat Completions wire format is selected.
+- Hide the UI control when Chat Completions wire format is selected.
 - Preserve the saved WebSocket setting when Chat Completions wire format is selected; only make the transport inactive.
 - Use risk-aware UI copy: the feature is experimental, uses OpenAI's Responses WebSocket transport for streaming Responses API requests, and unsupported endpoints may fail.
 - Do not validate configured OpenAI base URLs before attempting WebSocket transport.
 - Do not add automatic HTTP fallback for eligible WebSocket request failures.
 - Do not broaden the feature to OpenAI-compatible providers in the initial implementation.
 - Treat Codex OAuth as not a supported WebSocket scope, while avoiding a special guard solely to protect Codex OAuth from an opt-in attempt.
-- Use the published OpenAI WebSocket transport package instead of implementing the WebSocket protocol locally.
+- Use the published `@vercel/ai-sdk-openai-websocket-fetch` package instead of implementing the WebSocket protocol locally.
 - Add a small deep module for composing OpenAI provider fetch behavior with the WebSocket transport. Its interface should hide package details behind simple inputs such as whether WebSocket mode is active and a returned close hook.
 - Preserve existing OpenAI fetch behavior when composing the WebSocket transport, including request header handling, Mux attribution, DevTools header stripping, timeout behavior, custom fetch compatibility, and existing request normalization.
 - Keep the provider model factory return shape unchanged.
@@ -75,7 +75,7 @@ The implementation will use the published OpenAI WebSocket transport package rat
 - Test provider construction does not activate WebSocket transport when the effective wire format is Chat Completions.
 - Test the OpenAI provider settings UI renders a WebSocket transport control near Wire Format.
 - Test the WebSocket transport UI control persists changes to provider configuration.
-- Test the WebSocket transport UI control is disabled when Chat Completions wire format is selected.
+- Test the WebSocket transport UI control is hidden when Chat Completions wire format is selected.
 - Test switching to Chat Completions does not delete the saved `webSocketTransportEnabled` value.
 - Test the cleanup helper runs an attached cleanup once and tolerates repeated cleanup calls.
 - Test main stream cleanup runs the language-model cleanup helper on completion, error, and cancellation paths.
@@ -105,7 +105,7 @@ The implementation will use the published OpenAI WebSocket transport package rat
 - Existing OpenAI users see no transport behavior change unless `webSocketTransportEnabled` is explicitly enabled.
 - The **Built-in OpenAI Provider** configuration accepts and persists `webSocketTransportEnabled` as an optional boolean.
 - The OpenAI provider settings UI exposes the setting near Wire Format.
-- The UI disables the setting while Chat Completions wire format is selected and preserves the saved value.
+- The UI hides the setting while Chat Completions wire format is selected and preserves the saved value.
 - Enabled Responses-mode OpenAI streams use the published WebSocket transport through Mux's composition layer.
 - Chat Completions-mode OpenAI streams do not activate the WebSocket transport.
 - WebSocket failures surface normally without automatic HTTP fallback.
@@ -119,10 +119,10 @@ The implementation will use the published OpenAI WebSocket transport package rat
 3. Verify the WebSocket transport control appears near Wire Format with experimental/risk-aware helper copy.
 4. With Responses wire format selected, enable WebSocket transport and confirm the provider configuration persists the setting.
 5. Send a short prompt using an OpenAI Responses model and verify the response streams successfully, or that an unsupported endpoint failure is surfaced clearly.
-6. Switch Wire Format to Chat Completions and verify the WebSocket transport control becomes disabled while the saved preference is preserved.
+6. Switch Wire Format to Chat Completions and verify the WebSocket transport control is hidden while the saved preference is preserved.
 7. Switch Wire Format back to Responses and verify the previously saved WebSocket preference is still reflected.
 8. Interrupt or cancel a streaming response and verify the app remains stable and no follow-up stream is blocked by leaked transport state.
-9. Capture screenshots of the settings UI in enabled and Chat Completions-disabled states.
+9. Capture screenshots of the settings UI in enabled and Chat Completions-hidden states.
 10. Capture a short recording of enabling the setting, sending a prompt, and switching Wire Format to demonstrate the complete reviewer-visible flow.
 
 ### Issue Tracker Note

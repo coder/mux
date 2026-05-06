@@ -21,6 +21,7 @@ import {
   wrapFetchWithAnthropicCacheControl,
 } from "./providerModelFactory";
 import { MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER } from "@/common/utils/ai/providerOptions";
+import { hasLanguageModelCleanup } from "./languageModelCleanup";
 import { CodexOauthService } from "./codexOauthService";
 import { PolicyService } from "./policyService";
 import { ProviderService } from "./providerService";
@@ -777,6 +778,66 @@ describe("ProviderModelFactory GitHub Copilot", () => {
       }
 
       expect(result.data.constructor.name).toBe("OpenAIChatLanguageModel");
+    });
+  });
+});
+
+describe("ProviderModelFactory OpenAI WebSocket transport", () => {
+  it("attaches cleanup when enabled for Responses models", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        openai: {
+          apiKey: "sk-test",
+          webSocketTransportEnabled: true,
+        },
+      });
+
+      const result = await factory.createModel("openai:gpt-4.1-mini");
+
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        return;
+      }
+      expect(hasLanguageModelCleanup(result.data)).toBe(true);
+    });
+  });
+
+  it("does not attach cleanup when Chat Completions is selected", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        openai: {
+          apiKey: "sk-test",
+          wireFormat: "chatCompletions",
+          webSocketTransportEnabled: true,
+        },
+      });
+
+      const result = await factory.createModel("openai:gpt-4.1-mini");
+
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        return;
+      }
+      expect(hasLanguageModelCleanup(result.data)).toBe(false);
+    });
+  });
+
+  it("ignores invalid persisted WebSocket transport values", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        openai: {
+          apiKey: "sk-test",
+          webSocketTransportEnabled: "true",
+        },
+      } as unknown as Parameters<Config["saveProvidersConfig"]>[0]);
+
+      const result = await factory.createModel("openai:gpt-4.1-mini");
+
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        return;
+      }
+      expect(hasLanguageModelCleanup(result.data)).toBe(false);
     });
   });
 });

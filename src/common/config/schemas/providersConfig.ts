@@ -34,6 +34,7 @@ export const OpenAIProviderConfigSchema = BaseProviderConfigSchema.extend({
   codexOauth: z.record(z.string(), z.unknown()).optional(),
   defaultModel: z.string().optional(),
   apiVersion: z.string().optional(),
+  webSocketTransportEnabled: z.boolean().optional(),
 });
 
 export const BedrockProviderConfigSchema = BaseProviderConfigSchema.extend({

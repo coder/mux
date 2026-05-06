@@ -1,10 +1,19 @@
-import { APICallError, NoOutputGeneratedError, RetryError } from "ai";
-import { describe, expect, test } from "bun:test";
+import * as aiSdk from "ai";
+import { APICallError, NoOutputGeneratedError, RetryError, type LanguageModel } from "ai";
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 import {
   buildWorkspaceIdentityPrompt,
+  generateWorkspaceIdentity,
   mapModelCreationError,
   mapNameGenerationError,
 } from "./workspaceTitleGenerator";
+import { Ok } from "@/common/types/result";
+import type { AIService } from "./aiService";
+import { attachLanguageModelCleanup } from "./languageModelCleanup";
+
+afterEach(() => {
+  mock.restore();
+});
 
 describe("buildWorkspaceIdentityPrompt", () => {
   test("includes overall-scope guidance, conversation turns, and latest-user context without precedence", () => {
@@ -57,6 +66,48 @@ const createApiCallError = (
     data: overrides?.data,
     responseBody: overrides?.responseBody,
   });
+
+describe("generateWorkspaceIdentity cleanup", () => {
+  test("cleans up the model after a successful title stream", async () => {
+    let cleanupCalls = 0;
+    const model: LanguageModel = {
+      specificationVersion: "v3",
+      provider: "test",
+      modelId: "title-model",
+      supportedUrls: {},
+      doGenerate: () => Promise.reject(new Error("doGenerate is unused in cleanup tests")),
+      doStream: () => Promise.reject(new Error("doStream is unused in cleanup tests")),
+    };
+    attachLanguageModelCleanup(model, () => {
+      cleanupCalls += 1;
+    });
+    const aiService = {
+      createModel: () => Promise.resolve(Ok(model)),
+    };
+
+    // AIService is a class with many runtime dependencies; this test only needs its public createModel seam.
+    const titleAiService = aiService as unknown as AIService;
+
+    spyOn(aiSdk, "streamText").mockReturnValue({
+      toolResults: Promise.resolve([
+        {
+          dynamic: false,
+          toolName: "propose_name",
+          output: { name: "settings", title: "Add setting" },
+        },
+      ]),
+    } as unknown as ReturnType<typeof aiSdk.streamText>);
+
+    const result = await generateWorkspaceIdentity(
+      "Add setting",
+      ["openai:gpt-4.1-mini"],
+      titleAiService
+    );
+
+    expect(result.success).toBe(true);
+    expect(cleanupCalls).toBe(1);
+  });
+});
 
 describe("workspaceTitleGenerator error mappers", () => {
   describe("mapNameGenerationError", () => {

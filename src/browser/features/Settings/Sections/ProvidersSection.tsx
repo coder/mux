@@ -1636,6 +1636,8 @@ export function ProvidersSection() {
               const gatewayRouteTargets =
                 providerDefinition?.kind === "gateway" ? (providerDefinition.routes ?? []) : [];
               const isCustomOpenAICompatible = isCustomOpenAICompatibleProviderInfo(providerInfo);
+              const openAIWireFormat = providerInfo?.wireFormat ?? "responses";
+              const openAIWebSocketTransportVisible = openAIWireFormat === "responses";
               const statusDotColor = !enabled
                 ? "bg-warning"
                 : configured
@@ -2556,6 +2558,40 @@ export function ProvidersSection() {
                               </SelectContent>
                             </Select>
                           </div>
+                          {openAIWebSocketTransportVisible && (
+                            <div className="border-border-light border-t pt-3">
+                              <div className="flex items-center justify-between gap-3">
+                                <div>
+                                  <label className="text-foreground block text-xs font-medium">
+                                    WebSocket transport
+                                  </label>
+                                  <span className="text-muted text-xs">
+                                    Experimental: uses OpenAI&apos;s Responses WebSocket transport
+                                    for streaming Responses API requests.
+                                  </span>
+                                </div>
+                                <Switch
+                                  checked={config?.openai?.webSocketTransportEnabled === true}
+                                  disabled={!api}
+                                  onCheckedChange={(nextChecked) => {
+                                    if (!api) return;
+
+                                    const webSocketTransportEnabled = nextChecked
+                                      ? true
+                                      : undefined;
+                                    updateOptimistically("openai", { webSocketTransportEnabled });
+                                    void api.providers.setProviderConfig({
+                                      provider: "openai",
+                                      keyPath: ["webSocketTransportEnabled"],
+                                      value: nextChecked ? true : "",
+                                    });
+                                  }}
+                                  aria-label="WebSocket transport"
+                                />
+                              </div>
+                            </div>
+                          )}
+
                           <div className="border-border-light border-t pt-3">
                             <div className="mb-1 flex items-center gap-1">
                               <label className="text-muted block text-xs">Response storage</label>

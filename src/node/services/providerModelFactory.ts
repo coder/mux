@@ -41,6 +41,11 @@ import type { CodexOauthService } from "@/node/services/codexOauthService";
 import type { DevToolsService } from "@/node/services/devToolsService";
 import { captureAndStripDevToolsHeader } from "@/node/services/devToolsHeaderCapture";
 import { createDevToolsMiddleware } from "@/node/services/devToolsMiddleware";
+import {
+  attachLanguageModelCleanup,
+  moveLanguageModelCleanup,
+} from "@/node/services/languageModelCleanup";
+import { createOpenAIWebSocketTransportFetch } from "@/node/services/openAIWebSocketTransportFetch";
 import { log } from "@/node/services/log";
 import {
   MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER,
@@ -958,10 +963,12 @@ export class ProviderModelFactory {
     const workspaceId = opts?.workspaceId;
     const devToolsService = this.devToolsService;
     if (workspaceId != null && devToolsService?.enabled) {
+      const innerModel = model;
       model = wrapLanguageModel({
         model,
         middleware: createDevToolsMiddleware(workspaceId, devToolsService),
       });
+      moveLanguageModelCleanup(innerModel, model);
     }
 
     return Ok(model);
@@ -1296,6 +1303,9 @@ export class ProviderModelFactory {
 
         const baseFetch = getProviderFetch(providerConfig);
         const codexOauthService = this.codexOauthService;
+        const webSocketTransportEnabled =
+          (providerConfig as { webSocketTransportEnabled?: unknown }).webSocketTransportEnabled ===
+          true;
 
         // Wrap fetch so Codex OAuth Responses requests are normalized before
         // they are rerouted from api.openai.com to chatgpt.com's Codex backend.
@@ -1378,9 +1388,14 @@ export class ProviderModelFactory {
             : {}
         );
 
+        const webSocketTransport = createOpenAIWebSocketTransportFetch({
+          enabled: webSocketTransportEnabled && effectiveWireFormat === "responses",
+          baseFetch: fetchWithOpenAICodexNormalization as typeof fetch,
+        });
+
         // Lazy-load OpenAI provider to reduce startup time
         const { createOpenAI } = await PROVIDER_REGISTRY.openai();
-        const providerFetch = fetchWithOpenAICodexNormalization as typeof fetch;
+        const providerFetch = webSocketTransport.fetch;
         const provider = createOpenAI({
           ...configWithCreds,
           // Cast is safe: our fetch implementation is compatible with the SDK's fetch type.
@@ -1393,6 +1408,10 @@ export class ProviderModelFactory {
           effectiveWireFormat === "chatCompletions"
             ? provider.chat(modelId)
             : provider.responses(modelId);
+        if (webSocketTransport.active) {
+          attachLanguageModelCleanup(model, webSocketTransport.close);
+        }
+
         const injectModelOpenAIStore = (storeValue: unknown, mode: "default" | "force"): void => {
           assert(typeof storeValue === "boolean", "OpenAI store override must be boolean");
           const store = storeValue;

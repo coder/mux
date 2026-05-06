@@ -60,6 +60,7 @@ import { withSequentialExecution } from "@/node/services/tools/withSequentialExe
 import type { ResolvedCallSettingsOverrides } from "@/common/config/schemas/modelParameters";
 import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import { getErrorMessage } from "@/common/utils/errors";
+import { runLanguageModelCleanup } from "./languageModelCleanup";
 import { shellQuote } from "@/common/utils/shell";
 import { classify429Capacity } from "@/common/utils/errors/classify429Capacity";
 import { normalizeLiteralRequiredToolPattern } from "@/common/utils/agentTools";
@@ -2333,6 +2334,8 @@ export class StreamManager extends EventEmitter {
         clearTimeout(streamInfo.partialWriteTimer);
         streamInfo.partialWriteTimer = undefined;
       }
+
+      runLanguageModelCleanup(streamInfo.request.model);
 
       streamInfo.unlinkAbortSignal?.();
       streamInfo.unlinkAbortSignal = undefined;

@@ -204,6 +204,42 @@ describe("ProviderService.getConfig", () => {
     });
   });
 
+  it("surfaces valid OpenAI WebSocket transport preference", () => {
+    withTempConfig((config, service) => {
+      config.saveProvidersConfig({
+        openai: {
+          apiKey: "sk-test",
+          webSocketTransportEnabled: true,
+        },
+      });
+
+      const cfg = service.getConfig();
+
+      expect(cfg.openai.webSocketTransportEnabled).toBe(true);
+      expect(Object.prototype.hasOwnProperty.call(cfg.openai, "webSocketTransportEnabled")).toBe(
+        true
+      );
+    });
+  });
+
+  it("omits invalid OpenAI WebSocket transport preference", () => {
+    withTempConfig((config, service) => {
+      config.saveProvidersConfig({
+        openai: {
+          apiKey: "sk-test",
+          webSocketTransportEnabled: "true",
+        },
+      });
+
+      const cfg = service.getConfig();
+
+      expect(cfg.openai.webSocketTransportEnabled).toBeUndefined();
+      expect(Object.prototype.hasOwnProperty.call(cfg.openai, "webSocketTransportEnabled")).toBe(
+        false
+      );
+    });
+  });
+
   it("surfaces non-secret op:// API key references", () => {
     withTempConfig((config, service) => {
       const opRef = "op://Personal/Anthropic/credential";

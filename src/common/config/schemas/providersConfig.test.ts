@@ -62,6 +62,27 @@ describe("ProvidersConfigSchema", () => {
     expect(ProvidersConfigSchema.safeParse(invalid).success).toBe(false);
   });
 
+  it("accepts OpenAI WebSocket transport opt-in as an optional boolean", () => {
+    const valid = {
+      openai: { apiKey: "sk-openai-123", webSocketTransportEnabled: true },
+    };
+
+    const parsed = ProvidersConfigSchema.safeParse(valid);
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.openai?.webSocketTransportEnabled).toBe(true);
+    }
+  });
+
+  it("rejects non-boolean OpenAI WebSocket transport values", () => {
+    const invalid = {
+      openai: { webSocketTransportEnabled: "true" },
+    };
+
+    expect(ProvidersConfigSchema.safeParse(invalid).success).toBe(false);
+  });
+
   describe("modelParameters", () => {
     it("accepts valid per-model and wildcard overrides", () => {
       const valid = {

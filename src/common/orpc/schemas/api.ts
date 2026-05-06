@@ -205,6 +205,7 @@ export const ProviderConfigInfoSchema = z.object({
   serviceTier: ServiceTierSchema.optional(),
   wireFormat: z.enum(["responses", "chatCompletions"]).optional(),
   store: z.boolean().optional(),
+  webSocketTransportEnabled: z.boolean().optional(),
   /** Anthropic-specific fields */
   cacheTtl: CacheTtlSchema.optional(),
   disableBetaFeatures: z.boolean().optional(),

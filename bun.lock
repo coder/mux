@@ -46,6 +46,7 @@
         "@radix-ui/react-toggle-group": "^1.1.11",
         "@radix-ui/react-tooltip": "^1.2.8",
         "@radix-ui/react-visually-hidden": "^1.2.4",
+        "@vercel/ai-sdk-openai-websocket-fetch": "^1.0.0",
         "@xterm/addon-serialize": "^0.14.0",
         "@xterm/headless": "^6.0.0",
         "ai": "^6.0.72",
@@ -1586,6 +1587,8 @@
     "@unrs/resolver-binding-win32-ia32-msvc": ["@unrs/resolver-binding-win32-ia32-msvc@1.11.1", "", { "os": "win32", "cpu": "ia32" }, "sha512-DCEI6t5i1NmAZp6pFonpD5m7i6aFrpofcp4LA2i8IIq60Jyo28hamKBxNrZcyOwVOZkgsRp9O2sXWBWP8MnvIQ=="],
 
     "@unrs/resolver-binding-win32-x64-msvc": ["@unrs/resolver-binding-win32-x64-msvc@1.11.1", "", { "os": "win32", "cpu": "x64" }, "sha512-lrW200hZdbfRtztbygyaq/6jP6AKE8qQN2KvPcJ+x7wiD038YtnYtZ82IMNJ69GJibV7bwL3y9FgK+5w/pYt6g=="],
+
+    "@vercel/ai-sdk-openai-websocket-fetch": ["@vercel/ai-sdk-openai-websocket-fetch@1.0.0", "", { "dependencies": { "ws": "^8" }, "peerDependencies": { "@ai-sdk/openai": ">=3" }, "optionalPeers": ["@ai-sdk/openai"] }, "sha512-QTBex1bJogUTdh8lcmgxQhYkRZDVDMEdRyJjqy/Chnzv0i8UpLB2imFZvXORNUNdvu51aNPwgsclvx51F0Pc+A=="],
 
     "@vercel/oidc": ["@vercel/oidc@3.1.0", "", {}, "sha512-Fw28YZpRnA3cAHHDlkt7xQHiJ0fcL+NRcIqsocZQUSmbzeIKRpwttJjik5ZGanXP+vlA4SbTg+AbA3bP363l+w=="],
 

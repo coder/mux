@@ -255,6 +255,7 @@ export class ProviderService {
         serviceTier?: string;
         wireFormat?: string;
         store?: unknown;
+        webSocketTransportEnabled?: unknown;
         cacheTtl?: unknown;
         disableBetaFeatures?: unknown;
         /** OpenAI-only: default auth precedence for Codex-OAuth-allowed models. */
@@ -331,6 +332,10 @@ export class ProviderService {
       // OpenAI-specific: response storage setting (required for ZDR)
       if (provider === "openai" && typeof config.store === "boolean") {
         providerInfo.store = config.store;
+      }
+
+      if (provider === "openai" && typeof config.webSocketTransportEnabled === "boolean") {
+        providerInfo.webSocketTransportEnabled = config.webSocketTransportEnabled;
       }
 
       // Anthropic-specific fields
