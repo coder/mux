@@ -1,3 +1,8 @@
+import {
+  getDisplayOnlyFileMetadata,
+  isDisplayOnlyFilePart,
+  type DisplayOnlyFilePart,
+} from "@/common/utils/attachments/displayOnlyFileParts";
 import { MAX_SVG_TEXT_CHARS, SVG_MEDIA_TYPE } from "@/common/constants/imageAttachments";
 import {
   isSupportedAttachmentMediaType,
@@ -24,19 +29,6 @@ interface AISDKMediaPart {
 interface AISDKTextPart {
   type: "text";
   text: string;
-}
-
-interface DisplayOnlyFilePart {
-  type: "file-data";
-  data: string;
-  mediaType: string;
-  filename?: string;
-  providerOptions: {
-    mux?: {
-      displayOnly?: boolean;
-      size?: number;
-    };
-  };
 }
 
 type AISDKContent =
@@ -87,39 +79,6 @@ function isMediaPart(value: unknown): value is AISDKMediaPart {
   );
 }
 
-function getMuxProviderOptions(value: unknown): { displayOnly?: boolean; size?: number } | null {
-  if (typeof value !== "object" || value === null) {
-    return null;
-  }
-
-  const muxOptions = (value as Record<string, unknown>).mux;
-  if (typeof muxOptions !== "object" || muxOptions === null) {
-    return null;
-  }
-
-  const record = muxOptions as Record<string, unknown>;
-  return {
-    ...(typeof record.displayOnly === "boolean" ? { displayOnly: record.displayOnly } : {}),
-    ...(typeof record.size === "number" ? { size: record.size } : {}),
-  };
-}
-
-function isDisplayOnlyFilePart(value: unknown): value is DisplayOnlyFilePart {
-  if (typeof value !== "object" || value === null) {
-    return false;
-  }
-
-  const record = value as Record<string, unknown>;
-  const muxOptions = getMuxProviderOptions(record.providerOptions);
-  return (
-    record.type === "file-data" &&
-    typeof record.data === "string" &&
-    typeof record.mediaType === "string" &&
-    (record.filename === undefined || typeof record.filename === "string") &&
-    muxOptions?.displayOnly === true
-  );
-}
-
 function normalizeOptionalFilename(filename: string | undefined): string | undefined {
   const trimmed = filename?.trim();
   return trimmed != null && trimmed.length > 0 ? trimmed : undefined;
@@ -139,7 +98,7 @@ function buildDisplayOnlyFilePlaceholder(item: DisplayOnlyFilePart): AISDKTextPa
   const normalizedMediaType = normalizeAttachmentMediaType(item.mediaType);
   const filename = normalizeOptionalFilename(item.filename);
   const label = filename != null ? `${filename} (${normalizedMediaType})` : normalizedMediaType;
-  const sizeValue = getMuxProviderOptions(item.providerOptions)?.size;
+  const sizeValue = getDisplayOnlyFileMetadata(item.providerOptions)?.size;
   const size = typeof sizeValue === "number" ? `, size=${sizeValue} bytes` : "";
   return {
     type: "text",
@@ -186,7 +145,6 @@ export function extractAttachmentsFromToolOutput(
 
     if (isDisplayOnlyFilePart(item)) {
       didChange = true;
-      // Display-only files are for the chat UI. Strip their bytes before any provider request.
       newValue.push(buildDisplayOnlyFilePlaceholder(item));
       continue;
     }

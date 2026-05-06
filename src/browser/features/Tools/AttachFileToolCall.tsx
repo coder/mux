@@ -1,6 +1,11 @@
 import React from "react";
 import { Download, FileText } from "lucide-react";
 import {
+  getDisplayOnlyFileMetadata,
+  isDisplayOnlyFilePart,
+  type DisplayOnlyFilePart,
+} from "@/common/utils/attachments/displayOnlyFileParts";
+import {
   ToolContainer,
   ToolHeader,
   ExpandIcon,
@@ -24,19 +29,6 @@ interface AttachFileToolCallProps {
   status?: ToolStatus;
 }
 
-interface DisplayFilePart {
-  type: "file-data";
-  data: string;
-  mediaType: string;
-  filename?: string;
-  providerOptions: {
-    mux?: {
-      displayOnly?: boolean;
-      size?: number;
-    };
-  };
-}
-
 interface ContentResult {
   type: "content";
   value: unknown[];
@@ -51,45 +43,12 @@ function isContentResult(result: unknown): result is ContentResult {
   );
 }
 
-function getMuxProviderOptions(value: unknown): { displayOnly?: boolean; size?: number } | null {
-  if (typeof value !== "object" || value === null) {
-    return null;
-  }
-
-  const muxOptions = (value as Record<string, unknown>).mux;
-  if (typeof muxOptions !== "object" || muxOptions === null) {
-    return null;
-  }
-
-  const record = muxOptions as Record<string, unknown>;
-  return {
-    ...(typeof record.displayOnly === "boolean" ? { displayOnly: record.displayOnly } : {}),
-    ...(typeof record.size === "number" ? { size: record.size } : {}),
-  };
-}
-
-function isDisplayFilePart(value: unknown): value is DisplayFilePart {
-  if (typeof value !== "object" || value === null) {
-    return false;
-  }
-
-  const record = value as Record<string, unknown>;
-  const muxOptions = getMuxProviderOptions(record.providerOptions);
-  return (
-    record.type === "file-data" &&
-    typeof record.data === "string" &&
-    typeof record.mediaType === "string" &&
-    (record.filename === undefined || typeof record.filename === "string") &&
-    muxOptions?.displayOnly === true
-  );
-}
-
-function extractDisplayFilesFromToolResult(result: unknown): DisplayFilePart[] {
+function extractDisplayFilesFromToolResult(result: unknown): DisplayOnlyFilePart[] {
   if (!isContentResult(result)) {
     return [];
   }
 
-  return result.value.filter(isDisplayFilePart);
+  return result.value.filter(isDisplayOnlyFilePart);
 }
 
 function isValidBase64(data: string): boolean {
@@ -103,7 +62,7 @@ function getBaseMediaType(mediaType: string): string {
   return mediaType.toLowerCase().trim().split(";")[0] ?? "application/octet-stream";
 }
 
-function createSafeDataUrl(file: DisplayFilePart): string | null {
+function createSafeDataUrl(file: DisplayOnlyFilePart): string | null {
   if (!isValidBase64(file.data)) {
     return null;
   }
@@ -148,7 +107,7 @@ function filterResultForDisplay(result: unknown): unknown {
       };
     }
 
-    if (isDisplayFilePart(item)) {
+    if (isDisplayOnlyFilePart(item)) {
       return {
         type: "file-data",
         mediaType: item.mediaType,
@@ -164,11 +123,11 @@ function filterResultForDisplay(result: unknown): unknown {
   return { ...result, value: filteredValue };
 }
 
-const DisplayOnlyFile: React.FC<{ file: DisplayFilePart }> = (props) => {
+const DisplayOnlyFile: React.FC<{ file: DisplayOnlyFilePart }> = (props) => {
   const dataUrl = createSafeDataUrl(props.file);
   const baseMediaType = getBaseMediaType(props.file.mediaType);
   const label = props.file.filename ?? `Attachment (${baseMediaType})`;
-  const formattedSize = formatBytes(getMuxProviderOptions(props.file.providerOptions)?.size);
+  const formattedSize = formatBytes(getDisplayOnlyFileMetadata(props.file.providerOptions)?.size);
 
   return (
     <div className="border-border-light bg-dark mt-2 max-w-xl rounded border p-3">

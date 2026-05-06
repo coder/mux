@@ -303,13 +303,14 @@ describe("extractToolMediaAsUserMessages", () => {
     expect(rewritten).toHaveLength(1);
 
     const toolPart = rewritten[0].parts[0];
-    expect(toolPart.type).toBe("dynamic-tool");
-    if (toolPart.type === "dynamic-tool" && toolPart.state === "output-available") {
-      const outputText = JSON.stringify(toolPart.output);
-      expect(outputText).toContain("File shown to user only");
-      expect(outputText).not.toContain(base64);
-      expect(outputText).not.toContain("file-data");
+    if (toolPart.type !== "dynamic-tool" || toolPart.state !== "output-available") {
+      throw new Error("Expected rewritten output-available tool part");
     }
+
+    const outputText = JSON.stringify(toolPart.output);
+    expect(outputText).toContain("File shown to user only");
+    expect(outputText).not.toContain(base64);
+    expect(outputText).not.toContain("file-data");
   });
 
   it("does not rewrite unrelated tool outputs", async () => {

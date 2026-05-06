@@ -1,6 +1,7 @@
 import { tool } from "ai";
 import assert from "@/common/utils/assert";
 import { getErrorMessage } from "@/common/utils/errors";
+import { createDisplayOnlyFilePart } from "@/common/utils/attachments/displayOnlyFileParts";
 import type { AttachFileToolResult } from "@/common/types/tools";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
@@ -61,8 +62,6 @@ export const createAttachFileTool: ToolFactory = (config: ToolConfiguration) => 
               runtime: config.runtime,
               abortSignal,
             });
-            assert(displayFile.data.length > 0, "attach_file produced empty display file data");
-
             const label = formatDisplayOnlyFileLabel(displayFile);
             return {
               type: "content",
@@ -73,13 +72,7 @@ export const createAttachFileTool: ToolFactory = (config: ToolConfiguration) => 
                     `[File shown to user: ${label}. ` +
                     "This type is not supported as a model attachment, so the model will only receive this notice. Use another tool to inspect or convert the file if needed.]",
                 },
-                {
-                  type: "file-data",
-                  data: displayFile.data,
-                  mediaType: displayFile.mediaType,
-                  providerOptions: { mux: { displayOnly: true, size: displayFile.size } },
-                  ...(displayFile.filename ? { filename: displayFile.filename } : {}),
-                },
+                createDisplayOnlyFilePart(displayFile),
               ],
             };
           } catch (displayError) {

@@ -41,8 +41,6 @@ export interface LoadedAttachmentFromPath {
   size: number;
 }
 
-export type DisplayFileFromPath = LoadedAttachmentFromPath;
-
 const EXTENSION_TO_DISPLAY_MEDIA_TYPE: Record<string, string> = {
   webm: "video/webm",
   mp4: "video/mp4",
@@ -149,7 +147,7 @@ function getDisplayFileMediaType(args: ReadAttachmentFromPathArgs, resolvedPath:
 
 export async function readDisplayFileFromPath(
   args: ReadAttachmentFromPathArgs
-): Promise<DisplayFileFromPath> {
+): Promise<LoadedAttachmentFromPath> {
   assert(
     typeof args.path === "string" && args.path.trim().length > 0,
     "attach_file requires a path"
