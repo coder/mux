@@ -107,7 +107,9 @@ export function createOpenAIWebSocketTransportFetch(
     }
 
     const activeWebSocketFetch = getWebSocketFetch();
-    const headers = new Headers(init?.headers);
+    const headers = new Headers(
+      init?.headers ?? (input instanceof Request ? input.headers : undefined)
+    );
     captureAndStripDevToolsHeader(headers);
     const response = await activeWebSocketFetch(input, { ...(init ?? {}), headers });
     if (closeRequested) {

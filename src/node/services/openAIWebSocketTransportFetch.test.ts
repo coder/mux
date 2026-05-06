@@ -195,17 +195,20 @@ describe("createOpenAIWebSocketTransportFetch", () => {
 
   test("enabled transport recognizes streaming Responses Request objects", async () => {
     const wsCalls: string[] = [];
+    let webSocketHeaders: Headers | undefined;
     const transport = createOpenAIWebSocketTransportFetch({
       enabled: true,
       baseFetch: createTestFetch(() => Promise.resolve(new Response("base"))),
       createWebSocketFetch: () =>
-        createTestWebSocketFetch((input: RequestInfo | URL) => {
+        createTestWebSocketFetch((input: RequestInfo | URL, init?: RequestInit) => {
           wsCalls.push(getFetchInputUrl(input));
+          webSocketHeaders = new Headers(init?.headers);
           return Promise.resolve(new Response("ws"));
         }),
     });
     const request = new Request("https://api.openai.com/v1/responses", {
       method: "POST",
+      headers: { Authorization: "Bearer request-key" },
       body: JSON.stringify({ stream: true }),
     });
 
@@ -213,6 +216,7 @@ describe("createOpenAIWebSocketTransportFetch", () => {
 
     expect(await response.text()).toBe("ws");
     expect(wsCalls).toEqual(["https://api.openai.com/v1/responses"]);
+    expect(webSocketHeaders?.get("authorization")).toBe("Bearer request-key");
   });
 
   test("enabled transport recognizes Responses URLs with query parameters", async () => {
