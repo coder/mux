@@ -2,7 +2,9 @@ import assert from "node:assert";
 import { captureAndStripDevToolsHeader } from "./devToolsHeaderCapture";
 import { createWebSocketFetch as createOpenAIWebSocketFetch } from "@vercel/ai-sdk-openai-websocket-fetch";
 
-type WebSocketFetch = typeof fetch & { close: () => void };
+type WebSocketFetch = ((input: RequestInfo | URL, init?: RequestInit) => Promise<Response>) & {
+  close: () => void;
+};
 type WebSocketFetchFactory = () => WebSocketFetch;
 
 interface CreateOpenAIWebSocketTransportFetchOptions {
@@ -60,8 +62,18 @@ export function createOpenAIWebSocketTransportFetch(
   }
 
   const webSocketFetchFactory = options.createWebSocketFetch ?? createOpenAIWebSocketFetch;
-  const webSocketFetch = webSocketFetchFactory();
-  assert(typeof webSocketFetch.close === "function", "OpenAI WebSocket fetch must expose close()");
+  let webSocketFetch: WebSocketFetch | null = null;
+
+  const getWebSocketFetch = (): WebSocketFetch => {
+    if (webSocketFetch === null) {
+      webSocketFetch = webSocketFetchFactory();
+    }
+    assert(
+      typeof webSocketFetch.close === "function",
+      "OpenAI WebSocket fetch must expose close()"
+    );
+    return webSocketFetch;
+  };
 
   let closeRequested = false;
   const close = (): void => {
@@ -69,7 +81,7 @@ export function createOpenAIWebSocketTransportFetch(
       return;
     }
     closeRequested = true;
-    webSocketFetch.close();
+    webSocketFetch?.close();
   };
 
   const baseFetchWithPreconnect = options.baseFetch as typeof fetch & {
@@ -86,11 +98,12 @@ export function createOpenAIWebSocketTransportFetch(
       return options.baseFetch(input, init);
     }
 
+    const activeWebSocketFetch = getWebSocketFetch();
     const headers = new Headers(init?.headers);
     captureAndStripDevToolsHeader(headers);
-    const response = await webSocketFetch(input, { ...(init ?? {}), headers });
+    const response = await activeWebSocketFetch(input, { ...(init ?? {}), headers });
     if (closeRequested) {
-      webSocketFetch.close();
+      activeWebSocketFetch.close();
     }
     return response;
   }, fetchExtras) as typeof fetch;

@@ -57,6 +57,27 @@ describe("createOpenAIWebSocketTransportFetch", () => {
     expect(() => transport.close()).not.toThrow();
   });
 
+  test("enabled transport creates the WebSocket fetch lazily", async () => {
+    let created = false;
+    const transport = createOpenAIWebSocketTransportFetch({
+      enabled: true,
+      baseFetch: createTestFetch(() => Promise.resolve(new Response("base"))),
+      createWebSocketFetch: () => {
+        created = true;
+        return createTestWebSocketFetch(() => Promise.resolve(new Response("ws")));
+      },
+    });
+
+    expect(created).toBe(false);
+    await transport.fetch("https://api.openai.com/v1/models", { method: "GET" });
+    expect(created).toBe(false);
+    await transport.fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      body: JSON.stringify({ stream: true }),
+    });
+    expect(created).toBe(true);
+  });
+
   test("enabled transport sends streaming Responses API posts through WebSocket fetch", async () => {
     const wsCalls: string[] = [];
     const transport = createOpenAIWebSocketTransportFetch({
@@ -225,7 +246,7 @@ describe("createOpenAIWebSocketTransportFetch", () => {
     expect(closeCalls).toBe(2);
   });
 
-  test("close is idempotent", () => {
+  test("close is idempotent after WebSocket fetch creation", async () => {
     let closeCalls = 0;
     const transport = createOpenAIWebSocketTransportFetch({
       enabled: true,
@@ -239,6 +260,10 @@ describe("createOpenAIWebSocketTransportFetch", () => {
         ),
     });
 
+    await transport.fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      body: JSON.stringify({ stream: true }),
+    });
     transport.close();
     transport.close();
 
