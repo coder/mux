@@ -1068,6 +1068,90 @@ describe("StreamManager - language model cleanup", () => {
     expect(cleanupCalls).toBe(1);
   });
 
+  test("keeps model cleanup until a multi-step tool stream finishes", async () => {
+    const streamManager = new StreamManager(historyService);
+    streamManager.on("error", () => undefined);
+    const workspaceId = "cleanup-multistep-workspace";
+    const messageId = "cleanup-multistep-message";
+    const historySequence = 1;
+    let cleanupCalls = 0;
+    const model = createTestLanguageModel("cleanup-multistep-model");
+    attachLanguageModelCleanup(model, () => {
+      cleanupCalls += 1;
+    });
+
+    const appendResult = await historyService.appendToHistory(workspaceId, {
+      id: messageId,
+      role: "assistant",
+      metadata: { historySequence, partial: true },
+      parts: [],
+    });
+    expect(appendResult.success).toBe(true);
+
+    const processStreamWithCleanup = Reflect.get(streamManager, "processStreamWithCleanup") as (
+      workspaceId: string,
+      streamInfo: unknown,
+      historySequence: number
+    ) => Promise<void>;
+    expect(typeof processStreamWithCleanup).toBe("function");
+
+    const streamInfo = {
+      state: "streaming",
+      streamResult: {
+        fullStream: (async function* () {
+          yield {
+            type: "tool-call",
+            toolCallId: "call-1",
+            toolName: "test_tool",
+            input: { value: 1 },
+          };
+          expect(cleanupCalls).toBe(0);
+          yield {
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName: "test_tool",
+            output: { ok: true },
+          };
+          expect(cleanupCalls).toBe(0);
+          yield { type: "text-delta", text: "done" };
+          expect(cleanupCalls).toBe(0);
+          yield { type: "finish", finishReason: "stop" };
+        })(),
+        totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+        usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+        providerMetadata: Promise.resolve(undefined),
+        steps: Promise.resolve([]),
+      },
+      abortController: new AbortController(),
+      messageId,
+      token: "cleanup-multistep-token",
+      startTime: Date.now(),
+      lastPartTimestamp: Date.now(),
+      toolCompletionTimestamps: new Map<string, number>(),
+      model: "openai:gpt-4.1-mini",
+      metadataModel: "openai:gpt-4.1-mini",
+      historySequence,
+      request: { model, messages: [], providerOptions: undefined },
+      toolModelUsages: [],
+      parts: [],
+      lastPartialWriteTime: 0,
+      partialWritePromise: undefined,
+      processingPromise: Promise.resolve(),
+      softInterrupt: { pending: false as const },
+      runtimeTempDir: "",
+      runtime,
+      cumulativeUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      cumulativeProviderMetadata: undefined,
+      didRetryPreviousResponseIdAtStep: false,
+      currentStepStartIndex: 0,
+      stepTracker: {},
+    };
+
+    await processStreamWithCleanup.call(streamManager, workspaceId, streamInfo, historySequence);
+
+    expect(cleanupCalls).toBe(1);
+  });
+
   test("runs model cleanup when stream processing fails", async () => {
     const streamManager = new StreamManager(historyService);
     streamManager.on("error", () => undefined);

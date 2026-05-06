@@ -2256,10 +2256,15 @@ export function ProvidersSection() {
                             typeof providerInfo?.baseUrlResolved === "string"
                               ? providerInfo.baseUrlResolved.trim()
                               : "";
+                          const openAICodexOAuthIsDefault =
+                            providerInfo?.codexOauthSet === true &&
+                            (providerInfo.apiKeySet !== true ||
+                              providerInfo.codexOauthDefaultAuth !== "apiKey");
                           const openAIWebSocketTransportVisible =
                             openAIWireFormat === "responses" &&
                             openAIBaseUrl.length === 0 &&
-                            openAIResolvedBaseUrl.length === 0;
+                            openAIResolvedBaseUrl.length === 0 &&
+                            !openAICodexOAuthIsDefault;
                           return (
                             <div className="border-border-light space-y-3 border-t pt-3">
                               <div>

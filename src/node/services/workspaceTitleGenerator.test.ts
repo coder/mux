@@ -133,6 +133,50 @@ describe("generateWorkspaceIdentity cleanup", () => {
     expect(cleanupCalls).toBe(1);
   });
 
+  test("cleans up each candidate when title generation retries", async () => {
+    let firstCleanupCalls = 0;
+    let secondCleanupCalls = 0;
+    const firstModel = createTitleModel("title-first-model");
+    const secondModel = createTitleModel("title-second-model");
+    attachLanguageModelCleanup(firstModel, () => {
+      firstCleanupCalls += 1;
+    });
+    attachLanguageModelCleanup(secondModel, () => {
+      secondCleanupCalls += 1;
+    });
+    const aiService = {
+      createModel: mock((modelString: string) =>
+        Promise.resolve(Ok(modelString.includes("first") ? firstModel : secondModel))
+      ),
+    } as unknown as AIService;
+    let streamTextCalls = 0;
+    spyOn(aiSdk, "streamText").mockImplementation((() => {
+      streamTextCalls += 1;
+      if (streamTextCalls === 1) {
+        throw new Error("first candidate failed");
+      }
+      return {
+        toolResults: Promise.resolve([
+          {
+            dynamic: false,
+            toolName: "propose_name",
+            output: { name: "settings", title: "Add setting" },
+          },
+        ]),
+      } as unknown as ReturnType<typeof aiSdk.streamText>;
+    }) as unknown as typeof aiSdk.streamText);
+
+    const result = await generateWorkspaceIdentity(
+      "Add setting",
+      ["openai:first", "openai:second"],
+      aiService
+    );
+
+    expect(result.success).toBe(true);
+    expect(firstCleanupCalls).toBe(1);
+    expect(secondCleanupCalls).toBe(1);
+  });
+
   test("cleans up when title stream returns no propose_name result", async () => {
     let cleanupCalls = 0;
     const model = createTitleModel("title-no-tool-model");
