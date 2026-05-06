@@ -563,6 +563,16 @@ If a value is too large for the environment, it may be omitted (not set). Mux al
 </details>
 
 <details>
+<summary>propose_status (2)</summary>
+
+| Env var                  | JSON path | Type   | Description                                                                                                                                                                                    |
+| ------------------------ | --------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MUX_TOOL_INPUT_EMOJI`   | `emoji`   | string | A single emoji that represents the agent's current activity (e.g. '🔍', '🛠️', '🧪', '📝')                                                                                                      |
+| `MUX_TOOL_INPUT_MESSAGE` | `message` | string | A short verb-led phrase (2-6 words) describing what the agent is currently working on, in sentence case, no punctuation, no quotes (e.g. 'Investigating crash', 'Implementing sidebar status') |
+
+</details>
+
+<details>
 <summary>skills_catalog_read (3)</summary>
 
 | Env var                   | JSON path | Type   | Description                                                         |

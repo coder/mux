@@ -2634,6 +2634,58 @@ describe("WorkspaceStore", () => {
       expect(state.agentStatus).toEqual(activitySnapshot.displayStatus ?? undefined);
     });
 
+    it("prefers AI-generated aiStatus over todo-derived status for inactive workspaces", async () => {
+      // The whole point of the small-model status path: when AgentStatusService
+      // has produced a fresh aiStatus, it should win over todoStatus in the
+      // sidebar. Without this precedence the sidebar would still surface the
+      // legacy todo derivation, defeating the feature.
+      const workspaceId = "activity-fallback-ai-status-workspace";
+      const activitySnapshot: WorkspaceActivitySnapshot = {
+        recency: new Date("2024-01-04T16:00:00.000Z").getTime(),
+        streaming: false,
+        lastModel: "claude-sonnet-4",
+        lastThinkingLevel: null,
+        aiStatus: { emoji: "🛠️", message: "Wiring sidebar precedence" },
+        todoStatus: { emoji: "🔄", message: "Run typecheck" },
+        hasTodos: true,
+      };
+
+      mockActivityList.mockResolvedValue({ [workspaceId]: activitySnapshot });
+      recreateStore();
+      await tick(0);
+
+      createAndAddWorkspace(store, workspaceId, { createdAt: "2020-01-01T00:00:00.000Z" }, false);
+
+      const state = store.getWorkspaceState(workspaceId);
+      expect(state.agentStatus).toEqual(activitySnapshot.aiStatus ?? undefined);
+    });
+
+    it("keeps displayStatus precedence over aiStatus so explicit system status still wins", async () => {
+      // displayStatus is a deliberate, system-driven signal (e.g. "Compacting
+      // idle workspace…"). It must outrank aiStatus, otherwise the periodic
+      // small-model run would mask the explicit progress message the backend
+      // is trying to communicate.
+      const workspaceId = "activity-fallback-display-over-ai";
+      const activitySnapshot: WorkspaceActivitySnapshot = {
+        recency: new Date("2024-01-04T17:00:00.000Z").getTime(),
+        streaming: false,
+        lastModel: "claude-sonnet-4",
+        lastThinkingLevel: null,
+        displayStatus: { emoji: "💤", message: "Compacting idle workspace" },
+        aiStatus: { emoji: "🛠️", message: "Wiring sidebar precedence" },
+        hasTodos: false,
+      };
+
+      mockActivityList.mockResolvedValue({ [workspaceId]: activitySnapshot });
+      recreateStore();
+      await tick(0);
+
+      createAndAddWorkspace(store, workspaceId, { createdAt: "2020-01-01T00:00:00.000Z" }, false);
+
+      const state = store.getWorkspaceState(workspaceId);
+      expect(state.agentStatus).toEqual(activitySnapshot.displayStatus ?? undefined);
+    });
+
     it("suppresses stale legacy status fallback when activity says the todo list is empty", async () => {
       const workspaceId = "activity-fallback-empty-todo-status";
       const activitySnapshot: WorkspaceActivitySnapshot = {

@@ -43,6 +43,7 @@ import { ExperimentsService } from "@/node/services/experimentsService";
 import { WorkspaceMcpOverridesService } from "@/node/services/workspaceMcpOverridesService";
 import { McpOauthService } from "@/node/services/mcpOauthService";
 import { HeartbeatService } from "@/node/services/heartbeatService";
+import { AgentStatusService } from "@/node/services/agentStatusService";
 import { IdleCompactionService } from "@/node/services/idleCompactionService";
 import { getSigningService, type SigningService } from "@/node/services/signingService";
 import { coderService, type CoderService } from "@/node/services/coderService";
@@ -127,6 +128,7 @@ export class ServiceContainer {
   private readonly ptyService: PTYService;
   public readonly idleCompactionService: IdleCompactionService;
   public readonly heartbeatService: HeartbeatService;
+  public readonly agentStatusService: AgentStatusService;
 
   constructor(config: Config) {
     this.config = config;
@@ -275,6 +277,18 @@ export class ServiceContainer {
     this.editorService = new EditorService(config);
     this.updateService = new UpdateService(this.config);
     this.tokenizerService = new TokenizerService(this.sessionUsageService);
+    // AgentStatusService depends on tokenizer + window focus state; instantiate
+    // after both are constructed so the small-model status loop can run with
+    // accurate token budgeting and focus-aware cadence.
+    this.agentStatusService = new AgentStatusService(
+      config,
+      this.historyService,
+      this.tokenizerService,
+      this.extensionMetadata,
+      this.workspaceService,
+      this.windowService,
+      this.aiService
+    );
     this.serverService = new ServerService();
     this.menuEventService = new MenuEventService();
     this.voiceService = new VoiceService(
@@ -428,6 +442,10 @@ export class ServiceContainer {
     this.heartbeatService.start();
     stepDurationsMs["heartbeatService.start"] = Date.now() - heartbeatStartedAt;
 
+    const agentStatusStartedAt = Date.now();
+    this.agentStatusService.start();
+    stepDurationsMs["agentStatusService.start"] = Date.now() - agentStatusStartedAt;
+
     // Refresh mux-owned Coder SSH config in background (handles binary path changes on restart)
     // Skip getCoderInfo() to avoid caching "unavailable" if coder isn't installed yet
     void this.coderService.ensureMuxCoderSSHConfig().catch((error: unknown) => {
@@ -505,6 +523,7 @@ export class ServiceContainer {
     this.desktopTokenManager.dispose();
     await this.desktopSessionManager.closeAll();
     this.heartbeatService.stop();
+    this.agentStatusService.stop();
     this.idleCompactionService.stop();
     await this.browserBridgeServer.stop();
     this.browserSessionStateHub.dispose();

@@ -1577,6 +1577,21 @@ export class WorkspaceService extends EventEmitter {
     );
   }
 
+  /**
+   * Persist + broadcast an AI-generated sidebar status. Used by
+   * AgentStatusService; kept on WorkspaceService so it goes through the
+   * shared activity-emit path that frontends are already subscribed to.
+   */
+  public async updateAiStatus(
+    workspaceId: string,
+    aiStatus: WorkspaceAgentStatus | null,
+    inputHash: string | null
+  ): Promise<void> {
+    await this.emitWorkspaceActivityUpdate(workspaceId, "update workspace AI status", () =>
+      this.extensionMetadata.setAiStatus(workspaceId, aiStatus, inputHash)
+    );
+  }
+
   private async updateTodoStatusFromStorage(workspaceId: string): Promise<void> {
     const previousUpdate = this.todoStatusUpdateQueue.get(workspaceId) ?? Promise.resolve();
     const nextUpdate = previousUpdate
@@ -3847,7 +3862,17 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
-  private async getWorkspaceTitleModelCandidates(workspaceId: string): Promise<string[]> {
+  /**
+   * Build the candidate list used by both title generation and the
+   * sidebar AI-status path. Starts with the global "small model" preferences
+   * and falls back to any model the workspace itself has configured so a
+   * custom-model workspace can still produce names/statuses when the global
+   * preferred models are unavailable.
+   *
+   * Public so AgentStatusService (and any future small-model consumer) can
+   * reuse the same precedence without duplicating the workspace lookup.
+   */
+  public async getWorkspaceTitleModelCandidates(workspaceId: string): Promise<string[]> {
     const candidates: string[] = [...NAME_GEN_PREFERRED_MODELS];
     const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
     if (!metadataResult.success) {

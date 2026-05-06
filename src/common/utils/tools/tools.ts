@@ -431,10 +431,12 @@ export async function getToolsForModel(
     ...(config.advisorRuntime ? { advisor: createAdvisorTool(config) } : {}),
     ask_user_question: createAskUserQuestionTool(config),
     propose_plan: createProposePlanTool(config),
-    // propose_name is intentionally NOT registered here — it's only used by
-    // the internal workspace-naming path (workspaceTitleGenerator.ts) which
-    // creates the tool inline. Exposing it in the default toolset would let
-    // exec-derived agents see its "call me immediately" description.
+    // propose_name and propose_status are intentionally NOT registered here —
+    // they are only used by the internal workspace-naming path
+    // (workspaceTitleGenerator.ts) and the sidebar agent-status path
+    // (workspaceStatusGenerator.ts), which create the tool inline. Exposing
+    // them in the default toolset would let exec-derived agents see their
+    // "call me immediately" descriptions.
     ...(config.enableAgentReport ? { agent_report: createAgentReportTool(config) } : {}),
     switch_agent: createSwitchAgentTool(config),
     todo_write: createTodoWriteTool(config),

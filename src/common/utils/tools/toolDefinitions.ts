@@ -831,6 +831,27 @@ export const ProposeNameToolArgsSchema = z.object({
     .describe("Human-readable title (2-5 words): verb-noun format like 'Fix plan mode'"),
 });
 
+// -----------------------------------------------------------------------------
+// propose_status (sidebar agent status generation)
+// -----------------------------------------------------------------------------
+
+export const ProposeStatusToolArgsSchema = z.object({
+  emoji: z
+    .string()
+    .min(1)
+    .max(8)
+    .describe(
+      "A single emoji that represents the agent's current activity (e.g. '🔍', '🛠️', '🧪', '📝')"
+    ),
+  message: z
+    .string()
+    .min(2)
+    .max(60)
+    .describe(
+      "A short verb-led phrase (2-6 words) describing what the agent is currently working on, in sentence case, no punctuation, no quotes (e.g. 'Investigating crash', 'Implementing sidebar status')"
+    ),
+});
+
 const MuxConfigFileSchema = z.enum(["providers", "config"]);
 
 /**
@@ -1325,6 +1346,12 @@ export const TOOL_DEFINITIONS = {
       "Propose a workspace name and title. You MUST call this tool exactly once with your chosen name and title. " +
       "Do not emit a text response; call this tool immediately.",
     schema: ProposeNameToolArgsSchema,
+  },
+  propose_status: {
+    description:
+      "Propose a short sidebar status (emoji + 2-6 word verb-led phrase) summarizing what the agent is currently doing. " +
+      "You MUST call this tool exactly once. Do not emit a text response; call this tool immediately.",
+    schema: ProposeStatusToolArgsSchema,
   },
   propose_plan: {
     description:

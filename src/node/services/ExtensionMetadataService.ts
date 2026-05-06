@@ -227,6 +227,29 @@ export class ExtensionMetadataService {
   }
 
   /**
+   * Update the AI-generated sidebar status payload for a workspace.
+   *
+   * `inputHash` is opaque from this service's perspective: AgentStatusService
+   * persists a fingerprint of the trailing transcript window so that on
+   * restart we can skip regeneration when the transcript is unchanged.
+   * Callers pass `null` to clear both the payload and the cached hash.
+   */
+  async setAiStatus(
+    workspaceId: string,
+    aiStatus: ExtensionAgentStatus | null,
+    inputHash: string | null
+  ): Promise<WorkspaceActivitySnapshot> {
+    return this.mutateWorkspaceSnapshot(workspaceId, Date.now(), (workspace) => {
+      if (aiStatus) {
+        workspace.aiStatus = aiStatus;
+      } else {
+        workspace.aiStatus = null;
+      }
+      workspace.aiStatusInputHash = inputHash;
+    });
+  }
+
+  /**
    * Update the latest transient non-todo status payload for a workspace.
    */
   async setAgentStatus(
@@ -264,6 +287,22 @@ export class ExtensionMetadataService {
   async getSnapshot(workspaceId: string): Promise<WorkspaceActivitySnapshot | null> {
     const data = await this.load();
     return this.toSnapshot(data.workspaces[workspaceId]);
+  }
+
+  /**
+   * Read the persisted aiStatus input hash for a workspace, if any.
+   *
+   * Internal helper for AgentStatusService dedup across restarts. The hash is
+   * intentionally not part of WorkspaceActivitySnapshot because it has no
+   * sidebar/UI semantics — it's purely a backend bookkeeping field.
+   */
+  async getAiStatusInputHash(workspaceId: string): Promise<string | null> {
+    const data = await this.load();
+    const normalized = coerceExtensionMetadata(data.workspaces[workspaceId]);
+    if (!normalized) {
+      return null;
+    }
+    return typeof normalized.aiStatusInputHash === "string" ? normalized.aiStatusInputHash : null;
   }
 
   /**

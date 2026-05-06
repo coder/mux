@@ -1746,12 +1746,18 @@ export class WorkspaceStore {
         !hasRunningInitMessage;
       const aggregatorTodos = aggregator.getCurrentTodos();
       const displayStatus = useAggregatorState ? undefined : (activity?.displayStatus ?? undefined);
+      // Replaces the legacy todo-derived status as the primary sidebar signal.
+      // Produced periodically by AgentStatusService using the same "small model"
+      // path as title generation; we keep todoStatus below as a fallback while
+      // the AI status is being generated for the first time, on errors, or
+      // before the activity snapshot has caught up.
+      const aiStatus = activity?.aiStatus ?? undefined;
       const todoStatus = useAggregatorState
         ? (deriveTodoStatus(aggregatorTodos) ?? activity?.todoStatus ?? undefined)
         : (activity?.todoStatus ??
           (activity?.hasTodos === false ? undefined : deriveTodoStatus(aggregatorTodos)));
       const fallbackAgentStatus = useAggregatorState ? aggregator.getAgentStatus() : undefined;
-      const agentStatus = displayStatus ?? todoStatus ?? fallbackAgentStatus;
+      const agentStatus = displayStatus ?? aiStatus ?? todoStatus ?? fallbackAgentStatus;
 
       return {
         name: metadata?.name ?? workspaceId, // Fall back to ID if metadata missing
@@ -2449,7 +2455,8 @@ export class WorkspaceStore {
       previous?.recency !== snapshot?.recency ||
       previous?.hasTodos !== snapshot?.hasTodos ||
       !areAgentStatusesEqual(previous?.displayStatus, snapshot?.displayStatus) ||
-      !areAgentStatusesEqual(previous?.todoStatus, snapshot?.todoStatus);
+      !areAgentStatusesEqual(previous?.todoStatus, snapshot?.todoStatus) ||
+      !areAgentStatusesEqual(previous?.aiStatus, snapshot?.aiStatus);
 
     if (!changed) {
       return;
