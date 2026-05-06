@@ -2335,7 +2335,7 @@ export class StreamManager extends EventEmitter {
         streamInfo.partialWriteTimer = undefined;
       }
 
-      runLanguageModelCleanup(streamInfo.request.model);
+      runLanguageModelCleanup(streamInfo.request?.model);
 
       streamInfo.unlinkAbortSignal?.();
       streamInfo.unlinkAbortSignal = undefined;
@@ -3016,6 +3016,7 @@ export class StreamManager extends EventEmitter {
         return Ok(streamToken);
       } finally {
         if (!streamRegistered) {
+          runLanguageModelCleanup(model);
           unlinkAbortSignal();
           if (runtimeTempDir) {
             this.cleanupStreamTempDir(runtime, runtimeTempDir);

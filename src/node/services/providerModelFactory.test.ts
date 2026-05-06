@@ -22,6 +22,7 @@ import {
 } from "./providerModelFactory";
 import { MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER } from "@/common/utils/ai/providerOptions";
 import { hasLanguageModelCleanup } from "./languageModelCleanup";
+import type { DevToolsService } from "./devToolsService";
 import { CodexOauthService } from "./codexOauthService";
 import { PolicyService } from "./policyService";
 import { ProviderService } from "./providerService";
@@ -825,6 +826,56 @@ describe("ProviderModelFactory OpenAI WebSocket transport", () => {
       }
       expect(hasLanguageModelCleanup(result.data)).toBe(false);
       expect(modelCostsIncluded(result.data)).toBe(true);
+    });
+  });
+
+  it("does not attach cleanup when a custom OpenAI base URL is configured", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        openai: {
+          apiKey: "sk-test",
+          baseURL: "https://proxy.openai.test/v1",
+          webSocketTransportEnabled: true,
+        },
+      });
+
+      const result = await factory.createModel("openai:gpt-4.1-mini");
+
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        return;
+      }
+      expect(hasLanguageModelCleanup(result.data)).toBe(false);
+    });
+  });
+
+  it("preserves cleanup when DevTools wraps an OpenAI WebSocket model", async () => {
+    await withTempConfig(async (config) => {
+      config.saveProvidersConfig({
+        openai: {
+          apiKey: "sk-test",
+          webSocketTransportEnabled: true,
+        },
+      });
+      const providerService = new ProviderService(config);
+      const devToolsService = { enabled: true } as unknown as DevToolsService;
+      const factory = new ProviderModelFactory(
+        config,
+        providerService,
+        undefined,
+        undefined,
+        devToolsService
+      );
+
+      const result = await factory.createModel("openai:gpt-4.1-mini", undefined, {
+        workspaceId: "devtools-workspace",
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        return;
+      }
+      expect(hasLanguageModelCleanup(result.data)).toBe(true);
     });
   });
 

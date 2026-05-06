@@ -32,7 +32,7 @@ function isStreamingResponsesRequest(input: RequestInfo | URL, init?: RequestIni
     return false;
   }
 
-  if (!getRequestUrl(input).endsWith("/responses")) {
+  if (!/\/v1\/responses(\?|$)/.test(getRequestUrl(input))) {
     return false;
   }
 
@@ -63,12 +63,12 @@ export function createOpenAIWebSocketTransportFetch(
   const webSocketFetch = webSocketFetchFactory();
   assert(typeof webSocketFetch.close === "function", "OpenAI WebSocket fetch must expose close()");
 
-  let closed = false;
+  let closeRequested = false;
   const close = (): void => {
-    if (closed) {
+    if (closeRequested) {
       return;
     }
-    closed = true;
+    closeRequested = true;
     webSocketFetch.close();
   };
 
@@ -88,7 +88,11 @@ export function createOpenAIWebSocketTransportFetch(
 
     const headers = new Headers(init?.headers);
     captureAndStripDevToolsHeader(headers);
-    return webSocketFetch(input, { ...(init ?? {}), headers });
+    const response = await webSocketFetch(input, { ...(init ?? {}), headers });
+    if (closeRequested) {
+      webSocketFetch.close();
+    }
+    return response;
   }, fetchExtras) as typeof fetch;
 
   return {

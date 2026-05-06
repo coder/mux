@@ -140,6 +140,91 @@ describe("createOpenAIWebSocketTransportFetch", () => {
     expect(captured).toEqual({ authorization: "[REDACTED]" });
   });
 
+  test("enabled transport keeps non-streaming Responses posts on the base fetch", async () => {
+    const baseBodies: string[] = [];
+    const wsCalls: string[] = [];
+    const baseFetch = createTestFetch((_input: RequestInfo | URL, init?: RequestInit) => {
+      baseBodies.push(String(init?.body ?? ""));
+      return Promise.resolve(new Response("base"));
+    });
+    const transport = createOpenAIWebSocketTransportFetch({
+      enabled: true,
+      baseFetch,
+      createWebSocketFetch: () =>
+        createTestWebSocketFetch((input: RequestInfo | URL) => {
+          wsCalls.push(getFetchInputUrl(input));
+          return Promise.resolve(new Response("ws"));
+        }),
+    });
+
+    const streamFalse = await transport.fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      body: JSON.stringify({ stream: false }),
+    });
+    const streamAbsent = await transport.fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+
+    expect(await streamFalse.text()).toBe("base");
+    expect(await streamAbsent.text()).toBe("base");
+    expect(baseBodies).toEqual([JSON.stringify({ stream: false }), JSON.stringify({})]);
+    expect(wsCalls).toEqual([]);
+  });
+
+  test("enabled transport recognizes Responses URLs with query parameters", async () => {
+    const wsCalls: string[] = [];
+    const transport = createOpenAIWebSocketTransportFetch({
+      enabled: true,
+      baseFetch: createTestFetch(() => Promise.resolve(new Response("base"))),
+      createWebSocketFetch: () =>
+        createTestWebSocketFetch((input: RequestInfo | URL) => {
+          wsCalls.push(getFetchInputUrl(input));
+          return Promise.resolve(new Response("ws"));
+        }),
+    });
+
+    const response = await transport.fetch("https://api.openai.com/v1/responses?beta=2", {
+      method: "POST",
+      body: JSON.stringify({ stream: true }),
+    });
+
+    expect(await response.text()).toBe("ws");
+    expect(wsCalls).toEqual(["https://api.openai.com/v1/responses?beta=2"]);
+  });
+
+  test("close retries after a connection-establishment race", async () => {
+    let closeCalls = 0;
+    let resolveWebSocketFetch: ((response: Response) => void) | undefined;
+    const webSocketFetchPromise = new Promise<Response>((resolve) => {
+      resolveWebSocketFetch = resolve;
+    });
+    const transport = createOpenAIWebSocketTransportFetch({
+      enabled: true,
+      baseFetch: createTestFetch(() => Promise.resolve(new Response("base"))),
+      createWebSocketFetch: () =>
+        createTestWebSocketFetch(
+          () => webSocketFetchPromise,
+          () => {
+            closeCalls += 1;
+          }
+        ),
+    });
+
+    const responsePromise = transport.fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      body: JSON.stringify({ stream: true }),
+    });
+    transport.close();
+    if (!resolveWebSocketFetch) {
+      throw new Error("Expected test WebSocket fetch resolver to be initialized");
+    }
+    resolveWebSocketFetch(new Response("ws"));
+
+    expect(await (await responsePromise).text()).toBe("ws");
+    expect(closeCalls).toBe(2);
+  });
+
   test("close is idempotent", () => {
     let closeCalls = 0;
     const transport = createOpenAIWebSocketTransportFetch({

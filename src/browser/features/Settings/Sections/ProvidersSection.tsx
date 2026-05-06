@@ -1636,8 +1636,6 @@ export function ProvidersSection() {
               const gatewayRouteTargets =
                 providerDefinition?.kind === "gateway" ? (providerDefinition.routes ?? []) : [];
               const isCustomOpenAICompatible = isCustomOpenAICompatibleProviderInfo(providerInfo);
-              const openAIWireFormat = providerInfo?.wireFormat ?? "responses";
-              const openAIWebSocketTransportVisible = openAIWireFormat === "responses";
               const statusDotColor = !enabled
                 ? "bg-warning"
                 : configured
@@ -2247,404 +2245,418 @@ export function ProvidersSection() {
                       )}
 
                       {/* OpenAI: ChatGPT OAuth + service tier */}
-                      {provider === "openai" && (
-                        <div className="border-border-light space-y-3 border-t pt-3">
-                          <div>
-                            <label className="text-foreground block text-xs font-medium">
-                              ChatGPT (Codex) OAuth
-                            </label>
-                            <span className="text-muted text-xs">
-                              {codexOauthStatus === "starting"
-                                ? "Starting..."
-                                : codexOauthStatus === "waiting"
-                                  ? "Waiting for login..."
-                                  : codexOauthIsConnected
-                                    ? "Connected"
-                                    : "Not connected"}
-                            </span>
-                          </div>
+                      {provider === "openai" &&
+                        (() => {
+                          const openAIWireFormat = providerInfo?.wireFormat ?? "responses";
+                          const openAIWebSocketTransportVisible = openAIWireFormat === "responses";
+                          return (
+                            <div className="border-border-light space-y-3 border-t pt-3">
+                              <div>
+                                <label className="text-foreground block text-xs font-medium">
+                                  ChatGPT (Codex) OAuth
+                                </label>
+                                <span className="text-muted text-xs">
+                                  {codexOauthStatus === "starting"
+                                    ? "Starting..."
+                                    : codexOauthStatus === "waiting"
+                                      ? "Waiting for login..."
+                                      : codexOauthIsConnected
+                                        ? "Connected"
+                                        : "Not connected"}
+                                </span>
+                              </div>
 
-                          <div className="flex flex-wrap items-center gap-2">
-                            {!isRemoteServer && (
-                              <Button
-                                size="sm"
-                                onClick={() => {
-                                  void startCodexOauthBrowserConnect();
-                                }}
-                                disabled={!api || codexOauthLoginInProgress}
-                              >
-                                Connect (Browser)
-                              </Button>
-                            )}
-                            <Button
-                              size="sm"
-                              variant="secondary"
-                              onClick={() => {
-                                void startCodexOauthDeviceConnect();
-                              }}
-                              disabled={!api || codexOauthLoginInProgress}
-                            >
-                              Connect (Device)
-                            </Button>
-
-                            {codexOauthStatus === "waiting" &&
-                              !codexOauthDeviceFlow &&
-                              codexOauthAuthorizeUrl && (
+                              <div className="flex flex-wrap items-center gap-2">
+                                {!isRemoteServer && (
+                                  <Button
+                                    size="sm"
+                                    onClick={() => {
+                                      void startCodexOauthBrowserConnect();
+                                    }}
+                                    disabled={!api || codexOauthLoginInProgress}
+                                  >
+                                    Connect (Browser)
+                                  </Button>
+                                )}
                                 <Button
                                   size="sm"
-                                  aria-label="Copy and open OpenAI authorization page"
+                                  variant="secondary"
                                   onClick={() => {
-                                    void navigator.clipboard.writeText(codexOauthAuthorizeUrl);
-                                    window.open(codexOauthAuthorizeUrl, "_blank", "noopener");
+                                    void startCodexOauthDeviceConnect();
                                   }}
-                                  className="h-8 px-3 text-xs"
+                                  disabled={!api || codexOauthLoginInProgress}
                                 >
-                                  Copy & Open OpenAI
+                                  Connect (Device)
                                 </Button>
+
+                                {codexOauthStatus === "waiting" &&
+                                  !codexOauthDeviceFlow &&
+                                  codexOauthAuthorizeUrl && (
+                                    <Button
+                                      size="sm"
+                                      aria-label="Copy and open OpenAI authorization page"
+                                      onClick={() => {
+                                        void navigator.clipboard.writeText(codexOauthAuthorizeUrl);
+                                        window.open(codexOauthAuthorizeUrl, "_blank", "noopener");
+                                      }}
+                                      className="h-8 px-3 text-xs"
+                                    >
+                                      Copy & Open OpenAI
+                                    </Button>
+                                  )}
+
+                                {codexOauthLoginInProgress && (
+                                  <Button variant="secondary" size="sm" onClick={cancelCodexOauth}>
+                                    Cancel
+                                  </Button>
+                                )}
+
+                                {codexOauthIsConnected && (
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => {
+                                      void disconnectCodexOauth();
+                                    }}
+                                    disabled={!api || codexOauthLoginInProgress}
+                                  >
+                                    Disconnect
+                                  </Button>
+                                )}
+                              </div>
+
+                              {codexOauthDeviceFlow && (
+                                <div className="bg-background-tertiary space-y-2 rounded-md p-3">
+                                  <p className="text-muted text-xs">
+                                    Enter this code on the OpenAI verification page:
+                                  </p>
+                                  <div className="flex items-center gap-2">
+                                    <code className="text-foreground text-lg font-bold tracking-widest">
+                                      {codexOauthDeviceFlow.userCode}
+                                    </code>
+                                    <Button
+                                      size="sm"
+                                      aria-label="Copy and open OpenAI verification page"
+                                      onClick={() => {
+                                        void navigator.clipboard.writeText(
+                                          codexOauthDeviceFlow.userCode
+                                        );
+                                        window.open(
+                                          codexOauthDeviceFlow.verifyUrl,
+                                          "_blank",
+                                          "noopener"
+                                        );
+                                      }}
+                                      className="h-8 px-3 text-xs"
+                                    >
+                                      Copy & Open OpenAI
+                                    </Button>
+                                  </div>
+                                  <p className="text-muted inline-flex items-center gap-2 text-xs">
+                                    <Loader2 aria-hidden className="h-3.5 w-3.5 animate-spin" />
+                                    Waiting for authorization...
+                                  </p>
+                                </div>
                               )}
 
-                            {codexOauthLoginInProgress && (
-                              <Button variant="secondary" size="sm" onClick={cancelCodexOauth}>
-                                Cancel
-                              </Button>
-                            )}
+                              {codexOauthStatus === "waiting" && !codexOauthDeviceFlow && (
+                                <p className="text-muted inline-flex items-center gap-2 text-xs">
+                                  <Loader2 aria-hidden className="h-3.5 w-3.5 animate-spin" />
+                                  Waiting for authorization...
+                                </p>
+                              )}
 
-                            {codexOauthIsConnected && (
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => {
-                                  void disconnectCodexOauth();
-                                }}
-                                disabled={!api || codexOauthLoginInProgress}
-                              >
-                                Disconnect
-                              </Button>
-                            )}
-                          </div>
+                              {codexOauthStatus === "error" && codexOauthError && (
+                                <p className="text-destructive text-xs">{codexOauthError}</p>
+                              )}
 
-                          {codexOauthDeviceFlow && (
-                            <div className="bg-background-tertiary space-y-2 rounded-md p-3">
-                              <p className="text-muted text-xs">
-                                Enter this code on the OpenAI verification page:
-                              </p>
-                              <div className="flex items-center gap-2">
-                                <code className="text-foreground text-lg font-bold tracking-widest">
-                                  {codexOauthDeviceFlow.userCode}
-                                </code>
-                                <Button
-                                  size="sm"
-                                  aria-label="Copy and open OpenAI verification page"
-                                  onClick={() => {
-                                    void navigator.clipboard.writeText(
-                                      codexOauthDeviceFlow.userCode
-                                    );
-                                    window.open(
-                                      codexOauthDeviceFlow.verifyUrl,
-                                      "_blank",
-                                      "noopener"
-                                    );
-                                  }}
-                                  className="h-8 px-3 text-xs"
-                                >
-                                  Copy & Open OpenAI
-                                </Button>
-                              </div>
-                              <p className="text-muted inline-flex items-center gap-2 text-xs">
-                                <Loader2 aria-hidden className="h-3.5 w-3.5 animate-spin" />
-                                Waiting for authorization...
-                              </p>
-                            </div>
-                          )}
-
-                          {codexOauthStatus === "waiting" && !codexOauthDeviceFlow && (
-                            <p className="text-muted inline-flex items-center gap-2 text-xs">
-                              <Loader2 aria-hidden className="h-3.5 w-3.5 animate-spin" />
-                              Waiting for authorization...
-                            </p>
-                          )}
-
-                          {codexOauthStatus === "error" && codexOauthError && (
-                            <p className="text-destructive text-xs">{codexOauthError}</p>
-                          )}
-
-                          <div className="border-border-light space-y-2 border-t pt-3">
-                            <div>
-                              <label className="text-muted block text-xs">
-                                Default auth (when both are set)
-                              </label>
-                              <p className="text-muted text-xs">
-                                Applies to models that support both ChatGPT OAuth and API keys (e.g.{" "}
-                                <code className="text-accent">gpt-5.5</code>).
-                              </p>
-                            </div>
-
-                            <ToggleGroup
-                              type="single"
-                              value={codexOauthDefaultAuth}
-                              onValueChange={(next) => {
-                                if (!api) return;
-                                if (next !== "oauth" && next !== "apiKey") {
-                                  return;
-                                }
-
-                                updateOptimistically("openai", { codexOauthDefaultAuth: next });
-                                void api.providers.setProviderConfig({
-                                  provider: "openai",
-                                  keyPath: ["codexOauthDefaultAuth"],
-                                  value: next,
-                                });
-                              }}
-                              size="sm"
-                              className="h-9"
-                              disabled={!api || !codexOauthDefaultAuthIsEditable}
-                            >
-                              <ToggleGroupItem
-                                value="oauth"
-                                size="sm"
-                                className="h-7 px-3 text-[13px]"
-                              >
-                                Use ChatGPT OAuth by default
-                              </ToggleGroupItem>
-                              <ToggleGroupItem
-                                value="apiKey"
-                                size="sm"
-                                className="h-7 px-3 text-[13px]"
-                              >
-                                Use OpenAI API key by default
-                              </ToggleGroupItem>
-                            </ToggleGroup>
-
-                            <p className="text-muted text-xs">
-                              ChatGPT OAuth uses subscription billing (costs included). API key uses
-                              OpenAI platform billing.
-                            </p>
-
-                            {!codexOauthDefaultAuthIsEditable && (
-                              <p className="text-muted text-xs">
-                                Connect ChatGPT OAuth and set an OpenAI API key to change this
-                                setting.
-                              </p>
-                            )}
-                          </div>
-
-                          <div className="border-border-light border-t pt-3">
-                            <div className="mb-1 flex items-center gap-1">
-                              <label className="text-muted block text-xs">Service tier</label>
-                              <TooltipProvider>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <HelpIndicator aria-label="OpenAI service tier help">
-                                      ?
-                                    </HelpIndicator>
-                                  </TooltipTrigger>
-                                  <TooltipContent>
-                                    <div className="max-w-[260px]">
-                                      <div className="font-semibold">OpenAI service tier</div>
-                                      <div className="mt-1">
-                                        <span className="font-semibold">auto</span>: standard
-                                        behavior.
-                                      </div>
-                                      <div>
-                                        <span className="font-semibold">priority</span>: lower
-                                        latency, higher cost.
-                                      </div>
-                                      <div>
-                                        <span className="font-semibold">flex</span>: lower cost,
-                                        higher latency.
-                                      </div>
-                                    </div>
-                                  </TooltipContent>
-                                </Tooltip>
-                              </TooltipProvider>
-                            </div>
-                            <Select
-                              value={
-                                openaiServiceTierSelectOverride ??
-                                config?.openai?.serviceTier ??
-                                OPENAI_SERVICE_TIER_UNSET
-                              }
-                              onValueChange={(next) => {
-                                if (!api) return;
-
-                                if (next === OPENAI_SERVICE_TIER_UNSET) {
-                                  setOpenaiServiceTierSelectOverride(OPENAI_SERVICE_TIER_UNSET);
-                                  void api.providers
-                                    .setProviderConfig({
-                                      provider: "openai",
-                                      keyPath: ["serviceTier"],
-                                      value: "",
-                                    })
-                                    .then(() => refresh())
-                                    .finally(() => setOpenaiServiceTierSelectOverride(null));
-                                  return;
-                                }
-
-                                if (!isOpenAIServiceTier(next)) {
-                                  return;
-                                }
-
-                                setOpenaiServiceTierSelectOverride(null);
-                                updateOptimistically("openai", { serviceTier: next });
-                                void api.providers.setProviderConfig({
-                                  provider: "openai",
-                                  keyPath: ["serviceTier"],
-                                  value: next,
-                                });
-                              }}
-                            >
-                              <SelectTrigger className="w-64">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value={OPENAI_SERVICE_TIER_UNSET}>
-                                  Not configured (omit service_tier)
-                                </SelectItem>
-                                <SelectItem value="auto">auto</SelectItem>
-                                <SelectItem value="default">default</SelectItem>
-                                <SelectItem value="flex">flex</SelectItem>
-                                <SelectItem value="priority">priority</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-
-                          <div className="border-border-light border-t pt-3">
-                            <div className="mb-1 flex items-center gap-1">
-                              <label className="text-muted block text-xs">Wire format</label>
-                              <TooltipProvider>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <HelpIndicator aria-label="OpenAI wire format help">
-                                      ?
-                                    </HelpIndicator>
-                                  </TooltipTrigger>
-                                  <TooltipContent>
-                                    <div className="max-w-[260px]">
-                                      <div className="font-semibold">OpenAI wire format</div>
-                                      <div className="mt-1">
-                                        <span className="font-semibold">responses</span>: modern API
-                                        with persistence and built-in tools (default).
-                                      </div>
-                                      <div>
-                                        <span className="font-semibold">chat completions</span>:
-                                        legacy /chat/completions endpoint. Use if your provider
-                                        doesn&apos;t support the Responses API (e.g. Azure Gov).
-                                      </div>
-                                    </div>
-                                  </TooltipContent>
-                                </Tooltip>
-                              </TooltipProvider>
-                            </div>
-                            <Select
-                              value={config?.openai?.wireFormat ?? "responses"}
-                              onValueChange={(next) => {
-                                if (!api) return;
-                                if (next !== "responses" && next !== "chatCompletions") return;
-
-                                updateOptimistically("openai", { wireFormat: next });
-                                void api.providers.setProviderConfig({
-                                  provider: "openai",
-                                  keyPath: ["wireFormat"],
-                                  value: next,
-                                });
-                              }}
-                            >
-                              <SelectTrigger className="w-40">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="responses">responses</SelectItem>
-                                <SelectItem value="chatCompletions">chat completions</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          {openAIWebSocketTransportVisible && (
-                            <div className="border-border-light border-t pt-3">
-                              <div className="flex items-center justify-between gap-3">
+                              <div className="border-border-light space-y-2 border-t pt-3">
                                 <div>
-                                  <label className="text-foreground block text-xs font-medium">
-                                    WebSocket transport
+                                  <label className="text-muted block text-xs">
+                                    Default auth (when both are set)
                                   </label>
-                                  <span className="text-muted text-xs">
-                                    Experimental: uses OpenAI&apos;s Responses WebSocket transport
-                                    for streaming Responses API requests.
-                                  </span>
+                                  <p className="text-muted text-xs">
+                                    Applies to models that support both ChatGPT OAuth and API keys
+                                    (e.g. <code className="text-accent">gpt-5.5</code>).
+                                  </p>
                                 </div>
-                                <Switch
-                                  checked={config?.openai?.webSocketTransportEnabled === true}
-                                  disabled={!api}
-                                  onCheckedChange={(nextChecked) => {
-                                    if (!api) return;
 
-                                    const webSocketTransportEnabled = nextChecked
-                                      ? true
-                                      : undefined;
-                                    updateOptimistically("openai", { webSocketTransportEnabled });
+                                <ToggleGroup
+                                  type="single"
+                                  value={codexOauthDefaultAuth}
+                                  onValueChange={(next) => {
+                                    if (!api) return;
+                                    if (next !== "oauth" && next !== "apiKey") {
+                                      return;
+                                    }
+
+                                    updateOptimistically("openai", { codexOauthDefaultAuth: next });
                                     void api.providers.setProviderConfig({
                                       provider: "openai",
-                                      keyPath: ["webSocketTransportEnabled"],
-                                      value: nextChecked ? true : "",
+                                      keyPath: ["codexOauthDefaultAuth"],
+                                      value: next,
                                     });
                                   }}
-                                  aria-label="WebSocket transport"
-                                />
+                                  size="sm"
+                                  className="h-9"
+                                  disabled={!api || !codexOauthDefaultAuthIsEditable}
+                                >
+                                  <ToggleGroupItem
+                                    value="oauth"
+                                    size="sm"
+                                    className="h-7 px-3 text-[13px]"
+                                  >
+                                    Use ChatGPT OAuth by default
+                                  </ToggleGroupItem>
+                                  <ToggleGroupItem
+                                    value="apiKey"
+                                    size="sm"
+                                    className="h-7 px-3 text-[13px]"
+                                  >
+                                    Use OpenAI API key by default
+                                  </ToggleGroupItem>
+                                </ToggleGroup>
+
+                                <p className="text-muted text-xs">
+                                  ChatGPT OAuth uses subscription billing (costs included). API key
+                                  uses OpenAI platform billing.
+                                </p>
+
+                                {!codexOauthDefaultAuthIsEditable && (
+                                  <p className="text-muted text-xs">
+                                    Connect ChatGPT OAuth and set an OpenAI API key to change this
+                                    setting.
+                                  </p>
+                                )}
+                              </div>
+
+                              <div className="border-border-light border-t pt-3">
+                                <div className="mb-1 flex items-center gap-1">
+                                  <label className="text-muted block text-xs">Service tier</label>
+                                  <TooltipProvider>
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <HelpIndicator aria-label="OpenAI service tier help">
+                                          ?
+                                        </HelpIndicator>
+                                      </TooltipTrigger>
+                                      <TooltipContent>
+                                        <div className="max-w-[260px]">
+                                          <div className="font-semibold">OpenAI service tier</div>
+                                          <div className="mt-1">
+                                            <span className="font-semibold">auto</span>: standard
+                                            behavior.
+                                          </div>
+                                          <div>
+                                            <span className="font-semibold">priority</span>: lower
+                                            latency, higher cost.
+                                          </div>
+                                          <div>
+                                            <span className="font-semibold">flex</span>: lower cost,
+                                            higher latency.
+                                          </div>
+                                        </div>
+                                      </TooltipContent>
+                                    </Tooltip>
+                                  </TooltipProvider>
+                                </div>
+                                <Select
+                                  value={
+                                    openaiServiceTierSelectOverride ??
+                                    config?.openai?.serviceTier ??
+                                    OPENAI_SERVICE_TIER_UNSET
+                                  }
+                                  onValueChange={(next) => {
+                                    if (!api) return;
+
+                                    if (next === OPENAI_SERVICE_TIER_UNSET) {
+                                      setOpenaiServiceTierSelectOverride(OPENAI_SERVICE_TIER_UNSET);
+                                      void api.providers
+                                        .setProviderConfig({
+                                          provider: "openai",
+                                          keyPath: ["serviceTier"],
+                                          value: "",
+                                        })
+                                        .then(() => refresh())
+                                        .finally(() => setOpenaiServiceTierSelectOverride(null));
+                                      return;
+                                    }
+
+                                    if (!isOpenAIServiceTier(next)) {
+                                      return;
+                                    }
+
+                                    setOpenaiServiceTierSelectOverride(null);
+                                    updateOptimistically("openai", { serviceTier: next });
+                                    void api.providers.setProviderConfig({
+                                      provider: "openai",
+                                      keyPath: ["serviceTier"],
+                                      value: next,
+                                    });
+                                  }}
+                                >
+                                  <SelectTrigger className="w-64">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value={OPENAI_SERVICE_TIER_UNSET}>
+                                      Not configured (omit service_tier)
+                                    </SelectItem>
+                                    <SelectItem value="auto">auto</SelectItem>
+                                    <SelectItem value="default">default</SelectItem>
+                                    <SelectItem value="flex">flex</SelectItem>
+                                    <SelectItem value="priority">priority</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+
+                              <div className="border-border-light border-t pt-3">
+                                <div className="mb-1 flex items-center gap-1">
+                                  <label className="text-muted block text-xs">Wire format</label>
+                                  <TooltipProvider>
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <HelpIndicator aria-label="OpenAI wire format help">
+                                          ?
+                                        </HelpIndicator>
+                                      </TooltipTrigger>
+                                      <TooltipContent>
+                                        <div className="max-w-[260px]">
+                                          <div className="font-semibold">OpenAI wire format</div>
+                                          <div className="mt-1">
+                                            <span className="font-semibold">responses</span>: modern
+                                            API with persistence and built-in tools (default).
+                                          </div>
+                                          <div>
+                                            <span className="font-semibold">chat completions</span>:
+                                            legacy /chat/completions endpoint. Use if your provider
+                                            doesn&apos;t support the Responses API (e.g. Azure Gov).
+                                          </div>
+                                        </div>
+                                      </TooltipContent>
+                                    </Tooltip>
+                                  </TooltipProvider>
+                                </div>
+                                <Select
+                                  value={config?.openai?.wireFormat ?? "responses"}
+                                  onValueChange={(next) => {
+                                    if (!api) return;
+                                    if (next !== "responses" && next !== "chatCompletions") return;
+
+                                    updateOptimistically("openai", { wireFormat: next });
+                                    void api.providers.setProviderConfig({
+                                      provider: "openai",
+                                      keyPath: ["wireFormat"],
+                                      value: next,
+                                    });
+                                  }}
+                                >
+                                  <SelectTrigger className="w-40">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="responses">responses</SelectItem>
+                                    <SelectItem value="chatCompletions">
+                                      chat completions
+                                    </SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              {openAIWebSocketTransportVisible && (
+                                <div className="border-border-light border-t pt-3">
+                                  <div className="flex items-center justify-between gap-3">
+                                    <div>
+                                      <label className="text-foreground block text-xs font-medium">
+                                        WebSocket transport
+                                      </label>
+                                      <span className="text-muted text-xs">
+                                        Experimental: uses OpenAI&apos;s Responses WebSocket
+                                        transport for streaming Responses API requests. Unsupported
+                                        endpoints may fail.
+                                      </span>
+                                    </div>
+                                    <Switch
+                                      checked={config?.openai?.webSocketTransportEnabled === true}
+                                      disabled={!api}
+                                      onCheckedChange={(nextChecked) => {
+                                        if (!api) return;
+
+                                        const webSocketTransportEnabled = nextChecked
+                                          ? true
+                                          : undefined;
+                                        updateOptimistically("openai", {
+                                          webSocketTransportEnabled,
+                                        });
+                                        void api.providers.setProviderConfig({
+                                          provider: "openai",
+                                          keyPath: ["webSocketTransportEnabled"],
+                                          value: nextChecked ? true : "",
+                                        });
+                                      }}
+                                      aria-label="WebSocket transport"
+                                    />
+                                  </div>
+                                </div>
+                              )}
+
+                              <div className="border-border-light border-t pt-3">
+                                <div className="mb-1 flex items-center gap-1">
+                                  <label className="text-muted block text-xs">
+                                    Response storage
+                                  </label>
+                                  <TooltipProvider>
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <HelpIndicator aria-label="OpenAI response storage help">
+                                          ?
+                                        </HelpIndicator>
+                                      </TooltipTrigger>
+                                      <TooltipContent>
+                                        <div className="max-w-[260px]">
+                                          <div className="font-semibold">
+                                            OpenAI response storage
+                                          </div>
+                                          <div className="mt-1">
+                                            <span className="font-semibold">enabled</span>: OpenAI
+                                            stores responses for retrieval and context (default).
+                                          </div>
+                                          <div>
+                                            <span className="font-semibold">disabled</span>:
+                                            responses are not stored. Required for zero data
+                                            retention (ZDR) endpoints.
+                                          </div>
+                                        </div>
+                                      </TooltipContent>
+                                    </Tooltip>
+                                  </TooltipProvider>
+                                </div>
+                                <Select
+                                  value={config?.openai?.store === false ? "disabled" : "enabled"}
+                                  onValueChange={(next) => {
+                                    if (!api) return;
+                                    if (next !== "enabled" && next !== "disabled") return;
+
+                                    const store = next === "disabled" ? false : undefined;
+                                    updateOptimistically("openai", { store });
+                                    void api.providers.setProviderConfig({
+                                      provider: "openai",
+                                      keyPath: ["store"],
+                                      value: next === "disabled" ? false : "",
+                                    });
+                                  }}
+                                >
+                                  <SelectTrigger className="w-40">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="enabled">enabled</SelectItem>
+                                    <SelectItem value="disabled">disabled</SelectItem>
+                                  </SelectContent>
+                                </Select>
                               </div>
                             </div>
-                          )}
-
-                          <div className="border-border-light border-t pt-3">
-                            <div className="mb-1 flex items-center gap-1">
-                              <label className="text-muted block text-xs">Response storage</label>
-                              <TooltipProvider>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <HelpIndicator aria-label="OpenAI response storage help">
-                                      ?
-                                    </HelpIndicator>
-                                  </TooltipTrigger>
-                                  <TooltipContent>
-                                    <div className="max-w-[260px]">
-                                      <div className="font-semibold">OpenAI response storage</div>
-                                      <div className="mt-1">
-                                        <span className="font-semibold">enabled</span>: OpenAI
-                                        stores responses for retrieval and context (default).
-                                      </div>
-                                      <div>
-                                        <span className="font-semibold">disabled</span>: responses
-                                        are not stored. Required for zero data retention (ZDR)
-                                        endpoints.
-                                      </div>
-                                    </div>
-                                  </TooltipContent>
-                                </Tooltip>
-                              </TooltipProvider>
-                            </div>
-                            <Select
-                              value={config?.openai?.store === false ? "disabled" : "enabled"}
-                              onValueChange={(next) => {
-                                if (!api) return;
-                                if (next !== "enabled" && next !== "disabled") return;
-
-                                const store = next === "disabled" ? false : undefined;
-                                updateOptimistically("openai", { store });
-                                void api.providers.setProviderConfig({
-                                  provider: "openai",
-                                  keyPath: ["store"],
-                                  value: next === "disabled" ? false : "",
-                                });
-                              }}
-                            >
-                              <SelectTrigger className="w-40">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="enabled">enabled</SelectItem>
-                                <SelectItem value="disabled">disabled</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                        </div>
-                      )}
+                          );
+                        })()}
 
                       {isCustomOpenAICompatible && (
                         <div className="border-border-light space-y-2 border-t pt-3">

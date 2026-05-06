@@ -13,11 +13,14 @@ type LanguageModelWithCleanup = LanguageModel & {
 export function attachLanguageModelCleanup(
   model: LanguageModel,
   cleanup: LanguageModelCleanup
-): LanguageModel {
+): void {
   assert(typeof cleanup === "function", "language model cleanup must be a function");
+  assert(
+    !hasLanguageModelCleanup(model),
+    "language model already has cleanup attached; call moveLanguageModelCleanup instead"
+  );
   const modelWithCleanup = model as LanguageModelWithCleanup;
   modelWithCleanup[languageModelCleanupSymbol] = cleanup;
-  return model;
 }
 
 export function moveLanguageModelCleanup(source: LanguageModel, target: LanguageModel): void {
@@ -36,7 +39,11 @@ export function hasLanguageModelCleanup(model: LanguageModel): boolean {
   return typeof modelWithCleanup[languageModelCleanupSymbol] === "function";
 }
 
-export function runLanguageModelCleanup(model: LanguageModel): void {
+export function runLanguageModelCleanup(model: LanguageModel | undefined): void {
+  if (model === undefined) {
+    return;
+  }
+
   const modelWithCleanup = model as LanguageModelWithCleanup;
   const cleanup = modelWithCleanup[languageModelCleanupSymbol];
   if (cleanup === undefined) {

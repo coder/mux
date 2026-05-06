@@ -62,6 +62,15 @@ describe("language model cleanup", () => {
     expect(cleanupCalls).toBe(1);
   });
 
+  test("rejects double attach before cleanup is moved or run", () => {
+    const model = createModel();
+    attachLanguageModelCleanup(model, () => undefined);
+
+    expect(() => attachLanguageModelCleanup(model, () => undefined)).toThrow(
+      "language model already has cleanup attached"
+    );
+  });
+
   test("models without cleanup are safe", () => {
     expect(() => runLanguageModelCleanup(createModel())).not.toThrow();
   });

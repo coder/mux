@@ -27,6 +27,17 @@ import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { attachLanguageModelCleanup } from "./languageModelCleanup";
 import { shellQuote } from "@/common/utils/shell";
 
+function createTestLanguageModel(modelId = "cleanup-model"): LanguageModel {
+  return {
+    specificationVersion: "v3",
+    provider: "test",
+    modelId,
+    supportedUrls: {},
+    doGenerate: () => Promise.reject(new Error("doGenerate is unused in StreamManager tests")),
+    doStream: () => Promise.reject(new Error("doStream is unused in StreamManager tests")),
+  };
+}
+
 // Skip integration tests if TEST_INTEGRATION is not set
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
@@ -936,14 +947,7 @@ describe("StreamManager - language model cleanup", () => {
     const messageId = "cleanup-message";
     const historySequence = 1;
     let cleanupCalls = 0;
-    const model: LanguageModel = {
-      specificationVersion: "v3",
-      provider: "test",
-      modelId: "cleanup-model",
-      supportedUrls: {},
-      doGenerate: () => Promise.reject(new Error("doGenerate is unused in cleanup tests")),
-      doStream: () => Promise.reject(new Error("doStream is unused in cleanup tests")),
-    };
+    const model = createTestLanguageModel();
     attachLanguageModelCleanup(model, () => {
       cleanupCalls += 1;
     });
@@ -1006,6 +1010,197 @@ describe("StreamManager - language model cleanup", () => {
       throw new Error("Expected StreamManager.workspaceStreams to be a Map");
     }
     workspaceStreamsValue.set(workspaceId, streamInfo);
+
+    await processStreamWithCleanup.call(streamManager, workspaceId, streamInfo, historySequence);
+
+    expect(cleanupCalls).toBe(1);
+  });
+  test("runs model cleanup when startStream exits before processing after abort", async () => {
+    const streamManager = new StreamManager(historyService);
+    let cleanupCalls = 0;
+    const model = createTestLanguageModel("cleanup-preabort-model");
+    attachLanguageModelCleanup(model, () => {
+      cleanupCalls += 1;
+    });
+    const abortController = new AbortController();
+    abortController.abort(new Error("pre-abort"));
+
+    const result = await streamManager.startStream(
+      "cleanup-preabort-workspace",
+      [{ role: "user", content: "hello" }],
+      model,
+      "openai:gpt-4.1-mini",
+      1,
+      "system",
+      runtime,
+      "cleanup-preabort-message",
+      abortController.signal
+    );
+
+    expect(result.success).toBe(true);
+    expect(cleanupCalls).toBe(1);
+  });
+
+  test("runs model cleanup when stream creation throws before processing", async () => {
+    const streamManager = new StreamManager(historyService);
+    let cleanupCalls = 0;
+    const model = createTestLanguageModel("cleanup-create-throw-model");
+    attachLanguageModelCleanup(model, () => {
+      cleanupCalls += 1;
+    });
+    const replaceCreateStreamResult = Reflect.set(streamManager, "createStreamResult", () => {
+      throw new Error("create stream failed");
+    });
+    expect(replaceCreateStreamResult).toBe(true);
+
+    const result = await streamManager.startStream(
+      "cleanup-create-throw-workspace",
+      [{ role: "user", content: "hello" }],
+      model,
+      "openai:gpt-4.1-mini",
+      1,
+      "system",
+      runtime,
+      "cleanup-create-throw-message"
+    );
+
+    expect(result.success).toBe(false);
+    expect(cleanupCalls).toBe(1);
+  });
+
+  test("runs model cleanup when stream processing fails", async () => {
+    const streamManager = new StreamManager(historyService);
+    streamManager.on("error", () => undefined);
+    const workspaceId = "cleanup-error-workspace";
+    const messageId = "cleanup-error-message";
+    const historySequence = 1;
+    let cleanupCalls = 0;
+    const model = createTestLanguageModel("cleanup-error-model");
+    attachLanguageModelCleanup(model, () => {
+      cleanupCalls += 1;
+    });
+
+    const appendResult = await historyService.appendToHistory(workspaceId, {
+      id: messageId,
+      role: "assistant",
+      metadata: { historySequence, partial: true },
+      parts: [],
+    });
+    expect(appendResult.success).toBe(true);
+
+    const processStreamWithCleanup = Reflect.get(streamManager, "processStreamWithCleanup") as (
+      workspaceId: string,
+      streamInfo: unknown,
+      historySequence: number
+    ) => Promise<void>;
+    expect(typeof processStreamWithCleanup).toBe("function");
+
+    const streamInfo = {
+      state: "streaming",
+      streamResult: {
+        fullStream: (async function* () {
+          throw new Error("stream failed before output");
+        })(),
+        totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
+        usage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
+        providerMetadata: Promise.resolve(undefined),
+        steps: Promise.resolve([]),
+      },
+      abortController: new AbortController(),
+      messageId,
+      token: "cleanup-error-token",
+      startTime: Date.now(),
+      lastPartTimestamp: Date.now(),
+      toolCompletionTimestamps: new Map<string, number>(),
+      model: "openai:gpt-4.1-mini",
+      metadataModel: "openai:gpt-4.1-mini",
+      historySequence,
+      request: { model, messages: [], providerOptions: undefined },
+      toolModelUsages: [],
+      parts: [],
+      lastPartialWriteTime: 0,
+      partialWritePromise: undefined,
+      processingPromise: Promise.resolve(),
+      softInterrupt: { pending: false as const },
+      runtimeTempDir: "",
+      runtime,
+      cumulativeUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      cumulativeProviderMetadata: undefined,
+      didRetryPreviousResponseIdAtStep: false,
+      currentStepStartIndex: 0,
+      stepTracker: {},
+    };
+
+    await processStreamWithCleanup.call(streamManager, workspaceId, streamInfo, historySequence);
+
+    expect(cleanupCalls).toBe(1);
+  });
+
+  test("runs model cleanup when stream processing is aborted", async () => {
+    const streamManager = new StreamManager(historyService);
+    streamManager.on("error", () => undefined);
+    const workspaceId = "cleanup-abort-workspace";
+    const messageId = "cleanup-abort-message";
+    const historySequence = 1;
+    let cleanupCalls = 0;
+    const model = createTestLanguageModel("cleanup-abort-model");
+    attachLanguageModelCleanup(model, () => {
+      cleanupCalls += 1;
+    });
+
+    const appendResult = await historyService.appendToHistory(workspaceId, {
+      id: messageId,
+      role: "assistant",
+      metadata: { historySequence, partial: true },
+      parts: [],
+    });
+    expect(appendResult.success).toBe(true);
+
+    const processStreamWithCleanup = Reflect.get(streamManager, "processStreamWithCleanup") as (
+      workspaceId: string,
+      streamInfo: unknown,
+      historySequence: number
+    ) => Promise<void>;
+    expect(typeof processStreamWithCleanup).toBe("function");
+    const abortController = new AbortController();
+    abortController.abort(new Error("test abort"));
+
+    const streamInfo = {
+      state: "streaming",
+      streamResult: {
+        fullStream: (async function* () {
+          await Promise.resolve();
+          yield* [] as unknown[];
+        })(),
+        totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
+        usage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
+        providerMetadata: Promise.resolve(undefined),
+        steps: Promise.resolve([]),
+      },
+      abortController,
+      messageId,
+      token: "cleanup-abort-token",
+      startTime: Date.now(),
+      lastPartTimestamp: Date.now(),
+      toolCompletionTimestamps: new Map<string, number>(),
+      model: "openai:gpt-4.1-mini",
+      metadataModel: "openai:gpt-4.1-mini",
+      historySequence,
+      request: { model, messages: [], providerOptions: undefined },
+      toolModelUsages: [],
+      parts: [],
+      lastPartialWriteTime: 0,
+      partialWritePromise: undefined,
+      processingPromise: Promise.resolve(),
+      softInterrupt: { pending: false as const },
+      runtimeTempDir: "",
+      runtime,
+      cumulativeUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      cumulativeProviderMetadata: undefined,
+      didRetryPreviousResponseIdAtStep: false,
+      currentStepStartIndex: 0,
+      stepTracker: {},
+    };
 
     await processStreamWithCleanup.call(streamManager, workspaceId, streamInfo, historySequence);
 
@@ -1828,6 +2023,7 @@ describe("StreamManager - TTFT metadata persistence", () => {
       historySequence: params.historySequence,
       initialMetadata: params.initialMetadata,
       toolModelUsages: [],
+      request: { model: createTestLanguageModel(), messages: [], providerOptions: undefined },
       parts: params.parts,
       lastPartialWriteTime: 0,
       partialWriteTimer: undefined,
