@@ -1099,6 +1099,7 @@ describe("StreamManager - language model cleanup", () => {
       state: "streaming",
       streamResult: {
         fullStream: (async function* () {
+          await Promise.resolve();
           yield {
             type: "tool-call",
             toolCallId: "call-1",
