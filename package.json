@@ -150,7 +150,7 @@
     "@babel/preset-env": "^7.28.5",
     "@babel/preset-react": "^7.28.5",
     "@babel/preset-typescript": "^7.28.5",
-    "@electron/rebuild": "^4.0.1",
+    "@electron/rebuild": "^4.0.4",
     "@eslint/js": "^9.36.0",
     "@playwright/test": "^1.56.0",
     "@storybook/addon-docs": "^10.0.0",
@@ -194,7 +194,6 @@
     "electron-builder": "^24.6.0",
     "electron-devtools-installer": "^4.0.0",
     "electron-mock-ipc": "^0.3.12",
-    "electron-rebuild": "^3.2.9",
     "esbuild": "^0.25.11",
     "escape-html": "^1.0.3",
     "eslint": "^9.36.0",
@@ -235,7 +234,7 @@
     "vite-plugin-top-level-await": "^1.6.0"
   },
   "optionalDependencies": {
-    "electron": "^38.2.1",
+    "electron": "^40.9.3",
     "node-pty": "1.1.0-beta39"
   },
   "files": [
