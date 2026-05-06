@@ -1,4 +1,5 @@
 import assert from "node:assert";
+import { captureAndStripDevToolsHeader } from "./devToolsHeaderCapture";
 import { createWebSocketFetch as createOpenAIWebSocketFetch } from "@vercel/ai-sdk-openai-websocket-fetch";
 
 type WebSocketFetch = typeof fetch & { close: () => void };
@@ -85,7 +86,9 @@ export function createOpenAIWebSocketTransportFetch(
       return options.baseFetch(input, init);
     }
 
-    return webSocketFetch(input, init);
+    const headers = new Headers(init?.headers);
+    captureAndStripDevToolsHeader(headers);
+    return webSocketFetch(input, { ...(init ?? {}), headers });
   }, fetchExtras) as typeof fetch;
 
   return {

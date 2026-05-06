@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
 
+import {
+  consumeCapturedRequestHeaders,
+  DEVTOOLS_RUN_METADATA_ID_HEADER,
+  DEVTOOLS_STEP_ID_HEADER,
+} from "./devToolsHeaderCapture";
 import { createOpenAIWebSocketTransportFetch } from "./openAIWebSocketTransportFetch";
 
 function getFetchInputUrl(input: RequestInfo | URL): string {
@@ -101,6 +106,34 @@ describe("createOpenAIWebSocketTransportFetch", () => {
     expect(await response.text()).toBe("base");
     expect(baseCalls).toEqual(["https://api.openai.com/v1/models"]);
     expect(wsCalls).toEqual([]);
+  });
+
+  test("enabled transport strips DevTools headers before WebSocket dispatch", async () => {
+    let webSocketHeaders: Headers | null = null;
+    const transport = createOpenAIWebSocketTransportFetch({
+      enabled: true,
+      baseFetch: createTestFetch(() => Promise.resolve(new Response("base"))),
+      createWebSocketFetch: () =>
+        createTestWebSocketFetch((_input: RequestInfo | URL, init?: RequestInit) => {
+          webSocketHeaders = new Headers(init?.headers);
+          return Promise.resolve(new Response("ws"));
+        }),
+    });
+
+    await transport.fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer test-key",
+        [DEVTOOLS_STEP_ID_HEADER]: "step-ws-1",
+        [DEVTOOLS_RUN_METADATA_ID_HEADER]: "run-metadata-1",
+      },
+      body: JSON.stringify({ stream: true }),
+    });
+
+    expect(webSocketHeaders?.get(DEVTOOLS_STEP_ID_HEADER)).toBeNull();
+    expect(webSocketHeaders?.get(DEVTOOLS_RUN_METADATA_ID_HEADER)).toBeNull();
+    const captured = consumeCapturedRequestHeaders("step-ws-1");
+    expect(captured).toEqual({ authorization: "[REDACTED]" });
   });
 
   test("close is idempotent", () => {
