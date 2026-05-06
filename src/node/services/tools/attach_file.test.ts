@@ -306,11 +306,45 @@ describe("attach_file tool", () => {
     });
   });
 
+  it("rejects unmapped source files so the model can use file_read", async () => {
+    using workspaceDir = new TestTempDir("attach-file-workspace");
+    const tool = createTestAttachFileTool(workspaceDir.path);
+    const sourcePath = path.join(workspaceDir.path, "script.py");
+    await fs.writeFile(sourcePath, "print('hello')\n");
+
+    const result = (await tool.execute!(
+      { path: "script.py" },
+      mockToolCallOptions
+    )) as AttachFileToolResult;
+
+    expect(result).toEqual({
+      success: false,
+      error: `Unsupported attachment type: ${sourcePath}`,
+    });
+  });
+
+  it("rejects extensionless text files so the model can use file_read", async () => {
+    using workspaceDir = new TestTempDir("attach-file-workspace");
+    const tool = createTestAttachFileTool(workspaceDir.path);
+    const makefilePath = path.join(workspaceDir.path, "Makefile");
+    await fs.writeFile(makefilePath, "all:\n\techo hello\n");
+
+    const result = (await tool.execute!(
+      { path: "Makefile" },
+      mockToolCallOptions
+    )) as AttachFileToolResult;
+
+    expect(result).toEqual({
+      success: false,
+      error: `Unsupported attachment type: ${makefilePath}`,
+    });
+  });
+
   it("shows an unmapped binary file with the octet-stream fallback", async () => {
     using workspaceDir = new TestTempDir("attach-file-workspace");
     const tool = createTestAttachFileTool(workspaceDir.path);
     const zipPath = path.join(workspaceDir.path, "bundle.zip");
-    const zipBytes = Buffer.from("zip bytes");
+    const zipBytes = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00]);
     await fs.writeFile(zipPath, zipBytes);
 
     const result = expectSuccessfulAttachFileResult(

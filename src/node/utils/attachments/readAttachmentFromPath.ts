@@ -56,10 +56,17 @@ const EXTENSION_TO_DISPLAY_MEDIA_TYPE: Record<string, string> = {
 };
 
 const TEXT_EXTENSIONS_REQUIRING_FILE_READ = new Set([
+  "c",
+  "cpp",
+  "cs",
   "csv",
   "css",
+  "go",
+  "h",
+  "hpp",
   "html",
   "htm",
+  "java",
   "js",
   "json",
   "jsx",
@@ -67,7 +74,10 @@ const TEXT_EXTENSIONS_REQUIRING_FILE_READ = new Set([
   "md",
   "mdx",
   "mjs",
+  "py",
+  "rs",
   "sh",
+  "toml",
   "ts",
   "tsx",
   "txt",
@@ -182,24 +192,56 @@ function getFallbackFilename(
   return normalizeOptionalString(filename) ?? normalizeOptionalString(path.basename(resolvedPath));
 }
 
-function getDisplayFileMediaType(
+interface DisplayMediaTypeCandidate {
+  mediaType: string;
+  requireBinaryContent: boolean;
+}
+
+function getDisplayFileMediaTypeCandidate(
   args: ReadAttachmentFromPathArgs,
   resolvedPath: string
-): string | null {
+): DisplayMediaTypeCandidate | null {
   const override = normalizeOptionalString(args.mediaType);
   const extension = path.extname(resolvedPath).slice(1).toLowerCase();
-  const rawMediaType =
-    override ?? EXTENSION_TO_DISPLAY_MEDIA_TYPE[extension] ?? "application/octet-stream";
-  const mediaType = normalizeAttachmentMediaType(rawMediaType);
+  const rawMediaType = override ?? EXTENSION_TO_DISPLAY_MEDIA_TYPE[extension];
 
-  if (mediaType.startsWith("text/") || TEXT_MEDIA_TYPES_REQUIRING_FILE_READ.has(mediaType)) {
+  if (rawMediaType != null) {
+    const mediaType = normalizeAttachmentMediaType(rawMediaType);
+    if (mediaType.startsWith("text/") || TEXT_MEDIA_TYPES_REQUIRING_FILE_READ.has(mediaType)) {
+      return null;
+    }
+    return { mediaType, requireBinaryContent: false };
+  }
+
+  if (TEXT_EXTENSIONS_REQUIRING_FILE_READ.has(extension)) {
     return null;
   }
-  if (override == null && TEXT_EXTENSIONS_REQUIRING_FILE_READ.has(extension)) {
-    return null;
+
+  return { mediaType: "application/octet-stream", requireBinaryContent: true };
+}
+
+function isLikelyTextFile(bytes: Buffer): boolean {
+  if (bytes.length === 0) {
+    return true;
+  }
+  if (bytes.includes(0)) {
+    return false;
   }
 
-  return mediaType;
+  const text = bytes.toString("utf8");
+  if (text.includes("\uFFFD")) {
+    return false;
+  }
+
+  let controlCharacterCount = 0;
+  for (const char of text) {
+    const code = char.charCodeAt(0);
+    if (code < 32 && char !== "\n" && char !== "\r" && char !== "\t") {
+      controlCharacterCount++;
+    }
+  }
+
+  return controlCharacterCount / text.length < 0.05;
 }
 
 function createLoadedAttachment(args: {
@@ -236,8 +278,8 @@ export async function readAttachFileFromPath(
   });
 
   if (mediaType == null) {
-    const displayMediaType = getDisplayFileMediaType(args, resolvedPath);
-    if (displayMediaType == null) {
+    const displayMediaTypeCandidate = getDisplayFileMediaTypeCandidate(args, resolvedPath);
+    if (displayMediaTypeCandidate == null) {
       throw createUnsupportedAttachmentError(args, resolvedPath);
     }
     if (fileStat.size > MAX_ATTACH_FILE_SIZE_BYTES) {
@@ -247,11 +289,15 @@ export async function readAttachFileFromPath(
     }
 
     const bytes = await readRegularFileBytes(args, resolvedPath, fileStat.size);
+    if (displayMediaTypeCandidate.requireBinaryContent && isLikelyTextFile(bytes)) {
+      throw createUnsupportedAttachmentError(args, resolvedPath);
+    }
+
     return {
       type: "display",
       file: createLoadedAttachment({
         data: bytes,
-        mediaType: displayMediaType,
+        mediaType: displayMediaTypeCandidate.mediaType,
         filename,
         resolvedPath,
       }),
