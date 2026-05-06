@@ -351,13 +351,28 @@ export class AgentStatusService {
         return;
       }
 
-      state.lastInputHash = inputHash;
-
-      await this.workspaceService.updateAiStatus(
-        workspaceId,
-        { emoji: result.data.status.emoji, message: result.data.status.message },
-        inputHash
-      );
+      // Persist BEFORE updating the in-memory dedup hash. If the disk write
+      // fails (transient I/O error), we want the next tick to retry the
+      // unchanged transcript instead of dedup'ing against a hash we never
+      // actually committed. The frontend activity emit happens after the
+      // write returns successfully, so subscribers either see the new
+      // status or fall through to a later retry.
+      try {
+        const snapshot = await this.extensionMetadata.setAiStatus(
+          workspaceId,
+          { emoji: result.data.status.emoji, message: result.data.status.message },
+          inputHash
+        );
+        state.lastInputHash = inputHash;
+        this.workspaceService.emitWorkspaceActivity(workspaceId, snapshot);
+      } catch (error) {
+        log.error("AgentStatusService: failed to persist generated status", {
+          workspaceId,
+          error,
+        });
+        // Intentionally leave state.lastInputHash untouched so the next tick
+        // tries again with the same transcript.
+      }
     } catch (error) {
       log.error("AgentStatusService: unexpected error during status generation", {
         workspaceId,

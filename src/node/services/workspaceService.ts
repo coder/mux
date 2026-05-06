@@ -1543,7 +1543,14 @@ export class WorkspaceService extends EventEmitter {
     });
   }
 
-  private emitWorkspaceActivity(
+  /**
+   * Public so AgentStatusService (and any future consumer) can broadcast a
+   * workspace activity snapshot it produced itself. The standard path is
+   * `emitWorkspaceActivityUpdate`, but callers that need to know whether the
+   * persist actually succeeded need to invoke the underlying writer directly
+   * and then call this to reach the frontend.
+   */
+  public emitWorkspaceActivity(
     workspaceId: string,
     snapshot: WorkspaceActivitySnapshot | null
   ): void {
@@ -1574,21 +1581,6 @@ export class WorkspaceService extends EventEmitter {
   ): Promise<void> {
     await this.emitWorkspaceActivityUpdate(workspaceId, "update workspace agent status", () =>
       this.extensionMetadata.setAgentStatus(workspaceId, agentStatus)
-    );
-  }
-
-  /**
-   * Persist + broadcast an AI-generated sidebar status. Used by
-   * AgentStatusService; kept on WorkspaceService so it goes through the
-   * shared activity-emit path that frontends are already subscribed to.
-   */
-  public async updateAiStatus(
-    workspaceId: string,
-    aiStatus: WorkspaceAgentStatus | null,
-    inputHash: string | null
-  ): Promise<void> {
-    await this.emitWorkspaceActivityUpdate(workspaceId, "update workspace AI status", () =>
-      this.extensionMetadata.setAiStatus(workspaceId, aiStatus, inputHash)
     );
   }
 

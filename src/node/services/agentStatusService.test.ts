@@ -31,8 +31,13 @@ describe("AgentStatusService", () => {
   let mockTokenizer: TokenizerService;
   let mockAiService: AIService;
   let windowService: WindowService;
-  let updateAiStatusMock: ReturnType<
-    typeof mock<(workspaceId: string, status: unknown, hash: string | null) => Promise<void>>
+  let setAiStatusMock: ReturnType<
+    typeof mock<
+      (workspaceId: string, status: unknown, hash: string | null) => Promise<{ recency: number }>
+    >
+  >;
+  let emitWorkspaceActivityMock: ReturnType<
+    typeof mock<(workspaceId: string, snapshot: unknown) => void>
   >;
   let getAiStatusInputHashMock: ReturnType<
     typeof mock<(workspaceId: string) => Promise<string | null>>
@@ -93,14 +98,18 @@ describe("AgentStatusService", () => {
       getSessionDir: historyHandle.config.getSessionDir.bind(historyHandle.config),
     } as unknown as Config;
 
-    updateAiStatusMock = mock(() => Promise.resolve());
+    emitWorkspaceActivityMock = mock(() => undefined);
     mockWorkspaceService = {
       getWorkspaceTitleModelCandidates: mock(() => Promise.resolve(["anthropic:claude-haiku-4-5"])),
-      updateAiStatus: updateAiStatusMock,
+      emitWorkspaceActivity: emitWorkspaceActivityMock,
     } as unknown as WorkspaceService;
 
+    setAiStatusMock = mock((_workspaceId: string, _status: unknown, _hash: string | null) =>
+      Promise.resolve({ recency: 0 })
+    );
     getAiStatusInputHashMock = mock(() => Promise.resolve(null));
     mockExtensionMetadata = {
+      setAiStatus: setAiStatusMock,
       getAiStatusInputHash: getAiStatusInputHashMock,
     } as unknown as ExtensionMetadataService;
 
@@ -149,8 +158,8 @@ describe("AgentStatusService", () => {
     expect(generationCall[0]).toContain("Assistant: Running tests now");
     expect(generationCall[1]).toEqual(["anthropic:claude-haiku-4-5"]);
 
-    expect(updateAiStatusMock).toHaveBeenCalledTimes(1);
-    const updateCall = updateAiStatusMock.mock.calls[0];
+    expect(setAiStatusMock).toHaveBeenCalledTimes(1);
+    const updateCall = setAiStatusMock.mock.calls[0];
     expect(updateCall[0]).toBe(workspaceId);
     expect(updateCall[1]).toEqual({ emoji: "🛠️", message: "Editing source" });
     // The hash is persisted so subsequent runs can dedup against it.
@@ -167,14 +176,14 @@ describe("AgentStatusService", () => {
     const service = createService();
     await getInternals(service).runForWorkspace(workspaceId);
     expect(generateSpy).toHaveBeenCalledTimes(1);
-    expect(updateAiStatusMock).toHaveBeenCalledTimes(1);
+    expect(setAiStatusMock).toHaveBeenCalledTimes(1);
 
     // Second pass: history hasn't changed, so the input hash matches and we
     // must not call the model again. This is the "frozen chat" behavior the
     // user explicitly asked for.
     await getInternals(service).runForWorkspace(workspaceId);
     expect(generateSpy).toHaveBeenCalledTimes(1);
-    expect(updateAiStatusMock).toHaveBeenCalledTimes(1);
+    expect(setAiStatusMock).toHaveBeenCalledTimes(1);
   });
 
   test("includes the in-flight partial assistant message so the hash refreshes mid-stream", async () => {
@@ -191,7 +200,7 @@ describe("AgentStatusService", () => {
     const service = createService();
     await getInternals(service).runForWorkspace(workspaceId);
     expect(generateSpy).toHaveBeenCalledTimes(1);
-    const initialHash = updateAiStatusMock.mock.calls[0][2];
+    const initialHash = setAiStatusMock.mock.calls[0][2];
     expect(typeof initialHash).toBe("string");
 
     // Stage a partial assistant message — same shape the streaming pipeline
@@ -204,7 +213,7 @@ describe("AgentStatusService", () => {
     expect(generateSpy).toHaveBeenCalledTimes(2);
     const transcriptArg = generateSpy.mock.calls[1][0];
     expect(transcriptArg).toContain("Assistant: Reading config files");
-    const newHash = updateAiStatusMock.mock.calls[1][2];
+    const newHash = setAiStatusMock.mock.calls[1][2];
     expect(newHash).not.toBe(initialHash);
   });
 
@@ -225,7 +234,7 @@ describe("AgentStatusService", () => {
     );
     await getInternals(service).runForWorkspace(workspaceId);
     expect(generateSpy).toHaveBeenCalledTimes(2);
-    expect(updateAiStatusMock).toHaveBeenCalledTimes(2);
+    expect(setAiStatusMock).toHaveBeenCalledTimes(2);
   });
 
   test("skips regeneration when there is no chat history yet", async () => {
@@ -236,7 +245,7 @@ describe("AgentStatusService", () => {
     // call producing a hallucinated status, and we must not blank an
     // existing aiStatus on disk.
     expect(generateSpy).not.toHaveBeenCalled();
-    expect(updateAiStatusMock).not.toHaveBeenCalled();
+    expect(setAiStatusMock).not.toHaveBeenCalled();
   });
 
   test("focused windows regenerate at the focused interval; unfocused windows wait longer", async () => {
@@ -336,7 +345,7 @@ describe("AgentStatusService", () => {
     // Tick 1 → first workspace runs.
     await internals.runTick();
     expect(generateSpy).toHaveBeenCalledTimes(1);
-    const firstRunWorkspaceIds = updateAiStatusMock.mock.calls.map((call) => call[0]);
+    const firstRunWorkspaceIds = setAiStatusMock.mock.calls.map((call) => call[0]);
 
     // Advance just past one focused interval so all three are eligible. The
     // scheduler must pick a workspace that hasn't run yet (lastRanAt=0)
@@ -344,19 +353,52 @@ describe("AgentStatusService", () => {
     now += 31_000;
     await internals.runTick();
     expect(generateSpy).toHaveBeenCalledTimes(2);
-    const idsAfterTick2 = updateAiStatusMock.mock.calls.map((call) => call[0]);
+    const idsAfterTick2 = setAiStatusMock.mock.calls.map((call) => call[0]);
     expect(new Set(idsAfterTick2).size).toBe(2);
 
     // One more tick should cover the third workspace before any repeats.
     now += 31_000;
     await internals.runTick();
     expect(generateSpy).toHaveBeenCalledTimes(3);
-    const idsAfterTick3 = updateAiStatusMock.mock.calls.map((call) => call[0]);
+    const idsAfterTick3 = setAiStatusMock.mock.calls.map((call) => call[0]);
     expect(new Set(idsAfterTick3)).toEqual(new Set(["ws-a", "ws-b", "ws-c"]));
 
     // Use the variable to satisfy lint / show intent: every workspace was
     // covered at least once.
     expect(firstRunWorkspaceIds.length).toBeGreaterThan(0);
+  });
+
+  test("a failed persistence write does not update the dedup hash, so the next tick retries", async () => {
+    // Codex review: emitWorkspaceActivityUpdate (the historical wrapper) used
+    // to swallow disk errors, which meant a transient extensionMetadata.json
+    // write failure could leave the in-memory hash advanced even though the
+    // generated status never made it to disk or the frontend. After that,
+    // the next tick would dedup against the new hash and never retry.
+    // The fix is: only update lastInputHash AFTER a successful persist.
+    await historyHandle.historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("u1", "user", "kick off a task")
+    );
+
+    setAiStatusMock.mockImplementationOnce(() => Promise.reject(new Error("disk full")));
+
+    const service = createService();
+    await getInternals(service).runForWorkspace(workspaceId);
+
+    expect(generateSpy).toHaveBeenCalledTimes(1);
+    // setAiStatus was attempted but failed.
+    expect(setAiStatusMock).toHaveBeenCalledTimes(1);
+    // Activity emit must NOT happen on persist failure — frontend must not
+    // see a status the disk doesn't actually have.
+    expect(emitWorkspaceActivityMock).not.toHaveBeenCalled();
+
+    // The next runForWorkspace pass on the SAME transcript must retry,
+    // because the previous failure should have left lastInputHash null.
+    setAiStatusMock.mockImplementation((_w, _s, _h) => Promise.resolve({ recency: 0 }));
+    await getInternals(service).runForWorkspace(workspaceId);
+    expect(generateSpy).toHaveBeenCalledTimes(2);
+    expect(setAiStatusMock).toHaveBeenCalledTimes(2);
+    expect(emitWorkspaceActivityMock).toHaveBeenCalledTimes(1);
   });
 
   test("archived workspaces are not regenerated", async () => {
@@ -372,6 +414,6 @@ describe("AgentStatusService", () => {
     await getInternals(service).runTick();
 
     expect(generateSpy).not.toHaveBeenCalled();
-    expect(updateAiStatusMock).not.toHaveBeenCalled();
+    expect(setAiStatusMock).not.toHaveBeenCalled();
   });
 });
