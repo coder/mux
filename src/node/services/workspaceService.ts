@@ -2799,6 +2799,12 @@ export class WorkspaceService extends EventEmitter {
     // Try to remove from runtime (filesystem)
     try {
       if (!force) {
+        if (this.taskService?.hasStickyCompletedDescendants?.(workspaceId)) {
+          return Err(
+            "This workspace has sticky completed sub-agent workspaces. Remove those sub-agents first, or force-remove the workspace."
+          );
+        }
+
         const config = this.config.loadConfigOrDefault();
         const taskSettings = normalizeTaskSettings(config.taskSettings);
         if (

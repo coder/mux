@@ -280,7 +280,7 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
         throw new Error("Interrupted");
       }
 
-      const { agentId, subagent_type, prompt, title, run_in_background, n, variants } =
+      const { agentId, subagent_type, prompt, title, run_in_background, sticky, n, variants } =
         validatedArgs;
       const requestedAgentId =
         typeof agentId === "string" && agentId.trim().length > 0 ? agentId : subagent_type;
@@ -321,6 +321,9 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
           agentType: requestedAgentId,
           prompt: launch.prompt,
           title,
+          // Sticky sub-agents are intentionally preserved after reporting so the
+          // agent can leave an inspectable child workspace when the task outcome warrants it.
+          ...(sticky === true ? { sticky: true } : {}),
           experiments: config.experiments,
           ...(parentRuntimeAiSettings != null ? { parentRuntimeAiSettings } : {}),
           bestOf:

@@ -216,7 +216,8 @@ export function buildTaskToolDescription(runtimeMode: RuntimeMode | undefined): 
     "Spawn a sub-agent task (child workspace). " +
     "\n\nIMPORTANT: Whether a sub-agent can see uncommitted changes depends on the runtime. " +
     `${getTaskRuntimeVisibilityGuidance(runtimeMode)} ` +
-    "\n\nProvide agentId (preferred) or subagent_type, prompt, title, run_in_background, and optional n or variants. " +
+    "\n\nProvide agentId (preferred) or subagent_type, prompt, title, run_in_background, optional sticky, and optional n or variants. " +
+    "Do not set sticky on your own; set sticky=true only when the user explicitly asks to keep or preserve the child workspace after reporting. Sticky sub-agents are not auto-deleted. " +
     `Use n when you want several agents to try the same prompt independently. Use variants when you want several agents to run the same prompt template with a different ${TASK_VARIANT_PLACEHOLDER} substituted into each run. ` +
     "Examples: solve GitHub issues 45, 32, and 69 with one shared issue-solving template; investigate a regression across commit windows like A..B and B..C with one shared investigation template; or split a review into frontend/backend/tests/docs lanes with one shared review template. " +
     `For variants, keep the shared template in the prompt and put the per-lane difference into ${TASK_VARIANT_PLACEHOLDER}. ` +
@@ -244,6 +245,12 @@ const TaskToolAgentArgsSchema = z
     prompt: z.string().min(1),
     title: z.string().min(1),
     run_in_background: z.boolean().default(false),
+    sticky: z
+      .boolean()
+      .nullish()
+      .describe(
+        "Only set this when the user explicitly asks to keep or preserve the child workspace after reporting; do not decide to set it on your own. When true, the completed sub-agent workspace is preserved for inspection instead of being auto-deleted."
+      ),
     n: TaskToolBestOfCountSchema.nullish().describe(
       "Optional best-of count. Use n when several agents should try the same prompt independently. Mutually exclusive with variants; omit both for a single task. Only use grouped runs for sub-agents without interfering side effects, such as read-only agents like explore."
     ),
@@ -744,6 +751,7 @@ export const TaskListToolTaskSchema = z
     createdAt: z.string().optional(),
     modelString: z.string().optional(),
     thinkingLevel: TaskListThinkingLevelSchema.optional(),
+    sticky: z.boolean().optional(),
     depth: z.number().int().min(0),
   })
   .strict();

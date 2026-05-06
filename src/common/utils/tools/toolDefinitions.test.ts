@@ -35,6 +35,20 @@ describe("TOOL_DEFINITIONS", () => {
     }
   });
 
+  it("accepts optional sticky task tool flag", () => {
+    const parsed = TaskToolArgsSchema.safeParse({
+      subagent_type: "explore",
+      prompt: "do the thing",
+      title: "Test",
+      sticky: true,
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.sticky).toBe(true);
+    }
+  });
+
   it("accepts task tool best-of counts between 1 and 20", () => {
     expect(
       TaskToolArgsSchema.safeParse({

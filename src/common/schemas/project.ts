@@ -105,6 +105,10 @@ export const WorkspaceConfigSchema = z.object({
   bestOf: BestOfGroupSchema.optional().meta({
     description: "Grouping metadata for child tasks spawned from the same parent tool call.",
   }),
+  taskSticky: z.boolean().optional().meta({
+    description:
+      "If true, this completed child task workspace is preserved instead of being auto-deleted.",
+  }),
   taskStatus: z
     .enum(["queued", "running", "awaiting_report", "interrupted", "reported"])
     .optional()
