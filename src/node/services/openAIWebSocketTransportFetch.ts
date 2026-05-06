@@ -113,7 +113,11 @@ export function createOpenAIWebSocketTransportFetch(
     captureAndStripDevToolsHeader(headers);
     const response = await activeWebSocketFetch(input, { ...(init ?? {}), headers });
     if (closeRequested) {
-      activeWebSocketFetch.close();
+      try {
+        activeWebSocketFetch.close();
+      } catch {
+        // Cleanup after a cancellation race must not mask the successful fetch response.
+      }
     }
     return response;
   }, fetchExtras) as typeof fetch;

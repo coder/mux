@@ -273,6 +273,29 @@ describe("createOpenAIWebSocketTransportFetch", () => {
     expect(closeCalls).toBe(2);
   });
 
+  test("close retry failure does not mask a resolved WebSocket response", async () => {
+    const transport = createOpenAIWebSocketTransportFetch({
+      enabled: true,
+      baseFetch: createTestFetch(() => Promise.resolve(new Response("base"))),
+      createWebSocketFetch: () =>
+        createTestWebSocketFetch(
+          () => Promise.resolve(new Response("ws")),
+          () => {
+            throw new Error("close failed");
+          }
+        ),
+    });
+
+    const responsePromise = transport.fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      body: JSON.stringify({ stream: true }),
+    });
+    await Promise.resolve();
+    expect(() => transport.close()).toThrow("close failed");
+
+    expect(await (await responsePromise).text()).toBe("ws");
+  });
+
   test("close is idempotent after WebSocket fetch creation", async () => {
     let closeCalls = 0;
     const transport = createOpenAIWebSocketTransportFetch({
