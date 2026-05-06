@@ -1389,7 +1389,10 @@ export class ProviderModelFactory {
         );
 
         const webSocketTransport = createOpenAIWebSocketTransportFetch({
-          enabled: webSocketTransportEnabled && effectiveWireFormat === "responses",
+          enabled:
+            webSocketTransportEnabled &&
+            effectiveWireFormat === "responses" &&
+            !shouldRouteThroughCodexOauth,
           baseFetch: fetchWithOpenAICodexNormalization as typeof fetch,
         });
 

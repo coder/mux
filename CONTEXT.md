@@ -23,7 +23,7 @@ _Avoid_: transport, websocket, useWebSocketTransport
 ## Relationships
 
 - The **OpenAI WebSocket Transport** belongs to the built-in OpenAI provider settings surface.
-- Codex OAuth routing is not a supported **OpenAI WebSocket Transport** scope, and Mux does not add a special guard solely to protect it from an opt-in WebSocket attempt.
+- Codex OAuth routing is not a supported **OpenAI WebSocket Transport** scope; Mux keeps Codex OAuth on the existing HTTP routing path so OAuth token injection, endpoint rewriting, and request normalization still run.
 - The **OpenAI WebSocket Transport** applies only to eligible streaming Responses API requests.
 - The **OpenAI WebSocket Transport** is inactive when the **Built-in OpenAI Provider** uses Chat Completions wire format.
 - Switching to Chat Completions wire format preserves `webSocketTransportEnabled` but hides the UI control and disables the active WebSocket transport until Responses wire format is restored.

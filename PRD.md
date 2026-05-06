@@ -28,7 +28,7 @@ The implementation will use the published `@vercel/ai-sdk-openai-websocket-fetch
 16. As a Mux user, I want WebSocket connections to close when a stream errors, so that failed streams do not leak resources.
 17. As a Mux user, I want WebSocket connections to close when a stream is cancelled, so that interrupting a run cleans up transport resources.
 18. As a Mux user, I want workspace title generation to clean up WebSocket resources too, so that background model uses do not leak sockets.
-19. As a Mux user, I want Codex OAuth behavior not to receive special protective gating solely for WebSocket mode, so that the implementation stays simple and opt-in failures surface naturally.
+19. As a Mux user, I want Codex OAuth-routed requests to keep using the existing HTTP routing path, so that OAuth token injection, endpoint rewriting, and request normalization still run correctly.
 20. As a Mux user, I want OpenAI-compatible providers to remain outside the WebSocket feature scope, so that provider-specific transport behavior does not accidentally affect unrelated providers.
 21. As a Mux maintainer, I want the feature implemented through a small composition helper, so that WebSocket integration can be tested independently from the rest of provider construction.
 22. As a Mux maintainer, I want the feature to use the published WebSocket transport package, so that Mux does not own protocol details already maintained upstream.
@@ -55,7 +55,7 @@ The implementation will use the published `@vercel/ai-sdk-openai-websocket-fetch
 - Do not validate configured OpenAI base URLs before attempting WebSocket transport.
 - Do not add automatic HTTP fallback for eligible WebSocket request failures.
 - Do not broaden the feature to OpenAI-compatible providers in the initial implementation.
-- Treat Codex OAuth as not a supported WebSocket scope, while avoiding a special guard solely to protect Codex OAuth from an opt-in attempt.
+- Treat Codex OAuth as not a supported WebSocket scope; keep Codex OAuth-routed models on the existing HTTP routing path so OAuth token injection, endpoint rewriting, and request normalization still run.
 - Use the published `@vercel/ai-sdk-openai-websocket-fetch` package instead of implementing the WebSocket protocol locally.
 - Add a small deep module for composing OpenAI provider fetch behavior with the WebSocket transport. Its interface should hide package details behind simple inputs such as whether WebSocket mode is active and a returned close hook.
 - Preserve existing OpenAI fetch behavior when composing the WebSocket transport, including request header handling, Mux attribution, DevTools header stripping, timeout behavior, custom fetch compatibility, and existing request normalization.

@@ -802,6 +802,32 @@ describe("ProviderModelFactory OpenAI WebSocket transport", () => {
     });
   });
 
+  it("does not attach cleanup for Codex OAuth routed models", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        openai: {
+          webSocketTransportEnabled: true,
+          codexOauth: {
+            type: "oauth",
+            access: "test-access-token",
+            refresh: "test-refresh-token",
+            expires: Date.now() + 60_000,
+            accountId: "test-account-id",
+          },
+        },
+      });
+
+      const result = await factory.createModel(KNOWN_MODELS.GPT_53_CODEX.id);
+
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        return;
+      }
+      expect(hasLanguageModelCleanup(result.data)).toBe(false);
+      expect(modelCostsIncluded(result.data)).toBe(true);
+    });
+  });
+
   it("does not attach cleanup when Chat Completions is selected", async () => {
     await withTempConfig(async (config, factory) => {
       config.saveProvidersConfig({
