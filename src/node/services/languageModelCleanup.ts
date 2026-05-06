@@ -23,14 +23,24 @@ export function attachLanguageModelCleanup(
   modelWithCleanup[languageModelCleanupSymbol] = cleanup;
 }
 
+// Single-shot pop: read the attached cleanup (if any) and clear the slot in one
+// step so move/run callers can't accidentally leave a stale cleanup behind that
+// would re-fire on a later run.
+function detachLanguageModelCleanup(model: LanguageModel): LanguageModelCleanup | undefined {
+  const modelWithCleanup = model as LanguageModelWithCleanup;
+  const cleanup = modelWithCleanup[languageModelCleanupSymbol];
+  if (cleanup === undefined) {
+    return undefined;
+  }
+  delete modelWithCleanup[languageModelCleanupSymbol];
+  return cleanup;
+}
+
 export function moveLanguageModelCleanup(source: LanguageModel, target: LanguageModel): void {
-  const sourceWithCleanup = source as LanguageModelWithCleanup;
-  const cleanup = sourceWithCleanup[languageModelCleanupSymbol];
+  const cleanup = detachLanguageModelCleanup(source);
   if (cleanup === undefined) {
     return;
   }
-
-  delete sourceWithCleanup[languageModelCleanupSymbol];
   attachLanguageModelCleanup(target, cleanup);
 }
 
@@ -43,14 +53,10 @@ export function runLanguageModelCleanup(model: LanguageModel | undefined): void 
   if (model === undefined) {
     return;
   }
-
-  const modelWithCleanup = model as LanguageModelWithCleanup;
-  const cleanup = modelWithCleanup[languageModelCleanupSymbol];
+  const cleanup = detachLanguageModelCleanup(model);
   if (cleanup === undefined) {
     return;
   }
-
-  delete modelWithCleanup[languageModelCleanupSymbol];
 
   try {
     cleanup();
