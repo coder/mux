@@ -1,10 +1,13 @@
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import { mkdtempSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import type { ProjectsConfig, ProjectConfig, Workspace } from "@/common/types/project";
 import { Ok } from "@/common/types/result";
 import { createMuxMessage } from "@/common/types/message";
 import type { Config } from "@/node/config";
 import type { AIService } from "./aiService";
-import type { ExtensionMetadataService } from "./ExtensionMetadataService";
+import { ExtensionMetadataService } from "./ExtensionMetadataService";
 import type { WindowService } from "./windowService";
 import type { WorkspaceService } from "./workspaceService";
 import type { TokenizerService } from "./tokenizerService";
@@ -368,6 +371,24 @@ describe("AgentStatusService", () => {
     expect(generateSpy).toHaveBeenCalledTimes(2);
     expect(setAiStatusMock).toHaveBeenCalledTimes(2);
     expect(emitWorkspaceActivityMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("setAiStatus must not bump workspace recency (would re-sort idle workspaces)", async () => {
+    // AgentStatusService is a background scheduler with no causal
+    // connection to user activity, so its writes must not bump recency —
+    // that would promote idle workspaces in the sidebar and mark them
+    // unread every tick. Test ExtensionMetadataService directly to pin the
+    // contract for any future caller of setAiStatus.
+    const dir = mkdtempSync(join(tmpdir(), "mux-recency-"));
+    try {
+      const svc = new ExtensionMetadataService(join(dir, "metadata.json"));
+      await svc.updateRecency("ws", 100);
+      await svc.setAiStatus("ws", { emoji: "🛠️", message: "Doing work" });
+      const after = await svc.getSnapshot("ws");
+      expect(after?.recency).toBe(100);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test("archived workspaces are not regenerated", async () => {

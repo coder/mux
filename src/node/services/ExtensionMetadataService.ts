@@ -247,13 +247,35 @@ export class ExtensionMetadataService {
   /**
    * Update the AI-generated sidebar status payload for a workspace.
    * Pass `null` to clear it.
+   *
+   * AgentStatusService is a background scheduler with no causal connection
+   * to user activity, so this writer never advances `recency`. Existing
+   * entries keep their user-interaction recency (otherwise idle workspaces
+   * would be re-sorted and marked unread every tick); brand-new entries
+   * (rare: workspace has chat but no metadata yet) are seeded with
+   * `recency=0` so the AI status doesn't artificially promote them.
+   * `updateRecency` will set the real value on the next user interaction.
    */
   async setAiStatus(
     workspaceId: string,
     aiStatus: ExtensionAgentStatus | null
   ): Promise<WorkspaceActivitySnapshot> {
-    return this.mutateWorkspaceSnapshot(workspaceId, Date.now(), (workspace) => {
+    return this.withSerializedMutation(async () => {
+      const data = await this.load();
+      const existing = coerceExtensionMetadata(data.workspaces[workspaceId]);
+      const workspace: ExtensionMetadata = existing ?? {
+        recency: 0,
+        streaming: false,
+        lastModel: null,
+        lastThinkingLevel: null,
+        agentStatus: null,
+        displayStatus: null,
+        lastStatusUrl: null,
+      };
       workspace.aiStatus = aiStatus;
+      data.workspaces[workspaceId] = workspace;
+      await this.save(data);
+      return toWorkspaceActivitySnapshot(workspace);
     });
   }
 
