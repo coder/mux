@@ -188,6 +188,22 @@ function normalizeAdvisorMaxOutputTokens(value: number | null | undefined): numb
   return value;
 }
 
+function mergeTaskSettingsForConfigSave(current: unknown, input: unknown) {
+  const inputRecord = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  const definedInput: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(inputRecord)) {
+    if (value !== undefined) {
+      definedInput[key] = value;
+    }
+  }
+
+  // saveConfig predates optional task flags. Preserve existing values when a client only sends
+  // the required numeric limits; otherwise unrelated settings saves can silently disable toggles
+  // like preserveSubagentsUntilArchive before task cleanup evaluates them.
+  return normalizeTaskSettings({ ...normalizeTaskSettings(current), ...definedInput });
+}
+
 function normalizeMuxMessageFromDisk(value: unknown): MuxMessage | null {
   if (!value || typeof value !== "object") {
     return null;
@@ -927,7 +943,10 @@ export const router = (authToken?: string) => {
         .output(schemas.config.saveConfig.output)
         .handler(async ({ context, input }) => {
           await context.config.editConfig((config) => {
-            const normalizedTaskSettings = normalizeTaskSettings(input.taskSettings);
+            const normalizedTaskSettings = mergeTaskSettingsForConfigSave(
+              config.taskSettings,
+              input.taskSettings
+            );
             const result = { ...config, taskSettings: normalizedTaskSettings };
 
             if (input.advisorModelString !== undefined) {

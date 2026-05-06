@@ -67,4 +67,39 @@ describe("router config.saveConfig", () => {
     expect(saved.agentAiDefaults?.foo?.advisorEnabled).toBe(true);
     expect(saved.subagentAiDefaults?.foo).toBeUndefined();
   });
+
+  test("preserves optional task settings when a save omits them", async () => {
+    await config.editConfig((current) => ({
+      ...current,
+      taskSettings: {
+        ...DEFAULT_TASK_SETTINGS,
+        preserveSubagentsUntilArchive: true,
+        proposePlanImplementReplacesChatHistory: true,
+      },
+    }));
+
+    const client = createRouterClient(router(), { context: createContext() });
+
+    await client.config.saveConfig({
+      // Simulate an older/unrelated settings client that only sends the originally required
+      // task limits. Optional task flags must stay sticky, or the sub-agent preservation toggle
+      // silently turns itself off before cleanup evaluates it.
+      taskSettings: {
+        maxParallelAgentTasks: 4,
+        maxTaskNestingDepth: 5,
+      },
+      advisorModelString: null,
+    });
+
+    const saved = config.loadConfigOrDefault();
+    const savedTaskSettings = saved.taskSettings;
+    if (!savedTaskSettings) {
+      throw new Error("Expected saved task settings");
+    }
+
+    expect(savedTaskSettings.maxParallelAgentTasks).toBe(4);
+    expect(savedTaskSettings.maxTaskNestingDepth).toBe(5);
+    expect(savedTaskSettings.preserveSubagentsUntilArchive).toBe(true);
+    expect(savedTaskSettings.proposePlanImplementReplacesChatHistory).toBe(true);
+  });
 });
