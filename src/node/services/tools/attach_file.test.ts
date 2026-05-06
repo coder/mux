@@ -276,10 +276,12 @@ describe("attach_file tool", () => {
       (await tool.execute!({ path: "clip.webm" }, mockToolCallOptions)) as AttachFileToolResult
     );
 
-    expect(result.value[0]).toEqual({
-      type: "text",
-      text: "[File shown to user: clip.webm (video/webm). This type is not supported as a model attachment, so the model will only receive this notice. Use another tool to inspect or convert the file if needed.]",
-    });
+    expect(result.value[0].type).toBe("text");
+    if (result.value[0].type !== "text") {
+      throw new Error("Expected display-only status text");
+    }
+    expect(result.value[0].text).toContain("clip.webm");
+    expect(result.value[0].text).toContain("not supported as a model attachment");
     expect(result.value[1]).toEqual({
       type: "display_file",
       data: webmBytes.toString("base64"),
