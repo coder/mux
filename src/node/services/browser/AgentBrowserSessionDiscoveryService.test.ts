@@ -454,7 +454,7 @@ describe("AgentBrowserSessionDiscoveryService", () => {
 
     // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun's expect().rejects.toThrow() is thenable at runtime
     await expect(service.ensureSessionAttachable("workspace-1", "other-nostream")).rejects.toThrow(
-      'Session "other-nostream" is unavailable (no sessions discovered for workspace "workspace-1")'
+      'Session "other-nostream" not found for workspace "workspace-1"'
     );
 
     expect(
