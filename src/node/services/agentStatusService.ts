@@ -197,9 +197,14 @@ export class AgentStatusService {
       const candidates = await this.workspaceService.getWorkspaceTitleModelCandidates(workspaceId);
       if (candidates.length === 0) return;
 
+      // Skip the expensive provider call if stop() fired during any of the
+      // earlier awaits (transcript build, candidates fetch). The generator
+      // can take seconds to a minute, so kicking it off after shutdown
+      // would leak background LLM work past our lifecycle.
+      if (this.stopped) return;
       const result = await generateWorkspaceStatus(transcript, candidates, this.aiService);
-      // The generator can take seconds to a minute; bail if stop() fired
-      // mid-flight to avoid leaking writes past our lifecycle.
+      // Re-check after the generator returns: the same hazard at a later
+      // await boundary.
       if (this.stopped) return;
       if (!result.success) {
         log.debug("AgentStatusService: status generation failed; will retry next tick", {

@@ -39,6 +39,7 @@ describe("AgentStatusService", () => {
   let emitWorkspaceActivityMock: ReturnType<
     typeof mock<(workspaceId: string, snapshot: unknown) => void>
   >;
+  let getCandidatesMock: ReturnType<typeof mock<(workspaceId: string) => Promise<string[]>>>;
   let generateSpy: ReturnType<
     typeof spyOn<typeof workspaceStatusGenerator, "generateWorkspaceStatus">
   >;
@@ -92,8 +93,9 @@ describe("AgentStatusService", () => {
     } as unknown as Config;
 
     emitWorkspaceActivityMock = mock(() => undefined);
+    getCandidatesMock = mock((_id: string) => Promise.resolve(["anthropic:claude-haiku-4-5"]));
     mockWorkspaceService = {
-      getWorkspaceTitleModelCandidates: mock(() => Promise.resolve(["anthropic:claude-haiku-4-5"])),
+      getWorkspaceTitleModelCandidates: getCandidatesMock,
       emitWorkspaceActivity: emitWorkspaceActivityMock,
     } as unknown as WorkspaceService;
 
@@ -313,6 +315,36 @@ describe("AgentStatusService", () => {
     expect(new Set(persistedIds)).toEqual(new Set(ids));
   });
 
+  test("does not invoke the generator if stopped during transcript build or candidates fetch", async () => {
+    // Earlier awaits (history read, candidates fetch) are also yield points.
+    // If stop() fires during one of them, kicking off the multi-second
+    // provider call afterwards would leak LLM work past the service's
+    // declared lifecycle.
+    await historyHandle.historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("u1", "user", "long-running task")
+    );
+
+    let releaseCandidates!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseCandidates = resolve;
+    });
+    getCandidatesMock.mockImplementationOnce(async () => {
+      await gate;
+      return ["anthropic:claude-haiku-4-5"];
+    });
+
+    const service = createService();
+    const inFlight = getInternals(service).runForWorkspace(workspaceId);
+    service.stop();
+    releaseCandidates();
+    await inFlight;
+
+    expect(generateSpy).not.toHaveBeenCalled();
+    expect(setAiStatusMock).not.toHaveBeenCalled();
+    expect(emitWorkspaceActivityMock).not.toHaveBeenCalled();
+  });
+
   test("does not persist or emit if the service is stopped while a generation is in flight", async () => {
     // Real provider calls can take seconds to minutes. If stop() fires
     // mid-generation (app shutdown), persisting afterwards would leak writes
@@ -322,11 +354,20 @@ describe("AgentStatusService", () => {
       createMuxMessage("u1", "user", "long-running task")
     );
 
+    // Two-stage gate: signal when the generator actually starts (so the
+    // test can fire stop() after the pre-generator guard has passed) and
+    // a release the test holds until it's ready for the generator to
+    // resolve.
+    let signalStarted!: () => void;
+    const startedSignal = new Promise<void>((resolve) => {
+      signalStarted = resolve;
+    });
     let releaseGenerate!: () => void;
     const gate = new Promise<void>((resolve) => {
       releaseGenerate = resolve;
     });
     generateSpy.mockImplementationOnce(async () => {
+      signalStarted();
       await gate;
       return Ok({
         status: { emoji: "🛠️", message: "Doing work" },
@@ -336,6 +377,7 @@ describe("AgentStatusService", () => {
 
     const service = createService();
     const inFlight = getInternals(service).runForWorkspace(workspaceId);
+    await startedSignal;
     service.stop();
     releaseGenerate();
     await inFlight;
