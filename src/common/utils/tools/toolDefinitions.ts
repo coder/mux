@@ -852,16 +852,22 @@ export const TOOL_DEFINITIONS = {
         // Normalize to `script` so downstream code (tool runner + UI) stays consistent.
         if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
 
-        const obj = value as Record<string, unknown>;
-        if (typeof obj.script === "string") return value;
+        let obj = value as Record<string, unknown>;
 
-        if (typeof obj.command === "string") {
+        if (typeof obj.script !== "string" && typeof obj.command === "string") {
           // Drop the legacy field to keep tool args canonical (and avoid confusing downstream consumers).
           const { command, ...rest } = obj as Record<string, unknown> & { command: string };
-          return { ...rest, script: command };
+          obj = { ...rest, script: command };
         }
 
-        return value;
+        // Compatibility: DeepSeek v4 emits `description` instead of `display_name`.
+        // Treat `description` as an undocumented alias so the call still validates.
+        if (typeof obj.display_name !== "string" && typeof obj.description === "string") {
+          const { description, ...rest } = obj as Record<string, unknown> & { description: string };
+          obj = { ...rest, display_name: description };
+        }
+
+        return obj;
       },
       z.object({
         script: z.string().describe("The bash script/command to execute"),

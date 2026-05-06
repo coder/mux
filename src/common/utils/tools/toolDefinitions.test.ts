@@ -152,6 +152,37 @@ describe("TOOL_DEFINITIONS", () => {
     expect(parsed.success).toBe(false);
   });
 
+  it("accepts bash tool calls using description (alias for display_name)", () => {
+    // DeepSeek v4 emits `description` instead of `display_name`; ensure it normalizes.
+    const parsed = TOOL_DEFINITIONS.bash.schema.safeParse({
+      script: "ls",
+      timeout_secs: 60,
+      run_in_background: false,
+      description: "List files",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.display_name).toBe("List files");
+      expect("description" in parsed.data).toBe(false);
+    }
+  });
+
+  it("prefers display_name when both display_name and description are provided", () => {
+    const parsed = TOOL_DEFINITIONS.bash.schema.safeParse({
+      script: "ls",
+      timeout_secs: 60,
+      run_in_background: false,
+      display_name: "Real Name",
+      description: "Alias Name",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.display_name).toBe("Real Name");
+    }
+  });
+
   const filePathAliasCases = [
     {
       toolName: "file_read",
