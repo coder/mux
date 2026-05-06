@@ -177,6 +177,37 @@ describe("AgentStatusService", () => {
     expect(updateAiStatusMock).toHaveBeenCalledTimes(1);
   });
 
+  test("includes the in-flight partial assistant message so the hash refreshes mid-stream", async () => {
+    // During an active stream the assistant's text/tool activity lives in
+    // partial.json before being committed to chat.jsonl. If buildTrailing-
+    // Transcript only saw committed messages, the hash would stay constant
+    // for the entire stream, defeating the whole point of the feature
+    // (showing what the agent is doing *right now*).
+    await historyHandle.historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("u1", "user", "kick off a long task")
+    );
+
+    const service = createService();
+    await getInternals(service).runForWorkspace(workspaceId);
+    expect(generateSpy).toHaveBeenCalledTimes(1);
+    const initialHash = updateAiStatusMock.mock.calls[0][2];
+    expect(typeof initialHash).toBe("string");
+
+    // Stage a partial assistant message — same shape the streaming pipeline
+    // writes via writePartial. The runForWorkspace tick should now see this
+    // text in the transcript and regenerate.
+    const partial = createMuxMessage("a-partial", "assistant", "Reading config files");
+    await historyHandle.historyService.writePartial(workspaceId, partial);
+
+    await getInternals(service).runForWorkspace(workspaceId);
+    expect(generateSpy).toHaveBeenCalledTimes(2);
+    const transcriptArg = generateSpy.mock.calls[1][0];
+    expect(transcriptArg).toContain("Assistant: Reading config files");
+    const newHash = updateAiStatusMock.mock.calls[1][2];
+    expect(newHash).not.toBe(initialHash);
+  });
+
   test("re-generates after the trailing transcript changes", async () => {
     await historyHandle.historyService.appendToHistory(
       workspaceId,

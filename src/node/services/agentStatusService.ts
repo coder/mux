@@ -364,6 +364,12 @@ export class AgentStatusService {
    * message count and {@link AGENT_STATUS_MAX_TRANSCRIPT_TOKENS} tokens.
    *
    * Returns an empty string if the workspace has no chat history yet.
+   *
+   * During an active stream the assistant's current text and tool calls live
+   * in `partial.json` (via HistoryService.writePartial) before being committed
+   * to `chat.jsonl`. We append the partial message after the committed tail
+   * so the hash changes — and the status refreshes — as the stream progresses,
+   * which is exactly when an "agent doing X right now" status is most useful.
    */
   private async buildTrailingTranscript(workspaceId: string): Promise<string> {
     const result = await this.historyService.getLastMessages(
@@ -374,9 +380,13 @@ export class AgentStatusService {
       return "";
     }
 
-    const formatted = result.data
-      .map(formatMessageForTranscript)
-      .filter((entry) => entry.length > 0);
+    const messages: MuxMessage[] = [...result.data];
+    const partial = await this.historyService.readPartial(workspaceId);
+    if (partial) {
+      messages.push(partial);
+    }
+
+    const formatted = messages.map(formatMessageForTranscript).filter((entry) => entry.length > 0);
 
     if (formatted.length === 0) {
       return "";
