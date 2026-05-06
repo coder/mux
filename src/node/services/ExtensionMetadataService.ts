@@ -113,14 +113,12 @@ export class ExtensionMetadataService {
   }
 
   /**
-   * Initialize the service by ensuring directory exists and clearing stale streaming flags.
-   * Call this once on app startup.
+   * Initialize the service by ensuring directory exists and clearing stale
+   * streaming flags. Call once on app startup.
    *
-   * Per AGENTS.md ("Startup-time initialization must never crash the app"),
-   * we swallow disk-write failures here so a transient permission/disk-full
-   * error doesn't block app launch. The new save() throws on failure for the
-   * benefit of strict callers (AgentStatusService); this method is the
-   * startup-safety boundary that keeps that contract.
+   * Per AGENTS.md ("Startup-time initialization must never crash the app")
+   * disk failures here are logged and swallowed; save() itself throws so
+   * strict callers (e.g. AgentStatusService) can react.
    */
   async initialize(): Promise<void> {
     // Ensure directory exists
@@ -169,12 +167,10 @@ export class ExtensionMetadataService {
   }
 
   private async save(data: ExtensionMetadataFile): Promise<void> {
-    // Throw on write failure so callers that need to know whether the write
-    // actually happened (e.g. AgentStatusService, which dedups against the
-    // last successfully-persisted input hash) can react. Callers that don't
-    // care still wrap setX in emitWorkspaceActivityUpdate which downgrades
-    // the throw to a logged warning, preserving the historical
-    // "log-and-continue" behavior for those paths.
+    // Throws on failure so callers that need to know whether the write
+    // actually happened (e.g. AgentStatusService dedup) can react.
+    // emitWorkspaceActivityUpdate (the historical wrapper used elsewhere)
+    // downgrades throws to logged warnings for log-and-continue paths.
     try {
       const content = JSON.stringify(data, null, 2);
       await writeFileAtomic(this.filePath, content, "utf-8");
@@ -250,24 +246,14 @@ export class ExtensionMetadataService {
 
   /**
    * Update the AI-generated sidebar status payload for a workspace.
-   *
-   * `inputHash` is opaque from this service's perspective: AgentStatusService
-   * persists a fingerprint of the trailing transcript window so that on
-   * restart we can skip regeneration when the transcript is unchanged.
-   * Callers pass `null` to clear both the payload and the cached hash.
+   * Pass `null` to clear it.
    */
   async setAiStatus(
     workspaceId: string,
-    aiStatus: ExtensionAgentStatus | null,
-    inputHash: string | null
+    aiStatus: ExtensionAgentStatus | null
   ): Promise<WorkspaceActivitySnapshot> {
     return this.mutateWorkspaceSnapshot(workspaceId, Date.now(), (workspace) => {
-      if (aiStatus) {
-        workspace.aiStatus = aiStatus;
-      } else {
-        workspace.aiStatus = null;
-      }
-      workspace.aiStatusInputHash = inputHash;
+      workspace.aiStatus = aiStatus;
     });
   }
 
@@ -309,22 +295,6 @@ export class ExtensionMetadataService {
   async getSnapshot(workspaceId: string): Promise<WorkspaceActivitySnapshot | null> {
     const data = await this.load();
     return this.toSnapshot(data.workspaces[workspaceId]);
-  }
-
-  /**
-   * Read the persisted aiStatus input hash for a workspace, if any.
-   *
-   * Internal helper for AgentStatusService dedup across restarts. The hash is
-   * intentionally not part of WorkspaceActivitySnapshot because it has no
-   * sidebar/UI semantics — it's purely a backend bookkeeping field.
-   */
-  async getAiStatusInputHash(workspaceId: string): Promise<string | null> {
-    const data = await this.load();
-    const normalized = coerceExtensionMetadata(data.workspaces[workspaceId]);
-    if (!normalized) {
-      return null;
-    }
-    return typeof normalized.aiStatusInputHash === "string" ? normalized.aiStatusInputHash : null;
   }
 
   /**

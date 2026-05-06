@@ -1,72 +1,26 @@
-import { EventEmitter } from "events";
 import type { BrowserWindow } from "electron";
 import { log } from "@/node/services/log";
 
 type RestartAppHandler = () => void | Promise<void>;
 
-/**
- * WindowService extends EventEmitter so backend services that need to react
- * to window focus state (e.g. AgentStatusService cadence gating) can subscribe
- * via `windowService.on("focus-change", listener)` without depending on
- * Electron internals or polling.
- */
-export class WindowService extends EventEmitter {
+export class WindowService {
   private mainWindow: BrowserWindow | null = null;
   private restartAppHandler: RestartAppHandler | null = null;
-  // Default to true so headless/test environments behave as if the user is
-  // actively watching. Desktop wires this to BrowserWindow focus/blur events
-  // in `setMainWindow` below.
-  private focused = true;
 
   setMainWindow(window: BrowserWindow) {
     this.mainWindow = window;
-
-    // Seed from the window's current state if we can.
-    try {
-      this.setFocused(typeof window.isFocused === "function" ? window.isFocused() : true);
-    } catch {
-      this.setFocused(true);
-    }
-
-    // Wire focus/blur listeners directly to the window. The window is
-    // recreated only on app restart, so we don't need to teardown listeners.
-    // Tests pass a minimal stub without an EventEmitter surface; gracefully
-    // skip listener wiring in that case so unrelated suites don't crash.
-    const eventTarget = window as unknown as {
-      on?: (event: string, listener: () => void) => unknown;
-    };
-    if (typeof eventTarget.on === "function") {
-      eventTarget.on("focus", () => this.setFocused(true));
-      eventTarget.on("blur", () => this.setFocused(false));
-    }
   }
   setRestartAppHandler(handler: RestartAppHandler | null): void {
     this.restartAppHandler = handler;
   }
 
   /**
-   * Returns whether the desktop main window is currently focused. Falls back
-   * to `true` in non-desktop contexts (CLI server, tests) so backend
-   * services don't accidentally throttle themselves to "unfocused" cadence
-   * when there is no window at all.
+   * Whether the desktop main window is currently focused. Falls back to
+   * `true` in non-desktop contexts (CLI server, tests) so backend services
+   * don't throttle themselves to "unfocused" cadence when there is no window.
    */
   isFocused(): boolean {
-    return this.focused;
-  }
-
-  /**
-   * Update the cached focus state. Emits `focus-change` only on transitions
-   * so subscribers don't have to debounce duplicate notifications.
-   *
-   * Exposed publicly to allow tests and headless callers to drive focus
-   * transitions without an actual BrowserWindow.
-   */
-  setFocused(focused: boolean): void {
-    if (this.focused === focused) {
-      return;
-    }
-    this.focused = focused;
-    this.emit("focus-change", focused);
+    return this.mainWindow?.isFocused?.() ?? true;
   }
 
   async restartApp(): Promise<{ supported: true } | { supported: false; message: string }> {

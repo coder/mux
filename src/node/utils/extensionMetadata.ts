@@ -28,15 +28,9 @@ export interface ExtensionMetadata {
   // Persists the latest display-status URL so later updates without a URL
   // can still carry the last deep link even after displayStatus is cleared.
   lastStatusUrl?: string | null;
-  // AI-generated status summary produced by the small-model status path
-  // (workspaceStatusGenerator.ts). When present, takes precedence over
-  // todoStatus in the sidebar.
+  // AI-generated status summary (workspaceStatusGenerator). When present,
+  // takes precedence over todoStatus in the sidebar.
   aiStatus?: ExtensionAgentStatus | null;
-  // Hash of the trailing transcript window that produced `aiStatus`. Used by
-  // AgentStatusService to skip regeneration when the input is unchanged
-  // (idle/frozen chats). Survives restarts so we don't pay for redundant
-  // generations on relaunch.
-  aiStatusInputHash?: string | null;
 }
 
 /**
@@ -122,11 +116,6 @@ export function coerceExtensionMetadata(value: unknown): ExtensionMetadata | nul
     ...(aiStatus !== undefined ? { aiStatus } : {}),
     ...(typeof record.hasTodos === "boolean" ? { hasTodos: record.hasTodos } : {}),
     lastStatusUrl: coerceStatusUrl(record.lastStatusUrl),
-    ...(typeof record.aiStatusInputHash === "string"
-      ? { aiStatusInputHash: record.aiStatusInputHash }
-      : record.aiStatusInputHash === null
-        ? { aiStatusInputHash: null }
-        : {}),
   };
 }
 

@@ -1544,11 +1544,9 @@ export class WorkspaceService extends EventEmitter {
   }
 
   /**
-   * Public so AgentStatusService (and any future consumer) can broadcast a
-   * workspace activity snapshot it produced itself. The standard path is
-   * `emitWorkspaceActivityUpdate`, but callers that need to know whether the
-   * persist actually succeeded need to invoke the underlying writer directly
-   * and then call this to reach the frontend.
+   * Public so AgentStatusService can broadcast a snapshot it produced after
+   * a direct setX call. (Most callers use emitWorkspaceActivityUpdate, which
+   * couples persist + emit but swallows persist errors.)
    */
   public emitWorkspaceActivity(
     workspaceId: string,
@@ -3855,14 +3853,10 @@ export class WorkspaceService extends EventEmitter {
   }
 
   /**
-   * Build the candidate list used by both title generation and the
-   * sidebar AI-status path. Starts with the global "small model" preferences
-   * and falls back to any model the workspace itself has configured so a
-   * custom-model workspace can still produce names/statuses when the global
-   * preferred models are unavailable.
-   *
-   * Public so AgentStatusService (and any future small-model consumer) can
-   * reuse the same precedence without duplicating the workspace lookup.
+   * Candidate list for "small model" callers (title + AI sidebar status).
+   * Global preferences first, then any workspace-configured model so a
+   * custom-model workspace still works when global preferences are
+   * unavailable. Public so AgentStatusService can share the precedence.
    */
   public async getWorkspaceTitleModelCandidates(workspaceId: string): Promise<string[]> {
     const candidates: string[] = [...NAME_GEN_PREFERRED_MODELS];

@@ -22,125 +22,88 @@ import type { WorkspaceService } from "./workspaceService";
 import { generateWorkspaceStatus } from "./workspaceStatusGenerator";
 import { log } from "./log";
 
-/**
- * Public-test surface for AgentStatusService. Real callers use the no-arg
- * constructor; tests pass a `clock` to drive deterministic time and can
- * skip the startup delay by passing `startupDelayMs: 0`.
- */
+const FALLBACK_TOKENIZER_MODEL = "anthropic:claude-haiku-4-5";
+
 export interface AgentStatusServiceOptions {
   /** Override for test injection. Defaults to `Date.now`. */
   clock?: () => number;
-  /** Override startup delay (ms). Defaults to {@link AGENT_STATUS_STARTUP_DELAY_MS}. */
+  /** Override startup delay. Defaults to AGENT_STATUS_STARTUP_DELAY_MS. */
   startupDelayMs?: number;
-  /** Override scheduler tick interval (ms). Defaults to {@link AGENT_STATUS_TICK_INTERVAL_MS}. */
+  /** Override scheduler tick interval. Defaults to AGENT_STATUS_TICK_INTERVAL_MS. */
   tickIntervalMs?: number;
 }
 
-interface WorkspaceTrackingState {
-  /** Last time we successfully ran (or skipped due to dedup). 0 on first ever tick. */
+interface State {
+  /** Last time we ran (or skipped via dedup). 0 if we never ran. */
   lastRanAt: number;
-  /** Hash of the most recent input we generated against. null if we never ran. */
+  /** Hash of the input we last successfully generated for. null if never. */
   lastInputHash: string | null;
-  /** Whether a generation is currently in flight for this workspace. */
+  /** Whether a generation is currently in flight. */
   inFlight: boolean;
 }
 
 /**
- * Periodic backend job that produces the sidebar's AI-generated agent
- * status using the same "small model" path as workspace titles.
+ * Periodic backend job that produces the sidebar's AI-generated agent status
+ * using the same "small model" path as workspace title generation.
  *
- * Cadence:
- * - The scheduler ticks every {@link AGENT_STATUS_TICK_INTERVAL_MS}.
- * - Each workspace has its own per-tick eligibility window: focused windows
- *   regenerate at most every {@link AGENT_STATUS_FOCUSED_INTERVAL_MS}, blurred
- *   windows back off to {@link AGENT_STATUS_UNFOCUSED_INTERVAL_MS}.
+ * Cadence: per-workspace eligibility gates each tick. Focused windows
+ * regenerate at most every AGENT_STATUS_FOCUSED_INTERVAL_MS, blurred windows
+ * back off to AGENT_STATUS_UNFOCUSED_INTERVAL_MS.
  *
- * Dedup:
- * - Each generation hashes its trailing-transcript window. We persist the
- *   hash on disk via ExtensionMetadataService so a workspace whose chat is
- *   idle/frozen produces no further generations (input is unchanged).
+ * Dedup: each generation hashes its trailing-transcript window. Identical
+ * hash to the last successful run skips regeneration (idle/frozen chats).
  *
- * Concurrency:
- * - Bounded by {@link AGENT_STATUS_MAX_CONCURRENT} so a sweep across many
- *   workspaces never spikes provider load.
+ * Concurrency: bounded by AGENT_STATUS_MAX_CONCURRENT so a multi-workspace
+ * sweep never spikes provider load.
  */
 export class AgentStatusService {
-  private readonly config: Config;
-  private readonly historyService: HistoryService;
-  private readonly tokenizerService: TokenizerService;
-  private readonly extensionMetadata: ExtensionMetadataService;
-  private readonly workspaceService: WorkspaceService;
-  private readonly windowService: WindowService;
-  private readonly aiService: AIService;
-
+  private readonly tracked = new Map<string, State>();
+  private readonly inFlightPromises = new Set<Promise<void>>();
   private readonly clock: () => number;
   private readonly startupDelayMs: number;
   private readonly tickIntervalMs: number;
 
-  private readonly tracked = new Map<string, WorkspaceTrackingState>();
-  private inFlightCount = 0;
-  // Track in-flight per-workspace promises so a tick can be awaited cleanly
-  // in tests (and so shutdown can drain them if we ever need to).
-  private readonly inFlightPromises = new Set<Promise<void>>();
-
   private startupTimeout: ReturnType<typeof setTimeout> | null = null;
   private checkInterval: ReturnType<typeof setInterval> | null = null;
-  // Default to "running so the service is usable as soon as it's
-  // constructed (tests drive runTick() directly). stop() flips this true to
-  // gate any in-flight or scheduled work.
   private stopped = false;
   private tickInFlight = false;
-  private hashesHydrated = false;
 
   constructor(
-    config: Config,
-    historyService: HistoryService,
-    tokenizerService: TokenizerService,
-    extensionMetadata: ExtensionMetadataService,
-    workspaceService: WorkspaceService,
-    windowService: WindowService,
-    aiService: AIService,
+    private readonly config: Config,
+    private readonly historyService: HistoryService,
+    private readonly tokenizerService: TokenizerService,
+    private readonly extensionMetadata: ExtensionMetadataService,
+    private readonly workspaceService: WorkspaceService,
+    private readonly windowService: WindowService,
+    private readonly aiService: AIService,
     options: AgentStatusServiceOptions = {}
   ) {
-    this.config = config;
-    this.historyService = historyService;
-    this.tokenizerService = tokenizerService;
-    this.extensionMetadata = extensionMetadata;
-    this.workspaceService = workspaceService;
-    this.windowService = windowService;
-    this.aiService = aiService;
-
     this.clock = options.clock ?? (() => Date.now());
     this.startupDelayMs = options.startupDelayMs ?? AGENT_STATUS_STARTUP_DELAY_MS;
     this.tickIntervalMs = options.tickIntervalMs ?? AGENT_STATUS_TICK_INTERVAL_MS;
   }
 
   start(): void {
-    // Idempotent re-entry guard: callers in production wire start() once at
-    // initialize() time, but a defensive assert keeps double-start mistakes
-    // visible during development.
     assert(
       this.checkInterval === null && this.startupTimeout === null,
       "AgentStatusService.start() called while already running"
     );
     this.stopped = false;
 
-    const scheduleTicks = () => {
-      if (this.stopped) {
-        return;
-      }
-      // Fire one tick immediately after the startup delay so the user sees an
-      // initial status without waiting a full interval.
-      this.tick();
-      this.checkInterval = setInterval(() => this.tick(), this.tickIntervalMs);
+    const begin = () => {
+      if (this.stopped) return;
+      // Fire one tick immediately so the user sees an initial status without
+      // waiting a full interval after the startup delay.
+      void this.runTick();
+      this.checkInterval = setInterval(() => void this.runTick(), this.tickIntervalMs);
     };
 
     if (this.startupDelayMs <= 0) {
-      scheduleTicks();
+      begin();
     } else {
       this.startupTimeout = setTimeout(() => {
         this.startupTimeout = null;
-        scheduleTicks();
+        begin();
       }, this.startupDelayMs);
     }
 
@@ -161,148 +124,57 @@ export class AgentStatusService {
       this.checkInterval = null;
     }
     this.tracked.clear();
-    this.inFlightCount = 0;
     this.inFlightPromises.clear();
     this.tickInFlight = false;
-    this.hashesHydrated = false;
     log.info("AgentStatusService stopped");
   }
 
-  /**
-   * Synchronous best-effort tick entrypoint. Safe to call repeatedly; we
-   * guard with `tickInFlight` so overlapping ticks coalesce.
-   */
-  private tick(): void {
-    if (this.stopped || this.tickInFlight) {
-      return;
-    }
-    this.tickInFlight = true;
-    void this.runTick().finally(() => {
-      this.tickInFlight = false;
-    });
-  }
-
   private async runTick(): Promise<void> {
+    if (this.stopped || this.tickInFlight) return;
+    this.tickInFlight = true;
     try {
-      // First tick after start() needs to seed lastInputHash from disk so
-      // we honor the previous run's dedup state across restarts.
-      if (!this.hashesHydrated) {
-        await this.hydratePersistedHashes();
-        this.hashesHydrated = true;
-      }
-      this.processEligibleWorkspaces();
-      // Wait for the workspaces we just dispatched so callers (production
-      // schedulers + tests) observe their effects deterministically.
-      await this.drainInFlight();
+      this.dispatch();
+      // Awaited so production callers and tests observe completion.
+      await Promise.allSettled([...this.inFlightPromises]);
     } catch (error) {
       log.error("AgentStatusService tick failed", { error });
+    } finally {
+      this.tickInFlight = false;
     }
   }
 
-  private async drainInFlight(): Promise<void> {
-    while (this.inFlightPromises.size > 0) {
-      await Promise.allSettled(Array.from(this.inFlightPromises));
-    }
-  }
-
-  private async hydratePersistedHashes(): Promise<void> {
-    const config = this.config.loadConfigOrDefault();
-    for (const [, projectConfig] of config.projects) {
-      for (const workspace of projectConfig.workspaces) {
-        const workspaceId = workspace.id ?? workspace.name;
-        if (typeof workspaceId !== "string" || workspaceId.length === 0) {
-          continue;
-        }
-        const persistedHash = await this.extensionMetadata.getAiStatusInputHash(workspaceId);
-        if (persistedHash !== null) {
-          this.tracked.set(workspaceId, {
-            lastRanAt: 0,
-            lastInputHash: persistedHash,
-            inFlight: false,
-          });
-        }
-      }
-    }
-  }
-
-  // Synchronous: per-workspace dispatches go on inFlightPromises and are
-  // awaited by runTick via drainInFlight. Keeping this sync avoids a no-op
-  // Promise allocation on every tick.
-  private processEligibleWorkspaces(): void {
+  private dispatch(): void {
     const now = this.clock();
-    const focused = this.windowService.isFocused();
-    const interval = focused
+    const interval = this.windowService.isFocused()
       ? AGENT_STATUS_FOCUSED_INTERVAL_MS
       : AGENT_STATUS_UNFOCUSED_INTERVAL_MS;
 
-    const config = this.config.loadConfigOrDefault();
-
-    // Collect every eligible workspace first, then sort by lastRanAt
-    // ascending. With AGENT_STATUS_MAX_CONCURRENT=1 a fixed iteration order
-    // would let the first workspace starve everyone deeper in the list
-    // (it becomes re-eligible at 30s, and workspace[N>1] is never reached).
-    // Sorting by least-recently-run produces a fair round-robin without an
-    // explicit queue.
-    const eligible: Array<{ workspaceId: string; lastRanAt: number }> = [];
-    for (const [, projectConfig] of config.projects) {
-      for (const workspace of projectConfig.workspaces) {
-        const workspaceId = workspace.id ?? workspace.name;
-        if (typeof workspaceId !== "string" || workspaceId.length === 0) {
-          continue;
-        }
-        if (isWorkspaceArchived(workspace.archivedAt, workspace.unarchivedAt)) {
-          continue;
-        }
-
-        const state = this.tracked.get(workspaceId);
-        if (state?.inFlight) {
-          continue;
-        }
-        if (state && now - state.lastRanAt < interval) {
-          continue;
-        }
-
-        // Workspaces that have never run (state === undefined) get the
-        // earliest possible lastRanAt so they preempt previously-run
-        // workspaces on their first tick.
-        eligible.push({ workspaceId, lastRanAt: state?.lastRanAt ?? 0 });
+    // Sort eligible workspaces by lastRanAt ascending. With MAX_CONCURRENT=1,
+    // a fixed iteration order would let the first workspace starve the rest;
+    // least-recently-run gives fair round-robin without an explicit queue.
+    const eligible: Array<{ id: string; lastRanAt: number }> = [];
+    for (const [, projectConfig] of this.config.loadConfigOrDefault().projects) {
+      for (const ws of projectConfig.workspaces) {
+        const id = ws.id ?? ws.name;
+        if (typeof id !== "string" || id.length === 0) continue;
+        if (isWorkspaceArchived(ws.archivedAt, ws.unarchivedAt)) continue;
+        const state = this.tracked.get(id);
+        if (state?.inFlight) continue;
+        if (state && now - state.lastRanAt < interval) continue;
+        eligible.push({ id, lastRanAt: state?.lastRanAt ?? 0 });
       }
     }
-
     eligible.sort((a, b) => a.lastRanAt - b.lastRanAt);
 
-    for (const { workspaceId } of eligible) {
-      if (this.stopped) {
-        return;
-      }
-      if (this.inFlightCount >= AGENT_STATUS_MAX_CONCURRENT) {
-        return;
-      }
-
-      // Per-workspace work runs concurrently up to AGENT_STATUS_MAX_CONCURRENT.
-      // We track the promise (instead of fire-and-forget) so runTick can
-      // await all dispatched workspaces before returning. That keeps the
-      // production tick loop's "did we finish?" semantics observable, and
-      // makes tests deterministic without hand-rolled microtask flushing.
-      this.inFlightCount += 1;
-      this.markInFlight(workspaceId, true);
-      const promise = this.runForWorkspace(workspaceId).finally(() => {
-        this.inFlightCount = Math.max(0, this.inFlightCount - 1);
-        this.markInFlight(workspaceId, false);
+    for (const { id } of eligible) {
+      if (this.stopped || this.inFlightPromises.size >= AGENT_STATUS_MAX_CONCURRENT) return;
+      const state = this.ensureState(id);
+      state.inFlight = true;
+      const promise = this.runForWorkspace(id).finally(() => {
+        state.inFlight = false;
         this.inFlightPromises.delete(promise);
       });
       this.inFlightPromises.add(promise);
-    }
-  }
-
-  private markInFlight(workspaceId: string, value: boolean): void {
-    const state = this.tracked.get(workspaceId);
-    if (state) {
-      state.inFlight = value;
-      return;
-    }
-    if (value) {
-      this.tracked.set(workspaceId, { lastRanAt: 0, lastInputHash: null, inFlight: true });
     }
   }
 
@@ -311,72 +183,38 @@ export class AgentStatusService {
       const transcript = await this.buildTrailingTranscript(workspaceId);
       const inputHash = computeInputHash(transcript);
 
-      // Always update lastRanAt: even when we skip the LLM call, we don't
-      // want to reconsider this workspace until the next interval boundary.
+      // Bump lastRanAt regardless of skip/run so the scheduler doesn't
+      // reconsider this workspace until the next interval boundary.
       const state = this.ensureState(workspaceId);
-      const now = this.clock();
-      state.lastRanAt = now;
+      state.lastRanAt = this.clock();
 
-      if (transcript.trim().length === 0) {
-        // A brand-new workspace with no chat content yet — skip silently.
-        // We deliberately do not clear an existing aiStatus here so that a
-        // post-compaction "empty boundary" doesn't blank a recently produced
-        // status.
-        return;
-      }
-
-      if (state.lastInputHash === inputHash) {
-        // Idle/frozen: identical trailing window, no point in regenerating.
-        // Still bump lastRanAt above so we won't revisit until the next
-        // interval boundary, which keeps the scheduler cheap.
-        return;
-      }
+      // Empty workspace: nothing to summarize. Don't blank an existing
+      // aiStatus — that would clobber a status produced before compaction.
+      if (transcript.trim().length === 0) return;
+      // Idle/frozen: identical trailing window since last successful run.
+      if (state.lastInputHash === inputHash) return;
 
       const candidates = await this.workspaceService.getWorkspaceTitleModelCandidates(workspaceId);
-      if (candidates.length === 0) {
-        log.debug("AgentStatusService: no model candidates for workspace, skipping", {
-          workspaceId,
-        });
-        return;
-      }
+      if (candidates.length === 0) return;
 
       const result = await generateWorkspaceStatus(transcript, candidates, this.aiService);
+      // The generator can take seconds to a minute; bail if stop() fired
+      // mid-flight to avoid leaking writes past our lifecycle.
+      if (this.stopped) return;
       if (!result.success) {
         log.debug("AgentStatusService: status generation failed; will retry next tick", {
           workspaceId,
           error: result.error,
         });
-        // Leave lastInputHash unchanged so the next tick retries even
-        // though the input is unchanged.
-        return;
-      }
-
-      // The generator can take seconds to a minute. The service may have
-      // been stopped (app shutdown, dispose, etc.) while we were awaiting
-      // the provider response. If so, do not persist or emit — that would
-      // leak metadata writes and activity events past the service's
-      // declared lifetime.
-      if (this.stopped) {
         return;
       }
 
       // Persist BEFORE updating the in-memory dedup hash. If the disk write
-      // fails (transient I/O error), we want the next tick to retry the
-      // unchanged transcript instead of dedup'ing against a hash we never
-      // actually committed. The frontend activity emit happens after the
-      // write returns successfully, so subscribers either see the new
-      // status or fall through to a later retry.
+      // fails we want the next tick to retry against the same transcript
+      // instead of dedup'ing against a hash we never committed.
       try {
-        const snapshot = await this.extensionMetadata.setAiStatus(
-          workspaceId,
-          { emoji: result.data.status.emoji, message: result.data.status.message },
-          inputHash
-        );
-        // Re-check after the (also-async) disk write — same lifecycle
-        // hazard as the post-generation check above.
-        if (this.stopped) {
-          return;
-        }
+        const snapshot = await this.extensionMetadata.setAiStatus(workspaceId, result.data.status);
+        if (this.stopped) return;
         state.lastInputHash = inputHash;
         this.workspaceService.emitWorkspaceActivity(workspaceId, snapshot);
       } catch (error) {
@@ -384,8 +222,6 @@ export class AgentStatusService {
           workspaceId,
           error,
         });
-        // Intentionally leave state.lastInputHash untouched so the next tick
-        // tries again with the same transcript.
       }
     } catch (error) {
       log.error("AgentStatusService: unexpected error during status generation", {
@@ -395,110 +231,68 @@ export class AgentStatusService {
     }
   }
 
-  private ensureState(workspaceId: string): WorkspaceTrackingState {
-    let state = this.tracked.get(workspaceId);
+  private ensureState(id: string): State {
+    let state = this.tracked.get(id);
     if (!state) {
       state = { lastRanAt: 0, lastInputHash: null, inFlight: false };
-      this.tracked.set(workspaceId, state);
+      this.tracked.set(id, state);
     }
     return state;
   }
 
   /**
-   * Build the trailing chat transcript for a workspace, capped by both
-   * message count and {@link AGENT_STATUS_MAX_TRANSCRIPT_TOKENS} tokens.
-   *
-   * Returns an empty string if the workspace has no chat history yet.
-   *
-   * During an active stream the assistant's current text and tool calls live
-   * in `partial.json` (via HistoryService.writePartial) before being committed
-   * to `chat.jsonl`. We append the partial message after the committed tail
-   * so the hash changes — and the status refreshes — as the stream progresses,
-   * which is exactly when an "agent doing X right now" status is most useful.
+   * Build the trailing chat transcript, capped by message count and
+   * AGENT_STATUS_MAX_TRANSCRIPT_TOKENS. Includes the in-flight partial
+   * assistant message (HistoryService.readPartial) so the hash refreshes
+   * mid-stream — exactly when "what is the agent doing now" matters most.
    */
   private async buildTrailingTranscript(workspaceId: string): Promise<string> {
     const result = await this.historyService.getLastMessages(
       workspaceId,
       AGENT_STATUS_MAX_TRAILING_MESSAGES
     );
-    if (!result.success) {
-      return "";
-    }
+    if (!result.success) return "";
 
     const messages: MuxMessage[] = [...result.data];
     const partial = await this.historyService.readPartial(workspaceId);
-    if (partial) {
-      messages.push(partial);
-    }
+    if (partial) messages.push(partial);
 
-    const formatted = messages.map(formatMessageForTranscript).filter((entry) => entry.length > 0);
+    const formatted = messages.map(formatMessageForTranscript).filter((s) => s.length > 0);
+    if (formatted.length === 0) return "";
 
-    if (formatted.length === 0) {
-      return "";
-    }
-
-    // Trim from the front (oldest messages) until we fit within the token
-    // budget. The trailing-most messages carry the most signal for "what is
-    // the agent currently doing", so we never drop them.
-    //
-    // Use the first candidate model for tokenization. The tokenizer service
-    // gracefully falls back to a known family for unknown model strings, so
-    // this is safe even when the user's model is not in our table.
-    const tokenizerModel = await this.resolveTokenizerModel(workspaceId);
-    const tokenCounts = await this.tokenizerService.countTokensBatch(tokenizerModel, formatted);
+    // Trim from the front (oldest) until we fit the token budget. Trailing
+    // messages carry the most signal for "what is the agent doing right now",
+    // so we never drop them. The tokenizer service falls back to a known
+    // family for unknown models, so the fallback constant is safe regardless
+    // of which model actually generates this workspace's status.
+    const tokenCounts = await this.tokenizerService.countTokensBatch(
+      FALLBACK_TOKENIZER_MODEL,
+      formatted
+    );
 
     let totalTokens = tokenCounts.reduce((sum, n) => sum + n, 0);
-    let dropFromIndex = 0;
-    while (
-      totalTokens > AGENT_STATUS_MAX_TRANSCRIPT_TOKENS &&
-      dropFromIndex < formatted.length - 1
-    ) {
-      totalTokens -= tokenCounts[dropFromIndex];
-      dropFromIndex += 1;
+    let drop = 0;
+    while (totalTokens > AGENT_STATUS_MAX_TRANSCRIPT_TOKENS && drop < formatted.length - 1) {
+      totalTokens -= tokenCounts[drop];
+      drop += 1;
     }
-
-    return formatted.slice(dropFromIndex).join("\n\n");
-  }
-
-  private async resolveTokenizerModel(workspaceId: string): Promise<string> {
-    try {
-      const candidates = await this.workspaceService.getWorkspaceTitleModelCandidates(workspaceId);
-      // The first candidate is our preferred small model; tokenizing against
-      // it is good enough for budgeting purposes even if a fallback ends up
-      // being used.
-      return candidates[0] ?? "anthropic:claude-haiku-4-5";
-    } catch {
-      return "anthropic:claude-haiku-4-5";
-    }
+    return formatted.slice(drop).join("\n\n");
   }
 }
 
 function extractMessageText(message: MuxMessage): string {
-  if (!Array.isArray(message.parts)) {
-    return "";
-  }
-  const textParts: string[] = [];
-  for (const part of message.parts) {
-    if (part?.type !== "text") {
-      continue;
-    }
-    const text = (part as { text?: unknown }).text;
-    if (typeof text === "string" && text.trim().length > 0) {
-      textParts.push(text.trim());
-    }
-  }
-  return textParts.join("\n");
+  return (message.parts ?? [])
+    .filter((part): part is { type: "text"; text: string } => part.type === "text")
+    .map((part) => part.text.trim())
+    .filter((text) => text.length > 0)
+    .join("\n");
 }
 
 function summarizeToolPart(part: unknown): string | null {
-  if (typeof part !== "object" || part === null) {
-    return null;
-  }
-  const record = part as Record<string, unknown>;
-  const type = record.type;
-  if (typeof type !== "string") {
-    return null;
-  }
+  if (typeof part !== "object" || part === null) return null;
+  const record = part as { type?: unknown; toolName?: unknown };
+  const type = typeof record.type === "string" ? record.type : null;
+  if (!type) return null;
   // Tool calls have type "tool-<name>" or "dynamic-tool" with a toolName.
   const toolName =
     typeof record.toolName === "string"
@@ -506,60 +300,26 @@ function summarizeToolPart(part: unknown): string | null {
       : type.startsWith("tool-")
         ? type.slice(5)
         : null;
-  if (!toolName) {
-    return null;
-  }
-  return `[tool ${toolName}]`;
+  return toolName ? `[tool ${toolName}]` : null;
 }
 
 function formatMessageForTranscript(message: MuxMessage): string {
   const role = message.role === "user" ? "User" : message.role === "assistant" ? "Assistant" : null;
-  if (!role) {
-    return "";
-  }
-  const text = extractMessageText(message);
-  // Include a brief tool-call summary so the model can see *what* the agent
-  // is doing even when the assistant has not yet emitted natural-language
-  // text for the current step. We avoid inlining tool args/output to keep
-  // the cost predictable.
-  const toolSummaries: string[] = [];
-  if (Array.isArray(message.parts)) {
-    for (const part of message.parts) {
-      const summary = summarizeToolPart(part);
-      if (summary) {
-        toolSummaries.push(summary);
-      }
-    }
-  }
+  if (!role) return "";
 
   const segments: string[] = [];
-  if (text.length > 0) {
-    segments.push(text.slice(0, AGENT_STATUS_MAX_MESSAGE_CHARS));
-  }
-  if (toolSummaries.length > 0) {
-    segments.push(toolSummaries.join(" "));
-  }
+  const text = extractMessageText(message).slice(0, AGENT_STATUS_MAX_MESSAGE_CHARS);
+  if (text) segments.push(text);
 
-  if (segments.length === 0) {
-    return "";
-  }
+  // Tool-call summaries let the model see what the agent is doing even when
+  // the assistant has not emitted natural-language text yet. Args/output are
+  // intentionally omitted to keep cost predictable.
+  const tools = (message.parts ?? []).map(summarizeToolPart).filter((s): s is string => s !== null);
+  if (tools.length > 0) segments.push(tools.join(" "));
 
-  return `${role}: ${segments.join("\n")}`;
+  return segments.length === 0 ? "" : `${role}: ${segments.join("\n")}`;
 }
 
-/**
- * Compute a stable hash of the trailing transcript window. Used by the
- * scheduler to skip regeneration when the input hasn't changed since the
- * last successful generation. SHA-256 is overkill but trivially cheap;
- * the hash is opaque to everything outside this service.
- */
 function computeInputHash(transcript: string): string {
   return createHash("sha256").update(transcript).digest("hex");
 }
-
-// Exported for tests.
-export const __test__ = {
-  computeInputHash,
-  extractMessageText,
-  formatMessageForTranscript,
-};

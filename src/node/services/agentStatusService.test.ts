@@ -1,5 +1,4 @@
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
-import { EventEmitter } from "events";
 import type { ProjectsConfig, ProjectConfig, Workspace } from "@/common/types/project";
 import { Ok } from "@/common/types/result";
 import { createMuxMessage } from "@/common/types/message";
@@ -14,7 +13,6 @@ import * as workspaceStatusGenerator from "./workspaceStatusGenerator";
 import { createTestHistoryService } from "./testHistoryService";
 
 interface AgentStatusServiceInternals {
-  tick(): void;
   runTick(): Promise<void>;
   runForWorkspace(workspaceId: string): Promise<void>;
 }
@@ -31,16 +29,12 @@ describe("AgentStatusService", () => {
   let mockTokenizer: TokenizerService;
   let mockAiService: AIService;
   let windowService: WindowService;
+  let isFocused = true;
   let setAiStatusMock: ReturnType<
-    typeof mock<
-      (workspaceId: string, status: unknown, hash: string | null) => Promise<{ recency: number }>
-    >
+    typeof mock<(workspaceId: string, status: unknown) => Promise<{ recency: number }>>
   >;
   let emitWorkspaceActivityMock: ReturnType<
     typeof mock<(workspaceId: string, snapshot: unknown) => void>
-  >;
-  let getAiStatusInputHashMock: ReturnType<
-    typeof mock<(workspaceId: string) => Promise<string | null>>
   >;
   let generateSpy: ReturnType<
     typeof spyOn<typeof workspaceStatusGenerator, "generateWorkspaceStatus">
@@ -63,9 +57,7 @@ describe("AgentStatusService", () => {
     };
   }
 
-  // Driver: instantiate the service with a controllable clock and synchronously
-  // run a tick. We intentionally bypass the scheduler timers so each test step
-  // is deterministic.
+  // Bypass the scheduler timers so each test step is deterministic.
   function createService(options?: { clock?: () => number }): AgentStatusService {
     return new AgentStatusService(
       mockConfig,
@@ -78,8 +70,6 @@ describe("AgentStatusService", () => {
       {
         clock: options?.clock,
         startupDelayMs: 0,
-        // Use a very large tick interval so setInterval doesn't fire while
-        // the test is running; we drive ticks manually via getInternals().
         tickIntervalMs: 60 * 60 * 1000,
       }
     );
@@ -104,18 +94,15 @@ describe("AgentStatusService", () => {
       emitWorkspaceActivity: emitWorkspaceActivityMock,
     } as unknown as WorkspaceService;
 
-    setAiStatusMock = mock((_workspaceId: string, _status: unknown, _hash: string | null) =>
+    setAiStatusMock = mock((_workspaceId: string, _status: unknown) =>
       Promise.resolve({ recency: 0 })
     );
-    getAiStatusInputHashMock = mock(() => Promise.resolve(null));
     mockExtensionMetadata = {
       setAiStatus: setAiStatusMock,
-      getAiStatusInputHash: getAiStatusInputHashMock,
     } as unknown as ExtensionMetadataService;
 
     mockTokenizer = {
-      // Cheap deterministic tokenizer: 1 token per 4 chars. Avoids spinning up
-      // the real worker pool for each test.
+      // Cheap deterministic tokenizer (~1 token per 4 chars).
       countTokensBatch: mock((_model: string, texts: string[]) =>
         Promise.resolve(texts.map((t) => Math.ceil(t.length / 4)))
       ),
@@ -123,8 +110,8 @@ describe("AgentStatusService", () => {
 
     mockAiService = {} as unknown as AIService;
 
-    windowService = new EventEmitter() as unknown as WindowService;
-    (windowService as unknown as { isFocused: () => boolean }).isFocused = () => true;
+    isFocused = true;
+    windowService = { isFocused: () => isFocused } as unknown as WindowService;
 
     generateSpy = spyOn(workspaceStatusGenerator, "generateWorkspaceStatus").mockResolvedValue(
       Ok({
@@ -139,7 +126,7 @@ describe("AgentStatusService", () => {
     await historyHandle.cleanup();
   });
 
-  test("generates a fresh AI status when chat history exists and persists the input hash", async () => {
+  test("generates and persists a fresh AI status when chat history exists", async () => {
     await historyHandle.historyService.appendToHistory(
       workspaceId,
       createMuxMessage("u1", "user", "Please run the test suite")
@@ -159,15 +146,13 @@ describe("AgentStatusService", () => {
     expect(generationCall[1]).toEqual(["anthropic:claude-haiku-4-5"]);
 
     expect(setAiStatusMock).toHaveBeenCalledTimes(1);
-    const updateCall = setAiStatusMock.mock.calls[0];
-    expect(updateCall[0]).toBe(workspaceId);
-    expect(updateCall[1]).toEqual({ emoji: "🛠️", message: "Editing source" });
-    // The hash is persisted so subsequent runs can dedup against it.
-    expect(typeof updateCall[2]).toBe("string");
-    expect(updateCall[2]!.length).toBeGreaterThan(0);
+    const [persistedWorkspaceId, persistedStatus] = setAiStatusMock.mock.calls[0];
+    expect(persistedWorkspaceId).toBe(workspaceId);
+    expect(persistedStatus).toEqual({ emoji: "🛠️", message: "Editing source" });
   });
 
   test("skips regeneration when the trailing transcript is unchanged (dedup)", async () => {
+    // "Frozen chat" behavior: identical hash → no further LLM calls.
     await historyHandle.historyService.appendToHistory(
       workspaceId,
       createMuxMessage("u1", "user", "Idle workspace")
@@ -178,20 +163,16 @@ describe("AgentStatusService", () => {
     expect(generateSpy).toHaveBeenCalledTimes(1);
     expect(setAiStatusMock).toHaveBeenCalledTimes(1);
 
-    // Second pass: history hasn't changed, so the input hash matches and we
-    // must not call the model again. This is the "frozen chat" behavior the
-    // user explicitly asked for.
     await getInternals(service).runForWorkspace(workspaceId);
     expect(generateSpy).toHaveBeenCalledTimes(1);
     expect(setAiStatusMock).toHaveBeenCalledTimes(1);
   });
 
   test("includes the in-flight partial assistant message so the hash refreshes mid-stream", async () => {
-    // During an active stream the assistant's text/tool activity lives in
-    // partial.json before being committed to chat.jsonl. If buildTrailing-
-    // Transcript only saw committed messages, the hash would stay constant
-    // for the entire stream, defeating the whole point of the feature
-    // (showing what the agent is doing *right now*).
+    // The assistant's mid-stream output lives in partial.json before being
+    // committed to chat.jsonl. If buildTrailingTranscript ignored partials,
+    // the hash would stay constant during long streams and dedup would
+    // suppress the very updates the feature exists to surface.
     await historyHandle.historyService.appendToHistory(
       workspaceId,
       createMuxMessage("u1", "user", "kick off a long task")
@@ -200,21 +181,15 @@ describe("AgentStatusService", () => {
     const service = createService();
     await getInternals(service).runForWorkspace(workspaceId);
     expect(generateSpy).toHaveBeenCalledTimes(1);
-    const initialHash = setAiStatusMock.mock.calls[0][2];
-    expect(typeof initialHash).toBe("string");
 
-    // Stage a partial assistant message — same shape the streaming pipeline
-    // writes via writePartial. The runForWorkspace tick should now see this
-    // text in the transcript and regenerate.
     const partial = createMuxMessage("a-partial", "assistant", "Reading config files");
     await historyHandle.historyService.writePartial(workspaceId, partial);
 
+    // Dedup would have suppressed this second call if the partial was missing
+    // from the trailing window.
     await getInternals(service).runForWorkspace(workspaceId);
     expect(generateSpy).toHaveBeenCalledTimes(2);
-    const transcriptArg = generateSpy.mock.calls[1][0];
-    expect(transcriptArg).toContain("Assistant: Reading config files");
-    const newHash = setAiStatusMock.mock.calls[1][2];
-    expect(newHash).not.toBe(initialHash);
+    expect(generateSpy.mock.calls[1][0]).toContain("Assistant: Reading config files");
   });
 
   test("re-generates after the trailing transcript changes", async () => {
@@ -226,8 +201,6 @@ describe("AgentStatusService", () => {
     await getInternals(service).runForWorkspace(workspaceId);
     expect(generateSpy).toHaveBeenCalledTimes(1);
 
-    // New user turn changes the trailing window — hash must differ and we
-    // must regenerate.
     await historyHandle.historyService.appendToHistory(
       workspaceId,
       createMuxMessage("u2", "user", "Second request")
@@ -238,12 +211,10 @@ describe("AgentStatusService", () => {
   });
 
   test("skips regeneration when there is no chat history yet", async () => {
+    // Empty workspaces have nothing to summarize. Don't pay for a
+    // hallucinated status, and don't blank an existing aiStatus on disk.
     const service = createService();
     await getInternals(service).runForWorkspace(workspaceId);
-
-    // Empty workspaces have nothing to summarize. We must not pay for an LLM
-    // call producing a hallucinated status, and we must not blank an
-    // existing aiStatus on disk.
     expect(generateSpy).not.toHaveBeenCalled();
     expect(setAiStatusMock).not.toHaveBeenCalled();
   });
@@ -262,34 +233,30 @@ describe("AgentStatusService", () => {
     const service = createService({ clock: () => now });
     const internals = getInternals(service);
 
-    // First tick (focused) generates immediately. Mutate history afterwards
-    // so the dedup hash differs on subsequent ticks — otherwise this test
-    // would fail for the wrong reason.
-    (windowService as unknown as { isFocused: () => boolean }).isFocused = () => true;
+    // First focused tick generates. We mutate history between ticks so the
+    // dedup hash differs — otherwise this test would pass for the wrong
+    // reason.
+    isFocused = true;
     await internals.runTick();
     await historyHandle.historyService.appendToHistory(
       workspaceId,
       createMuxMessage("u2", "user", "follow-up A")
     );
-
     expect(generateSpy).toHaveBeenCalledTimes(1);
 
-    // Advance time by less than the focused interval. The scheduler must
-    // skip this workspace.
+    // Inside the focused interval: skipped.
     now += 5_000;
     await internals.runTick();
     expect(generateSpy).toHaveBeenCalledTimes(1);
 
-    // Advance past the focused interval; another generation should fire.
+    // Past the focused interval: regenerates.
     now += 30_000;
     await internals.runTick();
     expect(generateSpy).toHaveBeenCalledTimes(2);
 
-    // Now go unfocused. Even after the focused interval elapses, the
-    // unfocused interval is longer (2 minutes) and we should not regenerate
-    // until that boundary. Advance another 60s (well past focused, well
-    // short of unfocused).
-    (windowService as unknown as { isFocused: () => boolean }).isFocused = () => false;
+    // Unfocused: 60s elapsed is past focused but short of the unfocused
+    // interval (2 minutes), so the scheduler must wait.
+    isFocused = false;
     await historyHandle.historyService.appendToHistory(
       workspaceId,
       createMuxMessage("u3", "user", "follow-up B")
@@ -298,7 +265,7 @@ describe("AgentStatusService", () => {
     await internals.runTick();
     expect(generateSpy).toHaveBeenCalledTimes(2);
 
-    // Past the unfocused interval — should regenerate.
+    // Past the unfocused interval: regenerates.
     now += 120_000;
     await internals.runTick();
     expect(generateSpy).toHaveBeenCalledTimes(3);
@@ -306,32 +273,19 @@ describe("AgentStatusService", () => {
 
   test("round-robins across multiple workspaces so none starve under MAX_CONCURRENT=1", async () => {
     // With MAX_CONCURRENT=1 and a fixed iteration order, the first workspace
-    // would always become re-eligible before later ones got their turn —
-    // workspaces 4+ would never produce a status. The scheduler must
-    // prioritize least-recently-run workspaces so each one gets fair
-    // attention even when many are eligible at the same time.
+    // would always become re-eligible before later ones got a turn. The
+    // scheduler must prioritize least-recently-run workspaces.
     const projectPathLocal = "/test/round-robin-project";
-    const wsA: Workspace = {
-      id: "ws-a",
-      name: "ws-a",
-      path: "/test/path/a",
-    } as unknown as Workspace;
-    const wsB: Workspace = {
-      id: "ws-b",
-      name: "ws-b",
-      path: "/test/path/b",
-    } as unknown as Workspace;
-    const wsC: Workspace = {
-      id: "ws-c",
-      name: "ws-c",
-      path: "/test/path/c",
-    } as unknown as Workspace;
+    const ids = ["ws-a", "ws-b", "ws-c"];
+    const workspaces = ids.map(
+      (id) => ({ id, name: id, path: `/test/path/${id}` }) as unknown as Workspace
+    );
     projectsConfig = {
       projects: new Map<string, ProjectConfig>([
-        [projectPathLocal, { workspaces: [wsA, wsB, wsC] } as unknown as ProjectConfig],
+        [projectPathLocal, { workspaces } as unknown as ProjectConfig],
       ]),
     };
-    for (const id of ["ws-a", "ws-b", "ws-c"]) {
+    for (const id of ids) {
       await historyHandle.historyService.appendToHistory(
         id,
         createMuxMessage(`u1-${id}`, "user", `prompt for ${id}`)
@@ -342,52 +296,35 @@ describe("AgentStatusService", () => {
     const service = createService({ clock: () => now });
     const internals = getInternals(service);
 
-    // Tick 1 → first workspace runs.
+    // Tick 1 covers one workspace; ticks 2 and 3 each cover a distinct
+    // never-run workspace before any repeat (least-recently-run wins).
     await internals.runTick();
     expect(generateSpy).toHaveBeenCalledTimes(1);
-    const firstRunWorkspaceIds = setAiStatusMock.mock.calls.map((call) => call[0]);
-
-    // Advance just past one focused interval so all three are eligible. The
-    // scheduler must pick a workspace that hasn't run yet (lastRanAt=0)
-    // before re-running the workspace that just ran.
     now += 31_000;
     await internals.runTick();
     expect(generateSpy).toHaveBeenCalledTimes(2);
-    const idsAfterTick2 = setAiStatusMock.mock.calls.map((call) => call[0]);
-    expect(new Set(idsAfterTick2).size).toBe(2);
-
-    // One more tick should cover the third workspace before any repeats.
     now += 31_000;
     await internals.runTick();
     expect(generateSpy).toHaveBeenCalledTimes(3);
-    const idsAfterTick3 = setAiStatusMock.mock.calls.map((call) => call[0]);
-    expect(new Set(idsAfterTick3)).toEqual(new Set(["ws-a", "ws-b", "ws-c"]));
-
-    // Use the variable to satisfy lint / show intent: every workspace was
-    // covered at least once.
-    expect(firstRunWorkspaceIds.length).toBeGreaterThan(0);
+    const persistedIds = setAiStatusMock.mock.calls.map((call) => call[0]);
+    expect(new Set(persistedIds)).toEqual(new Set(ids));
   });
 
   test("does not persist or emit if the service is stopped while a generation is in flight", async () => {
-    // generateWorkspaceStatus can take seconds to minutes (real provider
-    // call). If the service is stopped (app shutdown / dispose) during that
-    // window, persisting the result would leak writes past the declared
-    // lifecycle. Prove it:
-    //   1) start a generation that resolves only after we call stop()
-    //   2) call stop()
-    //   3) release the generation
-    //   4) assert no setAiStatus / emit happened
+    // Real provider calls can take seconds to minutes. If stop() fires
+    // mid-generation (app shutdown), persisting afterwards would leak writes
+    // past the declared lifecycle.
     await historyHandle.historyService.appendToHistory(
       workspaceId,
       createMuxMessage("u1", "user", "long-running task")
     );
 
     let releaseGenerate!: () => void;
-    const generationGate = new Promise<void>((resolve) => {
+    const gate = new Promise<void>((resolve) => {
       releaseGenerate = resolve;
     });
     generateSpy.mockImplementationOnce(async () => {
-      await generationGate;
+      await gate;
       return Ok({
         status: { emoji: "🛠️", message: "Doing work" },
         modelUsed: "anthropic:claude-haiku-4-5",
@@ -395,10 +332,7 @@ describe("AgentStatusService", () => {
     });
 
     const service = createService();
-    const internals = getInternals(service);
-    const inFlight = internals.runForWorkspace(workspaceId);
-
-    // Stop the service while the generation is still pending.
+    const inFlight = getInternals(service).runForWorkspace(workspaceId);
     service.stop();
     releaseGenerate();
     await inFlight;
@@ -409,12 +343,9 @@ describe("AgentStatusService", () => {
   });
 
   test("a failed persistence write does not update the dedup hash, so the next tick retries", async () => {
-    // Codex review: emitWorkspaceActivityUpdate (the historical wrapper) used
-    // to swallow disk errors, which meant a transient extensionMetadata.json
-    // write failure could leave the in-memory hash advanced even though the
-    // generated status never made it to disk or the frontend. After that,
-    // the next tick would dedup against the new hash and never retry.
-    // The fix is: only update lastInputHash AFTER a successful persist.
+    // Only update lastInputHash AFTER a successful persist. Otherwise a
+    // transient I/O failure would leave us dedup'ing against a hash that
+    // never made it to disk, silently dropping subsequent retries.
     await historyHandle.historyService.appendToHistory(
       workspaceId,
       createMuxMessage("u1", "user", "kick off a task")
@@ -426,15 +357,13 @@ describe("AgentStatusService", () => {
     await getInternals(service).runForWorkspace(workspaceId);
 
     expect(generateSpy).toHaveBeenCalledTimes(1);
-    // setAiStatus was attempted but failed.
     expect(setAiStatusMock).toHaveBeenCalledTimes(1);
-    // Activity emit must NOT happen on persist failure — frontend must not
-    // see a status the disk doesn't actually have.
+    // Activity must not emit on persist failure.
     expect(emitWorkspaceActivityMock).not.toHaveBeenCalled();
 
-    // The next runForWorkspace pass on the SAME transcript must retry,
-    // because the previous failure should have left lastInputHash null.
-    setAiStatusMock.mockImplementation((_w, _s, _h) => Promise.resolve({ recency: 0 }));
+    // Same transcript, second pass: retries because the previous failure
+    // left lastInputHash unchanged.
+    setAiStatusMock.mockImplementation((_w, _s) => Promise.resolve({ recency: 0 }));
     await getInternals(service).runForWorkspace(workspaceId);
     expect(generateSpy).toHaveBeenCalledTimes(2);
     expect(setAiStatusMock).toHaveBeenCalledTimes(2);

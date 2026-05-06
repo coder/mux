@@ -11,11 +11,9 @@ import {
 } from "@/common/utils/tools/toolDefinitions";
 
 /**
- * AI-generated sidebar status summary.
- *
- * Emoji + short verb-led phrase, intentionally identical to the existing
- * WorkspaceAgentStatus shape so the frontend can render it through the
- * same WorkspaceStatusIndicator path used for displayStatus / todoStatus.
+ * AI-generated sidebar status: emoji + short verb-led phrase, matching
+ * WorkspaceAgentStatus so the frontend renders it through the same
+ * WorkspaceStatusIndicator path as displayStatus / todoStatus.
  */
 export interface WorkspaceAgentStatusPayload {
   emoji: string;
@@ -29,21 +27,15 @@ export interface GenerateWorkspaceStatusResult {
 }
 
 /**
- * Build the prompt used by {@link generateWorkspaceStatus}.
- *
- * The transcript is supplied pre-trimmed (token budget enforced upstream).
- * We deliberately keep the prompt short — the small model's job is to look
- * at the trailing window and write a present-tense phrase.
+ * Build the prompt used by {@link generateWorkspaceStatus}. The transcript
+ * is supplied pre-trimmed (token budget enforced upstream). The prompt
+ * intentionally targets "current activity" not "overall task scope" — this
+ * is a sidebar status, not a workspace title.
  */
 export function buildWorkspaceStatusPrompt(transcript: string): string {
-  // Sentinel for an empty trailing window (e.g., a fresh workspace with no
-  // text content). Shouldn't happen in practice because AgentStatusService
-  // skips empty inputs, but the model still needs *something* to ground on.
+  // Sentinel for an empty window. AgentStatusService skips empty inputs in
+  // practice, but the model still needs something to ground on.
   const body = transcript.trim().length > 0 ? transcript : "(no recent transcript)";
-
-  // The prompt avoids "summarize the whole task" framing on purpose: this
-  // is a sidebar status, not a workspace title. We want the *current*
-  // activity, not the overall scope.
   return [
     "You produce a short sidebar status that tells the user what an AI coding agent is doing right now.\n\n",
     "Recent chat transcript (oldest first, newest last):\n",
@@ -62,11 +54,8 @@ export function buildWorkspaceStatusPrompt(transcript: string): string {
 
 /**
  * Generate a sidebar agent-status summary using the same "small model" path
- * that powers workspace title generation.
- *
- * Try candidates in order, retrying on transient API errors (auth, quota,
- * 5xx, etc.) up to a small cap so a single misconfigured candidate doesn't
- * silently disable status updates for everyone.
+ * that powers workspace title generation. Tries up to 3 candidates so a
+ * single misconfigured candidate can't permanently disable status updates.
  */
 export async function generateWorkspaceStatus(
   transcript: string,
@@ -80,10 +69,7 @@ export async function generateWorkspaceStatus(
     });
   }
 
-  // Match workspaceTitleGenerator's retry behavior so a single API outage
-  // can't permanently disable the feature.
   const maxAttempts = Math.min(candidates.length, 3);
-
   let lastError: NameGenerationError | null = null;
 
   for (let i = 0; i < maxAttempts; i++) {
