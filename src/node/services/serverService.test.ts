@@ -225,7 +225,7 @@ test("supports non-CLI allow-http-origin opt-in via MUX_SERVER_ALLOW_HTTP_ORIGIN
 });
 
 describe("getTailscaleBindHosts", () => {
-  test("detects Tailscale bind addresses from interface names and Tailscale address ranges", () => {
+  test("detects Tailscale bind addresses from interface names and Tailscale CLI output", () => {
     const networkInterfaces: ReturnType<typeof os.networkInterfaces> = {
       lo0: [
         {
@@ -247,12 +247,12 @@ describe("getTailscaleBindHosts", () => {
           cidr: "192.168.1.10/24",
         },
         {
-          address: "100.128.0.2",
+          address: "100.80.0.2",
           netmask: "255.192.0.0",
           family: "IPv4",
           mac: "aa:bb:cc:dd:ee:ff",
           internal: false,
-          cidr: "100.128.0.2/10",
+          cidr: "100.80.0.2/10",
         },
       ],
       tailscale0: [
@@ -295,11 +295,28 @@ describe("getTailscaleBindHosts", () => {
       ],
     };
 
-    expect(getTailscaleBindHosts(networkInterfaces)).toEqual([
+    expect(getTailscaleBindHosts(networkInterfaces, new Set(["100.100.10.20"]))).toEqual([
       { interfaceName: "tailscale0", address: "100.64.0.2", family: "IPv4" },
       { interfaceName: "utun5", address: "100.100.10.20", family: "IPv4" },
       { interfaceName: "tailscale0", address: "fd7a:115c:a1e0::2", family: "IPv6" },
     ]);
+  });
+
+  test("does not label generic CGNAT addresses as Tailscale without proof", () => {
+    const networkInterfaces: ReturnType<typeof os.networkInterfaces> = {
+      en0: [
+        {
+          address: "100.80.0.2",
+          netmask: "255.192.0.0",
+          family: "IPv4",
+          mac: "aa:bb:cc:dd:ee:ff",
+          internal: false,
+          cidr: "100.80.0.2/10",
+        },
+      ],
+    };
+
+    expect(getTailscaleBindHosts(networkInterfaces, new Set())).toEqual([]);
   });
 });
 

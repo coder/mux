@@ -5,6 +5,7 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import { log } from "./log";
 import * as os from "os";
+import * as childProcess from "node:child_process";
 import { VERSION } from "@/version";
 import { buildMuxMdnsServiceOptions, MdnsAdvertiserService } from "./mdnsAdvertiserService";
 import type { AppRouter } from "@/node/orpc/router";
@@ -52,6 +53,8 @@ export interface TailscaleBindHost {
   address: string;
   family: "IPv4" | "IPv6";
 }
+
+const TAILSCALE_IP_COMMAND_TIMEOUT_MS = 1_000;
 
 function isLoopbackHost(host: string): boolean {
   const normalized = host.trim().toLowerCase();
@@ -181,8 +184,28 @@ function isLinkLocalAddress(address: string, family: "IPv4" | "IPv6"): boolean {
   return address.toLowerCase().startsWith("fe80:");
 }
 
+function getTailscaleCliAddresses(): ReadonlySet<string> {
+  try {
+    const output = childProcess.execFileSync("tailscale", ["ip"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: TAILSCALE_IP_COMMAND_TIMEOUT_MS,
+    });
+
+    return new Set(
+      output
+        .split(/\s+/)
+        .map((address) => address.trim())
+        .filter((address) => isTailscaleIpv4Address(address) || isTailscaleIpv6Address(address))
+    );
+  } catch {
+    return new Set();
+  }
+}
+
 export function getTailscaleBindHosts(
-  networkInterfaces: NetworkInterfaces = os.networkInterfaces()
+  networkInterfaces: NetworkInterfaces = os.networkInterfaces(),
+  tailscaleAddresses: ReadonlySet<string> = getTailscaleCliAddresses()
 ): TailscaleBindHost[] {
   const hostsByAddress = new Map<string, TailscaleBindHost>();
   const emptyInfos: os.NetworkInterfaceInfo[] = [];
@@ -200,9 +223,9 @@ export function getTailscaleBindHosts(
         continue;
       }
 
-      const isTailscaleAddress =
-        family === "IPv4" ? isTailscaleIpv4Address(address) : isTailscaleIpv6Address(address);
-      if (!isTailscaleInterfaceName(interfaceName) && !isTailscaleAddress) {
+      // A 100.64.0.0/10 address alone can be ordinary RFC6598 CGNAT, so only generic
+      // interface names become Tailscale choices when the Tailscale CLI proves the address.
+      if (!isTailscaleInterfaceName(interfaceName) && !tailscaleAddresses.has(address)) {
         continue;
       }
 
