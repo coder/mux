@@ -281,11 +281,65 @@ describe("attach_file tool", () => {
       text: "[File shown to user: clip.webm (video/webm). This type is not supported as a model attachment, so the model will only receive this notice. Use another tool to inspect or convert the file if needed.]",
     });
     expect(result.value[1]).toEqual({
-      type: "file-data",
+      type: "display_file",
       data: webmBytes.toString("base64"),
       mediaType: "video/webm",
       filename: "clip.webm",
       providerOptions: { mux: { displayOnly: true, size: webmBytes.length } },
+    });
+  });
+
+  it("rejects text-like unsupported files so the model can use file_read", async () => {
+    using workspaceDir = new TestTempDir("attach-file-workspace");
+    const tool = createTestAttachFileTool(workspaceDir.path);
+    const textPath = path.join(workspaceDir.path, "notes.txt");
+    await fs.writeFile(textPath, "hello");
+
+    const result = (await tool.execute!(
+      { path: "notes.txt" },
+      mockToolCallOptions
+    )) as AttachFileToolResult;
+
+    expect(result).toEqual({
+      success: false,
+      error: `Unsupported attachment type: ${textPath}`,
+    });
+  });
+
+  it("shows an unmapped binary file with the octet-stream fallback", async () => {
+    using workspaceDir = new TestTempDir("attach-file-workspace");
+    const tool = createTestAttachFileTool(workspaceDir.path);
+    const zipPath = path.join(workspaceDir.path, "bundle.zip");
+    const zipBytes = Buffer.from("zip bytes");
+    await fs.writeFile(zipPath, zipBytes);
+
+    const result = expectSuccessfulAttachFileResult(
+      (await tool.execute!({ path: "bundle.zip" }, mockToolCallOptions)) as AttachFileToolResult
+    );
+
+    expect(result.value[1]).toEqual({
+      type: "display_file",
+      data: zipBytes.toString("base64"),
+      mediaType: "application/octet-stream",
+      filename: "bundle.zip",
+      providerOptions: { mux: { displayOnly: true, size: zipBytes.length } },
+    });
+  });
+
+  it("rejects oversized unsupported files with both unsupported-type and size context", async () => {
+    using workspaceDir = new TestTempDir("attach-file-workspace");
+    const tool = createTestAttachFileTool(workspaceDir.path);
+    const largePath = path.join(workspaceDir.path, "huge.webm");
+    await fs.writeFile(largePath, Buffer.alloc(MAX_ATTACH_FILE_SIZE_BYTES + 1, 0x61));
+
+    const result = (await tool.execute!(
+      { path: "huge.webm" },
+      mockToolCallOptions
+    )) as AttachFileToolResult;
+
+    expect(result).toEqual({
+      success: false,
+      error: `Unsupported attachment type: ${largePath}. Could not show file to user: Attachment is too large (10.00MB). The maximum supported size is 10.00MB.`,
     });
   });
 

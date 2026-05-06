@@ -96,3 +96,16 @@ export const DisplayOnlyGenericFile: Story = {
     </ToolStoryShell>
   ),
 };
+
+export const FailedAttachment: Story = {
+  render: () => (
+    <ToolStoryShell>
+      <AttachFileToolCall
+        toolName="attach_file"
+        args={{ path: "missing.webm" }}
+        result={{ success: false, error: "File not found: /workspace/missing.webm" }}
+        status="failed"
+      />
+    </ToolStoryShell>
+  ),
+};

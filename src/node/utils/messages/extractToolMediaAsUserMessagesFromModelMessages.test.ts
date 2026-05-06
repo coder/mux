@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@jest/globals";
-import type { ModelMessage } from "ai";
+import type { ModelMessage, ToolResultPart } from "ai";
 import sharp from "sharp";
 import { MAX_IMAGE_DIMENSION } from "@/common/constants/imageAttachments";
 import { extractToolMediaAsUserMessagesFromModelMessages } from "./extractToolMediaAsUserMessagesFromModelMessages";
@@ -233,7 +233,7 @@ describe("extractToolMediaAsUserMessagesFromModelMessages", () => {
       value: [
         { type: "text", text: "[File shown to user: clip.webm]" },
         {
-          type: "file-data",
+          type: "display_file",
           mediaType: "video/webm",
           data: base64,
           filename: "clip.webm",
@@ -250,7 +250,7 @@ describe("extractToolMediaAsUserMessagesFromModelMessages", () => {
             type: "tool-result",
             toolCallId: "call-display",
             toolName: "attach_file",
-            output: attachFileOutput,
+            output: attachFileOutput as unknown as ToolResultPart["output"],
           },
         ],
       },
@@ -266,7 +266,19 @@ describe("extractToolMediaAsUserMessagesFromModelMessages", () => {
     const outputText = JSON.stringify(toolResultPart.output);
     expect(outputText).toContain("File shown to user only");
     expect(outputText).not.toContain(base64);
-    expect(outputText).not.toContain("file-data");
+    if (
+      typeof toolResultPart.output === "object" &&
+      toolResultPart.output !== null &&
+      (toolResultPart.output as { type?: unknown }).type === "content" &&
+      Array.isArray((toolResultPart.output as { value?: unknown }).value)
+    ) {
+      const rewrittenValue = (toolResultPart.output as { value: unknown[] }).value;
+      expect(
+        rewrittenValue.some((part) => (part as { type?: unknown }).type === "display_file")
+      ).toBe(false);
+    } else {
+      throw new Error("Expected rewritten content output");
+    }
   });
 
   it("is a no-op when there is no media", async () => {

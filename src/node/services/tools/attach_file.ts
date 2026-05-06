@@ -5,11 +5,7 @@ import { createDisplayOnlyFilePart } from "@/common/utils/attachments/displayOnl
 import type { AttachFileToolResult } from "@/common/types/tools";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
-import {
-  UnsupportedAttachmentTypeError,
-  readAttachmentFromPath,
-  readDisplayFileFromPath,
-} from "@/node/utils/attachments/readAttachmentFromPath";
+import { readAttachFileFromPath } from "@/node/utils/attachments/readAttachmentFromPath";
 
 function formatDisplayOnlyFileLabel(file: { filename?: string; mediaType: string }): string {
   return file.filename != null ? `${file.filename} (${file.mediaType})` : file.mediaType;
@@ -26,7 +22,7 @@ export const createAttachFileTool: ToolFactory = (config: ToolConfiguration) => 
       assert(typeof path === "string" && path.trim().length > 0, "attach_file requires a path");
 
       try {
-        const attachment = await readAttachmentFromPath({
+        const result = await readAttachFileFromPath({
           path,
           mediaType,
           filename,
@@ -34,6 +30,24 @@ export const createAttachFileTool: ToolFactory = (config: ToolConfiguration) => 
           runtime: config.runtime,
           abortSignal,
         });
+
+        if (result.type === "display") {
+          const label = formatDisplayOnlyFileLabel(result.file);
+          return {
+            type: "content",
+            value: [
+              {
+                type: "text",
+                text:
+                  `[File shown to user: ${label}. ` +
+                  "This type is not supported as a model attachment, so the model will only receive this notice. Use another tool to inspect or convert the file if needed.]",
+              },
+              createDisplayOnlyFilePart(result.file),
+            ],
+          };
+        }
+
+        const attachment = result.attachment;
         assert(attachment.data.length > 0, "attach_file produced empty attachment data");
 
         return {
@@ -52,37 +66,6 @@ export const createAttachFileTool: ToolFactory = (config: ToolConfiguration) => 
           ],
         };
       } catch (error) {
-        if (error instanceof UnsupportedAttachmentTypeError) {
-          try {
-            const displayFile = await readDisplayFileFromPath({
-              path,
-              mediaType,
-              filename,
-              cwd: config.cwd,
-              runtime: config.runtime,
-              abortSignal,
-            });
-            const label = formatDisplayOnlyFileLabel(displayFile);
-            return {
-              type: "content",
-              value: [
-                {
-                  type: "text",
-                  text:
-                    `[File shown to user: ${label}. ` +
-                    "This type is not supported as a model attachment, so the model will only receive this notice. Use another tool to inspect or convert the file if needed.]",
-                },
-                createDisplayOnlyFilePart(displayFile),
-              ],
-            };
-          } catch (displayError) {
-            return {
-              success: false,
-              error: getErrorMessage(displayError),
-            };
-          }
-        }
-
         return {
           success: false,
           error: getErrorMessage(error),

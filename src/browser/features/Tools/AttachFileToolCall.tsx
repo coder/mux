@@ -1,5 +1,9 @@
-import React from "react";
+import type React from "react";
 import { Download, FileText } from "lucide-react";
+import { isValidBase64AttachmentData } from "@/common/utils/attachments/base64";
+import { normalizeAttachmentMediaType } from "@/common/utils/attachments/supportedAttachmentMediaTypes";
+import { formatBytes } from "@/common/utils/formatBytes";
+import { isToolContentResult } from "@/common/utils/tools/toolContentResult";
 import {
   getDisplayOnlyFileMetadata,
   isDisplayOnlyFilePart,
@@ -29,65 +33,24 @@ interface AttachFileToolCallProps {
   status?: ToolStatus;
 }
 
-interface ContentResult {
-  type: "content";
-  value: unknown[];
-}
-
-function isContentResult(result: unknown): result is ContentResult {
-  return (
-    typeof result === "object" &&
-    result !== null &&
-    (result as { type?: unknown }).type === "content" &&
-    Array.isArray((result as { value?: unknown }).value)
-  );
-}
-
 function extractDisplayFilesFromToolResult(result: unknown): DisplayOnlyFilePart[] {
-  if (!isContentResult(result)) {
+  if (!isToolContentResult(result)) {
     return [];
   }
 
   return result.value.filter(isDisplayOnlyFilePart);
 }
 
-function isValidBase64(data: string): boolean {
-  if (data.length > 15_000_000) {
-    return false;
-  }
-  return /^[A-Za-z0-9+/]*={0,2}$/.test(data);
-}
-
-function getBaseMediaType(mediaType: string): string {
-  return mediaType.toLowerCase().trim().split(";")[0] ?? "application/octet-stream";
-}
-
 function createSafeDataUrl(file: DisplayOnlyFilePart): string | null {
-  if (!isValidBase64(file.data)) {
+  if (!isValidBase64AttachmentData(file.data)) {
     return null;
   }
 
-  return `data:${getBaseMediaType(file.mediaType)};base64,${file.data}`;
-}
-
-function formatBytes(bytes: number | undefined): string | null {
-  if (bytes == null) {
-    return null;
-  }
-
-  if (bytes < 1024) {
-    return `${bytes} B`;
-  }
-
-  if (bytes < 1024 * 1024) {
-    return `${(bytes / 1024).toFixed(1)} KB`;
-  }
-
-  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  return `data:${normalizeAttachmentMediaType(file.mediaType)};base64,${file.data}`;
 }
 
 function filterResultForDisplay(result: unknown): unknown {
-  if (!isContentResult(result)) {
+  if (!isToolContentResult(result)) {
     return result;
   }
 
@@ -109,7 +72,7 @@ function filterResultForDisplay(result: unknown): unknown {
 
     if (isDisplayOnlyFilePart(item)) {
       return {
-        type: "file-data",
+        type: "display_file",
         mediaType: item.mediaType,
         filename: item.filename,
         providerOptions: item.providerOptions,
@@ -125,9 +88,10 @@ function filterResultForDisplay(result: unknown): unknown {
 
 const DisplayOnlyFile: React.FC<{ file: DisplayOnlyFilePart }> = (props) => {
   const dataUrl = createSafeDataUrl(props.file);
-  const baseMediaType = getBaseMediaType(props.file.mediaType);
+  const baseMediaType = normalizeAttachmentMediaType(props.file.mediaType);
   const label = props.file.filename ?? `Attachment (${baseMediaType})`;
-  const formattedSize = formatBytes(getDisplayOnlyFileMetadata(props.file.providerOptions)?.size);
+  const metadata = getDisplayOnlyFileMetadata(props.file.providerOptions);
+  const formattedSize = metadata?.size != null ? formatBytes(metadata.size) : null;
 
   return (
     <div className="border-border-light bg-dark mt-2 max-w-xl rounded border p-3">
@@ -139,14 +103,15 @@ const DisplayOnlyFile: React.FC<{ file: DisplayOnlyFilePart }> = (props) => {
       </div>
 
       {dataUrl != null && baseMediaType.startsWith("video/") && (
-        <video controls src={dataUrl} className="max-h-80 max-w-full rounded" />
+        <video controls src={dataUrl} title={label} className="max-h-80 max-w-full rounded" />
       )}
       {dataUrl != null && baseMediaType.startsWith("audio/") && (
-        <audio controls src={dataUrl} className="w-full" />
+        <audio controls src={dataUrl} title={label} className="w-full" />
       )}
 
       <div className="mt-2 flex items-center gap-2 text-xs text-[var(--color-subtle)]">
         <span>Shown to the user only; not sent to the model as a file attachment.</span>
+        {dataUrl == null && <span>File data is unavailable for preview or download.</span>}
         {dataUrl != null && (
           <a
             href={dataUrl}
@@ -174,7 +139,7 @@ export const AttachFileToolCall: React.FC<AttachFileToolCallProps> = (props) => 
   return (
     <ToolContainer expanded={shouldShowDetails}>
       <ToolHeader onClick={() => hasDetails && toggleExpanded()}>
-        {hasDetails && <ExpandIcon expanded={shouldShowDetails}>▶</ExpandIcon>}
+        {hasDetails && <ExpandIcon expanded={expanded}>▶</ExpandIcon>}
         <ToolIcon toolName={props.toolName} />
         <ToolName>{props.toolName}</ToolName>
         <StatusIndicator status={props.status ?? "pending"}>

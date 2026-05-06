@@ -1831,7 +1831,7 @@ const AttachFileToolMediaPartSchema = z
 
 const AttachFileToolDisplayFilePartSchema = z
   .object({
-    type: z.literal("file-data"),
+    type: z.literal("display_file"),
     data: z.string(),
     mediaType: z.string(),
     filename: z.string().optional(),

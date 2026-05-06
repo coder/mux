@@ -285,7 +285,7 @@ describe("extractToolMediaAsUserMessages", () => {
               value: [
                 { type: "text", text: "[File shown to user: clip.webm]" },
                 {
-                  type: "file-data",
+                  type: "display_file",
                   mediaType: "video/webm",
                   data: base64,
                   filename: "clip.webm",
@@ -310,7 +310,19 @@ describe("extractToolMediaAsUserMessages", () => {
     const outputText = JSON.stringify(toolPart.output);
     expect(outputText).toContain("File shown to user only");
     expect(outputText).not.toContain(base64);
-    expect(outputText).not.toContain("file-data");
+    if (
+      typeof toolPart.output === "object" &&
+      toolPart.output !== null &&
+      (toolPart.output as { type?: unknown }).type === "content" &&
+      Array.isArray((toolPart.output as { value?: unknown }).value)
+    ) {
+      const rewrittenValue = (toolPart.output as { value: unknown[] }).value;
+      expect(
+        rewrittenValue.some((part) => (part as { type?: unknown }).type === "display_file")
+      ).toBe(false);
+    } else {
+      throw new Error("Expected rewritten content output");
+    }
   });
 
   it("does not rewrite unrelated tool outputs", async () => {

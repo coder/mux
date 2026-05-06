@@ -13,11 +13,11 @@ import {
   resizeRasterImageAttachmentBufferIfNeeded,
 } from "@/node/utils/attachments/resizeRasterImageAttachment";
 
-// Attachment payloads need a larger cap than text-oriented file tools because common
-// screenshots and PDFs regularly exceed 1MB before request-time rewriting runs.
+// This cap applies to both model attachments and display-only fallback files so
+// chat history never persists unexpectedly large base64 payloads.
 export const MAX_ATTACH_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
 
-export class UnsupportedAttachmentTypeError extends Error {
+class UnsupportedAttachmentTypeError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "UnsupportedAttachmentTypeError";
@@ -41,6 +41,10 @@ export interface LoadedAttachmentFromPath {
   size: number;
 }
 
+export type AttachFileFromPathResult =
+  | { type: "attachment"; attachment: LoadedAttachmentFromPath }
+  | { type: "display"; file: LoadedAttachmentFromPath };
+
 const EXTENSION_TO_DISPLAY_MEDIA_TYPE: Record<string, string> = {
   webm: "video/webm",
   mp4: "video/mp4",
@@ -49,10 +53,35 @@ const EXTENSION_TO_DISPLAY_MEDIA_TYPE: Record<string, string> = {
   mp3: "audio/mpeg",
   wav: "audio/wav",
   ogg: "audio/ogg",
-  txt: "text/plain",
-  csv: "text/csv",
-  json: "application/json",
 };
+
+const TEXT_EXTENSIONS_REQUIRING_FILE_READ = new Set([
+  "csv",
+  "css",
+  "html",
+  "htm",
+  "js",
+  "json",
+  "jsx",
+  "log",
+  "md",
+  "mdx",
+  "mjs",
+  "sh",
+  "ts",
+  "tsx",
+  "txt",
+  "xml",
+  "yaml",
+  "yml",
+]);
+
+const TEXT_MEDIA_TYPES_REQUIRING_FILE_READ = new Set([
+  "application/json",
+  "application/javascript",
+  "application/xml",
+  "text/csv",
+]);
 
 function normalizeOptionalString(value: string | null | undefined): string | undefined {
   const trimmed = value?.trim();
@@ -78,6 +107,10 @@ async function readStreamToBuffer(stream: ReadableStream<Uint8Array>): Promise<B
 
 function formatBytesAsMegabytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(2)}MB`;
+}
+
+function buildTooLargeMessage(bytes: number): string {
+  return `Attachment is too large (${formatBytesAsMegabytes(bytes)}). The maximum supported size is ${formatBytesAsMegabytes(MAX_ATTACH_FILE_SIZE_BYTES)}.`;
 }
 
 function buildMissingFileError(resolvedPath: string, error: unknown): Error {
@@ -115,9 +148,7 @@ async function readRegularFileBytes(
   expectedSize: number
 ): Promise<Buffer> {
   if (expectedSize > MAX_ATTACH_FILE_SIZE_BYTES) {
-    throw new Error(
-      `Attachment is too large (${formatBytesAsMegabytes(expectedSize)}). The maximum supported size is ${formatBytesAsMegabytes(MAX_ATTACH_FILE_SIZE_BYTES)}.`
-    );
+    throw new Error(buildTooLargeMessage(expectedSize));
   }
 
   let bytes: Buffer;
@@ -135,68 +166,96 @@ async function readRegularFileBytes(
   return bytes;
 }
 
-function getDisplayFileMediaType(args: ReadAttachmentFromPathArgs, resolvedPath: string): string {
-  const override = normalizeOptionalString(args.mediaType);
-  if (override != null) {
-    return normalizeAttachmentMediaType(override);
-  }
-
-  const extension = path.extname(resolvedPath).slice(1).toLowerCase();
-  return EXTENSION_TO_DISPLAY_MEDIA_TYPE[extension] ?? "application/octet-stream";
+function createUnsupportedAttachmentError(
+  args: ReadAttachmentFromPathArgs,
+  resolvedPath: string
+): Error {
+  return new UnsupportedAttachmentTypeError(
+    `Unsupported attachment type: ${args.mediaType ?? resolvedPath}`
+  );
 }
 
-export async function readDisplayFileFromPath(
-  args: ReadAttachmentFromPathArgs
-): Promise<LoadedAttachmentFromPath> {
-  assert(
-    typeof args.path === "string" && args.path.trim().length > 0,
-    "attach_file requires a path"
-  );
+function getFallbackFilename(
+  resolvedPath: string,
+  filename: string | null | undefined
+): string | undefined {
+  return normalizeOptionalString(filename) ?? normalizeOptionalString(path.basename(resolvedPath));
+}
 
-  const { resolvedPath } = resolvePathWithinCwd(args.path, args.cwd, args.runtime);
-  const fileStat = await statRegularFile(args, resolvedPath);
-  const bytes = await readRegularFileBytes(args, resolvedPath, fileStat.size);
-  const fallbackFilename = path.basename(resolvedPath);
-  const filename =
-    normalizeOptionalString(args.filename) ?? normalizeOptionalString(fallbackFilename);
-  const mediaType = getDisplayFileMediaType(args, resolvedPath);
+function getDisplayFileMediaType(
+  args: ReadAttachmentFromPathArgs,
+  resolvedPath: string
+): string | null {
+  const override = normalizeOptionalString(args.mediaType);
+  const extension = path.extname(resolvedPath).slice(1).toLowerCase();
+  const rawMediaType =
+    override ?? EXTENSION_TO_DISPLAY_MEDIA_TYPE[extension] ?? "application/octet-stream";
+  const mediaType = normalizeAttachmentMediaType(rawMediaType);
 
-  assert(bytes.length > 0, "attach_file display fallback produced empty file data");
+  if (mediaType.startsWith("text/") || TEXT_MEDIA_TYPES_REQUIRING_FILE_READ.has(mediaType)) {
+    return null;
+  }
+  if (override == null && TEXT_EXTENSIONS_REQUIRING_FILE_READ.has(extension)) {
+    return null;
+  }
 
+  return mediaType;
+}
+
+function createLoadedAttachment(args: {
+  data: Buffer;
+  mediaType: string;
+  filename?: string;
+  resolvedPath: string;
+}): LoadedAttachmentFromPath {
   return {
-    data: bytes.toString("base64"),
-    mediaType,
-    filename,
-    resolvedPath,
-    size: bytes.length,
+    data: args.data.toString("base64"),
+    mediaType: args.mediaType,
+    filename: args.filename,
+    resolvedPath: args.resolvedPath,
+    size: args.data.length,
   };
 }
 
-export async function readAttachmentFromPath(
+export async function readAttachFileFromPath(
   args: ReadAttachmentFromPathArgs
-): Promise<LoadedAttachmentFromPath> {
+): Promise<AttachFileFromPathResult> {
   assert(
     typeof args.path === "string" && args.path.trim().length > 0,
     "attach_file requires a path"
   );
 
   const { resolvedPath } = resolvePathWithinCwd(args.path, args.cwd, args.runtime);
-
   const fileStat = await statRegularFile(args, resolvedPath);
-
-  const fallbackFilename = path.basename(resolvedPath);
-  const filename =
-    normalizeOptionalString(args.filename) ?? normalizeOptionalString(fallbackFilename);
+  const filename = getFallbackFilename(resolvedPath, args.filename);
   const mediaType = getSupportedAttachmentMediaType({
     mediaType: args.mediaType,
     // Infer the attachment type from the source path, not the display filename override.
     // Callers may intentionally rename the attachment to a presentation-only label.
     filename: resolvedPath,
   });
+
   if (mediaType == null) {
-    throw new UnsupportedAttachmentTypeError(
-      `Unsupported attachment type: ${args.mediaType ?? resolvedPath}`
-    );
+    const displayMediaType = getDisplayFileMediaType(args, resolvedPath);
+    if (displayMediaType == null) {
+      throw createUnsupportedAttachmentError(args, resolvedPath);
+    }
+    if (fileStat.size > MAX_ATTACH_FILE_SIZE_BYTES) {
+      throw new Error(
+        `${getErrorMessage(createUnsupportedAttachmentError(args, resolvedPath))}. Could not show file to user: ${buildTooLargeMessage(fileStat.size)}`
+      );
+    }
+
+    const bytes = await readRegularFileBytes(args, resolvedPath, fileStat.size);
+    return {
+      type: "display",
+      file: createLoadedAttachment({
+        data: bytes,
+        mediaType: displayMediaType,
+        filename,
+        resolvedPath,
+      }),
+    };
   }
 
   const bytes = await readRegularFileBytes(args, resolvedPath, fileStat.size);
@@ -221,10 +280,24 @@ export async function readAttachmentFromPath(
   }
 
   return {
-    data: attachmentBytes.toString("base64"),
-    mediaType: attachmentMediaType,
-    filename,
-    resolvedPath,
-    size: attachmentBytes.length,
+    type: "attachment",
+    attachment: createLoadedAttachment({
+      data: attachmentBytes,
+      mediaType: attachmentMediaType,
+      filename,
+      resolvedPath,
+    }),
   };
+}
+
+export async function readAttachmentFromPath(
+  args: ReadAttachmentFromPathArgs
+): Promise<LoadedAttachmentFromPath> {
+  const result = await readAttachFileFromPath(args);
+  if (result.type === "attachment") {
+    return result.attachment;
+  }
+
+  const { resolvedPath } = resolvePathWithinCwd(args.path, args.cwd, args.runtime);
+  throw createUnsupportedAttachmentError(args, resolvedPath);
 }

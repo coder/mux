@@ -1,5 +1,5 @@
 export interface DisplayOnlyFilePart {
-  type: "file-data";
+  type: "display_file";
   data: string;
   mediaType: string;
   filename?: string;
@@ -23,7 +23,7 @@ export function createDisplayOnlyFilePart(args: {
   size: number;
 }): DisplayOnlyFilePart {
   return {
-    type: "file-data",
+    type: "display_file",
     data: args.data,
     mediaType: args.mediaType,
     providerOptions: { mux: { displayOnly: true, size: args.size } },
@@ -59,7 +59,7 @@ export function isDisplayOnlyFilePart(value: unknown): value is DisplayOnlyFileP
 
   const record = value as Record<string, unknown>;
   return (
-    record.type === "file-data" &&
+    record.type === "display_file" &&
     typeof record.data === "string" &&
     typeof record.mediaType === "string" &&
     (record.filename === undefined || typeof record.filename === "string") &&
