@@ -368,6 +368,46 @@ describe("AgentStatusService", () => {
     expect(firstRunWorkspaceIds.length).toBeGreaterThan(0);
   });
 
+  test("does not persist or emit if the service is stopped while a generation is in flight", async () => {
+    // generateWorkspaceStatus can take seconds to minutes (real provider
+    // call). If the service is stopped (app shutdown / dispose) during that
+    // window, persisting the result would leak writes past the declared
+    // lifecycle. Prove it:
+    //   1) start a generation that resolves only after we call stop()
+    //   2) call stop()
+    //   3) release the generation
+    //   4) assert no setAiStatus / emit happened
+    await historyHandle.historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("u1", "user", "long-running task")
+    );
+
+    let releaseGenerate!: () => void;
+    const generationGate = new Promise<void>((resolve) => {
+      releaseGenerate = resolve;
+    });
+    generateSpy.mockImplementationOnce(async () => {
+      await generationGate;
+      return Ok({
+        status: { emoji: "🛠️", message: "Doing work" },
+        modelUsed: "anthropic:claude-haiku-4-5",
+      });
+    });
+
+    const service = createService();
+    const internals = getInternals(service);
+    const inFlight = internals.runForWorkspace(workspaceId);
+
+    // Stop the service while the generation is still pending.
+    service.stop();
+    releaseGenerate();
+    await inFlight;
+
+    expect(generateSpy).toHaveBeenCalledTimes(1);
+    expect(setAiStatusMock).not.toHaveBeenCalled();
+    expect(emitWorkspaceActivityMock).not.toHaveBeenCalled();
+  });
+
   test("a failed persistence write does not update the dedup hash, so the next tick retries", async () => {
     // Codex review: emitWorkspaceActivityUpdate (the historical wrapper) used
     // to swallow disk errors, which meant a transient extensionMetadata.json

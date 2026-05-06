@@ -351,6 +351,15 @@ export class AgentStatusService {
         return;
       }
 
+      // The generator can take seconds to a minute. The service may have
+      // been stopped (app shutdown, dispose, etc.) while we were awaiting
+      // the provider response. If so, do not persist or emit — that would
+      // leak metadata writes and activity events past the service's
+      // declared lifetime.
+      if (this.stopped) {
+        return;
+      }
+
       // Persist BEFORE updating the in-memory dedup hash. If the disk write
       // fails (transient I/O error), we want the next tick to retry the
       // unchanged transcript instead of dedup'ing against a hash we never
@@ -363,6 +372,11 @@ export class AgentStatusService {
           { emoji: result.data.status.emoji, message: result.data.status.message },
           inputHash
         );
+        // Re-check after the (also-async) disk write — same lifecycle
+        // hazard as the post-generation check above.
+        if (this.stopped) {
+          return;
+        }
         state.lastInputHash = inputHash;
         this.workspaceService.emitWorkspaceActivity(workspaceId, snapshot);
       } catch (error) {
