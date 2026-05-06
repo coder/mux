@@ -295,6 +295,70 @@ describe("AgentStatusService", () => {
     expect(generateSpy).toHaveBeenCalledTimes(3);
   });
 
+  test("round-robins across multiple workspaces so none starve under MAX_CONCURRENT=1", async () => {
+    // With MAX_CONCURRENT=1 and a fixed iteration order, the first workspace
+    // would always become re-eligible before later ones got their turn —
+    // workspaces 4+ would never produce a status. The scheduler must
+    // prioritize least-recently-run workspaces so each one gets fair
+    // attention even when many are eligible at the same time.
+    const projectPathLocal = "/test/round-robin-project";
+    const wsA: Workspace = {
+      id: "ws-a",
+      name: "ws-a",
+      path: "/test/path/a",
+    } as unknown as Workspace;
+    const wsB: Workspace = {
+      id: "ws-b",
+      name: "ws-b",
+      path: "/test/path/b",
+    } as unknown as Workspace;
+    const wsC: Workspace = {
+      id: "ws-c",
+      name: "ws-c",
+      path: "/test/path/c",
+    } as unknown as Workspace;
+    projectsConfig = {
+      projects: new Map<string, ProjectConfig>([
+        [projectPathLocal, { workspaces: [wsA, wsB, wsC] } as unknown as ProjectConfig],
+      ]),
+    };
+    for (const id of ["ws-a", "ws-b", "ws-c"]) {
+      await historyHandle.historyService.appendToHistory(
+        id,
+        createMuxMessage(`u1-${id}`, "user", `prompt for ${id}`)
+      );
+    }
+
+    let now = 1_000_000;
+    const service = createService({ clock: () => now });
+    const internals = getInternals(service);
+
+    // Tick 1 → first workspace runs.
+    await internals.runTick();
+    expect(generateSpy).toHaveBeenCalledTimes(1);
+    const firstRunWorkspaceIds = updateAiStatusMock.mock.calls.map((call) => call[0]);
+
+    // Advance just past one focused interval so all three are eligible. The
+    // scheduler must pick a workspace that hasn't run yet (lastRanAt=0)
+    // before re-running the workspace that just ran.
+    now += 31_000;
+    await internals.runTick();
+    expect(generateSpy).toHaveBeenCalledTimes(2);
+    const idsAfterTick2 = updateAiStatusMock.mock.calls.map((call) => call[0]);
+    expect(new Set(idsAfterTick2).size).toBe(2);
+
+    // One more tick should cover the third workspace before any repeats.
+    now += 31_000;
+    await internals.runTick();
+    expect(generateSpy).toHaveBeenCalledTimes(3);
+    const idsAfterTick3 = updateAiStatusMock.mock.calls.map((call) => call[0]);
+    expect(new Set(idsAfterTick3)).toEqual(new Set(["ws-a", "ws-b", "ws-c"]));
+
+    // Use the variable to satisfy lint / show intent: every workspace was
+    // covered at least once.
+    expect(firstRunWorkspaceIds.length).toBeGreaterThan(0);
+  });
+
   test("archived workspaces are not regenerated", async () => {
     projectsConfig = makeProjectsConfig([
       makeWorkspaceEntry({ archivedAt: new Date().toISOString() } as Partial<Workspace>),

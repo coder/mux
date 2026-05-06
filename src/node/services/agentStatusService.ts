@@ -237,15 +237,15 @@ export class AgentStatusService {
 
     const config = this.config.loadConfigOrDefault();
 
+    // Collect every eligible workspace first, then sort by lastRanAt
+    // ascending. With AGENT_STATUS_MAX_CONCURRENT=1 a fixed iteration order
+    // would let the first workspace starve everyone deeper in the list
+    // (it becomes re-eligible at 30s, and workspace[N>1] is never reached).
+    // Sorting by least-recently-run produces a fair round-robin without an
+    // explicit queue.
+    const eligible: Array<{ workspaceId: string; lastRanAt: number }> = [];
     for (const [, projectConfig] of config.projects) {
       for (const workspace of projectConfig.workspaces) {
-        if (this.stopped) {
-          return;
-        }
-        if (this.inFlightCount >= AGENT_STATUS_MAX_CONCURRENT) {
-          return;
-        }
-
         const workspaceId = workspace.id ?? workspace.name;
         if (typeof workspaceId !== "string" || workspaceId.length === 0) {
           continue;
@@ -262,20 +262,36 @@ export class AgentStatusService {
           continue;
         }
 
-        // Per-workspace work runs concurrently up to AGENT_STATUS_MAX_CONCURRENT.
-        // We track the promise (instead of fire-and-forget) so runTick can
-        // await all dispatched workspaces before returning. That keeps the
-        // production tick loop's "did we finish?" semantics observable, and
-        // makes tests deterministic without hand-rolled microtask flushing.
-        this.inFlightCount += 1;
-        this.markInFlight(workspaceId, true);
-        const promise = this.runForWorkspace(workspaceId).finally(() => {
-          this.inFlightCount = Math.max(0, this.inFlightCount - 1);
-          this.markInFlight(workspaceId, false);
-          this.inFlightPromises.delete(promise);
-        });
-        this.inFlightPromises.add(promise);
+        // Workspaces that have never run (state === undefined) get the
+        // earliest possible lastRanAt so they preempt previously-run
+        // workspaces on their first tick.
+        eligible.push({ workspaceId, lastRanAt: state?.lastRanAt ?? 0 });
       }
+    }
+
+    eligible.sort((a, b) => a.lastRanAt - b.lastRanAt);
+
+    for (const { workspaceId } of eligible) {
+      if (this.stopped) {
+        return;
+      }
+      if (this.inFlightCount >= AGENT_STATUS_MAX_CONCURRENT) {
+        return;
+      }
+
+      // Per-workspace work runs concurrently up to AGENT_STATUS_MAX_CONCURRENT.
+      // We track the promise (instead of fire-and-forget) so runTick can
+      // await all dispatched workspaces before returning. That keeps the
+      // production tick loop's "did we finish?" semantics observable, and
+      // makes tests deterministic without hand-rolled microtask flushing.
+      this.inFlightCount += 1;
+      this.markInFlight(workspaceId, true);
+      const promise = this.runForWorkspace(workspaceId).finally(() => {
+        this.inFlightCount = Math.max(0, this.inFlightCount - 1);
+        this.markInFlight(workspaceId, false);
+        this.inFlightPromises.delete(promise);
+      });
+      this.inFlightPromises.add(promise);
     }
   }
 
