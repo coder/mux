@@ -42,6 +42,27 @@ async function withTempConfig(
   }
 }
 
+async function withOpenAIBaseUrlEnvUnset(run: () => Promise<void>): Promise<void> {
+  const savedBaseUrl = process.env.OPENAI_BASE_URL;
+  const savedApiBase = process.env.OPENAI_API_BASE;
+  delete process.env.OPENAI_BASE_URL;
+  delete process.env.OPENAI_API_BASE;
+  try {
+    await run();
+  } finally {
+    if (savedBaseUrl === undefined) {
+      delete process.env.OPENAI_BASE_URL;
+    } else {
+      process.env.OPENAI_BASE_URL = savedBaseUrl;
+    }
+    if (savedApiBase === undefined) {
+      delete process.env.OPENAI_API_BASE;
+    } else {
+      process.env.OPENAI_API_BASE = savedApiBase;
+    }
+  }
+}
+
 async function withTempPolicyProviderFactory(
   policy: unknown,
   run: (
@@ -785,22 +806,24 @@ describe("ProviderModelFactory GitHub Copilot", () => {
 
 describe("ProviderModelFactory OpenAI WebSocket transport", () => {
   it("attaches cleanup when enabled for Responses models", async () => {
-    await withTempConfig(async (config, factory) => {
-      config.saveProvidersConfig({
-        openai: {
-          apiKey: "sk-test",
-          webSocketTransportEnabled: true,
-        },
-      });
+    await withOpenAIBaseUrlEnvUnset(async () =>
+      withTempConfig(async (config, factory) => {
+        config.saveProvidersConfig({
+          openai: {
+            apiKey: "sk-test",
+            webSocketTransportEnabled: true,
+          },
+        });
 
-      const result = await factory.createModel("openai:gpt-4.1-mini");
+        const result = await factory.createModel("openai:gpt-4.1-mini");
 
-      expect(result.success).toBe(true);
-      if (!result.success) {
-        return;
-      }
-      expect(hasLanguageModelCleanup(result.data)).toBe(true);
-    });
+        expect(result.success).toBe(true);
+        if (!result.success) {
+          return;
+        }
+        expect(hasLanguageModelCleanup(result.data)).toBe(true);
+      })
+    );
   });
 
   it("does not attach cleanup for Codex OAuth routed models", async () => {
@@ -850,33 +873,35 @@ describe("ProviderModelFactory OpenAI WebSocket transport", () => {
   });
 
   it("preserves cleanup when DevTools wraps an OpenAI WebSocket model", async () => {
-    await withTempConfig(async (config) => {
-      config.saveProvidersConfig({
-        openai: {
-          apiKey: "sk-test",
-          webSocketTransportEnabled: true,
-        },
-      });
-      const providerService = new ProviderService(config);
-      const devToolsService = { enabled: true } as unknown as DevToolsService;
-      const factory = new ProviderModelFactory(
-        config,
-        providerService,
-        undefined,
-        undefined,
-        devToolsService
-      );
+    await withOpenAIBaseUrlEnvUnset(async () =>
+      withTempConfig(async (config) => {
+        config.saveProvidersConfig({
+          openai: {
+            apiKey: "sk-test",
+            webSocketTransportEnabled: true,
+          },
+        });
+        const providerService = new ProviderService(config);
+        const devToolsService = { enabled: true } as unknown as DevToolsService;
+        const factory = new ProviderModelFactory(
+          config,
+          providerService,
+          undefined,
+          undefined,
+          devToolsService
+        );
 
-      const result = await factory.createModel("openai:gpt-4.1-mini", undefined, {
-        workspaceId: "devtools-workspace",
-      });
+        const result = await factory.createModel("openai:gpt-4.1-mini", undefined, {
+          workspaceId: "devtools-workspace",
+        });
 
-      expect(result.success).toBe(true);
-      if (!result.success) {
-        return;
-      }
-      expect(hasLanguageModelCleanup(result.data)).toBe(true);
-    });
+        expect(result.success).toBe(true);
+        if (!result.success) {
+          return;
+        }
+        expect(hasLanguageModelCleanup(result.data)).toBe(true);
+      })
+    );
   });
 
   it("does not attach cleanup when Chat Completions is selected", async () => {
