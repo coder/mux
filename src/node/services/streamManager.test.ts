@@ -1099,7 +1099,9 @@ describe("StreamManager - language model cleanup", () => {
       state: "streaming",
       streamResult: {
         fullStream: (async function* () {
+          await Promise.resolve();
           throw new Error("stream failed before output");
+          yield* [] as unknown[];
         })(),
         totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
         usage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),

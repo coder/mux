@@ -165,7 +165,7 @@ describe("createOpenAIWebSocketTransportFetch", () => {
     const baseBodies: string[] = [];
     const wsCalls: string[] = [];
     const baseFetch = createTestFetch((_input: RequestInfo | URL, init?: RequestInit) => {
-      baseBodies.push(String(init?.body ?? ""));
+      baseBodies.push(typeof init?.body === "string" ? init.body : "");
       return Promise.resolve(new Response("base"));
     });
     const transport = createOpenAIWebSocketTransportFetch({

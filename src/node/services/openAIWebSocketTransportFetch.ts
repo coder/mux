@@ -65,9 +65,7 @@ export function createOpenAIWebSocketTransportFetch(
   let webSocketFetch: WebSocketFetch | null = null;
 
   const getWebSocketFetch = (): WebSocketFetch => {
-    if (webSocketFetch === null) {
-      webSocketFetch = webSocketFetchFactory();
-    }
+    webSocketFetch ??= webSocketFetchFactory();
     assert(
       typeof webSocketFetch.close === "function",
       "OpenAI WebSocket fetch must expose close()"
