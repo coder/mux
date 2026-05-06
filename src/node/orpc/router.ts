@@ -1237,6 +1237,7 @@ export const router = (authToken?: string) => {
           try {
             const result = await context.browserControlService.executeControl(input);
             if (result.success) {
+              // executeControl already validated the selected session with the explicit scope flag.
               const urlResult = await context.browserControlService.getUrl(
                 input.workspaceId,
                 input.sessionName,
@@ -1259,6 +1260,7 @@ export const router = (authToken?: string) => {
             return result;
           } catch (error) {
             try {
+              // executeControl already validated the selected session with the explicit scope flag.
               const urlResult = await context.browserControlService.getUrl(
                 input.workspaceId,
                 input.sessionName,

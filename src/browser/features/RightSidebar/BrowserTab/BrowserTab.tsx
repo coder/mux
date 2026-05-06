@@ -101,10 +101,6 @@ function chooseSelectedSession(
     return currentSessionName;
   }
 
-  if (currentSessionName != null && sessions.length === 0) {
-    return currentSessionName;
-  }
-
   return sessions[0]?.sessionName ?? null;
 }
 
@@ -513,8 +509,7 @@ function BrowserViewerState(props: {
     if (props.sessionStatus === "error") {
       return {
         title: "Browser preview unavailable",
-        description:
-          "Mux will keep retrying while a discovered browser session is available for this project.",
+        description: "Mux will keep retrying while the selected browser session is available.",
       };
     }
 

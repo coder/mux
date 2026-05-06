@@ -613,7 +613,7 @@ export class AgentBrowserSessionDiscoveryService {
     const sessions = this.getLookupSessions(sessionGroups, options);
     const session = sessions.find((candidate) => candidate.sessionName === sessionName) ?? null;
     if (session == null) {
-      if (sessions.length === 0) {
+      if (sessionGroups.sessions.length + sessionGroups.otherSessions.length === 0) {
         throw new Error(
           `Session "${sessionName}" is unavailable (no sessions discovered for workspace "${workspaceId}")`
         );
