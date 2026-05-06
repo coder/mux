@@ -2248,7 +2248,18 @@ export function ProvidersSection() {
                       {provider === "openai" &&
                         (() => {
                           const openAIWireFormat = providerInfo?.wireFormat ?? "responses";
-                          const openAIWebSocketTransportVisible = openAIWireFormat === "responses";
+                          const openAIBaseUrl =
+                            typeof providerInfo?.baseUrl === "string"
+                              ? providerInfo.baseUrl.trim()
+                              : "";
+                          const openAIResolvedBaseUrl =
+                            typeof providerInfo?.baseUrlResolved === "string"
+                              ? providerInfo.baseUrlResolved.trim()
+                              : "";
+                          const openAIWebSocketTransportVisible =
+                            openAIWireFormat === "responses" &&
+                            openAIBaseUrl.length === 0 &&
+                            openAIResolvedBaseUrl.length === 0;
                           return (
                             <div className="border-border-light space-y-3 border-t pt-3">
                               <div>

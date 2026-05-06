@@ -357,6 +357,23 @@ describe("ProvidersSection", () => {
     });
   });
 
+  test("hides the OpenAI WebSocket transport toggle when OpenAI uses a custom base URL", async () => {
+    const view = renderProvidersSection();
+    view.providersConfig.openai.baseUrl = "https://proxy.openai.test/v1";
+    view.providersConfig.openai.webSocketTransportEnabled = true;
+    const openAiButton = await view.findByRole("button", { name: /^OpenAI$/ });
+
+    fireEvent.click(openAiButton);
+
+    const openAiCard = getProviderCard(openAiButton);
+    expect(
+      within(openAiCard).queryByRole("switch", {
+        name: /WebSocket transport/i,
+      })
+    ).toBeNull();
+    expect(view.providersConfig.openai.webSocketTransportEnabled).toBe(true);
+  });
+
   test("hides the OpenAI WebSocket transport toggle for Chat Completions without clearing it", async () => {
     const view = renderProvidersSection();
     view.providersConfig.openai.wireFormat = "chatCompletions";
