@@ -16,6 +16,7 @@ export interface BrowserControlParams {
   sessionName: string;
   action: BrowserControlAction;
   url?: string | null;
+  allowOtherWorkspaceSession?: boolean | null;
 }
 
 export interface BrowserControlResult {
@@ -30,6 +31,7 @@ export interface BrowserGetUrlResult {
 
 export interface BrowserGetUrlOptions {
   skipSessionValidation?: boolean;
+  allowOtherWorkspaceSession?: boolean | null;
 }
 
 interface BrowserCommandExecutionResult {
@@ -70,7 +72,8 @@ export class BrowserControlService {
     try {
       const connection = await this.browserSessionDiscoveryService.getSessionConnection(
         params.workspaceId,
-        params.sessionName
+        params.sessionName,
+        { allowOtherWorkspaceSession: params.allowOtherWorkspaceSession === true }
       );
       if (connection == null) {
         return {
@@ -119,12 +122,18 @@ export class BrowserControlService {
       options?.skipSessionValidation == null || typeof options.skipSessionValidation === "boolean",
       "BrowserControlService getUrl skipSessionValidation must be a boolean when provided"
     );
+    assert(
+      options?.allowOtherWorkspaceSession == null ||
+        typeof options.allowOtherWorkspaceSession === "boolean",
+      "BrowserControlService getUrl allowOtherWorkspaceSession must be a boolean when provided"
+    );
 
     try {
       if (!options?.skipSessionValidation) {
         const connection = await this.browserSessionDiscoveryService.getSessionConnection(
           workspaceId,
-          sessionName
+          sessionName,
+          { allowOtherWorkspaceSession: options?.allowOtherWorkspaceSession === true }
         );
         if (connection == null) {
           return {
@@ -166,6 +175,12 @@ export class BrowserControlService {
     assert(
       BROWSER_CONTROL_ACTIONS.includes(params.action),
       `Unsupported browser control action: ${String(params.action)}`
+    );
+
+    assert(
+      params.allowOtherWorkspaceSession == null ||
+        typeof params.allowOtherWorkspaceSession === "boolean",
+      "BrowserControlService allowOtherWorkspaceSession must be a boolean when provided"
     );
 
     if (params.action === "open") {

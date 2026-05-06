@@ -5,6 +5,7 @@ import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { getBrowserSelectedSessionKey } from "@/common/constants/storage";
 import { cn } from "@/common/lib/utils";
 import type {
+  BrowserDiscoveredOtherSession,
   BrowserDiscoveredSession,
   BrowserDiscoveredSessionStatus,
   BrowserSession,
@@ -112,18 +113,25 @@ export function BrowserTab(props: BrowserTabProps) {
   const discoveryRefreshInFlightRef = useRef(false);
   const { api } = useAPI();
   const [discoveredSessions, setDiscoveredSessions] = useState<BrowserDiscoveredSession[]>([]);
-  const [selectedSessionName, setSelectedSessionName] = usePersistedState<string | null>(
-    getBrowserSelectedSessionKey(props.projectPath),
-    null,
-    { listener: true }
-  );
+  const [otherDiscoveredSessions, setOtherDiscoveredSessions] = useState<
+    BrowserDiscoveredOtherSession[]
+  >([]);
+  const [selectedCurrentSessionName, setSelectedCurrentSessionName] = usePersistedState<
+    string | null
+  >(getBrowserSelectedSessionKey(props.projectPath), null, { listener: true });
+  const [explicitOtherSessionName, setExplicitOtherSessionName] = useState<string | null>(null);
   const [discoveryError, setDiscoveryError] = useState<string | null>(null);
   const { session, connect, disconnect, sendInput, setPendingUrl } = useBrowserBridgeConnection(
     props.workspaceId
   );
 
-  const selectedDiscoveredSession =
-    discoveredSessions.find((candidate) => candidate.sessionName === selectedSessionName) ?? null;
+  const selectedSessionName = explicitOtherSessionName ?? selectedCurrentSessionName;
+  const selectedSessionAllowsOther = explicitOtherSessionName != null;
+  const selectedDiscoveredSession = selectedSessionAllowsOther
+    ? (otherDiscoveredSessions.find((candidate) => candidate.sessionName === selectedSessionName) ??
+      null)
+    : (discoveredSessions.find((candidate) => candidate.sessionName === selectedSessionName) ??
+      null);
 
   const isStarting = session?.status === "starting";
   const screenshotSrc =
@@ -141,6 +149,7 @@ export function BrowserTab(props: BrowserTabProps) {
     if (api == null) {
       setDiscoveryError("Browser API client is unavailable.");
       setDiscoveredSessions([]);
+      setOtherDiscoveredSessions([]);
       return;
     }
 
@@ -160,7 +169,14 @@ export function BrowserTab(props: BrowserTabProps) {
 
         setDiscoveryError(null);
         setDiscoveredSessions(result.sessions);
-        setSelectedSessionName((currentSessionName) =>
+        setOtherDiscoveredSessions(result.otherSessions);
+        setExplicitOtherSessionName((currentSessionName) =>
+          currentSessionName != null &&
+          result.otherSessions.some((session) => session.sessionName === currentSessionName)
+            ? currentSessionName
+            : null
+        );
+        setSelectedCurrentSessionName((currentSessionName) =>
           chooseSelectedSession(currentSessionName, result.sessions)
         );
       } catch (error) {
@@ -188,7 +204,7 @@ export function BrowserTab(props: BrowserTabProps) {
       cancelled = true;
       clearInterval(refreshTimer);
     };
-  }, [api, props.workspaceId, setSelectedSessionName]);
+  }, [api, props.workspaceId, setSelectedCurrentSessionName]);
 
   useEffect(() => {
     if (api == null || selectedSessionName == null || selectedDiscoveredSession == null) {
@@ -233,13 +249,18 @@ export function BrowserTab(props: BrowserTabProps) {
       sessionName: selectedSessionName,
       attemptedAtMs: now,
     };
-    connect(selectedSessionName);
+    if (selectedSessionAllowsOther) {
+      connect(selectedSessionName, { allowOtherWorkspaceSession: true });
+    } else {
+      connect(selectedSessionName);
+    }
   }, [
     api,
     connect,
     disconnect,
     selectedDiscoveredSession,
     selectedSessionName,
+    selectedSessionAllowsOther,
     session,
     visibleError,
   ]);
@@ -255,11 +276,17 @@ export function BrowserTab(props: BrowserTabProps) {
             {headerBadge && <BrowserHeaderBadge badge={headerBadge} />}
           </div>
         </div>
-        {discoveredSessions.length > 0 && selectedSessionName != null && (
+        {discoveredSessions.length + otherDiscoveredSessions.length > 0 && (
           <BrowserSessionPicker
-            sessions={discoveredSessions}
+            currentSessions={discoveredSessions}
+            otherSessions={otherDiscoveredSessions}
             selectedSessionName={selectedSessionName}
-            onChange={setSelectedSessionName}
+            selectedSessionAllowsOther={selectedSessionAllowsOther}
+            onSelectCurrent={(sessionName) => {
+              setExplicitOtherSessionName(null);
+              setSelectedCurrentSessionName(sessionName);
+            }}
+            onSelectOther={setExplicitOtherSessionName}
           />
         )}
       </div>
@@ -267,6 +294,7 @@ export function BrowserTab(props: BrowserTabProps) {
       <BrowserToolbar
         workspaceId={props.workspaceId}
         sessionName={selectedSessionName}
+        allowOtherWorkspaceSession={selectedSessionAllowsOther}
         currentUrl={session?.currentUrl ?? null}
         pendingUrl={session?.pendingUrl ?? null}
         isPageLoading={session?.isPageLoading ?? false}
@@ -298,6 +326,7 @@ export function BrowserTab(props: BrowserTabProps) {
               sessionStatus={session?.status ?? null}
               isStarting={isStarting}
               selectedSession={selectedDiscoveredSession}
+              hasOtherSessions={otherDiscoveredSessions.length > 0}
               hasDiscoveredSessions={discoveredSessions.length > 0}
             />
           }
@@ -321,9 +350,12 @@ function BrowserHeaderBadge(props: { badge: { label: string; className: string }
 }
 
 function BrowserSessionPicker(props: {
-  sessions: BrowserDiscoveredSession[];
-  selectedSessionName: string;
-  onChange: (sessionName: string) => void;
+  currentSessions: BrowserDiscoveredSession[];
+  otherSessions: BrowserDiscoveredOtherSession[];
+  selectedSessionName: string | null;
+  selectedSessionAllowsOther: boolean;
+  onSelectCurrent: (sessionName: string) => void;
+  onSelectOther: (sessionName: string) => void;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -354,7 +386,7 @@ function BrowserSessionPicker(props: {
         aria-haspopup="listbox"
         onClick={() => setIsOpen((current) => !current)}
       >
-        <span className="truncate">{props.selectedSessionName}</span>
+        <span className="truncate">{props.selectedSessionName ?? "Select session"}</span>
         <ChevronDown className="h-3 w-3 shrink-0" />
       </button>
 
@@ -363,33 +395,43 @@ function BrowserSessionPicker(props: {
           <div
             role="listbox"
             aria-label="Browser sessions"
-            className="max-h-[240px] overflow-y-auto p-1"
+            className="max-h-[280px] overflow-y-auto p-1"
           >
-            {props.sessions.map((session) => (
-              <button
+            {props.currentSessions.map((session) => (
+              <BrowserSessionPickerOption
                 key={session.sessionName}
-                type="button"
-                role="option"
-                aria-selected={session.sessionName === props.selectedSessionName}
-                data-testid={`browser-session-${session.sessionName}`}
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => {
-                  props.onChange(session.sessionName);
+                session={session}
+                isSelected={
+                  !props.selectedSessionAllowsOther &&
+                  session.sessionName === props.selectedSessionName
+                }
+                testId={`browser-session-${session.sessionName}`}
+                onSelect={() => {
+                  props.onSelectCurrent(session.sessionName);
                   setIsOpen(false);
                 }}
-                className="hover:bg-hover flex w-full items-center gap-1.5 rounded-sm px-2 py-1 text-left text-[11px]"
-              >
-                <Check
-                  className={cn(
-                    "h-3 w-3 shrink-0",
-                    session.sessionName === props.selectedSessionName ? "opacity-100" : "opacity-0"
-                  )}
-                />
-                <span className="min-w-0 flex-1 truncate">{session.sessionName}</span>
-                {session.status === "missing_stream" && (
-                  <span className="text-accent shrink-0 text-[10px]">Activating</span>
-                )}
-              </button>
+              />
+            ))}
+            {props.otherSessions.length > 0 && (
+              <div className="text-muted px-2 pt-1 pb-0.5 text-[10px] font-medium">
+                Other sessions
+              </div>
+            )}
+            {props.otherSessions.map((session) => (
+              <BrowserSessionPickerOption
+                key={session.sessionName}
+                session={session}
+                isSelected={
+                  props.selectedSessionAllowsOther &&
+                  session.sessionName === props.selectedSessionName
+                }
+                testId={`browser-other-session-${session.sessionName}`}
+                cwd={session.cwd}
+                onSelect={() => {
+                  props.onSelectOther(session.sessionName);
+                  setIsOpen(false);
+                }}
+              />
             ))}
           </div>
         </div>
@@ -398,10 +440,46 @@ function BrowserSessionPicker(props: {
   );
 }
 
+function BrowserSessionPickerOption(props: {
+  session: BrowserDiscoveredSession;
+  isSelected: boolean;
+  testId: string;
+  cwd?: string;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="option"
+      aria-selected={props.isSelected}
+      data-testid={props.testId}
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={props.onSelect}
+      className="hover:bg-hover flex w-full items-start gap-1.5 rounded-sm px-2 py-1 text-left text-[11px]"
+    >
+      <Check
+        className={cn("mt-0.5 h-3 w-3 shrink-0", props.isSelected ? "opacity-100" : "opacity-0")}
+      />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate">{props.session.sessionName}</span>
+        {props.cwd != null && (
+          <span className="text-muted block truncate text-[10px]" title={props.cwd}>
+            {props.cwd}
+          </span>
+        )}
+      </span>
+      {props.session.status === "missing_stream" && (
+        <span className="text-accent mt-0.5 shrink-0 text-[10px]">Activating</span>
+      )}
+    </button>
+  );
+}
+
 function BrowserViewerState(props: {
   sessionStatus: BrowserSessionStatus | null;
   isStarting: boolean;
   selectedSession: BrowserDiscoveredSession | null;
+  hasOtherSessions: boolean;
   hasDiscoveredSessions: boolean;
 }) {
   const content = (() => {
@@ -431,6 +509,13 @@ function BrowserViewerState(props: {
       return {
         title: "Waiting for browser frames",
         description: "Mux found a browser session and is waiting for live preview frames.",
+      };
+    }
+
+    if (props.hasOtherSessions) {
+      return {
+        title: "Choose a browser session",
+        description: "Other running sessions require explicit attachment before Mux connects.",
       };
     }
 

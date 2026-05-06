@@ -1181,13 +1181,18 @@ export const router = (authToken?: string) => {
         .input(schemas.browser.listSessions.input)
         .output(schemas.browser.listSessions.output)
         .handler(async ({ context, input }) => {
-          const sessions = await context.browserSessionDiscoveryService.listSessions(
+          const sessionGroups = await context.browserSessionDiscoveryService.listSessionGroups(
             input.workspaceId
           );
           return {
-            sessions: sessions.map((session) => ({
+            sessions: sessionGroups.sessions.map((session) => ({
               sessionName: session.sessionName,
               status: session.status,
+            })),
+            otherSessions: sessionGroups.otherSessions.map((session) => ({
+              sessionName: session.sessionName,
+              status: session.status,
+              cwd: session.cwd,
             })),
           };
         }),
@@ -1200,15 +1205,18 @@ export const router = (authToken?: string) => {
             throw new Error("Browser bridge bootstrap failed: API server unavailable");
           }
 
+          const allowOtherWorkspaceSession = input.allowOtherWorkspaceSession === true;
           const connection = await context.browserSessionDiscoveryService.ensureSessionAttachable(
             input.workspaceId,
-            input.sessionName
+            input.sessionName,
+            { allowOtherWorkspaceSession }
           );
 
           const token = context.browserBridgeTokenManager.mint(
             input.workspaceId,
             connection.sessionName,
-            connection.streamPort
+            connection.streamPort,
+            { allowOtherWorkspaceSession }
           );
 
           return {
@@ -1277,7 +1285,9 @@ export const router = (authToken?: string) => {
         .input(schemas.browser.getUrl.input)
         .output(schemas.browser.getUrl.output)
         .handler(async ({ context, input }) => {
-          return await context.browserControlService.getUrl(input.workspaceId, input.sessionName);
+          return await context.browserControlService.getUrl(input.workspaceId, input.sessionName, {
+            allowOtherWorkspaceSession: input.allowOtherWorkspaceSession === true,
+          });
         }),
     },
     uiLayouts: {

@@ -341,6 +341,110 @@ describe("AgentBrowserSessionDiscoveryService", () => {
     expect(await service.listSessions("workspace-1")).toEqual([]);
   });
 
+  test("groups sessions from the current workspace separately from other live sessions", async () => {
+    const projectPath = path.join(tempDir, "project");
+    const otherProjectPath = path.join(tempDir, "different-project");
+    await mkdir(projectPath, { recursive: true });
+    await mkdir(otherProjectPath, { recursive: true });
+    await writeSessionFiles(socketDir, "current", { pid: "100", streamPort: "9100" });
+    await writeSessionFiles(socketDir, "other", { pid: "200", streamPort: "9200" });
+
+    const service = createService({
+      listSessionNamesFn: () => Promise.resolve(["other", "current"]),
+      resolveCandidatePaths: () => Promise.resolve([projectPath]),
+      resolveProcessCwdFn: (pid) => Promise.resolve(pid === 100 ? projectPath : otherProjectPath),
+    });
+
+    expect(await service.listSessionGroups("workspace-1")).toEqual({
+      sessions: [
+        {
+          sessionName: "current",
+          pid: 100,
+          cwd: projectPath,
+          status: "attachable",
+          streamPort: 9100,
+        },
+      ],
+      otherSessions: [
+        {
+          sessionName: "other",
+          pid: 200,
+          cwd: otherProjectPath,
+          status: "attachable",
+          streamPort: 9200,
+        },
+      ],
+    });
+  });
+
+  test("keeps other missing_stream sessions discoverable without adding them to current sessions", async () => {
+    const projectPath = path.join(tempDir, "project");
+    const otherProjectPath = path.join(tempDir, "different-project");
+    await mkdir(projectPath, { recursive: true });
+    await mkdir(otherProjectPath, { recursive: true });
+    await writeSessionFiles(socketDir, "other-nostream", { pid: "201" });
+
+    const service = createService({
+      listSessionNamesFn: () => Promise.resolve(["other-nostream"]),
+      resolveCandidatePaths: () => Promise.resolve([projectPath]),
+      resolveProcessCwdFn: () => Promise.resolve(otherProjectPath),
+    });
+
+    expect(await service.listSessions("workspace-1")).toEqual([]);
+    expect(await service.listSessionGroups("workspace-1")).toEqual({
+      sessions: [],
+      otherSessions: [
+        {
+          sessionName: "other-nostream",
+          pid: 201,
+          cwd: otherProjectPath,
+          status: "missing_stream",
+        },
+      ],
+    });
+  });
+
+  test("explicitly allowed other sessions can be made attachable", async () => {
+    const projectPath = path.join(tempDir, "project");
+    const otherProjectPath = path.join(tempDir, "different-project");
+    await mkdir(projectPath, { recursive: true });
+    await mkdir(otherProjectPath, { recursive: true });
+    await writeSessionFiles(socketDir, "other-nostream", { pid: "202" });
+
+    const statuses = [
+      { enabled: false, port: null },
+      { enabled: true, port: 12345 },
+    ];
+    const getSessionStreamStatusFn = mock(() => Promise.resolve(statuses.shift() ?? null));
+    const enableSessionStreamingFn = mock(() => Promise.resolve({ port: 12345 }));
+    const service = createService({
+      listSessionNamesFn: () => Promise.resolve(["other-nostream"]),
+      getSessionStreamStatusFn,
+      enableSessionStreamingFn,
+      resolveCandidatePaths: () => Promise.resolve([projectPath]),
+      resolveProcessCwdFn: () => Promise.resolve(otherProjectPath),
+    });
+
+    // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun's expect().rejects.toThrow() is thenable at runtime
+    await expect(service.ensureSessionAttachable("workspace-1", "other-nostream")).rejects.toThrow(
+      'Session "other-nostream" is unavailable (no sessions discovered for workspace "workspace-1")'
+    );
+
+    expect(
+      await service.ensureSessionAttachable("workspace-1", "other-nostream", {
+        allowOtherWorkspaceSession: true,
+      })
+    ).toEqual({
+      sessionName: "other-nostream",
+      pid: 202,
+      cwd: otherProjectPath,
+      status: "attachable",
+      streamPort: 12345,
+    });
+    expect(getSessionStreamStatusFn).toHaveBeenCalledTimes(2);
+    expect(enableSessionStreamingFn).toHaveBeenCalledTimes(1);
+  });
+
   test("skips dead pid sessions when cwd cannot be resolved", async () => {
     await writeSessionFiles(socketDir, "dead", { pid: "404", streamPort: "9300" });
 
