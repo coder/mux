@@ -29,8 +29,12 @@ function getRequestUrl(input: RequestInfo | URL): string {
   return input.url;
 }
 
-function isStreamingResponsesRequest(input: RequestInfo | URL, init?: RequestInit): boolean {
-  if (init?.method?.toUpperCase() !== "POST") {
+async function isStreamingResponsesRequest(
+  input: RequestInfo | URL,
+  init?: RequestInit
+): Promise<boolean> {
+  const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+  if (method.toUpperCase() !== "POST") {
     return false;
   }
 
@@ -38,12 +42,18 @@ function isStreamingResponsesRequest(input: RequestInfo | URL, init?: RequestIni
     return false;
   }
 
-  if (typeof init?.body !== "string") {
+  const bodyText =
+    typeof init?.body === "string"
+      ? init.body
+      : init?.body == null && input instanceof Request
+        ? await input.clone().text()
+        : undefined;
+  if (bodyText === undefined) {
     return false;
   }
 
   try {
-    const body = JSON.parse(init.body) as { stream?: unknown };
+    const body = JSON.parse(bodyText) as { stream?: unknown };
     return body.stream === true;
   } catch {
     return false;
@@ -92,7 +102,7 @@ export function createOpenAIWebSocketTransportFetch(
   const transportFetch = Object.assign(async (input: RequestInfo | URL, init?: RequestInit) => {
     // The upstream package falls through to globalThis.fetch for non-WebSocket requests.
     // Pre-filter here so Mux's existing fetch wrappers keep handling those HTTP paths.
-    if (!isStreamingResponsesRequest(input, init)) {
+    if (!(await isStreamingResponsesRequest(input, init))) {
       return options.baseFetch(input, init);
     }
 

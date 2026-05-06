@@ -193,6 +193,28 @@ describe("createOpenAIWebSocketTransportFetch", () => {
     expect(wsCalls).toEqual([]);
   });
 
+  test("enabled transport recognizes streaming Responses Request objects", async () => {
+    const wsCalls: string[] = [];
+    const transport = createOpenAIWebSocketTransportFetch({
+      enabled: true,
+      baseFetch: createTestFetch(() => Promise.resolve(new Response("base"))),
+      createWebSocketFetch: () =>
+        createTestWebSocketFetch((input: RequestInfo | URL) => {
+          wsCalls.push(getFetchInputUrl(input));
+          return Promise.resolve(new Response("ws"));
+        }),
+    });
+    const request = new Request("https://api.openai.com/v1/responses", {
+      method: "POST",
+      body: JSON.stringify({ stream: true }),
+    });
+
+    const response = await transport.fetch(request);
+
+    expect(await response.text()).toBe("ws");
+    expect(wsCalls).toEqual(["https://api.openai.com/v1/responses"]);
+  });
+
   test("enabled transport recognizes Responses URLs with query parameters", async () => {
     const wsCalls: string[] = [];
     const transport = createOpenAIWebSocketTransportFetch({
@@ -236,6 +258,7 @@ describe("createOpenAIWebSocketTransportFetch", () => {
       method: "POST",
       body: JSON.stringify({ stream: true }),
     });
+    await Promise.resolve();
     transport.close();
     if (!resolveWebSocketFetch) {
       throw new Error("Expected test WebSocket fetch resolver to be initialized");
