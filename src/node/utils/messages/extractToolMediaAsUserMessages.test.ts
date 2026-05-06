@@ -267,6 +267,51 @@ describe("extractToolMediaAsUserMessages", () => {
     expect(svgTextPart).toBeDefined();
   });
 
+  it("strips display-only file bytes without creating a model attachment", async () => {
+    const base64 = Buffer.from("webm bytes").toString("base64");
+    const input: MuxMessage[] = [
+      {
+        id: "a5",
+        role: "assistant",
+        parts: [
+          {
+            type: "dynamic-tool",
+            toolCallId: "call5",
+            toolName: "attach_file",
+            input: { path: "/tmp/clip.webm" },
+            state: "output-available",
+            output: {
+              type: "content",
+              value: [
+                { type: "text", text: "[File shown to user: clip.webm]" },
+                {
+                  type: "file-data",
+                  mediaType: "video/webm",
+                  data: base64,
+                  filename: "clip.webm",
+                  providerOptions: { mux: { displayOnly: true, size: 10 } },
+                },
+              ],
+            },
+          },
+        ],
+        metadata: { timestamp: 5 },
+      },
+    ];
+
+    const rewritten = await extractToolMediaAsUserMessages(input);
+    expect(rewritten).toHaveLength(1);
+
+    const toolPart = rewritten[0].parts[0];
+    expect(toolPart.type).toBe("dynamic-tool");
+    if (toolPart.type === "dynamic-tool" && toolPart.state === "output-available") {
+      const outputText = JSON.stringify(toolPart.output);
+      expect(outputText).toContain("File shown to user only");
+      expect(outputText).not.toContain(base64);
+      expect(outputText).not.toContain("file-data");
+    }
+  });
+
   it("does not rewrite unrelated tool outputs", async () => {
     const input: MuxMessage[] = [
       {

@@ -929,7 +929,7 @@ export const TOOL_DEFINITIONS = {
     description:
       "Attach a supported file from the filesystem so later model steps receive it as a real attachment instead of a huge base64 JSON blob. " +
       "Accepts absolute or relative paths, including files outside the workspace. " +
-      "Currently supports raster images, SVG, and PDF.",
+      "Currently supports raster images, SVG, and PDF. Unsupported file types are shown to the user in chat when possible, but only a notice is sent to the model.",
     schema: z.preprocess(
       normalizeFilePath,
       z
@@ -1829,10 +1829,32 @@ const AttachFileToolMediaPartSchema = z
   })
   .strict();
 
+const AttachFileToolDisplayFilePartSchema = z
+  .object({
+    type: z.literal("file-data"),
+    data: z.string(),
+    mediaType: z.string(),
+    filename: z.string().optional(),
+    providerOptions: z
+      .object({
+        mux: z
+          .object({
+            displayOnly: z.literal(true),
+            size: z.number().int().nonnegative(),
+          })
+          .strict(),
+      })
+      .strict(),
+  })
+  .strict();
+
 const AttachFileToolSuccessResultSchema = z
   .object({
     type: z.literal("content"),
-    value: z.tuple([AttachFileToolTextPartSchema, AttachFileToolMediaPartSchema]),
+    value: z.union([
+      z.tuple([AttachFileToolTextPartSchema, AttachFileToolMediaPartSchema]),
+      z.tuple([AttachFileToolTextPartSchema, AttachFileToolDisplayFilePartSchema]),
+    ]),
   })
   .strict();
 

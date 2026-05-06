@@ -4,7 +4,15 @@ import { getErrorMessage } from "@/common/utils/errors";
 import type { AttachFileToolResult } from "@/common/types/tools";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
-import { readAttachmentFromPath } from "@/node/utils/attachments/readAttachmentFromPath";
+import {
+  UnsupportedAttachmentTypeError,
+  readAttachmentFromPath,
+  readDisplayFileFromPath,
+} from "@/node/utils/attachments/readAttachmentFromPath";
+
+function formatDisplayOnlyFileLabel(file: { filename?: string; mediaType: string }): string {
+  return file.filename != null ? `${file.filename} (${file.mediaType})` : file.mediaType;
+}
 
 export const createAttachFileTool: ToolFactory = (config: ToolConfiguration) => {
   return tool({
@@ -43,6 +51,45 @@ export const createAttachFileTool: ToolFactory = (config: ToolConfiguration) => 
           ],
         };
       } catch (error) {
+        if (error instanceof UnsupportedAttachmentTypeError) {
+          try {
+            const displayFile = await readDisplayFileFromPath({
+              path,
+              mediaType,
+              filename,
+              cwd: config.cwd,
+              runtime: config.runtime,
+              abortSignal,
+            });
+            assert(displayFile.data.length > 0, "attach_file produced empty display file data");
+
+            const label = formatDisplayOnlyFileLabel(displayFile);
+            return {
+              type: "content",
+              value: [
+                {
+                  type: "text",
+                  text:
+                    `[File shown to user: ${label}. ` +
+                    "This type is not supported as a model attachment, so the model will only receive this notice. Use another tool to inspect or convert the file if needed.]",
+                },
+                {
+                  type: "file-data",
+                  data: displayFile.data,
+                  mediaType: displayFile.mediaType,
+                  providerOptions: { mux: { displayOnly: true, size: displayFile.size } },
+                  ...(displayFile.filename ? { filename: displayFile.filename } : {}),
+                },
+              ],
+            };
+          } catch (displayError) {
+            return {
+              success: false,
+              error: getErrorMessage(displayError),
+            };
+          }
+        }
+
         return {
           success: false,
           error: getErrorMessage(error),

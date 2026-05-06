@@ -226,6 +226,49 @@ describe("extractToolMediaAsUserMessagesFromModelMessages", () => {
     expect(svgTextPart).toBeDefined();
   });
 
+  it("strips display-only file bytes without adding a synthetic user message", async () => {
+    const base64 = Buffer.from("webm bytes").toString("base64");
+    const attachFileOutput = {
+      type: "content",
+      value: [
+        { type: "text", text: "[File shown to user: clip.webm]" },
+        {
+          type: "file-data",
+          mediaType: "video/webm",
+          data: base64,
+          filename: "clip.webm",
+          providerOptions: { mux: { displayOnly: true, size: 10 } },
+        },
+      ],
+    } as const satisfies { type: "content"; value: unknown[] };
+
+    const input: ModelMessage[] = [
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-display",
+            toolName: "attach_file",
+            output: attachFileOutput,
+          },
+        ],
+      },
+    ];
+
+    const rewritten = await extractToolMediaAsUserMessagesFromModelMessages(input);
+    expect(rewritten).toHaveLength(1);
+
+    const rewrittenTool = rewritten[0];
+    expect(rewrittenTool.role).toBe("tool");
+    const toolResultPart = (rewrittenTool as Extract<ModelMessage, { role: "tool" }>).content[0];
+    if (toolResultPart.type !== "tool-result") throw new Error("Expected tool-result part");
+    const outputText = JSON.stringify(toolResultPart.output);
+    expect(outputText).toContain("File shown to user only");
+    expect(outputText).not.toContain(base64);
+    expect(outputText).not.toContain("file-data");
+  });
+
   it("is a no-op when there is no media", async () => {
     const input: ModelMessage[] = [
       {

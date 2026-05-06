@@ -265,20 +265,27 @@ describe("attach_file tool", () => {
     });
   });
 
-  it("rejects an unsupported type", async () => {
+  it("shows an unsupported file to the user without attaching it to the model", async () => {
     using workspaceDir = new TestTempDir("attach-file-workspace");
     const tool = createTestAttachFileTool(workspaceDir.path);
-    const textPath = path.join(workspaceDir.path, "notes.txt");
-    await fs.writeFile(textPath, "hello");
+    const webmPath = path.join(workspaceDir.path, "clip.webm");
+    const webmBytes = Buffer.from("webm bytes");
+    await fs.writeFile(webmPath, webmBytes);
 
-    const result = (await tool.execute!(
-      { path: "notes.txt" },
-      mockToolCallOptions
-    )) as AttachFileToolResult;
+    const result = expectSuccessfulAttachFileResult(
+      (await tool.execute!({ path: "clip.webm" }, mockToolCallOptions)) as AttachFileToolResult
+    );
 
-    expect(result).toEqual({
-      success: false,
-      error: `Unsupported attachment type: ${textPath}`,
+    expect(result.value[0]).toEqual({
+      type: "text",
+      text: "[File shown to user: clip.webm (video/webm). This type is not supported as a model attachment, so the model will only receive this notice. Use another tool to inspect or convert the file if needed.]",
+    });
+    expect(result.value[1]).toEqual({
+      type: "file-data",
+      data: webmBytes.toString("base64"),
+      mediaType: "video/webm",
+      filename: "clip.webm",
+      providerOptions: { mux: { displayOnly: true, size: webmBytes.length } },
     });
   });
 

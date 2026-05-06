@@ -9,6 +9,7 @@ import { z, type ZodSchema } from "zod";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 
 import { AnalyticsQueryToolCall } from "../analyticsQuery/AnalyticsQueryToolCall";
+import { AttachFileToolCall } from "../AttachFileToolCall";
 import { AdvisorToolCall } from "../AdvisorToolCall";
 import { GenericToolCall } from "../GenericToolCall";
 import { BashToolCall } from "../BashToolCall";
@@ -71,7 +72,7 @@ const legacyStatusSetSchema = z.object({
 const TOOL_REGISTRY: Record<string, ToolRegistryEntry> = {
   bash: { component: BashToolCall, schema: TOOL_DEFINITIONS.bash.schema },
   file_read: { component: FileReadToolCall, schema: TOOL_DEFINITIONS.file_read.schema },
-  attach_file: { component: GenericToolCall, schema: TOOL_DEFINITIONS.attach_file.schema },
+  attach_file: { component: AttachFileToolCall, schema: TOOL_DEFINITIONS.attach_file.schema },
   desktop_screenshot: {
     component: DesktopScreenshotToolCall,
     schema: TOOL_DEFINITIONS.desktop_screenshot.schema,

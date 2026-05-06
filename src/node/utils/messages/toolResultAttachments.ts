@@ -26,7 +26,24 @@ interface AISDKTextPart {
   text: string;
 }
 
-type AISDKContent = AISDKMediaPart | AISDKTextPart | { type: string; [key: string]: unknown };
+interface DisplayOnlyFilePart {
+  type: "file-data";
+  data: string;
+  mediaType: string;
+  filename?: string;
+  providerOptions: {
+    mux?: {
+      displayOnly?: boolean;
+      size?: number;
+    };
+  };
+}
+
+type AISDKContent =
+  | AISDKMediaPart
+  | AISDKTextPart
+  | DisplayOnlyFilePart
+  | { type: string; [key: string]: unknown };
 
 interface AISDKContentContainer {
   type: "content";
@@ -70,6 +87,39 @@ function isMediaPart(value: unknown): value is AISDKMediaPart {
   );
 }
 
+function getMuxProviderOptions(value: unknown): { displayOnly?: boolean; size?: number } | null {
+  if (typeof value !== "object" || value === null) {
+    return null;
+  }
+
+  const muxOptions = (value as Record<string, unknown>).mux;
+  if (typeof muxOptions !== "object" || muxOptions === null) {
+    return null;
+  }
+
+  const record = muxOptions as Record<string, unknown>;
+  return {
+    ...(typeof record.displayOnly === "boolean" ? { displayOnly: record.displayOnly } : {}),
+    ...(typeof record.size === "number" ? { size: record.size } : {}),
+  };
+}
+
+function isDisplayOnlyFilePart(value: unknown): value is DisplayOnlyFilePart {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+  const muxOptions = getMuxProviderOptions(record.providerOptions);
+  return (
+    record.type === "file-data" &&
+    typeof record.data === "string" &&
+    typeof record.mediaType === "string" &&
+    (record.filename === undefined || typeof record.filename === "string") &&
+    muxOptions?.displayOnly === true
+  );
+}
+
 function normalizeOptionalFilename(filename: string | undefined): string | undefined {
   const trimmed = filename?.trim();
   return trimmed != null && trimmed.length > 0 ? trimmed : undefined;
@@ -82,6 +132,18 @@ function buildAttachmentPlaceholder(item: AISDKMediaPart): AISDKTextPart {
   return {
     type: "text",
     text: `[Attachment attached: ${label} (base64 len=${item.data.length})]`,
+  };
+}
+
+function buildDisplayOnlyFilePlaceholder(item: DisplayOnlyFilePart): AISDKTextPart {
+  const normalizedMediaType = normalizeAttachmentMediaType(item.mediaType);
+  const filename = normalizeOptionalFilename(item.filename);
+  const label = filename != null ? `${filename} (${normalizedMediaType})` : normalizedMediaType;
+  const sizeValue = getMuxProviderOptions(item.providerOptions)?.size;
+  const size = typeof sizeValue === "number" ? `, size=${sizeValue} bytes` : "";
+  return {
+    type: "text",
+    text: `[File shown to user only: ${label}${size}. This file type is not supported as a model attachment, so no file bytes were sent to the model.]`,
   };
 }
 
@@ -106,9 +168,11 @@ export function extractAttachmentsFromToolOutput(
 
   const attachments: ExtractedToolAttachment[] = [];
   const newValue: AISDKContent[] = [];
+  let didChange = false;
 
   for (const item of output.value) {
     if (isMediaPart(item) && isSupportedAttachmentMediaType(item.mediaType)) {
+      didChange = true;
       attachments.push({
         data: item.data,
         mediaType: normalizeAttachmentMediaType(item.mediaType),
@@ -120,10 +184,17 @@ export function extractAttachmentsFromToolOutput(
       continue;
     }
 
+    if (isDisplayOnlyFilePart(item)) {
+      didChange = true;
+      // Display-only files are for the chat UI. Strip their bytes before any provider request.
+      newValue.push(buildDisplayOnlyFilePlaceholder(item));
+      continue;
+    }
+
     newValue.push(item);
   }
 
-  if (attachments.length === 0) {
+  if (!didChange) {
     return null;
   }
 
