@@ -4,6 +4,7 @@ import { EventEmitter } from "node:events";
 import { describe, expect, mock, test } from "bun:test";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import { BrowserBridgeServer } from "./BrowserBridgeServer";
+import type { BrowserBridgeTokenPayload } from "./BrowserBridgeTokenManager";
 import type { PageState } from "./BrowserSessionStateHub";
 
 const VALID_TOKEN = "valid-token";
@@ -50,12 +51,7 @@ function createAttachableConnection(sessionName: string, streamPort: number) {
 
 function createBridgeServer(
   options: {
-    validate?: (token: string) => {
-      workspaceId: string;
-      sessionName: string;
-      streamPort: number;
-      allowOtherWorkspaceSession: boolean;
-    } | null;
+    validate?: (token: string) => BrowserBridgeTokenPayload | null;
     getSessionConnection?: (
       workspaceId: string,
       sessionName: string,
@@ -284,6 +280,38 @@ describe("BrowserBridgeServer", () => {
 
       upstreamSocket.send('{"type":"frame","data":"abc"}');
       expect(await waitForMessage(ws)).toBe('{"type":"frame","data":"abc"}');
+    } finally {
+      ws.terminate();
+      await upgradeHarness.close();
+      await bridgeServer.stop();
+      await upstreamHarness.close();
+    }
+  });
+
+  test("bridges explicit other-workspace tokens on the success path", async () => {
+    const upstreamHarness = await listenUpstreamServer();
+    const getSessionConnection = mock(() =>
+      Promise.resolve(createAttachableConnection(VALID_SESSION_NAME, upstreamHarness.port))
+    );
+    const bridgeServer = createBridgeServer({
+      getSessionConnection,
+      validate: mock(() => ({
+        workspaceId: VALID_WORKSPACE_ID,
+        sessionName: VALID_SESSION_NAME,
+        streamPort: upstreamHarness.port,
+        allowOtherWorkspaceSession: true,
+      })),
+    });
+    const upgradeHarness = await listenUpgradeServer(bridgeServer);
+
+    const ws = new WebSocket(`ws://127.0.0.1:${upgradeHarness.port}/?token=${VALID_TOKEN}`);
+    try {
+      await waitForWebSocketOpen(ws);
+      await upstreamHarness.connectionPromise;
+
+      expect(getSessionConnection).toHaveBeenCalledWith(VALID_WORKSPACE_ID, VALID_SESSION_NAME, {
+        allowOtherWorkspaceSession: true,
+      });
     } finally {
       ws.terminate();
       await upgradeHarness.close();

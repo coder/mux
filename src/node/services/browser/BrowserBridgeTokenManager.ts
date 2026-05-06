@@ -46,6 +46,7 @@ export class BrowserBridgeTokenManager {
       "BrowserBridgeTokenManager.mint requires integer streamPort"
     );
     assert(streamPort > 0, "BrowserBridgeTokenManager.mint requires positive streamPort");
+
     let token = "";
     do {
       token = randomBytes(32).toString("hex");

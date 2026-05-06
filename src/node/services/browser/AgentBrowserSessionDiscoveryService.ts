@@ -203,6 +203,7 @@ export type AgentBrowserDiscoveredSession =
   | AgentBrowserDiscoveredSessionConnection
   | AgentBrowserMissingStreamSession;
 
+/** Sessions split by whether their process CWD is inside the active workspace paths. */
 export interface AgentBrowserSessionGroups {
   sessions: AgentBrowserDiscoveredSession[];
   otherSessions: AgentBrowserDiscoveredSession[];

@@ -52,6 +52,7 @@ void mock.module("./useBrowserBridgeConnection", () => ({
 import {
   BROWSER_PREVIEW_RETRY_INTERVAL_MS,
   BrowserTab,
+  chooseExplicitOtherSession,
   shouldBackOffBrowserReconnect,
 } from "./BrowserTab";
 
@@ -145,13 +146,39 @@ describe("BrowserTab", () => {
     await waitFor(() => {
       expect(view.getByText("Select session")).toBeTruthy();
     });
-    expect(view.queryByText("Other running sessions")).toBeNull();
+    expect(view.queryByText("Other sessions")).toBeNull();
+    expect(view.getByText("Choose a browser session")).toBeTruthy();
+    expect(view.getByText("Select an other session from the picker to connect.")).toBeTruthy();
 
     fireEvent.click(view.getByText("Select session"));
 
     expect(view.getByText("other-alpha")).toBeTruthy();
     expect(view.getByText("/tmp/other-project")).toBeTruthy();
     expect(connectMock).not.toHaveBeenCalled();
+  });
+
+  test("auto-selects current sessions while still listing other sessions in the picker", async () => {
+    listSessionsMock.mockResolvedValue({
+      sessions: [createDiscoveredSession({ sessionName: "current-alpha" })],
+      otherSessions: [
+        {
+          sessionName: "other-alpha",
+          status: "attachable",
+          cwd: "/tmp/other-project",
+        },
+      ],
+    });
+
+    const view = render(<BrowserTab workspaceId="workspace-1" projectPath="/project" />);
+
+    await waitFor(() => {
+      expect(connectMock).toHaveBeenCalledWith("current-alpha");
+    });
+
+    fireEvent.click(view.getByText("current-alpha"));
+
+    expect(view.getByTestId("browser-session-current-alpha")).toBeTruthy();
+    expect(view.getByTestId("browser-other-session-other-alpha")).toBeTruthy();
   });
 
   test("attaches to an other running session only after selecting it from the picker", async () => {
@@ -174,6 +201,10 @@ describe("BrowserTab", () => {
 
     fireEvent.click(view.getByText("Select session"));
     fireEvent.click(view.getByTestId("browser-other-session-other-alpha"));
+
+    await waitFor(() => {
+      expect(view.getByText("Waiting for browser frames")).toBeTruthy();
+    });
 
     await waitFor(() => {
       expect(connectMock).toHaveBeenCalledWith("other-alpha", {
@@ -205,6 +236,20 @@ describe("BrowserTab", () => {
     expect((view.getByLabelText("Forward") as HTMLButtonElement).disabled).toBe(false);
     expect((view.getByLabelText("Reload") as HTMLButtonElement).disabled).toBe(false);
     expect(view.getByTestId("browser-toolbar-loading-icon")).toBeTruthy();
+  });
+});
+
+describe("chooseExplicitOtherSession", () => {
+  test("preserves an explicitly selected other session while it is still discovered", () => {
+    expect(
+      chooseExplicitOtherSession("other-alpha", [
+        { sessionName: "other-alpha", status: "attachable", cwd: "/tmp/other-project" },
+      ])
+    ).toBe("other-alpha");
+  });
+
+  test("clears an explicitly selected other session after discovery loses it", () => {
+    expect(chooseExplicitOtherSession("other-alpha", [])).toBeNull();
   });
 });
 

@@ -15,6 +15,10 @@ import { BrowserToolbar } from "./BrowserToolbar";
 import { BrowserViewport } from "./BrowserViewport";
 import { useBrowserBridgeConnection } from "./useBrowserBridgeConnection";
 
+type BrowserSelectedSession =
+  | { sessionName: string; source: "current" }
+  | { sessionName: string; source: "other" };
+
 interface BrowserTabProps {
   workspaceId: string;
   projectPath: string;
@@ -104,6 +108,16 @@ function chooseSelectedSession(
   return sessions[0]?.sessionName ?? null;
 }
 
+export function chooseExplicitOtherSession(
+  currentSessionName: string | null,
+  otherSessions: BrowserDiscoveredOtherSession[]
+): string | null {
+  return currentSessionName != null &&
+    otherSessions.some((otherSession) => otherSession.sessionName === currentSessionName)
+    ? currentSessionName
+    : null;
+}
+
 export function BrowserTab(props: BrowserTabProps) {
   if (props.workspaceId.trim().length === 0) {
     throw new Error("Browser tab requires a workspaceId");
@@ -125,9 +139,15 @@ export function BrowserTab(props: BrowserTabProps) {
     props.workspaceId
   );
 
-  const selectedSessionName = explicitOtherSessionName ?? selectedCurrentSessionName;
-  const selectedSessionAllowsOther = explicitOtherSessionName != null;
-  const selectedDiscoveredSession = selectedSessionAllowsOther
+  const selectedSession: BrowserSelectedSession | null =
+    explicitOtherSessionName != null
+      ? { sessionName: explicitOtherSessionName, source: "other" }
+      : selectedCurrentSessionName != null
+        ? { sessionName: selectedCurrentSessionName, source: "current" }
+        : null;
+  const selectedSessionName = selectedSession?.sessionName ?? null;
+  const isOtherSessionSelected = selectedSession?.source === "other";
+  const selectedDiscoveredSession = isOtherSessionSelected
     ? (otherDiscoveredSessions.find((candidate) => candidate.sessionName === selectedSessionName) ??
       null)
     : (discoveredSessions.find((candidate) => candidate.sessionName === selectedSessionName) ??
@@ -171,10 +191,7 @@ export function BrowserTab(props: BrowserTabProps) {
         setDiscoveredSessions(result.sessions);
         setOtherDiscoveredSessions(result.otherSessions);
         setExplicitOtherSessionName((currentSessionName) =>
-          currentSessionName != null &&
-          result.otherSessions.some((session) => session.sessionName === currentSessionName)
-            ? currentSessionName
-            : null
+          chooseExplicitOtherSession(currentSessionName, result.otherSessions)
         );
         setSelectedCurrentSessionName((currentSessionName) =>
           chooseSelectedSession(currentSessionName, result.sessions)
@@ -249,7 +266,7 @@ export function BrowserTab(props: BrowserTabProps) {
       sessionName: selectedSessionName,
       attemptedAtMs: now,
     };
-    if (selectedSessionAllowsOther) {
+    if (isOtherSessionSelected) {
       connect(selectedSessionName, { allowOtherWorkspaceSession: true });
     } else {
       connect(selectedSessionName);
@@ -260,7 +277,7 @@ export function BrowserTab(props: BrowserTabProps) {
     disconnect,
     selectedDiscoveredSession,
     selectedSessionName,
-    selectedSessionAllowsOther,
+    isOtherSessionSelected,
     session,
     visibleError,
   ]);
@@ -281,7 +298,7 @@ export function BrowserTab(props: BrowserTabProps) {
             currentSessions={discoveredSessions}
             otherSessions={otherDiscoveredSessions}
             selectedSessionName={selectedSessionName}
-            selectedSessionAllowsOther={selectedSessionAllowsOther}
+            isOtherSessionSelected={isOtherSessionSelected}
             onSelectCurrent={(sessionName) => {
               setExplicitOtherSessionName(null);
               setSelectedCurrentSessionName(sessionName);
@@ -294,7 +311,7 @@ export function BrowserTab(props: BrowserTabProps) {
       <BrowserToolbar
         workspaceId={props.workspaceId}
         sessionName={selectedSessionName}
-        allowOtherWorkspaceSession={selectedSessionAllowsOther}
+        allowOtherWorkspaceSession={isOtherSessionSelected}
         currentUrl={session?.currentUrl ?? null}
         pendingUrl={session?.pendingUrl ?? null}
         isPageLoading={session?.isPageLoading ?? false}
@@ -353,7 +370,7 @@ function BrowserSessionPicker(props: {
   currentSessions: BrowserDiscoveredSession[];
   otherSessions: BrowserDiscoveredOtherSession[];
   selectedSessionName: string | null;
-  selectedSessionAllowsOther: boolean;
+  isOtherSessionSelected: boolean;
   onSelectCurrent: (sessionName: string) => void;
   onSelectOther: (sessionName: string) => void;
 }) {
@@ -402,8 +419,7 @@ function BrowserSessionPicker(props: {
                 key={session.sessionName}
                 session={session}
                 isSelected={
-                  !props.selectedSessionAllowsOther &&
-                  session.sessionName === props.selectedSessionName
+                  !props.isOtherSessionSelected && session.sessionName === props.selectedSessionName
                 }
                 testId={`browser-session-${session.sessionName}`}
                 onSelect={() => {
@@ -422,11 +438,9 @@ function BrowserSessionPicker(props: {
                 key={session.sessionName}
                 session={session}
                 isSelected={
-                  props.selectedSessionAllowsOther &&
-                  session.sessionName === props.selectedSessionName
+                  props.isOtherSessionSelected && session.sessionName === props.selectedSessionName
                 }
                 testId={`browser-other-session-${session.sessionName}`}
-                cwd={session.cwd}
                 onSelect={() => {
                   props.onSelectOther(session.sessionName);
                   setIsOpen(false);
@@ -441,10 +455,9 @@ function BrowserSessionPicker(props: {
 }
 
 function BrowserSessionPickerOption(props: {
-  session: BrowserDiscoveredSession;
+  session: BrowserDiscoveredSession | BrowserDiscoveredOtherSession;
   isSelected: boolean;
   testId: string;
-  cwd?: string;
   onSelect: () => void;
 }) {
   return (
@@ -462,9 +475,9 @@ function BrowserSessionPickerOption(props: {
       />
       <span className="min-w-0 flex-1">
         <span className="block truncate">{props.session.sessionName}</span>
-        {props.cwd != null && (
-          <span className="text-muted block truncate text-[10px]" title={props.cwd}>
-            {props.cwd}
+        {"cwd" in props.session && (
+          <span className="text-muted block truncate text-[10px]" title={props.session.cwd}>
+            {props.session.cwd}
           </span>
         )}
       </span>
@@ -505,7 +518,7 @@ function BrowserViewerState(props: {
       };
     }
 
-    if (props.hasDiscoveredSessions) {
+    if (props.selectedSession != null || props.hasDiscoveredSessions) {
       return {
         title: "Waiting for browser frames",
         description: "Mux found a browser session and is waiting for live preview frames.",
@@ -515,7 +528,7 @@ function BrowserViewerState(props: {
     if (props.hasOtherSessions) {
       return {
         title: "Choose a browser session",
-        description: "Other running sessions require explicit attachment before Mux connects.",
+        description: "Select an other session from the picker to connect.",
       };
     }
 

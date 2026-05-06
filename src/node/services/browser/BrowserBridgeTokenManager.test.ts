@@ -1,8 +1,12 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, setSystemTime } from "bun:test";
 import { AssertionError } from "@/common/utils/assert";
 import { BrowserBridgeTokenManager } from "./BrowserBridgeTokenManager";
 
 const TOKEN_TTL_MS = 30_000;
+
+afterEach(() => {
+  setSystemTime();
+});
 
 describe("BrowserBridgeTokenManager", () => {
   it("mints a 64-character hex token", () => {
@@ -64,18 +68,15 @@ describe("BrowserBridgeTokenManager", () => {
   });
 
   it("returns null for expired tokens", () => {
-    const originalNow = Date.now;
-    let nowMs = new Date("2026-01-01T00:00:00.000Z").getTime();
-    Date.now = () => nowMs;
+    setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
 
     const manager = new BrowserBridgeTokenManager();
     try {
       const token = manager.mint("workspace-1", "session-a", 9222);
-      nowMs += TOKEN_TTL_MS + 1;
+      setSystemTime(Date.now() + TOKEN_TTL_MS + 1);
       expect(manager.validate(token)).toBeNull();
     } finally {
       manager.dispose();
-      Date.now = originalNow;
     }
   });
 });

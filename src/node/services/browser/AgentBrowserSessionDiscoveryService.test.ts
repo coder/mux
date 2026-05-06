@@ -377,6 +377,33 @@ describe("AgentBrowserSessionDiscoveryService", () => {
     });
   });
 
+  test("getSessionConnection remains strict unless other sessions are explicitly allowed", async () => {
+    const projectPath = path.join(tempDir, "project");
+    const otherProjectPath = path.join(tempDir, "different-project");
+    await mkdir(projectPath, { recursive: true });
+    await mkdir(otherProjectPath, { recursive: true });
+    await writeSessionFiles(socketDir, "other", { pid: "203", streamPort: "9203" });
+
+    const service = createService({
+      listSessionNamesFn: () => Promise.resolve(["other"]),
+      resolveCandidatePaths: () => Promise.resolve([projectPath]),
+      resolveProcessCwdFn: () => Promise.resolve(otherProjectPath),
+    });
+
+    expect(await service.getSessionConnection("workspace-1", "other")).toBeNull();
+    expect(
+      await service.getSessionConnection("workspace-1", "other", {
+        allowOtherWorkspaceSession: true,
+      })
+    ).toEqual({
+      sessionName: "other",
+      pid: 203,
+      cwd: otherProjectPath,
+      status: "attachable",
+      streamPort: 9203,
+    });
+  });
+
   test("keeps other missing_stream sessions discoverable without adding them to current sessions", async () => {
     const projectPath = path.join(tempDir, "project");
     const otherProjectPath = path.join(tempDir, "different-project");
