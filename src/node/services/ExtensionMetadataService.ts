@@ -154,11 +154,18 @@ export class ExtensionMetadataService {
   }
 
   private async save(data: ExtensionMetadataFile): Promise<void> {
+    // Throw on write failure so callers that need to know whether the write
+    // actually happened (e.g. AgentStatusService, which dedups against the
+    // last successfully-persisted input hash) can react. Callers that don't
+    // care still wrap setX in emitWorkspaceActivityUpdate which downgrades
+    // the throw to a logged warning, preserving the historical
+    // "log-and-continue" behavior for those paths.
     try {
       const content = JSON.stringify(data, null, 2);
       await writeFileAtomic(this.filePath, content, "utf-8");
     } catch (error) {
       log.error("Failed to save metadata:", error);
+      throw error;
     }
   }
 
