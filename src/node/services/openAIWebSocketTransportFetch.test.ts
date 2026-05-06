@@ -109,7 +109,7 @@ describe("createOpenAIWebSocketTransportFetch", () => {
   });
 
   test("enabled transport strips DevTools headers before WebSocket dispatch", async () => {
-    let webSocketHeaders: Headers | null = null;
+    let webSocketHeaders: Headers | undefined;
     const transport = createOpenAIWebSocketTransportFetch({
       enabled: true,
       baseFetch: createTestFetch(() => Promise.resolve(new Response("base"))),
@@ -130,8 +130,12 @@ describe("createOpenAIWebSocketTransportFetch", () => {
       body: JSON.stringify({ stream: true }),
     });
 
-    expect(webSocketHeaders?.get(DEVTOOLS_STEP_ID_HEADER)).toBeNull();
-    expect(webSocketHeaders?.get(DEVTOOLS_RUN_METADATA_ID_HEADER)).toBeNull();
+    expect(webSocketHeaders).toBeDefined();
+    if (!webSocketHeaders) {
+      throw new Error("Expected WebSocket fetch to receive request headers");
+    }
+    expect(webSocketHeaders.get(DEVTOOLS_STEP_ID_HEADER)).toBeNull();
+    expect(webSocketHeaders.get(DEVTOOLS_RUN_METADATA_ID_HEADER)).toBeNull();
     const captured = consumeCapturedRequestHeaders("step-ws-1");
     expect(captured).toEqual({ authorization: "[REDACTED]" });
   });
