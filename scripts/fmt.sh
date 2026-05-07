@@ -63,18 +63,9 @@ check_nix_format() (
     exit 0
   fi
 
-  local tmp_dir
-  tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/fmt-nix-check.XXXXXX")"
-  trap 'rm -rf "$tmp_dir"' EXIT
-  cp "$flake_path" "$tmp_dir/flake.nix"
-  (
-    cd "$tmp_dir"
-    nix fmt -- flake.nix
-  )
-
-  if ! cmp -s "$flake_path" "$tmp_dir/flake.nix"; then
+  # Check from the repo flake instead of a temp copy; `nix fmt` evaluates flake metadata.
+  if ! nix fmt -- --check flake.nix; then
     echo "flake.nix is not formatted correctly. Run ./scripts/fmt.sh --nix or make fmt-nix."
-    diff -u "$flake_path" "$tmp_dir/flake.nix" || true
     exit 1
   fi
 )

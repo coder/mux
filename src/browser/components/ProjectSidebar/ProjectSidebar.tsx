@@ -109,7 +109,12 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { isMultiProject } from "@/common/utils/multiProject";
 import { MULTI_PROJECT_SIDEBAR_SECTION_ID } from "@/common/constants/multiProject";
 import { getProjectWorkspaceCounts } from "@/common/utils/projectRemoval";
-import { getTaskGroupKindFromMetadata } from "@/common/utils/tools/taskGroups";
+import {
+  TASK_GROUP_KIND,
+  formatTaskGroupItemsLabel,
+  getTaskGroupKindFromMetadata,
+  type TaskGroupKind,
+} from "@/common/utils/tools/taskGroups";
 import { hasCompletedAgentReport } from "@/common/utils/agentTaskCompletion";
 import { useExperimentValue } from "@/browser/hooks/useExperiments";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
@@ -896,6 +901,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
   const [archivingWorkspaceIds, setArchivingWorkspaceIds] = useState<Set<string>>(new Set());
   const [removingWorkspaceIds, setRemovingWorkspaceIds] = useState<Set<string>>(new Set());
+  const [deletingTaskGroupIds, setDeletingTaskGroupIds] = useState<Set<string>>(new Set());
   const [draftVisibilityByProject, setDraftVisibilityByProject] = useState<
     Record<string, Record<string, boolean>>
   >({});
@@ -903,6 +909,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const workspaceForkError = usePopoverError();
   const workspaceStopRuntimeError = usePopoverError();
   const workspaceRemoveError = usePopoverError();
+  const workspaceDeleteError = usePopoverError();
   const [archiveConfirmation, setArchiveConfirmation] = useState<{
     workspaceId: string;
     displayTitle: string;
@@ -1338,6 +1345,82 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
       }
     },
     [removeWorkspace, workspaceRemoveError]
+  );
+
+  const handleDeleteTaskGroupWorkspaces = useCallback(
+    async (params: {
+      groupId: string;
+      kind: TaskGroupKind;
+      title: string;
+      members: FrontendWorkspaceMetadata[];
+    }) => {
+      const memberIds = params.members.map((member) => member.id);
+      if (memberIds.length === 0 || deletingTaskGroupIds.has(params.groupId)) {
+        return;
+      }
+
+      const itemLabel = formatTaskGroupItemsLabel(params.kind).toLowerCase();
+      const hasRunningMembers = params.members.some(
+        (member) =>
+          member.taskStatus === "running" ||
+          member.taskStatus === "awaiting_report" ||
+          member.isInitializing === true
+      );
+      const ok = await confirmDialog({
+        title: `Delete all ${itemLabel}?`,
+        description: `This will permanently delete ${memberIds.length} ${itemLabel} workspace${memberIds.length === 1 ? "" : "s"} for “${params.title}”.`,
+        warning: hasRunningMembers
+          ? `Running ${itemLabel} will be stopped before deletion.`
+          : undefined,
+        confirmLabel: `Delete ${itemLabel}`,
+        confirmVariant: "destructive",
+      });
+      if (!ok) {
+        return;
+      }
+
+      setDeletingTaskGroupIds((prev) => new Set(prev).add(params.groupId));
+      setRemovingWorkspaceIds((prev) => {
+        const next = new Set(prev);
+        for (const memberId of memberIds) {
+          next.add(memberId);
+        }
+        return next;
+      });
+
+      let didShowError = false;
+      try {
+        for (const member of params.members) {
+          const result = await removeWorkspace(member.id, { force: true });
+          if (result.success) {
+            continue;
+          }
+
+          if (!didShowError) {
+            const displayTitle = member.title ?? member.name ?? member.id;
+            workspaceDeleteError.showError(
+              params.groupId,
+              `${displayTitle}: ${result.error ?? `Failed to delete ${itemLabel}`}`
+            );
+            didShowError = true;
+          }
+        }
+      } finally {
+        setRemovingWorkspaceIds((prev) => {
+          const next = new Set(prev);
+          for (const memberId of memberIds) {
+            next.delete(memberId);
+          }
+          return next;
+        });
+        setDeletingTaskGroupIds((prev) => {
+          const next = new Set(prev);
+          next.delete(params.groupId);
+          return next;
+        });
+      }
+    },
+    [confirmDialog, deletingTaskGroupIds, removeWorkspace, workspaceDeleteError]
   );
 
   const handleRemoveSection = async (
@@ -2320,6 +2403,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   const groupKind = getTaskGroupKindFromMetadata(
                                     allMembers[0]?.bestOf
                                   );
+                                  // Variant runs are sibling task workspaces; the group row owns bulk cleanup
+                                  // so users can delete the whole set without expanding every child.
+                                  const canDeleteTaskGroup = groupKind === TASK_GROUP_KIND.VARIANTS;
                                   let completedCount = 0;
                                   let runningCount = 0;
                                   let queuedCount = 0;
@@ -2367,9 +2453,22 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                       isSelected={allMembers.some(
                                         (member) => member.id === selectedWorkspace?.workspaceId
                                       )}
+                                      isDeleting={deletingTaskGroupIds.has(taskGroupId)}
                                       onToggle={() => {
                                         toggleTaskGroupExpansion(taskGroupId);
                                       }}
+                                      onDeleteAll={
+                                        canDeleteTaskGroup
+                                          ? () => {
+                                              void handleDeleteTaskGroupWorkspaces({
+                                                groupId: taskGroupId,
+                                                kind: groupKind,
+                                                title: groupTitle,
+                                                members: allMembers,
+                                              });
+                                            }
+                                          : undefined
+                                      }
                                     />
                                   );
 
@@ -3072,6 +3171,11 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
             error={workspaceRemoveError.error}
             prefix="Failed to cancel workspace creation"
             onDismiss={workspaceRemoveError.clearError}
+          />
+          <PopoverError
+            error={workspaceDeleteError.error}
+            prefix="Failed to delete variants"
+            onDismiss={workspaceDeleteError.clearError}
           />
           <PopoverError
             error={projectRemoveError.error}
