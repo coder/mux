@@ -7,11 +7,17 @@
  * is byte-for-byte unchanged.
  */
 
-/** Per-workspace regen interval when the desktop window is focused. */
-export const AGENT_STATUS_FOCUSED_INTERVAL_MS = 30 * 1000;
-
-/** Per-workspace regen interval when the desktop window is blurred. */
-export const AGENT_STATUS_UNFOCUSED_INTERVAL_MS = 2 * 60 * 1000;
+/**
+ * Per-workspace regen intervals split four ways: streaming workspaces
+ * (active) refresh much faster so the user can follow the agent in real
+ * time; idle workspaces (no active stream) back off because the chat
+ * isn't moving anyway. Either case backs off further when the desktop
+ * window is blurred.
+ */
+export const AGENT_STATUS_ACTIVE_FOCUSED_INTERVAL_MS = 10 * 1000;
+export const AGENT_STATUS_ACTIVE_UNFOCUSED_INTERVAL_MS = 30 * 1000;
+export const AGENT_STATUS_IDLE_FOCUSED_INTERVAL_MS = 30 * 1000;
+export const AGENT_STATUS_IDLE_UNFOCUSED_INTERVAL_MS = 2 * 60 * 1000;
 
 /**
  * How often the scheduler wakes up to scan workspaces. Per-workspace cadence

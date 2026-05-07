@@ -45,9 +45,11 @@ export function buildWorkspaceStatusPrompt(transcript: string): string {
     "Requirements:\n",
     "- Describe the specific activity the agent was last working on, drawn from the actual transcript content.\n",
     "- Do NOT use generic placeholders such as 'Awaiting next task', 'Doing work', or 'Idle'. Always name the concrete activity (file, feature, bug, command, etc.).\n",
+    "- Tense: use present tense if the agent appears to still be in the middle of the activity; use past tense if the most recent assistant turn looks complete (e.g. wrapped up with a summary, no pending tool calls).\n",
     "- emoji: A single emoji that visually represents the activity.\n",
-    "- message: 2-6 words, present tense, verb-led, sentence case, no punctuation, no quotes.\n",
-    '- Examples: "Investigating crash", "Implementing sidebar status", "Running tests", "Reading config files".\n\n',
+    "- message: 2-6 words, verb-led, sentence case, no punctuation, no quotes.\n",
+    '- Examples (in progress): "Investigating crash", "Implementing sidebar status", "Running tests", "Reading config files".\n',
+    '- Examples (completed): "Wrote tests", "Fixed sidebar bug", "Investigated crash", "Refactored config loader".\n\n',
     "Call propose_status exactly once with your chosen emoji and message. Do not emit any text response.",
   ].join("");
 }

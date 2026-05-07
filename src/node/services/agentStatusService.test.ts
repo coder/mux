@@ -36,6 +36,9 @@ describe("AgentStatusService", () => {
   let setSidebarStatusMock: ReturnType<
     typeof mock<(workspaceId: string, status: unknown) => Promise<{ recency: number }>>
   >;
+  let getAllSnapshotsMock: ReturnType<
+    typeof mock<() => Promise<Map<string, { streaming: boolean }>>>
+  >;
   let emitWorkspaceActivityMock: ReturnType<
     typeof mock<(workspaceId: string, snapshot: unknown) => void>
   >;
@@ -101,8 +104,12 @@ describe("AgentStatusService", () => {
     setSidebarStatusMock = mock((_workspaceId: string, _status: unknown) =>
       Promise.resolve({ recency: 0 })
     );
+    // Default: no snapshots → no workspaces are streaming → idle intervals.
+    // Tests that exercise the active intervals override this per-test.
+    getAllSnapshotsMock = mock(() => Promise.resolve(new Map<string, { streaming: boolean }>()));
     mockExtensionMetadata = {
       setSidebarStatus: setSidebarStatusMock,
+      getAllSnapshots: getAllSnapshotsMock,
     } as unknown as ExtensionMetadataService;
 
     mockTokenizer = {
@@ -223,7 +230,7 @@ describe("AgentStatusService", () => {
     expect(setSidebarStatusMock).not.toHaveBeenCalled();
   });
 
-  test("focused windows regenerate at the focused interval; unfocused windows wait longer", async () => {
+  test("idle workspaces regenerate at the idle focused/unfocused intervals", async () => {
     await historyHandle.historyService.appendToHistory(
       workspaceId,
       createMuxMessage("u1", "user", "Hello")
@@ -271,6 +278,63 @@ describe("AgentStatusService", () => {
 
     // Past the unfocused interval: regenerates.
     now += 120_000;
+    await internals.runTick();
+    expect(generateSpy).toHaveBeenCalledTimes(3);
+  });
+
+  test("streaming workspaces regenerate at the active intervals (10s focused, 30s unfocused)", async () => {
+    // The user-visible reason this test exists: when an agent is actively
+    // working, the sidebar status should refresh fast enough that the user
+    // can follow along (every 10s when watching, every 30s otherwise),
+    // versus the slower 30s/120s cadence for chats that aren't moving.
+    await historyHandle.historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("u1", "user", "kick off a long task")
+    );
+    // Mark the workspace as currently streaming so dispatch picks the
+    // active intervals.
+    getAllSnapshotsMock.mockImplementation(() =>
+      Promise.resolve(new Map<string, { streaming: boolean }>([[workspaceId, { streaming: true }]]))
+    );
+
+    let now = 1_000_000;
+    const service = createService({ clock: () => now });
+    const internals = getInternals(service);
+
+    isFocused = true;
+    await internals.runTick();
+    expect(generateSpy).toHaveBeenCalledTimes(1);
+
+    // 5s elapsed: inside the active-focused 10s interval → skip.
+    now += 5_000;
+    await historyHandle.historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("a1", "assistant", "step one")
+    );
+    await internals.runTick();
+    expect(generateSpy).toHaveBeenCalledTimes(1);
+
+    // 10s elapsed: at the active-focused interval → regenerates.
+    now += 5_000;
+    await historyHandle.historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("a2", "assistant", "step two")
+    );
+    await internals.runTick();
+    expect(generateSpy).toHaveBeenCalledTimes(2);
+
+    // Unfocused: 10s past last run is inside the 30s active-unfocused
+    // interval → skip. Only at 30s does it regenerate.
+    isFocused = false;
+    now += 10_000;
+    await historyHandle.historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("a3", "assistant", "step three")
+    );
+    await internals.runTick();
+    expect(generateSpy).toHaveBeenCalledTimes(2);
+
+    now += 20_000;
     await internals.runTick();
     expect(generateSpy).toHaveBeenCalledTimes(3);
   });

@@ -1,13 +1,15 @@
 import { createHash } from "crypto";
 import assert from "@/common/utils/assert";
 import {
-  AGENT_STATUS_FOCUSED_INTERVAL_MS,
+  AGENT_STATUS_ACTIVE_FOCUSED_INTERVAL_MS,
+  AGENT_STATUS_ACTIVE_UNFOCUSED_INTERVAL_MS,
+  AGENT_STATUS_IDLE_FOCUSED_INTERVAL_MS,
+  AGENT_STATUS_IDLE_UNFOCUSED_INTERVAL_MS,
   AGENT_STATUS_MAX_CONCURRENT,
   AGENT_STATUS_MAX_MESSAGE_CHARS,
   AGENT_STATUS_MAX_TRAILING_MESSAGES,
   AGENT_STATUS_MAX_TRANSCRIPT_TOKENS,
   AGENT_STATUS_TICK_INTERVAL_MS,
-  AGENT_STATUS_UNFOCUSED_INTERVAL_MS,
 } from "@/constants/agentStatus";
 import type { Config } from "@/node/config";
 import type { MuxMessage } from "@/common/types/message";
@@ -43,9 +45,9 @@ interface State {
  * Periodic backend job that produces the sidebar's AI-generated agent status
  * using the same "small model" path as workspace title generation.
  *
- * Cadence: per-workspace eligibility gates each tick. Focused windows
- * regenerate at most every AGENT_STATUS_FOCUSED_INTERVAL_MS, blurred windows
- * back off to AGENT_STATUS_UNFOCUSED_INTERVAL_MS.
+ * Cadence: streaming workspaces refresh fast so the user can follow along;
+ * idle workspaces back off. Both back off further when the desktop window
+ * is blurred. See ACTIVE_/IDLE_ intervals in @/constants/agentStatus.
  *
  * Dedup: each generation hashes its trailing-transcript window. Identical
  * hash to the last successful run skips regeneration (idle/frozen chats).
@@ -103,7 +105,13 @@ export class AgentStatusService {
     if (this.stopped || this.tickInFlight) return;
     this.tickInFlight = true;
     try {
-      this.dispatch();
+      // Anchor lastRanAt below to tick start time. With tick=10s and
+      // active-focused interval=10s, that makes the eligibility math exact:
+      // tick[k+1] - tick[k] === interval, so the workspace runs every tick.
+      // Otherwise sub-ms timer drift can degrade actual cadence to 2× the
+      // configured interval.
+      const tickStartedAt = this.clock();
+      await this.dispatch(tickStartedAt);
       // Awaited so production callers and tests observe completion.
       await Promise.allSettled([...this.inFlightPromises]);
     } catch (error) {
@@ -113,11 +121,11 @@ export class AgentStatusService {
     }
   }
 
-  private dispatch(): void {
-    const now = this.clock();
-    const interval = this.windowService.isFocused()
-      ? AGENT_STATUS_FOCUSED_INTERVAL_MS
-      : AGENT_STATUS_UNFOCUSED_INTERVAL_MS;
+  private async dispatch(tickStartedAt: number): Promise<void> {
+    const focused = this.windowService.isFocused();
+    // One disk read per tick for streaming state across all workspaces.
+    // Cheap, and avoids N reads inside the inner loop.
+    const snapshots = await this.extensionMetadata.getAllSnapshots();
 
     // Sort eligible workspaces by lastRanAt ascending. With MAX_CONCURRENT=1,
     // a fixed iteration order would let the first workspace starve the rest;
@@ -130,7 +138,8 @@ export class AgentStatusService {
         if (isWorkspaceArchived(ws.archivedAt, ws.unarchivedAt)) continue;
         const state = this.tracked.get(id);
         if (state?.inFlight) continue;
-        if (state && now - state.lastRanAt < interval) continue;
+        const interval = pickInterval(snapshots.get(id)?.streaming === true, focused);
+        if (state && tickStartedAt - state.lastRanAt < interval) continue;
         eligible.push({ id, lastRanAt: state?.lastRanAt ?? 0 });
       }
     }
@@ -140,6 +149,9 @@ export class AgentStatusService {
       if (this.stopped || this.inFlightPromises.size >= AGENT_STATUS_MAX_CONCURRENT) return;
       const state = this.ensureState(id);
       state.inFlight = true;
+      // Set lastRanAt at dispatch time (not after the async transcript
+      // build) so cadence is anchored to tick boundaries — see runTick.
+      state.lastRanAt = tickStartedAt;
       const promise = this.runForWorkspace(id).finally(() => {
         state.inFlight = false;
         this.inFlightPromises.delete(promise);
@@ -152,11 +164,10 @@ export class AgentStatusService {
     try {
       const transcript = await this.buildTrailingTranscript(workspaceId);
       const inputHash = computeInputHash(transcript);
-
-      // Bump lastRanAt regardless of skip/run so the scheduler doesn't
-      // reconsider this workspace until the next interval boundary.
+      // dispatch() set lastRanAt to the tick start time before kicking us
+      // off, so the scheduler already won't reconsider this workspace until
+      // the next interval boundary regardless of which branch we take below.
       const state = this.ensureState(workspaceId);
-      state.lastRanAt = this.clock();
 
       // Empty workspace: nothing to summarize. Don't blank an existing
       // todoStatus — that would clobber a status produced before compaction.
@@ -300,4 +311,13 @@ function formatMessageForTranscript(message: MuxMessage): string {
 
 function computeInputHash(transcript: string): string {
   return createHash("sha256").update(transcript).digest("hex");
+}
+
+function pickInterval(streaming: boolean, focused: boolean): number {
+  if (streaming) {
+    return focused
+      ? AGENT_STATUS_ACTIVE_FOCUSED_INTERVAL_MS
+      : AGENT_STATUS_ACTIVE_UNFOCUSED_INTERVAL_MS;
+  }
+  return focused ? AGENT_STATUS_IDLE_FOCUSED_INTERVAL_MS : AGENT_STATUS_IDLE_UNFOCUSED_INTERVAL_MS;
 }
