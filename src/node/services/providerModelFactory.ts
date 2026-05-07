@@ -1303,11 +1303,9 @@ export class ProviderModelFactory {
 
         const baseFetch = getProviderFetch(providerConfig);
         const codexOauthService = this.codexOauthService;
-        const openAIHasCustomBaseURL =
-          providerConfig.baseURL != null || providerConfig.baseUrl != null || creds.baseUrl != null;
         const webSocketTransportEnabled =
           (providerConfig as { webSocketTransportEnabled?: unknown }).webSocketTransportEnabled ===
-            true && !openAIHasCustomBaseURL;
+          true;
 
         // Wrap fetch so Codex OAuth Responses requests are normalized before
         // they are rerouted from api.openai.com to chatgpt.com's Codex backend.
@@ -1391,6 +1389,8 @@ export class ProviderModelFactory {
         );
 
         const webSocketTransport = createOpenAIWebSocketTransportFetch({
+          // Codex OAuth requests must keep using the HTTP fetch wrapper above so
+          // Mux can rewrite the endpoint and attach ChatGPT OAuth headers.
           enabled:
             webSocketTransportEnabled &&
             effectiveWireFormat === "responses" &&

@@ -852,7 +852,7 @@ describe("ProviderModelFactory OpenAI WebSocket transport", () => {
     });
   });
 
-  it("does not attach cleanup when a custom OpenAI base URL is configured", async () => {
+  it("attaches cleanup when a custom OpenAI base URL is configured", async () => {
     await withTempConfig(async (config, factory) => {
       config.saveProvidersConfig({
         openai: {
@@ -868,7 +868,7 @@ describe("ProviderModelFactory OpenAI WebSocket transport", () => {
       if (!result.success) {
         return;
       }
-      expect(hasLanguageModelCleanup(result.data)).toBe(false);
+      expect(hasLanguageModelCleanup(result.data)).toBe(true);
     });
   });
 

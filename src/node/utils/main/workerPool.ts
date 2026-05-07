@@ -82,7 +82,7 @@ worker.on("message", (response: WorkerResponse) => {
 });
 
 // Handle worker errors
-worker.on("error", (error) => {
+worker.on("error", (error: Error) => {
   log.error("Worker error:", error);
   workerError = error;
   // Reject all pending promises
