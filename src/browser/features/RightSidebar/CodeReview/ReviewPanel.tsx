@@ -1248,14 +1248,30 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   // Ensure selectedHunkId is valid after filtering/sorting:
   // - If no selection or selection not in filtered list, select first visible hunk
   // - This runs after sorting, so we always select the top-most hunk in current order
+  //
+  // Immersive review can intentionally navigate to a hunk that is hidden by
+  // the active filter (e.g. clicking a pending review whose hunk has been
+  // marked read while hide-read is on). The immersive view falls back to
+  // `allHunks` for those selections, so when we're in immersive mode we only
+  // reset when the hunk has truly disappeared from the diff (e.g. after a
+  // refresh removed it). The non-immersive panel only ever renders
+  // `filteredHunks`, so it keeps the original auto-advance to a visible hunk.
   useEffect(() => {
     if (filteredHunks.length === 0) return;
+
+    if (isImmersive) {
+      const selectionExists = selectedHunkId && hunks.some((h) => h.id === selectedHunkId);
+      if (!selectionExists) {
+        setSelectedHunkId(filteredHunks[0].id);
+      }
+      return;
+    }
 
     const selectionValid = selectedHunkId && filteredHunks.some((h) => h.id === selectedHunkId);
     if (!selectionValid) {
       setSelectedHunkId(filteredHunks[0].id);
     }
-  }, [filteredHunks, selectedHunkId, setSelectedHunkId]);
+  }, [filteredHunks, hunks, isImmersive, selectedHunkId, setSelectedHunkId]);
 
   // Memoize search config to prevent re-creating object on every render
   // This allows React.memo on HunkViewer to work properly

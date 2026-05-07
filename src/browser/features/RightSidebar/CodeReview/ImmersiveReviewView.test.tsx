@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
-import type { ComponentProps } from "react";
+import { useEffect, useState, type ComponentProps } from "react";
 
 import { ThemeProvider } from "@/browser/contexts/ThemeContext";
 import type { FileTreeNode } from "@/common/utils/git/numstatParser";
-import type { DiffHunk } from "@/common/types/review";
+import type { DiffHunk, Review } from "@/common/types/review";
 
 interface MockApiClient {
   workspace: {
@@ -49,7 +49,10 @@ function createHunk(overrides: Partial<DiffHunk> = {}): DiffHunk {
 }
 
 function createFileTree(filePath: string): FileTreeNode {
-  const segments = filePath.split("/");
+  return createFileTreeForPaths([filePath]);
+}
+
+function createFileTreeForPaths(filePaths: string[]): FileTreeNode {
   const root: FileTreeNode = {
     name: "",
     path: "",
@@ -57,18 +60,24 @@ function createFileTree(filePath: string): FileTreeNode {
     children: [],
   };
 
-  let current = root;
-  for (const [index, segment] of segments.entries()) {
-    const isLastSegment = index === segments.length - 1;
-    const path = segments.slice(0, index + 1).join("/");
-    const nextNode: FileTreeNode = {
-      name: segment,
-      path,
-      isDirectory: !isLastSegment,
-      children: [],
-    };
-    current.children.push(nextNode);
-    current = nextNode;
+  for (const filePath of filePaths) {
+    const segments = filePath.split("/");
+    let current = root;
+    for (const [index, segment] of segments.entries()) {
+      const isLastSegment = index === segments.length - 1;
+      const path = segments.slice(0, index + 1).join("/");
+      let next = current.children.find((child) => child.path === path);
+      if (!next) {
+        next = {
+          name: segment,
+          path,
+          isDirectory: !isLastSegment,
+          children: [],
+        };
+        current.children.push(next);
+      }
+      current = next;
+    }
   }
 
   return root;
@@ -217,5 +226,171 @@ describe("ImmersiveReviewView", () => {
 
     expect(view.queryByTestId("immersive-review-complete")).toBeNull();
     expect(view.getByText("No hunks for this file")).toBeTruthy();
+  });
+
+  test("clicking a sidebar review selects its hunk even when hidden by the active filter", () => {
+    // Repro for: clicking a pending review in the immersive sidebar should
+    // jump back to the hunk the review was attached to. Previously, when
+    // hide-read (or any other frontend filter) had removed the review's hunk
+    // from the visible list, the navigation handler still computed the right
+    // target hunk id from `allHunks` — but the parent panel reset the
+    // selection on the next render because it validated against the filtered
+    // hunks. Lock in the immersive contract by asserting the explicit target
+    // hunk id propagates out of `onSelectHunk`.
+    const visibleHunk = createHunk({
+      id: "hunk-visible",
+      filePath: "src/visible.ts",
+      newStart: 1,
+      newLines: 1,
+      oldStart: 1,
+      oldLines: 1,
+      header: "@@ -1 +1 @@",
+      content: "-old visible\n+new visible",
+    });
+    const reviewedHunk = createHunk({
+      id: "hunk-reviewed",
+      filePath: "src/reviewed.ts",
+      newStart: 1,
+      newLines: 1,
+      oldStart: 1,
+      oldLines: 1,
+      header: "@@ -1 +1 @@",
+      content: "-old reviewed\n+new reviewed",
+    });
+    const pendingReview: Review = {
+      id: "review-1",
+      data: {
+        filePath: reviewedHunk.filePath,
+        lineRange: "+1",
+        selectedCode: "// sample",
+        userNote: "Take another look here",
+      },
+      status: "pending",
+      createdAt: 1000,
+    };
+    const reviewsByFilePath = new Map<string, Review[]>([[reviewedHunk.filePath, [pendingReview]]]);
+    const onSelectHunk = mock((_hunkId: string | null) => undefined);
+
+    const view = renderImmersiveReview({
+      fileTree: createFileTreeForPaths([visibleHunk.filePath, reviewedHunk.filePath]),
+      // visibleHunk is the only currently-visible hunk (hide-read or search has
+      // removed reviewedHunk), but reviewedHunk still exists in the diff.
+      hunks: [visibleHunk],
+      allHunks: [visibleHunk, reviewedHunk],
+      isRead: (hunkId) => hunkId === reviewedHunk.id,
+      selectedHunkId: visibleHunk.id,
+      onSelectHunk,
+      reviewsByFilePath,
+      isTouchImmersive: false,
+    });
+
+    const noteCard = view.container.querySelector<HTMLElement>('[data-note-index="0"]');
+    expect(noteCard).toBeTruthy();
+
+    onSelectHunk.mockClear();
+    fireEvent.click(noteCard!);
+
+    const selectedIds = onSelectHunk.mock.calls.map(([hunkId]) => hunkId);
+    expect(selectedIds).toContain(reviewedHunk.id);
+    // The view must not silently fall back to the first visible hunk.
+    expect(selectedIds).not.toEqual([visibleHunk.id]);
+  });
+
+  test("parent panel keeps the explicit sidebar selection in immersive mode after click", () => {
+    // End-to-end repro that mirrors how ReviewPanel hosts ImmersiveReviewView:
+    // selectedHunkId lives in the parent and a useEffect re-validates it
+    // whenever filtered hunks change. With the immersive-aware fix the parent
+    // only resets when the hunk vanishes from the diff entirely, so clicking a
+    // pending review for a hidden hunk keeps the immersive view on that hunk's
+    // file (instead of bouncing back to the first visible hunk).
+    const visibleHunk = createHunk({
+      id: "hunk-visible",
+      filePath: "src/visible.ts",
+      newStart: 1,
+      newLines: 1,
+      oldStart: 1,
+      oldLines: 1,
+      header: "@@ -1 +1 @@",
+      content: "-old visible\n+new visible",
+    });
+    const reviewedHunk = createHunk({
+      id: "hunk-reviewed",
+      filePath: "src/reviewed.ts",
+      newStart: 1,
+      newLines: 1,
+      oldStart: 1,
+      oldLines: 1,
+      header: "@@ -1 +1 @@",
+      content: "-old reviewed\n+new reviewed",
+    });
+    const pendingReview: Review = {
+      id: "review-1",
+      data: {
+        filePath: reviewedHunk.filePath,
+        lineRange: "+1",
+        selectedCode: "// sample",
+        userNote: "Take another look here",
+      },
+      status: "pending",
+      createdAt: 1000,
+    };
+    const reviewsByFilePath = new Map<string, Review[]>([[reviewedHunk.filePath, [pendingReview]]]);
+
+    const filteredHunks = [visibleHunk];
+    const allHunks = [visibleHunk, reviewedHunk];
+
+    function ParentPanelHarness() {
+      const [selectedHunkId, setSelectedHunkId] = useState<string | null>(visibleHunk.id);
+
+      // Mirrors ReviewPanel's selection-validity effect with the immersive
+      // branch. Keep the explicit selection even when it's been hidden by an
+      // active filter, since the immersive view supports rendering it from
+      // `allHunks`. Switching `allHunks.some` back to `filteredHunks.some`
+      // here reproduces the original bug and makes this test fail.
+      useEffect(() => {
+        if (filteredHunks.length === 0) return;
+        const selectionExists =
+          selectedHunkId && allHunks.some((hunk) => hunk.id === selectedHunkId);
+        if (!selectionExists) {
+          setSelectedHunkId(filteredHunks[0].id);
+        }
+      }, [selectedHunkId]);
+
+      return (
+        <ImmersiveReviewView
+          workspaceId="workspace-1"
+          fileTree={createFileTreeForPaths([visibleHunk.filePath, reviewedHunk.filePath])}
+          hunks={filteredHunks}
+          allHunks={allHunks}
+          isRead={(hunkId) => hunkId === reviewedHunk.id}
+          onToggleRead={mock(() => undefined)}
+          onMarkFileAsRead={mock(() => undefined)}
+          selectedHunkId={selectedHunkId}
+          onSelectHunk={setSelectedHunkId}
+          onExit={mock(() => undefined)}
+          isTouchImmersive={false}
+          reviewsByFilePath={reviewsByFilePath}
+          firstSeenMap={{}}
+        />
+      );
+    }
+
+    const view = render(
+      <ThemeProvider forcedTheme="dark">
+        <ParentPanelHarness />
+      </ThemeProvider>
+    );
+
+    // Sanity-check the initial state: we start on the visible hunk's file.
+    expect(view.container.textContent ?? "").toContain(visibleHunk.filePath);
+
+    const noteCard = view.container.querySelector<HTMLElement>('[data-note-index="0"]');
+    expect(noteCard).toBeTruthy();
+    fireEvent.click(noteCard!);
+
+    // After the click the immersive header switches to the reviewed file —
+    // the parent panel must NOT have reset the selection back to the first
+    // visible hunk.
+    expect(view.container.textContent ?? "").toContain(reviewedHunk.filePath);
   });
 });
