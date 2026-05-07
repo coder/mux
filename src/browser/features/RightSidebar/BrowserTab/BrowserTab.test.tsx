@@ -212,7 +212,7 @@ describe("BrowserTab", () => {
     fireEvent.click(view.getByTestId("browser-session-current-alpha"));
 
     await waitFor(() => {
-      expect(connectMock.mock.calls.at(-1)).toEqual(["current-alpha"]);
+      expect(connectMock).toHaveBeenLastCalledWith("current-alpha");
     });
   });
 
