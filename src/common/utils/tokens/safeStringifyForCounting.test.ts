@@ -16,6 +16,20 @@ describe("safeStringifyForCounting", () => {
     expect(serialized).not.toContain("A".repeat(1024));
   });
 
+  test("redacts display-only file base64 payloads", () => {
+    const input = {
+      type: "display_file",
+      data: "A".repeat(1024),
+      mediaType: "video/webm",
+      filename: "clip.webm",
+    };
+
+    const serialized = safeStringifyForCounting(input);
+
+    expect(serialized).toContain("[omitted display-only base64 len=1024]");
+    expect(serialized).not.toContain("A".repeat(200));
+  });
+
   test("redacts base64 data URLs", () => {
     const dataUrl = `data:image/png;base64,${"A".repeat(1000)}`;
 

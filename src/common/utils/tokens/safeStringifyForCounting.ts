@@ -1,3 +1,4 @@
+import { isDisplayOnlyFilePart } from "@/common/utils/attachments/displayOnlyFileParts";
 /**
  * Safe JSON.stringify variant for *local* token counting.
  *
@@ -48,6 +49,13 @@ export function safeStringifyForCounting(data: unknown): string {
     return JSON.stringify(data, (_key, value: unknown) => {
       if (typeof value === "string") {
         return redactDataUrl(value) ?? value;
+      }
+
+      if (isDisplayOnlyFilePart(value)) {
+        return {
+          ...value,
+          data: `[omitted display-only base64 len=${value.data.length}]`,
+        };
       }
 
       if (isAiSdkMediaBlock(value)) {
