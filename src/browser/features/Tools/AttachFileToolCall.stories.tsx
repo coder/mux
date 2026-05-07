@@ -14,6 +14,8 @@ export default meta;
 
 type Story = StoryObj<typeof meta>;
 
+const samplePng =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
 const sampleBytes = "ZGlzcGxheS1vbmx5IGZpbGU=";
 
 function createAttachFileResult(file: ReturnType<typeof createDisplayOnlyFilePart>) {
@@ -36,6 +38,30 @@ function ToolStoryShell(props: { children: ReactNode }) {
     </div>
   );
 }
+
+export const ImageAttachment: Story = {
+  render: () => (
+    <ToolStoryShell>
+      <AttachFileToolCall
+        toolName="attach_file"
+        args={{ path: "screenshot.png" }}
+        result={{
+          type: "content",
+          value: [
+            { type: "text", text: "[Attachment prepared: screenshot.png]" },
+            {
+              type: "media",
+              data: samplePng,
+              mediaType: "image/png",
+              filename: "screenshot.png",
+            },
+          ],
+        }}
+        status="completed"
+      />
+    </ToolStoryShell>
+  ),
+};
 
 export const DisplayOnlyVideo: Story = {
   render: () => (

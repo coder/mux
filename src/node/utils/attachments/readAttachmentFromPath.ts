@@ -26,7 +26,7 @@ export interface ReadAttachmentFromPathArgs {
   abortSignal?: AbortSignal;
 }
 
-export interface LoadedAttachmentFromPath {
+export interface LoadedFileFromPath {
   data: string;
   mediaType: string;
   filename?: string;
@@ -35,8 +35,8 @@ export interface LoadedAttachmentFromPath {
 }
 
 export type AttachFileFromPathResult =
-  | { type: "attachment"; attachment: LoadedAttachmentFromPath }
-  | { type: "display"; file: LoadedAttachmentFromPath };
+  | { type: "attachment"; attachment: LoadedFileFromPath }
+  | { type: "display"; file: LoadedFileFromPath };
 
 const EXTENSION_TO_DISPLAY_MEDIA_TYPE: Record<string, string> = {
   webm: "video/webm",
@@ -240,7 +240,7 @@ function createLoadedAttachment(args: {
   mediaType: string;
   filename?: string;
   resolvedPath: string;
-}): LoadedAttachmentFromPath {
+}): LoadedFileFromPath {
   return {
     data: args.data.toString("base64"),
     mediaType: args.mediaType,
@@ -329,7 +329,7 @@ export async function readAttachFileFromPath(
 
 export async function readAttachmentFromPath(
   args: ReadAttachmentFromPathArgs
-): Promise<LoadedAttachmentFromPath> {
+): Promise<LoadedFileFromPath> {
   const result = await readAttachFileFromPath(args);
   if (result.type === "attachment") {
     return result.attachment;

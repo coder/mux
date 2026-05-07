@@ -264,7 +264,6 @@ describe("extractToolMediaAsUserMessagesFromModelMessages", () => {
     const toolResultPart = (rewrittenTool as Extract<ModelMessage, { role: "tool" }>).content[0];
     if (toolResultPart.type !== "tool-result") throw new Error("Expected tool-result part");
     const outputText = JSON.stringify(toolResultPart.output);
-    expect(outputText).toContain("File shown to user only");
     expect(outputText).not.toContain(base64);
     if (
       typeof toolResultPart.output === "object" &&

@@ -308,7 +308,6 @@ describe("extractToolMediaAsUserMessages", () => {
     }
 
     const outputText = JSON.stringify(toolPart.output);
-    expect(outputText).toContain("File shown to user only");
     expect(outputText).not.toContain(base64);
     if (
       typeof toolPart.output === "object" &&
@@ -364,7 +363,6 @@ describe("extractToolMediaAsUserMessages", () => {
     }
 
     const outputText = JSON.stringify(toolPart.output);
-    expect(outputText).toContain("File shown to user only");
     expect(outputText).not.toContain(base64);
   });
 

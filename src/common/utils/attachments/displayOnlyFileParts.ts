@@ -62,6 +62,6 @@ export function isDisplayOnlyFilePart(value: unknown): value is DisplayOnlyFileP
     record.type === "display_file" &&
     typeof record.data === "string" &&
     typeof record.mediaType === "string" &&
-    (record.filename === undefined || typeof record.filename === "string")
+    (record.filename == null || typeof record.filename === "string")
   );
 }
