@@ -2,6 +2,7 @@ import { describe, expect, it } from "@jest/globals";
 import sharp from "sharp";
 import { MAX_IMAGE_DIMENSION } from "@/common/constants/imageAttachments";
 import type { MuxMessage } from "@/common/types/message";
+import { expectContentOutputValue } from "./testToolOutputHelpers";
 import { extractToolMediaAsUserMessages } from "./extractToolMediaAsUserMessages";
 
 describe("extractToolMediaAsUserMessages", () => {
@@ -309,24 +310,13 @@ describe("extractToolMediaAsUserMessages", () => {
 
     const outputText = JSON.stringify(toolPart.output);
     expect(outputText).not.toContain(base64);
-    if (
-      typeof toolPart.output === "object" &&
-      toolPart.output !== null &&
-      (toolPart.output as { type?: unknown }).type === "content" &&
-      Array.isArray((toolPart.output as { value?: unknown }).value)
-    ) {
-      const rewrittenValue = (toolPart.output as { value: unknown[] }).value;
-      const textParts = rewrittenValue.filter(
-        (part) => (part as { type?: unknown }).type === "text"
-      );
-      expect(textParts).toHaveLength(2);
-      expect(JSON.stringify(textParts)).toContain("clip.webm");
-      expect(
-        rewrittenValue.some((part) => (part as { type?: unknown }).type === "display_file")
-      ).toBe(false);
-    } else {
-      throw new Error("Expected rewritten content output");
-    }
+    const rewrittenValue = expectContentOutputValue(toolPart.output);
+    const textParts = rewrittenValue.filter((part) => (part as { type?: unknown }).type === "text");
+    expect(textParts).toHaveLength(2);
+    expect(JSON.stringify(textParts)).toContain("clip.webm");
+    expect(
+      rewrittenValue.some((part) => (part as { type?: unknown }).type === "display_file")
+    ).toBe(false);
   });
 
   it("strips display-only file bytes even when metadata is missing", async () => {
@@ -367,24 +357,14 @@ describe("extractToolMediaAsUserMessages", () => {
       throw new Error("Expected rewritten output-available tool part");
     }
 
-    if (
-      typeof toolPart.output === "object" &&
-      toolPart.output !== null &&
-      (toolPart.output as { type?: unknown }).type === "content" &&
-      Array.isArray((toolPart.output as { value?: unknown }).value)
-    ) {
-      const rewrittenValue = (toolPart.output as { value: unknown[] }).value;
-      const textParts = rewrittenValue.filter(
-        (part) => (part as { type?: unknown }).type === "text"
-      );
-      expect(textParts).toHaveLength(2);
-      expect(JSON.stringify(textParts)).toContain("corrupt.webm");
-      expect(
-        rewrittenValue.some((part) => (part as { type?: unknown }).type === "display_file")
-      ).toBe(false);
-    } else {
-      throw new Error("Expected rewritten content output");
-    }
+    const rewrittenValue = expectContentOutputValue(toolPart.output);
+    const textParts = rewrittenValue.filter((part) => (part as { type?: unknown }).type === "text");
+    expect(textParts).toHaveLength(2);
+    expect(JSON.stringify(textParts)).toContain("corrupt.webm");
+    expect(
+      rewrittenValue.some((part) => (part as { type?: unknown }).type === "display_file")
+    ).toBe(false);
+
     const outputText = JSON.stringify(toolPart.output);
     expect(outputText).not.toContain(base64);
   });

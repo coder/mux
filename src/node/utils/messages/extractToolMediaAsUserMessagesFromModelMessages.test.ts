@@ -2,6 +2,7 @@ import { describe, expect, it } from "@jest/globals";
 import type { ModelMessage, ToolResultPart } from "ai";
 import sharp from "sharp";
 import { MAX_IMAGE_DIMENSION } from "@/common/constants/imageAttachments";
+import { expectContentOutputValue } from "./testToolOutputHelpers";
 import { extractToolMediaAsUserMessagesFromModelMessages } from "./extractToolMediaAsUserMessagesFromModelMessages";
 
 describe("extractToolMediaAsUserMessagesFromModelMessages", () => {
@@ -265,24 +266,13 @@ describe("extractToolMediaAsUserMessagesFromModelMessages", () => {
     if (toolResultPart.type !== "tool-result") throw new Error("Expected tool-result part");
     const outputText = JSON.stringify(toolResultPart.output);
     expect(outputText).not.toContain(base64);
-    if (
-      typeof toolResultPart.output === "object" &&
-      toolResultPart.output !== null &&
-      (toolResultPart.output as { type?: unknown }).type === "content" &&
-      Array.isArray((toolResultPart.output as { value?: unknown }).value)
-    ) {
-      const rewrittenValue = (toolResultPart.output as { value: unknown[] }).value;
-      const textParts = rewrittenValue.filter(
-        (part) => (part as { type?: unknown }).type === "text"
-      );
-      expect(textParts).toHaveLength(2);
-      expect(JSON.stringify(textParts)).toContain("clip.webm");
-      expect(
-        rewrittenValue.some((part) => (part as { type?: unknown }).type === "display_file")
-      ).toBe(false);
-    } else {
-      throw new Error("Expected rewritten content output");
-    }
+    const rewrittenValue = expectContentOutputValue(toolResultPart.output);
+    const textParts = rewrittenValue.filter((part) => (part as { type?: unknown }).type === "text");
+    expect(textParts).toHaveLength(2);
+    expect(JSON.stringify(textParts)).toContain("clip.webm");
+    expect(
+      rewrittenValue.some((part) => (part as { type?: unknown }).type === "display_file")
+    ).toBe(false);
   });
 
   it("is a no-op when there is no media", async () => {
