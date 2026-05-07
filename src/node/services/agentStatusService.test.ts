@@ -496,6 +496,50 @@ describe("AgentStatusService", () => {
     }
   });
 
+  test("rejects generic placeholder messages and advances dedup so we don't loop", async () => {
+    // Codex review: even with the prompt steering away from "Awaiting next
+    // task" et al., small models can still emit them. We must reject them
+    // post-generation so they never reach the sidebar — and we must NOT
+    // re-call the model on the same transcript, because we'd just get the
+    // same placeholder back and burn provider budget.
+    await historyHandle.historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("u1", "user", "kick off a task")
+    );
+
+    generateSpy.mockResolvedValueOnce(
+      Ok({
+        status: { emoji: "💤", message: "Awaiting next task" },
+        modelUsed: "anthropic:claude-haiku-4-5",
+      })
+    );
+
+    const service = createService();
+    await getInternals(service).runForWorkspace(workspaceId);
+
+    // Generator was called, but persist was skipped: the placeholder must
+    // not reach the sidebar.
+    expect(generateSpy).toHaveBeenCalledTimes(1);
+    expect(setSidebarStatusMock).not.toHaveBeenCalled();
+    expect(emitWorkspaceActivityMock).not.toHaveBeenCalled();
+
+    // Same transcript again: dedup must skip — we already learned this
+    // input produces a placeholder, no point retrying until it changes.
+    await getInternals(service).runForWorkspace(workspaceId);
+    expect(generateSpy).toHaveBeenCalledTimes(1);
+    expect(setSidebarStatusMock).not.toHaveBeenCalled();
+
+    // After a genuine transcript change, we try again with a fresh result.
+    await historyHandle.historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("u2", "user", "follow-up message")
+    );
+    await getInternals(service).runForWorkspace(workspaceId);
+    expect(generateSpy).toHaveBeenCalledTimes(2);
+    expect(setSidebarStatusMock).toHaveBeenCalledTimes(1);
+    expect(emitWorkspaceActivityMock).toHaveBeenCalledTimes(1);
+  });
+
   test("archived workspaces are not regenerated", async () => {
     projectsConfig = makeProjectsConfig([
       makeWorkspaceEntry({ archivedAt: new Date().toISOString() } as Partial<Workspace>),

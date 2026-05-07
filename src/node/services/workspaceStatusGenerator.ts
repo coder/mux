@@ -44,7 +44,7 @@ export function buildWorkspaceStatusPrompt(transcript: string): string {
     "\n</transcript>\n\n",
     "Requirements:\n",
     "- Describe the specific activity the agent was last working on, drawn from the actual transcript content.\n",
-    "- Do NOT use generic placeholders such as 'Awaiting next task', 'Doing work', or 'Idle'. Always name the concrete activity (file, feature, bug, command, etc.).\n",
+    "- Always name a concrete activity (file, feature, bug, command, etc.) from the transcript. Generic non-informative phrasing is rejected and not shown.\n",
     "- Tense: use present tense if the agent appears to still be in the middle of the activity; use past tense if the most recent assistant turn looks complete (e.g. wrapped up with a summary, no pending tool calls).\n",
     "- emoji: A single emoji that visually represents the activity.\n",
     "- message: 2-6 words, verb-led, sentence case, no punctuation, no quotes.\n",

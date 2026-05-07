@@ -195,6 +195,22 @@ export class AgentStatusService {
         return;
       }
 
+      // Defense in depth: even with a tuned prompt, small models can
+      // occasionally produce a generic placeholder ("Awaiting next task",
+      // "Doing work", etc.) that conveys no information. Reject those
+      // outputs before they reach the sidebar. Advance lastInputHash so we
+      // don't burn provider budget retrying the same transcript on every
+      // tick — the next genuine transcript change will trigger a fresh
+      // attempt.
+      if (isPlaceholderStatus(result.data.status.message)) {
+        log.debug("AgentStatusService: model produced placeholder status; skipping persist", {
+          workspaceId,
+          message: result.data.status.message,
+        });
+        state.lastInputHash = inputHash;
+        return;
+      }
+
       // Persist BEFORE updating the in-memory dedup hash. If the disk write
       // fails we want the next tick to retry against the same transcript
       // instead of dedup'ing against a hash we never committed.
@@ -311,6 +327,29 @@ function formatMessageForTranscript(message: MuxMessage): string {
 
 function computeInputHash(transcript: string): string {
   return createHash("sha256").update(transcript).digest("hex");
+}
+
+/**
+ * Generic non-informative status messages. Even with the prompt steering
+ * the model away from these, providers occasionally emit them (especially
+ * when the transcript is short or paused). We reject them post-generation
+ * rather than letting them reach the sidebar.
+ *
+ * Match is exact + case-insensitive on the trimmed message; we don't
+ * substring-match because legitimate phrases like "Awaiting user reply"
+ * contain "Awaiting" and shouldn't be filtered.
+ */
+const PLACEHOLDER_STATUS_MESSAGES: ReadonlySet<string> = new Set([
+  "awaiting next task",
+  "awaiting input",
+  "doing work",
+  "idle",
+  "working",
+  "no recent activity",
+]);
+
+function isPlaceholderStatus(message: string): boolean {
+  return PLACEHOLDER_STATUS_MESSAGES.has(message.trim().toLowerCase());
 }
 
 function pickInterval(streaming: boolean, focused: boolean): number {
