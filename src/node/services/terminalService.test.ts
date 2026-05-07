@@ -423,54 +423,36 @@ describe("TerminalService", () => {
     // process.uncaughtException in the Electron main process, which surfaces as a blocking
     // "Application Error" dialog. The defense in emitOutput must swallow listener throws so
     // a single bad subscriber cannot take down the host process.
-    let capturedOnData: ((data: string) => void) | undefined;
+    //
+    // The default createSessionMock already forwards `onData` to its 4th positional arg, so
+    // we can inspect mock.calls directly instead of swapping the implementation through a
+    // typed `as any` cast (banned by AGENTS.md TypeScript Discipline).
+    const session = await service.create({ workspaceId: "ws-1", cols: 80, rows: 24 });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (mockPTYService.createSession as any) = mock(
-      (
-        params: TerminalCreateParams,
-        _runtime: unknown,
-        _path: string,
-        onData: (d: string) => void,
-        _onExit: (code: number) => void
-      ) => {
-        capturedOnData = onData;
-        return Promise.resolve({
-          sessionId: "session-emit-throw",
-          workspaceId: params.workspaceId,
-          cols: params.cols,
-          rows: params.rows,
-        });
-      }
-    );
-
-    await service.create({ workspaceId: "ws-1", cols: 80, rows: 24 });
-
-    if (!capturedOnData) {
-      throw new Error("Expected createSession to capture onData callback");
+    const lastCall = createSessionMock.mock.calls.at(-1);
+    if (!lastCall) {
+      throw new Error("Expected createSession to be invoked");
     }
+    const capturedOnData = lastCall[3];
 
     // Simulate an orpc-attached subscriber (or any future listener) that throws.
     let subscriberCalls = 0;
-    const unsubscribe = service.onOutput("session-emit-throw", () => {
+    const unsubscribe = service.onOutput(session.sessionId, () => {
       subscriberCalls += 1;
       throw new Error("subscriber blew up");
     });
 
     // Must NOT throw. Without the try/catch around emitter.emit, this call would propagate
     // synchronously via EventEmitter and crash the host process.
-    expect(() => capturedOnData!("hello")).not.toThrow();
+    expect(() => capturedOnData("hello")).not.toThrow();
     expect(subscriberCalls).toBe(1);
 
     // A subsequent emission still reaches the (still-subscribed) listener — the defense
     // isolates the throw without disabling the data path.
-    expect(() => capturedOnData!("world")).not.toThrow();
+    expect(() => capturedOnData("world")).not.toThrow();
     expect(subscriberCalls).toBe(2);
 
     unsubscribe();
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (mockPTYService.createSession as any) = createSessionMock;
   });
 
   it("should close workspace sessions via terminateTrackedSessions", async () => {
