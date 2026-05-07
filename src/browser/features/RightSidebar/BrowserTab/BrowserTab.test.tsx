@@ -146,12 +146,12 @@ describe("BrowserTab", () => {
     await waitFor(() => {
       expect(view.getByText("Select session")).toBeTruthy();
     });
-    expect(view.queryByText("Other sessions")).toBeNull();
     expect(view.getByText("Choose a browser session")).toBeTruthy();
-    expect(view.getByText("Select an other session from the picker to connect.")).toBeTruthy();
+    expect(view.getByText("Select another session from the picker to connect.")).toBeTruthy();
 
     fireEvent.click(view.getByText("Select session"));
 
+    expect(view.getByText("Other sessions")).toBeTruthy();
     expect(view.getByText("other-alpha")).toBeTruthy();
     expect(view.getByText("/tmp/other-project")).toBeTruthy();
     expect(connectMock).not.toHaveBeenCalled();

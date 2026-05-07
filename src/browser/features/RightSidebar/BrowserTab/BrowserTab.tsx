@@ -523,7 +523,7 @@ function BrowserViewerState(props: {
     if (props.hasOtherSessions) {
       return {
         title: "Choose a browser session",
-        description: "Select an other session from the picker to connect.",
+        description: "Select another session from the picker to connect.",
       };
     }
 
