@@ -352,7 +352,9 @@ describe("McpOauthService.startDesktopFlow", () => {
 
       const authorizeUrl = new URL(startResult.data.authorizeUrl);
       expect(authorizeUrl.searchParams.get("code_challenge_method")).toBe("S256");
-      expect(authorizeUrl.searchParams.get("resource")).toBe(baseUrl);
+      // OAuth providers may canonicalize a root resource URL to its origin. That is
+      // equivalent to the configured root server URL, while base-path URLs are covered below.
+      expect(authorizeUrl.searchParams.get("resource")).toBe(new URL(baseUrl).origin);
 
       // Clean up the loopback listener (no callback will occur during this test).
       await service.cancelDesktopFlow(startResult.data.flowId);
