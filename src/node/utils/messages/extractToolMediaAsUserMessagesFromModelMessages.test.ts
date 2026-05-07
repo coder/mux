@@ -272,6 +272,11 @@ describe("extractToolMediaAsUserMessagesFromModelMessages", () => {
       Array.isArray((toolResultPart.output as { value?: unknown }).value)
     ) {
       const rewrittenValue = (toolResultPart.output as { value: unknown[] }).value;
+      const textParts = rewrittenValue.filter(
+        (part) => (part as { type?: unknown }).type === "text"
+      );
+      expect(textParts).toHaveLength(2);
+      expect(JSON.stringify(textParts)).toContain("clip.webm");
       expect(
         rewrittenValue.some((part) => (part as { type?: unknown }).type === "display_file")
       ).toBe(false);

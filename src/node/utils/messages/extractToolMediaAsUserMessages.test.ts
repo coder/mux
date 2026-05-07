@@ -316,6 +316,11 @@ describe("extractToolMediaAsUserMessages", () => {
       Array.isArray((toolPart.output as { value?: unknown }).value)
     ) {
       const rewrittenValue = (toolPart.output as { value: unknown[] }).value;
+      const textParts = rewrittenValue.filter(
+        (part) => (part as { type?: unknown }).type === "text"
+      );
+      expect(textParts).toHaveLength(2);
+      expect(JSON.stringify(textParts)).toContain("clip.webm");
       expect(
         rewrittenValue.some((part) => (part as { type?: unknown }).type === "display_file")
       ).toBe(false);
@@ -362,6 +367,24 @@ describe("extractToolMediaAsUserMessages", () => {
       throw new Error("Expected rewritten output-available tool part");
     }
 
+    if (
+      typeof toolPart.output === "object" &&
+      toolPart.output !== null &&
+      (toolPart.output as { type?: unknown }).type === "content" &&
+      Array.isArray((toolPart.output as { value?: unknown }).value)
+    ) {
+      const rewrittenValue = (toolPart.output as { value: unknown[] }).value;
+      const textParts = rewrittenValue.filter(
+        (part) => (part as { type?: unknown }).type === "text"
+      );
+      expect(textParts).toHaveLength(2);
+      expect(JSON.stringify(textParts)).toContain("corrupt.webm");
+      expect(
+        rewrittenValue.some((part) => (part as { type?: unknown }).type === "display_file")
+      ).toBe(false);
+    } else {
+      throw new Error("Expected rewritten content output");
+    }
     const outputText = JSON.stringify(toolPart.output);
     expect(outputText).not.toContain(base64);
   });

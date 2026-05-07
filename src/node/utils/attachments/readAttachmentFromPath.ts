@@ -235,7 +235,7 @@ function isLikelyTextFile(bytes: Buffer): boolean {
   return controlCharacterCount / text.length < 0.05;
 }
 
-function createLoadedAttachment(args: {
+function createLoadedFile(args: {
   data: Buffer;
   mediaType: string;
   filename?: string;
@@ -286,7 +286,7 @@ export async function readAttachFileFromPath(
 
     return {
       type: "display",
-      file: createLoadedAttachment({
+      file: createLoadedFile({
         data: bytes,
         mediaType: displayMediaTypeCandidate.mediaType,
         filename,
@@ -318,7 +318,7 @@ export async function readAttachFileFromPath(
 
   return {
     type: "attachment",
-    attachment: createLoadedAttachment({
+    attachment: createLoadedFile({
       data: attachmentBytes,
       mediaType: attachmentMediaType,
       filename,
