@@ -1756,13 +1756,24 @@ export class WorkspaceStore {
       const displayStatus = useAggregatorState ? undefined : (activity?.displayStatus ?? undefined);
       const fallbackAgentStatus = useAggregatorState ? aggregator.getAgentStatus() : undefined;
       const transientStatus = displayStatus ?? fallbackAgentStatus;
-      // Persistent sidebar status. The activity snapshot's `todoStatus` is the
-      // canonical "last write wins" slot — both AgentStatusService and the
-      // todo-derivation path write to it. Prefer it in both branches, falling
-      // back to a live aggregator derivation only when the snapshot has no
-      // entry yet (brand-new workspaces before the first persist).
+      // Persistent sidebar status. Both AgentStatusService (small-model
+      // summary) and the todo-derivation path write to the same `todoStatus`
+      // slot — but they have different freshness semantics, so the precedence
+      // differs by branch:
+      //
+      // - Active workspaces: the live aggregator owns the freshest todo
+      //   state (it sees `todo_write` events synchronously, before the async
+      //   persist + activity-emit round-trip). So we prefer the live
+      //   derivation. AI status falls through when the workspace has no
+      //   live todos — that's the common "free-form chat without a todo
+      //   list" case where the AI summary is most valuable.
+      //
+      // - Inactive workspaces: no aggregator, so the persisted snapshot is
+      //   the only signal. `hasTodos === false` blocks fallback derivation
+      //   so a freshly cleared todo list doesn't briefly resurrect the
+      //   stale aggregator-derived status.
       const todoStatus = useAggregatorState
-        ? (activity?.todoStatus ?? deriveTodoStatus(aggregatorTodos) ?? undefined)
+        ? (deriveTodoStatus(aggregatorTodos) ?? activity?.todoStatus ?? undefined)
         : (activity?.todoStatus ??
           (activity?.hasTodos === false ? undefined : deriveTodoStatus(aggregatorTodos)));
       const agentStatus = transientStatus ?? todoStatus;

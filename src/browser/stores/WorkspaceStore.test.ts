@@ -2591,19 +2591,22 @@ describe("WorkspaceStore", () => {
       expect(state.agentStatus).toEqual({ emoji: "🔄", message: "Run typecheck" });
     });
 
-    it("prefers persisted activity todoStatus over live aggregator todos for active workspaces", async () => {
-      // AgentStatusService writes its AI-generated payload into the same
-      // `todoStatus` slot. If the active branch always preferred the live
-      // aggregator derivation, the AI-generated status would never surface
-      // for any workspace with todos — defeating the feature.
-      const workspaceId = "active-ai-overrides-todos";
+    it("falls back to persisted AI status for active workspaces with no live todos", async () => {
+      // Live aggregator todos are the freshest signal for "what is the
+      // agent doing right now" because `todo_write` is processed
+      // synchronously, before the async setTodoStatus + activity-emit round
+      // trip. So when the workspace has live todos we prefer those (see
+      // the existing "derives active workspace status from the current todo
+      // list" test). When there are NO live todos, the AI-generated
+      // todoStatus from AgentStatusService still has to surface — that's
+      // the common "free-form chat without a todo list" case.
+      const workspaceId = "active-ai-no-live-todos";
       const activitySnapshot: WorkspaceActivitySnapshot = {
         recency: new Date("2024-01-04T13:00:00.000Z").getTime(),
         streaming: true,
         lastModel: "claude-sonnet-4",
         lastThinkingLevel: null,
         todoStatus: { emoji: "🛠️", message: "AI-generated summary" },
-        hasTodos: true,
       };
 
       mockActivityList.mockResolvedValue({ [workspaceId]: activitySnapshot });
@@ -2611,7 +2614,9 @@ describe("WorkspaceStore", () => {
       await tick(0);
 
       createAndAddWorkspace(store, workspaceId);
-      seedPinnedTodos(store, workspaceId, [{ content: "Run typecheck", status: "in_progress" }]);
+      // Intentionally no seedPinnedTodos — the aggregator has no todos, so
+      // the live derivation returns undefined and the persisted AI status
+      // must surface through the fallback chain.
 
       const state = store.getWorkspaceState(workspaceId);
       expect(state.agentStatus).toEqual(activitySnapshot.todoStatus ?? undefined);
