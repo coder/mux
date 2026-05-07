@@ -855,6 +855,26 @@ export const ProposeStatusToolArgsSchema = z.object({
 const MuxConfigFileSchema = z.enum(["providers", "config"]);
 
 /**
+ * Rename a string-typed alias field to its canonical name on a plain object,
+ * dropping the alias to keep downstream tool args canonical. No-op if the
+ * canonical field is already a string or the alias is missing/non-string.
+ *
+ * Used by the bash tool's `preprocess` to normalize quirky model emissions
+ * (e.g. `command` → `script`, `description` → `display_name`) without
+ * duplicating the same destructure/spread shape per alias.
+ */
+function renameAliasField(
+  obj: Record<string, unknown>,
+  alias: string,
+  canonical: string
+): Record<string, unknown> {
+  if (typeof obj[canonical] === "string") return obj;
+  if (typeof obj[alias] !== "string") return obj;
+  const { [alias]: aliasValue, ...rest } = obj;
+  return { ...rest, [canonical]: aliasValue };
+}
+
+/**
  * Tool definitions: single source of truth
  * Key = tool name, Value = { description, schema }
  */
@@ -869,25 +889,17 @@ export const TOOL_DEFINITIONS = {
       "On Windows this runs in Git Bash; to discard output use `>/dev/null` (not `>nul`).",
     schema: z.preprocess(
       (value) => {
-        // Compatibility: some models emit { command: "..." } instead of { script: "..." }.
-        // Normalize to `script` so downstream code (tool runner + UI) stays consistent.
+        // Compatibility shims for models that emit alias fields:
+        // - some models emit `command` instead of `script`
+        // - DeepSeek v4 emits `description` instead of `display_name`
+        // Normalize both so downstream code (tool runner + UI) sees canonical args.
+        // Aliases are intentionally undocumented in the public schema; we don't
+        // want to invite other models to use the wrong field.
         if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
 
         let obj = value as Record<string, unknown>;
-
-        if (typeof obj.script !== "string" && typeof obj.command === "string") {
-          // Drop the legacy field to keep tool args canonical (and avoid confusing downstream consumers).
-          const { command, ...rest } = obj as Record<string, unknown> & { command: string };
-          obj = { ...rest, script: command };
-        }
-
-        // Compatibility: DeepSeek v4 emits `description` instead of `display_name`.
-        // Treat `description` as an undocumented alias so the call still validates.
-        if (typeof obj.display_name !== "string" && typeof obj.description === "string") {
-          const { description, ...rest } = obj as Record<string, unknown> & { description: string };
-          obj = { ...rest, display_name: description };
-        }
-
+        obj = renameAliasField(obj, "command", "script");
+        obj = renameAliasField(obj, "description", "display_name");
         return obj;
       },
       z.object({
