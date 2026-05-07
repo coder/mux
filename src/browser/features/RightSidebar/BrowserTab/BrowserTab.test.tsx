@@ -181,6 +181,41 @@ describe("BrowserTab", () => {
     expect(view.getByTestId("browser-other-session-other-alpha")).toBeTruthy();
   });
 
+  test("can switch from an explicitly selected other session back to a current session", async () => {
+    listSessionsMock.mockResolvedValue({
+      sessions: [createDiscoveredSession({ sessionName: "current-alpha" })],
+      otherSessions: [
+        {
+          sessionName: "other-alpha",
+          status: "attachable",
+          cwd: "/tmp/other-project",
+        },
+      ],
+    });
+
+    const view = render(<BrowserTab workspaceId="workspace-1" projectPath="/project" />);
+
+    await waitFor(() => {
+      expect(connectMock).toHaveBeenCalledWith("current-alpha");
+    });
+
+    fireEvent.click(view.getByText("current-alpha"));
+    fireEvent.click(view.getByTestId("browser-other-session-other-alpha"));
+
+    await waitFor(() => {
+      expect(connectMock).toHaveBeenCalledWith("other-alpha", {
+        allowOtherWorkspaceSession: true,
+      });
+    });
+
+    fireEvent.click(view.getByText("other-alpha"));
+    fireEvent.click(view.getByTestId("browser-session-current-alpha"));
+
+    await waitFor(() => {
+      expect(connectMock.mock.calls.at(-1)).toEqual(["current-alpha"]);
+    });
+  });
+
   test("attaches to an other running session only after selecting it from the picker", async () => {
     listSessionsMock.mockResolvedValue({
       sessions: [],
@@ -246,6 +281,14 @@ describe("chooseExplicitOtherSession", () => {
         { sessionName: "other-alpha", status: "attachable", cwd: "/tmp/other-project" },
       ])
     ).toBe("other-alpha");
+  });
+
+  test("clears an explicitly selected other session when only a different other session exists", () => {
+    expect(
+      chooseExplicitOtherSession("other-alpha", [
+        { sessionName: "other-beta", status: "attachable", cwd: "/tmp/other-project" },
+      ])
+    ).toBeNull();
   });
 
   test("clears an explicitly selected other session after discovery loses it", () => {
