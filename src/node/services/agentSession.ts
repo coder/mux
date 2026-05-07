@@ -2064,6 +2064,71 @@ export class AgentSession {
       );
     }
 
+    // Validate model and attachment compatibility before any edit path mutates history.
+    // User rationale: an edit send used to truncate first, then fail validation and leave
+    // the existing chat visibly cut off at the edit target.
+    if (!options?.model || options.model.trim().length === 0) {
+      return Err(
+        createUnknownSendMessageError("No model specified. Please select a model using /model.")
+      );
+    }
+
+    options = this.normalizeGatewaySendOptions(options);
+
+    // Validate model string format (must be "provider:model-id")
+    if (!isValidModelFormat(options.model)) {
+      return Err({
+        type: "invalid_model_string",
+        message: `Invalid model string format: "${options.model}". Expected "provider:model-id"`,
+      });
+    }
+
+    const effectiveFileParts =
+      preservedEditFileParts && preservedEditFileParts.length > 0
+        ? preservedEditFileParts.map((part) => ({
+            url: part.url,
+            mediaType: part.mediaType,
+            filename: part.filename,
+          }))
+        : fileParts;
+
+    // Defense-in-depth: reject PDFs for models we know don't support them.
+    // (Frontend should also block this, but it's easy to bypass via IPC / older clients.)
+    if (effectiveFileParts && effectiveFileParts.length > 0) {
+      const pdfParts = effectiveFileParts.filter(
+        (part) => normalizeMediaType(part.mediaType) === PDF_MEDIA_TYPE
+      );
+
+      if (pdfParts.length > 0) {
+        const caps = getModelCapabilitiesResolved(
+          options.model,
+          this.aiService.getProvidersConfig()
+        );
+
+        if (caps && !caps.supportsPdfInput) {
+          return Err(
+            createUnknownSendMessageError(`Model ${options.model} does not support PDF input.`)
+          );
+        }
+
+        if (caps?.maxPdfSizeMb !== undefined) {
+          const maxBytes = caps.maxPdfSizeMb * 1024 * 1024;
+          for (const part of pdfParts) {
+            const bytes = estimateBase64DataUrlBytes(part.url);
+            if (bytes !== null && bytes > maxBytes) {
+              const actualMb = (bytes / (1024 * 1024)).toFixed(1);
+              const label = part.filename ?? "PDF";
+              return Err(
+                createUnknownSendMessageError(
+                  `${label} is ${actualMb}MB, but ${options.model} allows up to ${caps.maxPdfSizeMb}MB per PDF.`
+                )
+              );
+            }
+          }
+        }
+      }
+    }
+
     if (editMessageId) {
       // Ensure no in-flight completion code can append after we truncate.
       if (this.isBusy()) {
@@ -2212,15 +2277,6 @@ export class AgentSession {
       extractAcpDelegatedTools(typedMuxMetadata);
     const isCompactionRequest = isCompactionRequestMetadata(typedMuxMetadata);
 
-    // Validate model BEFORE persisting message to prevent orphaned messages on invalid model
-    if (!options?.model || options.model.trim().length === 0) {
-      return Err(
-        createUnknownSendMessageError("No model specified. Please select a model using /model.")
-      );
-    }
-
-    options = this.normalizeGatewaySendOptions(options);
-
     // Internal callers can force Copilot billing attribution for non-user turns
     // (task orchestration, compaction, auto-resume, etc.).
     let agentInitiated = internal?.agentInitiated === true;
@@ -2231,59 +2287,6 @@ export class AgentSession {
       ...(acpPromptId != null ? { acpPromptId } : {}),
       ...(delegatedToolNames != null ? { delegatedToolNames } : {}),
     };
-
-    // Defense-in-depth: reject PDFs for models we know don't support them.
-    // (Frontend should also block this, but it's easy to bypass via IPC / older clients.)
-    const effectiveFileParts =
-      preservedEditFileParts && preservedEditFileParts.length > 0
-        ? preservedEditFileParts.map((part) => ({
-            url: part.url,
-            mediaType: part.mediaType,
-            filename: part.filename,
-          }))
-        : fileParts;
-
-    if (effectiveFileParts && effectiveFileParts.length > 0) {
-      const pdfParts = effectiveFileParts.filter(
-        (part) => normalizeMediaType(part.mediaType) === PDF_MEDIA_TYPE
-      );
-
-      if (pdfParts.length > 0) {
-        const caps = getModelCapabilitiesResolved(
-          options.model,
-          this.aiService.getProvidersConfig()
-        );
-
-        if (caps && !caps.supportsPdfInput) {
-          return Err(
-            createUnknownSendMessageError(`Model ${options.model} does not support PDF input.`)
-          );
-        }
-
-        if (caps?.maxPdfSizeMb !== undefined) {
-          const maxBytes = caps.maxPdfSizeMb * 1024 * 1024;
-          for (const part of pdfParts) {
-            const bytes = estimateBase64DataUrlBytes(part.url);
-            if (bytes !== null && bytes > maxBytes) {
-              const actualMb = (bytes / (1024 * 1024)).toFixed(1);
-              const label = part.filename ?? "PDF";
-              return Err(
-                createUnknownSendMessageError(
-                  `${label} is ${actualMb}MB, but ${options.model} allows up to ${caps.maxPdfSizeMb}MB per PDF.`
-                )
-              );
-            }
-          }
-        }
-      }
-    }
-    // Validate model string format (must be "provider:model-id")
-    if (!isValidModelFormat(options.model)) {
-      return Err({
-        type: "invalid_model_string",
-        message: `Invalid model string format: "${options.model}". Expected "provider:model-id"`,
-      });
-    }
 
     const userMessage = createMuxMessage(
       messageId,

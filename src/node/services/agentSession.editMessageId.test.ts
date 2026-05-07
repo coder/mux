@@ -104,6 +104,44 @@ describe("AgentSession.sendMessage (editMessageId)", () => {
     expect(streamMessage.mock.calls).toHaveLength(1);
   });
 
+  it("does not truncate history when edit validation fails", async () => {
+    const workspaceId = "ws-edit-validation";
+    const { session, historyService, streamMessage } = await createSessionHarness(workspaceId);
+    await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("user-original", "user", "original", { historySequence: 0 })
+    );
+    await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("assistant-original", "assistant", "reply", { historySequence: 1 })
+    );
+    const truncateAfterMessage = spyOn(historyService, "truncateAfterMessage");
+    const appendToHistory = spyOn(historyService, "appendToHistory");
+
+    const result = await session.sendMessage("edited", {
+      model: "invalid-model",
+      agentId: "exec",
+      editMessageId: "user-original",
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.type).toBe("invalid_model_string");
+    }
+    expect(truncateAfterMessage).not.toHaveBeenCalled();
+    expect(appendToHistory).not.toHaveBeenCalled();
+    expect(streamMessage).not.toHaveBeenCalled();
+
+    const history = await historyService.getHistoryFromLatestBoundary(workspaceId);
+    expect(history.success).toBe(true);
+    if (history.success) {
+      expect(history.data.map((message) => message.id)).toEqual([
+        "user-original",
+        "assistant-original",
+      ]);
+    }
+  });
+
   it("clears image parts when editing with explicit empty fileParts", async () => {
     const workspaceId = "ws-test";
     const { session, historyService } = await createSessionHarness(workspaceId);

@@ -215,6 +215,58 @@ describe("HistoryService", () => {
       expect(messages[1].metadata?.historySequence).toBe(11);
     });
 
+    it("should initialize sequence counter from max historySequence after restart", async () => {
+      const workspaceId = "workspace-out-of-order-tail";
+      const workspaceDir = config.getSessionDir(workspaceId);
+      await fs.mkdir(workspaceDir, { recursive: true });
+
+      const messages = [
+        createMuxMessage("msg-low", "user", "low", { historySequence: 0 }),
+        createMuxMessage("msg-high", "assistant", "high", { historySequence: 100 }),
+        createMuxMessage("msg-stale-tail", "assistant", "stale", { historySequence: 10 }),
+      ];
+      const chatPath = path.join(workspaceDir, "chat.jsonl");
+      await fs.writeFile(
+        chatPath,
+        messages.map((msg) => JSON.stringify({ ...msg, workspaceId }) + "\n").join("")
+      );
+
+      const restartedService = new HistoryService(config);
+      const nextMessage = createMuxMessage("msg-next", "user", "next");
+      const appendResult = await restartedService.appendToHistory(workspaceId, nextMessage);
+
+      expect(appendResult.success).toBe(true);
+      expect(nextMessage.metadata?.historySequence).toBe(101);
+    });
+
+    it("should reject stale provided historySequence after restart", async () => {
+      const workspaceId = "workspace-stale-provided-sequence";
+      await service.appendToHistory(
+        workspaceId,
+        createMuxMessage("msg-low", "user", "low", { historySequence: 0 })
+      );
+      await service.appendToHistory(
+        workspaceId,
+        createMuxMessage("msg-high", "assistant", "high", { historySequence: 100 })
+      );
+
+      const restartedService = new HistoryService(config);
+      const staleMessage = createMuxMessage("msg-stale", "assistant", "stale", {
+        historySequence: 10,
+      });
+      const staleResult = await restartedService.appendToHistory(workspaceId, staleMessage);
+
+      expect(staleResult.success).toBe(false);
+      if (!staleResult.success) {
+        expect(staleResult.error).toContain("stale historySequence 10");
+      }
+
+      const nextMessage = createMuxMessage("msg-next", "user", "next");
+      const nextResult = await restartedService.appendToHistory(workspaceId, nextMessage);
+      expect(nextResult.success).toBe(true);
+      expect(nextMessage.metadata?.historySequence).toBe(101);
+    });
+
     it("should preserve other metadata fields", async () => {
       const workspaceId = "workspace1";
       const msg = createMuxMessage("msg1", "user", "Hello", {
