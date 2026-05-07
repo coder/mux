@@ -421,8 +421,10 @@ describe("TerminalService", () => {
     // Repro for the "App crash" reported when clicking the markdown Run button: a downstream
     // listener throwing inside the PTY data path would propagate up to the libuv tick and hit
     // process.uncaughtException in the Electron main process, which surfaces as a blocking
-    // "Application Error" dialog. The defense in emitOutput must swallow listener throws so
-    // a single bad subscriber cannot take down the host process.
+    // "Application Error" dialog. The defense must (a) keep the host process alive AND
+    // (b) keep healthy subscribers receiving output even if an earlier subscriber throws —
+    // EventEmitter.emit aborts dispatch synchronously at the first throwing listener, so the
+    // isolation must happen per-listener inside onOutput, not just around the whole emit.
     //
     // The default createSessionMock already forwards `onData` to its 4th positional arg, so
     // we can inspect mock.calls directly instead of swapping the implementation through a
@@ -435,24 +437,34 @@ describe("TerminalService", () => {
     }
     const capturedOnData = lastCall[3];
 
-    // Simulate an orpc-attached subscriber (or any future listener) that throws.
-    let subscriberCalls = 0;
-    const unsubscribe = service.onOutput(session.sessionId, () => {
-      subscriberCalls += 1;
+    // Register a throwing listener FIRST so EventEmitter dispatches to it before the healthy
+    // listener — this is the order that exposes the abort-mid-broadcast bug.
+    let throwingCalls = 0;
+    const unsubscribeThrowing = service.onOutput(session.sessionId, () => {
+      throwingCalls += 1;
       throw new Error("subscriber blew up");
     });
 
-    // Must NOT throw. Without the try/catch around emitter.emit, this call would propagate
-    // synchronously via EventEmitter and crash the host process.
+    const healthyChunks: string[] = [];
+    const unsubscribeHealthy = service.onOutput(session.sessionId, (data) => {
+      healthyChunks.push(data);
+    });
+
+    // Must NOT throw. Without per-listener isolation, EventEmitter's synchronous loop would
+    // re-throw and (1) crash the host process via uncaughtException, (2) starve the healthy
+    // listener of this chunk.
     expect(() => capturedOnData("hello")).not.toThrow();
-    expect(subscriberCalls).toBe(1);
+    expect(throwingCalls).toBe(1);
+    expect(healthyChunks).toEqual(["hello"]); // the second listener still received it.
 
-    // A subsequent emission still reaches the (still-subscribed) listener — the defense
-    // isolates the throw without disabling the data path.
+    // A subsequent emission also reaches both — the throwing listener stays subscribed and
+    // the healthy listener continues to receive every chunk.
     expect(() => capturedOnData("world")).not.toThrow();
-    expect(subscriberCalls).toBe(2);
+    expect(throwingCalls).toBe(2);
+    expect(healthyChunks).toEqual(["hello", "world"]);
 
-    unsubscribe();
+    unsubscribeThrowing();
+    unsubscribeHealthy();
   });
 
   it("should close workspace sessions via terminateTrackedSessions", async () => {

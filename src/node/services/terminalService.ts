@@ -710,8 +710,19 @@ export class TerminalService {
 
     // Note: The attach stream yields screenState first, then live output.
     // This subscription only provides live output from the point of subscription onward.
-
-    const handler = (data: string) => callback(data);
+    //
+    // Wrap the user callback in a per-listener try/catch so a single bad subscriber
+    // (e.g., a stale orpc stream still wired to a closed terminal window) cannot abort
+    // EventEmitter's synchronous dispatch loop and starve healthy subscribers of output.
+    // Without this, a crashy listener would also crash the Electron main process via
+    // process.uncaughtException (see emitOutput's defense-in-depth notes).
+    const handler = (data: string) => {
+      try {
+        callback(data);
+      } catch (err) {
+        log.warn(`[TerminalService] output listener threw for session ${sessionId}:`, err);
+      }
+    };
     emitter.on("data", handler);
 
     return () => {
@@ -874,10 +885,12 @@ export class TerminalService {
       }
     }
 
+    // Listener isolation lives inside onOutput's per-callback wrapper so a throwing subscriber
+    // does not abort EventEmitter's synchronous dispatch and starve later listeners of output.
+    // The try/catch here is defense-in-depth for any future emit-time error path (e.g.,
+    // EventEmitter internals): it must never let an exception escape the libuv tick.
     const emitter = this.outputEmitters.get(sessionId);
     if (emitter) {
-      // EventEmitter rethrows synchronously when a listener throws; isolate listener bugs from
-      // the PTY data path so a single bad subscriber cannot crash the main process.
       try {
         emitter.emit("data", data);
       } catch (err) {
