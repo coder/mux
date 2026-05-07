@@ -46,7 +46,11 @@ export function buildWorkspaceStatusPrompt(transcript: string): string {
     "- Describe the specific activity the agent was last working on, drawn from the actual transcript content.\n",
     "- Always name a concrete activity (file, feature, bug, command, etc.) from the transcript. Generic non-informative phrasing is rejected and not shown.\n",
     "- Tense: use present tense if the agent appears to still be in the middle of the activity; use past tense if the most recent assistant turn looks complete (e.g. wrapped up with a summary, no pending tool calls).\n",
-    "- emoji: A single emoji that visually represents the activity.\n",
+    // The sidebar renders the emoji through EmojiIcon, which maps a fixed
+    // set of glyphs to Lucide icons. Emojis outside this set fall back to
+    // a generic Sparkles icon, which looks identical regardless of the
+    // activity. Restrict the model to glyphs we know render correctly.
+    "- emoji: must be exactly one of: 🔍 📝 ✅ ❌ 🚀 ⏳ 🔗 🔄 🧪 🤔 🔧 🛠 🔔 🌐 📖 📦 💤 💡 ⚠. Pick the one that best matches the activity (🔍 investigating, 📝 writing, ✅ done/completed, ❌ failed, 🚀 deploying/launching, ⏳ waiting, 🔄 refreshing/iterating, 🧪 testing, 🤔 deciding, 🔧 🛠 fixing/building, 🌐 network/web, 📖 reading docs, 📦 packaging, 💤 idle, 💡 planning, ⚠ warning).\n",
     "- message: 2-6 words, verb-led, sentence case, no punctuation, no quotes.\n",
     '- Examples (in progress): "Investigating crash", "Implementing sidebar status", "Running tests", "Reading config files".\n',
     '- Examples (completed): "Wrote tests", "Fixed sidebar bug", "Investigated crash", "Refactored config loader".\n\n',
