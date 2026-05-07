@@ -2,23 +2,23 @@ import { randomBytes } from "node:crypto";
 import { assert } from "@/common/utils/assert";
 import { log } from "@/node/services/log";
 
-interface TokenRecord {
-  workspaceId: string;
-  sessionName: string;
-  streamPort: number;
-  allowOtherWorkspaceSession: boolean;
-  expiresAtMs: number;
-}
-
-interface BrowserBridgeTokenMintOptions {
-  allowOtherWorkspaceSession?: boolean;
-}
-
 export interface BrowserBridgeTokenPayload {
   workspaceId: string;
   sessionName: string;
   streamPort: number;
   allowOtherWorkspaceSession: boolean;
+}
+
+// TokenRecord = the validated payload plus the TTL deadline; extending the
+// payload type keeps the field list in one place so a future payload addition
+// (e.g. a new scoping flag) cannot drift between the stored record, the mint
+// input, and the validate-time rebuild below.
+interface TokenRecord extends BrowserBridgeTokenPayload {
+  expiresAtMs: number;
+}
+
+interface BrowserBridgeTokenMintOptions {
+  allowOtherWorkspaceSession?: boolean;
 }
 
 const BROWSER_BRIDGE_TOKEN_TTL_MS = 30_000;
@@ -76,12 +76,11 @@ export class BrowserBridgeTokenManager {
       return null;
     }
 
-    return {
-      workspaceId: record.workspaceId,
-      sessionName: record.sessionName,
-      streamPort: record.streamPort,
-      allowOtherWorkspaceSession: record.allowOtherWorkspaceSession,
-    };
+    // Strip the TTL deadline; rest-spread keeps the payload field list driven
+    // by BrowserBridgeTokenPayload so adding a payload field doesn't require a
+    // matching edit here.
+    const { expiresAtMs, ...payload } = record;
+    return payload;
   }
 
   private cleanupExpired(): void {
