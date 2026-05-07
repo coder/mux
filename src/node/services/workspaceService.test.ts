@@ -1638,7 +1638,65 @@ describe("WorkspaceService idle compaction dispatch", () => {
     await internals.updateStreamingStatus(workspaceId, false);
 
     expect(internals.idleCompactingWorkspaces.has(workspaceId)).toBe(false);
+    // todoStatus is intentionally NOT passed when there are no todos —
+    // passing null would delete an AgentStatusService-written AI summary
+    // from the same slot. Explicit clears happen via setTodoStatus.
     expect(setStreaming).toHaveBeenCalledWith(workspaceId, false, {
+      hasTodos: false,
+    });
+  });
+
+  test("stream-stop with no todos does NOT clear todoStatus (preserves AI summary)", async () => {
+    // Codex: AgentStatusService writes its AI-generated summary into the
+    // same `todoStatus` slot that `setTodoStatus` uses. The stream-stop
+    // path used to read an empty todo list and pass `todoStatus: null`,
+    // which deleted the slot — wiping a summary that was just generated
+    // during the stream. Free-form chats (no todos) hit this every turn.
+    const workspaceId = "stream-stop-preserves-ai-status";
+    const snapshot = {
+      recency: Date.now(),
+      streaming: false,
+      lastModel: "claude-sonnet-4",
+      lastThinkingLevel: null,
+    };
+    const setStreaming = mock(() => Promise.resolve(snapshot));
+    const emitWorkspaceActivity = mock(
+      (_workspaceId: string, _snapshot: typeof snapshot) => undefined
+    );
+
+    (
+      workspaceService as unknown as {
+        extensionMetadata: ExtensionMetadataService;
+        emitWorkspaceActivity: typeof emitWorkspaceActivity;
+      }
+    ).extensionMetadata = { setStreaming } as unknown as ExtensionMetadataService;
+    (
+      workspaceService as unknown as {
+        extensionMetadata: ExtensionMetadataService;
+        emitWorkspaceActivity: typeof emitWorkspaceActivity;
+      }
+    ).emitWorkspaceActivity = emitWorkspaceActivity;
+
+    const internals = workspaceService as unknown as {
+      updateStreamingStatus: (
+        workspaceId: string,
+        streaming: boolean,
+        options?: ExtensionMetadataStreamingUpdate
+      ) => Promise<void>;
+    };
+
+    await internals.updateStreamingStatus(workspaceId, false);
+
+    // The setStreaming call must omit `todoStatus` entirely. If it included
+    // `todoStatus: null`, ExtensionMetadataService.setStreaming would delete
+    // the slot (see the `update.todoStatus !== undefined` branch there).
+    expect(setStreaming).toHaveBeenCalledTimes(1);
+    expect(setStreaming).toHaveBeenCalledWith(workspaceId, false, { hasTodos: false });
+    // Defensive double-check that the assertion is strict — toHaveBeenCalledWith
+    // with an object literal in some matchers tolerates extra fields. Use
+    // `not` against an explicit `todoStatus: null` payload to lock the
+    // contract.
+    expect(setStreaming).not.toHaveBeenCalledWith(workspaceId, false, {
       hasTodos: false,
       todoStatus: null,
     });
@@ -3546,9 +3604,10 @@ describe("WorkspaceService metadata listeners", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(setStreaming).toHaveBeenCalledTimes(1);
+    // todoStatus is intentionally NOT passed when there are no todos —
+    // see updateStreamingStatus comment for rationale.
     expect(setStreaming).toHaveBeenCalledWith(workspaceId, false, {
       hasTodos: false,
-      todoStatus: null,
       generation: 0,
     });
   });

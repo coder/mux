@@ -1619,7 +1619,13 @@ export class WorkspaceService extends EventEmitter {
         const sessionDir = this.config.getSessionDir(workspaceId);
         const todos = await readTodosForSessionDir(sessionDir);
         hasTodos ??= todos.length > 0;
-        todoStatus ??= deriveTodoStatus(todos) ?? null;
+        // When there are no todos to derive from, leave `todoStatus` undefined
+        // so setStreaming doesn't touch the slot. AgentStatusService writes
+        // its AI-generated summary into the same `todoStatus` field — passing
+        // `null` here would clobber a freshly generated summary every time a
+        // free-form (no-todo) turn ends. Explicit clears still happen via
+        // setTodoStatus(null) when the agent calls `todo_write([])`.
+        todoStatus ??= deriveTodoStatus(todos);
       }
       if (
         !streaming &&
