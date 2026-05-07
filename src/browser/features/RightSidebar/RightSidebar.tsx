@@ -1246,8 +1246,15 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
       const sessionId = getTerminalSessionId(tab);
       if (!sessionId) return; // Can't pop out without a session
 
-      // Open the pop-out window (handles browser vs Electron modes)
-      openTerminalPopout(api, workspaceId, sessionId);
+      // Open the pop-out window (handles browser vs Electron modes). The promise is
+      // attached a `.catch` so an Electron terminalWindowManager rejection cannot become
+      // an unhandled promise rejection. We surface it via the same PopoverError used by
+      // handleAddTerminal — the user already paid the cost of removing the tab below, so
+      // they need to know if the pop-out itself failed.
+      void openTerminalPopout(api, workspaceId, sessionId).catch((err: unknown) => {
+        console.error("[RightSidebar] Failed to open terminal pop-out:", err);
+        terminalCreateError.showError("terminal-popout", getErrorMessage(err));
+      });
 
       // Remove the tab from the sidebar (terminal now lives in its own window)
       // Don't close the session - the pop-out window takes over
@@ -1261,7 +1268,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         return next;
       });
     },
-    [workspaceId, api, setLayout, terminalTitlesKey]
+    [workspaceId, api, setLayout, terminalTitlesKey, terminalCreateError]
   );
 
   // Configure sensors with distance threshold for click vs drag disambiguation

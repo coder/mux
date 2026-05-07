@@ -46,9 +46,12 @@ export function useOpenTerminal() {
       // promise rejection that the user perceives as the app silently freezing/crashing.
       try {
         if (isBrowser || isSSH || isDevcontainer) {
-          // Create terminal session first - window needs sessionId to connect
+          // Create terminal session first - window needs sessionId to connect.
           const session = await createTerminalSession(api, workspaceId, options);
-          openTerminalPopout(api, workspaceId, session.sessionId);
+          // Awaited so a rejected `terminal.openWindow` (e.g., Electron
+          // terminalWindowManager failure) is observed by this try/catch instead of
+          // becoming an unhandled rejection that looks like a silent freeze.
+          await openTerminalPopout(api, workspaceId, session.sessionId);
         } else {
           await api.terminal.openNative({ workspaceId });
         }
