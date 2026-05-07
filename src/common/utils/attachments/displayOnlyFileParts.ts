@@ -3,8 +3,8 @@ export interface DisplayOnlyFilePart {
   data: string;
   mediaType: string;
   filename?: string;
-  providerOptions: {
-    mux: {
+  providerOptions?: {
+    mux?: {
       displayOnly: true;
       size: number;
     };
@@ -62,7 +62,6 @@ export function isDisplayOnlyFilePart(value: unknown): value is DisplayOnlyFileP
     record.type === "display_file" &&
     typeof record.data === "string" &&
     typeof record.mediaType === "string" &&
-    (record.filename === undefined || typeof record.filename === "string") &&
-    getDisplayOnlyFileMetadata(record.providerOptions) != null
+    (record.filename === undefined || typeof record.filename === "string")
   );
 }

@@ -15,6 +15,7 @@ import {
 } from "./Shared/ToolPrimitives";
 import { useToolExpansion, getStatusDisplay, type ToolStatus } from "./Shared/toolUtils";
 import { JsonHighlight } from "./Shared/HighlightedCode";
+import { redactToolResultAttachmentsForDisplay } from "./Shared/toolResultDisplay";
 import { ToolResultImages, extractImagesFromToolResult } from "./Shared/ToolResultImages";
 
 interface GenericToolCallProps {
@@ -22,33 +23,6 @@ interface GenericToolCallProps {
   args?: unknown;
   result?: unknown;
   status?: ToolStatus;
-}
-
-/**
- * Filter out attachment data from result for JSON display (to avoid showing huge payloads).
- * Replaces media content with a placeholder indicator while preserving lightweight metadata.
- */
-function filterResultForDisplay(result: unknown): unknown {
-  if (typeof result !== "object" || result === null) return result;
-
-  const contentResult = result as { type?: string; value?: unknown[] };
-  if (contentResult.type !== "content" || !Array.isArray(contentResult.value)) return result;
-
-  // Replace media entries with placeholder
-  const filteredValue = contentResult.value.map((item) => {
-    if (typeof item === "object" && item !== null && (item as { type?: string }).type === "media") {
-      const mediaItem = item as { mediaType?: string; filename?: string };
-      return {
-        type: "media",
-        mediaType: mediaItem.mediaType,
-        filename: mediaItem.filename,
-        data: "[attachment data]",
-      };
-    }
-    return item;
-  });
-
-  return { ...contentResult, value: filteredValue };
 }
 
 export const GenericToolCall: React.FC<GenericToolCallProps> = ({
@@ -93,7 +67,7 @@ export const GenericToolCall: React.FC<GenericToolCallProps> = ({
             <DetailSection>
               <DetailLabel>Result</DetailLabel>
               <DetailContent>
-                <JsonHighlight value={filterResultForDisplay(result)} />
+                <JsonHighlight value={redactToolResultAttachmentsForDisplay(result)} />
               </DetailContent>
             </DetailSection>
           )}

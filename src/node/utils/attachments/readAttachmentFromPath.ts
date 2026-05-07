@@ -17,13 +17,6 @@ import {
 // chat history never persists unexpectedly large base64 payloads.
 export const MAX_ATTACH_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
 
-class UnsupportedAttachmentTypeError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "UnsupportedAttachmentTypeError";
-  }
-}
-
 export interface ReadAttachmentFromPathArgs {
   path: string;
   mediaType?: string | null;
@@ -180,9 +173,7 @@ function createUnsupportedAttachmentError(
   args: ReadAttachmentFromPathArgs,
   resolvedPath: string
 ): Error {
-  return new UnsupportedAttachmentTypeError(
-    `Unsupported attachment type: ${args.mediaType ?? resolvedPath}`
-  );
+  return new Error(`Unsupported attachment type: ${args.mediaType ?? resolvedPath}`);
 }
 
 function getFallbackFilename(
@@ -344,6 +335,5 @@ export async function readAttachmentFromPath(
     return result.attachment;
   }
 
-  const { resolvedPath } = resolvePathWithinCwd(args.path, args.cwd, args.runtime);
-  throw createUnsupportedAttachmentError(args, resolvedPath);
+  throw createUnsupportedAttachmentError(args, result.file.resolvedPath);
 }

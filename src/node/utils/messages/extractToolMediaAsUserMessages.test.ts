@@ -325,6 +325,49 @@ describe("extractToolMediaAsUserMessages", () => {
     }
   });
 
+  it("strips display-only file bytes even when metadata is missing", async () => {
+    const base64 = Buffer.from("webm bytes").toString("base64");
+    const input: MuxMessage[] = [
+      {
+        id: "a6",
+        role: "assistant",
+        parts: [
+          {
+            type: "dynamic-tool",
+            toolCallId: "call6",
+            toolName: "attach_file",
+            input: { path: "/tmp/corrupt.webm" },
+            state: "output-available",
+            output: {
+              type: "content",
+              value: [
+                { type: "text", text: "[File shown to user: corrupt.webm]" },
+                {
+                  type: "display_file",
+                  mediaType: "video/webm",
+                  data: base64,
+                  filename: "corrupt.webm",
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ];
+
+    const rewritten = await extractToolMediaAsUserMessages(input);
+    expect(rewritten).toHaveLength(1);
+
+    const toolPart = rewritten[0].parts[0];
+    if (toolPart.type !== "dynamic-tool" || toolPart.state !== "output-available") {
+      throw new Error("Expected rewritten output-available tool part");
+    }
+
+    const outputText = JSON.stringify(toolPart.output);
+    expect(outputText).toContain("File shown to user only");
+    expect(outputText).not.toContain(base64);
+  });
+
   it("does not rewrite unrelated tool outputs", async () => {
     const input: MuxMessage[] = [
       {

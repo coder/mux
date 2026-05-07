@@ -1842,9 +1842,11 @@ const AttachFileToolDisplayFilePartSchema = z
             displayOnly: z.literal(true),
             size: z.number().int().nonnegative(),
           })
-          .strict(),
+          .strict()
+          .optional(),
       })
-      .strict(),
+      .strict()
+      .optional(),
   })
   .strict();
 
