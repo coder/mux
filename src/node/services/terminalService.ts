@@ -859,13 +859,30 @@ export class TerminalService {
   }
 
   private emitOutput(sessionId: string, data: string) {
-    // Write to headless terminal to maintain parsed state (and generate device-query responses)
+    // Write to headless terminal to maintain parsed state (and generate device-query responses).
+    // SAFETY: xterm-headless (like the renderer's xterm WASM build) can throw intermittently on
+    // malformed escape sequences. This handler is invoked from a node-pty `onData` callback that
+    // runs on the libuv tick, so an uncaught throw here propagates to `process.uncaughtException`
+    // in the Electron main process, which turns it into a blocking "Application Error" dialog
+    // (see desktop/main.ts). Mirror the renderer-side defense in TerminalView.tsx.
     const headless = this.headlessTerminals.get(sessionId);
-    headless?.write(data);
+    if (headless) {
+      try {
+        headless.write(data);
+      } catch (err) {
+        log.warn(`[TerminalService] headless.write threw for session ${sessionId}:`, err);
+      }
+    }
 
     const emitter = this.outputEmitters.get(sessionId);
     if (emitter) {
-      emitter.emit("data", data);
+      // EventEmitter rethrows synchronously when a listener throws; isolate listener bugs from
+      // the PTY data path so a single bad subscriber cannot crash the main process.
+      try {
+        emitter.emit("data", data);
+      } catch (err) {
+        log.warn(`[TerminalService] output emitter threw for session ${sessionId}:`, err);
+      }
     }
   }
 

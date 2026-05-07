@@ -18,6 +18,9 @@ import {
 import { useAPI } from "@/browser/contexts/API";
 import { StatsContainer } from "@/browser/features/RightSidebar/StatsContainer";
 import { ErrorBoundary } from "@/browser/components/ErrorBoundary/ErrorBoundary";
+import { usePopoverError } from "@/browser/hooks/usePopoverError";
+import { PopoverError } from "@/browser/components/PopoverError/PopoverError";
+import { getErrorMessage } from "@/common/utils/errors";
 
 import { ReviewPanel } from "@/browser/features/RightSidebar/CodeReview/ReviewPanel";
 import { OutputTab } from "@/browser/components/OutputTab/OutputTab";
@@ -610,6 +613,12 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     null
   );
 
+  // Surface backend failures from terminal creation (e.g., the markdown Run button kicking off
+  // a session against a transcript-only workspace, or a runtime that isn't connected). Without
+  // this the click silently expands the sidebar with no new tab, which users perceive as a hang
+  // or app crash.
+  const terminalCreateError = usePopoverError();
+
   // Manual collapse state (persisted globally)
   const [collapsed, setCollapsed] = usePersistedState<boolean>(RIGHT_SIDEBAR_COLLAPSED_KEY, false, {
     listener: true,
@@ -1171,21 +1180,33 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   // Handler to add a new terminal tab.
   // Creates the backend session first, then adds the tab with the real sessionId.
   // This ensures the tabType (and React key) never changes, preventing remounts.
+  //
+  // The promise is given a `.catch` so backend rejections (e.g., transcript-only workspaces
+  // with no projectPath, archived worktrees, or disconnected SSH/Devcontainer runtimes)
+  // surface to the user via PopoverError instead of becoming an unhandled promise rejection
+  // that leaves the sidebar half-expanded and looks like an app crash. The wrapper stays
+  // non-async (`() => void`) so the existing `addTerminalRef` / `onAddTerminal` callsites
+  // (typed as void-returning) don't trip `no-misused-promises`.
   const handleAddTerminal = React.useCallback(
-    (options?: TerminalSessionCreateOptions) => {
+    (options?: TerminalSessionCreateOptions): void => {
       if (!api) return;
 
       // Also expand sidebar if collapsed
       setCollapsed(false);
 
-      void createTerminalSession(api, workspaceId, options).then((session) => {
-        const newTab = makeTerminalTabType(session.sessionId);
-        setLayout((prev) => addTabToFocusedTabset(prev, newTab));
-        // Schedule focus for this terminal (will be consumed when the tab mounts)
-        setAutoFocusTerminalSession(session.sessionId);
-      });
+      void createTerminalSession(api, workspaceId, options)
+        .then((session) => {
+          const newTab = makeTerminalTabType(session.sessionId);
+          setLayout((prev) => addTabToFocusedTabset(prev, newTab));
+          // Schedule focus for this terminal (will be consumed when the tab mounts)
+          setAutoFocusTerminalSession(session.sessionId);
+        })
+        .catch((err: unknown) => {
+          console.error("[RightSidebar] Failed to create terminal session:", err);
+          terminalCreateError.showError("terminal-create", getErrorMessage(err));
+        });
     },
-    [api, workspaceId, setLayout, setCollapsed]
+    [api, workspaceId, setLayout, setCollapsed, terminalCreateError]
   );
 
   // Expose handleAddTerminal to parent via ref (for Cmd/Ctrl+T keybind)
@@ -1453,6 +1474,12 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
           </div>
         ) : null}
       </DragOverlay>
+
+      <PopoverError
+        error={terminalCreateError.error}
+        prefix="Failed to open terminal:"
+        onDismiss={terminalCreateError.clearError}
+      />
     </DndContext>
   );
 };
