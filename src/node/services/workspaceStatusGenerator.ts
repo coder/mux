@@ -37,17 +37,17 @@ export function buildWorkspaceStatusPrompt(transcript: string): string {
   // practice, but the model still needs something to ground on.
   const body = transcript.trim().length > 0 ? transcript : "(no recent transcript)";
   return [
-    "You produce a short sidebar status that tells the user what an AI coding agent is doing right now.\n\n",
+    "You produce a short sidebar status summarizing the most recent activity in an AI coding agent's chat.\n\n",
     "Recent chat transcript (oldest first, newest last):\n",
     "<transcript>\n",
     body,
     "\n</transcript>\n\n",
     "Requirements:\n",
-    "- Focus on the most recent activity, not the overall task scope.\n",
+    "- Describe the specific activity the agent was last working on, drawn from the actual transcript content.\n",
+    "- Do NOT use generic placeholders such as 'Awaiting next task', 'Doing work', or 'Idle'. Always name the concrete activity (file, feature, bug, command, etc.).\n",
     "- emoji: A single emoji that visually represents the activity.\n",
     "- message: 2-6 words, present tense, verb-led, sentence case, no punctuation, no quotes.\n",
-    '- Examples of good messages: "Investigating crash", "Implementing sidebar status", "Running tests", "Reading config files", "Awaiting user reply".\n',
-    '- If the agent appears idle or finished, describe that state instead (e.g. "Awaiting next task").\n\n',
+    '- Examples: "Investigating crash", "Implementing sidebar status", "Running tests", "Reading config files".\n\n',
     "Call propose_status exactly once with your chosen emoji and message. Do not emit any text response.",
   ].join("");
 }
