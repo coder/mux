@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, afterEach, mock, type Mock } from "bun:test";
+import { describe, expect, it, beforeEach, afterEach, mock, spyOn, type Mock } from "bun:test";
 import type { DisplayedMessage } from "@/common/types/message";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { StreamStartEvent, ToolCallStartEvent } from "@/common/types/stream";
@@ -2586,6 +2586,29 @@ describe("WorkspaceStore", () => {
         { content: "Run typecheck", status: "in_progress" },
         { content: "Add regression test", status: "pending" },
       ]);
+
+      const state = store.getWorkspaceState(workspaceId);
+      expect(state.agentStatus).toEqual({ emoji: "🔄", message: "Run typecheck" });
+    });
+
+    it("live todo derivation wins over aggregator getAgentStatus (status_set/heartbeat) for active workspaces", () => {
+      // Codex round 6: aggregator.getAgentStatus() conflates status_set and
+      // muxMeta.displayStatus into one field. A status_set value persisted
+      // from a previous turn could mask a fresh todo_write in the current
+      // turn. Live todo must win.
+      const workspaceId = "active-live-todo-beats-aggregator-status";
+      createAndAddWorkspace(store, workspaceId);
+      seedPinnedTodos(store, workspaceId, [{ content: "Run typecheck", status: "in_progress" }]);
+
+      // Simulate an aggregator that has a non-empty getAgentStatus()
+      // (e.g. an old status_set from a previous turn). The new precedence
+      // must ignore it because the live todo derivation is fresher.
+      const aggregator = store.getAggregator(workspaceId);
+      if (!aggregator) throw new Error("expected aggregator");
+      spyOn(aggregator, "getAgentStatus").mockReturnValue({
+        emoji: "🔍",
+        message: "Investigating crash",
+      });
 
       const state = store.getWorkspaceState(workspaceId);
       expect(state.agentStatus).toEqual({ emoji: "🔄", message: "Run typecheck" });
