@@ -2591,6 +2591,32 @@ describe("WorkspaceStore", () => {
       expect(state.agentStatus).toEqual({ emoji: "🔄", message: "Run typecheck" });
     });
 
+    it("prefers persisted activity todoStatus over live aggregator todos for active workspaces", async () => {
+      // AgentStatusService writes its AI-generated payload into the same
+      // `todoStatus` slot. If the active branch always preferred the live
+      // aggregator derivation, the AI-generated status would never surface
+      // for any workspace with todos — defeating the feature.
+      const workspaceId = "active-ai-overrides-todos";
+      const activitySnapshot: WorkspaceActivitySnapshot = {
+        recency: new Date("2024-01-04T13:00:00.000Z").getTime(),
+        streaming: true,
+        lastModel: "claude-sonnet-4",
+        lastThinkingLevel: null,
+        todoStatus: { emoji: "🛠️", message: "AI-generated summary" },
+        hasTodos: true,
+      };
+
+      mockActivityList.mockResolvedValue({ [workspaceId]: activitySnapshot });
+      recreateStore();
+      await tick(0);
+
+      createAndAddWorkspace(store, workspaceId);
+      seedPinnedTodos(store, workspaceId, [{ content: "Run typecheck", status: "in_progress" }]);
+
+      const state = store.getWorkspaceState(workspaceId);
+      expect(state.agentStatus).toEqual(activitySnapshot.todoStatus ?? undefined);
+    });
+
     it("prefers todo-derived activity status for inactive workspaces", async () => {
       const workspaceId = "activity-fallback-todo-status-workspace";
       const activitySnapshot: WorkspaceActivitySnapshot = {

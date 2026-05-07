@@ -1756,12 +1756,13 @@ export class WorkspaceStore {
       const displayStatus = useAggregatorState ? undefined : (activity?.displayStatus ?? undefined);
       const fallbackAgentStatus = useAggregatorState ? aggregator.getAgentStatus() : undefined;
       const transientStatus = displayStatus ?? fallbackAgentStatus;
-      // Persistent sidebar status. Sourced from AgentStatusService (preferred,
-      // small-model summary of the trailing transcript) or derived from the
-      // current todo list (fallback for fresh workspaces). Both writers target
-      // the same `todoStatus` slot — last write wins.
+      // Persistent sidebar status. The activity snapshot's `todoStatus` is the
+      // canonical "last write wins" slot — both AgentStatusService and the
+      // todo-derivation path write to it. Prefer it in both branches, falling
+      // back to a live aggregator derivation only when the snapshot has no
+      // entry yet (brand-new workspaces before the first persist).
       const todoStatus = useAggregatorState
-        ? (deriveTodoStatus(aggregatorTodos) ?? activity?.todoStatus ?? undefined)
+        ? (activity?.todoStatus ?? deriveTodoStatus(aggregatorTodos) ?? undefined)
         : (activity?.todoStatus ??
           (activity?.hasTodos === false ? undefined : deriveTodoStatus(aggregatorTodos)));
       const agentStatus = transientStatus ?? todoStatus;
