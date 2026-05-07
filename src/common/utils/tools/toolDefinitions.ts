@@ -1341,17 +1341,23 @@ export const TOOL_DEFINITIONS = {
       "Each question must include 2–4 options; an 'Other' choice is provided automatically.",
     schema: AskUserQuestionToolArgsSchema,
   },
+  // `internal` tools are excluded from user-facing tool docs (hooks/tools.mdx
+  // env-var tables) because users can't write hooks for them — they run via
+  // bespoke streamText paths in their own services, not the standard tool
+  // execution pipeline. See gen_docs.ts.
   propose_name: {
     description:
       "Propose a workspace name and title. You MUST call this tool exactly once with your chosen name and title. " +
       "Do not emit a text response; call this tool immediately.",
     schema: ProposeNameToolArgsSchema,
+    internal: true,
   },
   propose_status: {
     description:
       "Propose a short sidebar status (emoji + 2-6 word verb-led phrase) summarizing what the agent is currently doing. " +
       "You MUST call this tool exactly once. Do not emit a text response; call this tool immediately.",
     schema: ProposeStatusToolArgsSchema,
+    internal: true,
   },
   propose_plan: {
     description:

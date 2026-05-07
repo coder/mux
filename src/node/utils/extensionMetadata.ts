@@ -28,9 +28,6 @@ export interface ExtensionMetadata {
   // Persists the latest display-status URL so later updates without a URL
   // can still carry the last deep link even after displayStatus is cleared.
   lastStatusUrl?: string | null;
-  // AI-generated status summary (workspaceStatusGenerator). When present,
-  // takes precedence over todoStatus in the sidebar.
-  aiStatus?: ExtensionAgentStatus | null;
 }
 
 /**
@@ -95,12 +92,6 @@ export function coerceExtensionMetadata(value: unknown): ExtensionMetadata | nul
         ? null
         : (coerceAgentStatus(record.todoStatus) ?? undefined)
       : undefined;
-  const aiStatus =
-    "aiStatus" in record
-      ? record.aiStatus === null
-        ? null
-        : (coerceAgentStatus(record.aiStatus) ?? undefined)
-      : undefined;
 
   return {
     recency: record.recency,
@@ -113,7 +104,6 @@ export function coerceExtensionMetadata(value: unknown): ExtensionMetadata | nul
     agentStatus: coerceAgentStatus(record.agentStatus),
     ...(displayStatus !== undefined ? { displayStatus } : {}),
     ...(todoStatus !== undefined ? { todoStatus } : {}),
-    ...(aiStatus !== undefined ? { aiStatus } : {}),
     ...(typeof record.hasTodos === "boolean" ? { hasTodos: record.hasTodos } : {}),
     lastStatusUrl: coerceStatusUrl(record.lastStatusUrl),
   };
@@ -132,8 +122,6 @@ export function toWorkspaceActivitySnapshot(
           // agentStatus field. Project that forward into todoStatus until a fresh todo_write
           // or stream-stop snapshot rewrites the workspace metadata.
           coerceAgentStatus(metadata.agentStatus);
-  const aiStatus = metadata.aiStatus !== undefined ? metadata.aiStatus : null;
-
   return {
     recency: metadata.recency,
     streaming: metadata.streaming,
@@ -144,7 +132,6 @@ export function toWorkspaceActivitySnapshot(
     lastThinkingLevel: metadata.lastThinkingLevel ?? null,
     ...(displayStatus ? { displayStatus } : {}),
     ...(todoStatus ? { todoStatus } : {}),
-    ...(aiStatus ? { aiStatus } : {}),
     ...(typeof metadata.hasTodos === "boolean" ? { hasTodos: metadata.hasTodos } : {}),
   };
 }

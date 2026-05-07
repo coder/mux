@@ -245,20 +245,21 @@ export class ExtensionMetadataService {
   }
 
   /**
-   * Update the AI-generated sidebar status payload for a workspace.
-   * Pass `null` to clear it.
+   * AgentStatusService writes its AI-generated payload into the same
+   * `todoStatus` field used by the todo-derived path. Passing `null` clears
+   * the slot.
    *
-   * AgentStatusService is a background scheduler with no causal connection
-   * to user activity, so this writer never advances `recency`. Existing
-   * entries keep their user-interaction recency (otherwise idle workspaces
-   * would be re-sorted and marked unread every tick); brand-new entries
-   * (rare: workspace has chat but no metadata yet) are seeded with
-   * `recency=0` so the AI status doesn't artificially promote them.
-   * `updateRecency` will set the real value on the next user interaction.
+   * Unlike `setTodoStatus`, this writer:
+   * - Never advances `recency`. Background regeneration must not promote
+   *   idle workspaces in the sidebar or mark them unread. Existing entries
+   *   keep their user-interaction recency; brand-new entries (rare: chat
+   *   exists but no metadata yet) are seeded with `recency=0` until the
+   *   next real user interaction.
+   * - Doesn't touch `hasTodos`. The todo-derivation path owns that flag.
    */
-  async setAiStatus(
+  async setSidebarStatus(
     workspaceId: string,
-    aiStatus: ExtensionAgentStatus | null
+    status: ExtensionAgentStatus | null
   ): Promise<WorkspaceActivitySnapshot> {
     return this.withSerializedMutation(async () => {
       const data = await this.load();
@@ -272,7 +273,11 @@ export class ExtensionMetadataService {
         displayStatus: null,
         lastStatusUrl: null,
       };
-      workspace.aiStatus = aiStatus;
+      if (status) {
+        workspace.todoStatus = status;
+      } else {
+        delete workspace.todoStatus;
+      }
       data.workspaces[workspaceId] = workspace;
       await this.save(data);
       return toWorkspaceActivitySnapshot(workspace);

@@ -1752,21 +1752,19 @@ export class WorkspaceStore {
       // `muxMetadata.displayStatus` for heartbeat / idle-compaction / background
       // turns. We collapse them into a single `transientStatus` so the
       // precedence works the same way for both branches and never lets a stale
-      // aiStatus mask an explicit system-set message.
+      // todoStatus mask an explicit system-set message.
       const displayStatus = useAggregatorState ? undefined : (activity?.displayStatus ?? undefined);
       const fallbackAgentStatus = useAggregatorState ? aggregator.getAgentStatus() : undefined;
       const transientStatus = displayStatus ?? fallbackAgentStatus;
-      // Replaces the legacy todo-derived status as the primary persistent
-      // sidebar signal. Produced periodically by AgentStatusService using the
-      // same "small model" path as title generation; we keep todoStatus below
-      // as a fallback while the AI status is being generated for the first
-      // time, on errors, or before the activity snapshot has caught up.
-      const aiStatus = activity?.aiStatus ?? undefined;
+      // Persistent sidebar status. Sourced from AgentStatusService (preferred,
+      // small-model summary of the trailing transcript) or derived from the
+      // current todo list (fallback for fresh workspaces). Both writers target
+      // the same `todoStatus` slot — last write wins.
       const todoStatus = useAggregatorState
         ? (deriveTodoStatus(aggregatorTodos) ?? activity?.todoStatus ?? undefined)
         : (activity?.todoStatus ??
           (activity?.hasTodos === false ? undefined : deriveTodoStatus(aggregatorTodos)));
-      const agentStatus = transientStatus ?? aiStatus ?? todoStatus;
+      const agentStatus = transientStatus ?? todoStatus;
 
       return {
         name: metadata?.name ?? workspaceId, // Fall back to ID if metadata missing
@@ -2464,8 +2462,7 @@ export class WorkspaceStore {
       previous?.recency !== snapshot?.recency ||
       previous?.hasTodos !== snapshot?.hasTodos ||
       !areAgentStatusesEqual(previous?.displayStatus, snapshot?.displayStatus) ||
-      !areAgentStatusesEqual(previous?.todoStatus, snapshot?.todoStatus) ||
-      !areAgentStatusesEqual(previous?.aiStatus, snapshot?.aiStatus);
+      !areAgentStatusesEqual(previous?.todoStatus, snapshot?.todoStatus);
 
     if (!changed) {
       return;

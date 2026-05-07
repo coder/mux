@@ -6,7 +6,6 @@ import {
   AGENT_STATUS_MAX_MESSAGE_CHARS,
   AGENT_STATUS_MAX_TRAILING_MESSAGES,
   AGENT_STATUS_MAX_TRANSCRIPT_TOKENS,
-  AGENT_STATUS_STARTUP_DELAY_MS,
   AGENT_STATUS_TICK_INTERVAL_MS,
   AGENT_STATUS_UNFOCUSED_INTERVAL_MS,
 } from "@/constants/agentStatus";
@@ -27,8 +26,6 @@ const FALLBACK_TOKENIZER_MODEL = "anthropic:claude-haiku-4-5";
 export interface AgentStatusServiceOptions {
   /** Override for test injection. Defaults to `Date.now`. */
   clock?: () => number;
-  /** Override startup delay. Defaults to AGENT_STATUS_STARTUP_DELAY_MS. */
-  startupDelayMs?: number;
   /** Override scheduler tick interval. Defaults to AGENT_STATUS_TICK_INTERVAL_MS. */
   tickIntervalMs?: number;
 }
@@ -60,10 +57,8 @@ export class AgentStatusService {
   private readonly tracked = new Map<string, State>();
   private readonly inFlightPromises = new Set<Promise<void>>();
   private readonly clock: () => number;
-  private readonly startupDelayMs: number;
   private readonly tickIntervalMs: number;
 
-  private startupTimeout: ReturnType<typeof setTimeout> | null = null;
   private checkInterval: ReturnType<typeof setInterval> | null = null;
   private stopped = false;
   private tickInFlight = false;
@@ -79,46 +74,21 @@ export class AgentStatusService {
     options: AgentStatusServiceOptions = {}
   ) {
     this.clock = options.clock ?? (() => Date.now());
-    this.startupDelayMs = options.startupDelayMs ?? AGENT_STATUS_STARTUP_DELAY_MS;
     this.tickIntervalMs = options.tickIntervalMs ?? AGENT_STATUS_TICK_INTERVAL_MS;
   }
 
   start(): void {
-    assert(
-      this.checkInterval === null && this.startupTimeout === null,
-      "AgentStatusService.start() called while already running"
-    );
+    assert(this.checkInterval === null, "AgentStatusService.start() called while already running");
     this.stopped = false;
-
-    const begin = () => {
-      if (this.stopped) return;
-      // Fire one tick immediately so the user sees an initial status without
-      // waiting a full interval after the startup delay.
-      void this.runTick();
-      this.checkInterval = setInterval(() => void this.runTick(), this.tickIntervalMs);
-    };
-
-    if (this.startupDelayMs <= 0) {
-      begin();
-    } else {
-      this.startupTimeout = setTimeout(() => {
-        this.startupTimeout = null;
-        begin();
-      }, this.startupDelayMs);
-    }
-
-    log.info("AgentStatusService started", {
-      startupDelayMs: this.startupDelayMs,
-      tickIntervalMs: this.tickIntervalMs,
-    });
+    // No startup delay: AGENT_STATUS_MAX_CONCURRENT=1 already serializes
+    // generation across workspaces, so the first tick can fire immediately
+    // without risking a thundering herd at launch.
+    this.checkInterval = setInterval(() => void this.runTick(), this.tickIntervalMs);
+    log.info("AgentStatusService started", { tickIntervalMs: this.tickIntervalMs });
   }
 
   stop(): void {
     this.stopped = true;
-    if (this.startupTimeout) {
-      clearTimeout(this.startupTimeout);
-      this.startupTimeout = null;
-    }
     if (this.checkInterval) {
       clearInterval(this.checkInterval);
       this.checkInterval = null;
@@ -189,7 +159,7 @@ export class AgentStatusService {
       state.lastRanAt = this.clock();
 
       // Empty workspace: nothing to summarize. Don't blank an existing
-      // aiStatus — that would clobber a status produced before compaction.
+      // todoStatus — that would clobber a status produced before compaction.
       if (transcript.trim().length === 0) return;
       // Idle/frozen: identical trailing window since last successful run.
       if (state.lastInputHash === inputHash) return;
@@ -218,7 +188,10 @@ export class AgentStatusService {
       // fails we want the next tick to retry against the same transcript
       // instead of dedup'ing against a hash we never committed.
       try {
-        const snapshot = await this.extensionMetadata.setAiStatus(workspaceId, result.data.status);
+        const snapshot = await this.extensionMetadata.setSidebarStatus(
+          workspaceId,
+          result.data.status
+        );
         if (this.stopped) return;
         state.lastInputHash = inputHash;
         this.workspaceService.emitWorkspaceActivity(workspaceId, snapshot);

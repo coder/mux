@@ -16,16 +16,11 @@ export const AGENT_STATUS_UNFOCUSED_INTERVAL_MS = 2 * 60 * 1000;
 /**
  * How often the scheduler wakes up to scan workspaces. Per-workspace cadence
  * is enforced separately, so this can be small enough to make focus
- * transitions feel snappy without driving redundant work.
+ * transitions feel snappy without driving redundant work. With
+ * AGENT_STATUS_MAX_CONCURRENT=1 the per-tick dispatch naturally smooths load
+ * across many workspaces — no separate startup delay needed.
  */
 export const AGENT_STATUS_TICK_INTERVAL_MS = 10 * 1000;
-
-/**
- * Delay before the first scheduler pass after startup. Lets initial chat
- * replay and metadata bootstrap settle, and avoids a thundering herd of
- * model calls during launch.
- */
-export const AGENT_STATUS_STARTUP_DELAY_MS = 30 * 1000;
 
 /** Token budget for the trailing chat-transcript window we feed the model. */
 export const AGENT_STATUS_MAX_TRANSCRIPT_TOKENS = 8000;

@@ -2634,19 +2634,18 @@ describe("WorkspaceStore", () => {
       expect(state.agentStatus).toEqual(activitySnapshot.displayStatus ?? undefined);
     });
 
-    it("prefers AI-generated aiStatus over todo-derived status for inactive workspaces", async () => {
-      // The whole point of the small-model status path: when AgentStatusService
-      // has produced a fresh aiStatus, it should win over todoStatus in the
-      // sidebar. Without this precedence the sidebar would still surface the
-      // legacy todo derivation, defeating the feature.
-      const workspaceId = "activity-fallback-ai-status-workspace";
+    it("uses todoStatus from the activity snapshot for inactive workspaces", async () => {
+      // todoStatus is the persistent sidebar slot — written by both the
+      // small-model AgentStatusService and the todo-derivation path. Inactive
+      // workspaces don't run the aggregator, so the snapshot's todoStatus is
+      // what the sidebar must show.
+      const workspaceId = "activity-fallback-todo-status-workspace";
       const activitySnapshot: WorkspaceActivitySnapshot = {
         recency: new Date("2024-01-04T16:00:00.000Z").getTime(),
         streaming: false,
         lastModel: "claude-sonnet-4",
         lastThinkingLevel: null,
-        aiStatus: { emoji: "🛠️", message: "Wiring sidebar precedence" },
-        todoStatus: { emoji: "🔄", message: "Run typecheck" },
+        todoStatus: { emoji: "🛠️", message: "Wiring sidebar precedence" },
         hasTodos: true,
       };
 
@@ -2657,22 +2656,22 @@ describe("WorkspaceStore", () => {
       createAndAddWorkspace(store, workspaceId, { createdAt: "2020-01-01T00:00:00.000Z" }, false);
 
       const state = store.getWorkspaceState(workspaceId);
-      expect(state.agentStatus).toEqual(activitySnapshot.aiStatus ?? undefined);
+      expect(state.agentStatus).toEqual(activitySnapshot.todoStatus ?? undefined);
     });
 
-    it("keeps displayStatus precedence over aiStatus so explicit system status still wins", async () => {
+    it("keeps displayStatus precedence over todoStatus so explicit system status still wins", async () => {
       // displayStatus is a deliberate, system-driven signal (e.g. "Compacting
-      // idle workspace…"). It must outrank aiStatus, otherwise the periodic
-      // small-model run would mask the explicit progress message the backend
-      // is trying to communicate.
-      const workspaceId = "activity-fallback-display-over-ai";
+      // idle workspace…"). It must outrank todoStatus — otherwise a periodic
+      // small-model rewrite of todoStatus would mask the explicit progress
+      // message the backend is trying to communicate.
+      const workspaceId = "activity-fallback-display-over-todo";
       const activitySnapshot: WorkspaceActivitySnapshot = {
         recency: new Date("2024-01-04T17:00:00.000Z").getTime(),
         streaming: false,
         lastModel: "claude-sonnet-4",
         lastThinkingLevel: null,
         displayStatus: { emoji: "💤", message: "Compacting idle workspace" },
-        aiStatus: { emoji: "🛠️", message: "Wiring sidebar precedence" },
+        todoStatus: { emoji: "🛠️", message: "Wiring sidebar precedence" },
         hasTodos: false,
       };
 

@@ -33,7 +33,7 @@ describe("AgentStatusService", () => {
   let mockAiService: AIService;
   let windowService: WindowService;
   let isFocused = true;
-  let setAiStatusMock: ReturnType<
+  let setSidebarStatusMock: ReturnType<
     typeof mock<(workspaceId: string, status: unknown) => Promise<{ recency: number }>>
   >;
   let emitWorkspaceActivityMock: ReturnType<
@@ -73,7 +73,6 @@ describe("AgentStatusService", () => {
       mockAiService,
       {
         clock: options?.clock,
-        startupDelayMs: 0,
         tickIntervalMs: 60 * 60 * 1000,
       }
     );
@@ -99,11 +98,11 @@ describe("AgentStatusService", () => {
       emitWorkspaceActivity: emitWorkspaceActivityMock,
     } as unknown as WorkspaceService;
 
-    setAiStatusMock = mock((_workspaceId: string, _status: unknown) =>
+    setSidebarStatusMock = mock((_workspaceId: string, _status: unknown) =>
       Promise.resolve({ recency: 0 })
     );
     mockExtensionMetadata = {
-      setAiStatus: setAiStatusMock,
+      setSidebarStatus: setSidebarStatusMock,
     } as unknown as ExtensionMetadataService;
 
     mockTokenizer = {
@@ -150,8 +149,8 @@ describe("AgentStatusService", () => {
     expect(generationCall[0]).toContain("Assistant: Running tests now");
     expect(generationCall[1]).toEqual(["anthropic:claude-haiku-4-5"]);
 
-    expect(setAiStatusMock).toHaveBeenCalledTimes(1);
-    const [persistedWorkspaceId, persistedStatus] = setAiStatusMock.mock.calls[0];
+    expect(setSidebarStatusMock).toHaveBeenCalledTimes(1);
+    const [persistedWorkspaceId, persistedStatus] = setSidebarStatusMock.mock.calls[0];
     expect(persistedWorkspaceId).toBe(workspaceId);
     expect(persistedStatus).toEqual({ emoji: "🛠️", message: "Editing source" });
   });
@@ -166,11 +165,11 @@ describe("AgentStatusService", () => {
     const service = createService();
     await getInternals(service).runForWorkspace(workspaceId);
     expect(generateSpy).toHaveBeenCalledTimes(1);
-    expect(setAiStatusMock).toHaveBeenCalledTimes(1);
+    expect(setSidebarStatusMock).toHaveBeenCalledTimes(1);
 
     await getInternals(service).runForWorkspace(workspaceId);
     expect(generateSpy).toHaveBeenCalledTimes(1);
-    expect(setAiStatusMock).toHaveBeenCalledTimes(1);
+    expect(setSidebarStatusMock).toHaveBeenCalledTimes(1);
   });
 
   test("includes the in-flight partial assistant message so the hash refreshes mid-stream", async () => {
@@ -212,16 +211,16 @@ describe("AgentStatusService", () => {
     );
     await getInternals(service).runForWorkspace(workspaceId);
     expect(generateSpy).toHaveBeenCalledTimes(2);
-    expect(setAiStatusMock).toHaveBeenCalledTimes(2);
+    expect(setSidebarStatusMock).toHaveBeenCalledTimes(2);
   });
 
   test("skips regeneration when there is no chat history yet", async () => {
     // Empty workspaces have nothing to summarize. Don't pay for a
-    // hallucinated status, and don't blank an existing aiStatus on disk.
+    // hallucinated status, and don't blank an existing todoStatus on disk.
     const service = createService();
     await getInternals(service).runForWorkspace(workspaceId);
     expect(generateSpy).not.toHaveBeenCalled();
-    expect(setAiStatusMock).not.toHaveBeenCalled();
+    expect(setSidebarStatusMock).not.toHaveBeenCalled();
   });
 
   test("focused windows regenerate at the focused interval; unfocused windows wait longer", async () => {
@@ -311,7 +310,7 @@ describe("AgentStatusService", () => {
     now += 31_000;
     await internals.runTick();
     expect(generateSpy).toHaveBeenCalledTimes(3);
-    const persistedIds = setAiStatusMock.mock.calls.map((call) => call[0]);
+    const persistedIds = setSidebarStatusMock.mock.calls.map((call) => call[0]);
     expect(new Set(persistedIds)).toEqual(new Set(ids));
   });
 
@@ -341,7 +340,7 @@ describe("AgentStatusService", () => {
     await inFlight;
 
     expect(generateSpy).not.toHaveBeenCalled();
-    expect(setAiStatusMock).not.toHaveBeenCalled();
+    expect(setSidebarStatusMock).not.toHaveBeenCalled();
     expect(emitWorkspaceActivityMock).not.toHaveBeenCalled();
   });
 
@@ -383,7 +382,7 @@ describe("AgentStatusService", () => {
     await inFlight;
 
     expect(generateSpy).toHaveBeenCalledTimes(1);
-    expect(setAiStatusMock).not.toHaveBeenCalled();
+    expect(setSidebarStatusMock).not.toHaveBeenCalled();
     expect(emitWorkspaceActivityMock).not.toHaveBeenCalled();
   });
 
@@ -396,36 +395,36 @@ describe("AgentStatusService", () => {
       createMuxMessage("u1", "user", "kick off a task")
     );
 
-    setAiStatusMock.mockImplementationOnce(() => Promise.reject(new Error("disk full")));
+    setSidebarStatusMock.mockImplementationOnce(() => Promise.reject(new Error("disk full")));
 
     const service = createService();
     await getInternals(service).runForWorkspace(workspaceId);
 
     expect(generateSpy).toHaveBeenCalledTimes(1);
-    expect(setAiStatusMock).toHaveBeenCalledTimes(1);
+    expect(setSidebarStatusMock).toHaveBeenCalledTimes(1);
     // Activity must not emit on persist failure.
     expect(emitWorkspaceActivityMock).not.toHaveBeenCalled();
 
     // Same transcript, second pass: retries because the previous failure
     // left lastInputHash unchanged.
-    setAiStatusMock.mockImplementation((_w, _s) => Promise.resolve({ recency: 0 }));
+    setSidebarStatusMock.mockImplementation((_w, _s) => Promise.resolve({ recency: 0 }));
     await getInternals(service).runForWorkspace(workspaceId);
     expect(generateSpy).toHaveBeenCalledTimes(2);
-    expect(setAiStatusMock).toHaveBeenCalledTimes(2);
+    expect(setSidebarStatusMock).toHaveBeenCalledTimes(2);
     expect(emitWorkspaceActivityMock).toHaveBeenCalledTimes(1);
   });
 
-  test("setAiStatus must not bump workspace recency (would re-sort idle workspaces)", async () => {
+  test("setSidebarStatus must not bump workspace recency (would re-sort idle workspaces)", async () => {
     // AgentStatusService is a background scheduler with no causal
     // connection to user activity, so its writes must not bump recency —
     // that would promote idle workspaces in the sidebar and mark them
     // unread every tick. Test ExtensionMetadataService directly to pin the
-    // contract for any future caller of setAiStatus.
+    // contract for any future caller of setSidebarStatus.
     const dir = mkdtempSync(join(tmpdir(), "mux-recency-"));
     try {
       const svc = new ExtensionMetadataService(join(dir, "metadata.json"));
       await svc.updateRecency("ws", 100);
-      await svc.setAiStatus("ws", { emoji: "🛠️", message: "Doing work" });
+      await svc.setSidebarStatus("ws", { emoji: "🛠️", message: "Doing work" });
       const after = await svc.getSnapshot("ws");
       expect(after?.recency).toBe(100);
     } finally {
@@ -446,6 +445,6 @@ describe("AgentStatusService", () => {
     await getInternals(service).runTick();
 
     expect(generateSpy).not.toHaveBeenCalled();
-    expect(setAiStatusMock).not.toHaveBeenCalled();
+    expect(setSidebarStatusMock).not.toHaveBeenCalled();
   });
 });
