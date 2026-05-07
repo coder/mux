@@ -173,6 +173,21 @@ describe("useBrowserBridgeConnection", () => {
     expect(result.current.session?.frameMetadata?.deviceWidth).toBe(1280);
   });
 
+  test("passes explicit other-workspace scope to browser bootstrap", async () => {
+    const result = renderHook(() => useBrowserBridgeConnection("workspace-1"));
+
+    act(() => {
+      result.result.current.connect("session-a", { allowOtherWorkspaceSession: true });
+    });
+    await flushAsyncWork();
+
+    expect(getBootstrapMock).toHaveBeenCalledWith({
+      workspaceId: "workspace-1",
+      sessionName: "session-a",
+      allowOtherWorkspaceSession: true,
+    });
+  });
+
   test("initializes new sessions with page state defaults", async () => {
     const { result } = await connectHook();
 

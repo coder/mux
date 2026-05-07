@@ -17,6 +17,14 @@ export interface BrowserDiscoveredSession {
   status: BrowserDiscoveredSessionStatus;
 }
 
+export interface BrowserDiscoveredOtherSession extends BrowserDiscoveredSession {
+  cwd: string;
+}
+
+export interface BrowserSessionAttachOptions {
+  allowOtherWorkspaceSession?: boolean;
+}
+
 export type PageStateSource = "bootstrap" | "command" | "poll";
 
 export interface BrowserSession {

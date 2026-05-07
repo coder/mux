@@ -2078,6 +2078,10 @@ const BrowserDiscoveredSessionSchema = z.object({
   status: z.enum(["attachable", "missing_stream"]),
 });
 
+const BrowserDiscoveredOtherSessionSchema = BrowserDiscoveredSessionSchema.extend({
+  cwd: z.string(),
+});
+
 const BrowserControlActionSchema = z.enum(["open", "back", "forward", "reload"]);
 
 export const browser = {
@@ -2089,6 +2093,7 @@ export const browser = {
       .strict(),
     output: z.object({
       sessions: z.array(BrowserDiscoveredSessionSchema),
+      otherSessions: z.array(BrowserDiscoveredOtherSessionSchema),
     }),
   },
   getBootstrap: {
@@ -2096,6 +2101,7 @@ export const browser = {
       .object({
         workspaceId: z.string(),
         sessionName: z.string(),
+        allowOtherWorkspaceSession: z.boolean().nullish(),
       })
       .strict(),
     output: z.object({
@@ -2111,6 +2117,7 @@ export const browser = {
         sessionName: z.string(),
         action: BrowserControlActionSchema,
         url: z.string().nullish(),
+        allowOtherWorkspaceSession: z.boolean().nullish(),
       })
       .strict(),
     output: z.object({
@@ -2123,6 +2130,7 @@ export const browser = {
       .object({
         workspaceId: z.string(),
         sessionName: z.string(),
+        allowOtherWorkspaceSession: z.boolean().nullish(),
       })
       .strict(),
     output: z.object({

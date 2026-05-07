@@ -6,7 +6,19 @@ interface TokenRecord {
   workspaceId: string;
   sessionName: string;
   streamPort: number;
+  allowOtherWorkspaceSession: boolean;
   expiresAtMs: number;
+}
+
+interface BrowserBridgeTokenMintOptions {
+  allowOtherWorkspaceSession?: boolean;
+}
+
+export interface BrowserBridgeTokenPayload {
+  workspaceId: string;
+  sessionName: string;
+  streamPort: number;
+  allowOtherWorkspaceSession: boolean;
 }
 
 const BROWSER_BRIDGE_TOKEN_TTL_MS = 30_000;
@@ -21,7 +33,12 @@ export class BrowserBridgeTokenManager {
     this.cleanupTimer.unref?.();
   }
 
-  mint(workspaceId: string, sessionName: string, streamPort: number): string {
+  mint(
+    workspaceId: string,
+    sessionName: string,
+    streamPort: number,
+    options?: BrowserBridgeTokenMintOptions
+  ): string {
     assert(workspaceId.length > 0, "BrowserBridgeTokenManager.mint requires non-empty workspaceId");
     assert(sessionName.length > 0, "BrowserBridgeTokenManager.mint requires non-empty sessionName");
     assert(
@@ -39,13 +56,14 @@ export class BrowserBridgeTokenManager {
       workspaceId,
       sessionName,
       streamPort,
+      allowOtherWorkspaceSession: options?.allowOtherWorkspaceSession === true,
       expiresAtMs: Date.now() + BROWSER_BRIDGE_TOKEN_TTL_MS,
     });
 
     return token;
   }
 
-  validate(token: string): { workspaceId: string; sessionName: string; streamPort: number } | null {
+  validate(token: string): BrowserBridgeTokenPayload | null {
     const record = this.tokens.get(token);
     if (!record) {
       return null;
@@ -62,6 +80,7 @@ export class BrowserBridgeTokenManager {
       workspaceId: record.workspaceId,
       sessionName: record.sessionName,
       streamPort: record.streamPort,
+      allowOtherWorkspaceSession: record.allowOtherWorkspaceSession,
     };
   }
 

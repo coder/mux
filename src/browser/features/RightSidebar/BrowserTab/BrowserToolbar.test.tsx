@@ -191,6 +191,21 @@ describe("BrowserToolbar", () => {
     });
   });
 
+  test("sends explicit other-workspace scope with browser control commands", async () => {
+    const view = renderToolbar({ allowOtherWorkspaceSession: true });
+
+    fireEvent.click(view.getByLabelText("Reload"));
+
+    await waitFor(() => {
+      expect(controlMock).toHaveBeenCalledWith({
+        workspaceId: "workspace-1",
+        sessionName: "session-a",
+        action: "reload",
+        allowOtherWorkspaceSession: true,
+      });
+    });
+  });
+
   test("runs browser navigation shortcuts when the URL input is not focused", async () => {
     let keyDownHandler: ((event: KeyboardEvent) => void) | null = null;
     const originalAddEventListener = window.addEventListener.bind(window);
