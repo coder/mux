@@ -158,6 +158,16 @@ import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 // localStorage quotas are environment-dependent and relatively small.
 // Be conservative here so we can warn the user before writes start failing.
 
+// Normal typing usually has no active suggestion menu. Reuse the existing empty array
+// so suggestion effects do not schedule an avoidable second render on every keypress.
+function clearSuggestions(prev: SlashSuggestion[]): SlashSuggestion[] {
+  return prev.length === 0 ? prev : [];
+}
+
+function replaceSuggestions(prev: SlashSuggestion[], next: SlashSuggestion[]): SlashSuggestion[] {
+  return prev.length === 0 && next.length === 0 ? prev : next;
+}
+
 const PDF_MEDIA_TYPE = "application/pdf";
 
 function getBaseMediaType(mediaType: string): string {
@@ -1180,7 +1190,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       atMentionRequestIdRef.current++;
       lastAtMentionScopeIdRef.current = null;
       lastAtMentionQueryRef.current = null;
-      setAtMentionSuggestions([]);
+      setAtMentionSuggestions(clearSuggestions);
       setShowAtMentionSuggestions(false);
       return;
     }
@@ -1193,7 +1203,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       atMentionRequestIdRef.current++;
       lastAtMentionScopeIdRef.current = null;
       lastAtMentionQueryRef.current = null;
-      setAtMentionSuggestions([]);
+      setAtMentionSuggestions(clearSuggestions);
       setShowAtMentionSuggestions(false);
       return;
     }
@@ -1264,7 +1274,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           setShowAtMentionSuggestions(nextSuggestions.length > 0);
         } catch {
           if (atMentionRequestIdRef.current === requestId) {
-            setAtMentionSuggestions([]);
+            setAtMentionSuggestions(clearSuggestions);
             setShowAtMentionSuggestions(false);
           }
         }
@@ -1301,7 +1311,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     const match = findInlineSkillReferenceAtCursor(input, cursor);
 
     if (!match) {
-      setSkillSuggestions([]);
+      setSkillSuggestions(clearSuggestions);
       setShowSkillSuggestions(false);
       lastSkillQueryRef.current = null;
       return;
@@ -1338,7 +1348,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       agentSkills: agentSkillDescriptors,
       variant,
     });
-    setCommandSuggestions(suggestions);
+    setCommandSuggestions((prev) => replaceSuggestions(prev, suggestions));
     setShowCommandSuggestions(suggestions.length > 0);
   }, [input, agentSkillDescriptors, variant]);
 
@@ -1925,7 +1935,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         input.slice(match.endIndex);
 
       setInput(next);
-      setAtMentionSuggestions([]);
+      setAtMentionSuggestions(clearSuggestions);
       setShowAtMentionSuggestions(false);
 
       requestAnimationFrame(() => {
@@ -1957,7 +1967,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       const next = input.slice(0, match.startIndex) + suggestion.replacement + trailing + after;
 
       setInput(next);
-      setSkillSuggestions([]);
+      setSkillSuggestions(clearSuggestions);
       setShowSkillSuggestions(false);
       lastSkillQueryRef.current = null;
 
