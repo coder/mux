@@ -261,12 +261,14 @@ export class AgentStatusService {
         markRecencyObserved();
         return;
       }
-      // Idle/frozen: identical trailing window since last settled run. Do not
-      // consume observedRecency here: WorkspaceService can bump recency before
-      // the user message is durably in history, and consuming it against the
-      // old hash would reintroduce stale pre-pivot statuses until cadence
-      // expires.
-      if (state.lastInputHash === inputHash) return;
+      // Idle/frozen: identical trailing window since last settled run. The
+      // recent race path above already handles recency that may be ahead of
+      // history, so any recency reaching this dedup branch is stale/non-racy:
+      // consume it to avoid permanent recency-advanced priority.
+      if (state.lastInputHash === inputHash) {
+        markRecencyObserved();
+        return;
+      }
 
       const candidates = await this.workspaceService.getWorkspaceTitleModelCandidates(workspaceId);
       if (candidates.length === 0) return;

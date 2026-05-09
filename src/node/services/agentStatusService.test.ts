@@ -393,7 +393,7 @@ describe("AgentStatusService", () => {
     // unconsumed so the next tick can still bypass cadence once history
     // catches up.
     now += 5_000;
-    recency = 200;
+    recency = now;
     await internals.runTick();
     expect(generateSpy).toHaveBeenCalledTimes(1);
 
@@ -401,7 +401,7 @@ describe("AgentStatusService", () => {
       workspaceId,
       createMuxMessage("u2", "user", "Pivot after recency")
     );
-    now += 5_000;
+    now += 10_000;
     await internals.runTick();
 
     expect(generateSpy).toHaveBeenCalledTimes(2);
@@ -441,6 +441,52 @@ describe("AgentStatusService", () => {
 
     expect(generateSpy).toHaveBeenCalledTimes(1);
     expect(generateSpy.mock.calls[0][0]).toContain("User: Pivot after restart");
+  });
+
+  test("dedup skips consume stale recency priority after the history catchup window", async () => {
+    const staleWorkspaceId = "ws-stale-recency";
+    projectsConfig = makeProjectsConfig([
+      makeWorkspaceEntry({ id: staleWorkspaceId, name: staleWorkspaceId } as Partial<Workspace>),
+      makeWorkspaceEntry(),
+    ]);
+    await historyHandle.historyService.appendToHistory(
+      staleWorkspaceId,
+      createMuxMessage("u-stale", "user", "Already summarized")
+    );
+    await historyHandle.historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("u-good", "user", "Waiting behind stale recency")
+    );
+
+    let now = 1_000_000;
+    let recency = 100;
+    getAllSnapshotsMock.mockImplementation(() =>
+      Promise.resolve(
+        new Map<string, ActivitySnapshotForTest>([
+          [staleWorkspaceId, { streaming: false, recency }],
+        ])
+      )
+    );
+    const service = createService({ clock: () => now });
+    const internals = getInternals(service);
+
+    await internals.runTick();
+    expect(generateSpy).toHaveBeenCalledTimes(1);
+    expect(generateSpy.mock.calls[0][0]).toContain("User: Already summarized");
+
+    now += 5_000;
+    recency = now;
+    await internals.runTick();
+    expect(generateSpy).toHaveBeenCalledTimes(1);
+
+    now += 10_000;
+    await internals.runTick();
+    expect(generateSpy).toHaveBeenCalledTimes(1);
+
+    now += 10_000;
+    await internals.runTick();
+    expect(generateSpy).toHaveBeenCalledTimes(2);
+    expect(generateSpy.mock.calls[1][0]).toContain("User: Waiting behind stale recency");
   });
 
   test("streaming workspaces regenerate at the active intervals (10s focused, 30s unfocused)", async () => {
