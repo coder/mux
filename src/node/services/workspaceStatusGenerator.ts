@@ -1,6 +1,7 @@
 import { streamText, tool } from "ai";
 import type { AIService } from "./aiService";
 import { log } from "./log";
+import { runLanguageModelCleanup } from "./languageModelCleanup";
 import { mapModelCreationError, mapNameGenerationError } from "./workspaceTitleGenerator";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
@@ -125,6 +126,14 @@ export async function generateWorkspaceStatus(
         error: lastError,
       });
       continue;
+    } finally {
+      // Mirror workspaceTitleGenerator: some providers attach cleanup hooks
+      // to the created model (notably the OpenAI Responses WebSocket
+      // transport, which attaches webSocketTransport.close). Without this
+      // call the periodic AgentStatusService loop would leak transports
+      // for every successful or failed candidate, every tick, every
+      // workspace.
+      runLanguageModelCleanup(modelResult.data);
     }
   }
 
