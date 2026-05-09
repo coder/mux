@@ -194,8 +194,7 @@ export class AgentStatusService {
       // Set lastRanAt at dispatch time (not after the async transcript
       // build) so cadence is anchored to tick boundaries — see runTick.
       state.lastRanAt = tickStartedAt;
-      state.lastObservedRecency = recency;
-      const promise = this.runForWorkspace(id).finally(() => {
+      const promise = this.runForWorkspace(id, recency).finally(() => {
         state.inFlight = false;
         this.inFlightPromises.delete(promise);
       });
@@ -203,7 +202,10 @@ export class AgentStatusService {
     }
   }
 
-  private async runForWorkspace(workspaceId: string): Promise<void> {
+  private async runForWorkspace(
+    workspaceId: string,
+    observedRecency: number | null = null
+  ): Promise<void> {
     try {
       const transcript = await this.buildTrailingTranscript(workspaceId);
       const inputHash = computeInputHash(transcript);
@@ -213,10 +215,20 @@ export class AgentStatusService {
       // chat pivoted again.
       const state = this.ensureState(workspaceId);
 
+      const markRecencyObserved = () => {
+        if (observedRecency !== null) {
+          state.lastObservedRecency = observedRecency;
+        }
+      };
+
       // Empty workspace: nothing to summarize. Don't blank an existing
       // todoStatus — that would clobber a status produced before compaction.
       if (transcript.trim().length === 0) return;
-      // Idle/frozen: identical trailing window since last successful run.
+      // Idle/frozen: identical trailing window since last settled run. Do not
+      // consume observedRecency here: WorkspaceService can bump recency before
+      // the user message is durably in history, and consuming it against the
+      // old hash would reintroduce stale pre-pivot statuses until cadence
+      // expires.
       if (state.lastInputHash === inputHash) return;
 
       const candidates = await this.workspaceService.getWorkspaceTitleModelCandidates(workspaceId);
@@ -247,6 +259,7 @@ export class AgentStatusService {
             "AgentStatusService: status generation failed at provider; deferring until transcript changes",
             { workspaceId, error: result.error.error }
           );
+          markRecencyObserved();
           state.lastInputHash = inputHash;
         } else {
           log.debug(
@@ -269,6 +282,7 @@ export class AgentStatusService {
           workspaceId,
           message: result.data.status.message,
         });
+        markRecencyObserved();
         state.lastInputHash = inputHash;
         return;
       }
@@ -282,6 +296,7 @@ export class AgentStatusService {
           result.data.status
         );
         if (this.stopped) return;
+        markRecencyObserved();
         state.lastInputHash = inputHash;
         this.workspaceService.emitWorkspaceActivity(workspaceId, snapshot);
       } catch (error) {

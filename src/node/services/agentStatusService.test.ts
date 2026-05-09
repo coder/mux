@@ -335,6 +335,47 @@ describe("AgentStatusService", () => {
     expect(generateSpy).toHaveBeenCalledTimes(2);
   });
 
+  test("does not consume a user recency bump until the pivot message reaches history", async () => {
+    await historyHandle.historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("u1", "user", "Initial request")
+    );
+
+    let recency = 100;
+    getAllSnapshotsMock.mockImplementation(() =>
+      Promise.resolve(
+        new Map<string, ActivitySnapshotForTest>([[workspaceId, { streaming: false, recency }]])
+      )
+    );
+
+    let now = 1_000_000;
+    const service = createService({ clock: () => now });
+    const internals = getInternals(service);
+
+    await internals.runTick();
+    expect(generateSpy).toHaveBeenCalledTimes(1);
+
+    // sendMessage updates workspace recency before the user message is
+    // durably appended to history. A scheduler tick in that gap sees the
+    // recency bump but the old transcript hash; it must leave the bump
+    // unconsumed so the next tick can still bypass cadence once history
+    // catches up.
+    now += 5_000;
+    recency = 200;
+    await internals.runTick();
+    expect(generateSpy).toHaveBeenCalledTimes(1);
+
+    await historyHandle.historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("u2", "user", "Pivot after recency")
+    );
+    now += 5_000;
+    await internals.runTick();
+
+    expect(generateSpy).toHaveBeenCalledTimes(2);
+    expect(generateSpy.mock.calls[1][0]).toContain("User: Pivot after recency");
+  });
+
   test("streaming workspaces regenerate at the active intervals (10s focused, 30s unfocused)", async () => {
     // The user-visible reason this test exists: when an agent is actively
     // working, the sidebar status should refresh fast enough that the user
