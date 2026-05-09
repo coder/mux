@@ -116,9 +116,10 @@ export class AgentStatusService {
     assert(this.checkInterval === null, "AgentStatusService.start() called while already running");
     this.stopped = false;
     // No startup delay: AGENT_STATUS_MAX_CONCURRENT=1 already serializes
-    // generation across workspaces, so the first tick can fire immediately
-    // without risking a thundering herd at launch.
+    // generation across workspaces, so an immediate first tick won't create a
+    // thundering herd at launch.
     this.checkInterval = setInterval(() => void this.runTick(), this.tickIntervalMs);
+    void this.runTick();
     log.info("AgentStatusService started", { tickIntervalMs: this.tickIntervalMs });
   }
 
