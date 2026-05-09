@@ -804,6 +804,56 @@ describe("AgentStatusService", () => {
     expect(emitWorkspaceActivityMock).toHaveBeenCalledTimes(1);
   });
 
+  test("pre-provider failures consume recency priority without advancing transcript dedup", async () => {
+    const misconfiguredWorkspaceId = "ws-misconfigured";
+    projectsConfig = makeProjectsConfig([
+      makeWorkspaceEntry({
+        id: misconfiguredWorkspaceId,
+        name: misconfiguredWorkspaceId,
+      } as Partial<Workspace>),
+      makeWorkspaceEntry(),
+    ]);
+    await historyHandle.historyService.appendToHistory(
+      misconfiguredWorkspaceId,
+      createMuxMessage("u-bad", "user", "Misconfigured workspace")
+    );
+    await historyHandle.historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("u-good", "user", "Healthy workspace")
+    );
+    getAllSnapshotsMock.mockImplementation(() =>
+      Promise.resolve(
+        new Map<string, ActivitySnapshotForTest>([
+          [misconfiguredWorkspaceId, { streaming: false, recency: 100 }],
+        ])
+      )
+    );
+    generateSpy.mockResolvedValueOnce(
+      Err({
+        error: {
+          type: "authentication",
+          authKind: "api_key_missing",
+          provider: "anthropic",
+        },
+        reachedProvider: false,
+      })
+    );
+
+    let now = 1_000_000;
+    const service = createService({ clock: () => now });
+    const internals = getInternals(service);
+
+    await internals.runTick();
+    expect(generateSpy).toHaveBeenCalledTimes(1);
+    expect(generateSpy.mock.calls[0][0]).toContain("User: Misconfigured workspace");
+
+    now += 10_000;
+    await internals.runTick();
+
+    expect(generateSpy).toHaveBeenCalledTimes(2);
+    expect(generateSpy.mock.calls[1][0]).toContain("User: Healthy workspace");
+  });
+
   test("archived workspaces are not regenerated", async () => {
     projectsConfig = makeProjectsConfig([
       makeWorkspaceEntry({ archivedAt: new Date().toISOString() } as Partial<Workspace>),

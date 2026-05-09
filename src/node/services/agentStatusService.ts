@@ -289,9 +289,14 @@ export class AgentStatusService {
           state.lastInputHash = inputHash;
         } else {
           log.debug(
-            "AgentStatusService: status generation failed before reaching provider; will retry next tick",
+            "AgentStatusService: status generation failed before reaching provider; will retry on cadence",
             { workspaceId, error: result.error.error }
           );
+          // Consume recency without advancing lastInputHash: credential/config
+          // fixes should still retry the same transcript, but a misconfigured
+          // workspace must not retain permanent recency-advanced priority and
+          // starve other workspaces under max concurrency 1.
+          markRecencyObserved();
         }
         return;
       }
