@@ -259,8 +259,9 @@ export class ExtensionMetadataService {
    */
   async setSidebarStatus(
     workspaceId: string,
-    status: ExtensionAgentStatus | null
-  ): Promise<WorkspaceActivitySnapshot> {
+    status: ExtensionAgentStatus | null,
+    options: { skipIfRecencyAdvancedSince?: number | null } = {}
+  ): Promise<WorkspaceActivitySnapshot | null> {
     return this.withSerializedMutation(async () => {
       const data = await this.load();
       const existing = coerceExtensionMetadata(data.workspaces[workspaceId]);
@@ -273,6 +274,14 @@ export class ExtensionMetadataService {
         displayStatus: null,
         lastStatusUrl: null,
       };
+      if (
+        options.skipIfRecencyAdvancedSince !== undefined &&
+        existing &&
+        (options.skipIfRecencyAdvancedSince === null ||
+          existing.recency > options.skipIfRecencyAdvancedSince)
+      ) {
+        return null;
+      }
       if (status) {
         workspace.todoStatus = status;
       } else {

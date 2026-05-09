@@ -283,16 +283,6 @@ export class AgentStatusService {
       // Re-check after the generator returns: the same hazard at a later
       // await boundary.
       if (this.stopped) return;
-      if (await this.hasNewerRecency(workspaceId, observedRecency)) {
-        // A user turn landed while the provider was generating against the
-        // previous transcript. Drop the old result so it cannot resurrect a
-        // pre-pivot sidebar status after the user message cleared/changed it.
-        log.debug("AgentStatusService: dropping generated status after newer recency", {
-          workspaceId,
-          observedRecency,
-        });
-        return;
-      }
       if (!result.success) {
         // Only advance the dedup hash when at least one candidate actually
         // reached the provider. If every candidate failed during model
@@ -348,9 +338,22 @@ export class AgentStatusService {
       try {
         const snapshot = await this.extensionMetadata.setSidebarStatus(
           workspaceId,
-          result.data.status
+          result.data.status,
+          { skipIfRecencyAdvancedSince: observedRecency }
         );
         if (this.stopped) return;
+        if (!snapshot) {
+          // The recency check happens inside ExtensionMetadataService's
+          // serialized mutation queue, immediately before the status write.
+          // That makes it atomic with fire-and-forget user-recency writes:
+          // a slow provider response cannot resurrect a pre-pivot status
+          // after a newer user turn has queued or committed its recency bump.
+          log.debug("AgentStatusService: dropping generated status after newer recency", {
+            workspaceId,
+            observedRecency,
+          });
+          return;
+        }
         markRecencyObserved();
         state.lastInputHash = inputHash;
         this.workspaceService.emitWorkspaceActivity(workspaceId, snapshot);
@@ -366,18 +369,6 @@ export class AgentStatusService {
         error,
       });
     }
-  }
-
-  private async hasNewerRecency(
-    workspaceId: string,
-    observedRecency: number | null
-  ): Promise<boolean> {
-    const snapshot = await this.extensionMetadata.getSnapshot(workspaceId);
-    const currentRecency = snapshot?.recency;
-    return (
-      typeof currentRecency === "number" &&
-      (observedRecency === null || currentRecency > observedRecency)
-    );
   }
 
   private ensureState(id: string): State {

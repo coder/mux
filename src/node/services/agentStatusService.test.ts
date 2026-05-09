@@ -39,7 +39,13 @@ describe("AgentStatusService", () => {
   let windowService: WindowService;
   let isFocused = true;
   let setSidebarStatusMock: ReturnType<
-    typeof mock<(workspaceId: string, status: unknown) => Promise<{ recency: number }>>
+    typeof mock<
+      (
+        workspaceId: string,
+        status: unknown,
+        options?: { skipIfRecencyAdvancedSince?: number | null }
+      ) => Promise<{ recency: number } | null>
+    >
   >;
   let getAllSnapshotsMock: ReturnType<
     typeof mock<() => Promise<Map<string, ActivitySnapshotForTest>>>
@@ -109,7 +115,7 @@ describe("AgentStatusService", () => {
       emitWorkspaceActivity: emitWorkspaceActivityMock,
     } as unknown as WorkspaceService;
 
-    setSidebarStatusMock = mock((_workspaceId: string, _status: unknown) =>
+    setSidebarStatusMock = mock((_workspaceId: string, _status: unknown, _options?: unknown) =>
       Promise.resolve({ recency: 0 })
     );
     // Default: no snapshots → no workspaces are streaming → idle intervals.
@@ -674,7 +680,13 @@ describe("AgentStatusService", () => {
         new Map<string, ActivitySnapshotForTest>([[workspaceId, { streaming: false, recency }]])
       )
     );
-    getSnapshotMock.mockImplementation(() => Promise.resolve({ recency }));
+    setSidebarStatusMock.mockImplementation((_workspaceId, _status, options) =>
+      Promise.resolve(
+        options?.skipIfRecencyAdvancedSince != null && recency > options.skipIfRecencyAdvancedSince
+          ? null
+          : { recency }
+      )
+    );
 
     let signalStarted!: () => void;
     const startedSignal = new Promise<void>((resolve) => {
@@ -705,7 +717,8 @@ describe("AgentStatusService", () => {
     await inFlight;
 
     expect(generateSpy).toHaveBeenCalledTimes(1);
-    expect(setSidebarStatusMock).not.toHaveBeenCalled();
+    expect(setSidebarStatusMock).toHaveBeenCalledTimes(1);
+    expect(setSidebarStatusMock.mock.calls[0][2]).toEqual({ skipIfRecencyAdvancedSince: 100 });
     expect(emitWorkspaceActivityMock).not.toHaveBeenCalled();
   });
 
@@ -750,6 +763,26 @@ describe("AgentStatusService", () => {
       await svc.setSidebarStatus("ws", { emoji: "🛠️", message: "Doing work" });
       const after = await svc.getSnapshot("ws");
       expect(after?.recency).toBe(100);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("setSidebarStatus can atomically skip when recency advanced", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mux-recency-skip-"));
+    try {
+      const svc = new ExtensionMetadataService(join(dir, "metadata.json"));
+      await svc.updateRecency("ws", 200);
+      const skipped = await svc.setSidebarStatus(
+        "ws",
+        { emoji: "🛠️", message: "Old status" },
+        { skipIfRecencyAdvancedSince: 100 }
+      );
+      const after = await svc.getSnapshot("ws");
+
+      expect(skipped).toBeNull();
+      expect(after?.todoStatus).toBeUndefined();
+      expect(after?.recency).toBe(200);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
