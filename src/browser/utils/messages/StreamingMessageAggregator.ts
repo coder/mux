@@ -7,7 +7,11 @@ import type {
   InlineSkillSnapshotMap,
   AgentSkillReference,
 } from "@/common/types/message";
-import { createMuxMessage, getCompactionFollowUpContent } from "@/common/types/message";
+import {
+  createMuxMessage,
+  getCompactionFollowUpContent,
+  isCompactionSummaryMetadata,
+} from "@/common/types/message";
 
 import {
   copyStreamLifecycleSnapshot,
@@ -131,6 +135,7 @@ interface StreamingContext {
   // background activity completion can still suppress intermediate notifications
   // after the workspace loses its live queued-message subscription.
   hasQueuedFollowUp: boolean;
+  suppressNotification: boolean;
   isReplay: boolean;
   model: string;
   routedThroughGateway?: boolean;
@@ -409,6 +414,9 @@ function deriveInlineSkillSnapshotDisplayState(
 export class StreamingMessageAggregator {
   private messages = new Map<string, MuxMessage>();
   private activeStreams = new Map<string, StreamingContext>();
+
+  private backgroundHandoffCompletion: ReturnType<typeof buildAggregateResponseCompleteMetadata> =
+    undefined;
 
   // Derived value cache - invalidated as a unit on every mutation.
   // Adding a new cached value? Add it here and it will auto-invalidate.
@@ -1412,6 +1420,29 @@ export class StreamingMessageAggregator {
     };
   }
 
+  private isDefaultPostCompactionContinueTurn(): boolean {
+    const messages = this.getAllMessages();
+    const latestMessage = messages.at(-1);
+    const previousMessage = messages.at(-2);
+    if (latestMessage?.role !== "user" || previousMessage?.role !== "assistant") {
+      return false;
+    }
+
+    if (latestMessage.metadata?.synthetic !== true) {
+      return false;
+    }
+
+    const summaryMetadata = previousMessage.metadata?.muxMetadata;
+    if (!isCompactionSummaryMetadata(summaryMetadata)) {
+      return false;
+    }
+
+    // The backend marks internal post-compaction resumes at the compaction follow-up
+    // source. This frontend check preserves the policy for replay/tests where only
+    // the synthetic user row and compaction summary are available.
+    return summaryMetadata.pendingFollowUp?.dispatchOptions?.source === "internal-resume";
+  }
+
   private setPendingStreamStartTime(time: number | null): void {
     this.pendingStreamStartTime = time;
     if (time === null) {
@@ -1600,7 +1631,21 @@ export class StreamingMessageAggregator {
   }
 
   getActiveResponseCompleteMetadata() {
-    return buildAggregateResponseCompleteMetadata(this.activeStreams.values());
+    return (
+      buildAggregateResponseCompleteMetadata(this.activeStreams.values()) ??
+      this.backgroundHandoffCompletion
+    );
+  }
+
+  handleBackgroundStreamingGenerationAdvance(): void {
+    const completion = buildAggregateResponseCompleteMetadata(this.activeStreams.values());
+    this.backgroundHandoffCompletion =
+      completion?.suppressNotification === true ? completion : undefined;
+    this.clearActiveStreams();
+  }
+
+  clearBackgroundHandoffCompletion(): void {
+    this.backgroundHandoffCompletion = undefined;
   }
 
   setActiveQueuedFollowUp(hasQueuedFollowUp: boolean): void {
@@ -1807,8 +1852,13 @@ export class StreamingMessageAggregator {
       // stream starts, older contexts must not keep suppressing later completions.
       activeStream.hasQueuedFollowUp = false;
     }
+    this.backgroundHandoffCompletion = undefined;
     const routeProvider = resolveRouteProvider(data.routeProvider, data.routedThroughGateway);
 
+    const suppressNotification =
+      this.isDefaultPostCompactionContinueTurn() ||
+      this.getLatestUnresolvedCompactionRequest()?.parsed.followUpContent?.dispatchOptions
+        ?.source === "internal-resume";
     const now = Date.now();
     const context: StreamingContext = {
       serverStartTime: data.startTime,
@@ -1819,6 +1869,7 @@ export class StreamingMessageAggregator {
       isIdleCompaction,
       hasCompactionContinue,
       hasQueuedFollowUp: false,
+      suppressNotification,
       isReplay: data.replay === true,
       model: data.model,
       routedThroughGateway: data.routedThroughGateway,

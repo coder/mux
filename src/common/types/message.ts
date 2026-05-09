@@ -108,6 +108,8 @@ export function pickStartupRetrySendOptions(
 }
 
 export interface CompactionFollowUpDispatchOptions {
+  /** Source marker for internal resume follow-ups, not user-authored prompts. */
+  source?: "internal-resume";
   /** Skip the queued follow-up instead of replaying it later if the workspace stopped being idle. */
   requireIdle?: boolean;
 }
