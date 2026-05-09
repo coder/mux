@@ -168,7 +168,9 @@ export const FileEditToolCall: React.FC<FileEditToolCallProps> = ({
   const diff = result && result.success ? (uiOnlyDiff ?? result.diff) : undefined;
   const filePath = extractToolFilePath(args);
   const largeDiffPreview = diff ? buildLargeDiffPreview(diff) : null;
-  const shouldShowLargeDiffPreview = Boolean(largeDiffPreview && !showRaw && !showFullDiff);
+  // Single nullable handle for the active preview so JSX truthiness checks narrow the type
+  // directly (no separate boolean + repeated `&& largeDiffPreview` guards).
+  const activeDiffPreview = largeDiffPreview && !showRaw && !showFullDiff ? largeDiffPreview : null;
 
   // Copy to clipboard with feedback
   const { copied, copyToClipboard } = useCopyToClipboard();
@@ -242,12 +244,12 @@ export const FileEditToolCall: React.FC<FileEditToolCallProps> = ({
 
               {result.success && diff && (
                 <>
-                  {shouldShowLargeDiffPreview && largeDiffPreview && (
+                  {activeDiffPreview && (
                     <DetailSection>
                       <div className="text-muted text-[11px]">
                         Large diff preview: showing{" "}
-                        {largeDiffPreview.displayedLines.toLocaleString()} of{" "}
-                        {largeDiffPreview.totalLines.toLocaleString()} lines. Full patch is still
+                        {activeDiffPreview.displayedLines.toLocaleString()} of{" "}
+                        {activeDiffPreview.totalLines.toLocaleString()} lines. Full patch is still
                         available from the menu.
                       </div>
                       <button
@@ -261,8 +263,8 @@ export const FileEditToolCall: React.FC<FileEditToolCallProps> = ({
                   )}
                   {showRaw
                     ? renderRawDiff(diff)
-                    : shouldShowLargeDiffPreview && largeDiffPreview
-                      ? renderRawDiff(largeDiffPreview.previewDiff)
+                    : activeDiffPreview
+                      ? renderRawDiff(activeDiffPreview.previewDiff)
                       : renderDiff(diff, filePath, onReviewNote)}
                 </>
               )}
