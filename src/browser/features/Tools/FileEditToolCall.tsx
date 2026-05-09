@@ -40,6 +40,51 @@ type FileEditToolResult =
   | FileEditReplaceLinesToolResult
   | FileEditInsertToolResult;
 
+// Large file-edit patches can create thousands of DOM nodes and trigger expensive layout
+// measurement while opening chats; preview first and let users opt into the full parsed render.
+const LARGE_DIFF_PREVIEW_LINE_THRESHOLD = 600;
+const LARGE_DIFF_PREVIEW_CHAR_THRESHOLD = 80_000;
+const LARGE_DIFF_PREVIEW_LINE_LIMIT = 240;
+
+interface LargeDiffPreview {
+  previewDiff: string;
+  totalLines: number;
+  displayedLines: number;
+  omittedLines: number;
+}
+
+export function buildLargeDiffPreview(diff: string): LargeDiffPreview | null {
+  const lines = diff.split(/\r?\n/);
+  if (lines.length > 0 && lines[lines.length - 1] === "") {
+    lines.pop();
+  }
+
+  const totalLines = lines.length;
+  if (
+    totalLines <= LARGE_DIFF_PREVIEW_LINE_THRESHOLD &&
+    diff.length <= LARGE_DIFF_PREVIEW_CHAR_THRESHOLD
+  ) {
+    return null;
+  }
+
+  const previewLines = lines.slice(0, LARGE_DIFF_PREVIEW_LINE_LIMIT);
+  const omittedLines = Math.max(0, totalLines - previewLines.length);
+  const previewDiff =
+    omittedLines > 0
+      ? [
+          ...previewLines,
+          `... ${omittedLines.toLocaleString()} diff lines omitted from preview ...`,
+        ].join("\n")
+      : previewLines.join("\n");
+
+  return {
+    previewDiff,
+    totalLines,
+    displayedLines: previewLines.length,
+    omittedLines,
+  };
+}
+
 interface FileEditToolCallProps {
   toolName: "file_edit_replace_string" | "file_edit_replace_lines" | "file_edit_insert";
   args: FileEditOperationArgs;
@@ -93,6 +138,16 @@ function renderDiff(
   }
 }
 
+function renderRawDiff(diff: string): React.ReactNode {
+  return (
+    <DiffContainer>
+      <pre className="font-monospace m-0 text-[11px] leading-[1.4] break-words whitespace-pre-wrap">
+        {diff}
+      </pre>
+    </DiffContainer>
+  );
+}
+
 export const FileEditToolCall: React.FC<FileEditToolCallProps> = ({
   toolName,
   args,
@@ -107,10 +162,13 @@ export const FileEditToolCall: React.FC<FileEditToolCallProps> = ({
   const { expanded, toggleExpanded } = useToolExpansion(initialExpanded);
   const [showRaw, setShowRaw] = React.useState(false);
   const [showInvocation, setShowInvocation] = React.useState(false);
+  const [showFullDiff, setShowFullDiff] = React.useState(false);
 
   const uiOnlyDiff = getToolOutputUiOnly(result)?.file_edit?.diff;
   const diff = result && result.success ? (uiOnlyDiff ?? result.diff) : undefined;
   const filePath = extractToolFilePath(args);
+  const largeDiffPreview = diff ? buildLargeDiffPreview(diff) : null;
+  const shouldShowLargeDiffPreview = Boolean(largeDiffPreview && !showRaw && !showFullDiff);
 
   // Copy to clipboard with feedback
   const { copied, copyToClipboard } = useCopyToClipboard();
@@ -182,17 +240,32 @@ export const FileEditToolCall: React.FC<FileEditToolCallProps> = ({
                 </DetailSection>
               )}
 
-              {result.success &&
-                diff &&
-                (showRaw ? (
-                  <DiffContainer>
-                    <pre className="font-monospace m-0 text-[11px] leading-[1.4] break-words whitespace-pre-wrap">
-                      {diff}
-                    </pre>
-                  </DiffContainer>
-                ) : (
-                  renderDiff(diff, filePath, onReviewNote)
-                ))}
+              {result.success && diff && (
+                <>
+                  {shouldShowLargeDiffPreview && largeDiffPreview && (
+                    <DetailSection>
+                      <div className="text-muted text-[11px]">
+                        Large diff preview: showing{" "}
+                        {largeDiffPreview.displayedLines.toLocaleString()} of{" "}
+                        {largeDiffPreview.totalLines.toLocaleString()} lines. Full patch is still
+                        available from the menu.
+                      </div>
+                      <button
+                        type="button"
+                        className="text-accent hover:text-accent-light mt-1 text-left text-[11px] underline underline-offset-2"
+                        onClick={() => setShowFullDiff(true)}
+                      >
+                        Render full parsed diff
+                      </button>
+                    </DetailSection>
+                  )}
+                  {showRaw
+                    ? renderRawDiff(diff)
+                    : shouldShowLargeDiffPreview && largeDiffPreview
+                      ? renderRawDiff(largeDiffPreview.previewDiff)
+                      : renderDiff(diff, filePath, onReviewNote)}
+                </>
+              )}
             </>
           )}
 

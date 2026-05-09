@@ -2,6 +2,7 @@ import fsPromises from "fs/promises";
 import path from "path";
 import type { DemoProjectConfig } from "./demoProject";
 import { createMuxMessage, type MuxMessage } from "../../../src/common/types/message";
+import { FILE_EDIT_DIFF_OMITTED_MESSAGE } from "../../../src/common/types/tools";
 import { HistoryService } from "../../../src/node/services/historyService";
 
 const BASE_TIMESTAMP_MS = 1_700_000_000_000;
@@ -12,6 +13,7 @@ type HistoryProfileDefinition = {
   assistantChars: number;
   reasoningChars: number;
   toolOutputChars: number;
+  largeDiffLinePairs?: number;
 };
 
 const HISTORY_PROFILE_NAMES = [
@@ -20,6 +22,7 @@ const HISTORY_PROFILE_NAMES = [
   "large",
   "tool-heavy",
   "reasoning-heavy",
+  "large-diff",
 ] as const;
 
 export type HistoryProfileName = (typeof HISTORY_PROFILE_NAMES)[number];
@@ -31,6 +34,7 @@ export interface SeededHistoryProfileSummary {
   estimatedCharacterCount: number;
   hasToolParts: boolean;
   hasReasoningParts: boolean;
+  largeDiffLineCount?: number;
 }
 
 const HISTORY_PROFILES: Record<HistoryProfileName, HistoryProfileDefinition> = {
@@ -69,6 +73,14 @@ const HISTORY_PROFILES: Record<HistoryProfileName, HistoryProfileDefinition> = {
     reasoningChars: 4_400,
     toolOutputChars: 0,
   },
+  "large-diff": {
+    messagePairs: 1,
+    userChars: 220,
+    assistantChars: 300,
+    reasoningChars: 0,
+    toolOutputChars: 0,
+    largeDiffLinePairs: 2_500,
+  },
 };
 
 function buildDeterministicText(label: string, targetLength: number): string {
@@ -84,11 +96,33 @@ function buildDeterministicText(label: string, targetLength: number): string {
   return content.slice(0, targetLength);
 }
 
+function buildLargeFileEditDiff(linePairs: number): string {
+  const normalizedLinePairs = Math.max(1, Math.trunc(linePairs));
+  const lines = [
+    "diff --git a/src/perf-large-diff.ts b/src/perf-large-diff.ts",
+    "index 1111111..2222222 100644",
+    "--- a/src/perf-large-diff.ts",
+    "+++ b/src/perf-large-diff.ts",
+    `@@ -1,${normalizedLinePairs} +1,${normalizedLinePairs} @@`,
+  ];
+
+  for (let lineIndex = 0; lineIndex < normalizedLinePairs; lineIndex++) {
+    const id = String(lineIndex + 1).padStart(4, "0");
+    lines.push(
+      `-export const perfProbe${id} = "before-${id}";`,
+      `+export const perfProbe${id} = "after-${id}";`
+    );
+  }
+
+  return `${lines.join("\n")}\n`;
+}
+
 function createAssistantParts(args: {
   profile: HistoryProfileName;
   index: number;
   toolOutputChars: number;
   reasoningChars: number;
+  largeDiffLinePairs?: number;
 }): MuxMessage["parts"] {
   const parts: MuxMessage["parts"] = [];
 
@@ -112,6 +146,28 @@ function createAssistantParts(args: {
       output: {
         success: true,
         [outputKey]: toolPayload,
+      },
+      timestamp: BASE_TIMESTAMP_MS + args.index,
+    });
+  }
+
+  if (args.largeDiffLinePairs && args.largeDiffLinePairs > 0) {
+    const diff = buildLargeFileEditDiff(args.largeDiffLinePairs);
+    parts.push({
+      type: "dynamic-tool",
+      state: "output-available",
+      toolCallId: `${args.profile}-large-diff-tool-call-${args.index}`,
+      toolName: "file_edit_replace_string",
+      input: {
+        path: "src/perf-large-diff.ts",
+        old_string: "before",
+        new_string: "after",
+      },
+      output: {
+        success: true,
+        diff: FILE_EDIT_DIFF_OMITTED_MESSAGE,
+        edits_applied: args.largeDiffLinePairs,
+        ui_only: { file_edit: { diff } },
       },
       timestamp: BASE_TIMESTAMP_MS + args.index,
     });
@@ -183,6 +239,7 @@ export async function seedWorkspaceHistoryProfile(args: {
       index: pairIndex,
       toolOutputChars: profileConfig.toolOutputChars,
       reasoningChars: profileConfig.reasoningChars,
+      largeDiffLinePairs: profileConfig.largeDiffLinePairs,
     });
 
     const assistantMessage = createMuxMessage(
@@ -204,18 +261,26 @@ export async function seedWorkspaceHistoryProfile(args: {
     });
   }
 
+  const largeDiffCharacterCount = profileConfig.largeDiffLinePairs
+    ? buildLargeFileEditDiff(profileConfig.largeDiffLinePairs).length
+    : 0;
+
   return {
     profile,
     messageCount: profileConfig.messagePairs * 2,
     assistantMessageCount: profileConfig.messagePairs,
     estimatedCharacterCount:
       profileConfig.messagePairs *
-      (profileConfig.userChars +
-        profileConfig.assistantChars +
-        profileConfig.toolOutputChars +
-        profileConfig.reasoningChars),
-    hasToolParts: profileConfig.toolOutputChars > 0,
+        (profileConfig.userChars +
+          profileConfig.assistantChars +
+          profileConfig.toolOutputChars +
+          profileConfig.reasoningChars) +
+      largeDiffCharacterCount,
+    hasToolParts: profileConfig.toolOutputChars > 0 || largeDiffCharacterCount > 0,
     hasReasoningParts: profileConfig.reasoningChars > 0,
+    largeDiffLineCount: profileConfig.largeDiffLinePairs
+      ? profileConfig.largeDiffLinePairs * 2 + 5
+      : undefined,
   };
 }
 
