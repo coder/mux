@@ -49,6 +49,8 @@ interface HunkViewerProps {
   includeUncommitted: boolean;
   /** Action callbacks for inline review notes */
   reviewActions?: ReviewActionCallbacks;
+  /** Prefer a collapsed default for huge reviews so opening Review doesn't mount every diff line. */
+  preferCollapsed?: boolean;
 }
 
 function renderHighlightedFilePath(
@@ -126,6 +128,7 @@ export const HunkViewer = React.memo<HunkViewerProps>(
     diffBase,
     reviewActions,
     includeUncommitted,
+    preferCollapsed = false,
   }) => {
     // Ref for the hunk container to track visibility
     const hunkRef = React.useRef<HTMLDivElement>(null);
@@ -202,28 +205,26 @@ export const HunkViewer = React.memo<HunkViewerProps>(
     const hasManualState = hunkId in expandStateMap;
     const manualExpandState = expandStateMap[hunkId];
 
-    // Determine initial expand state (priority: manual > read status > size)
+    const shouldAutoExpand = !isRead && !isLargeHunk && (!preferCollapsed || Boolean(isSelected));
+
+    // Determine initial expand state (priority: manual > read status > size/review scale)
     const [isExpanded, setIsExpanded] = useState(() => {
       if (hasManualState) {
         return manualExpandState;
       }
-      return !isRead && !isLargeHunk;
+      return shouldAutoExpand;
     });
 
-    // Auto-collapse when marked as read, auto-expand when unmarked (unless user manually set)
+    // Auto-collapse when marked as read or when a huge review keeps only the selected hunk open.
     React.useEffect(() => {
       // Don't override manual expand/collapse choices
       if (hasManualState) {
         return;
       }
 
-      if (isRead) {
-        setIsExpanded(false);
-      } else if (!isLargeHunk) {
-        setIsExpanded(true);
-      }
-      // Note: When unmarking as read, large hunks remain collapsed
-    }, [isRead, isLargeHunk, hasManualState]);
+      setIsExpanded(shouldAutoExpand);
+      // Note: When unmarking as read, large hunks remain collapsed unless selected.
+    }, [shouldAutoExpand, hasManualState]);
 
     // Sync local state with persisted state when it changes
     React.useEffect(() => {

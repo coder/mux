@@ -1,6 +1,6 @@
 import { type Page } from "@playwright/test";
 import { electronTest as test, electronExpect as expect } from "../electronTest";
-import { REVIEW_SORT_ORDER_KEY, TUTORIAL_STATE_KEY } from "../../../src/common/constants/storage";
+import { REVIEW_SORT_ORDER_KEY } from "../../../src/common/constants/storage";
 import { STORAGE_KEYS } from "../../../src/constants/workspaceDefaults";
 import {
   readReactProfileSnapshot,
@@ -8,31 +8,9 @@ import {
   withChromeProfiles,
   writePerfArtifacts,
 } from "../utils/perfProfile";
-import { seedLargeReviewDiff } from "../utils/reviewPerfFixture";
+import { disableReviewTutorial, seedLargeReviewDiff } from "../utils/reviewPerfFixture";
 
 const shouldRunPerfScenarios = process.env.MUX_E2E_RUN_PERF === "1";
-
-async function disableReviewTutorial(page: Page): Promise<void> {
-  await page.evaluate((tutorialStateKey) => {
-    const raw = window.localStorage.getItem(tutorialStateKey);
-    const parsed = raw
-      ? (JSON.parse(raw) as { disabled?: boolean; completed?: Record<string, boolean> })
-      : null;
-    window.localStorage.setItem(
-      tutorialStateKey,
-      JSON.stringify({
-        disabled: parsed?.disabled ?? false,
-        completed: {
-          ...(parsed?.completed ?? {}),
-          review: true,
-        },
-      })
-    );
-  }, TUTORIAL_STATE_KEY);
-
-  await page.reload();
-  await page.waitForLoadState("domcontentloaded");
-}
 
 async function waitForRegularReviewReady(page: Page, hunkCount: number): Promise<void> {
   const reviewPanel = page.getByTestId("review-panel");

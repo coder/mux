@@ -135,6 +135,9 @@ type DiffState =
   | { status: "loaded"; hunks: DiffHunk[]; truncationWarning: string | null }
   | { status: "error"; message: string };
 
+const LARGE_REVIEW_COLLAPSE_HUNK_THRESHOLD = 200;
+const LARGE_REVIEW_COLLAPSE_OUTPUT_BYTES = 250_000;
+
 const REVIEW_PANEL_CACHE_MAX_ENTRIES = 20;
 const REVIEW_PANEL_CACHE_MAX_SIZE_BYTES = 20 * 1024 * 1024; // 20MB
 
@@ -1242,6 +1245,16 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     firstSeenMap,
   ]);
 
+  // Huge reviews are useful for navigation, but eagerly expanding every hunk can mount
+  // tens of thousands of diff-line nodes next to the transcript. Keep the list scannable
+  // by expanding only the selected hunk once review scale crosses this threshold.
+  const preferCollapsedHunks =
+    hunks.length >= LARGE_REVIEW_COLLAPSE_HUNK_THRESHOLD ||
+    (diagnosticInfo?.outputLength ?? 0) >= LARGE_REVIEW_COLLAPSE_OUTPUT_BYTES ||
+    (diffState.status === "loaded" || diffState.status === "refreshing"
+      ? diffState.truncationWarning !== null
+      : false);
+
   // Keep ref in sync so callbacks can access current filtered list without dependency
   filteredHunksRef.current = filteredHunks;
 
@@ -1745,6 +1758,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
                       onComposingChange={handleHunkComposingChange}
                       diffBase={filters.diffBase}
                       includeUncommitted={filters.includeUncommitted}
+                      preferCollapsed={preferCollapsedHunks}
                       reviewActions={reviewActions}
                     />
                   );
