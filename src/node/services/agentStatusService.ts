@@ -215,6 +215,26 @@ export class AgentStatusService {
       // chat pivoted again.
       const state = this.ensureState(workspaceId);
 
+      if (
+        shouldWaitForFirstRecentRecency(
+          state,
+          observedRecency,
+          this.clock(),
+          AGENT_STATUS_TICK_INTERVAL_MS
+        )
+      ) {
+        // We may be seeing WorkspaceService's recency update before the
+        // corresponding user message is appended to history. With no settled
+        // hash baseline after startup, generating now could persist a stale
+        // pre-pivot status and consume the only recency signal. Wait one
+        // scheduler interval so the history write can catch up.
+        log.debug("AgentStatusService: waiting for recent recency bump to reach history", {
+          workspaceId,
+          observedRecency,
+        });
+        return;
+      }
+
       const markRecencyObserved = () => {
         if (observedRecency !== null) {
           state.lastObservedRecency = observedRecency;
@@ -427,6 +447,20 @@ const PLACEHOLDER_STATUS_MESSAGES: ReadonlySet<string> = new Set([
 
 function isPlaceholderStatus(message: string): boolean {
   return PLACEHOLDER_STATUS_MESSAGES.has(message.trim().toLowerCase());
+}
+
+function shouldWaitForFirstRecentRecency(
+  state: State,
+  observedRecency: number | null,
+  now: number,
+  tickIntervalMs: number
+): boolean {
+  return (
+    state.lastInputHash === null &&
+    state.lastObservedRecency === null &&
+    observedRecency !== null &&
+    now - observedRecency < tickIntervalMs
+  );
 }
 
 function hasRecencyAdvanced(state: State | undefined, recency: number | null): boolean {
