@@ -27,6 +27,26 @@ export interface GenerateWorkspaceStatusResult {
   modelUsed: string;
 }
 
+export interface GenerateWorkspaceStatusFailure {
+  error: NameGenerationError;
+  /**
+   * True if at least one candidate's `createModel` call succeeded, meaning
+   * we actually reached the provider with a request. False if every
+   * candidate failed during model construction (auth not connected, API
+   * key missing, provider disabled, model not available, policy denied,
+   * etc.).
+   *
+   * The caller uses this to decide whether to advance its dedup hash:
+   * post-provider failures (model refused tool, rate limit, network blip,
+   * persistent provider error) are properties of the *transcript* and
+   * should defer until the chat changes. Pre-provider failures are
+   * properties of the user's *config* and must remain retriable so a
+   * later credential/provider fix recovers without requiring a transcript
+   * change first.
+   */
+  reachedProvider: boolean;
+}
+
 /**
  * Build the prompt used by {@link generateWorkspaceStatus}. The transcript
  * is supplied pre-trimmed (token budget enforced upstream). The prompt
@@ -68,16 +88,25 @@ export async function generateWorkspaceStatus(
   transcript: string,
   candidates: readonly string[],
   aiService: AIService
-): Promise<Result<GenerateWorkspaceStatusResult, NameGenerationError>> {
+): Promise<Result<GenerateWorkspaceStatusResult, GenerateWorkspaceStatusFailure>> {
   if (candidates.length === 0) {
     return Err({
-      type: "unknown",
-      raw: "No model candidates provided for workspace status generation",
+      error: {
+        type: "unknown",
+        raw: "No model candidates provided for workspace status generation",
+      },
+      reachedProvider: false,
     });
   }
 
   const maxAttempts = Math.min(candidates.length, 3);
   let lastError: NameGenerationError | null = null;
+  // Track whether any candidate's createModel call succeeded — i.e., whether
+  // we actually crossed the wire to a provider. If every attempt fails at
+  // construction (no API key, OAuth not connected, provider disabled, etc.),
+  // the failure is about the user's config rather than the transcript and
+  // the caller must keep retrying so a later fix recovers.
+  let reachedProvider = false;
 
   for (let i = 0; i < maxAttempts; i++) {
     const modelString = candidates[i];
@@ -90,6 +119,7 @@ export async function generateWorkspaceStatus(
       log.debug(`Status generation: skipping ${modelString} (${modelResult.error.type})`);
       continue;
     }
+    reachedProvider = true;
 
     try {
       const currentStream = streamText({
@@ -137,10 +167,11 @@ export async function generateWorkspaceStatus(
     }
   }
 
-  return Err(
-    lastError ?? {
+  return Err({
+    error: lastError ?? {
       type: "configuration",
       raw: "No working model candidates were available for workspace status generation.",
-    }
-  );
+    },
+    reachedProvider,
+  });
 }

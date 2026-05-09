@@ -36,19 +36,24 @@ interface State {
   /** Last time we ran (or skipped via dedup). 0 if we never ran. */
   lastRanAt: number;
   /**
-   * Hash of the input we last *attempted* to generate for — covers
-   * successful persists, post-generation placeholder rejection, and
-   * (intentionally) candidate failures that reached the provider.
+   * Hash of the input we last "settled" on — i.e. an outcome that depends
+   * on the *transcript* and shouldn't be retried until the transcript
+   * changes. That covers:
+   *   - successful persists (Ok result, status written),
+   *   - post-generation placeholder rejection,
+   *   - generation failures that reached the provider (model refused tool,
+   *     rate limit, persistent provider error, etc.).
    *
-   * Why "attempted" rather than "successful": if all candidates fail
-   * (e.g., a configured model repeatedly refuses to call propose_status,
-   * or a persistent provider error), leaving this unset would let the
-   * scheduler resend the same trailing transcript every focused/idle
-   * interval, burning tokens on a workspace that is stuck. Advancing the
-   * hash on failure means the next genuine transcript change is the
-   * natural retry trigger, while idle/frozen workspaces stay quiet.
+   * Pre-provider failures (no API key, OAuth not connected, provider
+   * disabled, model not available, policy denied — anything that fails
+   * inside createModel before we cross the wire) intentionally do NOT
+   * advance this hash. Those are properties of the user's *config*, and
+   * caching them by transcript would freeze a workspace out of AI status
+   * until a new chat message arrived, even after the user fixed
+   * credentials. See the `result.error.reachedProvider` branch in
+   * `runForWorkspace`.
    *
-   * null if we have never attempted on this workspace.
+   * null if we have never settled on a transcript for this workspace.
    */
   lastInputHash: string | null;
   /** Whether a generation is currently in flight. */
@@ -202,19 +207,28 @@ export class AgentStatusService {
       // await boundary.
       if (this.stopped) return;
       if (!result.success) {
-        // Advance the dedup hash so we don't resend the same frozen
-        // transcript every tick when a workspace is stuck on a model that
-        // consistently fails (refuses propose_status, persistent provider
-        // error, etc.). The next genuine transcript change will trigger a
-        // fresh attempt.
-        log.debug(
-          "AgentStatusService: status generation failed; deferring until transcript changes",
-          {
-            workspaceId,
-            error: result.error,
-          }
-        );
-        state.lastInputHash = inputHash;
+        // Only advance the dedup hash when at least one candidate actually
+        // reached the provider. If every candidate failed during model
+        // construction (no API key, OAuth not connected, provider disabled,
+        // model not available, policy denied, etc.), the failure is about
+        // the user's *config* rather than the transcript — caching it would
+        // permanently skip this workspace until they happen to send another
+        // message, even after they fix credentials. Post-provider failures
+        // (model refused tool, rate limit, persistent provider error) are
+        // properties of the transcript and should defer until the chat
+        // changes.
+        if (result.error.reachedProvider) {
+          log.debug(
+            "AgentStatusService: status generation failed at provider; deferring until transcript changes",
+            { workspaceId, error: result.error.error }
+          );
+          state.lastInputHash = inputHash;
+        } else {
+          log.debug(
+            "AgentStatusService: status generation failed before reaching provider; will retry next tick",
+            { workspaceId, error: result.error.error }
+          );
+        }
         return;
       }
 

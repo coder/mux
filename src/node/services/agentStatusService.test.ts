@@ -540,21 +540,24 @@ describe("AgentStatusService", () => {
     expect(emitWorkspaceActivityMock).toHaveBeenCalledTimes(1);
   });
 
-  test("failed generation advances dedup so we don't resend the same transcript every tick", async () => {
-    // Codex review: when status generation fails after the provider call
-    // (e.g., the chosen model refuses to call propose_status, or hits a
-    // persistent provider error), leaving lastInputHash unchanged would let
-    // the scheduler resend the exact same trailing transcript on every
-    // focused/idle interval, burning tokens against a workspace that is
-    // stuck. Once we've attempted generation, the only retry signal that
-    // matters is a real transcript change.
+  test("post-provider failure advances dedup so we don't resend the same transcript every tick", async () => {
+    // Codex review: when status generation fails AFTER reaching the
+    // provider (e.g., the chosen model refuses to call propose_status, or
+    // hits a persistent provider error), leaving lastInputHash unchanged
+    // would let the scheduler resend the exact same trailing transcript on
+    // every focused/idle interval, burning tokens against a workspace that
+    // is stuck. Once we've attempted generation against the provider, the
+    // only retry signal that matters is a real transcript change.
     await historyHandle.historyService.appendToHistory(
       workspaceId,
       createMuxMessage("u1", "user", "kick off a task")
     );
 
     generateSpy.mockResolvedValueOnce(
-      Err({ type: "unknown", raw: "model did not call propose_status" })
+      Err({
+        error: { type: "unknown", raw: "model did not call propose_status" },
+        reachedProvider: true,
+      })
     );
 
     const service = createService();
@@ -579,6 +582,63 @@ describe("AgentStatusService", () => {
     );
     await getInternals(service).runForWorkspace(workspaceId);
     expect(generateSpy).toHaveBeenCalledTimes(2);
+    expect(setSidebarStatusMock).toHaveBeenCalledTimes(1);
+    expect(emitWorkspaceActivityMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("pre-provider failure (auth/config) keeps retrying so a later credential fix recovers", async () => {
+    // Codex review: if the first attempt happens before the user has
+    // connected OAuth / configured an API key (or while a provider is
+    // disabled), generateWorkspaceStatus returns an Err whose
+    // reachedProvider flag is false — every candidate failed at
+    // createModel, never crossed the wire to a provider. Caching that
+    // failure with the transcript hash would silently freeze the workspace
+    // out of AI status until the chat advances on its own. Pre-provider
+    // failures must therefore stay retriable: the next tick must call
+    // generateWorkspaceStatus again so a later credential/provider fix
+    // recovers without requiring a new user message.
+    await historyHandle.historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("u1", "user", "kick off a task")
+    );
+
+    generateSpy.mockResolvedValueOnce(
+      Err({
+        error: {
+          type: "authentication",
+          authKind: "api_key_missing",
+          provider: "anthropic",
+        },
+        reachedProvider: false,
+      })
+    );
+
+    const service = createService();
+    await getInternals(service).runForWorkspace(workspaceId);
+
+    expect(generateSpy).toHaveBeenCalledTimes(1);
+    expect(setSidebarStatusMock).not.toHaveBeenCalled();
+
+    // Same transcript, no fix yet: must retry. The scheduler still picks
+    // this workspace up because the dedup hash didn't advance.
+    generateSpy.mockResolvedValueOnce(
+      Err({
+        error: {
+          type: "authentication",
+          authKind: "api_key_missing",
+          provider: "anthropic",
+        },
+        reachedProvider: false,
+      })
+    );
+    await getInternals(service).runForWorkspace(workspaceId);
+    expect(generateSpy).toHaveBeenCalledTimes(2);
+    expect(setSidebarStatusMock).not.toHaveBeenCalled();
+
+    // User fixes credentials → next attempt succeeds against the same
+    // transcript (no chat change required).
+    await getInternals(service).runForWorkspace(workspaceId);
+    expect(generateSpy).toHaveBeenCalledTimes(3);
     expect(setSidebarStatusMock).toHaveBeenCalledTimes(1);
     expect(emitWorkspaceActivityMock).toHaveBeenCalledTimes(1);
   });

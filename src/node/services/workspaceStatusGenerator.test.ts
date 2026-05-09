@@ -40,8 +40,12 @@ describe("generateWorkspaceStatus error paths", () => {
     const result = await generateWorkspaceStatus("hello", [], fakeAiService);
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error.type).toBe("unknown");
-      expect(result.error.raw).toContain("No model candidates");
+      expect(result.error.error.type).toBe("unknown");
+      expect(result.error.error.raw).toContain("No model candidates");
+      // No candidates means we never even attempted createModel, so the
+      // failure has nothing to do with the transcript — caller must keep
+      // retrying so a future config change recovers without a new message.
+      expect(result.error.reachedProvider).toBe(false);
     }
   });
 });
