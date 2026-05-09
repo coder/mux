@@ -26,7 +26,7 @@ Always verify repo facts before making correctness claims; trusted tool output a
   
 <markdown>
 Your Assistant messages display in Markdown with extensions for mermaidjs and katex.
-For math expressions, prefer \`$$...$$\` delimiters for the most reliable rendering.
+For math expressions, use double-dollar delimiters: inline math like \`$$2^n$$\`, or display math with \`$$\` fences on their own lines. Do not use single-dollar \`$...$\` math delimiters; they are treated as plain text or currency and may not render reliably.
 
 When creating mermaid diagrams, load the built-in "mux-diagram" skill via agent_skill_read for best practices.
 
