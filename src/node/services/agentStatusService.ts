@@ -57,6 +57,13 @@ interface State {
    */
   lastInputHash: string | null;
   /**
+   * Hash of the transcript the scheduler last examined, even if that input
+   * did not settle into a sidebar status (for example, a pre-provider config
+   * failure). Used to avoid consuming a recency bump while history is still
+   * catching up to the user message that caused it.
+   */
+  lastSeenInputHash: string | null;
+  /**
    * Recency timestamp observed the last time the scheduler considered this
    * workspace. User messages update recency, so an increased value is a
    * strong signal that the old sidebar status may now be stale even if the
@@ -222,16 +229,19 @@ export class AgentStatusService {
       };
 
       if (
-        shouldWaitForFirstRecentRecency(
+        isRecentRecencyAheadOfHistory(
           state,
+          inputHash,
           observedRecency,
           this.clock(),
           AGENT_STATUS_TICK_INTERVAL_MS
         )
       ) {
+        state.lastSeenInputHash = inputHash;
         // We may be seeing WorkspaceService's recency update before the
-        // corresponding user message is appended to history. With no settled
-        // hash baseline after startup, generating now could persist a stale
+        // corresponding user message is appended to history. If the transcript
+        // is unchanged from the last one we examined (or we have no baseline
+        // immediately after startup), generating now could persist a stale
         // pre-pivot status and consume the only recency signal. Wait one
         // scheduler interval so the history write can catch up.
         log.debug("AgentStatusService: waiting for recent recency bump to reach history", {
@@ -240,6 +250,7 @@ export class AgentStatusService {
         });
         return;
       }
+      state.lastSeenInputHash = inputHash;
 
       // Empty workspace: nothing to summarize. Don't blank an existing
       // todoStatus — that would clobber a status produced before compaction.
@@ -347,7 +358,13 @@ export class AgentStatusService {
   private ensureState(id: string): State {
     let state = this.tracked.get(id);
     if (!state) {
-      state = { lastRanAt: 0, lastInputHash: null, lastObservedRecency: null, inFlight: false };
+      state = {
+        lastRanAt: 0,
+        lastInputHash: null,
+        lastSeenInputHash: null,
+        lastObservedRecency: null,
+        inFlight: false,
+      };
       this.tracked.set(id, state);
     }
     return state;
@@ -460,17 +477,18 @@ function isPlaceholderStatus(message: string): boolean {
   return PLACEHOLDER_STATUS_MESSAGES.has(message.trim().toLowerCase());
 }
 
-function shouldWaitForFirstRecentRecency(
+function isRecentRecencyAheadOfHistory(
   state: State,
+  inputHash: string,
   observedRecency: number | null,
   now: number,
-  tickIntervalMs: number
+  historyCatchupWindowMs: number
 ): boolean {
   return (
-    state.lastInputHash === null &&
-    state.lastObservedRecency === null &&
+    hasRecencyAdvanced(state, observedRecency) &&
+    (state.lastSeenInputHash === null || state.lastSeenInputHash === inputHash) &&
     observedRecency !== null &&
-    now - observedRecency < tickIntervalMs
+    now - observedRecency < historyCatchupWindowMs
   );
 }
 

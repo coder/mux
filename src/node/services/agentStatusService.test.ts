@@ -854,6 +854,51 @@ describe("AgentStatusService", () => {
     expect(generateSpy.mock.calls[1][0]).toContain("User: Healthy workspace");
   });
 
+  test("pre-provider retry state does not consume a recency bump before history catches up", async () => {
+    await historyHandle.historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("u1", "user", "Old misconfigured request")
+    );
+    let recency = 100;
+    getAllSnapshotsMock.mockImplementation(() =>
+      Promise.resolve(
+        new Map<string, ActivitySnapshotForTest>([[workspaceId, { streaming: false, recency }]])
+      )
+    );
+    generateSpy.mockResolvedValueOnce(
+      Err({
+        error: {
+          type: "authentication",
+          authKind: "api_key_missing",
+          provider: "anthropic",
+        },
+        reachedProvider: false,
+      })
+    );
+
+    let now = 1_000_000;
+    const service = createService({ clock: () => now });
+    const internals = getInternals(service);
+
+    await internals.runTick();
+    expect(generateSpy).toHaveBeenCalledTimes(1);
+
+    now += 5_000;
+    recency = now;
+    await internals.runTick();
+    expect(generateSpy).toHaveBeenCalledTimes(1);
+
+    await historyHandle.historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("u2", "user", "Pivot after config failure")
+    );
+    now += 10_000;
+    await internals.runTick();
+
+    expect(generateSpy).toHaveBeenCalledTimes(2);
+    expect(generateSpy.mock.calls[1][0]).toContain("User: Pivot after config failure");
+  });
+
   test("archived workspaces are not regenerated", async () => {
     projectsConfig = makeProjectsConfig([
       makeWorkspaceEntry({ archivedAt: new Date().toISOString() } as Partial<Workspace>),
