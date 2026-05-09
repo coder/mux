@@ -35,7 +35,21 @@ export interface AgentStatusServiceOptions {
 interface State {
   /** Last time we ran (or skipped via dedup). 0 if we never ran. */
   lastRanAt: number;
-  /** Hash of the input we last successfully generated for. null if never. */
+  /**
+   * Hash of the input we last *attempted* to generate for — covers
+   * successful persists, post-generation placeholder rejection, and
+   * (intentionally) candidate failures that reached the provider.
+   *
+   * Why "attempted" rather than "successful": if all candidates fail
+   * (e.g., a configured model repeatedly refuses to call propose_status,
+   * or a persistent provider error), leaving this unset would let the
+   * scheduler resend the same trailing transcript every focused/idle
+   * interval, burning tokens on a workspace that is stuck. Advancing the
+   * hash on failure means the next genuine transcript change is the
+   * natural retry trigger, while idle/frozen workspaces stay quiet.
+   *
+   * null if we have never attempted on this workspace.
+   */
   lastInputHash: string | null;
   /** Whether a generation is currently in flight. */
   inFlight: boolean;
@@ -188,10 +202,19 @@ export class AgentStatusService {
       // await boundary.
       if (this.stopped) return;
       if (!result.success) {
-        log.debug("AgentStatusService: status generation failed; will retry next tick", {
-          workspaceId,
-          error: result.error,
-        });
+        // Advance the dedup hash so we don't resend the same frozen
+        // transcript every tick when a workspace is stuck on a model that
+        // consistently fails (refuses propose_status, persistent provider
+        // error, etc.). The next genuine transcript change will trigger a
+        // fresh attempt.
+        log.debug(
+          "AgentStatusService: status generation failed; deferring until transcript changes",
+          {
+            workspaceId,
+            error: result.error,
+          }
+        );
+        state.lastInputHash = inputHash;
         return;
       }
 

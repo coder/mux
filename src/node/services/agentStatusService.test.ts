@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import type { ProjectsConfig, ProjectConfig, Workspace } from "@/common/types/project";
-import { Ok } from "@/common/types/result";
+import { Ok, Err } from "@/common/types/result";
 import { createMuxMessage } from "@/common/types/message";
 import type { Config } from "@/node/config";
 import type { AIService } from "./aiService";
@@ -530,6 +530,49 @@ describe("AgentStatusService", () => {
     expect(setSidebarStatusMock).not.toHaveBeenCalled();
 
     // After a genuine transcript change, we try again with a fresh result.
+    await historyHandle.historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("u2", "user", "follow-up message")
+    );
+    await getInternals(service).runForWorkspace(workspaceId);
+    expect(generateSpy).toHaveBeenCalledTimes(2);
+    expect(setSidebarStatusMock).toHaveBeenCalledTimes(1);
+    expect(emitWorkspaceActivityMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("failed generation advances dedup so we don't resend the same transcript every tick", async () => {
+    // Codex review: when status generation fails after the provider call
+    // (e.g., the chosen model refuses to call propose_status, or hits a
+    // persistent provider error), leaving lastInputHash unchanged would let
+    // the scheduler resend the exact same trailing transcript on every
+    // focused/idle interval, burning tokens against a workspace that is
+    // stuck. Once we've attempted generation, the only retry signal that
+    // matters is a real transcript change.
+    await historyHandle.historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("u1", "user", "kick off a task")
+    );
+
+    generateSpy.mockResolvedValueOnce(
+      Err({ type: "unknown", raw: "model did not call propose_status" })
+    );
+
+    const service = createService();
+    await getInternals(service).runForWorkspace(workspaceId);
+
+    // Generator was called and failed; nothing reached the sidebar.
+    expect(generateSpy).toHaveBeenCalledTimes(1);
+    expect(setSidebarStatusMock).not.toHaveBeenCalled();
+    expect(emitWorkspaceActivityMock).not.toHaveBeenCalled();
+
+    // Same transcript again: dedup must skip — we already learned that this
+    // input fails, no point retrying until something changes.
+    await getInternals(service).runForWorkspace(workspaceId);
+    expect(generateSpy).toHaveBeenCalledTimes(1);
+    expect(setSidebarStatusMock).not.toHaveBeenCalled();
+
+    // After a genuine transcript change, we try again. This time the
+    // generator returns a fresh result and it gets persisted normally.
     await historyHandle.historyService.appendToHistory(
       workspaceId,
       createMuxMessage("u2", "user", "follow-up message")
