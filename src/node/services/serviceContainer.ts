@@ -549,6 +549,13 @@ export class ServiceContainer {
     await this.desktopBridgeServer.stop();
     this.desktopTokenManager.dispose();
     await this.desktopSessionManager.closeAll();
+    // Stop the periodic AgentStatusService loop here too (not just in
+    // shutdown()): dispose() is the path used by the desktop before-quit
+    // and ACP in-process close handlers, and the ref'd setInterval would
+    // otherwise keep the process alive and continue calling
+    // generateWorkspaceStatus against services that are about to be torn
+    // down below.
+    this.agentStatusService.stop();
     await this.browserBridgeServer.stop();
     this.browserSessionStateHub.dispose();
     this.browserBridgeTokenManager.dispose();
