@@ -215,6 +215,12 @@ export class AgentStatusService {
       // chat pivoted again.
       const state = this.ensureState(workspaceId);
 
+      const markRecencyObserved = () => {
+        if (observedRecency !== null) {
+          state.lastObservedRecency = observedRecency;
+        }
+      };
+
       if (
         shouldWaitForFirstRecentRecency(
           state,
@@ -235,15 +241,15 @@ export class AgentStatusService {
         return;
       }
 
-      const markRecencyObserved = () => {
-        if (observedRecency !== null) {
-          state.lastObservedRecency = observedRecency;
-        }
-      };
-
       // Empty workspace: nothing to summarize. Don't blank an existing
       // todoStatus — that would clobber a status produced before compaction.
-      if (transcript.trim().length === 0) return;
+      // Still consume non-racy recency so an empty workspace doesn't sort as
+      // "recency advanced" forever and starve other workspaces under the
+      // single-concurrency scheduler.
+      if (transcript.trim().length === 0) {
+        markRecencyObserved();
+        return;
+      }
       // Idle/frozen: identical trailing window since last settled run. Do not
       // consume observedRecency here: WorkspaceService can bump recency before
       // the user message is durably in history, and consuming it against the

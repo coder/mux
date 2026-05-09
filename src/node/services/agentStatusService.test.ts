@@ -235,6 +235,38 @@ describe("AgentStatusService", () => {
     expect(setSidebarStatusMock).not.toHaveBeenCalled();
   });
 
+  test("empty workspaces consume observed recency so they do not starve populated workspaces", async () => {
+    const emptyWorkspaceId = "ws-empty";
+    projectsConfig = makeProjectsConfig([
+      makeWorkspaceEntry({ id: emptyWorkspaceId, name: emptyWorkspaceId } as Partial<Workspace>),
+      makeWorkspaceEntry(),
+    ]);
+    await historyHandle.historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("u1", "user", "Populated workspace")
+    );
+    getAllSnapshotsMock.mockImplementation(() =>
+      Promise.resolve(
+        new Map<string, ActivitySnapshotForTest>([
+          [emptyWorkspaceId, { streaming: false, recency: 100 }],
+        ])
+      )
+    );
+
+    let now = 1_000_000;
+    const service = createService({ clock: () => now });
+    const internals = getInternals(service);
+
+    await internals.runTick();
+    expect(generateSpy).not.toHaveBeenCalled();
+
+    now += 10_000;
+    await internals.runTick();
+
+    expect(generateSpy).toHaveBeenCalledTimes(1);
+    expect(generateSpy.mock.calls[0][0]).toContain("User: Populated workspace");
+  });
+
   test("idle workspaces regenerate at the idle focused/unfocused intervals", async () => {
     await historyHandle.historyService.appendToHistory(
       workspaceId,
