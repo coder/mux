@@ -20,6 +20,11 @@ interface AgentStatusServiceInternals {
   runForWorkspace(workspaceId: string): Promise<void>;
 }
 
+interface ActivitySnapshotForTest {
+  streaming: boolean;
+  recency?: number;
+}
+
 describe("AgentStatusService", () => {
   const workspaceId = "ws-test";
   const projectPath = "/test/project";
@@ -37,7 +42,7 @@ describe("AgentStatusService", () => {
     typeof mock<(workspaceId: string, status: unknown) => Promise<{ recency: number }>>
   >;
   let getAllSnapshotsMock: ReturnType<
-    typeof mock<() => Promise<Map<string, { streaming: boolean }>>>
+    typeof mock<() => Promise<Map<string, ActivitySnapshotForTest>>>
   >;
   let emitWorkspaceActivityMock: ReturnType<
     typeof mock<(workspaceId: string, snapshot: unknown) => void>
@@ -106,7 +111,7 @@ describe("AgentStatusService", () => {
     );
     // Default: no snapshots → no workspaces are streaming → idle intervals.
     // Tests that exercise the active intervals override this per-test.
-    getAllSnapshotsMock = mock(() => Promise.resolve(new Map<string, { streaming: boolean }>()));
+    getAllSnapshotsMock = mock(() => Promise.resolve(new Map<string, ActivitySnapshotForTest>()));
     mockExtensionMetadata = {
       setSidebarStatus: setSidebarStatusMock,
       getAllSnapshots: getAllSnapshotsMock,
@@ -280,6 +285,54 @@ describe("AgentStatusService", () => {
     now += 120_000;
     await internals.runTick();
     expect(generateSpy).toHaveBeenCalledTimes(3);
+  });
+
+  test("a user message recency bump bypasses the idle cadence so stale pre-pivot status refreshes", async () => {
+    // User rationale: a chat message is often a real pivot to the task at
+    // hand. If we wait for the normal idle cadence, the sidebar can keep
+    // showing the old pre-pivot status after the user has clearly changed
+    // direction.
+    await historyHandle.historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("u1", "user", "Initial request")
+    );
+
+    let recency = 100;
+    getAllSnapshotsMock.mockImplementation(() =>
+      Promise.resolve(
+        new Map<string, ActivitySnapshotForTest>([[workspaceId, { streaming: false, recency }]])
+      )
+    );
+
+    let now = 1_000_000;
+    const service = createService({ clock: () => now });
+    const internals = getInternals(service);
+
+    await internals.runTick();
+    expect(generateSpy).toHaveBeenCalledTimes(1);
+
+    now += 5_000;
+    recency = 200;
+    await historyHandle.historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("u2", "user", "Pivot to new task")
+    );
+    await internals.runTick();
+
+    // Still inside the 30s idle-focused interval, but the user-recency bump
+    // resets the clock so we regenerate against the pivot immediately.
+    expect(generateSpy).toHaveBeenCalledTimes(2);
+    expect(generateSpy.mock.calls[1][0]).toContain("User: Pivot to new task");
+
+    now += 5_000;
+    await historyHandle.historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("a1", "assistant", "Acknowledged")
+    );
+    await internals.runTick();
+
+    // Non-user transcript changes still obey cadence when recency is stable.
+    expect(generateSpy).toHaveBeenCalledTimes(2);
   });
 
   test("streaming workspaces regenerate at the active intervals (10s focused, 30s unfocused)", async () => {

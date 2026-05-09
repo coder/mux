@@ -56,6 +56,13 @@ interface State {
    * null if we have never settled on a transcript for this workspace.
    */
   lastInputHash: string | null;
+  /**
+   * Recency timestamp observed the last time the scheduler considered this
+   * workspace. User messages update recency, so an increased value is a
+   * strong signal that the old sidebar status may now be stale even if the
+   * normal idle/active cadence has not elapsed yet.
+   */
+  lastObservedRecency: number | null;
   /** Whether a generation is currently in flight. */
   inFlight: boolean;
 }
@@ -69,7 +76,7 @@ interface State {
  * is blurred. See ACTIVE_/IDLE_ intervals in @/constants/agentStatus.
  *
  * Dedup: each generation hashes its trailing-transcript window. Identical
- * hash to the last successful run skips regeneration (idle/frozen chats).
+ * hash to the last settled run skips regeneration (idle/frozen chats).
  *
  * Concurrency: bounded by AGENT_STATUS_MAX_CONCURRENT so a multi-workspace
  * sweep never spikes provider load.
@@ -149,7 +156,12 @@ export class AgentStatusService {
     // Sort eligible workspaces by lastRanAt ascending. With MAX_CONCURRENT=1,
     // a fixed iteration order would let the first workspace starve the rest;
     // least-recently-run gives fair round-robin without an explicit queue.
-    const eligible: Array<{ id: string; lastRanAt: number }> = [];
+    const eligible: Array<{
+      id: string;
+      lastRanAt: number;
+      recency: number | null;
+      recencyAdvanced: boolean;
+    }> = [];
     for (const [, projectConfig] of this.config.loadConfigOrDefault().projects) {
       for (const ws of projectConfig.workspaces) {
         const id = ws.id ?? ws.name;
@@ -157,20 +169,32 @@ export class AgentStatusService {
         if (isWorkspaceArchived(ws.archivedAt, ws.unarchivedAt)) continue;
         const state = this.tracked.get(id);
         if (state?.inFlight) continue;
-        const interval = pickInterval(snapshots.get(id)?.streaming === true, focused);
-        if (state && tickStartedAt - state.lastRanAt < interval) continue;
-        eligible.push({ id, lastRanAt: state?.lastRanAt ?? 0 });
+        const snapshot = snapshots.get(id);
+        const recency = typeof snapshot?.recency === "number" ? snapshot.recency : null;
+        const recencyAdvanced = hasRecencyAdvanced(state, recency);
+        const interval = pickInterval(snapshot?.streaming === true, focused);
+        if (state && !recencyAdvanced && tickStartedAt - state.lastRanAt < interval) continue;
+        eligible.push({ id, lastRanAt: state?.lastRanAt ?? 0, recency, recencyAdvanced });
       }
     }
-    eligible.sort((a, b) => a.lastRanAt - b.lastRanAt);
+    eligible.sort((a, b) => {
+      if (a.recencyAdvanced !== b.recencyAdvanced) {
+        // A user message is usually a task pivot. Put those workspaces ahead
+        // of ordinary cadence refreshes so stale pre-pivot statuses don't
+        // linger behind background idle work.
+        return a.recencyAdvanced ? -1 : 1;
+      }
+      return a.lastRanAt - b.lastRanAt;
+    });
 
-    for (const { id } of eligible) {
+    for (const { id, recency } of eligible) {
       if (this.stopped || this.inFlightPromises.size >= AGENT_STATUS_MAX_CONCURRENT) return;
       const state = this.ensureState(id);
       state.inFlight = true;
       // Set lastRanAt at dispatch time (not after the async transcript
       // build) so cadence is anchored to tick boundaries — see runTick.
       state.lastRanAt = tickStartedAt;
+      state.lastObservedRecency = recency;
       const promise = this.runForWorkspace(id).finally(() => {
         state.inFlight = false;
         this.inFlightPromises.delete(promise);
@@ -184,8 +208,9 @@ export class AgentStatusService {
       const transcript = await this.buildTrailingTranscript(workspaceId);
       const inputHash = computeInputHash(transcript);
       // dispatch() set lastRanAt to the tick start time before kicking us
-      // off, so the scheduler already won't reconsider this workspace until
-      // the next interval boundary regardless of which branch we take below.
+      // off, so the scheduler won't reconsider this workspace until the next
+      // interval boundary unless a newer user-recency timestamp indicates the
+      // chat pivoted again.
       const state = this.ensureState(workspaceId);
 
       // Empty workspace: nothing to summarize. Don't blank an existing
@@ -276,7 +301,7 @@ export class AgentStatusService {
   private ensureState(id: string): State {
     let state = this.tracked.get(id);
     if (!state) {
-      state = { lastRanAt: 0, lastInputHash: null, inFlight: false };
+      state = { lastRanAt: 0, lastInputHash: null, lastObservedRecency: null, inFlight: false };
       this.tracked.set(id, state);
     }
     return state;
@@ -387,6 +412,14 @@ const PLACEHOLDER_STATUS_MESSAGES: ReadonlySet<string> = new Set([
 
 function isPlaceholderStatus(message: string): boolean {
   return PLACEHOLDER_STATUS_MESSAGES.has(message.trim().toLowerCase());
+}
+
+function hasRecencyAdvanced(state: State | undefined, recency: number | null): boolean {
+  return (
+    state !== undefined &&
+    recency !== null &&
+    (state.lastObservedRecency === null || recency > state.lastObservedRecency)
+  );
 }
 
 function pickInterval(streaming: boolean, focused: boolean): number {
