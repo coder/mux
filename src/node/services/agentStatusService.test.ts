@@ -17,7 +17,7 @@ import { createTestHistoryService } from "./testHistoryService";
 
 interface AgentStatusServiceInternals {
   runTick(): Promise<void>;
-  runForWorkspace(workspaceId: string): Promise<void>;
+  runForWorkspace(workspaceId: string, observedRecency?: number | null): Promise<void>;
 }
 
 interface ActivitySnapshotForTest {
@@ -43,6 +43,9 @@ describe("AgentStatusService", () => {
   >;
   let getAllSnapshotsMock: ReturnType<
     typeof mock<() => Promise<Map<string, ActivitySnapshotForTest>>>
+  >;
+  let getSnapshotMock: ReturnType<
+    typeof mock<(workspaceId: string) => Promise<{ recency: number } | null>>
   >;
   let emitWorkspaceActivityMock: ReturnType<
     typeof mock<(workspaceId: string, snapshot: unknown) => void>
@@ -112,9 +115,11 @@ describe("AgentStatusService", () => {
     // Default: no snapshots → no workspaces are streaming → idle intervals.
     // Tests that exercise the active intervals override this per-test.
     getAllSnapshotsMock = mock(() => Promise.resolve(new Map<string, ActivitySnapshotForTest>()));
+    getSnapshotMock = mock((_workspaceId: string) => Promise.resolve(null));
     mockExtensionMetadata = {
       setSidebarStatus: setSidebarStatusMock,
       getAllSnapshots: getAllSnapshotsMock,
+      getSnapshot: getSnapshotMock,
     } as unknown as ExtensionMetadataService;
 
     mockTokenizer = {
@@ -649,6 +654,53 @@ describe("AgentStatusService", () => {
     const inFlight = getInternals(service).runForWorkspace(workspaceId);
     await startedSignal;
     service.stop();
+    releaseGenerate();
+    await inFlight;
+
+    expect(generateSpy).toHaveBeenCalledTimes(1);
+    expect(setSidebarStatusMock).not.toHaveBeenCalled();
+    expect(emitWorkspaceActivityMock).not.toHaveBeenCalled();
+  });
+
+  test("drops a generated status if workspace recency advances while provider call is in flight", async () => {
+    await historyHandle.historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("u1", "user", "Old task")
+    );
+
+    let recency = 100;
+    getAllSnapshotsMock.mockImplementation(() =>
+      Promise.resolve(
+        new Map<string, ActivitySnapshotForTest>([[workspaceId, { streaming: false, recency }]])
+      )
+    );
+    getSnapshotMock.mockImplementation(() => Promise.resolve({ recency }));
+
+    let signalStarted!: () => void;
+    const startedSignal = new Promise<void>((resolve) => {
+      signalStarted = resolve;
+    });
+    let releaseGenerate!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseGenerate = resolve;
+    });
+    generateSpy.mockImplementationOnce(async () => {
+      signalStarted();
+      await gate;
+      return Ok({
+        status: { emoji: "🛠️", message: "Summarizing old task" },
+        modelUsed: "anthropic:claude-haiku-4-5",
+      });
+    });
+
+    const service = createService();
+    const inFlight = getInternals(service).runForWorkspace(workspaceId, recency);
+    await startedSignal;
+
+    // A user message can advance recency while the provider is still working
+    // on the old transcript. The old result must not be written after that
+    // pivot, or the sidebar can resurrect stale pre-pivot status.
+    recency = 200;
     releaseGenerate();
     await inFlight;
 
