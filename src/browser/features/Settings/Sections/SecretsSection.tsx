@@ -20,6 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/browser/components/SelectPrimitive/SelectPrimitive";
+import { formatProjectHierarchyLabel, getTopLevelProjectEntries } from "@/common/utils/subProjects";
 
 type SecretsScope = "global" | "project";
 
@@ -120,11 +121,13 @@ export const SecretsSection: React.FC = () => {
   const { api } = useAPI();
   const { userProjects } = useProjectContext();
   const { secretsProjectPath, setSecretsProjectPath } = useSettings();
-  const projectList = Array.from(userProjects.keys());
+  const projectList = getTopLevelProjectEntries(userProjects).map(([projectPath]) => projectPath);
 
-  // Consume one-shot project scope hint from the sidebar secrets button.
+  // Consume one-shot project scope hint from the sidebar secrets button. Secrets
+  // are applied from the parent workspace owner, so sub-projects stay out of the
+  // project picker until runtime injection supports child-specific secrets.
   const initialScope: SecretsScope =
-    secretsProjectPath && userProjects.has(secretsProjectPath) ? "project" : "global";
+    secretsProjectPath && projectList.includes(secretsProjectPath) ? "project" : "global";
   const initialProject = initialScope === "project" ? secretsProjectPath! : "";
 
   const [scope, setScope] = useState<SecretsScope>(initialScope);
@@ -169,11 +172,11 @@ export const SecretsSection: React.FC = () => {
   // projects load asynchronously, so we must keep the hint alive until then.
   useEffect(() => {
     if (!secretsProjectPath) return;
-    if (!userProjects.has(secretsProjectPath)) return;
+    if (!projectList.includes(secretsProjectPath)) return;
     setScope("project");
     setSelectedProject(secretsProjectPath);
     setSecretsProjectPath(null);
-  }, [secretsProjectPath, userProjects, setSecretsProjectPath]);
+  }, [secretsProjectPath, projectList, setSecretsProjectPath]);
 
   // Default to the first project when switching into Project scope.
   useEffect(() => {
@@ -677,7 +680,7 @@ export const SecretsSection: React.FC = () => {
             <SelectContent>
               {projectList.map((path) => (
                 <SelectItem key={path} value={path}>
-                  {path.split(/[\\/]/).pop() ?? path}
+                  {formatProjectHierarchyLabel(path, userProjects)}
                 </SelectItem>
               ))}
             </SelectContent>

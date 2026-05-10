@@ -11,7 +11,7 @@ import {
   getProjectScopeId,
   getTrunkBranchKey,
 } from "@/common/constants/storage";
-import type { ProjectConfig } from "@/node/config";
+import type { ProjectConfig } from "@/common/types/project";
 
 import type { updatePersistedState } from "@/browser/hooks/usePersistedState";
 
@@ -79,11 +79,16 @@ describe("persistWorkspaceCreationPrefill", () => {
 });
 
 describe("getFirstProjectPath", () => {
-  test("returns first project path or null", () => {
+  test("returns first top-level project path or null", () => {
     const emptyProjects = new Map<string, ProjectConfig>();
     expect(getFirstProjectPath(emptyProjects)).toBeNull();
 
     const projects = new Map<string, ProjectConfig>();
+    projects.set("/tmp/a/packages/api", {
+      path: "/tmp/a/packages/api",
+      parentProjectPath: "/tmp/a",
+      workspaces: [],
+    } as ProjectConfig);
     projects.set("/tmp/a", { path: "/tmp/a", workspaces: [] } as ProjectConfig);
     projects.set("/tmp/b", { path: "/tmp/b", workspaces: [] } as ProjectConfig);
 

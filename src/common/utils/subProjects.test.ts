@@ -3,8 +3,11 @@ import type { ProjectConfig } from "@/common/types/project";
 import {
   deriveProjectHierarchy,
   formatProjectHierarchyLabel,
+  getFirstTopLevelProjectPath,
   getSubProjectsForParent,
+  getTopLevelProjectEntries,
   isPathDescendant,
+  resolveWorkspaceCreationScope,
 } from "./subProjects";
 
 function project(overrides: Partial<ProjectConfig> = {}): ProjectConfig {
@@ -55,6 +58,39 @@ describe("subProjects", () => {
 
     expect(projects.get("/repo/packages/api")?.parentProjectPath).toBe("/repo");
     expect(projects.get("/repo/packages/api/nested")?.parentProjectPath).toBe("/repo");
+  });
+
+  test("returns top-level projects without sub-project entries", () => {
+    const projects = new Map<string, ProjectConfig>([
+      ["/repo/packages/api", project({ parentProjectPath: "/repo" })],
+      ["/repo", project()],
+      ["/other", project()],
+    ]);
+
+    expect(getTopLevelProjectEntries(projects).map(([path]) => path)).toEqual(["/repo", "/other"]);
+    expect(getFirstTopLevelProjectPath(projects)).toBe("/repo");
+  });
+
+  test("resolves workspace creation scope to the parent plus optional sub-project", () => {
+    const projects = new Map<string, ProjectConfig>([
+      ["/repo", project()],
+      ["/repo/packages/api", project({ parentProjectPath: "/repo" })],
+      ["/other", project()],
+      ["/other/packages/web", project({ parentProjectPath: "/other" })],
+    ]);
+
+    expect(resolveWorkspaceCreationScope("/repo/packages/api", projects)).toEqual({
+      projectPath: "/repo",
+      subProjectPath: "/repo/packages/api",
+    });
+    expect(resolveWorkspaceCreationScope("/repo", projects, "/repo/packages/api")).toEqual({
+      projectPath: "/repo",
+      subProjectPath: "/repo/packages/api",
+    });
+    expect(resolveWorkspaceCreationScope("/repo", projects, "/other/packages/web")).toEqual({
+      projectPath: "/repo",
+      subProjectPath: null,
+    });
   });
 
   test("orders sub-projects by display name and labels them with parent context", () => {

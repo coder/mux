@@ -178,6 +178,35 @@ test("thinking effort command submits selected level", async () => {
   expect(onSetThinkingLevel).toHaveBeenCalledWith("w1", "high");
 });
 
+test("selected-workspace create action targets the workspace sub-project", async () => {
+  const userProjects = new Map<string, ProjectConfig>([
+    ["/repo/a", { workspaces: [] }],
+    ["/repo/a/packages/api", { workspaces: [], parentProjectPath: "/repo/a", displayName: "API" }],
+  ]);
+  const workspaceMetadata = new Map<string, FrontendWorkspaceMetadata>([
+    [
+      "w1",
+      {
+        id: "w1",
+        name: "feat-x",
+        projectName: "a",
+        projectPath: "/repo/a",
+        subProjectPath: "/repo/a/packages/api",
+        namedWorkspacePath: "/repo/a/feat-x",
+        runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+      },
+    ],
+  ]);
+  const onStartWorkspaceCreation = mock();
+  const sources = mk({ userProjects, workspaceMetadata, onStartWorkspaceCreation });
+  const actions = sources.flatMap((s) => s());
+  const createAction = actions.find((action) => action.id === "ws:new");
+
+  expect(createAction?.subtitle).toBe("for a / API");
+  await createAction?.run();
+  expect(onStartWorkspaceCreation).toHaveBeenCalledWith("/repo/a/packages/api");
+});
+
 test("buildCoreSources includes archive merged workspaces in project action", () => {
   const sources = mk();
   const actions = sources.flatMap((s) => s());
@@ -253,6 +282,14 @@ test("project commands exclude system projects from options", async () => {
         workspaces: [{ path: "/repo/a/feat-x" }, { path: "/repo/a/feat-y" }],
       },
     ],
+    [
+      "/repo/a/packages/api",
+      {
+        workspaces: [],
+        parentProjectPath: "/repo/a",
+        displayName: "API",
+      },
+    ],
     ["/repo/system", { workspaces: [], projectKind: "system" }],
   ]);
 
@@ -272,7 +309,10 @@ test("project commands exclude system projects from options", async () => {
   }
 
   const createOptions = await createProjectField.getOptions({});
-  expect(createOptions.map((option) => option.id)).toEqual(["/repo/a"]);
+  expect(createOptions.map((option) => option.id)).toEqual(["/repo/a", "/repo/a/packages/api"]);
+  expect(createOptions.find((option) => option.id === "/repo/a/packages/api")?.label).toBe(
+    "a / API"
+  );
   expect(createOptions.some((option) => option.id === "/repo/system")).toBe(false);
 
   const archiveAction = actions.find((a) => a.title === "Archive Merged Workspaces in Project…");
@@ -284,6 +324,7 @@ test("project commands exclude system projects from options", async () => {
   }
 
   const archiveOptions = await archiveProjectField.getOptions({});
+  expect(archiveOptions.some((option) => option.id === "/repo/a/packages/api")).toBe(false);
   expect(archiveOptions.map((option) => option.id)).toEqual(["/repo/a"]);
   expect(archiveOptions.some((option) => option.id === "/repo/system")).toBe(false);
 });

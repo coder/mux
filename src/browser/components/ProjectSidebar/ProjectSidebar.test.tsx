@@ -35,8 +35,6 @@ import * as PopoverErrorModule from "../PopoverError/PopoverError";
 import * as SectionHeaderModule from "../SectionHeader/SectionHeader";
 import * as WorkspaceSectionDropZoneModule from "../WorkspaceSectionDropZone/WorkspaceSectionDropZone";
 import * as WorkspaceDragLayerModule from "../WorkspaceDragLayer/WorkspaceDragLayer";
-import * as SectionDragLayerModule from "../SectionDragLayer/SectionDragLayer";
-import * as DraggableSectionModule from "../DraggableSection/DraggableSection";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import type ProjectSidebarComponent from "./ProjectSidebar";
 import type * as WorkspaceStatusIndicatorModuleExports from "../WorkspaceStatusIndicator/WorkspaceStatusIndicator";
@@ -520,12 +518,6 @@ function installProjectSidebarTestDoubles() {
   );
   spyOn(WorkspaceDragLayerModule, "WorkspaceDragLayer").mockImplementation(
     (() => null) as unknown as typeof WorkspaceDragLayerModule.WorkspaceDragLayer
-  );
-  spyOn(SectionDragLayerModule, "SectionDragLayer").mockImplementation(
-    (() => null) as unknown as typeof SectionDragLayerModule.SectionDragLayer
-  );
-  spyOn(DraggableSectionModule, "DraggableSection").mockImplementation(
-    TestWrapper as unknown as typeof DraggableSectionModule.DraggableSection
   );
   void mock.module("../PositionedMenu/PositionedMenu", () => ({
     PositionedMenu: (props: { open: boolean; children: React.ReactNode }) =>

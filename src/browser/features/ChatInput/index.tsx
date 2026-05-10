@@ -65,6 +65,7 @@ import {
   getInlineSkillSuggestions,
   shouldRefreshInlineSkillSuggestions,
 } from "@/browser/utils/agentSkills/inlineSkillSuggestions";
+import { resolveWorkspaceCreationScope } from "@/common/utils/subProjects";
 import { getCommandGhostHint } from "@/browser/utils/slashCommands/registry";
 import {
   getSlashCommandSuggestions,
@@ -202,14 +203,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   );
   const { variant } = props;
   const { userProjects } = useProjectContext();
-  const creationProject = variant === "creation" ? userProjects.get(props.projectPath) : undefined;
-  const creationParentProjectPath =
-    variant === "creation" ? (creationProject?.parentProjectPath ?? props.projectPath) : "";
-  const creationSubProjectPath =
+  const creationScope =
     variant === "creation"
-      ? (props.pendingSubProjectPath ??
-        (creationProject?.parentProjectPath ? props.projectPath : undefined))
-      : undefined;
+      ? resolveWorkspaceCreationScope(props.projectPath, userProjects, props.pendingSubProjectPath)
+      : null;
+  const creationParentProjectPath = creationScope?.projectPath ?? "";
+  const creationSubProjectPath = creationScope?.subProjectPath ?? undefined;
+  const creationProject =
+    variant === "creation" ? userProjects.get(creationParentProjectPath) : undefined;
   const creationProjectPath = creationParentProjectPath;
   const [thinkingLevel] = useThinkingLevel();
   const atMentionProjectPath = variant === "creation" ? props.projectPath : null;

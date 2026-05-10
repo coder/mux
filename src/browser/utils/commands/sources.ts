@@ -20,7 +20,7 @@ import {
   getLayoutsConfigOrDefault,
   getPresetForSlot,
 } from "@/browser/utils/uiLayouts";
-import { formatProjectHierarchyLabel } from "@/common/utils/subProjects";
+import { formatProjectHierarchyLabel, getTopLevelProjectEntries } from "@/common/utils/subProjects";
 import type { LayoutPresetsConfig, LayoutSlotNumber } from "@/common/types/uiLayouts";
 import {
   addToolToFocusedTabset,
@@ -238,13 +238,16 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
   const createWorkspaceForSelectedProjectAction = (
     selected: NonNullable<BuildSourcesParams["selectedWorkspace"]>
   ): CommandAction => {
+    const metadata = p.workspaceMetadata.get(selected.workspaceId);
+    const targetProjectPath = metadata?.subProjectPath ?? selected.projectPath;
+    const targetProjectLabel = formatProjectHierarchyLabel(targetProjectPath, p.userProjects);
     return {
       id: CommandIds.workspaceNew(),
       title: "Create New Workspace…",
-      subtitle: `for ${selected.projectName}`,
+      subtitle: `for ${targetProjectLabel}`,
       section: section.workspaces,
       shortcutHint: formatKeybind(KEYBINDS.NEW_WORKSPACE),
-      run: () => p.onStartWorkspaceCreation(selected.projectPath),
+      run: () => p.onStartWorkspaceCreation(targetProjectPath),
     };
   };
 
@@ -984,13 +987,11 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
               label: "Select project",
               placeholder: "Search projects…",
               getOptions: (_values) =>
-                Array.from(p.userProjects.entries())
-                  .filter(([, projectConfig]) => !projectConfig.parentProjectPath)
-                  .map(([projectPath]) => ({
-                    id: projectPath,
-                    label: formatProjectHierarchyLabel(projectPath, p.userProjects),
-                    keywords: [projectPath],
-                  })),
+                getTopLevelProjectEntries(p.userProjects).map(([projectPath]) => ({
+                  id: projectPath,
+                  label: formatProjectHierarchyLabel(projectPath, p.userProjects),
+                  keywords: [projectPath],
+                })),
             },
           ],
           onSubmit: async (vals) => {

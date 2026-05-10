@@ -1843,6 +1843,89 @@ exit 1
     });
   });
 
+  describe("getFileCompletions", () => {
+    it("works for subdirectories inside a parent git repository", async () => {
+      const repoPath = await createLocalGitRepository(tempDir, "repo-with-sub-project");
+      const subProjectPath = path.join(repoPath, "packages", "api");
+      await fs.mkdir(subProjectPath, { recursive: true });
+      await fs.writeFile(path.join(subProjectPath, "service.ts"), "export {};\n", "utf-8");
+
+      const result = await service.getFileCompletions(subProjectPath, "service");
+
+      expect(result.paths).toContain("service.ts");
+    });
+  });
+
+  describe("assignWorkspaceToSubProject", () => {
+    it("accepts either parent or sub-project path as the owner selector", async () => {
+      const parentPath = "/fake/project";
+      const subProjectPath = "/fake/project/packages/api";
+      const workspaceId = "workspace-1";
+      const cfg = config.loadConfigOrDefault();
+      cfg.projects.set(parentPath, {
+        workspaces: [{ id: workspaceId, path: path.join(tempDir, "workspace-1") }],
+      });
+      cfg.projects.set(subProjectPath, {
+        parentProjectPath: parentPath,
+        workspaces: [],
+      });
+      await config.saveConfig(cfg);
+
+      const result = await service.assignWorkspaceToSubProject(
+        subProjectPath,
+        workspaceId,
+        subProjectPath
+      );
+
+      expect(result.success).toBe(true);
+      const afterAssign = config.loadConfigOrDefault();
+      expect(afterAssign.projects.get(parentPath)?.workspaces[0]?.subProjectPath).toBe(
+        subProjectPath
+      );
+
+      const clearResult = await service.assignWorkspaceToSubProject(
+        subProjectPath,
+        workspaceId,
+        null
+      );
+
+      expect(clearResult.success).toBe(true);
+      const afterClear = config.loadConfigOrDefault();
+      expect(afterClear.projects.get(parentPath)?.workspaces[0]?.subProjectPath).toBeUndefined();
+    });
+
+    it("rejects target sub-projects from a different parent", async () => {
+      const parentPath = "/fake/project";
+      const subProjectPath = "/fake/project/packages/api";
+      const otherSubProjectPath = "/other/project/packages/web";
+      const workspaceId = "workspace-1";
+      const cfg = config.loadConfigOrDefault();
+      cfg.projects.set(parentPath, {
+        workspaces: [{ id: workspaceId, path: path.join(tempDir, "workspace-1") }],
+      });
+      cfg.projects.set(subProjectPath, {
+        parentProjectPath: parentPath,
+        workspaces: [],
+      });
+      cfg.projects.set("/other/project", { workspaces: [] });
+      cfg.projects.set(otherSubProjectPath, {
+        parentProjectPath: "/other/project",
+        workspaces: [],
+      });
+      await config.saveConfig(cfg);
+
+      const result = await service.assignWorkspaceToSubProject(
+        subProjectPath,
+        workspaceId,
+        otherSubProjectPath
+      );
+
+      expect(result.success).toBe(false);
+      if (result.success) throw new Error("Expected failure");
+      expect(result.error).toContain("Sub-project not found under parent");
+    });
+  });
+
   describe("remove", () => {
     it("removes project with no workspaces", async () => {
       const projectPath = "/fake/project";

@@ -1249,7 +1249,10 @@ export class ProjectService {
     if (isStale && !cacheEntry.refreshing) {
       cacheEntry.refreshing = (async () => {
         try {
-          if (!(await isGitRepository(normalizedPath))) {
+          // Sub-projects share a parent git repository; match branch listing by
+          // accepting any path inside a work tree rather than requiring `.git`
+          // directly under the project directory.
+          if (!(await isInsideGitRepository(normalizedPath))) {
             cacheEntry.index = EMPTY_FILE_COMPLETIONS_INDEX;
             return;
           }
@@ -1394,20 +1397,28 @@ export class ProjectService {
   ): Promise<Result<void>> {
     try {
       const config = this.config.loadConfigOrDefault();
-      const project = config.projects.get(projectPath);
+      const requestedProject = config.projects.get(projectPath);
 
-      if (!project) {
+      if (!requestedProject) {
         return Err(`Project not found: ${projectPath}`);
+      }
+
+      // Match workspace creation: callers may identify the current sub-project,
+      // but the workspace row itself is stored in the parent project's bucket.
+      const owningProjectPath = requestedProject.parentProjectPath ?? projectPath;
+      const owningProject = config.projects.get(owningProjectPath);
+      if (!owningProject) {
+        return Err(`Project not found: ${owningProjectPath}`);
       }
 
       if (subProjectPath !== null) {
         const subProject = config.projects.get(subProjectPath);
-        if (subProject?.parentProjectPath !== projectPath) {
+        if (subProject?.parentProjectPath !== owningProjectPath) {
           return Err(`Sub-project not found under parent: ${subProjectPath}`);
         }
       }
 
-      const workspace = project.workspaces.find((w) => w.id === workspaceId);
+      const workspace = owningProject.workspaces.find((w) => w.id === workspaceId);
       if (!workspace) {
         return Err(`Workspace not found: ${workspaceId}`);
       }

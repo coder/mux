@@ -69,6 +69,7 @@ import { useRouter } from "@/browser/contexts/RouterContext";
 import { normalizeSelectedModel } from "@/common/utils/ai/models";
 import { normalizeAgentId } from "@/common/utils/agentIds";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
+import { resolveWorkspaceCreationScope } from "@/common/utils/subProjects";
 import type { APIClient } from "@/browser/contexts/API";
 import { getErrorMessage } from "@/common/utils/errors";
 
@@ -472,7 +473,7 @@ export interface WorkspaceContext extends WorkspaceMetadataContextValue {
   /** Draft ID to open when creating a UI-only workspace draft (from URL) */
   pendingNewWorkspaceDraftId: string | null;
   /** Legacy entry point: open the creation screen (no new draft is created) */
-  beginWorkspaceCreation: (projectPath: string, subProjectPath?: string) => void;
+  beginWorkspaceCreation: (projectPath: string) => void;
 
   // UI-only workspace creation drafts (placeholders)
   workspaceDraftsByProject: WorkspaceDraftsByProject;
@@ -486,11 +487,7 @@ export interface WorkspaceContext extends WorkspaceMetadataContextValue {
     draftId: string,
     subProjectPath: string | null
   ) => void;
-  openWorkspaceDraft: (
-    projectPath: string,
-    draftId: string,
-    subProjectPath?: string | null
-  ) => void;
+  openWorkspaceDraft: (projectPath: string, draftId: string) => void;
   deleteWorkspaceDraft: (projectPath: string, draftId: string) => void;
 
   // Helpers
@@ -538,11 +535,16 @@ function shouldBlockStartupAutoNavigation(options: {
   );
 }
 
-function getMostRecentVisibleProjectPath(
+interface WorkspaceRouteScope {
+  projectPath: string;
+  subProjectPath: string | null;
+}
+
+function getMostRecentVisibleWorkspaceScope(
   workspaceMetadata: Map<string, FrontendWorkspaceMetadata>,
   workspaceRecency: Record<string, number>,
   getProjectConfig: (projectPath: string) => { projectKind?: "user" | "system" } | undefined
-): string | null {
+): WorkspaceRouteScope | null {
   const recentWorkspace = [...workspaceMetadata.values()]
     .filter((workspace) => {
       const projectConfig = getProjectConfig(workspace.projectPath);
@@ -569,7 +571,12 @@ function getMostRecentVisibleProjectPath(
       return bCreatedAt - aCreatedAt;
     })[0];
 
-  return recentWorkspace?.projectPath ?? null;
+  return recentWorkspace
+    ? {
+        projectPath: recentWorkspace.projectPath,
+        subProjectPath: recentWorkspace.subProjectPath ?? null,
+      }
+    : null;
 }
 
 export function WorkspaceProvider(props: WorkspaceProviderProps) {
@@ -723,10 +730,17 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       }
 
       const resolvedProjectConfig = getProjectConfig(resolvedProjectPath);
-      const owningProjectPath = resolvedProjectConfig?.parentProjectPath ?? resolvedProjectPath;
-      const normalizedSubProjectPath: string | null = resolvedProjectConfig?.parentProjectPath
-        ? resolvedProjectPath
-        : null;
+      const projectsForScope = new Map<string, NonNullable<typeof resolvedProjectConfig>>();
+      if (resolvedProjectConfig) {
+        projectsForScope.set(resolvedProjectPath, resolvedProjectConfig);
+      }
+      const creationScope = resolveWorkspaceCreationScope(
+        resolvedProjectPath,
+        projectsForScope,
+        null
+      );
+      const owningProjectPath = creationScope.projectPath;
+      const normalizedSubProjectPath = creationScope.subProjectPath;
 
       // IMPORTANT: Deep links should always create a fresh draft, even if an existing draft
       // is empty. This keeps deep-link navigations predictable and avoids surprising reuse.
@@ -878,11 +892,15 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   // removed/unregistered. WorkspaceService.create rejects unknown sub-project
   // paths under the parent, so leaking a stale value would brick reopening a
   // legacy draft. Coerce to null and let creation fall back to the parent cwd.
-  const pendingNewWorkspaceSubProjectPath =
-    pendingNewWorkspaceSubProjectPathRaw &&
-    getProjectConfig(pendingNewWorkspaceSubProjectPathRaw) != null
+  const pendingNewWorkspaceSubProjectPath = (() => {
+    if (!pendingNewWorkspaceProject || !pendingNewWorkspaceSubProjectPathRaw) {
+      return null;
+    }
+    const pendingSubProjectConfig = getProjectConfig(pendingNewWorkspaceSubProjectPathRaw);
+    return pendingSubProjectConfig?.parentProjectPath === pendingNewWorkspaceProject
       ? pendingNewWorkspaceSubProjectPathRaw
       : null;
+  })();
 
   // selectedWorkspace is derived from currentWorkspaceId in URL + workspaceMetadata
   const selectedWorkspace = useMemo(() => {
@@ -898,13 +916,18 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     isAnalyticsOpen ||
     pendingNewWorkspaceProject != null;
 
-  const resolveFallbackProjectPath = useCallback(() => {
-    const recentProjectPath = getMostRecentVisibleProjectPath(
+  const resolveFallbackWorkspaceScope = useCallback((): WorkspaceRouteScope | null => {
+    const recentScope = getMostRecentVisibleWorkspaceScope(
       workspaceMetadata,
       workspaceStore.getWorkspaceRecency(),
       getProjectConfig
     );
-    return recentProjectPath ?? resolveNewChatProjectPath({});
+    if (recentScope) {
+      return recentScope;
+    }
+
+    const projectPath = resolveNewChatProjectPath({});
+    return projectPath ? { projectPath, subProjectPath: null } : null;
   }, [workspaceMetadata, workspaceStore, getProjectConfig, resolveNewChatProjectPath]);
 
   // Keep a ref to the current selectedWorkspace for use in functional updates.
@@ -1549,7 +1572,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     []
   );
   const beginWorkspaceCreation = useCallback(
-    (projectPath: string, _subProjectPath?: string) => {
+    (projectPath: string) => {
       navigateToProject(projectPath);
     },
     [navigateToProject]
@@ -1691,19 +1714,21 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
       if (cancelled) return;
 
-      const fallbackProjectPath = resolveFallbackProjectPath();
-      if (!fallbackProjectPath) return;
+      const fallbackScope = resolveFallbackWorkspaceScope();
+      if (!fallbackScope) return;
 
       hasHandledStartupRootRouteRef.current = true;
 
       // The old landing page is gone. Treat "/" as a compatibility entrypoint and
       // immediately replace it with a concrete project route instead of rendering a dashboard.
       if (behavior === "new-chat") {
-        createWorkspaceDraft(fallbackProjectPath, undefined, { replace: true });
+        createWorkspaceDraft(fallbackScope.projectPath, fallbackScope.subProjectPath ?? undefined, {
+          replace: true,
+        });
         return;
       }
 
-      navigateToProject(fallbackProjectPath, undefined, { replace: true });
+      navigateToProject(fallbackScope.projectPath, undefined, { replace: true });
     };
 
     void resolveStartupRootRoute();
@@ -1716,7 +1741,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     loading,
     projectsLoading,
     hasBlockingStartupRouteState,
-    resolveFallbackProjectPath,
+    resolveFallbackWorkspaceScope,
     createWorkspaceDraft,
     navigateToProject,
   ]);
@@ -1729,14 +1754,20 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     if (loading || projectsLoading) return;
     if (location.pathname !== "/") return;
 
-    const fallbackProjectPath = resolveFallbackProjectPath();
-    if (!fallbackProjectPath) return;
+    const fallbackScope = resolveFallbackWorkspaceScope();
+    if (!fallbackScope) return;
 
-    navigateToProject(fallbackProjectPath, undefined, { replace: true });
-  }, [loading, projectsLoading, location.pathname, resolveFallbackProjectPath, navigateToProject]);
+    navigateToProject(fallbackScope.projectPath, undefined, { replace: true });
+  }, [
+    loading,
+    projectsLoading,
+    location.pathname,
+    resolveFallbackWorkspaceScope,
+    navigateToProject,
+  ]);
 
   const openWorkspaceDraft = useCallback(
-    (projectPath: string, draftId: string, _subProjectPath?: string | null) => {
+    (projectPath: string, draftId: string) => {
       navigateToProject(projectPath, draftId);
     },
     [navigateToProject]

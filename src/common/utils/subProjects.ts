@@ -62,6 +62,47 @@ export function getTopLevelProjectPath(
   return projects.get(projectPath)?.parentProjectPath ?? projectPath;
 }
 
+export function getTopLevelProjectEntries(
+  projects: Map<string, ProjectConfig>
+): Array<[string, ProjectConfig]> {
+  return Array.from(projects.entries()).filter(
+    ([, projectConfig]) => !projectConfig.parentProjectPath
+  );
+}
+
+export function getFirstTopLevelProjectPath(projects: Map<string, ProjectConfig>): string | null {
+  return getTopLevelProjectEntries(projects)[0]?.[0] ?? null;
+}
+
+export interface WorkspaceCreationScope {
+  projectPath: string;
+  subProjectPath: string | null;
+}
+
+export function resolveWorkspaceCreationScope(
+  projectPath: string,
+  projects: Map<string, ProjectConfig>,
+  subProjectPath?: string | null
+): WorkspaceCreationScope {
+  const requestedProjectConfig = projects.get(projectPath);
+  const owningProjectPath = requestedProjectConfig?.parentProjectPath ?? projectPath;
+  const requestedSubProjectPath = requestedProjectConfig?.parentProjectPath
+    ? projectPath
+    : (subProjectPath ?? null);
+  const requestedSubProjectConfig = requestedSubProjectPath
+    ? projects.get(requestedSubProjectPath)
+    : undefined;
+  const normalizedSubProjectPath =
+    requestedSubProjectConfig?.parentProjectPath === owningProjectPath
+      ? requestedSubProjectPath
+      : null;
+
+  return {
+    projectPath: owningProjectPath,
+    subProjectPath: normalizedSubProjectPath,
+  };
+}
+
 export function getSubProjectsForParent(
   parentProjectPath: string,
   projects: Map<string, ProjectConfig>

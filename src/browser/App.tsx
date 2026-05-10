@@ -42,6 +42,7 @@ import {
 } from "@/constants/layout";
 import { buildCoreSources, type BuildSourcesParams } from "./utils/commands/sources";
 
+import { getTopLevelProjectEntries } from "@/common/utils/subProjects";
 import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { isWorkspaceForkSwitchEvent } from "./utils/workspaceEvents";
@@ -1237,7 +1238,7 @@ function AppInner() {
           <MultiProjectWorkspaceCreateModal
             isOpen={isMultiProjectWorkspaceModalOpen}
             onClose={() => setMultiProjectWorkspaceModalOpen(false)}
-            projectOptions={Array.from(userProjects.keys()).map((projectPath) => ({
+            projectOptions={getTopLevelProjectEntries(userProjects).map(([projectPath]) => ({
               projectPath,
               projectName:
                 projectPath.split("/").pop() ?? projectPath.split("\\").pop() ?? "Unnamed Project",
