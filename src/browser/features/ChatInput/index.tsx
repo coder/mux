@@ -123,7 +123,6 @@ import {
 import { KNOWN_MODELS, MODEL_ABBREVIATION_EXAMPLES } from "@/common/constants/knownModels";
 import { useTelemetry } from "@/browser/hooks/useTelemetry";
 import { trackCommandUsed } from "@/common/telemetry";
-import { mergeAdditionalSystemInstructions } from "@/common/utils/additionalSystemInstructions";
 import type { FilePart, SendMessageOptions } from "@/common/orpc/types";
 
 import { CreationCenterContent } from "./CreationCenterContent";
@@ -2237,11 +2236,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         );
         // When editing /compact, compactionOptions already includes the base sendMessageOptions.
         // Avoid duplicating additionalSystemInstructions.
-        const additionalSystemInstructions = mergeAdditionalSystemInstructions(
-          additionalSystemContext,
+        const additionalSystemInstructions =
           compactionOptions.additionalSystemInstructions ??
-            sendMessageOptions.additionalSystemInstructions
-        );
+          sendMessageOptions.additionalSystemInstructions;
 
         muxMetadata = reviewMetadata;
 
@@ -2305,6 +2302,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           ...(overrides?.queueDispatchMode
             ? { queueDispatchMode: overrides.queueDispatchMode }
             : {}),
+          additionalSystemContext,
           additionalSystemInstructions,
           editMessageId: editMessageForSend?.id,
           fileParts: sendFileParts,

@@ -649,6 +649,8 @@ export const SendMessageOptionsSchema = z.object({
   model: z.string("No model specified"),
   toolPolicy: ToolPolicySchema.optional(),
   additionalSystemInstructions: z.string().optional(),
+  /** Live workspace scratchpad snapshot from the renderer; avoids racing pending disk writes. */
+  additionalSystemContext: z.string().optional(),
   maxOutputTokens: z.number().optional(),
   agentId: AgentIdSchema.meta({
     description: "Agent id for this request",

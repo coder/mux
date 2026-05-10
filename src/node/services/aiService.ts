@@ -126,6 +126,8 @@ export interface StreamMessageOptions {
   thinkingLevel?: ThinkingLevel;
   toolPolicy?: ToolPolicy;
   abortSignal?: AbortSignal;
+  /** Live workspace scratchpad snapshot from the renderer; when present it wins over disk. */
+  additionalSystemContext?: string;
   additionalSystemInstructions?: string;
   maxOutputTokens?: number;
   muxProviderOptions?: MuxProviderOptions;
@@ -741,6 +743,7 @@ export class AIService extends EventEmitter {
       thinkingLevel,
       toolPolicy,
       abortSignal,
+      additionalSystemContext,
       additionalSystemInstructions,
       maxOutputTokens,
       muxProviderOptions,
@@ -1164,18 +1167,21 @@ export class AIService extends EventEmitter {
       recordStartupPhaseTiming("listMcpServersMs", listMcpServersStartedAt);
 
       const loadAdditionalSystemContextStartedAt = Date.now();
-      let workspaceAdditionalSystemContext = "";
-      try {
-        workspaceAdditionalSystemContext = await readAdditionalSystemContext(
-          this.config,
-          workspaceId
-        );
-      } catch (error) {
-        // The scratchpad is user-editable state, so a transient read failure should not block a send.
-        log.warn("Failed to load workspace additional system context; continuing without it", {
-          workspaceId,
-          error,
-        });
+      let workspaceAdditionalSystemContext = additionalSystemContext;
+      if (workspaceAdditionalSystemContext == null) {
+        try {
+          workspaceAdditionalSystemContext = await readAdditionalSystemContext(
+            this.config,
+            workspaceId
+          );
+        } catch (error) {
+          // The scratchpad is user-editable state, so a transient read failure should not block a send.
+          log.warn("Failed to load workspace additional system context; continuing without it", {
+            workspaceId,
+            error,
+          });
+          workspaceAdditionalSystemContext = "";
+        }
       }
       const scratchpadAdditionalSystemInstructions = mergeAdditionalSystemInstructions(
         workspaceAdditionalSystemContext,
