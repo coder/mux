@@ -228,6 +228,17 @@ export class AgentStatusService {
           state.lastObservedRecency = observedRecency;
         }
       };
+      // Settle this transcript: consume observed recency AND advance the dedup
+      // hash so the next tick won't regenerate against the same input. Used by
+      // the three branches that produce a definitive outcome for this transcript
+      // (post-provider failure, placeholder rejection, successful persist).
+      // Pre-provider failures and the empty/dedup-hit branches use bare
+      // `markRecencyObserved()` because they should still retry on the same
+      // transcript when conditions change.
+      const settleOnTranscript = () => {
+        markRecencyObserved();
+        state.lastInputHash = inputHash;
+      };
 
       if (
         isRecentRecencyAheadOfHistory(
@@ -299,8 +310,7 @@ export class AgentStatusService {
             "AgentStatusService: status generation failed at provider; deferring until transcript changes",
             { workspaceId, error: result.error.error }
           );
-          markRecencyObserved();
-          state.lastInputHash = inputHash;
+          settleOnTranscript();
         } else {
           log.debug(
             "AgentStatusService: status generation failed before reaching provider; will retry on cadence",
@@ -327,8 +337,7 @@ export class AgentStatusService {
           workspaceId,
           message: result.data.status.message,
         });
-        markRecencyObserved();
-        state.lastInputHash = inputHash;
+        settleOnTranscript();
         return;
       }
 
@@ -354,8 +363,7 @@ export class AgentStatusService {
           });
           return;
         }
-        markRecencyObserved();
-        state.lastInputHash = inputHash;
+        settleOnTranscript();
         this.workspaceService.emitWorkspaceActivity(workspaceId, snapshot);
       } catch (error) {
         log.error("AgentStatusService: failed to persist generated status", {
