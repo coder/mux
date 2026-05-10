@@ -30,6 +30,7 @@ export function useAdditionalSystemContextScratchpad(workspaceId: string): Scrat
   const dirtyRef = useRef(false);
   const inFlightSaveRef = useRef(false);
   const pendingSaveRef = useRef<string | null>(null);
+  const saveGenerationRef = useRef(0);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -40,6 +41,7 @@ export function useAdditionalSystemContextScratchpad(workspaceId: string): Scrat
   }, []);
 
   useEffect(() => {
+    saveGenerationRef.current += 1;
     dirtyRef.current = false;
     pendingSaveRef.current = null;
     inFlightSaveRef.current = false;
@@ -75,6 +77,7 @@ export function useAdditionalSystemContextScratchpad(workspaceId: string): Scrat
     const next = pendingSaveRef.current;
     if (next == null) return;
 
+    const saveGeneration = saveGenerationRef.current;
     pendingSaveRef.current = null;
     inFlightSaveRef.current = true;
     setSaving(true);
@@ -83,15 +86,15 @@ export function useAdditionalSystemContextScratchpad(workspaceId: string): Scrat
     api.workspace
       .setAdditionalSystemContext({ workspaceId, content: next })
       .then((result) => {
-        if (!mountedRef.current) return;
+        if (!mountedRef.current || saveGeneration !== saveGenerationRef.current) return;
         updateAdditionalSystemContextSnapshot(workspaceId, result.content);
       })
       .catch((err) => {
-        if (!mountedRef.current) return;
+        if (!mountedRef.current || saveGeneration !== saveGenerationRef.current) return;
         setError(getErrorMessage(err));
       })
       .finally(() => {
-        if (!mountedRef.current) return;
+        if (!mountedRef.current || saveGeneration !== saveGenerationRef.current) return;
         inFlightSaveRef.current = false;
         if (pendingSaveRef.current == null) {
           setSaving(false);
