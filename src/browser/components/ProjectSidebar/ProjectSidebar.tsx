@@ -1669,12 +1669,12 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Sub-project workspaces share the parent worktree, so recover the child
-      // target from workspace metadata before opening a sibling draft.
+      // target from the live sidebar metadata before opening a sibling draft.
       if (matchesKeybind(e, KEYBINDS.NEW_WORKSPACE) && selectedWorkspace) {
         e.preventDefault();
-        const subProjectPath = workspaceStore.getWorkspaceMetadata(
-          selectedWorkspace.workspaceId
-        )?.subProjectPath;
+        const subProjectPath = sortedWorkspacesByProject
+          .get(selectedWorkspace.projectPath)
+          ?.find((workspace) => workspace.id === selectedWorkspace.workspaceId)?.subProjectPath;
         handleAddWorkspace(selectedWorkspace.projectPath, subProjectPath);
       } else if (matchesKeybind(e, KEYBINDS.ARCHIVE_WORKSPACE) && selectedWorkspace) {
         e.preventDefault();
@@ -1684,7 +1684,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selectedWorkspace, handleAddWorkspace, handleArchiveWorkspace, workspaceStore]);
+  }, [selectedWorkspace, handleAddWorkspace, handleArchiveWorkspace, sortedWorkspacesByProject]);
 
   return (
     <TitleEditProvider onUpdateTitle={onUpdateTitle}>
