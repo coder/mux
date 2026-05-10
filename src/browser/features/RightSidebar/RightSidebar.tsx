@@ -16,19 +16,19 @@ import {
   usePersistedState,
 } from "@/browser/hooks/usePersistedState";
 import { useAPI } from "@/browser/contexts/API";
-import { StatsContainer } from "@/browser/features/RightSidebar/StatsContainer";
-import { ErrorBoundary } from "@/browser/components/ErrorBoundary/ErrorBoundary";
+
 import { usePopoverError } from "@/browser/hooks/usePopoverError";
 import { PopoverError } from "@/browser/components/PopoverError/PopoverError";
 import { getErrorMessage } from "@/common/utils/errors";
 
-import { ReviewPanel } from "@/browser/features/RightSidebar/CodeReview/ReviewPanel";
-import { OutputTab } from "@/browser/components/OutputTab/OutputTab";
-import { InstructionsTab } from "@/browser/components/InstructionsTab/InstructionsTab";
-import { DesktopPanel } from "@/browser/features/desktop/DesktopPanel";
-
-import { DevToolsTab } from "./DevToolsTab";
-import { BrowserTab } from "./BrowserTab";
+// Per-tab panel components are no longer imported here directly — the
+// `tabRegistry` owns label + panel rendering for static tabs (see
+// `Tabs/tabRegistry.tsx`). Adding or removing a non-terminal tab is now a
+// one-line registry change rather than a multi-file edit ledger.
+//
+// The RightSidebar itself only retains terminal-specific code paths because
+// terminal tabs are multi-instance and keep-alive (state survives hidden
+// tabsets), which doesn't fit the static "one panel per id" registry shape.
 import {
   matchesKeybind,
   KEYBINDS,
@@ -81,15 +81,14 @@ import {
   type TerminalSessionCreateOptions,
 } from "@/browser/utils/terminal";
 import {
-  StatsTabLabel,
-  OutputTabLabel,
-  ReviewTabLabel,
+  TAB_REGISTRY,
   TerminalTabLabel,
-  InstructionsTabLabel,
   getTabContentClassName,
+  isBaseTabId,
+  type BaseTabType,
   type ReviewStats,
+  type TabPanelContext,
 } from "@/browser/features/RightSidebar/Tabs";
-import { BrowserTabLabel, DebugTabLabel, DesktopTabLabel } from "./Tabs/TabLabels";
 import {
   DndContext,
   DragOverlay,
@@ -364,23 +363,14 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
 
     const tooltip = keybindStr;
 
-    // Build label using tab-specific label components
+    // Build label by delegating to the per-tab Label component declared in
+    // the tab registry. Terminal tabs are special-cased (multi-instance label
+    // with index + close/pop-out actions) — see `tabRegistry.tsx` for why
+    // terminals stay outside the static registry.
     let label: React.ReactNode;
-
-    if (tab === "costs") {
-      label = <StatsTabLabel workspaceId={props.workspaceId} />;
-    } else if (tab === "review") {
-      label = <ReviewTabLabel reviewStats={props.reviewStats} />;
-    } else if (tab === "desktop") {
-      label = <DesktopTabLabel />;
-    } else if (tab === "browser") {
-      label = <BrowserTabLabel />;
-    } else if (tab === "instructions") {
-      label = <InstructionsTabLabel />;
-    } else if (tab === "output") {
-      label = <OutputTabLabel />;
-    } else if (tab === "debug") {
-      label = <DebugTabLabel />;
+    if (isBaseTabId(tab)) {
+      const Label = TAB_REGISTRY[tab].Label;
+      label = <Label workspaceId={props.workspaceId} reviewStats={props.reviewStats} />;
     } else if (isTerminal) {
       const terminalIndex = terminalTabs.indexOf(tab);
       label = (
@@ -410,24 +400,27 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
     ];
   });
 
-  const costsPanelId = `${tabsetBaseId}-panel-costs`;
-  const reviewPanelId = `${tabsetBaseId}-panel-review`;
-  const desktopPanelId = `${tabsetBaseId}-panel-desktop`;
-  const browserPanelId = `${tabsetBaseId}-panel-browser`;
-  const instructionsPanelId = `${tabsetBaseId}-panel-instructions`;
-  const outputPanelId = `${tabsetBaseId}-panel-output`;
-  const debugPanelId = `${tabsetBaseId}-panel-debug`;
-
-  const costsTabId = `${tabsetBaseId}-tab-costs`;
-  const reviewTabId = `${tabsetBaseId}-tab-review`;
-  const desktopTabId = `${tabsetBaseId}-tab-desktop`;
-  const browserTabId = `${tabsetBaseId}-tab-browser`;
-  const instructionsTabId = `${tabsetBaseId}-tab-instructions`;
-  const outputTabId = `${tabsetBaseId}-tab-output`;
-  const debugTabId = `${tabsetBaseId}-tab-debug`;
-
   // Generate sortable IDs for tabs in this tabset
   const sortableIds = items.map((item) => `${props.node.id}:${item.tab}`);
+
+  // Build the panel context once per tabset render — passed verbatim to each
+  // active tab's `renderPanel` from the registry. Centralising this means a
+  // panel renderer never has to negotiate with the RightSidebar component
+  // about prop shape.
+  const panelContext: TabPanelContext = {
+    workspaceId: props.workspaceId,
+    workspacePath: props.workspacePath,
+    projectPath: props.projectPath,
+    isCreating: props.isCreating,
+    focusTrigger: props.focusTrigger,
+    tabsetId: props.node.id,
+    review: {
+      onReviewNote: props.onReviewNote,
+      onStatsChange: props.onReviewStatsChange,
+      isTouchImmersive: props.isTouchReviewImmersive,
+      onTouchImmersiveChange: props.onTouchReviewImmersiveChange,
+    },
+  };
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col" onMouseDownCapture={setFocused}>
@@ -496,63 +489,13 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
           )}
         />
 
-        {props.node.activeTab === "costs" && (
-          <div role="tabpanel" id={costsPanelId} aria-labelledby={costsTabId}>
-            <ErrorBoundary workspaceInfo="Stats tab">
-              <StatsContainer workspaceId={props.workspaceId} />
-            </ErrorBoundary>
-          </div>
-        )}
-
-        {props.node.activeTab === "desktop" && (
-          <div
-            role="tabpanel"
-            id={desktopPanelId}
-            aria-labelledby={desktopTabId}
-            className="h-full"
-          >
-            <ErrorBoundary workspaceInfo="Desktop tab">
-              <DesktopPanel workspaceId={props.workspaceId} />
-            </ErrorBoundary>
-          </div>
-        )}
-
-        {props.node.activeTab === "browser" && (
-          <div
-            role="tabpanel"
-            id={browserPanelId}
-            aria-labelledby={browserTabId}
-            className="h-full"
-          >
-            <ErrorBoundary workspaceInfo="Browser tab">
-              <BrowserTab workspaceId={props.workspaceId} projectPath={props.projectPath} />
-            </ErrorBoundary>
-          </div>
-        )}
-
-        {props.node.activeTab === "instructions" && (
-          <div
-            role="tabpanel"
-            id={instructionsPanelId}
-            aria-labelledby={instructionsTabId}
-            className="h-full"
-          >
-            <InstructionsTab workspaceId={props.workspaceId} />
-          </div>
-        )}
-
-        {props.node.activeTab === "output" && (
-          <div role="tabpanel" id={outputPanelId} aria-labelledby={outputTabId} className="h-full">
-            <OutputTab workspaceId={props.workspaceId} />
-          </div>
-        )}
-
-        {props.node.activeTab === "debug" && (
-          <div role="tabpanel" id={debugPanelId} aria-labelledby={debugTabId}>
-            <ErrorBoundary workspaceInfo="Debug tab">
-              <DevToolsTab workspaceId={props.workspaceId} />
-            </ErrorBoundary>
-          </div>
+        {/* Static (non-terminal) tab panels — render the active one via the registry. */}
+        {isBaseTabId(props.node.activeTab) && (
+          <RegistryTabPanel
+            tabId={props.node.activeTab}
+            tabsetBaseId={tabsetBaseId}
+            context={panelContext}
+          />
         )}
 
         {/* Render all terminal tabs (keep-alive: hidden but mounted) */}
@@ -585,24 +528,36 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
             </div>
           );
         })}
-
-        {props.node.activeTab === "review" && (
-          <div role="tabpanel" id={reviewPanelId} aria-labelledby={reviewTabId} className="h-full">
-            <ReviewPanel
-              key={`${props.workspaceId}:${props.node.id}`}
-              workspaceId={props.workspaceId}
-              workspacePath={props.workspacePath}
-              projectPath={props.projectPath}
-              onReviewNote={props.onReviewNote}
-              focusTrigger={props.focusTrigger}
-              isCreating={props.isCreating}
-              isTouchImmersive={props.isTouchReviewImmersive}
-              onTouchImmersiveChange={props.onTouchReviewImmersiveChange}
-              onStatsChange={props.onReviewStatsChange}
-            />
-          </div>
-        )}
       </div>
+    </div>
+  );
+};
+
+/**
+ * Render the active static (non-terminal) tab's panel by delegating to the
+ * `renderPanel` function declared in the registry. Wrapping the render in a
+ * `tabpanel` element here means each registry entry only has to describe its
+ * content — accessibility wiring stays in one place.
+ */
+const RegistryTabPanel: React.FC<{
+  tabId: BaseTabType;
+  tabsetBaseId: string;
+  context: TabPanelContext;
+}> = ({ tabId, tabsetBaseId, context }) => {
+  const reg = TAB_REGISTRY[tabId];
+  // Tabs whose content needs the full available height opt in via their
+  // `contentClassName` (`overflow-hidden p-0`); those that scroll
+  // (`overflow-y-auto …`) don't. Keep the `h-full` policy decision local to
+  // the registry rather than the wrapper.
+  const needsFullHeight = reg.contentClassName.includes("overflow-hidden");
+  return (
+    <div
+      role="tabpanel"
+      id={`${tabsetBaseId}-panel-${tabId}`}
+      aria-labelledby={`${tabsetBaseId}-tab-${tabId}`}
+      className={needsFullHeight ? "h-full" : undefined}
+    >
+      {reg.renderPanel(context)}
     </div>
   );
 };

@@ -16,6 +16,11 @@ import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePer
 import { CommandIds } from "@/browser/utils/commandIds";
 import { isTabType, type TabType } from "@/browser/types/rightSidebar";
 import {
+  TAB_REGISTRY,
+  getOrderedBaseTabIds,
+  type BaseTabType,
+} from "@/browser/features/RightSidebar/Tabs/tabRegistry";
+import {
   getEffectiveSlotKeybind,
   getLayoutsConfigOrDefault,
   getPresetForSlot,
@@ -229,6 +234,37 @@ const findFirstTerminalSessionTab = (
     findFirstTerminalSessionTab(node.children[0]) ?? findFirstTerminalSessionTab(node.children[1])
   );
 };
+
+/**
+ * Build a "Hide/Show <Name>" command for a registry-defined tab.
+ *
+ * Each command-source factory is re-invoked per palette render, so the
+ * Hide/Show title is up-to-date without any explicit subscription wiring.
+ *
+ * This generic factory removes the need for hand-rolled `navToggleOutput`,
+ * `navToggleInstructions`, … entries — adding a tab to the registry
+ * automatically gives it a command-palette toggle.
+ */
+function buildToggleTabCommand(
+  workspaceId: string,
+  tabId: BaseTabType,
+  navigationSection: CommandAction["section"]
+): CommandAction {
+  const reg = TAB_REGISTRY[tabId];
+  const visible = hasTab(readRightSidebarLayout(workspaceId), tabId as TabType);
+  return {
+    id: `nav:toggle-tab:${tabId}`,
+    title: `${visible ? "Hide" : "Show"} ${reg.name}`,
+    section: navigationSection,
+    keywords: reg.paletteKeywords ?? [tabId],
+    run: () => {
+      updateRightSidebarLayout(workspaceId, (s) => toggleTab(s, tabId as TabType));
+      if (!visible) {
+        updatePersistedState<boolean>(RIGHT_SIDEBAR_COLLAPSED_KEY, false);
+      }
+    },
+  };
+}
 export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandAction[]> {
   const actions: Array<() => CommandAction[]> = [];
 
@@ -535,19 +571,12 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
     const wsId = p.selectedWorkspace?.workspaceId;
     if (wsId) {
       list.push(
-        {
-          id: CommandIds.navToggleOutput(),
-          title: hasTab(readRightSidebarLayout(wsId), "output") ? "Hide Output" : "Show Output",
-          section: section.navigation,
-          keywords: ["log", "logs", "output"],
-          run: () => {
-            const isOutputVisible = hasTab(readRightSidebarLayout(wsId), "output");
-            updateRightSidebarLayout(wsId, (s) => toggleTab(s, "output"));
-            if (!isOutputVisible) {
-              updatePersistedState<boolean>(RIGHT_SIDEBAR_COLLAPSED_KEY, false);
-            }
-          },
-        },
+        // Generic per-tab "Hide/Show <Name>" commands derived from the registry —
+        // adding a tab in `tabRegistry.tsx` automatically gives users a
+        // command-palette toggle, no per-tab handler to write here.
+        ...getOrderedBaseTabIds().map((tabId) =>
+          buildToggleTabCommand(wsId, tabId, section.navigation)
+        ),
         {
           id: CommandIds.navOpenLogFile(),
           title: "Open Log File",
@@ -601,25 +630,17 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
                 name: "tool",
                 label: "Tool",
                 placeholder: "Select a tool…",
-                getOptions: () =>
-                  (
-                    ["costs", "review", "instructions", "output", "debug", "terminal"] as TabType[]
-                  ).map((tab) => ({
-                    id: tab,
-                    label:
-                      tab === "costs"
-                        ? "Costs"
-                        : tab === "review"
-                          ? "Review"
-                          : tab === "instructions"
-                            ? "Instructions"
-                            : tab === "output"
-                              ? "Output"
-                              : tab === "debug"
-                                ? "Debug"
-                                : "Terminal",
-                    keywords: [tab],
+                // Static tabs come straight from the registry (in default order).
+                // Terminal is appended manually because it lives outside the
+                // registry — see the comment on TAB_REGISTRY for why.
+                getOptions: () => [
+                  ...getOrderedBaseTabIds().map((tabId) => ({
+                    id: tabId as TabType,
+                    label: TAB_REGISTRY[tabId].name,
+                    keywords: TAB_REGISTRY[tabId].paletteKeywords ?? [tabId],
                   })),
+                  { id: "terminal" as TabType, label: "Terminal", keywords: ["terminal"] },
+                ],
               },
             ],
             onSubmit: (vals) => {

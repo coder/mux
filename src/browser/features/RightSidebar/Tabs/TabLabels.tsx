@@ -31,6 +31,9 @@ interface StatsTabLabelProps {
 /**
  * Unified Stats tab label with a session cost badge.
  * Subscribes to workspace usage directly to avoid re-rendering parent components.
+ *
+ * Accepts a context-bag prop so it can be invoked through the generic
+ * `tabRegistry` Label slot (see `Tabs/tabRegistry.tsx`).
  */
 export const StatsTabLabel: React.FC<StatsTabLabelProps> = ({ workspaceId }) => {
   const usage = useWorkspaceUsage(workspaceId);

@@ -1,28 +1,35 @@
 /**
  * Tab system for RightSidebar.
  *
- * Exports:
- * - Registry: Tab configuration and utilities
- * - TabLabels: Label components for each tab type
+ * The single source of truth for tab definitions lives in `tabRegistry.tsx`.
+ * Adding/renaming/removing a non-terminal tab should require touching ONLY
+ * that file. This barrel re-exports the public surface for convenience.
  */
 
 export {
-  TAB_CONFIGS,
-  TERMINAL_TAB_CONFIG,
-  getTabConfig,
-  getTabName,
-  getTabContentClassName,
-  type TabConfig,
-  type TabRenderContext,
-  type TerminalTabRenderContext,
-  type TabLabelProps,
+  TAB_REGISTRY,
+  BASE_TAB_IDS,
+  isBaseTabId,
+  getTabRegistration,
+  getDefaultLayoutTabIds,
+  getOrderedBaseTabIds,
+  type BaseTabType,
+  type TabRegistration,
+  type TabPanelContext,
+  type TabLabelContext,
   type ReviewStats,
-} from "./registry";
+} from "./tabRegistry";
 
+export { getTabName, getTabContentClassName } from "./registry";
+
+// Label components are still exported for legacy/test consumers.
 export {
   StatsTabLabel,
   OutputTabLabel,
   ReviewTabLabel,
   TerminalTabLabel,
   InstructionsTabLabel,
+  BrowserTabLabel,
+  DebugTabLabel,
+  DesktopTabLabel,
 } from "./TabLabels";
