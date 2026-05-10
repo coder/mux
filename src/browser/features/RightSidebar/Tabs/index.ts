@@ -1,9 +1,10 @@
 /**
  * Tab system for RightSidebar.
  *
- * The single source of truth for tab definitions lives in `tabRegistry.tsx`.
- * Adding/renaming/removing a non-terminal tab should require touching ONLY
- * that file. This barrel re-exports the public surface for convenience.
+ * Lightweight tab metadata lives in `tabConfig.ts`; React label/panel renderers
+ * live in `tabRegistry.tsx`. This split keeps shared helpers and the VS Code
+ * extension from eagerly importing desktop-only panel code while still giving
+ * the desktop sidebar one typed registry surface.
  */
 
 export {

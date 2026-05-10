@@ -86,6 +86,17 @@ describe("instructionFiles", () => {
       expect(result).toBeNull();
     });
 
+    it("should preserve local instructions when the base file strips to empty", async () => {
+      await fs.writeFile(path.join(tempDir, "AGENTS.md"), "<!-- tracked-only comment -->");
+      await fs.writeFile(path.join(tempDir, "AGENT.md"), "lower priority base");
+      await fs.writeFile(path.join(tempDir, "AGENTS.local.md"), "local guidance");
+
+      const result = await readInstructionSet(tempDir, INSTRUCTION_SCOPE.GLOBAL);
+      expect(result?.combinedContent).toBe("local guidance");
+      expect(result?.files).toHaveLength(1);
+      expect(result?.files[0]?.filename).toBe("AGENTS.local.md");
+    });
+
     it("should prefer AGENTS.md even if AGENT.md and AGENTS.local.md exist", async () => {
       await fs.writeFile(path.join(tempDir, "AGENTS.md"), "agents base");
       await fs.writeFile(path.join(tempDir, "AGENT.md"), "agent base");

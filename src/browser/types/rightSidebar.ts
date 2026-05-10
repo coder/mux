@@ -1,9 +1,9 @@
 /**
  * Right-sidebar tab types.
  *
- * Static (non-terminal) tab ids are derived from the tab registry
- * (`@/browser/features/RightSidebar/Tabs/tabRegistry`) — adding or removing a
- * tab is a one-line change there. This file just lifts those ids to the
+ * Static (non-terminal) tab ids are derived from the lightweight tab config
+ * (`@/browser/features/RightSidebar/Tabs/tabConfig`) so type-only consumers do
+ * not import panel renderers. This file just lifts those ids to the
  * shared type space so other modules don't have to import the registry just
  * to pattern-match on tab ids.
  */
@@ -12,7 +12,7 @@ import {
   BASE_TAB_IDS,
   isBaseTabId,
   type BaseTabType,
-} from "@/browser/features/RightSidebar/Tabs/tabRegistry";
+} from "@/browser/features/RightSidebar/Tabs/tabConfig";
 
 /** Runtime list of static (non-terminal) tab ids — useful for iteration. */
 export const RIGHT_SIDEBAR_TABS = BASE_TAB_IDS;

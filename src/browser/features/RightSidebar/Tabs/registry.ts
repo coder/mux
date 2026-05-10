@@ -1,19 +1,17 @@
 /**
- * Backwards-compat shim — the real registry now lives in
- * `tabRegistry.tsx` (single source of truth for adding/removing tabs).
+ * Backwards-compat shim for tab display helpers.
  *
  * This file remains so legacy callers can import `getTabContentClassName`,
- * `getTabName`, etc. without churn, but new code should depend on
- * `tabRegistry` directly.
+ * `getTabName`, etc. without pulling in React panel renderers. New non-UI
+ * helpers should depend on the lightweight `tabConfig` directly.
  */
 
 import type { TabType } from "@/browser/types/rightSidebar";
-import {
-  TAB_REGISTRY,
-  isBaseTabId,
-  type ReviewStats as RegistryReviewStats,
-  type TabPanelContext,
-  type TabLabelContext,
+import { getTabConfig, isBaseTabId } from "./tabConfig";
+import type {
+  ReviewStats as RegistryReviewStats,
+  TabLabelContext,
+  TabPanelContext,
 } from "./tabRegistry";
 
 /** Re-exported review stats type (used by RightSidebar wrapper props). */
@@ -26,12 +24,12 @@ const TERMINAL_TAB_NAME = "Terminal";
 
 /** Display name for a tab id (incl. terminal). */
 export function getTabName(tab: TabType): string {
-  if (isBaseTabId(tab)) return TAB_REGISTRY[tab].name;
+  if (isBaseTabId(tab)) return getTabConfig(tab).name;
   return TERMINAL_TAB_NAME;
 }
 
 /** Content container CSS classes for a tab id (incl. terminal). */
 export function getTabContentClassName(tab: TabType): string {
-  if (isBaseTabId(tab)) return TAB_REGISTRY[tab].contentClassName;
+  if (isBaseTabId(tab)) return getTabConfig(tab).contentClassName;
   return TERMINAL_TAB_CONTENT_CLASS_NAME;
 }

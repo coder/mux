@@ -57,7 +57,6 @@ import {
   findTabset,
   getDefaultRightSidebarLayoutState,
   getFocusedActiveTab,
-  isRightSidebarLayoutState,
   moveTabToTabset,
   parseRightSidebarLayoutState,
   removeTabEverywhere,
@@ -838,12 +837,18 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     });
   }, [desktopAvailable, initialActiveTab, setLayoutRaw]);
 
-  // If we ever deserialize an invalid layout (e.g. schema changes), reset to defaults.
+  // Persist parser migrations (schema resets, removed-tab cleanup, newly-added
+  // default tabs like Instructions) back to storage. Without this, the current
+  // render can show the migrated layout while other localStorage readers — and
+  // future mounts after a hot reload — still see the stale pre-migration tabs.
   React.useEffect(() => {
-    if (!isRightSidebarLayoutState(layoutRaw)) {
+    if (layoutDraft !== null) {
+      return;
+    }
+    if (layoutRaw !== layout) {
       setLayoutRaw(layout);
     }
-  }, [layout, layoutRaw, setLayoutRaw]);
+  }, [layout, layoutDraft, layoutRaw, setLayoutRaw]);
 
   const getBaseLayout = React.useCallback(() => {
     return (

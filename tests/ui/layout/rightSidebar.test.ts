@@ -158,6 +158,44 @@ describeIntegration("RightSidebar (UI)", () => {
     }
   }, 60_000);
 
+  test("shows the Instructions tab by default", async () => {
+    const cleanupDom = installDom();
+
+    updatePersistedState(RIGHT_SIDEBAR_TAB_KEY, null);
+    updatePersistedState(getRightSidebarLayoutKey(workspaceId), null);
+
+    const view = renderApp({
+      apiClient: env.orpc,
+      metadata,
+    });
+
+    try {
+      await setupWorkspaceView(view, metadata, workspaceId);
+
+      const sidebar = await waitFor(
+        () => {
+          const el = view.container.querySelector(
+            '[role="complementary"][aria-label="Workspace insights"]'
+          );
+          if (!el) throw new Error("RightSidebar not found");
+          return el as HTMLElement;
+        },
+        { timeout: 10_000 }
+      );
+
+      await waitFor(() => {
+        const instructionsTab = sidebar.querySelector(
+          '[role="tab"][aria-controls*="instructions"]'
+        ) as HTMLElement | null;
+        if (!instructionsTab) {
+          throw new Error("Instructions tab should be present by default");
+        }
+      });
+    } finally {
+      await cleanupView(view, cleanupDom);
+    }
+  }, 60_000);
+
   test("adds the browser tab when the experiment is enabled", async () => {
     const cleanupDom = installDom();
 

@@ -1,5 +1,5 @@
 import { isTabType, type TabType } from "@/browser/types/rightSidebar";
-import { getDefaultLayoutTabIds } from "@/browser/features/RightSidebar/Tabs/tabRegistry";
+import { getDefaultLayoutTabIds } from "@/browser/features/RightSidebar/Tabs/tabConfig";
 
 export type RightSidebarLayoutNode =
   | {
@@ -60,7 +60,7 @@ export interface RightSidebarLayoutState {
 export function getDefaultRightSidebarLayoutState(activeTab: TabType): RightSidebarLayoutState {
   // Default tabs come from the registry's `inDefaultLayout` flag — no
   // hardcoded list to keep in sync. Adding a tab to the default layout is a
-  // one-line change in `Tabs/tabRegistry.tsx`.
+  // one-line metadata change in `Tabs/tabConfig.ts`.
   const defaultTabs: TabType[] = [...getDefaultLayoutTabIds()];
   const tabs = defaultTabs.includes(activeTab) ? defaultTabs : [...defaultTabs, activeTab];
 

@@ -53,6 +53,8 @@ function createRuntimeFileReader(runtime: Runtime): FileReader {
   };
 }
 
+type ReadInstructionFileResult = { exists: false } | { exists: true; file: InstructionFile | null };
+
 /** Read a single instruction file via the given reader, returning structured info. */
 async function readSingleFile(
   reader: FileReader,
@@ -61,24 +63,27 @@ async function readSingleFile(
   scope: InstructionScope,
   isLocal: boolean,
   projectName: string | undefined
-): Promise<InstructionFile | null> {
+): Promise<ReadInstructionFileResult> {
   let raw: string;
   try {
     raw = await reader.readFile(path.join(directory, filename));
   } catch {
-    return null;
+    return { exists: false };
   }
   const sanitized = stripMarkdownComments(raw);
-  if (sanitized.length === 0) return null;
+  if (sanitized.length === 0) return { exists: true, file: null };
   return {
-    path: path.join(directory, filename),
-    filename,
-    isLocal,
-    scope,
-    projectName: projectName ?? null,
-    content: sanitized,
-    bytes: Buffer.byteLength(sanitized, "utf-8"),
-    tokens: null,
+    exists: true,
+    file: {
+      path: path.join(directory, filename),
+      filename,
+      isLocal,
+      scope,
+      projectName: projectName ?? null,
+      content: sanitized,
+      bytes: Buffer.byteLength(sanitized, "utf-8"),
+      tokens: null,
+    },
   };
 }
 
@@ -88,12 +93,16 @@ async function readBaseInstructionFile(
   directory: string,
   scope: InstructionScope,
   projectName: string | undefined
-): Promise<InstructionFile | null> {
+): Promise<ReadInstructionFileResult> {
   for (const filename of INSTRUCTION_FILE_NAMES) {
-    const file = await readSingleFile(reader, directory, filename, scope, false, projectName);
-    if (file) return file;
+    const result = await readSingleFile(reader, directory, filename, scope, false, projectName);
+    // Existence, not post-comment content, decides base-file priority. This
+    // preserves the historical behavior where an AGENTS.md containing only
+    // comments still enables AGENTS.local.md and prevents lower-priority
+    // AGENT.md/CLAUDE.md files from taking over.
+    if (result.exists) return result;
   }
-  return null;
+  return { exists: false };
 }
 
 /**
@@ -111,7 +120,7 @@ async function readInstructionSetWith(
   projectName?: string
 ): Promise<InstructionSet | null> {
   const base = await readBaseInstructionFile(reader, directory, scope, projectName);
-  if (!base) return null;
+  if (!base.exists) return null;
 
   const local = await readSingleFile(
     reader,
@@ -122,7 +131,11 @@ async function readInstructionSetWith(
     projectName
   );
 
-  const files: InstructionFile[] = local ? [base, local] : [base];
+  const files: InstructionFile[] = [base.file, local.exists ? local.file : null].filter(
+    (file): file is InstructionFile => file != null
+  );
+  if (files.length === 0) return null;
+
   const combinedContent = files.map((f) => f.content).join("\n\n");
 
   return {

@@ -16,10 +16,10 @@ import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePer
 import { CommandIds } from "@/browser/utils/commandIds";
 import { isTabType, type TabType } from "@/browser/types/rightSidebar";
 import {
-  TAB_REGISTRY,
   getOrderedBaseTabIds,
+  getTabConfig,
   type BaseTabType,
-} from "@/browser/features/RightSidebar/Tabs/tabRegistry";
+} from "@/browser/features/RightSidebar/Tabs/tabConfig";
 import {
   getEffectiveSlotKeybind,
   getLayoutsConfigOrDefault,
@@ -236,21 +236,20 @@ const findFirstTerminalSessionTab = (
 };
 
 /**
- * Build a "Hide/Show <Name>" command for a registry-defined tab.
+ * Build a "Hide/Show <Name>" command for a config-defined tab.
  *
  * Each command-source factory is re-invoked per palette render, so the
  * Hide/Show title is up-to-date without any explicit subscription wiring.
  *
- * This generic factory removes the need for hand-rolled `navToggleOutput`,
- * `navToggleInstructions`, … entries — adding a tab to the registry
- * automatically gives it a command-palette toggle.
+ * This is secondary discoverability only; default visibility is controlled by
+ * `inDefaultLayout` in `tabConfig.ts` and enforced by the layout migration.
  */
 function buildToggleTabCommand(
   workspaceId: string,
   tabId: BaseTabType,
   navigationSection: CommandAction["section"]
 ): CommandAction {
-  const reg = TAB_REGISTRY[tabId];
+  const reg = getTabConfig(tabId);
   const visible = hasTab(readRightSidebarLayout(workspaceId), tabId as TabType);
   return {
     id: `nav:toggle-tab:${tabId}`,
@@ -571,8 +570,8 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
     const wsId = p.selectedWorkspace?.workspaceId;
     if (wsId) {
       list.push(
-        // Generic per-tab "Hide/Show <Name>" commands derived from the registry —
-        // adding a tab in `tabRegistry.tsx` automatically gives users a
+        // Generic per-tab "Hide/Show <Name>" commands derived from tab config —
+        // adding a tab in `tabConfig.ts` automatically gives users a
         // command-palette toggle, no per-tab handler to write here.
         ...getOrderedBaseTabIds().map((tabId) =>
           buildToggleTabCommand(wsId, tabId, section.navigation)
@@ -630,15 +629,17 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
                 name: "tool",
                 label: "Tool",
                 placeholder: "Select a tool…",
-                // Static tabs come straight from the registry (in default order).
-                // Terminal is appended manually because it lives outside the
-                // registry — see the comment on TAB_REGISTRY for why.
+                // Static tabs come straight from the lightweight config (in default order).
+                // Terminal is appended manually because it lives outside the static registry.
                 getOptions: () => [
-                  ...getOrderedBaseTabIds().map((tabId) => ({
-                    id: tabId as TabType,
-                    label: TAB_REGISTRY[tabId].name,
-                    keywords: TAB_REGISTRY[tabId].paletteKeywords ?? [tabId],
-                  })),
+                  ...getOrderedBaseTabIds().map((tabId) => {
+                    const config = getTabConfig(tabId);
+                    return {
+                      id: tabId as TabType,
+                      label: config.name,
+                      keywords: config.paletteKeywords ?? [tabId],
+                    };
+                  }),
                   { id: "terminal" as TabType, label: "Terminal", keywords: ["terminal"] },
                 ],
               },

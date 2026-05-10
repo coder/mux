@@ -1,10 +1,10 @@
 /**
- * Right-sidebar tab registry — single source of truth for non-terminal tabs.
+ * Right-sidebar tab registry — UI renderers for non-terminal tabs.
  *
- * Adding a tab should mean adding ONE entry here. Every consumer
- * (`RightSidebar.tsx`, the default layout, the command palette, the layout
- * migration) iterates this registry, so adding/renaming/removing a tab no
- * longer requires touching switch statements scattered across the codebase.
+ * Static tab metadata lives in `tabConfig.ts` so shared helpers can read tab
+ * names/default-layout policy without importing React panels. This file layers
+ * labels and panel renderers on top of that lightweight config for the actual
+ * desktop right sidebar.
  *
  * Terminal tabs are intentionally NOT in this registry: they are
  * multi-instance (`terminal:<sessionId>`), keep-alive, and need session-aware
@@ -21,8 +21,8 @@ import { ReviewPanel } from "@/browser/features/RightSidebar/CodeReview/ReviewPa
 import { DesktopPanel } from "@/browser/features/desktop/DesktopPanel";
 import { BrowserTab } from "@/browser/features/RightSidebar/BrowserTab";
 import { DevToolsTab } from "@/browser/features/RightSidebar/DevToolsTab";
-import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import type { ReviewNoteData } from "@/common/types/review";
+import { BASE_TAB_IDS, TAB_CONFIG, type BaseTabType, type TabConfig } from "./tabConfig";
 import {
   BrowserTabLabel,
   DebugTabLabel,
@@ -32,6 +32,16 @@ import {
   ReviewTabLabel,
   StatsTabLabel,
 } from "./TabLabels";
+
+export {
+  BASE_TAB_IDS,
+  getDefaultLayoutTabIds,
+  getOrderedBaseTabIds,
+  getTabConfig,
+  isBaseTabId,
+  type BaseTabType,
+  type TabConfig,
+} from "./tabConfig";
 
 /** Stats reported by ReviewPanel for tab display (kept local to the registry). */
 export interface ReviewStats {
@@ -65,59 +75,24 @@ export interface TabPanelContext {
   };
 }
 
-/** Static description of one non-terminal tab. */
-export interface TabRegistration {
-  /** Display name shown in tab strip / pickers. */
-  name: string;
-  /** Content container CSS classes. */
-  contentClassName: string;
-  /** Whether the panel should remain mounted while hidden. */
-  keepAlive?: boolean;
-  /** Optional feature/experiment flag required to show this tab. */
-  featureFlag?: string;
-  /**
-   * Whether the tab should appear in the default layout for new workspaces.
-   * Tabs with this flag are also auto-added to existing persisted layouts via
-   * `ensureDefaultLayoutTabs` migration so users don't have to manually add
-   * them after an upgrade.
-   */
-  inDefaultLayout?: boolean;
-  /**
-   * Sort order in the default layout & Add-Tool picker.
-   * Lower numbers come first.
-   */
-  defaultOrder: number;
+/** Static description of one non-terminal tab, including UI renderers. */
+export interface TabRegistration extends TabConfig {
   /** Workspace-scope label component (subscribes to per-workspace stores as needed). */
   Label: React.ComponentType<TabLabelContext>;
   /** Renders the panel body. Receives a workspace-scoped context bag. */
   renderPanel: (ctx: TabPanelContext) => React.ReactNode;
-  /** Optional palette keywords to improve fuzzy search in the command palette. */
-  paletteKeywords?: string[];
 }
 
-// `satisfies` lets us derive `BaseTabType` from this object's keys while
-// type-checking every field. We don't use `as const` because the helpers
-// below want a uniform `TabRegistration` shape (so optional fields like
-// `inDefaultLayout` can be read without a type-narrowing escape hatch).
-const TAB_REGISTRY_DEF = {
+const TAB_RENDERERS = {
   costs: {
-    name: "Stats", // Hosts Cost/Timing/Models sub-tabs.
-    contentClassName: "overflow-y-auto p-[15px]",
-    inDefaultLayout: true,
-    defaultOrder: 10,
     Label: ({ workspaceId }) => <StatsTabLabel workspaceId={workspaceId} />,
     renderPanel: (ctx) => (
       <ErrorBoundary workspaceInfo="Stats tab">
         <StatsContainer workspaceId={ctx.workspaceId} />
       </ErrorBoundary>
     ),
-    paletteKeywords: ["cost", "stats", "tokens", "timing"],
   },
   review: {
-    name: "Review",
-    contentClassName: "overflow-y-auto p-0",
-    inDefaultLayout: true,
-    defaultOrder: 20,
     Label: ({ reviewStats }) => <ReviewTabLabel reviewStats={reviewStats} />,
     renderPanel: (ctx) => (
       <ReviewPanel
@@ -135,98 +110,52 @@ const TAB_REGISTRY_DEF = {
         onStatsChange={ctx.review.onStatsChange}
       />
     ),
-    paletteKeywords: ["review", "diff", "code review"],
   },
   instructions: {
-    name: "Instructions",
-    contentClassName: "overflow-hidden p-0",
-    inDefaultLayout: true,
-    defaultOrder: 30,
     Label: InstructionsTabLabel,
     renderPanel: (ctx) => <InstructionsTab workspaceId={ctx.workspaceId} />,
-    paletteKeywords: ["agents", "agents.md", "claude.md", "instructions", "prompt", "context"],
   },
   desktop: {
-    name: "Desktop",
-    contentClassName: "overflow-hidden p-0",
-    featureFlag: EXPERIMENT_IDS.PORTABLE_DESKTOP,
-    defaultOrder: 40,
     Label: DesktopTabLabel,
     renderPanel: (ctx) => (
       <ErrorBoundary workspaceInfo="Desktop tab">
         <DesktopPanel workspaceId={ctx.workspaceId} />
       </ErrorBoundary>
     ),
-    paletteKeywords: ["desktop", "vnc", "screen"],
   },
   browser: {
-    name: "Browser",
-    contentClassName: "overflow-hidden p-0",
-    keepAlive: false,
-    featureFlag: EXPERIMENT_IDS.AGENT_BROWSER,
-    defaultOrder: 50,
     Label: BrowserTabLabel,
     renderPanel: (ctx) => (
       <ErrorBoundary workspaceInfo="Browser tab">
         <BrowserTab workspaceId={ctx.workspaceId} projectPath={ctx.projectPath} />
       </ErrorBoundary>
     ),
-    paletteKeywords: ["browser", "web"],
   },
   output: {
-    name: "Output",
-    contentClassName: "overflow-hidden p-0",
-    defaultOrder: 60,
     Label: OutputTabLabel,
     renderPanel: (ctx) => <OutputTab workspaceId={ctx.workspaceId} />,
-    paletteKeywords: ["log", "logs", "output"],
   },
   debug: {
-    name: "Debug",
-    contentClassName: "overflow-y-auto p-0",
-    defaultOrder: 70,
     Label: DebugTabLabel,
     renderPanel: (ctx) => (
       <ErrorBoundary workspaceInfo="Debug tab">
         <DevToolsTab workspaceId={ctx.workspaceId} />
       </ErrorBoundary>
     ),
-    paletteKeywords: ["debug", "devtools", "diagnostics"],
   },
-} satisfies Record<string, TabRegistration>;
+} satisfies Record<
+  BaseTabType,
+  {
+    Label: React.ComponentType<TabLabelContext>;
+    renderPanel: (ctx: TabPanelContext) => React.ReactNode;
+  }
+>;
 
-/** Static (non-terminal) tab id union, derived from the registry keys. */
-export type BaseTabType = keyof typeof TAB_REGISTRY_DEF;
-
-/**
- * Public registry indexed by tab id. Typed as a uniform record so callers can
- * read optional fields (`inDefaultLayout`, `featureFlag`, …) without manual
- * narrowing.
- */
-export const TAB_REGISTRY: Record<BaseTabType, TabRegistration> = TAB_REGISTRY_DEF;
-
-/** Runtime-iterable list of base tab ids (for validators & iteration). */
-export const BASE_TAB_IDS = Object.keys(TAB_REGISTRY_DEF) as BaseTabType[];
-
-/** Type-narrowing predicate for static (non-terminal) tab ids. */
-export function isBaseTabId(value: unknown): value is BaseTabType {
-  return typeof value === "string" && Object.prototype.hasOwnProperty.call(TAB_REGISTRY_DEF, value);
-}
+/** Public UI registry indexed by tab id. */
+export const TAB_REGISTRY: Record<BaseTabType, TabRegistration> = Object.fromEntries(
+  BASE_TAB_IDS.map((id) => [id, { ...TAB_CONFIG[id], ...TAB_RENDERERS[id] }])
+) as Record<BaseTabType, TabRegistration>;
 
 export function getTabRegistration(id: BaseTabType): TabRegistration {
   return TAB_REGISTRY[id];
-}
-
-/** Default-layout tab ids in canonical order (used for new workspaces & migration). */
-export function getDefaultLayoutTabIds(): BaseTabType[] {
-  return BASE_TAB_IDS.filter((id) => TAB_REGISTRY[id].inDefaultLayout === true).sort(
-    (a, b) => TAB_REGISTRY[a].defaultOrder - TAB_REGISTRY[b].defaultOrder
-  );
-}
-
-/** All static tabs ordered by defaultOrder (used by Add-Tool picker). */
-export function getOrderedBaseTabIds(): BaseTabType[] {
-  return [...BASE_TAB_IDS].sort(
-    (a, b) => TAB_REGISTRY[a].defaultOrder - TAB_REGISTRY[b].defaultOrder
-  );
 }

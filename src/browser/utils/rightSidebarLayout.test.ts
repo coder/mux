@@ -13,6 +13,16 @@ import {
   type RightSidebarLayoutState,
 } from "./rightSidebarLayout";
 
+test("default layout includes Instructions alongside Stats and Review", () => {
+  const state = getDefaultRightSidebarLayoutState("costs");
+  expect(state.root.type).toBe("tabset");
+  if (state.root.type !== "tabset") throw new Error("expected tabset");
+
+  expect(state.root.tabs).toContain("costs");
+  expect(state.root.tabs).toContain("review");
+  expect(state.root.tabs).toContain("instructions");
+});
+
 test("selectTabInFocusedTabset adds missing tool and makes it active", () => {
   let s = getDefaultRightSidebarLayoutState("costs");
   // Start with a layout that only has costs.
