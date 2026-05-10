@@ -100,7 +100,11 @@ function flushAdditionalSystemContextSave(api: APIClient, workspaceId: string): 
 
   api.workspace
     .setAdditionalSystemContext({ workspaceId, content: next })
-    .then((result) => updateAdditionalSystemContextSnapshot(workspaceId, result.content))
+    .then((result) => {
+      if (state.pending == null) {
+        updateAdditionalSystemContextSnapshot(workspaceId, result.content);
+      }
+    })
     .catch((error) => notifySaveError(state, error))
     .finally(() => {
       state.inFlight = false;
