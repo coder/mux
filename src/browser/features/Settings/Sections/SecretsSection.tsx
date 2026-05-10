@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { KeyRound, Loader2, Trash2 } from "lucide-react";
+import type { ProjectConfig } from "@/common/types/project";
 import { isOpSecretValue, type Secret } from "@/common/types/secrets";
 import { useAPI } from "@/browser/contexts/API";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
@@ -20,7 +21,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/browser/components/SelectPrimitive/SelectPrimitive";
-import { formatProjectHierarchyLabel, getTopLevelProjectEntries } from "@/common/utils/subProjects";
+import {
+  formatProjectHierarchyLabel,
+  getFirstTopLevelProjectPath,
+  getTopLevelProjectEntries,
+} from "@/common/utils/subProjects";
 
 type SecretsScope = "global" | "project";
 
@@ -117,6 +122,13 @@ function secretsEqual(a: Secret[], b: Secret[]): boolean {
   return true;
 }
 
+function isProjectSecretsTarget(
+  userProjects: Map<string, ProjectConfig>,
+  projectPath: string
+): boolean {
+  return userProjects.get(projectPath)?.parentProjectPath == null;
+}
+
 export const SecretsSection: React.FC = () => {
   const { api } = useAPI();
   const { userProjects } = useProjectContext();
@@ -127,7 +139,9 @@ export const SecretsSection: React.FC = () => {
   // are applied from the parent workspace owner, so sub-projects stay out of the
   // project picker until runtime injection supports child-specific secrets.
   const initialScope: SecretsScope =
-    secretsProjectPath && projectList.includes(secretsProjectPath) ? "project" : "global";
+    secretsProjectPath && isProjectSecretsTarget(userProjects, secretsProjectPath)
+      ? "project"
+      : "global";
   const initialProject = initialScope === "project" ? secretsProjectPath! : "";
 
   const [scope, setScope] = useState<SecretsScope>(initialScope);
@@ -172,11 +186,11 @@ export const SecretsSection: React.FC = () => {
   // projects load asynchronously, so we must keep the hint alive until then.
   useEffect(() => {
     if (!secretsProjectPath) return;
-    if (!projectList.includes(secretsProjectPath)) return;
+    if (!isProjectSecretsTarget(userProjects, secretsProjectPath)) return;
     setScope("project");
     setSelectedProject(secretsProjectPath);
     setSecretsProjectPath(null);
-  }, [secretsProjectPath, projectList, setSecretsProjectPath]);
+  }, [secretsProjectPath, userProjects, setSecretsProjectPath]);
 
   // Default to the first project when switching into Project scope.
   useEffect(() => {
@@ -184,12 +198,12 @@ export const SecretsSection: React.FC = () => {
       return;
     }
 
-    if (selectedProject && projectList.includes(selectedProject)) {
+    if (selectedProject && isProjectSecretsTarget(userProjects, selectedProject)) {
       return;
     }
 
-    setSelectedProject(projectList[0] ?? "");
-  }, [projectList, scope, selectedProject]);
+    setSelectedProject(getFirstTopLevelProjectPath(userProjects) ?? "");
+  }, [scope, selectedProject, userProjects]);
 
   const currentProjectPath = scope === "project" ? selectedProject : undefined;
 

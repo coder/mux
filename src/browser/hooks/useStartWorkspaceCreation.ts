@@ -17,10 +17,6 @@ import {
 export type StartWorkspaceCreationDetail =
   CustomEventPayloads[typeof CUSTOM_EVENTS.START_WORKSPACE_CREATION];
 
-export function getFirstProjectPath(projects: Map<string, ProjectConfig>): string | null {
-  return getFirstTopLevelProjectPath(projects);
-}
-
 type PersistFn = typeof updatePersistedState;
 
 export function persistWorkspaceCreationPrefill(
@@ -65,7 +61,7 @@ function resolveProjectPath(
     return requestedPath;
   }
 
-  return getFirstProjectPath(projects);
+  return getFirstTopLevelProjectPath(projects);
 }
 
 export function useStartWorkspaceCreation({

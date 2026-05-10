@@ -308,7 +308,7 @@ type DraggableProjectItemProps = React.PropsWithChildren<{
   "data-project-path"?: string;
 }>;
 
-const DraggableProjectItemBase: React.FC<DraggableProjectItemProps> = ({
+const DraggableProjectItem: React.FC<DraggableProjectItemProps> = ({
   projectPath,
   onReorder,
   children,
@@ -357,7 +357,6 @@ const DraggableProjectItemBase: React.FC<DraggableProjectItemProps> = ({
   );
 };
 
-const DraggableProjectItem = DraggableProjectItemBase;
 /**
  * Wrapper that fetches draft data from localStorage and renders via unified AgentListItem.
  * Keeps data-fetching logic colocated with sidebar while delegating rendering to shared component.
@@ -470,8 +469,6 @@ interface ProjectDragItem {
   type: "PROJECT";
   projectPath: string;
 }
-type DragItem = ProjectDragItem | null;
-
 const ProjectDragLayer: React.FC = () => {
   const dragState = useDragLayer<{
     isDragging: boolean;
@@ -483,7 +480,7 @@ const ProjectDragLayer: React.FC = () => {
     currentOffset: monitor.getClientOffset(),
   }));
   const isDragging = dragState.isDragging;
-  const item = dragState.item as DragItem;
+  const item = dragState.item as ProjectDragItem | null;
   const currentOffset = dragState.currentOffset;
 
   React.useEffect(() => {
@@ -498,7 +495,6 @@ const ProjectDragLayer: React.FC = () => {
     };
   }, [isDragging]);
 
-  // Only render for PROJECT type drags (not section reorder)
   if (!isDragging || !currentOffset || !item?.projectPath || item.type !== "PROJECT") return null;
 
   const abbrevPath = PlatformPaths.abbreviate(item.projectPath);
@@ -2032,8 +2028,6 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             {(() => {
                               // Archived workspaces are excluded from workspaceMetadata so won't appear here
 
-                              const allWorkspaces = projectWorkspaces;
-
                               const draftsForProject = workspaceDraftsByProject[projectPath] ?? [];
                               const activeDraftIds = new Set(
                                 draftsForProject.map((draft) => draft.draftId)
@@ -2048,7 +2042,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               const promotedWorkspaceIds = new Set(
                                 Object.values(activeDraftPromotions).map((metadata) => metadata.id)
                               );
-                              const workspacesForNormalRendering = allWorkspaces.filter(
+                              const workspacesForNormalRendering = projectWorkspaces.filter(
                                 (workspace) => !promotedWorkspaceIds.has(workspace.id)
                               );
                               const sections: SectionConfig[] = getSubProjectsForParent(
@@ -2059,7 +2053,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 name: getProjectDisplayName(subProjectPath, subProjectConfig),
                                 color: subProjectConfig.color,
                               }));
-                              const depthByWorkspaceId = computeWorkspaceDepthMap(allWorkspaces);
+                              const depthByWorkspaceId =
+                                computeWorkspaceDepthMap(projectWorkspaces);
                               const visibleWorkspacesForNormalRendering = filterVisibleAgentRows(
                                 workspacesForNormalRendering,
                                 expandedCompletedParentIds
@@ -2087,22 +2082,21 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   (draft, index) => [draft.draftId, index + 1] as const
                                 )
                               );
-                              const sectionIds = new Set(sections.map((section) => section.id));
-                              const normalizeDraftSectionId = (
+                              const getDraftSectionId = (
                                 draft: (typeof sortedDrafts)[number]
-                              ): string | null => {
-                                return typeof draft.subProjectPath === "string" &&
-                                  sectionIds.has(draft.subProjectPath)
+                              ): string | null =>
+                                typeof draft.subProjectPath === "string" &&
+                                userProjects.get(draft.subProjectPath)?.parentProjectPath ===
+                                  projectPath
                                   ? draft.subProjectPath
                                   : null;
-                              };
 
                               // Drafts can reference a section that has since been deleted.
                               // Treat those as unsectioned so they remain accessible.
                               const unsectionedDrafts: typeof sortedDrafts = [];
                               const draftsBySectionId = new Map<string, typeof sortedDrafts>();
                               for (const draft of sortedDrafts) {
-                                const sectionId = normalizeDraftSectionId(draft);
+                                const sectionId = getDraftSectionId(draft);
                                 if (sectionId === null) {
                                   unsectionedDrafts.push(draft);
                                   continue;
@@ -2387,12 +2381,12 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               const renderDraft = (
                                 draft: (typeof sortedDrafts)[number]
                               ): React.ReactNode => {
-                                const sectionId = normalizeDraftSectionId(draft);
+                                const sectionId = getDraftSectionId(draft);
                                 const promotedMetadata = activeDraftPromotions[draft.draftId];
 
                                 if (promotedMetadata) {
                                   const liveMetadata =
-                                    allWorkspaces.find(
+                                    projectWorkspaces.find(
                                       (workspace) => workspace.id === promotedMetadata.id
                                     ) ?? promotedMetadata;
                                   return renderWorkspace(liveMetadata, sectionId ?? undefined);

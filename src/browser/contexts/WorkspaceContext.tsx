@@ -69,9 +69,9 @@ import { useRouter } from "@/browser/contexts/RouterContext";
 import { normalizeSelectedModel } from "@/common/utils/ai/models";
 import { normalizeAgentId } from "@/common/utils/agentIds";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
-import { resolveWorkspaceCreationScope } from "@/common/utils/subProjects";
 import type { APIClient } from "@/browser/contexts/API";
 import { getErrorMessage } from "@/common/utils/errors";
+import type { WorkspaceCreationScope } from "@/common/utils/subProjects";
 
 /**
  * One-time best-effort migration: if the backend doesn't have model preferences yet,
@@ -535,16 +535,11 @@ function shouldBlockStartupAutoNavigation(options: {
   );
 }
 
-interface WorkspaceRouteScope {
-  projectPath: string;
-  subProjectPath: string | null;
-}
-
 function getMostRecentVisibleWorkspaceScope(
   workspaceMetadata: Map<string, FrontendWorkspaceMetadata>,
   workspaceRecency: Record<string, number>,
   getProjectConfig: (projectPath: string) => { projectKind?: "user" | "system" } | undefined
-): WorkspaceRouteScope | null {
+): WorkspaceCreationScope | null {
   const recentWorkspace = [...workspaceMetadata.values()]
     .filter((workspace) => {
       const projectConfig = getProjectConfig(workspace.projectPath);
@@ -730,17 +725,10 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       }
 
       const resolvedProjectConfig = getProjectConfig(resolvedProjectPath);
-      const projectsForScope = new Map<string, NonNullable<typeof resolvedProjectConfig>>();
-      if (resolvedProjectConfig) {
-        projectsForScope.set(resolvedProjectPath, resolvedProjectConfig);
-      }
-      const creationScope = resolveWorkspaceCreationScope(
-        resolvedProjectPath,
-        projectsForScope,
-        null
-      );
-      const owningProjectPath = creationScope.projectPath;
-      const normalizedSubProjectPath = creationScope.subProjectPath;
+      const owningProjectPath = resolvedProjectConfig?.parentProjectPath ?? resolvedProjectPath;
+      const normalizedSubProjectPath = resolvedProjectConfig?.parentProjectPath
+        ? resolvedProjectPath
+        : null;
 
       // IMPORTANT: Deep links should always create a fresh draft, even if an existing draft
       // is empty. This keeps deep-link navigations predictable and avoids surprising reuse.
@@ -916,7 +904,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     isAnalyticsOpen ||
     pendingNewWorkspaceProject != null;
 
-  const resolveFallbackWorkspaceScope = useCallback((): WorkspaceRouteScope | null => {
+  const resolveFallbackWorkspaceScope = useCallback((): WorkspaceCreationScope | null => {
     const recentScope = getMostRecentVisibleWorkspaceScope(
       workspaceMetadata,
       workspaceStore.getWorkspaceRecency(),
