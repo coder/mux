@@ -112,7 +112,7 @@ const TAB_RENDERERS = {
     ),
   },
   instructions: {
-    Label: InstructionsTabLabel,
+    Label: ({ workspaceId }) => <InstructionsTabLabel workspaceId={workspaceId} />,
     renderPanel: (ctx) => <InstructionsTab workspaceId={ctx.workspaceId} />,
   },
   desktop: {

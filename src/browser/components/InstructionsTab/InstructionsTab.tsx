@@ -6,6 +6,7 @@ import { ErrorBoundary } from "@/browser/components/ErrorBoundary/ErrorBoundary"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/Tooltip/Tooltip";
 import { AdditionalSystemContextPanel } from "./AdditionalSystemContextScratchpad";
 import { isAbortError } from "@/browser/utils/isAbortError";
+import { setWorkspaceInstructionsFileCount } from "@/browser/utils/workspaceInstructionsStore";
 import { cn } from "@/common/lib/utils";
 import {
   INSTRUCTION_SCOPE,
@@ -54,6 +55,9 @@ function InstructionsTabImpl(props: InstructionsTabProps) {
         if (controller.signal.aborted) return;
         setData(result);
         setLoading(false);
+        // Publish to the shared store so the tab-strip label can render the
+        // count badge even when this panel is not the active tab.
+        setWorkspaceInstructionsFileCount(props.workspaceId, result.files.length);
       })
       .catch((err) => {
         if (isAbortError(err) || controller.signal.aborted) return;

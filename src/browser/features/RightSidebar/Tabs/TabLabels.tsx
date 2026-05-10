@@ -8,18 +8,16 @@
  */
 
 import React from "react";
-import {
-  BookOpen,
-  BugPlay,
-  ExternalLink,
-  Monitor,
-  Globe,
-  Terminal as TerminalIcon,
-  X,
-} from "lucide-react";
+import { BugPlay, ExternalLink, Monitor, Globe, Terminal as TerminalIcon, X } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/Tooltip/Tooltip";
 import { type ReviewStats } from "./registry";
+import { useAPI } from "@/browser/contexts/API";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
+import { useAdditionalSystemContextSnapshot } from "@/browser/utils/additionalSystemContextStore";
+import {
+  ensureWorkspaceInstructionsFetched,
+  useWorkspaceInstructionsFileCount,
+} from "@/browser/utils/workspaceInstructionsStore";
 import { cn } from "@/common/lib/utils";
 import { useWorkspaceUsage } from "@/browser/stores/WorkspaceStore";
 import { sumUsageHistory, type ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
@@ -117,17 +115,59 @@ export function OutputTabLabel() {
   return <>Output</>;
 }
 
+interface InstructionsTabLabelProps {
+  workspaceId: string;
+}
+
 /**
- * Instructions tab label with a book icon. The token-count badge is rendered by
- * the panel itself (and will lazily fill in once the IPC fetch resolves) — we
- * keep the label cheap so it doesn't trigger an IPC call just to size the strip.
+ * Instructions tab label with a count badge consistent with Stats/Review.
+ *
+ * Subscribes to the shared instructions store so the count stays in sync with
+ * the panel's own fetches, and triggers a one-shot IPC fetch on first mount
+ * when the count is unknown (e.g. another tab is active in the same tabset).
+ *
+ * The badge picks up the accent color when the per-workspace scratchpad has
+ * any user content — a quick visual hint that this workspace is sending
+ * additional system context to the agent.
  */
-export const InstructionsTabLabel: React.FC = () => (
-  <span className="inline-flex items-center gap-1">
-    <BookOpen className="h-3 w-3 shrink-0" />
-    Instructions
-  </span>
-);
+export const InstructionsTabLabel: React.FC<InstructionsTabLabelProps> = ({ workspaceId }) => {
+  const { api } = useAPI();
+  const fileCount = useWorkspaceInstructionsFileCount(workspaceId);
+  const scratchpad = useAdditionalSystemContextSnapshot(workspaceId);
+  const hasScratchpad = scratchpad.trim().length > 0;
+
+  React.useEffect(() => {
+    if (!api) return;
+    ensureWorkspaceInstructionsFetched(api, workspaceId);
+  }, [api, workspaceId]);
+
+  // Once a count is known, render it; until then keep the label compact.
+  // Always render the badge when the scratchpad is active so the accent color
+  // stays visible even if the count is still loading.
+  const showBadge = hasScratchpad || (fileCount != null && fileCount > 0);
+  const badgeText = fileCount ?? 0;
+
+  return (
+    <>
+      Instructions
+      {showBadge && (
+        <span
+          className={cn(
+            "text-[10px] tabular-nums",
+            hasScratchpad ? "text-[var(--color-accent)]" : "text-muted"
+          )}
+          aria-label={
+            hasScratchpad
+              ? `${badgeText} instruction files (scratchpad active)`
+              : `${badgeText} instruction files`
+          }
+        >
+          {badgeText}
+        </span>
+      )}
+    </>
+  );
+};
 
 interface TerminalTabLabelProps {
   /** Dynamic title from OSC sequences, if available */
