@@ -172,6 +172,8 @@ export interface MockORPCClientOptions {
       exitCode?: number;
     }>
   >;
+  /** Additional system context scratchpads per workspace (Instructions tab / chat decoration). */
+  additionalSystemContexts?: Map<string, string>;
   /** Session usage data per workspace (for Costs tab) */
   workspaceStatsSnapshots?: Map<string, WorkspaceStatsSnapshot>;
   /** Global secrets (Settings → Secrets → Global) */
@@ -335,6 +337,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       string,
       { messages: MuxMessage[]; model?: string; thinkingLevel?: ThinkingLevel }
     >(),
+    additionalSystemContexts = new Map<string, string>(),
     workspaceStatsSnapshots = new Map<string, WorkspaceStatsSnapshot>(),
     globalSecrets = [],
     projectSecrets = new Map<string, Secret[]>(),
@@ -1562,6 +1565,27 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           result[id] = sessionUsage.get(id);
         }
         return Promise.resolve(result);
+      },
+      getInstructions: (input: { workspaceId: string; model?: string | null }) =>
+        Promise.resolve({
+          workspaceId: input.workspaceId,
+          model: input.model ?? null,
+          additionalSystemContext: {
+            content: additionalSystemContexts.get(input.workspaceId) ?? "",
+          },
+          sources: { global: null, context: [] },
+          files: [],
+          totalTokens: null,
+        }),
+      getAdditionalSystemContext: (input: { workspaceId: string }) =>
+        Promise.resolve({ content: additionalSystemContexts.get(input.workspaceId) ?? "" }),
+      setAdditionalSystemContext: (input: { workspaceId: string; content: string }) => {
+        if (input.content.length === 0) {
+          additionalSystemContexts.delete(input.workspaceId);
+        } else {
+          additionalSystemContexts.set(input.workspaceId, input.content);
+        }
+        return Promise.resolve({ content: input.content });
       },
       mcp: {
         get: (input: { workspaceId: string }) =>
