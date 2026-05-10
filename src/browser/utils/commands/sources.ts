@@ -575,7 +575,10 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         // the layout migration, so exposing hide commands for them would be a
         // no-op and obscure the fact that they are meant to be visible by default.
         ...getOrderedBaseTabIds()
-          .filter((tabId) => getTabConfig(tabId).inDefaultLayout !== true)
+          .filter((tabId) => {
+            const config = getTabConfig(tabId);
+            return config.inDefaultLayout !== true && config.featureFlag == null;
+          })
           .map((tabId) => buildToggleTabCommand(wsId, tabId, section.navigation)),
         {
           id: CommandIds.navOpenLogFile(),
@@ -633,14 +636,16 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
                 // Static tabs come straight from the lightweight config (in default order).
                 // Terminal is appended manually because it lives outside the static registry.
                 getOptions: () => [
-                  ...getOrderedBaseTabIds().map((tabId) => {
-                    const config = getTabConfig(tabId);
-                    return {
-                      id: tabId as TabType,
-                      label: config.name,
-                      keywords: config.paletteKeywords ?? [tabId],
-                    };
-                  }),
+                  ...getOrderedBaseTabIds()
+                    .filter((tabId) => getTabConfig(tabId).featureFlag == null)
+                    .map((tabId) => {
+                      const config = getTabConfig(tabId);
+                      return {
+                        id: tabId as TabType,
+                        label: config.name,
+                        keywords: config.paletteKeywords ?? [tabId],
+                      };
+                    }),
                   { id: "terminal" as TabType, label: "Terminal", keywords: ["terminal"] },
                 ],
               },

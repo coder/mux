@@ -2,36 +2,15 @@ import { useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 
 import { useAPI } from "@/browser/contexts/API";
+import {
+  updateAdditionalSystemContextSnapshot,
+  useAdditionalSystemContextSnapshot,
+} from "@/browser/utils/additionalSystemContextStore";
 import { cn } from "@/common/lib/utils";
 import { getErrorMessage } from "@/common/utils/errors";
 
-const ADDITIONAL_SYSTEM_CONTEXT_EVENT = "mux:additional-system-context-changed";
-
-interface AdditionalSystemContextEventDetail {
-  workspaceId: string;
-  content: string;
-}
-
-function emitAdditionalSystemContextChanged(workspaceId: string, content: string): void {
-  if (typeof window === "undefined") return;
-  window.dispatchEvent(
-    new CustomEvent<AdditionalSystemContextEventDetail>(ADDITIONAL_SYSTEM_CONTEXT_EVENT, {
-      detail: { workspaceId, content },
-    })
-  );
-}
-
 function getFirstLinePreview(content: string): string {
   return content.split(/\r?\n/, 1)[0]?.trim() || "(blank first line)";
-}
-
-function isAdditionalSystemContextEvent(
-  event: Event
-): event is CustomEvent<AdditionalSystemContextEventDetail> {
-  const detail = (event as CustomEvent<AdditionalSystemContextEventDetail>).detail;
-  return (
-    detail != null && typeof detail.workspaceId === "string" && typeof detail.content === "string"
-  );
 }
 
 interface ScratchpadState {
@@ -44,7 +23,7 @@ interface ScratchpadState {
 
 export function useAdditionalSystemContextScratchpad(workspaceId: string): ScratchpadState {
   const { api } = useAPI();
-  const [content, setContentState] = useState("");
+  const content = useAdditionalSystemContextSnapshot(workspaceId);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -64,7 +43,6 @@ export function useAdditionalSystemContextScratchpad(workspaceId: string): Scrat
     dirtyRef.current = false;
     pendingSaveRef.current = null;
     inFlightSaveRef.current = false;
-    setContentState("");
     setLoading(true);
     setSaving(false);
     setError(null);
@@ -77,8 +55,7 @@ export function useAdditionalSystemContextScratchpad(workspaceId: string): Scrat
       .then((result) => {
         if (cancelled || !mountedRef.current) return;
         if (!dirtyRef.current) {
-          setContentState(result.content);
-          emitAdditionalSystemContextChanged(workspaceId, result.content);
+          updateAdditionalSystemContextSnapshot(workspaceId, result.content);
         }
         setLoading(false);
       })
@@ -92,16 +69,6 @@ export function useAdditionalSystemContextScratchpad(workspaceId: string): Scrat
       cancelled = true;
     };
   }, [api, workspaceId]);
-
-  useEffect(() => {
-    const handleChanged = (event: Event) => {
-      if (!isAdditionalSystemContextEvent(event)) return;
-      if (event.detail.workspaceId !== workspaceId) return;
-      setContentState(event.detail.content);
-    };
-    window.addEventListener(ADDITIONAL_SYSTEM_CONTEXT_EVENT, handleChanged);
-    return () => window.removeEventListener(ADDITIONAL_SYSTEM_CONTEXT_EVENT, handleChanged);
-  }, [workspaceId]);
 
   const flushSave = () => {
     if (!api || inFlightSaveRef.current) return;
@@ -117,7 +84,7 @@ export function useAdditionalSystemContextScratchpad(workspaceId: string): Scrat
       .setAdditionalSystemContext({ workspaceId, content: next })
       .then((result) => {
         if (!mountedRef.current) return;
-        emitAdditionalSystemContextChanged(workspaceId, result.content);
+        updateAdditionalSystemContextSnapshot(workspaceId, result.content);
       })
       .catch((err) => {
         if (!mountedRef.current) return;
@@ -135,8 +102,7 @@ export function useAdditionalSystemContextScratchpad(workspaceId: string): Scrat
 
   const setContent = (next: string) => {
     dirtyRef.current = true;
-    setContentState(next);
-    emitAdditionalSystemContextChanged(workspaceId, next);
+    updateAdditionalSystemContextSnapshot(workspaceId, next);
     pendingSaveRef.current = next;
     flushSave();
   };

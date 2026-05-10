@@ -52,6 +52,9 @@ describe("additionalSystemContext", () => {
 
   test("mergeAdditionalSystemInstructions appends scratchpad before request-specific instructions", () => {
     expect(mergeAdditionalSystemInstructions("scratch", "request")).toBe("scratch\n\nrequest");
+    expect(mergeAdditionalSystemInstructions("scratch", "scratch\n\nrequest")).toBe(
+      "scratch\n\nrequest"
+    );
     expect(mergeAdditionalSystemInstructions("scratch", undefined)).toBe("scratch");
     expect(mergeAdditionalSystemInstructions("", "request")).toBe("request");
     expect(mergeAdditionalSystemInstructions("", undefined)).toBeUndefined();

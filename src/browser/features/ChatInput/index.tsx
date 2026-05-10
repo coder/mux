@@ -30,6 +30,7 @@ import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { useAPI } from "@/browser/contexts/API";
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
 import { normalizeSelectedModel } from "@/common/utils/ai/models";
+import { useAdditionalSystemContextSnapshot } from "@/browser/utils/additionalSystemContextStore";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import { setWorkspaceModelWithOrigin } from "@/browser/utils/modelChange";
 import {
@@ -122,6 +123,7 @@ import {
 import { KNOWN_MODELS, MODEL_ABBREVIATION_EXAMPLES } from "@/common/constants/knownModels";
 import { useTelemetry } from "@/browser/hooks/useTelemetry";
 import { trackCommandUsed } from "@/common/telemetry";
+import { mergeAdditionalSystemInstructions } from "@/common/utils/additionalSystemInstructions";
 import type { FilePart, SendMessageOptions } from "@/common/orpc/types";
 
 import { CreationCenterContent } from "./CreationCenterContent";
@@ -612,6 +614,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   // For creation variant, use project-scoped key; for workspace, use workspace ID
   const sendMessageOptions = useSendMessageOptions(
     variant === "workspace" ? props.workspaceId : getProjectScopeId(creationProjectPath)
+  );
+  const additionalSystemContext = useAdditionalSystemContextSnapshot(
+    variant === "workspace" ? props.workspaceId : ""
   );
   // Extract models for convenience (don't create separate state - use hook as single source of truth)
   // - preferredModel: selected model used for backend routing, preserving explicit gateway choices
@@ -2232,9 +2237,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         );
         // When editing /compact, compactionOptions already includes the base sendMessageOptions.
         // Avoid duplicating additionalSystemInstructions.
-        const additionalSystemInstructions =
+        const additionalSystemInstructions = mergeAdditionalSystemInstructions(
+          additionalSystemContext,
           compactionOptions.additionalSystemInstructions ??
-          sendMessageOptions.additionalSystemInstructions;
+            sendMessageOptions.additionalSystemInstructions
+        );
 
         muxMetadata = reviewMetadata;
 

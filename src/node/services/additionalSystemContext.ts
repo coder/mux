@@ -1,6 +1,7 @@
 import * as fs from "fs/promises";
 import * as path from "path";
 
+import { mergeAdditionalSystemInstructions } from "@/common/utils/additionalSystemInstructions";
 import { ensurePrivateDir } from "@/node/utils/fs";
 
 interface SessionDirProvider {
@@ -52,12 +53,4 @@ export async function writeAdditionalSystemContext(
   await fs.writeFile(filePath, content, "utf-8");
 }
 
-export function mergeAdditionalSystemInstructions(
-  scratchpadContent: string,
-  requestAdditionalSystemInstructions?: string
-): string | undefined {
-  const parts = [scratchpadContent, requestAdditionalSystemInstructions]
-    .map((part) => part?.trim() ?? "")
-    .filter((part) => part.length > 0);
-  return parts.length > 0 ? parts.join("\n\n") : undefined;
-}
+export { mergeAdditionalSystemInstructions };
