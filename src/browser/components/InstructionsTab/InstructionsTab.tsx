@@ -178,10 +178,15 @@ function FileRow({ file, projectName }: FileRowProps) {
 
   return (
     <li className="border-border/50 border-b last:border-b-0">
+      {/* Header is the click target. The preview/expanded body lives in a sibling
+          container at the same indentation so toggling never shifts the text
+          horizontally — only the body's height changes. Putting the body
+          outside the <button> also lets users select/scroll long files
+          without accidentally collapsing the row. */}
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="hover:bg-accent/30 flex w-full items-start gap-2 px-3 py-2 text-left transition-colors"
+        className="hover:bg-accent/30 flex w-full items-start gap-2 px-3 pt-2 text-left transition-colors"
         aria-expanded={expanded}
       >
         {hasMore ? (
@@ -210,18 +215,32 @@ function FileRow({ file, projectName }: FileRowProps) {
           <div className="text-muted mt-0.5 truncate font-mono text-[10px]" title={file.path}>
             {file.path}
           </div>
-          {!expanded && preview && (
-            <pre className="text-muted mt-1 line-clamp-3 overflow-hidden text-[11px] whitespace-pre-wrap">
-              {preview}
-            </pre>
-          )}
         </div>
       </button>
-      {expanded && (
-        <pre className="border-border/50 bg-muted/10 max-h-[60vh] overflow-auto border-t px-3 py-2 font-mono text-[11px] whitespace-pre-wrap">
-          {file.content}
-        </pre>
-      )}
+      {/* The body's left padding is calibrated so the text inside its <pre>
+          starts exactly where the column inside the button starts — at
+          `px-3 (12px) + icon h-3.5 (14px) + gap-2 (8px) = 34px` from the row
+          edge. We give the body wrapper `pl-[26px]` and the inner <pre>s a
+          matching `px-2 py-1` so:
+            - text x-position = 26px + 8px = 34px (matches the column)
+            - text y-position is identical between preview and expanded
+              because both <pre>s share the same `mt-1 px-2 py-1`.
+          The preview keeps an invisible border so its box height matches the
+          expanded box exactly, eliminating any vertical jump. Putting the
+          body outside the <button> also lets users select/scroll long files
+          without accidentally collapsing the row. */}
+      <div className="pr-3 pb-2 pl-[26px]">
+        {!expanded && preview && (
+          <pre className="text-muted mt-1 line-clamp-3 overflow-hidden rounded border border-transparent px-2 py-1 text-[11px] whitespace-pre-wrap">
+            {preview}
+          </pre>
+        )}
+        {expanded && (
+          <pre className="bg-muted/10 border-border/50 mt-1 max-h-[60vh] overflow-auto rounded border px-2 py-1 font-mono text-[11px] whitespace-pre-wrap">
+            {file.content}
+          </pre>
+        )}
+      </div>
     </li>
   );
 }

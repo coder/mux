@@ -21,6 +21,7 @@ import {
   stripScopedInstructionSections,
 } from "@/node/utils/main/markdown";
 import type { Runtime } from "@/node/runtime/Runtime";
+import { resolveWorkspaceRootPath } from "@/node/runtime/runtimeHelpers";
 import { getMuxHome } from "@/common/constants/paths";
 import { getAvailableTools } from "@/common/utils/tools/toolDefinitions";
 import { getToolAvailabilityOptions } from "@/common/utils/tools/toolAvailability";
@@ -285,7 +286,11 @@ export async function readToolInstructions(
   modelString: string,
   agentInstructions?: string
 ): Promise<Record<string, string>> {
-  const sources = await loadInstructionSources(metadata, runtime, workspacePath);
+  // Tool instructions read the same `AGENTS.md` files as the system prompt;
+  // anchor at the workspace root so sub-project workspaces still see parent
+  // project tool sections (see `loadInstructionSources` doc).
+  const workspaceRootPath = subProjectAwareWorkspaceRoot(metadata, runtime, workspacePath);
+  const sources = await loadInstructionSources(metadata, runtime, workspaceRootPath);
   const globalInstructions = sources.global?.combinedContent ?? null;
   const contextInstructions = joinInstructionSets(sources.context) || null;
 
@@ -298,15 +303,32 @@ export async function readToolInstructions(
   });
 }
 
-async function readMultiProjectContextInstructions(
+/**
+ * For sub-project workspaces, callers typically pass the execution path
+ * (`<root>/<subProjectRelativePath>`) as `workspacePath`. Instruction loading
+ * needs the workspace root instead — without it, the parent project's
+ * AGENTS.md is missed entirely. For non-sub-project workspaces the execution
+ * path *is* the root, so we keep the caller's value to preserve test fixtures
+ * that build a workspace path independent of `runtime.getWorkspacePath()`.
+ */
+function subProjectAwareWorkspaceRoot(
   metadata: WorkspaceMetadata,
   runtime: Runtime,
   workspacePath: string
+): string {
+  if (!metadata.subProjectPath?.trim()) return workspacePath;
+  return resolveWorkspaceRootPath(metadata, runtime);
+}
+
+async function readMultiProjectContextInstructions(
+  metadata: WorkspaceMetadata,
+  runtime: Runtime,
+  workspaceRootPath: string
 ): Promise<InstructionSet[]> {
   const sets: InstructionSet[] = [];
   const workspaceInstructions = await readInstructionSetFromRuntime(
     runtime,
-    workspacePath,
+    workspaceRootPath,
     INSTRUCTION_SCOPE.WORKSPACE
   );
   if (workspaceInstructions) {
@@ -325,7 +347,7 @@ async function readMultiProjectContextInstructions(
     );
     seenProjectNames.add(project.projectName);
 
-    const workspaceProjectPath = path.join(workspacePath, project.projectName);
+    const workspaceProjectPath = path.join(workspaceRootPath, project.projectName);
     const projectInstructions =
       (await readInstructionSetFromRuntime(
         runtime,
@@ -349,7 +371,7 @@ async function readMultiProjectContextInstructions(
 async function readSingleProjectContextInstructions(
   metadata: WorkspaceMetadata,
   runtime: Runtime,
-  workspacePath: string
+  workspaceRootPath: string
 ): Promise<InstructionSet[]> {
   // Read parent + sub-project AGENTS.md from the workspace's *own* checkout
   // (via the runtime). For worktree/SSH/Docker flows the parent project's host
@@ -358,6 +380,10 @@ async function readSingleProjectContextInstructions(
   // edits from overriding parent guidance. The workspace root is by
   // construction the parent project's checkout, and any registered
   // sub-project's relative path is stable across checkouts of the same repo.
+  //
+  // `workspaceRootPath` is the parent project's checkout root — *without* the
+  // sub-project segment appended (see `resolveWorkspaceRootPath`). The
+  // sub-project's AGENTS.md is read at `<root>/<subProjectRelativePath>`.
   const subProjectRelativePath = metadata.subProjectPath
     ? deriveSubProjectRelativePath(metadata.projectPath, metadata.subProjectPath)
     : null;
@@ -366,11 +392,11 @@ async function readSingleProjectContextInstructions(
   // but SSH/Docker/devcontainer runtimes read files via POSIX paths. Normalize to
   // forward slashes and let the runtime joiner produce a runtime-correct path.
   const subProjectInstructionsDir = subProjectRelativePath
-    ? runtime.normalizePath(subProjectRelativePath.replace(/\\/g, "/"), workspacePath)
+    ? runtime.normalizePath(subProjectRelativePath.replace(/\\/g, "/"), workspaceRootPath)
     : null;
 
   const [parentInstructions, subProjectInstructions] = await Promise.all([
-    readInstructionSetFromRuntime(runtime, workspacePath, INSTRUCTION_SCOPE.WORKSPACE),
+    readInstructionSetFromRuntime(runtime, workspaceRootPath, INSTRUCTION_SCOPE.WORKSPACE),
     subProjectInstructionsDir
       ? readInstructionSetFromRuntime(
           runtime,
@@ -418,12 +444,17 @@ function deriveSubProjectRelativePath(projectPath: string, subProjectPath: strin
 export async function loadInstructionSources(
   metadata: WorkspaceMetadata,
   runtime: Runtime,
-  workspacePath: string
+  workspaceRootPath: string
 ): Promise<InstructionSources> {
+  // `workspaceRootPath` is the parent project's checkout root — *without* the
+  // optional sub-project segment. Callers that hand us the execution path
+  // (root + subProject) for a sub-project workspace would silently lose the
+  // parent project's AGENTS.md, so we require root explicitly. See
+  // `resolveWorkspaceRootPath` in `@/node/runtime/runtimeHelpers`.
   const global = await readInstructionSet(getSystemDirectory(), INSTRUCTION_SCOPE.GLOBAL);
   const context = isMultiProject(metadata)
-    ? await readMultiProjectContextInstructions(metadata, runtime, workspacePath)
-    : await readSingleProjectContextInstructions(metadata, runtime, workspacePath);
+    ? await readMultiProjectContextInstructions(metadata, runtime, workspaceRootPath)
+    : await readSingleProjectContextInstructions(metadata, runtime, workspaceRootPath);
 
   return { global, context };
 }
@@ -483,7 +514,11 @@ export async function buildSystemMessage(
   // best practices. See tools.ts ToolConfiguration.availableSkills/availableSubagents.
 
   // Read instruction sets
-  const instructionSources = await loadInstructionSources(metadata, runtime, workspacePath);
+  // Sub-project workspaces pass the execution path (root + subProject); fall
+  // back to the resolved root so the parent project's AGENTS.md is still read.
+  // For non-sub-project workspaces this is a no-op (root === execution path).
+  const workspaceRootPath = subProjectAwareWorkspaceRoot(metadata, runtime, workspacePath);
+  const instructionSources = await loadInstructionSources(metadata, runtime, workspaceRootPath);
   const globalInstructions = instructionSources.global?.combinedContent ?? null;
   // Concatenated context content for downstream string-based helpers
   // (`stripScopedInstructionSections`, `extractModelSection`, …). The structured

@@ -5,7 +5,10 @@ import {
   type InstructionSources,
   type WorkspaceInstructions,
 } from "@/common/types/instructions";
-import { createRuntimeContextForWorkspace } from "@/node/runtime/runtimeHelpers";
+import {
+  createRuntimeContextForWorkspace,
+  resolveWorkspaceRootPath,
+} from "@/node/runtime/runtimeHelpers";
 import type { AIService } from "@/node/services/aiService";
 import type { TokenizerService } from "@/node/services/tokenizerService";
 import { loadInstructionSources } from "@/node/services/systemMessage";
@@ -43,8 +46,13 @@ export class InstructionsService {
     }
     const metadata = metadataResult.data;
 
-    const { runtime, workspacePath } = createRuntimeContextForWorkspace(metadata);
-    const sources = await loadInstructionSources(metadata, runtime, workspacePath);
+    // Use the workspace *root* (without sub-project segment) so the parent
+    // project's AGENTS.md is read for sub-project workspaces; otherwise the
+    // panel would only show the sub-project's own AGENTS.md, mirroring the
+    // historical bug in the prompt builder.
+    const { runtime } = createRuntimeContextForWorkspace(metadata);
+    const workspaceRootPath = resolveWorkspaceRootPath(metadata, runtime);
+    const sources = await loadInstructionSources(metadata, runtime, workspaceRootPath);
 
     const trimmedOverride = modelOverride?.trim();
     const model =

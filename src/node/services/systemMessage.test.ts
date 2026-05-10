@@ -215,6 +215,51 @@ Use clear examples.
     expect(customInstructions).toContain("Use clear examples.");
   });
 
+  test("includes parent project AGENTS.md alongside sub-project AGENTS.md when subProjectPath is set", async () => {
+    // Regression: the prompt builder previously read `workspacePath` (the
+    // execution path = workspace_root + subProjectRelativePath) as if it were
+    // the workspace root, so for sub-project workspaces it joined the
+    // sub-project segment a second time and missed the parent AGENTS.md
+    // entirely. We now derive the workspace root explicitly from runtime
+    // metadata and read both files at the right paths.
+    const subProjectDir = path.join(workspaceDir, "packages", "api");
+    await fs.mkdir(subProjectDir, { recursive: true });
+    await fs.writeFile(
+      path.join(workspaceDir, "AGENTS.md"),
+      "# Parent Project\nParent project guidance.\n"
+    );
+    await fs.writeFile(
+      path.join(subProjectDir, "AGENTS.md"),
+      "# Sub-project Package API\nSub-project guidance.\n"
+    );
+
+    // The runtime must report `workspaceDir` as the workspace path so
+    // `resolveWorkspaceRootPath` returns it (LocalRuntime returns its
+    // constructor arg from getWorkspacePath).
+    const subProjectRuntime = new LocalRuntime(workspaceDir);
+
+    const metadata: WorkspaceMetadata = {
+      id: "test-workspace",
+      name: "test-workspace",
+      projectName: "test-project",
+      projectPath: projectDir,
+      subProjectPath: path.join(projectDir, "packages", "api"),
+      runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+    };
+
+    const systemMessage = await buildSystemMessage(
+      metadata,
+      subProjectRuntime,
+      // Callers pass the *execution* path (root + sub-project) here; the
+      // function should still resolve the parent AGENTS.md correctly.
+      subProjectDir
+    );
+
+    const customInstructions = extractTagContent(systemMessage, "custom-instructions") ?? "";
+    expect(customInstructions).toContain("Parent project guidance.");
+    expect(customInstructions).toContain("Sub-project guidance.");
+  });
+
   test("includes generic instructions from every project repo in a multi-project workspace", async () => {
     const { metadata, primaryWorkspaceRepoDir, secondaryWorkspaceRepoDir } =
       await createMultiProjectFixture();
