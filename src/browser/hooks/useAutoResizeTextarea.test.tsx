@@ -8,6 +8,7 @@ function createFakeTextarea(initialScrollHeight: number): {
   ref: RefObject<HTMLTextAreaElement>;
   assignments: string[];
   setScrollHeight: (value: number) => void;
+  setInlineHeight: (value: string) => void;
 } {
   let height = "";
   let scrollHeight = initialScrollHeight;
@@ -34,6 +35,9 @@ function createFakeTextarea(initialScrollHeight: number): {
     assignments,
     setScrollHeight: (value) => {
       scrollHeight = value;
+    },
+    setInlineHeight: (value) => {
+      height = value;
     },
   };
 }
@@ -88,6 +92,33 @@ describe("useAutoResizeTextarea", () => {
     rerender({ value: "line one" });
 
     expect(textarea.assignments).toEqual(["auto", "40px"]);
+  });
+
+  it("restores the capped height when a deletion keeps the same measured height", () => {
+    const textarea = createFakeTextarea(800);
+    const { rerender } = renderHook(({ value }) => useAutoResizeTextarea(textarea.ref, value, 50), {
+      initialProps: { value: "line one\nline two\nline three" },
+    });
+    expect(textarea.assignments).toEqual(["auto", "500px"]);
+    textarea.assignments.length = 0;
+
+    rerender({ value: "line one\nline two" });
+
+    expect(textarea.assignments).toEqual(["auto", "500px"]);
+  });
+
+  it("repairs the inline height after another caller clears it", () => {
+    const textarea = createFakeTextarea(800);
+    const { rerender } = renderHook(({ value }) => useAutoResizeTextarea(textarea.ref, value, 50), {
+      initialProps: { value: "line one\nline two" },
+    });
+    expect(textarea.assignments).toEqual(["auto", "500px"]);
+    textarea.assignments.length = 0;
+
+    textarea.setInlineHeight("");
+    rerender({ value: "line one\nline two!" });
+
+    expect(textarea.assignments).toEqual(["500px"]);
   });
 
   it("shrinks when a longer replacement does not preserve the previous text", () => {

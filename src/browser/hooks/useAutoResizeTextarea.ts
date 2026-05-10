@@ -69,7 +69,14 @@ export function useAutoResizeTextarea(
       nextHeight = Math.min(el.scrollHeight, max);
     }
 
-    if (appliedHeightRef.current !== nextHeight) {
+    // The cached height can match even after this effect temporarily set `auto`, or
+    // after callers cleared the inline style. Verify the DOM still has the px height
+    // before skipping the write; otherwise large drafts collapse to the CSS min-height.
+    const currentInlineHeight = Number.parseFloat(el.style.height);
+    const inlineHeightMatches =
+      Number.isFinite(currentInlineHeight) && Math.abs(currentInlineHeight - nextHeight) < 0.5;
+
+    if (appliedHeightRef.current !== nextHeight || !inlineHeightMatches) {
       el.style.height = `${nextHeight}px`;
       appliedHeightRef.current = nextHeight;
     }
