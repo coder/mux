@@ -602,18 +602,22 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
                 label: "Tool",
                 placeholder: "Select a tool…",
                 getOptions: () =>
-                  (["costs", "review", "output", "debug", "terminal"] as TabType[]).map((tab) => ({
+                  (
+                    ["costs", "review", "instructions", "output", "debug", "terminal"] as TabType[]
+                  ).map((tab) => ({
                     id: tab,
                     label:
                       tab === "costs"
                         ? "Costs"
                         : tab === "review"
                           ? "Review"
-                          : tab === "output"
-                            ? "Output"
-                            : tab === "debug"
-                              ? "Debug"
-                              : "Terminal",
+                          : tab === "instructions"
+                            ? "Instructions"
+                            : tab === "output"
+                              ? "Output"
+                              : tab === "debug"
+                                ? "Debug"
+                                : "Terminal",
                     keywords: [tab],
                   })),
               },

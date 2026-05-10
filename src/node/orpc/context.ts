@@ -26,6 +26,7 @@ import type { TelemetryService } from "@/node/services/telemetryService";
 import type { SigningService } from "@/node/services/signingService";
 import type { SessionTimingService } from "@/node/services/sessionTimingService";
 import type { SessionUsageService } from "@/node/services/sessionUsageService";
+import type { InstructionsService } from "@/node/services/instructionsService";
 import type { TaskService } from "@/node/services/taskService";
 import type { BrowserBridgeServer } from "@/node/services/browser/BrowserBridgeServer";
 import type { AgentBrowserSessionDiscoveryService } from "@/node/services/browser/AgentBrowserSessionDiscoveryService";
@@ -70,6 +71,7 @@ export interface ORPCContext {
   telemetryService: TelemetryService;
   experimentsService: ExperimentsService;
   sessionUsageService: SessionUsageService;
+  instructionsService: InstructionsService;
   devToolsService: DevToolsService;
   browserSessionDiscoveryService: AgentBrowserSessionDiscoveryService;
   browserBridgeTokenManager: BrowserBridgeTokenManager;

@@ -17,6 +17,7 @@ import { EditorService } from "@/node/services/editorService";
 import { WindowService } from "@/node/services/windowService";
 import { UpdateService } from "@/node/services/updateService";
 import { TokenizerService } from "@/node/services/tokenizerService";
+import { InstructionsService } from "@/node/services/instructionsService";
 import { ServerService } from "@/node/services/serverService";
 import { MenuEventService } from "@/node/services/menuEventService";
 import { VoiceService } from "@/node/services/voiceService";
@@ -102,6 +103,7 @@ export class ServiceContainer {
   public readonly windowService: WindowService;
   public readonly updateService: UpdateService;
   public readonly tokenizerService: TokenizerService;
+  public readonly instructionsService: InstructionsService;
   public readonly serverService: ServerService;
   public readonly menuEventService: MenuEventService;
   public readonly voiceService: VoiceService;
@@ -277,6 +279,7 @@ export class ServiceContainer {
     this.editorService = new EditorService(config);
     this.updateService = new UpdateService(this.config);
     this.tokenizerService = new TokenizerService(this.sessionUsageService);
+    this.instructionsService = new InstructionsService(this.aiService, this.tokenizerService);
     // AgentStatusService depends on tokenizer + window focus state; instantiate
     // after both are constructed so the small-model status loop can run with
     // accurate token budgeting and focus-aware cadence.
@@ -485,6 +488,7 @@ export class ServiceContainer {
       windowService: this.windowService,
       updateService: this.updateService,
       tokenizerService: this.tokenizerService,
+      instructionsService: this.instructionsService,
       serverService: this.serverService,
       menuEventService: this.menuEventService,
       voiceService: this.voiceService,

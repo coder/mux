@@ -19,4 +19,10 @@ export {
   type ReviewStats,
 } from "./registry";
 
-export { StatsTabLabel, OutputTabLabel, ReviewTabLabel, TerminalTabLabel } from "./TabLabels";
+export {
+  StatsTabLabel,
+  OutputTabLabel,
+  ReviewTabLabel,
+  TerminalTabLabel,
+  InstructionsTabLabel,
+} from "./TabLabels";

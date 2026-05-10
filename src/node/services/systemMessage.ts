@@ -6,6 +6,12 @@ import type { RuntimeMode } from "@/common/types/runtime";
 import { RUNTIME_MODE } from "@/common/types/runtime";
 import { getProjects, isMultiProject } from "@/common/utils/multiProject";
 import {
+  INSTRUCTION_SCOPE,
+  joinInstructionSets,
+  type InstructionSet,
+  type InstructionSources,
+} from "@/common/types/instructions";
+import {
   readInstructionSet,
   readInstructionSetFromRuntime,
 } from "@/node/utils/main/instructionFiles";
@@ -244,7 +250,7 @@ export function extractToolInstructions(
   const availableTools = getAvailableTools(modelString, options);
   const toolInstructions: Record<string, string> = {};
   const sources = {
-    agent: options?.agentInstructions,
+    agent: options?.agentInstructions ?? null,
     context: contextInstructions,
     global: globalInstructions,
   };
@@ -263,7 +269,7 @@ export function extractToolInstructions(
 
 /**
  * Read instruction sources and extract tool-specific instructions.
- * Convenience wrapper that combines readInstructionSources and extractToolInstructions.
+ * Convenience wrapper that combines loadInstructionSources and extractToolInstructions.
  *
  * @param metadata - Workspace metadata (contains projectPath)
  * @param runtime - Runtime for reading workspace files (supports SSH)
@@ -279,11 +285,9 @@ export async function readToolInstructions(
   modelString: string,
   agentInstructions?: string
 ): Promise<Record<string, string>> {
-  const [globalInstructions, contextInstructions] = await readInstructionSources(
-    metadata,
-    runtime,
-    workspacePath
-  );
+  const sources = await loadInstructionSources(metadata, runtime, workspacePath);
+  const globalInstructions = sources.global?.combinedContent ?? null;
+  const contextInstructions = joinInstructionSets(sources.context) || null;
 
   return extractToolInstructions(globalInstructions, contextInstructions, modelString, {
     ...getToolAvailabilityOptions({
@@ -298,11 +302,15 @@ async function readMultiProjectContextInstructions(
   metadata: WorkspaceMetadata,
   runtime: Runtime,
   workspacePath: string
-): Promise<string | null> {
-  const contextSegments: string[] = [];
-  const workspaceInstructions = await readInstructionSetFromRuntime(runtime, workspacePath);
+): Promise<InstructionSet[]> {
+  const sets: InstructionSet[] = [];
+  const workspaceInstructions = await readInstructionSetFromRuntime(
+    runtime,
+    workspacePath,
+    INSTRUCTION_SCOPE.WORKSPACE
+  );
   if (workspaceInstructions) {
-    contextSegments.push(workspaceInstructions);
+    sets.push(workspaceInstructions);
   }
 
   const seenProjectNames = new Set<string>();
@@ -319,21 +327,30 @@ async function readMultiProjectContextInstructions(
 
     const workspaceProjectPath = path.join(workspacePath, project.projectName);
     const projectInstructions =
-      (await readInstructionSetFromRuntime(runtime, workspaceProjectPath)) ??
-      (await readInstructionSet(project.projectPath));
+      (await readInstructionSetFromRuntime(
+        runtime,
+        workspaceProjectPath,
+        INSTRUCTION_SCOPE.PROJECT,
+        project.projectName
+      )) ??
+      (await readInstructionSet(
+        project.projectPath,
+        INSTRUCTION_SCOPE.PROJECT,
+        project.projectName
+      ));
     if (projectInstructions) {
-      contextSegments.push(projectInstructions);
+      sets.push(projectInstructions);
     }
   }
 
-  return contextSegments.length > 0 ? contextSegments.join("\n\n") : null;
+  return sets;
 }
 
 async function readSingleProjectContextInstructions(
   metadata: WorkspaceMetadata,
   runtime: Runtime,
   workspacePath: string
-): Promise<string | null> {
+): Promise<InstructionSet[]> {
   // Read parent + sub-project AGENTS.md from the workspace's *own* checkout
   // (via the runtime). For worktree/SSH/Docker flows the parent project's host
   // path is a different checkout than the workspace branch — mixing the two
@@ -353,16 +370,19 @@ async function readSingleProjectContextInstructions(
     : null;
 
   const [parentInstructions, subProjectInstructions] = await Promise.all([
-    readInstructionSetFromRuntime(runtime, workspacePath),
+    readInstructionSetFromRuntime(runtime, workspacePath, INSTRUCTION_SCOPE.WORKSPACE),
     subProjectInstructionsDir
-      ? readInstructionSetFromRuntime(runtime, subProjectInstructionsDir)
+      ? readInstructionSetFromRuntime(
+          runtime,
+          subProjectInstructionsDir,
+          INSTRUCTION_SCOPE.SUBPROJECT
+        )
       : Promise.resolve(null),
   ]);
 
-  const contextSegments = [parentInstructions, subProjectInstructions].filter(
-    (segment): segment is string => segment != null && segment.trim().length > 0
+  return [parentInstructions, subProjectInstructions].filter(
+    (set): set is InstructionSet => set != null && set.combinedContent.trim().length > 0
   );
-  return contextSegments.length > 0 ? contextSegments.join("\n\n") : null;
 }
 
 /**
@@ -381,29 +401,31 @@ function deriveSubProjectRelativePath(projectPath: string, subProjectPath: strin
 }
 
 /**
- * Read instruction sets from global and context sources.
- * Internal helper for buildSystemMessage and extractToolInstructions.
+ * Read instruction sets from global and context sources as a structured tree.
  *
- * Single-project workspaces keep the historical lookup order of workspace root → project root.
+ * Single-project workspaces keep the historical lookup order of workspace root → sub-project.
  * Multi-project workspaces layer the shared container instructions with every per-project repo
  * mounted under <workspace>/<projectName> so secondary repos can contribute scoped instructions.
+ *
+ * Exported so the IPC layer can hand the structured payload to the right-sidebar
+ * Instructions tab — keeping the panel and the prompt builder in lockstep via shared types.
  *
  * @param metadata - Workspace metadata (contains projectPath)
  * @param runtime - Runtime for reading workspace files (supports SSH)
  * @param workspacePath - Workspace directory path
- * @returns Tuple of [globalInstructions, contextInstructions]
+ * @returns Structured instruction sources (global + ordered context entries)
  */
-async function readInstructionSources(
+export async function loadInstructionSources(
   metadata: WorkspaceMetadata,
   runtime: Runtime,
   workspacePath: string
-): Promise<[string | null, string | null]> {
-  const globalInstructions = await readInstructionSet(getSystemDirectory());
-  const contextInstructions = isMultiProject(metadata)
+): Promise<InstructionSources> {
+  const global = await readInstructionSet(getSystemDirectory(), INSTRUCTION_SCOPE.GLOBAL);
+  const context = isMultiProject(metadata)
     ? await readMultiProjectContextInstructions(metadata, runtime, workspacePath)
     : await readSingleProjectContextInstructions(metadata, runtime, workspacePath);
 
-  return [globalInstructions, contextInstructions];
+  return { global, context };
 }
 
 /**
@@ -461,11 +483,12 @@ export async function buildSystemMessage(
   // best practices. See tools.ts ToolConfiguration.availableSkills/availableSubagents.
 
   // Read instruction sets
-  const [globalInstructions, contextInstructions] = await readInstructionSources(
-    metadata,
-    runtime,
-    workspacePath
-  );
+  const instructionSources = await loadInstructionSources(metadata, runtime, workspacePath);
+  const globalInstructions = instructionSources.global?.combinedContent ?? null;
+  // Concatenated context content for downstream string-based helpers
+  // (`stripScopedInstructionSections`, `extractModelSection`, …). The structured
+  // form lives in `instructionSources` for consumers that need per-file metadata.
+  const contextInstructions = joinInstructionSets(instructionSources.context) || null;
 
   const agentPrompt = options?.agentSystemPrompt?.trim() ?? null;
 

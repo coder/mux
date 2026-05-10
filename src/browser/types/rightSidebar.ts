@@ -5,6 +5,7 @@ export const RIGHT_SIDEBAR_TABS = [
   "desktop",
   "browser",
   // "stats" removed — absorbed into "costs" as sub-tabs
+  "instructions",
   "output",
   "debug",
 ] as const;

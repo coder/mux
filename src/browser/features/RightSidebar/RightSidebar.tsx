@@ -24,6 +24,7 @@ import { getErrorMessage } from "@/common/utils/errors";
 
 import { ReviewPanel } from "@/browser/features/RightSidebar/CodeReview/ReviewPanel";
 import { OutputTab } from "@/browser/components/OutputTab/OutputTab";
+import { InstructionsTab } from "@/browser/components/InstructionsTab/InstructionsTab";
 import { DesktopPanel } from "@/browser/features/desktop/DesktopPanel";
 
 import { DevToolsTab } from "./DevToolsTab";
@@ -84,6 +85,7 @@ import {
   OutputTabLabel,
   ReviewTabLabel,
   TerminalTabLabel,
+  InstructionsTabLabel,
   getTabContentClassName,
   type ReviewStats,
 } from "@/browser/features/RightSidebar/Tabs";
@@ -373,6 +375,8 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
       label = <DesktopTabLabel />;
     } else if (tab === "browser") {
       label = <BrowserTabLabel />;
+    } else if (tab === "instructions") {
+      label = <InstructionsTabLabel />;
     } else if (tab === "output") {
       label = <OutputTabLabel />;
     } else if (tab === "debug") {
@@ -410,6 +414,7 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
   const reviewPanelId = `${tabsetBaseId}-panel-review`;
   const desktopPanelId = `${tabsetBaseId}-panel-desktop`;
   const browserPanelId = `${tabsetBaseId}-panel-browser`;
+  const instructionsPanelId = `${tabsetBaseId}-panel-instructions`;
   const outputPanelId = `${tabsetBaseId}-panel-output`;
   const debugPanelId = `${tabsetBaseId}-panel-debug`;
 
@@ -417,6 +422,7 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
   const reviewTabId = `${tabsetBaseId}-tab-review`;
   const desktopTabId = `${tabsetBaseId}-tab-desktop`;
   const browserTabId = `${tabsetBaseId}-tab-browser`;
+  const instructionsTabId = `${tabsetBaseId}-tab-instructions`;
   const outputTabId = `${tabsetBaseId}-tab-output`;
   const debugTabId = `${tabsetBaseId}-tab-debug`;
 
@@ -521,6 +527,17 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
             <ErrorBoundary workspaceInfo="Browser tab">
               <BrowserTab workspaceId={props.workspaceId} projectPath={props.projectPath} />
             </ErrorBoundary>
+          </div>
+        )}
+
+        {props.node.activeTab === "instructions" && (
+          <div
+            role="tabpanel"
+            id={instructionsPanelId}
+            aria-labelledby={instructionsTabId}
+            className="h-full"
+          >
+            <InstructionsTab workspaceId={props.workspaceId} />
           </div>
         )}
 

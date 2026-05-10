@@ -80,6 +80,16 @@ export {
   SkillNameSchema,
 } from "./schemas/agentSkill";
 
+// Instruction context schemas (AGENTS.md, CLAUDE.md, …)
+export {
+  INSTRUCTION_SCOPE,
+  InstructionFileSchema,
+  InstructionScopeSchema,
+  InstructionSetSchema,
+  InstructionSourcesSchema,
+  WorkspaceInstructionsSchema,
+} from "./schemas/instructions";
+
 // Error schemas
 // Agent Definition schemas
 export {

@@ -6,6 +6,7 @@ import { WORKTREE_ARCHIVE_BEHAVIORS } from "@/common/config/worktreeArchiveBehav
 import { HEARTBEAT_MAX_INTERVAL_MS, HEARTBEAT_MIN_INTERVAL_MS } from "@/constants/heartbeat";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { ChatStatsSchema, SessionUsageFileSchema } from "./chatStats";
+import { WorkspaceInstructionsSchema } from "./instructions";
 import {
   NameGenerationErrorSchema,
   ProjectRemoveErrorSchema,
@@ -1456,6 +1457,20 @@ export const workspace = {
   getSessionUsageBatch: {
     input: z.object({ workspaceIds: z.array(z.string()) }),
     output: z.record(z.string(), SessionUsageFileSchema.optional()),
+  },
+  /**
+   * Resolve the instruction context (AGENTS.md, CLAUDE.md, AGENTS.local.md, …)
+   * loaded into the system prompt for this workspace. Used by the right-sidebar
+   * Instructions tab; the same structured payload backs the prompt builder so
+   * the panel can never drift from what the agent actually sees.
+   */
+  getInstructions: {
+    input: z.object({
+      workspaceId: z.string(),
+      /** Optional canonical "provider:model" used for token counting. */
+      model: z.string().nullish(),
+    }),
+    output: WorkspaceInstructionsSchema,
   },
   /** Per-workspace MCP configuration (overrides project-level mcp.jsonc) */
   mcp: {

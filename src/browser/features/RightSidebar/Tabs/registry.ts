@@ -80,7 +80,7 @@ export interface TabConfig {
 
 /** Static tab configurations (non-terminal tabs) */
 export const TAB_CONFIGS: Record<
-  "costs" | "review" | "desktop" | "browser" | "output" | "debug",
+  "costs" | "review" | "desktop" | "browser" | "instructions" | "output" | "debug",
   TabConfig
 > = {
   costs: {
@@ -101,6 +101,10 @@ export const TAB_CONFIGS: Record<
     contentClassName: "overflow-hidden p-0",
     keepAlive: false,
     featureFlag: EXPERIMENT_IDS.AGENT_BROWSER,
+  },
+  instructions: {
+    name: "Instructions",
+    contentClassName: "overflow-hidden p-0",
   },
   output: {
     name: "Output",
@@ -126,6 +130,7 @@ export function getTabConfig(tab: TabType): TabConfig {
     tab === "review" ||
     tab === "desktop" ||
     tab === "browser" ||
+    tab === "instructions" ||
     tab === "output" ||
     tab === "debug"
   ) {

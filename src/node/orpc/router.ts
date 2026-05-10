@@ -4006,6 +4006,15 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           return context.sessionUsageService.getSessionUsageBatch(input.workspaceIds);
         }),
+      getInstructions: t
+        .input(schemas.workspace.getInstructions.input)
+        .output(schemas.workspace.getInstructions.output)
+        .handler(async ({ context, input }) => {
+          return context.instructionsService.getWorkspaceInstructions(
+            input.workspaceId,
+            input.model
+          );
+        }),
       stats: {
         subscribe: t
           .input(schemas.workspace.stats.subscribe.input)

@@ -8,7 +8,15 @@
  */
 
 import React from "react";
-import { BugPlay, ExternalLink, Monitor, Globe, Terminal as TerminalIcon, X } from "lucide-react";
+import {
+  BookOpen,
+  BugPlay,
+  ExternalLink,
+  Monitor,
+  Globe,
+  Terminal as TerminalIcon,
+  X,
+} from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/Tooltip/Tooltip";
 import { type ReviewStats } from "./registry";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
@@ -105,6 +113,18 @@ export const DebugTabLabel: React.FC = () => (
 export function OutputTabLabel() {
   return <>Output</>;
 }
+
+/**
+ * Instructions tab label with a book icon. The token-count badge is rendered by
+ * the panel itself (and will lazily fill in once the IPC fetch resolves) — we
+ * keep the label cheap so it doesn't trigger an IPC call just to size the strip.
+ */
+export const InstructionsTabLabel: React.FC = () => (
+  <span className="inline-flex items-center gap-1">
+    <BookOpen className="h-3 w-3 shrink-0" />
+    Instructions
+  </span>
+);
 
 interface TerminalTabLabelProps {
   /** Dynamic title from OSC sequences, if available */
