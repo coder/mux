@@ -126,7 +126,8 @@ function isProjectSecretsTarget(
   userProjects: Map<string, ProjectConfig>,
   projectPath: string
 ): boolean {
-  return userProjects.get(projectPath)?.parentProjectPath == null;
+  const project = userProjects.get(projectPath);
+  return project !== undefined && project.parentProjectPath == null;
 }
 
 export const SecretsSection: React.FC = () => {
