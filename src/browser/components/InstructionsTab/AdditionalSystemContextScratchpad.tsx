@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 
 import { useAPI } from "@/browser/contexts/API";
 import {
+  queueAdditionalSystemContextSave,
   updateAdditionalSystemContextSnapshot,
   useAdditionalSystemContextSnapshot,
 } from "@/browser/utils/additionalSystemContextStore";
@@ -28,9 +29,6 @@ export function useAdditionalSystemContextScratchpad(workspaceId: string): Scrat
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const dirtyRef = useRef(false);
-  const inFlightSaveRef = useRef(false);
-  const pendingSaveRef = useRef<string | null>(null);
-  const saveGenerationRef = useRef(0);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -41,10 +39,7 @@ export function useAdditionalSystemContextScratchpad(workspaceId: string): Scrat
   }, []);
 
   useEffect(() => {
-    saveGenerationRef.current += 1;
     dirtyRef.current = false;
-    pendingSaveRef.current = null;
-    inFlightSaveRef.current = false;
     setLoading(true);
     setSaving(false);
     setError(null);
@@ -72,42 +67,22 @@ export function useAdditionalSystemContextScratchpad(workspaceId: string): Scrat
     };
   }, [api, workspaceId]);
 
-  const flushSave = () => {
-    if (!api || inFlightSaveRef.current) return;
-    const next = pendingSaveRef.current;
-    if (next == null) return;
-
-    const saveGeneration = saveGenerationRef.current;
-    pendingSaveRef.current = null;
-    inFlightSaveRef.current = true;
-    setSaving(true);
-    setError(null);
-
-    api.workspace
-      .setAdditionalSystemContext({ workspaceId, content: next })
-      .then((result) => {
-        if (!mountedRef.current || saveGeneration !== saveGenerationRef.current) return;
-        updateAdditionalSystemContextSnapshot(workspaceId, result.content);
-      })
-      .catch((err) => {
-        if (!mountedRef.current || saveGeneration !== saveGenerationRef.current) return;
-        setError(getErrorMessage(err));
-      })
-      .finally(() => {
-        if (!mountedRef.current || saveGeneration !== saveGenerationRef.current) return;
-        inFlightSaveRef.current = false;
-        if (pendingSaveRef.current == null) {
-          setSaving(false);
-        }
-        flushSave();
-      });
-  };
-
   const setContent = (next: string) => {
     dirtyRef.current = true;
     updateAdditionalSystemContextSnapshot(workspaceId, next);
-    pendingSaveRef.current = next;
-    flushSave();
+    if (!api) return;
+    setSaving(true);
+    setError(null);
+    queueAdditionalSystemContextSave(api, workspaceId, next, {
+      onError: (err) => {
+        if (!mountedRef.current) return;
+        setError(getErrorMessage(err));
+      },
+      onIdle: () => {
+        if (!mountedRef.current) return;
+        setSaving(false);
+      },
+    });
   };
 
   return { content, loading, saving, error, setContent };
