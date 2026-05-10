@@ -1896,18 +1896,12 @@ exit 1
 
     it("rejects target sub-projects from a different parent", async () => {
       const parentPath = "/fake/project";
-      const subProjectPath = "/fake/project/packages/api";
       const otherSubProjectPath = "/other/project/packages/web";
       const workspaceId = "workspace-1";
       const cfg = config.loadConfigOrDefault();
       cfg.projects.set(parentPath, {
         workspaces: [{ id: workspaceId, path: path.join(tempDir, "workspace-1") }],
       });
-      cfg.projects.set(subProjectPath, {
-        parentProjectPath: parentPath,
-        workspaces: [],
-      });
-      cfg.projects.set("/other/project", { workspaces: [] });
       cfg.projects.set(otherSubProjectPath, {
         parentProjectPath: "/other/project",
         workspaces: [],
@@ -1915,7 +1909,7 @@ exit 1
       await config.saveConfig(cfg);
 
       const result = await service.assignWorkspaceToSubProject(
-        subProjectPath,
+        parentPath,
         workspaceId,
         otherSubProjectPath
       );

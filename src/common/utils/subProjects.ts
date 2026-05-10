@@ -22,7 +22,7 @@ function getTopLevelAncestorProjectPath(
 ): string | null {
   let topLevelAncestorPath: string | null = null;
   for (const candidatePath of projectPaths) {
-    if (candidatePath === projectPath || !isPathDescendant(candidatePath, projectPath)) {
+    if (!isPathDescendant(candidatePath, projectPath)) {
       continue;
     }
 

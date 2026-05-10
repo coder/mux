@@ -53,24 +53,15 @@ interface UseStartWorkspaceCreationOptions {
   beginWorkspaceCreation: (projectPath: string) => void;
 }
 
-function resolveProjectPath(
-  projects: Map<string, ProjectConfig>,
-  requestedPath: string
-): string | null {
-  if (projects.has(requestedPath)) {
-    return requestedPath;
-  }
-
-  return getFirstTopLevelProjectPath(projects);
-}
-
 export function useStartWorkspaceCreation({
   projects,
   beginWorkspaceCreation,
 }: UseStartWorkspaceCreationOptions) {
   const startWorkspaceCreation = useCallback(
     (projectPath: string, detail?: StartWorkspaceCreationDetail) => {
-      const resolvedProjectPath = resolveProjectPath(projects, projectPath);
+      const resolvedProjectPath = projects.has(projectPath)
+        ? projectPath
+        : getFirstTopLevelProjectPath(projects);
 
       if (!resolvedProjectPath) {
         console.warn("No projects available for workspace creation");

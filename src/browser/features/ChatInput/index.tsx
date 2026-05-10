@@ -211,7 +211,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const creationSubProjectPath = creationScope?.subProjectPath ?? undefined;
   const creationProject =
     variant === "creation" ? userProjects.get(creationParentProjectPath) : undefined;
-  const creationProjectPath = creationParentProjectPath;
   const [thinkingLevel] = useThinkingLevel();
   const atMentionProjectPath = variant === "creation" ? props.projectPath : null;
   const workspaceId = variant === "workspace" ? props.workspaceId : null;
@@ -612,7 +611,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   // Get current send message options from shared hook (must be at component top level)
   // For creation variant, use project-scoped key; for workspace, use workspace ID
   const sendMessageOptions = useSendMessageOptions(
-    variant === "workspace" ? props.workspaceId : getProjectScopeId(creationProjectPath)
+    variant === "workspace" ? props.workspaceId : getProjectScopeId(creationParentProjectPath)
   );
   // Extract models for convenience (don't create separate state - use hook as single source of truth)
   // - preferredModel: selected model used for backend routing, preserving explicit gateway choices
@@ -670,7 +669,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         onModelChange(selectedModel);
       } else {
         const scopeId =
-          variant === "creation" ? getProjectScopeId(creationProjectPath) : workspaceId;
+          variant === "creation" ? getProjectScopeId(creationParentProjectPath) : workspaceId;
         if (scopeId) {
           setWorkspaceModelWithOrigin(scopeId, selectedModel, "user");
         }
@@ -724,7 +723,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     [
       api,
       agentId,
-      creationProjectPath,
+      creationParentProjectPath,
       ensureModelInSettings,
       onModelChange,
       thinkingLevel,
@@ -842,7 +841,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           onSelectedRuntimeChange: creationState.setSelectedRuntime,
           onSetDefaultRuntime: creationState.setDefaultRuntimeChoice,
           disabled: isSendInFlight,
-          projectPath: creationParentProjectPath || props.projectPath,
+          projectPath: creationParentProjectPath,
           // Surface the actually-targeted project (possibly a sub-project) to
           // the dropdown so the trigger label reflects what the user picked,
           // while runtime/settings scoping stays on the parent above. When
@@ -985,7 +984,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       return;
     }
 
-    const scopeId = getProjectScopeId(creationProjectPath);
+    const scopeId = getProjectScopeId(creationParentProjectPath);
     const modelKey = getModelKey(scopeId);
     const thinkingKey = getThinkingLevelKey(scopeId);
 
@@ -1021,7 +1020,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     if (existingThinking !== resolvedThinking) {
       updatePersistedState(thinkingKey, resolvedThinking);
     }
-  }, [agentAiDefaults, agentId, creationProjectPath, defaultModel, variant]);
+  }, [agentAiDefaults, agentId, creationParentProjectPath, defaultModel, variant]);
 
   // Expose ChatInput auto-focus completion for Storybook/tests.
   const chatInputSectionRef = useRef<HTMLDivElement | null>(null);
