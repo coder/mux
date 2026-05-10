@@ -12,6 +12,7 @@
 import type { z } from "zod";
 import { INSTRUCTION_SCOPE } from "@/common/orpc/schemas/instructions";
 import type {
+  AdditionalSystemContextSchema,
   InstructionFileSchema,
   InstructionScopeSchema,
   InstructionSetSchema,
@@ -21,6 +22,7 @@ import type {
 
 export { INSTRUCTION_SCOPE };
 
+export type AdditionalSystemContext = z.infer<typeof AdditionalSystemContextSchema>;
 export type InstructionScope = z.infer<typeof InstructionScopeSchema>;
 export type InstructionFile = z.infer<typeof InstructionFileSchema>;
 export type InstructionSet = z.infer<typeof InstructionSetSchema>;

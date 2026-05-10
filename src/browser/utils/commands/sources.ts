@@ -570,12 +570,13 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
     const wsId = p.selectedWorkspace?.workspaceId;
     if (wsId) {
       list.push(
-        // Generic per-tab "Hide/Show <Name>" commands derived from tab config —
-        // adding a tab in `tabConfig.ts` automatically gives users a
-        // command-palette toggle, no per-tab handler to write here.
-        ...getOrderedBaseTabIds().map((tabId) =>
-          buildToggleTabCommand(wsId, tabId, section.navigation)
-        ),
+        // Generic per-tab "Hide/Show <Name>" commands are only for optional tabs.
+        // Default-layout tabs (Stats/Review/Instructions) are auto-restored by
+        // the layout migration, so exposing hide commands for them would be a
+        // no-op and obscure the fact that they are meant to be visible by default.
+        ...getOrderedBaseTabIds()
+          .filter((tabId) => getTabConfig(tabId).inDefaultLayout !== true)
+          .map((tabId) => buildToggleTabCommand(wsId, tabId, section.navigation)),
         {
           id: CommandIds.navOpenLogFile(),
           title: "Open Log File",

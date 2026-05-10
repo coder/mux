@@ -82,6 +82,7 @@ export {
 
 // Instruction context schemas (AGENTS.md, CLAUDE.md, …)
 export {
+  AdditionalSystemContextSchema,
   INSTRUCTION_SCOPE,
   InstructionFileSchema,
   InstructionScopeSchema,

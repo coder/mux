@@ -59,6 +59,7 @@ import { isNonNegativeInteger, isPositiveInteger } from "@/common/utils/numbers"
 import { deriveTodoStatus } from "@/common/utils/todoList";
 import { fileExists } from "@/node/utils/runtime/fileExists";
 import { orchestrateFork } from "@/node/services/utils/forkOrchestrator";
+import { ADDITIONAL_SYSTEM_CONTEXT_FILENAME } from "@/node/services/additionalSystemContext";
 import { generateWorkspaceIdentity } from "@/node/services/workspaceTitleGenerator";
 import { NAME_GEN_PREFERRED_MODELS } from "@/common/constants/nameGeneration";
 import type { DevcontainerRuntime } from "@/node/runtime/DevcontainerRuntime";
@@ -5234,7 +5235,12 @@ export class WorkspaceService extends EventEmitter {
       try {
         await ensurePrivateDir(newSessionDir);
 
-        const sessionFiles = ["chat.jsonl", "partial.json", "session-timing.json"] as const;
+        const sessionFiles = [
+          "chat.jsonl",
+          "partial.json",
+          "session-timing.json",
+          ADDITIONAL_SYSTEM_CONTEXT_FILENAME,
+        ] as const;
         for (const fileName of sessionFiles) {
           await copyIfExists(
             path.join(sourceSessionDir, fileName),

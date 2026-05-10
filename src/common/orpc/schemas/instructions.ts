@@ -85,6 +85,11 @@ export const InstructionSourcesSchema = z.object({
   context: z.array(InstructionSetSchema),
 });
 
+/** Per-workspace scratchpad appended to `<additional-instructions>` for every turn. */
+export const AdditionalSystemContextSchema = z.object({
+  content: z.string(),
+});
+
 /**
  * IPC payload returned by `workspace.getInstructions`.
  * Includes per-file token counts and a flat ordered list for easy rendering.
@@ -93,6 +98,8 @@ export const WorkspaceInstructionsSchema = z.object({
   workspaceId: z.string(),
   /** Canonical "provider:model" used to count tokens, or null if unknown. */
   model: z.string().nullable(),
+  /** Workspace scratchpad that is appended to additional system instructions. */
+  additionalSystemContext: AdditionalSystemContextSchema,
   /** Structured by scope (mirrors how the prompt is composed). */
   sources: InstructionSourcesSchema,
   /**

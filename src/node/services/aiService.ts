@@ -58,6 +58,10 @@ import { sumUsageHistory, getTotalCost } from "@/common/utils/tokens/usageAggreg
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { normalizeToCanonical } from "@/common/utils/ai/models";
 import { readToolInstructions } from "./systemMessage";
+import {
+  mergeAdditionalSystemInstructions,
+  readAdditionalSystemContext,
+} from "./additionalSystemContext";
 import type { TelemetryService } from "@/node/services/telemetryService";
 import type { DevToolsService } from "@/node/services/devToolsService";
 import type { ExperimentsService } from "@/node/services/experimentsService";
@@ -1159,6 +1163,29 @@ export class AIService extends EventEmitter {
         : undefined;
       recordStartupPhaseTiming("listMcpServersMs", listMcpServersStartedAt);
 
+      const loadAdditionalSystemContextStartedAt = Date.now();
+      let workspaceAdditionalSystemContext = "";
+      try {
+        workspaceAdditionalSystemContext = await readAdditionalSystemContext(
+          this.config,
+          workspaceId
+        );
+      } catch (error) {
+        // The scratchpad is user-editable state, so a transient read failure should not block a send.
+        log.warn("Failed to load workspace additional system context; continuing without it", {
+          workspaceId,
+          error,
+        });
+      }
+      const scratchpadAdditionalSystemInstructions = mergeAdditionalSystemInstructions(
+        workspaceAdditionalSystemContext,
+        additionalSystemInstructions
+      );
+      recordStartupPhaseTiming(
+        "loadAdditionalSystemContextMs",
+        loadAdditionalSystemContextStartedAt
+      );
+
       // Build plan-aware instructions and determine plan→exec transition content.
       // IMPORTANT: Derive this from the same boundary-sliced message payload that is sent to
       // the model so plan hints/handoffs cannot be suppressed by pre-boundary history.
@@ -1173,7 +1200,7 @@ export class AIService extends EventEmitter {
           effectiveAgentId,
           agentIsPlanLike,
           agentDiscoveryPath,
-          additionalSystemInstructions,
+          additionalSystemInstructions: scratchpadAdditionalSystemInstructions,
           shouldDisableTaskToolsForDepth,
           taskDepth,
           taskSettings,

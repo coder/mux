@@ -5,6 +5,7 @@ import {
   type InstructionSources,
   type WorkspaceInstructions,
 } from "@/common/types/instructions";
+import type { Config } from "@/node/config";
 import {
   createRuntimeContextForWorkspace,
   resolveWorkspaceRootPath,
@@ -13,6 +14,10 @@ import type { AIService } from "@/node/services/aiService";
 import type { TokenizerService } from "@/node/services/tokenizerService";
 import { loadInstructionSources } from "@/node/services/systemMessage";
 import { log } from "@/node/services/log";
+import {
+  readAdditionalSystemContext,
+  writeAdditionalSystemContext,
+} from "@/node/services/additionalSystemContext";
 
 /**
  * InstructionsService — exposes the instruction context (AGENTS.md, CLAUDE.md,
@@ -25,9 +30,31 @@ import { log } from "@/node/services/log";
  */
 export class InstructionsService {
   constructor(
+    private readonly config: Config,
     private readonly aiService: AIService,
     private readonly tokenizerService: TokenizerService
   ) {}
+
+  private async assertWorkspaceExists(workspaceId: string): Promise<void> {
+    const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
+    if (!metadataResult.success) {
+      throw new Error(metadataResult.error);
+    }
+  }
+
+  async getAdditionalSystemContext(workspaceId: string): Promise<{ content: string }> {
+    await this.assertWorkspaceExists(workspaceId);
+    return { content: await readAdditionalSystemContext(this.config, workspaceId) };
+  }
+
+  async setAdditionalSystemContext(
+    workspaceId: string,
+    content: string
+  ): Promise<{ content: string }> {
+    await this.assertWorkspaceExists(workspaceId);
+    await writeAdditionalSystemContext(this.config, workspaceId, content);
+    return { content };
+  }
 
   /**
    * Load the full instruction context for a workspace, optionally annotated
@@ -96,6 +123,9 @@ export class InstructionsService {
     return {
       workspaceId,
       model,
+      additionalSystemContext: {
+        content: await readAdditionalSystemContext(this.config, workspaceId),
+      },
       sources: annotatedSources,
       files: annotatedFiles,
       totalTokens,

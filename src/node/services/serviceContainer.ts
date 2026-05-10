@@ -279,7 +279,11 @@ export class ServiceContainer {
     this.editorService = new EditorService(config);
     this.updateService = new UpdateService(this.config);
     this.tokenizerService = new TokenizerService(this.sessionUsageService);
-    this.instructionsService = new InstructionsService(this.aiService, this.tokenizerService);
+    this.instructionsService = new InstructionsService(
+      config,
+      this.aiService,
+      this.tokenizerService
+    );
     // AgentStatusService depends on tokenizer + window focus state; instantiate
     // after both are constructed so the small-model status loop can run with
     // accurate token budgeting and focus-aware cadence.

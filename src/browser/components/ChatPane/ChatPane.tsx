@@ -10,6 +10,7 @@ import React, {
 import { Lightbulb } from "lucide-react";
 import { MessageListProvider } from "@/browser/features/Messages/MessageListContext";
 import { cn } from "@/common/lib/utils";
+import { AdditionalSystemContextChatDecoration } from "@/browser/components/InstructionsTab/AdditionalSystemContextScratchpad";
 import { MessageRenderer } from "@/browser/features/Messages/MessageRenderer";
 import { MarkdownRenderer } from "@/browser/features/Messages/MarkdownRenderer";
 import { useTranscriptContextMenu } from "@/browser/features/Messages/useTranscriptContextMenu";
@@ -909,6 +910,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                           </TooltipIfPresent>
                         </div>
                       )}
+                      <AdditionalSystemContextChatDecoration workspaceId={workspaceId} />
                       {deferredMessages.map((msg, index) => {
                         const bashOutputGroup = bashOutputGroupInfos[index];
 

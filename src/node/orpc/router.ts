@@ -4015,6 +4015,21 @@ export const router = (authToken?: string) => {
             input.model
           );
         }),
+      getAdditionalSystemContext: t
+        .input(schemas.workspace.getAdditionalSystemContext.input)
+        .output(schemas.workspace.getAdditionalSystemContext.output)
+        .handler(async ({ context, input }) => {
+          return context.instructionsService.getAdditionalSystemContext(input.workspaceId);
+        }),
+      setAdditionalSystemContext: t
+        .input(schemas.workspace.setAdditionalSystemContext.input)
+        .output(schemas.workspace.setAdditionalSystemContext.output)
+        .handler(async ({ context, input }) => {
+          return context.instructionsService.setAdditionalSystemContext(
+            input.workspaceId,
+            input.content
+          );
+        }),
       stats: {
         subscribe: t
           .input(schemas.workspace.stats.subscribe.input)

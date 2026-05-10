@@ -6,7 +6,7 @@ import { WORKTREE_ARCHIVE_BEHAVIORS } from "@/common/config/worktreeArchiveBehav
 import { HEARTBEAT_MAX_INTERVAL_MS, HEARTBEAT_MIN_INTERVAL_MS } from "@/constants/heartbeat";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { ChatStatsSchema, SessionUsageFileSchema } from "./chatStats";
-import { WorkspaceInstructionsSchema } from "./instructions";
+import { AdditionalSystemContextSchema, WorkspaceInstructionsSchema } from "./instructions";
 import {
   NameGenerationErrorSchema,
   ProjectRemoveErrorSchema,
@@ -1471,6 +1471,14 @@ export const workspace = {
       model: z.string().nullish(),
     }),
     output: WorkspaceInstructionsSchema,
+  },
+  getAdditionalSystemContext: {
+    input: z.object({ workspaceId: z.string() }),
+    output: AdditionalSystemContextSchema,
+  },
+  setAdditionalSystemContext: {
+    input: z.object({ workspaceId: z.string(), content: z.string() }),
+    output: AdditionalSystemContextSchema,
   },
   /** Per-workspace MCP configuration (overrides project-level mcp.jsonc) */
   mcp: {
