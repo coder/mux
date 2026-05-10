@@ -1668,10 +1668,14 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   // Handle keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Create new workspace for the project of the selected workspace
+      // Sub-project workspaces share the parent worktree, so recover the child
+      // target from workspace metadata before opening a sibling draft.
       if (matchesKeybind(e, KEYBINDS.NEW_WORKSPACE) && selectedWorkspace) {
         e.preventDefault();
-        handleAddWorkspace(selectedWorkspace.projectPath);
+        const subProjectPath = workspaceStore.getWorkspaceMetadata(
+          selectedWorkspace.workspaceId
+        )?.subProjectPath;
+        handleAddWorkspace(selectedWorkspace.projectPath, subProjectPath);
       } else if (matchesKeybind(e, KEYBINDS.ARCHIVE_WORKSPACE) && selectedWorkspace) {
         e.preventDefault();
         void handleArchiveWorkspace(selectedWorkspace.workspaceId);
@@ -1680,7 +1684,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selectedWorkspace, handleAddWorkspace, handleArchiveWorkspace]);
+  }, [selectedWorkspace, handleAddWorkspace, handleArchiveWorkspace, workspaceStore]);
 
   return (
     <TitleEditProvider onUpdateTitle={onUpdateTitle}>
