@@ -30,7 +30,10 @@ import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { useAPI } from "@/browser/contexts/API";
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
 import { normalizeSelectedModel } from "@/common/utils/ai/models";
-import { useAdditionalSystemContextSnapshot } from "@/browser/utils/additionalSystemContextStore";
+import {
+  useAdditionalSystemContextHydrated,
+  useAdditionalSystemContextSnapshot,
+} from "@/browser/utils/additionalSystemContextStore";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import { setWorkspaceModelWithOrigin } from "@/browser/utils/modelChange";
 import {
@@ -615,6 +618,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     variant === "workspace" ? props.workspaceId : getProjectScopeId(creationProjectPath)
   );
   const additionalSystemContext = useAdditionalSystemContextSnapshot(
+    variant === "workspace" ? props.workspaceId : ""
+  );
+  const additionalSystemContextHydrated = useAdditionalSystemContextHydrated(
     variant === "workspace" ? props.workspaceId : ""
   );
   // Extract models for convenience (don't create separate state - use hook as single source of truth)
@@ -2302,7 +2308,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           ...(overrides?.queueDispatchMode
             ? { queueDispatchMode: overrides.queueDispatchMode }
             : {}),
-          additionalSystemContext,
+          ...(additionalSystemContextHydrated ? { additionalSystemContext } : {}),
           additionalSystemInstructions,
           editMessageId: editMessageForSend?.id,
           fileParts: sendFileParts,

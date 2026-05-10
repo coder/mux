@@ -1,6 +1,8 @@
 import type { APIClient } from "@/browser/contexts/API";
 import { useSyncExternalStore } from "react";
 
+const hydratedWorkspaces = new Set<string>();
+const versionByWorkspace = new Map<string, number>();
 const contentByWorkspace = new Map<string, string>();
 const subscribersByWorkspace = new Map<string, Set<() => void>>();
 
@@ -12,11 +14,22 @@ function getSubscribers(workspaceId: string): Set<() => void> {
   return created;
 }
 
+export function getAdditionalSystemContextVersion(workspaceId: string): number {
+  return versionByWorkspace.get(workspaceId) ?? 0;
+}
+
+export function isAdditionalSystemContextHydrated(workspaceId: string): boolean {
+  return hydratedWorkspaces.has(workspaceId);
+}
+
 export function readAdditionalSystemContextSnapshot(workspaceId: string): string {
   return contentByWorkspace.get(workspaceId) ?? "";
 }
 
 export function updateAdditionalSystemContextSnapshot(workspaceId: string, content: string): void {
+  hydratedWorkspaces.add(workspaceId);
+  versionByWorkspace.set(workspaceId, getAdditionalSystemContextVersion(workspaceId) + 1);
+
   if (content.length === 0) {
     contentByWorkspace.delete(workspaceId);
   } else {
@@ -111,6 +124,14 @@ export function queueAdditionalSystemContextSave(
   }
   state.pending = content;
   flushAdditionalSystemContextSave(api, workspaceId);
+}
+
+export function useAdditionalSystemContextHydrated(workspaceId: string): boolean {
+  return useSyncExternalStore(
+    (callback) => subscribeAdditionalSystemContext(workspaceId, callback),
+    () => isAdditionalSystemContextHydrated(workspaceId),
+    () => false
+  );
 }
 
 export function useAdditionalSystemContextSnapshot(workspaceId: string): string {

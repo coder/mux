@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 
 import { useAPI } from "@/browser/contexts/API";
 import {
+  getAdditionalSystemContextVersion,
   queueAdditionalSystemContextSave,
   updateAdditionalSystemContextSnapshot,
   useAdditionalSystemContextSnapshot,
@@ -46,12 +47,13 @@ export function useAdditionalSystemContextScratchpad(workspaceId: string): Scrat
 
     if (!api) return;
 
+    const loadVersion = getAdditionalSystemContextVersion(workspaceId);
     let cancelled = false;
     api.workspace
       .getAdditionalSystemContext({ workspaceId })
       .then((result) => {
         if (cancelled || !mountedRef.current) return;
-        if (!dirtyRef.current) {
+        if (!dirtyRef.current && getAdditionalSystemContextVersion(workspaceId) === loadVersion) {
           updateAdditionalSystemContextSnapshot(workspaceId, result.content);
         }
         setLoading(false);
