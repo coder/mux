@@ -1,6 +1,7 @@
 import React, { useMemo } from "react";
 import { Streamdown } from "streamdown";
-import type { Pluggable } from "unified";
+import type { Element, Root, RootContent, Text } from "hast";
+import type { Pluggable, Plugin } from "unified";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import remarkBreaks from "remark-breaks";
@@ -102,7 +103,78 @@ const sanitizeSchema = {
   },
 };
 
+interface RawHtmlNode {
+  type: "raw";
+  value: string;
+  position?: Text["position"];
+}
+
+type MutableHastNode = Root | RootContent | RawHtmlNode;
+
+type MutableHastParent = Element | Root | { children: MutableHastNode[] };
+
+const RAW_HTML_TAG_NAME_PATTERN = /<\/?\s*([A-Za-z][A-Za-z0-9:-]*)\b[^>]*>/g;
+const ALLOWED_RAW_HTML_TAG_NAMES = new Set(
+  (sanitizeSchema.tagNames ?? []).map((tagName) => tagName.toLowerCase())
+);
+
+function isRawHtmlNode(node: unknown): node is RawHtmlNode {
+  const candidate = node as { type?: unknown; value?: unknown };
+  return candidate.type === "raw" && typeof candidate.value === "string";
+}
+
+function isMutableHastParent(node: unknown): node is MutableHastParent {
+  const candidate = node as { children?: unknown };
+  return Array.isArray(candidate.children);
+}
+
+export function rawHtmlUsesOnlyAllowedTags(rawHtml: string): boolean {
+  for (const match of rawHtml.matchAll(RAW_HTML_TAG_NAME_PATTERN)) {
+    const tagName = match[1]?.toLowerCase();
+    if (!tagName || !ALLOWED_RAW_HTML_TAG_NAMES.has(tagName)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function preserveUnknownRawHtmlChildren(parent: MutableHastParent): void {
+  const children = parent.children as MutableHastNode[];
+
+  for (let idx = 0; idx < children.length; idx++) {
+    const child = children[idx];
+
+    if (isRawHtmlNode(child)) {
+      if (!rawHtmlUsesOnlyAllowedTags(child.value)) {
+        // Pasted errors often include JSX/component names like `<SignOutButton/>`.
+        // If we let rehype parse unknown tags as HTML, sanitize strips the whole tag;
+        // treating only unknown raw HTML as text keeps the transcript readable while
+        // preserving supported HTML such as <details>/<summary> below.
+        children[idx] = {
+          type: "text",
+          value: child.value,
+          position: child.position,
+        };
+      }
+
+      continue;
+    }
+
+    if (isMutableHastParent(child)) {
+      preserveUnknownRawHtmlChildren(child);
+    }
+  }
+}
+
+const rehypePreserveUnknownRawHtml: Plugin<[], Root> = () => {
+  return (tree) => {
+    preserveUnknownRawHtmlChildren(tree);
+  };
+};
+
 const REHYPE_PLUGINS: Pluggable[] = [
+  rehypePreserveUnknownRawHtml,
   rehypeRaw, // Parse HTML elements first
   [rehypeSanitize, sanitizeSchema], // Sanitize HTML to prevent XSS (strips dangerous elements/attributes)
   [
