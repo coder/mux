@@ -133,6 +133,24 @@ interface SnapshotPrivateApi {
   resolveLocalSyncRefManifest(projectPath: string): Promise<string | null>;
 }
 
+interface FreshWorkspaceSourcePrivateApi {
+  resolveFreshWorkspaceSourceBase(
+    baseRepoPathArg: string,
+    trunkBranch: string,
+    fetchedOrigin: boolean,
+    fallbackRef: string | null,
+    initLogger: InitLogger,
+    abortSignal?: AbortSignal
+  ): Promise<string>;
+  fetchOriginTrunk(
+    workspacePath: string,
+    trunkBranch: string,
+    initLogger: InitLogger,
+    abortSignal?: AbortSignal,
+    nhp?: string
+  ): Promise<boolean>;
+}
+
 function createLayout(): RemoteProjectLayout {
   return {
     projectId: "project-id",
@@ -253,6 +271,62 @@ describe("SSHRuntime authoritative sync contract", () => {
     expect(pushCalls[0]).toContain("--atomic");
     expect(pushCalls[0]).toContain("+refs/heads/*:refs/mux-bundle/*");
     expect(pushCalls[0]).not.toContain("+refs/tags/*:refs/tags/*");
+  });
+
+  it("uses the upstream source branch over the synced local snapshot for fresh workspaces", async () => {
+    const runtime = new CommandCaptureSSHRuntime();
+    const privateApi = runtime as unknown as FreshWorkspaceSourcePrivateApi;
+
+    const sourceBase = await privateApi.resolveFreshWorkspaceSourceBase(
+      "/remote/src/project/.mux-base.git",
+      "main",
+      true,
+      "refs/mux-bundle/main",
+      noopInitLogger
+    );
+
+    expect(sourceBase).toBe("origin/main");
+    expect(runtime.commands.some((command) => command.includes("merge-base --is-ancestor"))).toBe(
+      false
+    );
+    expect(runtime.commands).toContain(
+      "git -C /remote/src/project/.mux-base.git rev-parse --verify --quiet 'refs/remotes/origin/main'"
+    );
+  });
+
+  it("falls back to the local snapshot explicitly when the upstream source is unavailable", async () => {
+    const runtime = new CommandCaptureSSHRuntime();
+    const privateApi = runtime as unknown as FreshWorkspaceSourcePrivateApi;
+    const stderrLines: string[] = [];
+    const initLogger = {
+      ...noopInitLogger,
+      logStderr(line: string) {
+        stderrLines.push(line);
+      },
+    };
+
+    const sourceBase = await privateApi.resolveFreshWorkspaceSourceBase(
+      "/remote/src/project/.mux-base.git",
+      "main",
+      false,
+      "refs/mux-bundle/main",
+      initLogger
+    );
+
+    expect(sourceBase).toBe("refs/mux-bundle/main");
+    expect(runtime.commands).toHaveLength(0);
+    expect(stderrLines[0]).toContain("using local snapshot refs/mux-bundle/main");
+  });
+
+  it("fetches source branches into explicit remote-tracking refs", async () => {
+    const runtime = new CommandCaptureSSHRuntime();
+    const privateApi = runtime as unknown as FreshWorkspaceSourcePrivateApi;
+
+    await privateApi.fetchOriginTrunk("/remote/src/project/.mux-base.git", "main", noopInitLogger);
+
+    expect(runtime.commands).toContain(
+      "git fetch origin '+refs/heads/main:refs/remotes/origin/main'"
+    );
   });
 
   it("fetches pruneable bundle branches separately from shared tags", async () => {

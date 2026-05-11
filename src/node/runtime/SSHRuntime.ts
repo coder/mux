@@ -852,6 +852,42 @@ export class SSHRuntime extends RemoteRuntime {
     return null;
   }
 
+  private async remoteTrackingBranchExists(
+    baseRepoPathArg: string,
+    trunkBranch: string,
+    abortSignal?: AbortSignal
+  ): Promise<boolean> {
+    const originRef = `refs/remotes/origin/${trunkBranch}`;
+    const check = await execBuffered(
+      this,
+      `git -C ${baseRepoPathArg} rev-parse --verify --quiet ${shescape.quote(originRef)}`,
+      { cwd: "/tmp", timeout: 10, abortSignal }
+    );
+    return check.exitCode === 0;
+  }
+
+  private async resolveFreshWorkspaceSourceBase(
+    baseRepoPathArg: string,
+    trunkBranch: string,
+    fetchedOrigin: boolean,
+    fallbackRef: string | null,
+    initLogger: InitLogger,
+    abortSignal?: AbortSignal
+  ): Promise<string> {
+    if (
+      fetchedOrigin &&
+      (await this.remoteTrackingBranchExists(baseRepoPathArg, trunkBranch, abortSignal))
+    ) {
+      return `origin/${trunkBranch}`;
+    }
+
+    const fallbackBase = fallbackRef ?? "HEAD";
+    initLogger.logStderr(
+      `Note: origin/${trunkBranch} was not available on the remote host; using local snapshot ${fallbackBase}`
+    );
+    return fallbackBase;
+  }
+
   private async resolveLocalSyncRefManifest(projectPath: string): Promise<string | null> {
     try {
       using proc = execFileAsync("git", ["-C", projectPath, "show-ref", "--heads"]);
@@ -1764,8 +1800,8 @@ export class SSHRuntime extends RemoteRuntime {
       const baseRepoPath = this.getBaseRepoPath(projectPath);
       const baseRepoPathArg = await this.ensureBaseRepo(projectPath, initLogger, abortSignal);
 
-      // Fetch latest from origin in the base repo (best-effort) so new branches
-      // can start from the latest upstream state.
+      // Fetch latest from origin in the base repo so an explicit Source branch
+      // means the upstream branch, not the local snapshot staged in refs/mux-bundle/*.
       const fetchedOrigin = await this.fetchOriginTrunk(
         baseRepoPath,
         trunkBranch,
@@ -1774,29 +1810,22 @@ export class SSHRuntime extends RemoteRuntime {
         nhp
       );
 
-      // Resolve the bundle's staging ref to use as the local fallback start point.
-      // The staging ref is refs/mux-bundle/<trunk>, but the local project's default
-      // branch may differ from trunkBranch (e.g. "master" vs "main").
+      // Resolve the bundle's staging ref to use only as a local fallback start point.
+      // refs/mux-bundle/* is a transport cache for the user's laptop state; it must
+      // not override origin/<source> when the remote source branch is available.
       const bundleTrunkRef = await this.resolveBundleTrunkRef(
         baseRepoPathArg,
         trunkBranch,
         abortSignal
       );
-
-      const shouldUseOrigin =
-        fetchedOrigin &&
-        bundleTrunkRef != null &&
-        (await this.canFastForwardToOrigin(
-          baseRepoPath,
-          bundleTrunkRef,
-          trunkBranch,
-          initLogger,
-          abortSignal
-        ));
-
-      // When origin is reachable, branch from the fresh remote tracking ref.
-      // Otherwise, use the bundle's staging ref (or HEAD as last resort).
-      const newBranchBase = shouldUseOrigin ? `origin/${trunkBranch}` : (bundleTrunkRef ?? "HEAD");
+      const newBranchBase = await this.resolveFreshWorkspaceSourceBase(
+        baseRepoPathArg,
+        trunkBranch,
+        fetchedOrigin,
+        bundleTrunkRef,
+        initLogger,
+        abortSignal
+      );
 
       // git worktree add creates the directory and checks out the branch in one step.
       // -B creates the branch or resets it to the start point if it already exists
@@ -1854,7 +1883,7 @@ export class SSHRuntime extends RemoteRuntime {
   }
 
   /**
-   * Fetch trunk branch from origin before checkout.
+   * Fetch trunk branch from origin into its remote-tracking ref before checkout.
    * Returns true if fetch succeeded (origin is available for branching).
    */
   private async fetchOriginTrunk(
@@ -1867,7 +1896,8 @@ export class SSHRuntime extends RemoteRuntime {
     try {
       initLogger.logStep(`Fetching latest from origin/${trunkBranch}...`);
 
-      const fetchCmd = `${nhp}git fetch origin ${shescape.quote(trunkBranch)}`;
+      const remoteTrackingRefSpec = `+refs/heads/${trunkBranch}:refs/remotes/origin/${trunkBranch}`;
+      const fetchCmd = `${nhp}git fetch origin ${shescape.quote(remoteTrackingRefSpec)}`;
       const fetchStream = await this.exec(fetchCmd, {
         cwd: workspacePath,
         timeout: 120, // 2 minutes for network operation
