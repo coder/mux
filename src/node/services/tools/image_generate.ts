@@ -1,6 +1,7 @@
 import path from "node:path";
 import assert from "node:assert/strict";
 import sharp from "sharp";
+import type { JSONValue } from "@ai-sdk/provider";
 import { generateImage, tool } from "ai";
 
 import type { ImageGenerateToolResult } from "@/common/types/tools";
@@ -75,6 +76,33 @@ async function createThumbnail(data: Uint8Array): Promise<{
   };
 }
 
+function stripThumbnailForModelOutput(output: unknown): unknown {
+  if (!output || typeof output !== "object" || Array.isArray(output)) {
+    return output;
+  }
+  const record = output as Record<string, unknown>;
+  if (record.success !== true || !Array.isArray(record.images)) {
+    return output;
+  }
+
+  const images: unknown[] = record.images;
+  return {
+    ...record,
+    images: images.map((image) => {
+      if (!image || typeof image !== "object" || Array.isArray(image)) {
+        return image;
+      }
+      const stripped: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(image as Record<string, unknown>)) {
+        if (key !== "thumbnail") {
+          stripped[key] = value;
+        }
+      }
+      return stripped;
+    }),
+  };
+}
+
 function getRevisedPrompt(providerMetadata: unknown, index: number): string | undefined {
   if (typeof providerMetadata !== "object" || providerMetadata === null) {
     return undefined;
@@ -140,6 +168,10 @@ export const createImageGenerateTool: ToolFactory = (config) => {
   return tool({
     description: TOOL_DEFINITIONS.image_generate.description,
     inputSchema: TOOL_DEFINITIONS.image_generate.schema,
+    toModelOutput: ({ output }) => ({
+      type: "json",
+      value: stripThumbnailForModelOutput(output) as JSONValue,
+    }),
     execute: async ({ prompt, n, quality, outputFormat }, { abortSignal, toolCallId }) => {
       const runtime = config.imageGenerationRuntime;
       assert(runtime, "imageGenerationRuntime must be set when image_generate is registered");

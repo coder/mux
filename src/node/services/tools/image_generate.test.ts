@@ -42,6 +42,59 @@ describe("image_generate tool", () => {
     expect(createImageModelCalled).toBe(false);
   });
 
+  test("omits thumbnails from model-visible tool output", async () => {
+    using workspaceDir = new TestTempDir("image-generate-workspace");
+    const tool = createImageGenerateTool({
+      ...createTestToolConfig(workspaceDir.path),
+      imageGenerationRuntime: {
+        modelString: "openai:gpt-image-1.5",
+        maxImagesPerCall: 2,
+        createImageModel: () => Promise.reject(new Error("not used")),
+      },
+    });
+
+    const modelOutput = await tool.toModelOutput!({
+      toolCallId: "image-tool-call",
+      input: {},
+      output: {
+        success: true,
+        model: "openai:gpt-image-1.5",
+        prompt: "square",
+        requestedCount: 1,
+        images: [
+          {
+            path: "/tmp/image.png",
+            filename: "image.png",
+            mediaType: "image/png",
+            thumbnail: {
+              data: "large-base64",
+              mediaType: "image/webp",
+              width: 512,
+              height: 512,
+            },
+          },
+        ],
+      },
+    });
+
+    expect(modelOutput).toEqual({
+      type: "json",
+      value: {
+        success: true,
+        model: "openai:gpt-image-1.5",
+        prompt: "square",
+        requestedCount: 1,
+        images: [
+          {
+            path: "/tmp/image.png",
+            filename: "image.png",
+            mediaType: "image/png",
+          },
+        ],
+      },
+    });
+  });
+
   test("writes generated artifacts outside the stream temp directory", async () => {
     using workspaceDir = new TestTempDir("image-generate-workspace");
     const tool = createImageGenerateTool({
