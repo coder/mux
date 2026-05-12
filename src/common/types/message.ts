@@ -137,78 +137,6 @@ export interface CompactionFollowUpRequest extends CompactionFollowUpInput, Pres
 }
 
 /**
- * Brand symbol for ContinueMessage - ensures it can only be created via factory functions.
- * This prevents bugs where code manually constructs { text: "..." } and forgets fields.
- */
-declare const ContinueMessageBrand: unique symbol;
-
-/**
- * Message to continue with after compaction.
- * Branded type - must be created via buildContinueMessage() or rebuildContinueMessage().
- */
-export type ContinueMessage = UserMessageContent & {
-  model?: string;
-  /** Agent ID for the continue message (determines tool policy via agent definitions). Defaults to 'exec'. */
-  agentId?: string;
-  /** Message metadata to apply to the queued follow-up user message (e.g., preserve /skill display) */
-  muxMetadata?: MuxMessageMetadata;
-  /** Brand marker - not present at runtime, enforces factory usage at compile time */
-  readonly [ContinueMessageBrand]: true;
-};
-
-/**
- * Input options for building a ContinueMessage.
- * All content fields optional - returns undefined if no content provided.
- */
-export interface BuildContinueMessageOptions {
-  text?: string;
-  fileParts?: FilePart[];
-  reviews?: ReviewNoteDataForDisplay[];
-  /** Optional message metadata to carry through to the queued follow-up user message */
-  muxMetadata?: MuxMessageMetadata;
-  model: string;
-  agentId: string;
-}
-
-/**
- * Build a ContinueMessage from raw inputs.
- * Centralizes the has-content check and field construction.
- *
- * @returns ContinueMessage if there's content to continue with, undefined otherwise
- */
-export function buildContinueMessage(
-  opts: BuildContinueMessageOptions
-): ContinueMessage | undefined {
-  const hasText = opts.text && opts.text.length > 0;
-  const hasFiles = opts.fileParts && opts.fileParts.length > 0;
-  const hasReviews = opts.reviews && opts.reviews.length > 0;
-  if (!hasText && !hasFiles && !hasReviews) return undefined;
-
-  // Type assertion is safe here - this is the only factory for ContinueMessage
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-  const result: ContinueMessage = {
-    text: opts.text ?? "",
-    fileParts: opts.fileParts,
-    reviews: opts.reviews,
-    muxMetadata: opts.muxMetadata,
-    model: opts.model,
-    agentId: opts.agentId,
-  } as ContinueMessage;
-  return result;
-}
-
-/**
- * Persisted ContinueMessage shape - what we read from storage/history.
- * May be missing fields if saved by older code versions.
- */
-export type PersistedContinueMessage = Partial<
-  Omit<ContinueMessage, typeof ContinueMessageBrand>
-> & {
-  /** @deprecated Legacy base mode persisted in older history entries. */
-  mode?: AgentMode;
-};
-
-/**
  * True when the content is the default resume sentinel ("Continue")
  * with no attachments.
  */
@@ -218,39 +146,6 @@ export function isDefaultSourceContent(content?: Partial<UserMessageContent>): b
   const hasFiles = (content.fileParts?.length ?? 0) > 0;
   const hasReviews = (content.reviews?.length ?? 0) > 0;
   return text === "Continue" && !hasFiles && !hasReviews;
-}
-
-/**
- * Rebuild a ContinueMessage from persisted data.
- * Use this when reading from storage/history where the data may have been
- * saved by older code that didn't include all fields.
- *
- * @param persisted - Data from storage (may be partial)
- * @param defaults - Default values for model/mode if not in persisted data
- * @returns Branded ContinueMessage, or undefined if no content
- */
-export function rebuildContinueMessage(
-  persisted: PersistedContinueMessage | undefined,
-  defaults: { model: string; agentId: string }
-): ContinueMessage | undefined {
-  if (!persisted) return undefined;
-
-  const persistedAgentId =
-    typeof persisted.agentId === "string" && persisted.agentId.trim().length > 0
-      ? persisted.agentId.trim()
-      : undefined;
-
-  const legacyMode = (persisted as { mode?: unknown }).mode;
-  const legacyAgentId = legacyMode === "plan" || legacyMode === "exec" ? legacyMode : undefined;
-
-  return buildContinueMessage({
-    text: persisted.text,
-    fileParts: persisted.fileParts,
-    reviews: persisted.reviews,
-    muxMetadata: persisted.muxMetadata,
-    model: persisted.model ?? defaults.model,
-    agentId: persistedAgentId ?? legacyAgentId ?? defaults.agentId,
-  });
 }
 
 // Parsed compaction request data (shared type for consistency)

@@ -1,4 +1,4 @@
-import { buildContinueMessage, type MuxMessageMetadata } from "@/common/types/message";
+import type { MuxMessageMetadata } from "@/common/types/message";
 import type { ParsedCommand, SlashSuggestion } from "@/browser/utils/slashCommands/types";
 import type { InferClientInputs } from "@orpc/client";
 import type { ORPCClient } from "../orpc/client";

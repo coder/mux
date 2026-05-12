@@ -776,7 +776,7 @@ describe("prepareCompactionMessage", () => {
       throw new Error("Expected compaction metadata");
     }
 
-    // ContinueMessage should be built from sourceContent
+    // Follow-up content should be built from sourceContent.
     expect(metadata.parsed.followUpContent).toBeDefined();
     expect(metadata.parsed.followUpContent?.text).toBe("/tests run all tests");
 

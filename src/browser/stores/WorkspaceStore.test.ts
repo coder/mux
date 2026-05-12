@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach, mock, spyOn, type Mock } from "bun:test";
-import type { DisplayedMessage } from "@/common/types/message";
+import type { CompactionFollowUpRequest, DisplayedMessage } from "@/common/types/message";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { StreamStartEvent, ToolCallStartEvent } from "@/common/types/stream";
 import type { WorkspaceActivitySnapshot, WorkspaceChatMessage } from "@/common/orpc/types";
@@ -358,6 +358,115 @@ function mockChatStreamFor(
     yield* body(options?.signal);
     await waitForAbortSignal(options?.signal);
   });
+}
+
+const TEST_MODEL = "claude-sonnet-4";
+
+function createReleaseGate(): { release: () => void; wait: Promise<void> } {
+  let release!: () => void;
+  const wait = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return { release, wait };
+}
+
+function createActivitySnapshot(
+  recency: number,
+  overrides: Partial<WorkspaceActivitySnapshot> = {}
+): WorkspaceActivitySnapshot {
+  return {
+    recency,
+    streaming: true,
+    lastModel: TEST_MODEL,
+    lastThinkingLevel: null,
+    ...overrides,
+  };
+}
+
+function mockBackgroundActivityTransition(
+  workspaceId: string,
+  initialSnapshot: WorkspaceActivitySnapshot,
+  nextSnapshots: WorkspaceActivitySnapshot[]
+): () => void {
+  const gate = createReleaseGate();
+  mockActivityList.mockResolvedValue({ [workspaceId]: initialSnapshot });
+  mockActivitySubscribe.mockImplementation(async function* (
+    _input?: void,
+    options?: { signal?: AbortSignal }
+  ): AsyncGenerator<WorkspaceActivityEvent, void, unknown> {
+    await gate.wait;
+    if (options?.signal?.aborted) {
+      return;
+    }
+
+    for (const activity of nextSnapshots) {
+      yield { type: "activity", workspaceId, activity };
+    }
+
+    await waitForAbortSignal(options?.signal);
+  });
+  return gate.release;
+}
+
+function streamStartEvent(
+  workspaceId: string,
+  messageId: string,
+  overrides: Partial<StreamStartEvent> = {}
+): WorkspaceChatMessage {
+  return {
+    type: "stream-start",
+    workspaceId,
+    messageId,
+    historySequence: 1,
+    model: TEST_MODEL,
+    startTime: Date.now(),
+    ...overrides,
+  };
+}
+
+function queuedFollowUpEvent(workspaceId: string, text: string): WorkspaceChatMessage {
+  return {
+    type: "queued-message-changed",
+    workspaceId,
+    queuedMessages: [text],
+    displayText: text,
+  };
+}
+
+function compactionRequestEvent(
+  id: string,
+  followUpContent?: CompactionFollowUpRequest,
+  timestamp = Date.now()
+): WorkspaceChatMessage {
+  return {
+    type: "message",
+    id,
+    role: "user",
+    parts: [{ type: "text", text: "/compact" }],
+    metadata: {
+      historySequence: 1,
+      timestamp,
+      muxMetadata: {
+        type: "compaction-request",
+        rawCommand: "/compact",
+        parsed: {
+          model: TEST_MODEL,
+          ...(followUpContent ? { followUpContent } : {}),
+        },
+      },
+    },
+  };
+}
+
+function compactionFollowUp(
+  overrides: Partial<CompactionFollowUpRequest> = {}
+): CompactionFollowUpRequest {
+  return {
+    text: "continue after compaction",
+    model: TEST_MODEL,
+    agentId: "exec",
+    ...overrides,
+  };
 }
 
 /**
@@ -2768,53 +2877,17 @@ describe("WorkspaceStore", () => {
       const activeWorkspaceId = "active-workspace";
       const backgroundWorkspaceId = "background-workspace";
       const initialRecency = new Date("2024-01-05T00:00:00.000Z").getTime();
-
-      const backgroundStreamingSnapshot: WorkspaceActivitySnapshot = {
-        recency: initialRecency,
-        streaming: true,
-        lastModel: "claude-sonnet-4",
-        lastThinkingLevel: null,
-      };
-
-      let releaseBackgroundCompletion!: () => void;
-      const backgroundCompletionReady = new Promise<void>((resolve) => {
-        releaseBackgroundCompletion = resolve;
-      });
-
-      mockActivityList.mockResolvedValue({
-        [backgroundWorkspaceId]: backgroundStreamingSnapshot,
-      });
-
-      mockActivitySubscribe.mockImplementation(async function* (
-        _input?: void,
-        options?: { signal?: AbortSignal }
-      ): AsyncGenerator<WorkspaceActivityEvent, void, unknown> {
-        await backgroundCompletionReady;
-        if (options?.signal?.aborted) {
-          return;
-        }
-
-        yield {
-          type: "activity" as const,
-          workspaceId: backgroundWorkspaceId,
-          activity: {
-            ...backgroundStreamingSnapshot,
-            recency: initialRecency + 1,
-            streaming: false,
-          },
-        };
-
-        await waitForAbortSignal(options?.signal);
-      });
-
+      const initialSnapshot = createActivitySnapshot(initialRecency);
+      const releaseBackgroundCompletion = mockBackgroundActivityTransition(
+        backgroundWorkspaceId,
+        initialSnapshot,
+        [{ ...initialSnapshot, recency: initialRecency + 1, streaming: false }]
+      );
       const onResponseComplete = createResponseCompleteSpy();
 
-      // Recreate the store so the first activity.list call uses this test snapshot.
       recreateStore(onResponseComplete);
-
       createAndAddWorkspace(store, activeWorkspaceId);
       createAndAddWorkspace(store, backgroundWorkspaceId, {}, false);
-
       releaseBackgroundCompletion();
       await tick(0);
 
@@ -2829,107 +2902,39 @@ describe("WorkspaceStore", () => {
       const activeWorkspaceId = "active-workspace-internal-resume-background";
       const backgroundWorkspaceId = "background-workspace-internal-resume-background";
       const initialRecency = new Date("2024-01-06T00:00:00.000Z").getTime();
-
-      const backgroundStreamingSnapshot: WorkspaceActivitySnapshot = {
-        recency: initialRecency,
-        streaming: true,
-        streamingGeneration: 1,
-        lastModel: "claude-sonnet-4",
-        lastThinkingLevel: null,
-      };
-
-      let releaseBackgroundCompletion!: () => void;
-      const backgroundCompletionReady = new Promise<void>((resolve) => {
-        releaseBackgroundCompletion = resolve;
-      });
-
-      mockActivityList.mockResolvedValue({
-        [backgroundWorkspaceId]: backgroundStreamingSnapshot,
-      });
-
-      mockActivitySubscribe.mockImplementation(async function* (
-        _input?: void,
-        options?: { signal?: AbortSignal }
-      ): AsyncGenerator<WorkspaceActivityEvent, void, unknown> {
-        await backgroundCompletionReady;
-        if (options?.signal?.aborted) {
-          return;
-        }
-
-        yield {
-          type: "activity" as const,
-          workspaceId: backgroundWorkspaceId,
-          activity: {
-            ...backgroundStreamingSnapshot,
-            streamingGeneration: 2,
-          },
-        };
-
-        yield {
-          type: "activity" as const,
-          workspaceId: backgroundWorkspaceId,
-          activity: {
-            ...backgroundStreamingSnapshot,
+      const initialSnapshot = createActivitySnapshot(initialRecency, { streamingGeneration: 1 });
+      const releaseBackgroundCompletion = mockBackgroundActivityTransition(
+        backgroundWorkspaceId,
+        initialSnapshot,
+        [
+          { ...initialSnapshot, streamingGeneration: 2 },
+          {
+            ...initialSnapshot,
             recency: initialRecency + 1,
             streaming: false,
             streamingGeneration: 2,
           },
-        };
-
-        await waitForAbortSignal(options?.signal);
-      });
-
+        ]
+      );
       mockChatStreamFor(backgroundWorkspaceId, function* () {
-        yield {
-          type: "message",
-          id: "internal-resume-compaction-request",
-          role: "user",
-          parts: [{ type: "text", text: "/compact" }],
-          metadata: {
-            historySequence: 1,
-            timestamp: Date.now(),
-            muxMetadata: {
-              type: "compaction-request",
-              rawCommand: "/compact",
-              parsed: {
-                model: "claude-sonnet-4",
-                followUpContent: {
-                  text: "Continue",
-                  model: "claude-sonnet-4",
-                  agentId: "exec",
-                  dispatchOptions: { source: "internal-resume" },
-                },
-              },
-            },
-          },
-        };
-
-        yield {
-          type: "stream-start",
-          workspaceId: backgroundWorkspaceId,
-          messageId: "compaction-stream",
+        yield compactionRequestEvent(
+          "internal-resume-compaction-request",
+          compactionFollowUp({ text: "Continue", dispatchOptions: { source: "internal-resume" } })
+        );
+        yield streamStartEvent(backgroundWorkspaceId, "compaction-stream", {
           historySequence: 2,
-          model: "claude-sonnet-4",
-          startTime: Date.now(),
           mode: "exec",
-        };
-
+        });
         yield { type: "caught-up", hasOlderHistory: false };
       });
-
       const onResponseComplete = createResponseCompleteSpy();
 
       recreateStore(onResponseComplete);
-
       createAndAddWorkspace(store, backgroundWorkspaceId);
-
-      const sawCompactingStream = await waitUntil(
-        () => store.getWorkspaceState(backgroundWorkspaceId).isCompacting
-      );
-      expect(sawCompactingStream).toBe(true);
-
+      expect(
+        await waitUntil(() => store.getWorkspaceState(backgroundWorkspaceId).isCompacting)
+      ).toBe(true);
       createAndAddWorkspace(store, activeWorkspaceId);
-
       releaseBackgroundCompletion();
       await tick(0);
 
@@ -2945,79 +2950,29 @@ describe("WorkspaceStore", () => {
       const activeWorkspaceId = "active-workspace-queued-follow-up-background";
       const backgroundWorkspaceId = "background-workspace-queued-follow-up-background";
       const initialRecency = new Date("2024-01-07T00:00:00.000Z").getTime();
-
-      const backgroundStreamingSnapshot: WorkspaceActivitySnapshot = {
-        recency: initialRecency,
-        streaming: true,
-        lastModel: "claude-sonnet-4",
-        lastThinkingLevel: null,
-      };
-
-      let releaseBackgroundCompletion!: () => void;
-      const backgroundCompletionReady = new Promise<void>((resolve) => {
-        releaseBackgroundCompletion = resolve;
-      });
-
-      mockActivityList.mockResolvedValue({
-        [backgroundWorkspaceId]: backgroundStreamingSnapshot,
-      });
-
-      mockActivitySubscribe.mockImplementation(async function* (
-        _input?: void,
-        options?: { signal?: AbortSignal }
-      ): AsyncGenerator<WorkspaceActivityEvent, void, unknown> {
-        await backgroundCompletionReady;
-        if (options?.signal?.aborted) {
-          return;
-        }
-
-        yield {
-          type: "activity" as const,
-          workspaceId: backgroundWorkspaceId,
-          activity: {
-            ...backgroundStreamingSnapshot,
-            recency: initialRecency + 1,
-            streaming: false,
-          },
-        };
-
-        await waitForAbortSignal(options?.signal);
-      });
-
+      const followUpText = "follow-up after response";
+      const initialSnapshot = createActivitySnapshot(initialRecency);
+      const releaseBackgroundCompletion = mockBackgroundActivityTransition(
+        backgroundWorkspaceId,
+        initialSnapshot,
+        [{ ...initialSnapshot, recency: initialRecency + 1, streaming: false }]
+      );
       mockChatStreamFor(backgroundWorkspaceId, function* () {
         yield { type: "caught-up", hasOlderHistory: false };
-
-        yield {
-          type: "stream-start",
-          workspaceId: backgroundWorkspaceId,
-          messageId: "response-stream",
-          historySequence: 1,
-          model: "claude-sonnet-4",
-          startTime: Date.now(),
-        };
-
-        yield {
-          type: "queued-message-changed",
-          workspaceId: backgroundWorkspaceId,
-          queuedMessages: ["follow-up after response"],
-          displayText: "follow-up after response",
-        };
+        yield streamStartEvent(backgroundWorkspaceId, "response-stream");
+        yield queuedFollowUpEvent(backgroundWorkspaceId, followUpText);
       });
-
       const onResponseComplete = createResponseCompleteSpy();
 
       recreateStore(onResponseComplete);
-
       createAndAddWorkspace(store, backgroundWorkspaceId);
-
-      const sawQueuedFollowUp = await waitUntil(() => {
-        const state = store.getWorkspaceState(backgroundWorkspaceId);
-        return state.canInterrupt && state.queuedMessage?.content === "follow-up after response";
-      });
-      expect(sawQueuedFollowUp).toBe(true);
-
+      expect(
+        await waitUntil(() => {
+          const state = store.getWorkspaceState(backgroundWorkspaceId);
+          return state.canInterrupt && state.queuedMessage?.content === followUpText;
+        })
+      ).toBe(true);
       createAndAddWorkspace(store, activeWorkspaceId);
-
       releaseBackgroundCompletion();
       await tick(0);
 
@@ -3033,93 +2988,37 @@ describe("WorkspaceStore", () => {
       const activeWorkspaceId = "active-workspace-after-handoff";
       const backgroundWorkspaceId = "background-workspace-after-handoff";
       const initialRecency = new Date("2024-01-07T12:00:00.000Z").getTime();
-
-      const backgroundStreamingSnapshot: WorkspaceActivitySnapshot = {
-        recency: initialRecency,
-        streaming: true,
-        streamingGeneration: 1,
-        lastModel: "claude-sonnet-4",
-        lastThinkingLevel: null,
-      };
-
-      let releaseBackgroundCompletion!: () => void;
-      const backgroundCompletionReady = new Promise<void>((resolve) => {
-        releaseBackgroundCompletion = resolve;
-      });
-
-      mockActivityList.mockResolvedValue({
-        [backgroundWorkspaceId]: backgroundStreamingSnapshot,
-      });
-
-      mockActivitySubscribe.mockImplementation(async function* (
-        _input?: void,
-        options?: { signal?: AbortSignal }
-      ): AsyncGenerator<WorkspaceActivityEvent, void, unknown> {
-        await backgroundCompletionReady;
-        if (options?.signal?.aborted) {
-          return;
-        }
-
-        yield {
-          type: "activity" as const,
-          workspaceId: backgroundWorkspaceId,
-          activity: {
-            ...backgroundStreamingSnapshot,
-            streamingGeneration: 2,
-          },
-        };
-
-        yield {
-          type: "activity" as const,
-          workspaceId: backgroundWorkspaceId,
-          activity: {
-            ...backgroundStreamingSnapshot,
+      const followUpText = "follow-up after response";
+      const initialSnapshot = createActivitySnapshot(initialRecency, { streamingGeneration: 1 });
+      const releaseBackgroundCompletion = mockBackgroundActivityTransition(
+        backgroundWorkspaceId,
+        initialSnapshot,
+        [
+          { ...initialSnapshot, streamingGeneration: 2 },
+          {
+            ...initialSnapshot,
             recency: initialRecency + 1,
             streaming: false,
             streamingGeneration: 2,
           },
-        };
-
-        await waitForAbortSignal(options?.signal);
-      });
-
+        ]
+      );
       mockChatStreamFor(backgroundWorkspaceId, function* () {
         yield { type: "caught-up", hasOlderHistory: false };
-
-        yield {
-          type: "stream-start",
-          workspaceId: backgroundWorkspaceId,
-          messageId: "response-stream-a",
-          historySequence: 1,
-          model: "claude-sonnet-4",
-          startTime: Date.now(),
-        };
-
-        yield {
-          type: "queued-message-changed",
-          workspaceId: backgroundWorkspaceId,
-          queuedMessages: ["follow-up after response"],
-          displayText: "follow-up after response",
-        };
+        yield streamStartEvent(backgroundWorkspaceId, "response-stream-a");
+        yield queuedFollowUpEvent(backgroundWorkspaceId, followUpText);
       });
-
       const onResponseComplete = createResponseCompleteSpy();
 
       recreateStore(onResponseComplete);
-
       createAndAddWorkspace(store, backgroundWorkspaceId);
-
-      const sawQueuedFollowUp = await waitUntil(() => {
-        const state = store.getWorkspaceState(backgroundWorkspaceId);
-        return state.canInterrupt && state.queuedMessage?.content === "follow-up after response";
-      });
-      expect(sawQueuedFollowUp).toBe(true);
-
+      expect(
+        await waitUntil(() => {
+          const state = store.getWorkspaceState(backgroundWorkspaceId);
+          return state.canInterrupt && state.queuedMessage?.content === followUpText;
+        })
+      ).toBe(true);
       createAndAddWorkspace(store, activeWorkspaceId);
-
-      // Simulate the stale-context case Codex flagged: stream B starts while the workspace is
-      // backgrounded, so the activity subscription sees generation 2 but the renderer never
-      // receives live onChat events for that second stream.
       releaseBackgroundCompletion();
       await tick(0);
 
@@ -3134,97 +3033,28 @@ describe("WorkspaceStore", () => {
       const activeWorkspaceId = "active-workspace-continue";
       const backgroundWorkspaceId = "background-workspace-continue";
       const initialRecency = new Date("2024-01-08T00:00:00.000Z").getTime();
-
-      const backgroundStreamingSnapshot: WorkspaceActivitySnapshot = {
-        recency: initialRecency,
-        streaming: true,
-        lastModel: "claude-sonnet-4",
-        lastThinkingLevel: null,
-      };
-
-      let releaseBackgroundCompletion!: () => void;
-      const backgroundCompletionReady = new Promise<void>((resolve) => {
-        releaseBackgroundCompletion = resolve;
-      });
-
-      mockActivityList.mockResolvedValue({
-        [backgroundWorkspaceId]: backgroundStreamingSnapshot,
-      });
-
-      mockActivitySubscribe.mockImplementation(async function* (
-        _input?: void,
-        options?: { signal?: AbortSignal }
-      ): AsyncGenerator<WorkspaceActivityEvent, void, unknown> {
-        await backgroundCompletionReady;
-        if (options?.signal?.aborted) {
-          return;
-        }
-
-        yield {
-          type: "activity" as const,
-          workspaceId: backgroundWorkspaceId,
-          activity: {
-            ...backgroundStreamingSnapshot,
-            recency: initialRecency + 1,
-            streaming: false,
-          },
-        };
-
-        await waitForAbortSignal(options?.signal);
-      });
-
+      const initialSnapshot = createActivitySnapshot(initialRecency);
+      const releaseBackgroundCompletion = mockBackgroundActivityTransition(
+        backgroundWorkspaceId,
+        initialSnapshot,
+        [{ ...initialSnapshot, recency: initialRecency + 1, streaming: false }]
+      );
       mockChatStreamFor(backgroundWorkspaceId, function* () {
-        yield {
-          type: "message",
-          id: "compaction-request-msg",
-          role: "user",
-          parts: [{ type: "text", text: "/compact" }],
-          metadata: {
-            historySequence: 1,
-            timestamp: Date.now(),
-            muxMetadata: {
-              type: "compaction-request",
-              rawCommand: "/compact",
-              parsed: {
-                model: "claude-sonnet-4",
-                followUpContent: {
-                  text: "continue after compaction",
-                  model: "claude-sonnet-4",
-                  agentId: "exec",
-                },
-              },
-            },
-          },
-        };
-
-        yield {
-          type: "stream-start",
-          workspaceId: backgroundWorkspaceId,
-          messageId: "compaction-stream",
+        yield compactionRequestEvent("compaction-request-msg", compactionFollowUp());
+        yield streamStartEvent(backgroundWorkspaceId, "compaction-stream", {
           historySequence: 2,
-          model: "claude-sonnet-4",
-          startTime: Date.now(),
           mode: "exec",
-        };
-
+        });
         yield { type: "caught-up", hasOlderHistory: false };
       });
-
       const onResponseComplete = createResponseCompleteSpy();
 
-      // Recreate the store so the first activity.list call uses this test snapshot.
       recreateStore(onResponseComplete);
-
       createAndAddWorkspace(store, backgroundWorkspaceId);
-
-      const sawCompactingStream = await waitUntil(
-        () => store.getWorkspaceState(backgroundWorkspaceId).isCompacting
-      );
-      expect(sawCompactingStream).toBe(true);
-
-      // Move focus to a different workspace so the compaction workspace is backgrounded.
+      expect(
+        await waitUntil(() => store.getWorkspaceState(backgroundWorkspaceId).isCompacting)
+      ).toBe(true);
       createAndAddWorkspace(store, activeWorkspaceId);
-
       releaseBackgroundCompletion();
       await tick(0);
 
@@ -3238,45 +3068,24 @@ describe("WorkspaceStore", () => {
 
     it("marks normal completions with queued follow-up for active callbacks", async () => {
       const workspaceId = "active-workspace-normal-queued-follow-up";
-
+      const followUpText = "follow-up after response";
       mockChatStreamFor(workspaceId, function* () {
         yield { type: "caught-up", hasOlderHistory: false };
-
-        yield {
-          type: "stream-start",
-          workspaceId,
-          messageId: "response-stream",
-          historySequence: 1,
-          model: "claude-sonnet-4",
-          startTime: Date.now(),
-        };
-
-        yield {
-          type: "queued-message-changed",
-          workspaceId,
-          queuedMessages: ["follow-up after response"],
-          displayText: "follow-up after response",
-        };
-
+        yield streamStartEvent(workspaceId, "response-stream");
+        yield queuedFollowUpEvent(workspaceId, followUpText);
         yield {
           type: "stream-end",
           workspaceId,
           messageId: "response-stream",
-          metadata: {
-            model: "claude-sonnet-4",
-          },
+          metadata: { model: TEST_MODEL },
           parts: [],
         };
       });
-
       const onResponseComplete = createResponseCompleteSpy();
 
       recreateStore(onResponseComplete);
-
       createAndAddWorkspace(store, workspaceId);
-
-      const sawResponseComplete = await waitUntil(() => onResponseComplete.mock.calls.length > 0);
-      expect(sawResponseComplete).toBe(true);
+      expect(await waitUntil(() => onResponseComplete.mock.calls.length > 0)).toBe(true);
 
       expectResponseComplete(onResponseComplete, {
         workspaceId,
@@ -3290,67 +3099,29 @@ describe("WorkspaceStore", () => {
 
     it("marks compaction completions with queued follow-up as auto-follow-up for active callbacks", async () => {
       const workspaceId = "active-workspace-queued-follow-up";
-
+      const timestamp = Date.now();
       mockChatStreamFor(workspaceId, function* () {
-        const timestamp = Date.now();
-
         yield { type: "caught-up", hasOlderHistory: false };
-
-        yield {
-          type: "message",
-          id: "compaction-request-msg",
-          role: "user",
-          parts: [{ type: "text", text: "/compact" }],
-          metadata: {
-            historySequence: 1,
-            timestamp,
-            muxMetadata: {
-              type: "compaction-request",
-              rawCommand: "/compact",
-              parsed: {
-                model: "claude-sonnet-4",
-              },
-            },
-          },
-        };
-
-        yield {
-          type: "stream-start",
-          workspaceId,
-          messageId: "compaction-stream",
+        yield compactionRequestEvent("compaction-request-msg", undefined, timestamp);
+        yield streamStartEvent(workspaceId, "compaction-stream", {
           historySequence: 2,
-          model: "claude-sonnet-4",
           startTime: timestamp + 1,
           mode: "compact",
-        };
-
-        // A queued message will be auto-sent by the backend when compaction stream ends.
-        yield {
-          type: "queued-message-changed",
-          workspaceId,
-          queuedMessages: ["follow-up after compaction"],
-          displayText: "follow-up after compaction",
-        };
-
+        });
+        yield queuedFollowUpEvent(workspaceId, "follow-up after compaction");
         yield {
           type: "stream-end",
           workspaceId,
           messageId: "compaction-stream",
-          metadata: {
-            model: "claude-sonnet-4",
-          },
+          metadata: { model: TEST_MODEL },
           parts: [],
         };
       });
-
       const onResponseComplete = createResponseCompleteSpy();
 
       recreateStore(onResponseComplete);
-
       createAndAddWorkspace(store, workspaceId);
-
-      const sawResponseComplete = await waitUntil(() => onResponseComplete.mock.calls.length > 0);
-      expect(sawResponseComplete).toBe(true);
+      expect(await waitUntil(() => onResponseComplete.mock.calls.length > 0)).toBe(true);
 
       expectResponseComplete(onResponseComplete, {
         workspaceId,
@@ -3366,102 +3137,35 @@ describe("WorkspaceStore", () => {
       const activeWorkspaceId = "active-workspace-background-queued-follow-up";
       const backgroundWorkspaceId = "background-workspace-background-queued-follow-up";
       const initialRecency = new Date("2024-01-09T00:00:00.000Z").getTime();
-
-      const backgroundStreamingSnapshot: WorkspaceActivitySnapshot = {
-        recency: initialRecency,
-        streaming: true,
-        lastModel: "claude-sonnet-4",
-        lastThinkingLevel: null,
-      };
-
-      let releaseBackgroundCompletion!: () => void;
-      const backgroundCompletionReady = new Promise<void>((resolve) => {
-        releaseBackgroundCompletion = resolve;
-      });
-
-      mockActivityList.mockResolvedValue({
-        [backgroundWorkspaceId]: backgroundStreamingSnapshot,
-      });
-
-      mockActivitySubscribe.mockImplementation(async function* (
-        _input?: void,
-        options?: { signal?: AbortSignal }
-      ): AsyncGenerator<WorkspaceActivityEvent, void, unknown> {
-        await backgroundCompletionReady;
-        if (options?.signal?.aborted) {
-          return;
-        }
-
-        yield {
-          type: "activity" as const,
-          workspaceId: backgroundWorkspaceId,
-          activity: {
-            ...backgroundStreamingSnapshot,
-            recency: initialRecency + 1,
-            streaming: false,
-          },
-        };
-
-        await waitForAbortSignal(options?.signal);
-      });
-
+      const followUpText = "follow-up after compaction";
+      const timestamp = Date.now();
+      const initialSnapshot = createActivitySnapshot(initialRecency);
+      const releaseBackgroundCompletion = mockBackgroundActivityTransition(
+        backgroundWorkspaceId,
+        initialSnapshot,
+        [{ ...initialSnapshot, recency: initialRecency + 1, streaming: false }]
+      );
       mockChatStreamFor(backgroundWorkspaceId, function* () {
-        const timestamp = Date.now();
-
         yield { type: "caught-up", hasOlderHistory: false };
-
-        yield {
-          type: "message",
-          id: "compaction-request-msg",
-          role: "user",
-          parts: [{ type: "text", text: "/compact" }],
-          metadata: {
-            historySequence: 1,
-            timestamp,
-            muxMetadata: {
-              type: "compaction-request",
-              rawCommand: "/compact",
-              parsed: {
-                model: "claude-sonnet-4",
-              },
-            },
-          },
-        };
-
-        yield {
-          type: "stream-start",
-          workspaceId: backgroundWorkspaceId,
-          messageId: "compaction-stream",
+        yield compactionRequestEvent("compaction-request-msg", undefined, timestamp);
+        yield streamStartEvent(backgroundWorkspaceId, "compaction-stream", {
           historySequence: 2,
-          model: "claude-sonnet-4",
           startTime: timestamp + 1,
           mode: "compact",
-        };
-
-        yield {
-          type: "queued-message-changed",
-          workspaceId: backgroundWorkspaceId,
-          queuedMessages: ["follow-up after compaction"],
-          displayText: "follow-up after compaction",
-        };
+        });
+        yield queuedFollowUpEvent(backgroundWorkspaceId, followUpText);
       });
-
       const onResponseComplete = createResponseCompleteSpy();
 
       recreateStore(onResponseComplete);
-
       createAndAddWorkspace(store, backgroundWorkspaceId);
-
-      const sawQueuedFollowUp = await waitUntil(() => {
-        const state = store.getWorkspaceState(backgroundWorkspaceId);
-        return state.isCompacting && state.queuedMessage?.content === "follow-up after compaction";
-      });
-      expect(sawQueuedFollowUp).toBe(true);
-
-      // Move focus to a different workspace so the compaction workspace is backgrounded
-      // and completion falls back to the activity snapshot path.
+      expect(
+        await waitUntil(() => {
+          const state = store.getWorkspaceState(backgroundWorkspaceId);
+          return state.isCompacting && state.queuedMessage?.content === followUpText;
+        })
+      ).toBe(true);
       createAndAddWorkspace(store, activeWorkspaceId);
-
       releaseBackgroundCompletion();
       await tick(0);
 
@@ -3477,54 +3181,17 @@ describe("WorkspaceStore", () => {
       const activeWorkspaceId = "active-workspace-no-replay";
       const backgroundWorkspaceId = "background-workspace-no-replay";
       const initialRecency = new Date("2024-01-06T00:00:00.000Z").getTime();
-
-      const backgroundStreamingSnapshot: WorkspaceActivitySnapshot = {
-        recency: initialRecency,
-        streaming: true,
-        lastModel: "claude-sonnet-4",
-        lastThinkingLevel: null,
-      };
-
-      let releaseBackgroundTransition!: () => void;
-      const backgroundTransitionReady = new Promise<void>((resolve) => {
-        releaseBackgroundTransition = resolve;
-      });
-
-      mockActivityList.mockResolvedValue({
-        [backgroundWorkspaceId]: backgroundStreamingSnapshot,
-      });
-
-      mockActivitySubscribe.mockImplementation(async function* (
-        _input?: void,
-        options?: { signal?: AbortSignal }
-      ): AsyncGenerator<WorkspaceActivityEvent, void, unknown> {
-        await backgroundTransitionReady;
-        if (options?.signal?.aborted) {
-          return;
-        }
-
-        yield {
-          type: "activity" as const,
-          workspaceId: backgroundWorkspaceId,
-          activity: {
-            ...backgroundStreamingSnapshot,
-            // Abort/error transitions can stop streaming without advancing recency.
-            recency: initialRecency,
-            streaming: false,
-          },
-        };
-
-        await waitForAbortSignal(options?.signal);
-      });
-
+      const initialSnapshot = createActivitySnapshot(initialRecency);
+      const releaseBackgroundTransition = mockBackgroundActivityTransition(
+        backgroundWorkspaceId,
+        initialSnapshot,
+        [{ ...initialSnapshot, recency: initialRecency, streaming: false }]
+      );
       const onResponseComplete = createResponseCompleteSpy();
 
-      // Recreate the store so the first activity.list call uses this test snapshot.
       recreateStore(onResponseComplete);
-
       createAndAddWorkspace(store, activeWorkspaceId);
       createAndAddWorkspace(store, backgroundWorkspaceId, {}, false);
-
       releaseBackgroundTransition();
       await tick(0);
 
