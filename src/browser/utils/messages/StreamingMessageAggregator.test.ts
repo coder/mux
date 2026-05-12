@@ -256,6 +256,54 @@ describe("StreamingMessageAggregator", () => {
       expect(userMessages[1]?.isSynthetic).toBeUndefined();
     });
 
+    test("should strip legacy goal-cleared label from displayed summaries", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      const legacySummary = createMuxMessage(
+        "goal-cleared-1",
+        "assistant",
+        'Goal cleared: "Ship goal primitive" — spent $0.00 over 0 turns (status: active)',
+        {
+          timestamp: 1,
+          historySequence: 1,
+          synthetic: true,
+          uiVisible: true,
+          muxMetadata: { type: "goal-cleared-summary" },
+        }
+      );
+
+      aggregator.loadHistoricalMessages([legacySummary], false);
+
+      const displayed = aggregator.getDisplayedMessages();
+      const assistantMessages = displayed.filter((m) => m.type === "assistant");
+      expect(assistantMessages[0]?.content).toBe(
+        '"Ship goal primitive" — spent $0.00 over 0 turns (status: active)'
+      );
+    });
+
+    test("should preserve already-concise goal-cleared summaries", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      const summary = createMuxMessage(
+        "goal-cleared-2",
+        "assistant",
+        '"Ship goal primitive" — spent $0.00 over 0 turns (status: active)',
+        {
+          timestamp: 1,
+          historySequence: 1,
+          synthetic: true,
+          uiVisible: true,
+          muxMetadata: { type: "goal-cleared-summary" },
+        }
+      );
+
+      aggregator.loadHistoricalMessages([summary], false);
+
+      const displayed = aggregator.getDisplayedMessages();
+      const assistantMessages = displayed.filter((m) => m.type === "assistant");
+      expect(assistantMessages[0]?.content).toBe(
+        '"Ship goal primitive" — spent $0.00 over 0 turns (status: active)'
+      );
+    });
+
     test("should show synthetic messages when debugLlmRequest is enabled", () => {
       withDebugLlmRequestEnabled(() => {
         const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);

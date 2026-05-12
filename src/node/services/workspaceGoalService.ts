@@ -1857,6 +1857,7 @@ export class WorkspaceGoalService {
   }
 
   private async appendClearSummary(workspaceId: string, goal: GoalRecordV1): Promise<void> {
+    // Keep the persisted summary self-describing for model context; the renderer hides the redundant label.
     const summary = `Goal cleared: "${goal.objective}" — spent $${formatCentsBare(goal.costCents)} over ${goal.turnsUsed} turns (status: ${goal.status})`;
     const message = createMuxMessage(
       `goal-cleared-${Date.now()}-${crypto.randomUUID()}`,

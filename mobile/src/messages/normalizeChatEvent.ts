@@ -3,6 +3,7 @@ import type { MuxMessage, MuxTextPart, MuxFilePart } from "@/common/types/messag
 import type { DynamicToolPart } from "@/common/types/toolParts";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import { isMuxMessage } from "@/common/orpc/types";
+import { getGoalClearedSummaryDisplayText } from "@/common/utils/goalClearedSummaryDisplay";
 import { createChatEventProcessor } from "@/browser/utils/messages/ChatEventProcessor";
 
 /**
@@ -145,7 +146,7 @@ function transformMuxToDisplayed(message: MuxMessage): DisplayedMessage[] {
           type: "assistant",
           id: `${message.id}-${partIndex}`,
           historyId: message.id,
-          content: part.text,
+          content: getGoalClearedSummaryDisplayText(part.text, message.metadata?.muxMetadata),
           historySequence,
           streamSequence: streamSeq++,
           isStreaming: false,
