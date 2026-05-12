@@ -115,7 +115,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
           },
         ]
       : []),
-    ...(onEdit && !isLocalCommandOutput
+    ...(onEdit && !isLocalCommandOutput && !isGoalContinuation && !isBudgetLimitWrapup
       ? [
           {
             label: "Edit",

@@ -1,42 +1,43 @@
 import type { ReactElement } from "react";
 import { CircleStop, Target } from "lucide-react";
+import { unescapeXml } from "@/common/utils/xml";
+import { GOAL_OBJECTIVE_CLOSE_TAG, GOAL_OBJECTIVE_OPEN_TAG } from "@/constants/goals";
 
-type GoalSyntheticMessageKind = "continuation" | "budget-limit";
+type GoalCardVariant = "continuation" | "budget-limit";
 
 interface GoalSyntheticMessageContentProps {
   content: string;
-  kind: GoalSyntheticMessageKind;
+  kind: GoalCardVariant;
 }
 
-const OBJECTIVE_OPEN_TAG = "<untrusted_objective>";
-const OBJECTIVE_CLOSE_TAG = "</untrusted_objective>";
-
-function decodeXmlEntities(value: string): string {
-  return value
-    .replaceAll("&lt;", "<")
-    .replaceAll("&gt;", ">")
-    .replaceAll("&quot;", '"')
-    .replaceAll("&apos;", "'")
-    .replaceAll("&amp;", "&");
-}
+const FIRST_PARAGRAPH_DELIMITER = "\n\n";
+const MAX_LIMIT_REASON_LENGTH = 160;
 
 function extractObjective(content: string): string | null {
-  const objectiveStart = content.indexOf(OBJECTIVE_OPEN_TAG);
+  const objectiveStart = content.indexOf(GOAL_OBJECTIVE_OPEN_TAG);
   if (objectiveStart === -1) return null;
 
-  const valueStart = objectiveStart + OBJECTIVE_OPEN_TAG.length;
-  const objectiveEnd = content.indexOf(OBJECTIVE_CLOSE_TAG, valueStart);
+  const valueStart = objectiveStart + GOAL_OBJECTIVE_OPEN_TAG.length;
+  const objectiveEnd = content.indexOf(GOAL_OBJECTIVE_CLOSE_TAG, valueStart);
   if (objectiveEnd === -1) return null;
 
   const objective = content.slice(valueStart, objectiveEnd).trim();
-  return objective.length > 0 ? decodeXmlEntities(objective) : null;
+  return objective.length > 0 ? unescapeXml(objective) : null;
 }
 
-function extractLimitReason(content: string): string | null {
-  const [reason = ""] = content.split("\n\n", 1);
-  return reason.trim() || null;
+function extractFirstParagraph(content: string): string | null {
+  const delimiterIndex = content.indexOf(FIRST_PARAGRAPH_DELIMITER);
+  if (delimiterIndex === -1) return null;
+
+  const paragraph = content.slice(0, delimiterIndex).trim();
+  if (!paragraph) return null;
+  if (paragraph.length > MAX_LIMIT_REASON_LENGTH) return null;
+  if (paragraph.includes(GOAL_OBJECTIVE_OPEN_TAG)) return null;
+
+  return paragraph;
 }
 
+/** Hides model-only goal prompt internals while surfacing the user-facing goal event. */
 export function GoalSyntheticMessageContent(props: GoalSyntheticMessageContentProps): ReactElement {
   const objective = extractObjective(props.content);
   let title = "Continuing active goal";
@@ -45,7 +46,7 @@ export function GoalSyntheticMessageContent(props: GoalSyntheticMessageContentPr
 
   if (props.kind === "budget-limit") {
     title = "Goal limit reached";
-    description = extractLimitReason(props.content) ?? "Mux is wrapping up the current goal.";
+    description = extractFirstParagraph(props.content) ?? "Mux is wrapping up the current goal.";
     Icon = CircleStop;
   }
 
