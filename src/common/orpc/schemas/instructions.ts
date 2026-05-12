@@ -88,6 +88,12 @@ export const InstructionSourcesSchema = z.object({
 /** Per-workspace scratchpad appended to `<additional-instructions>` for every turn. */
 export const AdditionalSystemContextSchema = z.object({
   content: z.string(),
+  /**
+   * When false, the scratchpad content is preserved on disk but not injected
+   * into the system prompt. Lets users keep notes around without sending them.
+   * Defaults to true on read when the workspace has never explicitly toggled it.
+   */
+  enabled: z.boolean(),
 });
 
 /**

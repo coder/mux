@@ -42,18 +42,21 @@ export class InstructionsService {
     }
   }
 
-  async getAdditionalSystemContext(workspaceId: string): Promise<{ content: string }> {
+  async getAdditionalSystemContext(
+    workspaceId: string
+  ): Promise<{ content: string; enabled: boolean }> {
     await this.assertWorkspaceExists(workspaceId);
-    return { content: await readAdditionalSystemContext(this.config, workspaceId) };
+    return await readAdditionalSystemContext(this.config, workspaceId);
   }
 
   async setAdditionalSystemContext(
     workspaceId: string,
-    content: string
-  ): Promise<{ content: string }> {
+    content: string,
+    enabled: boolean
+  ): Promise<{ content: string; enabled: boolean }> {
     await this.assertWorkspaceExists(workspaceId);
-    await writeAdditionalSystemContext(this.config, workspaceId, content);
-    return { content };
+    await writeAdditionalSystemContext(this.config, workspaceId, { content, enabled });
+    return { content, enabled };
   }
 
   /**
@@ -123,9 +126,7 @@ export class InstructionsService {
     return {
       workspaceId,
       model,
-      additionalSystemContext: {
-        content: await readAdditionalSystemContext(this.config, workspaceId),
-      },
+      additionalSystemContext: await readAdditionalSystemContext(this.config, workspaceId),
       sources: annotatedSources,
       files: annotatedFiles,
       totalTokens,

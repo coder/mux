@@ -4,7 +4,7 @@ import { ChevronDown, ChevronRight, FileText, RefreshCw } from "lucide-react";
 import { useAPI } from "@/browser/contexts/API";
 import { ErrorBoundary } from "@/browser/components/ErrorBoundary/ErrorBoundary";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/Tooltip/Tooltip";
-import { AdditionalSystemContextPanel } from "./AdditionalSystemContextScratchpad";
+import { ChatInstructionsPanel } from "./AdditionalSystemContextScratchpad";
 import { isAbortError } from "@/browser/utils/isAbortError";
 import { setWorkspaceInstructionsFileCount } from "@/browser/utils/workspaceInstructionsStore";
 import { cn } from "@/common/lib/utils";
@@ -76,7 +76,7 @@ function InstructionsTabImpl(props: InstructionsTabProps) {
         onRefresh={refresh}
       />
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <AdditionalSystemContextPanel workspaceId={props.workspaceId} />
+        <ChatInstructionsPanel workspaceId={props.workspaceId} />
         {error && <ErrorBanner message={error} />}
         {!error && !loading && data?.files.length === 0 && <EmptyState />}
         {data && data.files.length > 0 && <InstructionsBody data={data} />}

@@ -4027,7 +4027,8 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           return context.instructionsService.setAdditionalSystemContext(
             input.workspaceId,
-            input.content
+            input.content,
+            input.enabled
           );
         }),
       stats: {

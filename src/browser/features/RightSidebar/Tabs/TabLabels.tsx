@@ -134,18 +134,20 @@ export const InstructionsTabLabel: React.FC<InstructionsTabLabelProps> = ({ work
   const { api } = useAPI();
   const fileCount = useWorkspaceInstructionsFileCount(workspaceId);
   const scratchpad = useAdditionalSystemContextSnapshot(workspaceId);
-  const hasScratchpad = scratchpad.trim().length > 0;
+  const chatInstructionsActive = scratchpad.enabled && scratchpad.content.trim().length > 0;
 
   React.useEffect(() => {
     if (!api) return;
     ensureWorkspaceInstructionsFetched(api, workspaceId);
   }, [api, workspaceId]);
 
-  // Once a count is known, render it; until then keep the label compact.
-  // Always render the badge when the scratchpad is active so the accent color
-  // stays visible even if the count is still loading.
-  const showBadge = hasScratchpad || (fileCount != null && fileCount > 0);
-  const badgeText = fileCount ?? 0;
+  // Chat Instructions, when active, contribute one additional "instruction
+  // source" to the badge count. We mark them with a trailing asterisk so
+  // users can tell ephemeral chat-scoped instructions apart from on-disk
+  // AGENTS.md files at a glance.
+  const baseCount = fileCount ?? 0;
+  const displayCount = baseCount + (chatInstructionsActive ? 1 : 0);
+  const showBadge = chatInstructionsActive || (fileCount != null && fileCount > 0);
 
   return (
     <>
@@ -154,15 +156,16 @@ export const InstructionsTabLabel: React.FC<InstructionsTabLabelProps> = ({ work
         <span
           className={cn(
             "text-[10px] tabular-nums",
-            hasScratchpad ? "text-[var(--color-accent)]" : "text-muted"
+            chatInstructionsActive ? "text-[var(--color-accent)]" : "text-muted"
           )}
           aria-label={
-            hasScratchpad
-              ? `${badgeText} instruction files (scratchpad active)`
-              : `${badgeText} instruction files`
+            chatInstructionsActive
+              ? `${baseCount} instruction files plus active Chat Instructions`
+              : `${baseCount} instruction files`
           }
         >
-          {badgeText}
+          {displayCount}
+          {chatInstructionsActive && "*"}
         </span>
       )}
     </>

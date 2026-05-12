@@ -10,7 +10,7 @@ import React, {
 import { Lightbulb } from "lucide-react";
 import { MessageListProvider } from "@/browser/features/Messages/MessageListContext";
 import { cn } from "@/common/lib/utils";
-import { AdditionalSystemContextChatDecoration } from "@/browser/components/InstructionsTab/AdditionalSystemContextScratchpad";
+import { ChatInstructionsChatDecoration } from "@/browser/components/InstructionsTab/AdditionalSystemContextScratchpad";
 import { MessageRenderer } from "@/browser/features/Messages/MessageRenderer";
 import { MarkdownRenderer } from "@/browser/features/Messages/MarkdownRenderer";
 import { useTranscriptContextMenu } from "@/browser/features/Messages/useTranscriptContextMenu";
@@ -910,7 +910,6 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                           </TooltipIfPresent>
                         </div>
                       )}
-                      <AdditionalSystemContextChatDecoration workspaceId={workspaceId} />
                       {deferredMessages.map((msg, index) => {
                         const bashOutputGroup = bashOutputGroupInfos[index];
 
@@ -1141,6 +1140,13 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
   decorationEntries.push({
     key: "background-processes",
     node: <BackgroundProcessesBanner workspaceId={props.workspaceId} />,
+  });
+  // The Chat Instructions decoration is intentionally self-gating: it renders
+  // nothing when the scratchpad is empty or disabled, so it can always be in
+  // the decoration lane without affecting layout for users who don't use it.
+  decorationEntries.push({
+    key: "chat-instructions",
+    node: <ChatInstructionsChatDecoration workspaceId={props.workspaceId} />,
   });
   if (props.shouldShowReviewsBanner) {
     decorationEntries.push({

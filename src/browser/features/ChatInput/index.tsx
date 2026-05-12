@@ -2308,7 +2308,16 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           ...(overrides?.queueDispatchMode
             ? { queueDispatchMode: overrides.queueDispatchMode }
             : {}),
-          ...(additionalSystemContextHydrated ? { additionalSystemContext } : {}),
+          // Honor the per-workspace "Chat Instructions" toggle: when the user
+          // has disabled the scratchpad, send an empty string so the backend
+          // doesn't fall back to reading the durable content from disk.
+          ...(additionalSystemContextHydrated
+            ? {
+                additionalSystemContext: additionalSystemContext.enabled
+                  ? additionalSystemContext.content
+                  : "",
+              }
+            : {}),
           additionalSystemInstructions,
           editMessageId: editMessageForSend?.id,
           fileParts: sendFileParts,

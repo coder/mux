@@ -1477,7 +1477,11 @@ export const workspace = {
     output: AdditionalSystemContextSchema,
   },
   setAdditionalSystemContext: {
-    input: z.object({ workspaceId: z.string(), content: z.string() }),
+    input: z.object({
+      workspaceId: z.string(),
+      content: z.string(),
+      enabled: z.boolean(),
+    }),
     output: AdditionalSystemContextSchema,
   },
   /** Per-workspace MCP configuration (overrides project-level mcp.jsonc) */

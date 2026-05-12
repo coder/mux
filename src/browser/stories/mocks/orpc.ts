@@ -172,8 +172,8 @@ export interface MockORPCClientOptions {
       exitCode?: number;
     }>
   >;
-  /** Additional system context scratchpads per workspace (Instructions tab / chat decoration). */
-  additionalSystemContexts?: Map<string, string>;
+  /** Chat Instructions scratchpads per workspace (Instructions tab / chat decoration). */
+  additionalSystemContexts?: Map<string, { content: string; enabled: boolean }>;
   /** Session usage data per workspace (for Costs tab) */
   workspaceStatsSnapshots?: Map<string, WorkspaceStatsSnapshot>;
   /** Global secrets (Settings → Secrets → Global) */
@@ -337,7 +337,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       string,
       { messages: MuxMessage[]; model?: string; thinkingLevel?: ThinkingLevel }
     >(),
-    additionalSystemContexts = new Map<string, string>(),
+    additionalSystemContexts = new Map<string, { content: string; enabled: boolean }>(),
     workspaceStatsSnapshots = new Map<string, WorkspaceStatsSnapshot>(),
     globalSecrets = [],
     projectSecrets = new Map<string, Secret[]>(),
@@ -1570,22 +1570,32 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         Promise.resolve({
           workspaceId: input.workspaceId,
           model: input.model ?? null,
-          additionalSystemContext: {
-            content: additionalSystemContexts.get(input.workspaceId) ?? "",
+          additionalSystemContext: additionalSystemContexts.get(input.workspaceId) ?? {
+            content: "",
+            enabled: true,
           },
           sources: { global: null, context: [] },
           files: [],
           totalTokens: null,
         }),
       getAdditionalSystemContext: (input: { workspaceId: string }) =>
-        Promise.resolve({ content: additionalSystemContexts.get(input.workspaceId) ?? "" }),
-      setAdditionalSystemContext: (input: { workspaceId: string; content: string }) => {
+        Promise.resolve(
+          additionalSystemContexts.get(input.workspaceId) ?? { content: "", enabled: true }
+        ),
+      setAdditionalSystemContext: (input: {
+        workspaceId: string;
+        content: string;
+        enabled: boolean;
+      }) => {
         if (input.content.length === 0) {
           additionalSystemContexts.delete(input.workspaceId);
         } else {
-          additionalSystemContexts.set(input.workspaceId, input.content);
+          additionalSystemContexts.set(input.workspaceId, {
+            content: input.content,
+            enabled: input.enabled,
+          });
         }
-        return Promise.resolve({ content: input.content });
+        return Promise.resolve({ content: input.content, enabled: input.enabled });
       },
       mcp: {
         get: (input: { workspaceId: string }) =>

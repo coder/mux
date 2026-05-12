@@ -59,6 +59,7 @@ import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { normalizeToCanonical } from "@/common/utils/ai/models";
 import { readToolInstructions } from "./systemMessage";
 import {
+  effectiveAdditionalSystemContext,
   mergeAdditionalSystemInstructions,
   readAdditionalSystemContext,
 } from "./additionalSystemContext";
@@ -1170,10 +1171,12 @@ export class AIService extends EventEmitter {
       let workspaceAdditionalSystemContext = additionalSystemContext;
       if (workspaceAdditionalSystemContext == null) {
         try {
-          workspaceAdditionalSystemContext = await readAdditionalSystemContext(
-            this.config,
-            workspaceId
-          );
+          // Fall back to disk only when the renderer did not send a live snapshot.
+          // `effectiveAdditionalSystemContext` honors the `enabled` toggle: when
+          // the user has disabled the scratchpad, the persisted content is
+          // intentionally not injected.
+          const record = await readAdditionalSystemContext(this.config, workspaceId);
+          workspaceAdditionalSystemContext = effectiveAdditionalSystemContext(record);
         } catch (error) {
           // The scratchpad is user-editable state, so a transient read failure should not block a send.
           log.warn("Failed to load workspace additional system context; continuing without it", {

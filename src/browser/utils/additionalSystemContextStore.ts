@@ -1,10 +1,18 @@
 import type { APIClient } from "@/browser/contexts/API";
 import { useSyncExternalStore } from "react";
 
+export interface AdditionalSystemContextSnapshot {
+  content: string;
+  enabled: boolean;
+}
+
+const DEFAULT_SNAPSHOT: AdditionalSystemContextSnapshot = { content: "", enabled: true };
+
 const hydratedWorkspaces = new Set<string>();
 const versionByWorkspace = new Map<string, number>();
-const contentByWorkspace = new Map<string, string>();
+const snapshotByWorkspace = new Map<string, AdditionalSystemContextSnapshot>();
 const subscribersByWorkspace = new Map<string, Set<() => void>>();
+const focusListenersByWorkspace = new Map<string, Set<() => void>>();
 
 function getSubscribers(workspaceId: string): Set<() => void> {
   const existing = subscribersByWorkspace.get(workspaceId);
@@ -22,18 +30,26 @@ export function isAdditionalSystemContextHydrated(workspaceId: string): boolean 
   return hydratedWorkspaces.has(workspaceId);
 }
 
-export function readAdditionalSystemContextSnapshot(workspaceId: string): string {
-  return contentByWorkspace.get(workspaceId) ?? "";
+export function readAdditionalSystemContextSnapshot(
+  workspaceId: string
+): AdditionalSystemContextSnapshot {
+  return snapshotByWorkspace.get(workspaceId) ?? DEFAULT_SNAPSHOT;
 }
 
-export function updateAdditionalSystemContextSnapshot(workspaceId: string, content: string): void {
+export function updateAdditionalSystemContextSnapshot(
+  workspaceId: string,
+  next: AdditionalSystemContextSnapshot
+): void {
   hydratedWorkspaces.add(workspaceId);
   versionByWorkspace.set(workspaceId, getAdditionalSystemContextVersion(workspaceId) + 1);
 
-  if (content.length === 0) {
-    contentByWorkspace.delete(workspaceId);
+  // Empty content with the default "enabled" toggle collapses to the implicit
+  // default. Anything else (non-empty content OR a non-default toggle) needs to
+  // be retained so consumers can observe it.
+  if (next.content.length === 0 && next.enabled) {
+    snapshotByWorkspace.delete(workspaceId);
   } else {
-    contentByWorkspace.set(workspaceId, content);
+    snapshotByWorkspace.set(workspaceId, next);
   }
 
   for (const subscriber of getSubscribers(workspaceId)) {
@@ -62,7 +78,7 @@ interface SaveCallbacks {
 
 interface SaveState {
   inFlight: boolean;
-  pending: string | null;
+  pending: AdditionalSystemContextSnapshot | null;
   callbacks: Set<SaveCallbacks>;
 }
 
@@ -99,10 +115,19 @@ function flushAdditionalSystemContextSave(api: APIClient, workspaceId: string): 
   state.inFlight = true;
 
   api.workspace
-    .setAdditionalSystemContext({ workspaceId, content: next })
+    .setAdditionalSystemContext({
+      workspaceId,
+      content: next.content,
+      enabled: next.enabled,
+    })
     .then((result) => {
+      // Only sync from server when nothing newer is queued. Otherwise an older
+      // save's response would overwrite still-unflushed live edits.
       if (state.pending == null) {
-        updateAdditionalSystemContextSnapshot(workspaceId, result.content);
+        updateAdditionalSystemContextSnapshot(workspaceId, {
+          content: result.content,
+          enabled: result.enabled,
+        });
       }
     })
     .catch((error) => notifySaveError(state, error))
@@ -119,15 +144,65 @@ function flushAdditionalSystemContextSave(api: APIClient, workspaceId: string): 
 export function queueAdditionalSystemContextSave(
   api: APIClient,
   workspaceId: string,
-  content: string,
+  next: AdditionalSystemContextSnapshot,
   callbacks?: SaveCallbacks
 ): void {
   const state = getSaveState(workspaceId);
   if (callbacks) {
     state.callbacks.add(callbacks);
   }
-  state.pending = content;
+  state.pending = next;
   flushAdditionalSystemContextSave(api, workspaceId);
+}
+
+/**
+ * Focus request channel. ChatInput decoration / Instructions tab badge calls
+ * `requestAdditionalSystemContextFocus(workspaceId)` after switching the
+ * right-sidebar tab to "instructions"; the editor subscribes via
+ * `subscribeAdditionalSystemContextFocus` and focuses its textarea.
+ *
+ * Using a tiny pub-sub instead of a ref lets the editor be unmounted at the
+ * time the request is fired (e.g. when the Instructions tab is being switched
+ * on for the first time) — the editor's effect will register the listener as
+ * soon as it mounts, and the focus request remains visible because we replay
+ * it with a small generation counter.
+ */
+let pendingFocusGeneration = new Map<string, number>();
+
+export function requestAdditionalSystemContextFocus(workspaceId: string): void {
+  const next = (pendingFocusGeneration.get(workspaceId) ?? 0) + 1;
+  pendingFocusGeneration.set(workspaceId, next);
+  const listeners = focusListenersByWorkspace.get(workspaceId);
+  if (!listeners) return;
+  for (const listener of listeners) listener();
+}
+
+export function subscribeAdditionalSystemContextFocus(
+  workspaceId: string,
+  callback: () => void
+): () => void {
+  let listeners = focusListenersByWorkspace.get(workspaceId);
+  if (!listeners) {
+    listeners = new Set();
+    focusListenersByWorkspace.set(workspaceId, listeners);
+  }
+  const target = listeners;
+  target.add(callback);
+  return () => {
+    target.delete(callback);
+    if (target.size === 0) {
+      focusListenersByWorkspace.delete(workspaceId);
+    }
+  };
+}
+
+export function getAdditionalSystemContextFocusGeneration(workspaceId: string): number {
+  return pendingFocusGeneration.get(workspaceId) ?? 0;
+}
+
+/** Test-only: reset focus generation counters between scenarios. */
+export function __resetAdditionalSystemContextFocusForTests(): void {
+  pendingFocusGeneration = new Map();
 }
 
 export function useAdditionalSystemContextHydrated(workspaceId: string): boolean {
@@ -138,10 +213,12 @@ export function useAdditionalSystemContextHydrated(workspaceId: string): boolean
   );
 }
 
-export function useAdditionalSystemContextSnapshot(workspaceId: string): string {
+export function useAdditionalSystemContextSnapshot(
+  workspaceId: string
+): AdditionalSystemContextSnapshot {
   return useSyncExternalStore(
     (callback) => subscribeAdditionalSystemContext(workspaceId, callback),
     () => readAdditionalSystemContextSnapshot(workspaceId),
-    () => ""
+    () => DEFAULT_SNAPSHOT
   );
 }
