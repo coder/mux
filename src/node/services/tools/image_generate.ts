@@ -5,10 +5,7 @@ import type { JSONValue, LanguageModelV2Usage } from "@ai-sdk/provider";
 import { generateImage, tool } from "ai";
 
 import type { ImageGenerateToolResult } from "@/common/types/tools";
-import {
-  DEFAULT_IMAGE_GENERATION_MODEL,
-  IMAGE_GENERATION_OUTPUT_FORMAT_VALUES,
-} from "@/common/types/imageGeneration";
+import { DEFAULT_IMAGE_GENERATION_MODEL } from "@/common/types/imageGeneration";
 import { stripImageGenerateThumbnails } from "@/common/utils/imageGenerationToolResult";
 import { getErrorMessage } from "@/common/utils/errors";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
@@ -25,19 +22,20 @@ function sanitizePathSegment(value: string): string {
 }
 
 function getExtension(mediaType: string, outputFormat: string | null | undefined): string {
-  if (outputFormat && IMAGE_GENERATION_OUTPUT_FORMAT_VALUES.includes(outputFormat as never)) {
-    return outputFormat === "jpeg" ? "jpg" : outputFormat;
-  }
-
-  switch (mediaType) {
+  switch (mediaType.toLowerCase().trim()) {
     case "image/jpeg":
       return "jpg";
     case "image/webp":
       return "webp";
     case "image/png":
-    default:
       return "png";
   }
+
+  if (outputFormat === "jpeg" || outputFormat === "png" || outputFormat === "webp") {
+    return outputFormat === "jpeg" ? "jpg" : outputFormat;
+  }
+
+  return "png";
 }
 
 async function writeRuntimeFile(

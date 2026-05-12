@@ -232,7 +232,7 @@ describe("image_generate tool", () => {
     });
 
     const result = (await tool.execute!(
-      { prompt: "A tiny square", n: 1 },
+      { prompt: "A tiny square", n: 1, outputFormat: "jpeg" },
       mockToolCallOptions
     )) as ImageGenerateToolResult;
 
