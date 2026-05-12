@@ -101,7 +101,7 @@ import type {
   StreamAbortReason,
   StreamEndEvent,
 } from "@/common/types/stream";
-import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
+import { applyToolPolicyToNames, type ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import type { PTCEventWithParent } from "@/node/services/tools/code_execution";
 import { MockAiStreamPlayer } from "./mock/mockAiStreamPlayer";
 import { DEVTOOLS_RUN_METADATA_ID_HEADER } from "./devToolsHeaderCapture";
@@ -1257,6 +1257,11 @@ export class AIService extends EventEmitter {
               return desktopCapabilityPromise;
             };
 
+      const imageGenerationDirectToolAvailable =
+        imageGenerationExperimentEnabled &&
+        experiments?.programmaticToolCallingExclusive !== true &&
+        applyToolPolicyToNames(["image_generate"], effectiveToolPolicy).includes("image_generate");
+
       const buildStreamSystemContextForAdvisor = (advisorToolAvailable: boolean) =>
         buildStreamSystemContext({
           runtime,
@@ -1275,6 +1280,7 @@ export class AIService extends EventEmitter {
           muxScope,
           loadDesktopCapability,
           advisorToolAvailable,
+          imageGenerationToolAvailable: imageGenerationDirectToolAvailable,
         });
 
       // Build provisional agent context before tool policy finalizes the toolset.

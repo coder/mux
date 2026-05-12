@@ -243,6 +243,8 @@ export interface BuildStreamSystemContextOptions {
   loadDesktopCapability?: () => Promise<DesktopCapability>;
   /** Whether the advisor tool is available for the current agent */
   advisorToolAvailable?: boolean;
+  /** Whether the image_generate tool is available as a direct tool for the current agent. */
+  imageGenerationToolAvailable?: boolean;
 }
 
 /** Result of system context assembly. */
@@ -466,6 +468,7 @@ export async function buildStreamSystemContext(
     muxScope,
     loadDesktopCapability,
     advisorToolAvailable,
+    imageGenerationToolAvailable,
   } = opts;
 
   const workspaceLog = log.withFields({ workspaceId, workspaceName: metadata.name });
@@ -535,6 +538,12 @@ export async function buildStreamSystemContext(
     });
   } catch (error) {
     workspaceLog.warn("Failed to discover agent skills for tool description", { error });
+  }
+
+  if (imageGenerationToolAvailable === false) {
+    availableSkills = availableSkills?.filter(
+      (skill) => !(skill.scope === "built-in" && skill.name === "imagegen")
+    );
   }
 
   const ancestorPlanContext = resolveAncestorPlanContext({
