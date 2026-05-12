@@ -863,7 +863,7 @@ const BashMonitorSchema = z.object({
     .describe("Regex applied per stdout/stderr line at write time. Matching lines wake the agent."),
   filter_exclude: z
     .boolean()
-    .default(false)
+    .nullish()
     .describe("Invert match: matching lines are dropped, non-matching lines wake the agent."),
   max_events: z
     .number()
@@ -875,7 +875,7 @@ const BashMonitorSchema = z.object({
     .number()
     .int()
     .nonnegative()
-    .default(1000)
+    .nullish()
     .describe("Coalesce matches that occur within this window into a single wake event."),
 });
 
