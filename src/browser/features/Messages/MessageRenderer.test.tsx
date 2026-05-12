@@ -245,7 +245,7 @@ describe("MessageRenderer generated image rows", () => {
       historyId: "assistant-1",
       toolCallId: "tool-1",
       prompt: "A soft gradient orb",
-      model: "openai:gpt-image-2",
+      model: "openai:gpt-image-1.5",
       images: [
         {
           path: "/tmp/mux/imagegen/tool-1/image-1.png",
@@ -266,7 +266,7 @@ describe("MessageRenderer generated image rows", () => {
     const { getByAltText, getByText } = render(<MessageRenderer message={message} />);
 
     expect(getByText("Generated image")).toBeDefined();
-    expect(getByText("openai:gpt-image-2")).toBeDefined();
+    expect(getByText("openai:gpt-image-1.5")).toBeDefined();
     expect(getByText("A soft gradient orb")).toBeDefined();
     expect(getByText("/tmp/mux/imagegen/tool-1/image-1.png")).toBeDefined();
     expect(getByAltText("Generated image 1")).toBeDefined();

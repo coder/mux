@@ -117,12 +117,12 @@ function formatImageModelError(error: unknown): { error: string; setupHint?: str
     case "provider_not_supported":
       return {
         error: "Image generation v1 only supports OpenAI image models.",
-        setupHint: "Choose openai:gpt-image-2 in Settings → Experiments → Image Generation Tool.",
+        setupHint: "Choose openai:gpt-image-1.5 in Settings → Experiments → Image Generation Tool.",
       };
     case "invalid_model_string":
       return {
         error: typeof record.message === "string" ? record.message : "Invalid image model string.",
-        setupHint: "Use the provider:model-id format, for example openai:gpt-image-2.",
+        setupHint: "Use the provider:model-id format, for example openai:gpt-image-1.5.",
       };
     case "policy_denied":
       return {

@@ -331,7 +331,7 @@ export const GeneratedImages: AppStory = {
                   state: "output-available" as const,
                   output: {
                     success: true,
-                    model: "openai:gpt-image-2",
+                    model: "openai:gpt-image-1.5",
                     prompt: "Three soft gradient orb variants",
                     requestedCount: 3,
                     images: [

@@ -77,7 +77,7 @@ describe("StreamingMessageAggregator", () => {
         state: "output-available",
         output: {
           success: true,
-          model: "openai:gpt-image-2",
+          model: "openai:gpt-image-1.5",
           prompt: "A small blue square",
           requestedCount: 1,
           images: [
@@ -99,7 +99,7 @@ describe("StreamingMessageAggregator", () => {
         throw new Error("Expected generated-image display row");
       }
       expect(displayed[0].toolCallId).toBe("image-tool-1");
-      expect(displayed[0].model).toBe("openai:gpt-image-2");
+      expect(displayed[0].model).toBe("openai:gpt-image-1.5");
       expect(displayed[0].images[0]?.path).toBe("/tmp/mux/imagegen/image-tool-1/image-1.png");
     });
 
@@ -117,7 +117,7 @@ describe("StreamingMessageAggregator", () => {
         state: "output-available",
         output: {
           success: true,
-          model: "openai:gpt-image-2",
+          model: "openai:gpt-image-1.5",
           prompt: "A small blue square",
           requestedCount: 1,
           images: [null],

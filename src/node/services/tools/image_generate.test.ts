@@ -18,7 +18,7 @@ describe("image_generate tool", () => {
     const tool = createImageGenerateTool({
       ...createTestToolConfig(workspaceDir.path),
       imageGenerationRuntime: {
-        modelString: "openai:gpt-image-2",
+        modelString: "openai:gpt-image-1.5",
         maxImagesPerCall: 2,
         createImageModel: () => {
           createImageModelCalled = true;
@@ -47,7 +47,7 @@ describe("image_generate tool", () => {
     const tool = createImageGenerateTool({
       ...createTestToolConfig(workspaceDir.path),
       imageGenerationRuntime: {
-        modelString: "openai:gpt-image-2",
+        modelString: "openai:gpt-image-1.5",
         maxImagesPerCall: 2,
         createImageModel: () =>
           Promise.resolve(

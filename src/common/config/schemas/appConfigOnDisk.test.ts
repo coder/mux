@@ -66,7 +66,7 @@ describe("AppConfigOnDiskSchema", () => {
     expect(
       AppConfigOnDiskSchema.safeParse({
         imageGeneration: {
-          modelString: "openai:gpt-image-2",
+          modelString: "openai:gpt-image-1.5",
           maxImagesPerCall: 10,
         },
       }).success
@@ -75,7 +75,7 @@ describe("AppConfigOnDiskSchema", () => {
     expect(
       AppConfigOnDiskSchema.safeParse({
         imageGeneration: {
-          modelString: "openai:gpt-image-2",
+          modelString: "openai:gpt-image-1.5",
           maxImagesPerCall: 11,
         },
       }).success
