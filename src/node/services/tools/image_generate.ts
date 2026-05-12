@@ -186,6 +186,7 @@ export const createImageGenerateTool: ToolFactory = (config) => {
             openai: {
               ...(quality != null ? { quality } : {}),
               outputFormat: outputFormat ?? "png",
+              output_format: outputFormat ?? "png",
             },
           },
         });
