@@ -105,6 +105,7 @@ Use this index to find a page's:
     - Telemetry (`/reference/telemetry`) → `references/docs/reference/telemetry.mdx` — What Mux collects, what it doesn’t, and how to disable it
     - Storybook (`/reference/storybook`) → `references/docs/reference/storybook.mdx` — Develop and test Mux UI states in isolation
     - Terminal Benchmarking (`/reference/benchmarking`) → `references/docs/reference/benchmarking.mdx` — Run Terminal-Bench benchmarks with the Mux adapter
+    - adr/0001-experimental-image-generation-tool (`/adr/0001-experimental-image-generation-tool`) → `references/docs/adr/0001-experimental-image-generation-tool.md`
     - AGENTS.md (`/AGENTS`) → `references/docs/AGENTS.md` — Agent instructions for AI assistants working on the Mux codebase
 <!-- END DOCS_TREE -->
 

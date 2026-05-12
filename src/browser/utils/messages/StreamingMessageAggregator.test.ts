@@ -136,6 +136,45 @@ describe("StreamingMessageAggregator", () => {
       expect(displayed[0].status).toBe("completed");
     });
 
+    test("keeps non-string image_generate warnings as a normal tool row", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      const assistantMessage = createMuxMessage("assistant-image-bad-warnings", "assistant", "", {
+        historySequence: 9,
+        timestamp: 1236,
+      });
+      assistantMessage.parts.push({
+        type: "dynamic-tool",
+        toolCallId: "image-tool-bad-warnings",
+        toolName: "image_generate",
+        input: { prompt: "A small blue square" },
+        state: "output-available",
+        output: {
+          success: true,
+          model: "openai:gpt-image-1.5",
+          prompt: "A small blue square",
+          requestedCount: 1,
+          images: [
+            {
+              path: "/tmp/mux/generated_images/image-tool-1/image-1.png",
+              filename: "image-1.png",
+              mediaType: "image/png",
+            },
+          ],
+          warnings: "thumbnail warning",
+        },
+      });
+
+      aggregator.loadHistoricalMessages([assistantMessage]);
+
+      const displayed = aggregator.getDisplayedMessages();
+      expect(displayed).toHaveLength(1);
+      expect(displayed[0]?.type).toBe("tool");
+      if (displayed[0]?.type !== "tool") {
+        throw new Error("Expected bad image warnings to remain a tool row");
+      }
+      expect(displayed[0].toolName).toBe("image_generate");
+    });
+
     test("keeps failed image_generate output as a normal tool row", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
       const assistantMessage = createMuxMessage("assistant-image-failed", "assistant", "", {

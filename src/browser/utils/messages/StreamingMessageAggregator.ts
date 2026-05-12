@@ -174,6 +174,7 @@ function isSuccessfulImageGenerateResult(
     model?: unknown;
     prompt?: unknown;
     images?: unknown;
+    warnings?: unknown;
   };
   if (
     candidate.success !== true ||
@@ -181,6 +182,16 @@ function isSuccessfulImageGenerateResult(
     typeof candidate.prompt !== "string" ||
     !Array.isArray(candidate.images) ||
     candidate.images.length === 0
+  ) {
+    return false;
+  }
+
+  if (candidate.warnings !== undefined && !Array.isArray(candidate.warnings)) {
+    return false;
+  }
+  if (
+    Array.isArray(candidate.warnings) &&
+    !candidate.warnings.every((warning) => typeof warning === "string")
   ) {
     return false;
   }

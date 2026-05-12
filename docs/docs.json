@@ -127,6 +127,7 @@
               "reference/telemetry",
               "reference/storybook",
               "reference/benchmarking",
+              "adr/0001-experimental-image-generation-tool",
               "AGENTS"
             ]
           }
