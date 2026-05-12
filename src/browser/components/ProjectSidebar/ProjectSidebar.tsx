@@ -56,6 +56,7 @@ import {
   getTierKey,
   getSectionExpandedKey,
   getSectionTierKey,
+  resolveEffectiveSectionId,
   type AgentRowRenderMeta,
 } from "@/browser/utils/ui/workspaceFiltering";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
@@ -1672,9 +1673,23 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
       // target from the live sidebar metadata before opening a sibling draft.
       if (matchesKeybind(e, KEYBINDS.NEW_WORKSPACE) && selectedWorkspace) {
         e.preventDefault();
-        const subProjectPath = sortedWorkspacesByProject
-          .get(selectedWorkspace.projectPath)
-          ?.find((workspace) => workspace.id === selectedWorkspace.workspaceId)?.subProjectPath;
+        // Resolve the effective section ID exactly the way the renderer does:
+        // honor the workspace's own subProjectPath when it still exists,
+        // otherwise inherit from the parent workspace. This keeps Ctrl+N in
+        // lockstep with the visible section and avoids forwarding deleted
+        // sub-project paths that workspace.create would reject.
+        const projectWorkspaces =
+          sortedWorkspacesByProject.get(selectedWorkspace.projectPath) ?? [];
+        const byId = new Map(projectWorkspaces.map((m) => [m.id, m]));
+        const meta = byId.get(selectedWorkspace.workspaceId);
+        const validSectionIds = new Set(
+          getSubProjectsForParent(selectedWorkspace.projectPath, userProjects).map(
+            ([subPath]) => subPath
+          )
+        );
+        const subProjectPath = meta
+          ? resolveEffectiveSectionId(meta, byId, validSectionIds)
+          : undefined;
         handleAddWorkspace(selectedWorkspace.projectPath, subProjectPath);
       } else if (matchesKeybind(e, KEYBINDS.ARCHIVE_WORKSPACE) && selectedWorkspace) {
         e.preventDefault();
@@ -1684,7 +1699,13 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selectedWorkspace, handleAddWorkspace, handleArchiveWorkspace, sortedWorkspacesByProject]);
+  }, [
+    selectedWorkspace,
+    handleAddWorkspace,
+    handleArchiveWorkspace,
+    sortedWorkspacesByProject,
+    userProjects,
+  ]);
 
   return (
     <TitleEditProvider onUpdateTitle={onUpdateTitle}>

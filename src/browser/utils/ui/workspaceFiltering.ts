@@ -573,23 +573,8 @@ export function partitionWorkspacesBySection(
     byId.set(workspace.id, workspace);
   }
 
-  // Resolve effective section for a workspace (inherit from parent if unset)
-  const resolveSection = (workspace: FrontendWorkspaceMetadata): string | undefined => {
-    if (workspace.subProjectPath && sectionIds.has(workspace.subProjectPath)) {
-      return workspace.subProjectPath;
-    }
-    // Inherit from parent if child has no section
-    if (workspace.parentWorkspaceId) {
-      const parent = byId.get(workspace.parentWorkspaceId);
-      if (parent) {
-        return resolveSection(parent);
-      }
-    }
-    return undefined;
-  };
-
   for (const workspace of workspaces) {
-    const effectiveSectionId = resolveSection(workspace);
+    const effectiveSectionId = resolveEffectiveSectionId(workspace, byId, sectionIds);
     if (effectiveSectionId) {
       const list = bySectionId.get(effectiveSectionId)!;
       list.push(workspace);
@@ -599,6 +584,32 @@ export function partitionWorkspacesBySection(
   }
 
   return { unsectioned, bySectionId };
+}
+
+/**
+ * Resolve the effective sub-project section ID for a workspace, matching how
+ * the sidebar renders it: honor the workspace's own `subProjectPath` if the
+ * section still exists, otherwise inherit from the parent workspace (sub-agent
+ * children created via the task tool do not set `subProjectPath` themselves).
+ *
+ * Exported so keybind/command handlers can stay in sync with the renderer
+ * without re-implementing the parent walk.
+ */
+export function resolveEffectiveSectionId(
+  workspace: FrontendWorkspaceMetadata,
+  byId: ReadonlyMap<string, FrontendWorkspaceMetadata>,
+  sectionIds: ReadonlySet<string>
+): string | undefined {
+  if (workspace.subProjectPath && sectionIds.has(workspace.subProjectPath)) {
+    return workspace.subProjectPath;
+  }
+  if (workspace.parentWorkspaceId) {
+    const parent = byId.get(workspace.parentWorkspaceId);
+    if (parent) {
+      return resolveEffectiveSectionId(parent, byId, sectionIds);
+    }
+  }
+  return undefined;
 }
 
 /**
