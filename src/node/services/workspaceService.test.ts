@@ -3327,6 +3327,38 @@ describe("WorkspaceService remove preserved descendants", () => {
     await cleanupHistory();
   });
 
+  test("remove() blocks parent removal when sticky completed descendants exist", async () => {
+    const hasStickyCompletedDescendants = mock(() => true);
+    const hasCompletedDescendants = mock(() => false);
+    workspaceService.setTaskService({
+      hasStickyCompletedDescendants,
+      hasCompletedDescendants,
+    } as unknown as TaskService);
+    const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockReturnValue({
+      deleteWorkspace: deleteWorkspaceMock,
+    } as unknown as ReturnType<typeof runtimeFactory.createRuntime>);
+
+    try {
+      const result = await workspaceService.remove(workspaceId);
+
+      expect(result).toEqual(
+        Err(
+          "This workspace has sticky completed sub-agent workspaces. Remove those sub-agents first, or force-remove the workspace."
+        )
+      );
+      expect(hasStickyCompletedDescendants).toHaveBeenCalledTimes(1);
+      expect(hasStickyCompletedDescendants).toHaveBeenCalledWith(workspaceId);
+      expect(hasCompletedDescendants).not.toHaveBeenCalled();
+      expect(stopStreamMock).not.toHaveBeenCalled();
+      expect(getWorkspaceMetadataMock).not.toHaveBeenCalled();
+      expect(createRuntimeSpy).not.toHaveBeenCalled();
+      expect(deleteWorkspaceMock).not.toHaveBeenCalled();
+      expect(removeWorkspaceMock).not.toHaveBeenCalled();
+    } finally {
+      createRuntimeSpy.mockRestore();
+    }
+  });
+
   test("remove() blocks direct removal of unarchived workspace with preserved completed descendants", async () => {
     const hasCompletedDescendants = mock(() => true);
     workspaceService.setTaskService({

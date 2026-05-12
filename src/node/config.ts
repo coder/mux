@@ -1506,6 +1506,7 @@ export class Config {
               agentType: workspace.agentType,
               agentId: workspace.agentId,
               bestOf: workspace.bestOf,
+              taskSticky: workspace.taskSticky,
               taskStatus: workspace.taskStatus,
               reportedAt: workspace.reportedAt,
               taskModelString: workspace.taskModelString,
@@ -1604,6 +1605,7 @@ export class Config {
             metadata.agentType ??= workspace.agentType;
             metadata.agentId ??= workspace.agentId;
             metadata.bestOf ??= workspace.bestOf;
+            metadata.taskSticky ??= workspace.taskSticky;
             metadata.taskStatus ??= workspace.taskStatus;
             metadata.reportedAt ??= workspace.reportedAt;
             metadata.taskModelString ??= workspace.taskModelString;
@@ -1633,6 +1635,7 @@ export class Config {
             workspace.createdAt = metadata.createdAt;
             workspace.runtimeConfig = metadata.runtimeConfig;
             workspace.forkFamilyBaseName = metadata.forkFamilyBaseName;
+            workspace.taskSticky = metadata.taskSticky;
             configModified = true;
 
             if (!workspace.projects && metadata.projects) {
@@ -1672,6 +1675,7 @@ export class Config {
               agentType: workspace.agentType,
               agentId: workspace.agentId,
               bestOf: workspace.bestOf,
+              taskSticky: workspace.taskSticky,
               taskStatus: workspace.taskStatus,
               reportedAt: workspace.reportedAt,
               taskModelString: workspace.taskModelString,
@@ -1722,6 +1726,7 @@ export class Config {
             agentType: workspace.agentType,
             agentId: workspace.agentId,
             bestOf: workspace.bestOf,
+            taskSticky: workspace.taskSticky,
             taskStatus: workspace.taskStatus,
             reportedAt: workspace.reportedAt,
             taskModelString: workspace.taskModelString,
@@ -1790,6 +1795,7 @@ export class Config {
         agentType: metadata.agentType,
         agentId: metadata.agentId,
         bestOf: metadata.bestOf,
+        taskSticky: metadata.taskSticky,
         taskStatus: metadata.taskStatus,
         reportedAt: metadata.reportedAt,
         taskModelString: metadata.taskModelString,

@@ -1746,6 +1746,29 @@ describe("TaskService", () => {
     );
   }, 20_000);
 
+  test("create persists sticky task preference on the child workspace", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["aaaaaaaaaa"], "bbbbbbbbbb");
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+
+    const { workspaceService } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    const created = await taskService.create({
+      parentWorkspaceId: parentId,
+      kind: "agent",
+      agentType: "exec",
+      prompt: "run sticky exec task",
+      title: "Sticky task",
+      sticky: true,
+    });
+    expect(created.success).toBe(true);
+    if (!created.success) return;
+
+    const childEntry = findWorkspaceInConfig(config, created.data.taskId);
+    expect(childEntry?.taskSticky).toBe(true);
+  }, 20_000);
+
   test("parent runtime AI settings outrank persisted parent workspace settings", async () => {
     const config = await createTestConfig(rootDir);
     stubStableIds(config, ["aaaaaaaaaa"], "bbbbbbbbbb");
@@ -8888,6 +8911,7 @@ describe("TaskService", () => {
       name: string;
       agentType: string;
       taskStatus?: "reported" | "interrupted";
+      taskSticky?: boolean;
       reportedAt?: string;
     }
 
@@ -8960,6 +8984,7 @@ describe("TaskService", () => {
           parentWorkspaceId,
           agentType: task.agentType,
           taskStatus: task.taskStatus ?? "reported",
+          taskSticky: task.taskSticky,
           reportedAt: task.reportedAt,
         });
         parentWorkspaceId = task.id;
@@ -9126,6 +9151,46 @@ describe("TaskService", () => {
       } finally {
         patchArtifactSpy.mockRestore();
       }
+    });
+
+    test("sticky completed descendants are never auto-cleaned", async () => {
+      const parentTaskId = "parent-222";
+      const childTaskId = "child-333";
+      const { config, remove, rootWorkspaceId, taskService, internal } =
+        await setupReportedTaskChain({
+          preserveSubagentsUntilArchive: false,
+          taskChain: [
+            {
+              id: parentTaskId,
+              directoryName: "parent-task",
+              name: "agent_exec_parent",
+              agentType: "exec",
+              taskStatus: "reported",
+            },
+            {
+              id: childTaskId,
+              directoryName: "child-task",
+              name: "agent_explore_child",
+              agentType: "explore",
+              taskStatus: "reported",
+              taskSticky: true,
+            },
+          ],
+        });
+
+      await archiveWorkspaceInTestConfig(config, rootWorkspaceId);
+
+      const cleanupEligibility = await internal.canCleanupReportedTask(childTaskId);
+      expect(cleanupEligibility).toEqual({ ok: false, reason: "sticky" });
+
+      await internal.cleanupReportedLeafTask(childTaskId);
+      await taskService.cleanupReportedDescendantsAfterArchive(rootWorkspaceId);
+
+      expect(remove).not.toHaveBeenCalled();
+      expect(findWorkspaceInConfig(config, childTaskId)).toBeTruthy();
+      expect(findWorkspaceInConfig(config, parentTaskId)).toBeTruthy();
+      expect(taskService.hasStickyCompletedDescendants(rootWorkspaceId)).toBe(true);
+      expect(taskService.hasPreservedCompletedDescendants(rootWorkspaceId)).toBe(true);
     });
 
     test("with toggle off, current cleanup behavior remains unchanged", async () => {

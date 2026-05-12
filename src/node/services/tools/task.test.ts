@@ -98,6 +98,39 @@ describe("task tool", () => {
     expectQueuedOrRunningTaskToolResult(result, { status: "queued", taskId: "child-task" });
   });
 
+  it("passes sticky preference when spawning a task", async () => {
+    using tempDir = new TestTempDir("test-task-tool-sticky");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    const create = mock((_args: { sticky?: boolean }) =>
+      Ok({ taskId: "child-task", kind: "agent" as const, status: "queued" as const })
+    );
+    const waitForAgentReport = mock(() => Promise.resolve({ reportMarkdown: "ignored" }));
+    const taskService = { create, waitForAgentReport } as unknown as TaskService;
+
+    const tool = createTaskTool({
+      ...baseConfig,
+      taskService,
+    });
+
+    await Promise.resolve(
+      tool.execute!(
+        {
+          agentId: "explore",
+          prompt: "do it",
+          title: "Sticky child task",
+          run_in_background: true,
+          sticky: true,
+        },
+        mockToolCallOptions
+      )
+    );
+
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(create.mock.calls[0]?.[0].sticky).toBe(true);
+    expect(waitForAgentReport).not.toHaveBeenCalled();
+  });
+
   it("passes parent MUX_MODEL_STRING/MUX_THINKING_LEVEL as a runtime fallback hint", async () => {
     using tempDir = new TestTempDir("test-task-tool-parent-ai-env");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });

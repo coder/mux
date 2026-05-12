@@ -108,6 +108,8 @@ export interface TaskCreateArgs {
   prompt: string;
   /** Human-readable title for the task (displayed in sidebar) */
   title: string;
+  /** Preserve this completed child workspace instead of auto-deleting it after report delivery. */
+  sticky?: boolean;
   modelString?: string;
   thinkingLevel?: ThinkingLevel;
   parentRuntimeAiSettings?: { modelString?: string; thinkingLevel?: ThinkingLevel };
@@ -148,6 +150,7 @@ export interface DescendantAgentTaskInfo {
   createdAt?: string;
   modelString?: string;
   thinkingLevel?: ThinkingLevel;
+  sticky?: boolean;
   depth: number;
 }
 
@@ -1074,6 +1077,8 @@ export class TaskService {
           agentId,
           agentType,
           bestOf: normalizedBestOf,
+          // Sticky task workspaces remain inspectable after agent_report instead of being auto-deleted.
+          taskSticky: args.sticky === true ? true : undefined,
           taskStatus: "queued",
           taskPrompt: prompt,
           taskTrunkBranch: trunkBranch,
@@ -1191,6 +1196,8 @@ export class TaskService {
         parentWorkspaceId,
         agentType,
         bestOf: normalizedBestOf,
+        // Sticky task workspaces remain inspectable after agent_report instead of being auto-deleted.
+        taskSticky: args.sticky === true ? true : undefined,
         taskStatus: "running",
         taskTrunkBranch: trunkBranch,
         taskBaseCommitSha: taskBaseCommitSha ?? undefined,
@@ -1960,6 +1967,16 @@ export class TaskService {
     return this.hasActiveDescendantAgentTasks(cfg, workspaceId);
   }
 
+  hasStickyCompletedDescendants(workspaceId: string): boolean {
+    assert(workspaceId.length > 0, "hasStickyCompletedDescendants: workspaceId must be non-empty");
+
+    const cfg = this.config.loadConfigOrDefault();
+    const index = this.buildAgentTaskIndex(cfg);
+    return this.listCompletedDescendantAgentTaskIds(index, workspaceId).some(
+      (descendantId) => index.byId.get(descendantId)?.taskSticky === true
+    );
+  }
+
   hasPreservedCompletedDescendants(workspaceId: string): boolean {
     assert(
       workspaceId.length > 0,
@@ -1967,13 +1984,19 @@ export class TaskService {
     );
 
     const cfg = this.config.loadConfigOrDefault();
+    const index = this.buildAgentTaskIndex(cfg);
+    const completedDescendants = this.listCompletedDescendantAgentTaskIds(index, workspaceId);
+    if (
+      completedDescendants.some((descendantId) => index.byId.get(descendantId)?.taskSticky === true)
+    ) {
+      return true;
+    }
+
     const taskSettings = normalizeTaskSettings(cfg.taskSettings);
     if (!taskSettings.preserveSubagentsUntilArchive) {
       return false;
     }
 
-    const index = this.buildAgentTaskIndex(cfg);
-    const completedDescendants = this.listCompletedDescendantAgentTaskIds(index, workspaceId);
     return completedDescendants.some(
       (descendantId) => !this.hasArchivedAncestor(index, cfg, descendantId)
     );
@@ -2058,6 +2081,7 @@ export class TaskService {
           createdAt: entry.createdAt,
           modelString: entry.aiSettings?.model,
           thinkingLevel: entry.aiSettings?.thinkingLevel,
+          sticky: entry.taskSticky === true ? true : undefined,
           depth: next.depth,
         });
       }
@@ -4554,6 +4578,10 @@ export class TaskService {
 
     if (!hasCompletedAgentReport(entry.workspace)) {
       return { ok: false, reason: "task_not_reported" };
+    }
+
+    if (entry.workspace.taskSticky === true) {
+      return { ok: false, reason: "sticky" };
     }
 
     if (entry.workspace.bestOf?.total != null && entry.workspace.bestOf.total > 1) {
