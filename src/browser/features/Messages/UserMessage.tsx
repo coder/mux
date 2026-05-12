@@ -5,7 +5,7 @@ import type { ButtonConfig } from "./MessageWindow";
 import { MessageWindow } from "./MessageWindow";
 import { UserMessageContent } from "./UserMessageContent";
 import { GoalSyntheticMessageContent } from "./GoalSyntheticMessageContent";
-import { MonitorWakeMessage, parseMonitorWakeMessages } from "./MonitorWakeMessage";
+import { MonitorWakeMessage, extractMonitorWakeEvents } from "./MonitorWakeMessage";
 import { TerminalOutput } from "./TerminalOutput";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
@@ -79,10 +79,14 @@ export const UserMessage: React.FC<UserMessageProps> = ({
     : "";
 
   // Monitor wakes are queued synthetically by AgentSession and arrive as `<monitor-event …>`
-  // XML so the model has structured context. Detect them here to render an inline system card
-  // instead of leaking the raw XML to the user. Multiple events can be batched together when a
-  // busy session flushes more than one wake at once, so render one card per parsed block.
-  const monitorWakeEvents = parseMonitorWakeMessages(content);
+  // XML so the model has structured context. Detect them anywhere in the message so we render
+  // inline cards even when the wake was appended to an already-queued user message.
+  const monitorExtract = extractMonitorWakeEvents(content);
+  const hasMonitorEvents = monitorExtract !== null && monitorExtract.events.length > 0;
+  const hasOnlyMonitorEvents = hasMonitorEvents && monitorExtract.remainingContent.length === 0;
+  // Surface the visible content (with monitor XML stripped) to copy/edit affordances so the
+  // user is not handed the synthetic XML when they hit Copy.
+  const visibleContent = hasMonitorEvents ? monitorExtract.remainingContent : content;
 
   // Copy to clipboard with feedback
   const { copied, copyToClipboard } = useCopyToClipboard(clipboardWriteText);
@@ -150,7 +154,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
       : []),
     {
       label: copied ? "Copied" : "Copy",
-      onClick: () => void copyToClipboard(content),
+      onClick: () => void copyToClipboard(visibleContent.length > 0 ? visibleContent : content),
       icon: copied ? <ClipboardCheck /> : <Clipboard />,
     },
   ];
@@ -170,7 +174,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
         goal continuation
       </span>
     );
-  } else if (monitorWakeEvents) {
+  } else if (hasOnlyMonitorEvents) {
     label = (
       <span className="bg-muted/20 text-muted flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase">
         <Radio aria-hidden="true" className="h-3 w-3" />
@@ -191,14 +195,16 @@ export const UserMessage: React.FC<UserMessageProps> = ({
   );
 
   let renderedContent: React.ReactNode;
-  if (monitorWakeEvents) {
-    renderedContent = (
-      <div className="space-y-2">
-        {monitorWakeEvents.map((event, index) => (
-          <MonitorWakeMessage key={`${event.taskId}-${index}`} event={event} />
-        ))}
-      </div>
-    );
+  const monitorCards = hasMonitorEvents ? (
+    <div className="space-y-2">
+      {monitorExtract.events.map((event, index) => (
+        <MonitorWakeMessage key={`${event.taskId}-${index}`} event={event} />
+      ))}
+    </div>
+  ) : null;
+
+  if (hasOnlyMonitorEvents) {
+    renderedContent = monitorCards;
   } else if (isLocalCommandOutput) {
     renderedContent = <TerminalOutput output={extractedOutput} isError={false} />;
   } else if (isGoalContinuation || isBudgetLimitWrapup) {
@@ -209,16 +215,21 @@ export const UserMessage: React.FC<UserMessageProps> = ({
       />
     );
   } else {
+    // When a monitor wake was appended to a previously queued user message, render the user's
+    // original text via the normal path and append the inline monitor cards below it.
     renderedContent = (
-      <UserMessageContent
-        content={content}
-        commandPrefix={message.commandPrefix}
-        agentSkillSnapshot={message.agentSkill?.snapshot}
-        inlineSkillSnapshots={message.inlineSkillSnapshots}
-        reviews={message.reviews}
-        fileParts={message.fileParts}
-        variant="sent"
-      />
+      <div className="space-y-2">
+        <UserMessageContent
+          content={visibleContent}
+          commandPrefix={message.commandPrefix}
+          agentSkillSnapshot={message.agentSkill?.snapshot}
+          inlineSkillSnapshots={message.inlineSkillSnapshots}
+          reviews={message.reviews}
+          fileParts={message.fileParts}
+          variant="sent"
+        />
+        {monitorCards}
+      </div>
     );
   }
 

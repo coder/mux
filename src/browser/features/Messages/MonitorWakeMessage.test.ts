@@ -1,7 +1,7 @@
 import { describe, it, expect } from "bun:test";
-import { parseMonitorWakeMessages } from "./MonitorWakeMessage";
+import { extractMonitorWakeEvents } from "./MonitorWakeMessage";
 
-describe("parseMonitorWakeMessages", () => {
+describe("extractMonitorWakeEvents", () => {
   it("parses a basic monitor-event payload", () => {
     const raw = [
       '<monitor-event taskId="bash:abc" total_matches="3">',
@@ -10,13 +10,16 @@ describe("parseMonitorWakeMessages", () => {
       "</monitor-event>",
     ].join("\n");
 
-    expect(parseMonitorWakeMessages(raw)).toEqual([
-      {
-        taskId: "bash:abc",
-        totalMatches: 3,
-        lines: ["ERR boom"],
-      },
-    ]);
+    expect(extractMonitorWakeEvents(raw)).toEqual({
+      events: [
+        {
+          taskId: "bash:abc",
+          totalMatches: 3,
+          lines: ["ERR boom"],
+        },
+      ],
+      remainingContent: "",
+    });
   });
 
   it("captures optional display_name and dropped_lines", () => {
@@ -27,29 +30,35 @@ describe("parseMonitorWakeMessages", () => {
       "</monitor-event>",
     ].join("\n");
 
-    expect(parseMonitorWakeMessages(raw)).toEqual([
-      {
-        taskId: "bash:abc",
-        displayName: "Dev Server",
-        totalMatches: 7,
-        droppedLines: 2,
-        lines: ["match one", "match two"],
-      },
-    ]);
+    expect(extractMonitorWakeEvents(raw)).toEqual({
+      events: [
+        {
+          taskId: "bash:abc",
+          displayName: "Dev Server",
+          totalMatches: 7,
+          droppedLines: 2,
+          lines: ["match one", "match two"],
+        },
+      ],
+      remainingContent: "",
+    });
   });
 
   it("unescapes XML entities in attributes and lines", () => {
     const raw =
       '<monitor-event taskId="bash:1" display_name="A &amp; B" total_matches="1"><line>5 &lt; 6 &amp;&amp; ok</line></monitor-event>';
 
-    expect(parseMonitorWakeMessages(raw)).toEqual([
-      {
-        taskId: "bash:1",
-        displayName: "A & B",
-        totalMatches: 1,
-        lines: ["5 < 6 && ok"],
-      },
-    ]);
+    expect(extractMonitorWakeEvents(raw)).toEqual({
+      events: [
+        {
+          taskId: "bash:1",
+          displayName: "A & B",
+          totalMatches: 1,
+          lines: ["5 < 6 && ok"],
+        },
+      ],
+      remainingContent: "",
+    });
   });
 
   it("returns one entry per batched monitor-event block", () => {
@@ -63,32 +72,48 @@ describe("parseMonitorWakeMessages", () => {
       "</monitor-event>",
     ].join("\n");
 
-    expect(parseMonitorWakeMessages(raw)).toEqual([
-      {
-        taskId: "bash:1",
-        displayName: "Server",
-        totalMatches: 1,
-        lines: ["boot ready"],
-      },
-      {
-        taskId: "bash:2",
-        displayName: "Tests",
-        totalMatches: 2,
-        lines: ["FAIL one", "FAIL two"],
-      },
-    ]);
+    expect(extractMonitorWakeEvents(raw)).toEqual({
+      events: [
+        {
+          taskId: "bash:1",
+          displayName: "Server",
+          totalMatches: 1,
+          lines: ["boot ready"],
+        },
+        {
+          taskId: "bash:2",
+          displayName: "Tests",
+          totalMatches: 2,
+          lines: ["FAIL one", "FAIL two"],
+        },
+      ],
+      remainingContent: "",
+    });
   });
 
-  it("returns null for content that is not exclusively monitor events", () => {
-    expect(parseMonitorWakeMessages("hello world")).toBeNull();
+  it("preserves non-monitor user text alongside extracted events", () => {
+    const raw = [
+      "Please investigate this:",
+      '<monitor-event taskId="bash:1" total_matches="1"><line>FAIL boot</line></monitor-event>',
+    ].join("\n");
+
+    expect(extractMonitorWakeEvents(raw)).toEqual({
+      events: [
+        {
+          taskId: "bash:1",
+          totalMatches: 1,
+          lines: ["FAIL boot"],
+        },
+      ],
+      remainingContent: "Please investigate this:",
+    });
+  });
+
+  it("returns null when no monitor block is present", () => {
+    expect(extractMonitorWakeEvents("hello world")).toBeNull();
     expect(
-      parseMonitorWakeMessages("<local-command-stdout>nope</local-command-stdout>")
+      extractMonitorWakeEvents("<local-command-stdout>nope</local-command-stdout>")
     ).toBeNull();
-    expect(parseMonitorWakeMessages('<monitor-event taskId="bash:1">')).toBeNull();
-    expect(
-      parseMonitorWakeMessages(
-        'preamble\n<monitor-event taskId="bash:1" total_matches="1"><line>x</line></monitor-event>'
-      )
-    ).toBeNull();
+    expect(extractMonitorWakeEvents('<monitor-event taskId="bash:1">')).toBeNull();
   });
 });

@@ -18,8 +18,9 @@ const MONITOR_OPEN_TAG = "<monitor-event";
 const MONITOR_CLOSE_TAG = "</monitor-event>";
 const ATTRIBUTE_PATTERN = /(\w[\w-]*)="([^"]*)"/g;
 const LINE_PATTERN = /<line>([\s\S]*?)<\/line>/g;
-// Matches one full `<monitor-event …>…</monitor-event>` block, used to split batched payloads
-// produced when multiple wake events are queued before a busy session flushes them together.
+// Matches one full `<monitor-event …>…</monitor-event>` block. Used both to detect monitor
+// wakes in a user message and to split batched payloads produced when multiple wake events
+// are queued before a busy session flushes them together.
 const MONITOR_BLOCK_PATTERN = /<monitor-event\b[^>]*>[\s\S]*?<\/monitor-event>/g;
 
 function parseSingleMonitorBlock(block: string): MonitorWakeEvent | null {
@@ -63,35 +64,38 @@ function parseSingleMonitorBlock(block: string): MonitorWakeEvent | null {
   };
 }
 
+/** Result of pulling monitor wake blocks out of a user message. */
+export interface MonitorWakeExtract {
+  /** Parsed wake events, in source order. */
+  events: MonitorWakeEvent[];
+  /** Remaining message content with all monitor blocks removed and trimmed. */
+  remainingContent: string;
+}
+
 /**
- * Detect and parse one or more synthetic monitor wake messages produced by AgentSession.
- * Returns null when `content` is not exclusively `<monitor-event …>` blocks; otherwise returns
- * one parsed event per block so concurrent wakes from different processes render distinctly.
+ * Extract monitor wake `<monitor-event …>` blocks from a user message.
+ *
+ * Returns null when no monitor block is present. The synthetic wake message can be appended
+ * to an already-queued user message (MessageQueue concatenates with `\n`), so we extract all
+ * monitor blocks anywhere in the content and leave the remaining user text untouched.
  */
-export function parseMonitorWakeMessages(content: string): MonitorWakeEvent[] | null {
-  const trimmed = content.trim();
-  if (!trimmed.startsWith(MONITOR_OPEN_TAG) || !trimmed.endsWith(MONITOR_CLOSE_TAG)) {
-    return null;
-  }
-
+export function extractMonitorWakeEvents(content: string): MonitorWakeExtract | null {
   MONITOR_BLOCK_PATTERN.lastIndex = 0;
-  const blocks = trimmed.match(MONITOR_BLOCK_PATTERN);
-  if (!blocks || blocks.length === 0) return null;
-
-  // Reject any text outside of `<monitor-event>` blocks so we don't silently drop content
-  // (which would also let a malicious user message masquerade as a monitor wake).
-  const joined = blocks.join("\n");
-  if (joined.replace(/\s+/g, "") !== trimmed.replace(/\s+/g, "")) {
-    return null;
-  }
+  const matches = Array.from(content.matchAll(MONITOR_BLOCK_PATTERN));
+  if (matches.length === 0) return null;
 
   const events: MonitorWakeEvent[] = [];
-  for (const block of blocks) {
-    const event = parseSingleMonitorBlock(block);
+  for (const match of matches) {
+    const event = parseSingleMonitorBlock(match[0]);
     if (!event) return null;
     events.push(event);
   }
-  return events;
+
+  let remaining = content;
+  for (const match of matches) {
+    remaining = remaining.replace(match[0], "");
+  }
+  return { events, remainingContent: remaining.replace(/\n{2,}/g, "\n\n").trim() };
 }
 
 interface MonitorWakeMessageProps {
