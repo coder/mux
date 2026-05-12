@@ -3,36 +3,8 @@
  * Produces a cloned array safe for sending to providers without touching persisted history/UI.
  */
 import type { MuxMessage } from "@/common/types/message";
+import { stripImageGenerateThumbnails } from "@/common/utils/imageGenerationToolResult";
 import { stripToolOutputUiOnly } from "@/common/utils/tools/toolOutputUiOnly";
-
-function stripImageGenerateThumbnailFromImage(image: unknown): unknown {
-  if (!image || typeof image !== "object" || Array.isArray(image)) {
-    return image;
-  }
-
-  const stripped: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(image)) {
-    if (key !== "thumbnail") {
-      stripped[key] = value;
-    }
-  }
-  return stripped;
-}
-
-function stripImageGenerateThumbnails(output: unknown): unknown {
-  if (!output || typeof output !== "object" || Array.isArray(output)) {
-    return output;
-  }
-  const record = output as Record<string, unknown>;
-  if (record.success !== true || !Array.isArray(record.images)) {
-    return output;
-  }
-
-  return {
-    ...record,
-    images: record.images.map(stripImageGenerateThumbnailFromImage),
-  };
-}
 
 export function applyToolOutputRedaction(messages: MuxMessage[]): MuxMessage[] {
   return messages.map((msg) => {

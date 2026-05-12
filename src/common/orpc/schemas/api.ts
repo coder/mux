@@ -6,6 +6,10 @@ import { WORKTREE_ARCHIVE_BEHAVIORS } from "@/common/config/worktreeArchiveBehav
 import { HEARTBEAT_MAX_INTERVAL_MS, HEARTBEAT_MIN_INTERVAL_MS } from "@/constants/heartbeat";
 import { DEFAULT_GOAL_DEFAULTS } from "@/constants/goals";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import {
+  MAX_IMAGE_GENERATION_MAX_IMAGES,
+  MIN_IMAGE_GENERATION_MAX_IMAGES,
+} from "@/common/types/imageGeneration";
 import { ChatStatsSchema, SessionUsageFileSchema } from "./chatStats";
 import { AdditionalSystemContextSchema, WorkspaceInstructionsSchema } from "./instructions";
 import {
@@ -1842,7 +1846,11 @@ const AdvisorMaxUsesPerTurnSchema = z.number().int().positive().nullable();
 const AdvisorMaxOutputTokensSchema = z.number().int().positive().nullable();
 const ImageGenerationConfigSchema = z.object({
   modelString: z.string(),
-  maxImagesPerCall: z.number().int().min(1).max(10),
+  maxImagesPerCall: z
+    .number()
+    .int()
+    .min(MIN_IMAGE_GENERATION_MAX_IMAGES)
+    .max(MAX_IMAGE_GENERATION_MAX_IMAGES),
 });
 
 const GoalDefaultsConfigSchema = z.object({

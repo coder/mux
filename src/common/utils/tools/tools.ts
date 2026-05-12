@@ -55,6 +55,7 @@ import type { DesktopSessionManager } from "@/node/services/desktop/DesktopSessi
 import type { TaskService } from "@/node/services/taskService";
 import type { WorkspaceGoalService } from "@/node/services/workspaceGoalService";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
+import type { SendMessageError } from "@/common/types/errors";
 import type { FileState } from "@/node/services/agentSession";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
@@ -167,7 +168,7 @@ export interface ToolConfiguration {
     /** Per-call image count cap configured by the user. */
     maxImagesPerCall: number;
     /** Creates an AI SDK image model for the configured image model string. */
-    createImageModel: (modelString: string) => Promise<Result<ImageModel, unknown>>;
+    createImageModel: (modelString: string) => Promise<Result<ImageModel, SendMessageError>>;
   };
   /** Runtime bundle for the advisor tool (present only when advisor is eligible for this stream). */
   advisorRuntime?: {

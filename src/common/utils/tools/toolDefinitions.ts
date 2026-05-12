@@ -1749,7 +1749,7 @@ const ImageGenerateImageSchema = z.object({
   revisedPrompt: z.string().optional(),
 });
 
-export const ImageGenerateToolResultSchema = z.union([
+export const ImageGenerateToolResultSchema = z.discriminatedUnion("success", [
   z.object({
     success: z.literal(true),
     model: z.string(),

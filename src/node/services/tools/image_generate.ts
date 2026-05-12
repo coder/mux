@@ -5,7 +5,11 @@ import type { JSONValue, LanguageModelV2Usage } from "@ai-sdk/provider";
 import { generateImage, tool } from "ai";
 
 import type { ImageGenerateToolResult } from "@/common/types/tools";
-import { IMAGE_GENERATION_OUTPUT_FORMAT_VALUES } from "@/common/types/imageGeneration";
+import {
+  DEFAULT_IMAGE_GENERATION_MODEL,
+  IMAGE_GENERATION_OUTPUT_FORMAT_VALUES,
+} from "@/common/types/imageGeneration";
+import { stripImageGenerateThumbnails } from "@/common/utils/imageGenerationToolResult";
 import { getErrorMessage } from "@/common/utils/errors";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
@@ -17,7 +21,7 @@ const THUMBNAIL_MEDIA_TYPE = "image/webp";
 
 function sanitizePathSegment(value: string): string {
   const sanitized = value.replace(/[^a-zA-Z0-9_-]/g, "_");
-  return sanitized.length > 0 ? sanitized : "image_generation";
+  return sanitized.length > 0 ? sanitized : "image_generate";
 }
 
 function getExtension(mediaType: string, outputFormat: string | null | undefined): string {
@@ -73,33 +77,6 @@ async function createThumbnail(data: Uint8Array): Promise<{
     mediaType: THUMBNAIL_MEDIA_TYPE,
     width,
     height,
-  };
-}
-
-function stripThumbnailForModelOutput(output: unknown): unknown {
-  if (!output || typeof output !== "object" || Array.isArray(output)) {
-    return output;
-  }
-  const record = output as Record<string, unknown>;
-  if (record.success !== true || !Array.isArray(record.images)) {
-    return output;
-  }
-
-  const images: unknown[] = record.images;
-  return {
-    ...record,
-    images: images.map((image) => {
-      if (!image || typeof image !== "object" || Array.isArray(image)) {
-        return image;
-      }
-      const stripped: Record<string, unknown> = {};
-      for (const [key, value] of Object.entries(image as Record<string, unknown>)) {
-        if (key !== "thumbnail") {
-          stripped[key] = value;
-        }
-      }
-      return stripped;
-    }),
   };
 }
 
@@ -216,12 +193,12 @@ function formatImageModelError(error: unknown): { error: string; setupHint?: str
     case "provider_not_supported":
       return {
         error: "Image generation v1 only supports OpenAI image models.",
-        setupHint: "Choose openai:gpt-image-1.5 in Settings → Experiments → Image Generation Tool.",
+        setupHint: `Choose ${DEFAULT_IMAGE_GENERATION_MODEL} in Settings > Experiments > Image Generation Tool.`,
       };
     case "invalid_model_string":
       return {
         error: typeof record.message === "string" ? record.message : "Invalid image model string.",
-        setupHint: "Use the provider:model-id format, for example openai:gpt-image-1.5.",
+        setupHint: `Use the provider:model-id format, for example ${DEFAULT_IMAGE_GENERATION_MODEL}.`,
       };
     case "policy_denied":
       return {
@@ -230,8 +207,16 @@ function formatImageModelError(error: unknown): { error: string; setupHint?: str
             ? record.message
             : "Image generation is denied by policy.",
       };
+    case "unknown":
+      return {
+        error: typeof record.raw === "string" ? record.raw : getErrorMessage(error),
+        setupHint: "Check OpenAI provider credentials, billing, rate limits, and content policy.",
+      };
     default:
-      return { error: getErrorMessage(error) };
+      return {
+        error: getErrorMessage(error),
+        setupHint: "Check OpenAI provider credentials, billing, rate limits, and content policy.",
+      };
   }
 }
 
@@ -241,7 +226,7 @@ export const createImageGenerateTool: ToolFactory = (config) => {
     inputSchema: TOOL_DEFINITIONS.image_generate.schema,
     toModelOutput: ({ output }) => ({
       type: "json",
-      value: stripThumbnailForModelOutput(output) as JSONValue,
+      value: stripImageGenerateThumbnails(output) as JSONValue,
     }),
     execute: async ({ prompt, n, quality, outputFormat }, { abortSignal, toolCallId }) => {
       const runtime = config.imageGenerationRuntime;
@@ -267,7 +252,7 @@ export const createImageGenerateTool: ToolFactory = (config) => {
           success: false,
           error: `Requested ${requestedCount} images, but Image Generation Tool is configured for a maximum of ${runtime.maxImagesPerCall}.`,
           setupHint:
-            "Adjust Settings → Experiments → Image Generation Tool or request fewer images.",
+            "Adjust Settings > Experiments > Image Generation Tool or request fewer images.",
         };
       }
 
@@ -363,6 +348,7 @@ export const createImageGenerateTool: ToolFactory = (config) => {
         return {
           success: false,
           error: `Image generation failed: ${getErrorMessage(error)}`,
+          setupHint: "Check OpenAI provider credentials, billing, rate limits, and content policy.",
         } satisfies ImageGenerateToolResult;
       }
     },
