@@ -23,21 +23,103 @@ import {
   goalStatusLabel,
 } from "./Goal/goalToolUtils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/Tooltip/Tooltip";
+import { useOptionalWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
+import type { GoalRecordV1, GoalSnapshot, GoalStatus } from "@/common/types/goal";
 
 interface CompleteGoalToolCallProps {
   args: { summary: string };
   result?: unknown;
   status?: ToolStatus;
+  workspaceId?: string;
+}
+
+interface CompleteGoalDisplayGoal {
+  goalId: string;
+  status: GoalStatus;
+  objective: string;
+  budgetCents: number | null;
+  costCents: number;
+  turnsUsed: number;
+  turnCap: number | null;
+  completionSummary?: string;
+  startedAtMs: number;
+}
+
+export function getCompleteGoalDisplayGoal(
+  resultGoal: GoalRecordV1 | null,
+  liveGoal: GoalSnapshot | null | undefined,
+  retainedLiveGoal: GoalSnapshot | null | undefined = null
+): CompleteGoalDisplayGoal | null {
+  if (resultGoal == null) {
+    return null;
+  }
+
+  const freshestLiveGoal =
+    liveGoal?.goalId === resultGoal.goalId
+      ? liveGoal
+      : retainedLiveGoal?.goalId === resultGoal.goalId
+        ? retainedLiveGoal
+        : null;
+
+  if (freshestLiveGoal) {
+    return {
+      goalId: freshestLiveGoal.goalId,
+      status: freshestLiveGoal.status,
+      objective: freshestLiveGoal.objective,
+      budgetCents: freshestLiveGoal.budgetCents,
+      costCents: freshestLiveGoal.costCents,
+      turnsUsed: freshestLiveGoal.turnsUsed,
+      turnCap: freshestLiveGoal.turnCap,
+      ...(freshestLiveGoal.completionSummary != null
+        ? { completionSummary: freshestLiveGoal.completionSummary }
+        : resultGoal.completionSummary != null
+          ? { completionSummary: resultGoal.completionSummary }
+          : {}),
+      startedAtMs: freshestLiveGoal.startedAtMs,
+    };
+  }
+
+  return {
+    goalId: resultGoal.goalId,
+    status: resultGoal.status,
+    objective: resultGoal.objective,
+    budgetCents: resultGoal.budgetCents,
+    costCents: resultGoal.costCents,
+    turnsUsed: resultGoal.turnsUsed,
+    turnCap: resultGoal.turnCap,
+    ...(resultGoal.completionSummary != null
+      ? { completionSummary: resultGoal.completionSummary }
+      : {}),
+    startedAtMs: resultGoal.createdAtMs,
+  };
 }
 
 export const CompleteGoalToolCall: React.FC<CompleteGoalToolCallProps> = ({
   args,
   result,
   status = "pending",
+  workspaceId,
 }) => {
   const { expanded, toggleExpanded } = useToolExpansion();
+  const sidebarState = useOptionalWorkspaceSidebarState(workspaceId);
   const errorResult = isToolErrorResult(result) ? result : null;
-  const goal = extractGoalFromResult(result);
+  const resultGoal = extractGoalFromResult(result);
+  const retainedLiveGoalRef = React.useRef<GoalSnapshot | null>(null);
+  if (resultGoal && sidebarState?.goal?.goalId === resultGoal.goalId) {
+    // Preserve the finalized same-goal accounting even if the user clears the
+    // completed goal or starts a new one while this transcript card remains
+    // mounted. Otherwise the card would regress to the stale pre-accounting
+    // tool result.
+    retainedLiveGoalRef.current = sidebarState.goal;
+  }
+  // `complete_goal` returns before the completing stream's final accounting is
+  // known. Prefer the same-goal live snapshot when available so the transcript
+  // card matches the finalized Goal sidebar cost/turn totals.
+  const goal = getCompleteGoalDisplayGoal(
+    resultGoal,
+    sidebarState?.goal,
+    retainedLiveGoalRef.current
+  );
   const summary = (goal?.completionSummary ?? args.summary).trim();
   const succeeded = status === "completed" && !errorResult;
   const iconClassName = succeeded
@@ -104,7 +186,7 @@ export const CompleteGoalToolCall: React.FC<CompleteGoalToolCallProps> = ({
                 <GoalToolStat
                   label="Elapsed"
                   value={
-                    <span className="counter-nums">{formatGoalElapsed(goal.createdAtMs)}</span>
+                    <span className="counter-nums">{formatGoalElapsed(goal.startedAtMs)}</span>
                   }
                 />
               </dl>
