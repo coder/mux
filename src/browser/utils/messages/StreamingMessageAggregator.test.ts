@@ -1983,6 +1983,129 @@ describe("StreamingMessageAggregator", () => {
 
       expect(aggregator.isCompacting()).toBe(false);
     });
+
+    test("suppresses response notifications for default post-compaction Continue resumes", () => {
+      const workspaceId = "test-workspace-default-continue-notify";
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT, workspaceId);
+      let completion: Parameters<typeof shouldNotifyOnResponseComplete>[0];
+      aggregator.onResponseComplete = (event) => {
+        completion = event.completion;
+      };
+
+      const summaryMessage = createMuxMessage("summary-default-continue", "assistant", "Summary", {
+        historySequence: 1,
+        timestamp: Date.now(),
+        compactionBoundary: true,
+        muxMetadata: {
+          type: "compaction-summary",
+          pendingFollowUp: {
+            text: "Continue",
+            model: "anthropic:claude-3-5-haiku-20241022",
+            dispatchOptions: { source: "internal-resume" },
+            agentId: "exec",
+          },
+        },
+      });
+
+      aggregator.loadHistoricalMessages([summaryMessage], true);
+      aggregator.handleMessage({
+        ...createMuxMessage("synthetic-default-continue", "user", "Continue", {
+          historySequence: 2,
+          timestamp: Date.now(),
+          synthetic: true,
+          uiVisible: true,
+        }),
+        type: "message",
+      });
+
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId,
+        messageId: "continue-stream",
+        historySequence: 3,
+        model: "anthropic:claude-3-5-haiku-20241022",
+        startTime: Date.now(),
+        agentId: "exec",
+        mode: "exec",
+      });
+      aggregator.handleStreamEnd({
+        type: "stream-end",
+        workspaceId,
+        messageId: "continue-stream",
+        metadata: {
+          historySequence: 3,
+          timestamp: Date.now(),
+          model: "anthropic:claude-3-5-haiku-20241022",
+        },
+        parts: [{ type: "text", text: "Done" }],
+      });
+
+      expect(completion).toEqual({
+        kind: "response",
+        hasAutoFollowUp: false,
+        suppressNotification: true,
+      });
+      expect(shouldNotifyOnResponseComplete(completion)).toBe(false);
+    });
+
+    test("does not suppress response notifications for user-authored Continue follow-ups", () => {
+      const workspaceId = "test-workspace-user-follow-up-notify";
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT, workspaceId);
+      let completion: Parameters<typeof shouldNotifyOnResponseComplete>[0];
+      aggregator.onResponseComplete = (event) => {
+        completion = event.completion;
+      };
+
+      const summaryMessage = createMuxMessage("summary-user-follow-up", "assistant", "Summary", {
+        historySequence: 1,
+        timestamp: Date.now(),
+        compactionBoundary: true,
+        muxMetadata: {
+          type: "compaction-summary",
+          pendingFollowUp: {
+            text: "Continue",
+            model: "anthropic:claude-3-5-haiku-20241022",
+            agentId: "exec",
+          },
+        },
+      });
+
+      aggregator.loadHistoricalMessages([summaryMessage], true);
+      aggregator.handleMessage({
+        ...createMuxMessage("synthetic-user-follow-up", "user", "Continue", {
+          historySequence: 2,
+          timestamp: Date.now(),
+          synthetic: true,
+          uiVisible: true,
+        }),
+        type: "message",
+      });
+
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId,
+        messageId: "follow-up-stream",
+        historySequence: 3,
+        model: "anthropic:claude-3-5-haiku-20241022",
+        startTime: Date.now(),
+        agentId: "exec",
+        mode: "exec",
+      });
+      aggregator.handleStreamEnd({
+        type: "stream-end",
+        workspaceId,
+        messageId: "follow-up-stream",
+        metadata: {
+          historySequence: 3,
+          timestamp: Date.now(),
+          model: "anthropic:claude-3-5-haiku-20241022",
+        },
+        parts: [{ type: "text", text: "Done" }],
+      });
+
+      expect(completion).toBeUndefined();
+      expect(shouldNotifyOnResponseComplete(completion)).toBe(true);
+    });
   });
 
   describe("pending stream model", () => {

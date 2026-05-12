@@ -2825,6 +2825,122 @@ describe("WorkspaceStore", () => {
       });
     });
 
+    it("preserves internal resume metadata across background handoffs", async () => {
+      const activeWorkspaceId = "active-workspace-internal-resume-background";
+      const backgroundWorkspaceId = "background-workspace-internal-resume-background";
+      const initialRecency = new Date("2024-01-06T00:00:00.000Z").getTime();
+
+      const backgroundStreamingSnapshot: WorkspaceActivitySnapshot = {
+        recency: initialRecency,
+        streaming: true,
+        streamingGeneration: 1,
+        lastModel: "claude-sonnet-4",
+        lastThinkingLevel: null,
+      };
+
+      let releaseBackgroundCompletion!: () => void;
+      const backgroundCompletionReady = new Promise<void>((resolve) => {
+        releaseBackgroundCompletion = resolve;
+      });
+
+      mockActivityList.mockResolvedValue({
+        [backgroundWorkspaceId]: backgroundStreamingSnapshot,
+      });
+
+      mockActivitySubscribe.mockImplementation(async function* (
+        _input?: void,
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceActivityEvent, void, unknown> {
+        await backgroundCompletionReady;
+        if (options?.signal?.aborted) {
+          return;
+        }
+
+        yield {
+          type: "activity" as const,
+          workspaceId: backgroundWorkspaceId,
+          activity: {
+            ...backgroundStreamingSnapshot,
+            streamingGeneration: 2,
+          },
+        };
+
+        yield {
+          type: "activity" as const,
+          workspaceId: backgroundWorkspaceId,
+          activity: {
+            ...backgroundStreamingSnapshot,
+            recency: initialRecency + 1,
+            streaming: false,
+            streamingGeneration: 2,
+          },
+        };
+
+        await waitForAbortSignal(options?.signal);
+      });
+
+      mockChatStreamFor(backgroundWorkspaceId, function* () {
+        yield {
+          type: "message",
+          id: "internal-resume-compaction-request",
+          role: "user",
+          parts: [{ type: "text", text: "/compact" }],
+          metadata: {
+            historySequence: 1,
+            timestamp: Date.now(),
+            muxMetadata: {
+              type: "compaction-request",
+              rawCommand: "/compact",
+              parsed: {
+                model: "claude-sonnet-4",
+                followUpContent: {
+                  text: "Continue",
+                  model: "claude-sonnet-4",
+                  agentId: "exec",
+                  dispatchOptions: { source: "internal-resume" },
+                },
+              },
+            },
+          },
+        };
+
+        yield {
+          type: "stream-start",
+          workspaceId: backgroundWorkspaceId,
+          messageId: "compaction-stream",
+          historySequence: 2,
+          model: "claude-sonnet-4",
+          startTime: Date.now(),
+          mode: "exec",
+        };
+
+        yield { type: "caught-up", hasOlderHistory: false };
+      });
+
+      const onResponseComplete = createResponseCompleteSpy();
+
+      recreateStore(onResponseComplete);
+
+      createAndAddWorkspace(store, backgroundWorkspaceId);
+
+      const sawCompactingStream = await waitUntil(
+        () => store.getWorkspaceState(backgroundWorkspaceId).isCompacting
+      );
+      expect(sawCompactingStream).toBe(true);
+
+      createAndAddWorkspace(store, activeWorkspaceId);
+
+      releaseBackgroundCompletion();
+      await tick(0);
+
+      expectResponseComplete(onResponseComplete, {
+        workspaceId: backgroundWorkspaceId,
+        isFinal: true,
+        completion: { kind: "compaction", hasAutoFollowUp: true, suppressNotification: true },
+        completedAt: initialRecency + 1,
+      });
+    });
+
     it("preserves queued auto-follow-up metadata for background completion callbacks", async () => {
       const activeWorkspaceId = "active-workspace-queued-follow-up-background";
       const backgroundWorkspaceId = "background-workspace-queued-follow-up-background";

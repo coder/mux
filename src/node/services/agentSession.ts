@@ -2859,7 +2859,20 @@ export class AgentSession {
       toolPolicy: [{ regex_match: ".*", action: "disable" }],
     };
 
-    const messageText = buildCompactionMessageText({ followUpContent: params.followUpContent });
+    const followUpContent: CompactionFollowUpRequest =
+      params.reason === "mid-stream"
+        ? {
+            ...params.followUpContent,
+            dispatchOptions: {
+              ...params.followUpContent.dispatchOptions,
+              // Mid-stream compaction resumes with a generated "Continue" sentinel; unlike
+              // on-send compaction, it is not the user's original prompt completing.
+              source: "internal-resume",
+            },
+          }
+        : params.followUpContent;
+
+    const messageText = buildCompactionMessageText({ followUpContent });
 
     const metadata: MuxMessageMetadata = {
       type: "compaction-request",
@@ -2867,7 +2880,7 @@ export class AgentSession {
       commandPrefix: "/compact",
       parsed: {
         model: sendOptions.model,
-        followUpContent: params.followUpContent,
+        followUpContent,
       },
       requestedModel: sendOptions.model,
       source: "auto-compaction",

@@ -2501,9 +2501,9 @@ export class WorkspaceStore {
       previous.streamingGeneration !== snapshot.streamingGeneration;
     if (didBackgroundStreamingGenerationAdvance) {
       // Background activity snapshots continue across handoffs even after onChat unsubscribes.
-      // Once a newer stream generation appears, any cached live stream contexts are stale and
-      // must not suppress the terminal notification for the new background turn.
-      this.aggregators.get(workspaceId)?.clearActiveStreams();
+      // Let the aggregator decide whether any stream-scoped completion metadata should
+      // survive the handoff before clearing stale live stream contexts.
+      this.aggregators.get(workspaceId)?.handleBackgroundStreamingGenerationAdvance();
     }
 
     const stoppedStreamingSnapshot =
@@ -2539,12 +2539,13 @@ export class WorkspaceStore {
       // Activity snapshots don't include message/content metadata. Reuse any
       // still-active stream context captured before this workspace was backgrounded
       // so queued follow-up handoffs remain suppressible in App notifications.
+      const completion = wasIdleCompaction
+        ? createIdleCompactionCompletion(backgroundCompletion?.hasAutoFollowUp ?? false)
+        : backgroundCompletion;
       this.emitResponseComplete({
         workspaceId,
         isFinal: true,
-        completion: wasIdleCompaction
-          ? createIdleCompactionCompletion(backgroundCompletion?.hasAutoFollowUp ?? false)
-          : backgroundCompletion,
+        completion,
         completedAt: stoppedStreamingSnapshot.recency,
       });
     }
@@ -2553,6 +2554,7 @@ export class WorkspaceStore {
       // Inactive workspaces do not receive stream-end events via onChat. Once
       // activity confirms streaming stopped, clear stale stream contexts so they
       // cannot leak compaction metadata into future completion callbacks.
+      this.aggregators.get(workspaceId)?.clearBackgroundHandoffCompletion();
       this.aggregators.get(workspaceId)?.clearActiveStreams();
       this.aggregators.get(workspaceId)?.clearPendingStreamStart();
     }
