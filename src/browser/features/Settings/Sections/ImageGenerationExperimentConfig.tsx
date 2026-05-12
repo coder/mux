@@ -54,6 +54,7 @@ export function ImageGenerationExperimentConfig() {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savingRef = useRef(false);
   const pendingSaveRef = useRef<ImageGenerationConfig | null>(null);
+  const draftRef = useRef({ modelDraft, maxImagesDraft });
   const lastSyncedRef = useRef<ImageGenerationConfig | null>(null);
   const isMountedRef = useRef(true);
 
@@ -62,6 +63,10 @@ export function ImageGenerationExperimentConfig() {
       isMountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    draftRef.current = { modelDraft, maxImagesDraft };
+  }, [modelDraft, maxImagesDraft]);
 
   useEffect(() => {
     if (!api) {
@@ -143,6 +148,18 @@ export function ImageGenerationExperimentConfig() {
         })
         .finally(() => {
           savingRef.current = false;
+          const currentDraft = normalizeDraft(
+            draftRef.current.modelDraft,
+            draftRef.current.maxImagesDraft
+          );
+          if (
+            currentDraft != null &&
+            lastSyncedRef.current != null &&
+            !areConfigsEqual(lastSyncedRef.current, currentDraft) &&
+            pendingSaveRef.current == null
+          ) {
+            pendingSaveRef.current = currentDraft;
+          }
           flush();
         });
     };
