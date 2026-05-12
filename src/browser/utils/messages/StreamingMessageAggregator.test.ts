@@ -103,6 +103,62 @@ describe("StreamingMessageAggregator", () => {
       expect(displayed[0].images[0]?.path).toBe("/tmp/mux/imagegen/image-tool-1/image-1.png");
     });
 
+    test("renders nested PTC image_generate output as a generated-image row", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      const assistantMessage = createMuxMessage("assistant-ptc-image", "assistant", "", {
+        historySequence: 8,
+        timestamp: 1235,
+      });
+      const imageOutput = {
+        success: true,
+        model: "openai:gpt-image-1.5",
+        prompt: "A nested blue square",
+        requestedCount: 1,
+        images: [
+          {
+            path: "/tmp/mux/generated_images/ptc-image/image-1.png",
+            filename: "image-1.png",
+            mediaType: "image/png",
+          },
+        ],
+      };
+      assistantMessage.parts.push({
+        type: "dynamic-tool",
+        toolCallId: "code-tool-1",
+        toolName: "code_execution",
+        input: { code: "await mux.image_generate(...)" },
+        state: "output-available",
+        output: {
+          success: true,
+          result: "done",
+          toolCalls: [
+            {
+              toolName: "image_generate",
+              args: { prompt: "A nested blue square" },
+              result: imageOutput,
+              duration_ms: 12,
+            },
+          ],
+        },
+      });
+
+      aggregator.loadHistoricalMessages([assistantMessage]);
+
+      const displayed = aggregator.getDisplayedMessages();
+      expect(displayed).toHaveLength(2);
+      expect(displayed[0]?.type).toBe("tool");
+      expect(displayed[1]?.type).toBe("generated-image");
+      if (displayed[0]?.type !== "tool" || displayed[1]?.type !== "generated-image") {
+        throw new Error("Expected code_execution tool row followed by generated image row");
+      }
+      expect(displayed[0].toolName).toBe("code_execution");
+      expect(displayed[0].isLastPartOfMessage).toBe(false);
+      expect(displayed[1].toolCallId).toBe("code-tool-1-nested-0");
+      expect(displayed[1].prompt).toBe("A nested blue square");
+      expect(displayed[1].images[0]?.path).toBe("/tmp/mux/generated_images/ptc-image/image-1.png");
+      expect(displayed[1].isLastPartOfMessage).toBe(true);
+    });
+
     test("keeps malformed successful image_generate output as a normal tool row", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
       const assistantMessage = createMuxMessage("assistant-image-malformed", "assistant", "", {

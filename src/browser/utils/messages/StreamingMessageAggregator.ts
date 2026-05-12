@@ -173,6 +173,37 @@ function isSuccessfulImageGenerateResult(
   return parsed.success && parsed.data.success;
 }
 
+function appendGeneratedImageMessage(
+  displayedMessages: DisplayedMessage[],
+  options: {
+    id: string;
+    historyId: string;
+    toolCallId: string;
+    output: Extract<ImageGenerateToolResult, { success: true }>;
+    isPartial: boolean;
+    historySequence: number;
+    streamSequence: number;
+    isLastPartOfMessage: boolean;
+    timestamp?: number;
+  }
+): void {
+  displayedMessages.push({
+    type: "generated-image",
+    id: options.id,
+    historyId: options.historyId,
+    toolCallId: options.toolCallId,
+    prompt: options.output.prompt,
+    model: options.output.model,
+    images: options.output.images,
+    warnings: options.output.warnings,
+    isPartial: options.isPartial,
+    historySequence: options.historySequence,
+    streamSequence: options.streamSequence,
+    isLastPartOfMessage: options.isLastPartOfMessage,
+    timestamp: options.timestamp,
+  });
+}
+
 /**
  * Check if a tool result indicates success (for tools that return { success: boolean })
  */
@@ -3110,6 +3141,20 @@ export class StreamingMessageAggregator {
             }
           }
 
+          const nestedGeneratedImages =
+            !isPartial && nestedCalls
+              ? nestedCalls.filter(
+                  (
+                    nestedCall
+                  ): nestedCall is typeof nestedCall & {
+                    output: Extract<ImageGenerateToolResult, { success: true }>;
+                  } =>
+                    nestedCall.toolName === "image_generate" &&
+                    nestedCall.state === "output-available" &&
+                    isSuccessfulImageGenerateResult(nestedCall.output)
+                )
+              : [];
+
           if (
             part.toolName === "image_generate" &&
             part.state === "output-available" &&
@@ -3117,15 +3162,11 @@ export class StreamingMessageAggregator {
             !isPartial &&
             isSuccessfulImageGenerateResult(part.output)
           ) {
-            displayedMessages.push({
-              type: "generated-image",
+            appendGeneratedImageMessage(displayedMessages, {
               id: `${message.id}-${partIndex}`,
               historyId: message.id,
               toolCallId: part.toolCallId,
-              prompt: part.output.prompt,
-              model: part.output.model,
-              images: part.output.images,
-              warnings: part.output.warnings,
+              output: part.output,
               isPartial,
               historySequence,
               streamSequence: streamSeq++,
@@ -3145,9 +3186,22 @@ export class StreamingMessageAggregator {
               isPartial,
               historySequence,
               streamSequence: streamSeq++,
-              isLastPartOfMessage: isLastPart,
+              isLastPartOfMessage: isLastPart && nestedGeneratedImages.length === 0,
               timestamp: part.timestamp ?? baseTimestamp,
               nestedCalls,
+            });
+            nestedGeneratedImages.forEach((nestedCall, nestedIndex) => {
+              appendGeneratedImageMessage(displayedMessages, {
+                id: `${message.id}-${partIndex}-nested-image-${nestedIndex}`,
+                historyId: message.id,
+                toolCallId: nestedCall.toolCallId,
+                output: nestedCall.output,
+                isPartial,
+                historySequence,
+                streamSequence: streamSeq++,
+                isLastPartOfMessage: isLastPart && nestedIndex === nestedGeneratedImages.length - 1,
+                timestamp: nestedCall.timestamp ?? part.timestamp ?? baseTimestamp,
+              });
             });
           }
         }
