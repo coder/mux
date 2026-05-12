@@ -1,7 +1,7 @@
 import path from "node:path";
 import assert from "node:assert/strict";
 import sharp from "sharp";
-import type { JSONValue } from "@ai-sdk/provider";
+import type { JSONValue, LanguageModelV2Usage } from "@ai-sdk/provider";
 import { generateImage, tool } from "ai";
 
 import type { ImageGenerateToolResult } from "@/common/types/tools";
@@ -125,6 +125,77 @@ function getRevisedPrompt(providerMetadata: unknown, index: number): string | un
     : undefined;
 }
 
+function numberOrZero(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function getOpenAIImageTokenUsage(providerMetadata: unknown): LanguageModelV2Usage | undefined {
+  if (typeof providerMetadata !== "object" || providerMetadata === null) {
+    return undefined;
+  }
+  const openai = (providerMetadata as { openai?: unknown }).openai;
+  if (typeof openai !== "object" || openai === null) {
+    return undefined;
+  }
+  const images = (openai as { images?: unknown }).images;
+  if (!Array.isArray(images)) {
+    return undefined;
+  }
+
+  let inputTokens = 0;
+  let outputTokens = 0;
+  for (const image of images) {
+    if (typeof image !== "object" || image === null) {
+      continue;
+    }
+    inputTokens += numberOrZero((image as { textTokens?: unknown }).textTokens);
+    outputTokens += numberOrZero((image as { imageTokens?: unknown }).imageTokens);
+  }
+
+  if (inputTokens === 0 && outputTokens === 0) {
+    return undefined;
+  }
+
+  return {
+    inputTokens,
+    outputTokens,
+    totalTokens: inputTokens + outputTokens,
+  };
+}
+
+function getLanguageModelUsageForImageResult(
+  usage: unknown,
+  providerMetadata: unknown
+): LanguageModelV2Usage | undefined {
+  if (usage != null && typeof usage === "object") {
+    const candidate = usage as {
+      inputTokens?: unknown;
+      outputTokens?: unknown;
+      totalTokens?: unknown;
+      cachedInputTokens?: unknown;
+      reasoningTokens?: unknown;
+    };
+    const hasTokenUsage =
+      typeof candidate.inputTokens === "number" ||
+      typeof candidate.outputTokens === "number" ||
+      typeof candidate.totalTokens === "number";
+    if (hasTokenUsage) {
+      return {
+        inputTokens: typeof candidate.inputTokens === "number" ? candidate.inputTokens : undefined,
+        outputTokens:
+          typeof candidate.outputTokens === "number" ? candidate.outputTokens : undefined,
+        totalTokens: typeof candidate.totalTokens === "number" ? candidate.totalTokens : undefined,
+        cachedInputTokens:
+          typeof candidate.cachedInputTokens === "number" ? candidate.cachedInputTokens : undefined,
+        reasoningTokens:
+          typeof candidate.reasoningTokens === "number" ? candidate.reasoningTokens : undefined,
+      };
+    }
+  }
+
+  return getOpenAIImageTokenUsage(providerMetadata);
+}
+
 function formatImageModelError(error: unknown): { error: string; setupHint?: string } {
   if (typeof error !== "object" || error === null) {
     return { error: getErrorMessage(error) };
@@ -222,13 +293,17 @@ export const createImageGenerateTool: ToolFactory = (config) => {
           },
         });
 
-        if (config.reportModelUsage != null && result.usage != null) {
+        const usageForModelAccounting = getLanguageModelUsageForImageResult(
+          result.usage,
+          result.providerMetadata
+        );
+        if (config.reportModelUsage != null && usageForModelAccounting != null) {
           try {
             config.reportModelUsage({
               source: "tool",
               toolName: "image_generate",
               model: modelString,
-              usage: result.usage,
+              usage: usageForModelAccounting,
               providerMetadata: result.providerMetadata as Record<string, unknown> | undefined,
               toolCallId,
               timestamp: Date.now(),

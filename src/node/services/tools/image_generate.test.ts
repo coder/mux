@@ -42,6 +42,55 @@ describe("image_generate tool", () => {
     expect(createImageModelCalled).toBe(false);
   });
 
+  test("reports OpenAI image token usage through the tool usage path", async () => {
+    using workspaceDir = new TestTempDir("image-generate-workspace");
+    const reportedUsage: Array<{
+      inputTokens?: number;
+      outputTokens?: number;
+      totalTokens?: number;
+    }> = [];
+    const tool = createImageGenerateTool({
+      ...createTestToolConfig(workspaceDir.path),
+      reportModelUsage: (event) => {
+        reportedUsage.push(event.usage);
+      },
+      imageGenerationRuntime: {
+        modelString: "openai:gpt-image-1.5",
+        maxImagesPerCall: 2,
+        createImageModel: () =>
+          Promise.resolve(
+            Ok({
+              specificationVersion: "v2",
+              provider: "test",
+              modelId: "test-image-model",
+              maxImagesPerCall: 1,
+              doGenerate: () =>
+                Promise.resolve({
+                  images: [
+                    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lKrL7wAAAABJRU5ErkJggg==",
+                  ],
+                  warnings: [],
+                  response: { timestamp: new Date(), modelId: "test-image-model", headers: {} },
+                  providerMetadata: {
+                    openai: {
+                      images: [{ textTokens: 7, imageTokens: 11 }],
+                    },
+                  },
+                }),
+            } as never)
+          ),
+      },
+    });
+
+    const result = (await tool.execute!(
+      { prompt: "A tiny square", n: 1 },
+      mockToolCallOptions
+    )) as ImageGenerateToolResult;
+
+    expect(result.success).toBe(true);
+    expect(reportedUsage).toEqual([{ inputTokens: 7, outputTokens: 11, totalTokens: 18 }]);
+  });
+
   test("omits thumbnails from model-visible tool output", async () => {
     using workspaceDir = new TestTempDir("image-generate-workspace");
     const tool = createImageGenerateTool({
