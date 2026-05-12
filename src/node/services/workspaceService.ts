@@ -43,7 +43,7 @@ import {
 } from "@/node/runtime/runtimeHelpers";
 import { getWorkspacePathHintForProject } from "@/node/services/workspaceProjectRepos";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
-import { ensurePrivateDir } from "@/node/utils/fs";
+import { ensurePrivateDir, isErrnoWithCode } from "@/node/utils/fs";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { getProjects, isMultiProject } from "@/common/utils/multiProject";
 import { generateGitStatusScript, parseGitStatusScriptOutput } from "@/common/utils/git/gitStatus";
@@ -542,10 +542,6 @@ export function generateForkTitle(parentTitle: string, existingTitles: string[])
   // If parent title itself exists in the list (without suffix), start at (1)
   // Otherwise continue from the highest found suffix
   return `${base} (${findMaxSequentialNumber(existingTitles, prefix, ")") + 1})`;
-}
-
-function isErrnoWithCode(error: unknown, code: string): boolean {
-  return Boolean(error && typeof error === "object" && "code" in error && error.code === code);
 }
 
 async function copyIfExists(sourcePath: string, destinationPath: string): Promise<void> {

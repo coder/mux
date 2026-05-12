@@ -2,7 +2,7 @@ import * as fs from "fs/promises";
 import * as path from "path";
 
 import { mergeAdditionalSystemInstructions } from "@/common/utils/additionalSystemInstructions";
-import { ensurePrivateDir } from "@/node/utils/fs";
+import { ensurePrivateDir, isErrnoWithCode } from "@/node/utils/fs";
 
 interface SessionDirProvider {
   getSessionDir(workspaceId: string): string;
@@ -20,10 +20,6 @@ export const ADDITIONAL_SYSTEM_CONTEXT_DISABLED_FILENAME = "additional-system-co
 export interface AdditionalSystemContextRecord {
   content: string;
   enabled: boolean;
-}
-
-function isErrnoWithCode(error: unknown, code: string): boolean {
-  return Boolean(error && typeof error === "object" && "code" in error && error.code === code);
 }
 
 export function getAdditionalSystemContextPath(
