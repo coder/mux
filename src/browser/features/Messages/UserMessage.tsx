@@ -4,6 +4,7 @@ import type { DisplayedMessage } from "@/common/types/message";
 import type { ButtonConfig } from "./MessageWindow";
 import { MessageWindow } from "./MessageWindow";
 import { UserMessageContent } from "./UserMessageContent";
+import { GoalSyntheticMessageContent } from "./GoalSyntheticMessageContent";
 import { TerminalOutput } from "./TerminalOutput";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
@@ -164,6 +165,30 @@ export const UserMessage: React.FC<UserMessageProps> = ({
     (isGoalContinuation || isBudgetLimitWrapup) && "italic"
   );
 
+  let renderedContent: React.ReactNode;
+  if (isLocalCommandOutput) {
+    renderedContent = <TerminalOutput output={extractedOutput} isError={false} />;
+  } else if (isGoalContinuation || isBudgetLimitWrapup) {
+    renderedContent = (
+      <GoalSyntheticMessageContent
+        content={content}
+        kind={isBudgetLimitWrapup ? "budget-limit" : "continuation"}
+      />
+    );
+  } else {
+    renderedContent = (
+      <UserMessageContent
+        content={content}
+        commandPrefix={message.commandPrefix}
+        agentSkillSnapshot={message.agentSkill?.snapshot}
+        inlineSkillSnapshots={message.inlineSkillSnapshots}
+        reviews={message.reviews}
+        fileParts={message.fileParts}
+        variant="sent"
+      />
+    );
+  }
+
   return (
     <MessageWindow
       label={label}
@@ -172,19 +197,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
       className={syntheticClassName}
       variant="user"
     >
-      {isLocalCommandOutput ? (
-        <TerminalOutput output={extractedOutput} isError={false} />
-      ) : (
-        <UserMessageContent
-          content={content}
-          commandPrefix={message.commandPrefix}
-          agentSkillSnapshot={message.agentSkill?.snapshot}
-          inlineSkillSnapshots={message.inlineSkillSnapshots}
-          reviews={message.reviews}
-          fileParts={message.fileParts}
-          variant="sent"
-        />
-      )}
+      {renderedContent}
     </MessageWindow>
   );
 };
