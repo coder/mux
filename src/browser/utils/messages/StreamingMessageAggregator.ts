@@ -175,13 +175,58 @@ function isSuccessfulImageGenerateResult(
     prompt?: unknown;
     images?: unknown;
   };
-  return (
-    candidate.success === true &&
-    typeof candidate.model === "string" &&
-    typeof candidate.prompt === "string" &&
-    Array.isArray(candidate.images) &&
-    candidate.images.length > 0
-  );
+  if (
+    candidate.success !== true ||
+    typeof candidate.model !== "string" ||
+    typeof candidate.prompt !== "string" ||
+    !Array.isArray(candidate.images) ||
+    candidate.images.length === 0
+  ) {
+    return false;
+  }
+
+  return candidate.images.every((image) => {
+    if (typeof image !== "object" || image === null) {
+      return false;
+    }
+    const item = image as {
+      path?: unknown;
+      filename?: unknown;
+      mediaType?: unknown;
+      thumbnail?: unknown;
+      revisedPrompt?: unknown;
+    };
+    if (
+      typeof item.path !== "string" ||
+      typeof item.filename !== "string" ||
+      typeof item.mediaType !== "string"
+    ) {
+      return false;
+    }
+    if (item.revisedPrompt !== undefined && typeof item.revisedPrompt !== "string") {
+      return false;
+    }
+    if (item.thumbnail === undefined) {
+      return true;
+    }
+    if (typeof item.thumbnail !== "object" || item.thumbnail === null) {
+      return false;
+    }
+    const thumbnail = item.thumbnail as {
+      data?: unknown;
+      mediaType?: unknown;
+      width?: unknown;
+      height?: unknown;
+    };
+    return (
+      typeof thumbnail.data === "string" &&
+      typeof thumbnail.mediaType === "string" &&
+      typeof thumbnail.width === "number" &&
+      thumbnail.width > 0 &&
+      typeof thumbnail.height === "number" &&
+      thumbnail.height > 0
+    );
+  });
 }
 
 /**

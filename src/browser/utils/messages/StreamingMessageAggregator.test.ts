@@ -103,6 +103,39 @@ describe("StreamingMessageAggregator", () => {
       expect(displayed[0].images[0]?.path).toBe("/tmp/mux/imagegen/image-tool-1/image-1.png");
     });
 
+    test("keeps malformed successful image_generate output as a normal tool row", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      const assistantMessage = createMuxMessage("assistant-image-malformed", "assistant", "", {
+        historySequence: 8,
+        timestamp: 1235,
+      });
+      assistantMessage.parts.push({
+        type: "dynamic-tool",
+        toolCallId: "image-tool-malformed",
+        toolName: "image_generate",
+        input: { prompt: "A small blue square" },
+        state: "output-available",
+        output: {
+          success: true,
+          model: "openai:gpt-image-2",
+          prompt: "A small blue square",
+          requestedCount: 1,
+          images: [null],
+        },
+      });
+
+      aggregator.loadHistoricalMessages([assistantMessage]);
+
+      const displayed = aggregator.getDisplayedMessages();
+      expect(displayed).toHaveLength(1);
+      expect(displayed[0]?.type).toBe("tool");
+      if (displayed[0]?.type !== "tool") {
+        throw new Error("Expected malformed image generation to remain a tool row");
+      }
+      expect(displayed[0].toolName).toBe("image_generate");
+      expect(displayed[0].status).toBe("completed");
+    });
+
     test("keeps failed image_generate output as a normal tool row", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
       const assistantMessage = createMuxMessage("assistant-image-failed", "assistant", "", {
