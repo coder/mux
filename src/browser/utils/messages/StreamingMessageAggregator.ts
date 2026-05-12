@@ -65,6 +65,7 @@ import { computeRecencyTimestamp } from "./recency";
 import { assert } from "@/common/utils/assert";
 import { getStatusStateKey } from "@/common/constants/storage";
 import { getFollowUpContentText } from "@/browser/utils/compaction/format";
+import { getGoalClearedSummaryDisplayText } from "@/common/utils/goalClearedSummaryDisplay";
 
 // Maximum number of messages to display in the DOM for performance
 // Full history is still maintained internally for token counting and stats
@@ -3022,7 +3023,7 @@ export class StreamingMessageAggregator {
             type: "assistant",
             id: `${message.id}-${partIndex}`,
             historyId: message.id,
-            content: part.text,
+            content: getGoalClearedSummaryDisplayText(part.text, muxMeta),
             historySequence,
             streamSequence: streamSeq++,
             isStreaming,
