@@ -90,6 +90,27 @@ Live goal accounting at limit:
     expect(queryByText("auto")).toBeNull();
   });
 
+  test("hides edit for synthetic goal messages even when editing is enabled", () => {
+    const message: DisplayedMessage = {
+      type: "user",
+      id: "goal-continuation-edit",
+      historyId: "goal-continuation-edit",
+      content: "Continue working on the active workspace goal.",
+      historySequence: 22,
+      isSynthetic: true,
+      isGoalContinuation: true,
+    };
+
+    const { getByLabelText, queryByLabelText } = render(
+      <TooltipProvider>
+        <MessageRenderer message={message} onEditUserMessage={() => undefined} />
+      </TooltipProvider>
+    );
+
+    expect(getByLabelText("Copy")).toBeDefined();
+    expect(queryByLabelText("Edit")).toBeNull();
+  });
+
   test("renders goal cards when the objective tag is missing", () => {
     const message: DisplayedMessage = {
       type: "user",
@@ -97,6 +118,30 @@ Live goal accounting at limit:
       historyId: "goal-continuation-no-objective",
       content: "Continue working on the active workspace goal.",
       historySequence: 22,
+      isSynthetic: true,
+      isGoalContinuation: true,
+    };
+
+    const { container, getByText } = render(
+      <TooltipProvider>
+        <MessageRenderer message={message} />
+      </TooltipProvider>
+    );
+
+    expect(getByText("Continuing active goal")).toBeDefined();
+    expect(getByText("Mux is taking the next step automatically.")).toBeDefined();
+    expect(container.querySelector("blockquote")).toBeNull();
+  });
+
+  test("renders goal cards when the objective close tag is missing", () => {
+    const message: DisplayedMessage = {
+      type: "user",
+      id: "goal-continuation-missing-close",
+      historyId: "goal-continuation-missing-close",
+      content: `Continue working on the active workspace goal.
+
+<untrusted_objective>Ship the feature`,
+      historySequence: 23,
       isSynthetic: true,
       isGoalContinuation: true,
     };
@@ -124,7 +169,7 @@ Live goal accounting at limit:
       isBudgetLimitWrapup: true,
     };
 
-    const { getByText, queryByText } = render(
+    const { container, getByText, queryByText } = render(
       <TooltipProvider>
         <MessageRenderer message={message} />
       </TooltipProvider>
@@ -132,6 +177,8 @@ Live goal accounting at limit:
 
     expect(getByText("Goal limit reached")).toBeDefined();
     expect(getByText("Mux is wrapping up the current goal.")).toBeDefined();
+    expect(getByText("Ship the feature")).toBeDefined();
+    expect(container.querySelector("blockquote")).toBeDefined();
     expect(queryByText(/Live goal accounting/)).toBeNull();
   });
 });
