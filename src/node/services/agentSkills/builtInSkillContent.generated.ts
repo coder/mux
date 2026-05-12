@@ -241,6 +241,11 @@ export const BUILTIN_SKILL_FILES: Record<string, Record<string, string>> = {
   },
   "mux-docs": {
     "references/docs/adr/0001-experimental-image-generation-tool.md": [
+      "---",
+      "title: Experimental Image Generation Tool",
+      "description: Architecture decision for Mux's experimental image generation tool and generated-image display messages",
+      "---",
+      "",
       "# 0001. Experimental Image Generation Uses a Mux-Executed Tool with Derived Display Messages",
       "",
       "## Status",
@@ -6512,7 +6517,7 @@ export const BUILTIN_SKILL_FILES: Record<string, Record<string, string>> = {
       "    - Telemetry (`/reference/telemetry`) → `references/docs/reference/telemetry.mdx` — What Mux collects, what it doesn’t, and how to disable it",
       "    - Storybook (`/reference/storybook`) → `references/docs/reference/storybook.mdx` — Develop and test Mux UI states in isolation",
       "    - Terminal Benchmarking (`/reference/benchmarking`) → `references/docs/reference/benchmarking.mdx` — Run Terminal-Bench benchmarks with the Mux adapter",
-      "    - adr/0001-experimental-image-generation-tool (`/adr/0001-experimental-image-generation-tool`) → `references/docs/adr/0001-experimental-image-generation-tool.md`",
+      "    - Experimental Image Generation Tool (`/adr/0001-experimental-image-generation-tool`) → `references/docs/adr/0001-experimental-image-generation-tool.md` — Architecture decision for Mux's experimental image generation tool and generated-image display messages",
       "    - AGENTS.md (`/AGENTS`) → `references/docs/AGENTS.md` — Agent instructions for AI assistants working on the Mux codebase",
       "<!-- END DOCS_TREE -->",
       "",
