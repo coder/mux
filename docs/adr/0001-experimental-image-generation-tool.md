@@ -18,7 +18,7 @@ The feature is gated behind a visible, default-off Image Generation Tool experim
 
 The first tool operation is text-to-image generation only. It exposes prompt, image count, quality, and output format. Editing, masks, batch generation, transparent-background workflows, seed, aspect ratio, style, moderation overrides, and compression are deferred.
 
-Generated full-resolution images are saved under the active runtime's temporary directory. The persisted tool result stores saved paths plus bounded thumbnails for transcript preview. Full image bytes are not stored in chat history.
+Generated full-resolution images are saved under the active runtime artifact directory. The persisted tool result stores saved paths plus bounded thumbnails for transcript preview. Full image bytes are not stored in chat history.
 
 The frontend renders successful `image_generate` results as a first-class Generated Image Display Message derived from the persisted tool result. The persisted transcript source of truth remains the normal tool call and tool result; no new persisted chat part or stream protocol event is required for the first experiment. Pending, executing, failed, interrupted, or redacted image-generation calls continue to render as normal tool rows.
 

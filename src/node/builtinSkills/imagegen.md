@@ -92,8 +92,8 @@ For refinements, generate a new image from an updated prompt. Do not claim to ed
 
 ## Artifact handling
 
-Generated full-resolution images are saved under the active runtime's temporary directory. These are best-effort session artifacts, not permanent project assets.
+Generated full-resolution images are saved under the active runtime artifact directory. These are best-effort session artifacts, not permanent project assets.
 
-Preview or discarded images can remain in the runtime temp directory. When the user wants an image used by the project, copy the selected final image into the workspace and report the workspace path.
+Preview or discarded images can remain in the runtime artifact directory. When the user wants an image used by the project, copy the selected final image into the workspace and report the workspace path.
 
 Keep generated originals unless the user explicitly asks to delete them.

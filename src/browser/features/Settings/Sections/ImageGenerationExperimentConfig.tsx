@@ -156,6 +156,39 @@ export function ImageGenerationExperimentConfig() {
     };
   }, [api, loaded, loadFailed, modelDraft, maxImagesDraft]);
 
+  useEffect(() => {
+    if (!api || !loaded || loadFailed) {
+      return;
+    }
+
+    return () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+
+      if (savingRef.current) {
+        return;
+      }
+
+      const payload = pendingSaveRef.current;
+      if (!payload) {
+        return;
+      }
+
+      // Image generation settings auto-save. If Settings closes during the debounce window,
+      // flush the pending valid edit rather than silently dropping the user's change.
+      pendingSaveRef.current = null;
+      savingRef.current = true;
+      void api.config
+        .updateImageGenerationConfig({ imageGeneration: payload })
+        .catch(() => undefined)
+        .finally(() => {
+          savingRef.current = false;
+        });
+    };
+  }, [api, loaded, loadFailed]);
+
   const handleMaxImagesBlur = () => {
     const parsed = parseMaxImages(maxImagesDraft) ?? DEFAULT_IMAGE_GENERATION_MAX_IMAGES;
     assert(
@@ -180,7 +213,7 @@ export function ImageGenerationExperimentConfig() {
     <div className="bg-background-secondary space-y-3 px-4 py-3">
       <div className="text-muted text-xs">
         Generate-only experiment. Requires OpenAI provider credentials. Full images are saved as
-        runtime-temp artifacts; copy final assets into the workspace when they matter.
+        runtime artifacts; copy final assets into the workspace when they matter.
       </div>
 
       <div className="flex items-center justify-between gap-4">
