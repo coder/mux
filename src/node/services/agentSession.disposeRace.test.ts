@@ -545,4 +545,98 @@ describe("AgentSession disposal race conditions", () => {
       { synthetic: true, agentInitiated: true }
     );
   });
+
+  test("monitor wake coalesces while a prior wake is queued", async () => {
+    const backgroundHandlers = new Map<
+      string,
+      (workspaceId: string, payload: MonitorMatchPayload) => void
+    >();
+    const sendDone = createDeferred<void>();
+
+    const aiService: AIService = {
+      on(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+      off(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+      stopStream: mock(() => Promise.resolve(Ok(undefined))),
+      isStreaming: mock(() => true),
+    } as unknown as AIService;
+
+    const historyService: HistoryService = {
+      getLastMessages: mock(() => Promise.resolve(Ok([]))),
+    } as unknown as HistoryService;
+
+    const initStateManager: InitStateManager = {
+      on(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+      off(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+    } as unknown as InitStateManager;
+
+    const backgroundProcessManager: BackgroundProcessManager = {
+      cleanup: mock(() => Promise.resolve()),
+      setMessageQueued: mock(() => undefined),
+      on(eventName: string | symbol, listener: (...args: unknown[]) => void) {
+        backgroundHandlers.set(
+          String(eventName),
+          listener as (workspaceId: string, payload: MonitorMatchPayload) => void
+        );
+        return this;
+      },
+      off(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+    } as unknown as BackgroundProcessManager;
+
+    const config: Config = {
+      srcDir: "/tmp",
+      getSessionDir: mock(() => "/tmp"),
+    } as unknown as Config;
+
+    const session = new AgentSession({
+      workspaceId: "ws",
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+    (session as unknown as { turnPhase: "streaming" }).turnPhase = "streaming";
+    (
+      session as unknown as { lastMonitorWakeSendOptions?: SendMessageOptions }
+    ).lastMonitorWakeSendOptions = {
+      model: "anthropic:claude-sonnet-4-5",
+      agentId: "exec",
+    };
+
+    const sentMessages: string[] = [];
+    const sendMessage = mock((message: string) => {
+      sentMessages.push(message);
+      sendDone.resolve();
+      return Promise.resolve(Ok(undefined));
+    });
+    (session as unknown as { sendMessage: typeof sendMessage }).sendMessage = sendMessage;
+
+    const emitMonitorMatch = (line: string) =>
+      backgroundHandlers.get("monitor:match")?.("ws", {
+        processId: "proc-1",
+        taskId: "bash:proc-1",
+        lines: [line],
+        totalMatches: 1,
+        timestamp: Date.now(),
+      });
+
+    emitMonitorMatch("ERR one");
+    emitMonitorMatch("ERR two");
+    session.sendQueuedMessages();
+
+    await sendDone.promise;
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sentMessages[0]?.match(/<monitor-event/g)?.length).toBe(1);
+  });
 });

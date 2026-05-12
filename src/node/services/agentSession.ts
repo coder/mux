@@ -375,6 +375,7 @@ export class AgentSession {
 
   private idleWaiters: Array<() => void> = [];
   private readonly messageQueue = new MessageQueue();
+  private readonly queuedMonitorWakeTaskIds = new Set<string>();
   private backgroundMonitorMatchSubscribed = false;
   private readonly backgroundMonitorMatchHandler = (
     workspaceId: string,
@@ -396,6 +397,13 @@ export class AgentSession {
       timestamp: payload.timestamp,
     });
 
+    if (this.queuedMonitorWakeTaskIds.has(payload.taskId)) {
+      // A pending wake already tells the agent to inspect this process. Keep UI counters moving
+      // but avoid unbounded queued synthetic prompts while the session is busy.
+      log.debug(`Coalesced duplicate monitor wake for ${payload.taskId}`);
+      return;
+    }
+
     const wakeMessage = this.formatMonitorWakeMessage(payload);
     const wakeOptions =
       this.buildMonitorWakeSendOptions(this.activeStreamContext?.options) ??
@@ -410,6 +418,9 @@ export class AgentSession {
         synthetic: true,
         agentInitiated: true,
       });
+      if (dispatchMode !== null) {
+        this.queuedMonitorWakeTaskIds.add(payload.taskId);
+      }
       if (dispatchMode !== null && !this.isBusy()) {
         this.sendQueuedMessages();
       }
@@ -4895,6 +4906,7 @@ export class AgentSession {
   clearQueue(): void {
     this.assertNotDisposed("clearQueue");
     this.messageQueue.clear();
+    this.queuedMonitorWakeTaskIds.clear();
     this.emitQueuedMessageChanged();
     this.backgroundProcessManager.setMessageQueued(this.workspaceId, false);
   }
@@ -4956,6 +4968,7 @@ export class AgentSession {
     if (!this.messageQueue.isEmpty()) {
       const { message, options, internal } = this.messageQueue.produceMessage();
       this.messageQueue.clear();
+      this.queuedMonitorWakeTaskIds.clear();
       this.emitQueuedMessageChanged();
 
       // Set PREPARING synchronously before the async sendMessage to prevent
