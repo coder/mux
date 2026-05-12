@@ -15,12 +15,19 @@ export function applyToolOutputRedaction(messages: MuxMessage[]): MuxMessage[] {
       if (part.state !== "output-available") return part;
 
       const outputWithoutUiOnly = stripToolOutputUiOnly(part.output);
+      const nestedCalls = part.nestedCalls?.map((nestedCall) => {
+        if (nestedCall.state !== "output-available") {
+          return nestedCall;
+        }
+        return {
+          ...nestedCall,
+          output: stripImageGenerateThumbnails(stripToolOutputUiOnly(nestedCall.output)),
+        };
+      });
       return {
         ...part,
-        output:
-          part.toolName === "image_generate"
-            ? stripImageGenerateThumbnails(outputWithoutUiOnly)
-            : outputWithoutUiOnly,
+        ...(nestedCalls ? { nestedCalls } : {}),
+        output: stripImageGenerateThumbnails(outputWithoutUiOnly),
       };
     });
 

@@ -21,15 +21,25 @@ function stripImageGenerateThumbnailFromImage(image: unknown): unknown {
 }
 
 export function stripImageGenerateThumbnails(output: unknown): unknown {
+  if (isUnknownArray(output)) {
+    return output.map(stripImageGenerateThumbnails);
+  }
   if (!isRecord(output)) {
     return output;
   }
-  if (output.success !== true || !isUnknownArray(output.images)) {
-    return output;
-  }
 
-  return {
-    ...output,
-    images: output.images.map(stripImageGenerateThumbnailFromImage),
-  };
+  const images = output.images;
+  const stripsCurrentImageResult = output.success === true && isUnknownArray(images);
+  const record: Record<string, unknown> = stripsCurrentImageResult
+    ? {
+        ...output,
+        images: images.map(stripImageGenerateThumbnailFromImage),
+      }
+    : output;
+  const stripped: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(record)) {
+    stripped[key] =
+      stripsCurrentImageResult && key === "images" ? value : stripImageGenerateThumbnails(value);
+  }
+  return stripped;
 }
