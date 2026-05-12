@@ -62,6 +62,10 @@ describe("AppConfigOnDiskSchema", () => {
     ).toBe(true);
   });
 
+  it("accepts sparse configs without image generation settings", () => {
+    expect(AppConfigOnDiskSchema.safeParse({ defaultModel: "openai:gpt-4o" }).success).toBe(true);
+  });
+
   it("validates image generation configuration limits", () => {
     expect(
       AppConfigOnDiskSchema.safeParse({

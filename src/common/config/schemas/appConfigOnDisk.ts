@@ -109,7 +109,7 @@ export const AppConfigOnDiskSchema = z
     advisorMaxOutputTokens: z.number().int().positive().nullable().optional(),
     hiddenModels: z.array(z.string()).optional(),
     preferredCompactionModel: z.string().optional(),
-    imageGeneration: ImageGenerationConfigSchema,
+    imageGeneration: ImageGenerationConfigSchema.optional(),
     agentAiDefaults: AgentAiDefaultsSchema.optional(),
     /**
      * Sparse per-agent override that wins over agentAiDefaults when an agent runs as a
