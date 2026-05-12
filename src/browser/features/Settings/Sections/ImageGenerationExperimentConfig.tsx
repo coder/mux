@@ -159,7 +159,23 @@ export function ImageGenerationExperimentConfig() {
         })
         .finally(() => {
           savingRef.current = false;
-          if (!saveSucceeded || !isMountedRef.current) {
+          if (!saveSucceeded) {
+            return;
+          }
+          if (!isMountedRef.current) {
+            // Preserve edits made while the previous save was in flight; closing Settings
+            // should not silently drop the latest valid draft.
+            const pendingUnmountSave = pendingSaveRef.current;
+            if (pendingUnmountSave != null) {
+              pendingSaveRef.current = null;
+              savingRef.current = true;
+              void api.config
+                .updateImageGenerationConfig({ imageGeneration: pendingUnmountSave })
+                .catch(() => undefined)
+                .finally(() => {
+                  savingRef.current = false;
+                });
+            }
             return;
           }
 
