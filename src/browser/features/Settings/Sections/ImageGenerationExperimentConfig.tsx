@@ -133,21 +133,36 @@ export function ImageGenerationExperimentConfig() {
 
       pendingSaveRef.current = null;
       savingRef.current = true;
+      let saveSucceeded = false;
       void api.config
         .updateImageGenerationConfig({ imageGeneration: payload })
         .then(() => {
+          saveSucceeded = true;
           lastSyncedRef.current = payload;
           if (isMountedRef.current) {
             setSaveError(null);
           }
         })
         .catch((error: unknown) => {
+          const currentDraft = isMountedRef.current
+            ? normalizeDraft(draftRef.current.modelDraft, draftRef.current.maxImagesDraft)
+            : null;
+          pendingSaveRef.current =
+            currentDraft != null &&
+            lastSyncedRef.current != null &&
+            !areConfigsEqual(lastSyncedRef.current, currentDraft)
+              ? currentDraft
+              : null;
           if (isMountedRef.current) {
             setSaveError(getErrorMessage(error));
           }
         })
         .finally(() => {
           savingRef.current = false;
+          if (!saveSucceeded || !isMountedRef.current) {
+            return;
+          }
+
           const currentDraft = normalizeDraft(
             draftRef.current.modelDraft,
             draftRef.current.maxImagesDraft
@@ -160,7 +175,9 @@ export function ImageGenerationExperimentConfig() {
           ) {
             pendingSaveRef.current = currentDraft;
           }
-          flush();
+          if (pendingSaveRef.current != null) {
+            flush();
+          }
         });
     };
 
