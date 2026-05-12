@@ -3181,6 +3181,7 @@ export class StreamingMessageAggregator {
             part.toolName === "image_generate" &&
             part.state === "output-available" &&
             status === "completed" &&
+            !isPartial &&
             isSuccessfulImageGenerateResult(part.output)
           ) {
             displayedMessages.push({

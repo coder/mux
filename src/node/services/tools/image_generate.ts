@@ -266,14 +266,13 @@ export const createImageGenerateTool: ToolFactory = (config) => {
             warnings.push(`Thumbnail generation failed for ${filename}: ${getErrorMessage(error)}`);
           }
 
+          const revisedPrompt = getRevisedPrompt(result.providerMetadata, index);
           images.push({
             path: artifactPath,
             filename,
             mediaType,
             ...(thumbnail ? { thumbnail } : {}),
-            ...(getRevisedPrompt(result.providerMetadata, index)
-              ? { revisedPrompt: getRevisedPrompt(result.providerMetadata, index) }
-              : {}),
+            ...(revisedPrompt ? { revisedPrompt } : {}),
           });
         }
 

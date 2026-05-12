@@ -1,3 +1,4 @@
+import { expect, userEvent, within } from "@storybook/test";
 import type { WorkspaceChatMessage, ChatMuxMessage } from "@/common/orpc/types";
 import type { AppStory } from "@/browser/stories/meta.js";
 import { appMeta, AppWithMocks, CHROMATIC_SMOKE_MODES } from "@/browser/stories/meta.js";
@@ -378,6 +379,15 @@ export const GeneratedImages: AppStory = {
       }}
     />
   ),
+};
+
+GeneratedImages.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  await expect(canvas.findByText("Generated 3 images")).resolves.toBeInTheDocument();
+  await expect(canvas.findByAltText("Generated image 3")).resolves.toBeInTheDocument();
+  await userEvent.click(await canvas.findByAltText("Generated image 2"));
+  const body = within(document.body);
+  await expect(body.findByAltText("Generated image preview")).resolves.toBeInTheDocument();
 };
 
 export const WithReasoning: AppStory = {

@@ -18,6 +18,7 @@ import { SELECTED_WORKSPACE_KEY, UI_THEME_KEY } from "@/common/constants/storage
 import type { ServerAuthSession } from "@/common/orpc/types";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import type { ProjectConfig } from "@/common/types/project";
+import type { ImageGenerationConfig } from "@/common/types/imageGeneration";
 import type { TaskSettings } from "@/common/types/tasks";
 import type { LayoutPresetsConfig } from "@/common/types/uiLayouts";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
@@ -107,6 +108,8 @@ interface SetupSettingsStoryOptions {
   providersList?: string[];
   agentAiDefaults?: AgentAiDefaults;
   taskSettings?: Partial<TaskSettings>;
+  /** Initial image generation config for config.getConfig */
+  imageGeneration?: Partial<ImageGenerationConfig>;
   /** Sessions shown in Settings → Server Access. */
   serverAuthSessions?: ServerAuthSession[];
   /** Pre-set experiment states in localStorage before render */
@@ -132,6 +135,7 @@ export function setupSettingsStory(options: SetupSettingsStoryOptions): APIClien
     providersConfig: options.providersConfig ?? {},
     agentAiDefaults: options.agentAiDefaults,
     providersList: options.providersList ?? ["anthropic", "openai", "xai"],
+    imageGeneration: options.imageGeneration,
     taskSettings: options.taskSettings,
     serverAuthSessions: options.serverAuthSessions,
     layoutPresets: options.layoutPresets,

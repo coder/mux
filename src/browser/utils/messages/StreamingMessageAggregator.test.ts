@@ -175,6 +175,45 @@ describe("StreamingMessageAggregator", () => {
       expect(displayed[0].toolName).toBe("image_generate");
     });
 
+    test("keeps successful image_generate output as a normal tool row when the message is partial", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      const assistantMessage = createMuxMessage("assistant-image-partial", "assistant", "", {
+        historySequence: 10,
+        timestamp: 1237,
+        partial: true,
+      });
+      assistantMessage.parts.push({
+        type: "dynamic-tool",
+        toolCallId: "image-tool-partial",
+        toolName: "image_generate",
+        input: { prompt: "A small blue square" },
+        state: "output-available",
+        output: {
+          success: true,
+          model: "openai:gpt-image-1.5",
+          prompt: "A small blue square",
+          requestedCount: 1,
+          images: [
+            {
+              path: "/tmp/mux/generated_images/image-tool-1/image-1.png",
+              filename: "image-1.png",
+              mediaType: "image/png",
+            },
+          ],
+        },
+      });
+
+      aggregator.loadHistoricalMessages([assistantMessage]);
+
+      const displayed = aggregator.getDisplayedMessages();
+      expect(displayed).toHaveLength(1);
+      expect(displayed[0]?.type).toBe("tool");
+      if (displayed[0]?.type !== "tool") {
+        throw new Error("Expected partial image generation to remain a tool row");
+      }
+      expect(displayed[0].status).toBe("completed");
+    });
+
     test("keeps failed image_generate output as a normal tool row", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
       const assistantMessage = createMuxMessage("assistant-image-failed", "assistant", "", {

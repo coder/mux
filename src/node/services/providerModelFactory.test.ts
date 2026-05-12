@@ -425,6 +425,86 @@ describe("ProviderModelFactory.createModel", () => {
   });
 });
 
+describe("ProviderModelFactory.createImageModel", () => {
+  it("creates an OpenAI image model when credentials are configured", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({ openai: { apiKey: "sk-test" } });
+
+      const result = await factory.createImageModel("openai:gpt-image-1.5");
+
+      expect(result.success).toBe(true);
+    });
+  });
+
+  it("rejects non-OpenAI image providers in v1", async () => {
+    await withTempConfig(async (_config, factory) => {
+      const result = await factory.createImageModel("google:imagen-test");
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toEqual({ type: "provider_not_supported", provider: "google" });
+      }
+    });
+  });
+
+  it("returns api_key_not_found when OpenAI credentials are missing", async () => {
+    const savedApiKey = process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    try {
+      await withOpenAIBaseUrlEnvUnset(async () => {
+        await withTempConfig(async (_config, factory) => {
+          const result = await factory.createImageModel("openai:gpt-image-1.5");
+
+          expect(result.success).toBe(false);
+          if (!result.success) {
+            expect(result.error).toEqual({ type: "api_key_not_found", provider: "openai" });
+          }
+        });
+      });
+    } finally {
+      if (savedApiKey === undefined) {
+        delete process.env.OPENAI_API_KEY;
+      } else {
+        process.env.OPENAI_API_KEY = savedApiKey;
+      }
+    }
+  });
+
+  it("returns provider_disabled when OpenAI is disabled", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({ openai: { apiKey: "sk-test", enabled: false } });
+
+      const result = await factory.createImageModel("openai:gpt-image-1.5");
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toEqual({ type: "provider_disabled", provider: "openai" });
+      }
+    });
+  });
+
+  it("enforces provider and model policy for image models", async () => {
+    await withTempPolicyProviderFactory(
+      {
+        policy_format_version: "0.1",
+        provider_access: [{ id: "openai", model_access: ["gpt-image-1-mini"] }],
+      },
+      async (config, factory) => {
+        config.saveProvidersConfig({ openai: { apiKey: "sk-test" } });
+
+        const denied = await factory.createImageModel("openai:gpt-image-1.5");
+        expect(denied.success).toBe(false);
+        if (!denied.success) {
+          expect(denied.error.type).toBe("policy_denied");
+        }
+
+        const allowed = await factory.createImageModel("openai:gpt-image-1-mini");
+        expect(allowed.success).toBe(true);
+      }
+    );
+  });
+});
+
 describe("ProviderModelFactory GitHub Copilot", () => {
   it("creates routed gpt-5.5 models with the chat completions API mode", async () => {
     await withTempConfig(async (config, factory) => {

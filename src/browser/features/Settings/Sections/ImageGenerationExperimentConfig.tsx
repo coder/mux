@@ -237,8 +237,7 @@ export function ImageGenerationExperimentConfig() {
         <div>
           <div className="text-foreground text-sm">Image model</div>
           <div className="text-muted text-xs">
-            Default {DEFAULT_IMAGE_GENERATION_MODEL}; pinned snapshot{" "}
-            {PINNED_IMAGE_GENERATION_MODEL}
+            {`Default ${DEFAULT_IMAGE_GENERATION_MODEL}; pinned snapshot ${PINNED_IMAGE_GENERATION_MODEL}`}
           </div>
         </div>
         <Input
@@ -256,8 +255,7 @@ export function ImageGenerationExperimentConfig() {
         <div>
           <div className="text-foreground text-sm">Max images per call</div>
           <div className="text-muted text-xs">
-            {MIN_IMAGE_GENERATION_MAX_IMAGES}–{MAX_IMAGE_GENERATION_MAX_IMAGES}; requests above this
-            fail instead of being silently clamped
+            {`${MIN_IMAGE_GENERATION_MAX_IMAGES}-${MAX_IMAGE_GENERATION_MAX_IMAGES}; requests above this fail instead of being silently clamped`}
           </div>
         </div>
         <Input
@@ -272,8 +270,7 @@ export function ImageGenerationExperimentConfig() {
       </div>
       {maxImagesInvalid && (
         <div className="text-error text-xs">
-          Enter a whole number from {MIN_IMAGE_GENERATION_MAX_IMAGES} to{" "}
-          {MAX_IMAGE_GENERATION_MAX_IMAGES}.
+          {`Enter a whole number from ${MIN_IMAGE_GENERATION_MAX_IMAGES} to ${MAX_IMAGE_GENERATION_MAX_IMAGES}.`}
         </div>
       )}
       {saveError && <div className="text-error text-xs">{saveError}</div>}
