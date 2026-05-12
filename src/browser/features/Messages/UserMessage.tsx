@@ -72,8 +72,8 @@ export const UserMessage: React.FC<UserMessageProps> = ({
   const { copied, copyToClipboard } = useCopyToClipboard(clipboardWriteText);
 
   const handleEdit = () => {
-    // Allow users to take ownership of AUTO (synthetic) prompts by editing them.
-    if (onEdit && !isLocalCommandOutput) {
+    // Goal-synthetic messages keep raw model prompts available via Copy/JSON only.
+    if (onEdit && !isLocalCommandOutput && !isGoalContinuation && !isBudgetLimitWrapup) {
       onEdit(buildEditingStateFromDisplayed(message));
     }
   };
