@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ArrowUpRight, BookOpen } from "lucide-react";
 
+import { ChatInputDecoration } from "@/browser/components/ChatPane/ChatInputDecoration";
 import { useAPI } from "@/browser/contexts/API";
 import {
   type AdditionalSystemContextSnapshot,
@@ -164,8 +165,6 @@ interface ChatInstructionsEditorProps {
   textareaClassName?: string;
   minRows?: number;
   placeholder?: string;
-  /** When true (default), the editor responds to focus requests routed through the store. */
-  respondToFocusRequests?: boolean;
 }
 
 export function ChatInstructionsEditor(props: ChatInstructionsEditorProps) {
@@ -183,10 +182,8 @@ export function ChatInstructionsEditor(props: ChatInstructionsEditorProps) {
 
   // Listen for focus-requests fired by the ChatInput decoration / badge so
   // that clicking the decoration brings the user straight into the editor.
-  const respondToFocus = props.respondToFocusRequests ?? true;
   const lastFocusGenRef = useRef(getAdditionalSystemContextFocusGeneration(props.workspaceId));
   useEffect(() => {
-    if (!respondToFocus) return;
     const focus = () => {
       const generation = getAdditionalSystemContextFocusGeneration(props.workspaceId);
       if (generation === lastFocusGenRef.current) return;
@@ -203,7 +200,7 @@ export function ChatInstructionsEditor(props: ChatInstructionsEditorProps) {
     // switched on for the first time during the focus request).
     focus();
     return unsubscribe;
-  }, [props.workspaceId, respondToFocus]);
+  }, [props.workspaceId]);
 
   // Render a quiet hint when there's no save in progress; only flash the
   // "Saving…" label after the >1s delay.
@@ -275,16 +272,17 @@ export function ChatInstructionsPanel(props: { workspaceId: string }) {
 }
 
 /**
- * Compact decoration shown right above the ChatInput (and inline in the
- * message list) whenever {@link isChatInstructionsActive} is true. Clicking
- * the header brings the user to the Instructions tab and focuses the editor.
+ * Compact decoration rendered in the chat-input decoration stack whenever
+ * {@link isChatInstructionsActive} is true. Visually matches the other
+ * decorations (TODO, background bashes, queued messages) via the shared
+ * {@link ChatInputDecoration} primitive, but acts as a link rather than an
+ * expandable panel: clicking opens the Instructions tab in the right sidebar
+ * and focuses the editor there. We render the trailing icon as an arrow
+ * instead of a chevron to signal "this opens elsewhere".
  */
 export function ChatInstructionsChatDecoration(props: { workspaceId: string }) {
   const snapshot = useAdditionalSystemContextSnapshot(props.workspaceId);
-  const [expanded, setExpanded] = useState(false);
-  const active = isChatInstructionsActive(snapshot);
-
-  if (!active && !expanded) return null;
+  if (!isChatInstructionsActive(snapshot)) return null;
 
   const handleOpenInPanel = () => {
     focusInstructionsTab(props.workspaceId);
@@ -292,58 +290,30 @@ export function ChatInstructionsChatDecoration(props: { workspaceId: string }) {
   };
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-4">
-      <div
-        className={cn(
-          "border-border bg-muted/10 rounded-lg border text-xs",
-          active && "border-[var(--color-accent)]/40"
-        )}
-      >
-        <div className="flex w-full items-center gap-2 rounded-t-lg px-1 py-1">
-          <button
-            type="button"
-            className="hover:bg-accent/20 flex flex-1 items-center gap-2 rounded px-2 py-1 text-left transition-colors"
-            onClick={() => setExpanded((value) => !value)}
-            aria-expanded={expanded}
-            aria-label={
-              expanded ? `Collapse ${CHAT_INSTRUCTIONS_LABEL}` : `Expand ${CHAT_INSTRUCTIONS_LABEL}`
-            }
-          >
-            {expanded ? (
-              <ChevronDown className="text-muted h-3.5 w-3.5 shrink-0" />
-            ) : (
-              <ChevronRight className="text-muted h-3.5 w-3.5 shrink-0" />
-            )}
-            <span className="font-medium">{CHAT_INSTRUCTIONS_LABEL}</span>
-            {!expanded && active && (
-              <span className="text-muted min-w-0 truncate">
-                {getChatInstructionsFirstLinePreview(snapshot.content)}
-              </span>
-            )}
-          </button>
-          <button
-            type="button"
-            className="text-muted hover:text-foreground shrink-0 rounded px-2 py-1 text-[10px] underline-offset-2 transition-colors hover:underline"
-            onClick={handleOpenInPanel}
-            aria-label={`Open ${CHAT_INSTRUCTIONS_LABEL} editor`}
-          >
-            Open editor
-          </button>
-        </div>
-        {expanded && (
-          <div className="border-border border-t p-3">
-            <ChatInstructionsEditor
-              workspaceId={props.workspaceId}
-              minRows={2}
-              textareaClassName="bg-background/80"
-              // The dedicated editor in the Instructions tab is the authoritative
-              // focus target. Don't steal focus when the decoration is expanded.
-              respondToFocusRequests={false}
-            />
-          </div>
-        )}
-      </div>
-    </div>
+    <ChatInputDecoration
+      // Pure link — never expands inline. The dedicated editor in the
+      // Instructions tab is the authoritative editing surface.
+      expanded={false}
+      onToggle={handleOpenInPanel}
+      dataComponent="ChatInstructionsChatDecoration"
+      trailingIcon={
+        <ArrowUpRight
+          aria-hidden="true"
+          className="text-muted group-hover:text-secondary size-3.5 transition-colors"
+        />
+      }
+      summary={
+        <>
+          <BookOpen className="text-muted group-hover:text-secondary size-3.5 shrink-0 transition-colors" />
+          <span className="text-muted group-hover:text-secondary flex min-w-0 items-center gap-1 transition-colors">
+            <span className="shrink-0 font-medium">{CHAT_INSTRUCTIONS_LABEL}</span>
+            <span className="min-w-0 truncate">
+              · {getChatInstructionsFirstLinePreview(snapshot.content)}
+            </span>
+          </span>
+        </>
+      }
+    />
   );
 }
 

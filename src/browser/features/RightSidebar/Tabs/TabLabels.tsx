@@ -154,10 +154,7 @@ export const InstructionsTabLabel: React.FC<InstructionsTabLabelProps> = ({ work
       Instructions
       {showBadge && (
         <span
-          className={cn(
-            "text-[10px] tabular-nums",
-            chatInstructionsActive ? "text-[var(--color-accent)]" : "text-muted"
-          )}
+          className="text-muted text-[10px] tabular-nums"
           aria-label={
             chatInstructionsActive
               ? `${baseCount} instruction files plus active Chat Instructions`
@@ -165,7 +162,13 @@ export const InstructionsTabLabel: React.FC<InstructionsTabLabelProps> = ({ work
           }
         >
           {displayCount}
-          {chatInstructionsActive && "*"}
+          {chatInstructionsActive && (
+            // Orange asterisk mirrors the "dirty / has unsaved changes" cue used
+            // by the git status indicator — a glanceable signal that the agent
+            // is receiving ephemeral chat-scoped instructions in addition to
+            // whatever AGENTS.md files contribute to this workspace.
+            <span className="text-warning">*</span>
+          )}
         </span>
       )}
     </>
