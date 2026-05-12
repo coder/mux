@@ -80,6 +80,7 @@ import * as path from "node:path";
 import type { DevToolsEvent } from "@/common/types/devtools";
 import type { MuxMessage } from "@/common/types/message";
 import { coerceThinkingLevel } from "@/common/types/thinking";
+import { normalizeImageGenerationConfig } from "@/common/types/imageGeneration";
 import { normalizeLegacyMuxMetadata } from "@/node/utils/messages/legacy";
 import { log } from "@/node/services/log";
 import { BROWSER_BRIDGE_WS_PATH, DESKTOP_WS_PATH } from "@/node/orpc/wsPaths";
@@ -631,6 +632,7 @@ export const router = (authToken?: string) => {
             advisorThinkingLevel: config.advisorThinkingLevel ?? null,
             advisorMaxUsesPerTurn: config.advisorMaxUsesPerTurn,
             advisorMaxOutputTokens: config.advisorMaxOutputTokens,
+            imageGeneration: normalizeImageGenerationConfig(config.imageGeneration),
             hiddenModels: config.hiddenModels,
             coderWorkspaceArchiveBehavior:
               config.coderWorkspaceArchiveBehavior ?? DEFAULT_CODER_ARCHIVE_BEHAVIOR,
@@ -774,6 +776,15 @@ export const router = (authToken?: string) => {
             ...config,
             routePriority: input.routePriority,
             routeOverrides,
+          }));
+        }),
+      updateImageGenerationConfig: t
+        .input(schemas.config.updateImageGenerationConfig.input)
+        .output(schemas.config.updateImageGenerationConfig.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => ({
+            ...config,
+            imageGeneration: normalizeImageGenerationConfig(input.imageGeneration),
           }));
         }),
       updateModelPreferences: t

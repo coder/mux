@@ -85,6 +85,7 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
       advisorTool: isExperimentEnabled(EXPERIMENT_IDS.ADVISOR_TOOL),
       goals: isExperimentEnabled(EXPERIMENT_IDS.GOALS),
       execSubagentHardRestart: isExperimentEnabled(EXPERIMENT_IDS.EXEC_SUBAGENT_HARD_RESTART),
+      imageGenerationTool: isExperimentEnabled(EXPERIMENT_IDS.IMAGE_GENERATION_TOOL),
     },
   });
 }

@@ -1,4 +1,4 @@
-import { type LanguageModel, type Tool } from "ai";
+import { type ImageModel, type LanguageModel, type Tool } from "ai";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
 import { createFileReadTool } from "@/node/services/tools/file_read";
@@ -11,6 +11,7 @@ import { createFileEditReplaceStringTool } from "@/node/services/tools/file_edit
 // DISABLED: import { createFileEditReplaceLinesTool } from "@/node/services/tools/file_edit_replace_lines";
 import { createFileEditInsertTool } from "@/node/services/tools/file_edit_insert";
 import { createAskUserQuestionTool } from "@/node/services/tools/ask_user_question";
+import { createImageGenerateTool } from "@/node/services/tools/image_generate";
 import { createAdvisorTool } from "@/node/services/tools/advisor";
 import { createProposePlanTool } from "@/node/services/tools/propose_plan";
 import { createTodoWriteTool, createTodoReadTool } from "@/node/services/tools/todo";
@@ -57,6 +58,7 @@ import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import type { FileState } from "@/node/services/agentSession";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
+import type { Result } from "@/common/types/result";
 import type { ModelMessage } from "@/common/types/message";
 import type { ProjectRef } from "@/common/types/workspace";
 
@@ -145,6 +147,7 @@ export interface ToolConfiguration {
     programmaticToolCalling?: boolean;
     programmaticToolCallingExclusive?: boolean;
     goals?: boolean;
+    imageGenerationTool?: boolean;
     execSubagentHardRestart?: boolean;
   };
   /** Available sub-agents for the task tool description (dynamic context) */
@@ -156,6 +159,15 @@ export interface ToolConfiguration {
   /** Analytics service for raw SQL queries against DuckDB analytics data */
   analyticsService?: {
     executeRawQuery(sql: string): Promise<unknown>;
+  };
+  /** Runtime bundle for the image generation tool (present only when the experiment is enabled). */
+  imageGenerationRuntime?: {
+    /** Configured image model string (e.g. "openai:gpt-image-2"). */
+    modelString: string;
+    /** Per-call image count cap configured by the user. */
+    maxImagesPerCall: number;
+    /** Creates an AI SDK image model for the configured image model string. */
+    createImageModel: (modelString: string) => Promise<Result<ImageModel, unknown>>;
   };
   /** Runtime bundle for the advisor tool (present only when advisor is eligible for this stream). */
   advisorRuntime?: {
@@ -440,6 +452,7 @@ export async function getToolsForModel(
     skills_catalog_search: createSkillsCatalogSearchTool(config),
     skills_catalog_read: createSkillsCatalogReadTool(config),
     ...(config.advisorRuntime ? { advisor: createAdvisorTool(config) } : {}),
+    ...(config.imageGenerationRuntime ? { image_generate: createImageGenerateTool(config) } : {}),
     ask_user_question: createAskUserQuestionTool(config),
     propose_plan: createProposePlanTool(config),
     // propose_name and propose_status are intentionally NOT registered here —
@@ -559,6 +572,7 @@ export async function getToolsForModel(
       enableAgentReport: config.enableAgentReport,
       enableAnalyticsQuery: Boolean(config.analyticsService),
       enableAdvisor: Boolean(config.advisorRuntime),
+      enableImageGeneration: Boolean(config.imageGenerationRuntime),
       // Mux global tools are always created; tool policy (agent frontmatter)
       // controls which agents can actually use them.
       enableMuxGlobalAgentsTools: true,

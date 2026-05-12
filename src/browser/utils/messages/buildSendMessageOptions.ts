@@ -9,6 +9,7 @@ export interface ExperimentValues {
   advisorTool: boolean | undefined;
   goals: boolean | undefined;
   execSubagentHardRestart: boolean | undefined;
+  imageGenerationTool: boolean | undefined;
 }
 
 export interface SendMessageOptionsInput {

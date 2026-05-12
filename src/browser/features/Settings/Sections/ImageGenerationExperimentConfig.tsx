@@ -1,0 +1,232 @@
+import React, { useEffect, useRef, useState } from "react";
+
+import { Input } from "@/browser/components/Input/Input";
+import { useAPI } from "@/browser/contexts/API";
+import {
+  DEFAULT_IMAGE_GENERATION_MAX_IMAGES,
+  DEFAULT_IMAGE_GENERATION_MODEL,
+  MAX_IMAGE_GENERATION_MAX_IMAGES,
+  MIN_IMAGE_GENERATION_MAX_IMAGES,
+  PINNED_IMAGE_GENERATION_MODEL,
+  normalizeImageGenerationConfig,
+  type ImageGenerationConfig,
+} from "@/common/types/imageGeneration";
+import assert from "@/common/utils/assert";
+import { getErrorMessage } from "@/common/utils/errors";
+
+function parseMaxImages(value: string): number | null {
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) {
+    return null;
+  }
+  const parsed = Number.parseInt(trimmed, 10);
+  if (
+    !Number.isInteger(parsed) ||
+    parsed < MIN_IMAGE_GENERATION_MAX_IMAGES ||
+    parsed > MAX_IMAGE_GENERATION_MAX_IMAGES
+  ) {
+    return null;
+  }
+  return parsed;
+}
+
+function normalizeDraft(modelDraft: string, maxImagesDraft: string): ImageGenerationConfig | null {
+  const modelString = modelDraft.trim();
+  const maxImagesPerCall = parseMaxImages(maxImagesDraft);
+  if (!modelString || maxImagesPerCall == null) {
+    return null;
+  }
+  return { modelString, maxImagesPerCall };
+}
+
+function areConfigsEqual(a: ImageGenerationConfig, b: ImageGenerationConfig): boolean {
+  return a.modelString === b.modelString && a.maxImagesPerCall === b.maxImagesPerCall;
+}
+
+export function ImageGenerationExperimentConfig() {
+  const { api } = useAPI();
+  const [modelDraft, setModelDraft] = useState(DEFAULT_IMAGE_GENERATION_MODEL);
+  const [maxImagesDraft, setMaxImagesDraft] = useState(String(DEFAULT_IMAGE_GENERATION_MAX_IMAGES));
+  const [loaded, setLoaded] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const savingRef = useRef(false);
+  const pendingSaveRef = useRef<ImageGenerationConfig | null>(null);
+  const lastSyncedRef = useRef<ImageGenerationConfig | null>(null);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!api) {
+      return;
+    }
+
+    let ignore = false;
+    setLoaded(false);
+    setLoadFailed(false);
+    setSaveError(null);
+
+    void api.config
+      .getConfig()
+      .then((cfg) => {
+        if (ignore) return;
+        const imageGeneration = normalizeImageGenerationConfig(cfg.imageGeneration);
+        setModelDraft(imageGeneration.modelString);
+        setMaxImagesDraft(String(imageGeneration.maxImagesPerCall));
+        lastSyncedRef.current = imageGeneration;
+        setLoaded(true);
+      })
+      .catch((error: unknown) => {
+        if (ignore) return;
+        setSaveError(getErrorMessage(error));
+        setLoadFailed(true);
+        setLoaded(true);
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [api]);
+
+  useEffect(() => {
+    if (!api || !loaded || loadFailed) {
+      return;
+    }
+
+    const normalizedDraft = normalizeDraft(modelDraft, maxImagesDraft);
+    if (normalizedDraft == null) {
+      return;
+    }
+
+    const lastSynced = lastSyncedRef.current;
+    if (lastSynced && areConfigsEqual(lastSynced, normalizedDraft)) {
+      pendingSaveRef.current = null;
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+      return;
+    }
+
+    pendingSaveRef.current = normalizedDraft;
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+
+    const flush = () => {
+      if (savingRef.current) return;
+      const payload = pendingSaveRef.current;
+      if (!payload) return;
+
+      pendingSaveRef.current = null;
+      savingRef.current = true;
+      void api.config
+        .updateImageGenerationConfig({ imageGeneration: payload })
+        .then(() => {
+          lastSyncedRef.current = payload;
+          if (isMountedRef.current) {
+            setSaveError(null);
+          }
+        })
+        .catch((error: unknown) => {
+          if (isMountedRef.current) {
+            setSaveError(getErrorMessage(error));
+          }
+        })
+        .finally(() => {
+          savingRef.current = false;
+          flush();
+        });
+    };
+
+    saveTimerRef.current = setTimeout(flush, 400);
+    return () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+    };
+  }, [api, loaded, loadFailed, modelDraft, maxImagesDraft]);
+
+  const handleMaxImagesBlur = () => {
+    const parsed = parseMaxImages(maxImagesDraft) ?? DEFAULT_IMAGE_GENERATION_MAX_IMAGES;
+    assert(
+      parsed >= MIN_IMAGE_GENERATION_MAX_IMAGES && parsed <= MAX_IMAGE_GENERATION_MAX_IMAGES,
+      "Image generation max images blur fallback must be in range"
+    );
+    setMaxImagesDraft(String(parsed));
+  };
+
+  const maxImagesInvalid = parseMaxImages(maxImagesDraft) == null;
+  const modelInvalid = modelDraft.trim().length === 0;
+
+  if (!api) {
+    return (
+      <div className="bg-background-secondary px-4 py-3">
+        <div className="text-muted text-xs">Connect to mux to configure image generation.</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-background-secondary space-y-3 px-4 py-3">
+      <div className="text-muted text-xs">
+        Generate-only experiment. Requires OpenAI provider credentials. Full images are saved as
+        runtime-temp artifacts; copy final assets into the workspace when they matter.
+      </div>
+
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <div className="text-foreground text-sm">Image model</div>
+          <div className="text-muted text-xs">
+            Default {DEFAULT_IMAGE_GENERATION_MODEL}; pinned snapshot{" "}
+            {PINNED_IMAGE_GENERATION_MODEL}
+          </div>
+        </div>
+        <Input
+          value={modelDraft}
+          onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
+            setModelDraft(event.target.value)
+          }
+          placeholder={DEFAULT_IMAGE_GENERATION_MODEL}
+          className="border-border-medium bg-background-secondary h-9 w-72"
+        />
+      </div>
+      {modelInvalid && <div className="text-error text-xs">Image model is required.</div>}
+
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <div className="text-foreground text-sm">Max images per call</div>
+          <div className="text-muted text-xs">
+            {MIN_IMAGE_GENERATION_MAX_IMAGES}–{MAX_IMAGE_GENERATION_MAX_IMAGES}; requests above this
+            fail instead of being silently clamped
+          </div>
+        </div>
+        <Input
+          value={maxImagesDraft}
+          onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
+            setMaxImagesDraft(event.target.value)
+          }
+          onBlur={handleMaxImagesBlur}
+          inputMode="numeric"
+          className="border-border-medium bg-background-secondary h-9 w-24"
+        />
+      </div>
+      {maxImagesInvalid && (
+        <div className="text-error text-xs">
+          Enter a whole number from {MIN_IMAGE_GENERATION_MAX_IMAGES} to{" "}
+          {MAX_IMAGE_GENERATION_MAX_IMAGES}.
+        </div>
+      )}
+      {saveError && <div className="text-error text-xs">{saveError}</div>}
+    </div>
+  );
+}

@@ -650,6 +650,32 @@ export type DisplayedMessage =
       }>;
     }
   | {
+      type: "generated-image";
+      id: string;
+      historyId: string;
+      toolCallId: string;
+      prompt: string;
+      model: string;
+      images: Array<{
+        path: string;
+        filename: string;
+        mediaType: string;
+        thumbnail?: {
+          data: string;
+          mediaType: string;
+          width: number;
+          height: number;
+        };
+        revisedPrompt?: string;
+      }>;
+      warnings?: string[];
+      historySequence: number;
+      streamSequence?: number;
+      isPartial: boolean;
+      isLastPartOfMessage?: boolean;
+      timestamp?: number;
+    }
+  | {
       type: "reasoning";
       id: string; // Display ID for UI/React keys
       historyId: string; // Original MuxMessage ID for history operations

@@ -62,6 +62,78 @@ function seedPendingStreamState(aggregator: StreamingMessageAggregator): void {
 }
 
 describe("StreamingMessageAggregator", () => {
+  describe("image generation display messages", () => {
+    test("renders successful image_generate tool output as a generated-image row", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      const assistantMessage = createMuxMessage("assistant-image", "assistant", "", {
+        historySequence: 7,
+        timestamp: 1234,
+      });
+      assistantMessage.parts.push({
+        type: "dynamic-tool",
+        toolCallId: "image-tool-1",
+        toolName: "image_generate",
+        input: { prompt: "A small blue square" },
+        state: "output-available",
+        output: {
+          success: true,
+          model: "openai:gpt-image-2",
+          prompt: "A small blue square",
+          requestedCount: 1,
+          images: [
+            {
+              path: "/tmp/mux/imagegen/image-tool-1/image-1.png",
+              filename: "image-1.png",
+              mediaType: "image/png",
+            },
+          ],
+        },
+      });
+
+      aggregator.loadHistoricalMessages([assistantMessage]);
+
+      const displayed = aggregator.getDisplayedMessages();
+      expect(displayed).toHaveLength(1);
+      expect(displayed[0]?.type).toBe("generated-image");
+      if (displayed[0]?.type !== "generated-image") {
+        throw new Error("Expected generated-image display row");
+      }
+      expect(displayed[0].toolCallId).toBe("image-tool-1");
+      expect(displayed[0].model).toBe("openai:gpt-image-2");
+      expect(displayed[0].images[0]?.path).toBe("/tmp/mux/imagegen/image-tool-1/image-1.png");
+    });
+
+    test("keeps failed image_generate output as a normal tool row", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      const assistantMessage = createMuxMessage("assistant-image-failed", "assistant", "", {
+        historySequence: 8,
+        timestamp: 1235,
+      });
+      assistantMessage.parts.push({
+        type: "dynamic-tool",
+        toolCallId: "image-tool-failed",
+        toolName: "image_generate",
+        input: { prompt: "A small blue square" },
+        state: "output-available",
+        output: {
+          success: false,
+          error: "Image generation requires an OpenAI API key.",
+        },
+      });
+
+      aggregator.loadHistoricalMessages([assistantMessage]);
+
+      const displayed = aggregator.getDisplayedMessages();
+      expect(displayed).toHaveLength(1);
+      expect(displayed[0]?.type).toBe("tool");
+      if (displayed[0]?.type !== "tool") {
+        throw new Error("Expected failed image generation to remain a tool row");
+      }
+      expect(displayed[0].toolName).toBe("image_generate");
+      expect(displayed[0].status).toBe("failed");
+    });
+  });
+
   describe("init state reference stability", () => {
     test("should return new array reference when state changes", async () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);

@@ -14,6 +14,7 @@ export const EXPERIMENT_IDS = {
   MULTI_PROJECT_WORKSPACES: "multi-project-workspaces",
   AGENT_BROWSER: "agent-browser",
   ADVISOR_TOOL: "advisor-tool",
+  IMAGE_GENERATION_TOOL: "image-generation-tool",
   WORKSPACE_HEARTBEATS: "workspace-heartbeats",
   GOALS: "goals",
   PORTABLE_DESKTOP: "portable-desktop",
@@ -111,6 +112,15 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     id: EXPERIMENT_IDS.ADVISOR_TOOL,
     name: "Advisor Tool",
     description: "Enable the experimental client-side advisor tool foundation",
+    enabledByDefault: false,
+    userOverridable: true,
+    showInSettings: true,
+  },
+  [EXPERIMENT_IDS.IMAGE_GENERATION_TOOL]: {
+    id: EXPERIMENT_IDS.IMAGE_GENERATION_TOOL,
+    name: "Image Generation Tool",
+    description:
+      "Enable an experimental agent tool for generating image artifacts with a separately configured image model",
     enabledByDefault: false,
     userOverridable: true,
     showInSettings: true,

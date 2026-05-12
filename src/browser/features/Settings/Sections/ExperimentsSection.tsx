@@ -27,6 +27,7 @@ import type { ApiServerStatus, DesktopPrereqStatus } from "@/common/orpc/types";
 import { Input } from "@/browser/components/Input/Input";
 import { useAPI } from "@/browser/contexts/API";
 import { useTelemetry } from "@/browser/hooks/useTelemetry";
+import { ImageGenerationExperimentConfig } from "./ImageGenerationExperimentConfig";
 import { AdvisorToolExperimentConfig } from "./AdvisorToolExperimentConfig";
 
 const PORTABLE_DESKTOP_INSTALL_URL = "https://github.com/coder/portabledesktop";
@@ -604,6 +605,7 @@ export function ExperimentsSection() {
   const allExperiments = getExperimentList();
   const { api } = useAPI();
   const advisorToolEnabled = useExperimentValue(EXPERIMENT_IDS.ADVISOR_TOOL);
+  const imageGenerationToolEnabled = useExperimentValue(EXPERIMENT_IDS.IMAGE_GENERATION_TOOL);
 
   // Only show user-overridable experiments (non-overridable ones are hidden since users can't change them)
   const experiments = useMemo(
@@ -655,6 +657,9 @@ export function ExperimentsSection() {
               />
               {exp.id === EXPERIMENT_IDS.ADVISOR_TOOL && advisorToolEnabled && (
                 <AdvisorToolExperimentConfig />
+              )}
+              {exp.id === EXPERIMENT_IDS.IMAGE_GENERATION_TOOL && imageGenerationToolEnabled && (
+                <ImageGenerationExperimentConfig />
               )}
               {exp.id === EXPERIMENT_IDS.PORTABLE_DESKTOP && <PortableDesktopExperimentWarning />}
               {exp.id === EXPERIMENT_IDS.CONFIGURABLE_BIND_URL && <ConfigurableBindUrlControls />}

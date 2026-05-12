@@ -47,6 +47,11 @@ import { zodToJsonSchema } from "zod-to-json-schema";
 import { extractToolFilePath } from "@/common/utils/tools/toolInputFilePath";
 import { TASK_VARIANT_PLACEHOLDER, TASK_GROUP_KIND_VALUES } from "@/common/utils/tools/taskGroups";
 
+import {
+  IMAGE_GENERATION_OUTPUT_FORMAT_VALUES,
+  IMAGE_GENERATION_QUALITY_VALUES,
+} from "@/common/types/imageGeneration";
+
 // -----------------------------------------------------------------------------
 // ask_user_question (plan-mode interactive questions)
 // -----------------------------------------------------------------------------
@@ -879,6 +884,34 @@ function renameAliasField(
  * Key = tool name, Value = { description, schema }
  */
 export const TOOL_DEFINITIONS = {
+  image_generate: {
+    description:
+      "Generate raster image artifacts using Mux's experimental image generation configuration. " +
+      "Use only when the user explicitly asks to generate or create image artifacts. " +
+      "Do not call for ordinary code, design discussion, or prompt brainstorming. " +
+      "Generated full-resolution images are saved under the runtime temp directory; copy selected final assets into the workspace when needed.",
+    schema: z
+      .object({
+        prompt: z.string().min(1).describe("Prompt describing the image(s) to generate"),
+        n: z
+          .number()
+          .int()
+          .positive()
+          .nullish()
+          .describe(
+            "Number of images to generate. Defaults to 1 and must not exceed the user's configured Image Generation Tool maximum."
+          ),
+        quality: z
+          .enum(IMAGE_GENERATION_QUALITY_VALUES)
+          .nullish()
+          .describe("Optional generation quality. Defaults to the provider/model default."),
+        outputFormat: z
+          .enum(IMAGE_GENERATION_OUTPUT_FORMAT_VALUES)
+          .nullish()
+          .describe("Optional output format. Defaults to png."),
+      })
+      .strict(),
+  },
   bash: {
     description:
       "Execute a bash command with a configurable timeout. " +
@@ -1701,6 +1734,37 @@ const TruncatedInfoSchema = z.object({
   totalLines: z.number(),
 });
 
+const ImageGenerateThumbnailSchema = z.object({
+  data: z.string(),
+  mediaType: z.string(),
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+});
+
+const ImageGenerateImageSchema = z.object({
+  path: z.string(),
+  filename: z.string(),
+  mediaType: z.string(),
+  thumbnail: ImageGenerateThumbnailSchema.optional(),
+  revisedPrompt: z.string().optional(),
+});
+
+export const ImageGenerateToolResultSchema = z.union([
+  z.object({
+    success: z.literal(true),
+    model: z.string(),
+    prompt: z.string(),
+    requestedCount: z.number().int().positive(),
+    images: z.array(ImageGenerateImageSchema).min(1),
+    warnings: z.array(z.string()).optional(),
+  }),
+  z.object({
+    success: z.literal(false),
+    error: z.string(),
+    setupHint: z.string().optional(),
+  }),
+]);
+
 /**
  * Bash tool result - success, background spawn, or failure.
  */
@@ -2113,6 +2177,7 @@ export function getAvailableTools(
     enableAgentReport?: boolean;
     enableAnalyticsQuery?: boolean;
     enableAdvisor?: boolean;
+    enableImageGeneration?: boolean;
     /** @deprecated Mux global tools are always included. */
     enableMuxGlobalAgentsTools?: boolean;
   }
@@ -2121,6 +2186,7 @@ export function getAvailableTools(
   const enableAgentReport = options?.enableAgentReport ?? true;
   const enableAnalyticsQuery = options?.enableAnalyticsQuery ?? true;
   const enableAdvisor = options?.enableAdvisor ?? false;
+  const enableImageGeneration = options?.enableImageGeneration ?? false;
 
   // Base tools available for all models
   // Note: Tool availability is controlled by agent tool policy (allowlist), not mode checks here.
@@ -2150,6 +2216,7 @@ export function getAvailableTools(
     // "file_edit_replace_lines", // DISABLED: causes models to break repo state
     "file_edit_insert",
     ...(enableAdvisor ? ["advisor"] : []),
+    ...(enableImageGeneration ? ["image_generate"] : []),
     "ask_user_question",
     "propose_plan",
     "bash",

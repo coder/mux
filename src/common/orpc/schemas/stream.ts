@@ -651,6 +651,7 @@ export const ExperimentsSchema = z.object({
   advisorTool: z.boolean().optional(),
   goals: z.boolean().optional(),
   execSubagentHardRestart: z.boolean().optional(),
+  imageGenerationTool: z.boolean().optional(),
 });
 
 // SendMessage options

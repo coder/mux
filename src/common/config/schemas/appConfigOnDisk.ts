@@ -9,6 +9,11 @@ import { WORKTREE_ARCHIVE_BEHAVIORS } from "../worktreeArchiveBehavior";
 import { TaskSettingsSchema } from "./taskSettings";
 import { HEARTBEAT_MAX_INTERVAL_MS, HEARTBEAT_MIN_INTERVAL_MS } from "@/constants/heartbeat";
 import { DEFAULT_GOAL_DEFAULTS } from "@/constants/goals";
+import {
+  DEFAULT_IMAGE_GENERATION_MAX_IMAGES,
+  MAX_IMAGE_GENERATION_MAX_IMAGES,
+  MIN_IMAGE_GENERATION_MAX_IMAGES,
+} from "@/common/types/imageGeneration";
 
 export { RuntimeEnablementOverridesSchema } from "../../schemas/runtimeEnablement";
 export type { RuntimeEnablementOverrides } from "../../schemas/runtimeEnablement";
@@ -52,6 +57,19 @@ export const AppConfigMigrationsSchema = z.object({
   execSubagentDefaultsSplit: z.boolean().optional(),
 });
 
+export const ImageGenerationConfigSchema = z
+  .object({
+    modelString: z.string().optional(),
+    maxImagesPerCall: z
+      .number()
+      .int()
+      .min(MIN_IMAGE_GENERATION_MAX_IMAGES)
+      .max(MAX_IMAGE_GENERATION_MAX_IMAGES)
+      .default(DEFAULT_IMAGE_GENERATION_MAX_IMAGES)
+      .optional(),
+  })
+  .optional();
+
 export const FeatureFlagOverrideSchema = z.enum(["default", "on", "off"]);
 
 export const UpdateChannelSchema = z.enum(["stable", "nightly"]);
@@ -91,6 +109,7 @@ export const AppConfigOnDiskSchema = z
     advisorMaxOutputTokens: z.number().int().positive().nullable().optional(),
     hiddenModels: z.array(z.string()).optional(),
     preferredCompactionModel: z.string().optional(),
+    imageGeneration: ImageGenerationConfigSchema,
     agentAiDefaults: AgentAiDefaultsSchema.optional(),
     /**
      * Sparse per-agent override that wins over agentAiDefaults when an agent runs as a

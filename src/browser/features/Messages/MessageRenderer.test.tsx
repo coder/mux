@@ -222,6 +222,57 @@ Live goal accounting at limit:
   });
 });
 
+describe("MessageRenderer generated image rows", () => {
+  beforeEach(() => {
+    globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
+    globalThis.document = globalThis.window.document;
+    globalThis.localStorage = globalThis.window.localStorage;
+  });
+
+  afterEach(() => {
+    cleanup();
+
+    globalThis.window = undefined as unknown as Window & typeof globalThis;
+    globalThis.document = undefined as unknown as Document;
+    globalThis.localStorage = undefined as unknown as Storage;
+  });
+
+  test("renders generated image artifacts with prompt, model, preview, and saved path", () => {
+    const tinyWebp = "UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA";
+    const message: DisplayedMessage = {
+      type: "generated-image",
+      id: "generated-image-row",
+      historyId: "assistant-1",
+      toolCallId: "tool-1",
+      prompt: "A soft gradient orb",
+      model: "openai:gpt-image-2",
+      images: [
+        {
+          path: "/tmp/mux/imagegen/tool-1/image-1.png",
+          filename: "image-1.png",
+          mediaType: "image/png",
+          thumbnail: {
+            data: tinyWebp,
+            mediaType: "image/webp",
+            width: 1,
+            height: 1,
+          },
+        },
+      ],
+      historySequence: 12,
+      isPartial: false,
+    };
+
+    const { getByAltText, getByText } = render(<MessageRenderer message={message} />);
+
+    expect(getByText("Generated image")).toBeDefined();
+    expect(getByText("openai:gpt-image-2")).toBeDefined();
+    expect(getByText("A soft gradient orb")).toBeDefined();
+    expect(getByText("/tmp/mux/imagegen/tool-1/image-1.png")).toBeDefined();
+    expect(getByAltText("Generated image 1")).toBeDefined();
+  });
+});
+
 describe("MessageRenderer compaction boundary rows", () => {
   beforeEach(() => {
     globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;

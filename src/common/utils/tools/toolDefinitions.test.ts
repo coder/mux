@@ -366,6 +366,13 @@ describe("TOOL_DEFINITIONS", () => {
     expect(tools).toContain("skills_catalog_read");
   });
 
+  it("includes image_generate only when image generation is enabled", () => {
+    expect(getAvailableTools("openai:gpt-5")).not.toContain("image_generate");
+    expect(getAvailableTools("openai:gpt-5", { enableImageGeneration: true })).toContain(
+      "image_generate"
+    );
+  });
+
   it("agent_skill_write schema rejects an advertise tool argument (advertise is authored in content)", () => {
     const parsed = TOOL_DEFINITIONS.agent_skill_write.schema.safeParse({
       name: "demo-skill",

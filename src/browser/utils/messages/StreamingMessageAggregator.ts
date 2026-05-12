@@ -33,6 +33,7 @@ import {
 import { GOAL_BUDGET_LIMIT_KIND, GOAL_CONTINUATION_KIND } from "@/constants/goals";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { StreamErrorType } from "@/common/types/errors";
+import type { ImageGenerateToolResult } from "@/common/types/tools";
 import type { TodoItem, StatusSetToolResult, NotifyToolResult } from "@/common/types/tools";
 import { completeInProgressTodoItems } from "@/common/utils/todoList";
 import { getToolOutputUiOnly } from "@/common/utils/tools/toolOutputUiOnly";
@@ -162,6 +163,25 @@ interface StreamingContext {
 interface PendingCompactionRequest {
   parsed: CompactionRequestData;
   source?: "idle-compaction" | "auto-compaction";
+}
+
+function isSuccessfulImageGenerateResult(
+  result: unknown
+): result is Extract<ImageGenerateToolResult, { success: true }> {
+  if (typeof result !== "object" || result === null) return false;
+  const candidate = result as {
+    success?: unknown;
+    model?: unknown;
+    prompt?: unknown;
+    images?: unknown;
+  };
+  return (
+    candidate.success === true &&
+    typeof candidate.model === "string" &&
+    typeof candidate.prompt === "string" &&
+    Array.isArray(candidate.images) &&
+    candidate.images.length > 0
+  );
 }
 
 /**
@@ -3101,22 +3121,45 @@ export class StreamingMessageAggregator {
             }
           }
 
-          displayedMessages.push({
-            type: "tool",
-            id: `${message.id}-${partIndex}`,
-            historyId: message.id,
-            toolCallId: part.toolCallId,
-            toolName: part.toolName,
-            args: part.input,
-            result: part.state === "output-available" ? part.output : undefined,
-            status,
-            isPartial,
-            historySequence,
-            streamSequence: streamSeq++,
-            isLastPartOfMessage: isLastPart,
-            timestamp: part.timestamp ?? baseTimestamp,
-            nestedCalls,
-          });
+          if (
+            part.toolName === "image_generate" &&
+            part.state === "output-available" &&
+            status === "completed" &&
+            isSuccessfulImageGenerateResult(part.output)
+          ) {
+            displayedMessages.push({
+              type: "generated-image",
+              id: `${message.id}-${partIndex}`,
+              historyId: message.id,
+              toolCallId: part.toolCallId,
+              prompt: part.output.prompt,
+              model: part.output.model,
+              images: part.output.images,
+              warnings: part.output.warnings,
+              isPartial,
+              historySequence,
+              streamSequence: streamSeq++,
+              isLastPartOfMessage: isLastPart,
+              timestamp: part.timestamp ?? baseTimestamp,
+            });
+          } else {
+            displayedMessages.push({
+              type: "tool",
+              id: `${message.id}-${partIndex}`,
+              historyId: message.id,
+              toolCallId: part.toolCallId,
+              toolName: part.toolName,
+              args: part.input,
+              result: part.state === "output-available" ? part.output : undefined,
+              status,
+              isPartial,
+              historySequence,
+              streamSequence: streamSeq++,
+              isLastPartOfMessage: isLastPart,
+              timestamp: part.timestamp ?? baseTimestamp,
+              nestedCalls,
+            });
+          }
         }
       });
 

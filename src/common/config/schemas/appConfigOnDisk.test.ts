@@ -62,6 +62,26 @@ describe("AppConfigOnDiskSchema", () => {
     ).toBe(true);
   });
 
+  it("validates image generation configuration limits", () => {
+    expect(
+      AppConfigOnDiskSchema.safeParse({
+        imageGeneration: {
+          modelString: "openai:gpt-image-2",
+          maxImagesPerCall: 10,
+        },
+      }).success
+    ).toBe(true);
+
+    expect(
+      AppConfigOnDiskSchema.safeParse({
+        imageGeneration: {
+          modelString: "openai:gpt-image-2",
+          maxImagesPerCall: 11,
+        },
+      }).success
+    ).toBe(false);
+  });
+
   it("preserves unknown fields via passthrough", () => {
     const valid = { futureField: "something" };
 

@@ -2,7 +2,7 @@ import assert from "node:assert";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { XaiProviderOptions } from "@ai-sdk/xai";
 import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
-import { wrapLanguageModel, type LanguageModel } from "ai";
+import { wrapLanguageModel, type ImageModel, type LanguageModel } from "ai";
 import { anthropicSupportsNativeXhigh, type ThinkingLevel } from "@/common/types/thinking";
 import { Ok, Err } from "@/common/types/result";
 import type { Result } from "@/common/types/result";
@@ -927,6 +927,85 @@ export class ProviderModelFactory {
     }
 
     return true;
+  }
+
+  async createImageModel(modelString: string): Promise<Result<ImageModel, SendMessageError>> {
+    try {
+      const [providerName, modelId] = parseModelString(modelString);
+      if (!providerName || !modelId) {
+        return Err({
+          type: "invalid_model_string",
+          message: `Invalid image model string format: "${modelString}". Expected "provider:model-id"`,
+        });
+      }
+
+      if (providerName !== "openai") {
+        return Err({
+          type: "provider_not_supported",
+          provider: providerName,
+        });
+      }
+
+      if (this.policyService?.isEnforced()) {
+        if (!this.policyService.isProviderAllowed(providerName)) {
+          return Err({
+            type: "policy_denied",
+            message: `Provider ${providerName} is not allowed by policy`,
+          });
+        }
+
+        if (!this.policyService.isModelAllowed(providerName, modelId)) {
+          return Err({
+            type: "policy_denied",
+            message: `Image model ${providerName}:${modelId} is not allowed by policy`,
+          });
+        }
+      }
+
+      const providersConfig = this.config.loadProvidersConfig() ?? {};
+      let providerConfig = providersConfig.openai ?? {};
+      if (isProviderDisabledInConfig(providerConfig as { enabled?: unknown })) {
+        return Err({ type: "provider_disabled", provider: providerName });
+      }
+
+      const { baseUrl, ...configWithoutBaseUrl } = providerConfig;
+      providerConfig = baseUrl
+        ? { ...configWithoutBaseUrl, baseURL: baseUrl }
+        : configWithoutBaseUrl;
+
+      const forcedBaseUrl = this.policyService?.isEnforced()
+        ? this.policyService.getForcedBaseUrl(providerName)
+        : undefined;
+      if (forcedBaseUrl) {
+        providerConfig = { ...providerConfig, baseURL: forcedBaseUrl };
+      }
+
+      const creds = resolveProviderCredentials("openai", providerConfig);
+      const resolvedApiKey = await this.resolveApiKey(creds.apiKey);
+      if (creds.apiKey && isOpReference(creds.apiKey) && !resolvedApiKey) {
+        return Err({ type: "api_key_not_found", provider: providerName });
+      }
+      if (!creds.isConfigured) {
+        return Err({ type: "api_key_not_found", provider: providerName });
+      }
+
+      const configWithCreds = {
+        ...providerConfig,
+        apiKey: resolvedApiKey,
+        ...(creds.baseUrl && !providerConfig.baseURL ? { baseURL: creds.baseUrl } : {}),
+        ...(creds.organization ? { organization: creds.organization } : {}),
+        headers: buildAppAttributionHeaders(providerConfig.headers),
+      };
+
+      const { createOpenAI } = await PROVIDER_REGISTRY.openai();
+      const provider = createOpenAI({
+        ...configWithCreds,
+        fetch: getProviderFetch(providerConfig),
+      });
+      return Ok(provider.image(modelId));
+    } catch (error) {
+      return Err({ type: "unknown", raw: getErrorMessage(error) });
+    }
   }
 
   /**
