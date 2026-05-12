@@ -11,6 +11,7 @@ import {
 import { DEFAULT_GOAL_DEFAULTS, normalizeGoalDefaults } from "@/constants/goals";
 import { Err, Ok } from "@/common/types/result";
 import { resolveProviderCredentials } from "@/node/utils/providerRequirements";
+import { isErrnoWithCode } from "@/node/utils/fs";
 import { isPathInsideDir, stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { generateWorkspaceIdentity } from "@/node/services/workspaceTitleGenerator";
 import type {
@@ -146,10 +147,6 @@ async function resolveAgentDiscoveryContext(
     { projectPath: input.projectPath! }
   );
   return { runtime, discoveryPath: input.projectPath! };
-}
-
-function isErrnoWithCode(error: unknown, code: string): boolean {
-  return Boolean(error && typeof error === "object" && "code" in error && error.code === code);
 }
 
 function isTrustedProjectPath(context: ORPCContext, projectPath?: string | null): boolean {

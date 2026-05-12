@@ -25,6 +25,16 @@ function preservesPreviousValueAsInsertion(previousValue: string, nextValue: str
   return sharedPrefixLength + sharedSuffixLength === previousValue.length;
 }
 
+// Read the textarea's current inline `height` style as a finite px number, or null when the
+// style is empty / non-px / non-finite. Centralizing the parseFloat + isFinite pair keeps the
+// canOnlyGrow first-render fallback and the post-resize verification (which guards against a
+// stale cache after `auto` writes or external clears) from drifting on what counts as a
+// usable inline height.
+function readInlineHeightPx(el: HTMLTextAreaElement): number | null {
+  const value = Number.parseFloat(el.style.height);
+  return Number.isFinite(value) ? value : null;
+}
+
 /**
  * Auto-resize a textarea to fit its content.
  * Uses useLayoutEffect to measure and set height synchronously before paint.
@@ -57,11 +67,9 @@ export function useAutoResizeTextarea(
       // (including all chat rows) through layout even when the composer height is
       // unchanged. For pure insertions we only need to grow if scrollHeight exceeds
       // the currently applied height; shrinking paths still use the full reset below.
-      const appliedHeight = appliedHeightRef.current ?? Number.parseFloat(el.style.height);
+      const appliedHeight = appliedHeightRef.current ?? readInlineHeightPx(el);
       const scrollHeight = Math.min(el.scrollHeight, max);
-      nextHeight = Number.isFinite(appliedHeight)
-        ? Math.max(appliedHeight, scrollHeight)
-        : scrollHeight;
+      nextHeight = appliedHeight !== null ? Math.max(appliedHeight, scrollHeight) : scrollHeight;
     } else {
       // Deletions, same-length replacements, viewport changes, and first render may
       // shrink the textarea, so measure from its intrinsic content height.
@@ -72,9 +80,9 @@ export function useAutoResizeTextarea(
     // The cached height can match even after this effect temporarily set `auto`, or
     // after callers cleared the inline style. Verify the DOM still has the px height
     // before skipping the write; otherwise large drafts collapse to the CSS min-height.
-    const currentInlineHeight = Number.parseFloat(el.style.height);
+    const currentInlineHeight = readInlineHeightPx(el);
     const inlineHeightMatches =
-      Number.isFinite(currentInlineHeight) && Math.abs(currentInlineHeight - nextHeight) < 0.5;
+      currentInlineHeight !== null && Math.abs(currentInlineHeight - nextHeight) < 0.5;
 
     if (appliedHeightRef.current !== nextHeight || !inlineHeightMatches) {
       el.style.height = `${nextHeight}px`;

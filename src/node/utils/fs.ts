@@ -18,3 +18,14 @@ export function ensurePrivateDirSync(dirPath: string): void {
   // chmod is needed because mkdir does not change permissions on existing dirs
   chmodSync(dirPath, 0o700);
 }
+
+/**
+ * Returns true when `error` looks like a Node `NodeJS.ErrnoException`
+ * carrying the given POSIX-style error `code` (e.g. "ENOENT", "EEXIST").
+ *
+ * Centralised because fs / runtime callers across the node layer need this
+ * exact narrow-and-compare pattern and previously each open-coded it.
+ */
+export function isErrnoWithCode(error: unknown, code: string): boolean {
+  return Boolean(error && typeof error === "object" && "code" in error && error.code === code);
+}

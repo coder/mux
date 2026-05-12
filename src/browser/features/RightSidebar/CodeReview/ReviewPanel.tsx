@@ -1259,7 +1259,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   filteredHunksRef.current = filteredHunks;
 
   // Ensure selectedHunkId is valid after filtering/sorting:
-  // - If no selection or selection not in filtered list, select first visible hunk
+  // - If no selection or selection not in the validity list, select first visible hunk
   // - This runs after sorting, so we always select the top-most hunk in current order
   //
   // Immersive review can intentionally navigate to a hunk that is hidden by
@@ -1272,15 +1272,11 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   useEffect(() => {
     if (filteredHunks.length === 0) return;
 
-    if (isImmersive) {
-      const selectionExists = selectedHunkId && hunks.some((h) => h.id === selectedHunkId);
-      if (!selectionExists) {
-        setSelectedHunkId(filteredHunks[0].id);
-      }
-      return;
-    }
-
-    const selectionValid = selectedHunkId && filteredHunks.some((h) => h.id === selectedHunkId);
+    // Picking the validity list up front keeps the immersive and non-immersive
+    // behavior in lockstep — the only difference is which list we accept the
+    // current selection against.
+    const validityList = isImmersive ? hunks : filteredHunks;
+    const selectionValid = selectedHunkId && validityList.some((h) => h.id === selectedHunkId);
     if (!selectionValid) {
       setSelectedHunkId(filteredHunks[0].id);
     }

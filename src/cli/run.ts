@@ -35,6 +35,7 @@ import {
   type SendMessageOptions,
   type WorkspaceChatMessage,
 } from "../common/orpc/types";
+import type { ServiceTier } from "../common/config/schemas/providersConfig";
 import { createDisplayUsage } from "../common/utils/tokens/displayUsage";
 import {
   getTotalCost,
@@ -298,7 +299,7 @@ interface CLIOptions {
   mcpConfig: boolean;
   experiment: string[];
   budget?: number;
-  serviceTier?: "auto" | "default" | "flex" | "priority";
+  serviceTier?: ServiceTier;
   use1m?: boolean;
   keepBackgroundProcesses?: boolean;
 }

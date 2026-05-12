@@ -1859,13 +1859,7 @@ export class SSHRuntime extends RemoteRuntime {
       );
       const shouldUseOrigin =
         fetchedOrigin &&
-        (await this.canFastForwardToOrigin(
-          workspacePath,
-          trunkBranch,
-          trunkBranch,
-          initLogger,
-          abortSignal
-        ));
+        (await this.canFastForwardToOrigin(workspacePath, trunkBranch, initLogger, abortSignal));
 
       if (shouldUseOrigin) {
         await this.fastForwardToOrigin(workspacePath, trunkBranch, initLogger, abortSignal, nhp);
@@ -1930,24 +1924,22 @@ export class SSHRuntime extends RemoteRuntime {
   }
 
   /**
-   * Check if a local ref can fast-forward to origin/<originBranch>.
-   * Returns true if localRef is behind or equal to origin (safe to use origin).
-   * Returns false if localRef is ahead or diverged (preserve local state).
+   * Check if the local <branch> can fast-forward to origin/<branch>.
+   * Returns true if local is behind or equal to origin (safe to use origin).
+   * Returns false if local is ahead or diverged (preserve local state).
    *
-   * @param localRef - The ref to compare (e.g. "main" or "refs/mux-bundle/main")
-   * @param originBranch - The branch name on origin (e.g. "main")
+   * @param branch - The branch name to compare locally and on origin (e.g. "main")
    */
   private async canFastForwardToOrigin(
     workspacePath: string,
-    localRef: string,
-    originBranch: string,
+    branch: string,
     initLogger: InitLogger,
     abortSignal?: AbortSignal
   ): Promise<boolean> {
     try {
-      // Check if localRef is an ancestor of origin/<originBranch>
+      // Check if local <branch> is an ancestor of origin/<branch>
       // Exit code 0 = local is ancestor (can fast-forward), non-zero = cannot
-      const checkCmd = `git merge-base --is-ancestor ${shescape.quote(localRef)} origin/${shescape.quote(originBranch)}`;
+      const checkCmd = `git merge-base --is-ancestor ${shescape.quote(branch)} origin/${shescape.quote(branch)}`;
       const checkStream = await this.exec(checkCmd, {
         cwd: workspacePath,
         timeout: 30,
@@ -1961,7 +1953,7 @@ export class SSHRuntime extends RemoteRuntime {
 
       // Local is ahead or diverged - preserve local state
       initLogger.logStderr(
-        `Note: Local ${localRef} is ahead of or diverged from origin/${originBranch}, using local state`
+        `Note: Local ${branch} is ahead of or diverged from origin/${branch}, using local state`
       );
       return false;
     } catch {

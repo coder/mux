@@ -82,12 +82,14 @@ function buildTopLevelSuggestions(
     return scope;
   };
 
+  // The skill build callback below hardcodes the trailing space, so we omit
+  // `appendSpace` here — leaving it set would be a no-op and falsely suggest
+  // the build path consults it.
   const skillDefinitions: SuggestionDefinition[] = (context.agentSkills ?? [])
     .filter((skill) => !SLASH_COMMAND_DEFINITION_MAP.has(skill.name))
     .map((skill) => ({
       key: skill.name,
       description: `${skill.description} (${formatScopeLabel(skill.scope)})`,
-      appendSpace: true,
     }));
 
   const skillSuggestions = filterAndMapSuggestions(skillDefinitions, partial, (definition) => {
@@ -100,12 +102,13 @@ function buildTopLevelSuggestions(
     };
   });
 
-  // Model alias one-shot suggestions (e.g., /haiku, /sonnet, /opus+high)
+  // Model alias one-shot suggestions (e.g., /haiku, /sonnet, /opus+high).
+  // The build callback below hardcodes the trailing space, so `appendSpace`
+  // is intentionally omitted here.
   const modelAliasDefinitions: SuggestionDefinition[] = Object.entries(MODEL_ABBREVIATIONS).map(
     ([alias, modelId]) => ({
       key: alias,
       description: `Send with ${formatModelDisplayName(modelId.split(":")[1] ?? modelId)} (one message, +level for thinking)`,
-      appendSpace: true,
     })
   );
 

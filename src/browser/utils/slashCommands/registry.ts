@@ -10,7 +10,7 @@ import type {
   SlashSuggestionContext,
 } from "./types";
 import minimist from "minimist";
-import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import { EXPERIMENT_IDS, type ExperimentId } from "@/common/constants/experiments";
 import { MODEL_ABBREVIATIONS } from "@/common/constants/knownModels";
 import { SLASH_COMMAND_HINTS } from "@/common/constants/slashCommandHints";
 import { assert } from "@/common/utils/assert";
@@ -657,6 +657,18 @@ export const SLASH_COMMAND_DEFINITION_MAP = new Map(
 
 const COMMAND_GHOST_HINT_PATTERN = /^\/(\S+) +$/;
 
+/**
+ * Slash commands gated behind a single experiment flag — their ghost-hint is
+ * suppressed when the experiment is off. Hiding on a thrown experiment check
+ * (e.g., test environments where the hook is unavailable) is the safer
+ * default. Adding a new gated command is a one-line entry here instead of a
+ * duplicated try/catch block in `getCommandGhostHint`.
+ */
+const COMMAND_GHOST_HINT_EXPERIMENT_GATES: Readonly<Record<string, ExperimentId>> = {
+  goal: EXPERIMENT_IDS.GOALS,
+  heartbeat: EXPERIMENT_IDS.WORKSPACE_HEARTBEATS,
+};
+
 export function getCommandGhostHint(
   input: string,
   showCommandSuggestions: boolean,
@@ -676,19 +688,10 @@ export function getCommandGhostHint(
     return null;
   }
 
-  if (commandKey === "goal") {
+  const gateExperimentId = COMMAND_GHOST_HINT_EXPERIMENT_GATES[commandKey];
+  if (gateExperimentId != null) {
     try {
-      if (!isExperimentEnabled(EXPERIMENT_IDS.GOALS)) {
-        return null;
-      }
-    } catch {
-      return null;
-    }
-  }
-
-  if (commandKey === "heartbeat") {
-    try {
-      if (!isExperimentEnabled(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS)) {
+      if (!isExperimentEnabled(gateExperimentId)) {
         return null;
       }
     } catch {

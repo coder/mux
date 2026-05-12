@@ -114,8 +114,10 @@ type MutableHastNode = Root | RootContent | RawHtmlNode;
 type MutableHastParent = Element | Root | { children: MutableHastNode[] };
 
 const RAW_HTML_TAG_NAME_PATTERN = /<\/?\s*([A-Za-z][A-Za-z0-9:-]*)\b[^>]*>/g;
+// sanitizeSchema.tagNames is constructed locally above with a concrete array literal,
+// so the spread/override leaves it non-optional — no `?? []` fallback needed.
 const ALLOWED_RAW_HTML_TAG_NAMES = new Set(
-  (sanitizeSchema.tagNames ?? []).map((tagName) => tagName.toLowerCase())
+  sanitizeSchema.tagNames.map((tagName) => tagName.toLowerCase())
 );
 
 function isRawHtmlNode(node: unknown): node is RawHtmlNode {

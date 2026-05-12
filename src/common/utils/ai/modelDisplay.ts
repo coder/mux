@@ -237,8 +237,10 @@ function parseBedrockModelName(modelId: string): string | null {
   const knownVendors = ["anthropic", "amazon", "meta", "cohere", "mistral", "ai21"];
   const knownRegionPrefixes = ["global", "us", "eu", "ap", "sa"];
 
+  // The early `dotParts.length < 2` return above guarantees both indices exist here,
+  // so neither access needs a length guard.
   const firstPart = dotParts[0].toLowerCase();
-  const secondPart = dotParts.length > 1 ? dotParts[1].toLowerCase() : "";
+  const secondPart = dotParts[1].toLowerCase();
 
   // Format is either: vendor.model or region.vendor.model
   const isVendor = knownVendors.includes(firstPart);
