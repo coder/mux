@@ -91,24 +91,63 @@ Live goal accounting at limit:
   });
 
   test("hides edit for synthetic goal messages even when editing is enabled", () => {
+    const messages: DisplayedMessage[] = [
+      {
+        type: "user",
+        id: "goal-continuation-edit",
+        historyId: "goal-continuation-edit",
+        content: "Continue working on the active workspace goal.",
+        historySequence: 22,
+        isSynthetic: true,
+        isGoalContinuation: true,
+      },
+      {
+        type: "user",
+        id: "goal-budget-wrapup-edit",
+        historyId: "goal-budget-wrapup-edit",
+        content: "The budget for this goal has been exhausted.",
+        historySequence: 23,
+        isSynthetic: true,
+        isBudgetLimitWrapup: true,
+      },
+    ];
+
+    for (const message of messages) {
+      const { getByLabelText, queryByLabelText, unmount } = render(
+        <TooltipProvider>
+          <MessageRenderer message={message} onEditUserMessage={() => undefined} />
+        </TooltipProvider>
+      );
+
+      expect(getByLabelText("Copy")).toBeDefined();
+      expect(queryByLabelText("Edit")).toBeNull();
+      unmount();
+    }
+  });
+
+  test("falls back when the budget-limit reason is too long", () => {
+    const longReason = `The budget for this goal has been exhausted ${"soon ".repeat(40)}.`;
     const message: DisplayedMessage = {
       type: "user",
-      id: "goal-continuation-edit",
-      historyId: "goal-continuation-edit",
-      content: "Continue working on the active workspace goal.",
-      historySequence: 22,
+      id: "goal-budget-wrapup-long-reason",
+      historyId: "goal-budget-wrapup-long-reason",
+      content: `${longReason}
+
+<untrusted_objective>Ship the feature</untrusted_objective>`,
+      historySequence: 24,
       isSynthetic: true,
-      isGoalContinuation: true,
+      isBudgetLimitWrapup: true,
     };
 
-    const { getByLabelText, queryByLabelText } = render(
+    const { getByText, queryByText } = render(
       <TooltipProvider>
-        <MessageRenderer message={message} onEditUserMessage={() => undefined} />
+        <MessageRenderer message={message} />
       </TooltipProvider>
     );
 
-    expect(getByLabelText("Copy")).toBeDefined();
-    expect(queryByLabelText("Edit")).toBeNull();
+    expect(getByText("Goal limit reached")).toBeDefined();
+    expect(getByText("Mux is wrapping up the current goal.")).toBeDefined();
+    expect(queryByText(longReason)).toBeNull();
   });
 
   test("renders goal cards when the objective tag is missing", () => {

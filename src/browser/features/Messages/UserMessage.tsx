@@ -11,6 +11,7 @@ import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import { copyToClipboard } from "@/browser/utils/clipboard";
 import {
   buildEditingStateFromDisplayed,
+  canEditDisplayedUserMessage,
   type EditingMessageState,
 } from "@/browser/utils/chatEditing";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
@@ -71,9 +72,11 @@ export const UserMessage: React.FC<UserMessageProps> = ({
   // Copy to clipboard with feedback
   const { copied, copyToClipboard } = useCopyToClipboard(clipboardWriteText);
 
+  const canEdit = canEditDisplayedUserMessage(message);
+
   const handleEdit = () => {
     // Goal-synthetic messages keep raw model prompts available via Copy/JSON only.
-    if (onEdit && !isLocalCommandOutput && !isGoalContinuation && !isBudgetLimitWrapup) {
+    if (onEdit && canEdit) {
       onEdit(buildEditingStateFromDisplayed(message));
     }
   };
@@ -115,7 +118,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
           },
         ]
       : []),
-    ...(onEdit && !isLocalCommandOutput && !isGoalContinuation && !isBudgetLimitWrapup
+    ...(onEdit && canEdit
       ? [
           {
             label: "Edit",
