@@ -107,6 +107,12 @@ export function ImageGenerationExperimentConfig() {
 
     const normalizedDraft = normalizeDraft(modelDraft, maxImagesDraft);
     if (normalizedDraft == null) {
+      // Invalid drafts should not flush an older valid payload when Settings closes.
+      pendingSaveRef.current = null;
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
       return;
     }
 
