@@ -286,7 +286,7 @@ export const BudgetLimitWrapupMessages: AppStory = {
             }),
             createGoalBudgetLimitMessage(
               "msg-5",
-              "The budget for this goal has been exhausted.\n\nBring the current line of work to a clean stopping point, summarize where things stand, and stop.",
+              "The budget for this goal has been exhausted.\n\n<untrusted_objective>Ship the requested feature with tests.</untrusted_objective>\n\nBring the current line of work to a clean stopping point, summarize where things stand, and stop.",
               {
                 historySequence: 5,
                 timestamp: STABLE_TIMESTAMP - 60000,

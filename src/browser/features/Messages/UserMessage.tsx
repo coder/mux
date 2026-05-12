@@ -4,12 +4,14 @@ import type { DisplayedMessage } from "@/common/types/message";
 import type { ButtonConfig } from "./MessageWindow";
 import { MessageWindow } from "./MessageWindow";
 import { UserMessageContent } from "./UserMessageContent";
+import { GoalSyntheticMessageContent } from "./GoalSyntheticMessageContent";
 import { TerminalOutput } from "./TerminalOutput";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import { copyToClipboard } from "@/browser/utils/clipboard";
 import {
   buildEditingStateFromDisplayed,
+  canEditDisplayedUserMessage,
   type EditingMessageState,
 } from "@/browser/utils/chatEditing";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
@@ -70,9 +72,11 @@ export const UserMessage: React.FC<UserMessageProps> = ({
   // Copy to clipboard with feedback
   const { copied, copyToClipboard } = useCopyToClipboard(clipboardWriteText);
 
+  const canEdit = canEditDisplayedUserMessage(message);
+
   const handleEdit = () => {
-    // Allow users to take ownership of AUTO (synthetic) prompts by editing them.
-    if (onEdit && !isLocalCommandOutput) {
+    // Goal-synthetic messages keep raw model prompts available via Copy/JSON only.
+    if (onEdit && canEdit) {
       onEdit(buildEditingStateFromDisplayed(message));
     }
   };
@@ -114,7 +118,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
           },
         ]
       : []),
-    ...(onEdit && !isLocalCommandOutput
+    ...(onEdit && canEdit
       ? [
           {
             label: "Edit",
@@ -164,6 +168,30 @@ export const UserMessage: React.FC<UserMessageProps> = ({
     (isGoalContinuation || isBudgetLimitWrapup) && "italic"
   );
 
+  let renderedContent: React.ReactNode;
+  if (isLocalCommandOutput) {
+    renderedContent = <TerminalOutput output={extractedOutput} isError={false} />;
+  } else if (isGoalContinuation || isBudgetLimitWrapup) {
+    renderedContent = (
+      <GoalSyntheticMessageContent
+        content={content}
+        kind={isBudgetLimitWrapup ? "budget-limit" : "continuation"}
+      />
+    );
+  } else {
+    renderedContent = (
+      <UserMessageContent
+        content={content}
+        commandPrefix={message.commandPrefix}
+        agentSkillSnapshot={message.agentSkill?.snapshot}
+        inlineSkillSnapshots={message.inlineSkillSnapshots}
+        reviews={message.reviews}
+        fileParts={message.fileParts}
+        variant="sent"
+      />
+    );
+  }
+
   return (
     <MessageWindow
       label={label}
@@ -172,19 +200,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
       className={syntheticClassName}
       variant="user"
     >
-      {isLocalCommandOutput ? (
-        <TerminalOutput output={extractedOutput} isError={false} />
-      ) : (
-        <UserMessageContent
-          content={content}
-          commandPrefix={message.commandPrefix}
-          agentSkillSnapshot={message.agentSkill?.snapshot}
-          inlineSkillSnapshots={message.inlineSkillSnapshots}
-          reviews={message.reviews}
-          fileParts={message.fileParts}
-          variant="sent"
-        />
-      )}
+      {renderedContent}
     </MessageWindow>
   );
 };

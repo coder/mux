@@ -3,6 +3,8 @@ export const GOAL_CONTINUATION_IDLE_CONSUMER_PRIORITY = 100;
 export const DEFAULT_GOAL_CONTINUATION_COOLDOWN_MS = 60_000;
 export const GOAL_CONTINUATION_KIND = "goal_continuation";
 export const GOAL_BUDGET_LIMIT_KIND = "goal_budget_limit";
+export const GOAL_OBJECTIVE_OPEN_TAG = "<untrusted_objective>";
+export const GOAL_OBJECTIVE_CLOSE_TAG = "</untrusted_objective>";
 export type GoalSyntheticMessageKind =
   | typeof GOAL_CONTINUATION_KIND
   | typeof GOAL_BUDGET_LIMIT_KIND;

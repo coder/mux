@@ -81,6 +81,7 @@ import {
 } from "@/browser/contexts/BackgroundBashContext";
 import {
   buildEditingStateFromDisplayed,
+  canEditDisplayedUserMessage,
   normalizeQueuedMessage,
   type EditingMessageState,
 } from "@/browser/utils/chatEditing";
@@ -544,7 +545,10 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     const transformedMessages = mergeConsecutiveStreamErrors(current.messages);
     const lastUserMessage = [...transformedMessages]
       .reverse()
-      .find((msg): msg is Extract<DisplayedMessage, { type: "user" }> => msg.type === "user");
+      .find(
+        (msg): msg is Extract<DisplayedMessage, { type: "user" }> =>
+          msg.type === "user" && canEditDisplayedUserMessage(msg)
+      );
 
     if (!lastUserMessage) {
       return;

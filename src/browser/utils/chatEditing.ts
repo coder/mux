@@ -27,6 +27,17 @@ export const normalizeQueuedMessage = (queued: QueuedMessage): PendingUserMessag
   reviews: queued.reviews ?? [],
 });
 
+const LOCAL_COMMAND_STDOUT_OPEN_TAG = "<local-command-stdout>";
+const LOCAL_COMMAND_STDOUT_CLOSE_TAG = "</local-command-stdout>";
+
+export const canEditDisplayedUserMessage = (message: DisplayedUserMessage): boolean => {
+  if (message.isGoalContinuation === true || message.isBudgetLimitWrapup === true) return false;
+  if (message.content.startsWith(LOCAL_COMMAND_STDOUT_OPEN_TAG)) {
+    return !message.content.endsWith(LOCAL_COMMAND_STDOUT_CLOSE_TAG);
+  }
+  return true;
+};
+
 export const buildPendingFromDisplayed = (message: DisplayedUserMessage): PendingUserMessage => ({
   content: getEditableUserMessageText(message),
   fileParts: message.fileParts ?? [],
