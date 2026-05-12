@@ -3164,6 +3164,13 @@ export class StreamingMessageAggregator {
                 )
               : [];
 
+          const nestedGeneratedImageIds = new Set(
+            nestedGeneratedImages.map((nestedCall) => nestedCall.toolCallId)
+          );
+          const nestedCallsForToolRow = nestedCalls?.filter(
+            (nestedCall) => !nestedGeneratedImageIds.has(nestedCall.toolCallId)
+          );
+
           if (
             part.toolName === "image_generate" &&
             part.state === "output-available" &&
@@ -3198,7 +3205,7 @@ export class StreamingMessageAggregator {
               streamSequence: streamSeq++,
               isLastPartOfMessage: isLastPart && nestedGeneratedImages.length === 0,
               timestamp: part.timestamp ?? baseTimestamp,
-              nestedCalls,
+              nestedCalls: nestedCallsForToolRow,
             });
             nestedGeneratedImages.forEach((nestedCall, nestedIndex) => {
               appendGeneratedImageMessage(displayedMessages, {

@@ -11,7 +11,6 @@ import {
   normalizeImageGenerationConfig,
   type ImageGenerationConfig,
 } from "@/common/types/imageGeneration";
-import assert from "@/common/utils/assert";
 import { getErrorMessage } from "@/common/utils/errors";
 
 function parseMaxImages(value: string): number | null {
@@ -247,10 +246,6 @@ export function ImageGenerationExperimentConfig() {
 
   const handleMaxImagesBlur = () => {
     const parsed = parseMaxImages(maxImagesDraft) ?? DEFAULT_IMAGE_GENERATION_MAX_IMAGES;
-    assert(
-      parsed >= MIN_IMAGE_GENERATION_MAX_IMAGES && parsed <= MAX_IMAGE_GENERATION_MAX_IMAGES,
-      "Image generation max images blur fallback must be in range"
-    );
     setMaxImagesDraft(String(parsed));
   };
 

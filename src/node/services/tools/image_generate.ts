@@ -47,8 +47,16 @@ async function writeRuntimeFile(
   const writer = config.runtime.writeFile(filePath).getWriter();
   try {
     await writer.write(data);
-  } finally {
     await writer.close();
+  } catch (error) {
+    try {
+      await writer.abort(error);
+    } catch (abortError) {
+      log.debug("image_generate: failed to abort artifact write", {
+        error: getErrorMessage(abortError),
+      });
+    }
+    throw error;
   }
 }
 
@@ -297,15 +305,6 @@ export const createImageGenerateTool: ToolFactory = (config) => {
               error: getErrorMessage(error),
             });
           }
-        }
-
-        if (result.images.length === 0) {
-          return {
-            success: false,
-            error: "Image generation failed: provider returned no images.",
-            setupHint:
-              "Try again or choose a different OpenAI image model in Settings > Experiments > Image Generation Tool.",
-          } satisfies ImageGenerateToolResult;
         }
 
         const muxHome = await config.runtime.resolvePath(config.runtime.getMuxHome());

@@ -5,6 +5,7 @@ import type { ToolExecutionOptions } from "ai";
 import type { ImageModelV2 } from "@ai-sdk/provider";
 
 import type { ImageGenerateToolResult } from "@/common/types/tools";
+import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import { createImageGenerateTool } from "./image_generate";
 import { TestTempDir, createTestToolConfig } from "./testHelpers";
 import { Err, Ok } from "@/common/types/result";
@@ -287,7 +288,67 @@ describe("image_generate tool", () => {
     expect(result.setupHint).toContain("credentials, billing, rate limits, and content policy");
   });
 
-  test("fails when the provider returns zero images", async () => {
+  test("aborts artifact writes instead of closing partial files after write failures", async () => {
+    using workspaceDir = new TestTempDir("image-generate-workspace");
+    let closeCalled = false;
+    let abortCalled = false;
+
+    class FailingWriteRuntime extends LocalRuntime {
+      override writeFile(): WritableStream<Uint8Array> {
+        return {
+          getWriter: () => ({
+            closed: Promise.resolve(undefined),
+            desiredSize: 1,
+            ready: Promise.resolve(undefined),
+            write: () => Promise.reject(new Error("disk full")),
+            close: () => {
+              closeCalled = true;
+              return Promise.resolve();
+            },
+            abort: () => {
+              abortCalled = true;
+              return Promise.resolve();
+            },
+            releaseLock: () => undefined,
+          }),
+        } as unknown as WritableStream<Uint8Array>;
+      }
+    }
+
+    const tool = createImageGenerateTool({
+      ...createTestToolConfig(workspaceDir.path, {
+        runtime: new FailingWriteRuntime(workspaceDir.path),
+      }),
+      imageGenerationRuntime: {
+        modelString: "openai:gpt-image-1.5",
+        maxImagesPerCall: 2,
+        createImageModel: () =>
+          Promise.resolve(
+            Ok(
+              createMockImageModel(() =>
+                Promise.resolve({
+                  images: [testPngBase64],
+                  warnings: [],
+                  response: { timestamp: new Date(), modelId: "test-image-model", headers: {} },
+                  providerMetadata: {},
+                })
+              )
+            )
+          ),
+      },
+    });
+
+    const result = (await tool.execute!(
+      { prompt: "A tiny square", n: 1 },
+      mockToolCallOptions
+    )) as ImageGenerateToolResult;
+
+    expect(result.success).toBe(false);
+    expect(closeCalled).toBe(false);
+    expect(abortCalled).toBe(true);
+  });
+
+  test("returns a setup hint when the AI SDK rejects a zero-image provider response", async () => {
     using workspaceDir = new TestTempDir("image-generate-workspace");
     const tool = createImageGenerateTool({
       ...createTestToolConfig(workspaceDir.path),

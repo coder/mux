@@ -192,6 +192,7 @@ describe("StreamingMessageAggregator", () => {
         throw new Error("Expected code_execution tool row followed by generated image row");
       }
       expect(displayed[0].toolName).toBe("code_execution");
+      expect(displayed[0].nestedCalls).toEqual([]);
       expect(displayed[0].isLastPartOfMessage).toBe(false);
       expect(displayed[1].toolCallId).toBe("code-tool-1-nested-0");
       expect(displayed[1].prompt).toBe("A nested blue square");
