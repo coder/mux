@@ -397,8 +397,16 @@ export class AgentSession {
     });
 
     const wakeMessage = this.formatMonitorWakeMessage(payload);
+    const wakeOptions =
+      this.buildMonitorWakeSendOptions(this.activeStreamContext?.options) ??
+      this.lastMonitorWakeSendOptions;
+    if (!wakeOptions) {
+      log.debug(`Skipped monitor wake for ${payload.taskId}: no send options available`);
+      return;
+    }
+
     try {
-      const dispatchMode = this.queueMessage(wakeMessage, undefined, {
+      const dispatchMode = this.queueMessage(wakeMessage, wakeOptions, {
         synthetic: true,
         agentInitiated: true,
       });
@@ -526,6 +534,9 @@ export class AgentSession {
   /** Tracks whether the current stream included post-compaction attachments. */
   private activeStreamHadPostCompactionInjection = false;
 
+  /** Latest normalized send options suitable for internal wake-up turns. */
+  private lastMonitorWakeSendOptions?: SendMessageOptions;
+
   /** Context needed to retry the current stream (cleared on stream end/abort/error). */
   private activeStreamContext?: {
     modelString: string;
@@ -542,6 +553,21 @@ export class AgentSession {
     options?: SendMessageOptions;
     source?: "idle-compaction" | "auto-compaction";
   };
+
+  private buildMonitorWakeSendOptions(
+    source: SendMessageOptions | undefined
+  ): SendMessageOptions | undefined {
+    if (!source?.model || source.model.trim().length === 0) {
+      return undefined;
+    }
+
+    // Monitor wakes are synthetic follow-up turns, so reuse the model/agent/tool context from
+    // the triggering conversation without carrying user-message-only fields such as edits or files.
+    return {
+      ...pickStartupRetrySendOptions(source),
+      skipAiSettingsPersistence: true,
+    };
+  }
 
   private escapeMonitorAttribute(value: string): string {
     return value
@@ -2556,6 +2582,8 @@ export class AgentSession {
     if (isManualUserMessage) {
       await this.applyManualUserMessageGoalSafety();
     }
+
+    this.lastMonitorWakeSendOptions = this.buildMonitorWakeSendOptions(optionsForStream);
 
     const userMessage = createMuxMessage(
       messageId,
