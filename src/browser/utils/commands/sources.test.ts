@@ -519,6 +519,34 @@ test("goal set objective prompt treats blank budget as explicit no-budget", asyn
   });
 });
 
+test("goal set objective prompt allows zero budget on unpriced model", async () => {
+  const setGoal = mock(() => Promise.resolve({ success: true, data: makeGoalRecord("active") }));
+  const actions = getVisibleGoalActions({
+    api: {
+      config: { getConfig: mock(() => Promise.resolve({})) },
+      providers: { getConfig: mock(() => Promise.resolve({})) },
+      workspace: { getGoal: mock(() => Promise.resolve({ goal: null })), setGoal },
+    } as unknown as APIClient,
+    selectedWorkspaceState: {
+      ...makeWorkspaceState(null),
+      currentModel: "custom:unpriced-model",
+    },
+  });
+
+  const setObjectiveAction = actions.find((action) => action.id === "goal:set-objective");
+  await setObjectiveAction!.prompt!.onSubmit({
+    objective: "Track without dollar limit",
+    budget: "0",
+  });
+
+  expect(setGoal).toHaveBeenCalledWith(
+    expect.objectContaining({
+      objective: "Track without dollar limit",
+      budgetCents: null,
+    })
+  );
+});
+
 test("goal set objective prompt submits objective and parsed budget", async () => {
   const getGoal = mock(() => Promise.resolve({ goal: null }));
   const setGoal = mock(() => Promise.resolve({ success: true, data: makeGoalRecord("active") }));

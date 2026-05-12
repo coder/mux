@@ -15,6 +15,11 @@ describe("resolveGoalSetIntent", () => {
     expect(intent.budgetCents).toBe(200);
   });
 
+  test("treats explicit zero budget as no budget", () => {
+    const intent = resolveGoalSetIntent({ objective: "ship", budgetCents: 0 }, baseDefaults);
+    expect(intent.budgetCents).toBeNull();
+  });
+
   test("preserves explicit null budget (user-cleared)", () => {
     const intent = resolveGoalSetIntent({ objective: "ship", budgetCents: null }, baseDefaults);
     expect(intent.budgetCents).toBeNull();
@@ -34,6 +39,14 @@ describe("resolveGoalSetIntent", () => {
       { ...baseDefaults, alwaysRequireExplicitBudget: true }
     );
     expect(intent.budgetCents).toBe(1500);
+  });
+
+  test("treats a zero default budget as no budget", () => {
+    const intent = resolveGoalSetIntent(
+      { objective: "ship" },
+      { ...baseDefaults, defaultBudgetCents: 0, alwaysRequireExplicitBudget: true }
+    );
+    expect(intent.budgetCents).toBeNull();
   });
 
   test("turnCap falls back to defaultTurnCap when omitted", () => {

@@ -14,7 +14,9 @@ import type { ProvidersConfigMap, SendMessageOptions } from "@/common/orpc/types
 import { isWorkspaceArchived } from "@/common/utils/archive";
 import {
   hasBudgetedResumableGoal,
+  hasGoalBudgetLimit,
   modelHasPricingData,
+  normalizeGoalBudgetCents,
   UNPRICED_TARGET_MODEL_GOAL_MESSAGE,
 } from "@/common/utils/goals/budgetPricing";
 import type { SendMessageError } from "@/common/types/errors";
@@ -160,6 +162,7 @@ interface GoalStreamStamp {
 
 interface StreamAccountingInput {
   workspaceId: string;
+  /** Total cost attributable to this stream from start (cumulative for previews, final for records). */
   costUsd?: number | null;
   isCompaction?: boolean;
   streamStartedAtMs?: number | null;
@@ -291,6 +294,7 @@ export class WorkspaceGoalService {
   private pendingContinuationCandidates = new Map<string, PendingGoalContinuationCandidate>();
   private continuationReRequestTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private lastUserStopAtMsByWorkspace = new Map<string, number>();
+  private recordedStreamStartedAtMsByWorkspace = new Map<string, number>();
   private lastGoalStreamStamps = new Map<string, GoalStreamStamp>();
   private nextGoalStreamStampSequence = 1;
   private goalContinuationBridge: GoalContinuationRuntimeBridge | null = null;
@@ -331,7 +335,7 @@ export class WorkspaceGoalService {
       goalId: crypto.randomUUID(),
       objective: input.objective,
       status,
-      budgetCents: input.budgetCents,
+      budgetCents: normalizeGoalBudgetCents(input.budgetCents),
       turnCap: input.turnCap,
       costCents: 0,
       costMicroCents: 0,
@@ -838,8 +842,10 @@ export class WorkspaceGoalService {
         await this.writeGoal(workspaceId, next);
         await this.pushSnapshot(workspaceId, next);
         this.emitBudgetLimited(next, current.status);
+        return next;
       }
-      return next;
+      await this.pushSnapshot(workspaceId, current);
+      return current;
     });
   }
 
@@ -998,7 +1004,9 @@ export class WorkspaceGoalService {
     const next: GoalRecordV1 = GoalRecordV1Schema.parse({
       ...goal,
       ...(input.status != null ? { status: input.status } : {}),
-      ...(Object.hasOwn(input, "budgetCents") ? { budgetCents: input.budgetCents ?? null } : {}),
+      ...(Object.hasOwn(input, "budgetCents")
+        ? { budgetCents: normalizeGoalBudgetCents(input.budgetCents) }
+        : {}),
       ...(Object.hasOwn(input, "turnCap") ? { turnCap: input.turnCap ?? null } : {}),
       ...(Object.hasOwn(input, "requireUserAcknowledgmentSinceMs")
         ? { requireUserAcknowledgmentSinceMs: input.requireUserAcknowledgmentSinceMs ?? null }
@@ -1010,11 +1018,12 @@ export class WorkspaceGoalService {
   }
 
   private hasReachedBudgetLimit(goal: GoalRecordV1): boolean {
-    if (goal.budgetCents == null) {
+    const { budgetCents } = goal;
+    if (budgetCents == null || !hasGoalBudgetLimit(budgetCents)) {
       return false;
     }
     const costMicroCents = goal.costMicroCents ?? goal.costCents * MICRO_CENTS_PER_CENT;
-    return costMicroCents >= goal.budgetCents * MICRO_CENTS_PER_CENT;
+    return costMicroCents >= budgetCents * MICRO_CENTS_PER_CENT;
   }
 
   private hasReachedTurnLimit(goal: GoalRecordV1): boolean {
@@ -1025,24 +1034,45 @@ export class WorkspaceGoalService {
     return this.hasReachedBudgetLimit(goal) || this.hasReachedTurnLimit(goal);
   }
 
+  private applyCostAccounting(
+    goal: GoalRecordV1,
+    costMicroCentsThisStream: number
+  ): Pick<GoalRecordV1, "costCents" | "costMicroCents"> {
+    const costMicroCents =
+      (goal.costMicroCents ?? goal.costCents * MICRO_CENTS_PER_CENT) + costMicroCentsThisStream;
+    return {
+      costCents: Math.round(costMicroCents / MICRO_CENTS_PER_CENT),
+      costMicroCents,
+    };
+  }
+
   private applyBudgetDrivenStatus(
     next: GoalRecordV1,
     options?: { originKind?: GoalStreamOriginKind }
   ): GoalRecordV1 {
-    const reachedLimit = this.hasReachedAnyLimit(next);
-    const shouldLimitActiveGoal = next.status === "active" && reachedLimit;
-    const shouldRearmBudgetLimitedGoal = next.status === "budget_limited" && !reachedLimit;
+    const normalizedBudgetCents = normalizeGoalBudgetCents(next.budgetCents);
+    const normalized =
+      normalizedBudgetCents === next.budgetCents
+        ? next
+        : GoalRecordV1Schema.parse({
+            ...next,
+            budgetCents: normalizedBudgetCents,
+            updatedAtMs: Date.now(),
+          });
+    const reachedLimit = this.hasReachedAnyLimit(normalized);
+    const shouldLimitActiveGoal = normalized.status === "active" && reachedLimit;
+    const shouldRearmBudgetLimitedGoal = normalized.status === "budget_limited" && !reachedLimit;
     if (!shouldLimitActiveGoal && !shouldRearmBudgetLimitedGoal) {
-      return next;
+      return normalized;
     }
 
     return GoalRecordV1Schema.parse({
-      ...next,
+      ...normalized,
       status: shouldLimitActiveGoal ? "budget_limited" : "active",
       // Raising/removing limits re-arms the one-shot budget wrap-up.
       budgetLimitInjectedForGoalId: shouldRearmBudgetLimitedGoal
         ? null
-        : next.budgetLimitInjectedForGoalId,
+        : normalized.budgetLimitInjectedForGoalId,
       // Persist the origin kind on the active→budget_limited transition so
       // `recoverPendingDispatchAfterRestart` can decide whether to arm a
       // wrap-up after restart (Coder-agents-review P3 DEREM-54). When
@@ -1051,7 +1081,7 @@ export class WorkspaceGoalService {
         ? (options?.originKind ?? null)
         : shouldRearmBudgetLimitedGoal
           ? null
-          : next.budgetLimitOriginKind,
+          : normalized.budgetLimitOriginKind,
       updatedAtMs: Date.now(),
     });
   }
@@ -1160,11 +1190,7 @@ export class WorkspaceGoalService {
   }
 
   async getGoal(workspaceId: string): Promise<GoalRecordV1 | null> {
-    return this.fileLocks.withLock(workspaceId, async () => {
-      const goal = await this.readGoalFile(workspaceId);
-      await this.pushSnapshot(workspaceId, goal);
-      return goal;
-    });
+    return this.normalizeGoalLimits(workspaceId);
   }
 
   /**
@@ -1544,7 +1570,7 @@ export class WorkspaceGoalService {
       workspaceId.trim().length > 0,
       "recoverPendingDispatchAfterRestart requires workspaceId"
     );
-    const goal = await this.getGoal(workspaceId);
+    const goal = await this.normalizeGoalLimits(workspaceId);
     if (!goal) {
       return;
     }
@@ -1694,6 +1720,47 @@ export class WorkspaceGoalService {
     return stamp;
   }
 
+  /**
+   * Push a live cost preview to the activity snapshot without persisting to
+   * goal.json. The cost is the cumulative current-stream cost on top of the
+   * durable base; `recordStreamAccounting` performs final accounting at stream end.
+   */
+  async previewStreamAccounting(input: StreamAccountingInput): Promise<GoalSnapshot | null> {
+    assert(input.workspaceId.trim().length > 0, "previewStreamAccounting requires workspaceId");
+    if (input.isCompaction === true) {
+      return null;
+    }
+
+    const costMicroCentsThisStream = costUsdToMicroCents(input.costUsd);
+    return this.fileLocks.withLock(input.workspaceId, async () => {
+      const current = await this.readGoalFile(input.workspaceId);
+      if (!current) {
+        return null;
+      }
+
+      if (input.streamStartedAtMs != null && current.createdAtMs > input.streamStartedAtMs) {
+        return null;
+      }
+      if (
+        input.streamStartedAtMs != null &&
+        this.recordedStreamStartedAtMsByWorkspace.get(input.workspaceId) === input.streamStartedAtMs
+      ) {
+        return null;
+      }
+
+      if (current.status === "paused" || current.status === "complete") {
+        return toGoalSnapshot(current);
+      }
+
+      const preview = GoalRecordV1Schema.parse({
+        ...current,
+        ...this.applyCostAccounting(current, costMicroCentsThisStream),
+        updatedAtMs: Date.now(),
+      });
+      return this.pushSnapshot(input.workspaceId, preview);
+    });
+  }
+
   async recordStreamAccounting(input: StreamAccountingInput): Promise<GoalRecordV1 | null> {
     assert(input.workspaceId.trim().length > 0, "recordStreamAccounting requires workspaceId");
     const originKind = input.streamOriginKind ?? (input.isCompaction === true ? "other" : "user");
@@ -1703,7 +1770,7 @@ export class WorkspaceGoalService {
       return null;
     }
 
-    const costMicroCentsDelta = costUsdToMicroCents(input.costUsd);
+    const costMicroCentsThisStream = costUsdToMicroCents(input.costUsd);
     return this.fileLocks.withLock(input.workspaceId, async () => {
       const current = await this.readGoalFile(input.workspaceId);
       if (!current) {
@@ -1728,16 +1795,16 @@ export class WorkspaceGoalService {
       // reaches here while still active must not consume a turn against the cap
       // (Coder-agents-review P3 DEREM-24).
       const turnsDelta = originKind === "user" ? 0 : 1;
-      const accumulatedMicroCents =
-        (current.costMicroCents ?? current.costCents * MICRO_CENTS_PER_CENT) + costMicroCentsDelta;
       const accounted = GoalRecordV1Schema.parse({
         ...current,
-        costCents: Math.round(accumulatedMicroCents / MICRO_CENTS_PER_CENT),
-        costMicroCents: accumulatedMicroCents,
+        ...this.applyCostAccounting(current, costMicroCentsThisStream),
         turnsUsed: current.turnsUsed + turnsDelta,
         updatedAtMs: Date.now(),
       });
       const next = this.applyBudgetDrivenStatus(accounted, { originKind });
+      if (input.streamStartedAtMs != null) {
+        this.recordedStreamStartedAtMsByWorkspace.set(input.workspaceId, input.streamStartedAtMs);
+      }
       await this.writeGoal(input.workspaceId, next);
       await this.pushSnapshot(input.workspaceId, next);
       this.recordLastGoalStream(input.workspaceId, originKind, next.goalId);
@@ -1783,13 +1850,9 @@ export class WorkspaceGoalService {
         return skippedChildAttribution(current);
       }
 
-      const accumulatedMicroCents =
-        (current.costMicroCents ?? current.costCents * MICRO_CENTS_PER_CENT) +
-        input.childCostCents * MICRO_CENTS_PER_CENT;
       const accounted = GoalRecordV1Schema.parse({
         ...current,
-        costCents: Math.round(accumulatedMicroCents / MICRO_CENTS_PER_CENT),
-        costMicroCents: accumulatedMicroCents,
+        ...this.applyCostAccounting(current, input.childCostCents * MICRO_CENTS_PER_CENT),
         turnsUsed: current.turnsUsed + 1,
         attributedChildren: [...current.attributedChildren, input.childWorkspaceId],
         updatedAtMs: Date.now(),
@@ -1828,6 +1891,7 @@ export class WorkspaceGoalService {
       const current = await this.readGoalFile(workspaceId);
       this.pendingGoalMutations.delete(workspaceId);
       this.pendingContinuationCandidates.delete(workspaceId);
+      this.recordedStreamStartedAtMsByWorkspace.delete(workspaceId);
       this.lastGoalStreamStamps.delete(workspaceId);
       const timer = this.continuationReRequestTimers.get(workspaceId);
       if (timer != null) {

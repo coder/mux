@@ -91,6 +91,7 @@ import {
   type StreamLifecycleSnapshot,
 } from "@/common/types/stream";
 import type { GoalStreamOriginKind, WorkspaceGoalService } from "./workspaceGoalService";
+import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import { getTotalCost } from "@/common/utils/tokens/usageAggregator";
 import { CompactionHandler } from "./compactionHandler";
 import { RetryManager, type RetryFailureError, type RetryStatusEvent } from "./retryManager";
@@ -4093,6 +4094,53 @@ export class AgentSession {
     return true;
   }
 
+  private async previewGoalAccountingFromUsage(input: {
+    model: string;
+    usage: LanguageModelV2Usage | undefined;
+    providerMetadata?: Record<string, unknown>;
+    metadataModel?: string;
+    isCompaction?: boolean;
+  }): Promise<void> {
+    if (this.workspaceGoalService?.isExperimentEnabled() !== true) {
+      return;
+    }
+    const displayUsage = createDisplayUsage(
+      input.usage,
+      input.model,
+      input.providerMetadata,
+      input.metadataModel
+    );
+    const costUsd = getTotalCost(displayUsage) ?? 0;
+    try {
+      await this.workspaceGoalService.previewStreamAccounting({
+        workspaceId: this.workspaceId,
+        costUsd,
+        isCompaction: input.isCompaction === true,
+        streamStartedAtMs: this.activeStreamStartedAtMs ?? null,
+      });
+    } catch (error) {
+      log.warn("Failed to preview goal stream accounting", {
+        workspaceId: this.workspaceId,
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
+  private async restoreGoalAccountingSnapshot(): Promise<void> {
+    if (this.workspaceGoalService?.isExperimentEnabled() !== true) {
+      return;
+    }
+
+    try {
+      await this.workspaceGoalService.getGoal(this.workspaceId);
+    } catch (error) {
+      log.warn("Failed to restore goal accounting snapshot", {
+        workspaceId: this.workspaceId,
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
   private async recordGoalAccountingFromUsage(input: {
     model: string;
     usage: StreamEndEvent["metadata"]["usage"];
@@ -4185,6 +4233,7 @@ export class AgentSession {
     const streamErrorMessage = createStreamErrorMessage(data);
     this.setTerminalStreamLifecycle("failed");
     this.terminalStreamError = streamErrorMessage;
+    await this.restoreGoalAccountingSnapshot();
     this.activeCompactionRequest = undefined;
     this.resetActiveStreamState();
 
@@ -4290,6 +4339,17 @@ export class AgentSession {
         usage: payload.usage,
         providerMetadata: payload.providerMetadata,
         live: true,
+      });
+
+      await this.previewGoalAccountingFromUsage({
+        model: modelForUsage,
+        usage: payload.cumulativeUsage ?? payload.usage,
+        providerMetadata: payload.cumulativeProviderMetadata ?? payload.providerMetadata,
+        metadataModel: resolveModelForMetadata(
+          modelForUsage,
+          this.activeStreamContext?.providersConfig ?? null
+        ),
+        isCompaction: this.activeCompactionRequest !== undefined,
       });
 
       // Never recurse compaction while we're already running a compaction request.

@@ -128,39 +128,41 @@ describe("WorkspaceGoalService", () => {
     );
   });
 
-  test("rejects zero-budget goals when kickoff model has no pricing", async () => {
+  test("treats zero-budget goals as unbudgeted even when kickoff model has no pricing", async () => {
     const dispatcher = new IdleDispatcher();
     service.registerGoalContinuationConsumer(dispatcher, {
       ...continuationBridge(),
       getKickoffSendOptions: () => ({ model: "custom:unpriced-model", agentId: "exec" }),
     });
 
-    const result = await service.setGoal({
+    const created = await setGoalOk(service, {
       workspaceId,
-      objective: "Do not spend unpriced",
+      objective: "Do not enforce a dollar budget",
       budgetCents: 0,
     });
 
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error).toMatchObject({ type: "invalid_transition" });
-    }
-    expect(await service.getGoal(workspaceId)).toBeNull();
+    await drainPendingDispatches();
+
+    expect(created).toMatchObject({ status: "active", budgetCents: null });
+    expect(await service.getGoal(workspaceId)).toMatchObject({
+      status: "active",
+      budgetCents: null,
+    });
   });
 
-  test("creates zero-budget goals as budget_limited without arming kickoff continuation", async () => {
+  test("creates zero-budget goals as active goals without arming a budget wrap-up", async () => {
     const dispatcher = new IdleDispatcher();
     const execute = mock(() => Promise.resolve(true));
     service.registerGoalContinuationConsumer(dispatcher, continuationBridge(execute));
 
     const created = await setGoalOk(service, {
       workspaceId,
-      objective: "Do not spend",
+      objective: "Track without a dollar limit",
       budgetCents: 0,
     });
     await drainPendingDispatches();
 
-    expect(created).toMatchObject({ status: "budget_limited", budgetCents: 0 });
+    expect(created).toMatchObject({ status: "active", budgetCents: null });
     expect(execute).not.toHaveBeenCalled();
   });
 
@@ -682,6 +684,48 @@ describe("WorkspaceGoalService", () => {
     expect(await restartedService.getGoal(workspaceId)).toMatchObject({
       status: "budget_limited",
       budgetLimitInjectedForGoalId: created.goalId,
+    });
+  });
+
+  test("getGoal normalizes legacy zero-budget goals on read", async () => {
+    const legacy = await setGoalOk(service, {
+      workspaceId,
+      objective: "Legacy read normalization",
+      budgetCents: 100,
+    });
+    await fs.writeFile(
+      path.join(config.getSessionDir(workspaceId), "goal.json"),
+      JSON.stringify({ ...legacy, status: "budget_limited", budgetCents: 0 })
+    );
+
+    expect(await service.getGoal(workspaceId)).toMatchObject({
+      status: "active",
+      budgetCents: null,
+    });
+  });
+
+  test("recoverPendingDispatchAfterRestart migrates legacy zero-budget limited goals", async () => {
+    const legacy = await setGoalOk(service, {
+      workspaceId,
+      objective: "Legacy zero budget",
+      budgetCents: 100,
+    });
+    await fs.writeFile(
+      path.join(config.getSessionDir(workspaceId), "goal.json"),
+      JSON.stringify({ ...legacy, status: "budget_limited", budgetCents: 0 })
+    );
+    const restartedService = new WorkspaceGoalService(
+      config,
+      historyService,
+      extensionMetadata,
+      analytics
+    );
+
+    await restartedService.recoverPendingDispatchAfterRestart(workspaceId);
+
+    expect(await restartedService.getGoal(workspaceId)).toMatchObject({
+      status: "active",
+      budgetCents: null,
     });
   });
 
@@ -1709,6 +1753,114 @@ describe("WorkspaceGoalService", () => {
 
     expect(updated).toBeNull();
     expect(await service.getGoal(workspaceId)).toMatchObject({ costCents: 0, turnsUsed: 0 });
+  });
+
+  test("previews live stream cost without double-counting final accounting", async () => {
+    const created = await setGoalOk(service, {
+      workspaceId,
+      objective: "Preview live cost",
+      budgetCents: 1_000,
+    });
+
+    const firstPreview = await service.previewStreamAccounting({
+      workspaceId,
+      costUsd: 0.5,
+      streamStartedAtMs: created.createdAtMs + 1,
+    });
+    const secondPreview = await service.previewStreamAccounting({
+      workspaceId,
+      costUsd: 1.25,
+      streamStartedAtMs: created.createdAtMs + 1,
+    });
+
+    expect(firstPreview).toMatchObject({ costCents: 50, budgetCents: 1_000 });
+    expect(secondPreview).toMatchObject({ costCents: 125, budgetCents: 1_000 });
+    expect(await extensionMetadata.getSnapshot(workspaceId)).toMatchObject({
+      goal: { costCents: 125, budgetCents: 1_000 },
+    });
+    expect(await service.getGoal(workspaceId)).toMatchObject({ costCents: 0, budgetCents: 1_000 });
+
+    const editedDuringStream = await setGoalOk(service, { workspaceId, budgetCents: 2_000 });
+    const previewAfterEdit = await service.previewStreamAccounting({
+      workspaceId,
+      costUsd: 1.5,
+      streamStartedAtMs: created.createdAtMs + 1,
+    });
+    expect(editedDuringStream).toMatchObject({ budgetCents: 2_000 });
+    expect(previewAfterEdit).toMatchObject({ costCents: 150, budgetCents: 2_000 });
+
+    const final = await service.recordStreamAccounting({
+      workspaceId,
+      costUsd: 1.25,
+      streamStartedAtMs: created.createdAtMs + 1,
+      streamOriginKind: "goal_continuation",
+    });
+
+    expect(final).toMatchObject({ costCents: 125, turnsUsed: 1, status: "active" });
+
+    const previewAfterFinal = await service.previewStreamAccounting({
+      workspaceId,
+      costUsd: 1.25,
+      streamStartedAtMs: created.createdAtMs + 1,
+    });
+    expect(previewAfterFinal).toBeNull();
+    expect(await extensionMetadata.getSnapshot(workspaceId)).toMatchObject({
+      goal: { costCents: 125, budgetCents: 2_000 },
+    });
+  });
+
+  test("previewStreamAccounting skips paused goals, compactions, and stale streams", async () => {
+    const created = await setGoalOk(service, {
+      workspaceId,
+      objective: "Preview guard coverage",
+      budgetCents: 1_000,
+    });
+
+    expect(
+      await service.previewStreamAccounting({
+        workspaceId,
+        costUsd: 5,
+        isCompaction: true,
+        streamStartedAtMs: created.createdAtMs + 1,
+      })
+    ).toBeNull();
+    expect(await extensionMetadata.getSnapshot(workspaceId)).toMatchObject({
+      goal: { costCents: 0 },
+    });
+
+    expect(
+      await service.previewStreamAccounting({
+        workspaceId,
+        costUsd: 5,
+        streamStartedAtMs: created.createdAtMs - 1,
+      })
+    ).toBeNull();
+
+    await setGoalOk(service, { workspaceId, status: "paused" });
+    expect(
+      await service.previewStreamAccounting({
+        workspaceId,
+        costUsd: 5,
+        streamStartedAtMs: created.createdAtMs + 1,
+      })
+    ).toMatchObject({ costCents: 0, status: "paused" });
+  });
+
+  test("does not budget-limit zero-dollar goals after paid streams", async () => {
+    await setGoalOk(service, {
+      workspaceId,
+      objective: "Track paid work without a dollar limit",
+      budgetCents: 0,
+    });
+
+    const updated = await service.recordStreamAccounting({
+      workspaceId,
+      costUsd: 1.24,
+      streamOriginKind: "goal_continuation",
+    });
+
+    expect(updated).toMatchObject({ costCents: 124, turnsUsed: 1, status: "active" });
+    expect(updated?.budgetCents).toBeNull();
   });
 
   test("flips active goals to budget-limited when stream cost reaches the budget", async () => {

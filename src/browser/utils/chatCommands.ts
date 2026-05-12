@@ -39,6 +39,7 @@ import type { ParsedCommand } from "@/browser/utils/slashCommands/types";
 import { type GoalDefaults } from "@/constants/goals";
 import {
   hasBudgetedResumableGoal,
+  hasGoalBudgetLimit,
   modelHasPricingData,
   UNPRICED_CURRENT_MODEL_GOAL_MESSAGE,
   UNPRICED_TARGET_MODEL_GOAL_MESSAGE,
@@ -824,7 +825,7 @@ async function handleGoalCommand(
     }
 
     if (parsed.type === "goal-budget") {
-      if (parsed.budgetCents != null && !(await currentModelHasPricingData(context))) {
+      if (hasGoalBudgetLimit(parsed.budgetCents) && !(await currentModelHasPricingData(context))) {
         showUnpricedModelGoalToast(setToast);
         return { clearInput: false, toastShown: true };
       }
@@ -844,7 +845,10 @@ async function handleGoalCommand(
 
     const goalDefaults = await getGoalDefaults(context);
     const goalSetIntent = resolveSlashGoalSetIntent(parsed, goalDefaults);
-    if (goalSetIntent.budgetCents != null && !(await currentModelHasPricingData(context))) {
+    if (
+      hasGoalBudgetLimit(goalSetIntent.budgetCents) &&
+      !(await currentModelHasPricingData(context))
+    ) {
       showUnpricedModelGoalToast(setToast);
       return { clearInput: false, toastShown: true };
     }

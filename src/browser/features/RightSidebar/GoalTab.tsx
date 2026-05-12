@@ -92,7 +92,7 @@ export function GoalTab(props: GoalTabProps) {
       if (editingField === "budget") {
         const budgetCents = parseBudgetInput(submittedValue);
         if (budgetCents === undefined) {
-          setError("Enter a budget like $5, 500c, or leave blank for no budget.");
+          setError("Enter a budget like $5 or 500c. Use 0 or blank for no budget.");
           return;
         }
         await props.onUpdateBudget?.(budgetCents);
@@ -330,7 +330,7 @@ export function GoalTab(props: GoalTabProps) {
           />
           <p className="text-muted mt-1 text-xs">
             {editingField === "budget"
-              ? "Use $5, 500c, or blank for no budget."
+              ? "Use $5, 500c, 0, or blank for no budget."
               : "Use a positive whole number, or blank for no cap."}
           </p>
           <div className="mt-2 flex gap-2">

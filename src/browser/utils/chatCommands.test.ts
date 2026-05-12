@@ -755,6 +755,35 @@ describe("processSlashCommand - goal budgets", () => {
     });
   });
 
+  test("passes zero-dollar budget updates through on unpriced current model", async () => {
+    enableGoalsExperiment();
+    const currentGoal = {
+      goalId: "11111111-1111-4111-8111-111111111111",
+      objective: "existing objective",
+    };
+    const setGoal = mock().mockResolvedValueOnce({
+      success: true,
+      data: { ...currentGoal, budgetCents: null },
+    });
+    const context = createGoalCommandContext({
+      config: { getConfig: mock(() => Promise.resolve({})) },
+      workspace: {
+        getGoal: mock(() => Promise.resolve({ goal: currentGoal })),
+        setGoal,
+        clearGoal: mock(),
+      },
+    } as unknown as SlashCommandContext["api"]);
+    context.sendMessageOptions.model = "custom-provider:no-price-model";
+
+    await processSlashCommand({ type: "goal-budget", budgetCents: 0 }, context);
+
+    expect(setGoal).toHaveBeenCalledWith({
+      workspaceId: "goal-ws",
+      budgetCents: 0,
+      expectedGoalId: currentGoal.goalId,
+    });
+  });
+
   test("refuses budgeted goals on an unpriced current model", async () => {
     enableGoalsExperiment();
     const setGoal = mock();

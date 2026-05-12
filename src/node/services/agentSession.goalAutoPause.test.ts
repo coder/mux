@@ -13,6 +13,7 @@ import { Ok } from "@/common/types/result";
 import type { SendMessageOptions } from "@/common/orpc/types";
 import type { GoalRecordV1, GoalStatus } from "@/common/types/goal";
 import { GOAL_CONTINUATION_IDLE_CONSUMER_NAME } from "@/constants/goals";
+import { waitForCondition } from "./testDispatchHelpers";
 import { IdleDispatcher } from "./idleDispatcher";
 
 const PROJECT_PATH = "/tmp/mux-agent-session-goal-test-project";
@@ -22,6 +23,8 @@ interface SessionHarness {
   historyService: HistoryService;
   session: AgentSession;
   goalService: WorkspaceGoalService;
+  extensionMetadata: ExtensionMetadataService;
+  aiService: AIService & EventEmitter;
   analytics: { recordGoalLifecycleEvent: ReturnType<typeof mock> };
   cleanup: () => Promise<void>;
 }
@@ -38,7 +41,7 @@ async function setGoalOk(
   return result.data;
 }
 
-function createAiService(workspaceId: string): AIService {
+function createAiService(workspaceId: string): AIService & EventEmitter {
   const aiEmitter = new EventEmitter();
   return Object.assign(aiEmitter, {
     isStreaming: mock((_workspaceId: string) => false),
@@ -58,7 +61,7 @@ function createAiService(workspaceId: string): AIService {
       )
     ),
     replayStream: mock((_workspaceId: string) => Promise.resolve()),
-  }) as unknown as AIService;
+  }) as unknown as AIService & EventEmitter;
 }
 
 async function createSessionHarness(workspaceId: string): Promise<SessionHarness> {
@@ -89,17 +92,18 @@ async function createSessionHarness(workspaceId: string): Promise<SessionHarness
     setMessageQueued: mock((_workspaceId: string, _queued: boolean) => undefined),
   } as unknown as BackgroundProcessManager;
 
+  const aiService = createAiService(workspaceId);
   const session = new AgentSession({
     workspaceId,
     config,
     historyService,
-    aiService: createAiService(workspaceId),
+    aiService,
     initStateManager,
     backgroundProcessManager,
     workspaceGoalService: goalService,
   });
 
-  return { historyService, session, goalService, analytics, cleanup };
+  return { historyService, session, goalService, extensionMetadata, aiService, analytics, cleanup };
 }
 
 describe("AgentSession goal safety hooks", () => {
@@ -140,12 +144,21 @@ describe("AgentSession goal safety hooks", () => {
       const workspaceId = `manual-leaves-${status.replace("_", "-")}`;
       const { session, goalService, cleanup } = await createSessionHarness(workspaceId);
       cleanups.push(cleanup);
-      await setGoalOk(goalService, {
+      const seeded = await setGoalOk(goalService, {
         workspaceId,
         objective: `Goal already ${status}`,
         status,
+        ...(status === "budget_limited" ? { budgetCents: 100 } : {}),
         ...(status === "complete" ? { completionSummary: "Finished already." } : {}),
       });
+      if (status === "budget_limited") {
+        await goalService.recordStreamAccounting({
+          workspaceId,
+          costUsd: 1,
+          streamStartedAtMs: seeded.createdAtMs + 1,
+          streamOriginKind: "goal_continuation",
+        });
+      }
 
       const result = await session.sendMessage("Manual follow-up", SEND_OPTIONS);
 
@@ -216,6 +229,57 @@ describe("AgentSession goal safety hooks", () => {
     expect(await goalService.getGoal(workspaceId)).toMatchObject({
       status: "active",
       requireUserAcknowledgmentSinceMs: 66_000,
+    });
+    session.dispose();
+  });
+
+  test("stream errors restore durable goal snapshot after live cost preview", async () => {
+    const workspaceId = "stream-error-restores-goal-preview";
+    const { session, goalService, extensionMetadata, aiService, cleanup } =
+      await createSessionHarness(workspaceId);
+    cleanups.push(cleanup);
+    goalService.registerGoalContinuationConsumer(new IdleDispatcher(), {
+      isGoalExperimentEnabled: () => true,
+      hasActiveDescendantTasks: () => false,
+      getRuntimeState: () => ({ isRuntimeCompatible: true }),
+      executeGoalContinuation: () => Promise.resolve(true),
+    });
+    const created = await setGoalOk(goalService, {
+      workspaceId,
+      objective: "Restore preview on error",
+      budgetCents: 1_000,
+    });
+    await goalService.previewStreamAccounting({
+      workspaceId,
+      costUsd: 1.25,
+      streamStartedAtMs: created.createdAtMs + 1,
+    });
+    expect(await extensionMetadata.getSnapshot(workspaceId)).toMatchObject({
+      goal: { costCents: 125 },
+    });
+
+    aiService.streamMessage = mock(() => {
+      aiService.emit("error", {
+        workspaceId,
+        messageId: "assistant-stream-error",
+        error: "boom",
+        errorType: "unknown",
+      });
+      return Promise.resolve(Ok(undefined));
+    }) as unknown as AIService["streamMessage"];
+    const eventTypes: string[] = [];
+    session.onChatEvent((event) => {
+      eventTypes.push(event.message.type);
+    });
+
+    await session.sendMessage("Synthetic continuation", SEND_OPTIONS, {
+      synthetic: true,
+      goalContinuation: true,
+    });
+    await waitForCondition(() => eventTypes.includes("stream-error"), { timeoutMs: 1_000 });
+
+    expect(await extensionMetadata.getSnapshot(workspaceId)).toMatchObject({
+      goal: { costCents: 0, budgetCents: 1_000 },
     });
     session.dispose();
   });

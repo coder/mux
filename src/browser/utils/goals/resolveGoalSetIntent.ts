@@ -1,3 +1,4 @@
+import { normalizeGoalBudgetCents } from "@/common/utils/goals/budgetPricing";
 import type { APIClient } from "@/browser/contexts/API";
 import { DEFAULT_GOAL_DEFAULTS, normalizeGoalDefaults, type GoalDefaults } from "@/constants/goals";
 
@@ -7,8 +8,8 @@ import { DEFAULT_GOAL_DEFAULTS, normalizeGoalDefaults, type GoalDefaults } from 
  *
  * - `budgetCents` is a discriminated tri-state:
  *   - `undefined` → "user did not specify; apply default"
- *   - `null` → "user explicitly cleared the budget"
- *   - `number` → explicit cents value
+ *   - `null` or `0` → "no budget" (explicit clear)
+ *   - positive `number` → explicit cents value
  */
 export interface GoalSetIntentInput {
   objective: string;
@@ -29,7 +30,7 @@ export interface GoalSetIntent {
  *   - If the caller omitted `budgetCents`:
  *     - `alwaysRequireExplicitBudget` → fall back to `defaultBudgetCents`.
  *     - Otherwise → `null` (no budget).
- *   - `null` is preserved (explicit "no budget" clear).
+ *   - `null` and `0` both become no budget (explicit "no budget" clear).
  *   - If the caller omitted `turnCap`, fall back to `defaultTurnCap`.
  *
  * Coder-agents-review P3 DEREM-27: the slash command path (`/goal`) used to
@@ -44,9 +45,9 @@ export function resolveGoalSetIntent(
 ): GoalSetIntent {
   let budgetCents: number | null;
   if (input.budgetCents !== undefined) {
-    budgetCents = input.budgetCents;
+    budgetCents = normalizeGoalBudgetCents(input.budgetCents);
   } else if (defaults.alwaysRequireExplicitBudget) {
-    budgetCents = defaults.defaultBudgetCents;
+    budgetCents = normalizeGoalBudgetCents(defaults.defaultBudgetCents);
   } else {
     budgetCents = null;
   }

@@ -89,7 +89,7 @@ export function GoalsSection() {
             <label htmlFor="goal-default-budget" className="min-w-0 flex-1">
               <div className="text-foreground text-sm font-medium">Default goal budget</div>
               <div className="text-muted mt-0.5 text-xs">
-                Applied to new goals when no budget flag is provided.
+                Applied to new goals when no budget flag is provided. Use $0.00 for no dollar limit.
               </div>
             </label>
             <div className="flex items-center gap-1">

@@ -49,6 +49,7 @@ import { parseGoalBudgetCents } from "@/browser/utils/slashCommands/registry";
 import { setGoalWithConflictRetry } from "@/browser/utils/goals/setGoalWithConflictRetry";
 import { loadGoalDefaults, resolveGoalSetIntent } from "@/browser/utils/goals/resolveGoalSetIntent";
 import {
+  hasGoalBudgetLimit,
   modelHasPricingData,
   UNPRICED_CURRENT_MODEL_GOAL_MESSAGE,
 } from "@/common/utils/goals/budgetPricing";
@@ -301,7 +302,7 @@ function canSetBudgetedGoalWithCurrentPaletteModel(
   budgetCents: number | null,
   providersConfig: unknown
 ): boolean {
-  if (budgetCents == null) {
+  if (!hasGoalBudgetLimit(budgetCents)) {
     return true;
   }
   const selectedModel =

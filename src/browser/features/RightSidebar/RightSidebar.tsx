@@ -19,6 +19,7 @@ import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { useAPI } from "@/browser/contexts/API";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import {
+  hasGoalBudgetLimit,
   modelHasPricingData,
   UNPRICED_CURRENT_MODEL_GOAL_MESSAGE,
 } from "@/common/utils/goals/budgetPricing";
@@ -687,7 +688,10 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   };
 
   const handleGoalUpdateBudget = async (budgetCents: number | null) => {
-    if (budgetCents != null && !modelHasPricingData(sendMessageOptions.model, providersConfig)) {
+    if (
+      hasGoalBudgetLimit(budgetCents) &&
+      !modelHasPricingData(sendMessageOptions.model, providersConfig)
+    ) {
       throw new Error(UNPRICED_CURRENT_MODEL_GOAL_MESSAGE);
     }
     await setGoalWithSingleConflictRetry({ budgetCents });

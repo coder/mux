@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { formatGoalCents, hasBudgetedResumableGoal, modelHasPricingData } from "./budgetPricing";
+import {
+  formatGoalCents,
+  hasBudgetedResumableGoal,
+  hasGoalBudgetLimit,
+  modelHasPricingData,
+  normalizeGoalBudgetCents,
+} from "./budgetPricing";
 
 describe("formatGoalCents", () => {
   test("formats integer cents as a dollar-prefixed two-decimal string", () => {
@@ -31,6 +37,18 @@ describe("modelHasPricingData", () => {
   });
 });
 
+describe("goal budget limit helpers", () => {
+  test("treat zero cents as no dollar budget limit", () => {
+    expect(hasGoalBudgetLimit(0)).toBe(false);
+    expect(normalizeGoalBudgetCents(0)).toBeNull();
+  });
+
+  test("preserve positive budget limits", () => {
+    expect(hasGoalBudgetLimit(1)).toBe(true);
+    expect(normalizeGoalBudgetCents(1)).toBe(1);
+  });
+});
+
 describe("hasBudgetedResumableGoal", () => {
   // Regression: the active-only check let the user pause a budgeted goal,
   // switch to an unpriced model, and resume — the next stream then records
@@ -43,6 +61,12 @@ describe("hasBudgetedResumableGoal", () => {
 
   test("returns false for completed budgeted goals (terminal)", () => {
     expect(hasBudgetedResumableGoal({ status: "complete", budgetCents: 100 })).toBe(false);
+  });
+
+  test("returns false for zero-dollar budgets", () => {
+    expect(hasBudgetedResumableGoal({ status: "active", budgetCents: 0 })).toBe(false);
+    expect(hasBudgetedResumableGoal({ status: "paused", budgetCents: 0 })).toBe(false);
+    expect(hasBudgetedResumableGoal({ status: "budget_limited", budgetCents: 0 })).toBe(false);
   });
 
   test("returns false for any goal without a budget", () => {

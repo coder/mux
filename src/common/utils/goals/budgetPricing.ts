@@ -11,15 +11,33 @@ export function formatGoalCents(cents: number): string {
 
 type GoalBudgetState = Pick<GoalRecordV1 | GoalSnapshot, "status" | "budgetCents">;
 
+/** True when the budget imposes a positive dollar limit; zero cents means no budget. */
+export function hasGoalBudgetLimit(budgetCents: number | null | undefined): boolean {
+  if (budgetCents == null) {
+    return false;
+  }
+  assert(
+    Number.isInteger(budgetCents) && budgetCents >= 0,
+    `goal budget limit requires non-negative integer cents, got ${budgetCents}`
+  );
+  return budgetCents > 0;
+}
+
+/** Collapse zero-cent and nullish budgets to null (no dollar limit). */
+export function normalizeGoalBudgetCents(budgetCents: number | null | undefined): number | null {
+  return budgetCents != null && hasGoalBudgetLimit(budgetCents) ? budgetCents : null;
+}
+
 /**
  * Returns true for any goal whose budget will be debited again if the user
  * continues working — i.e. `active`, `paused`, or `budget_limited` (the
- * non-terminal states with a numeric `budgetCents`). Used to gate model
+ * non-terminal states with a positive `budgetCents`). Used to gate model
  * switches: an unpriced model on such a goal silently records 0 cost on the
- * next stream, breaking budget enforcement after resume.
+ * next stream, breaking budget enforcement after resume. A zero-dollar budget
+ * is treated as "no budget" so users can disable dollar limits from settings.
  */
 export function hasBudgetedResumableGoal(goal: GoalBudgetState | null | undefined): boolean {
-  if (goal?.budgetCents == null) {
+  if (!goal || !hasGoalBudgetLimit(goal.budgetCents)) {
     return false;
   }
   return goal.status === "active" || goal.status === "paused" || goal.status === "budget_limited";

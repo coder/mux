@@ -29,6 +29,13 @@ describe("parseGoalBudgetInputCents", () => {
     expect(parseGoalBudgetInputCents("100C")).toBe(100);
   });
 
+  test("parses zero dollar inputs", () => {
+    expect(parseGoalBudgetInputCents("0")).toBe(0);
+    expect(parseGoalBudgetInputCents("$0")).toBe(0);
+    expect(parseGoalBudgetInputCents("$0.00")).toBe(0);
+    expect(parseGoalBudgetInputCents("0c")).toBe(0);
+  });
+
   test("returns undefined for invalid input", () => {
     expect(parseGoalBudgetInputCents("abc")).toBeUndefined();
     expect(parseGoalBudgetInputCents("$")).toBeUndefined();
