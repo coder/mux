@@ -173,6 +173,14 @@ function isSuccessfulImageGenerateResult(
   return parsed.success && parsed.data.success;
 }
 
+function hasVisibleHookOutput(result: unknown): boolean {
+  if (typeof result !== "object" || result === null || Array.isArray(result)) {
+    return false;
+  }
+  const hookOutput = (result as Record<string, unknown>).hook_output;
+  return typeof hookOutput === "string" && hookOutput.length > 0;
+}
+
 function appendGeneratedImageMessage(
   displayedMessages: DisplayedMessage[],
   options: {
@@ -3151,6 +3159,7 @@ export class StreamingMessageAggregator {
                   } =>
                     nestedCall.toolName === "image_generate" &&
                     nestedCall.state === "output-available" &&
+                    !hasVisibleHookOutput(nestedCall.output) &&
                     isSuccessfulImageGenerateResult(nestedCall.output)
                 )
               : [];
@@ -3160,6 +3169,7 @@ export class StreamingMessageAggregator {
             part.state === "output-available" &&
             status === "completed" &&
             !isPartial &&
+            !hasVisibleHookOutput(part.output) &&
             isSuccessfulImageGenerateResult(part.output)
           ) {
             appendGeneratedImageMessage(displayedMessages, {

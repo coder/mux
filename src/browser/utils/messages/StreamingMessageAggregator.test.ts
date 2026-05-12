@@ -103,6 +103,46 @@ describe("StreamingMessageAggregator", () => {
       expect(displayed[0].images[0]?.path).toBe("/tmp/mux/imagegen/image-tool-1/image-1.png");
     });
 
+    test("keeps image_generate output with hook output as a normal tool row", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      const assistantMessage = createMuxMessage("assistant-image-hook", "assistant", "", {
+        historySequence: 8,
+        timestamp: 1235,
+      });
+      assistantMessage.parts.push({
+        type: "dynamic-tool",
+        toolCallId: "image-tool-hook",
+        toolName: "image_generate",
+        input: { prompt: "A small blue square" },
+        state: "output-available",
+        output: {
+          success: true,
+          model: "openai:gpt-image-1.5",
+          prompt: "A small blue square",
+          requestedCount: 1,
+          images: [
+            {
+              path: "/tmp/mux/imagegen/image-tool-1/image-1.png",
+              filename: "image-1.png",
+              mediaType: "image/png",
+            },
+          ],
+          hook_output: "post-processing hook ran",
+        },
+      });
+
+      aggregator.loadHistoricalMessages([assistantMessage]);
+
+      const displayed = aggregator.getDisplayedMessages();
+      expect(displayed).toHaveLength(1);
+      expect(displayed[0]?.type).toBe("tool");
+      if (displayed[0]?.type !== "tool") {
+        throw new Error("Expected hooked image generation to remain a tool row");
+      }
+      expect(displayed[0].toolName).toBe("image_generate");
+      expect(displayed[0].result).toMatchObject({ hook_output: "post-processing hook ran" });
+    });
+
     test("renders nested PTC image_generate output as a generated-image row", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
       const assistantMessage = createMuxMessage("assistant-ptc-image", "assistant", "", {
