@@ -91,13 +91,22 @@ export const UserMessage: React.FC<UserMessageProps> = ({
   // Copy to clipboard with feedback
   const { copied, copyToClipboard } = useCopyToClipboard(clipboardWriteText);
 
-  const canEdit = canEditDisplayedUserMessage(message);
+  // Editing a mixed monitor-wake message must not surface the synthetic XML to the user;
+  // strip extracted monitor blocks before invoking the editor so the next send is the user's
+  // own prompt text only. Pure-monitor messages cannot be edited (no original user text).
+  const canEdit = canEditDisplayedUserMessage(message) && !hasOnlyMonitorEvents;
 
   const handleEdit = () => {
-    // Goal-synthetic messages keep raw model prompts available via Copy/JSON only.
-    if (onEdit && canEdit) {
-      onEdit(buildEditingStateFromDisplayed(message));
+    if (!onEdit || !canEdit) return;
+    if (hasMonitorEvents) {
+      const baseState = buildEditingStateFromDisplayed(message);
+      onEdit({
+        ...baseState,
+        pending: { ...baseState.pending, content: visibleContent },
+      });
+      return;
     }
+    onEdit(buildEditingStateFromDisplayed(message));
   };
 
   // Navigation buttons - always reserve space to avoid layout shift
