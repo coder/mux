@@ -1,3 +1,8 @@
+---
+title: Experimental Image Generation Tool
+description: Architecture decision for Mux's experimental image generation tool and generated-image display messages
+---
+
 # 0001. Experimental Image Generation Uses a Mux-Executed Tool with Derived Display Messages
 
 ## Status
