@@ -85,8 +85,25 @@ export const UserMessage: React.FC<UserMessageProps> = ({
   const hasMonitorEvents = monitorExtract !== null && monitorExtract.events.length > 0;
   const hasOnlyMonitorEvents = hasMonitorEvents && monitorExtract.remainingContent.length === 0;
   // Surface the visible content (with monitor XML stripped) to copy/edit affordances so the
-  // user is not handed the synthetic XML when they hit Copy.
+  // user is not handed the synthetic XML when they hit Copy. For pure monitor wakes there is
+  // no user text, so flatten the parsed events into a readable summary instead.
   const visibleContent = hasMonitorEvents ? monitorExtract.remainingContent : content;
+  const monitorCopyText = hasMonitorEvents
+    ? monitorExtract.events
+        .map((event) => {
+          const source = event.displayName ?? event.taskId;
+          const header = `Monitor (${source}): ${event.lines.length} new line${
+            event.lines.length === 1 ? "" : "s"
+          } / ${event.totalMatches} total`;
+          return event.lines.length > 0 ? `${header}\n${event.lines.join("\n")}` : header;
+        })
+        .join("\n\n")
+    : "";
+  const copyText = hasOnlyMonitorEvents
+    ? monitorCopyText
+    : visibleContent.length > 0
+      ? visibleContent
+      : content;
 
   // Copy to clipboard with feedback
   const { copied, copyToClipboard } = useCopyToClipboard(clipboardWriteText);
@@ -163,7 +180,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
       : []),
     {
       label: copied ? "Copied" : "Copy",
-      onClick: () => void copyToClipboard(visibleContent.length > 0 ? visibleContent : content),
+      onClick: () => void copyToClipboard(copyText),
       icon: copied ? <ClipboardCheck /> : <Clipboard />,
     },
   ];

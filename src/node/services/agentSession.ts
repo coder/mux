@@ -405,10 +405,15 @@ export class AgentSession {
     }
 
     const wakeMessage = this.formatMonitorWakeMessage(payload);
-    const wakeOptions =
-      this.buildMonitorWakeSendOptions(this.activeStreamContext?.options) ??
-      this.lastMonitorWakeSendOptions;
-    if (!wakeOptions) {
+    // When a user message is already queued, preserve their selected send options. MessageQueue
+    // replaces latestOptions on every add, so passing our synthetic wake options here would
+    // dispatch the user's combined turn with the previous stream's model/agent/tool policy.
+    const queueHadEntriesBeforeWake = this.hasQueuedMessages();
+    const wakeOptions = queueHadEntriesBeforeWake
+      ? undefined
+      : (this.buildMonitorWakeSendOptions(this.activeStreamContext?.options) ??
+        this.lastMonitorWakeSendOptions);
+    if (!queueHadEntriesBeforeWake && !wakeOptions) {
       log.debug(`Skipped monitor wake for ${payload.taskId}: no send options available`);
       return;
     }
