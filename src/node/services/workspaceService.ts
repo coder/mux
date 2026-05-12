@@ -164,7 +164,10 @@ import type {
   GoalContinuationRuntimeState,
   WorkspaceGoalService,
 } from "@/node/services/workspaceGoalService";
-import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
+import type {
+  BackgroundProcessManager,
+  BackgroundProcessMonitorSnapshot,
+} from "@/node/services/backgroundProcessManager";
 import type { WorkspaceLifecycleHooks } from "@/node/services/workspaceLifecycleHooks";
 import type { TaskService } from "@/node/services/taskService";
 import { findWorkspaceEntry } from "@/node/services/taskUtils";
@@ -7018,6 +7021,7 @@ export class WorkspaceService extends EventEmitter {
       startTime: number;
       status: "running" | "exited" | "killed" | "failed";
       exitCode?: number;
+      monitor?: BackgroundProcessMonitorSnapshot;
     }>
   > {
     const processes = await this.backgroundProcessManager.list(workspaceId);
@@ -7028,6 +7032,7 @@ export class WorkspaceService extends EventEmitter {
       displayName: p.displayName,
       startTime: p.startTime,
       status: p.status,
+      monitor: this.backgroundProcessManager.getMonitorSnapshot(p),
       exitCode: p.exitCode,
     }));
   }

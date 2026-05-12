@@ -106,6 +106,15 @@ export const BackgroundProcessesBanner: React.FC<BackgroundProcessesBannerProps>
                     <div className="text-foreground truncate font-mono text-xs" title={proc.script}>
                       {proc.displayName ?? truncateScript(proc.script)}
                     </div>
+                    {proc.monitor && (
+                      <div
+                        className="text-muted truncate font-mono text-[10px]"
+                        title={proc.monitor.lastLines.at(-1)}
+                      >
+                        monitor {proc.monitor.totalMatches} match
+                        {proc.monitor.totalMatches !== 1 && "es"}
+                      </div>
+                    )}
                     <div className="text-muted font-mono text-[10px]">pid {proc.pid}</div>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">

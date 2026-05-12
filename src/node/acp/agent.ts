@@ -1536,6 +1536,7 @@ export class MuxAgent implements Agent {
         event.type === "usage-delta" ||
         event.type === "session-usage-delta" ||
         event.type === "bash-output" ||
+        event.type === "monitor-match" ||
         event.type === "init-output" ||
         // Drop replay history messages under saturation, but keep live message
         // events so ACP clients do not miss real-time conversation updates.

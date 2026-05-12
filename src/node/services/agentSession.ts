@@ -97,7 +97,7 @@ import { getTotalCost } from "@/common/utils/tokens/usageAggregator";
 import { CompactionHandler } from "./compactionHandler";
 import { RetryManager, type RetryFailureError, type RetryStatusEvent } from "./retryManager";
 import type { TelemetryService } from "./telemetryService";
-import type { BackgroundProcessManager } from "./backgroundProcessManager";
+import type { BackgroundProcessManager, MonitorMatchPayload } from "./backgroundProcessManager";
 import type { ExperimentsService } from "./experimentsService";
 
 import { AttachmentService } from "./attachmentService";
@@ -373,6 +373,40 @@ export class AgentSession {
 
   private idleWaiters: Array<() => void> = [];
   private readonly messageQueue = new MessageQueue();
+  private readonly backgroundMonitorMatchHandler = (
+    workspaceId: string,
+    payload: MonitorMatchPayload
+  ): void => {
+    if (workspaceId !== this.workspaceId || this.disposed) {
+      return;
+    }
+
+    this.emitChatEvent({
+      type: "monitor-match",
+      workspaceId: this.workspaceId,
+      processId: payload.processId,
+      taskId: payload.taskId,
+      ...(payload.displayName !== undefined ? { displayName: payload.displayName } : {}),
+      lines: payload.lines,
+      totalMatches: payload.totalMatches,
+      ...(payload.droppedLines !== undefined ? { droppedLines: payload.droppedLines } : {}),
+      timestamp: payload.timestamp,
+    });
+
+    const wakeMessage = this.formatMonitorWakeMessage(payload);
+    try {
+      const dispatchMode = this.queueMessage(wakeMessage, undefined, {
+        synthetic: true,
+        agentInitiated: true,
+      });
+      if (dispatchMode !== null && !this.isBusy()) {
+        this.sendQueuedMessages();
+      }
+    } catch (error) {
+      log.debug(`Failed to queue monitor wake message: ${getErrorMessage(error)}`);
+    }
+  };
+
   private readonly compactionHandler: CompactionHandler;
   private readonly compactionMonitor: CompactionMonitor;
 
@@ -506,6 +540,35 @@ export class AgentSession {
     source?: "idle-compaction" | "auto-compaction";
   };
 
+  private escapeMonitorAttribute(value: string): string {
+    return value
+      .replaceAll("&", "&amp;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;");
+  }
+
+  private escapeMonitorText(value: string): string {
+    return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+  }
+
+  private formatMonitorWakeMessage(payload: MonitorMatchPayload): string {
+    const displayNameAttribute = payload.displayName
+      ? ` display_name="${this.escapeMonitorAttribute(payload.displayName)}"`
+      : "";
+    const droppedAttribute = payload.droppedLines ? ` dropped_lines="${payload.droppedLines}"` : "";
+    const lines = payload.lines
+      .map((line) => `<line>${this.escapeMonitorText(line)}</line>`)
+      .join("\n");
+
+    return [
+      `<monitor-event taskId="${this.escapeMonitorAttribute(payload.taskId)}"${displayNameAttribute} total_matches="${payload.totalMatches}"${droppedAttribute}>`,
+      `<!-- ${payload.lines.length} new matching line${payload.lines.length === 1 ? "" : "s"} -->`,
+      lines,
+      "</monitor-event>",
+    ].join("\n");
+  }
+
   constructor(options: AgentSessionOptions) {
     assert(options, "AgentSession requires options");
     const {
@@ -561,6 +624,7 @@ export class AgentSession {
       (event) => this.emitRetryEvent(event)
     );
 
+    this.backgroundProcessManager.on("monitor:match", this.backgroundMonitorMatchHandler);
     this.attachAiListeners();
     this.attachInitListeners();
   }
@@ -586,6 +650,7 @@ export class AgentSession {
       void this.backgroundProcessManager.cleanup(this.workspaceId);
     }
 
+    this.backgroundProcessManager.off("monitor:match", this.backgroundMonitorMatchHandler);
     for (const { event, handler } of this.aiListeners) {
       this.aiService.off(event, handler as never);
     }

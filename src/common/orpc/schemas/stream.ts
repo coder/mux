@@ -362,6 +362,25 @@ export const BashOutputEventSchema = z.object({
 });
 
 /**
+ * UI-only write-time monitor match from a background bash process.
+ *
+ * This is intentionally NOT part of the tool result returned to the model.
+ * It is streamed over workspace.onChat for renderer state; the model is notified
+ * separately by a synthetic queued wake message.
+ */
+export const MonitorMatchEventSchema = z.object({
+  type: z.literal("monitor-match"),
+  workspaceId: z.string(),
+  processId: z.string(),
+  taskId: z.string(),
+  displayName: z.string().optional(),
+  lines: z.array(z.string()),
+  totalMatches: z.number(),
+  droppedLines: z.number().optional(),
+  timestamp: z.number().meta({ description: "When monitor matches were flushed (Date.now())" }),
+});
+
+/**
  * UI-only advisor progress update for live phase display.
  *
  * This is intentionally NOT part of the tool result returned to the model.
@@ -586,6 +605,7 @@ export const WorkspaceChatMessageSchema = z.discriminatedUnion("type", [
   ToolCallDeltaEventSchema,
   ToolCallEndEventSchema,
   BashOutputEventSchema,
+  MonitorMatchEventSchema,
   TaskCreatedEventSchema,
   AdvisorPhaseEventSchema,
   // Reasoning events

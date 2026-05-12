@@ -22,6 +22,7 @@ import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools"
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import { toBashTaskId } from "./taskId";
 import { migrateToBackground } from "@/node/services/backgroundProcessExecutor";
+import type { BackgroundProcessMonitorConfig } from "@/node/services/backgroundProcessManager";
 import { LocalBaseRuntime } from "@/node/runtime/LocalBaseRuntime";
 import { getToolEnvPath } from "@/node/services/hooks";
 import { GIT_NO_HOOKS_ENV } from "@/node/utils/gitNoHooksEnv";
@@ -886,7 +887,7 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
     description: buildBashToolDescription(config.cwd, config.projects ?? []),
     inputSchema: TOOL_DEFINITIONS.bash.schema,
     execute: async (
-      { script, timeout_secs, run_in_background, display_name },
+      { script, timeout_secs, run_in_background, display_name, monitor },
       { abortSignal, toolCallId }
     ): Promise<BashToolResult> => {
       // Validate script input
@@ -936,6 +937,15 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
           fileReadNotice
         );
 
+      if (monitor != null && !run_in_background) {
+        return withNotice({
+          success: false,
+          error: "monitor requires run_in_background=true",
+          exitCode: -1,
+          wall_duration_ms: 0,
+        });
+      }
+
       if (run_in_background) {
         if (!config.workspaceId || !config.backgroundProcessManager || !config.runtime) {
           return withNotice({
@@ -945,6 +955,40 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
             exitCode: -1,
             wall_duration_ms: 0,
           });
+        }
+
+        let monitorConfig: BackgroundProcessMonitorConfig | undefined;
+        let monitorResult:
+          | NonNullable<Extract<BashToolResult, { success: true; taskId: string }>["monitor"]>
+          | undefined;
+        if (monitor != null) {
+          let pattern: RegExp;
+          try {
+            pattern = new RegExp(monitor.filter);
+          } catch (error) {
+            return withNotice({
+              success: false,
+              error: `Invalid monitor filter regex: ${getErrorMessage(error)}`,
+              exitCode: -1,
+              wall_duration_ms: 0,
+            });
+          }
+
+          const filterExclude = monitor.filter_exclude ?? false;
+          const cooldownMs = monitor.cooldown_ms ?? 1000;
+          monitorConfig = {
+            filter: monitor.filter,
+            pattern,
+            exclude: filterExclude,
+            cooldownMs,
+            ...(monitor.max_events != null ? { maxEvents: monitor.max_events } : {}),
+          };
+          monitorResult = {
+            filter: monitor.filter,
+            filter_exclude: filterExclude,
+            cooldown_ms: cooldownMs,
+            ...(monitor.max_events != null ? { max_events: monitor.max_events } : {}),
+          };
         }
 
         const startTime = performance.now();
@@ -958,6 +1002,7 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
             env: { ...hooksEnv, ...(config.muxEnv ?? {}), ...(config.secrets ?? {}) },
             displayName: safeDisplayName,
             isForeground: false, // Explicit background
+            ...(monitorConfig ? { monitor: monitorConfig } : {}),
             timeoutSecs: timeout_secs, // Auto-terminate after this duration
           }
         );
@@ -973,11 +1018,14 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
 
         return withNotice({
           success: true,
-          output: `Background process started with ID: ${spawnResult.processId}`,
+          output: monitorResult
+            ? `Background process started with ID: ${spawnResult.processId}\nMonitor armed. Matching lines will be delivered as a wake message; no polling required.`
+            : `Background process started with ID: ${spawnResult.processId}`,
           exitCode: 0,
           wall_duration_ms: Math.round(performance.now() - startTime),
           taskId: toBashTaskId(spawnResult.processId),
           backgroundProcessId: spawnResult.processId,
+          ...(monitorResult ? { monitor: monitorResult } : {}),
         });
       }
 
