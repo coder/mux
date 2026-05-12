@@ -346,6 +346,8 @@ enum TurnPhase {
 
 type StartupAutoRetryCheckOutcome = "completed" | "deferred";
 
+type OptionalBackgroundMonitorEventSource = Partial<Pick<BackgroundProcessManager, "on" | "off">>;
+
 export class AgentSession {
   private readonly workspaceId: string;
   private readonly config: Config;
@@ -373,6 +375,7 @@ export class AgentSession {
 
   private idleWaiters: Array<() => void> = [];
   private readonly messageQueue = new MessageQueue();
+  private backgroundMonitorMatchSubscribed = false;
   private readonly backgroundMonitorMatchHandler = (
     workspaceId: string,
     payload: MonitorMatchPayload
@@ -624,7 +627,14 @@ export class AgentSession {
       (event) => this.emitRetryEvent(event)
     );
 
-    this.backgroundProcessManager.on("monitor:match", this.backgroundMonitorMatchHandler);
+    const backgroundMonitorEventSource: OptionalBackgroundMonitorEventSource =
+      this.backgroundProcessManager;
+    if (typeof backgroundMonitorEventSource.on === "function") {
+      // Some unit tests provide narrow BackgroundProcessManager doubles; production uses the
+      // real event emitter, but startup must remain resilient when optional wiring is absent.
+      backgroundMonitorEventSource.on("monitor:match", this.backgroundMonitorMatchHandler);
+      this.backgroundMonitorMatchSubscribed = true;
+    }
     this.attachAiListeners();
     this.attachInitListeners();
   }
@@ -650,7 +660,12 @@ export class AgentSession {
       void this.backgroundProcessManager.cleanup(this.workspaceId);
     }
 
-    this.backgroundProcessManager.off("monitor:match", this.backgroundMonitorMatchHandler);
+    if (this.backgroundMonitorMatchSubscribed) {
+      const backgroundMonitorEventSource: OptionalBackgroundMonitorEventSource =
+        this.backgroundProcessManager;
+      backgroundMonitorEventSource.off?.("monitor:match", this.backgroundMonitorMatchHandler);
+      this.backgroundMonitorMatchSubscribed = false;
+    }
     for (const { event, handler } of this.aiListeners) {
       this.aiService.off(event, handler as never);
     }
