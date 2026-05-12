@@ -15,7 +15,6 @@ import {
   LEFT_SIDEBAR_COLLAPSED_KEY,
   LEFT_SIDEBAR_WIDTH_KEY,
   RIGHT_SIDEBAR_COLLAPSED_KEY,
-  RIGHT_SIDEBAR_TAB_KEY,
   RIGHT_SIDEBAR_WIDTH_KEY,
 } from "@/common/constants/storage";
 import {
@@ -29,10 +28,13 @@ import {
   findFirstTabsetId,
   findTabset,
   getDefaultRightSidebarLayoutState,
-  parseRightSidebarLayoutState,
   type RightSidebarLayoutNode,
   type RightSidebarLayoutState,
 } from "@/browser/utils/rightSidebarLayout";
+import {
+  getRightSidebarTabFallback,
+  readRightSidebarLayout,
+} from "@/browser/utils/rightSidebarTabFocus";
 import { isTabType, makeTerminalTabType, type TabType } from "@/browser/types/rightSidebar";
 import { createTerminalSession } from "@/browser/utils/terminal";
 import type { APIClient } from "@/browser/contexts/API";
@@ -86,18 +88,6 @@ export function resolveRightSidebarWidthPx(width: RightSidebarWidthPreset): numb
 
   const viewportWidth = typeof window !== "undefined" ? window.innerWidth : 1200;
   return clampInt(viewportWidth * width.value, 300, 1200);
-}
-
-function getRightSidebarTabFallback(): TabType {
-  const raw = readPersistedState<string>(RIGHT_SIDEBAR_TAB_KEY, "costs");
-  return isTabType(raw) ? raw : "costs";
-}
-
-function readCurrentRightSidebarLayoutState(workspaceId: string): RightSidebarLayoutState {
-  const fallback = getRightSidebarTabFallback();
-  const defaultLayout = getDefaultRightSidebarLayoutState(fallback);
-  const raw = readPersistedState<unknown>(getRightSidebarLayoutKey(workspaceId), defaultLayout);
-  return parseRightSidebarLayoutState(raw, fallback);
 }
 
 function readCurrentRightSidebarCollapsed(): boolean {
@@ -223,7 +213,7 @@ function convertLayoutStateToPreset(state: RightSidebarLayoutState): RightSideba
 
   if (!root) {
     // Fallback to default layout without terminals.
-    const fallback = getDefaultRightSidebarLayoutState("costs");
+    const fallback = getDefaultRightSidebarLayoutState(getRightSidebarTabFallback());
     const fallbackRoot = convertNodeToPreset(fallback.root, { terminalCounter: 0 });
     assert(fallbackRoot !== null, "default right sidebar layout must convert");
     return {
@@ -259,7 +249,7 @@ export function createPresetFromCurrentWorkspace(
   const leftSidebarWidthPx = readCurrentLeftSidebarWidthPx();
   const rightSidebarCollapsed = readCurrentRightSidebarCollapsed();
   const rightSidebarWidthPx = readCurrentRightSidebarWidthPx();
-  const rightSidebarLayout = readCurrentRightSidebarLayoutState(workspaceId);
+  const rightSidebarLayout = readRightSidebarLayout(workspaceId);
 
   const presetLayout = convertLayoutStateToPreset(rightSidebarLayout);
 
@@ -397,7 +387,7 @@ function resolvePresetLayoutToLayoutState(
 ): RightSidebarLayoutState {
   const root = resolvePresetNodeToLayout(preset.root, mapping);
   if (!root) {
-    return getDefaultRightSidebarLayoutState("costs");
+    return getDefaultRightSidebarLayoutState(getRightSidebarTabFallback());
   }
 
   const focusedTabsetId =

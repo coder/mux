@@ -1,11 +1,4 @@
-import {
-  getDefaultRightSidebarLayoutState,
-  parseRightSidebarLayoutState,
-  selectOrAddTab,
-} from "@/browser/utils/rightSidebarLayout";
-import { getRightSidebarLayoutKey, RIGHT_SIDEBAR_TAB_KEY } from "@/common/constants/storage";
-import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
-import { isTabType, type TabType } from "@/browser/types/rightSidebar";
+import { focusRightSidebarTab } from "@/browser/utils/rightSidebarTabFocus";
 
 /**
  * Programmatically reveal the right-sidebar Instructions tab for a workspace.
@@ -16,16 +9,5 @@ import { isTabType, type TabType } from "@/browser/types/rightSidebar";
  * current tabset; otherwise it's added to the focused tabset.
  */
 export function focusInstructionsTab(workspaceId: string): void {
-  const fallback = getRightSidebarTabFallback();
-  const defaultLayout = getDefaultRightSidebarLayoutState(fallback);
-  updatePersistedState(
-    getRightSidebarLayoutKey(workspaceId),
-    (prev) => selectOrAddTab(parseRightSidebarLayoutState(prev, fallback), "instructions"),
-    defaultLayout
-  );
-}
-
-function getRightSidebarTabFallback(): TabType {
-  const raw = readPersistedState<string>(RIGHT_SIDEBAR_TAB_KEY, "costs");
-  return isTabType(raw) ? raw : "costs";
+  focusRightSidebarTab(workspaceId, "instructions");
 }

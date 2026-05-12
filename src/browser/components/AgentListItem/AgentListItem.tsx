@@ -1,5 +1,6 @@
 import { useTitleEdit } from "@/browser/contexts/WorkspaceTitleEditContext";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { focusRightSidebarTab } from "@/browser/utils/rightSidebarTabFocus";
 import { useContextMenuPosition } from "@/browser/hooks/useContextMenuPosition";
 import { useExperimentValue } from "@/browser/hooks/useExperiments";
 import {
@@ -20,9 +21,8 @@ import {
   normalizeTaskGroupLabel,
 } from "@/common/utils/tools/taskGroups";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
-import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { isDevcontainerRuntime } from "@/common/types/runtime";
-import { getWorkspaceLastReadKey } from "@/common/constants/storage";
+import { getWorkspaceLastReadKey, RIGHT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
 import type { GoalSnapshot } from "@/common/types/goal";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import React, { useState, useEffect, useRef, useCallback } from "react";
@@ -446,6 +446,11 @@ function getGoalPillText(goal: GoalSnapshot): string {
   return `Target  ${formatGoalCents(goal.costCents)}`;
 }
 
+function openGoalTabForWorkspace(workspaceId: string): void {
+  updatePersistedState(RIGHT_SIDEBAR_COLLAPSED_KEY, false);
+  focusRightSidebarTab(workspaceId, "goal");
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Regular Workspace Item (persisted workspace)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -700,6 +705,13 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
 
   const paddingLeft = getSidebarItemPaddingLeft(depth);
 
+  const workspaceSelection: WorkspaceSelection = {
+    projectPath,
+    projectName,
+    namedWorkspacePath,
+    workspaceId,
+  };
+
   // Drag handle for moving workspace between sections
   const [{ isDragging }, drag, dragPreview] = useDrag(
     () => ({
@@ -748,12 +760,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
         onClick={() => {
           if (isDisabled) return;
           if (ctxMenu.suppressClickIfLongPress()) return;
-          onSelectWorkspace({
-            projectPath,
-            projectName,
-            namedWorkspacePath,
-            workspaceId,
-          });
+          onSelectWorkspace(workspaceSelection);
         }}
         onDoubleClick={(event) => {
           if (isDisabled || isEditing) {
@@ -797,12 +804,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
           }
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
-            onSelectWorkspace({
-              projectPath,
-              projectName,
-              namedWorkspacePath,
-              workspaceId,
-            });
+            onSelectWorkspace(workspaceSelection);
           }
         }}
         onContextMenu={ctxMenu.onContextMenu}
@@ -1089,9 +1091,8 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                     data-testid={`workspace-goal-pill-${workspaceId}`}
                     onClick={(event) => {
                       event.stopPropagation();
-                      window.dispatchEvent(
-                        createCustomEvent(CUSTOM_EVENTS.OPEN_GOAL_TAB, { workspaceId })
-                      );
+                      openGoalTabForWorkspace(workspaceId);
+                      onSelectWorkspace(workspaceSelection);
                     }}
                     onKeyDown={stopKeyboardPropagation}
                   >

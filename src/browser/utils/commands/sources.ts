@@ -7,12 +7,8 @@ import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
 import { getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
 import assert from "@/common/utils/assert";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
-import {
-  getRightSidebarLayoutKey,
-  RIGHT_SIDEBAR_COLLAPSED_KEY,
-  RIGHT_SIDEBAR_TAB_KEY,
-} from "@/common/constants/storage";
-import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { RIGHT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { CommandIds } from "@/browser/utils/commandIds";
 import { isTabType, type TabType } from "@/browser/types/rightSidebar";
 import {
@@ -29,14 +25,17 @@ import { formatProjectHierarchyLabel, getTopLevelProjectEntries } from "@/common
 import type { LayoutPresetsConfig, LayoutSlotNumber } from "@/common/types/uiLayouts";
 import {
   addToolToFocusedTabset,
-  getDefaultRightSidebarLayoutState,
   hasTab,
-  parseRightSidebarLayoutState,
   selectTabInTabset,
   setFocusedTabset,
   splitFocusedTabset,
   toggleTab,
+  type RightSidebarLayoutState,
 } from "@/browser/utils/rightSidebarLayout";
+import {
+  readRightSidebarLayout,
+  updateRightSidebarLayout,
+} from "@/browser/utils/rightSidebarTabFocus";
 
 import type { ProjectConfig } from "@/node/config";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
@@ -141,36 +140,6 @@ const section = {
   goals: COMMAND_SECTIONS.GOALS,
 };
 
-const getRightSidebarTabFallback = (): TabType => {
-  const raw = readPersistedState<string>(RIGHT_SIDEBAR_TAB_KEY, "costs");
-  return isTabType(raw) ? raw : "costs";
-};
-
-const readRightSidebarLayout = (workspaceId: string) => {
-  const fallback = getRightSidebarTabFallback();
-  const raw = readPersistedState(
-    getRightSidebarLayoutKey(workspaceId),
-    getDefaultRightSidebarLayoutState(fallback)
-  );
-  return parseRightSidebarLayoutState(raw, fallback);
-};
-
-const updateRightSidebarLayout = (
-  workspaceId: string,
-  updater: (
-    state: ReturnType<typeof parseRightSidebarLayoutState>
-  ) => ReturnType<typeof parseRightSidebarLayoutState>
-) => {
-  const fallback = getRightSidebarTabFallback();
-  const defaultLayout = getDefaultRightSidebarLayoutState(fallback);
-
-  updatePersistedState<ReturnType<typeof parseRightSidebarLayoutState>>(
-    getRightSidebarLayoutKey(workspaceId),
-    (prev) => updater(parseRightSidebarLayoutState(prev, fallback)),
-    defaultLayout
-  );
-};
-
 function toFileUrl(filePath: string): string {
   const normalized = filePath.replace(/\\/g, "/");
 
@@ -235,7 +204,7 @@ const showCommandFeedbackToast = (feedback: {
 };
 
 const findFirstTerminalSessionTab = (
-  node: ReturnType<typeof parseRightSidebarLayoutState>["root"]
+  node: RightSidebarLayoutState["root"]
 ): { tabsetId: string; tab: TabType } | null => {
   if (node.type === "tabset") {
     const tab = node.tabs.find((t) => t.startsWith("terminal:") && t !== "terminal");
