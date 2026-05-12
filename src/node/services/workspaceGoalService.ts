@@ -43,6 +43,15 @@ function costUsdToMicroCents(costUsd: number | null | undefined): number {
   return Math.max(0, Math.round((costUsd ?? 0) * 100 * MICRO_CENTS_PER_CENT));
 }
 
+/**
+ * Returns the goal's accumulated cost in micro-cents, falling back to the
+ * coarser `costCents` field for goals persisted before micro-cent tracking
+ * was added.
+ */
+function getGoalCostMicroCents(goal: GoalRecordV1): number {
+  return goal.costMicroCents ?? goal.costCents * MICRO_CENTS_PER_CENT;
+}
+
 type GoalLifecycleEvent =
   | "goal_created"
   | "goal_replaced"
@@ -1022,8 +1031,7 @@ export class WorkspaceGoalService {
     if (budgetCents == null || !hasGoalBudgetLimit(budgetCents)) {
       return false;
     }
-    const costMicroCents = goal.costMicroCents ?? goal.costCents * MICRO_CENTS_PER_CENT;
-    return costMicroCents >= budgetCents * MICRO_CENTS_PER_CENT;
+    return getGoalCostMicroCents(goal) >= budgetCents * MICRO_CENTS_PER_CENT;
   }
 
   private hasReachedTurnLimit(goal: GoalRecordV1): boolean {
@@ -1038,8 +1046,7 @@ export class WorkspaceGoalService {
     goal: GoalRecordV1,
     costMicroCentsThisStream: number
   ): Pick<GoalRecordV1, "costCents" | "costMicroCents"> {
-    const costMicroCents =
-      (goal.costMicroCents ?? goal.costCents * MICRO_CENTS_PER_CENT) + costMicroCentsThisStream;
+    const costMicroCents = getGoalCostMicroCents(goal) + costMicroCentsThisStream;
     return {
       costCents: Math.round(costMicroCents / MICRO_CENTS_PER_CENT),
       costMicroCents,
