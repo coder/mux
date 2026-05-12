@@ -12,13 +12,15 @@ import { Err, Ok } from "@/common/types/result";
 
 const testPngBase64 =
   "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAHUlEQVR4nGNgYPj/nzLMMGoAw2gYMIyGwf9hEAYAMqb+ENPK2kcAAAAASUVORK5CYII=";
+const sharpInvalidPngBase64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lKrL7wAAAABJRU5ErkJggg==";
 
 function createMockImageModel(doGenerate: ImageModelV2["doGenerate"]): ImageModelV2 {
   return {
     specificationVersion: "v2",
     provider: "test",
     modelId: "test-image-model",
-    maxImagesPerCall: 1,
+    maxImagesPerCall: 10,
     doGenerate,
   };
 }
@@ -259,6 +261,80 @@ describe("image_generate tool", () => {
     expect(image.thumbnail).toMatchObject({ mediaType: "image/webp", width: 16, height: 16 });
     const artifactStats = await fs.stat(image.path);
     expect(artifactStats.isFile()).toBe(true);
+  });
+
+  test("writes multiple generated images with per-image thumbnails", async () => {
+    using workspaceDir = new TestTempDir("image-generate-workspace");
+    const tool = createImageGenerateTool({
+      ...createTestToolConfig(workspaceDir.path),
+      imageGenerationRuntime: {
+        modelString: "openai:gpt-image-1.5",
+        maxImagesPerCall: 4,
+        createImageModel: () =>
+          Promise.resolve(
+            Ok(
+              createMockImageModel(() =>
+                Promise.resolve({
+                  images: [testPngBase64, testPngBase64],
+                  warnings: [],
+                  response: { timestamp: new Date(), modelId: "test-image-model", headers: {} },
+                  providerMetadata: {},
+                })
+              )
+            )
+          ),
+      },
+    });
+
+    const result = (await tool.execute!(
+      { prompt: "Two tiny squares", n: 2 },
+      mockToolCallOptions
+    )) as ImageGenerateToolResult;
+
+    if (!result.success) {
+      throw new Error(`Expected image_generate to succeed, got ${result.error}`);
+    }
+    expect(result.requestedCount).toBe(2);
+    expect(result.images).toHaveLength(2);
+    expect(result.images.map((image) => image.filename)).toEqual(["image-1.png", "image-2.png"]);
+    expect(result.images.every((image) => image.thumbnail?.mediaType === "image/webp")).toBe(true);
+    await Promise.all(result.images.map((image) => fs.stat(image.path)));
+  });
+
+  test("keeps generated image results when thumbnail creation fails", async () => {
+    using workspaceDir = new TestTempDir("image-generate-workspace");
+    const tool = createImageGenerateTool({
+      ...createTestToolConfig(workspaceDir.path),
+      imageGenerationRuntime: {
+        modelString: "openai:gpt-image-1.5",
+        maxImagesPerCall: 2,
+        createImageModel: () =>
+          Promise.resolve(
+            Ok(
+              createMockImageModel(() =>
+                Promise.resolve({
+                  images: [sharpInvalidPngBase64],
+                  warnings: [],
+                  response: { timestamp: new Date(), modelId: "test-image-model", headers: {} },
+                  providerMetadata: {},
+                })
+              )
+            )
+          ),
+      },
+    });
+
+    const result = (await tool.execute!(
+      { prompt: "A tiny square", n: 1 },
+      mockToolCallOptions
+    )) as ImageGenerateToolResult;
+
+    if (!result.success) {
+      throw new Error(`Expected image_generate to succeed, got ${result.error}`);
+    }
+    expect(result.images).toHaveLength(1);
+    expect(result.images[0]?.thumbnail).toBeUndefined();
+    expect(result.warnings?.[0]).toContain("Thumbnail generation failed for image-1.png");
   });
 
   test("returns a setup hint when the provider image request fails", async () => {
