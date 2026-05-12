@@ -143,7 +143,12 @@ export class MessageQueue {
     const incomingIsCompaction = isCompactionMetadata(options?.muxMetadata);
     const incomingIsAgentSkill = isAgentSkillMetadata(options?.muxMetadata);
     const queueHasMessages = !this.isEmpty();
-    const incomingMode = options?.queueDispatchMode ?? "tool-end";
+    // When a caller explicitly omits options entirely (e.g. a synthetic monitor wake appended
+    // to an already-queued user message), preserve the existing dispatch mode rather than
+    // collapsing it back to "tool-end". Callers that pass options are still responsible for
+    // setting queueDispatchMode if they want to broaden the mode.
+    const incomingMode =
+      options?.queueDispatchMode ?? (queueHasMessages ? this.queueDispatchMode : "tool-end");
     const nextQueueDispatchMode = !queueHasMessages
       ? incomingMode
       : incomingMode === "tool-end"

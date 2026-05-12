@@ -270,6 +270,19 @@ describe("MessageQueue", () => {
 
       expect(queue.getQueueDispatchMode()).toBe("tool-end");
     });
+
+    it("preserves the existing dispatch mode when subsequent add omits options", () => {
+      queue.add("User message", {
+        model: "claude-3-5-sonnet-20241022",
+        agentId: "exec",
+        queueDispatchMode: "turn-end",
+      });
+
+      // A synthetic wake without explicit options must not flip the queue from turn-end → tool-end.
+      queue.add("Synthetic wake", undefined, { synthetic: true });
+
+      expect(queue.getQueueDispatchMode()).toBe("turn-end");
+    });
   });
 
   describe("addOnce", () => {
