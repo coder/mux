@@ -265,7 +265,7 @@ describe("MessageRenderer generated image rows", () => {
 
     const { getByAltText, getByText } = render(<MessageRenderer message={message} />);
 
-    expect(getByText("Generated image")).toBeDefined();
+    expect(getByText("Generated image preview")).toBeDefined();
     expect(getByText("openai:gpt-image-1.5")).toBeDefined();
     expect(getByText("A soft gradient orb")).toBeDefined();
     expect(getByText("/tmp/mux/imagegen/tool-1/image-1.png")).toBeDefined();

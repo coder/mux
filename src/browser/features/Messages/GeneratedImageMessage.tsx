@@ -38,7 +38,7 @@ export function GeneratedImageMessage(props: GeneratedImageMessageProps) {
         <div className="mb-2 flex items-center gap-2">
           <ImageIcon className="text-muted h-4 w-4" aria-hidden="true" />
           <div className="text-foreground text-sm font-medium">
-            Generated image {imageCount === 1 ? "preview" : "previews"}
+            Generated {imageCount === 1 ? "image preview" : `${imageCount} image previews`}
           </div>
           <div className="text-muted text-xs">{props.message.model}</div>
         </div>

@@ -383,7 +383,7 @@ export const GeneratedImages: AppStory = {
 
 GeneratedImages.play = async ({ canvasElement }) => {
   const canvas = within(canvasElement);
-  await expect(canvas.findByText("Generated 3 images")).resolves.toBeInTheDocument();
+  await expect(canvas.findByText("Generated 3 image previews")).resolves.toBeInTheDocument();
   await expect(canvas.findByAltText("Generated image 3")).resolves.toBeInTheDocument();
   await userEvent.click(await canvas.findByAltText("Generated image 2"));
   const body = within(document.body);
