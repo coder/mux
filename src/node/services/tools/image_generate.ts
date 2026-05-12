@@ -208,11 +208,12 @@ export const createImageGenerateTool: ToolFactory = (config) => {
           }
         }
 
+        const muxHome = await config.runtime.resolvePath(config.runtime.getMuxHome());
         const workspaceSegment = sanitizePathSegment(config.workspaceId ?? "workspace");
         const callSegment = sanitizePathSegment(toolCallId ?? `image_${Date.now()}`);
         const outputDir = config.runtime.normalizePath(
           path.posix.join("generated_images", workspaceSegment, callSegment),
-          config.runtime.getMuxHome()
+          muxHome
         );
         await config.runtime.ensureDir(outputDir);
 
