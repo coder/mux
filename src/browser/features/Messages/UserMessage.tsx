@@ -5,7 +5,7 @@ import type { ButtonConfig } from "./MessageWindow";
 import { MessageWindow } from "./MessageWindow";
 import { UserMessageContent } from "./UserMessageContent";
 import { GoalSyntheticMessageContent } from "./GoalSyntheticMessageContent";
-import { MonitorWakeMessage, parseMonitorWakeMessage } from "./MonitorWakeMessage";
+import { MonitorWakeMessage, parseMonitorWakeMessages } from "./MonitorWakeMessage";
 import { TerminalOutput } from "./TerminalOutput";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
@@ -80,8 +80,9 @@ export const UserMessage: React.FC<UserMessageProps> = ({
 
   // Monitor wakes are queued synthetically by AgentSession and arrive as `<monitor-event …>`
   // XML so the model has structured context. Detect them here to render an inline system card
-  // instead of leaking the raw XML to the user.
-  const monitorWakeEvent = parseMonitorWakeMessage(content);
+  // instead of leaking the raw XML to the user. Multiple events can be batched together when a
+  // busy session flushes more than one wake at once, so render one card per parsed block.
+  const monitorWakeEvents = parseMonitorWakeMessages(content);
 
   // Copy to clipboard with feedback
   const { copied, copyToClipboard } = useCopyToClipboard(clipboardWriteText);
@@ -169,7 +170,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
         goal continuation
       </span>
     );
-  } else if (monitorWakeEvent) {
+  } else if (monitorWakeEvents) {
     label = (
       <span className="bg-muted/20 text-muted flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase">
         <Radio aria-hidden="true" className="h-3 w-3" />
@@ -190,8 +191,14 @@ export const UserMessage: React.FC<UserMessageProps> = ({
   );
 
   let renderedContent: React.ReactNode;
-  if (monitorWakeEvent) {
-    renderedContent = <MonitorWakeMessage event={monitorWakeEvent} />;
+  if (monitorWakeEvents) {
+    renderedContent = (
+      <div className="space-y-2">
+        {monitorWakeEvents.map((event, index) => (
+          <MonitorWakeMessage key={`${event.taskId}-${index}`} event={event} />
+        ))}
+      </div>
+    );
   } else if (isLocalCommandOutput) {
     renderedContent = <TerminalOutput output={extractedOutput} isError={false} />;
   } else if (isGoalContinuation || isBudgetLimitWrapup) {

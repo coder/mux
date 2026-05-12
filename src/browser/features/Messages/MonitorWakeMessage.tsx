@@ -18,20 +18,14 @@ const MONITOR_OPEN_TAG = "<monitor-event";
 const MONITOR_CLOSE_TAG = "</monitor-event>";
 const ATTRIBUTE_PATTERN = /(\w[\w-]*)="([^"]*)"/g;
 const LINE_PATTERN = /<line>([\s\S]*?)<\/line>/g;
+// Matches one full `<monitor-event …>…</monitor-event>` block, used to split batched payloads
+// produced when multiple wake events are queued before a busy session flushes them together.
+const MONITOR_BLOCK_PATTERN = /<monitor-event\b[^>]*>[\s\S]*?<\/monitor-event>/g;
 
-/**
- * Detect and parse the synthetic monitor wake message produced by AgentSession.
- * Returns null when `content` is not a complete `<monitor-event …>` block.
- */
-export function parseMonitorWakeMessage(content: string): MonitorWakeEvent | null {
-  const trimmed = content.trim();
-  if (!trimmed.startsWith(MONITOR_OPEN_TAG) || !trimmed.endsWith(MONITOR_CLOSE_TAG)) {
-    return null;
-  }
-
-  const closeBracket = trimmed.indexOf(">");
+function parseSingleMonitorBlock(block: string): MonitorWakeEvent | null {
+  const closeBracket = block.indexOf(">");
   if (closeBracket === -1) return null;
-  const openTag = trimmed.slice(MONITOR_OPEN_TAG.length, closeBracket);
+  const openTag = block.slice(MONITOR_OPEN_TAG.length, closeBracket);
 
   const attributes = new Map<string, string>();
   ATTRIBUTE_PATTERN.lastIndex = 0;
@@ -51,7 +45,7 @@ export function parseMonitorWakeMessage(content: string): MonitorWakeEvent | nul
       ? Number.parseInt(droppedRaw, 10)
       : undefined;
 
-  const body = trimmed.slice(closeBracket + 1, -MONITOR_CLOSE_TAG.length);
+  const body = block.slice(closeBracket + 1, -MONITOR_CLOSE_TAG.length);
   const lines: string[] = [];
   LINE_PATTERN.lastIndex = 0;
   for (const match of body.matchAll(LINE_PATTERN)) {
@@ -67,6 +61,37 @@ export function parseMonitorWakeMessage(content: string): MonitorWakeEvent | nul
     ...(droppedLines !== undefined && { droppedLines }),
     lines,
   };
+}
+
+/**
+ * Detect and parse one or more synthetic monitor wake messages produced by AgentSession.
+ * Returns null when `content` is not exclusively `<monitor-event …>` blocks; otherwise returns
+ * one parsed event per block so concurrent wakes from different processes render distinctly.
+ */
+export function parseMonitorWakeMessages(content: string): MonitorWakeEvent[] | null {
+  const trimmed = content.trim();
+  if (!trimmed.startsWith(MONITOR_OPEN_TAG) || !trimmed.endsWith(MONITOR_CLOSE_TAG)) {
+    return null;
+  }
+
+  MONITOR_BLOCK_PATTERN.lastIndex = 0;
+  const blocks = trimmed.match(MONITOR_BLOCK_PATTERN);
+  if (!blocks || blocks.length === 0) return null;
+
+  // Reject any text outside of `<monitor-event>` blocks so we don't silently drop content
+  // (which would also let a malicious user message masquerade as a monitor wake).
+  const joined = blocks.join("\n");
+  if (joined.replace(/\s+/g, "") !== trimmed.replace(/\s+/g, "")) {
+    return null;
+  }
+
+  const events: MonitorWakeEvent[] = [];
+  for (const block of blocks) {
+    const event = parseSingleMonitorBlock(block);
+    if (!event) return null;
+    events.push(event);
+  }
+  return events;
 }
 
 interface MonitorWakeMessageProps {
