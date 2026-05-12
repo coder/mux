@@ -289,19 +289,29 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
     }, monitor.cooldownMs);
   }
 
-  private truncateMonitorLine(line: string): string {
-    if (Buffer.byteLength(line, "utf8") <= BASH_MAX_LINE_BYTES) return line;
-
+  private truncateUtf8Prefix(value: string, maxBytes: number): string {
     let bytes = 0;
     let endIndex = 0;
-    for (const char of line) {
+    for (const char of value) {
       const charBytes = Buffer.byteLength(char, "utf8");
-      if (bytes + charBytes > BASH_MAX_LINE_BYTES) break;
+      if (bytes + charBytes > maxBytes) break;
       bytes += charBytes;
       endIndex += char.length;
     }
 
-    return `${line.slice(0, endIndex)}… [truncated]`;
+    return value.slice(0, endIndex);
+  }
+
+  private truncateMonitorLine(line: string): string {
+    if (Buffer.byteLength(line, "utf8") <= BASH_MAX_LINE_BYTES) return line;
+
+    return `${this.truncateUtf8Prefix(line, BASH_MAX_LINE_BYTES)}… [truncated]`;
+  }
+
+  private boundMonitorIncompleteLineBuffer(line: string): string {
+    if (Buffer.byteLength(line, "utf8") <= BASH_MAX_LINE_BYTES) return line;
+
+    return this.truncateUtf8Prefix(line, BASH_MAX_LINE_BYTES);
   }
 
   private recordMonitorMatch(proc: BackgroundProcess, line: string): void {
@@ -360,9 +370,8 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
       }
       monitor.incompleteLineBuffer = "";
     } else {
-      monitor.incompleteLineBuffer = hasTrailingNewline
-        ? ""
-        : (allLines[allLines.length - 1] ?? "");
+      const incompleteLine = hasTrailingNewline ? "" : (allLines[allLines.length - 1] ?? "");
+      monitor.incompleteLineBuffer = this.boundMonitorIncompleteLineBuffer(incompleteLine);
     }
 
     for (const line of completeLines) {

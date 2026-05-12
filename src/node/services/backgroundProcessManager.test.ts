@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import {
   BackgroundProcessManager,
@@ -14,6 +15,7 @@ import { createBashTool } from "@/node/services/tools/bash";
 import { createBashOutputTool } from "@/node/services/tools/bash_output";
 import { TestTempDir, createTestToolConfig } from "@/node/services/tools/testHelpers";
 import type { BashToolResult, BashOutputToolResult } from "@/common/types/tools";
+import { BASH_MAX_LINE_BYTES } from "@/common/constants/toolLimits";
 
 function waitForMonitorMatch(
   manager: BackgroundProcessManager,
@@ -243,6 +245,39 @@ describe("BackgroundProcessManager", () => {
       const proc = await manager.getProcess(result.processId);
       expect(proc?.status).toBe("running");
       expect(proc ? manager.getMonitorSnapshot(proc)?.totalMatches : undefined).toBe(1);
+    });
+
+    it("bounds incomplete monitor lines while a process keeps running", async () => {
+      const longByteCount = BASH_MAX_LINE_BYTES * 2;
+      const result = await manager.spawn(
+        runtime,
+        testWorkspaceId,
+        `bun -e "process.stdout.write('A'.repeat(${longByteCount})); setTimeout(() => {}, 2000)"`,
+        {
+          cwd: process.cwd(),
+          displayName: "monitor-incomplete-bound",
+          monitor: {
+            filter: "NEVER_MATCHES",
+            pattern: /NEVER_MATCHES/,
+            exclude: false,
+            cooldownMs: 0,
+          },
+        }
+      );
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      let incompleteLineBytes = 0;
+      for (let attempt = 0; attempt < 20; attempt++) {
+        const proc = await manager.getProcess(result.processId);
+        incompleteLineBytes = Buffer.byteLength(proc?.monitor?.incompleteLineBuffer ?? "", "utf8");
+        if (incompleteLineBytes > 0) break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+
+      expect(incompleteLineBytes).toBeGreaterThan(0);
+      expect(incompleteLineBytes).toBeLessThanOrEqual(BASH_MAX_LINE_BYTES);
     });
   });
 
