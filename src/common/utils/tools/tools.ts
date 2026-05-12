@@ -410,6 +410,9 @@ export async function getToolsForModel(
   // Runtime-dependent tools need to wait for workspace initialization
   // Wrap them to handle init waiting centrally instead of in each tool
   const runtimeTools: Record<string, Tool> = {
+    ...(config.imageGenerationRuntime
+      ? { image_generate: wrap(createImageGenerateTool(config)) }
+      : {}),
     file_read: wrap(createFileReadTool(config)),
     attach_file: wrap(createAttachFileTool(config)),
     agent_skill_read: wrap(createAgentSkillReadTool(config)),
@@ -452,7 +455,6 @@ export async function getToolsForModel(
     skills_catalog_search: createSkillsCatalogSearchTool(config),
     skills_catalog_read: createSkillsCatalogReadTool(config),
     ...(config.advisorRuntime ? { advisor: createAdvisorTool(config) } : {}),
-    ...(config.imageGenerationRuntime ? { image_generate: createImageGenerateTool(config) } : {}),
     ask_user_question: createAskUserQuestionTool(config),
     propose_plan: createProposePlanTool(config),
     // propose_name and propose_status are intentionally NOT registered here —
