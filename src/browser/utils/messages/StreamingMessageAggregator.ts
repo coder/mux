@@ -36,6 +36,7 @@ import type { StreamErrorType } from "@/common/types/errors";
 import type { ImageGenerateToolResult } from "@/common/types/tools";
 import type { TodoItem, StatusSetToolResult, NotifyToolResult } from "@/common/types/tools";
 import { completeInProgressTodoItems } from "@/common/utils/todoList";
+import { ImageGenerateToolResultSchema } from "@/common/utils/tools/toolDefinitions";
 import { getToolOutputUiOnly } from "@/common/utils/tools/toolOutputUiOnly";
 
 import { computePriorHistoryFingerprint } from "@/common/orpc/onChatCursorFingerprint";
@@ -168,76 +169,8 @@ interface PendingCompactionRequest {
 function isSuccessfulImageGenerateResult(
   result: unknown
 ): result is Extract<ImageGenerateToolResult, { success: true }> {
-  if (typeof result !== "object" || result === null) return false;
-  const candidate = result as {
-    success?: unknown;
-    model?: unknown;
-    prompt?: unknown;
-    images?: unknown;
-    warnings?: unknown;
-  };
-  if (
-    candidate.success !== true ||
-    typeof candidate.model !== "string" ||
-    typeof candidate.prompt !== "string" ||
-    !Array.isArray(candidate.images) ||
-    candidate.images.length === 0
-  ) {
-    return false;
-  }
-
-  if (candidate.warnings !== undefined && !Array.isArray(candidate.warnings)) {
-    return false;
-  }
-  if (
-    Array.isArray(candidate.warnings) &&
-    !candidate.warnings.every((warning) => typeof warning === "string")
-  ) {
-    return false;
-  }
-
-  return candidate.images.every((image) => {
-    if (typeof image !== "object" || image === null) {
-      return false;
-    }
-    const item = image as {
-      path?: unknown;
-      filename?: unknown;
-      mediaType?: unknown;
-      thumbnail?: unknown;
-      revisedPrompt?: unknown;
-    };
-    if (
-      typeof item.path !== "string" ||
-      typeof item.filename !== "string" ||
-      typeof item.mediaType !== "string"
-    ) {
-      return false;
-    }
-    if (item.revisedPrompt !== undefined && typeof item.revisedPrompt !== "string") {
-      return false;
-    }
-    if (item.thumbnail === undefined) {
-      return true;
-    }
-    if (typeof item.thumbnail !== "object" || item.thumbnail === null) {
-      return false;
-    }
-    const thumbnail = item.thumbnail as {
-      data?: unknown;
-      mediaType?: unknown;
-      width?: unknown;
-      height?: unknown;
-    };
-    return (
-      typeof thumbnail.data === "string" &&
-      typeof thumbnail.mediaType === "string" &&
-      typeof thumbnail.width === "number" &&
-      thumbnail.width > 0 &&
-      typeof thumbnail.height === "number" &&
-      thumbnail.height > 0
-    );
-  });
+  const parsed = ImageGenerateToolResultSchema.safeParse(result);
+  return parsed.success && parsed.data.success;
 }
 
 /**

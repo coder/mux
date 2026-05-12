@@ -2,12 +2,7 @@ import React, { useState } from "react";
 import { isValidBase64AttachmentData } from "@/common/utils/attachments/base64";
 import { isToolContentResult } from "@/common/utils/tools/toolContentResult";
 import { TooltipIfPresent } from "@/browser/components/Tooltip/Tooltip";
-import {
-  Dialog,
-  DialogContent,
-  DialogTitle,
-  VisuallyHidden,
-} from "@/browser/components/Dialog/Dialog";
+import { ImageLightbox } from "@/browser/components/ImageLightbox";
 
 /**
  * Image content from MCP tool results (transformed from MCP's image type to AI SDK's media type)
@@ -111,25 +106,12 @@ export const ToolResultImages: React.FC<ToolResultImagesProps> = ({ result }) =>
         ))}
       </div>
 
-      {/* Lightbox modal for full-size image viewing */}
-      <Dialog open={selectedImage !== null} onOpenChange={() => setSelectedImage(null)}>
-        <DialogContent
-          maxWidth="90vw"
-          maxHeight="90vh"
-          className="flex items-center justify-center bg-black/90 p-2"
-        >
-          <VisuallyHidden>
-            <DialogTitle>Image Preview</DialogTitle>
-          </VisuallyHidden>
-          {selectedImage && (
-            <img
-              src={selectedImage}
-              alt="Full size preview"
-              className="max-h-[85vh] max-w-full object-contain"
-            />
-          )}
-        </DialogContent>
-      </Dialog>
+      <ImageLightbox
+        src={selectedImage}
+        title="Image Preview"
+        alt="Full size preview"
+        onClose={() => setSelectedImage(null)}
+      />
     </>
   );
 };

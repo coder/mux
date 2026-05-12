@@ -1,10 +1,26 @@
+import * as fs from "fs/promises";
+
 import { describe, expect, test } from "bun:test";
 import type { ToolExecutionOptions } from "ai";
+import type { ImageModelV2 } from "@ai-sdk/provider";
 
 import type { ImageGenerateToolResult } from "@/common/types/tools";
 import { createImageGenerateTool } from "./image_generate";
 import { TestTempDir, createTestToolConfig } from "./testHelpers";
 import { Err, Ok } from "@/common/types/result";
+
+const testPngBase64 =
+  "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAHUlEQVR4nGNgYPj/nzLMMGoAw2gYMIyGwf9hEAYAMqb+ENPK2kcAAAAASUVORK5CYII=";
+
+function createMockImageModel(doGenerate: ImageModelV2["doGenerate"]): ImageModelV2 {
+  return {
+    specificationVersion: "v2",
+    provider: "test",
+    modelId: "test-image-model",
+    maxImagesPerCall: 1,
+    doGenerate,
+  };
+}
 
 const mockToolCallOptions: ToolExecutionOptions = {
   toolCallId: "image-tool-call",
@@ -59,16 +75,10 @@ describe("image_generate tool", () => {
         maxImagesPerCall: 2,
         createImageModel: () =>
           Promise.resolve(
-            Ok({
-              specificationVersion: "v2",
-              provider: "test",
-              modelId: "test-image-model",
-              maxImagesPerCall: 1,
-              doGenerate: () =>
+            Ok(
+              createMockImageModel(() =>
                 Promise.resolve({
-                  images: [
-                    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lKrL7wAAAABJRU5ErkJggg==",
-                  ],
+                  images: [testPngBase64],
                   warnings: [],
                   response: { timestamp: new Date(), modelId: "test-image-model", headers: {} },
                   providerMetadata: {
@@ -76,8 +86,9 @@ describe("image_generate tool", () => {
                       images: [{ textTokens: 7, imageTokens: 11 }],
                     },
                   },
-                }),
-            } as never)
+                })
+              )
+            )
           ),
       },
     });
@@ -206,21 +217,16 @@ describe("image_generate tool", () => {
         maxImagesPerCall: 2,
         createImageModel: () =>
           Promise.resolve(
-            Ok({
-              specificationVersion: "v2",
-              provider: "test",
-              modelId: "test-image-model",
-              maxImagesPerCall: 1,
-              doGenerate: () =>
+            Ok(
+              createMockImageModel(() =>
                 Promise.resolve({
-                  images: [
-                    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lKrL7wAAAABJRU5ErkJggg==",
-                  ],
+                  images: [testPngBase64],
                   warnings: [],
                   response: { timestamp: new Date(), modelId: "test-image-model", headers: {} },
                   providerMetadata: {},
-                }),
-            } as never)
+                })
+              )
+            )
           ),
       },
     });
@@ -233,8 +239,87 @@ describe("image_generate tool", () => {
     if (!result.success) {
       throw new Error(`Expected image_generate to succeed, got ${result.error}`);
     }
-    expect(result.success).toBe(true);
-    expect(result.images[0]?.path).toContain("generated_images/test-workspace/image-tool-call");
-    expect(result.images[0]?.path).not.toContain("imagegen/image-tool-call");
+    expect(result).toMatchObject({
+      success: true,
+      model: "openai:gpt-image-1.5",
+      prompt: "A tiny square",
+      requestedCount: 1,
+    });
+    expect(result.images).toHaveLength(1);
+    const image = result.images[0];
+    expect(image).toBeDefined();
+    if (!image) {
+      throw new Error("Expected a generated image result");
+    }
+    expect(image.path).toContain("generated_images/test-workspace/image-tool-call");
+    expect(image.path).not.toContain("imagegen/image-tool-call");
+    expect(image.filename).toBe("image-1.png");
+    expect(image.mediaType).toBe("image/png");
+    expect(image.thumbnail).toMatchObject({ mediaType: "image/webp", width: 16, height: 16 });
+    const artifactStats = await fs.stat(image.path);
+    expect(artifactStats.isFile()).toBe(true);
+  });
+
+  test("returns a setup hint when the provider image request fails", async () => {
+    using workspaceDir = new TestTempDir("image-generate-workspace");
+    const tool = createImageGenerateTool({
+      ...createTestToolConfig(workspaceDir.path),
+      imageGenerationRuntime: {
+        modelString: "openai:gpt-image-1.5",
+        maxImagesPerCall: 2,
+        createImageModel: () =>
+          Promise.resolve(
+            Ok(createMockImageModel(() => Promise.reject(new Error("rate limit exceeded"))))
+          ),
+      },
+    });
+
+    const result = (await tool.execute!(
+      { prompt: "A tiny square", n: 1 },
+      mockToolCallOptions
+    )) as ImageGenerateToolResult;
+
+    expect(result.success).toBe(false);
+    if (result.success) {
+      throw new Error("Expected provider failure");
+    }
+    expect(result.error).toContain("rate limit exceeded");
+    expect(result.setupHint).toContain("credentials, billing, rate limits, and content policy");
+  });
+
+  test("fails when the provider returns zero images", async () => {
+    using workspaceDir = new TestTempDir("image-generate-workspace");
+    const tool = createImageGenerateTool({
+      ...createTestToolConfig(workspaceDir.path),
+      imageGenerationRuntime: {
+        modelString: "openai:gpt-image-1.5",
+        maxImagesPerCall: 2,
+        createImageModel: () =>
+          Promise.resolve(
+            Ok(
+              createMockImageModel(() =>
+                Promise.resolve({
+                  images: [],
+                  warnings: [],
+                  response: { timestamp: new Date(), modelId: "test-image-model", headers: {} },
+                  providerMetadata: {},
+                })
+              )
+            )
+          ),
+      },
+    });
+
+    const result = (await tool.execute!(
+      { prompt: "A tiny square", n: 1 },
+      mockToolCallOptions
+    )) as ImageGenerateToolResult;
+
+    expect(result.success).toBe(false);
+    if (result.success) {
+      throw new Error("Expected zero-image provider response to fail");
+    }
+    expect(result.error).toContain("No image generated");
+    expect(result.setupHint).toContain("credentials, billing, rate limits, and content policy");
   });
 });

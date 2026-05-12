@@ -183,7 +183,8 @@ function formatImageModelError(error: unknown): { error: string; setupHint?: str
     case "api_key_not_found":
       return {
         error: "Image generation requires an OpenAI API key.",
-        setupHint: "Configure OpenAI in Settings → Providers or set OPENAI_API_KEY.",
+        setupHint:
+          "Configure an OpenAI API key in Settings > Providers or set OPENAI_API_KEY; Codex OAuth does not currently provide image-generation credentials.",
       };
     case "provider_disabled":
       return {
@@ -298,6 +299,15 @@ export const createImageGenerateTool: ToolFactory = (config) => {
               error: getErrorMessage(error),
             });
           }
+        }
+
+        if (result.images.length === 0) {
+          return {
+            success: false,
+            error: "Image generation failed: provider returned no images.",
+            setupHint:
+              "Try again or choose a different OpenAI image model in Settings > Experiments > Image Generation Tool.",
+          } satisfies ImageGenerateToolResult;
         }
 
         const muxHome = await config.runtime.resolvePath(config.runtime.getMuxHome());

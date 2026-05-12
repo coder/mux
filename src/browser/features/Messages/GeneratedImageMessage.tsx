@@ -2,12 +2,7 @@ import { useState } from "react";
 import { Image as ImageIcon } from "lucide-react";
 
 import { CopyButton } from "@/browser/components/CopyButton/CopyButton";
-import {
-  Dialog,
-  DialogContent,
-  DialogTitle,
-  VisuallyHidden,
-} from "@/browser/components/Dialog/Dialog";
+import { ImageLightbox } from "@/browser/components/ImageLightbox";
 import type { DisplayedMessage } from "@/common/types/message";
 import { isValidBase64AttachmentData } from "@/common/utils/attachments/base64";
 
@@ -43,7 +38,7 @@ export function GeneratedImageMessage(props: GeneratedImageMessageProps) {
         <div className="mb-2 flex items-center gap-2">
           <ImageIcon className="text-muted h-4 w-4" aria-hidden="true" />
           <div className="text-foreground text-sm font-medium">
-            Generated {imageCount === 1 ? "image" : `${imageCount} images`}
+            Generated image {imageCount === 1 ? "preview" : "previews"}
           </div>
           <div className="text-muted text-xs">{props.message.model}</div>
         </div>
@@ -100,24 +95,12 @@ export function GeneratedImageMessage(props: GeneratedImageMessageProps) {
         )}
       </div>
 
-      <Dialog open={selectedImage !== null} onOpenChange={() => setSelectedImage(null)}>
-        <DialogContent
-          maxWidth="90vw"
-          maxHeight="90vh"
-          className="flex w-auto items-center justify-center bg-black/90 p-2"
-        >
-          <VisuallyHidden>
-            <DialogTitle>Generated image preview</DialogTitle>
-          </VisuallyHidden>
-          {selectedImage && (
-            <img
-              src={selectedImage}
-              alt="Generated image preview"
-              className="max-h-[85vh] max-w-full object-contain"
-            />
-          )}
-        </DialogContent>
-      </Dialog>
+      <ImageLightbox
+        src={selectedImage}
+        title="Generated image preview"
+        alt="Generated image preview"
+        onClose={() => setSelectedImage(null)}
+      />
     </div>
   );
 }

@@ -137,6 +137,7 @@ export interface TaskCreateArgs {
   experiments?: {
     programmaticToolCalling?: boolean;
     programmaticToolCallingExclusive?: boolean;
+    imageGenerationTool?: boolean;
     goals?: boolean;
     execSubagentHardRestart?: boolean;
   };

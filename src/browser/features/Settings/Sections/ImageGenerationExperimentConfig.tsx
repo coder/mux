@@ -263,6 +263,7 @@ export function ImageGenerationExperimentConfig() {
             setModelDraft(event.target.value)
           }
           placeholder={DEFAULT_IMAGE_GENERATION_MODEL}
+          disabled={loadFailed}
           className="border-border-medium bg-background-secondary h-9 w-72"
         />
       </div>
@@ -282,6 +283,7 @@ export function ImageGenerationExperimentConfig() {
           }
           onBlur={handleMaxImagesBlur}
           inputMode="numeric"
+          disabled={loadFailed}
           className="border-border-medium bg-background-secondary h-9 w-24"
         />
       </div>
