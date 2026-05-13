@@ -289,6 +289,8 @@ export interface ProviderConfiguredPayload {
  */
 export type TelemetryCommandType =
   | "clear"
+  | "clear:hard"
+  | "clear:soft"
   | "compact"
   | "new"
   | "fork"

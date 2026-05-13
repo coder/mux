@@ -254,6 +254,354 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
     }
   });
 
+  test("context reset appends a boundary and preserves transcript history", async () => {
+    const { config, historyService, workspaceService, cleanup } = await createServices();
+    const workspaceId = "context-reset-preserves-history";
+    try {
+      await config.addWorkspace("/tmp/context-reset-project", {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "context-reset-project",
+        projectPath: "/tmp/context-reset-project",
+        runtimeConfig: { type: "local" },
+      });
+      expect(
+        (
+          await historyService.appendToHistory(
+            workspaceId,
+            createMuxMessage("pre-reset-user", "user", "before reset", {})
+          )
+        ).success
+      ).toBe(true);
+
+      const result = await workspaceService.resetContext(workspaceId);
+
+      expect(result).toEqual({ success: true, data: "reset" });
+      const activeWindow = await historyService.getHistoryFromLatestBoundary(workspaceId);
+      expect(activeWindow.success).toBe(true);
+      const activeIds = activeWindow.success ? activeWindow.data.map((message) => message.id) : [];
+      expect(activeIds).toHaveLength(1);
+      expect(activeIds[0]?.startsWith("context-reset-")).toBe(true);
+      expect(
+        activeWindow.success ? activeWindow.data[0]?.metadata?.contextBoundaryKind : undefined
+      ).toBe("reset");
+
+      const allMessages: string[] = [];
+      const iterateResult = await historyService.iterateFullHistory(
+        workspaceId,
+        "forward",
+        (messages) => {
+          allMessages.push(...messages.map((message) => message.id));
+        }
+      );
+      expect(iterateResult.success).toBe(true);
+      expect(allMessages).toHaveLength(2);
+      expect(allMessages[0]).toBe("pre-reset-user");
+      expect(allMessages[1]?.startsWith("context-reset-")).toBe(true);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("context reset is a no-op when repeated without provider-eligible messages", async () => {
+    const { config, historyService, workspaceService, cleanup } = await createServices();
+    const workspaceId = "context-reset-noop";
+    try {
+      await config.addWorkspace("/tmp/context-reset-noop-project", {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "context-reset-noop-project",
+        projectPath: "/tmp/context-reset-noop-project",
+        runtimeConfig: { type: "local" },
+      });
+      expect(
+        (
+          await historyService.appendToHistory(
+            workspaceId,
+            createMuxMessage("pre-reset-user", "user", "before reset", {})
+          )
+        ).success
+      ).toBe(true);
+
+      expect(await workspaceService.resetContext(workspaceId)).toEqual({
+        success: true,
+        data: "reset",
+      });
+      expect(await workspaceService.resetContext(workspaceId)).toEqual({
+        success: true,
+        data: "noop",
+      });
+
+      let boundaryCount = 0;
+      const iterateResult = await historyService.iterateFullHistory(
+        workspaceId,
+        "forward",
+        (messages) => {
+          boundaryCount += messages.filter(
+            (message) => message.metadata?.contextBoundaryKind === "reset"
+          ).length;
+        }
+      );
+      expect(iterateResult.success).toBe(true);
+      expect(boundaryCount).toBe(1);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("context reset surfaces active-context history read failures", async () => {
+    const { config, historyService, workspaceService, cleanup } = await createServices();
+    const workspaceId = "context-reset-history-read-fails";
+    try {
+      await config.addWorkspace("/tmp/context-reset-history-read-fails-project", {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "context-reset-history-read-fails-project",
+        projectPath: "/tmp/context-reset-history-read-fails-project",
+        runtimeConfig: { type: "local" },
+      });
+      const historySpy = spyOn(
+        historyService,
+        "getHistoryFromLatestBoundary"
+      ).mockResolvedValueOnce(Err("read failed"));
+
+      try {
+        const result = await workspaceService.resetContext(workspaceId);
+
+        expect(result).toEqual({
+          success: false,
+          error: "Failed to read active context before reset: read failed",
+        });
+      } finally {
+        historySpy.mockRestore();
+      }
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("context reset rejects active streams", async () => {
+    const aiService = {
+      on: mock(() => undefined),
+      isStreaming: mock(() => true),
+    } as unknown as AIService;
+    const { config, workspaceService, cleanup } = await createServices(aiService);
+    const workspaceId = "context-reset-active-stream";
+    try {
+      await config.addWorkspace("/tmp/context-reset-active-project", {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "context-reset-active-project",
+        projectPath: "/tmp/context-reset-active-project",
+        runtimeConfig: { type: "local" },
+      });
+
+      const result = await workspaceService.resetContext(workspaceId);
+
+      expect(result.success).toBe(false);
+      expect(result.success ? undefined : result.error).toBe(
+        "Cannot reset context while a turn is active. Press Esc to stop the stream first."
+      );
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("context reset rejects queued or preparing turns", async () => {
+    const { config, workspaceService, cleanup } = await createServices();
+    const workspaceId = "context-reset-queued-turn";
+    try {
+      await config.addWorkspace("/tmp/context-reset-queued-project", {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "context-reset-queued-project",
+        projectPath: "/tmp/context-reset-queued-project",
+        runtimeConfig: { type: "local" },
+      });
+      const pendingSpy = spyOn(
+        workspaceService,
+        "hasPendingQueuedOrPreparingTurn"
+      ).mockReturnValueOnce(true);
+
+      try {
+        const result = await workspaceService.resetContext(workspaceId);
+
+        expect(result.success).toBe(false);
+        expect(result.success ? undefined : result.error).toBe(
+          "Cannot reset context while queued user input is pending. Send or clear the queued message first."
+        );
+      } finally {
+        pendingSpy.mockRestore();
+      }
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("context reset does not clear plan files when boundary append fails", async () => {
+    const { config, historyService, workspaceService, cleanup } = await createServices();
+    const workspaceId = "context-reset-append-fails";
+    try {
+      await config.addWorkspace("/tmp/context-reset-append-fails-project", {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "context-reset-append-fails-project",
+        projectPath: "/tmp/context-reset-append-fails-project",
+        runtimeConfig: { type: "local" },
+      });
+      const planFile = await writePlanFile(
+        config.rootDir,
+        "context-reset-append-fails-project",
+        workspaceId
+      );
+      const seedResult = await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("pre-reset-user", "user", "before reset", {})
+      );
+      expect(seedResult.success).toBe(true);
+      const appendSpy = spyOn(historyService, "appendToHistory").mockResolvedValueOnce(
+        Err("disk full")
+      );
+
+      try {
+        const result = await workspaceService.resetContext(workspaceId);
+
+        expect(result.success).toBe(false);
+        expect(result.success ? undefined : result.error).toBe(
+          "Failed to append context reset boundary: disk full"
+        );
+        await fsPromises.access(planFile);
+      } finally {
+        appendSpy.mockRestore();
+      }
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("context reset remains successful when post-boundary goal acknowledgment fails", async () => {
+    const { config, historyService, workspaceService, cleanup } = await createServices();
+    const workspaceId = "context-reset-goal-ack-fails";
+    try {
+      await config.addWorkspace("/tmp/context-reset-goal-ack-fails-project", {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "context-reset-goal-ack-fails-project",
+        projectPath: "/tmp/context-reset-goal-ack-fails-project",
+        runtimeConfig: { type: "local" },
+      });
+      workspaceService.setWorkspaceGoalService({
+        requireUserAcknowledgment: mock(() => Promise.reject(new Error("goal write failed"))),
+      } as unknown as WorkspaceGoalService);
+      const seedResult = await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("pre-reset-user", "user", "before reset", {})
+      );
+      expect(seedResult.success).toBe(true);
+
+      const result = await workspaceService.resetContext(workspaceId);
+
+      expect(result).toEqual({ success: true, data: "reset" });
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("context reset rejects duplicate resets and sends while a reset is in progress", async () => {
+    const { config, historyService, workspaceService, cleanup } = await createServices();
+    const workspaceId = "context-reset-reentrancy";
+    try {
+      await config.addWorkspace("/tmp/context-reset-reentrancy-project", {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "context-reset-reentrancy-project",
+        projectPath: "/tmp/context-reset-reentrancy-project",
+        runtimeConfig: { type: "local" },
+      });
+      const historyDeferred =
+        createDeferred<Awaited<ReturnType<HistoryService["getHistoryFromLatestBoundary"]>>>();
+      const historySpy = spyOn(
+        historyService,
+        "getHistoryFromLatestBoundary"
+      ).mockImplementationOnce(() => historyDeferred.promise);
+
+      try {
+        const firstReset = workspaceService.resetContext(workspaceId);
+        await Promise.resolve();
+
+        const duplicateReset = await workspaceService.resetContext(workspaceId);
+        expect(duplicateReset).toEqual({
+          success: false,
+          error: "Context reset is already in progress for this workspace.",
+        });
+
+        const sendResult = await workspaceService.sendMessage(workspaceId, "hello", {
+          model: "anthropic:claude-sonnet-4-6",
+          thinkingLevel: "off",
+          toolPolicy: [],
+          agentId: "exec",
+        });
+        expect(sendResult).toEqual({
+          success: false,
+          error: {
+            type: "unknown",
+            raw: "Workspace context is resetting. Please wait and try again.",
+          },
+        });
+
+        historyDeferred.resolve(Ok([]));
+        expect(await firstReset).toEqual({ success: true, data: "noop" });
+      } finally {
+        historySpy.mockRestore();
+      }
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("context reset preserves the goal and requires user acknowledgment", async () => {
+    const { config, historyService, workspaceService, goalService, cleanup } =
+      await createServices();
+    const workspaceId = "context-reset-goal-workspace";
+    try {
+      await config.addWorkspace("/tmp/context-reset-goal-project", {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "context-reset-goal-project",
+        projectPath: "/tmp/context-reset-goal-project",
+        runtimeConfig: { type: "local" },
+      });
+      const created = await setWorkspaceGoalOk(goalService, {
+        workspaceId,
+        objective: "Keep pursuing the objective",
+      });
+      expect(
+        (
+          await historyService.appendToHistory(
+            workspaceId,
+            createMuxMessage("pre-reset-user", "user", "before reset", {})
+          )
+        ).success
+      ).toBe(true);
+
+      const nowSpy = spyOn(Date, "now").mockReturnValue(1_234_568);
+      try {
+        const result = await workspaceService.resetContext(workspaceId);
+        expect(result.success).toBe(true);
+      } finally {
+        nowSpy.mockRestore();
+      }
+
+      expect(await goalService.getGoal(workspaceId)).toMatchObject({
+        goalId: created.goalId,
+        objective: created.objective,
+        requireUserAcknowledgmentSinceMs: 1_234_568,
+      });
+    } finally {
+      await cleanup();
+    }
+  });
+
   // ---------------------------------------------------------------------------
   // Codex P1 (PRRT_kwDOPxxmWM5_ucm2): the WorkspaceService stream-abort
   // listener must NOT replay queued goal mutations on user-aborted streams.

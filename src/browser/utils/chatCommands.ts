@@ -44,6 +44,7 @@ import {
   UNPRICED_CURRENT_MODEL_GOAL_MESSAGE,
   UNPRICED_TARGET_MODEL_GOAL_MESSAGE,
 } from "@/common/utils/goals/budgetPricing";
+import { getContextResetSuccessMessage } from "@/browser/utils/contextResetFeedback";
 import { HEARTBEAT_DEFAULT_INTERVAL_MS } from "@/constants/heartbeat";
 import {
   WORKSPACE_ONLY_COMMAND_KEYS,
@@ -161,10 +162,13 @@ export interface SlashCommandContext extends Omit<CommandHandlerContext, "worksp
   setVimEnabled: (cb: (prev: boolean) => boolean) => void;
 
   // Workspace Actions
+  onResetContext?: () => Promise<"reset" | "noop">;
   onTruncateHistory?: (percentage?: number) => Promise<void>;
   resetInputHeight: () => void;
   /** Callback to trigger message-sent side effects (auto-scroll, auto-background) */
   onMessageSent?: (dispatchMode: QueueDispatchMode) => void;
+  /** Callback to detach review context from the composer without marking it checked */
+  onDetachAllReviews?: () => void;
   /** Callback to mark review IDs as checked after successful send */
   onCheckReviews?: (reviewIds: string[]) => void;
   /** Review IDs that are attached (for marking as checked on success) */
@@ -878,10 +882,48 @@ async function handleGoalCommand(
 }
 
 async function handleClearCommand(
-  _parsed: Extract<ParsedCommand, { type: "clear" }>,
+  parsed: Extract<ParsedCommand, { type: "clear" }>,
   context: SlashCommandContext
 ): Promise<CommandHandlerResult> {
-  const { setInput, onTruncateHistory, resetInputHeight, setToast } = context;
+  const {
+    setInput,
+    setAttachments,
+    onDetachAllReviews,
+    onResetContext,
+    onTruncateHistory,
+    resetInputHeight,
+    setToast,
+  } = context;
+
+  if (parsed.mode === "soft") {
+    if (!onResetContext) return { clearInput: true, toastShown: false };
+
+    try {
+      const result = await onResetContext();
+      setInput("");
+      resetInputHeight();
+      if (result === "reset") {
+        setAttachments([]);
+        onDetachAllReviews?.();
+      }
+      trackCommandUsed("clear:soft");
+      setToast({
+        id: Date.now().toString(),
+        type: "success",
+        message: getContextResetSuccessMessage(result),
+      });
+      return { clearInput: true, toastShown: true };
+    } catch (error) {
+      const normalized = error instanceof Error ? error : new Error("Failed to reset context");
+      console.error("Failed to reset context:", normalized);
+      setToast({
+        id: Date.now().toString(),
+        type: "error",
+        message: normalized.message,
+      });
+      return { clearInput: false, toastShown: true };
+    }
+  }
 
   setInput("");
   resetInputHeight();
@@ -890,7 +932,9 @@ async function handleClearCommand(
 
   try {
     await onTruncateHistory(1.0);
-    trackCommandUsed("clear");
+    setAttachments([]);
+    onDetachAllReviews?.();
+    trackCommandUsed("clear:hard");
     setToast({
       id: Date.now().toString(),
       type: "success",

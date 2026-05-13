@@ -54,9 +54,15 @@ import { detectDefaultTrunkBranch, listLocalBranches } from "@/node/git";
 import { shellQuote } from "@/node/runtime/backgroundCommands";
 import { extractEditedFilePaths } from "@/common/utils/messages/extractEditedFiles";
 import { buildCompactionMessageText } from "@/common/utils/compaction/compactionPrompt";
-import { isDurableCompactedMarker } from "@/common/utils/messages/compactionBoundary";
+import {
+  CONTEXT_BOUNDARY_KINDS,
+  hasProviderEligibleMessages,
+  isDurableCompactedMarker,
+  sliceMessagesForProviderFromLatestContextBoundary,
+} from "@/common/utils/messages/compactionBoundary";
 import { isNonNegativeInteger, isPositiveInteger } from "@/common/utils/numbers";
 import { deriveTodoStatus } from "@/common/utils/todoList";
+import { createContextResetBoundaryMessageId } from "@/node/services/utils/messageIds";
 import { fileExists } from "@/node/utils/runtime/fileExists";
 import { orchestrateFork } from "@/node/services/utils/forkOrchestrator";
 import {
@@ -103,6 +109,7 @@ import {
 } from "@/common/utils/tools/toolDefinitions";
 import type { UIMode } from "@/common/types/mode";
 import {
+  createMuxMessage,
   pickPreservedSendOptions,
   type CompactionFollowUpRequest,
   type MuxMessageMetadata,
@@ -1207,6 +1214,9 @@ export class WorkspaceService extends EventEmitter {
   // Tracks workspaces undergoing idle (background) compaction so the activity snapshot
   // can tag the stream, letting the frontend suppress notifications for maintenance work.
   private readonly idleCompactingWorkspaces = new Set<string>();
+
+  // Blocks new sends while a context reset is committing its durable boundary and cleanup.
+  private readonly resettingContextWorkspaces = new Set<string>();
 
   // Tracks in-flight fork auto-title generations so only the first accepted continue
   // message can claim the workspace title.
@@ -5502,6 +5512,14 @@ export class WorkspaceService extends EventEmitter {
         });
       }
 
+      if (this.resettingContextWorkspaces.has(workspaceId)) {
+        log.debug("sendMessage blocked: context reset is in progress", { workspaceId });
+        return Err({
+          type: "unknown",
+          raw: "Workspace context is resetting. Please wait and try again.",
+        });
+      }
+
       // Guard: avoid creating sessions for workspaces that don't exist anymore.
       const workspaceConfig = this.config.findWorkspace(workspaceId);
       if (!workspaceConfig) {
@@ -6368,6 +6386,78 @@ export class WorkspaceService extends EventEmitter {
     }
 
     return Ok(undefined);
+  }
+
+  async resetContext(workspaceId: string): Promise<Result<"reset" | "noop">> {
+    if (this.resettingContextWorkspaces.has(workspaceId)) {
+      return Err("Context reset is already in progress for this workspace.");
+    }
+
+    this.resettingContextWorkspaces.add(workspaceId);
+    try {
+      const session = this.sessions.get(workspaceId);
+      if (session?.isBusy() || this.aiService.isStreaming(workspaceId)) {
+        return Err(
+          "Cannot reset context while a turn is active. Press Esc to stop the stream first."
+        );
+      }
+
+      if (this.hasPendingQueuedOrPreparingTurn(workspaceId)) {
+        return Err(
+          "Cannot reset context while queued user input is pending. Send or clear the queued message first."
+        );
+      }
+
+      const historyResult = await this.historyService.getHistoryFromLatestBoundary(workspaceId);
+      if (!historyResult.success) {
+        return Err(`Failed to read active context before reset: ${historyResult.error}`);
+      }
+
+      const activeContextMessages = sliceMessagesForProviderFromLatestContextBoundary(
+        historyResult.data
+      );
+      if (!hasProviderEligibleMessages(activeContextMessages)) {
+        return Ok("noop");
+      }
+
+      const boundaryMessage = createMuxMessage(
+        createContextResetBoundaryMessageId(),
+        "assistant",
+        "",
+        {
+          timestamp: Date.now(),
+          contextBoundaryKind: CONTEXT_BOUNDARY_KINDS.RESET,
+        }
+      );
+
+      const appendResult = await this.historyService.appendToHistory(workspaceId, boundaryMessage);
+      if (!appendResult.success) {
+        return Err(`Failed to append context reset boundary: ${appendResult.error}`);
+      }
+
+      const typedBoundaryMessage = { ...boundaryMessage, type: "message" as const };
+      if (session) {
+        session.emitChatEvent(typedBoundaryMessage);
+      } else {
+        this.emit("chat", { workspaceId, message: typedBoundaryMessage });
+      }
+
+      const metadata = await this.getInfo(workspaceId);
+      if (metadata) {
+        await this.deletePlanFilesForWorkspace(workspaceId, metadata);
+      }
+
+      try {
+        await this.workspaceGoalService?.requireUserAcknowledgment(workspaceId);
+      } catch (error) {
+        log.error("Failed to require goal acknowledgment after context reset:", error);
+      }
+      this.sessions.get(workspaceId)?.clearFileState();
+
+      return Ok("reset");
+    } finally {
+      this.resettingContextWorkspaces.delete(workspaceId);
+    }
   }
 
   async replaceHistory(

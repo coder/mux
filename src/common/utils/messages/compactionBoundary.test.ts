@@ -4,6 +4,9 @@ import { createMuxMessage } from "@/common/types/message";
 
 import {
   findLatestCompactionBoundaryIndex,
+  findLatestContextBoundaryIndex,
+  hasProviderEligibleMessages,
+  sliceMessagesForProviderFromLatestContextBoundary,
   sliceMessagesFromLatestCompactionBoundary,
 } from "./compactionBoundary";
 
@@ -139,6 +142,77 @@ describe("findLatestCompactionBoundaryIndex", () => {
     ];
 
     expect(findLatestCompactionBoundaryIndex(messages)).toBe(1);
+  });
+});
+
+describe("context boundary helpers", () => {
+  it("recognizes context reset boundaries as latest context boundary", () => {
+    const messages = [
+      createMuxMessage("u0", "user", "before"),
+      createMuxMessage("reset", "assistant", "", { contextBoundaryKind: "reset" }),
+      createMuxMessage("u1", "user", "after"),
+    ];
+
+    expect(findLatestContextBoundaryIndex(messages)).toBe(1);
+    expect(findLatestCompactionBoundaryIndex(messages)).toBe(-1);
+  });
+
+  it("excludes reset boundaries and pre-reset messages from provider slices", () => {
+    const messages = [
+      createMuxMessage("u0", "user", "before"),
+      createMuxMessage("a0", "assistant", "before reply"),
+      createMuxMessage("reset", "assistant", "", { contextBoundaryKind: "reset" }),
+      createMuxMessage("u1", "user", "after"),
+      createMuxMessage("a1", "assistant", "after reply"),
+    ];
+
+    const sliced = sliceMessagesForProviderFromLatestContextBoundary(messages);
+
+    expect(sliced.map((msg) => msg.id)).toEqual(["u1", "a1"]);
+  });
+
+  it("keeps compaction summaries provider-visible in context slices", () => {
+    const messages = [
+      createMuxMessage("u0", "user", "before"),
+      createMuxMessage("summary", "assistant", "summary text", {
+        compacted: "user",
+        compactionBoundary: true,
+        compactionEpoch: 1,
+      }),
+      createMuxMessage("u1", "user", "after"),
+    ];
+
+    const sliced = sliceMessagesForProviderFromLatestContextBoundary(messages);
+
+    expect(sliced.map((msg) => msg.id)).toEqual(["summary", "u1"]);
+  });
+
+  it("uses the latest boundary across mixed compaction and reset histories", () => {
+    const messages = [
+      createMuxMessage("u0", "user", "before"),
+      createMuxMessage("summary", "assistant", "summary text", {
+        compacted: "user",
+        compactionBoundary: true,
+        compactionEpoch: 1,
+      }),
+      createMuxMessage("u1", "user", "middle"),
+      createMuxMessage("reset", "assistant", "", { contextBoundaryKind: "reset" }),
+      createMuxMessage("u2", "user", "latest"),
+    ];
+
+    expect(findLatestContextBoundaryIndex(messages)).toBe(3);
+    expect(
+      sliceMessagesForProviderFromLatestContextBoundary(messages).map((msg) => msg.id)
+    ).toEqual(["u2"]);
+  });
+
+  it("does not count reset boundaries as provider-eligible messages", () => {
+    expect(
+      hasProviderEligibleMessages([
+        createMuxMessage("reset", "assistant", "", { contextBoundaryKind: "reset" }),
+      ])
+    ).toBe(false);
+    expect(hasProviderEligibleMessages([createMuxMessage("u1", "user", "after")])).toBe(true);
   });
 });
 

@@ -34,6 +34,8 @@ const FrontendPlatformInfoSchema = z.object({
 // Command type enum (matches payload.ts TelemetryCommandType)
 const TelemetryCommandTypeSchema = z.enum([
   "clear",
+  "clear:hard",
+  "clear:soft",
   "compact",
   "new",
   "fork",

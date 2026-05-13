@@ -54,6 +54,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
   const content = message.content;
   const isStreaming = message.isStreaming;
   const isCompacted = message.isCompacted;
+  const isBeforeLatestContextBoundary = message.isBeforeLatestContextBoundary === true;
   const isStreamingCompaction = isStreaming && isCompacting;
 
   // Use Start Here hook for final assistant messages
@@ -62,7 +63,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
     buttonLabel: startHereLabel,
     disabled: startHereDisabled,
     modal: startHereModal,
-  } = useStartHere(workspaceId, content, isCompacted, {
+  } = useStartHere(workspaceId, content, isCompacted || isBeforeLatestContextBoundary, {
     // Preserve legacy plan/exec markers so Start Here keeps plan→exec handoff for old history.
     sourceAgentId: message.agentId ?? message.mode,
   });

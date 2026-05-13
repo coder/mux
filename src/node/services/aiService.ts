@@ -86,7 +86,7 @@ import {
 } from "@/common/utils/ai/providerOptions";
 import { resolveModelParameterOverrides } from "@/common/utils/ai/modelParameterOverrides";
 import { isPlainObject } from "@/common/utils/isPlainObject";
-import { sliceMessagesFromLatestCompactionBoundary } from "@/common/utils/messages/compactionBoundary";
+import { sliceMessagesForProviderFromLatestContextBoundary } from "@/common/utils/messages/compactionBoundary";
 import { getProjects, isMultiProject } from "@/common/utils/multiProject";
 import { uniqueSuffix } from "@/common/utils/hasher";
 import { isWorkspaceTrustedForSharedExecution } from "@/node/services/utils/workspaceTrust";
@@ -121,6 +121,26 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { isProjectTrusted } from "@/node/utils/projectTrust";
 
 const STREAM_STARTUP_DIAGNOSTIC_THRESHOLD_MS = 1_000;
+
+export function prepareProviderRequestMessages(
+  messages: MuxMessage[],
+  canonicalProviderName: string,
+  effectiveThinkingLevel: ThinkingLevel
+): {
+  activeContextMessages: MuxMessage[];
+  providerRequestMessages: MuxMessage[];
+} {
+  const activeContextMessages = sliceMessagesForProviderFromLatestContextBoundary(messages);
+  const preserveReasoningOnly =
+    canonicalProviderName === "anthropic" && effectiveThinkingLevel !== "off";
+  return {
+    activeContextMessages,
+    providerRequestMessages: filterEmptyAssistantMessages(
+      activeContextMessages,
+      preserveReasoningOnly
+    ),
+  };
+}
 
 // ---------------------------------------------------------------------------
 // streamMessage options
@@ -857,25 +877,24 @@ export class AIService extends EventEmitter {
       // Dump original messages for debugging
       log.debug_obj(`${workspaceId}/1_original_messages.json`, messages);
 
-      // Filter out assistant messages with only reasoning (no text/tools)
-      // EXCEPTION: When extended thinking is enabled, preserve reasoning-only messages
-      // to comply with Extended Thinking API requirements
-      const preserveReasoningOnly =
-        canonicalProviderName === "anthropic" && effectiveThinkingLevel !== "off";
-      const filteredMessages = filterEmptyAssistantMessages(messages, preserveReasoningOnly);
-      log.debug(`Filtered ${messages.length - filteredMessages.length} empty assistant messages`);
-      log.debug_obj(`${workspaceId}/1a_filtered_messages.json`, filteredMessages);
-
-      // WS2 request slicing: only send the latest compaction epoch to providers.
-      // This is request-only; persisted history remains append-only for replay/debugging.
-      const providerRequestMessages = sliceMessagesFromLatestCompactionBoundary(filteredMessages);
-      if (providerRequestMessages !== filteredMessages) {
-        log.debug("Sliced provider history from latest compaction boundary", {
+      // Context Boundary request slicing happens before empty-assistant filtering so
+      // provider-invisible reset rows can still bound the active context window.
+      const { activeContextMessages, providerRequestMessages } = prepareProviderRequestMessages(
+        messages,
+        canonicalProviderName,
+        effectiveThinkingLevel
+      );
+      if (activeContextMessages !== messages) {
+        log.debug("Sliced provider history from latest context boundary", {
           workspaceId,
-          originalCount: filteredMessages.length,
-          slicedCount: providerRequestMessages.length,
+          originalCount: messages.length,
+          slicedCount: activeContextMessages.length,
         });
       }
+      log.debug_obj(`${workspaceId}/1a_active_context_messages.json`, activeContextMessages);
+      log.debug(
+        `Filtered ${activeContextMessages.length - providerRequestMessages.length} empty assistant messages`
+      );
       log.debug_obj(`${workspaceId}/1b_provider_request_messages.json`, providerRequestMessages);
 
       // OpenAI-specific: Keep reasoning parts in history so each request can

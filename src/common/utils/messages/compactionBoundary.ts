@@ -1,7 +1,14 @@
 import assert from "@/common/utils/assert";
+import {
+  CONTEXT_BOUNDARY_KINDS,
+  type ContextBoundaryKind,
+} from "@/common/constants/contextBoundary";
 import { isPositiveInteger } from "@/common/utils/numbers";
+import { hasProviderReplayableContent } from "@/common/utils/messages/providerEligibility";
 
 import type { MuxMessage } from "@/common/types/message";
+
+export { CONTEXT_BOUNDARY_KINDS, type ContextBoundaryKind };
 
 export function isDurableCompactedMarker(
   value: unknown
@@ -32,12 +39,57 @@ export function isDurableCompactionBoundaryMarker(message: MuxMessage | undefine
   return true;
 }
 
+export function isDurableContextResetBoundaryMarker(message: MuxMessage | undefined): boolean {
+  if (message?.metadata?.contextBoundaryKind !== CONTEXT_BOUNDARY_KINDS.RESET) {
+    return false;
+  }
+
+  // Context resets are transcript structure, not model content. Persist them as
+  // assistant rows so existing chat event and display plumbing can carry them.
+  if (message.role !== "assistant") {
+    return false;
+  }
+
+  return true;
+}
+
+export function getContextBoundaryKind(
+  message: MuxMessage | undefined
+): ContextBoundaryKind | null {
+  if (isDurableContextResetBoundaryMarker(message)) {
+    return CONTEXT_BOUNDARY_KINDS.RESET;
+  }
+
+  if (isDurableCompactionBoundaryMarker(message)) {
+    return CONTEXT_BOUNDARY_KINDS.COMPACTION;
+  }
+
+  return null;
+}
+
+export function isDurableContextBoundaryMarker(message: MuxMessage | undefined): boolean {
+  return getContextBoundaryKind(message) !== null;
+}
+
 /**
- * Locate the latest durable compaction boundary in reverse chronological order.
+ * Locate the latest durable context boundary in reverse chronological order.
  *
  * Returns the index of the newest message tagged with valid boundary metadata,
  * or `-1` when no durable boundary exists in the provided history.
  */
+export function findLatestContextBoundaryIndex(messages: MuxMessage[]): number {
+  assert(Array.isArray(messages), "findLatestContextBoundaryIndex requires a message array");
+
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (isDurableContextBoundaryMarker(messages[i])) {
+      return i;
+    }
+  }
+
+  return -1;
+}
+
+/** Backwards-compatible compaction-only lookup for existing call sites and tests. */
 export function findLatestCompactionBoundaryIndex(messages: MuxMessage[]): number {
   assert(Array.isArray(messages), "findLatestCompactionBoundaryIndex requires a message array");
 
@@ -74,4 +126,45 @@ export function sliceMessagesFromLatestCompactionBoundary(messages: MuxMessage[]
   );
 
   return sliced;
+}
+
+export function isProviderEligibleMessage(message: MuxMessage): boolean {
+  if (isDurableContextResetBoundaryMarker(message)) {
+    return false;
+  }
+
+  return hasProviderReplayableContent(message);
+}
+
+export function hasProviderEligibleMessages(messages: MuxMessage[]): boolean {
+  assert(Array.isArray(messages), "hasProviderEligibleMessages requires a message array");
+  return messages.some(isProviderEligibleMessage);
+}
+
+/**
+ * Slice provider payload history from the latest Context Boundary.
+ *
+ * Compaction boundaries remain provider-visible because they carry summaries.
+ * Context reset boundaries are provider-invisible, so the active window starts
+ * after the reset marker.
+ */
+export function sliceMessagesForProviderFromLatestContextBoundary(
+  messages: MuxMessage[]
+): MuxMessage[] {
+  const boundaryIndex = findLatestContextBoundaryIndex(messages);
+  if (boundaryIndex === -1) {
+    return messages;
+  }
+
+  assert(
+    boundaryIndex >= 0 && boundaryIndex < messages.length,
+    "context boundary index must be within message history bounds"
+  );
+
+  const boundaryKind = getContextBoundaryKind(messages[boundaryIndex]);
+  assert(boundaryKind !== null, "context boundary slicing must start from a durable boundary");
+
+  return boundaryKind === "reset"
+    ? messages.slice(boundaryIndex + 1)
+    : messages.slice(boundaryIndex);
 }

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
 import { ThinkingLevelSchema } from "../../types/thinking";
 import { AgentIdSchema } from "./agentDefinition";
 import { StreamErrorTypeSchema } from "./errors";
@@ -138,6 +139,7 @@ export const MuxMessageSchema = z.object({
       compactionEpoch: CompactionEpochSchema,
       // Durable boundary marker for compaction summaries.
       compactionBoundary: z.boolean().optional(),
+      contextBoundaryKind: z.literal(CONTEXT_BOUNDARY_KINDS.RESET).optional(),
       toolPolicy: z.any().optional(),
       disableWorkspaceAgents: z.boolean().optional(),
       retrySendOptions: z.any().optional(),

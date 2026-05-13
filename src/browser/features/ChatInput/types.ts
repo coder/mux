@@ -31,6 +31,7 @@ export interface ChatInputWorkspaceVariant {
   /** Fires once a regular workspace send has passed validation, before IPC/streaming begins. */
   onMessageSendStarted?: (dispatchMode: QueueDispatchMode) => void;
   onMessageSent?: (dispatchMode: QueueDispatchMode) => void;
+  onResetContext: () => Promise<"reset" | "noop">;
   onTruncateHistory: (percentage?: number) => Promise<void>;
   onModelChange?: (model: string) => void;
   isCompacting?: boolean;

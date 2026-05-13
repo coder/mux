@@ -347,6 +347,22 @@ describe("MessageRenderer compaction boundary rows", () => {
     expect(getByText("Compaction boundary #4")).toBeDefined();
   });
 
+  test("renders context reset boundary rows", () => {
+    const message: DisplayedMessage = {
+      type: "compaction-boundary",
+      id: "reset-boundary",
+      historySequence: 11,
+      boundaryKind: "reset",
+      position: "start",
+    };
+
+    const { getByTestId, getByText } = render(<MessageRenderer message={message} />);
+
+    const boundary = getByTestId("compaction-boundary");
+    expect(boundary.getAttribute("aria-label")).toBe("Context reset");
+    expect(getByText("Context reset")).toBeDefined();
+  });
+
   test("renders compaction boundary label for legacy end rows", () => {
     const message: DisplayedMessage = {
       type: "compaction-boundary",

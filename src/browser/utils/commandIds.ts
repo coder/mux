@@ -55,6 +55,7 @@ export const CommandIds = {
 
   // Chat commands
   chatClear: () => "chat:clear" as const,
+  chatResetContext: () => "chat:reset-context" as const,
   chatTruncate: (pct: number) => `${COMMAND_ID_PREFIXES.CHAT_TRUNCATE}${pct}` as const,
   chatInterrupt: () => "chat:interrupt" as const,
   chatJumpBottom: () => "chat:jumpBottom" as const,

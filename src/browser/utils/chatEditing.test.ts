@@ -27,6 +27,12 @@ describe("canEditDisplayedUserMessage", () => {
     ).toBe(false);
   });
 
+  test("excludes messages before the latest context boundary", () => {
+    expect(canEditDisplayedUserMessage(userMessage({ isBeforeLatestContextBoundary: true }))).toBe(
+      false
+    );
+  });
+
   test("allows normal user messages", () => {
     expect(canEditDisplayedUserMessage(userMessage())).toBe(true);
   });

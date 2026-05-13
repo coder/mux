@@ -2,6 +2,7 @@ import { THEME_OPTIONS, type ThemePreference } from "@/browser/contexts/ThemeCon
 import type { CommandAction } from "@/browser/contexts/CommandRegistryContext";
 import type { APIClient } from "@/browser/contexts/API";
 import type { ConfirmDialogOptions } from "@/browser/contexts/ConfirmDialogContext";
+import { getContextResetSuccessMessage } from "@/browser/utils/contextResetFeedback";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
 import { getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
@@ -994,6 +995,29 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
     const list: CommandAction[] = [];
     if (p.selectedWorkspace) {
       const id = p.selectedWorkspace.workspaceId;
+      list.push({
+        id: CommandIds.chatResetContext(),
+        title: "Reset Context, Preserve History",
+        section: section.chat,
+        keywords: ["context reset", "soft clear", "preserve history", "reset chat"],
+        run: async () => {
+          assert(p.api, "Reset Context palette action requires a connected backend");
+          const result = await p.api.workspace.resetContext({ workspaceId: id });
+          if (!result.success) {
+            showCommandFeedbackToast({ type: "error", message: result.error });
+            throw new Error(result.error);
+          }
+          if (result.data === "reset") {
+            window.dispatchEvent(
+              createCustomEvent(CUSTOM_EVENTS.CLEAR_CHAT_COMPOSER, { workspaceId: id })
+            );
+          }
+          showCommandFeedbackToast({
+            type: "success",
+            message: getContextResetSuccessMessage(result.data),
+          });
+        },
+      });
       list.push({
         id: CommandIds.chatClear(),
         title: "Clear History",

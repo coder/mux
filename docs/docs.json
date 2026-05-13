@@ -122,6 +122,7 @@
               "reference/benchmarking",
               "adr/0001-experimental-image-generation-tool",
               "adr/0002-image-editing-visual-mockups",
+              "adr/0003-context-boundaries-for-compaction-and-reset",
               "AGENTS"
             ]
           }
