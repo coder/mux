@@ -814,6 +814,12 @@ export interface QueuedMessage {
   queueDispatchMode?: QueueDispatchMode;
   /** True when the queued message is a compaction request (/compact) */
   hasCompactionRequest?: boolean;
+  /**
+   * True when one or more queued entries are backend-generated `<monitor-event>` wake
+   * payloads. The renderer uses this to parse wake blocks out of `content` and show a card
+   * instead of leaking the raw XML into the queued-message banner or the composer.
+   */
+  containsMonitorEvents?: boolean;
 }
 
 // Helper to create a simple text message

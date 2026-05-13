@@ -903,6 +903,9 @@ export class WorkspaceStore {
             reviews: data.reviews,
             queueDispatchMode: data.queueDispatchMode,
             hasCompactionRequest: data.hasCompactionRequest,
+            // Flag is sticky on the QueuedMessage so the banner + edit/restore paths can
+            // strip backend-generated `<monitor-event>` XML before the user sees it.
+            containsMonitorEvents: data.containsMonitorEvents === true ? true : undefined,
           }
         : null;
 

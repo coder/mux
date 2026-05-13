@@ -95,6 +95,15 @@ export class MessageQueue {
     return isCompactionMetadata(this.firstMuxMetadata);
   }
 
+  /**
+   * True when any queued entry carries a backend-generated `<monitor-event>` wake. Surfaced
+   * through `queued-message-changed` so the renderer can parse the structured wake out of
+   * `displayText` instead of showing raw XML in the queued-message banner.
+   */
+  containsMonitorEvents(): boolean {
+    return this.queuedContainsMonitorEvents;
+  }
+
   getQueueDispatchMode(): QueueDispatchMode {
     return this.queueDispatchMode;
   }

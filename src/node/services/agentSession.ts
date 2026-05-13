@@ -1,4 +1,5 @@
 import assert from "@/common/utils/assert";
+import { stripMonitorWakeXml } from "@/common/utils/monitorWake";
 import { EventEmitter } from "events";
 import * as path from "path";
 import { mkdir, readFile, unlink, writeFile } from "fs/promises";
@@ -4931,18 +4932,28 @@ export class AgentSession {
   restoreQueueToInput(): void {
     this.assertNotDisposed("restoreQueueToInput");
     if (!this.messageQueue.isEmpty()) {
-      const displayText = this.messageQueue.getDisplayText();
+      const rawText = this.messageQueue.getDisplayText();
       const fileParts = this.messageQueue.getFileParts();
       const reviews = this.messageQueue.getReviews();
+      // Strip backend-generated monitor wake XML so an interrupt never repopulates the
+      // composer with a synthetic `<monitor-event …>` payload the user didn't author. If the
+      // queue was monitor-only and nothing user-authored survives, skip the restore entirely
+      // and let clearQueue's emit collapse the banner.
+      const monitorOnlyOrigin = this.messageQueue.containsMonitorEvents();
+      const text = monitorOnlyOrigin ? stripMonitorWakeXml(rawText) : rawText;
+      const hasContentToRestore =
+        text.length > 0 || fileParts.length > 0 || (reviews?.length ?? 0) > 0;
       this.clearQueue();
 
-      this.emitChatEvent({
-        type: "restore-to-input",
-        workspaceId: this.workspaceId,
-        text: displayText,
-        fileParts: fileParts,
-        reviews: reviews,
-      });
+      if (hasContentToRestore) {
+        this.emitChatEvent({
+          type: "restore-to-input",
+          workspaceId: this.workspaceId,
+          text,
+          fileParts: fileParts,
+          reviews: reviews,
+        });
+      }
     }
   }
 
@@ -4956,6 +4967,7 @@ export class AgentSession {
       reviews: this.messageQueue.getReviews(),
       queueDispatchMode: this.messageQueue.getQueueDispatchMode(),
       hasCompactionRequest: this.messageQueue.hasCompactionRequest(),
+      ...(this.messageQueue.containsMonitorEvents() && { containsMonitorEvents: true }),
     });
   }
 

@@ -576,6 +576,12 @@ export const QueuedMessageChangedEventSchema = z.object({
   queueDispatchMode: z.enum(["tool-end", "turn-end"]).optional(),
   /** True when the queued message is a compaction request (/compact) */
   hasCompactionRequest: z.boolean().optional(),
+  /**
+   * True when one or more queued entries are backend-generated `<monitor-event>` wake
+   * payloads. The renderer uses this to parse the structured wake out of `displayText` and
+   * show a compact card instead of dumping raw XML in the queued-message banner.
+   */
+  containsMonitorEvents: z.boolean().optional(),
 });
 
 export const RestoreToInputEventSchema = z.object({

@@ -6,6 +6,7 @@ import type {
   ReviewNoteDataForDisplay,
 } from "@/common/types/message";
 import { getEditableUserMessageText } from "@/browser/utils/messages/messageUtils";
+import { stripMonitorWakeXml } from "@/common/utils/monitorWake";
 
 // Keep pending edit data normalized with required arrays so edits can't drop attachments/reviews.
 export interface PendingUserMessage extends Omit<
@@ -22,7 +23,11 @@ export interface EditingMessageState {
 }
 
 export const normalizeQueuedMessage = (queued: QueuedMessage): PendingUserMessage => ({
-  content: queued.content,
+  // Strip backend-generated monitor wake XML so the Edit composer never loads the synthetic
+  // `<monitor-event …>` payload as if the user had typed it. We can be unconditional here:
+  // the helper is a no-op when no monitor blocks are present.
+  content:
+    queued.containsMonitorEvents === true ? stripMonitorWakeXml(queued.content) : queued.content,
   fileParts: queued.fileParts ?? [],
   reviews: queued.reviews ?? [],
 });

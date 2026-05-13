@@ -354,4 +354,71 @@ describe("QueuedMessage banner", () => {
     expect(view.queryByText(/\d+ file/)).toBeNull();
     expect(view.queryByText(/\d+ image/)).toBeNull();
   });
+
+  test("renders monitor wake card and hides raw XML when flagged", () => {
+    const monitorXml =
+      '<monitor-event taskId="bash:proc-1" display_name="Dev Server" total_matches="1"><line>READY in 3.2s</line></monitor-event>';
+
+    const view = render(
+      <QueuedMessage
+        message={createQueuedMessage({
+          content: monitorXml,
+          containsMonitorEvents: true,
+        })}
+        onEdit={mock(() => {})}
+      />
+    );
+
+    expandQueuedMessage(view);
+    // The parsed wake card surfaces the structured payload …
+    expect(view.getByText(/Monitor matched 1 new line/i)).toBeTruthy();
+    expect(view.getByText("READY in 3.2s")).toBeTruthy();
+    // … and the raw XML must not appear anywhere in the banner DOM.
+    expect(view.container.textContent ?? "").not.toContain("<monitor-event");
+    // Pure-monitor queues have no user-authored text to edit; hide Edit so the composer
+    // doesn't pop empty when the user clicks it.
+    expect(view.queryByText("Edit")).toBeNull();
+  });
+
+  test("renders user text alongside monitor wake card when queue mixes both", () => {
+    const raw = [
+      "Please investigate this:",
+      '<monitor-event taskId="bash:proc-2" total_matches="2"><line>FAIL one</line><line>FAIL two</line></monitor-event>',
+    ].join("\n");
+
+    const view = render(
+      <QueuedMessage
+        message={createQueuedMessage({ content: raw, containsMonitorEvents: true })}
+        onEdit={mock(() => {})}
+      />
+    );
+
+    expandQueuedMessage(view);
+    expect(view.getByText("Please investigate this:")).toBeTruthy();
+    expect(view.getByText(/Monitor matched 2 new lines/i)).toBeTruthy();
+    // The wake card renders both lines inside a single <pre>, so assert on the substring.
+    expect(view.container.textContent ?? "").toContain("FAIL one");
+    expect(view.container.textContent ?? "").toContain("FAIL two");
+    expect(view.container.textContent ?? "").not.toContain("<monitor-event");
+    // Mixed queues still allow Edit; the editor will only receive the user-authored text.
+    expect(view.getByText("Edit")).toBeTruthy();
+  });
+
+  test("does not parse monitor XML when the containsMonitorEvents flag is absent", () => {
+    // Defensive: a user pasting similar-looking XML into the composer must not see it
+    // silently stripped or rewritten.
+    const monitorXml =
+      '<monitor-event taskId="bash:abc" total_matches="1"><line>boom</line></monitor-event>';
+
+    const view = render(
+      <QueuedMessage
+        message={createQueuedMessage({ content: monitorXml })}
+        onEdit={mock(() => {})}
+      />
+    );
+
+    expandQueuedMessage(view);
+    expect(view.queryByText(/Monitor matched/i)).toBeNull();
+    expect(view.container.textContent ?? "").toContain("monitor-event");
+  });
 });

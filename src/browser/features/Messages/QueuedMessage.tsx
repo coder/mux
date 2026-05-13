@@ -3,6 +3,11 @@ import type { QueuedMessage as QueuedMessageType } from "@/common/types/message"
 import { Pencil, Send } from "lucide-react";
 import { ChatInputDecoration } from "@/browser/components/ChatPane/ChatInputDecoration";
 import { UserMessageContent } from "@/browser/features/Messages/UserMessageContent";
+import {
+  MonitorWakeMessage,
+  extractMonitorWakeEvents,
+  type MonitorWakeEvent,
+} from "@/browser/features/Messages/MonitorWakeMessage";
 
 interface QueuedMessageProps {
   message: QueuedMessageType;
@@ -14,17 +19,30 @@ interface QueuedMessageProps {
 interface QueuedPreview {
   sanitizedText: string;
   fallbackLabel: string;
+  /**
+   * Parsed monitor wake events when the queue contains a backend-generated `<monitor-event>`
+   * payload. The banner renders these as compact cards so the user never sees the raw XML.
+   */
+  monitorEvents: MonitorWakeEvent[];
 }
 
 function deriveQueuedPreview(message: QueuedMessageType): QueuedPreview {
   const hasReviews = (message.reviews?.length ?? 0) > 0;
-  const sanitizedText = hasReviews
+  const reviewStripped = hasReviews
     ? message.content.replace(/<review>[\s\S]*?<\/review>\s*/g, "").trim()
     : message.content;
 
+  // Only parse monitor blocks when the backend has flagged the queue as containing them, so
+  // a user pasting similar XML in their own draft is rendered verbatim.
+  const monitorExtract =
+    message.containsMonitorEvents === true ? extractMonitorWakeEvents(reviewStripped) : null;
+  const monitorEvents = monitorExtract?.events ?? [];
+  const sanitizedText = monitorExtract ? monitorExtract.remainingContent : reviewStripped;
+
   return {
     sanitizedText,
-    fallbackLabel: "Queued message ready",
+    fallbackLabel: monitorEvents.length > 0 ? "" : "Queued message ready",
+    monitorEvents,
   };
 }
 
@@ -37,6 +55,11 @@ export const QueuedMessage: React.FC<QueuedMessageProps> = ({
   const [isExpanded, setIsExpanded] = useState(true);
   const [isSending, setIsSending] = useState(false);
   const preview = deriveQueuedPreview(message);
+  const hasMonitorEvents = preview.monitorEvents.length > 0;
+  const hasVisibleText = preview.sanitizedText.length > 0;
+  // A queue that's only a backend-generated wake has no user-authored text to edit; hide
+  // Edit so we don't pop a misleadingly empty composer.
+  const canEdit = !(hasMonitorEvents && !hasVisibleText);
   const queueStatusLabel =
     message.queueDispatchMode === "turn-end" ? "Sending after turn" : "Sending after step";
 
@@ -75,17 +98,26 @@ export const QueuedMessage: React.FC<QueuedMessageProps> = ({
           data-component="QueuedMessageCard"
         >
           {/* Keep queued drafts bounded so long content never pushes the composer off-screen. */}
-          <div className="max-h-[40vh] overflow-y-auto">
-            <UserMessageContent
-              content={preview.sanitizedText || preview.fallbackLabel}
-              reviews={message.reviews}
-              fileParts={message.fileParts}
-              variant="queued"
-            />
+          <div className="max-h-[40vh] space-y-2 overflow-y-auto">
+            {(hasVisibleText || !hasMonitorEvents) && (
+              <UserMessageContent
+                content={preview.sanitizedText || preview.fallbackLabel}
+                reviews={message.reviews}
+                fileParts={message.fileParts}
+                variant="queued"
+              />
+            )}
+            {hasMonitorEvents && (
+              <div className="space-y-2">
+                {preview.monitorEvents.map((event, index) => (
+                  <MonitorWakeMessage key={`${event.taskId}-${index}`} event={event} />
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="mt-1 flex flex-wrap items-center justify-end gap-x-2 gap-y-0.5">
-            {onEdit && (
+            {onEdit && canEdit && (
               <button
                 type="button"
                 onClick={onEdit}
