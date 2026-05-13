@@ -404,6 +404,29 @@ describe("QueuedMessage banner", () => {
     expect(view.getByText("Edit")).toBeTruthy();
   });
 
+  test("keeps Edit visible when monitor wake accompanies attachments but no user text", () => {
+    // Mixed queue: pure wake XML in `content` but the user has queued attachments. The
+    // banner must keep Edit visible so the mouse path matches the editLast shortcut, which
+    // restores those survivors via the queue-restore branch.
+    const monitorXml =
+      '<monitor-event source="mux" taskId="bash:proc-3" total_matches="1"><line>READY</line></monitor-event>';
+
+    const view = render(
+      <QueuedMessage
+        message={createQueuedMessage({
+          content: monitorXml,
+          containsMonitorEvents: true,
+          fileParts: [{ url: "file:///tmp/a.png", mediaType: "image/png" }],
+        })}
+        onEdit={mock(() => {})}
+      />
+    );
+
+    expandQueuedMessage(view);
+    expect(view.getByText("Edit")).toBeTruthy();
+    expect(view.container.textContent ?? "").not.toContain("<monitor-event");
+  });
+
   test("does not parse monitor XML when the containsMonitorEvents flag is absent", () => {
     // Defensive: a user pasting similar-looking XML into the composer must not see it
     // silently stripped or rewritten.

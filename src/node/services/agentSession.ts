@@ -4940,13 +4940,15 @@ export class AgentSession {
       const fileParts = this.messageQueue.getFileParts();
       const reviews = this.messageQueue.getReviews();
       // Strip backend-generated monitor wake XML so an interrupt never repopulates the
-      // composer with a synthetic `<monitor-event …>` payload the user didn't author. If the
-      // queue was monitor-only and nothing user-authored survives, skip the restore entirely
-      // and let clearQueue's emit collapse the banner.
-      const monitorOnlyOrigin = this.messageQueue.containsMonitorEvents();
-      const text = monitorOnlyOrigin ? stripMonitorWakeXml(rawText) : rawText;
+      // composer with a synthetic `<monitor-event …>` payload the user didn't author.
+      const queueContainsMonitor = this.messageQueue.containsMonitorEvents();
+      const text = queueContainsMonitor ? stripMonitorWakeXml(rawText) : rawText;
       const hasContentToRestore =
         text.length > 0 || fileParts.length > 0 || (reviews?.length ?? 0) > 0;
+      // Pure-monitor queues (only the synthetic wake, no user-authored survivors) must NOT
+      // be cleared: doing so would silently drop the pending wake before it can reach the
+      // agent. Bail without touching the queue so the wake stays scheduled.
+      if (queueContainsMonitor && !hasContentToRestore) return;
       this.clearQueue();
 
       if (hasContentToRestore) {

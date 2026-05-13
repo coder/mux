@@ -8,6 +8,7 @@ import {
   extractMonitorWakeEvents,
   type MonitorWakeEvent,
 } from "@/browser/features/Messages/MonitorWakeMessage";
+import { isPureMonitorWakeQueue } from "@/browser/utils/chatEditing";
 
 interface QueuedMessageProps {
   message: QueuedMessageType;
@@ -57,9 +58,11 @@ export const QueuedMessage: React.FC<QueuedMessageProps> = ({
   const preview = deriveQueuedPreview(message);
   const hasMonitorEvents = preview.monitorEvents.length > 0;
   const hasVisibleText = preview.sanitizedText.length > 0;
-  // A queue that's only a backend-generated wake has no user-authored text to edit; hide
-  // Edit so we don't pop a misleadingly empty composer.
-  const canEdit = !(hasMonitorEvents && !hasVisibleText);
+  // A queue that's only a backend-generated wake (no user-authored text, attachments, or
+  // reviews) has nothing to edit; hide Edit so we don't pop a misleadingly empty composer.
+  // For mixed queues — wake + attachments/reviews even with no user text — keep Edit visible
+  // so the mouse path matches the editLast shortcut, which restores those survivors.
+  const canEdit = !isPureMonitorWakeQueue(message);
   const queueStatusLabel =
     message.queueDispatchMode === "turn-end" ? "Sending after turn" : "Sending after step";
 
