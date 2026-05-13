@@ -20,8 +20,6 @@ import {
   getWorkspaceLastReadKey,
 } from "@/common/constants/storage";
 import type { AgentRowRenderMeta } from "@/browser/utils/ui/workspaceFiltering";
-import { EXPERIMENT_IDS, getExperimentKey } from "@/common/constants/experiments";
-import type { GoalStatus } from "@/common/types/goal";
 import type { WorkspaceActivitySnapshot } from "@/common/orpc/types";
 
 const meta: Meta<typeof AgentListItem> = {
@@ -298,49 +296,6 @@ function renderIdleState(isUnread: boolean) {
   return renderSingleWorkspaceState(2);
 }
 
-function renderGoalState(
-  status: GoalStatus,
-  accounting?: { budgetCents: number | null; costCents: number }
-) {
-  const workspace = STORY_WORKSPACES[2];
-  updatePersistedState(getExperimentKey(EXPERIMENT_IDS.GOALS), true);
-  return (
-    <StoryScaffold
-      activeWorkspaceId={workspace.id}
-      workspaceActivitySnapshots={{
-        [workspace.id]: {
-          recency: NOW,
-          streaming: false,
-          lastModel: null,
-          lastThinkingLevel: null,
-          goal: {
-            goalId: "11111111-1111-4111-8111-111111111111",
-            status,
-            objective: "Ship the goal primitive",
-            budgetCents: accounting?.budgetCents ?? null,
-            costCents: accounting?.costCents ?? 0,
-            turnsUsed: 0,
-            turnCap: null,
-            completionSummary: status === "complete" ? "The goal primitive shipped." : undefined,
-            startedAtMs: NOW,
-          },
-        },
-      }}
-    >
-      <AgentListItem
-        metadata={workspace}
-        projectPath={PROJECT_PATH}
-        projectName={PROJECT_NAME}
-        isSelected={false}
-        onSelectWorkspace={() => undefined}
-        onForkWorkspace={() => Promise.resolve()}
-        onArchiveWorkspace={() => Promise.resolve()}
-        onCancelCreation={() => Promise.resolve()}
-      />
-    </StoryScaffold>
-  );
-}
-
 function renderDraftState() {
   return (
     <StoryScaffold>
@@ -576,37 +531,6 @@ export const Archiving: Story = {
 export const Question: Story = {
   args: undefined as never,
   render: () => renderSingleWorkspaceState(4),
-};
-
-export const GoalActive: Story = {
-  args: undefined as never,
-  render: () => renderGoalState("active"),
-};
-
-export const GoalActiveBudgeted: Story = {
-  args: undefined as never,
-  render: () => renderGoalState("active", { budgetCents: 500, costCents: 123 }),
-};
-
-export const GoalActiveUnbudgeted: Story = {
-  args: undefined as never,
-  render: () => renderGoalState("active", { budgetCents: null, costCents: 123 }),
-};
-
-export const GoalPaused: Story = {
-  args: undefined as never,
-  render: () => renderGoalState("paused"),
-};
-
-export const GoalBudgetLimited: Story = {
-  args: undefined as never,
-  name: "Goal/Budget Limited",
-  render: () => renderGoalState("budget_limited", { budgetCents: 500, costCents: 525 }),
-};
-
-export const GoalComplete: Story = {
-  args: undefined as never,
-  render: () => renderGoalState("complete"),
 };
 
 export const Draft: Story = {
