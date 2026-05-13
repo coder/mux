@@ -18,10 +18,14 @@ const MONITOR_OPEN_TAG = "<monitor-event";
 const MONITOR_CLOSE_TAG = "</monitor-event>";
 const ATTRIBUTE_PATTERN = /(\w[\w-]*)="([^"]*)"/g;
 const LINE_PATTERN = /<line>([\s\S]*?)<\/line>/g;
-// Matches one full `<monitor-event …>…</monitor-event>` block. Used both to detect monitor
-// wakes in a user message and to split batched payloads produced when multiple wake events
-// are queued before a busy session flushes them together.
-const MONITOR_BLOCK_PATTERN = /<monitor-event\b[^>]*>[\s\S]*?<\/monitor-event>/g;
+// Matches one full `<monitor-event …>…</monitor-event>` block that carries the backend
+// `source="mux"` sentinel. Used both to detect synthetic monitor wakes in a user message
+// and to split batched payloads produced when multiple wake events are queued before a busy
+// session flushes them together. The sentinel requirement protects user-authored XML that
+// happens to look like `<monitor-event …>` from being silently extracted/stripped when a
+// real backend wake is appended to their queued message.
+const MONITOR_BLOCK_PATTERN =
+  /<monitor-event\b(?=[^>]*\bsource="mux")[^>]*>[\s\S]*?<\/monitor-event>/g;
 
 function parseSingleMonitorBlock(block: string): MonitorWakeEvent | null {
   const closeBracket = block.indexOf(">");

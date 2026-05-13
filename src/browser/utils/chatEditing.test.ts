@@ -42,14 +42,15 @@ describe("normalizeQueuedMessage", () => {
   test("passes content through verbatim when no monitor flag is set", () => {
     // The flag gate prevents user-authored XML that resembles `<monitor-event>` from being
     // silently stripped when the user opens the Edit composer.
-    const verbatim = '<monitor-event taskId="bash:1" total_matches="1"></monitor-event>';
+    const verbatim =
+      '<monitor-event source="mux" taskId="bash:1" total_matches="1"></monitor-event>';
     expect(normalizeQueuedMessage(baseQueued({ content: verbatim })).content).toBe(verbatim);
   });
 
   test("strips backend-generated monitor XML when the queue is flagged", () => {
     const raw = [
       "investigate this",
-      '<monitor-event taskId="bash:1" total_matches="1"><line>FAIL boot</line></monitor-event>',
+      '<monitor-event source="mux" taskId="bash:1" total_matches="1"><line>FAIL boot</line></monitor-event>',
     ].join("\n");
     const result = normalizeQueuedMessage(
       baseQueued({ content: raw, containsMonitorEvents: true })

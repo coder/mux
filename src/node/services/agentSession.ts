@@ -609,7 +609,11 @@ export class AgentSession {
       .join("\n");
 
     return [
-      `<monitor-event taskId="${this.escapeMonitorAttribute(payload.taskId)}"${displayNameAttribute} total_matches="${payload.totalMatches}"${droppedAttribute}>`,
+      // `source="mux"` is a sentinel attribute that distinguishes backend-generated wakes from
+      // user-pasted XML that happens to look like a `<monitor-event …>` block. The renderer
+      // extracts/strips only sentinel-bearing blocks so a user's verbatim XML survives intact
+      // when a real wake is appended to their queued message.
+      `<monitor-event source="mux" taskId="${this.escapeMonitorAttribute(payload.taskId)}"${displayNameAttribute} total_matches="${payload.totalMatches}"${droppedAttribute}>`,
       `<!-- ${payload.lines.length} new matching line${payload.lines.length === 1 ? "" : "s"} -->`,
       lines,
       "</monitor-event>",

@@ -357,7 +357,7 @@ describe("QueuedMessage banner", () => {
 
   test("renders monitor wake card and hides raw XML when flagged", () => {
     const monitorXml =
-      '<monitor-event taskId="bash:proc-1" display_name="Dev Server" total_matches="1"><line>READY in 3.2s</line></monitor-event>';
+      '<monitor-event source="mux" taskId="bash:proc-1" display_name="Dev Server" total_matches="1"><line>READY in 3.2s</line></monitor-event>';
 
     const view = render(
       <QueuedMessage
@@ -383,7 +383,7 @@ describe("QueuedMessage banner", () => {
   test("renders user text alongside monitor wake card when queue mixes both", () => {
     const raw = [
       "Please investigate this:",
-      '<monitor-event taskId="bash:proc-2" total_matches="2"><line>FAIL one</line><line>FAIL two</line></monitor-event>',
+      '<monitor-event source="mux" taskId="bash:proc-2" total_matches="2"><line>FAIL one</line><line>FAIL two</line></monitor-event>',
     ].join("\n");
 
     const view = render(
@@ -408,7 +408,7 @@ describe("QueuedMessage banner", () => {
     // Defensive: a user pasting similar-looking XML into the composer must not see it
     // silently stripped or rewritten.
     const monitorXml =
-      '<monitor-event taskId="bash:abc" total_matches="1"><line>boom</line></monitor-event>';
+      '<monitor-event source="mux" taskId="bash:abc" total_matches="1"><line>boom</line></monitor-event>';
 
     const view = render(
       <QueuedMessage

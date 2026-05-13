@@ -10,17 +10,21 @@
  *     similarly must not surface raw monitor wake XML.
  *
  * Keep this regex aligned with the one used by `extractMonitorWakeEvents` in
- * `src/browser/features/Messages/MonitorWakeMessage.tsx` (same anchor + non-greedy body).
+ * `src/browser/features/Messages/MonitorWakeMessage.tsx`. Both match only blocks that carry
+ * the backend `source="mux"` sentinel attribute so user-authored XML that happens to look
+ * like a monitor event is never silently stripped, even when a real wake gets appended to
+ * the same queued message.
  */
-const MONITOR_BLOCK_PATTERN = /<monitor-event\b[^>]*>[\s\S]*?<\/monitor-event>/g;
+const MONITOR_BLOCK_PATTERN =
+  /<monitor-event\b(?=[^>]*\bsource="mux")[^>]*>[\s\S]*?<\/monitor-event>/g;
 
 /**
- * Remove every `<monitor-event …>…</monitor-event>` block from `content` and collapse the
- * leftover whitespace. Returns the input unchanged when no blocks are present so callers can
- * still cheaply guard on `stripped !== content`.
+ * Remove every backend-generated `<monitor-event source="mux" …>…</monitor-event>` block
+ * from `content` and collapse the leftover whitespace. Returns the input unchanged when no
+ * sentinel-bearing blocks are present so callers can cheaply guard on `stripped !== content`.
  */
 export function stripMonitorWakeXml(content: string): string {
-  if (!content.includes("<monitor-event")) return content;
+  if (!content.includes('source="mux"')) return content;
   const stripped = content.replace(MONITOR_BLOCK_PATTERN, "");
   if (stripped === content) return content;
   return stripped.replace(/\n{2,}/g, "\n\n").trim();
