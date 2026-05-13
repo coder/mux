@@ -1,5 +1,6 @@
 import type { Runtime, BackgroundHandle } from "@/node/runtime/Runtime";
-import { RemoteRuntime } from "@/node/runtime/RemoteRuntime";
+import { LocalRuntime } from "@/node/runtime/LocalRuntime";
+import { WorktreeRuntime } from "@/node/runtime/WorktreeRuntime";
 import { Buffer } from "node:buffer";
 import { EventEmitter } from "events";
 import { spawnProcess } from "./backgroundProcessExecutor";
@@ -561,13 +562,16 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
     this.processes.set(processId, proc);
 
     if (config.monitor && !proc.isForeground) {
-      // Each remote readOutput()/getExitCode() shells through the runtime (wc/tail/cat), so
-      // a tight 100ms poll on SSH/Docker would issue dozens of remote commands per second
-      // for every monitored idle process. Slow the loop down for remote runtimes.
-      const pollIntervalMs =
-        runtime instanceof RemoteRuntime
-          ? MONITOR_POLL_INTERVAL_MS_REMOTE
-          : MONITOR_POLL_INTERVAL_MS_LOCAL;
+      // Only `LocalRuntime`/`WorktreeRuntime` operate directly on the host filesystem; every
+      // other runtime (devcontainer, docker, ssh, etc.) shells out (wc/tail/cat) per
+      // readOutput()/getExitCode() call. A tight 100ms poll on those transports issues dozens
+      // of commands per second for each monitored idle process, so slow the loop down unless
+      // we're confidently on a true local filesystem path.
+      const isLocalFilesystemRuntime =
+        runtime instanceof LocalRuntime || runtime instanceof WorktreeRuntime;
+      const pollIntervalMs = isLocalFilesystemRuntime
+        ? MONITOR_POLL_INTERVAL_MS_LOCAL
+        : MONITOR_POLL_INTERVAL_MS_REMOTE;
       proc.monitor = this.createMonitorState(config.monitor, { pollIntervalMs });
       this.startMonitorTail(proc);
     }
