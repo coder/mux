@@ -19,6 +19,7 @@ import {
   getImageDimensions,
   getImageDimensionsFromMetadata,
   getImageOutputDir,
+  IMAGE_TOOL_PROVIDER_SETUP_HINT,
   processImageArtifacts,
   reportImageToolUsage,
 } from "./imageArtifacts";
@@ -221,7 +222,7 @@ export const createImageEditTool: ToolFactory = (config) => {
         return {
           success: false,
           error: `Image editing failed: ${sanitizeErrorMessageForDisplay(getErrorMessage(error))}`,
-          setupHint: "Check OpenAI provider credentials, billing, rate limits, and content policy.",
+          setupHint: IMAGE_TOOL_PROVIDER_SETUP_HINT,
         } satisfies ImageEditToolResult;
       }
     },

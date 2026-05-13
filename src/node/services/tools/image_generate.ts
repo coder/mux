@@ -12,6 +12,7 @@ import {
   buildOpenAIImageProviderOptions,
   formatImageModelError,
   getImageOutputDir,
+  IMAGE_TOOL_PROVIDER_SETUP_HINT,
   processImageArtifacts,
   reportImageToolUsage,
 } from "./imageArtifacts";
@@ -112,7 +113,7 @@ export const createImageGenerateTool: ToolFactory = (config) => {
         return {
           success: false,
           error: `Image generation failed: ${sanitizeErrorMessageForDisplay(getErrorMessage(error))}`,
-          setupHint: "Check OpenAI provider credentials, billing, rate limits, and content policy.",
+          setupHint: IMAGE_TOOL_PROVIDER_SETUP_HINT,
         } satisfies ImageGenerateToolResult;
       }
     },

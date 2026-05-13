@@ -15,6 +15,14 @@ const THUMBNAIL_MAX_DIMENSION = 512;
 const THUMBNAIL_QUALITY = 75;
 const THUMBNAIL_MEDIA_TYPE = "image/webp";
 
+// Generic "go look at your OpenAI account" advice used as a fallback setup hint
+// whenever an image tool surfaces an opaque provider failure (unknown
+// `formatImageModelError` shapes, or the post-`generateImage` catch in
+// `image_generate` / `image_edit`). Kept as a single source of truth so the
+// guidance stays consistent across every image-tool error path.
+export const IMAGE_TOOL_PROVIDER_SETUP_HINT =
+  "Check OpenAI provider credentials, billing, rate limits, and content policy.";
+
 type ImageModelOperation = "generation" | "editing";
 type ImageToolName = "image_generate" | "image_edit";
 
@@ -65,12 +73,12 @@ export function formatImageModelError(
         error: sanitizeErrorMessageForDisplay(
           typeof record.raw === "string" ? record.raw : getErrorMessage(error)
         ),
-        setupHint: "Check OpenAI provider credentials, billing, rate limits, and content policy.",
+        setupHint: IMAGE_TOOL_PROVIDER_SETUP_HINT,
       };
     default:
       return {
         error: sanitizeErrorMessageForDisplay(getErrorMessage(error)),
-        setupHint: "Check OpenAI provider credentials, billing, rate limits, and content policy.",
+        setupHint: IMAGE_TOOL_PROVIDER_SETUP_HINT,
       };
   }
 }
