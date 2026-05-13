@@ -13,6 +13,7 @@ import type { InitStateManager } from "@/node/services/initStateManager";
 import type { FrontendWorkspaceMetadata, WorkspaceMetadata } from "@/common/types/workspace";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { DEFAULT_MODEL } from "@/common/constants/knownModels";
 import { computePriorHistoryFingerprint } from "@/common/orpc/onChatCursorFingerprint";
 import type {
@@ -97,6 +98,7 @@ import { CompactionHandler } from "./compactionHandler";
 import { RetryManager, type RetryFailureError, type RetryStatusEvent } from "./retryManager";
 import type { TelemetryService } from "./telemetryService";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
+import type { ExperimentsService } from "./experimentsService";
 
 import { AttachmentService } from "./attachmentService";
 import type { TodoItem } from "@/common/types/tools";
@@ -129,7 +131,11 @@ import {
   isNonRetryableStreamError,
 } from "@/common/utils/messages/retryEligibility";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
-import { readAgentSkill } from "@/node/services/agentSkills/agentSkillsService";
+import {
+  IMAGEGEN_SKILL_DISABLED_MESSAGE,
+  isBuiltInImagegenSkillPackage,
+  readAgentSkill,
+} from "@/node/services/agentSkills/agentSkillsService";
 import {
   createLoadedSkillSnapshot,
   extractLoadedSkillSnapshotsFromMessages,
@@ -320,6 +326,7 @@ interface AgentSessionOptions {
   aiService: AIService;
   initStateManager: InitStateManager;
   telemetryService?: TelemetryService;
+  experimentsService?: ExperimentsService;
   backgroundProcessManager: BackgroundProcessManager;
   workspaceGoalService?: WorkspaceGoalService;
   /** When true, skip terminating background processes on dispose/compaction (for bench/CI) */
@@ -346,6 +353,7 @@ export class AgentSession {
   private readonly aiService: AIService;
   private readonly initStateManager: InitStateManager;
   private readonly backgroundProcessManager: BackgroundProcessManager;
+  private readonly experimentsService?: ExperimentsService;
   private readonly workspaceGoalService?: WorkspaceGoalService;
   private readonly keepBackgroundProcesses: boolean;
   private readonly onCompactionComplete?: () => void;
@@ -508,6 +516,7 @@ export class AgentSession {
       initStateManager,
       telemetryService,
       backgroundProcessManager,
+      experimentsService,
       workspaceGoalService,
       keepBackgroundProcesses,
       onCompactionComplete,
@@ -523,6 +532,7 @@ export class AgentSession {
     this.historyService = historyService;
     this.aiService = aiService;
     this.initStateManager = initStateManager;
+    this.experimentsService = experimentsService;
     this.backgroundProcessManager = backgroundProcessManager;
     this.workspaceGoalService = workspaceGoalService;
     this.keepBackgroundProcesses = keepBackgroundProcesses ?? false;
@@ -2494,7 +2504,8 @@ export class AgentSession {
     try {
       skillSnapshotMessages = await this.materializeAgentSkillSnapshots(
         typedMuxMetadata,
-        options?.disableWorkspaceAgents
+        options?.disableWorkspaceAgents,
+        this.isImageGenerationToolEnabled(options?.experiments)
       );
     } catch (error) {
       return Err(createUnknownSendMessageError(getErrorMessage(error)));
@@ -5672,9 +5683,17 @@ export class AgentSession {
     return { snapshotMessage, materializedTokens: tokens };
   }
 
+  private isImageGenerationToolEnabled(experiments: SendMessageOptions["experiments"]): boolean {
+    return (
+      experiments?.imageGenerationTool ??
+      this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.IMAGE_GENERATION_TOOL) === true
+    );
+  }
+
   private async materializeAgentSkillSnapshots(
     muxMetadata: MuxMessageMetadata | undefined,
-    disableWorkspaceAgents: boolean | undefined
+    disableWorkspaceAgents: boolean | undefined,
+    imageGenerationToolEnabled: boolean
   ): Promise<MuxMessage[]> {
     const refs = extractAgentSkillRefs(muxMetadata);
     if (refs.length === 0) {
@@ -5734,6 +5753,13 @@ export class AgentSession {
       } catch (error) {
         if (ref.source === "slash") {
           throw error;
+        }
+        continue;
+      }
+
+      if (isBuiltInImagegenSkillPackage(resolved.package) && !imageGenerationToolEnabled) {
+        if (ref.source === "slash") {
+          throw new Error(IMAGEGEN_SKILL_DISABLED_MESSAGE);
         }
         continue;
       }

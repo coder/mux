@@ -63,7 +63,11 @@ import {
 import {
   discoverAgentSkills,
   discoverAgentSkillsDiagnostics,
+  filterUnavailableImagegenSkills,
+  IMAGEGEN_SKILL_DISABLED_MESSAGE,
+  isBuiltInImagegenSkillPackage,
   readAgentSkill,
+  type ResolvedAgentSkill,
 } from "@/node/services/agentSkills/agentSkillsService";
 import {
   discoverAgentDefinitions,
@@ -148,6 +152,23 @@ async function resolveAgentDiscoveryContext(
     { projectPath: input.projectPath! }
   );
   return { runtime, discoveryPath: input.projectPath! };
+}
+
+function isImageGenerationToolExperimentEnabled(context: ORPCContext): boolean {
+  return context.experimentsService.isExperimentEnabled(EXPERIMENT_IDS.IMAGE_GENERATION_TOOL);
+}
+
+function assertImagegenSkillAvailable(
+  context: ORPCContext,
+  resolvedSkill: ResolvedAgentSkill
+): void {
+  if (!isBuiltInImagegenSkillPackage(resolvedSkill.package)) {
+    return;
+  }
+
+  if (!isImageGenerationToolExperimentEnabled(context)) {
+    throw new Error(IMAGEGEN_SKILL_DISABLED_MESSAGE);
+  }
 }
 
 function isTrustedProjectPath(context: ORPCContext, projectPath?: string | null): boolean {
@@ -1505,7 +1526,11 @@ export const router = (authToken?: string) => {
             await context.aiService.waitForInit(input.workspaceId);
           }
           const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
-          return discoverAgentSkills(runtime, discoveryPath);
+          const skills = await discoverAgentSkills(runtime, discoveryPath);
+          return filterUnavailableImagegenSkills(
+            skills,
+            isImageGenerationToolExperimentEnabled(context)
+          );
         }),
       listDiagnostics: t
         .input(schemas.agentSkills.listDiagnostics.input)
@@ -1516,7 +1541,14 @@ export const router = (authToken?: string) => {
             await context.aiService.waitForInit(input.workspaceId);
           }
           const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
-          return discoverAgentSkillsDiagnostics(runtime, discoveryPath);
+          const diagnostics = await discoverAgentSkillsDiagnostics(runtime, discoveryPath);
+          return {
+            ...diagnostics,
+            skills: filterUnavailableImagegenSkills(
+              diagnostics.skills,
+              isImageGenerationToolExperimentEnabled(context)
+            ),
+          };
         }),
       get: t
         .input(schemas.agentSkills.get.input)
@@ -1528,6 +1560,7 @@ export const router = (authToken?: string) => {
           }
           const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
           const result = await readAgentSkill(runtime, discoveryPath, input.skillName);
+          assertImagegenSkillAvailable(context, result);
           return result.package;
         }),
     },

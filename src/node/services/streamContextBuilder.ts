@@ -41,7 +41,10 @@ import {
 } from "@/node/services/agentDefinitions/agentDefinitionsService";
 import { isAgentEffectivelyDisabled } from "@/node/services/agentDefinitions/agentEnablement";
 import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/resolveAgentInheritanceChain";
-import { discoverAgentSkills } from "@/node/services/agentSkills/agentSkillsService";
+import {
+  discoverAgentSkills,
+  filterUnavailableImagegenSkills,
+} from "@/node/services/agentSkills/agentSkillsService";
 import { resolveSkillStorageContext } from "@/node/services/agentSkills/skillStorageContext";
 import { buildSystemMessage } from "./systemMessage";
 import { getTokenizerForModel } from "@/node/utils/main/tokenizer";
@@ -540,9 +543,10 @@ export async function buildStreamSystemContext(
     workspaceLog.warn("Failed to discover agent skills for tool description", { error });
   }
 
-  if (imageGenerationToolAvailable === false) {
-    availableSkills = availableSkills?.filter(
-      (skill) => !(skill.scope === "built-in" && skill.name === "imagegen")
+  if (availableSkills) {
+    availableSkills = filterUnavailableImagegenSkills(
+      availableSkills,
+      imageGenerationToolAvailable
     );
   }
 

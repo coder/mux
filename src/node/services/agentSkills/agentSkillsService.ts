@@ -27,6 +27,34 @@ import { AgentSkillParseError, parseSkillMarkdown } from "./parseSkillMarkdown";
 import { getBuiltInSkillByName, getBuiltInSkillDescriptors } from "./builtInSkillDefinitions";
 import type { ProjectSkillContainment } from "./skillStorageContext";
 
+export const IMAGEGEN_BUILT_IN_SKILL_NAME = "imagegen" satisfies SkillName;
+
+export const IMAGEGEN_SKILL_DISABLED_MESSAGE =
+  "Built-in imagegen skill is only available when the Image Generation Tool experiment is enabled.";
+
+export function isBuiltInImagegenSkill(
+  skill: Pick<AgentSkillDescriptor, "name" | "scope">
+): boolean {
+  return skill.scope === "built-in" && skill.name === IMAGEGEN_BUILT_IN_SKILL_NAME;
+}
+
+export function isBuiltInImagegenSkillPackage(skillPackage: AgentSkillPackage): boolean {
+  return (
+    skillPackage.scope === "built-in" &&
+    skillPackage.frontmatter.name === IMAGEGEN_BUILT_IN_SKILL_NAME
+  );
+}
+
+export function filterUnavailableImagegenSkills<
+  T extends Pick<AgentSkillDescriptor, "name" | "scope">,
+>(skills: T[], imageGenerationToolAvailable: boolean | undefined): T[] {
+  if (imageGenerationToolAvailable === true) {
+    return skills;
+  }
+
+  return skills.filter((skill) => !isBuiltInImagegenSkill(skill));
+}
+
 const UNIVERSAL_SKILLS_ROOT = "~/.agents/skills";
 
 export interface AgentSkillsRoots {
