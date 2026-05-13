@@ -309,6 +309,7 @@ export const BudgetLimitWrapupMessages: AppStory = {
 };
 
 export const GeneratedImages: AppStory = {
+  parameters: { chromatic: { modes: CHROMATIC_SMOKE_MODES } },
   render: () => (
     <AppWithMocks
       setup={() => {
