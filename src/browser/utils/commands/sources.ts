@@ -2,6 +2,7 @@ import { THEME_OPTIONS, type ThemePreference } from "@/browser/contexts/ThemeCon
 import type { CommandAction } from "@/browser/contexts/CommandRegistryContext";
 import type { APIClient } from "@/browser/contexts/API";
 import type { ConfirmDialogOptions } from "@/browser/contexts/ConfirmDialogContext";
+import { getContextResetSuccessMessage } from "@/browser/utils/contextResetFeedback";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
 import { getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
@@ -1013,8 +1014,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
           }
           showCommandFeedbackToast({
             type: "success",
-            message:
-              result.data === "noop" ? "No context to reset" : "Context reset; history preserved",
+            message: getContextResetSuccessMessage(result.data),
           });
         },
       });

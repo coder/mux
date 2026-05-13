@@ -85,35 +85,59 @@ test("chat commands include separate reset context and clear history actions", a
     Promise.resolve({ success: true as const, data: "reset" as const })
   );
   const truncateHistory = mock(() => Promise.resolve({ success: true as const, data: undefined }));
-  const sources = mk({
-    api: {
-      workspace: {
-        resetContext,
-        truncateHistory,
-        interruptStream: () => Promise.resolve({ success: true as const, data: undefined }),
-      },
-    } as unknown as APIClient,
-  });
-  const actions = sources.flatMap((s) => s());
+  const testWindow = new GlobalWindow();
+  const originalWindow = globalThis.window;
+  const originalDocument = globalThis.document;
+  const originalCustomEvent = globalThis.CustomEvent;
 
-  const resetAction = actions.find((action) => action.title === "Reset Context, Preserve History");
-  const clearAction = actions.find((action) => action.title === "Clear History");
+  globalThis.window = testWindow as unknown as Window & typeof globalThis;
+  globalThis.document = testWindow.document as unknown as Document;
+  globalThis.CustomEvent = testWindow.CustomEvent as unknown as typeof CustomEvent;
+  document.body
+    .appendChild(document.createElement("div"))
+    .setAttribute("data-component", "ChatInputSection");
 
-  expect(resetAction).toBeDefined();
-  expect(resetAction?.keywords).toEqual([
-    "context reset",
-    "soft clear",
-    "preserve history",
-    "reset chat",
-  ]);
-  expect(clearAction).toBeDefined();
+  try {
+    const sources = mk({
+      api: {
+        workspace: {
+          resetContext,
+          truncateHistory,
+          interruptStream: () => Promise.resolve({ success: true as const, data: undefined }),
+        },
+      } as unknown as APIClient,
+    });
+    const actions = sources.flatMap((s) => s());
 
-  await resetAction?.run();
-  expect(resetContext).toHaveBeenCalledWith({ workspaceId: "w1" });
-  expect(truncateHistory).not.toHaveBeenCalled();
+    const resetAction = actions.find(
+      (action) => action.title === "Reset Context, Preserve History"
+    );
+    const clearAction = actions.find((action) => action.title === "Clear History");
 
-  await clearAction?.run();
-  expect(truncateHistory).toHaveBeenCalledWith({ workspaceId: "w1", percentage: 1.0 });
+    if (!resetAction) {
+      throw new Error("Expected reset context action");
+    }
+    expect(resetAction.keywords).toEqual([
+      "context reset",
+      "soft clear",
+      "preserve history",
+      "reset chat",
+    ]);
+    if (!clearAction) {
+      throw new Error("Expected clear history action");
+    }
+
+    await Promise.resolve(resetAction.run());
+    expect(resetContext).toHaveBeenCalledWith({ workspaceId: "w1" });
+    expect(truncateHistory).not.toHaveBeenCalled();
+
+    await Promise.resolve(clearAction.run());
+    expect(truncateHistory).toHaveBeenCalledWith({ workspaceId: "w1", percentage: 1.0 });
+  } finally {
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+    globalThis.CustomEvent = originalCustomEvent;
+  }
 });
 
 test("reset context command dispatches toast feedback", async () => {

@@ -44,6 +44,7 @@ import {
   UNPRICED_CURRENT_MODEL_GOAL_MESSAGE,
   UNPRICED_TARGET_MODEL_GOAL_MESSAGE,
 } from "@/common/utils/goals/budgetPricing";
+import { getContextResetSuccessMessage } from "@/browser/utils/contextResetFeedback";
 import { HEARTBEAT_DEFAULT_INTERVAL_MS } from "@/constants/heartbeat";
 import {
   WORKSPACE_ONLY_COMMAND_KEYS,
@@ -909,7 +910,7 @@ async function handleClearCommand(
       setToast({
         id: Date.now().toString(),
         type: "success",
-        message: result === "noop" ? "No context to reset" : "Context reset; history preserved",
+        message: getContextResetSuccessMessage(result),
       });
       return { clearInput: true, toastShown: true };
     } catch (error) {
