@@ -71,7 +71,10 @@ import { computeRecencyTimestamp } from "./recency";
 import { assert } from "@/common/utils/assert";
 import { getStatusStateKey } from "@/common/constants/storage";
 import { getFollowUpContentText } from "@/browser/utils/compaction/format";
-import { getContextBoundaryKind } from "@/common/utils/messages/compactionBoundary";
+import {
+  CONTEXT_BOUNDARY_KINDS,
+  getContextBoundaryKind,
+} from "@/common/utils/messages/compactionBoundary";
 import { getGoalClearedSummaryDisplayText } from "@/common/utils/goalClearedSummaryDisplay";
 
 // Maximum number of messages to display in the DOM for performance
@@ -2843,7 +2846,7 @@ export class StreamingMessageAggregator {
       // (emitHistoricalEvents now reads from skip=0, the latest boundary only).
       // This keeps only the current epoch visible in-session; older epochs remain
       // available via Load More history pagination.
-      if (this.isContextBoundaryMessage(incomingMessage)) {
+      if (this.isCompactionBoundaryMessage(incomingMessage)) {
         this.pruneBeforeLatestBoundary(incomingMessage);
       }
 
@@ -2895,10 +2898,18 @@ export class StreamingMessageAggregator {
   }
 
   private isContextBoundaryMessage(message: MuxMessage): boolean {
+    return (
+      this.isCompactionBoundaryMessage(message) ||
+      getContextBoundaryKind(message) === CONTEXT_BOUNDARY_KINDS.RESET
+    );
+  }
+
+  private isCompactionBoundaryMessage(message: MuxMessage): boolean {
     const muxMeta = message.metadata?.muxMetadata;
     return (
       message.role === "assistant" &&
-      (getContextBoundaryKind(message) !== null || muxMeta?.type === "compaction-summary")
+      (getContextBoundaryKind(message) === CONTEXT_BOUNDARY_KINDS.COMPACTION ||
+        muxMeta?.type === "compaction-summary")
     );
   }
 

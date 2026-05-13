@@ -1,4 +1,5 @@
 import { describe, test, expect } from "bun:test";
+import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
 import { createMuxMessage, type DisplayedMessage } from "@/common/types/message";
 import { shouldNotifyOnResponseComplete } from "./responseCompletionMetadata";
 import { MAX_HISTORY_HIDDEN_SEGMENTS } from "./transcriptTruncationPlan";
@@ -1775,6 +1776,46 @@ describe("StreamingMessageAggregator", () => {
 
       const afterCompactionCursor = aggregator.getOnChatCursor();
       expect(afterCompactionCursor?.history?.oldestHistorySequence).toBe(60);
+    });
+
+    test("keeps visible history when a live reset boundary arrives", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      const user = asChatMessage(
+        createMuxMessage("user-1", "user", "First message", { historySequence: 0 })
+      );
+      const assistant = asChatMessage(
+        createMuxMessage("assistant-1", "assistant", "Normal response", { historySequence: 1 })
+      );
+      const resetBoundary = asChatMessage(
+        createMuxMessage("reset-1", "assistant", "", {
+          historySequence: 2,
+          contextBoundaryKind: CONTEXT_BOUNDARY_KINDS.RESET,
+        })
+      );
+
+      aggregator.handleMessage(user);
+      aggregator.handleMessage(assistant);
+      aggregator.handleMessage(resetBoundary);
+
+      expect(aggregator.getAllMessages().map((message) => message.id)).toEqual([
+        "user-1",
+        "assistant-1",
+        "reset-1",
+      ]);
+
+      const displayed = aggregator.getDisplayedMessages();
+      expect(displayed.map((message) => message.type)).toEqual([
+        "user",
+        "assistant",
+        "compaction-boundary",
+      ]);
+
+      const displayedUser = displayed[0];
+      if (displayedUser?.type !== "user") {
+        throw new Error("Expected first displayed row to remain the pre-reset user message");
+      }
+      expect(displayedUser.isBeforeLatestContextBoundary).toBe(true);
     });
 
     test("does not prune messages when a non-boundary message arrives", () => {
