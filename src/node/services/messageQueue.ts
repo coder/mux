@@ -143,12 +143,17 @@ export class MessageQueue {
     const incomingIsCompaction = isCompactionMetadata(options?.muxMetadata);
     const incomingIsAgentSkill = isAgentSkillMetadata(options?.muxMetadata);
     const queueHasMessages = !this.isEmpty();
-    // When a caller explicitly omits options entirely (e.g. a synthetic monitor wake appended
-    // to an already-queued user message), preserve the existing dispatch mode rather than
-    // collapsing it back to "tool-end". Callers that pass options are still responsible for
-    // setting queueDispatchMode if they want to broaden the mode.
+    // Distinguish "purely append text" (options === undefined) from "normal send without
+    // an explicit dispatch override" (options provided without queueDispatchMode):
+    //   - When options are omitted entirely (e.g. a synthetic monitor wake appended to an
+    //     already-queued user message), preserve the existing dispatch mode so the user's
+    //     selected turn-end is not silently narrowed to tool-end.
+    //   - When options are present but queueDispatchMode is unset, fall back to "tool-end"
+    //     so a normal Send still narrows a previously turn-end queue.
+    const callerOmittedOptionsEntirely = options === undefined;
     const incomingMode =
-      options?.queueDispatchMode ?? (queueHasMessages ? this.queueDispatchMode : "tool-end");
+      options?.queueDispatchMode ??
+      (callerOmittedOptionsEntirely && queueHasMessages ? this.queueDispatchMode : "tool-end");
     const nextQueueDispatchMode = !queueHasMessages
       ? incomingMode
       : incomingMode === "tool-end"
