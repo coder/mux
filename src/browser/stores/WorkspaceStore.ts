@@ -37,6 +37,7 @@ import {
   isInitOutput,
   isInitStart,
   isAdvisorPhaseEvent,
+  isMonitorMatchEvent,
   isBashOutputEvent,
   isTaskCreatedEvent,
   isMuxMessage,
@@ -902,6 +903,9 @@ export class WorkspaceStore {
             reviews: data.reviews,
             queueDispatchMode: data.queueDispatchMode,
             hasCompactionRequest: data.hasCompactionRequest,
+            // Flag is sticky on the QueuedMessage so the banner + edit/restore paths can
+            // strip backend-generated `<monitor-event>` XML before the user sees it.
+            containsMonitorEvents: data.containsMonitorEvents === true ? true : undefined,
           }
         : null;
 
@@ -3698,6 +3702,7 @@ export class WorkspaceStore {
     return (
       data.type in this.bufferedEventHandlers ||
       data.type === "bash-output" ||
+      data.type === "monitor-match" ||
       data.type === "advisor-phase" ||
       data.type === "task-created"
     );
@@ -3957,6 +3962,13 @@ export class WorkspaceStore {
 
       // High-frequency: throttle UI updates like other delta-style events.
       this.scheduleIdleStateBump(workspaceId);
+      return;
+    }
+
+    if (isMonitorMatchEvent(data)) {
+      // BackgroundBashStore owns process-list monitor counters via backgroundBashes.subscribe.
+      // This chat event is still delivered so reconnect/replay buffering recognizes it.
+      this.states.bump(workspaceId);
       return;
     }
 

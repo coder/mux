@@ -215,6 +215,7 @@ export {
   ToolCallDeltaEventSchema,
   ToolCallEndEventSchema,
   ToolCallStartEventSchema,
+  MonitorMatchEventSchema,
   BashOutputEventSchema,
   TaskCreatedEventSchema,
   AdvisorPhaseEventSchema,

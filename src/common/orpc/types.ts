@@ -16,6 +16,7 @@ import type {
   ToolCallDeltaEvent,
   ToolCallEndEvent,
   AdvisorPhaseEvent,
+  MonitorMatchEvent,
   BashOutputEvent,
   TaskCreatedEvent,
   ReasoningDeltaEvent,
@@ -105,6 +106,10 @@ export function isToolCallStart(msg: WorkspaceChatMessage): msg is ToolCallStart
 
 export function isToolCallDelta(msg: WorkspaceChatMessage): msg is ToolCallDeltaEvent {
   return (msg as { type?: string }).type === "tool-call-delta";
+}
+
+export function isMonitorMatchEvent(msg: WorkspaceChatMessage): msg is MonitorMatchEvent {
+  return (msg as { type?: string }).type === "monitor-match";
 }
 
 export function isBashOutputEvent(msg: WorkspaceChatMessage): msg is BashOutputEvent {

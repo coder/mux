@@ -1,12 +1,25 @@
 import type { Runtime, BackgroundHandle } from "@/node/runtime/Runtime";
+import { LocalRuntime } from "@/node/runtime/LocalRuntime";
+import { WorktreeRuntime } from "@/node/runtime/WorktreeRuntime";
+import { Buffer } from "node:buffer";
+import { EventEmitter } from "events";
 import { spawnProcess } from "./backgroundProcessExecutor";
 import assert from "@/common/utils/assert";
 import { getErrorMessage } from "@/common/utils/errors";
 import { log } from "./log";
 import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
+import { BASH_MAX_LINE_BYTES } from "@/common/constants/toolLimits";
 
 const DEFAULT_BACKGROUND_BASH_TAIL_BYTES = 64_000;
 const MAX_BACKGROUND_BASH_TAIL_BYTES = 1_000_000;
+
+// Local runtimes can tail the on-disk output file directly, so a tight 100ms poll is cheap.
+// Remote runtimes (SSH/Docker) shell out wc/tail/cat per poll; back off to keep monitored
+// long-running processes from saturating the remote transport when idle.
+const MONITOR_POLL_INTERVAL_MS_LOCAL = 100;
+const MONITOR_POLL_INTERVAL_MS_REMOTE = 1_000;
+const MONITOR_MAX_PENDING_LINES = 50;
+const MONITOR_MAX_LAST_LINES = 20;
 
 export function computeTailStartOffset(fileSizeBytes: number, tailBytes: number): number {
   assert(
@@ -21,8 +34,6 @@ export function computeTailStartOffset(fileSizeBytes: number, tailBytes: number)
   return Math.max(0, fileSizeBytes - tailBytes);
 }
 
-import { EventEmitter } from "events";
-
 /**
  * Metadata written to meta.json for bookkeeping
  */
@@ -35,6 +46,48 @@ export interface BackgroundProcessMeta {
   exitCode?: number;
   exitTime?: number;
   displayName?: string;
+}
+
+export interface BackgroundProcessMonitorConfig {
+  filter: string;
+  pattern: RegExp;
+  exclude: boolean;
+  maxEvents?: number;
+  cooldownMs: number;
+}
+
+export interface BackgroundProcessMonitorSnapshot {
+  filter: string;
+  filter_exclude: boolean;
+  max_events?: number;
+  cooldown_ms: number;
+  totalMatches: number;
+  droppedLines: number;
+  lastLines: string[];
+}
+
+export interface MonitorMatchPayload {
+  processId: string;
+  taskId: string;
+  displayName?: string;
+  lines: string[];
+  totalMatches: number;
+  droppedLines?: number;
+  timestamp: number;
+}
+
+export interface BackgroundProcessMonitorState extends BackgroundProcessMonitorConfig {
+  matchesCount: number;
+  pendingLines: string[];
+  droppedLines: number;
+  totalDroppedLines: number;
+  lastLines: string[];
+  flushTimer?: ReturnType<typeof setTimeout>;
+  lastReadOffset: number;
+  /** How frequently the tail loop reads output (ms); longer for remote runtimes. */
+  pollIntervalMs: number;
+  incompleteLineBuffer: string;
+  stopped: boolean;
 }
 
 /**
@@ -65,6 +118,8 @@ export interface BackgroundProcess {
   getOutputCallCount: number;
   /** Buffer for incomplete lines (no trailing newline) from previous read */
   incompleteLineBuffer: string;
+  /** Optional write-time monitor that wakes the agent on matching output lines. */
+  monitor?: BackgroundProcessMonitorState;
 }
 
 /**
@@ -104,6 +159,7 @@ export interface ForegroundProcess {
  */
 export interface BackgroundProcessManagerEvents {
   change: [workspaceId: string];
+  "monitor:match": [workspaceId: string, payload: MonitorMatchPayload];
 }
 
 export class BackgroundProcessManager extends EventEmitter<BackgroundProcessManagerEvents> {
@@ -152,6 +208,243 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
   /** Emit a change event for a workspace */
   private emitChange(workspaceId: string): void {
     this.emit("change", workspaceId);
+  }
+
+  private createMonitorState(
+    config: BackgroundProcessMonitorConfig,
+    options: { pollIntervalMs: number }
+  ): BackgroundProcessMonitorState {
+    return {
+      ...config,
+      matchesCount: 0,
+      pendingLines: [],
+      droppedLines: 0,
+      totalDroppedLines: 0,
+      lastLines: [],
+      lastReadOffset: 0,
+      incompleteLineBuffer: "",
+      stopped: false,
+      pollIntervalMs: options.pollIntervalMs,
+    };
+  }
+
+  getMonitorSnapshot(proc: BackgroundProcess): BackgroundProcessMonitorSnapshot | undefined {
+    const monitor = proc.monitor;
+    if (!monitor) return undefined;
+
+    return {
+      filter: monitor.filter,
+      filter_exclude: monitor.exclude,
+      ...(monitor.maxEvents !== undefined ? { max_events: monitor.maxEvents } : {}),
+      cooldown_ms: monitor.cooldownMs,
+      totalMatches: monitor.matchesCount,
+      droppedLines: monitor.totalDroppedLines,
+      lastLines: [...monitor.lastLines],
+    };
+  }
+
+  private emitMonitorMatch(proc: BackgroundProcess, monitor: BackgroundProcessMonitorState): void {
+    if (monitor.pendingLines.length === 0) return;
+
+    if (monitor.flushTimer) {
+      clearTimeout(monitor.flushTimer);
+      monitor.flushTimer = undefined;
+    }
+
+    const lines = monitor.pendingLines;
+    const droppedLines = monitor.droppedLines;
+    monitor.pendingLines = [];
+    monitor.droppedLines = 0;
+
+    this.emit("monitor:match", proc.workspaceId, {
+      processId: proc.id,
+      taskId: `bash:${proc.id}`,
+      ...(proc.displayName !== undefined ? { displayName: proc.displayName } : {}),
+      lines,
+      totalMatches: monitor.matchesCount,
+      ...(droppedLines > 0 ? { droppedLines } : {}),
+      timestamp: Date.now(),
+    });
+    this.emitChange(proc.workspaceId);
+  }
+
+  private stopMonitor(proc: BackgroundProcess, flushPending: boolean): void {
+    const monitor = proc.monitor;
+    if (!monitor || monitor.stopped) return;
+
+    monitor.stopped = true;
+    if (monitor.flushTimer) {
+      clearTimeout(monitor.flushTimer);
+      monitor.flushTimer = undefined;
+    }
+    if (flushPending) {
+      this.emitMonitorMatch(proc, monitor);
+    }
+  }
+
+  private scheduleMonitorFlush(
+    proc: BackgroundProcess,
+    monitor: BackgroundProcessMonitorState
+  ): void {
+    if (monitor.cooldownMs === 0) {
+      this.emitMonitorMatch(proc, monitor);
+      return;
+    }
+
+    monitor.flushTimer ??= setTimeout(() => {
+      monitor.flushTimer = undefined;
+      if (!monitor.stopped) {
+        this.emitMonitorMatch(proc, monitor);
+      }
+    }, monitor.cooldownMs);
+  }
+
+  private truncateUtf8Prefix(value: string, maxBytes: number): string {
+    let bytes = 0;
+    let endIndex = 0;
+    for (const char of value) {
+      const charBytes = Buffer.byteLength(char, "utf8");
+      if (bytes + charBytes > maxBytes) break;
+      bytes += charBytes;
+      endIndex += char.length;
+    }
+
+    return value.slice(0, endIndex);
+  }
+
+  private truncateMonitorLine(line: string): string {
+    if (Buffer.byteLength(line, "utf8") <= BASH_MAX_LINE_BYTES) return line;
+
+    return `${this.truncateUtf8Prefix(line, BASH_MAX_LINE_BYTES)}… [truncated]`;
+  }
+
+  private boundMonitorIncompleteLineBuffer(line: string): string {
+    if (Buffer.byteLength(line, "utf8") <= BASH_MAX_LINE_BYTES) return line;
+
+    return this.truncateUtf8Prefix(line, BASH_MAX_LINE_BYTES);
+  }
+
+  private recordMonitorMatch(proc: BackgroundProcess, line: string): void {
+    const monitor = proc.monitor;
+    if (!monitor || monitor.stopped) return;
+
+    const boundedLine = this.truncateMonitorLine(line);
+    monitor.matchesCount++;
+    monitor.pendingLines.push(boundedLine);
+    monitor.lastLines.push(boundedLine);
+
+    if (monitor.lastLines.length > MONITOR_MAX_LAST_LINES) {
+      monitor.lastLines.splice(0, monitor.lastLines.length - MONITOR_MAX_LAST_LINES);
+    }
+
+    while (monitor.pendingLines.length > MONITOR_MAX_PENDING_LINES) {
+      monitor.pendingLines.shift();
+      monitor.droppedLines++;
+      monitor.totalDroppedLines++;
+    }
+
+    this.scheduleMonitorFlush(proc, monitor);
+
+    if (monitor.maxEvents !== undefined && monitor.matchesCount >= monitor.maxEvents) {
+      // The monitor is intentionally a wake-up mechanism, not process lifecycle control.
+      // max_events silences future wakes while leaving the underlying background command alive.
+      this.stopMonitor(proc, true);
+    }
+  }
+
+  private monitorMatchesLine(monitor: BackgroundProcessMonitorState, line: string): boolean {
+    monitor.pattern.lastIndex = 0;
+    const matched = monitor.pattern.test(line);
+    return monitor.exclude ? !matched : matched;
+  }
+
+  private processMonitorContent(
+    proc: BackgroundProcess,
+    content: string,
+    options?: { includeIncompleteLine?: boolean }
+  ): void {
+    const monitor = proc.monitor;
+    if (!monitor || monitor.stopped) return;
+    if (content.length === 0 && options?.includeIncompleteLine !== true) return;
+
+    const rawWithBuffer = monitor.incompleteLineBuffer + content;
+    const allLines = rawWithBuffer.split("\n");
+    const hasTrailingNewline = rawWithBuffer.endsWith("\n");
+    const completeLines = hasTrailingNewline ? allLines.slice(0, -1) : allLines.slice(0, -1);
+
+    const includeIncompleteLine = options?.includeIncompleteLine === true;
+    if (includeIncompleteLine && !hasTrailingNewline) {
+      const last = allLines[allLines.length - 1];
+      if (last.length > 0) {
+        completeLines.push(last);
+      }
+      monitor.incompleteLineBuffer = "";
+    } else {
+      const incompleteLine = hasTrailingNewline ? "" : (allLines[allLines.length - 1] ?? "");
+      monitor.incompleteLineBuffer = this.boundMonitorIncompleteLineBuffer(incompleteLine);
+    }
+
+    for (const line of completeLines) {
+      if (monitor.stopped) break;
+      if (this.monitorMatchesLine(monitor, line)) {
+        this.recordMonitorMatch(proc, line);
+      }
+    }
+  }
+
+  private startMonitorTail(proc: BackgroundProcess): void {
+    void this.monitorTailLoop(proc.id).catch((error: unknown) => {
+      const current = this.processes.get(proc.id);
+      if (current?.monitor && !current.monitor.stopped) {
+        current.monitor.stopped = true;
+      }
+      log.debug(
+        `BackgroundProcessManager: monitor tail for ${proc.id} failed: ${getErrorMessage(error)}`
+      );
+    });
+  }
+
+  private async monitorTailLoop(processId: string): Promise<void> {
+    while (true) {
+      const proc = this.processes.get(processId);
+      const monitor = proc?.monitor;
+      if (!proc || !monitor || monitor.stopped) return;
+
+      const read = await proc.handle.readOutput(monitor.lastReadOffset);
+      if (read.newOffset < monitor.lastReadOffset) {
+        log.debug(`BackgroundProcessManager: monitor read offset moved backwards for ${processId}`);
+        this.stopMonitor(proc, true);
+        return;
+      }
+
+      monitor.lastReadOffset = read.newOffset;
+      this.processMonitorContent(proc, read.content);
+
+      const exitCode = await proc.handle.getExitCode();
+      if (exitCode !== null) {
+        if (proc.status === "running") {
+          proc.status = "exited";
+          proc.exitCode = exitCode;
+          proc.exitTime = Date.now();
+          await this.updateMetaFile(proc).catch((err: unknown) => {
+            log.debug(
+              `BackgroundProcessManager: Failed to update meta.json: ${getErrorMessage(err)}`
+            );
+          });
+          this.emitChange(proc.workspaceId);
+        }
+
+        // stdout/stderr redirection can lag exit-code observation by a tick.
+        await new Promise((resolve) => setTimeout(resolve, monitor.pollIntervalMs));
+        const finalRead = await proc.handle.readOutput(monitor.lastReadOffset);
+        monitor.lastReadOffset = finalRead.newOffset;
+        this.processMonitorContent(proc, finalRead.content, { includeIncompleteLine: true });
+        this.stopMonitor(proc, true);
+        return;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, monitor.pollIntervalMs));
+    }
   }
 
   /**
@@ -207,6 +500,8 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
       displayName: string;
       /** If true, process is foreground (being waited on). Default: false (background) */
       isForeground?: boolean;
+      /** Optional write-time monitor for background output. */
+      monitor?: BackgroundProcessMonitorConfig;
       /** Auto-terminate after this many seconds (background processes only) */
       timeoutSecs?: number;
     }
@@ -265,6 +560,21 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
 
     // Store process in map
     this.processes.set(processId, proc);
+
+    if (config.monitor && !proc.isForeground) {
+      // Only `LocalRuntime`/`WorktreeRuntime` operate directly on the host filesystem; every
+      // other runtime (devcontainer, docker, ssh, etc.) shells out (wc/tail/cat) per
+      // readOutput()/getExitCode() call. A tight 100ms poll on those transports issues dozens
+      // of commands per second for each monitored idle process, so slow the loop down unless
+      // we're confidently on a true local filesystem path.
+      const isLocalFilesystemRuntime =
+        runtime instanceof LocalRuntime || runtime instanceof WorktreeRuntime;
+      const pollIntervalMs = isLocalFilesystemRuntime
+        ? MONITOR_POLL_INTERVAL_MS_LOCAL
+        : MONITOR_POLL_INTERVAL_MS_REMOTE;
+      proc.monitor = this.createMonitorState(config.monitor, { pollIntervalMs });
+      this.startMonitorTail(proc);
+    }
 
     log.debug(
       `Process ${processId} spawned successfully with PID ${pid} (foreground: ${proc.isForeground})`
@@ -859,6 +1169,7 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
 
     // If already terminated, return success (idempotent)
     if (proc.status === "exited" || proc.status === "killed" || proc.status === "failed") {
+      this.stopMonitor(proc, true);
       log.debug(`Process ${processId} already terminated with status: ${proc.status}`);
       return { success: true };
     }
@@ -876,6 +1187,8 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
         log.debug(`BackgroundProcessManager: Failed to update meta.json: ${getErrorMessage(err)}`);
       });
 
+      this.stopMonitor(proc, true);
+
       // Dispose of the handle
       await proc.handle.dispose();
 
@@ -892,6 +1205,8 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
       await this.updateMetaFile(proc).catch((err: unknown) => {
         log.debug(`BackgroundProcessManager: Failed to update meta.json: ${getErrorMessage(err)}`);
       });
+      this.stopMonitor(proc, true);
+
       // Ensure handle is cleaned up even on error
       await proc.handle.dispose();
       this.emitChange(proc.workspaceId);

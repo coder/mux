@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect } from "react";
-import { Terminal, X, Loader2, FileText } from "lucide-react";
+import { Terminal, X, Loader2, FileText, Radio } from "lucide-react";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 import { cn } from "@/common/lib/utils";
 import { BackgroundBashOutputDialog } from "../BackgroundBashOutputDialog/BackgroundBashOutputDialog";
@@ -93,19 +93,48 @@ export const BackgroundProcessesBanner: React.FC<BackgroundProcessesBannerProps>
           renderExpanded={() =>
             runningProcesses.map((proc) => {
               const isTerminating = terminatingIds.has(proc.id);
+              const monitor = proc.monitor;
+              // Quiet monitor = armed but no matches yet. Use a dimmer row so a noisy match
+              // can pop visually without changing the dialog/banner overall density.
+              const isQuietMonitor = monitor?.totalMatches === 0;
+              const hasMonitorMatch = (monitor?.totalMatches ?? 0) > 0;
               return (
                 <div
                   key={proc.id}
                   className={cn(
                     "hover:bg-hover flex items-center justify-between gap-3 rounded px-2 py-1.5",
                     "transition-colors",
-                    isTerminating && "pointer-events-none opacity-50"
+                    isTerminating && "pointer-events-none opacity-50",
+                    !isTerminating && isQuietMonitor && "opacity-70"
                   )}
                 >
                   <div className="min-w-0 flex-1">
                     <div className="text-foreground truncate font-mono text-xs" title={proc.script}>
                       {proc.displayName ?? truncateScript(proc.script)}
                     </div>
+                    {monitor && (
+                      <div
+                        className={cn(
+                          "flex items-center gap-1 truncate font-mono text-[10px]",
+                          hasMonitorMatch ? "text-foreground" : "text-muted italic"
+                        )}
+                        title={monitor.lastLines.at(-1) ?? `watching /${monitor.filter}/`}
+                      >
+                        <Radio
+                          aria-hidden
+                          size={10}
+                          className={cn(hasMonitorMatch ? "text-success" : "text-muted")}
+                        />
+                        {hasMonitorMatch ? (
+                          <span>
+                            monitor {monitor.totalMatches} match
+                            {monitor.totalMatches !== 1 && "es"}
+                          </span>
+                        ) : (
+                          <span className="truncate">watching /{monitor.filter}/</span>
+                        )}
+                      </div>
+                    )}
                     <div className="text-muted font-mono text-[10px]">pid {proc.pid}</div>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">

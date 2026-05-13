@@ -145,6 +145,12 @@ export const MuxMessageSchema = z.object({
       partial: z.boolean().optional(),
       synthetic: z.boolean().optional(),
       uiVisible: z.boolean().optional(),
+      /**
+       * True when a persisted user message contains backend-generated `<monitor-event>`
+       * blocks. The UI uses this to gate the inline monitor-card renderer so user-authored
+       * XML that happens to look similar is not silently extracted/stripped.
+       */
+      containsMonitorEvents: z.boolean().optional(),
 
       agentSkillSnapshot: z
         .object({

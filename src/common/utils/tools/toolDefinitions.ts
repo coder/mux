@@ -857,6 +857,28 @@ export const ProposeStatusToolArgsSchema = z.object({
     ),
 });
 
+const BashMonitorSchema = z.object({
+  filter: z
+    .string()
+    .describe("Regex applied per stdout/stderr line at write time. Matching lines wake the agent."),
+  filter_exclude: z
+    .boolean()
+    .nullish()
+    .describe("Invert match: matching lines are dropped, non-matching lines wake the agent."),
+  max_events: z
+    .number()
+    .int()
+    .positive()
+    .nullish()
+    .describe("Auto-stop monitoring after this many matches; the process keeps running."),
+  cooldown_ms: z
+    .number()
+    .int()
+    .nonnegative()
+    .nullish()
+    .describe("Coalesce matches that occur within this window into a single wake event."),
+});
+
 const MuxConfigFileSchema = z.enum(["providers", "config"]);
 
 /**
@@ -949,6 +971,8 @@ export const TOOL_DEFINITIONS = {
       "Commands that exceed these limits will FAIL with an error (no partial output returned). " +
       "Be conservative: use 'head', 'tail', 'grep', or other filters to limit output before running commands. " +
       "Large outputs may be automatically filtered; when this happens, the result includes a note explaining what was kept and (if available) where the full output was saved.\n" +
+      "Background commands can include a monitor block with a regex filter; matching lines wake the agent at the next step boundary, so no polling is required. " +
+      "Use monitor for dev servers, watch tests, and log tails where specific error/progress lines should interrupt ongoing work.\n" +
       "On Windows this runs in Git Bash; to discard output use `>/dev/null` (not `>nul`).",
     schema: z.preprocess(
       (value) => {
@@ -965,40 +989,49 @@ export const TOOL_DEFINITIONS = {
         obj = renameAliasField(obj, "description", "display_name");
         return obj;
       },
-      z.object({
-        script: z.string().describe("The bash script/command to execute"),
-        timeout_secs: z
-          .number()
-          .positive()
-          .describe(
-            "Timeout in seconds. For foreground: max execution time before kill. " +
-              "For background: max lifetime before auto-termination. " +
-              "Start small and increase on retry; avoid large initial values to keep UX responsive"
+      z
+        .object({
+          script: z.string().describe("The bash script/command to execute"),
+          timeout_secs: z
+            .number()
+            .positive()
+            .describe(
+              "Timeout in seconds. For foreground: max execution time before kill. " +
+                "For background: max lifetime before auto-termination. " +
+                "Start small and increase on retry; avoid large initial values to keep UX responsive"
+            ),
+          run_in_background: z
+            .boolean()
+            .default(false)
+            .describe(
+              "Run this command in the background without blocking. " +
+                "Use for processes running >5s (dev servers, builds, file watchers). " +
+                "Do NOT use for quick commands (<5s), interactive processes (no stdin support), " +
+                "or processes requiring real-time output (use foreground with larger timeout instead). " +
+                "Returns immediately with a taskId (bash:<processId>) and backgroundProcessId. " +
+                "Read output with task_await (returns only new output since last check). " +
+                "Terminate with task_terminate using the taskId. " +
+                "List active tasks with task_list. " +
+                "Process persists until timeout_secs expires, terminated, or workspace is removed." +
+                "\\n\\nFor long-running tasks like builds or compilations, prefer background mode to continue productive work in parallel. " +
+                "Do not call task_await in the same parallel tool-call batch; wait for the returned taskId first. " +
+                "When you actually need the output, read it with task_await; do not poll task_await just because the process is still running."
+            ),
+          display_name: z
+            .string()
+            .describe(
+              "Human-readable name for the process (e.g., 'Dev Server', 'TypeCheck Watch'). " +
+                "Required for all bash invocations since any process can be sent to background."
+            ),
+          monitor: BashMonitorSchema.nullish().describe(
+            "Wake-on-match monitor. When set with run_in_background=true, matching lines push a synthetic agent-initiated user message at the next step boundary, " +
+              "so you don't need to poll task_await. Use grep-style line-oriented patterns. Full output is still readable via task_await."
           ),
-        run_in_background: z
-          .boolean()
-          .default(false)
-          .describe(
-            "Run this command in the background without blocking. " +
-              "Use for processes running >5s (dev servers, builds, file watchers). " +
-              "Do NOT use for quick commands (<5s), interactive processes (no stdin support), " +
-              "or processes requiring real-time output (use foreground with larger timeout instead). " +
-              "Returns immediately with a taskId (bash:<processId>) and backgroundProcessId. " +
-              "Read output with task_await (returns only new output since last check). " +
-              "Terminate with task_terminate using the taskId. " +
-              "List active tasks with task_list. " +
-              "Process persists until timeout_secs expires, terminated, or workspace is removed." +
-              "\\n\\nFor long-running tasks like builds or compilations, prefer background mode to continue productive work in parallel. " +
-              "Do not call task_await in the same parallel tool-call batch; wait for the returned taskId first. " +
-              "When you actually need the output, read it with task_await; do not poll task_await just because the process is still running."
-          ),
-        display_name: z
-          .string()
-          .describe(
-            "Human-readable name for the process (e.g., 'Dev Server', 'TypeCheck Watch'). " +
-              "Required for all bash invocations since any process can be sent to background."
-          ),
-      })
+        })
+        .refine((args) => args.monitor == null || args.run_in_background === true, {
+          path: ["monitor"],
+          message: "monitor requires run_in_background=true",
+        })
     ),
   },
   file_read: {
@@ -1850,6 +1883,7 @@ const BashToolBackgroundSchema = z
     wall_duration_ms: z.number(),
     taskId: z.string(),
     backgroundProcessId: z.string(),
+    monitor: BashMonitorSchema.optional(),
   })
   .extend(ToolOutputUiOnlyFieldSchema);
 

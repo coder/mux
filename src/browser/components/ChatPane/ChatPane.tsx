@@ -82,6 +82,7 @@ import {
 import {
   buildEditingStateFromDisplayed,
   canEditDisplayedUserMessage,
+  isPureMonitorWakeQueue,
   normalizeQueuedMessage,
   type EditingMessageState,
 } from "@/browser/utils/chatEditing";
@@ -497,6 +498,10 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     async (queuedMessage: QueuedMessageData) => {
       const inputApi = chatInputAPI.current;
       if (!inputApi) return;
+      // A pure backend-generated monitor wake has no user-authored text to restore; clearing
+      // the queue here would silently drop the wake and open an empty composer. Bail so the
+      // pending wake stays queued and reaches the agent on the next dispatch boundary.
+      if (isPureMonitorWakeQueue(queuedMessage)) return;
 
       await api?.workspace.clearQueue({ workspaceId });
       inputApi.restoreDraft(normalizeQueuedMessage(queuedMessage));
@@ -536,7 +541,10 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     const current = workspaceStateRef.current;
     if (!current) return;
 
-    if (current.queuedMessage) {
+    // Skip the queued-draft branch for pure monitor wakes so the editLast shortcut doesn't
+    // clear the backend queue and drop the wake into an empty composer; fall through to the
+    // previous user message instead.
+    if (current.queuedMessage && !isPureMonitorWakeQueue(current.queuedMessage)) {
       await restoreQueuedDraft(current.queuedMessage);
       return;
     }

@@ -208,6 +208,7 @@ export class StreamTranslator {
       case "stream-start":
       case "reasoning-end":
       case "delete":
+      case "monitor-match":
       case "task-created":
       case "usage-delta":
       case "session-usage-delta":

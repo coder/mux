@@ -270,6 +270,36 @@ describe("MessageQueue", () => {
 
       expect(queue.getQueueDispatchMode()).toBe("tool-end");
     });
+
+    it("preserves the existing dispatch mode when subsequent add omits options entirely", () => {
+      queue.add("User message", {
+        model: "claude-3-5-sonnet-20241022",
+        agentId: "exec",
+        queueDispatchMode: "turn-end",
+      });
+
+      // A synthetic wake without explicit options must not flip the queue from turn-end → tool-end.
+      queue.add("Synthetic wake", undefined, { synthetic: true });
+
+      expect(queue.getQueueDispatchMode()).toBe("turn-end");
+    });
+
+    it("narrows to tool-end when subsequent add provides options without dispatch mode", () => {
+      queue.add("User message", {
+        model: "claude-3-5-sonnet-20241022",
+        agentId: "exec",
+        queueDispatchMode: "turn-end",
+      });
+
+      // A normal Send from the frontend omits queueDispatchMode for the default mode. The
+      // queue must still treat that as tool-end so the existing turn-end is narrowed.
+      queue.add("Follow up", {
+        model: "claude-3-5-sonnet-20241022",
+        agentId: "exec",
+      });
+
+      expect(queue.getQueueDispatchMode()).toBe("tool-end");
+    });
   });
 
   describe("addOnce", () => {

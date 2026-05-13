@@ -1947,6 +1947,99 @@ describe("bash tool - background execution", () => {
     tempDir[Symbol.dispose]();
   });
 
+  it("should arm monitor for background mode and echo monitor config", async () => {
+    const manager = new BackgroundProcessManager("/tmp/mux-test-bg");
+
+    const tempDir = new TestTempDir("test-bash-bg-monitor");
+    const config = createTestToolConfig(tempDir.path);
+    config.backgroundProcessManager = manager;
+
+    const tool = createBashTool(config);
+    const args: BashToolArgs = {
+      script: "echo ERROR",
+      timeout_secs: 5,
+      run_in_background: true,
+      display_name: "test-monitor-bg",
+      monitor: {
+        filter: "ERROR",
+        filter_exclude: false,
+        cooldown_ms: 0,
+      },
+    };
+
+    const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
+
+    expect(result.success).toBe(true);
+    if (result.success && "backgroundProcessId" in result) {
+      expect(result.output).toContain("Monitor armed");
+      expect(result.monitor).toMatchObject({
+        filter: "ERROR",
+        filter_exclude: false,
+        cooldown_ms: 0,
+      });
+    } else {
+      throw new Error("Expected background process ID in result");
+    }
+
+    await manager.terminateAll();
+    tempDir[Symbol.dispose]();
+  });
+
+  it("should reject a monitor without background mode", async () => {
+    using testEnv = createTestBashTool();
+    const tool = testEnv.tool;
+    const args = {
+      script: "echo ERROR",
+      timeout_secs: 5,
+      run_in_background: false,
+      display_name: "test-monitor-foreground",
+      monitor: {
+        filter: "ERROR",
+        filter_exclude: false,
+        cooldown_ms: 0,
+      },
+    } satisfies BashToolArgs;
+
+    const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("monitor requires run_in_background=true");
+    }
+  });
+
+  it("should reject invalid monitor regex without spawning", async () => {
+    const manager = new BackgroundProcessManager("/tmp/mux-test-bg");
+
+    const tempDir = new TestTempDir("test-bash-bg-monitor-regex");
+    const config = createTestToolConfig(tempDir.path);
+    config.backgroundProcessManager = manager;
+
+    const tool = createBashTool(config);
+    const args: BashToolArgs = {
+      script: "echo ERROR",
+      timeout_secs: 5,
+      run_in_background: true,
+      display_name: "test-monitor-bad-regex",
+      monitor: {
+        filter: "[",
+        filter_exclude: false,
+        cooldown_ms: 0,
+      },
+    };
+
+    const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("Invalid monitor filter regex");
+    }
+    expect(await manager.list(config.workspaceId)).toHaveLength(0);
+
+    await manager.terminateAll();
+    tempDir[Symbol.dispose]();
+  });
+
   it("should inject muxEnv environment variables in background mode", async () => {
     const manager = new BackgroundProcessManager("/tmp/mux-test-bg");
 

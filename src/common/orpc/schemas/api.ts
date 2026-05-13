@@ -148,6 +148,16 @@ export const ProjectGitStatusResultSchema = z.object({
 
 export type ProjectGitStatusResult = z.infer<typeof ProjectGitStatusResultSchema>;
 
+export const BackgroundProcessMonitorInfoSchema = z.object({
+  filter: z.string(),
+  filter_exclude: z.boolean(),
+  max_events: z.number().optional(),
+  cooldown_ms: z.number(),
+  totalMatches: z.number(),
+  droppedLines: z.number(),
+  lastLines: z.array(z.string()),
+});
+
 // Background process info (for UI display)
 export const BackgroundProcessInfoSchema = z.object({
   id: z.string(),
@@ -156,6 +166,7 @@ export const BackgroundProcessInfoSchema = z.object({
   displayName: z.string().optional(),
   startTime: z.number(),
   status: BackgroundProcessStatusSchema,
+  monitor: BackgroundProcessMonitorInfoSchema.optional(),
   exitCode: z.number().optional(),
 });
 

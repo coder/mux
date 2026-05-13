@@ -5,6 +5,7 @@ import type { ButtonConfig } from "./MessageWindow";
 import { MessageWindow } from "./MessageWindow";
 import { UserMessageContent } from "./UserMessageContent";
 import { GoalSyntheticMessageContent } from "./GoalSyntheticMessageContent";
+import { MonitorWakeMessage, extractMonitorWakeEvents } from "./MonitorWakeMessage";
 import { TerminalOutput } from "./TerminalOutput";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
@@ -16,7 +17,15 @@ import {
 } from "@/browser/utils/chatEditing";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { VIM_ENABLED_KEY } from "@/common/constants/storage";
-import { ChevronLeft, ChevronRight, Clipboard, ClipboardCheck, Pencil, Target } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Clipboard,
+  ClipboardCheck,
+  Pencil,
+  Radio,
+  Target,
+} from "lucide-react";
 
 /** Navigation info for navigating between user messages */
 export interface UserMessageNavigation {
@@ -69,16 +78,53 @@ export const UserMessage: React.FC<UserMessageProps> = ({
     ? content.slice("<local-command-stdout>".length, -"</local-command-stdout>".length).trim()
     : "";
 
+  // Monitor wakes are queued synthetically by AgentSession and arrive as `<monitor-event …>`
+  // XML so the model has structured context. Only extract them when the backend has flagged
+  // this persisted user message as containing wake events; otherwise a user pasting similar
+  // XML would have their content silently stripped.
+  const monitorExtract = message.containsMonitorEvents ? extractMonitorWakeEvents(content) : null;
+  const hasMonitorEvents = monitorExtract !== null && monitorExtract.events.length > 0;
+  const hasOnlyMonitorEvents = hasMonitorEvents && monitorExtract.remainingContent.length === 0;
+  // Surface the visible content (with monitor XML stripped) to copy/edit affordances so the
+  // user is not handed the synthetic XML when they hit Copy. For pure monitor wakes there is
+  // no user text, so flatten the parsed events into a readable summary instead.
+  const visibleContent = hasMonitorEvents ? monitorExtract.remainingContent : content;
+  const monitorCopyText = hasMonitorEvents
+    ? monitorExtract.events
+        .map((event) => {
+          const source = event.displayName ?? event.taskId;
+          const header = `Monitor (${source}): ${event.lines.length} new line${
+            event.lines.length === 1 ? "" : "s"
+          } / ${event.totalMatches} total`;
+          return event.lines.length > 0 ? `${header}\n${event.lines.join("\n")}` : header;
+        })
+        .join("\n\n")
+    : "";
+  const copyText = hasOnlyMonitorEvents
+    ? monitorCopyText
+    : visibleContent.length > 0
+      ? visibleContent
+      : content;
+
   // Copy to clipboard with feedback
   const { copied, copyToClipboard } = useCopyToClipboard(clipboardWriteText);
 
-  const canEdit = canEditDisplayedUserMessage(message);
+  // Editing a mixed monitor-wake message must not surface the synthetic XML to the user;
+  // strip extracted monitor blocks before invoking the editor so the next send is the user's
+  // own prompt text only. Pure-monitor messages cannot be edited (no original user text).
+  const canEdit = canEditDisplayedUserMessage(message) && !hasOnlyMonitorEvents;
 
   const handleEdit = () => {
-    // Goal-synthetic messages keep raw model prompts available via Copy/JSON only.
-    if (onEdit && canEdit) {
-      onEdit(buildEditingStateFromDisplayed(message));
+    if (!onEdit || !canEdit) return;
+    if (hasMonitorEvents) {
+      const baseState = buildEditingStateFromDisplayed(message);
+      onEdit({
+        ...baseState,
+        pending: { ...baseState.pending, content: visibleContent },
+      });
+      return;
     }
+    onEdit(buildEditingStateFromDisplayed(message));
   };
 
   // Navigation buttons - always reserve space to avoid layout shift
@@ -135,7 +181,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
       : []),
     {
       label: copied ? "Copied" : "Copy",
-      onClick: () => void copyToClipboard(content),
+      onClick: () => void copyToClipboard(copyText),
       icon: copied ? <ClipboardCheck /> : <Clipboard />,
     },
   ];
@@ -155,6 +201,13 @@ export const UserMessage: React.FC<UserMessageProps> = ({
         goal continuation
       </span>
     );
+  } else if (hasOnlyMonitorEvents) {
+    label = (
+      <span className="bg-muted/20 text-muted flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase">
+        <Radio aria-hidden="true" className="h-3 w-3" />
+        monitor
+      </span>
+    );
   } else if (isSynthetic) {
     label = (
       <span className="bg-muted/20 text-muted rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase">
@@ -169,7 +222,17 @@ export const UserMessage: React.FC<UserMessageProps> = ({
   );
 
   let renderedContent: React.ReactNode;
-  if (isLocalCommandOutput) {
+  const monitorCards = hasMonitorEvents ? (
+    <div className="space-y-2">
+      {monitorExtract.events.map((event, index) => (
+        <MonitorWakeMessage key={`${event.taskId}-${index}`} event={event} />
+      ))}
+    </div>
+  ) : null;
+
+  if (hasOnlyMonitorEvents) {
+    renderedContent = monitorCards;
+  } else if (isLocalCommandOutput) {
     renderedContent = <TerminalOutput output={extractedOutput} isError={false} />;
   } else if (isGoalContinuation || isBudgetLimitWrapup) {
     renderedContent = (
@@ -179,16 +242,21 @@ export const UserMessage: React.FC<UserMessageProps> = ({
       />
     );
   } else {
+    // When a monitor wake was appended to a previously queued user message, render the user's
+    // original text via the normal path and append the inline monitor cards below it.
     renderedContent = (
-      <UserMessageContent
-        content={content}
-        commandPrefix={message.commandPrefix}
-        agentSkillSnapshot={message.agentSkill?.snapshot}
-        inlineSkillSnapshots={message.inlineSkillSnapshots}
-        reviews={message.reviews}
-        fileParts={message.fileParts}
-        variant="sent"
-      />
+      <div className="space-y-2">
+        <UserMessageContent
+          content={visibleContent}
+          commandPrefix={message.commandPrefix}
+          agentSkillSnapshot={message.agentSkill?.snapshot}
+          inlineSkillSnapshots={message.inlineSkillSnapshots}
+          reviews={message.reviews}
+          fileParts={message.fileParts}
+          variant="sent"
+        />
+        {monitorCards}
+      </div>
     );
   }
 

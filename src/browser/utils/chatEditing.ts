@@ -6,6 +6,7 @@ import type {
   ReviewNoteDataForDisplay,
 } from "@/common/types/message";
 import { getEditableUserMessageText } from "@/browser/utils/messages/messageUtils";
+import { stripMonitorWakeXml } from "@/common/utils/monitorWake";
 
 // Keep pending edit data normalized with required arrays so edits can't drop attachments/reviews.
 export interface PendingUserMessage extends Omit<
@@ -22,10 +23,30 @@ export interface EditingMessageState {
 }
 
 export const normalizeQueuedMessage = (queued: QueuedMessage): PendingUserMessage => ({
-  content: queued.content,
+  // Strip backend-generated monitor wake XML so the Edit composer never loads the synthetic
+  // `<monitor-event …>` payload as if the user had typed it. We can be unconditional here:
+  // the helper is a no-op when no monitor blocks are present.
+  content:
+    queued.containsMonitorEvents === true ? stripMonitorWakeXml(queued.content) : queued.content,
   fileParts: queued.fileParts ?? [],
   reviews: queued.reviews ?? [],
 });
+
+/**
+ * Returns true when a queued message is *only* a backend-generated monitor wake — i.e. the
+ * synthetic `<monitor-event source="mux" …>` XML with no surviving user-authored text or
+ * attachments. Edit/restore-to-input paths must skip these queues so we never clear the
+ * backend queue and drop the wake into an empty composer (the wake would silently never
+ * reach the agent). Callers should instead fall through to the previous-message edit path.
+ */
+export const isPureMonitorWakeQueue = (queued: QueuedMessage): boolean => {
+  if (queued.containsMonitorEvents !== true) return false;
+  const remainingText = stripMonitorWakeXml(queued.content);
+  if (remainingText.length > 0) return false;
+  if ((queued.fileParts?.length ?? 0) > 0) return false;
+  if ((queued.reviews?.length ?? 0) > 0) return false;
+  return true;
+};
 
 const LOCAL_COMMAND_STDOUT_OPEN_TAG = "<local-command-stdout>";
 const LOCAL_COMMAND_STDOUT_CLOSE_TAG = "</local-command-stdout>";

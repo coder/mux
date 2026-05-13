@@ -1,4 +1,5 @@
 import assert from "@/common/utils/assert";
+import { stripMonitorWakeXml } from "@/common/utils/monitorWake";
 import { EventEmitter } from "events";
 import * as path from "path";
 import { mkdir, readFile, unlink, writeFile } from "fs/promises";
@@ -97,7 +98,7 @@ import { getTotalCost } from "@/common/utils/tokens/usageAggregator";
 import { CompactionHandler } from "./compactionHandler";
 import { RetryManager, type RetryFailureError, type RetryStatusEvent } from "./retryManager";
 import type { TelemetryService } from "./telemetryService";
-import type { BackgroundProcessManager } from "./backgroundProcessManager";
+import type { BackgroundProcessManager, MonitorMatchPayload } from "./backgroundProcessManager";
 import type { ExperimentsService } from "./experimentsService";
 
 import { AttachmentService } from "./attachmentService";
@@ -346,6 +347,8 @@ enum TurnPhase {
 
 type StartupAutoRetryCheckOutcome = "completed" | "deferred";
 
+type OptionalBackgroundMonitorEventSource = Partial<Pick<BackgroundProcessManager, "on" | "off">>;
+
 export class AgentSession {
   private readonly workspaceId: string;
   private readonly config: Config;
@@ -373,6 +376,66 @@ export class AgentSession {
 
   private idleWaiters: Array<() => void> = [];
   private readonly messageQueue = new MessageQueue();
+  private readonly queuedMonitorWakeTaskIds = new Set<string>();
+  private backgroundMonitorMatchSubscribed = false;
+  private readonly backgroundMonitorMatchHandler = (
+    workspaceId: string,
+    payload: MonitorMatchPayload
+  ): void => {
+    if (workspaceId !== this.workspaceId || this.disposed) {
+      return;
+    }
+
+    this.emitChatEvent({
+      type: "monitor-match",
+      workspaceId: this.workspaceId,
+      processId: payload.processId,
+      taskId: payload.taskId,
+      ...(payload.displayName !== undefined ? { displayName: payload.displayName } : {}),
+      lines: payload.lines,
+      totalMatches: payload.totalMatches,
+      ...(payload.droppedLines !== undefined ? { droppedLines: payload.droppedLines } : {}),
+      timestamp: payload.timestamp,
+    });
+
+    if (this.queuedMonitorWakeTaskIds.has(payload.taskId)) {
+      // A pending wake already tells the agent to inspect this process. Keep UI counters moving
+      // but avoid unbounded queued synthetic prompts while the session is busy.
+      log.debug(`Coalesced duplicate monitor wake for ${payload.taskId}`);
+      return;
+    }
+
+    const wakeMessage = this.formatMonitorWakeMessage(payload);
+    // When a user message is already queued, preserve their selected send options. MessageQueue
+    // replaces latestOptions on every add, so passing our synthetic wake options here would
+    // dispatch the user's combined turn with the previous stream's model/agent/tool policy.
+    const queueHadEntriesBeforeWake = this.hasQueuedMessages();
+    const wakeOptions = queueHadEntriesBeforeWake
+      ? undefined
+      : (this.buildMonitorWakeSendOptions(this.activeStreamContext?.options) ??
+        this.lastMonitorWakeSendOptions);
+    if (!queueHadEntriesBeforeWake && !wakeOptions) {
+      log.debug(`Skipped monitor wake for ${payload.taskId}: no send options available`);
+      return;
+    }
+
+    try {
+      const dispatchMode = this.queueMessage(wakeMessage, wakeOptions, {
+        synthetic: true,
+        agentInitiated: true,
+        containsMonitorEvents: true,
+      });
+      if (dispatchMode !== null) {
+        this.queuedMonitorWakeTaskIds.add(payload.taskId);
+      }
+      if (dispatchMode !== null && !this.isBusy()) {
+        this.sendQueuedMessages();
+      }
+    } catch (error) {
+      log.debug(`Failed to queue monitor wake message: ${getErrorMessage(error)}`);
+    }
+  };
+
   private readonly compactionHandler: CompactionHandler;
   private readonly compactionMonitor: CompactionMonitor;
 
@@ -489,6 +552,9 @@ export class AgentSession {
   /** Tracks whether the current stream included post-compaction attachments. */
   private activeStreamHadPostCompactionInjection = false;
 
+  /** Latest normalized send options suitable for internal wake-up turns. */
+  private lastMonitorWakeSendOptions?: SendMessageOptions;
+
   /** Context needed to retry the current stream (cleared on stream end/abort/error). */
   private activeStreamContext?: {
     modelString: string;
@@ -505,6 +571,54 @@ export class AgentSession {
     options?: SendMessageOptions;
     source?: "idle-compaction" | "auto-compaction";
   };
+
+  private buildMonitorWakeSendOptions(
+    source: SendMessageOptions | undefined
+  ): SendMessageOptions | undefined {
+    if (!source?.model || source.model.trim().length === 0) {
+      return undefined;
+    }
+
+    // Monitor wakes are synthetic follow-up turns, so reuse the model/agent/tool context from
+    // the triggering conversation without carrying user-message-only fields such as edits or files.
+    return {
+      ...pickStartupRetrySendOptions(source),
+      skipAiSettingsPersistence: true,
+    };
+  }
+
+  private escapeMonitorAttribute(value: string): string {
+    return value
+      .replaceAll("&", "&amp;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;");
+  }
+
+  private escapeMonitorText(value: string): string {
+    return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+  }
+
+  private formatMonitorWakeMessage(payload: MonitorMatchPayload): string {
+    const displayNameAttribute = payload.displayName
+      ? ` display_name="${this.escapeMonitorAttribute(payload.displayName)}"`
+      : "";
+    const droppedAttribute = payload.droppedLines ? ` dropped_lines="${payload.droppedLines}"` : "";
+    const lines = payload.lines
+      .map((line) => `<line>${this.escapeMonitorText(line)}</line>`)
+      .join("\n");
+
+    return [
+      // `source="mux"` is a sentinel attribute that distinguishes backend-generated wakes from
+      // user-pasted XML that happens to look like a `<monitor-event …>` block. The renderer
+      // extracts/strips only sentinel-bearing blocks so a user's verbatim XML survives intact
+      // when a real wake is appended to their queued message.
+      `<monitor-event source="mux" taskId="${this.escapeMonitorAttribute(payload.taskId)}"${displayNameAttribute} total_matches="${payload.totalMatches}"${droppedAttribute}>`,
+      `<!-- ${payload.lines.length} new matching line${payload.lines.length === 1 ? "" : "s"} -->`,
+      lines,
+      "</monitor-event>",
+    ].join("\n");
+  }
 
   constructor(options: AgentSessionOptions) {
     assert(options, "AgentSession requires options");
@@ -561,6 +675,14 @@ export class AgentSession {
       (event) => this.emitRetryEvent(event)
     );
 
+    const backgroundMonitorEventSource: OptionalBackgroundMonitorEventSource =
+      this.backgroundProcessManager;
+    if (typeof backgroundMonitorEventSource.on === "function") {
+      // Some unit tests provide narrow BackgroundProcessManager doubles; production uses the
+      // real event emitter, but startup must remain resilient when optional wiring is absent.
+      backgroundMonitorEventSource.on("monitor:match", this.backgroundMonitorMatchHandler);
+      this.backgroundMonitorMatchSubscribed = true;
+    }
     this.attachAiListeners();
     this.attachInitListeners();
   }
@@ -586,6 +708,12 @@ export class AgentSession {
       void this.backgroundProcessManager.cleanup(this.workspaceId);
     }
 
+    if (this.backgroundMonitorMatchSubscribed) {
+      const backgroundMonitorEventSource: OptionalBackgroundMonitorEventSource =
+        this.backgroundProcessManager;
+      backgroundMonitorEventSource.off?.("monitor:match", this.backgroundMonitorMatchHandler);
+      this.backgroundMonitorMatchSubscribed = false;
+    }
     for (const { event, handler } of this.aiListeners) {
       this.aiService.off(event, handler as never);
     }
@@ -2152,6 +2280,8 @@ export class AgentSession {
       agentInitiated?: boolean;
       goalContinuation?: boolean;
       goalKind?: GoalSyntheticMessageKind;
+      /** Marks a persisted user message as containing backend-generated `<monitor-event>` blocks. */
+      containsMonitorEvents?: boolean;
       onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
     }
   ): Promise<Result<void, SendMessageError>> {
@@ -2477,6 +2607,8 @@ export class AgentSession {
       await this.applyManualUserMessageGoalSafety();
     }
 
+    this.lastMonitorWakeSendOptions = this.buildMonitorWakeSendOptions(optionsForStream);
+
     const userMessage = createMuxMessage(
       messageId,
       "user",
@@ -2491,6 +2623,7 @@ export class AgentSession {
         ...(goalKind != null ? { kind: goalKind } : {}),
         // Auto-resume and other system-generated messages are synthetic + UI-visible
         ...(internal?.synthetic && { synthetic: true, uiVisible: true }),
+        ...(internal?.containsMonitorEvents === true && { containsMonitorEvents: true }),
       },
       additionalParts
     );
@@ -4766,7 +4899,7 @@ export class AgentSession {
   queueMessage(
     message: string,
     options?: SendMessageOptions & { fileParts?: FilePart[] },
-    internal?: { synthetic?: boolean; agentInitiated?: boolean }
+    internal?: { synthetic?: boolean; agentInitiated?: boolean; containsMonitorEvents?: boolean }
   ): "tool-end" | "turn-end" | null {
     this.assertNotDisposed("queueMessage");
     const didEnqueue = this.messageQueue.add(message, options, internal);
@@ -4787,6 +4920,7 @@ export class AgentSession {
   clearQueue(): void {
     this.assertNotDisposed("clearQueue");
     this.messageQueue.clear();
+    this.queuedMonitorWakeTaskIds.clear();
     this.emitQueuedMessageChanged();
     this.backgroundProcessManager.setMessageQueued(this.workspaceId, false);
   }
@@ -4802,18 +4936,30 @@ export class AgentSession {
   restoreQueueToInput(): void {
     this.assertNotDisposed("restoreQueueToInput");
     if (!this.messageQueue.isEmpty()) {
-      const displayText = this.messageQueue.getDisplayText();
+      const rawText = this.messageQueue.getDisplayText();
       const fileParts = this.messageQueue.getFileParts();
       const reviews = this.messageQueue.getReviews();
+      // Strip backend-generated monitor wake XML so an interrupt never repopulates the
+      // composer with a synthetic `<monitor-event …>` payload the user didn't author.
+      const queueContainsMonitor = this.messageQueue.containsMonitorEvents();
+      const text = queueContainsMonitor ? stripMonitorWakeXml(rawText) : rawText;
+      const hasContentToRestore =
+        text.length > 0 || fileParts.length > 0 || (reviews?.length ?? 0) > 0;
+      // Pure-monitor queues (only the synthetic wake, no user-authored survivors) must NOT
+      // be cleared: doing so would silently drop the pending wake before it can reach the
+      // agent. Bail without touching the queue so the wake stays scheduled.
+      if (queueContainsMonitor && !hasContentToRestore) return;
       this.clearQueue();
 
-      this.emitChatEvent({
-        type: "restore-to-input",
-        workspaceId: this.workspaceId,
-        text: displayText,
-        fileParts: fileParts,
-        reviews: reviews,
-      });
+      if (hasContentToRestore) {
+        this.emitChatEvent({
+          type: "restore-to-input",
+          workspaceId: this.workspaceId,
+          text,
+          fileParts: fileParts,
+          reviews: reviews,
+        });
+      }
     }
   }
 
@@ -4827,6 +4973,7 @@ export class AgentSession {
       reviews: this.messageQueue.getReviews(),
       queueDispatchMode: this.messageQueue.getQueueDispatchMode(),
       hasCompactionRequest: this.messageQueue.hasCompactionRequest(),
+      ...(this.messageQueue.containsMonitorEvents() && { containsMonitorEvents: true }),
     });
   }
 
@@ -4848,6 +4995,7 @@ export class AgentSession {
     if (!this.messageQueue.isEmpty()) {
       const { message, options, internal } = this.messageQueue.produceMessage();
       this.messageQueue.clear();
+      this.queuedMonitorWakeTaskIds.clear();
       this.emitQueuedMessageChanged();
 
       // Set PREPARING synchronously before the async sendMessage to prevent

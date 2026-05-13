@@ -67,6 +67,13 @@ type QueueDispatchMode = NonNullable<SendMessageOptions["queueDispatchMode"]>;
 interface QueuedMessageInternalOptions {
   synthetic?: boolean;
   agentInitiated?: boolean;
+  /**
+   * Marker for backend-generated `<monitor-event>` blocks queued as synthetic wakes. Surfaces
+   * through `produceMessage().internal` so callers can persist a metadata flag on the resulting
+   * user message and the renderer can safely extract those blocks without misclassifying
+   * user-authored XML that happens to look similar.
+   */
+  containsMonitorEvents?: boolean;
 }
 
 export class MessageQueue {
@@ -79,12 +86,22 @@ export class MessageQueue {
   private queuedEntryCount = 0;
   private queuedSyntheticCount = 0;
   private queuedAgentInitiatedCount = 0;
+  private queuedContainsMonitorEvents = false;
 
   /**
    * Check if the queue currently contains a compaction request.
    */
   hasCompactionRequest(): boolean {
     return isCompactionMetadata(this.firstMuxMetadata);
+  }
+
+  /**
+   * True when any queued entry carries a backend-generated `<monitor-event>` wake. Surfaced
+   * through `queued-message-changed` so the renderer can parse the structured wake out of
+   * `displayText` instead of showing raw XML in the queued-message banner.
+   */
+  containsMonitorEvents(): boolean {
+    return this.queuedContainsMonitorEvents;
   }
 
   getQueueDispatchMode(): QueueDispatchMode {
@@ -143,7 +160,17 @@ export class MessageQueue {
     const incomingIsCompaction = isCompactionMetadata(options?.muxMetadata);
     const incomingIsAgentSkill = isAgentSkillMetadata(options?.muxMetadata);
     const queueHasMessages = !this.isEmpty();
-    const incomingMode = options?.queueDispatchMode ?? "tool-end";
+    // Distinguish "purely append text" (options === undefined) from "normal send without
+    // an explicit dispatch override" (options provided without queueDispatchMode):
+    //   - When options are omitted entirely (e.g. a synthetic monitor wake appended to an
+    //     already-queued user message), preserve the existing dispatch mode so the user's
+    //     selected turn-end is not silently narrowed to tool-end.
+    //   - When options are present but queueDispatchMode is unset, fall back to "tool-end"
+    //     so a normal Send still narrows a previously turn-end queue.
+    const callerOmittedOptionsEntirely = options === undefined;
+    const incomingMode =
+      options?.queueDispatchMode ??
+      (callerOmittedOptionsEntirely && queueHasMessages ? this.queueDispatchMode : "tool-end");
     const nextQueueDispatchMode = !queueHasMessages
       ? incomingMode
       : incomingMode === "tool-end"
@@ -206,6 +233,9 @@ export class MessageQueue {
     }
     if (internal?.agentInitiated === true) {
       this.queuedAgentInitiatedCount += 1;
+    }
+    if (internal?.containsMonitorEvents === true) {
+      this.queuedContainsMonitorEvents = true;
     }
 
     return true;
@@ -286,11 +316,13 @@ export class MessageQueue {
       this.queuedEntryCount > 0 && this.queuedSyntheticCount === this.queuedEntryCount;
     const allQueuedEntriesAreAgentInitiated =
       this.queuedEntryCount > 0 && this.queuedAgentInitiatedCount === this.queuedEntryCount;
+    const containsMonitorEvents = this.queuedContainsMonitorEvents;
     const internal =
-      allQueuedEntriesAreSynthetic || allQueuedEntriesAreAgentInitiated
+      allQueuedEntriesAreSynthetic || allQueuedEntriesAreAgentInitiated || containsMonitorEvents
         ? {
             ...(allQueuedEntriesAreSynthetic ? { synthetic: true } : {}),
             ...(allQueuedEntriesAreAgentInitiated ? { agentInitiated: true } : {}),
+            ...(containsMonitorEvents ? { containsMonitorEvents: true } : {}),
           }
         : undefined;
 
@@ -310,6 +342,7 @@ export class MessageQueue {
     this.queuedEntryCount = 0;
     this.queuedSyntheticCount = 0;
     this.queuedAgentInitiatedCount = 0;
+    this.queuedContainsMonitorEvents = false;
   }
 
   /**

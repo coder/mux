@@ -3022,6 +3022,7 @@ export class StreamingMessageAggregator {
         isSynthetic: message.metadata?.synthetic === true ? true : undefined,
         isGoalContinuation: message.metadata?.kind === GOAL_CONTINUATION_KIND ? true : undefined,
         isBudgetLimitWrapup: message.metadata?.kind === GOAL_BUDGET_LIMIT_KIND ? true : undefined,
+        containsMonitorEvents: message.metadata?.containsMonitorEvents === true ? true : undefined,
         timestamp: baseTimestamp,
         agentSkill,
         inlineSkillSnapshots,

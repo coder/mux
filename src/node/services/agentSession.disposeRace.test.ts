@@ -4,7 +4,8 @@ import type { Config } from "@/node/config";
 import type { HistoryService } from "./historyService";
 import type { AIService } from "./aiService";
 import type { InitStateManager } from "./initStateManager";
-import type { BackgroundProcessManager } from "./backgroundProcessManager";
+import type { BackgroundProcessManager, MonitorMatchPayload } from "./backgroundProcessManager";
+import type { SendMessageOptions } from "@/common/orpc/types";
 import type { Result } from "@/common/types/result";
 import { Ok } from "@/common/types/result";
 
@@ -445,5 +446,300 @@ describe("AgentSession disposal race conditions", () => {
       expect.objectContaining({ model: "anthropic:claude-sonnet-4-5", agentId: "compact" }),
       { synthetic: true }
     );
+  });
+
+  test("monitor wake dispatches with the latest send options", async () => {
+    const backgroundHandlers = new Map<
+      string,
+      (workspaceId: string, payload: MonitorMatchPayload) => void
+    >();
+    const sendDone = createDeferred<void>();
+
+    const aiService: AIService = {
+      on(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+      off(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+      stopStream: mock(() => Promise.resolve(Ok(undefined))),
+      isStreaming: mock(() => false),
+    } as unknown as AIService;
+
+    const historyService: HistoryService = {
+      getLastMessages: mock(() => Promise.resolve(Ok([]))),
+    } as unknown as HistoryService;
+
+    const initStateManager: InitStateManager = {
+      on(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+      off(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+    } as unknown as InitStateManager;
+
+    const backgroundProcessManager: BackgroundProcessManager = {
+      cleanup: mock(() => Promise.resolve()),
+      setMessageQueued: mock(() => undefined),
+      on(eventName: string | symbol, listener: (...args: unknown[]) => void) {
+        backgroundHandlers.set(
+          String(eventName),
+          listener as (workspaceId: string, payload: MonitorMatchPayload) => void
+        );
+        return this;
+      },
+      off(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+    } as unknown as BackgroundProcessManager;
+
+    const config: Config = {
+      srcDir: "/tmp",
+      getSessionDir: mock(() => "/tmp"),
+    } as unknown as Config;
+
+    const session = new AgentSession({
+      workspaceId: "ws",
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+
+    const sendOptions: SendMessageOptions = {
+      model: "anthropic:claude-sonnet-4-5",
+      agentId: "exec",
+    };
+    (
+      session as unknown as { lastMonitorWakeSendOptions?: SendMessageOptions }
+    ).lastMonitorWakeSendOptions = sendOptions;
+
+    const sendMessage = mock(
+      (
+        _message: string,
+        _options?: SendMessageOptions,
+        _internal?: { synthetic?: boolean; agentInitiated?: boolean }
+      ) => {
+        sendDone.resolve();
+        return Promise.resolve(Ok(undefined));
+      }
+    );
+    (session as unknown as { sendMessage: typeof sendMessage }).sendMessage = sendMessage;
+
+    backgroundHandlers.get("monitor:match")?.("ws", {
+      processId: "proc-1",
+      taskId: "bash:proc-1",
+      lines: ["READY"],
+      totalMatches: 1,
+      timestamp: Date.now(),
+    });
+
+    await sendDone.promise;
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.stringContaining("<monitor-event"),
+      expect.objectContaining({ model: sendOptions.model, agentId: sendOptions.agentId }),
+      { synthetic: true, agentInitiated: true, containsMonitorEvents: true }
+    );
+  });
+
+  test("monitor wake coalesces while a prior wake is queued", async () => {
+    const backgroundHandlers = new Map<
+      string,
+      (workspaceId: string, payload: MonitorMatchPayload) => void
+    >();
+    const sendDone = createDeferred<void>();
+
+    const aiService: AIService = {
+      on(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+      off(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+      stopStream: mock(() => Promise.resolve(Ok(undefined))),
+      isStreaming: mock(() => true),
+    } as unknown as AIService;
+
+    const historyService: HistoryService = {
+      getLastMessages: mock(() => Promise.resolve(Ok([]))),
+    } as unknown as HistoryService;
+
+    const initStateManager: InitStateManager = {
+      on(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+      off(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+    } as unknown as InitStateManager;
+
+    const backgroundProcessManager: BackgroundProcessManager = {
+      cleanup: mock(() => Promise.resolve()),
+      setMessageQueued: mock(() => undefined),
+      on(eventName: string | symbol, listener: (...args: unknown[]) => void) {
+        backgroundHandlers.set(
+          String(eventName),
+          listener as (workspaceId: string, payload: MonitorMatchPayload) => void
+        );
+        return this;
+      },
+      off(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+    } as unknown as BackgroundProcessManager;
+
+    const config: Config = {
+      srcDir: "/tmp",
+      getSessionDir: mock(() => "/tmp"),
+    } as unknown as Config;
+
+    const session = new AgentSession({
+      workspaceId: "ws",
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+    (session as unknown as { turnPhase: "streaming" }).turnPhase = "streaming";
+    (
+      session as unknown as { lastMonitorWakeSendOptions?: SendMessageOptions }
+    ).lastMonitorWakeSendOptions = {
+      model: "anthropic:claude-sonnet-4-5",
+      agentId: "exec",
+    };
+
+    const sentMessages: string[] = [];
+    const sendMessage = mock((message: string) => {
+      sentMessages.push(message);
+      sendDone.resolve();
+      return Promise.resolve(Ok(undefined));
+    });
+    (session as unknown as { sendMessage: typeof sendMessage }).sendMessage = sendMessage;
+
+    const emitMonitorMatch = (line: string) =>
+      backgroundHandlers.get("monitor:match")?.("ws", {
+        processId: "proc-1",
+        taskId: "bash:proc-1",
+        lines: [line],
+        totalMatches: 1,
+        timestamp: Date.now(),
+      });
+
+    emitMonitorMatch("ERR one");
+    emitMonitorMatch("ERR two");
+    session.sendQueuedMessages();
+
+    await sendDone.promise;
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sentMessages[0]?.match(/<monitor-event/g)?.length).toBe(1);
+  });
+
+  test("restoreQueueToInput leaves pure monitor wakes queued instead of dropping them", async () => {
+    // Regression: editLast / interrupt restore must never silently clear a queue whose only
+    // content is a backend-generated wake — that would drop the wake before the agent sees
+    // it. Bail without clearing and let the wake reach the next dispatch boundary.
+    const backgroundHandlers = new Map<
+      string,
+      (workspaceId: string, payload: MonitorMatchPayload) => void
+    >();
+    const sendDone = createDeferred<void>();
+
+    const aiService: AIService = {
+      on(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+      off(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+      stopStream: mock(() => Promise.resolve(Ok(undefined))),
+      isStreaming: mock(() => false),
+    } as unknown as AIService;
+
+    const historyService: HistoryService = {
+      getLastMessages: mock(() => Promise.resolve(Ok([]))),
+    } as unknown as HistoryService;
+
+    const initStateManager: InitStateManager = {
+      on(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+      off(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+    } as unknown as InitStateManager;
+
+    const backgroundProcessManager: BackgroundProcessManager = {
+      cleanup: mock(() => Promise.resolve()),
+      setMessageQueued: mock(() => undefined),
+      on(eventName: string | symbol, listener: (...args: unknown[]) => void) {
+        backgroundHandlers.set(
+          String(eventName),
+          listener as (workspaceId: string, payload: MonitorMatchPayload) => void
+        );
+        return this;
+      },
+      off(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+    } as unknown as BackgroundProcessManager;
+
+    const config: Config = {
+      srcDir: "/tmp",
+      getSessionDir: mock(() => "/tmp"),
+    } as unknown as Config;
+
+    const restoreEvents: Array<{ text: string }> = [];
+    const session = new AgentSession({
+      workspaceId: "ws",
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+    (
+      session as unknown as { lastMonitorWakeSendOptions?: SendMessageOptions }
+    ).lastMonitorWakeSendOptions = {
+      model: "anthropic:claude-sonnet-4-5",
+      agentId: "exec",
+    };
+
+    // Capture restore-to-input emissions to prove the bail-out path doesn't surface one.
+    session.onChatEvent((event) => {
+      const message = event.message;
+      if (message.type === "restore-to-input") {
+        restoreEvents.push({ text: message.text });
+      }
+    });
+
+    const sendMessage = mock((_message: string) => {
+      sendDone.resolve();
+      return Promise.resolve(Ok(undefined));
+    });
+    (session as unknown as { sendMessage: typeof sendMessage }).sendMessage = sendMessage;
+
+    backgroundHandlers.get("monitor:match")?.("ws", {
+      processId: "proc-1",
+      taskId: "bash:proc-1",
+      lines: ["READY"],
+      totalMatches: 1,
+      timestamp: Date.now(),
+    });
+
+    // Now simulate the user interrupting; the queue should NOT be drained.
+    session.restoreQueueToInput();
+
+    expect(restoreEvents.length).toBe(0);
+
+    // Flushing the queue should still surface the original wake to the model.
+    session.sendQueuedMessages();
+    await sendDone.promise;
+    expect(sendMessage).toHaveBeenCalledTimes(1);
   });
 });
