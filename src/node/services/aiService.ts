@@ -122,6 +122,26 @@ import { isProjectTrusted } from "@/node/utils/projectTrust";
 
 const STREAM_STARTUP_DIAGNOSTIC_THRESHOLD_MS = 1_000;
 
+export function prepareProviderRequestMessages(
+  messages: MuxMessage[],
+  canonicalProviderName: string,
+  effectiveThinkingLevel: ThinkingLevel
+): {
+  activeContextMessages: MuxMessage[];
+  providerRequestMessages: MuxMessage[];
+} {
+  const activeContextMessages = sliceMessagesForProviderFromLatestContextBoundary(messages);
+  const preserveReasoningOnly =
+    canonicalProviderName === "anthropic" && effectiveThinkingLevel !== "off";
+  return {
+    activeContextMessages,
+    providerRequestMessages: filterEmptyAssistantMessages(
+      activeContextMessages,
+      preserveReasoningOnly
+    ),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // streamMessage options
 // ---------------------------------------------------------------------------
@@ -859,7 +879,11 @@ export class AIService extends EventEmitter {
 
       // Context Boundary request slicing happens before empty-assistant filtering so
       // provider-invisible reset rows can still bound the active context window.
-      const activeContextMessages = sliceMessagesForProviderFromLatestContextBoundary(messages);
+      const { activeContextMessages, providerRequestMessages } = prepareProviderRequestMessages(
+        messages,
+        canonicalProviderName,
+        effectiveThinkingLevel
+      );
       if (activeContextMessages !== messages) {
         log.debug("Sliced provider history from latest context boundary", {
           workspaceId,
@@ -868,16 +892,6 @@ export class AIService extends EventEmitter {
         });
       }
       log.debug_obj(`${workspaceId}/1a_active_context_messages.json`, activeContextMessages);
-
-      // Filter out assistant messages with only reasoning (no text/tools)
-      // EXCEPTION: When extended thinking is enabled, preserve reasoning-only messages
-      // to comply with Extended Thinking API requirements
-      const preserveReasoningOnly =
-        canonicalProviderName === "anthropic" && effectiveThinkingLevel !== "off";
-      const providerRequestMessages = filterEmptyAssistantMessages(
-        activeContextMessages,
-        preserveReasoningOnly
-      );
       log.debug(
         `Filtered ${activeContextMessages.length - providerRequestMessages.length} empty assistant messages`
       );

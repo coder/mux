@@ -7,7 +7,11 @@ import * as path from "node:path";
 
 import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
 
-import { AIService, resolveMuxProjectRootForHostFs } from "./aiService";
+import {
+  AIService,
+  prepareProviderRequestMessages,
+  resolveMuxProjectRootForHostFs,
+} from "./aiService";
 import { discoverAvailableSubagentsForToolContext } from "./streamContextBuilder";
 import {
   normalizeAnthropicBaseURL,
@@ -17,6 +21,7 @@ import {
 import { HistoryService } from "./historyService";
 import { InitStateManager } from "./initStateManager";
 import { ProviderService } from "./providerService";
+import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { Config } from "@/node/config";
 import * as runtimeFactory from "@/node/runtime/runtimeFactory";
@@ -61,6 +66,30 @@ import { normalizeToCanonical } from "@/common/utils/ai/models";
 import * as toolsModule from "@/common/utils/tools/tools";
 import * as providerOptionsModule from "@/common/utils/ai/providerOptions";
 import * as systemMessageModule from "./systemMessage";
+
+describe("prepareProviderRequestMessages", () => {
+  it("slices at reset boundaries before filtering empty assistant messages", () => {
+    const oldMessage = createMuxMessage("old-user", "user", "old context", {
+      historySequence: 1,
+    });
+    const resetBoundary = createMuxMessage("reset-boundary", "assistant", "", {
+      historySequence: 2,
+      contextBoundaryKind: CONTEXT_BOUNDARY_KINDS.RESET,
+    });
+    const newMessage = createMuxMessage("new-user", "user", "new context", {
+      historySequence: 3,
+    });
+
+    const result = prepareProviderRequestMessages(
+      [oldMessage, resetBoundary, newMessage],
+      "openai",
+      "off"
+    );
+
+    expect(result.activeContextMessages.map((message) => message.id)).toEqual(["new-user"]);
+    expect(result.providerRequestMessages.map((message) => message.id)).toEqual(["new-user"]);
+  });
+});
 
 describe("AIService", () => {
   let service: AIService;
