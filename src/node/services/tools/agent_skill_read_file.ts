@@ -7,7 +7,7 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { SkillNameSchema } from "@/common/orpc/schemas";
 import {
   IMAGEGEN_SKILL_DISABLED_MESSAGE,
-  isBuiltInImagegenSkillPackage,
+  isBuiltInImagegenSkillUnavailable,
   readAgentSkill,
 } from "@/node/services/agentSkills/agentSkillsService";
 import { resolveSkillStorageContext } from "@/node/services/agentSkills/skillStorageContext";
@@ -146,8 +146,10 @@ export const createAgentSkillReadFileTool: ToolFactory = (config: ToolConfigurat
         );
 
         if (
-          isBuiltInImagegenSkillPackage(resolvedSkill.package) &&
-          !config.imageGenerationRuntime
+          isBuiltInImagegenSkillUnavailable(
+            resolvedSkill.package,
+            config.imageGenerationRuntime != null
+          )
         ) {
           return {
             success: false,

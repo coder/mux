@@ -133,7 +133,7 @@ import {
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import {
   IMAGEGEN_SKILL_DISABLED_MESSAGE,
-  isBuiltInImagegenSkillPackage,
+  isBuiltInImagegenSkillUnavailable,
   readAgentSkill,
 } from "@/node/services/agentSkills/agentSkillsService";
 import {
@@ -5757,7 +5757,7 @@ export class AgentSession {
         continue;
       }
 
-      if (isBuiltInImagegenSkillPackage(resolved.package) && !imageGenerationToolEnabled) {
+      if (isBuiltInImagegenSkillUnavailable(resolved.package, imageGenerationToolEnabled)) {
         if (ref.source === "slash") {
           throw new Error(IMAGEGEN_SKILL_DISABLED_MESSAGE);
         }

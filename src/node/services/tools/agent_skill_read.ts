@@ -8,7 +8,7 @@ import { getErrorMessage } from "@/common/utils/errors";
 import {
   filterUnavailableImagegenSkills,
   IMAGEGEN_SKILL_DISABLED_MESSAGE,
-  isBuiltInImagegenSkillPackage,
+  isBuiltInImagegenSkillUnavailable,
   readAgentSkill,
 } from "@/node/services/agentSkills/agentSkillsService";
 import { resolveSkillStorageContext } from "@/node/services/agentSkills/skillStorageContext";
@@ -88,7 +88,9 @@ export const createAgentSkillReadTool: ToolFactory = (config: ToolConfiguration)
             containment: skillCtx.containment,
           }
         );
-        if (isBuiltInImagegenSkillPackage(resolved.package) && !config.imageGenerationRuntime) {
+        if (
+          isBuiltInImagegenSkillUnavailable(resolved.package, config.imageGenerationRuntime != null)
+        ) {
           return {
             success: false,
             error: IMAGEGEN_SKILL_DISABLED_MESSAGE,

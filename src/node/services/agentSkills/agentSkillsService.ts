@@ -55,6 +55,19 @@ export function filterUnavailableImagegenSkills<
   return skills.filter((skill) => !isBuiltInImagegenSkill(skill));
 }
 
+/**
+ * True iff the resolved skill package is the built-in imagegen skill AND the
+ * image generation tool is not currently available. Centralizes the
+ * "is-imagegen + experiment-off" check used by tools/services that need to
+ * refuse loading the built-in skill when the tool is gated off.
+ */
+export function isBuiltInImagegenSkillUnavailable(
+  skillPackage: AgentSkillPackage,
+  imageGenerationToolAvailable: boolean | undefined
+): boolean {
+  return isBuiltInImagegenSkillPackage(skillPackage) && imageGenerationToolAvailable !== true;
+}
+
 const UNIVERSAL_SKILLS_ROOT = "~/.agents/skills";
 
 export interface AgentSkillsRoots {
