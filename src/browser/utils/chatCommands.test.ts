@@ -244,6 +244,8 @@ describe("processSlashCommand - clear", () => {
 
     expect(result).toEqual({ clearInput: true, toastShown: true });
     expect(context.onTruncateHistory).toHaveBeenCalledWith(1.0);
+    expect(context.setAttachments).toHaveBeenCalledWith([]);
+    expect(context.onDetachAllReviews).toHaveBeenCalled();
     expect(context.onResetContext).not.toHaveBeenCalled();
   });
 
@@ -260,6 +262,39 @@ describe("processSlashCommand - clear", () => {
     expect(context.setToast).toHaveBeenCalledWith(
       expect.objectContaining({ message: "Context reset; history preserved", type: "success" })
     );
+  });
+
+  test("soft clear preserves attachments when reset is a no-op", async () => {
+    const context = createClearContext({
+      onResetContext: mock(() => Promise.resolve("noop" as const)),
+    });
+
+    const result = await processSlashCommand({ type: "clear", mode: "soft" }, context);
+
+    expect(result).toEqual({ clearInput: true, toastShown: true });
+    expect(context.setAttachments).not.toHaveBeenCalled();
+    expect(context.onDetachAllReviews).not.toHaveBeenCalled();
+  });
+
+  test("soft clear reports errors without clearing composer state", async () => {
+    const context = createClearContext({
+      onResetContext: mock(() => Promise.reject(new Error("reset failed"))),
+    });
+    const consoleErrorSpy = spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      const result = await processSlashCommand({ type: "clear", mode: "soft" }, context);
+
+      expect(result).toEqual({ clearInput: false, toastShown: true });
+      expect(context.setInput).not.toHaveBeenCalled();
+      expect(context.setAttachments).not.toHaveBeenCalled();
+      expect(context.onDetachAllReviews).not.toHaveBeenCalled();
+      expect(context.setToast).toHaveBeenCalledWith(
+        expect.objectContaining({ message: "reset failed", type: "error" })
+      );
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
   });
 
   test("soft clear reports no-op resets", async () => {

@@ -376,6 +376,78 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
     }
   });
 
+  test("context reset rejects queued or preparing turns", async () => {
+    const { config, workspaceService, cleanup } = await createServices();
+    const workspaceId = "context-reset-queued-turn";
+    try {
+      await config.addWorkspace("/tmp/context-reset-queued-project", {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "context-reset-queued-project",
+        projectPath: "/tmp/context-reset-queued-project",
+        runtimeConfig: { type: "local" },
+      });
+      const pendingSpy = spyOn(
+        workspaceService,
+        "hasPendingQueuedOrPreparingTurn"
+      ).mockReturnValueOnce(true);
+
+      try {
+        const result = await workspaceService.resetContext(workspaceId);
+
+        expect(result.success).toBe(false);
+        expect(result.success ? undefined : result.error).toBe(
+          "Cannot reset context while queued user input is pending. Send or clear the queued message first."
+        );
+      } finally {
+        pendingSpy.mockRestore();
+      }
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("context reset does not clear plan files when boundary append fails", async () => {
+    const { config, historyService, workspaceService, cleanup } = await createServices();
+    const workspaceId = "context-reset-append-fails";
+    try {
+      await config.addWorkspace("/tmp/context-reset-append-fails-project", {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "context-reset-append-fails-project",
+        projectPath: "/tmp/context-reset-append-fails-project",
+        runtimeConfig: { type: "local" },
+      });
+      const planFile = await writePlanFile(
+        config.rootDir,
+        "context-reset-append-fails-project",
+        workspaceId
+      );
+      const seedResult = await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("pre-reset-user", "user", "before reset", {})
+      );
+      expect(seedResult.success).toBe(true);
+      const appendSpy = spyOn(historyService, "appendToHistory").mockResolvedValueOnce(
+        Err("disk full")
+      );
+
+      try {
+        const result = await workspaceService.resetContext(workspaceId);
+
+        expect(result.success).toBe(false);
+        expect(result.success ? undefined : result.error).toBe(
+          "Failed to append context reset boundary: disk full"
+        );
+        await fsPromises.access(planFile);
+      } finally {
+        appendSpy.mockRestore();
+      }
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("context reset preserves the goal and requires user acknowledgment", async () => {
     const { config, historyService, workspaceService, goalService, cleanup } =
       await createServices();

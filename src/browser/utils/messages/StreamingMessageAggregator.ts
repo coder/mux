@@ -212,7 +212,7 @@ function markRowsBeforeLatestContextBoundary(messages: DisplayedMessage[]): Disp
 
   let changed = false;
   const marked = messages.map((message) => {
-    if (message.type !== "user") {
+    if (message.type !== "user" && message.type !== "assistant") {
       return message;
     }
 
@@ -1507,7 +1507,7 @@ export class StreamingMessageAggregator {
     const messages = this.getAllMessages();
     for (let i = messages.length - 1; i >= 0; i--) {
       const message = messages[i];
-      if (message.role === "assistant" && this.isContextBoundaryMessage(message)) {
+      if (message.role === "assistant" && this.isCompactionBoundaryMessage(message)) {
         // A completed summary closes the earlier /compact request, so later auto-continue
         // streams must not inherit a stale "compacting" UI state from that older turn.
         sawCompletedCompaction = true;

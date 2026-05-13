@@ -116,6 +116,60 @@ test("chat commands include separate reset context and clear history actions", a
   expect(truncateHistory).toHaveBeenCalledWith({ workspaceId: "w1", percentage: 1.0 });
 });
 
+test("reset context command dispatches toast feedback", async () => {
+  const resetContext = mock(() =>
+    Promise.resolve({ success: true as const, data: "reset" as const })
+  );
+  const testWindow = new GlobalWindow();
+  const originalWindow = globalThis.window;
+  const originalDocument = globalThis.document;
+  const originalCustomEvent = globalThis.CustomEvent;
+
+  globalThis.window = testWindow as unknown as Window & typeof globalThis;
+  globalThis.document = testWindow.document as unknown as Document;
+  globalThis.CustomEvent = testWindow.CustomEvent as unknown as typeof CustomEvent;
+
+  const chatInputHost = document.createElement("div");
+  chatInputHost.setAttribute("data-component", "ChatInputSection");
+  document.body.appendChild(chatInputHost);
+
+  const receivedToasts: Array<{ type: "success" | "error"; message: string; title?: string }> = [];
+  const handleToast = (event: Event) => {
+    receivedToasts.push(
+      (event as CustomEvent<{ type: "success" | "error"; message: string; title?: string }>).detail
+    );
+  };
+  window.addEventListener(CUSTOM_EVENTS.ANALYTICS_REBUILD_TOAST, handleToast);
+
+  try {
+    const sources = mk({
+      api: {
+        workspace: {
+          resetContext,
+          truncateHistory: () => Promise.resolve({ success: true as const, data: undefined }),
+          interruptStream: () => Promise.resolve({ success: true as const, data: undefined }),
+        },
+      } as unknown as APIClient,
+    });
+    const actions = sources.flatMap((s) => s());
+    const resetAction = actions.find(
+      (action) => action.title === "Reset Context, Preserve History"
+    );
+
+    expect(resetAction).toBeDefined();
+    await resetAction?.run();
+
+    expect(receivedToasts).toEqual([
+      { type: "success", message: "Context reset; history preserved" },
+    ]);
+  } finally {
+    window.removeEventListener(CUSTOM_EVENTS.ANALYTICS_REBUILD_TOAST, handleToast);
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+    globalThis.CustomEvent = originalCustomEvent;
+  }
+});
+
 test("buildCoreSources includes create/switch workspace actions", () => {
   const sources = mk();
   const actions = sources.flatMap((s) => s());

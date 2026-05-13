@@ -209,7 +209,7 @@ export class WorkspaceConsumerManager {
     // Run in next tick to avoid blocking caller
     void (async () => {
       try {
-        // Only count tokens for the current active context — pre-boundary
+        // Only count tokens for the current active context; pre-boundary
         // transcript rows carry stale context and inflate the consumer breakdown.
         const messages = sliceMessagesForProviderFromLatestContextBoundary(
           aggregator.getAllMessages()

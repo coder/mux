@@ -1000,10 +1000,17 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         section: section.chat,
         keywords: ["context reset", "soft clear", "preserve history", "reset chat"],
         run: async () => {
-          const result = await p.api?.workspace.resetContext({ workspaceId: id });
-          if (result && !result.success) {
+          assert(p.api, "Reset Context palette action requires a connected backend");
+          const result = await p.api.workspace.resetContext({ workspaceId: id });
+          if (!result.success) {
+            showCommandFeedbackToast({ type: "error", message: result.error });
             throw new Error(result.error);
           }
+          showCommandFeedbackToast({
+            type: "success",
+            message:
+              result.data === "noop" ? "No context to reset" : "Context reset; history preserved",
+          });
         },
       });
       list.push({

@@ -3,7 +3,10 @@ import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { StreamErrorType } from "./errors";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import type { FilePart, MuxToolPartSchema } from "@/common/orpc/schemas";
-import type { PersistedContextBoundaryKind } from "@/common/constants/contextBoundary";
+import type {
+  ContextBoundaryKind,
+  PersistedContextBoundaryKind,
+} from "@/common/constants/contextBoundary";
 import type { GoalSyntheticMessageKind } from "@/constants/goals";
 import type { SendMessageOptions } from "@/common/orpc/types";
 import type { z } from "zod";
@@ -616,6 +619,8 @@ export type DisplayedMessage =
       isLastPartOfMessage?: boolean; // True if this is the last part of a multi-part message
       isCompacted: boolean; // Whether this is a compacted summary
       isIdleCompacted: boolean; // Whether this compaction was auto-triggered due to inactivity
+      /** True when this assistant row predates the latest Context Boundary. */
+      isBeforeLatestContextBoundary?: boolean;
       model?: string;
       routedThroughGateway?: boolean;
       routeProvider?: string;
@@ -757,7 +762,7 @@ export type DisplayedMessage =
       type: "compaction-boundary";
       id: string; // Display ID for UI/React keys
       historySequence: number; // Sequence of the compaction summary this boundary belongs to
-      boundaryKind?: "compaction" | "reset";
+      boundaryKind?: ContextBoundaryKind;
       position: "start" | "end";
       compactionEpoch?: number;
     }

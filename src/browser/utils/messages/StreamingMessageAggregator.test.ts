@@ -1811,6 +1811,12 @@ describe("StreamingMessageAggregator", () => {
         "compaction-boundary",
       ]);
 
+      const displayedAssistant = displayed[1];
+      if (displayedAssistant?.type !== "assistant") {
+        throw new Error("Expected second displayed row to remain the pre-reset assistant message");
+      }
+      expect(displayedAssistant.isBeforeLatestContextBoundary).toBe(true);
+
       const displayedUser = displayed[0];
       if (displayedUser?.type !== "user") {
         throw new Error("Expected first displayed row to remain the pre-reset user message");

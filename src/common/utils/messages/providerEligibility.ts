@@ -31,6 +31,8 @@ export function hasProviderReplayableContent(
       return false;
     }
 
+    // Incomplete tool calls are dropped by convertToModelMessages with
+    // ignoreIncompleteToolCalls, so they must not make an empty assistant turn replayable.
     if (part.type === "dynamic-tool") {
       return part.state === "output-available";
     }

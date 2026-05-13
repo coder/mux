@@ -1215,6 +1215,9 @@ export class WorkspaceService extends EventEmitter {
   // can tag the stream, letting the frontend suppress notifications for maintenance work.
   private readonly idleCompactingWorkspaces = new Set<string>();
 
+  // Blocks new sends while a context reset is committing its durable boundary and cleanup.
+  private readonly resettingContextWorkspaces = new Set<string>();
+
   // Tracks in-flight fork auto-title generations so only the first accepted continue
   // message can claim the workspace title.
   private readonly autoTitlingWorkspaces = new Set<string>();
@@ -5509,6 +5512,14 @@ export class WorkspaceService extends EventEmitter {
         });
       }
 
+      if (this.resettingContextWorkspaces.has(workspaceId)) {
+        log.debug("sendMessage blocked: context reset is in progress", { workspaceId });
+        return Err({
+          type: "unknown",
+          raw: "Workspace context is resetting. Please wait and try again.",
+        });
+      }
+
       // Guard: avoid creating sessions for workspaces that don't exist anymore.
       const workspaceConfig = this.config.findWorkspace(workspaceId);
       if (!workspaceConfig) {
@@ -6378,66 +6389,75 @@ export class WorkspaceService extends EventEmitter {
   }
 
   async resetContext(workspaceId: string): Promise<Result<"reset" | "noop">> {
-    const session = this.sessions.get(workspaceId);
-    if (session?.isBusy() || this.aiService.isStreaming(workspaceId)) {
-      return Err(
-        "Cannot reset context while a turn is active. Press Esc to stop the stream first."
-      );
+    if (this.resettingContextWorkspaces.has(workspaceId)) {
+      return Err("Context reset is already in progress for this workspace.");
     }
 
-    if (this.hasPendingQueuedOrPreparingTurn(workspaceId)) {
-      return Err(
-        "Cannot reset context while queued user input is pending. Send or clear the queued message first."
-      );
-    }
-
-    const historyResult = await this.historyService.getHistoryFromLatestBoundary(workspaceId);
-    if (!historyResult.success) {
-      return Err(`Failed to read active context before reset: ${historyResult.error}`);
-    }
-
-    const activeContextMessages = sliceMessagesForProviderFromLatestContextBoundary(
-      historyResult.data
-    );
-    if (!hasProviderEligibleMessages(activeContextMessages)) {
-      return Ok("noop");
-    }
-
-    const metadata = await this.getInfo(workspaceId);
-    if (metadata) {
-      await this.deletePlanFilesForWorkspace(workspaceId, metadata);
-    }
-
+    this.resettingContextWorkspaces.add(workspaceId);
     try {
-      await this.workspaceGoalService?.requireUserAcknowledgment(workspaceId);
-    } catch (error) {
-      return Err(getErrorMessage(error));
-    }
-    this.sessions.get(workspaceId)?.clearFileState();
-
-    const boundaryMessage = createMuxMessage(
-      createContextResetBoundaryMessageId(),
-      "assistant",
-      "",
-      {
-        timestamp: Date.now(),
-        contextBoundaryKind: CONTEXT_BOUNDARY_KINDS.RESET,
+      const session = this.sessions.get(workspaceId);
+      if (session?.isBusy() || this.aiService.isStreaming(workspaceId)) {
+        return Err(
+          "Cannot reset context while a turn is active. Press Esc to stop the stream first."
+        );
       }
-    );
 
-    const appendResult = await this.historyService.appendToHistory(workspaceId, boundaryMessage);
-    if (!appendResult.success) {
-      return Err(`Failed to append context reset boundary: ${appendResult.error}`);
+      if (this.hasPendingQueuedOrPreparingTurn(workspaceId)) {
+        return Err(
+          "Cannot reset context while queued user input is pending. Send or clear the queued message first."
+        );
+      }
+
+      const historyResult = await this.historyService.getHistoryFromLatestBoundary(workspaceId);
+      if (!historyResult.success) {
+        return Err(`Failed to read active context before reset: ${historyResult.error}`);
+      }
+
+      const activeContextMessages = sliceMessagesForProviderFromLatestContextBoundary(
+        historyResult.data
+      );
+      if (!hasProviderEligibleMessages(activeContextMessages)) {
+        return Ok("noop");
+      }
+
+      const boundaryMessage = createMuxMessage(
+        createContextResetBoundaryMessageId(),
+        "assistant",
+        "",
+        {
+          timestamp: Date.now(),
+          contextBoundaryKind: CONTEXT_BOUNDARY_KINDS.RESET,
+        }
+      );
+
+      const appendResult = await this.historyService.appendToHistory(workspaceId, boundaryMessage);
+      if (!appendResult.success) {
+        return Err(`Failed to append context reset boundary: ${appendResult.error}`);
+      }
+
+      const typedBoundaryMessage = { ...boundaryMessage, type: "message" as const };
+      if (session) {
+        session.emitChatEvent(typedBoundaryMessage);
+      } else {
+        this.emit("chat", { workspaceId, message: typedBoundaryMessage });
+      }
+
+      const metadata = await this.getInfo(workspaceId);
+      if (metadata) {
+        await this.deletePlanFilesForWorkspace(workspaceId, metadata);
+      }
+
+      try {
+        await this.workspaceGoalService?.requireUserAcknowledgment(workspaceId);
+      } catch (error) {
+        return Err(getErrorMessage(error));
+      }
+      this.sessions.get(workspaceId)?.clearFileState();
+
+      return Ok("reset");
+    } finally {
+      this.resettingContextWorkspaces.delete(workspaceId);
     }
-
-    const typedBoundaryMessage = { ...boundaryMessage, type: "message" as const };
-    if (session) {
-      session.emitChatEvent(typedBoundaryMessage);
-    } else {
-      this.emit("chat", { workspaceId, message: typedBoundaryMessage });
-    }
-
-    return Ok("reset");
   }
 
   async replaceHistory(

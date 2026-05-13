@@ -901,9 +901,11 @@ async function handleClearCommand(
       const result = await onResetContext();
       setInput("");
       resetInputHeight();
-      setAttachments([]);
-      onDetachAllReviews?.();
-      trackCommandUsed("clear");
+      if (result === "reset") {
+        setAttachments([]);
+        onDetachAllReviews?.();
+      }
+      trackCommandUsed("clear:soft");
       setToast({
         id: Date.now().toString(),
         type: "success",
@@ -929,7 +931,9 @@ async function handleClearCommand(
 
   try {
     await onTruncateHistory(1.0);
-    trackCommandUsed("clear");
+    setAttachments([]);
+    onDetachAllReviews?.();
+    trackCommandUsed("clear:hard");
     setToast({
       id: Date.now().toString(),
       type: "success",

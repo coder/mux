@@ -94,7 +94,7 @@ function filterAndMapSuggestions<T extends SuggestionDefinition>(
 
 const clearCommandDefinition: SlashCommandDefinition = {
   key: "clear",
-  description: "Clear conversation history",
+  description: "Clear history, or use --soft to reset context while preserving history",
   appendSpace: false,
   handler: ({ cleanRemainingTokens }) => {
     if (cleanRemainingTokens.length === 0) {
