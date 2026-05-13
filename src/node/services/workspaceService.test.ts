@@ -349,6 +349,37 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
     }
   });
 
+  test("context reset surfaces active-context history read failures", async () => {
+    const { config, historyService, workspaceService, cleanup } = await createServices();
+    const workspaceId = "context-reset-history-read-fails";
+    try {
+      await config.addWorkspace("/tmp/context-reset-history-read-fails-project", {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "context-reset-history-read-fails-project",
+        projectPath: "/tmp/context-reset-history-read-fails-project",
+        runtimeConfig: { type: "local" },
+      });
+      const historySpy = spyOn(
+        historyService,
+        "getHistoryFromLatestBoundary"
+      ).mockResolvedValueOnce(Err("read failed"));
+
+      try {
+        const result = await workspaceService.resetContext(workspaceId);
+
+        expect(result).toEqual({
+          success: false,
+          error: "Failed to read active context before reset: read failed",
+        });
+      } finally {
+        historySpy.mockRestore();
+      }
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("context reset rejects active streams", async () => {
     const aiService = {
       on: mock(() => undefined),
