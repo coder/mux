@@ -1,4 +1,5 @@
 import type { Runtime, BackgroundHandle } from "@/node/runtime/Runtime";
+import { RemoteRuntime } from "@/node/runtime/RemoteRuntime";
 import { Buffer } from "node:buffer";
 import { EventEmitter } from "events";
 import { spawnProcess } from "./backgroundProcessExecutor";
@@ -11,7 +12,11 @@ import { BASH_MAX_LINE_BYTES } from "@/common/constants/toolLimits";
 const DEFAULT_BACKGROUND_BASH_TAIL_BYTES = 64_000;
 const MAX_BACKGROUND_BASH_TAIL_BYTES = 1_000_000;
 
-const MONITOR_POLL_INTERVAL_MS = 100;
+// Local runtimes can tail the on-disk output file directly, so a tight 100ms poll is cheap.
+// Remote runtimes (SSH/Docker) shell out wc/tail/cat per poll; back off to keep monitored
+// long-running processes from saturating the remote transport when idle.
+const MONITOR_POLL_INTERVAL_MS_LOCAL = 100;
+const MONITOR_POLL_INTERVAL_MS_REMOTE = 1_000;
 const MONITOR_MAX_PENDING_LINES = 50;
 const MONITOR_MAX_LAST_LINES = 20;
 
@@ -78,6 +83,8 @@ export interface BackgroundProcessMonitorState extends BackgroundProcessMonitorC
   lastLines: string[];
   flushTimer?: ReturnType<typeof setTimeout>;
   lastReadOffset: number;
+  /** How frequently the tail loop reads output (ms); longer for remote runtimes. */
+  pollIntervalMs: number;
   incompleteLineBuffer: string;
   stopped: boolean;
 }
@@ -203,7 +210,8 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
   }
 
   private createMonitorState(
-    config: BackgroundProcessMonitorConfig
+    config: BackgroundProcessMonitorConfig,
+    options: { pollIntervalMs: number }
   ): BackgroundProcessMonitorState {
     return {
       ...config,
@@ -215,6 +223,7 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
       lastReadOffset: 0,
       incompleteLineBuffer: "",
       stopped: false,
+      pollIntervalMs: options.pollIntervalMs,
     };
   }
 
@@ -425,7 +434,7 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
         }
 
         // stdout/stderr redirection can lag exit-code observation by a tick.
-        await new Promise((resolve) => setTimeout(resolve, MONITOR_POLL_INTERVAL_MS));
+        await new Promise((resolve) => setTimeout(resolve, monitor.pollIntervalMs));
         const finalRead = await proc.handle.readOutput(monitor.lastReadOffset);
         monitor.lastReadOffset = finalRead.newOffset;
         this.processMonitorContent(proc, finalRead.content, { includeIncompleteLine: true });
@@ -433,7 +442,7 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
         return;
       }
 
-      await new Promise((resolve) => setTimeout(resolve, MONITOR_POLL_INTERVAL_MS));
+      await new Promise((resolve) => setTimeout(resolve, monitor.pollIntervalMs));
     }
   }
 
@@ -552,7 +561,14 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
     this.processes.set(processId, proc);
 
     if (config.monitor && !proc.isForeground) {
-      proc.monitor = this.createMonitorState(config.monitor);
+      // Each remote readOutput()/getExitCode() shells through the runtime (wc/tail/cat), so
+      // a tight 100ms poll on SSH/Docker would issue dozens of remote commands per second
+      // for every monitored idle process. Slow the loop down for remote runtimes.
+      const pollIntervalMs =
+        runtime instanceof RemoteRuntime
+          ? MONITOR_POLL_INTERVAL_MS_REMOTE
+          : MONITOR_POLL_INTERVAL_MS_LOCAL;
+      proc.monitor = this.createMonitorState(config.monitor, { pollIntervalMs });
       this.startMonitorTail(proc);
     }
 
