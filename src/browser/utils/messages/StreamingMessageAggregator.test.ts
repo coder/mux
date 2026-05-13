@@ -1811,6 +1811,12 @@ describe("StreamingMessageAggregator", () => {
         "compaction-boundary",
       ]);
 
+      const resetDivider = displayed[2];
+      if (resetDivider?.type !== "compaction-boundary") {
+        throw new Error("Expected reset boundary divider");
+      }
+      expect(resetDivider.boundaryKind).toBe("reset");
+
       const displayedAssistant = displayed[1];
       if (displayedAssistant?.type !== "assistant") {
         throw new Error("Expected second displayed row to remain the pre-reset assistant message");

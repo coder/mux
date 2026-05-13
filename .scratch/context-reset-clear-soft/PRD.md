@@ -10,7 +10,7 @@ The visible transcript should show a **Context Reset Boundary** labeled `Context
 
 Today, `/clear` destructively truncates chat history. Users sometimes want a fresh model context without losing the previous conversation for review, export, or audit. Compaction already creates durable boundaries that preserve older history while reducing active model context, but compaction carries a provider-visible summary. Context Reset needs similar boundary/window behavior without any provider-visible summary or synthetic note.
 
-Domain terms are captured in `CONTEXT.md`. The architecture decision to model compaction and reset as kinds of **Context Boundary** is captured in `docs/adr/0002-context-boundaries-for-compaction-and-reset.md`.
+Domain terms are captured in `CONTEXT.md`. The architecture decision to model compaction and reset as kinds of **Context Boundary** is captured in `docs/adr/0003-context-boundaries-for-compaction-and-reset.md`.
 
 ## Goals
 
