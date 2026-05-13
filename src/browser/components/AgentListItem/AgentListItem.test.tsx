@@ -1,7 +1,7 @@
 import "../../../../tests/ui/dom";
 
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
-import { cleanup, fireEvent, render, within } from "@testing-library/react";
+import { cleanup, render, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { installDom } from "../../../../tests/ui/dom";
 import type * as ReactDndModuleType from "react-dnd";
@@ -17,8 +17,6 @@ import type * as RuntimeStatusStoreModuleType from "@/browser/stores/RuntimeStat
 import type * as WorkspaceStoreModule from "@/browser/stores/WorkspaceStore";
 import * as TooltipModule from "../Tooltip/Tooltip";
 import * as WorkspaceStatusIndicatorModule from "../WorkspaceStatusIndicator/WorkspaceStatusIndicator";
-import { parseRightSidebarLayoutState } from "@/browser/utils/rightSidebarLayout";
-import { getRightSidebarLayoutKey, RIGHT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
 import type { AgentRowRenderMeta } from "@/browser/utils/ui/workspaceFiltering";
 import type { StreamAbortReasonSnapshot } from "@/common/types/stream";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
@@ -293,15 +291,15 @@ describe("AgentListItem", () => {
     expect(rowView.queryByTestId(`workspace-secondary-row-${TEST_WORKSPACE_ID}`)).toBeNull();
   });
 
-  test("renders budget-limited goal pill with stateful aria label", () => {
+  test("does not render a goal target pill in the workspace row", () => {
     mockWorkspaceHeartbeatsEnabled = true;
     mockWorkspaceSidebarState = createWorkspaceSidebarState({
       goal: {
         goalId: "11111111-1111-4111-8111-111111111111",
-        status: "budget_limited",
+        status: "active",
         objective: "Ship goal budgets",
         budgetCents: 500,
-        costCents: 525,
+        costCents: 125,
         turnsUsed: 4,
         turnCap: null,
         startedAtMs: Date.now(),
@@ -309,54 +307,8 @@ describe("AgentListItem", () => {
     });
 
     const { row } = renderWorkspaceItem();
-    const pill = within(row).getByTestId(`workspace-goal-pill-${TEST_WORKSPACE_ID}`);
 
-    expect(pill.textContent).toContain("Target  budget limited");
-    expect(pill.getAttribute("aria-label")).toBe("Goal budget limited, $5.25 of $5.00 spent");
-  });
-
-  test("goal pill selects the workspace, expands the sidebar, and opens the Goal tab", () => {
-    mockWorkspaceHeartbeatsEnabled = true;
-    mockWorkspaceSidebarState = createWorkspaceSidebarState({
-      goal: {
-        goalId: "22222222-2222-4222-8222-222222222222",
-        status: "active",
-        objective: "Open the goal tab",
-        budgetCents: 100_000,
-        costCents: 5_294,
-        turnsUsed: 2,
-        turnCap: null,
-        startedAtMs: Date.now(),
-      },
-    });
-    window.localStorage.setItem(RIGHT_SIDEBAR_COLLAPSED_KEY, JSON.stringify(true));
-    const onSelectWorkspace = mock((_: WorkspaceSelection) => undefined);
-
-    const { row, metadata } = renderWorkspaceItem({ onSelectWorkspace });
-    const pill = within(row).getByTestId(`workspace-goal-pill-${TEST_WORKSPACE_ID}`);
-
-    fireEvent.click(pill);
-
-    expect(onSelectWorkspace).toHaveBeenCalledTimes(1);
-    expect(onSelectWorkspace).toHaveBeenCalledWith({
-      projectPath: metadata.projectPath,
-      projectName: metadata.projectName,
-      namedWorkspacePath: metadata.namedWorkspacePath,
-      workspaceId: metadata.id,
-    });
-    expect(window.localStorage.getItem(RIGHT_SIDEBAR_COLLAPSED_KEY)).toBe("false");
-    const persistedLayout = window.localStorage.getItem(getRightSidebarLayoutKey(metadata.id));
-    if (persistedLayout === null) {
-      throw new Error("expected target workspace right sidebar layout to be persisted");
-    }
-    const rawLayout: unknown = JSON.parse(persistedLayout);
-    const layout = parseRightSidebarLayoutState(rawLayout, "costs");
-    expect(layout.root.type).toBe("tabset");
-    if (layout.root.type !== "tabset") {
-      throw new Error("expected default right sidebar layout to be a tabset");
-    }
-    expect(layout.root.activeTab).toBe("goal");
-    expect(layout.root.tabs).toContain("goal");
+    expect(within(row).queryByTestId(`workspace-goal-pill-${TEST_WORKSPACE_ID}`)).toBeNull();
   });
 
   test("renders a heartbeat icon directly in the leading slot for seen rows when the heartbeat experiment is enabled", () => {
