@@ -476,6 +476,58 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
     }
   });
 
+  test("context reset rejects duplicate resets and sends while a reset is in progress", async () => {
+    const { config, historyService, workspaceService, cleanup } = await createServices();
+    const workspaceId = "context-reset-reentrancy";
+    try {
+      await config.addWorkspace("/tmp/context-reset-reentrancy-project", {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "context-reset-reentrancy-project",
+        projectPath: "/tmp/context-reset-reentrancy-project",
+        runtimeConfig: { type: "local" },
+      });
+      const historyDeferred =
+        createDeferred<Awaited<ReturnType<HistoryService["getHistoryFromLatestBoundary"]>>>();
+      const historySpy = spyOn(
+        historyService,
+        "getHistoryFromLatestBoundary"
+      ).mockImplementationOnce(() => historyDeferred.promise);
+
+      try {
+        const firstReset = workspaceService.resetContext(workspaceId);
+        await Promise.resolve();
+
+        const duplicateReset = await workspaceService.resetContext(workspaceId);
+        expect(duplicateReset).toEqual({
+          success: false,
+          error: "Context reset is already in progress for this workspace.",
+        });
+
+        const sendResult = await workspaceService.sendMessage(workspaceId, "hello", {
+          model: "anthropic:claude-sonnet-4-6",
+          thinkingLevel: "off",
+          toolPolicy: [],
+          agentId: "exec",
+        });
+        expect(sendResult).toEqual({
+          success: false,
+          error: {
+            type: "unknown",
+            raw: "Workspace context is resetting. Please wait and try again.",
+          },
+        });
+
+        historyDeferred.resolve(Ok([]));
+        expect(await firstReset).toEqual({ success: true, data: "noop" });
+      } finally {
+        historySpy.mockRestore();
+      }
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("context reset preserves the goal and requires user acknowledgment", async () => {
     const { config, historyService, workspaceService, goalService, cleanup } =
       await createServices();
