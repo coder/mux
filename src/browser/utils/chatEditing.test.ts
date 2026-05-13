@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { DisplayedUserMessage, QueuedMessage } from "@/common/types/message";
-import { canEditDisplayedUserMessage, normalizeQueuedMessage } from "./chatEditing";
+import {
+  canEditDisplayedUserMessage,
+  isPureMonitorWakeQueue,
+  normalizeQueuedMessage,
+} from "./chatEditing";
 
 function userMessage(overrides: Partial<DisplayedUserMessage> = {}): DisplayedUserMessage {
   return {
@@ -56,5 +60,47 @@ describe("normalizeQueuedMessage", () => {
       baseQueued({ content: raw, containsMonitorEvents: true })
     );
     expect(result.content).toBe("investigate this");
+  });
+});
+
+describe("isPureMonitorWakeQueue", () => {
+  const baseQueued = (overrides: Partial<QueuedMessage> = {}): QueuedMessage => ({
+    id: "queued",
+    content: "",
+    ...overrides,
+  });
+  const wakeXml =
+    '<monitor-event source="mux" taskId="bash:1" total_matches="1"><line>FAIL boot</line></monitor-event>';
+
+  test("returns false when the queue is not flagged as containing monitor events", () => {
+    expect(isPureMonitorWakeQueue(baseQueued({ content: wakeXml }))).toBe(false);
+  });
+
+  test("returns true for a flagged queue with only the synthetic wake", () => {
+    // Edit/restore shortcut paths must bail in this case so the wake stays queued instead of
+    // being silently dropped into an empty composer.
+    expect(
+      isPureMonitorWakeQueue(baseQueued({ content: wakeXml, containsMonitorEvents: true }))
+    ).toBe(true);
+  });
+
+  test("returns false when user-authored text is mixed with the wake", () => {
+    expect(
+      isPureMonitorWakeQueue(
+        baseQueued({ content: `investigate this\n${wakeXml}`, containsMonitorEvents: true })
+      )
+    ).toBe(false);
+  });
+
+  test("returns false when attachments accompany the wake", () => {
+    expect(
+      isPureMonitorWakeQueue(
+        baseQueued({
+          content: wakeXml,
+          containsMonitorEvents: true,
+          fileParts: [{ url: "file:///tmp/a.png", mediaType: "image/png" }],
+        })
+      )
+    ).toBe(false);
   });
 });

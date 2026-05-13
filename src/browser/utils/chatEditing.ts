@@ -32,6 +32,22 @@ export const normalizeQueuedMessage = (queued: QueuedMessage): PendingUserMessag
   reviews: queued.reviews ?? [],
 });
 
+/**
+ * Returns true when a queued message is *only* a backend-generated monitor wake — i.e. the
+ * synthetic `<monitor-event source="mux" …>` XML with no surviving user-authored text or
+ * attachments. Edit/restore-to-input paths must skip these queues so we never clear the
+ * backend queue and drop the wake into an empty composer (the wake would silently never
+ * reach the agent). Callers should instead fall through to the previous-message edit path.
+ */
+export const isPureMonitorWakeQueue = (queued: QueuedMessage): boolean => {
+  if (queued.containsMonitorEvents !== true) return false;
+  const remainingText = stripMonitorWakeXml(queued.content);
+  if (remainingText.length > 0) return false;
+  if ((queued.fileParts?.length ?? 0) > 0) return false;
+  if ((queued.reviews?.length ?? 0) > 0) return false;
+  return true;
+};
+
 const LOCAL_COMMAND_STDOUT_OPEN_TAG = "<local-command-stdout>";
 const LOCAL_COMMAND_STDOUT_CLOSE_TAG = "</local-command-stdout>";
 
