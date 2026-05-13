@@ -17,6 +17,13 @@ describe("/goal slash command", () => {
     });
   });
 
+  test("parses multiline objective with Markdown bullets", () => {
+    expect(parseCommand("/goal Implement PRD\n\nRead first:\n- CONTEXT.md\n- PRD.md")).toEqual({
+      type: "goal-set",
+      objective: "Implement PRD\n\nRead first:\n- CONTEXT.md\n- PRD.md",
+    });
+  });
+
   test("parses budget flags on goal creation", () => {
     expect(parseCommand('/goal "ship the slice" --budget $5')).toEqual({
       type: "goal-set",
@@ -50,6 +57,43 @@ describe("/goal slash command", () => {
       type: "goal-set",
       objective: "ship the slice",
       budgetCents: null,
+    });
+  });
+
+  test("preserves a single newline between header objective and body", () => {
+    expect(parseCommand("/goal Ship it\n- bullet")).toEqual({
+      type: "goal-set",
+      objective: "Ship it\n- bullet",
+    });
+  });
+
+  test("parses header flags while preserving flag-looking body prose", () => {
+    expect(
+      parseCommand("/goal --budget $5 --turns 25\nShip it\n--budget stays prose\n- bullet")
+    ).toEqual({
+      type: "goal-set",
+      objective: "Ship it\n--budget stays prose\n- bullet",
+      budgetCents: 500,
+      turnCap: 25,
+    });
+  });
+
+  test("rejects unknown goal creation flags as known-command flag errors", () => {
+    expect(parseCommand("/goal --bogus\nBody")).toMatchObject({
+      type: "command-unknown-flag",
+      command: "goal",
+      flag: "--bogus",
+    });
+  });
+
+  test("rejects lifecycle commands with multiline bodies", () => {
+    expect(parseCommand("/goal clear\nActually a long objective")).toMatchObject({
+      type: "command-invalid-args",
+      command: "goal",
+    });
+    expect(parseCommand("/goal complete\nActually a long objective")).toMatchObject({
+      type: "command-invalid-args",
+      command: "goal",
     });
   });
 

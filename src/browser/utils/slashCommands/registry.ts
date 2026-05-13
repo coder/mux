@@ -20,6 +20,12 @@ import { parseGoalBudgetInputCents } from "@/common/utils/goals/budgetParser";
 import { HEARTBEAT_MAX_INTERVAL_MS, HEARTBEAT_MIN_INTERVAL_MS } from "@/constants/heartbeat";
 import { WORKSPACE_ONLY_COMMAND_KEYS } from "@/constants/slashCommands";
 
+function tokenizeCommandLine(input: string): string[] {
+  return (input.match(/(?:[^\s"]+|"[^"]*")+/g) ?? []).map((token) =>
+    token.replace(/^"(.*)"$/, "$1")
+  );
+}
+
 /**
  * Parse multiline command input into first-line tokens and remaining message.
  * Used by commands that support messages on subsequent lines (/compact, /new).
@@ -35,16 +41,36 @@ function parseMultilineCommand(rawInput: string): {
   const firstLine = lines[0];
   const remainingLines = lines.slice(1).join("\n").trim();
 
-  // Tokenize first line only (preserving quotes)
-  const tokens = (firstLine.match(/(?:[^\s"]+|"[^"]*")+/g) ?? []).map((token) =>
-    token.replace(/^"(.*)"$/, "$1")
-  );
+  const tokens = tokenizeCommandLine(firstLine);
 
   return {
     firstLine,
     tokens,
     message: remainingLines.length > 0 ? remainingLines : undefined,
     hasMultiline,
+  };
+}
+
+interface CommandHeaderBody {
+  headerTokens: string[];
+  body: string | undefined;
+  bodyHadLeadingBlankLine: boolean;
+}
+
+function trimOuterBlankLines(value: string): string {
+  return value.replace(/^(?:[ \t]*\r?\n)+/, "").replace(/(?:\r?\n[ \t]*)+$/, "");
+}
+
+function parseCommandHeaderBody(rawInput: string): CommandHeaderBody {
+  const newlineIndex = rawInput.indexOf("\n");
+  const header = newlineIndex === -1 ? rawInput : rawInput.slice(0, newlineIndex);
+  const rawBody = newlineIndex === -1 ? "" : rawInput.slice(newlineIndex + 1);
+  const body = trimOuterBlankLines(rawBody);
+
+  return {
+    headerTokens: tokenizeCommandLine(header),
+    body: body.trim().length > 0 ? body : undefined,
+    bodyHadLeadingBlankLine: /^\s*\r?\n/.test(rawBody),
   };
 }
 
@@ -471,43 +497,63 @@ function parseGoalTurnCap(value: unknown): number | null {
 const GOAL_USAGE = `/goal ${SLASH_COMMAND_HINTS.goal}`;
 const GOAL_BUDGET_USAGE = "/goal budget $5|500c|--no-budget";
 
+function invalidGoalBodyArgs(
+  body: string
+): Extract<ParsedCommand, { type: "command-invalid-args" }> {
+  return { type: "command-invalid-args", command: "goal", input: body, usage: GOAL_USAGE };
+}
+
+function unknownGoalFlag(flag: string): Extract<ParsedCommand, { type: "command-unknown-flag" }> {
+  return { type: "command-unknown-flag", command: "goal", flag, usage: GOAL_USAGE };
+}
+
 const goalCommandDefinition: SlashCommandDefinition = {
   key: "goal",
   description: `Create, view, or clear a workspace goal. Usage: ${GOAL_USAGE}`,
   inputHint: SLASH_COMMAND_HINTS.goal,
   appendSpace: false,
-  handler: ({ cleanRemainingTokens }): ParsedCommand => {
-    if (cleanRemainingTokens.length === 0) {
+  handler: ({ rawInput }): ParsedCommand => {
+    const { headerTokens, body, bodyHadLeadingBlankLine } = parseCommandHeaderBody(rawInput);
+
+    if (headerTokens.length === 0 && !body) {
       return { type: "goal-show" };
     }
 
-    const action = cleanRemainingTokens[0].toLowerCase();
+    const action = headerTokens[0]?.toLowerCase();
     if (action === "clear") {
+      if (body) {
+        return invalidGoalBodyArgs(body);
+      }
       return { type: "goal-clear" };
     }
 
     if (action === "pause") {
+      if (body) {
+        return invalidGoalBodyArgs(body);
+      }
       return { type: "goal-pause" };
     }
 
     if (action === "resume") {
+      if (body) {
+        return invalidGoalBodyArgs(body);
+      }
       return { type: "goal-resume" };
     }
 
     if (action === "complete") {
-      const parsed = minimist(cleanRemainingTokens.slice(1), {
+      if (body) {
+        return invalidGoalBodyArgs(body);
+      }
+      const parsed = minimist(headerTokens.slice(1), {
         string: ["summary"],
         unknown: (arg: string) => !arg.startsWith("-"),
       });
-      const unknownFlag = cleanRemainingTokens.slice(1).find((token) => {
+      const unknownFlag = headerTokens.slice(1).find((token) => {
         return token.startsWith("-") && token !== "--summary";
       });
       if (unknownFlag) {
-        return {
-          type: "unknown-command",
-          command: "goal",
-          subcommand: `Unknown flag: ${unknownFlag}`,
-        };
+        return unknownGoalFlag(unknownFlag);
       }
       if (parsed._.length > 0) {
         return {
@@ -522,7 +568,10 @@ const goalCommandDefinition: SlashCommandDefinition = {
     }
 
     if (action === "budget") {
-      const budgetTokens = cleanRemainingTokens.slice(1);
+      if (body) {
+        return invalidGoalBodyArgs(body);
+      }
+      const budgetTokens = headerTokens.slice(1);
       if (budgetTokens.length === 0) {
         return {
           type: "command-missing-args",
@@ -553,15 +602,15 @@ const goalCommandDefinition: SlashCommandDefinition = {
       return { type: "goal-budget", budgetCents };
     }
 
-    const noBudget = cleanRemainingTokens.includes("--no-budget");
+    const noBudget = headerTokens.includes("--no-budget");
     const parsed = minimist(
-      cleanRemainingTokens.filter((token) => token !== "--no-budget"),
+      headerTokens.filter((token) => token !== "--no-budget"),
       {
         string: ["budget", "turns"],
         unknown: (arg: string) => !arg.startsWith("-"),
       }
     );
-    const unknownFlag = cleanRemainingTokens.find((token) => {
+    const unknownFlag = headerTokens.find((token) => {
       return (
         token.startsWith("-") &&
         token !== "--budget" &&
@@ -570,14 +619,13 @@ const goalCommandDefinition: SlashCommandDefinition = {
       );
     });
     if (unknownFlag) {
-      return {
-        type: "unknown-command",
-        command: "goal",
-        subcommand: `Unknown flag: ${unknownFlag}`,
-      };
+      return unknownGoalFlag(unknownFlag);
     }
 
-    const objective = parsed._.join(" ").trim();
+    const headerObjective = parsed._.join(" ").trim();
+    const objective = [headerObjective, body]
+      .filter((part): part is string => part != null && part.length > 0)
+      .join(headerObjective && bodyHadLeadingBlankLine ? "\n\n" : "\n");
     if (objective.length === 0) {
       return {
         type: "command-missing-args",

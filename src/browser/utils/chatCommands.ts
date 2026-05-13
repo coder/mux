@@ -470,6 +470,7 @@ export async function processSlashCommand(
     switch (parsed.type) {
       case "command-missing-args":
       case "command-invalid-args":
+      case "command-unknown-flag":
       case "unknown-command":
         return parsed.command;
       default:

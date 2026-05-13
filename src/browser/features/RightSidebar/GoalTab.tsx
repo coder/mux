@@ -226,7 +226,9 @@ export function GoalTab(props: GoalTabProps) {
           <Target className="h-3.5 w-3.5" aria-hidden="true" />
           Goal {goalStatusLabel(props.goal.status)}
         </div>
-        <h2 className="text-foreground text-sm leading-5 font-semibold">{props.goal.objective}</h2>
+        <h2 className="text-foreground text-sm leading-5 font-semibold whitespace-pre-wrap">
+          {props.goal.objective}
+        </h2>
       </header>
 
       {props.goal.status === "complete" && props.goal.completionSummary && (

@@ -9,6 +9,7 @@ import {
   handleCompactCommand,
   processSlashCommand,
 } from "./chatCommands";
+import { parseCommand } from "./slashCommands/parser";
 import type { CommandHandlerContext, SlashCommandContext } from "./chatCommands";
 import type { ReviewNoteData } from "@/common/types/review";
 import { HEARTBEAT_DEFAULT_INTERVAL_MS } from "@/constants/heartbeat";
@@ -400,6 +401,23 @@ describe("processSlashCommand - goal experiment state", () => {
   });
 });
 
+describe("processSlashCommand - workspace command gating", () => {
+  test("blocks known goal flag errors during workspace creation", async () => {
+    const context = createGoalCommandContext(null);
+    context.variant = "creation";
+
+    const result = await processSlashCommand(
+      { type: "command-unknown-flag", command: "goal", flag: "--bogus" },
+      context
+    );
+
+    expect(result).toEqual({ clearInput: false, toastShown: true });
+    expect(context.setToast).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "Command not available during workspace creation" })
+    );
+  });
+});
+
 describe("processSlashCommand - goal optimistic concurrency", () => {
   test("retries once after a goal conflict and reapplies the slash command intent", async () => {
     enableGoalsExperiment();
@@ -648,6 +666,42 @@ describe("processSlashCommand - goal budgets", () => {
       budgetCents: 350,
       turnCap: 25,
     });
+  });
+
+  test("passes parsed multiline goal objectives through to setGoal", async () => {
+    enableGoalsExperiment();
+    const objective = "Implement PRD\n\nRead first:\n- CONTEXT.md\n- PRD.md";
+    const setGoal = mock().mockResolvedValueOnce({
+      success: true,
+      data: { goalId: "33333333-3333-4333-8333-333333333333", objective },
+    });
+    const context = createGoalCommandContext({
+      config: { getConfig: mock(() => Promise.resolve({})) },
+      workspace: {
+        getGoal: mock(() => Promise.resolve({ goal: null })),
+        setGoal,
+        clearGoal: mock(),
+      },
+    } as unknown as SlashCommandContext["api"]);
+
+    const parsed = parseCommand("/goal Implement PRD\n\nRead first:\n- CONTEXT.md\n- PRD.md");
+    if (parsed?.type !== "goal-set") {
+      throw new Error("expected multiline /goal to parse as goal-set");
+    }
+
+    const result = await processSlashCommand(parsed, context);
+
+    expect(result).toEqual({ clearInput: true, toastShown: true });
+    expect(setGoal).toHaveBeenCalledWith({
+      workspaceId: "goal-ws",
+      objective,
+      expectedGoalId: null,
+      budgetCents: 200,
+      turnCap: null,
+    });
+    expect(window.dispatchEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "mux:openGoalTab" })
+    );
   });
 
   test("passes explicit no-budget and turn cap through to setGoal", async () => {

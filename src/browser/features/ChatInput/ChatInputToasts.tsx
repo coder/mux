@@ -91,6 +91,20 @@ export const createCommandToast = (parsed: ParsedCommand): Toast | null => {
         ),
       };
 
+    case "command-unknown-flag":
+      return {
+        id: Date.now().toString(),
+        type: "error",
+        title: "Unknown Flag",
+        message: `Unknown flag for /${parsed.command}: ${parsed.flag}`,
+        solution: parsed.usage ? (
+          <>
+            <SolutionLabel>Usage:</SolutionLabel>
+            {parsed.usage}
+          </>
+        ) : undefined,
+      };
+
     case "unknown-command": {
       const cmd = "/" + parsed.command + (parsed.subcommand ? " " + parsed.subcommand : "");
       return {

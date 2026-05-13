@@ -33,6 +33,7 @@ export type ParsedCommand =
   | { type: "plan-open" }
   | { type: "debug-llm-request" }
   | { type: "unknown-command"; command: string; subcommand?: string }
+  | { type: "command-unknown-flag"; command: string; flag: string; usage?: string }
   | { type: "command-missing-args"; command: string; usage: string }
   | { type: "command-invalid-args"; command: string; input: string; usage: string }
   | { type: "idle-compaction"; hours: number | null }
