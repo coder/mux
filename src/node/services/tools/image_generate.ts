@@ -86,7 +86,11 @@ async function createThumbnail(data: Uint8Array): Promise<{
   };
 }
 
-function getRevisedPrompt(providerMetadata: unknown, index: number): string | undefined {
+// OpenAI returns per-image diagnostics (revised prompts, token counts) under
+// `providerMetadata.openai.images`. Both `getRevisedPrompt` and
+// `getOpenAIImageTokenUsage` need the same narrowed array, so the walk lives
+// in one helper to keep the unknown→array coercion in a single place.
+function getOpenAIImageInfos(providerMetadata: unknown): unknown[] | undefined {
   if (typeof providerMetadata !== "object" || providerMetadata === null) {
     return undefined;
   }
@@ -95,7 +99,12 @@ function getRevisedPrompt(providerMetadata: unknown, index: number): string | un
     return undefined;
   }
   const images = (openai as { images?: unknown }).images;
-  if (!Array.isArray(images)) {
+  return Array.isArray(images) ? images : undefined;
+}
+
+function getRevisedPrompt(providerMetadata: unknown, index: number): string | undefined {
+  const images = getOpenAIImageInfos(providerMetadata);
+  if (!images) {
     return undefined;
   }
   const image: unknown = images[index];
@@ -113,15 +122,8 @@ function numberOrZero(value: unknown): number {
 }
 
 function getOpenAIImageTokenUsage(providerMetadata: unknown): LanguageModelV2Usage | undefined {
-  if (typeof providerMetadata !== "object" || providerMetadata === null) {
-    return undefined;
-  }
-  const openai = (providerMetadata as { openai?: unknown }).openai;
-  if (typeof openai !== "object" || openai === null) {
-    return undefined;
-  }
-  const images = (openai as { images?: unknown }).images;
-  if (!Array.isArray(images)) {
+  const images = getOpenAIImageInfos(providerMetadata);
+  if (!images) {
     return undefined;
   }
 
