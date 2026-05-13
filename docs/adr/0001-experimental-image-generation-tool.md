@@ -17,7 +17,7 @@ The Codex CLI report described a layered design built around a model-facing imag
 
 ## Decision
 
-Mux will implement the first image generation experiment as a Mux-executed model-callable tool named `image_generate`, backed by OpenAI image models through the AI SDK image generation API. The default image model is `openai:gpt-image-1.5`, with `openai:gpt-image-1.5-2025-12-16` available for users who want a pinned snapshot.
+Mux will implement the first image generation experiment as a Mux-executed model-callable tool named `image_generate`, backed by OpenAI image models through the AI SDK image generation API. The default image model is `openai:gpt-image-2`.
 
 The feature is gated behind a visible, default-off Image Generation Tool experiment. The experiment owns an app-level `imageGeneration` configuration object containing `modelString` and `maxImagesPerCall`.
 

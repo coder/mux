@@ -1,7 +1,7 @@
 import assert from "@/common/utils/assert";
 
-export const DEFAULT_IMAGE_GENERATION_MODEL = "openai:gpt-image-1.5";
-export const PINNED_IMAGE_GENERATION_MODEL = "openai:gpt-image-1.5-2025-12-16";
+export const DEFAULT_IMAGE_GENERATION_MODEL = "openai:gpt-image-2";
+export const PINNED_IMAGE_GENERATION_MODEL = "openai:gpt-image-2-2026-04-21";
 export const DEFAULT_IMAGE_GENERATION_MAX_IMAGES = 4;
 export const MIN_IMAGE_GENERATION_MAX_IMAGES = 1;
 export const MAX_IMAGE_GENERATION_MAX_IMAGES = 10;

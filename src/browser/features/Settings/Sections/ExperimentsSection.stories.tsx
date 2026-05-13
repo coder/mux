@@ -1,6 +1,7 @@
 import { expect, userEvent, waitFor, within } from "@storybook/test";
 import { lightweightMeta } from "@/browser/stories/meta.js";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import { DEFAULT_IMAGE_GENERATION_MODEL } from "@/common/types/imageGeneration";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { ExperimentsSection } from "./ExperimentsSection.js";
 import { SettingsSectionStory, setupSettingsStory } from "./settingsStoryUtils.js";
@@ -42,7 +43,7 @@ export const ImageGenerationEnabled: Story = {
       setup={() =>
         setupSettingsStory({
           experiments: { [EXPERIMENT_IDS.IMAGE_GENERATION_TOOL]: true },
-          imageGeneration: { modelString: "openai:gpt-image-1.5", maxImagesPerCall: 4 },
+          imageGeneration: { modelString: DEFAULT_IMAGE_GENERATION_MODEL, maxImagesPerCall: 4 },
         })
       }
     >
@@ -52,7 +53,9 @@ export const ImageGenerationEnabled: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await expect(canvas.findByText("Image Generation Tool")).resolves.toBeInTheDocument();
-    await expect(canvas.findByDisplayValue("openai:gpt-image-1.5")).resolves.toBeInTheDocument();
+    await expect(
+      canvas.findByDisplayValue(DEFAULT_IMAGE_GENERATION_MODEL)
+    ).resolves.toBeInTheDocument();
 
     const maxImagesInput = await canvas.findByDisplayValue("4");
     await userEvent.clear(maxImagesInput);

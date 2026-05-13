@@ -9,6 +9,7 @@ import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import { createImageGenerateTool } from "./image_generate";
 import { TestTempDir, createTestToolConfig } from "./testHelpers";
 import { Err, Ok } from "@/common/types/result";
+import { DEFAULT_IMAGE_GENERATION_MODEL } from "@/common/types/imageGeneration";
 
 const testPngBase64 =
   "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAHUlEQVR4nGNgYPj/nzLMMGoAw2gYMIyGwf9hEAYAMqb+ENPK2kcAAAAASUVORK5CYII=";
@@ -208,7 +209,7 @@ describe("image_generate tool", () => {
       throw new Error("Expected provider setup failure");
     }
     expect(result.error).toContain("only supports OpenAI");
-    expect(result.setupHint).toContain("openai:gpt-image-1.5");
+    expect(result.setupHint).toContain(DEFAULT_IMAGE_GENERATION_MODEL);
   });
 
   test("writes generated artifacts outside the stream temp directory", async () => {

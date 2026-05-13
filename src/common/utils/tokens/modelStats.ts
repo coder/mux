@@ -23,6 +23,9 @@ interface RawModelData {
   max_output_tokens?: number | string | null;
   input_cost_per_token?: number;
   output_cost_per_token?: number;
+  input_cost_per_image_token?: number;
+  output_cost_per_image_token?: number;
+  cache_read_input_image_token_cost?: number;
   input_cost_per_token_above_200k_tokens?: number;
   output_cost_per_token_above_200k_tokens?: number;
   cache_creation_input_token_cost?: number;
@@ -91,8 +94,14 @@ function extractModelStats(data: RawModelData): ModelStats {
     // Subscription providers like GitHub Copilot omit per-token costs.
     input_cost_per_token:
       typeof data.input_cost_per_token === "number" ? data.input_cost_per_token : 0,
+    // Image generation tool usage reports generated image tokens as outputTokens, so
+    // image model stats use the image-output price in the generic output slot.
     output_cost_per_token:
-      typeof data.output_cost_per_token === "number" ? data.output_cost_per_token : 0,
+      data.mode === "image_generation" && typeof data.output_cost_per_image_token === "number"
+        ? data.output_cost_per_image_token
+        : typeof data.output_cost_per_token === "number"
+          ? data.output_cost_per_token
+          : 0,
     input_cost_per_token_above_200k_tokens: parseOptionalNumber(
       data.input_cost_per_token_above_200k_tokens
     ),

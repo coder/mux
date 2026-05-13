@@ -9,6 +9,9 @@ interface ModelData {
   max_output_tokens?: number;
   input_cost_per_token: number;
   output_cost_per_token: number;
+  input_cost_per_image_token?: number;
+  output_cost_per_image_token?: number;
+  cache_read_input_image_token_cost?: number;
   input_cost_per_token_above_200k_tokens?: number;
   output_cost_per_token_above_200k_tokens?: number;
   cache_creation_input_token_cost?: number;
@@ -32,6 +35,24 @@ interface ModelData {
 }
 
 export const modelsExtra: Record<string, ModelData> = {
+  // GPT Image 2 - image-generation model not yet in LiteLLM's bundled models.json.
+  // OpenAI prices text input at $5/M tokens, image input at $8/M, cached text input at
+  // $1.25/M, cached image input at $2/M, and generated image output at $30/M.
+  "gpt-image-2": {
+    max_input_tokens: 32000,
+    input_cost_per_token: 0.000005, // $5 per million text input tokens
+    cache_read_input_token_cost: 0.00000125, // $1.25 per million cached text input tokens
+    input_cost_per_image_token: 0.000008, // $8 per million image input tokens
+    cache_read_input_image_token_cost: 0.000002, // $2 per million cached image input tokens
+    output_cost_per_image_token: 0.00003, // $30 per million generated image output tokens
+    output_cost_per_token: 0.00003, // Mux maps image output tokens through outputTokens.
+    litellm_provider: "openai",
+    mode: "image_generation",
+    supported_endpoints: ["/v1/images/generations"],
+    supports_vision: true,
+    supports_pdf_input: true,
+  },
+
   // Claude Opus 4.7 - Released April 2026
   // Native 1M context at standard pricing: $5/M input, $25/M output.
   // 128K max output tokens. Supports native xhigh effort level.

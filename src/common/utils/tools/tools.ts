@@ -163,7 +163,7 @@ export interface ToolConfiguration {
   };
   /** Runtime bundle for the image generation tool (present only when the experiment is enabled). */
   imageGenerationRuntime?: {
-    /** Configured image model string (e.g. "openai:gpt-image-1.5"). */
+    /** Configured image model string (e.g. "openai:gpt-image-2"). */
     modelString: string;
     /** Per-call image count cap configured by the user. */
     maxImagesPerCall: number;
