@@ -23,7 +23,7 @@ export type ParsedCommand =
       message: string;
     }
   | { type: "model-help" }
-  | { type: "clear" }
+  | { type: "clear"; mode: "hard" | "soft" }
   | { type: "truncate"; percentage: number }
   | { type: "compact"; maxOutputTokens?: number; continueMessage?: string; model?: string }
   | { type: "fork"; startMessage?: string }

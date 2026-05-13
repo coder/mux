@@ -97,15 +97,19 @@ const clearCommandDefinition: SlashCommandDefinition = {
   description: "Clear conversation history",
   appendSpace: false,
   handler: ({ cleanRemainingTokens }) => {
-    if (cleanRemainingTokens.length > 0) {
-      return {
-        type: "unknown-command",
-        command: "clear",
-        subcommand: cleanRemainingTokens[0],
-      };
+    if (cleanRemainingTokens.length === 0) {
+      return { type: "clear", mode: "hard" };
     }
 
-    return { type: "clear" };
+    if (cleanRemainingTokens.length === 1 && cleanRemainingTokens[0] === "--soft") {
+      return { type: "clear", mode: "soft" };
+    }
+
+    return {
+      type: "unknown-command",
+      command: "clear",
+      subcommand: cleanRemainingTokens[0],
+    };
   },
 };
 

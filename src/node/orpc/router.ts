@@ -3476,6 +3476,16 @@ export const router = (authToken?: string) => {
           }
           return { success: true, data: undefined };
         }),
+      resetContext: t
+        .input(schemas.workspace.resetContext.input)
+        .output(schemas.workspace.resetContext.output)
+        .handler(async ({ context, input }) => {
+          const result = await context.workspaceService.resetContext(input.workspaceId);
+          if (!result.success) {
+            return { success: false, error: result.error };
+          }
+          return { success: true, data: result.data };
+        }),
       replaceChatHistory: t
         .input(schemas.workspace.replaceChatHistory.input)
         .output(schemas.workspace.replaceChatHistory.output)

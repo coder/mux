@@ -62,6 +62,7 @@ const mk = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) => {
     onSetTheme: () => undefined,
     api: {
       workspace: {
+        resetContext: () => Promise.resolve({ success: true, data: "reset" }),
         truncateHistory: () => Promise.resolve({ success: true, data: undefined }),
         interruptStream: () => Promise.resolve({ success: true, data: undefined }),
       },
@@ -78,6 +79,42 @@ const mk = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) => {
   };
   return buildCoreSources(params);
 };
+
+test("chat commands include separate reset context and clear history actions", async () => {
+  const resetContext = mock(() =>
+    Promise.resolve({ success: true as const, data: "reset" as const })
+  );
+  const truncateHistory = mock(() => Promise.resolve({ success: true as const, data: undefined }));
+  const sources = mk({
+    api: {
+      workspace: {
+        resetContext,
+        truncateHistory,
+        interruptStream: () => Promise.resolve({ success: true as const, data: undefined }),
+      },
+    } as unknown as APIClient,
+  });
+  const actions = sources.flatMap((s) => s());
+
+  const resetAction = actions.find((action) => action.title === "Reset Context, Preserve History");
+  const clearAction = actions.find((action) => action.title === "Clear History");
+
+  expect(resetAction).toBeDefined();
+  expect(resetAction?.keywords).toEqual([
+    "context reset",
+    "soft clear",
+    "preserve history",
+    "reset chat",
+  ]);
+  expect(clearAction).toBeDefined();
+
+  await resetAction?.run();
+  expect(resetContext).toHaveBeenCalledWith({ workspaceId: "w1" });
+  expect(truncateHistory).not.toHaveBeenCalled();
+
+  await clearAction?.run();
+  expect(truncateHistory).toHaveBeenCalledWith({ workspaceId: "w1", percentage: 1.0 });
+});
 
 test("buildCoreSources includes create/switch workspace actions", () => {
   const sources = mk();

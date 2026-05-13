@@ -995,6 +995,18 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
     if (p.selectedWorkspace) {
       const id = p.selectedWorkspace.workspaceId;
       list.push({
+        id: CommandIds.chatResetContext(),
+        title: "Reset Context, Preserve History",
+        section: section.chat,
+        keywords: ["context reset", "soft clear", "preserve history", "reset chat"],
+        run: async () => {
+          const result = await p.api?.workspace.resetContext({ workspaceId: id });
+          if (result && !result.success) {
+            throw new Error(result.error);
+          }
+        },
+      });
+      list.push({
         id: CommandIds.chatClear(),
         title: "Clear History",
         section: section.chat,

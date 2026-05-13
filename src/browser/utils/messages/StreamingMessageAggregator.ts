@@ -71,6 +71,7 @@ import { computeRecencyTimestamp } from "./recency";
 import { assert } from "@/common/utils/assert";
 import { getStatusStateKey } from "@/common/constants/storage";
 import { getFollowUpContentText } from "@/browser/utils/compaction/format";
+import { getContextBoundaryKind } from "@/common/utils/messages/compactionBoundary";
 import { getGoalClearedSummaryDisplayText } from "@/common/utils/goalClearedSummaryDisplay";
 
 // Maximum number of messages to display in the DOM for performance
@@ -189,6 +190,42 @@ function hasVisibleHookOutput(result: unknown): boolean {
   }
   const hookOutput = (result as Record<string, unknown>).hook_output;
   return typeof hookOutput === "string" && hookOutput.length > 0;
+}
+
+function markRowsBeforeLatestContextBoundary(messages: DisplayedMessage[]): DisplayedMessage[] {
+  let latestBoundarySequence: number | null = null;
+  for (const message of messages) {
+    if (message.type !== "compaction-boundary") {
+      continue;
+    }
+    if (latestBoundarySequence === null || message.historySequence > latestBoundarySequence) {
+      latestBoundarySequence = message.historySequence;
+    }
+  }
+
+  if (latestBoundarySequence === null) {
+    return messages;
+  }
+
+  let changed = false;
+  const marked = messages.map((message) => {
+    if (message.type !== "user") {
+      return message;
+    }
+
+    const isBeforeLatestContextBoundary = message.historySequence < latestBoundarySequence;
+    if (message.isBeforeLatestContextBoundary === isBeforeLatestContextBoundary) {
+      return message;
+    }
+
+    changed = true;
+    return {
+      ...message,
+      isBeforeLatestContextBoundary: isBeforeLatestContextBoundary ? true : undefined,
+    };
+  });
+
+  return changed ? marked : messages;
 }
 
 function appendGeneratedImageMessage(
@@ -1467,7 +1504,7 @@ export class StreamingMessageAggregator {
     const messages = this.getAllMessages();
     for (let i = messages.length - 1; i >= 0; i--) {
       const message = messages[i];
-      if (message.role === "assistant" && this.isCompactionBoundarySummaryMessage(message)) {
+      if (message.role === "assistant" && this.isContextBoundaryMessage(message)) {
         // A completed summary closes the earlier /compact request, so later auto-continue
         // streams must not inherit a stale "compacting" UI state from that older turn.
         sawCompletedCompaction = true;
@@ -2806,7 +2843,7 @@ export class StreamingMessageAggregator {
       // (emitHistoricalEvents now reads from skip=0, the latest boundary only).
       // This keeps only the current epoch visible in-session; older epochs remain
       // available via Load More history pagination.
-      if (this.isCompactionBoundarySummaryMessage(incomingMessage)) {
+      if (this.isContextBoundaryMessage(incomingMessage)) {
         this.pruneBeforeLatestBoundary(incomingMessage);
       }
 
@@ -2857,11 +2894,11 @@ export class StreamingMessageAggregator {
     }
   }
 
-  private isCompactionBoundarySummaryMessage(message: MuxMessage): boolean {
+  private isContextBoundaryMessage(message: MuxMessage): boolean {
     const muxMeta = message.metadata?.muxMetadata;
     return (
       message.role === "assistant" &&
-      (message.metadata?.compactionBoundary === true || muxMeta?.type === "compaction-summary")
+      (getContextBoundaryKind(message) !== null || muxMeta?.type === "compaction-summary")
     );
   }
 
@@ -2928,6 +2965,7 @@ export class StreamingMessageAggregator {
       type: "compaction-boundary",
       id: `${message.id}-compaction-boundary`,
       historySequence,
+      boundaryKind: getContextBoundaryKind(message) ?? "compaction",
       position: "start",
       compactionEpoch,
     };
@@ -3072,8 +3110,8 @@ export class StreamingMessageAggregator {
         if (part.type === "reasoning") renderableReasoningCount++;
       }
 
-      const isCompactionBoundarySummary = this.isCompactionBoundarySummaryMessage(message);
-      if (isCompactionBoundarySummary) {
+      const isContextBoundary = this.isContextBoundaryMessage(message);
+      if (isContextBoundary) {
         displayedMessages.push(this.createCompactionBoundaryRow(message, historySequence));
       }
 
@@ -3528,6 +3566,8 @@ export class StreamingMessageAggregator {
             ? this.normalizeLastPartFlags(truncationPlan.rows)
             : truncationPlan.rows;
       }
+
+      resultMessages = markRowsBeforeLatestContextBoundary(resultMessages);
 
       // Add init state if present (ephemeral, appears at top)
       if (this.initState) {

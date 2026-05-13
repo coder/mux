@@ -1215,6 +1215,10 @@ export const workspace = {
     }),
     output: ResultSchema(z.void(), z.string()),
   },
+  resetContext: {
+    input: z.object({ workspaceId: z.string() }),
+    output: ResultSchema(z.enum(["reset", "noop"]), z.string()),
+  },
   replaceChatHistory: {
     input: z.object({
       workspaceId: z.string(),

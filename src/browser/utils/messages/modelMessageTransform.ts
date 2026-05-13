@@ -8,6 +8,7 @@ import type { MuxMessage } from "@/common/types/message";
 import type { EditedFileAttachment } from "@/node/services/agentSession";
 import type { PostCompactionAttachment } from "@/common/types/attachment";
 import { MAX_POST_COMPACTION_INJECTION_CHARS } from "@/common/constants/attachments";
+import { hasProviderReplayableContent } from "@/common/utils/messages/providerEligibility";
 import { findLatestCompactionBoundaryIndex } from "@/common/utils/messages/compactionBoundary";
 import { renderAttachmentsToContentWithBudget } from "./attachmentRenderer";
 
@@ -41,55 +42,7 @@ export function filterEmptyAssistantMessages(
       return true;
     }
 
-    // Filter out messages with no parts at all (placeholder messages)
-    if (msg.parts?.length === 0) {
-      return false;
-    }
-
-    // Keep assistant messages that have at least one part that will survive
-    // conversion to provider ModelMessages.
-    //
-    // Important: We call convertToModelMessages(..., { ignoreIncompleteToolCalls: true }).
-    // That means *incomplete* tool calls (state: "input-available") will be dropped.
-    // If we treat them as content here, we can end up sending an assistant message that
-    // becomes empty after conversion, which the AI SDK rejects ("all messages must have
-    // non-empty content...") and can brick a workspace after a crash.
-    const hasContent = msg.parts.some((part) => {
-      if (part.type === "text") {
-        return part.text.trim().length > 0;
-      }
-
-      // Reasoning-only messages are handled below (provider-dependent).
-      if (part.type === "reasoning") {
-        return false;
-      }
-
-      if (part.type === "dynamic-tool") {
-        // Only completed tool calls produce content that can be replayed to the model.
-        return part.state === "output-available";
-      }
-
-      // File/image parts count as content.
-      if (part.type === "file") {
-        return true;
-      }
-
-      // Future-proofing: unknown parts should not brick the request.
-      return true;
-    });
-
-    if (hasContent) {
-      return true;
-    }
-
-    // If preserveReasoningOnly is enabled, keep messages with reasoning parts
-    // (needed for Extended Thinking API compliance)
-    if (preserveReasoningOnly) {
-      const hasReasoning = msg.parts.some((part) => part.type === "reasoning");
-      return hasReasoning;
-    }
-
-    return false;
+    return hasProviderReplayableContent(msg, { preserveReasoningOnly });
   });
 }
 

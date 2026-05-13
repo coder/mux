@@ -161,6 +161,7 @@ export interface SlashCommandContext extends Omit<CommandHandlerContext, "worksp
   setVimEnabled: (cb: (prev: boolean) => boolean) => void;
 
   // Workspace Actions
+  onResetContext?: () => Promise<"reset" | "noop">;
   onTruncateHistory?: (percentage?: number) => Promise<void>;
   resetInputHeight: () => void;
   /** Callback to trigger message-sent side effects (auto-scroll, auto-background) */
@@ -878,10 +879,44 @@ async function handleGoalCommand(
 }
 
 async function handleClearCommand(
-  _parsed: Extract<ParsedCommand, { type: "clear" }>,
+  parsed: Extract<ParsedCommand, { type: "clear" }>,
   context: SlashCommandContext
 ): Promise<CommandHandlerResult> {
-  const { setInput, onTruncateHistory, resetInputHeight, setToast } = context;
+  const {
+    setInput,
+    setAttachments,
+    onResetContext,
+    onTruncateHistory,
+    resetInputHeight,
+    setToast,
+  } = context;
+
+  if (parsed.mode === "soft") {
+    if (!onResetContext) return { clearInput: true, toastShown: false };
+
+    try {
+      const result = await onResetContext();
+      setInput("");
+      resetInputHeight();
+      setAttachments([]);
+      trackCommandUsed("clear");
+      setToast({
+        id: Date.now().toString(),
+        type: "success",
+        message: result === "noop" ? "No context to reset" : "Context reset; history preserved",
+      });
+      return { clearInput: true, toastShown: true };
+    } catch (error) {
+      const normalized = error instanceof Error ? error : new Error("Failed to reset context");
+      console.error("Failed to reset context:", normalized);
+      setToast({
+        id: Date.now().toString(),
+        type: "error",
+        message: normalized.message,
+      });
+      return { clearInput: false, toastShown: true };
+    }
+  }
 
   setInput("");
   resetInputHeight();

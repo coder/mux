@@ -254,6 +254,171 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
     }
   });
 
+  test("context reset appends a boundary and preserves transcript history", async () => {
+    const { config, historyService, workspaceService, cleanup } = await createServices();
+    const workspaceId = "context-reset-preserves-history";
+    try {
+      await config.addWorkspace("/tmp/context-reset-project", {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "context-reset-project",
+        projectPath: "/tmp/context-reset-project",
+        runtimeConfig: { type: "local" },
+      });
+      expect(
+        (
+          await historyService.appendToHistory(
+            workspaceId,
+            createMuxMessage("pre-reset-user", "user", "before reset", {})
+          )
+        ).success
+      ).toBe(true);
+
+      const result = await workspaceService.resetContext(workspaceId);
+
+      expect(result).toEqual({ success: true, data: "reset" });
+      const activeWindow = await historyService.getHistoryFromLatestBoundary(workspaceId);
+      expect(activeWindow.success).toBe(true);
+      const activeIds = activeWindow.success ? activeWindow.data.map((message) => message.id) : [];
+      expect(activeIds).toHaveLength(1);
+      expect(activeIds[0]?.startsWith("context-reset-")).toBe(true);
+      expect(
+        activeWindow.success ? activeWindow.data[0]?.metadata?.contextBoundaryKind : undefined
+      ).toBe("reset");
+
+      const allMessages: string[] = [];
+      const iterateResult = await historyService.iterateFullHistory(
+        workspaceId,
+        "forward",
+        (messages) => {
+          allMessages.push(...messages.map((message) => message.id));
+        }
+      );
+      expect(iterateResult.success).toBe(true);
+      expect(allMessages).toHaveLength(2);
+      expect(allMessages[0]).toBe("pre-reset-user");
+      expect(allMessages[1]?.startsWith("context-reset-")).toBe(true);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("context reset is a no-op when repeated without provider-eligible messages", async () => {
+    const { config, historyService, workspaceService, cleanup } = await createServices();
+    const workspaceId = "context-reset-noop";
+    try {
+      await config.addWorkspace("/tmp/context-reset-noop-project", {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "context-reset-noop-project",
+        projectPath: "/tmp/context-reset-noop-project",
+        runtimeConfig: { type: "local" },
+      });
+      expect(
+        (
+          await historyService.appendToHistory(
+            workspaceId,
+            createMuxMessage("pre-reset-user", "user", "before reset", {})
+          )
+        ).success
+      ).toBe(true);
+
+      expect(await workspaceService.resetContext(workspaceId)).toEqual({
+        success: true,
+        data: "reset",
+      });
+      expect(await workspaceService.resetContext(workspaceId)).toEqual({
+        success: true,
+        data: "noop",
+      });
+
+      let boundaryCount = 0;
+      const iterateResult = await historyService.iterateFullHistory(
+        workspaceId,
+        "forward",
+        (messages) => {
+          boundaryCount += messages.filter(
+            (message) => message.metadata?.contextBoundaryKind === "reset"
+          ).length;
+        }
+      );
+      expect(iterateResult.success).toBe(true);
+      expect(boundaryCount).toBe(1);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("context reset rejects active streams", async () => {
+    const aiService = {
+      on: mock(() => undefined),
+      isStreaming: mock(() => true),
+    } as unknown as AIService;
+    const { config, workspaceService, cleanup } = await createServices(aiService);
+    const workspaceId = "context-reset-active-stream";
+    try {
+      await config.addWorkspace("/tmp/context-reset-active-project", {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "context-reset-active-project",
+        projectPath: "/tmp/context-reset-active-project",
+        runtimeConfig: { type: "local" },
+      });
+
+      const result = await workspaceService.resetContext(workspaceId);
+
+      expect(result.success).toBe(false);
+      expect(result.success ? undefined : result.error).toBe(
+        "Cannot reset context while a turn is active. Press Esc to stop the stream first."
+      );
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("context reset preserves the goal and requires user acknowledgment", async () => {
+    const { config, historyService, workspaceService, goalService, cleanup } =
+      await createServices();
+    const workspaceId = "context-reset-goal-workspace";
+    try {
+      await config.addWorkspace("/tmp/context-reset-goal-project", {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "context-reset-goal-project",
+        projectPath: "/tmp/context-reset-goal-project",
+        runtimeConfig: { type: "local" },
+      });
+      const created = await setWorkspaceGoalOk(goalService, {
+        workspaceId,
+        objective: "Keep pursuing the objective",
+      });
+      expect(
+        (
+          await historyService.appendToHistory(
+            workspaceId,
+            createMuxMessage("pre-reset-user", "user", "before reset", {})
+          )
+        ).success
+      ).toBe(true);
+
+      const nowSpy = spyOn(Date, "now").mockReturnValue(1_234_568);
+      try {
+        const result = await workspaceService.resetContext(workspaceId);
+        expect(result.success).toBe(true);
+      } finally {
+        nowSpy.mockRestore();
+      }
+
+      expect(await goalService.getGoal(workspaceId)).toMatchObject({
+        goalId: created.goalId,
+        objective: created.objective,
+        requireUserAcknowledgmentSinceMs: 1_234_568,
+      });
+    } finally {
+      await cleanup();
+    }
+  });
+
   // ---------------------------------------------------------------------------
   // Codex P1 (PRRT_kwDOPxxmWM5_ucm2): the WorkspaceService stream-abort
   // listener must NOT replay queued goal mutations on user-aborted streams.

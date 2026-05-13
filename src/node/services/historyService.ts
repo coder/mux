@@ -17,9 +17,10 @@ import { getTokenizerForModel } from "@/node/utils/main/tokenizer";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { safeStringifyForCounting } from "@/common/utils/tokens/safeStringifyForCounting";
 import { normalizeLegacyMuxMetadata } from "@/node/utils/messages/legacy";
+import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
 import {
   isDurableCompactedMarker,
-  isDurableCompactionBoundaryMarker,
+  isDurableContextBoundaryMarker,
 } from "@/common/utils/messages/compactionBoundary";
 import { getErrorMessage } from "@/common/utils/errors";
 import { isNonNegativeInteger, isPositiveInteger } from "@/common/utils/numbers";
@@ -129,8 +130,11 @@ export class HistoryService {
 
   /** Size of each chunk when scanning the file in reverse (256KB covers typical post-compaction content). */
   private static readonly REVERSE_READ_CHUNK_SIZE = 256 * 1024;
-  /** String-search needle for compaction boundary lines. */
-  private static readonly BOUNDARY_NEEDLE = '"compactionBoundary":true';
+  /** String-search needles for context boundary lines. */
+  private static readonly BOUNDARY_NEEDLES = [
+    '"compactionBoundary":true',
+    `"contextBoundaryKind":"${CONTEXT_BOUNDARY_KINDS.RESET}"`,
+  ] as const;
 
   /**
    * Scan chat.jsonl in reverse to find the byte offset of a durable compaction boundary.
@@ -204,10 +208,10 @@ export class HistoryService {
           if (lineEnd <= lineStart) continue; // empty line
 
           const line = buffer.subarray(lineStart, lineEnd).toString("utf-8");
-          if (line.includes(HistoryService.BOUNDARY_NEEDLE)) {
+          if (HistoryService.BOUNDARY_NEEDLES.some((needle) => line.includes(needle))) {
             try {
               const msg = JSON.parse(line) as MuxMessage;
-              if (isDurableCompactionBoundaryMarker(msg)) {
+              if (isDurableContextBoundaryMarker(msg)) {
                 if (skipped < skip) {
                   skipped++;
                 } else {
@@ -226,10 +230,10 @@ export class HistoryService {
       // Check the very first line (accumulated in carryover)
       if (carryoverBytes.length > 0) {
         const line = carryoverBytes.toString("utf-8");
-        if (line.includes(HistoryService.BOUNDARY_NEEDLE)) {
+        if (HistoryService.BOUNDARY_NEEDLES.some((needle) => line.includes(needle))) {
           try {
             const msg = JSON.parse(line) as MuxMessage;
-            if (isDurableCompactionBoundaryMarker(msg)) {
+            if (isDurableContextBoundaryMarker(msg)) {
               if (skipped < skip) {
                 // Not enough boundaries in the file to satisfy skip
                 return null;

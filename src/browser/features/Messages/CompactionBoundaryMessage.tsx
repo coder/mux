@@ -10,7 +10,8 @@ interface CompactionBoundaryMessageProps {
 export const CompactionBoundaryMessage: React.FC<CompactionBoundaryMessageProps> = (props) => {
   const epochLabel =
     typeof props.message.compactionEpoch === "number" ? ` #${props.message.compactionEpoch}` : "";
-  const label = `Compaction boundary${epochLabel}`;
+  const label =
+    props.message.boundaryKind === "reset" ? "Context reset" : `Compaction boundary${epochLabel}`;
 
   return (
     <div

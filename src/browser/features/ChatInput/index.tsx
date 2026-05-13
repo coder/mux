@@ -1844,7 +1844,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       return false;
     }
 
-    const isDestructive = parsed.type === "clear" || parsed.type === "truncate";
+    const isDestructive =
+      (parsed.type === "clear" && parsed.mode === "hard") || parsed.type === "truncate";
     if (isDestructive && variant === "workspace" && !options?.skipConfirmation) {
       setPendingDestructiveCommand({
         type: parsed.type,
@@ -1876,6 +1877,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       setToast,
       setPreferredModel,
       setVimEnabled,
+      onResetContext: variant === "workspace" ? props.onResetContext : undefined,
       onTruncateHistory: variant === "workspace" ? props.onTruncateHistory : undefined,
       resetInputHeight: () => {
         if (inputRef.current) {
@@ -1914,7 +1916,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
     const parsedCommand: ParsedCommand =
       pendingDestructiveCommand.type === "clear"
-        ? { type: "clear" }
+        ? { type: "clear", mode: "hard" }
         : {
             type: "truncate",
             percentage: pendingDestructiveCommand.percentage ?? 0,

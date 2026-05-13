@@ -6,6 +6,10 @@ import type { ProvidersConfigMap } from "@/common/orpc/types";
 import assert from "@/common/utils/assert";
 import { computeProvidersConfigFingerprint } from "@/common/utils/providers/configFingerprint";
 import { getToolAvailabilityOptions } from "@/common/utils/tools/toolAvailability";
+import {
+  isDurableContextBoundaryMarker,
+  sliceMessagesForProviderFromLatestContextBoundary,
+} from "@/common/utils/messages/compactionBoundary";
 import type { SessionUsageService, SessionUsageTokenStatsCacheV1 } from "./sessionUsageService";
 import { log } from "./log";
 
@@ -82,9 +86,12 @@ export class TokenizerService {
 
     const calcId = ++this.nextCalcId;
     this.latestCalcIdByWorkspace.set(workspaceId, calcId);
+    const activeContextMessages = isDurableContextBoundaryMarker(messages[0])
+      ? messages
+      : sliceMessagesForProviderFromLatestContextBoundary(messages);
 
     const stats = await calculateTokenStats(
-      messages,
+      activeContextMessages,
       model,
       providersConfig,
       getToolAvailabilityOptions({ workspaceId, parentWorkspaceId })
@@ -103,8 +110,8 @@ export class TokenizerService {
       model: stats.model,
       tokenizerName: stats.tokenizerName,
       history: {
-        messageCount: messages.length,
-        maxHistorySequence: getMaxHistorySequence(messages),
+        messageCount: activeContextMessages.length,
+        maxHistorySequence: getMaxHistorySequence(activeContextMessages),
       },
       consumers: stats.consumers,
       totalTokens: stats.totalTokens,
@@ -116,8 +123,8 @@ export class TokenizerService {
     try {
       assert(cache.totalTokens >= 0, "Tokenizer calculateStats: cache.totalTokens must be >= 0");
       assert(
-        cache.history.messageCount === messages.length,
-        "Tokenizer calculateStats: cache.history.messageCount must match messages.length"
+        cache.history.messageCount === activeContextMessages.length,
+        "Tokenizer calculateStats: cache.history.messageCount must match active context length"
       );
       for (const consumer of cache.consumers) {
         assert(

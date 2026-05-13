@@ -3,6 +3,7 @@ import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { StreamErrorType } from "./errors";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import type { FilePart, MuxToolPartSchema } from "@/common/orpc/schemas";
+import type { PersistedContextBoundaryKind } from "@/common/constants/contextBoundary";
 import type { GoalSyntheticMessageKind } from "@/constants/goals";
 import type { SendMessageOptions } from "@/common/orpc/types";
 import type { z } from "zod";
@@ -464,6 +465,8 @@ export interface MuxMetadata {
    * This lets downstream logic identify compaction boundaries without mutating history.
    */
   compactionBoundary?: boolean;
+  /** Durable provider-context boundary kind. Existing compaction rows are also boundaries via compactionBoundary. */
+  contextBoundaryKind?: PersistedContextBoundaryKind;
   toolPolicy?: ToolPolicy; // Tool policy active when this message was sent (user messages only)
   disableWorkspaceAgents?: boolean; // Whether workspace-local agent files were disabled for this user turn
   /** Snapshot of send options used for this user turn (for startup retry recovery). */
@@ -574,6 +577,8 @@ export type DisplayedMessage =
       isGoalContinuation?: boolean;
       /** True for the one-shot wrap-up turn after a goal continuation exhausts its budget. */
       isBudgetLimitWrapup?: boolean;
+      /** True when this row is loaded above the latest Context Boundary and must not mutate active context. */
+      isBeforeLatestContextBoundary?: boolean;
       /** Present when this message invoked an agent skill via /{skill-name} */
       agentSkill?: {
         skillName: string;
@@ -752,6 +757,7 @@ export type DisplayedMessage =
       type: "compaction-boundary";
       id: string; // Display ID for UI/React keys
       historySequence: number; // Sequence of the compaction summary this boundary belongs to
+      boundaryKind?: "compaction" | "reset";
       position: "start" | "end";
       compactionEpoch?: number;
     }

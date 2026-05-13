@@ -210,6 +210,70 @@ function createGoalCommandContext(api: SlashCommandContext["api"]): SlashCommand
   };
 }
 
+describe("processSlashCommand - clear", () => {
+  function createClearContext(overrides: Partial<SlashCommandContext> = {}): SlashCommandContext {
+    return {
+      api: null,
+      workspaceId: "test-ws",
+      variant: "workspace",
+      projectPath: "/tmp/project",
+      setPreferredModel: mock(() => undefined),
+      setVimEnabled: mock((cb: (prev: boolean) => boolean) => cb(false)),
+      resetInputHeight: mock(() => undefined),
+      onResetContext: mock(() => Promise.resolve("reset" as const)),
+      onTruncateHistory: mock(() => Promise.resolve(undefined)),
+      sendMessageOptions: {
+        model: "anthropic:claude-sonnet-4-6",
+        thinkingLevel: "off",
+        toolPolicy: [],
+        agentId: "exec",
+      },
+      setInput: mock(() => undefined),
+      setToast: mock(() => undefined),
+      setAttachments: mock(() => undefined),
+      setSendingState: mock(() => undefined),
+      ...overrides,
+    };
+  }
+
+  test("hard clear truncates history", async () => {
+    const context = createClearContext();
+
+    const result = await processSlashCommand({ type: "clear", mode: "hard" }, context);
+
+    expect(result).toEqual({ clearInput: true, toastShown: true });
+    expect(context.onTruncateHistory).toHaveBeenCalledWith(1.0);
+    expect(context.onResetContext).not.toHaveBeenCalled();
+  });
+
+  test("soft clear resets context without truncating history", async () => {
+    const context = createClearContext();
+
+    const result = await processSlashCommand({ type: "clear", mode: "soft" }, context);
+
+    expect(result).toEqual({ clearInput: true, toastShown: true });
+    expect(context.onResetContext).toHaveBeenCalled();
+    expect(context.setAttachments).toHaveBeenCalledWith([]);
+    expect(context.onTruncateHistory).not.toHaveBeenCalled();
+    expect(context.setToast).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "Context reset; history preserved", type: "success" })
+    );
+  });
+
+  test("soft clear reports no-op resets", async () => {
+    const context = createClearContext({
+      onResetContext: mock(() => Promise.resolve("noop" as const)),
+    });
+
+    const result = await processSlashCommand({ type: "clear", mode: "soft" }, context);
+
+    expect(result).toEqual({ clearInput: true, toastShown: true });
+    expect(context.setToast).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "No context to reset", type: "success" })
+    );
+  });
+});
+
 describe("processSlashCommand - model-set", () => {
   const createModelSetContext = (api: SlashCommandContext["api"]): SlashCommandContext => ({
     api,

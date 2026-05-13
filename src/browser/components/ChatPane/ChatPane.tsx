@@ -609,6 +609,16 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     [workspaceId, jumpToBottom, api]
   );
 
+  const handleResetContext = useCallback(async (): Promise<"reset" | "noop"> => {
+    jumpToBottom();
+
+    const result = await api?.workspace.resetContext({ workspaceId });
+    if (!result?.success) {
+      throw new Error(result?.error ?? "Failed to reset context");
+    }
+    return result.data;
+  }, [workspaceId, jumpToBottom, api]);
+
   const openInEditor = useOpenInEditor();
   const handleOpenInEditor = useCallback(() => {
     void openInEditor(workspaceId, namedWorkspacePath, runtimeConfig);
@@ -1040,6 +1050,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
               onModelChange={handleModelChange}
               onMessageSendStarted={handleMessageSendStarted}
               onMessageSent={handleMessageSent}
+              onResetContext={handleResetContext}
               onTruncateHistory={handleClearHistory}
               editingMessage={editingMessage}
               onCancelEdit={handleCancelEdit}
@@ -1092,6 +1103,7 @@ interface ChatInputPaneProps {
   onModelChange?: (model: string) => void;
   onMessageSendStarted: (dispatchMode: QueueDispatchMode) => void;
   onMessageSent: (dispatchMode: QueueDispatchMode) => void;
+  onResetContext: () => Promise<"reset" | "noop">;
   onTruncateHistory: (percentage?: number) => Promise<void>;
   editingMessage: EditingMessageState | undefined;
   onCancelEdit: () => void;
@@ -1199,6 +1211,7 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
         runtimeType={getRuntimeTypeForTelemetry(props.runtimeConfig)}
         onMessageSendStarted={props.onMessageSendStarted}
         onMessageSent={props.onMessageSent}
+        onResetContext={props.onResetContext}
         onTruncateHistory={props.onTruncateHistory}
         onModelChange={props.onModelChange}
         disabled={!props.projectName || !props.workspaceName || props.isQueuedAgentTask}
