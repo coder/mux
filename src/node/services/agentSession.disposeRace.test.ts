@@ -542,7 +542,7 @@ describe("AgentSession disposal race conditions", () => {
     expect(sendMessage).toHaveBeenCalledWith(
       expect.stringContaining("<monitor-event"),
       expect.objectContaining({ model: sendOptions.model, agentId: sendOptions.agentId }),
-      { synthetic: true, agentInitiated: true }
+      { synthetic: true, agentInitiated: true, containsMonitorEvents: true }
     );
   });
 

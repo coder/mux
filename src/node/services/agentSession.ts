@@ -422,6 +422,7 @@ export class AgentSession {
       const dispatchMode = this.queueMessage(wakeMessage, wakeOptions, {
         synthetic: true,
         agentInitiated: true,
+        containsMonitorEvents: true,
       });
       if (dispatchMode !== null) {
         this.queuedMonitorWakeTaskIds.add(payload.taskId);
@@ -2274,6 +2275,8 @@ export class AgentSession {
       agentInitiated?: boolean;
       goalContinuation?: boolean;
       goalKind?: GoalSyntheticMessageKind;
+      /** Marks a persisted user message as containing backend-generated `<monitor-event>` blocks. */
+      containsMonitorEvents?: boolean;
       onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
     }
   ): Promise<Result<void, SendMessageError>> {
@@ -2615,6 +2618,7 @@ export class AgentSession {
         ...(goalKind != null ? { kind: goalKind } : {}),
         // Auto-resume and other system-generated messages are synthetic + UI-visible
         ...(internal?.synthetic && { synthetic: true, uiVisible: true }),
+        ...(internal?.containsMonitorEvents === true && { containsMonitorEvents: true }),
       },
       additionalParts
     );
@@ -4890,7 +4894,7 @@ export class AgentSession {
   queueMessage(
     message: string,
     options?: SendMessageOptions & { fileParts?: FilePart[] },
-    internal?: { synthetic?: boolean; agentInitiated?: boolean }
+    internal?: { synthetic?: boolean; agentInitiated?: boolean; containsMonitorEvents?: boolean }
   ): "tool-end" | "turn-end" | null {
     this.assertNotDisposed("queueMessage");
     const didEnqueue = this.messageQueue.add(message, options, internal);

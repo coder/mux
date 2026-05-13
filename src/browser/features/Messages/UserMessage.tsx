@@ -79,9 +79,10 @@ export const UserMessage: React.FC<UserMessageProps> = ({
     : "";
 
   // Monitor wakes are queued synthetically by AgentSession and arrive as `<monitor-event …>`
-  // XML so the model has structured context. Detect them anywhere in the message so we render
-  // inline cards even when the wake was appended to an already-queued user message.
-  const monitorExtract = extractMonitorWakeEvents(content);
+  // XML so the model has structured context. Only extract them when the backend has flagged
+  // this persisted user message as containing wake events; otherwise a user pasting similar
+  // XML would have their content silently stripped.
+  const monitorExtract = message.containsMonitorEvents ? extractMonitorWakeEvents(content) : null;
   const hasMonitorEvents = monitorExtract !== null && monitorExtract.events.length > 0;
   const hasOnlyMonitorEvents = hasMonitorEvents && monitorExtract.remainingContent.length === 0;
   // Surface the visible content (with monitor XML stripped) to copy/edit affordances so the

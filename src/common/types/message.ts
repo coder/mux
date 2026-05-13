@@ -475,6 +475,16 @@ export interface MuxMetadata {
   kind?: "goal_continuation" | "goal_budget_limit";
 
   /**
+   * Marks a user message that contains backend-generated `<monitor-event>` blocks.
+   *
+   * Only set by AgentSession when queueing/sending a monitor wake (alone or appended to an
+   * already-queued user follow-up). The UI uses this flag to gate inline extraction of
+   * `<monitor-event>` blocks so a user pasting similar XML is rendered verbatim rather than
+   * silently stripped.
+   */
+  containsMonitorEvents?: boolean;
+
+  /**
    * ACP-only correlation id propagated through stream events so prompt() can
    * match terminal events to the originating ACP request in shared workspaces.
    */
@@ -574,6 +584,8 @@ export type DisplayedMessage =
       isGoalContinuation?: boolean;
       /** True for the one-shot wrap-up turn after a goal continuation exhausts its budget. */
       isBudgetLimitWrapup?: boolean;
+      /** True when this user message contains backend-generated monitor wake events. */
+      containsMonitorEvents?: boolean;
       /** Present when this message invoked an agent skill via /{skill-name} */
       agentSkill?: {
         skillName: string;

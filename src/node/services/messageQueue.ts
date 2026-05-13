@@ -67,6 +67,13 @@ type QueueDispatchMode = NonNullable<SendMessageOptions["queueDispatchMode"]>;
 interface QueuedMessageInternalOptions {
   synthetic?: boolean;
   agentInitiated?: boolean;
+  /**
+   * Marker for backend-generated `<monitor-event>` blocks queued as synthetic wakes. Surfaces
+   * through `produceMessage().internal` so callers can persist a metadata flag on the resulting
+   * user message and the renderer can safely extract those blocks without misclassifying
+   * user-authored XML that happens to look similar.
+   */
+  containsMonitorEvents?: boolean;
 }
 
 export class MessageQueue {
@@ -79,6 +86,7 @@ export class MessageQueue {
   private queuedEntryCount = 0;
   private queuedSyntheticCount = 0;
   private queuedAgentInitiatedCount = 0;
+  private queuedContainsMonitorEvents = false;
 
   /**
    * Check if the queue currently contains a compaction request.
@@ -217,6 +225,9 @@ export class MessageQueue {
     if (internal?.agentInitiated === true) {
       this.queuedAgentInitiatedCount += 1;
     }
+    if (internal?.containsMonitorEvents === true) {
+      this.queuedContainsMonitorEvents = true;
+    }
 
     return true;
   }
@@ -296,11 +307,13 @@ export class MessageQueue {
       this.queuedEntryCount > 0 && this.queuedSyntheticCount === this.queuedEntryCount;
     const allQueuedEntriesAreAgentInitiated =
       this.queuedEntryCount > 0 && this.queuedAgentInitiatedCount === this.queuedEntryCount;
+    const containsMonitorEvents = this.queuedContainsMonitorEvents;
     const internal =
-      allQueuedEntriesAreSynthetic || allQueuedEntriesAreAgentInitiated
+      allQueuedEntriesAreSynthetic || allQueuedEntriesAreAgentInitiated || containsMonitorEvents
         ? {
             ...(allQueuedEntriesAreSynthetic ? { synthetic: true } : {}),
             ...(allQueuedEntriesAreAgentInitiated ? { agentInitiated: true } : {}),
+            ...(containsMonitorEvents ? { containsMonitorEvents: true } : {}),
           }
         : undefined;
 
@@ -320,6 +333,7 @@ export class MessageQueue {
     this.queuedEntryCount = 0;
     this.queuedSyntheticCount = 0;
     this.queuedAgentInitiatedCount = 0;
+    this.queuedContainsMonitorEvents = false;
   }
 
   /**
