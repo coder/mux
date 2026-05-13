@@ -511,6 +511,21 @@ function unknownGoalFlag(flag: string): Extract<ParsedCommand, { type: "command-
   return { type: "command-unknown-flag", command: "goal", flag, usage: GOAL_USAGE };
 }
 
+// Goal subcommands whose only behavior is to emit a single typed lifecycle
+// event with no arguments. Centralizing the action→type mapping keeps the
+// handler from repeating identical three-line `if (action === "...")` blocks
+// (each with the same `if (body) return invalidGoalBodyArgs(body)` guard)
+// for every new lifecycle verb.
+type SimpleGoalLifecycleType = Extract<
+  ParsedCommand,
+  { type: "goal-clear" | "goal-pause" | "goal-resume" }
+>["type"];
+const SIMPLE_GOAL_LIFECYCLE_TYPES: Record<string, SimpleGoalLifecycleType> = {
+  clear: "goal-clear",
+  pause: "goal-pause",
+  resume: "goal-resume",
+};
+
 const goalCommandDefinition: SlashCommandDefinition = {
   key: "goal",
   description: `Create, view, or clear a workspace goal. Usage: ${GOAL_USAGE}`,
@@ -524,25 +539,11 @@ const goalCommandDefinition: SlashCommandDefinition = {
     }
 
     const action = headerTokens[0]?.toLowerCase();
-    if (action === "clear") {
+    if (action != null && action in SIMPLE_GOAL_LIFECYCLE_TYPES) {
       if (body) {
         return invalidGoalBodyArgs(body);
       }
-      return { type: "goal-clear" };
-    }
-
-    if (action === "pause") {
-      if (body) {
-        return invalidGoalBodyArgs(body);
-      }
-      return { type: "goal-pause" };
-    }
-
-    if (action === "resume") {
-      if (body) {
-        return invalidGoalBodyArgs(body);
-      }
-      return { type: "goal-resume" };
+      return { type: SIMPLE_GOAL_LIFECYCLE_TYPES[action] };
     }
 
     if (action === "complete") {
