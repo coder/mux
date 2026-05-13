@@ -140,6 +140,11 @@ test("reset context command dispatches toast feedback", async () => {
     );
   };
   window.addEventListener(CUSTOM_EVENTS.ANALYTICS_REBUILD_TOAST, handleToast);
+  const clearEvents: string[] = [];
+  const handleComposerClear = (event: Event) => {
+    clearEvents.push((event as CustomEvent<{ workspaceId: string }>).detail.workspaceId);
+  };
+  window.addEventListener(CUSTOM_EVENTS.CLEAR_CHAT_COMPOSER, handleComposerClear);
 
   try {
     const sources = mk({
@@ -159,10 +164,131 @@ test("reset context command dispatches toast feedback", async () => {
     expect(resetAction).toBeDefined();
     await resetAction?.run();
 
+    expect(clearEvents).toEqual(["w1"]);
     expect(receivedToasts).toEqual([
       { type: "success", message: "Context reset; history preserved" },
     ]);
   } finally {
+    window.removeEventListener(CUSTOM_EVENTS.CLEAR_CHAT_COMPOSER, handleComposerClear);
+    window.removeEventListener(CUSTOM_EVENTS.ANALYTICS_REBUILD_TOAST, handleToast);
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+    globalThis.CustomEvent = originalCustomEvent;
+  }
+});
+
+test("reset context command preserves composer on no-op", async () => {
+  const resetContext = mock(() =>
+    Promise.resolve({ success: true as const, data: "noop" as const })
+  );
+  const testWindow = new GlobalWindow();
+  const originalWindow = globalThis.window;
+  const originalDocument = globalThis.document;
+  const originalCustomEvent = globalThis.CustomEvent;
+
+  globalThis.window = testWindow as unknown as Window & typeof globalThis;
+  globalThis.document = testWindow.document as unknown as Document;
+  globalThis.CustomEvent = testWindow.CustomEvent as unknown as typeof CustomEvent;
+  document.body
+    .appendChild(document.createElement("div"))
+    .setAttribute("data-component", "ChatInputSection");
+
+  const receivedToasts: Array<{ type: "success" | "error"; message: string; title?: string }> = [];
+  const clearEvents: string[] = [];
+  const handleToast = (event: Event) =>
+    receivedToasts.push(
+      (event as CustomEvent<{ type: "success" | "error"; message: string; title?: string }>).detail
+    );
+  const handleComposerClear = (event: Event) =>
+    clearEvents.push((event as CustomEvent<{ workspaceId: string }>).detail.workspaceId);
+  window.addEventListener(CUSTOM_EVENTS.ANALYTICS_REBUILD_TOAST, handleToast);
+  window.addEventListener(CUSTOM_EVENTS.CLEAR_CHAT_COMPOSER, handleComposerClear);
+
+  try {
+    const sources = mk({
+      api: {
+        workspace: {
+          resetContext,
+          truncateHistory: () => Promise.resolve({ success: true as const, data: undefined }),
+          interruptStream: () => Promise.resolve({ success: true as const, data: undefined }),
+        },
+      } as unknown as APIClient,
+    });
+    const resetAction = sources
+      .flatMap((source) => source())
+      .find((action) => action.title === "Reset Context, Preserve History");
+
+    expect(resetAction).toBeDefined();
+    await resetAction?.run();
+
+    expect(clearEvents).toEqual([]);
+    expect(receivedToasts).toEqual([{ type: "success", message: "No context to reset" }]);
+  } finally {
+    window.removeEventListener(CUSTOM_EVENTS.CLEAR_CHAT_COMPOSER, handleComposerClear);
+    window.removeEventListener(CUSTOM_EVENTS.ANALYTICS_REBUILD_TOAST, handleToast);
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+    globalThis.CustomEvent = originalCustomEvent;
+  }
+});
+
+test("reset context command shows error toast before rethrowing", async () => {
+  const resetContext = mock(() =>
+    Promise.resolve({ success: false as const, error: "reset failed" })
+  );
+  const testWindow = new GlobalWindow();
+  const originalWindow = globalThis.window;
+  const originalDocument = globalThis.document;
+  const originalCustomEvent = globalThis.CustomEvent;
+
+  globalThis.window = testWindow as unknown as Window & typeof globalThis;
+  globalThis.document = testWindow.document as unknown as Document;
+  globalThis.CustomEvent = testWindow.CustomEvent as unknown as typeof CustomEvent;
+  document.body
+    .appendChild(document.createElement("div"))
+    .setAttribute("data-component", "ChatInputSection");
+
+  const receivedToasts: Array<{ type: "success" | "error"; message: string; title?: string }> = [];
+  const clearEvents: string[] = [];
+  const handleToast = (event: Event) =>
+    receivedToasts.push(
+      (event as CustomEvent<{ type: "success" | "error"; message: string; title?: string }>).detail
+    );
+  const handleComposerClear = (event: Event) =>
+    clearEvents.push((event as CustomEvent<{ workspaceId: string }>).detail.workspaceId);
+  window.addEventListener(CUSTOM_EVENTS.ANALYTICS_REBUILD_TOAST, handleToast);
+  window.addEventListener(CUSTOM_EVENTS.CLEAR_CHAT_COMPOSER, handleComposerClear);
+
+  try {
+    const sources = mk({
+      api: {
+        workspace: {
+          resetContext,
+          truncateHistory: () => Promise.resolve({ success: true as const, data: undefined }),
+          interruptStream: () => Promise.resolve({ success: true as const, data: undefined }),
+        },
+      } as unknown as APIClient,
+    });
+    const resetAction = sources
+      .flatMap((source) => source())
+      .find((action) => action.title === "Reset Context, Preserve History");
+
+    if (!resetAction) {
+      throw new Error("Expected reset context action");
+    }
+    let thrown: unknown;
+    try {
+      await Promise.resolve(resetAction.run());
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    expect(thrown instanceof Error ? thrown.message : undefined).toBe("reset failed");
+
+    expect(clearEvents).toEqual([]);
+    expect(receivedToasts).toEqual([{ type: "error", message: "reset failed" }]);
+  } finally {
+    window.removeEventListener(CUSTOM_EVENTS.CLEAR_CHAT_COMPOSER, handleComposerClear);
     window.removeEventListener(CUSTOM_EVENTS.ANALYTICS_REBUILD_TOAST, handleToast);
     globalThis.window = originalWindow;
     globalThis.document = originalDocument;

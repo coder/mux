@@ -3,7 +3,7 @@ title: Context Boundaries for Compaction and Reset
 description: Architecture decision for modeling provider context windows separately from transcript history
 ---
 
-# 0002. Context Boundaries Separate Active Context from Transcript History
+# 0003. Context Boundaries Separate Active Context from Transcript History
 
 ## Status
 

@@ -448,6 +448,34 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
     }
   });
 
+  test("context reset remains successful when post-boundary goal acknowledgment fails", async () => {
+    const { config, historyService, workspaceService, cleanup } = await createServices();
+    const workspaceId = "context-reset-goal-ack-fails";
+    try {
+      await config.addWorkspace("/tmp/context-reset-goal-ack-fails-project", {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "context-reset-goal-ack-fails-project",
+        projectPath: "/tmp/context-reset-goal-ack-fails-project",
+        runtimeConfig: { type: "local" },
+      });
+      workspaceService.setWorkspaceGoalService({
+        requireUserAcknowledgment: mock(() => Promise.reject(new Error("goal write failed"))),
+      } as unknown as WorkspaceGoalService);
+      const seedResult = await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("pre-reset-user", "user", "before reset", {})
+      );
+      expect(seedResult.success).toBe(true);
+
+      const result = await workspaceService.resetContext(workspaceId);
+
+      expect(result).toEqual({ success: true, data: "reset" });
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("context reset preserves the goal and requires user acknowledgment", async () => {
     const { config, historyService, workspaceService, goalService, cleanup } =
       await createServices();

@@ -6,11 +6,7 @@ import type { ProvidersConfigMap } from "@/common/orpc/types";
 import assert from "@/common/utils/assert";
 import { computeProvidersConfigFingerprint } from "@/common/utils/providers/configFingerprint";
 import { getToolAvailabilityOptions } from "@/common/utils/tools/toolAvailability";
-import {
-  CONTEXT_BOUNDARY_KINDS,
-  getContextBoundaryKind,
-  sliceMessagesForProviderFromLatestContextBoundary,
-} from "@/common/utils/messages/compactionBoundary";
+import { sliceMessagesForProviderFromLatestContextBoundary } from "@/common/utils/messages/compactionBoundary";
 import type { SessionUsageService, SessionUsageTokenStatsCacheV1 } from "./sessionUsageService";
 import { log } from "./log";
 
@@ -87,10 +83,7 @@ export class TokenizerService {
 
     const calcId = ++this.nextCalcId;
     this.latestCalcIdByWorkspace.set(workspaceId, calcId);
-    const activeContextMessages =
-      getContextBoundaryKind(messages[0]) === CONTEXT_BOUNDARY_KINDS.COMPACTION
-        ? messages
-        : sliceMessagesForProviderFromLatestContextBoundary(messages);
+    const activeContextMessages = sliceMessagesForProviderFromLatestContextBoundary(messages);
 
     const stats = await calculateTokenStats(
       activeContextMessages,

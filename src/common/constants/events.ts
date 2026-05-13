@@ -23,6 +23,12 @@ export const CUSTOM_EVENTS = {
   UPDATE_CHAT_INPUT: "mux:updateChatInput",
 
   /**
+   * Event to clear the active chat composer after an out-of-band command succeeds.
+   * Detail: { workspaceId: string }
+   */
+  CLEAR_CHAT_COMPOSER: "mux:clearChatComposer",
+
+  /**
    * Event to open the model selector
    * No detail
    */
@@ -144,6 +150,9 @@ export interface CustomEventPayloads {
     mode?: "replace" | "append";
     fileParts?: FilePart[];
     reviews?: ReviewNoteDataForDisplay[];
+  };
+  [CUSTOM_EVENTS.CLEAR_CHAT_COMPOSER]: {
+    workspaceId: string;
   };
   [CUSTOM_EVENTS.OPEN_AGENT_PICKER]: never; // No payload
   [CUSTOM_EVENTS.CLOSE_AGENT_PICKER]: never; // No payload

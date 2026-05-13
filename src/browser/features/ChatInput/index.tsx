@@ -423,6 +423,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     [persistAttachments]
   );
   // Attached reviews come from parent via props (persisted in pendingReviews state).
+  const workspaceIdForComposerClear = variant === "workspace" ? props.workspaceId : null;
+  const onDetachAllReviewsForComposerClear =
+    variant === "workspace" ? props.onDetachAllReviews : undefined;
+
   // draftReviews takes precedence when restoring or editing message drafts.
   const attachedReviews = variant === "workspace" ? (props.attachedReviews ?? []) : [];
   const draftReviewIdsByValueRef = useRef(new WeakMap<ReviewNoteDataForDisplay, string>());
@@ -1548,6 +1552,26 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     return () =>
       window.removeEventListener(CUSTOM_EVENTS.UPDATE_CHAT_INPUT, handler as EventListener);
   }, [appendText, restoreText, restoreDraft, applyDraftFromPending, getDraft, editingMessageForUi]);
+
+  useEffect(() => {
+    const handler = (event: CustomEvent<{ workspaceId: string }>) => {
+      if (workspaceIdForComposerClear !== event.detail.workspaceId) {
+        return;
+      }
+
+      setInput("");
+      setAttachments([]);
+      setDraftReviews(null);
+      onDetachAllReviewsForComposerClear?.();
+      if (inputRef.current) {
+        inputRef.current.style.height = "";
+      }
+    };
+
+    window.addEventListener(CUSTOM_EVENTS.CLEAR_CHAT_COMPOSER, handler as EventListener);
+    return () =>
+      window.removeEventListener(CUSTOM_EVENTS.CLEAR_CHAT_COMPOSER, handler as EventListener);
+  }, [onDetachAllReviewsForComposerClear, setAttachments, setInput, workspaceIdForComposerClear]);
 
   // Allow external components to open the Model Selector
   useEffect(() => {

@@ -6450,7 +6450,7 @@ export class WorkspaceService extends EventEmitter {
       try {
         await this.workspaceGoalService?.requireUserAcknowledgment(workspaceId);
       } catch (error) {
-        return Err(getErrorMessage(error));
+        log.error("Failed to require goal acknowledgment after context reset:", error);
       }
       this.sessions.get(workspaceId)?.clearFileState();
 

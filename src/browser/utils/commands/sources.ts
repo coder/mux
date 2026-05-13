@@ -1006,6 +1006,11 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
             showCommandFeedbackToast({ type: "error", message: result.error });
             throw new Error(result.error);
           }
+          if (result.data === "reset") {
+            window.dispatchEvent(
+              createCustomEvent(CUSTOM_EVENTS.CLEAR_CHAT_COMPOSER, { workspaceId: id })
+            );
+          }
           showCommandFeedbackToast({
             type: "success",
             message:
