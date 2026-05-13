@@ -13,9 +13,20 @@ interface GeneratedImageMessageProps {
   className?: string;
 }
 
-type GeneratedImageArtifact = GeneratedImageMessageProps["message"]["images"][number];
+interface EditedImageMessageProps {
+  message: Extract<DisplayedMessage, { type: "edited-image" }>;
+  className?: string;
+}
 
-function getThumbnailDataUrl(image: GeneratedImageArtifact): string | null {
+type ImageToolMessage = GeneratedImageMessageProps["message"] | EditedImageMessageProps["message"];
+type ImageArtifact = ImageToolMessage["images"][number];
+type EditedImageArtifact = EditedImageMessageProps["message"]["images"][number];
+
+function isEditedImageArtifact(image: ImageArtifact): image is EditedImageArtifact {
+  return "outputDimensions" in image;
+}
+
+function getThumbnailDataUrl(image: ImageArtifact): string | null {
   const thumbnail = image.thumbnail;
   if (!thumbnail) {
     return null;
@@ -30,7 +41,7 @@ function getThumbnailDataUrl(image: GeneratedImageArtifact): string | null {
   return `data:${mediaType};base64,${thumbnail.data}`;
 }
 
-function getThumbnailAspectStyle(image: GeneratedImageArtifact): CSSProperties | undefined {
+function getThumbnailAspectStyle(image: ImageArtifact): CSSProperties | undefined {
   const thumbnail = image.thumbnail;
   if (!thumbnail) {
     return undefined;
@@ -38,24 +49,29 @@ function getThumbnailAspectStyle(image: GeneratedImageArtifact): CSSProperties |
   return { aspectRatio: `${thumbnail.width} / ${thumbnail.height}` };
 }
 
-function getImageMetadata(image: GeneratedImageArtifact): string[] {
+function getImageMetadata(image: ImageArtifact, messageType: ImageToolMessage["type"]): string[] {
   const metadata = [image.mediaType];
-  if (image.thumbnail) {
+  if (messageType === "edited-image" && isEditedImageArtifact(image)) {
+    metadata.push(`${image.outputDimensions.width}×${image.outputDimensions.height}`);
+  } else if (image.thumbnail) {
     metadata.push(`${image.thumbnail.width}×${image.thumbnail.height}`);
   }
   return metadata;
 }
 
-interface GeneratedImageCardProps {
-  image: GeneratedImageArtifact;
+interface ImageArtifactCardProps {
+  image: ImageArtifact;
   index: number;
   imageCount: number;
+  altPrefix: string;
   onSelect: (src: string) => void;
+  messageType: ImageToolMessage["type"];
 }
 
-function GeneratedImageCard(props: GeneratedImageCardProps) {
+function ImageArtifactCard(props: ImageArtifactCardProps) {
   const dataUrl = getThumbnailDataUrl(props.image);
-  const metadata = getImageMetadata(props.image);
+  const metadata = getImageMetadata(props.image, props.messageType);
+  const imageNumber = props.index + 1;
 
   return (
     <figure className="border-border-light bg-background overflow-hidden rounded-lg border shadow-sm">
@@ -64,7 +80,7 @@ function GeneratedImageCard(props: GeneratedImageCardProps) {
           <button
             type="button"
             onClick={() => props.onSelect(dataUrl)}
-            aria-label={`Open generated image ${props.index + 1} preview`}
+            aria-label={`Open ${props.altPrefix.toLowerCase()} ${imageNumber} preview`}
             className={cn(
               "group relative flex w-full cursor-pointer items-center justify-center overflow-hidden bg-code-bg p-2",
               props.imageCount === 1 ? "min-h-72" : "min-h-48"
@@ -73,7 +89,7 @@ function GeneratedImageCard(props: GeneratedImageCardProps) {
           >
             <img
               src={dataUrl}
-              alt={`Generated image ${props.index + 1}`}
+              alt={`${props.altPrefix} ${imageNumber}`}
               className="max-h-full max-w-full rounded-sm object-contain shadow-md"
             />
             <span className="border-border-light bg-background-secondary/95 text-foreground pointer-events-none absolute right-3 bottom-3 inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-medium opacity-0 shadow-lg transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
@@ -130,11 +146,59 @@ function GeneratedImageCard(props: GeneratedImageCardProps) {
   );
 }
 
-export function GeneratedImageMessage(props: GeneratedImageMessageProps) {
+function SourceImageSummary(props: {
+  source: Extract<DisplayedMessage, { type: "edited-image" }>["source"];
+}) {
+  const resolvedDiffers = props.source.resolvedPath !== props.source.path;
+
+  return (
+    <div className="border-border-light bg-background-secondary rounded-lg border px-3 py-2">
+      <div className="text-muted mb-1 text-[10px] font-medium tracking-wide uppercase">Source</div>
+      <div className="flex min-w-0 items-center gap-2">
+        <code
+          className="text-foreground-secondary min-w-0 flex-1 truncate text-[11px]"
+          title={props.source.path}
+        >
+          {props.source.path}
+        </code>
+        <CopyButton text={props.source.path} className="!p-1.5" />
+      </div>
+      <div className="text-muted counter-nums mt-1 flex flex-wrap gap-x-2 text-[11px]">
+        <span>
+          {props.source.dimensions.width}×{props.source.dimensions.height}
+        </span>
+        <span>{props.source.sizeBytes.toLocaleString()} bytes</span>
+      </div>
+      {resolvedDiffers && (
+        <details className="mt-2 text-[11px]">
+          <summary className="text-muted cursor-pointer">Resolved path</summary>
+          <code
+            className="text-muted bg-code-bg mt-1 block truncate rounded px-2 py-1"
+            title={props.source.resolvedPath}
+          >
+            {props.source.resolvedPath}
+          </code>
+        </details>
+      )}
+    </div>
+  );
+}
+
+interface ImageToolMessageBaseProps {
+  message: ImageToolMessage;
+  className?: string;
+  copy: {
+    titleSingular: string;
+    titlePlural: (count: number) => string;
+    lightboxTitle: string;
+    altPrefix: string;
+  };
+}
+
+function ImageToolMessageBase(props: ImageToolMessageBaseProps) {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const imageCount = props.message.images.length;
-  const title =
-    imageCount === 1 ? "Generated image preview" : `Generated ${imageCount} image previews`;
+  const title = imageCount === 1 ? props.copy.titleSingular : props.copy.titlePlural(imageCount);
 
   return (
     <div className={props.className}>
@@ -157,6 +221,10 @@ export function GeneratedImageMessage(props: GeneratedImageMessageProps) {
             </div>
           </div>
 
+          {props.message.type === "edited-image" && (
+            <SourceImageSummary source={props.message.source} />
+          )}
+
           <div className="border-border-light bg-background-secondary rounded-lg border px-3 py-2">
             <div className="text-muted mb-1 text-[10px] font-medium tracking-wide uppercase">
               Prompt
@@ -174,12 +242,14 @@ export function GeneratedImageMessage(props: GeneratedImageMessageProps) {
           )}
         >
           {props.message.images.map((image, index) => (
-            <GeneratedImageCard
+            <ImageArtifactCard
               key={`${image.path}-${index}`}
               image={image}
               index={index}
               imageCount={imageCount}
+              altPrefix={props.copy.altPrefix}
               onSelect={setSelectedImage}
+              messageType={props.message.type}
             />
           ))}
         </div>
@@ -194,10 +264,40 @@ export function GeneratedImageMessage(props: GeneratedImageMessageProps) {
 
       <ImageLightbox
         src={selectedImage}
-        title="Generated image preview"
-        alt="Generated image preview"
+        title={props.copy.lightboxTitle}
+        alt={props.copy.lightboxTitle}
         onClose={() => setSelectedImage(null)}
       />
     </div>
+  );
+}
+
+export function GeneratedImageMessage(props: GeneratedImageMessageProps) {
+  return (
+    <ImageToolMessageBase
+      message={props.message}
+      className={props.className}
+      copy={{
+        titleSingular: "Generated image preview",
+        titlePlural: (count) => `Generated ${count} image previews`,
+        lightboxTitle: "Generated image preview",
+        altPrefix: "Generated image",
+      }}
+    />
+  );
+}
+
+export function EditedImageMessage(props: EditedImageMessageProps) {
+  return (
+    <ImageToolMessageBase
+      message={props.message}
+      className={props.className}
+      copy={{
+        titleSingular: "Edited image preview",
+        titlePlural: (count) => `Edited ${count} image previews`,
+        lightboxTitle: "Edited image preview",
+        altPrefix: "Edited image",
+      }}
+    />
   );
 }

@@ -271,6 +271,48 @@ describe("MessageRenderer generated image rows", () => {
     expect(getByText("/tmp/mux/imagegen/tool-1/image-1.png")).toBeDefined();
     expect(getByAltText("Generated image 1")).toBeDefined();
   });
+
+  test("renders edited image artifacts with source metadata and saved path", () => {
+    const tinyWebp = "UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA";
+    const message: DisplayedMessage = {
+      type: "edited-image",
+      id: "edited-image-row",
+      historyId: "assistant-2",
+      toolCallId: "tool-2",
+      prompt: "Make the square blue",
+      model: "openai:gpt-image-1.5",
+      source: {
+        path: "/tmp/source.png",
+        resolvedPath: "/tmp/source.png",
+        sizeBytes: 100,
+        dimensions: { width: 16, height: 16 },
+      },
+      images: [
+        {
+          path: "/tmp/mux/edited_images/tool-2/image-1.png",
+          filename: "image-1.png",
+          mediaType: "image/png",
+          outputDimensions: { width: 16, height: 16 },
+          thumbnail: {
+            data: tinyWebp,
+            mediaType: "image/webp",
+            width: 1,
+            height: 1,
+          },
+        },
+      ],
+      historySequence: 13,
+      isPartial: false,
+    };
+
+    const { getByAltText, getByText } = render(<MessageRenderer message={message} />);
+
+    expect(getByText("Edited image preview")).toBeDefined();
+    expect(getByText("Make the square blue")).toBeDefined();
+    expect(getByText("/tmp/source.png")).toBeDefined();
+    expect(getByText("/tmp/mux/edited_images/tool-2/image-1.png")).toBeDefined();
+    expect(getByAltText("Edited image 1")).toBeDefined();
+  });
 });
 
 describe("MessageRenderer compaction boundary rows", () => {

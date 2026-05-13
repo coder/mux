@@ -336,7 +336,7 @@ describe("ProvidersSection", () => {
 
   test("shows and persists the OpenAI WebSocket transport toggle", async () => {
     const view = renderProvidersSection();
-    const openAiButton = await view.findByRole("button", { name: /^OpenAI$/ });
+    const openAiButton = await view.findByRole("button", { name: /^OpenAI\b/ });
 
     fireEvent.click(openAiButton);
 
@@ -360,7 +360,7 @@ describe("ProvidersSection", () => {
   test("clears the OpenAI WebSocket transport preference when toggled off", async () => {
     const view = renderProvidersSection();
     view.providersConfig.openai.webSocketTransportEnabled = true;
-    const openAiButton = await view.findByRole("button", { name: /^OpenAI$/ });
+    const openAiButton = await view.findByRole("button", { name: /^OpenAI\b/ });
 
     fireEvent.click(openAiButton);
 
@@ -385,7 +385,7 @@ describe("ProvidersSection", () => {
     view.providersConfig.openai.codexOauthSet = true;
     view.providersConfig.openai.apiKeySet = false;
     view.providersConfig.openai.webSocketTransportEnabled = true;
-    const openAiButton = await view.findByRole("button", { name: /^OpenAI$/ });
+    const openAiButton = await view.findByRole("button", { name: /^OpenAI\b/ });
 
     fireEvent.click(openAiButton);
 
@@ -402,7 +402,7 @@ describe("ProvidersSection", () => {
     const view = renderProvidersSection();
     view.providersConfig.openai.baseUrl = "https://proxy.openai.test/v1";
     view.providersConfig.openai.webSocketTransportEnabled = true;
-    const openAiButton = await view.findByRole("button", { name: /^OpenAI$/ });
+    const openAiButton = await view.findByRole("button", { name: /^OpenAI\b/ });
 
     fireEvent.click(openAiButton);
 
@@ -419,7 +419,7 @@ describe("ProvidersSection", () => {
     const view = renderProvidersSection();
     view.providersConfig.openai.wireFormat = "chatCompletions";
     view.providersConfig.openai.webSocketTransportEnabled = true;
-    const openAiButton = await view.findByRole("button", { name: /^OpenAI$/ });
+    const openAiButton = await view.findByRole("button", { name: /^OpenAI\b/ });
 
     fireEvent.click(openAiButton);
 
@@ -445,7 +445,7 @@ describe("ProvidersSection", () => {
       within(getProviderCard(customButton)).getByRole("button", { name: "Remove" })
     ).toBeTruthy();
 
-    const openAiButton = view.getByRole("button", { name: /^OpenAI$/ });
+    const openAiButton = view.getByRole("button", { name: /^OpenAI\b/ });
     fireEvent.click(openAiButton);
     expect(
       within(getProviderCard(openAiButton)).queryByRole("button", { name: "Remove" })

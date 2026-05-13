@@ -43,7 +43,11 @@ export const ImageGenerationEnabled: Story = {
       setup={() =>
         setupSettingsStory({
           experiments: { [EXPERIMENT_IDS.IMAGE_GENERATION_TOOL]: true },
-          imageGeneration: { modelString: DEFAULT_IMAGE_GENERATION_MODEL, maxImagesPerCall: 4 },
+          imageGeneration: {
+            modelString: DEFAULT_IMAGE_GENERATION_MODEL,
+            maxImagesPerCall: 4,
+            allowImageUploadsForEditing: true,
+          },
         })
       }
     >
@@ -52,10 +56,15 @@ export const ImageGenerationEnabled: Story = {
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await expect(canvas.findByText("Image Generation Tool")).resolves.toBeInTheDocument();
+    await expect(canvas.findByText("Image Tools")).resolves.toBeInTheDocument();
     await expect(
       canvas.findByDisplayValue(DEFAULT_IMAGE_GENERATION_MODEL)
     ).resolves.toBeInTheDocument();
+
+    const uploadConsentSwitch = await canvas.findByLabelText("Allow image uploads for editing");
+    await waitFor(() => expect(uploadConsentSwitch).toHaveAttribute("aria-checked", "true"));
+    await userEvent.click(uploadConsentSwitch);
+    await waitFor(() => expect(uploadConsentSwitch).toHaveAttribute("aria-checked", "false"));
 
     const maxImagesInput = await canvas.findByDisplayValue("4");
     await userEvent.clear(maxImagesInput);
@@ -72,8 +81,23 @@ export const ImageGenerationEnabled: Story = {
 
 export const ExperimentsToggleOff: Story = {
   render: () => (
-    <SettingsSectionStory setup={() => setupSettingsStory({})}>
+    <SettingsSectionStory
+      setup={() =>
+        setupSettingsStory({
+          experiments: { [EXPERIMENT_IDS.IMAGE_GENERATION_TOOL]: false },
+        })
+      }
+    >
       <ExperimentsSection />
     </SettingsSectionStory>
   ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.findByText("Image Tools")).resolves.toBeInTheDocument();
+    const imageToolsToggle = await canvas.findByLabelText("Toggle Image Tools");
+    await waitFor(() => expect(imageToolsToggle).toHaveAttribute("aria-checked", "false"));
+    await expect(canvas.queryByText("Image model")).toBeNull();
+    await expect(canvas.queryByText("Max images per call")).toBeNull();
+    await expect(canvas.queryByText("Allow image uploads for editing")).toBeNull();
+  },
 };

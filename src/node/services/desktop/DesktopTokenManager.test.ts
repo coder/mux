@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, setSystemTime, vi } from "bun:test";
+import { afterEach, describe, expect, it, setSystemTime } from "bun:test";
 import { DESKTOP_DEFAULTS } from "@/common/constants/desktop";
 import { AssertionError } from "@/common/utils/assert";
 import { DesktopTokenManager } from "./DesktopTokenManager";
@@ -6,7 +6,6 @@ import { DesktopTokenManager } from "./DesktopTokenManager";
 describe("DesktopTokenManager", () => {
   afterEach(() => {
     setSystemTime();
-    vi.useRealTimers();
   });
 
   it("mints a 64-character hex token", () => {

@@ -24,6 +24,7 @@ import type {
   FileReadToolResultSchema,
   AttachFileToolResultSchema,
   ImageGenerateToolResultSchema,
+  ImageEditToolResultSchema,
   TaskToolResultSchema,
   TaskAwaitToolResultSchema,
   TaskApplyGitPatchToolResultSchema,
@@ -33,17 +34,21 @@ import type {
   WebFetchToolResultSchema,
 } from "@/common/utils/tools/toolDefinitions";
 
-// Bash Tool Types — derived from schema (avoid drift)
+// Bash Tool Types, derived from schema (avoid drift)
 export type BashToolArgs = z.infer<typeof TOOL_DEFINITIONS.bash.schema>;
 
 // BashToolResult derived from Zod schema (single source of truth)
 export type BashToolResult = z.infer<typeof BashToolResultSchema>;
 
-// Image generation tool types — derived from schema (avoid drift)
+// Image generation tool types, derived from schema (avoid drift)
 export type ImageGenerateToolArgs = z.infer<typeof TOOL_DEFINITIONS.image_generate.schema>;
 export type ImageGenerateToolResult = z.infer<typeof ImageGenerateToolResultSchema>;
 
-// File Read Tool Types — derived from schema (avoid drift)
+// Image edit tool types, derived from schema (avoid drift)
+export type ImageEditToolArgs = z.infer<typeof TOOL_DEFINITIONS.image_edit.schema>;
+export type ImageEditToolResult = z.infer<typeof ImageEditToolResultSchema>;
+
+// File Read Tool Types, derived from schema (avoid drift)
 export type FileReadToolArgs = z.infer<typeof TOOL_DEFINITIONS.file_read.schema>;
 
 // Agent Skill Tool Types
@@ -304,7 +309,7 @@ export interface LegacyProposePlanToolResult {
   message: string;
 }
 
-// Todo Tool Types — derived from schema (avoid drift)
+// Todo Tool Types, derived from schema (avoid drift)
 export type TodoWriteToolArgs = z.infer<typeof TOOL_DEFINITIONS.todo_write.schema>;
 export type TodoItem = TodoWriteToolArgs["todos"][number];
 
@@ -319,13 +324,13 @@ export interface StatusSetToolArgs {
   url?: string | null;
 }
 
-// Bash Output Tool Types — derived from schema (avoid drift)
+// Bash Output Tool Types, derived from schema (avoid drift)
 export type BashOutputToolArgs = z.infer<typeof TOOL_DEFINITIONS.bash_output.schema>;
 
 // BashOutputToolResult derived from Zod schema (single source of truth)
 export type BashOutputToolResult = z.infer<typeof BashOutputToolResultSchema>;
 
-// Bash Background Tool Types — derived from schema (avoid drift)
+// Bash Background Tool Types, derived from schema (avoid drift)
 export type BashBackgroundTerminateArgs = z.infer<
   typeof TOOL_DEFINITIONS.bash_background_terminate.schema
 >;
@@ -357,7 +362,7 @@ export type StatusSetToolResult =
       error: string;
     };
 
-// Web Fetch Tool Types — derived from schema (avoid drift)
+// Web Fetch Tool Types, derived from schema (avoid drift)
 export type WebFetchToolArgs = z.infer<typeof TOOL_DEFINITIONS.web_fetch.schema>;
 
 // WebFetchToolResult derived from Zod schema (single source of truth)

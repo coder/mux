@@ -6,7 +6,7 @@ function isUnknownArray(value: unknown): value is unknown[] {
   return Array.isArray(value);
 }
 
-function stripImageGenerateThumbnailFromImage(image: unknown): unknown {
+function stripThumbnailFromImage(image: unknown): unknown {
   if (!isRecord(image)) {
     return image;
   }
@@ -20,9 +20,23 @@ function stripImageGenerateThumbnailFromImage(image: unknown): unknown {
   return stripped;
 }
 
-export function stripImageGenerateThumbnails(output: unknown): unknown {
+function stripResolvedSourcePath(source: unknown): unknown {
+  if (!isRecord(source)) {
+    return source;
+  }
+
+  const stripped: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (key !== "resolvedPath") {
+      stripped[key] = value;
+    }
+  }
+  return stripped;
+}
+
+export function stripImageToolOutputForModel(output: unknown): unknown {
   if (isUnknownArray(output)) {
-    return output.map(stripImageGenerateThumbnails);
+    return output.map(stripImageToolOutputForModel);
   }
   if (!isRecord(output)) {
     return output;
@@ -33,13 +47,16 @@ export function stripImageGenerateThumbnails(output: unknown): unknown {
   const record: Record<string, unknown> = stripsCurrentImageResult
     ? {
         ...output,
-        images: images.map(stripImageGenerateThumbnailFromImage),
+        images: images.map(stripThumbnailFromImage),
+        ...(isRecord(output.source) ? { source: stripResolvedSourcePath(output.source) } : {}),
       }
     : output;
   const stripped: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(record)) {
     stripped[key] =
-      stripsCurrentImageResult && key === "images" ? value : stripImageGenerateThumbnails(value);
+      stripsCurrentImageResult && key === "images" ? value : stripImageToolOutputForModel(value);
   }
   return stripped;
 }
+
+export const stripImageToolThumbnails = stripImageToolOutputForModel;

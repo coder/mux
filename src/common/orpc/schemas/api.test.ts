@@ -206,6 +206,21 @@ describe("ProviderConfigInfoSchema conformance", () => {
   });
 });
 
+describe("config imageGeneration schema", () => {
+  it("preserves image upload consent across get and update payloads", () => {
+    const full = {
+      modelString: "openai:gpt-image-1.5",
+      maxImagesPerCall: 2,
+      allowImageUploadsForEditing: true,
+    };
+
+    expect(config.getConfig.output.shape.imageGeneration.parse(full)).toEqual(full);
+    expect(config.updateImageGenerationConfig.input.parse({ imageGeneration: full })).toEqual({
+      imageGeneration: full,
+    });
+  });
+});
+
 describe("workspace.getProjectGitStatuses schema", () => {
   it("accepts omitted and null baseRef values", () => {
     expect(workspace.getProjectGitStatuses.input.safeParse({ workspaceId: "ws" }).success).toBe(

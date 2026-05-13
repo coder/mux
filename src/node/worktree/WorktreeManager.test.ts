@@ -118,8 +118,8 @@ describe("WorktreeManager.createWorkspace", () => {
             fixture.projectPath,
             testCase.branchName
           );
-          const syncSpy = spyOn(submoduleSync, "syncLocalGitSubmodules").mockRejectedValue(
-            new Error("submodule auth failed")
+          const syncSpy = spyOn(submoduleSync, "syncLocalGitSubmodules").mockImplementation(() =>
+            Promise.reject(new Error("submodule auth failed"))
           );
 
           try {

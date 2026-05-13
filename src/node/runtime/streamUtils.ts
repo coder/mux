@@ -43,3 +43,47 @@ export async function streamToString(stream: ReadableStream<Uint8Array>): Promis
     reader.releaseLock();
   }
 }
+
+/** Convert a ReadableStream<Uint8Array> to one concatenated Uint8Array. */
+export async function streamToUint8Array(
+  stream: ReadableStream<Uint8Array>,
+  maxBytes?: number
+): Promise<Uint8Array> {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalLength = 0;
+
+  let completed = false;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        completed = true;
+        break;
+      }
+      const nextLength = totalLength + value.length;
+      if (maxBytes != null && nextLength > maxBytes) {
+        throw new Error(`Stream exceeded ${maxBytes} byte limit`);
+      }
+      chunks.push(value);
+      totalLength = nextLength;
+    }
+  } finally {
+    if (!completed) {
+      try {
+        await reader.cancel();
+      } catch {
+        // Stream may already be errored or canceled.
+      }
+    }
+    reader.releaseLock();
+  }
+
+  const output = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    output.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return output;
+}

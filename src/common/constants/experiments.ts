@@ -118,9 +118,9 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
   },
   [EXPERIMENT_IDS.IMAGE_GENERATION_TOOL]: {
     id: EXPERIMENT_IDS.IMAGE_GENERATION_TOOL,
-    name: "Image Generation Tool",
+    name: "Image Tools",
     description:
-      "Enable an experimental agent tool for generating image artifacts with a separately configured image model",
+      "Enable experimental agent tools for generating and editing image artifacts with a separately configured image model",
     enabledByDefault: false,
     userOverridable: true,
     showInSettings: true,

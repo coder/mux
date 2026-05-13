@@ -659,7 +659,7 @@ export function ExperimentsSection() {
                 <AdvisorToolExperimentConfig />
               )}
               {exp.id === EXPERIMENT_IDS.IMAGE_GENERATION_TOOL && imageGenerationToolEnabled && (
-                <ImageGenerationExperimentConfig />
+                <ImageGenerationExperimentConfig enabled={imageGenerationToolEnabled} />
               )}
               {exp.id === EXPERIMENT_IDS.PORTABLE_DESKTOP && <PortableDesktopExperimentWarning />}
               {exp.id === EXPERIMENT_IDS.CONFIGURABLE_BIND_URL && <ConfigurableBindUrlControls />}

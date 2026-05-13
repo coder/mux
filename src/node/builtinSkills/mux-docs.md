@@ -106,6 +106,7 @@ Use this index to find a page's:
     - Storybook (`/reference/storybook`) → `references/docs/reference/storybook.mdx` — Develop and test Mux UI states in isolation
     - Terminal Benchmarking (`/reference/benchmarking`) → `references/docs/reference/benchmarking.mdx` — Run Terminal-Bench benchmarks with the Mux adapter
     - Experimental Image Generation Tool (`/adr/0001-experimental-image-generation-tool`) → `references/docs/adr/0001-experimental-image-generation-tool.md` — Architecture decision for Mux's experimental image generation tool and generated-image display messages
+    - Image Editing Uses a Separate General-Purpose Tool (`/adr/0002-image-editing-visual-mockups`) → `references/docs/adr/0002-image-editing-visual-mockups.md` — Architecture decision for Mux's experimental image editing tool and edited image display messages
     - AGENTS.md (`/AGENTS`) → `references/docs/AGENTS.md` — Agent instructions for AI assistants working on the Mux codebase
 <!-- END DOCS_TREE -->
 

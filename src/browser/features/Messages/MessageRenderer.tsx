@@ -12,7 +12,7 @@ import { StreamErrorMessage } from "./StreamErrorMessage";
 import { CompactionBoundaryMessage } from "./CompactionBoundaryMessage";
 import { HistoryHiddenMessage } from "./HistoryHiddenMessage";
 import { InitMessage } from "./InitMessage";
-import { GeneratedImageMessage } from "./GeneratedImageMessage";
+import { EditedImageMessage, GeneratedImageMessage } from "./GeneratedImageMessage";
 import { ProposePlanToolCall } from "../Tools/ProposePlanToolCall";
 import { removeEphemeralMessage } from "@/browser/stores/WorkspaceStore";
 import { TranscriptMessageBoundary, TranscriptQuoteRoot } from "./TranscriptQuoteBoundary";
@@ -123,6 +123,9 @@ export const MessageRenderer = React.memo<MessageRendererProps>(
         break;
       case "generated-image":
         renderedMessage = <GeneratedImageMessage message={message} className={className} />;
+        break;
+      case "edited-image":
+        renderedMessage = <EditedImageMessage message={message} className={className} />;
         break;
       case "reasoning":
         renderedMessage = (

@@ -676,6 +676,45 @@ export type DisplayedMessage =
       timestamp?: number;
     }
   | {
+      type: "edited-image";
+      id: string;
+      historyId: string;
+      toolCallId: string;
+      prompt: string;
+      model: string;
+      source: {
+        path: string;
+        resolvedPath: string;
+        sizeBytes: number;
+        dimensions: {
+          width: number;
+          height: number;
+        };
+      };
+      images: Array<{
+        path: string;
+        filename: string;
+        mediaType: string;
+        outputDimensions: {
+          width: number;
+          height: number;
+        };
+        thumbnail?: {
+          data: string;
+          mediaType: string;
+          width: number;
+          height: number;
+        };
+        revisedPrompt?: string;
+      }>;
+      warnings?: string[];
+      historySequence: number;
+      streamSequence?: number;
+      isPartial: boolean;
+      isLastPartOfMessage?: boolean;
+      timestamp?: number;
+    }
+  | {
       type: "reasoning";
       id: string; // Display ID for UI/React keys
       historyId: string; // Original MuxMessage ID for history operations

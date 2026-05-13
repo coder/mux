@@ -517,14 +517,27 @@ If a value is too large for the environment, it may be omitted (not set). Mux al
 </details>
 
 <details>
+<summary>image_edit (5)</summary>
+
+| Env var                        | JSON path      | Type   | Description                                                                                                                           |
+| ------------------------------ | -------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `MUX_TOOL_INPUT_N`             | `n`            | number | Number of edited variants to create. Defaults to 1; request multiple variants only when the user asks or variants are clearly useful. |
+| `MUX_TOOL_INPUT_OUTPUT_FORMAT` | `outputFormat` | enum   | Optional output format. Defaults to png.                                                                                              |
+| `MUX_TOOL_INPUT_PROMPT`        | `prompt`       | string | Edit prompt describing the desired image changes                                                                                      |
+| `MUX_TOOL_INPUT_QUALITY`       | `quality`      | enum   | Optional edit quality. Defaults to the provider/model default.                                                                        |
+| `MUX_TOOL_INPUT_SOURCE_PATH`   | `sourcePath`   | string | Path to the existing source image to edit                                                                                             |
+
+</details>
+
+<details>
 <summary>image_generate (4)</summary>
 
-| Env var                        | JSON path      | Type   | Description                                                                                                          |
-| ------------------------------ | -------------- | ------ | -------------------------------------------------------------------------------------------------------------------- |
-| `MUX_TOOL_INPUT_N`             | `n`            | number | Number of images to generate. Defaults to 1 and must not exceed the user's configured Image Generation Tool maximum. |
-| `MUX_TOOL_INPUT_OUTPUT_FORMAT` | `outputFormat` | enum   | Optional output format. Defaults to png.                                                                             |
-| `MUX_TOOL_INPUT_PROMPT`        | `prompt`       | string | Prompt describing the image(s) to generate                                                                           |
-| `MUX_TOOL_INPUT_QUALITY`       | `quality`      | enum   | Optional generation quality. Defaults to the provider/model default.                                                 |
+| Env var                        | JSON path      | Type   | Description                                                                                                |
+| ------------------------------ | -------------- | ------ | ---------------------------------------------------------------------------------------------------------- |
+| `MUX_TOOL_INPUT_N`             | `n`            | number | Number of images to generate. Defaults to 1 and must not exceed the user's configured Image Tools maximum. |
+| `MUX_TOOL_INPUT_OUTPUT_FORMAT` | `outputFormat` | enum   | Optional output format. Defaults to png.                                                                   |
+| `MUX_TOOL_INPUT_PROMPT`        | `prompt`       | string | Prompt describing the image(s) to generate                                                                 |
+| `MUX_TOOL_INPUT_QUALITY`       | `quality`      | enum   | Optional generation quality. Defaults to the provider/model default.                                       |
 
 </details>
 

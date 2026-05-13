@@ -391,6 +391,83 @@ GeneratedImages.play = async ({ canvasElement }) => {
   await expect(body.findByAltText("Generated image preview")).resolves.toBeInTheDocument();
 };
 
+export const EditedImages: AppStory = {
+  parameters: { chromatic: { modes: CHROMATIC_SMOKE_MODES } },
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        collapseLeftSidebar();
+        return setupSimpleChatStory({
+          workspaceId: "ws-edited-images",
+          messages: [
+            createUserMessage("msg-1", "Mock the settings screenshot with upload consent enabled", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 120000,
+            }),
+            createAssistantMessage("msg-2", "", {
+              historySequence: 2,
+              timestamp: STABLE_TIMESTAMP - 110000,
+              toolCalls: [
+                {
+                  type: "dynamic-tool" as const,
+                  toolCallId: "image-edit-tool-1",
+                  toolName: "image_edit",
+                  input: {
+                    sourcePath: "screenshots/settings.png",
+                    prompt: "Show the Image Tools upload consent switch enabled.",
+                  },
+                  state: "output-available" as const,
+                  output: {
+                    success: true,
+                    model: "openai:gpt-image-1.5",
+                    prompt: "Show the Image Tools upload consent switch enabled.",
+                    requestedCount: 1,
+                    source: {
+                      path: "screenshots/settings.png",
+                      resolvedPath: "/home/user/projects/my-app/screenshots/settings.png",
+                      sizeBytes: 123456,
+                      dimensions: { width: 640, height: 480 },
+                    },
+                    images: [
+                      {
+                        path: "/tmp/mux/edited_images/image-edit-tool-1/image-1.png",
+                        filename: "image-1.png",
+                        mediaType: "image/png",
+                        outputDimensions: { width: 640, height: 480 },
+                        thumbnail: {
+                          data: "UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA",
+                          mediaType: "image/webp",
+                          width: 1,
+                          height: 1,
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            }),
+          ],
+        });
+      }}
+    />
+  ),
+};
+
+EditedImages.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  await expect(canvas.findByText("Edited image preview")).resolves.toBeInTheDocument();
+  const sourcePathMatches = await canvas.findAllByText("screenshots/settings.png");
+  await expect(sourcePathMatches.length).toBeGreaterThan(0);
+  const dimensionsMatches = await canvas.findAllByText("640×480");
+  await expect(dimensionsMatches.length).toBeGreaterThan(0);
+  await expect(canvas.findByText("123,456 bytes")).resolves.toBeInTheDocument();
+  await userEvent.click(await canvas.findByText("Resolved path"));
+  await expect(
+    canvas.findByText("/home/user/projects/my-app/screenshots/settings.png")
+  ).resolves.toBeInTheDocument();
+  await expect(canvas.findByAltText("Edited image 1")).resolves.toBeInTheDocument();
+};
+
 export const WithReasoning: AppStory = {
   render: () => (
     <AppWithMocks

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 
+import { Switch } from "@/browser/components/Switch/Switch";
 import { Input } from "@/browser/components/Input/Input";
 import { useAPI } from "@/browser/contexts/API";
 import {
@@ -29,23 +30,37 @@ function parseMaxImages(value: string): number | null {
   return parsed;
 }
 
-function normalizeDraft(modelDraft: string, maxImagesDraft: string): ImageGenerationConfig | null {
+function normalizeDraft(
+  modelDraft: string,
+  maxImagesDraft: string,
+  allowImageUploadsForEditing: boolean
+): ImageGenerationConfig | null {
   const modelString = modelDraft.trim();
   const maxImagesPerCall = parseMaxImages(maxImagesDraft);
   if (!modelString || maxImagesPerCall == null) {
     return null;
   }
-  return { modelString, maxImagesPerCall };
+  return { modelString, maxImagesPerCall, allowImageUploadsForEditing };
 }
 
 function areConfigsEqual(a: ImageGenerationConfig, b: ImageGenerationConfig): boolean {
-  return a.modelString === b.modelString && a.maxImagesPerCall === b.maxImagesPerCall;
+  return (
+    a.modelString === b.modelString &&
+    a.maxImagesPerCall === b.maxImagesPerCall &&
+    a.allowImageUploadsForEditing === b.allowImageUploadsForEditing
+  );
 }
 
-export function ImageGenerationExperimentConfig() {
+interface ImageGenerationExperimentConfigProps {
+  enabled?: boolean;
+}
+
+export function ImageGenerationExperimentConfig(props: ImageGenerationExperimentConfigProps) {
+  const imageToolsEnabled = props.enabled ?? true;
   const { api } = useAPI();
   const [modelDraft, setModelDraft] = useState(DEFAULT_IMAGE_GENERATION_MODEL);
   const [maxImagesDraft, setMaxImagesDraft] = useState(String(DEFAULT_IMAGE_GENERATION_MAX_IMAGES));
+  const [allowUploadsDraft, setAllowUploadsDraft] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -53,7 +68,7 @@ export function ImageGenerationExperimentConfig() {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savingRef = useRef(false);
   const pendingSaveRef = useRef<ImageGenerationConfig | null>(null);
-  const draftRef = useRef({ modelDraft, maxImagesDraft });
+  const draftRef = useRef({ modelDraft, maxImagesDraft, allowUploadsDraft });
   const lastSyncedRef = useRef<ImageGenerationConfig | null>(null);
   const isMountedRef = useRef(true);
 
@@ -64,8 +79,8 @@ export function ImageGenerationExperimentConfig() {
   }, []);
 
   useEffect(() => {
-    draftRef.current = { modelDraft, maxImagesDraft };
-  }, [modelDraft, maxImagesDraft]);
+    draftRef.current = { modelDraft, maxImagesDraft, allowUploadsDraft };
+  }, [modelDraft, maxImagesDraft, allowUploadsDraft]);
 
   useEffect(() => {
     if (!api) {
@@ -83,6 +98,7 @@ export function ImageGenerationExperimentConfig() {
         if (ignore) return;
         const imageGeneration = normalizeImageGenerationConfig(cfg.imageGeneration);
         setModelDraft(imageGeneration.modelString);
+        setAllowUploadsDraft(imageGeneration.allowImageUploadsForEditing);
         setMaxImagesDraft(String(imageGeneration.maxImagesPerCall));
         lastSyncedRef.current = imageGeneration;
         setLoaded(true);
@@ -104,7 +120,7 @@ export function ImageGenerationExperimentConfig() {
       return;
     }
 
-    const normalizedDraft = normalizeDraft(modelDraft, maxImagesDraft);
+    const normalizedDraft = normalizeDraft(modelDraft, maxImagesDraft, allowUploadsDraft);
     if (normalizedDraft == null) {
       // Invalid drafts should not flush an older valid payload when Settings closes.
       pendingSaveRef.current = null;
@@ -150,7 +166,11 @@ export function ImageGenerationExperimentConfig() {
         })
         .catch((error: unknown) => {
           const currentDraft = isMountedRef.current
-            ? normalizeDraft(draftRef.current.modelDraft, draftRef.current.maxImagesDraft)
+            ? normalizeDraft(
+                draftRef.current.modelDraft,
+                draftRef.current.maxImagesDraft,
+                draftRef.current.allowUploadsDraft
+              )
             : null;
           pendingSaveRef.current =
             currentDraft != null &&
@@ -186,7 +206,8 @@ export function ImageGenerationExperimentConfig() {
 
           const currentDraft = normalizeDraft(
             draftRef.current.modelDraft,
-            draftRef.current.maxImagesDraft
+            draftRef.current.maxImagesDraft,
+            draftRef.current.allowUploadsDraft
           );
           if (
             currentDraft != null &&
@@ -209,7 +230,7 @@ export function ImageGenerationExperimentConfig() {
         saveTimerRef.current = null;
       }
     };
-  }, [api, loaded, loadFailed, modelDraft, maxImagesDraft]);
+  }, [api, loaded, loadFailed, modelDraft, maxImagesDraft, allowUploadsDraft]);
 
   useEffect(() => {
     if (!api || !loaded || loadFailed) {
@@ -252,10 +273,12 @@ export function ImageGenerationExperimentConfig() {
   const maxImagesInvalid = parseMaxImages(maxImagesDraft) == null;
   const modelInvalid = modelDraft.trim().length === 0;
 
+  const controlsDisabled = loadFailed || !imageToolsEnabled;
+
   if (!api) {
     return (
       <div className="bg-background-secondary px-4 py-3">
-        <div className="text-muted text-xs">Connect to mux to configure image generation.</div>
+        <div className="text-muted text-xs">Connect to mux to configure Image Tools.</div>
       </div>
     );
   }
@@ -263,9 +286,15 @@ export function ImageGenerationExperimentConfig() {
   return (
     <div className="bg-background-secondary space-y-3 px-4 py-3">
       <div className="text-muted text-xs">
-        Generate-only experiment. Requires OpenAI provider credentials. Full images are saved as
-        runtime artifacts; copy final assets into the workspace when they matter.
+        Experimental Image Tools require OpenAI provider credentials. Full images are saved as
+        runtime artifacts; copy final assets into the workspace when they matter. Image editing
+        uploads source images as-is, including metadata, only when upload consent is enabled.
       </div>
+      {!imageToolsEnabled && (
+        <div className="text-muted text-xs">
+          Turn on Image Tools above to enable image generation settings and upload consent.
+        </div>
+      )}
 
       <div className="flex items-center justify-between gap-4">
         <div>
@@ -280,7 +309,7 @@ export function ImageGenerationExperimentConfig() {
             setModelDraft(event.target.value)
           }
           placeholder={DEFAULT_IMAGE_GENERATION_MODEL}
-          disabled={loadFailed}
+          disabled={controlsDisabled}
           className="border-border-medium bg-background-secondary h-9 w-72"
         />
       </div>
@@ -300,8 +329,24 @@ export function ImageGenerationExperimentConfig() {
           }
           onBlur={handleMaxImagesBlur}
           inputMode="numeric"
-          disabled={loadFailed}
+          disabled={controlsDisabled}
           className="border-border-medium bg-background-secondary h-9 w-24"
+        />
+      </div>
+
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <div className="text-foreground text-sm">Allow image uploads for editing</div>
+          <div className="text-muted text-xs">
+            Enables the image_edit tool. The agent may select any image file the runtime can access;
+            source images are uploaded as-is, including embedded metadata.
+          </div>
+        </div>
+        <Switch
+          checked={allowUploadsDraft}
+          onCheckedChange={setAllowUploadsDraft}
+          disabled={controlsDisabled}
+          aria-label="Allow image uploads for editing"
         />
       </div>
       {maxImagesInvalid && (

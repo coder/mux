@@ -1,25 +1,29 @@
 ---
 name: imagegen
-description: Generate raster image artifacts for this workspace using Mux's experimental image generation tool
+description: Create or edit raster image artifacts for this workspace using Mux's experimental Image Tools
 ---
 
-# Image Generation
+# Image Tools
 
-Use this skill when the user asks to generate or create raster image artifacts: hero images, illustrations, product mockups, UI visuals, icons, game assets, textures, infographics, or visual variants.
+Use this skill when the user asks to generate raster image artifacts or edit an existing image: hero images, illustrations, product mockups, UI visuals, icons, game assets, textures, infographics, visual variants, or prompt-based edits to a local image path.
 
 ## Current capability
 
-Use the `image_generate` tool for text-to-image generation.
+Use `image_generate` for text-to-image generation.
 
-The first Mux image generation experiment is generate-only:
+Use `image_edit` when the user asks to edit an existing local PNG, JPEG, or WebP image and the tool is available. If `image_edit` is not in your toolset, explain that image editing requires upload consent in Settings > Experiments > Image Tools and offer image generation or implementation guidance instead. The tool edits exactly one source image from a prompt and returns edited image artifacts. It does not capture screenshots, write code, plan implementation work, or verify UI changes; those steps belong to the calling workflow when the user explicitly asks for them.
 
-- No image editing.
-- No masks or reference-image edits.
+Image editing uploads the selected source file to the configured image provider as-is, including embedded metadata. Do not upload incidental images, screenshots, secrets, or sensitive visual/metadata content unless image editing is requested or clearly required by the task.
+
+Deferred capabilities:
+
+- No masks or region-specific edits.
+- No multi-image reference editing.
 - No batch JSONL workflow.
 - No transparent-background or chroma-key workflow.
 - No fallback CLI scripts.
 
-If the user asks for a deferred capability, explain the limitation and offer a generate-only alternative.
+If the user asks for a deferred capability, explain the limitation and offer the closest prompt-based generate/edit alternative.
 
 ## Prompting principles
 
@@ -42,7 +46,7 @@ Use a concise prompt with optional sections:
 
 ```text
 Primary request: ...
-Subject: ...
+Subject/source: ...
 Style/medium: ...
 Composition/framing: ...
 Lighting/mood: ...
@@ -64,9 +68,9 @@ Describe the product, audience, visual metaphor, aspect/framing needs, and any e
 
 Describe the product surface, environment, camera angle, material, lighting, and brand-neutral constraints. Keep labels/logos out unless provided by the user.
 
-### UI illustration
+### UI visual or screenshot edit
 
-Describe the interface concept and mood without inventing a literal app screenshot unless requested. Prefer clean composition and readable visual hierarchy.
+If the user provided or asked you to capture a screenshot, use separate screenshot tooling first, then call `image_edit` on that saved image path. Treat the edited output as a visual mockup only; do not claim it changed the product UI.
 
 ### Icon or logo concept
 
@@ -86,14 +90,16 @@ Describe pattern scale, seamlessness if desired, material, palette, and whether 
 
 ## Variants and iteration
 
-For variants, use `image_generate` with the requested count when it is within the configured maximum. If the request exceeds the configured maximum, ask for fewer images or tell the user to adjust Settings → Experiments → Image Generation Tool.
+For variants, request the count the user asked for when it is within the configured maximum. If the request exceeds the configured maximum, ask for fewer images or tell the user to adjust Settings > Experiments > Image Tools.
 
-For refinements, generate a new image from an updated prompt. Do not claim to edit the previous output.
+Default to one output. Request multiple variants only when the user asks for variants or variants are clearly useful.
+
+For prompt refinements to an existing image artifact, use `image_edit` only when the source image path is available and upload consent permits editing; otherwise use `image_generate` from an updated prompt.
 
 ## Artifact handling
 
-Generated full-resolution images are saved under the active runtime artifact directory. These are best-effort session artifacts, not permanent project assets.
+Generated and edited full-resolution images are saved under runtime artifact directories. These are best-effort session artifacts, not permanent project assets.
 
 Preview or discarded images can remain in the runtime artifact directory. When the user wants an image used by the project, copy the selected final image into the workspace and report the workspace path.
 
-Keep generated originals unless the user explicitly asks to delete them.
+Keep originals unless the user explicitly asks to delete them.

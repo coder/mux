@@ -33,10 +33,13 @@ import {
 import { GOAL_BUDGET_LIMIT_KIND, GOAL_CONTINUATION_KIND } from "@/constants/goals";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { StreamErrorType } from "@/common/types/errors";
-import type { ImageGenerateToolResult } from "@/common/types/tools";
+import type { ImageEditToolResult, ImageGenerateToolResult } from "@/common/types/tools";
 import type { TodoItem, StatusSetToolResult, NotifyToolResult } from "@/common/types/tools";
 import { completeInProgressTodoItems } from "@/common/utils/todoList";
-import { ImageGenerateToolResultSchema } from "@/common/utils/tools/toolDefinitions";
+import {
+  ImageEditToolResultSchema,
+  ImageGenerateToolResultSchema,
+} from "@/common/utils/tools/toolDefinitions";
 import { getToolOutputUiOnly } from "@/common/utils/tools/toolOutputUiOnly";
 
 import { computePriorHistoryFingerprint } from "@/common/orpc/onChatCursorFingerprint";
@@ -173,6 +176,13 @@ function isSuccessfulImageGenerateResult(
   return parsed.success && parsed.data.success;
 }
 
+function isSuccessfulImageEditResult(
+  result: unknown
+): result is Extract<ImageEditToolResult, { success: true }> {
+  const parsed = ImageEditToolResultSchema.safeParse(result);
+  return parsed.success && parsed.data.success;
+}
+
 function hasVisibleHookOutput(result: unknown): boolean {
   if (typeof result !== "object" || result === null || Array.isArray(result)) {
     return false;
@@ -202,6 +212,38 @@ function appendGeneratedImageMessage(
     toolCallId: options.toolCallId,
     prompt: options.output.prompt,
     model: options.output.model,
+    images: options.output.images,
+    warnings: options.output.warnings,
+    isPartial: options.isPartial,
+    historySequence: options.historySequence,
+    streamSequence: options.streamSequence,
+    isLastPartOfMessage: options.isLastPartOfMessage,
+    timestamp: options.timestamp,
+  });
+}
+
+function appendEditedImageMessage(
+  displayedMessages: DisplayedMessage[],
+  options: {
+    id: string;
+    historyId: string;
+    toolCallId: string;
+    output: Extract<ImageEditToolResult, { success: true }>;
+    isPartial: boolean;
+    historySequence: number;
+    streamSequence: number;
+    isLastPartOfMessage: boolean;
+    timestamp?: number;
+  }
+): void {
+  displayedMessages.push({
+    type: "edited-image",
+    id: options.id,
+    historyId: options.historyId,
+    toolCallId: options.toolCallId,
+    prompt: options.output.prompt,
+    model: options.output.model,
+    source: options.output.source,
     images: options.output.images,
     warnings: options.output.warnings,
     isPartial: options.isPartial,
@@ -3149,26 +3191,65 @@ export class StreamingMessageAggregator {
             }
           }
 
-          const nestedGeneratedImages =
-            !isPartial && nestedCalls
-              ? nestedCalls.filter(
-                  (
-                    nestedCall
-                  ): nestedCall is typeof nestedCall & {
-                    output: Extract<ImageGenerateToolResult, { success: true }>;
-                  } =>
-                    nestedCall.toolName === "image_generate" &&
-                    nestedCall.state === "output-available" &&
-                    !hasVisibleHookOutput(nestedCall.output) &&
-                    isSuccessfulImageGenerateResult(nestedCall.output)
-                )
-              : [];
+          const nestedImageMessages: Array<
+            | {
+                kind: "generated";
+                nestedCall: {
+                  toolCallId: string;
+                  timestamp?: number;
+                  output: Extract<ImageGenerateToolResult, { success: true }>;
+                };
+              }
+            | {
+                kind: "edited";
+                nestedCall: {
+                  toolCallId: string;
+                  timestamp?: number;
+                  output: Extract<ImageEditToolResult, { success: true }>;
+                };
+              }
+          > = [];
+          if (!isPartial && nestedCalls) {
+            for (const nestedCall of nestedCalls) {
+              if (
+                nestedCall.toolName === "image_generate" &&
+                nestedCall.state === "output-available" &&
+                !hasVisibleHookOutput(nestedCall.output) &&
+                isSuccessfulImageGenerateResult(nestedCall.output)
+              ) {
+                nestedImageMessages.push({
+                  kind: "generated",
+                  nestedCall: {
+                    toolCallId: nestedCall.toolCallId,
+                    timestamp: nestedCall.timestamp,
+                    output: nestedCall.output,
+                  },
+                });
+                continue;
+              }
+              if (
+                nestedCall.toolName === "image_edit" &&
+                nestedCall.state === "output-available" &&
+                !hasVisibleHookOutput(nestedCall.output) &&
+                isSuccessfulImageEditResult(nestedCall.output)
+              ) {
+                nestedImageMessages.push({
+                  kind: "edited",
+                  nestedCall: {
+                    toolCallId: nestedCall.toolCallId,
+                    timestamp: nestedCall.timestamp,
+                    output: nestedCall.output,
+                  },
+                });
+              }
+            }
+          }
 
-          const nestedGeneratedImageIds = new Set(
-            nestedGeneratedImages.map((nestedCall) => nestedCall.toolCallId)
+          const nestedImageMessageIds = new Set(
+            nestedImageMessages.map(({ nestedCall }) => nestedCall.toolCallId)
           );
           const nestedCallsForToolRow = nestedCalls?.filter(
-            (nestedCall) => !nestedGeneratedImageIds.has(nestedCall.toolCallId)
+            (nestedCall) => !nestedImageMessageIds.has(nestedCall.toolCallId)
           );
 
           if (
@@ -3180,6 +3261,25 @@ export class StreamingMessageAggregator {
             isSuccessfulImageGenerateResult(part.output)
           ) {
             appendGeneratedImageMessage(displayedMessages, {
+              id: `${message.id}-${partIndex}`,
+              historyId: message.id,
+              toolCallId: part.toolCallId,
+              output: part.output,
+              isPartial,
+              historySequence,
+              streamSequence: streamSeq++,
+              isLastPartOfMessage: isLastPart,
+              timestamp: part.timestamp ?? baseTimestamp,
+            });
+          } else if (
+            part.toolName === "image_edit" &&
+            part.state === "output-available" &&
+            status === "completed" &&
+            !isPartial &&
+            !hasVisibleHookOutput(part.output) &&
+            isSuccessfulImageEditResult(part.output)
+          ) {
+            appendEditedImageMessage(displayedMessages, {
               id: `${message.id}-${partIndex}`,
               historyId: message.id,
               toolCallId: part.toolCallId,
@@ -3203,20 +3303,35 @@ export class StreamingMessageAggregator {
               isPartial,
               historySequence,
               streamSequence: streamSeq++,
-              isLastPartOfMessage: isLastPart && nestedGeneratedImages.length === 0,
+              isLastPartOfMessage: isLastPart && nestedImageMessages.length === 0,
               timestamp: part.timestamp ?? baseTimestamp,
               nestedCalls: nestedCallsForToolRow,
             });
-            nestedGeneratedImages.forEach((nestedCall, nestedIndex) => {
-              appendGeneratedImageMessage(displayedMessages, {
-                id: `${message.id}-${partIndex}-nested-image-${nestedIndex}`,
+            nestedImageMessages.forEach(({ kind, nestedCall }, nestedIndex) => {
+              const isLastNestedImage = nestedIndex === nestedImageMessages.length - 1;
+              if (kind === "generated") {
+                appendGeneratedImageMessage(displayedMessages, {
+                  id: `${message.id}-${partIndex}-nested-image-${nestedIndex}`,
+                  historyId: message.id,
+                  toolCallId: nestedCall.toolCallId,
+                  output: nestedCall.output,
+                  isPartial,
+                  historySequence,
+                  streamSequence: streamSeq++,
+                  isLastPartOfMessage: isLastPart && isLastNestedImage,
+                  timestamp: nestedCall.timestamp ?? part.timestamp ?? baseTimestamp,
+                });
+                return;
+              }
+              appendEditedImageMessage(displayedMessages, {
+                id: `${message.id}-${partIndex}-nested-edited-image-${nestedIndex}`,
                 historyId: message.id,
                 toolCallId: nestedCall.toolCallId,
                 output: nestedCall.output,
                 isPartial,
                 historySequence,
                 streamSequence: streamSeq++,
-                isLastPartOfMessage: isLastPart && nestedIndex === nestedGeneratedImages.length - 1,
+                isLastPartOfMessage: isLastPart && isLastNestedImage,
                 timestamp: nestedCall.timestamp ?? part.timestamp ?? baseTimestamp,
               });
             });

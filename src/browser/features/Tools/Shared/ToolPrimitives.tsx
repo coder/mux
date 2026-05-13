@@ -243,6 +243,7 @@ export const TOOL_NAME_TO_ICON: Partial<Record<string, LucideIcon>> = {
   file_read: BookOpen,
   attach_file: Paperclip,
   image_generate: ImageIcon,
+  image_edit: ImageIcon,
   desktop_screenshot: Monitor,
   desktop_move_mouse: Move,
   desktop_click: MousePointerClick,

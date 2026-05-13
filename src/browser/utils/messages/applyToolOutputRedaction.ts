@@ -3,7 +3,7 @@
  * Produces a cloned array safe for sending to providers without touching persisted history/UI.
  */
 import type { MuxMessage } from "@/common/types/message";
-import { stripImageGenerateThumbnails } from "@/common/utils/imageGenerationToolResult";
+import { stripImageToolOutputForModel } from "@/common/utils/imageGenerationToolResult";
 import { stripToolOutputUiOnly } from "@/common/utils/tools/toolOutputUiOnly";
 
 export function applyToolOutputRedaction(messages: MuxMessage[]): MuxMessage[] {
@@ -21,13 +21,13 @@ export function applyToolOutputRedaction(messages: MuxMessage[]): MuxMessage[] {
         }
         return {
           ...nestedCall,
-          output: stripImageGenerateThumbnails(stripToolOutputUiOnly(nestedCall.output)),
+          output: stripImageToolOutputForModel(stripToolOutputUiOnly(nestedCall.output)),
         };
       });
       return {
         ...part,
         ...(nestedCalls ? { nestedCalls } : {}),
-        output: stripImageGenerateThumbnails(outputWithoutUiOnly),
+        output: stripImageToolOutputForModel(outputWithoutUiOnly),
       };
     });
 

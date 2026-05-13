@@ -15,6 +15,7 @@ export type ImageGenerationOutputFormat = (typeof IMAGE_GENERATION_OUTPUT_FORMAT
 export interface ImageGenerationConfig {
   modelString: string;
   maxImagesPerCall: number;
+  allowImageUploadsForEditing: boolean;
 }
 
 export function clampImageGenerationMaxImages(value: number): number {
@@ -41,5 +42,7 @@ export function normalizeImageGenerationConfig(value: unknown): ImageGenerationC
       ? clampImageGenerationMaxImages(rawMaxImagesPerCall)
       : DEFAULT_IMAGE_GENERATION_MAX_IMAGES;
 
-  return { modelString, maxImagesPerCall };
+  const allowImageUploadsForEditing = record.allowImageUploadsForEditing === true;
+
+  return { modelString, maxImagesPerCall, allowImageUploadsForEditing };
 }

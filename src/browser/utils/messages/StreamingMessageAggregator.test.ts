@@ -200,6 +200,161 @@ describe("StreamingMessageAggregator", () => {
       expect(displayed[1].isLastPartOfMessage).toBe(true);
     });
 
+    test("renders successful image_edit tool output as an edited-image row", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      const assistantMessage = createMuxMessage("assistant-edit-image", "assistant", "", {
+        historySequence: 8,
+        timestamp: 1235,
+      });
+      assistantMessage.parts.push({
+        type: "dynamic-tool",
+        toolCallId: "image-edit-tool-1",
+        toolName: "image_edit",
+        input: { sourcePath: "/tmp/source.png", prompt: "Make the square blue" },
+        state: "output-available",
+        output: {
+          success: true,
+          model: "openai:gpt-image-1.5",
+          prompt: "Make the square blue",
+          requestedCount: 1,
+          source: {
+            path: "/tmp/source.png",
+            resolvedPath: "/tmp/source.png",
+            sizeBytes: 100,
+            dimensions: { width: 16, height: 16 },
+          },
+          images: [
+            {
+              path: "/tmp/mux/edited_images/image-edit-tool-1/image-1.png",
+              filename: "image-1.png",
+              mediaType: "image/png",
+              outputDimensions: { width: 16, height: 16 },
+            },
+          ],
+        },
+      });
+
+      aggregator.loadHistoricalMessages([assistantMessage]);
+
+      const displayed = aggregator.getDisplayedMessages();
+      expect(displayed).toHaveLength(1);
+      expect(displayed[0]?.type).toBe("edited-image");
+      if (displayed[0]?.type !== "edited-image") {
+        throw new Error("Expected edited-image display row");
+      }
+      expect(displayed[0].toolCallId).toBe("image-edit-tool-1");
+      expect(displayed[0].source.path).toBe("/tmp/source.png");
+      expect(displayed[0].images[0]?.outputDimensions).toEqual({ width: 16, height: 16 });
+    });
+
+    test("renders nested PTC image_edit output as an edited-image row", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      const assistantMessage = createMuxMessage("assistant-ptc-edit-image", "assistant", "", {
+        historySequence: 8,
+        timestamp: 1235,
+      });
+      const imageOutput = {
+        success: true,
+        model: "openai:gpt-image-1.5",
+        prompt: "Make a nested square blue",
+        requestedCount: 1,
+        source: {
+          path: "/tmp/source.png",
+          resolvedPath: "/tmp/source.png",
+          sizeBytes: 100,
+          dimensions: { width: 16, height: 16 },
+        },
+        images: [
+          {
+            path: "/tmp/mux/edited_images/ptc-edit/image-1.png",
+            filename: "image-1.png",
+            mediaType: "image/png",
+            outputDimensions: { width: 16, height: 16 },
+          },
+        ],
+      };
+      assistantMessage.parts.push({
+        type: "dynamic-tool",
+        toolCallId: "code-tool-edit-1",
+        toolName: "code_execution",
+        input: { code: "await mux.image_edit(...)" },
+        state: "output-available",
+        output: {
+          success: true,
+          result: "done",
+          toolCalls: [
+            {
+              toolName: "image_edit",
+              args: { sourcePath: "/tmp/source.png", prompt: "Make a nested square blue" },
+              result: imageOutput,
+              duration_ms: 12,
+            },
+          ],
+        },
+      });
+
+      aggregator.loadHistoricalMessages([assistantMessage]);
+
+      const displayed = aggregator.getDisplayedMessages();
+      expect(displayed).toHaveLength(2);
+      expect(displayed[0]?.type).toBe("tool");
+      expect(displayed[1]?.type).toBe("edited-image");
+      if (displayed[0]?.type !== "tool" || displayed[1]?.type !== "edited-image") {
+        throw new Error("Expected code_execution tool row followed by edited image row");
+      }
+      expect(displayed[0].toolName).toBe("code_execution");
+      expect(displayed[0].nestedCalls).toEqual([]);
+      expect(displayed[0].isLastPartOfMessage).toBe(false);
+      expect(displayed[1].toolCallId).toBe("code-tool-edit-1-nested-0");
+      expect(displayed[1].prompt).toBe("Make a nested square blue");
+      expect(displayed[1].images[0]?.path).toBe("/tmp/mux/edited_images/ptc-edit/image-1.png");
+      expect(displayed[1].isLastPartOfMessage).toBe(true);
+    });
+
+    test("keeps malformed successful image_edit output as a normal tool row", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      const assistantMessage = createMuxMessage("assistant-edit-image-malformed", "assistant", "", {
+        historySequence: 8,
+        timestamp: 1235,
+      });
+      assistantMessage.parts.push({
+        type: "dynamic-tool",
+        toolCallId: "image-edit-tool-malformed",
+        toolName: "image_edit",
+        input: { sourcePath: "/tmp/source.png", prompt: "Make the square blue" },
+        state: "output-available",
+        output: {
+          success: true,
+          model: "openai:gpt-image-1.5",
+          prompt: "Make the square blue",
+          requestedCount: 1,
+          source: {
+            path: "/tmp/source.png",
+            resolvedPath: "/tmp/source.png",
+            sizeBytes: 100,
+            dimensions: { width: 16, height: 16 },
+          },
+          images: [
+            {
+              path: "/tmp/mux/edited_images/image-edit-tool-1/image-1.png",
+              filename: "image-1.png",
+              mediaType: "image/png",
+            },
+          ],
+        },
+      });
+
+      aggregator.loadHistoricalMessages([assistantMessage]);
+
+      const displayed = aggregator.getDisplayedMessages();
+      expect(displayed).toHaveLength(1);
+      expect(displayed[0]?.type).toBe("tool");
+      if (displayed[0]?.type !== "tool") {
+        throw new Error("Expected malformed image edit to remain a tool row");
+      }
+      expect(displayed[0].toolName).toBe("image_edit");
+    });
+
     test("keeps malformed successful image_generate output as a normal tool row", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
       const assistantMessage = createMuxMessage("assistant-image-malformed", "assistant", "", {
@@ -309,6 +464,36 @@ describe("StreamingMessageAggregator", () => {
         throw new Error("Expected partial image generation to remain a tool row");
       }
       expect(displayed[0].status).toBe("completed");
+    });
+
+    test("keeps failed image_edit output as a normal tool row", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      const assistantMessage = createMuxMessage("assistant-edit-image-failed", "assistant", "", {
+        historySequence: 8,
+        timestamp: 1235,
+      });
+      assistantMessage.parts.push({
+        type: "dynamic-tool",
+        toolCallId: "image-edit-tool-failed",
+        toolName: "image_edit",
+        input: { sourcePath: "/tmp/source.png", prompt: "Make the square blue" },
+        state: "output-available",
+        output: {
+          success: false,
+          error: "Image editing requires upload consent.",
+        },
+      });
+
+      aggregator.loadHistoricalMessages([assistantMessage]);
+
+      const displayed = aggregator.getDisplayedMessages();
+      expect(displayed).toHaveLength(1);
+      expect(displayed[0]?.type).toBe("tool");
+      if (displayed[0]?.type !== "tool") {
+        throw new Error("Expected failed image edit to remain a tool row");
+      }
+      expect(displayed[0].toolName).toBe("image_edit");
+      expect(displayed[0].status).toBe("failed");
     });
 
     test("keeps failed image_generate output as a normal tool row", () => {

@@ -324,7 +324,7 @@ describe("agent_skill_read_file", () => {
 
     expect(parsed.data.success).toBe(false);
     if (!parsed.data.success) {
-      expect(parsed.data.error).toContain("Image Generation Tool experiment");
+      expect(parsed.data.error).toContain("Image Tools experiment");
     }
   });
 

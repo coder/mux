@@ -67,6 +67,7 @@ export const ImageGenerationConfigSchema = z
       .max(MAX_IMAGE_GENERATION_MAX_IMAGES)
       .default(DEFAULT_IMAGE_GENERATION_MAX_IMAGES)
       .optional(),
+    allowImageUploadsForEditing: z.boolean().default(false).optional(),
   })
   .optional();
 

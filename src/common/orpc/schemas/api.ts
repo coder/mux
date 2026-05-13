@@ -1851,6 +1851,7 @@ const ImageGenerationConfigSchema = z.object({
     .int()
     .min(MIN_IMAGE_GENERATION_MAX_IMAGES)
     .max(MAX_IMAGE_GENERATION_MAX_IMAGES),
+  allowImageUploadsForEditing: z.boolean(),
 });
 
 const GoalDefaultsConfigSchema = z.object({

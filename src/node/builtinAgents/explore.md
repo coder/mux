@@ -17,7 +17,7 @@ subagent:
 tools:
   # Remove editing and task tools from exec base (read-only agent; skill tools are kept)
   remove:
-    - image_generate
+    - image_.*
     - file_edit_.*
     - task
     - task_apply_git_patch

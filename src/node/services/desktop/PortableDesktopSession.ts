@@ -60,21 +60,24 @@ function resolvePortableDesktopBinary(rootDir: string): string {
 
   const lookupCommand = process.platform === "win32" ? "where" : "which";
 
-  try {
-    const lookupOutput = execFileSync(lookupCommand, [DESKTOP_DEFAULTS.BINARY_NAME], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-      windowsHide: true,
-    });
-    const resolvedFromPath = lookupOutput
-      .split(/\r?\n/)
-      .map((entry) => entry.trim())
-      .find((entry) => entry.length > 0);
-    if (resolvedFromPath) {
-      return resolvedFromPath;
+  const shouldSearchPath = (process.env.PATH ?? "").trim().length > 0;
+  if (shouldSearchPath) {
+    try {
+      const lookupOutput = execFileSync(lookupCommand, [DESKTOP_DEFAULTS.BINARY_NAME], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        windowsHide: true,
+      });
+      const resolvedFromPath = lookupOutput
+        .split(/\r?\n/)
+        .map((entry) => entry.trim())
+        .find((entry) => entry.length > 0);
+      if (resolvedFromPath) {
+        return resolvedFromPath;
+      }
+    } catch {
+      // Fall back to the cached binary location below.
     }
-  } catch {
-    // Fall back to the cached binary location below.
   }
 
   const binaryFileName =

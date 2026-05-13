@@ -11,8 +11,8 @@ tools:
     # Use tools.remove in child agents to restrict specific tools
     - .*
   remove:
-    # Plan should not perform costful artifact generation.
-    - image_generate
+    # Plan should not perform costful image artifact work.
+    - image_.*
     # Plan should not apply sub-agent patches.
     - task_apply_git_patch
     # Global config and catalog tools stay out of general-purpose agents

@@ -86,13 +86,17 @@ mux run -t 0 "Quick fix"          # Lowest thinking for the model
 mux run -t high "Deep analysis"   # Named level
 ```
 
-## Experimental Image Generation Model
+## Experimental Image Tools Model
 
-Mux can expose an experimental `image_generate` tool for Exec agents. Enable it in **Settings → Experiments → Image Generation Tool**.
+Mux can expose experimental Image Tools for Exec agents. Enable them in **Settings → Experiments → Image Tools**.
 
-The image model is configured separately from the chat model. The default is `openai:gpt-image-2`. The first experiment is OpenAI-only and requires OpenAI provider credentials in **Settings → Providers**.
+The image model is configured separately from the chat model. The default is `openai:gpt-image-2`. Image Tools are OpenAI-only in this experiment and require OpenAI provider credentials in **Settings → Providers**.
 
-The first version is generate-only. It supports prompt, image count, quality, and output format. Generated full-resolution images are saved as runtime artifacts; copy selected final assets into the workspace when they should become project files.
+`image_generate` creates raster images from text prompts. It supports prompt, image count, quality, and output format.
+
+`image_edit` edits one existing PNG, JPEG, or WebP image by path. Because editing uploads the source file to the image provider, including embedded metadata, it is hidden unless you also enable **Allow image uploads for editing** under the Image Tools settings. Source images are sent as-is; Mux does not automatically redact screenshot contents or strip image metadata.
+
+Generated and edited full-resolution images are saved as runtime artifacts. Copy selected final assets into the workspace when they should become project files.
 
 ## Next Steps
 

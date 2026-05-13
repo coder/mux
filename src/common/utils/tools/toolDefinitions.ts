@@ -886,10 +886,10 @@ function renameAliasField(
 export const TOOL_DEFINITIONS = {
   image_generate: {
     description:
-      "Generate raster image artifacts using Mux's experimental image generation configuration. " +
+      "Generate raster image artifacts using Mux's experimental Image Tools configuration. " +
       "Use only when the user explicitly asks to generate or create image artifacts. " +
       "Do not call for ordinary code, design discussion, or prompt brainstorming. " +
-      "Generated full-resolution images are saved under the runtime temp directory; copy selected final assets into the workspace when needed.",
+      "Generated full-resolution images are saved as runtime artifacts; copy selected final assets into the workspace when needed.",
     schema: z
       .object({
         prompt: z.string().min(1).describe("Prompt describing the image(s) to generate"),
@@ -899,12 +899,42 @@ export const TOOL_DEFINITIONS = {
           .positive()
           .nullish()
           .describe(
-            "Number of images to generate. Defaults to 1 and must not exceed the user's configured Image Generation Tool maximum."
+            "Number of images to generate. Defaults to 1 and must not exceed the user's configured Image Tools maximum."
           ),
         quality: z
           .enum(IMAGE_GENERATION_QUALITY_VALUES)
           .nullish()
           .describe("Optional generation quality. Defaults to the provider/model default."),
+        outputFormat: z
+          .enum(IMAGE_GENERATION_OUTPUT_FORMAT_VALUES)
+          .nullish()
+          .describe("Optional output format. Defaults to png."),
+      })
+      .strict(),
+  },
+  image_edit: {
+    description:
+      "Edit one existing local PNG, JPEG, or WebP image using Mux's experimental Image Tools configuration. " +
+      "Use only when image editing is requested or clearly required by the current task; do not upload incidental image files. " +
+      "The source image is uploaded as-is, including embedded metadata, to the configured image provider. " +
+      "Do not edit images containing secrets or sensitive visual/metadata content. " +
+      "Edited full-resolution images are saved as runtime artifacts; copy selected final assets into the workspace when needed.",
+    schema: z
+      .object({
+        sourcePath: z.string().min(1).describe("Path to the existing source image to edit"),
+        prompt: z.string().min(1).describe("Edit prompt describing the desired image changes"),
+        n: z
+          .number()
+          .int()
+          .positive()
+          .nullish()
+          .describe(
+            "Number of edited variants to create. Defaults to 1; request multiple variants only when the user asks or variants are clearly useful."
+          ),
+        quality: z
+          .enum(IMAGE_GENERATION_QUALITY_VALUES)
+          .nullish()
+          .describe("Optional edit quality. Defaults to the provider/model default."),
         outputFormat: z
           .enum(IMAGE_GENERATION_OUTPUT_FORMAT_VALUES)
           .nullish()
@@ -1734,19 +1764,35 @@ const TruncatedInfoSchema = z.object({
   totalLines: z.number(),
 });
 
-const ImageGenerateThumbnailSchema = z.object({
+const ImageToolThumbnailSchema = z.object({
   data: z.string(),
   mediaType: z.string(),
   width: z.number().int().positive(),
   height: z.number().int().positive(),
 });
 
-const ImageGenerateImageSchema = z.object({
+const ImageToolDimensionsSchema = z.object({
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+});
+
+const ImageToolImageSchema = z.object({
   path: z.string(),
   filename: z.string(),
   mediaType: z.string(),
-  thumbnail: ImageGenerateThumbnailSchema.optional(),
+  thumbnail: ImageToolThumbnailSchema.optional(),
   revisedPrompt: z.string().optional(),
+});
+
+const ImageEditImageSchema = ImageToolImageSchema.extend({
+  outputDimensions: ImageToolDimensionsSchema,
+});
+
+const ImageEditSourceSchema = z.object({
+  path: z.string(),
+  resolvedPath: z.string(),
+  sizeBytes: z.number().int().nonnegative(),
+  dimensions: ImageToolDimensionsSchema,
 });
 
 export const ImageGenerateToolResultSchema = z.discriminatedUnion("success", [
@@ -1755,7 +1801,24 @@ export const ImageGenerateToolResultSchema = z.discriminatedUnion("success", [
     model: z.string(),
     prompt: z.string(),
     requestedCount: z.number().int().positive(),
-    images: z.array(ImageGenerateImageSchema).min(1),
+    images: z.array(ImageToolImageSchema).min(1),
+    warnings: z.array(z.string()).optional(),
+  }),
+  z.object({
+    success: z.literal(false),
+    error: z.string(),
+    setupHint: z.string().optional(),
+  }),
+]);
+
+export const ImageEditToolResultSchema = z.discriminatedUnion("success", [
+  z.object({
+    success: z.literal(true),
+    model: z.string(),
+    prompt: z.string(),
+    requestedCount: z.number().int().positive(),
+    source: ImageEditSourceSchema,
+    images: z.array(ImageEditImageSchema).min(1),
     warnings: z.array(z.string()).optional(),
   }),
   z.object({
@@ -2178,6 +2241,7 @@ export function getAvailableTools(
     enableAnalyticsQuery?: boolean;
     enableAdvisor?: boolean;
     enableImageGeneration?: boolean;
+    enableImageEditing?: boolean;
     /** @deprecated Mux global tools are always included. */
     enableMuxGlobalAgentsTools?: boolean;
   }
@@ -2187,6 +2251,7 @@ export function getAvailableTools(
   const enableAnalyticsQuery = options?.enableAnalyticsQuery ?? true;
   const enableAdvisor = options?.enableAdvisor ?? false;
   const enableImageGeneration = options?.enableImageGeneration ?? false;
+  const enableImageEditing = enableImageGeneration && (options?.enableImageEditing ?? false);
 
   // Base tools available for all models
   // Note: Tool availability is controlled by agent tool policy (allowlist), not mode checks here.
@@ -2217,6 +2282,7 @@ export function getAvailableTools(
     "file_edit_insert",
     ...(enableAdvisor ? ["advisor"] : []),
     ...(enableImageGeneration ? ["image_generate"] : []),
+    ...(enableImageEditing ? ["image_edit"] : []),
     "ask_user_question",
     "propose_plan",
     "bash",

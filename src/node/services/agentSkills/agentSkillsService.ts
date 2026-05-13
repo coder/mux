@@ -30,7 +30,7 @@ import type { ProjectSkillContainment } from "./skillStorageContext";
 export const IMAGEGEN_BUILT_IN_SKILL_NAME = "imagegen" satisfies SkillName;
 
 export const IMAGEGEN_SKILL_DISABLED_MESSAGE =
-  "Built-in imagegen skill is only available when the Image Generation Tool experiment is enabled.";
+  "Built-in imagegen skill is only available when the Image Tools experiment is enabled.";
 
 export function isBuiltInImagegenSkill(
   skill: Pick<AgentSkillDescriptor, "name" | "scope">

@@ -1261,6 +1261,9 @@ export class AIService extends EventEmitter {
         imageGenerationExperimentEnabled &&
         experiments?.programmaticToolCallingExclusive !== true &&
         applyToolPolicyToNames(["image_generate"], effectiveToolPolicy).includes("image_generate");
+      const imageEditingEnabled =
+        imageGenerationExperimentEnabled &&
+        cfg.imageGeneration?.allowImageUploadsForEditing === true;
 
       const buildStreamSystemContextForAdvisor = (advisorToolAvailable: boolean) =>
         buildStreamSystemContext({
@@ -1499,6 +1502,7 @@ export class AIService extends EventEmitter {
                 },
               }
             : {}),
+          imageEditingEnabled,
           ...(advisorToolEligible
             ? {
                 advisorRuntime: {
