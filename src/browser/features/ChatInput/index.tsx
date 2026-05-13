@@ -1889,6 +1889,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       reviews: reviewsData,
       fileParts: commandFileParts.length > 0 ? commandFileParts : undefined,
       onMessageSent: variant === "workspace" ? props.onMessageSent : undefined,
+      onDetachAllReviews: variant === "workspace" ? props.onDetachAllReviews : undefined,
       onCheckReviews: variant === "workspace" ? props.onCheckReviews : undefined,
       attachedReviewIds: reviewIdsForCheck,
     };

@@ -220,6 +220,7 @@ describe("processSlashCommand - clear", () => {
       setPreferredModel: mock(() => undefined),
       setVimEnabled: mock((cb: (prev: boolean) => boolean) => cb(false)),
       resetInputHeight: mock(() => undefined),
+      onDetachAllReviews: mock(() => undefined),
       onResetContext: mock(() => Promise.resolve("reset" as const)),
       onTruncateHistory: mock(() => Promise.resolve(undefined)),
       sendMessageOptions: {
@@ -254,6 +255,7 @@ describe("processSlashCommand - clear", () => {
     expect(result).toEqual({ clearInput: true, toastShown: true });
     expect(context.onResetContext).toHaveBeenCalled();
     expect(context.setAttachments).toHaveBeenCalledWith([]);
+    expect(context.onDetachAllReviews).toHaveBeenCalled();
     expect(context.onTruncateHistory).not.toHaveBeenCalled();
     expect(context.setToast).toHaveBeenCalledWith(
       expect.objectContaining({ message: "Context reset; history preserved", type: "success" })

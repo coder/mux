@@ -166,6 +166,8 @@ export interface SlashCommandContext extends Omit<CommandHandlerContext, "worksp
   resetInputHeight: () => void;
   /** Callback to trigger message-sent side effects (auto-scroll, auto-background) */
   onMessageSent?: (dispatchMode: QueueDispatchMode) => void;
+  /** Callback to detach review context from the composer without marking it checked */
+  onDetachAllReviews?: () => void;
   /** Callback to mark review IDs as checked after successful send */
   onCheckReviews?: (reviewIds: string[]) => void;
   /** Review IDs that are attached (for marking as checked on success) */
@@ -885,6 +887,7 @@ async function handleClearCommand(
   const {
     setInput,
     setAttachments,
+    onDetachAllReviews,
     onResetContext,
     onTruncateHistory,
     resetInputHeight,
@@ -899,6 +902,7 @@ async function handleClearCommand(
       setInput("");
       resetInputHeight();
       setAttachments([]);
+      onDetachAllReviews?.();
       trackCommandUsed("clear");
       setToast({
         id: Date.now().toString(),
