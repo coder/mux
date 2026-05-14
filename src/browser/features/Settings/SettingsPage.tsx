@@ -15,8 +15,6 @@ import {
   ShieldCheck,
   Server,
   Lock,
-  HeartPulse,
-  Target,
 } from "lucide-react";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useOnboardingPause } from "@/browser/features/SplashScreens/SplashScreenProvider";
@@ -37,9 +35,9 @@ import { ExperimentsSection } from "./Sections/ExperimentsSection";
 import { ServerAccessSection } from "./Sections/ServerAccessSection";
 import { KeybindsSection } from "./Sections/KeybindsSection";
 import { SecuritySection } from "./Sections/SecuritySection";
-import { HeartbeatSection } from "./Sections/HeartbeatSection";
-import { GoalsSection } from "./Sections/GoalsSection";
 import type { SettingsSection } from "./types";
+
+const LEGACY_EXPERIMENT_SETTINGS_SECTION_IDS = new Set(["goals", "heartbeat"]);
 
 const BASE_SECTIONS: SettingsSection[] = [
   {
@@ -125,21 +123,17 @@ export function SettingsPage(props: SettingsPageProps) {
   const { close, activeSection, setActiveSection } = useSettings();
   const onboardingPause = useOnboardingPause();
   const governorEnabled = useExperimentValue(EXPERIMENT_IDS.MUX_GOVERNOR);
-  const workspaceHeartbeatsEnabled = useExperimentValue(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS);
-  const goalsEnabled = useExperimentValue(EXPERIMENT_IDS.GOALS);
 
-  // Keep routing on a valid section when an experiment-gated section is disabled.
+  // Keep routing on a valid section when experiment-owned settings move or disappear.
   useEffect(() => {
+    if (LEGACY_EXPERIMENT_SETTINGS_SECTION_IDS.has(activeSection)) {
+      setActiveSection("experiments");
+      return;
+    }
     if (!governorEnabled && activeSection === "governor") {
       setActiveSection(BASE_SECTIONS[0]?.id ?? "general");
     }
-    if (!workspaceHeartbeatsEnabled && activeSection === "heartbeat") {
-      setActiveSection(BASE_SECTIONS[0]?.id ?? "general");
-    }
-    if (!goalsEnabled && activeSection === "goals") {
-      setActiveSection(BASE_SECTIONS[0]?.id ?? "general");
-    }
-  }, [activeSection, setActiveSection, governorEnabled, workspaceHeartbeatsEnabled, goalsEnabled]);
+  }, [activeSection, setActiveSection, governorEnabled]);
 
   // Close settings on Escape. Uses bubble phase so inner surfaces (Select dropdowns,
   // Popover, Dialog) that call stopPropagation/preventDefault on Escape get first
@@ -170,29 +164,6 @@ export function SettingsPage(props: SettingsPageProps) {
       },
     ];
   }
-  if (goalsEnabled) {
-    sections = [
-      ...sections,
-      {
-        id: "goals",
-        label: "Goals",
-        icon: <Target className="h-4 w-4" />,
-        component: GoalsSection,
-      },
-    ];
-  }
-  if (workspaceHeartbeatsEnabled) {
-    sections = [
-      ...sections,
-      {
-        id: "heartbeat",
-        label: "Heartbeat",
-        icon: <HeartPulse className="h-4 w-4" />,
-        component: HeartbeatSection,
-      },
-    ];
-  }
-
   const currentSection = sections.find((section) => section.id === activeSection) ?? sections[0];
   const SectionComponent = currentSection.component;
 

@@ -2,6 +2,7 @@ import { expect, userEvent, waitFor, within } from "@storybook/test";
 import { lightweightMeta } from "@/browser/stories/meta.js";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { DEFAULT_IMAGE_GENERATION_MODEL } from "@/common/types/imageGeneration";
+import { DEFAULT_GOAL_DEFAULTS } from "@/constants/goals";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { ExperimentsSection } from "./ExperimentsSection.js";
 import { SettingsSectionStory, setupSettingsStory } from "./settingsStoryUtils.js";
@@ -76,6 +77,43 @@ export const ImageGenerationEnabled: Story = {
     await userEvent.clear(maxImagesInput);
     await userEvent.type(maxImagesInput, "2");
     await waitFor(() => expect(maxImagesInput).toHaveValue("2"));
+  },
+};
+
+export const GoalAndHeartbeatSettingsEnabled: Story = {
+  render: () => (
+    <SettingsSectionStory
+      setup={() =>
+        setupSettingsStory({
+          experiments: {
+            [EXPERIMENT_IDS.GOALS]: true,
+            [EXPERIMENT_IDS.WORKSPACE_HEARTBEATS]: true,
+          },
+          goalDefaults: {
+            ...DEFAULT_GOAL_DEFAULTS,
+            defaultBudgetCents: 350,
+            defaultTurnCap: 8,
+          },
+          heartbeatDefaultIntervalMs: 45 * 60_000,
+          heartbeatDefaultPrompt: "Review pending work before continuing.",
+        })
+      }
+    >
+      <ExperimentsSection />
+    </SettingsSectionStory>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.findByLabelText("Default goal budget in dollars")).resolves.toHaveValue(
+      "3.50"
+    );
+    await expect(canvas.findByLabelText("Default goal turn cap")).resolves.toHaveValue(8);
+    await expect(
+      canvas.findByLabelText("Default heartbeat threshold in minutes")
+    ).resolves.toHaveValue(45);
+    await expect(canvas.findByLabelText("Default heartbeat prompt")).resolves.toHaveValue(
+      "Review pending work before continuing."
+    );
   },
 };
 

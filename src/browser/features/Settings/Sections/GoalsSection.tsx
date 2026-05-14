@@ -24,8 +24,13 @@ function parseTurnCap(value: string): number | null {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
-export function GoalsSection() {
+interface GoalDefaultsControlsProps {
+  loadConfig?: () => Promise<{ goalDefaults?: Partial<GoalDefaults> | null }>;
+}
+
+export function GoalDefaultsControls(props: GoalDefaultsControlsProps) {
   const { api } = useAPI();
+  const loadConfig = props.loadConfig;
   const [goalDefaults, setGoalDefaults] = useState<GoalDefaults>(() => ({
     ...DEFAULT_GOAL_DEFAULTS,
   }));
@@ -35,12 +40,12 @@ export function GoalsSection() {
   const [turnCapDraft, setTurnCapDraft] = useState("");
 
   useEffect(() => {
-    if (!api?.config?.getConfig) {
+    const configPromise = loadConfig?.() ?? api?.config?.getConfig();
+    if (!configPromise) {
       return;
     }
 
-    void api.config
-      .getConfig()
+    void configPromise
       .then((config) => {
         const defaults = normalizeGoalDefaults(config.goalDefaults);
         setGoalDefaults(defaults);
@@ -50,7 +55,7 @@ export function GoalsSection() {
       .catch(() => {
         // Keep defaults editable if config loading fails; a later edit can still persist.
       });
-  }, [api]);
+  }, [api, loadConfig]);
 
   const persistGoalDefaults = (next: GoalDefaults) => {
     const normalized = normalizeGoalDefaults(next);
@@ -72,6 +77,79 @@ export function GoalsSection() {
   };
 
   return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-4">
+        <label htmlFor="goal-default-budget" className="min-w-0 flex-1">
+          <div className="text-foreground text-sm font-medium">Default goal budget</div>
+          <div className="text-muted mt-0.5 text-xs">
+            Applied to new goals when no budget flag is provided. Use $0.00 for no dollar limit.
+          </div>
+        </label>
+        <div className="flex items-center gap-1">
+          <span className="text-muted text-sm">$</span>
+          <Input
+            id="goal-default-budget"
+            aria-label="Default goal budget in dollars"
+            type="text"
+            inputMode="decimal"
+            value={budgetDraft}
+            onChange={(event) => setBudgetDraft(event.target.value)}
+            onBlur={(event) => saveBudget(event.currentTarget.value)}
+            className="border-border-medium bg-background-secondary h-9 w-24 text-right"
+          />
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between gap-4">
+        <label htmlFor="goal-default-turn-cap" className="min-w-0 flex-1">
+          <div className="text-foreground text-sm font-medium">Default turn cap</div>
+          <div className="text-muted mt-0.5 text-xs">
+            Leave empty to disable the turn cap for new goals.
+          </div>
+        </label>
+        <Input
+          id="goal-default-turn-cap"
+          aria-label="Default goal turn cap"
+          type="number"
+          inputMode="numeric"
+          min={1}
+          step={1}
+          value={turnCapDraft}
+          onChange={(event) => setTurnCapDraft(event.target.value)}
+          onBlur={(event) => saveTurnCap(event.currentTarget.value)}
+          className="border-border-medium bg-background-secondary h-9 w-24 text-right"
+        />
+      </div>
+
+      <label className="flex items-start justify-between gap-4">
+        <span className="min-w-0 flex-1">
+          <span className="text-foreground block text-sm font-medium">
+            Always require explicit budget
+          </span>
+          <span className="text-muted mt-0.5 block text-xs">
+            When enabled, omitted budgets use the default budget instead of creating unbudgeted
+            goals.
+          </span>
+        </span>
+        <input
+          aria-label="Always require explicit budget"
+          type="checkbox"
+          checked={goalDefaults.alwaysRequireExplicitBudget}
+          onChange={(event) =>
+            persistGoalDefaults({
+              ...goalDefaults,
+              alwaysRequireExplicitBudget: event.target.checked,
+            })
+          }
+          className="accent-accent mt-1 h-4 w-4"
+        />
+      </label>
+    </div>
+  );
+}
+
+export function GoalsSection() {
+  return (
     <div className="space-y-6">
       <div>
         <h2 className="text-foreground mb-2 text-lg font-semibold">Goals</h2>
@@ -84,74 +162,7 @@ export function GoalsSection() {
           <Target className="h-4 w-4" aria-hidden="true" />
           Goal defaults
         </div>
-        <div className="space-y-4">
-          <div className="flex items-center justify-between gap-4">
-            <label htmlFor="goal-default-budget" className="min-w-0 flex-1">
-              <div className="text-foreground text-sm font-medium">Default goal budget</div>
-              <div className="text-muted mt-0.5 text-xs">
-                Applied to new goals when no budget flag is provided. Use $0.00 for no dollar limit.
-              </div>
-            </label>
-            <div className="flex items-center gap-1">
-              <span className="text-muted text-sm">$</span>
-              <Input
-                id="goal-default-budget"
-                aria-label="Default goal budget in dollars"
-                type="text"
-                inputMode="decimal"
-                value={budgetDraft}
-                onChange={(event) => setBudgetDraft(event.target.value)}
-                onBlur={(event) => saveBudget(event.currentTarget.value)}
-                className="border-border-medium bg-background-secondary h-9 w-24 text-right"
-              />
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between gap-4">
-            <label htmlFor="goal-default-turn-cap" className="min-w-0 flex-1">
-              <div className="text-foreground text-sm font-medium">Default turn cap</div>
-              <div className="text-muted mt-0.5 text-xs">
-                Leave empty to disable the turn cap for new goals.
-              </div>
-            </label>
-            <Input
-              id="goal-default-turn-cap"
-              aria-label="Default goal turn cap"
-              type="number"
-              inputMode="numeric"
-              min={1}
-              step={1}
-              value={turnCapDraft}
-              onChange={(event) => setTurnCapDraft(event.target.value)}
-              onBlur={(event) => saveTurnCap(event.currentTarget.value)}
-              className="border-border-medium bg-background-secondary h-9 w-24 text-right"
-            />
-          </div>
-
-          <label className="flex items-start justify-between gap-4">
-            <span className="min-w-0 flex-1">
-              <span className="text-foreground block text-sm font-medium">
-                Always require explicit budget
-              </span>
-              <span className="text-muted mt-0.5 block text-xs">
-                When enabled, omitted budgets use the default budget instead of creating unbudgeted
-                goals.
-              </span>
-            </span>
-            <input
-              aria-label="Always require explicit budget"
-              type="checkbox"
-              checked={goalDefaults.alwaysRequireExplicitBudget}
-              onChange={(event) =>
-                persistGoalDefaults({
-                  ...goalDefaults,
-                  alwaysRequireExplicitBudget: event.target.checked,
-                })
-              }
-              className="accent-accent mt-1 h-4 w-4"
-            />
-          </label>
-        </div>
+        <GoalDefaultsControls />
       </div>
     </div>
   );
