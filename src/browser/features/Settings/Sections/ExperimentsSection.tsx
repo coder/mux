@@ -620,7 +620,10 @@ export function ExperimentsSection() {
   const imageGenerationToolEnabled = useExperimentValue(EXPERIMENT_IDS.IMAGE_GENERATION_TOOL);
   const goalsEnabled = useExperimentValue(EXPERIMENT_IDS.GOALS);
   const workspaceHeartbeatsEnabled = useExperimentValue(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS);
-  const settingsConfigRequestRef = useRef<Promise<SettingsConfig> | null>(null);
+  const settingsConfigRequestRef = useRef<{
+    api: APIClient;
+    request: Promise<SettingsConfig>;
+  } | null>(null);
 
   useEffect(() => {
     settingsConfigRequestRef.current = null;
@@ -631,20 +634,21 @@ export function ExperimentsSection() {
       return Promise.reject(new Error("Cannot load settings config before API connection."));
     }
 
-    if (settingsConfigRequestRef.current) {
-      return settingsConfigRequestRef.current;
+    const cachedRequest = settingsConfigRequestRef.current;
+    if (cachedRequest?.api === api) {
+      return cachedRequest.request;
     }
 
     const request = api.config.getConfig();
-    settingsConfigRequestRef.current = request;
+    settingsConfigRequestRef.current = { api, request };
     request.then(
       () => {
-        if (settingsConfigRequestRef.current === request) {
+        if (settingsConfigRequestRef.current?.request === request) {
           settingsConfigRequestRef.current = null;
         }
       },
       () => {
-        if (settingsConfigRequestRef.current === request) {
+        if (settingsConfigRequestRef.current?.request === request) {
           settingsConfigRequestRef.current = null;
         }
       }

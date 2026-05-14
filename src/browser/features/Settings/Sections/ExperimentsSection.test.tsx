@@ -231,6 +231,58 @@ describe("PortableDesktopExperimentWarning", () => {
     });
   });
 
+  test("starts a fresh settings load when the API client changes", async () => {
+    experimentEnabled = false;
+    experimentValues = {
+      [EXPERIMENT_IDS.GOALS]: true,
+      [EXPERIMENT_IDS.WORKSPACE_HEARTBEATS]: true,
+    };
+
+    const staleConfig = createDeferred<{
+      goalDefaults?: unknown;
+      heartbeatDefaultPrompt?: string;
+      heartbeatDefaultIntervalMs?: number;
+    }>();
+    const staleGetConfig = mock(() => staleConfig.promise);
+    mockApi = {
+      ...mockApi,
+      config: {
+        getConfig: staleGetConfig,
+        updateGoalDefaults: mock(() => Promise.resolve()),
+        updateHeartbeatDefaultPrompt: mock(() => Promise.resolve()),
+        updateHeartbeatDefaultIntervalMs: mock(() => Promise.resolve()),
+      },
+    };
+
+    const view = render(<ExperimentsSection />);
+
+    await waitFor(() => {
+      expect(staleGetConfig).toHaveBeenCalledTimes(1);
+    });
+
+    const freshConfig = createDeferred<{
+      goalDefaults?: unknown;
+      heartbeatDefaultPrompt?: string;
+      heartbeatDefaultIntervalMs?: number;
+    }>();
+    const freshGetConfig = mock(() => freshConfig.promise);
+    mockApi = {
+      ...mockApi,
+      config: {
+        getConfig: freshGetConfig,
+        updateGoalDefaults: mock(() => Promise.resolve()),
+        updateHeartbeatDefaultPrompt: mock(() => Promise.resolve()),
+        updateHeartbeatDefaultIntervalMs: mock(() => Promise.resolve()),
+      },
+    };
+
+    view.rerender(<ExperimentsSection />);
+
+    await waitFor(() => {
+      expect(freshGetConfig).toHaveBeenCalledTimes(1);
+    });
+  });
+
   test("loads prereq status on mount and shows the missing-binary warning when needed", async () => {
     const getPrereqStatus = mock(() =>
       Promise.resolve({ available: false as const, reason: "binary_not_found" as const })
