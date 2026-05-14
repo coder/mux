@@ -631,8 +631,25 @@ export function ExperimentsSection() {
       return Promise.reject(new Error("Cannot load settings config before API connection."));
     }
 
-    settingsConfigRequestRef.current ??= api.config.getConfig();
-    return settingsConfigRequestRef.current;
+    if (settingsConfigRequestRef.current) {
+      return settingsConfigRequestRef.current;
+    }
+
+    const request = api.config.getConfig();
+    settingsConfigRequestRef.current = request;
+    request.then(
+      () => {
+        if (settingsConfigRequestRef.current === request) {
+          settingsConfigRequestRef.current = null;
+        }
+      },
+      () => {
+        if (settingsConfigRequestRef.current === request) {
+          settingsConfigRequestRef.current = null;
+        }
+      }
+    );
+    return request;
   }, [api]);
 
   // Only show user-overridable experiments (non-overridable ones are hidden since users can't change them)

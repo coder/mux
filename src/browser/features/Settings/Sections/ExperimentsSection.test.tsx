@@ -194,6 +194,43 @@ describe("PortableDesktopExperimentWarning", () => {
     expect(mockApi.config?.getConfig).toHaveBeenCalledTimes(1);
   });
 
+  test("reloads experiment settings when inline controls remount", async () => {
+    experimentEnabled = false;
+    experimentValues = {
+      [EXPERIMENT_IDS.GOALS]: true,
+      [EXPERIMENT_IDS.WORKSPACE_HEARTBEATS]: true,
+    };
+
+    const view = render(<ExperimentsSection />);
+
+    await waitFor(() => {
+      expect(view.getByLabelText("Default goal budget in dollars")).toBeTruthy();
+    });
+    await waitFor(() => {
+      expect(view.getByLabelText("Default heartbeat threshold in minutes")).toBeTruthy();
+    });
+    expect(mockApi.config?.getConfig).toHaveBeenCalledTimes(1);
+
+    experimentValues = {
+      [EXPERIMENT_IDS.GOALS]: false,
+      [EXPERIMENT_IDS.WORKSPACE_HEARTBEATS]: false,
+    };
+    view.rerender(<ExperimentsSection />);
+
+    expect(view.queryByLabelText("Default goal budget in dollars")).toBeNull();
+    expect(view.queryByLabelText("Default heartbeat threshold in minutes")).toBeNull();
+
+    experimentValues = {
+      [EXPERIMENT_IDS.GOALS]: true,
+      [EXPERIMENT_IDS.WORKSPACE_HEARTBEATS]: true,
+    };
+    view.rerender(<ExperimentsSection />);
+
+    await waitFor(() => {
+      expect(mockApi.config?.getConfig).toHaveBeenCalledTimes(2);
+    });
+  });
+
   test("loads prereq status on mount and shows the missing-binary warning when needed", async () => {
     const getPrereqStatus = mock(() =>
       Promise.resolve({ available: false as const, reason: "binary_not_found" as const })
