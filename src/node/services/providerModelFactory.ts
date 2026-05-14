@@ -600,6 +600,19 @@ function hasUploadFileName(value: Blob): boolean {
   return typeof name === "string" && name.length > 0;
 }
 
+// OpenAI's `/v1/images/edits` endpoint rejects multipart uploads that lack a
+// filename (the AI SDK's `Image`/`Mask` blobs are nameless), so
+// `normalizeOpenAIImageEditFormData` rewrites them with a deterministic name.
+// This predicate matches the form entries that need that rewrite: an upload
+// field carrying a binary blob without a filename already attached.
+function isNamelessOpenAIImageEditUpload(key: string, formValue: FormDataEntryValue): boolean {
+  return (
+    isOpenAIImageEditUploadKey(key) &&
+    typeof formValue !== "string" &&
+    !hasUploadFileName(formValue)
+  );
+}
+
 function normalizeOpenAIImageEditFormData(
   init: Parameters<typeof fetch>[1]
 ): Parameters<typeof fetch>[1] {
@@ -608,11 +621,8 @@ function normalizeOpenAIImageEditFormData(
   }
 
   const entries = Array.from(init.body.entries());
-  const hasNamelessUpload = entries.some(
-    ([key, formValue]) =>
-      isOpenAIImageEditUploadKey(key) &&
-      typeof formValue !== "string" &&
-      !hasUploadFileName(formValue)
+  const hasNamelessUpload = entries.some(([key, formValue]) =>
+    isNamelessOpenAIImageEditUpload(key, formValue)
   );
   if (!hasNamelessUpload) {
     return init;
@@ -620,11 +630,7 @@ function normalizeOpenAIImageEditFormData(
 
   const formData = new FormData();
   for (const [key, formValue] of entries) {
-    if (
-      isOpenAIImageEditUploadKey(key) &&
-      typeof formValue !== "string" &&
-      !hasUploadFileName(formValue)
-    ) {
+    if (isNamelessOpenAIImageEditUpload(key, formValue)) {
       const upload = formValue as unknown as Blob;
       formData.append(
         key,
