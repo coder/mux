@@ -72,6 +72,18 @@ export function formatImageModelError(
   }
 }
 
+export function buildOpenAIImageProviderOptions(
+  quality: string | null | undefined,
+  outputFormat: string | null | undefined
+): { openai: { quality?: string; outputFormat: string } } {
+  return {
+    openai: {
+      ...(quality != null ? { quality } : {}),
+      outputFormat: outputFormat ?? "png",
+    },
+  };
+}
+
 export interface ImageDimensions {
   width: number;
   height: number;

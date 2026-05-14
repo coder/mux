@@ -1,4 +1,5 @@
 import assert from "node:assert";
+import { Buffer } from "node:buffer";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { XaiProviderOptions } from "@ai-sdk/xai";
 import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
@@ -498,6 +499,183 @@ function getProviderFetch(providerConfig: ProviderConfig): typeof fetch {
   };
 
   return Object.assign(wrappedFetch, customFetch) as typeof fetch;
+}
+
+function getFormString(body: BodyInit | null | undefined, name: string): string | null {
+  if (!(body instanceof FormData)) {
+    return null;
+  }
+  const value = body.get(name);
+  return typeof value === "string" ? value : null;
+}
+
+function getImageOutputFormat(contentType: string, body: BodyInit | null | undefined): string {
+  const mediaType = contentType.split(";", 1)[0]?.trim().toLowerCase();
+  switch (mediaType) {
+    case "image/jpeg":
+    case "image/jpg":
+      return "jpeg";
+    case "image/webp":
+      return "webp";
+    case "image/png":
+      return "png";
+  }
+
+  const requestedFormat = getFormString(body, "output_format");
+  if (requestedFormat === "jpeg" || requestedFormat === "png" || requestedFormat === "webp") {
+    return requestedFormat;
+  }
+  return "png";
+}
+
+function getRequestedImageCount(body: BodyInit | null | undefined): number {
+  const value = getFormString(body, "n");
+  if (value == null || value.trim() === "") {
+    return 1;
+  }
+  const count = Number(value);
+  return Number.isInteger(count) && count > 0 ? count : 1;
+}
+
+function createOpenAIImageToolErrorResponse(message: string): Response {
+  return new Response(JSON.stringify({ error: { message, type: "mux_image_response_error" } }), {
+    status: 502,
+    statusText: "Bad Gateway",
+    headers: { "content-type": "application/json" },
+  });
+}
+
+function isOpenAIImageEditEndpoint(input: Parameters<typeof fetch>[0]): boolean {
+  const url = getFetchInputUrl(input);
+  if (!url) {
+    return false;
+  }
+  try {
+    return new URL(url).pathname.endsWith("/images/edits");
+  } catch {
+    return false;
+  }
+}
+
+function getOpenAIImageEditFileName(key: string, mediaType: string): string {
+  const prefix = key === "mask" ? "mask" : "image";
+  switch (mediaType.toLowerCase().trim()) {
+    case "image/jpeg":
+    case "image/jpg":
+      return `${prefix}.jpg`;
+    case "image/webp":
+      return `${prefix}.webp`;
+    default:
+      return `${prefix}.png`;
+  }
+}
+
+function isOpenAIImageEditUploadKey(key: string): boolean {
+  return key === "image" || key === "image[]" || key === "mask";
+}
+
+function hasUploadFileName(value: Blob): boolean {
+  const name = (value as { name?: unknown }).name;
+  return typeof name === "string" && name.length > 0;
+}
+
+function normalizeOpenAIImageEditFormData(
+  init: Parameters<typeof fetch>[1]
+): Parameters<typeof fetch>[1] {
+  if (!(init?.body instanceof FormData)) {
+    return init;
+  }
+
+  const entries = Array.from(init.body.entries());
+  const hasNamelessUpload = entries.some(
+    ([key, formValue]) =>
+      isOpenAIImageEditUploadKey(key) &&
+      typeof formValue !== "string" &&
+      !hasUploadFileName(formValue)
+  );
+  if (!hasNamelessUpload) {
+    return init;
+  }
+
+  const formData = new FormData();
+  for (const [key, formValue] of entries) {
+    if (
+      isOpenAIImageEditUploadKey(key) &&
+      typeof formValue !== "string" &&
+      !hasUploadFileName(formValue)
+    ) {
+      const upload = formValue as unknown as Blob;
+      formData.append(
+        key,
+        upload,
+        getOpenAIImageEditFileName(key === "image[]" ? "image" : key, upload.type ?? "image/png")
+      );
+    } else {
+      formData.append(key, formValue);
+    }
+  }
+
+  const headers = init.headers == null ? undefined : new Headers(init.headers);
+  if (headers?.get("content-type")?.toLowerCase().startsWith("multipart/form-data")) {
+    headers.delete("content-type");
+  }
+
+  return { ...init, body: formData, ...(headers != null ? { headers } : {}) };
+}
+
+// Some OpenAI-compatible image edit deployments return a successful image/* body
+// instead of the JSON shape AI SDK expects. Normalize only that narrow success path.
+export function wrapFetchWithOpenAIImageResponseNormalization(
+  baseFetch: typeof fetch
+): typeof fetch {
+  const wrappedFetch = async (
+    input: Parameters<typeof fetch>[0],
+    init?: Parameters<typeof fetch>[1]
+  ): Promise<Response> => {
+    const isImageEditRequest = isOpenAIImageEditEndpoint(input);
+    const requestInit = isImageEditRequest ? normalizeOpenAIImageEditFormData(init) : init;
+    const response = await baseFetch(input, requestInit);
+    if (!isImageEditRequest || !response.ok) {
+      return response;
+    }
+
+    const contentType = response.headers.get("content-type") ?? "";
+    if (!contentType.toLowerCase().startsWith("image/")) {
+      return response;
+    }
+
+    const requestedCount = getRequestedImageCount(requestInit?.body);
+    if (requestedCount !== 1) {
+      return createOpenAIImageToolErrorResponse(
+        `OpenAI returned one binary image for an edit request that asked for ${requestedCount} images.`
+      );
+    }
+
+    const imageBuffer = await response.arrayBuffer();
+    if (imageBuffer.byteLength === 0) {
+      return createOpenAIImageToolErrorResponse("OpenAI returned an empty binary image response.");
+    }
+
+    const headers = new Headers(response.headers);
+    headers.set("content-type", "application/json");
+    headers.delete("content-length");
+    headers.delete("content-encoding");
+
+    return new Response(
+      JSON.stringify({
+        created: Math.floor(Date.now() / 1_000),
+        data: [{ b64_json: Buffer.from(imageBuffer).toString("base64") }],
+        output_format: getImageOutputFormat(contentType, requestInit?.body),
+      }),
+      {
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+      }
+    );
+  };
+
+  return Object.assign(wrappedFetch, baseFetch) as typeof fetch;
 }
 
 // ---------------------------------------------------------------------------
@@ -1000,7 +1178,7 @@ export class ProviderModelFactory {
       const { createOpenAI } = await PROVIDER_REGISTRY.openai();
       const provider = createOpenAI({
         ...configWithCreds,
-        fetch: getProviderFetch(providerConfig),
+        fetch: wrapFetchWithOpenAIImageResponseNormalization(getProviderFetch(providerConfig)),
       });
       return Ok(provider.image(modelId));
     } catch (error) {

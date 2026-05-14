@@ -351,6 +351,45 @@ describe("image_edit tool", () => {
     expect(result.error).toContain("only supports OpenAI");
   });
 
+  test("passes OpenAI image edit options using AI SDK option names", async () => {
+    using workspaceDir = new TestTempDir("image-edit-workspace");
+    const sourcePath = path.join(workspaceDir.path, "source.png");
+    await fs.writeFile(sourcePath, testPngBytes);
+    let capturedProviderOptions: unknown;
+    const tool = createImageEditTool({
+      ...createImageEditTestConfig(workspaceDir.path),
+      imageEditingEnabled: true,
+      imageGenerationRuntime: {
+        modelString: "openai:gpt-image-2",
+        maxImagesPerCall: 2,
+        createImageModel: () =>
+          Promise.resolve(
+            Ok(
+              createMockImageModel((options) => {
+                capturedProviderOptions = options.providerOptions;
+                return Promise.resolve({
+                  images: [testPngBase64],
+                  warnings: [],
+                  response: { timestamp: new Date(), modelId: "test-image-model", headers: {} },
+                  providerMetadata: {},
+                });
+              })
+            )
+          ),
+      },
+    });
+
+    const result = (await tool.execute!(
+      { sourcePath, prompt: "Make it blue", quality: "high", outputFormat: "webp" },
+      createMockToolCallOptions()
+    )) as ImageEditToolResult;
+
+    expect(result.success).toBe(true);
+    expect(capturedProviderOptions).toEqual({
+      openai: { quality: "high", outputFormat: "webp" },
+    });
+  });
+
   test("returns provider errors when image editing generation fails", async () => {
     using workspaceDir = new TestTempDir("image-edit-workspace");
     const sourcePath = path.join(workspaceDir.path, "source.png");

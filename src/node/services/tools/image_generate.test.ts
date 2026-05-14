@@ -62,6 +62,42 @@ describe("image_generate tool", () => {
     expect(createImageModelCalled).toBe(false);
   });
 
+  test("passes OpenAI image options using AI SDK option names", async () => {
+    using workspaceDir = new TestTempDir("image-generate-workspace");
+    let capturedProviderOptions: unknown;
+    const tool = createImageGenerateTool({
+      ...createTestToolConfig(workspaceDir.path),
+      imageGenerationRuntime: {
+        modelString: "openai:gpt-image-2",
+        maxImagesPerCall: 2,
+        createImageModel: () =>
+          Promise.resolve(
+            Ok(
+              createMockImageModel((options) => {
+                capturedProviderOptions = options.providerOptions;
+                return Promise.resolve({
+                  images: [testPngBase64],
+                  warnings: [],
+                  response: { timestamp: new Date(), modelId: "test-image-model", headers: {} },
+                  providerMetadata: {},
+                });
+              })
+            )
+          ),
+      },
+    });
+
+    const result = (await tool.execute!(
+      { prompt: "A tiny square", quality: "high", outputFormat: "webp" },
+      mockToolCallOptions
+    )) as ImageGenerateToolResult;
+
+    expect(result.success).toBe(true);
+    expect(capturedProviderOptions).toEqual({
+      openai: { quality: "high", outputFormat: "webp" },
+    });
+  });
+
   test("reports OpenAI image token usage through the tool usage path", async () => {
     using workspaceDir = new TestTempDir("image-generate-workspace");
     const reportedUsage: Array<{

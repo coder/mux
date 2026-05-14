@@ -5,7 +5,10 @@ import { generateImage, tool } from "ai";
 import sharp from "sharp";
 
 import type { ImageEditToolResult } from "@/common/types/tools";
-import { stripImageToolOutputForModel } from "@/common/utils/imageGenerationToolResult";
+import {
+  sanitizeImageToolErrorForModel,
+  stripImageToolOutputForModel,
+} from "@/common/utils/imageGenerationToolResult";
 import { getErrorMessage } from "@/common/utils/errors";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { ToolFactory } from "@/common/utils/tools/tools";
@@ -13,6 +16,7 @@ import { LocalBaseRuntime } from "@/node/runtime/LocalBaseRuntime";
 import { streamToUint8Array } from "@/node/runtime/streamUtils";
 import type { ImageDimensions } from "./imageArtifacts";
 import {
+  buildOpenAIImageProviderOptions,
   formatImageModelError,
   getImageDimensions,
   getImageDimensionsFromMetadata,
@@ -155,12 +159,7 @@ export const createImageEditTool: ToolFactory = (config) => {
           prompt: { text: trimmedPrompt, images: [sourceBytes] },
           n: requestedCount,
           abortSignal,
-          providerOptions: {
-            openai: {
-              ...(quality != null ? { quality } : {}),
-              output_format: outputFormat ?? "png",
-            },
-          },
+          providerOptions: buildOpenAIImageProviderOptions(quality, outputFormat),
         });
 
         reportImageToolUsage(
@@ -223,7 +222,7 @@ export const createImageEditTool: ToolFactory = (config) => {
       } catch (error) {
         return {
           success: false,
-          error: `Image editing failed: ${getErrorMessage(error)}`,
+          error: `Image editing failed: ${sanitizeImageToolErrorForModel(getErrorMessage(error))}`,
           setupHint: "Check OpenAI provider credentials, billing, rate limits, and content policy.",
         } satisfies ImageEditToolResult;
       }
