@@ -15,8 +15,16 @@ import {
   HEARTBEAT_DEFAULT_MESSAGE_BODY,
 } from "@/constants/heartbeat";
 
-export function HeartbeatSection() {
+interface HeartbeatDefaultsControlsProps {
+  loadConfig?: () => Promise<{
+    heartbeatDefaultPrompt?: string;
+    heartbeatDefaultIntervalMs?: number;
+  }>;
+}
+
+export function HeartbeatDefaultsControls(props: HeartbeatDefaultsControlsProps) {
   const { api } = useAPI();
+  const loadConfig = props.loadConfig;
   const [heartbeatDefaultPrompt, setHeartbeatDefaultPrompt] = useState("");
   const [heartbeatDefaultPromptLoaded, setHeartbeatDefaultPromptLoaded] = useState(false);
   const [heartbeatDefaultPromptLoadedOk, setHeartbeatDefaultPromptLoadedOk] = useState(false);
@@ -33,7 +41,8 @@ export function HeartbeatSection() {
   const heartbeatDefaultIntervalEditedSinceLoadRef = useRef(false);
 
   useEffect(() => {
-    if (!api) {
+    const configPromise = loadConfig?.() ?? api?.config?.getConfig();
+    if (!configPromise) {
       return;
     }
 
@@ -47,8 +56,7 @@ export function HeartbeatSection() {
     const heartbeatDefaultPromptNonce = ++heartbeatDefaultPromptLoadNonceRef.current;
     const heartbeatDefaultIntervalNonce = ++heartbeatDefaultIntervalLoadNonceRef.current;
 
-    void api.config
-      .getConfig()
+    void configPromise
       .then((cfg) => {
         if (heartbeatDefaultPromptNonce === heartbeatDefaultPromptLoadNonceRef.current) {
           setHeartbeatDefaultPrompt(cfg.heartbeatDefaultPrompt ?? "");
@@ -77,7 +85,7 @@ export function HeartbeatSection() {
           setHeartbeatDefaultIntervalLoaded(true);
         }
       });
-  }, [api]);
+  }, [api, loadConfig]);
 
   const handleHeartbeatDefaultPromptBlur = useCallback(() => {
     if (!heartbeatDefaultPromptLoaded || !api?.config?.updateHeartbeatDefaultPrompt) {
@@ -166,7 +174,6 @@ export function HeartbeatSection() {
 
   return (
     <div className="flex flex-col gap-6">
-      {/* Keep global heartbeat defaults grouped together so General stays focused on app basics. */}
       <div>
         <div className="flex items-center justify-between gap-4">
           <label htmlFor="heartbeat-default-threshold" className="min-w-0 flex-1">
@@ -224,4 +231,8 @@ export function HeartbeatSection() {
       </div>
     </div>
   );
+}
+
+export function HeartbeatSection() {
+  return <HeartbeatDefaultsControls />;
 }

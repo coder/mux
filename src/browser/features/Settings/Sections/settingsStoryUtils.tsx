@@ -20,6 +20,7 @@ import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import type { ProjectConfig } from "@/common/types/project";
 import type { ImageGenerationConfig } from "@/common/types/imageGeneration";
 import type { TaskSettings } from "@/common/types/tasks";
+import type { GoalDefaults } from "@/constants/goals";
 import type { LayoutPresetsConfig } from "@/common/types/uiLayouts";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 
@@ -110,6 +111,12 @@ interface SetupSettingsStoryOptions {
   taskSettings?: Partial<TaskSettings>;
   /** Initial image generation config for config.getConfig */
   imageGeneration?: Partial<ImageGenerationConfig>;
+  /** Initial global heartbeat default prompt for config.getConfig */
+  heartbeatDefaultPrompt?: string;
+  /** Initial global heartbeat default interval for config.getConfig */
+  heartbeatDefaultIntervalMs?: number;
+  /** Initial global goal defaults for config.getConfig */
+  goalDefaults?: GoalDefaults;
   /** Sessions shown in Settings → Server Access. */
   serverAuthSessions?: ServerAuthSession[];
   /** Pre-set experiment states in localStorage before render */
@@ -136,6 +143,9 @@ export function setupSettingsStory(options: SetupSettingsStoryOptions): APIClien
     agentAiDefaults: options.agentAiDefaults,
     providersList: options.providersList ?? ["anthropic", "openai", "xai"],
     imageGeneration: options.imageGeneration,
+    heartbeatDefaultPrompt: options.heartbeatDefaultPrompt,
+    heartbeatDefaultIntervalMs: options.heartbeatDefaultIntervalMs,
+    goalDefaults: options.goalDefaults,
     taskSettings: options.taskSettings,
     serverAuthSessions: options.serverAuthSessions,
     layoutPresets: options.layoutPresets,

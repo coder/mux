@@ -2,6 +2,7 @@ import { expect, userEvent, waitFor, within } from "@storybook/test";
 import { lightweightMeta } from "@/browser/stories/meta.js";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { DEFAULT_IMAGE_GENERATION_MODEL } from "@/common/types/imageGeneration";
+import { DEFAULT_GOAL_DEFAULTS } from "@/constants/goals";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { ExperimentsSection } from "./ExperimentsSection.js";
 import { SettingsSectionStory, setupSettingsStory } from "./settingsStoryUtils.js";
@@ -76,6 +77,48 @@ export const ImageGenerationEnabled: Story = {
     await userEvent.clear(maxImagesInput);
     await userEvent.type(maxImagesInput, "2");
     await waitFor(() => expect(maxImagesInput).toHaveValue("2"));
+  },
+};
+
+export const GoalAndHeartbeatSettingsEnabled: Story = {
+  render: () => (
+    <SettingsSectionStory
+      setup={() =>
+        setupSettingsStory({
+          experiments: {
+            [EXPERIMENT_IDS.GOALS]: true,
+            [EXPERIMENT_IDS.WORKSPACE_HEARTBEATS]: true,
+          },
+          goalDefaults: {
+            ...DEFAULT_GOAL_DEFAULTS,
+            defaultBudgetCents: 350,
+            defaultTurnCap: 8,
+          },
+          heartbeatDefaultIntervalMs: 45 * 60_000,
+          heartbeatDefaultPrompt: "Review pending work before continuing.",
+        })
+      }
+    >
+      <ExperimentsSection />
+    </SettingsSectionStory>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const budgetInput = await canvas.findByLabelText("Default goal budget in dollars");
+    await waitFor(() => expect(budgetInput).toHaveValue("3.50"));
+
+    const turnCapInput = await canvas.findByLabelText("Default goal turn cap");
+    await waitFor(() => expect(turnCapInput).toHaveValue(8));
+
+    const heartbeatThresholdInput = await canvas.findByLabelText(
+      "Default heartbeat threshold in minutes"
+    );
+    await waitFor(() => expect(heartbeatThresholdInput).toHaveValue(45));
+
+    const heartbeatPrompt = await canvas.findByLabelText("Default heartbeat prompt");
+    await waitFor(() =>
+      expect(heartbeatPrompt).toHaveValue("Review pending work before continuing.")
+    );
   },
 };
 

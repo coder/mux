@@ -24,7 +24,7 @@ interface SettingsContextValue {
   activeSection: string;
   open: (section?: string, options?: OpenSettingsOptions) => void;
   close: () => void;
-  setActiveSection: (section: string) => void;
+  setActiveSection: (section: string, options?: { replace?: boolean }) => void;
 
   /** Subscribe to settings close events. Returns an unsubscribe function. */
   registerOnClose: (callback: () => void) => () => void;
@@ -116,7 +116,7 @@ export function SettingsProvider(props: { children: ReactNode }) {
   }, [router]);
 
   const setActiveSection = useCallback(
-    (section: string) => {
+    (section: string, options?: { replace?: boolean }) => {
       if (section !== "providers") {
         setProvidersExpandedProvider(null);
       }
@@ -127,7 +127,7 @@ export function SettingsProvider(props: { children: ReactNode }) {
       if (section !== "secrets") {
         setSecretsProjectPath(null);
       }
-      router.navigateToSettings(section);
+      router.navigateToSettings(section, options);
     },
     [router]
   );
