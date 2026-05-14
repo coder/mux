@@ -18,6 +18,7 @@ import {
   MUX_AI_PROVIDER_USER_AGENT,
   normalizeCodexResponsesBody,
   resolveAIProviderHeaderSource,
+  resolveOpenAIWebSocketResponsesUrl,
   wrapFetchWithAnthropicCacheControl,
   wrapFetchWithOpenAIImageResponseNormalization,
 } from "./providerModelFactory";
@@ -97,6 +98,21 @@ async function withTempPolicyProviderFactory(
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 }
+
+describe("resolveOpenAIWebSocketResponsesUrl", () => {
+  it("uses the official default when no base URL is configured", () => {
+    expect(resolveOpenAIWebSocketResponsesUrl(undefined)).toBeUndefined();
+  });
+
+  it("maps HTTPS and HTTP OpenAI base URLs to Responses WebSocket URLs", () => {
+    expect(resolveOpenAIWebSocketResponsesUrl("https://api.openai.com/v1")).toBe(
+      "wss://api.openai.com/v1/responses"
+    );
+    expect(resolveOpenAIWebSocketResponsesUrl("http://localhost:8080/openai/v1/")).toBe(
+      "ws://localhost:8080/openai/v1/responses"
+    );
+  });
+});
 
 describe("normalizeCodexResponsesBody", () => {
   it("enforces Codex-compatible fields, strips truncation, and lifts system prompts into instructions", () => {

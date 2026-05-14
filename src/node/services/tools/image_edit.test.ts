@@ -420,6 +420,42 @@ describe("image_edit tool", () => {
     expect(result.error).toContain("provider exploded");
   });
 
+  test("sanitizes binary-like provider errors when image editing fails", async () => {
+    using workspaceDir = new TestTempDir("image-edit-workspace");
+    const sourcePath = path.join(workspaceDir.path, "source.png");
+    await fs.writeFile(sourcePath, testPngBytes);
+    const tool = createImageEditTool({
+      ...createImageEditTestConfig(workspaceDir.path),
+      imageEditingEnabled: true,
+      imageGenerationRuntime: {
+        modelString: "openai:gpt-image-1.5",
+        maxImagesPerCall: 2,
+        createImageModel: () =>
+          Promise.resolve(
+            Ok(
+              createMockImageModel(() =>
+                Promise.reject(new Error("Invalid JSON response: \u001b\u0000\ufffdpayload"))
+              )
+            )
+          ),
+      },
+    });
+
+    const result = (await tool.execute!(
+      { sourcePath, prompt: "Make it blue" },
+      createMockToolCallOptions()
+    )) as ImageEditToolResult;
+
+    expect(result.success).toBe(false);
+    if (result.success) {
+      throw new Error("Expected provider generation failure");
+    }
+    expect(result.error).toContain("Image editing failed:");
+    expect(result.error).toContain("nul=1");
+    expect(result.error).not.toContain("\u0000");
+    expect(result.error).not.toContain("�");
+  });
+
   test("does not write edited artifacts when output dimensions cannot be read", async () => {
     using workspaceDir = new TestTempDir("image-edit-workspace");
     const sourcePath = path.join(workspaceDir.path, "source.png");

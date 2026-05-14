@@ -11,6 +11,7 @@ import type { ModelMessage } from "@/common/types/message";
 import { THINKING_LEVEL_OFF, coerceThinkingLevel } from "@/common/types/thinking";
 import { buildProviderOptions } from "@/common/utils/ai/providerOptions";
 import { getErrorMessage } from "@/common/utils/errors";
+import { sanitizeErrorMessageForDisplay } from "@/common/utils/providerOutputSanitization";
 import type { AdvisorPhaseEvent } from "@/common/types/stream";
 import { AdvisorToolInputSchema, TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { AdvisorToolCallSnapshot, ToolConfiguration } from "@/common/utils/tools/tools";
@@ -240,7 +241,7 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
         return {
           type: "error" as const,
           isError: true,
-          message: `Advisor request failed: ${getErrorMessage(error)}`,
+          message: `Advisor request failed: ${sanitizeErrorMessageForDisplay(getErrorMessage(error))}`,
         };
       }
     },

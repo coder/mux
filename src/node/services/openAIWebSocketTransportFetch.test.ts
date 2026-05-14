@@ -101,6 +101,26 @@ describe("createOpenAIWebSocketTransportFetch", () => {
     expect(transport.active).toBe(true);
   });
 
+  test("passes custom WebSocket endpoint to the WebSocket fetch factory", async () => {
+    let capturedOptions: { url?: string } | undefined;
+    const transport = createOpenAIWebSocketTransportFetch({
+      enabled: true,
+      baseFetch: createTestFetch(() => Promise.resolve(new Response("base"))),
+      webSocketUrl: "wss://proxy.openai.test/v1/responses",
+      createWebSocketFetch: (options) => {
+        capturedOptions = options;
+        return createTestWebSocketFetch(() => Promise.resolve(new Response("ws")));
+      },
+    });
+
+    await transport.fetch("https://proxy.openai.test/v1/responses", {
+      method: "POST",
+      body: JSON.stringify({ stream: true }),
+    });
+
+    expect(capturedOptions).toEqual({ url: "wss://proxy.openai.test/v1/responses" });
+  });
+
   test("enabled transport keeps non-eligible requests on the base fetch", async () => {
     const baseCalls: string[] = [];
     const wsCalls: string[] = [];

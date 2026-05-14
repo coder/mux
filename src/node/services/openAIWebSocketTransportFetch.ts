@@ -5,11 +5,16 @@ import { createWebSocketFetch as createOpenAIWebSocketFetch } from "@vercel/ai-s
 type WebSocketFetch = ((input: RequestInfo | URL, init?: RequestInit) => Promise<Response>) & {
   close: () => void;
 };
-type WebSocketFetchFactory = () => WebSocketFetch;
+interface WebSocketFetchOptions {
+  url?: string;
+}
+
+type WebSocketFetchFactory = (options?: WebSocketFetchOptions) => WebSocketFetch;
 
 interface CreateOpenAIWebSocketTransportFetchOptions {
   enabled: boolean;
   baseFetch: typeof fetch;
+  webSocketUrl?: string;
   createWebSocketFetch?: WebSocketFetchFactory;
 }
 
@@ -75,7 +80,9 @@ export function createOpenAIWebSocketTransportFetch(
   let webSocketFetch: WebSocketFetch | null = null;
 
   const getWebSocketFetch = (): WebSocketFetch => {
-    webSocketFetch ??= webSocketFetchFactory();
+    webSocketFetch ??= webSocketFetchFactory(
+      options.webSocketUrl ? { url: options.webSocketUrl } : undefined
+    );
     assert(
       typeof webSocketFetch.close === "function",
       "OpenAI WebSocket fetch must expose close()"
