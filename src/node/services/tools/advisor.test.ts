@@ -402,6 +402,27 @@ describe("advisor tool", () => {
     expect(reportModelUsage).not.toHaveBeenCalled();
   });
 
+  it("sanitizes binary-like advisor provider failures", async () => {
+    using tempDir = new TestTempDir("advisor-tool-sanitized-error");
+    const { config } = createToolConfig(tempDir.path);
+    spyOn(ai, "generateText").mockRejectedValue(
+      new Error("Invalid JSON response: \u001b\u0000\ufffdpayload")
+    );
+
+    const tool = createAdvisorTool(config);
+    const rawResult: unknown = await Promise.resolve(tool.execute!({}, mockToolCallOptions));
+
+    expect(typeof rawResult).toBe("object");
+    expect(rawResult).not.toBeNull();
+    const result = rawResult as { type?: unknown; isError?: unknown; message?: unknown };
+    expect(result.type).toBe("error");
+    expect(result.isError).toBe(true);
+    expect(result.message).toEqual(expect.stringContaining("Advisor request failed:"));
+    expect(result.message).toEqual(expect.stringContaining("nul=1"));
+    expect(JSON.stringify(rawResult)).not.toContain("\u0000");
+    expect(JSON.stringify(rawResult)).not.toContain("�");
+  });
+
   it("swallows synchronous usage reporting failures and logs them", async () => {
     using tempDir = new TestTempDir("advisor-tool-report-failure");
     const usage: LanguageModelV2Usage = {

@@ -6,6 +6,7 @@ import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { ToolConfiguration } from "@/common/utils/tools/tools";
 import { DEFAULT_IMAGE_GENERATION_MODEL } from "@/common/types/imageGeneration";
 import { getErrorMessage } from "@/common/utils/errors";
+import { sanitizeErrorMessageForDisplay } from "@/common/utils/providerOutputSanitization";
 import { shellQuote } from "@/common/utils/shell";
 import { log } from "@/node/services/log";
 import { getRasterImageDimensionsFromMetadata } from "@/node/utils/attachments/resizeRasterImageAttachment";
@@ -61,12 +62,14 @@ export function formatImageModelError(
       };
     case "unknown":
       return {
-        error: typeof record.raw === "string" ? record.raw : getErrorMessage(error),
+        error: sanitizeErrorMessageForDisplay(
+          typeof record.raw === "string" ? record.raw : getErrorMessage(error)
+        ),
         setupHint: "Check OpenAI provider credentials, billing, rate limits, and content policy.",
       };
     default:
       return {
-        error: getErrorMessage(error),
+        error: sanitizeErrorMessageForDisplay(getErrorMessage(error)),
         setupHint: "Check OpenAI provider credentials, billing, rate limits, and content policy.",
       };
   }

@@ -248,6 +248,39 @@ describe("image_generate tool", () => {
     expect(result.setupHint).toContain(DEFAULT_IMAGE_GENERATION_MODEL);
   });
 
+  test("sanitizes binary-like provider errors when image generation fails", async () => {
+    using workspaceDir = new TestTempDir("image-generate-workspace");
+    const tool = createImageGenerateTool({
+      ...createTestToolConfig(workspaceDir.path),
+      imageGenerationRuntime: {
+        modelString: "openai:gpt-image-1.5",
+        maxImagesPerCall: 2,
+        createImageModel: () =>
+          Promise.resolve(
+            Ok(
+              createMockImageModel(() =>
+                Promise.reject(new Error("Invalid JSON response: \u001b\u0000\ufffdpayload"))
+              )
+            )
+          ),
+      },
+    });
+
+    const result = (await tool.execute!(
+      { prompt: "A small square" },
+      mockToolCallOptions
+    )) as ImageGenerateToolResult;
+
+    expect(result.success).toBe(false);
+    if (result.success) {
+      throw new Error("Expected provider generation failure");
+    }
+    expect(result.error).toContain("Image generation failed:");
+    expect(result.error).toContain("nul=1");
+    expect(result.error).not.toContain("\u0000");
+    expect(result.error).not.toContain("�");
+  });
+
   test("writes generated artifacts outside the stream temp directory", async () => {
     using workspaceDir = new TestTempDir("image-generate-workspace");
     const tool = createImageGenerateTool({

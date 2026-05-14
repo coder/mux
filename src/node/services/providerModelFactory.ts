@@ -24,6 +24,7 @@ import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import type { ServiceTier } from "@/common/config/schemas/providersConfig";
 import type { ExternalSecretResolver } from "@/common/types/secrets";
 import { isOpReference } from "@/common/utils/opRef";
+import { resolveConfigBaseUrl } from "@/common/utils/providers/baseUrl";
 import { isProviderDisabledInConfig } from "@/common/utils/providers/isProviderDisabled";
 import {
   isBuiltInProvider,
@@ -190,6 +191,26 @@ const defaultFetchWithUnlimitedTimeout = (async (
   };
   return fetch(input, requestInit);
 }) as typeof fetch;
+
+export function resolveOpenAIWebSocketResponsesUrl(baseURL: unknown): string | undefined {
+  const resolvedBaseURL = resolveConfigBaseUrl({ baseURL });
+  if (resolvedBaseURL == null) {
+    return undefined;
+  }
+
+  const url = new URL(resolvedBaseURL);
+  if (url.protocol === "https:") {
+    url.protocol = "wss:";
+  } else if (url.protocol === "http:") {
+    url.protocol = "ws:";
+  } else {
+    throw new Error(`Unsupported OpenAI WebSocket base URL protocol: ${url.protocol}`);
+  }
+  url.pathname = `${url.pathname.replace(/\/+$/, "")}/responses`;
+  url.search = "";
+  url.hash = "";
+  return url.toString();
+}
 
 type FetchWithBunExtensions = typeof fetch & {
   preconnect?: typeof fetch extends { preconnect: infer P } ? P : unknown;
@@ -1654,6 +1675,9 @@ export class ProviderModelFactory {
             effectiveWireFormat === "responses" &&
             !shouldRouteThroughCodexOauth,
           baseFetch: fetchWithOpenAICodexNormalization as typeof fetch,
+          // The upstream WebSocket fetch defaults to api.openai.com. Pass Mux's
+          // resolved base URL so custom/proxied OpenAI endpoints are not bypassed.
+          webSocketUrl: resolveOpenAIWebSocketResponsesUrl(configWithCreds.baseURL),
         });
 
         // Lazy-load OpenAI provider to reduce startup time

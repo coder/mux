@@ -3,11 +3,9 @@ import type { JSONValue } from "@ai-sdk/provider";
 import { generateImage, tool } from "ai";
 
 import type { ImageGenerateToolResult } from "@/common/types/tools";
-import {
-  sanitizeImageToolErrorForModel,
-  stripImageToolOutputForModel,
-} from "@/common/utils/imageGenerationToolResult";
+import { stripImageToolOutputForModel } from "@/common/utils/imageGenerationToolResult";
 import { getErrorMessage } from "@/common/utils/errors";
+import { sanitizeErrorMessageForDisplay } from "@/common/utils/providerOutputSanitization";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { ToolFactory } from "@/common/utils/tools/tools";
 import {
@@ -113,7 +111,7 @@ export const createImageGenerateTool: ToolFactory = (config) => {
       } catch (error) {
         return {
           success: false,
-          error: `Image generation failed: ${sanitizeImageToolErrorForModel(getErrorMessage(error))}`,
+          error: `Image generation failed: ${sanitizeErrorMessageForDisplay(getErrorMessage(error))}`,
           setupHint: "Check OpenAI provider credentials, billing, rate limits, and content policy.",
         } satisfies ImageGenerateToolResult;
       }
