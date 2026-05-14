@@ -104,15 +104,20 @@ export const GoalAndHeartbeatSettingsEnabled: Story = {
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await expect(canvas.findByLabelText("Default goal budget in dollars")).resolves.toHaveValue(
-      "3.50"
+    const budgetInput = await canvas.findByLabelText("Default goal budget in dollars");
+    await waitFor(() => expect(budgetInput).toHaveValue("3.50"));
+
+    const turnCapInput = await canvas.findByLabelText("Default goal turn cap");
+    await waitFor(() => expect(turnCapInput).toHaveValue(8));
+
+    const heartbeatThresholdInput = await canvas.findByLabelText(
+      "Default heartbeat threshold in minutes"
     );
-    await expect(canvas.findByLabelText("Default goal turn cap")).resolves.toHaveValue(8);
-    await expect(
-      canvas.findByLabelText("Default heartbeat threshold in minutes")
-    ).resolves.toHaveValue(45);
-    await expect(canvas.findByLabelText("Default heartbeat prompt")).resolves.toHaveValue(
-      "Review pending work before continuing."
+    await waitFor(() => expect(heartbeatThresholdInput).toHaveValue(45));
+
+    const heartbeatPrompt = await canvas.findByLabelText("Default heartbeat prompt");
+    await waitFor(() =>
+      expect(heartbeatPrompt).toHaveValue("Review pending work before continuing.")
     );
   },
 };
