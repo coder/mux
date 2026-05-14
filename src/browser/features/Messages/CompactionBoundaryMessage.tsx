@@ -1,5 +1,6 @@
 import React from "react";
 import { cn } from "@/common/lib/utils";
+import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
 import type { DisplayedMessage } from "@/common/types/message";
 
 interface CompactionBoundaryMessageProps {
@@ -11,7 +12,9 @@ export const CompactionBoundaryMessage: React.FC<CompactionBoundaryMessageProps>
   const epochLabel =
     typeof props.message.compactionEpoch === "number" ? ` #${props.message.compactionEpoch}` : "";
   const label =
-    props.message.boundaryKind === "reset" ? "Context reset" : `Compaction boundary${epochLabel}`;
+    props.message.boundaryKind === CONTEXT_BOUNDARY_KINDS.RESET
+      ? "Context reset"
+      : `Compaction boundary${epochLabel}`;
 
   return (
     <div

@@ -164,7 +164,7 @@ export function sliceMessagesForProviderFromLatestContextBoundary(
   const boundaryKind = getContextBoundaryKind(messages[boundaryIndex]);
   assert(boundaryKind !== null, "context boundary slicing must start from a durable boundary");
 
-  return boundaryKind === "reset"
+  return boundaryKind === CONTEXT_BOUNDARY_KINDS.RESET
     ? messages.slice(boundaryIndex + 1)
     : messages.slice(boundaryIndex);
 }

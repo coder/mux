@@ -2976,7 +2976,7 @@ export class StreamingMessageAggregator {
       type: "compaction-boundary",
       id: `${message.id}-compaction-boundary`,
       historySequence,
-      boundaryKind: getContextBoundaryKind(message) ?? "compaction",
+      boundaryKind: getContextBoundaryKind(message) ?? CONTEXT_BOUNDARY_KINDS.COMPACTION,
       position: "start",
       compactionEpoch,
     };
