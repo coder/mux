@@ -127,7 +127,7 @@ export function SettingsPage(props: SettingsPageProps) {
   // Keep routing on a valid section when experiment-owned settings move or disappear.
   useEffect(() => {
     if (LEGACY_EXPERIMENT_SETTINGS_SECTION_IDS.has(activeSection)) {
-      setActiveSection("experiments");
+      setActiveSection("experiments", { replace: true });
       return;
     }
     if (!governorEnabled && activeSection === "governor") {

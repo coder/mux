@@ -5,7 +5,7 @@ import { ThemeProvider } from "@/browser/contexts/ThemeContext";
 import { installDom } from "../../../../tests/ui/dom";
 
 let activeSection = "general";
-let setActiveSection = mock((section: string) => {
+let setActiveSection = mock((section: string, _options?: { replace?: boolean }) => {
   activeSection = section;
 });
 const close = mock(() => undefined);
@@ -70,7 +70,7 @@ describe("SettingsPage", () => {
   beforeEach(() => {
     cleanupDom = installDom();
     activeSection = "general";
-    setActiveSection = mock((section: string) => {
+    setActiveSection = mock((section: string, _options?: { replace?: boolean }) => {
       activeSection = section;
     });
   });
@@ -95,7 +95,7 @@ describe("SettingsPage", () => {
     const view = renderSettingsPage();
 
     await waitFor(() => {
-      expect(setActiveSection).toHaveBeenCalledWith("experiments");
+      expect(setActiveSection).toHaveBeenCalledWith("experiments", { replace: true });
     });
 
     view.unmount();
@@ -104,7 +104,7 @@ describe("SettingsPage", () => {
     renderSettingsPage();
 
     await waitFor(() => {
-      expect(setActiveSection).toHaveBeenCalledWith("experiments");
+      expect(setActiveSection).toHaveBeenCalledWith("experiments", { replace: true });
     });
   });
 });
