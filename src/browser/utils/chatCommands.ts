@@ -863,14 +863,9 @@ async function handleGoalCommand(
       showGoalSetErrorToast(setToast, result.error);
       return { clearInput: false, toastShown: true };
     }
-    setToast({
-      id: Date.now().toString(),
-      type: "success",
-      message: `Goal set: ${result.goal.objective}`,
-    });
     window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.OPEN_GOAL_TAB, { workspaceId }));
     trackCommandUsed("goal");
-    return { clearInput: true, toastShown: true };
+    return { clearInput: true, toastShown: false };
   } catch (error) {
     setToast({
       id: Date.now().toString(),

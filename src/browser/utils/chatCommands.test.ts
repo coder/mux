@@ -495,10 +495,11 @@ describe("processSlashCommand - goal experiment state", () => {
       context
     );
 
-    expect(result).toEqual({ clearInput: true, toastShown: true });
+    expect(result).toEqual({ clearInput: true, toastShown: false });
     expect(setGoal).toHaveBeenCalledWith(
       expect.objectContaining({ objective: "remote objective" })
     );
+    expect(context.setToast).not.toHaveBeenCalled();
   });
 });
 
@@ -560,7 +561,7 @@ describe("processSlashCommand - goal optimistic concurrency", () => {
       context
     );
 
-    expect(result).toEqual({ clearInput: true, toastShown: true });
+    expect(result).toEqual({ clearInput: true, toastShown: false });
     expect(getGoal).toHaveBeenCalledTimes(2);
     expect(setGoal).toHaveBeenNthCalledWith(1, {
       workspaceId: "goal-ws",
@@ -576,9 +577,7 @@ describe("processSlashCommand - goal optimistic concurrency", () => {
       turnCap: null,
       expectedGoalId: "22222222-2222-4222-8222-222222222222",
     });
-    expect(context.setToast).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "success", message: "Goal set: new objective" })
-    );
+    expect(context.setToast).not.toHaveBeenCalled();
   });
 
   test("surfaces a toast and stops after two consecutive goal conflicts", async () => {
@@ -792,7 +791,7 @@ describe("processSlashCommand - goal budgets", () => {
 
     const result = await processSlashCommand(parsed, context);
 
-    expect(result).toEqual({ clearInput: true, toastShown: true });
+    expect(result).toEqual({ clearInput: true, toastShown: false });
     expect(setGoal).toHaveBeenCalledWith({
       workspaceId: "goal-ws",
       objective,
@@ -800,6 +799,7 @@ describe("processSlashCommand - goal budgets", () => {
       budgetCents: 200,
       turnCap: null,
     });
+    expect(context.setToast).not.toHaveBeenCalled();
     expect(window.dispatchEvent).toHaveBeenCalledWith(
       expect.objectContaining({ type: "mux:openGoalTab" })
     );
