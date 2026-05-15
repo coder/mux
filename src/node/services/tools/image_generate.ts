@@ -12,6 +12,7 @@ import {
   buildOpenAIImageProviderOptions,
   formatImageModelError,
   getImageOutputDir,
+  IMAGE_TOOL_EXCESS_COUNT_SETUP_HINT,
   IMAGE_TOOL_PROVIDER_SETUP_HINT,
   processImageArtifacts,
   reportImageToolUsage,
@@ -48,7 +49,7 @@ export const createImageGenerateTool: ToolFactory = (config) => {
         return {
           success: false,
           error: `Requested ${requestedCount} images, but Image Tools is configured for a maximum of ${runtime.maxImagesPerCall}.`,
-          setupHint: "Adjust Settings > Experiments > Image Tools or request fewer images.",
+          setupHint: IMAGE_TOOL_EXCESS_COUNT_SETUP_HINT,
         };
       }
 
