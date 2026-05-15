@@ -23,6 +23,12 @@ const THUMBNAIL_MEDIA_TYPE = "image/webp";
 export const IMAGE_TOOL_PROVIDER_SETUP_HINT =
   "Check OpenAI provider credentials, billing, rate limits, and content policy.";
 
+// Setup hint surfaced when a single image tool call requests more images than
+// the configured `maxImagesPerCall` allows. Shared across `image_generate` and
+// `image_edit` so the guidance stays consistent.
+export const IMAGE_TOOL_EXCESS_COUNT_SETUP_HINT =
+  "Adjust Settings > Experiments > Image Tools or request fewer images.";
+
 type ImageModelOperation = "generation" | "editing";
 type ImageToolName = "image_generate" | "image_edit";
 
