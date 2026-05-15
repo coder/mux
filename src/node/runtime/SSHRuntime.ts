@@ -69,6 +69,15 @@ const BUNDLE_REF_PREFIX = "refs/mux-bundle/";
 const BASE_REPO_CONFIG_LOCK_RETRY_DELAYS_MS = [50, 100, 200];
 const BASE_REPO_HEALTH_PROBE_TIMEOUT_SECONDS = 10;
 const BASE_REPO_PROMISOR_CLEANUP_TIMEOUT_SECONDS = 10;
+/** Git config keys that announce a bare repo as a promisor remote to
+ *  `repo_has_promisor_remote()`. Unsetting all three is what makes
+ *  receive-pack's `check_connected()` skip the buggy partial-clone fast
+ *  path on subsequent pushes (see `stripBaseRepoPromisorConfig`). */
+const BASE_REPO_PROMISOR_CONFIG_KEYS = [
+  "remote.origin.promisor",
+  "remote.origin.partialclonefilter",
+  "extensions.partialclone",
+] as const;
 const BASE_REPO_MAINTENANCE_TIMEOUT_SECONDS = 120;
 const BASE_REPO_FRAGMENTED_PACK_THRESHOLD = 25;
 const PROJECT_SYNC_MAX_ATTEMPTS = 3;
@@ -445,10 +454,9 @@ export class SSHRuntime extends RemoteRuntime {
     // single SSH round trip; `; true` ensures the pipeline as a whole
     // returns 0 even when every key was already absent.
     const cmd =
-      `git -C ${baseRepoPathArg} config --unset-all remote.origin.promisor; ` +
-      `git -C ${baseRepoPathArg} config --unset-all remote.origin.partialclonefilter; ` +
-      `git -C ${baseRepoPathArg} config --unset-all extensions.partialclone; ` +
-      `true`;
+      BASE_REPO_PROMISOR_CONFIG_KEYS.map(
+        (key) => `git -C ${baseRepoPathArg} config --unset-all ${key}`
+      ).join("; ") + "; true";
 
     const result = await execBuffered(this, cmd, {
       cwd: "/tmp",
