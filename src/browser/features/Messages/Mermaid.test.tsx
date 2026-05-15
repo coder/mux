@@ -2,7 +2,7 @@ import { cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
 import { StreamingContext } from "./StreamingContext";
-import { Mermaid } from "./Mermaid";
+import { Mermaid, sanitizeMermaidSvg } from "./Mermaid";
 
 const DEFAULT_SVG =
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" /></svg>';
@@ -91,6 +91,55 @@ describe("Mermaid layout stability", () => {
 
     await waitFor(() => expect(view.container.textContent).toContain("Mermaid Error: bad diagram"));
     expect(view.container.querySelector(".mermaid-container")).toBeNull();
+  });
+
+  // Regression: Mermaid embeds HTML labels (with bare <br>, <hr>, etc.) inside
+  // <foreignObject>. A strict image/svg+xml DOMParser rejects that markup and
+  // we used to surface "Mermaid returned invalid SVG output" for any diagram
+  // that wrapped a label. Sanitization must accept foreignObject HTML while
+  // still stripping active content.
+  describe("sanitizeMermaidSvg (foreignObject + void elements)", () => {
+    const SVG_WITH_BR = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+      <foreignObject x="0" y="0" width="100" height="100">
+        <div xmlns="http://www.w3.org/1999/xhtml"><span><p>first<br>second</p></span></div>
+      </foreignObject>
+    </svg>`;
+
+    test("accepts SVG whose foreignObject HTML labels use bare <br>", () => {
+      const out = sanitizeMermaidSvg(SVG_WITH_BR);
+      expect(out).not.toBeNull();
+      expect(out).toContain("<svg");
+      expect(out).toContain("first");
+      expect(out).toContain("second");
+    });
+
+    test("still strips <script> nested inside foreignObject", () => {
+      const malicious = `<svg xmlns="http://www.w3.org/2000/svg"><foreignObject>
+        <div xmlns="http://www.w3.org/1999/xhtml">
+          <p>hi<br>there</p>
+          <script>alert(1)</script>
+        </div>
+      </foreignObject></svg>`;
+      const out = sanitizeMermaidSvg(malicious);
+      expect(out).not.toBeNull();
+      expect(out).not.toContain("<script");
+      expect(out).not.toContain("alert(1)");
+    });
+
+    test("still strips on* handlers and javascript: hrefs", () => {
+      const malicious = `<svg xmlns="http://www.w3.org/2000/svg">
+        <a href="javascript:alert(1)" onclick="alert(2)"><rect width="10" height="10"/></a>
+      </svg>`;
+      const out = sanitizeMermaidSvg(malicious);
+      expect(out).not.toBeNull();
+      expect(out).not.toContain("javascript:");
+      expect(out).not.toContain("onclick");
+    });
+
+    test("rejects input that contains no <svg> root", () => {
+      expect(sanitizeMermaidSvg("<div>not an svg</div>")).toBeNull();
+      expect(sanitizeMermaidSvg("")).toBeNull();
+    });
   });
 
   test("renders sanitized SVG inside the stable container", async () => {

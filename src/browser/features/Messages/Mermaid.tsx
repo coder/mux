@@ -95,28 +95,32 @@ function canonicalizeUrlForSchemeCheck(value: string): string {
 }
 
 export function sanitizeMermaidSvg(svg: string): string | null {
+  // Parse as HTML rather than image/svg+xml. Mermaid embeds HTML inside
+  // <foreignObject> for wrapped labels, and that HTML legitimately contains
+  // void elements like <br> (no self-closing slash). Strict XML parsing rejects
+  // such SVG, so we used to throw "Mermaid returned invalid SVG output" on any
+  // diagram whose labels wrapped (e.g. "label<br/>second line"). The HTML
+  // parser handles SVG + embedded HTML the same way the browser does when the
+  // sanitized SVG is later inserted via innerHTML, which is our actual sink.
   const parser = new DOMParser();
-  const doc = parser.parseFromString(svg, "image/svg+xml");
+  const doc = parser.parseFromString(svg, "text/html");
 
-  if (doc.querySelector("parsererror")) {
-    return null;
-  }
-
-  const svgRoot = doc.documentElement;
-  if (svgRoot.tagName.toLowerCase() !== "svg") {
+  const svgRoot = doc.querySelector("svg");
+  if (!svgRoot) {
     return null;
   }
 
   // Defense in depth: remove active content containers and sanitize remaining attributes.
   // NOTE: Keep <foreignObject> because Mermaid uses it for wrapped node labels.
-  doc.querySelectorAll("script,iframe,object,embed").forEach((node) => {
+  svgRoot.querySelectorAll("script,iframe,object,embed").forEach((node) => {
     node.remove();
   });
 
   const urlAttributes = new Set(["href", "xlink:href", "src", "action", "formaction"]);
   const blockedSchemes = ["javascript:", "vbscript:", "data:text/html"];
 
-  doc.querySelectorAll("*").forEach((element) => {
+  const elementsToScan: Element[] = [svgRoot, ...Array.from(svgRoot.querySelectorAll("*"))];
+  elementsToScan.forEach((element) => {
     for (const attribute of Array.from(element.attributes)) {
       const attributeName = attribute.name.toLowerCase();
       const canonicalUrlValue = canonicalizeUrlForSchemeCheck(attribute.value.trim());
