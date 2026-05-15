@@ -140,6 +140,22 @@ describe("Mermaid layout stability", () => {
       expect(sanitizeMermaidSvg("<div>not an svg</div>")).toBeNull();
       expect(sanitizeMermaidSvg("")).toBeNull();
     });
+
+    test("still rejects malformed SVG that lacks foreignObject", () => {
+      // Codex regression: HTML parsing is permissive enough to "repair" missing
+      // close tags. We only relax to HTML parsing for the foreignObject case
+      // (Mermaid's known idiom). Other malformed input must still fail closed
+      // so callers see "invalid SVG output" instead of a silently-recovered
+      // tree.
+      expect(sanitizeMermaidSvg("<svg><g></svg>")).toBeNull();
+      expect(sanitizeMermaidSvg("<svg><rect></svg>")).toBeNull();
+    });
+
+    test("rejects malformed SVG even when foreignObject is present and broken", () => {
+      // A foreignObject opens the HTML-parser fallback, but the input still
+      // has to contain a recognizable <svg> root. Garbage without one fails.
+      expect(sanitizeMermaidSvg("<foreignObject><p>oops</p></foreignObject>")).toBeNull();
+    });
   });
 
   test("renders sanitized SVG inside the stable container", async () => {

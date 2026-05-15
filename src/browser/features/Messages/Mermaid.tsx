@@ -95,17 +95,31 @@ function canonicalizeUrlForSchemeCheck(value: string): string {
 }
 
 export function sanitizeMermaidSvg(svg: string): string | null {
-  // Parse as HTML rather than image/svg+xml. Mermaid embeds HTML inside
-  // <foreignObject> for wrapped labels, and that HTML legitimately contains
-  // void elements like <br> (no self-closing slash). Strict XML parsing rejects
-  // such SVG, so we used to throw "Mermaid returned invalid SVG output" on any
-  // diagram whose labels wrapped (e.g. "label<br/>second line"). The HTML
-  // parser handles SVG + embedded HTML the same way the browser does when the
-  // sanitized SVG is later inserted via innerHTML, which is our actual sink.
+  // Try strict XML parsing first so genuinely malformed SVG still fails closed.
+  // Mermaid embeds HTML labels inside <foreignObject> when wrap/markdownAutoWrap
+  // is enabled; that HTML legitimately uses void elements like bare <br>, which
+  // strict image/svg+xml DOMParser rejects with a parsererror. Used to make us
+  // throw "Mermaid returned invalid SVG output" on every diagram with wrapped
+  // labels. To accept that valid output without weakening rejection of
+  // arbitrary malformed input, fall back to the HTML parser *only* when the
+  // input genuinely contains a <foreignObject> — i.e. when we know we're
+  // dealing with the SVG-plus-embedded-HTML case the strict parser can't
+  // handle. Any other parsererror still returns null.
   const parser = new DOMParser();
-  const doc = parser.parseFromString(svg, "text/html");
+  const xmlDoc = parser.parseFromString(svg, "image/svg+xml");
+  const xmlHasError = xmlDoc.querySelector("parsererror") !== null;
 
-  const svgRoot = doc.querySelector("svg");
+  let svgRoot: Element | null;
+  if (!xmlHasError) {
+    svgRoot =
+      xmlDoc.documentElement.tagName.toLowerCase() === "svg" ? xmlDoc.documentElement : null;
+  } else if (/<foreignObject\b/i.test(svg)) {
+    const htmlDoc = parser.parseFromString(svg, "text/html");
+    svgRoot = htmlDoc.querySelector("svg");
+  } else {
+    return null;
+  }
+
   if (!svgRoot) {
     return null;
   }
