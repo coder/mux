@@ -156,6 +156,27 @@ describe("Mermaid layout stability", () => {
       // has to contain a recognizable <svg> root. Garbage without one fails.
       expect(sanitizeMermaidSvg("<foreignObject><p>oops</p></foreignObject>")).toBeNull();
     });
+
+    test("rejects malformed SVG that has foreignObject but breaks outside it", () => {
+      // Codex regression #2: the presence of <foreignObject> alone must not
+      // open the door to repairing structural errors elsewhere in the SVG.
+      // After stripping the foreignObject subtree, the outer structure
+      // (unbalanced <g>) is still malformed → must fail closed.
+      const malformedOutside =
+        '<svg xmlns="http://www.w3.org/2000/svg"><foreignObject><p>x<br></p></foreignObject><g></svg>';
+      expect(sanitizeMermaidSvg(malformedOutside)).toBeNull();
+    });
+
+    test("accepts valid SVG whose only XML non-conformance is inside foreignObject", () => {
+      // Positive complement of the above: when stripping <foreignObject>
+      // produces well-formed XML, we relax to the HTML parser and keep the
+      // embedded label intact.
+      const wrappedLabel =
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><g><foreignObject x="0" y="0" width="10" height="10"><div xmlns="http://www.w3.org/1999/xhtml"><p>a<br>b</p></div></foreignObject></g></svg>';
+      const out = sanitizeMermaidSvg(wrappedLabel);
+      expect(out).not.toBeNull();
+      expect(out).toContain("<svg");
+    });
   });
 
   test("renders sanitized SVG inside the stable container", async () => {
