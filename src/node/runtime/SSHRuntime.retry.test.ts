@@ -212,7 +212,33 @@ class CleanupCommandSSHRuntime extends SSHRuntime {
   }
 }
 
+// Single-line shell pipeline that strips partial-clone config from a shared
+// bare base repo. The exact text is asserted in tests because order matters:
+// the strip must precede the on-disk `.promisor` marker cleanup so that even
+// a half-completed repair leaves the repo non-promisor (and therefore safe
+// from the upstream `check_connected()` sideband deadlock — see the doc
+// comment on `stripBaseRepoPromisorConfig` in SSHRuntime.ts).
+function expectedStripPromisorCommand(baseRepoPathArg: string): string {
+  return (
+    `git -C ${baseRepoPathArg} config --unset-all remote.origin.promisor; ` +
+    `git -C ${baseRepoPathArg} config --unset-all remote.origin.partialclonefilter; ` +
+    `git -C ${baseRepoPathArg} config --unset-all extensions.partialclone; ` +
+    `true`
+  );
+}
+
 describe("SSHRuntime project sync retry orchestration", () => {
+  it("strips legacy partial-clone keys before any on-disk maintenance", async () => {
+    const runtime = new CleanupCommandSSHRuntime();
+    const baseRepoPathArg = '"/remote/src/project/.mux-base.git"';
+
+    await runtime.runCleanup(baseRepoPathArg);
+
+    // Strip must be the first remote call in repair — see comment above.
+    expect(runtime.commands[0]).toBe(expectedStripPromisorCommand(baseRepoPathArg));
+    expect(runtime.timeouts[0]).toBe(10);
+  });
+
   it("removes stale promisor markers before running git gc", async () => {
     const runtime = new CleanupCommandSSHRuntime();
     const baseRepoPathArg = '"/remote/src/project/.mux-base.git"';
@@ -220,10 +246,11 @@ describe("SSHRuntime project sync retry orchestration", () => {
     await runtime.runCleanup(baseRepoPathArg);
 
     expect(runtime.commands).toEqual([
+      expectedStripPromisorCommand(baseRepoPathArg),
       `find ${baseRepoPathArg}/objects/pack -name '*.promisor' -print -delete 2>/dev/null || true`,
       `git -C ${baseRepoPathArg} gc --prune=now`,
     ]);
-    expect(runtime.timeouts).toEqual([10, 120]);
+    expect(runtime.timeouts).toEqual([10, 10, 120]);
   });
 
   it("proactively repairs fragmented base repos before sync", async () => {
@@ -238,10 +265,11 @@ describe("SSHRuntime project sync retry orchestration", () => {
     ]);
     expect(runtime.commands).toEqual([
       `git -C ${baseRepoPathArg} count-objects -v`,
+      expectedStripPromisorCommand(baseRepoPathArg),
       `find ${baseRepoPathArg}/objects/pack -name '*.promisor' -print -delete 2>/dev/null || true`,
       `git -C ${baseRepoPathArg} gc --prune=now`,
     ]);
-    expect(runtime.timeouts).toEqual([10, 10, 120]);
+    expect(runtime.timeouts).toEqual([10, 10, 10, 120]);
   });
 
   it("skips proactive maintenance for healthy base repos", async () => {
@@ -283,10 +311,11 @@ describe("SSHRuntime project sync retry orchestration", () => {
     ]);
     expect(runtime.commands).toEqual([
       `git -C ${baseRepoPathArg} count-objects -v`,
+      expectedStripPromisorCommand(baseRepoPathArg),
       `find ${baseRepoPathArg}/objects/pack -name '*.promisor' -print -delete 2>/dev/null || true`,
       `git -C ${baseRepoPathArg} gc --prune=now`,
     ]);
-    expect(runtime.timeouts).toEqual([10, 10, 120]);
+    expect(runtime.timeouts).toEqual([10, 10, 10, 120]);
   });
 
   it("propagates aborts during proactive maintenance preflight", async () => {

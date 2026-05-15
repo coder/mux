@@ -379,6 +379,89 @@ export class SSHRuntime extends RemoteRuntime {
     };
   }
 
+  /**
+   * Remove stale partial-clone / promisor configuration from a shared bare
+   * base repo. Idempotent — absent keys are silently treated as success.
+   *
+   * Why this matters (real, current upstream Git bug):
+   *
+   *   Git's `check_connected()` (`connected.c`) has a fast path that
+   *   activates whenever the receiving repo is a promisor remote, i.e.
+   *   `repo_has_promisor_remote()` returns true. That path was added in
+   *   50033772d ("connected: verify promisor-ness of partial clone",
+   *   2020-01) and is byte-identical on every release from v2.27.0 through
+   *   current `master`. It violates `check_connected_options::err_fd`'s
+   *   documented contract — "The descriptor is closed before
+   *   check_connected returns" (header comment in `connected.h`) — by
+   *   returning 0 directly when all pushed ref tips are already present in
+   *   a promisor pack, without ever calling `close(opt->err_fd)`.
+   *
+   *   On the receive-pack side, `execute_commands()` runs the connectivity
+   *   check with `err_fd = muxer.in`, where `muxer` is an async pthread
+   *   spawned by `start_async()` to relay child stderr over the sideband.
+   *   When the buggy fast path returns, the muxer pipe's write end is
+   *   still held open by receive-pack itself, so the keepalive worker
+   *   thread keeps polling its read end (timing out every 5s and emitting
+   *   `0005\1` sideband keepalives) and never sees EOF. The subsequent
+   *   `finish_async(&muxer)` is `pthread_join`, which then blocks forever.
+   *   The local push hangs in OpenSSH mux-channel I/O even though TCP
+   *   keepalives still flow on the underlying connection.
+   *
+   *   Jeff King already fixed an architecturally identical deadlock years
+   *   ago — 6cdad1f13 ("receive-pack: fix deadlock when we cannot create
+   *   tmpdir", 2017-03) — by adding the missing `close(err_fd)` to an
+   *   early-return path in `unpack()`. The same lesson was never applied
+   *   to the promisor path added three years later.
+   *
+   *   Mux never deliberately turns the shared base repo into a partial
+   *   clone, but legacy bare repos populated by earlier Mux versions, or
+   *   by user-initiated `git fetch --filter` runs on the remote, can
+   *   carry these keys. Stripping them makes `repo_has_promisor_remote()`
+   *   return false, routing `check_connected()` through the slow rev-list
+   *   path that closes its sideband fd correctly. The companion `.promisor`
+   *   marker file cleanup in `repairBaseRepoForSync` handles the on-disk
+   *   side of the same legacy state.
+   */
+  protected async stripBaseRepoPromisorConfig(
+    baseRepoPathArg: string,
+    abortSignal?: AbortSignal
+  ): Promise<void> {
+    if (abortSignal?.aborted) {
+      throw new Error("Operation aborted");
+    }
+
+    // `git config --unset-all` exits 0 (removed) or 5 (key/section absent);
+    // both are idempotent successes. Anything else is a real failure we
+    // want surfaced but not fatal — workspace init must not depend on
+    // remote config writes that may race with concurrent worktrees.
+    //
+    // Three keys cover every way a bare repo can advertise itself as a
+    // partial clone to `repo_has_promisor_remote()`:
+    //   - remote.origin.promisor       (flag set by `clone/fetch --filter`)
+    //   - remote.origin.partialclonefilter  (the filter spec itself)
+    //   - extensions.partialclone      (the repository-format extension)
+    //
+    // Collapsed into one remote shell call to keep workspace init to a
+    // single SSH round trip; `; true` ensures the pipeline as a whole
+    // returns 0 even when every key was already absent.
+    const cmd =
+      `git -C ${baseRepoPathArg} config --unset-all remote.origin.promisor; ` +
+      `git -C ${baseRepoPathArg} config --unset-all remote.origin.partialclonefilter; ` +
+      `git -C ${baseRepoPathArg} config --unset-all extensions.partialclone; ` +
+      `true`;
+
+    const result = await execBuffered(this, cmd, {
+      cwd: "/tmp",
+      timeout: BASE_REPO_PROMISOR_CLEANUP_TIMEOUT_SECONDS,
+      abortSignal,
+    });
+
+    const stderr = result.stderr.trim();
+    if (stderr) {
+      log.warn(`Partial-clone config cleanup reported diagnostics: ${stderr}`);
+    }
+  }
+
   protected async repairBaseRepoForSync(
     baseRepoPathArg: string,
     repairContext: string,
@@ -388,9 +471,15 @@ export class SSHRuntime extends RemoteRuntime {
       throw new Error("Operation aborted");
     }
 
-    const promisorPackDirArg = `${baseRepoPathArg}/objects/pack`;
     log.info(repairContext);
 
+    // Strip partial-clone config before the on-disk cleanup so that even
+    // if `git gc` fails, subsequent pushes no longer route through the
+    // buggy `check_connected()` promisor fast path. See the doc comment
+    // on stripBaseRepoPromisorConfig for the full upstream-bug story.
+    await this.stripBaseRepoPromisorConfig(baseRepoPathArg, abortSignal);
+
+    const promisorPackDirArg = `${baseRepoPathArg}/objects/pack`;
     const promisorCleanupResult = await execBuffered(
       this,
       `find ${promisorPackDirArg} -name '*.promisor' -print -delete 2>/dev/null || true`,
@@ -674,6 +763,12 @@ export class SSHRuntime extends RemoteRuntime {
     if (normalizedConfig) {
       initLogger.logStep("Normalized shared base repository config for worktrees");
     }
+
+    // Defensively neuter partial-clone configuration on every init so that
+    // legacy bare repos populated by older Mux versions stop tripping the
+    // upstream `check_connected()` sideband deadlock on the very first
+    // push (instead of only after a retry-driven repair pass).
+    await this.stripBaseRepoPromisorConfig(baseRepoPathArg, abortSignal);
 
     return baseRepoPathArg;
   }
