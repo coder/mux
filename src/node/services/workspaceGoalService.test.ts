@@ -188,7 +188,7 @@ describe("WorkspaceGoalService", () => {
     // "Add a tie-breaker for goal history sorting"). The reader breaks ties
     // by JSONL append index DESC instead, so the freshly-appended line wins.
     const ts = Date.now();
-    let nowSpy = ts;
+    const nowSpy = ts;
     const dateNow = spyOn(Date, "now").mockImplementation(() => nowSpy);
     try {
       const first = await setGoalOk(service, { workspaceId, objective: "First" });
