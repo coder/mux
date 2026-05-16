@@ -427,24 +427,39 @@ export class WorkspaceGoalService {
         return [];
       }
 
-      const entries: GoalHistoryEntry[] = [];
+      // Track the original JSONL append index so we can break ties when two
+      // lifecycle operations land in the same millisecond (Codex P2 review:
+      // "Add a tie-breaker for goal history sorting"). Without this, a stable
+      // sort by `endedAtMs` would preserve append order (oldest-first) for
+      // ties — violating the documented "newest first" contract and
+      // potentially making consecutive-clear tests flaky on fast machines.
+      const indexed: Array<{ index: number; entry: GoalHistoryEntry }> = [];
+      let appendIndex = 0;
       for (const line of raw.split("\n")) {
         const trimmed = line.trim();
         if (trimmed.length === 0) {
           continue;
         }
         try {
-          entries.push(GoalHistoryEntrySchema.parse(JSON.parse(trimmed)));
+          indexed.push({
+            index: appendIndex,
+            entry: GoalHistoryEntrySchema.parse(JSON.parse(trimmed)),
+          });
         } catch (error) {
           log.warn("Skipping corrupt goal history entry", { workspaceId, error });
         }
+        appendIndex += 1;
       }
 
-      // Sort by endedAtMs DESC so the renderer can stream from the top
-      // without an extra sort. Stable across equal timestamps via reverse
-      // insertion.
-      entries.sort((a, b) => b.endedAtMs - a.endedAtMs);
-      return entries.slice(0, GOAL_HISTORY_RENDER_CAP);
+      // Sort by endedAtMs DESC, with append-index DESC as the tie-breaker so
+      // the latest line in the JSONL wins for same-ms entries.
+      indexed.sort((a, b) => {
+        if (b.entry.endedAtMs !== a.entry.endedAtMs) {
+          return b.entry.endedAtMs - a.entry.endedAtMs;
+        }
+        return b.index - a.index;
+      });
+      return indexed.slice(0, GOAL_HISTORY_RENDER_CAP).map((row) => row.entry);
     });
   }
 

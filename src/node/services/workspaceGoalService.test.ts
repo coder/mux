@@ -181,7 +181,32 @@ describe("WorkspaceGoalService", () => {
     });
   });
 
-  test("getGoalHistory tolerates corrupt JSONL lines without bricking the workspace", async () => {
+  test("getGoalHistory returns the latest entry first when endedAtMs ties", async () => {
+    // Two back-to-back clears in the same millisecond would otherwise rely
+    // on the stable sort preserving JSONL append order (oldest-first),
+    // violating the "newest first" contract (Codex P2 review:
+    // "Add a tie-breaker for goal history sorting"). The reader breaks ties
+    // by JSONL append index DESC instead, so the freshly-appended line wins.
+    const ts = Date.now();
+    let nowSpy = ts;
+    const dateNow = spyOn(Date, "now").mockImplementation(() => nowSpy);
+    try {
+      const first = await setGoalOk(service, { workspaceId, objective: "First" });
+      await service.clearGoal(workspaceId);
+      const second = await setGoalOk(service, { workspaceId, objective: "Second" });
+      await service.clearGoal(workspaceId);
+
+      const history = await service.getGoalHistory(workspaceId);
+      expect(history).toHaveLength(2);
+      // Same-ms timestamps force the tie-breaker; the second append wins.
+      expect(history[0].goal.goalId).toBe(second.goalId);
+      expect(history[1].goal.goalId).toBe(first.goalId);
+    } finally {
+      dateNow.mockRestore();
+    }
+  });
+
+    test("getGoalHistory tolerates corrupt JSONL lines without bricking the workspace", async () => {
     const created = await setGoalOk(service, { workspaceId, objective: "Good entry" });
     await service.clearGoal(workspaceId);
 
