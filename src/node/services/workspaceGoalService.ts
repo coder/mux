@@ -2,8 +2,14 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import writeFileAtomic from "write-file-atomic";
 import assert from "@/common/utils/assert";
-import type { GoalRecordV1, GoalSetError, GoalSnapshot, GoalStatus } from "@/common/types/goal";
-import { toGoalSnapshot } from "@/common/types/goal";
+import {
+  toGoalSnapshot,
+  toPendingGoalSnapshot,
+  type GoalRecordV1,
+  type GoalSetError,
+  type GoalSnapshot,
+  type GoalStatus,
+} from "@/common/types/goal";
 import type { WorkspaceActivitySnapshot } from "@/common/types/workspace";
 import type { Workspace } from "@/common/types/project";
 import type { Result } from "@/common/types/result";
@@ -37,6 +43,9 @@ import type { IdleDispatcher, IdleDispatchPayload } from "./idleDispatcher";
 import { log } from "./log";
 
 const GOAL_FILE = "goal.json";
+const PENDING_GOAL_EDIT_MESSAGE =
+  "Goal is still being saved. Wait for the current stream to finish before editing it.";
+
 const MICRO_CENTS_PER_CENT = 1_000_000;
 
 function costUsdToMicroCents(costUsd: number | null | undefined): number {
@@ -299,6 +308,7 @@ function continuationSendOptions(sendOptions: SendMessageOptions): SendMessageOp
 export class WorkspaceGoalService {
   private readonly fileLocks = workspaceFileLocks;
   private readonly pendingGoalMutations = new Map<string, PendingGoalMutation>();
+  private readonly pendingGoalSnapshots = new Map<string, GoalSnapshot>();
 
   private pendingContinuationCandidates = new Map<string, PendingGoalContinuationCandidate>();
   private continuationReRequestTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -413,6 +423,51 @@ export class WorkspaceGoalService {
     const activity = await this.extensionMetadata.setGoal(workspaceId, snapshot);
     this.onActivityChange?.(workspaceId, activity);
     return snapshot;
+  }
+
+  private async pushTransientGoalSnapshot(
+    workspaceId: string,
+    snapshot: GoalSnapshot
+  ): Promise<void> {
+    const activity = await this.extensionMetadata.getSnapshot(workspaceId);
+    if (activity) {
+      this.onActivityChange?.(workspaceId, {
+        ...activity,
+        goal: snapshot,
+        transientGoalOnly: true,
+      });
+    }
+  }
+
+  private async publishPendingGoalSnapshot(workspaceId: string, goal: GoalRecordV1): Promise<void> {
+    const snapshot = toPendingGoalSnapshot(goal);
+    this.pendingGoalSnapshots.set(workspaceId, snapshot);
+    await this.pushTransientGoalSnapshot(workspaceId, snapshot);
+  }
+
+  private async pushGoalReadSnapshot(
+    workspaceId: string,
+    goal: GoalRecordV1 | null
+  ): Promise<GoalSnapshot | null> {
+    const pendingSnapshot = this.pendingGoalSnapshots.get(workspaceId);
+    if (pendingSnapshot) {
+      // Goal reads keep activity snapshots warm, but mid-stream queued goals
+      // must keep showing the transient replacement until stream-end persistence.
+      await this.pushTransientGoalSnapshot(workspaceId, pendingSnapshot);
+      return pendingSnapshot;
+    }
+    return this.pushSnapshot(workspaceId, goal);
+  }
+
+  private async restorePersistedGoalSnapshot(workspaceId: string): Promise<void> {
+    try {
+      await this.fileLocks.withLock(workspaceId, async () => {
+        const current = await this.readGoalFile(workspaceId);
+        await this.pushSnapshot(workspaceId, current);
+      });
+    } catch (error) {
+      log.warn("Failed to restore persisted goal snapshot", { workspaceId, error });
+    }
   }
 
   private assertParentWorkspace(workspaceId: string): void {
@@ -557,17 +612,25 @@ export class WorkspaceGoalService {
     assert(Number.isFinite(stoppedAtMs) && stoppedAtMs >= 0, "user stop timestamp must be valid");
     this.lastUserStopAtMsByWorkspace.set(workspaceId, stoppedAtMs);
     this.pendingContinuationCandidates.delete(workspaceId);
+    this.pendingGoalSnapshots.delete(workspaceId);
     // Drop queued goal mutations too (Coder-agents-review P2 DEREM-18). If a
     // user sets a goal mid-stream then stops the stream, the mutation would
     // otherwise stay queued and apply on the NEXT stream's stream-end via
     // applyPendingAfterStreamEnd, writing goal.json with createdAtMs > the
     // userStopAtMs gate — auto-continuation would then fire in a context the
     // user did not intend (the stop was meant to discard the goal change).
-    this.pendingGoalMutations.delete(workspaceId);
+    const hadPendingGoalMutation = this.pendingGoalMutations.delete(workspaceId);
 
     await this.fileLocks.withLock(workspaceId, async () => {
       const current = await this.readGoalFile(workspaceId);
       if (current?.status !== "active" && current?.status !== "budget_limited") {
+        // Mid-stream /goal now publishes an optimistic activity snapshot so the
+        // Goal panel opens immediately. If the user aborts that stream, revert
+        // the panel to the persisted goal file (or null) along with dropping the
+        // queued mutation.
+        if (hadPendingGoalMutation) {
+          await this.pushSnapshot(workspaceId, current);
+        }
         return;
       }
       const next = GoalRecordV1Schema.parse({
@@ -843,17 +906,17 @@ export class WorkspaceGoalService {
     return this.fileLocks.withLock(workspaceId, async () => {
       const current = await this.readGoalFile(workspaceId);
       if (!current) {
-        await this.pushSnapshot(workspaceId, null);
+        await this.pushGoalReadSnapshot(workspaceId, null);
         return null;
       }
       const next = this.applyBudgetDrivenStatus(current);
       if (next !== current) {
         await this.writeGoal(workspaceId, next);
-        await this.pushSnapshot(workspaceId, next);
+        await this.pushGoalReadSnapshot(workspaceId, next);
         this.emitBudgetLimited(next, current.status);
         return next;
       }
-      await this.pushSnapshot(workspaceId, current);
+      await this.pushGoalReadSnapshot(workspaceId, current);
       return current;
     });
   }
@@ -1313,6 +1376,13 @@ export class WorkspaceGoalService {
     const objective = input.objective?.trim();
     this.assertParentWorkspace(input.workspaceId);
 
+    if (!objective && this.pendingGoalSnapshots.has(input.workspaceId)) {
+      // Until stream-end persists the queued objective, status/budget-only edits
+      // would target the old durable goal (or no goal) while the panel displays
+      // the optimistic replacement. Reject them instead of mutating the wrong record.
+      return Err({ type: "invalid_transition", message: PENDING_GOAL_EDIT_MESSAGE });
+    }
+
     // -----------------------------------------------------------------------
     // Mid-stream branch: setGoal during an active stream defers the actual
     // disk write until applyPendingAfterStreamEnd. The returned `Ok(projected)`
@@ -1366,6 +1436,11 @@ export class WorkspaceGoalService {
             : {}),
           ...(input.initiator != null ? { initiator: input.initiator } : {}),
         });
+        // A user can run /goal while the first turn is still streaming. The
+        // durable goal write must wait for stream accounting, but the Goal panel
+        // reads activity snapshots, so publish the projected goal immediately
+        // without persisting this crash-unsafe optimistic state.
+        await this.publishPendingGoalSnapshot(input.workspaceId, projected);
         return Ok(projected);
       });
     }
@@ -1738,6 +1813,11 @@ export class WorkspaceGoalService {
       return null;
     }
 
+    const pendingSnapshot = this.pendingGoalSnapshots.get(input.workspaceId);
+    if (pendingSnapshot) {
+      return pendingSnapshot;
+    }
+
     const costMicroCentsThisStream = costUsdToMicroCents(input.costUsd);
     return this.fileLocks.withLock(input.workspaceId, async () => {
       const current = await this.readGoalFile(input.workspaceId);
@@ -1897,6 +1977,7 @@ export class WorkspaceGoalService {
     const cleared = await this.fileLocks.withLock(workspaceId, async () => {
       const current = await this.readGoalFile(workspaceId);
       this.pendingGoalMutations.delete(workspaceId);
+      this.pendingGoalSnapshots.delete(workspaceId);
       this.pendingContinuationCandidates.delete(workspaceId);
       this.recordedStreamStartedAtMsByWorkspace.delete(workspaceId);
       this.lastGoalStreamStamps.delete(workspaceId);
@@ -1953,6 +2034,7 @@ export class WorkspaceGoalService {
     }
 
     this.pendingGoalMutations.delete(workspaceId);
+    this.pendingGoalSnapshots.delete(workspaceId);
     // Mirror the `setGoal` wrapper (DEREM-36) here: `setGoalImmediately`
     // rethrows `WorkspaceGoalTransitionError` / `WorkspaceGoalChildWorkspaceError`
     // for invalid transitions (e.g. a queued `/goal pause` against an
@@ -1970,6 +2052,10 @@ export class WorkspaceGoalService {
         error: error instanceof Error ? error.message : String(error),
       });
       return null;
+    } finally {
+      // Always re-read the durable record: queued snapshots are optimistic, and
+      // drains can succeed as persistence no-ops, reject, or throw.
+      await this.restorePersistedGoalSnapshot(workspaceId);
     }
   }
 }

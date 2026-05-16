@@ -12,6 +12,10 @@ export type GoalSnapshot = z.infer<typeof GoalSnapshotSchema>;
 
 export type GoalSetError = z.infer<typeof GoalSetErrorSchema>;
 
+export function isGoalPendingPersistence(goal: GoalSnapshot | null | undefined): boolean {
+  return goal?.pendingPersistence === true;
+}
+
 export function toGoalSnapshot(goal: GoalRecordV1): GoalSnapshot {
   return {
     goalId: goal.goalId,
@@ -24,4 +28,8 @@ export function toGoalSnapshot(goal: GoalRecordV1): GoalSnapshot {
     ...(goal.completionSummary != null ? { completionSummary: goal.completionSummary } : {}),
     startedAtMs: goal.createdAtMs,
   };
+}
+
+export function toPendingGoalSnapshot(goal: GoalRecordV1): GoalSnapshot {
+  return { ...toGoalSnapshot(goal), pendingPersistence: true };
 }

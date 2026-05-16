@@ -43,7 +43,7 @@ import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { BranchListResult } from "@/common/orpc/types";
 import type { WorkspaceState } from "@/browser/stores/WorkspaceStore";
 import type { RuntimeConfig } from "@/common/types/runtime";
-import type { GoalSetError, GoalStatus } from "@/common/types/goal";
+import { isGoalPendingPersistence, type GoalSetError, type GoalStatus } from "@/common/types/goal";
 import { getErrorMessage } from "@/common/utils/errors";
 import { parseGoalBudgetCents } from "@/browser/utils/slashCommands/registry";
 import { setGoalWithConflictRetry } from "@/browser/utils/goals/setGoalWithConflictRetry";
@@ -906,7 +906,9 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
       },
     ];
 
-    if (goal?.status === "active") {
+    const isPendingGoalPersistence = isGoalPendingPersistence(goal);
+
+    if (!isPendingGoalPersistence && goal?.status === "active") {
       list.push({
         id: CommandIds.goalPause(),
         title: "Goal: Pause",
@@ -919,7 +921,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
       });
     }
 
-    if (goal?.status === "paused") {
+    if (!isPendingGoalPersistence && goal?.status === "paused") {
       list.push({
         id: CommandIds.goalResume(),
         title: "Goal: Resume",
@@ -932,7 +934,10 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
       });
     }
 
-    if (goal?.status === "active" || goal?.status === "budget_limited") {
+    if (
+      !isPendingGoalPersistence &&
+      (goal?.status === "active" || goal?.status === "budget_limited")
+    ) {
       list.push({
         id: CommandIds.goalMarkComplete(),
         title: "Goal: Mark complete",
@@ -966,8 +971,8 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
     }
 
     if (goal) {
-      list.push(
-        {
+      if (!isPendingGoalPersistence) {
+        list.push({
           id: CommandIds.goalClear(),
           title: "Goal: Clear",
           section: section.goals,
@@ -976,15 +981,15 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
             assert(api, "Goal palette actions require a connected backend");
             await api.workspace.clearGoal({ workspaceId });
           },
-        },
-        {
-          id: CommandIds.goalOpenPanel(),
-          title: "Goal: Open panel",
-          section: section.goals,
-          keywords: ["target", "objective", "sidebar"],
-          run: () => openGoalPanel(workspaceId),
-        }
-      );
+        });
+      }
+      list.push({
+        id: CommandIds.goalOpenPanel(),
+        title: "Goal: Open panel",
+        section: section.goals,
+        keywords: ["target", "objective", "sidebar"],
+        run: () => openGoalPanel(workspaceId),
+      });
     }
 
     return list;

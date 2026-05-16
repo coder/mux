@@ -96,6 +96,22 @@ describe("GoalTab", () => {
     expect(getByText("3 / 10")).toBeTruthy();
   });
 
+  test("renders pending goals read-only until they are saved", () => {
+    const { queryByLabelText } = render(
+      <GoalTab
+        goal={goal({ pendingPersistence: true, budgetCents: 500, turnCap: 10 })}
+        onSetStatus={mock()}
+        onClear={mock()}
+      />
+    );
+
+    expect(queryByLabelText("Pause goal")).toBeNull();
+    expect(queryByLabelText("Mark goal complete")).toBeNull();
+    expect(queryByLabelText("Clear goal")).toBeNull();
+    expect(queryByLabelText("Edit goal budget")).toBeNull();
+    expect(queryByLabelText("Edit goal turn cap")).toBeNull();
+  });
+
   test("edits budget inline and restores focus", async () => {
     const onUpdateBudget = mock(() => Promise.resolve(undefined));
     const { getByLabelText, getByText } = render(

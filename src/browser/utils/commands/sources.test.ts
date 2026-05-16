@@ -546,7 +546,10 @@ test("project commands exclude system projects from options", async () => {
   expect(archiveOptions.some((option) => option.id === "/repo/system")).toBe(false);
 });
 
-const makeGoalSnapshot = (status: "active" | "paused" | "budget_limited" | "complete") => ({
+const makeGoalSnapshot = (
+  status: "active" | "paused" | "budget_limited" | "complete",
+  overrides: Partial<NonNullable<WorkspaceState["goal"]>> = {}
+) => ({
   goalId: "00000000-0000-4000-8000-000000000001",
   status,
   objective: "Ship palette parity",
@@ -555,6 +558,7 @@ const makeGoalSnapshot = (status: "active" | "paused" | "budget_limited" | "comp
   turnsUsed: 2,
   turnCap: null,
   startedAtMs: 1_700_000_000_000,
+  ...overrides,
 });
 
 const makeGoalRecord = (status: "active" | "paused" | "budget_limited" | "complete") => ({
@@ -640,6 +644,16 @@ test("goal palette commands match the Active lifecycle state", () => {
     "Goal: Pause",
     "Goal: Set objective",
   ]);
+});
+
+test("goal palette hides mutating lifecycle commands for pending goals", () => {
+  expect(
+    getVisibleGoalTitles({
+      selectedWorkspaceState: makeWorkspaceState(
+        makeGoalSnapshot("active", { pendingPersistence: true })
+      ),
+    })
+  ).toEqual(["Goal: Open panel", "Goal: Set objective"]);
 });
 
 test("goal palette commands match the Paused lifecycle state", () => {

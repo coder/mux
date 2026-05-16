@@ -1,6 +1,6 @@
 import { Target } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import type { GoalSnapshot, GoalStatus } from "@/common/types/goal";
+import { isGoalPendingPersistence, type GoalSnapshot, type GoalStatus } from "@/common/types/goal";
 import { formatGoalCents } from "@/common/utils/goals/budgetPricing";
 import { parseGoalBudgetInputCents } from "@/common/utils/goals/budgetParser";
 // Import shared formatters / status labels from goalToolUtils so the GoalTab
@@ -125,7 +125,12 @@ export function GoalTab(props: GoalTabProps) {
       return;
     }
     lastCompleteInputRequestRef.current = request;
-    if (request > 0 && props.goal && props.goal.status !== "complete") {
+    if (
+      request > 0 &&
+      props.goal &&
+      props.goal.status !== "complete" &&
+      !isGoalPendingPersistence(props.goal)
+    ) {
       openSummaryInput(
         document.activeElement instanceof HTMLElement ? document.activeElement : null
       );
@@ -141,9 +146,12 @@ export function GoalTab(props: GoalTabProps) {
     );
   }
 
-  const canPause = props.goal.status === "active";
-  const canResume = props.goal.status === "paused";
-  const canComplete = props.goal.status === "active" || props.goal.status === "budget_limited";
+  const isPendingPersistence = isGoalPendingPersistence(props.goal);
+  const canEdit = !isPendingPersistence;
+  const canPause = canEdit && props.goal.status === "active";
+  const canResume = canEdit && props.goal.status === "paused";
+  const canComplete =
+    canEdit && (props.goal.status === "active" || props.goal.status === "budget_limited");
 
   const setStatus = async (
     status: Exclude<GoalStatus, "budget_limited">,
@@ -231,6 +239,13 @@ export function GoalTab(props: GoalTabProps) {
         </h2>
       </header>
 
+      {isPendingPersistence && (
+        <p className="border-border-light bg-surface-secondary text-muted rounded-md border p-3 text-sm leading-5">
+          This goal is queued while the current stream finishes. It will become editable once it is
+          saved.
+        </p>
+      )}
+
       {props.goal.status === "complete" && props.goal.completionSummary && (
         <section
           className="border-border-light bg-surface-secondary rounded-md border p-3"
@@ -254,14 +269,16 @@ export function GoalTab(props: GoalTabProps) {
                 ? "No budget"
                 : formatGoalCents(props.goal.budgetCents)}
             </span>
-            <button
-              type="button"
-              className="text-muted hover:text-foreground text-xs underline"
-              aria-label="Edit goal budget"
-              onClick={(event) => openBudgetEditor(event.currentTarget)}
-            >
-              Edit
-            </button>
+            {canEdit && (
+              <button
+                type="button"
+                className="text-muted hover:text-foreground text-xs underline"
+                aria-label="Edit goal budget"
+                onClick={(event) => openBudgetEditor(event.currentTarget)}
+              >
+                Edit
+              </button>
+            )}
           </dd>
         </div>
         <div className="bg-surface-secondary rounded-md p-3">
@@ -280,14 +297,16 @@ export function GoalTab(props: GoalTabProps) {
                 ? String(props.goal.turnsUsed)
                 : `${props.goal.turnsUsed} / ${props.goal.turnCap}`}
             </span>
-            <button
-              type="button"
-              className="text-muted hover:text-foreground text-xs underline"
-              aria-label="Edit goal turn cap"
-              onClick={(event) => openTurnCapEditor(event.currentTarget)}
-            >
-              Edit
-            </button>
+            {canEdit && (
+              <button
+                type="button"
+                className="text-muted hover:text-foreground text-xs underline"
+                aria-label="Edit goal turn cap"
+                onClick={(event) => openTurnCapEditor(event.currentTarget)}
+              >
+                Edit
+              </button>
+            )}
           </dd>
         </div>
         <div className="bg-surface-secondary rounded-md p-3">
@@ -356,46 +375,48 @@ export function GoalTab(props: GoalTabProps) {
         </div>
       )}
 
-      <div className="flex flex-wrap gap-2">
-        {canPause && (
+      {canEdit && (
+        <div className="flex flex-wrap gap-2">
+          {canPause && (
+            <button
+              type="button"
+              className="border-border-light bg-surface-secondary text-foreground hover:bg-surface-tertiary rounded-md border px-3 py-1.5 text-sm"
+              aria-label="Pause goal"
+              onClick={() => void setStatus("paused")}
+            >
+              Pause
+            </button>
+          )}
+          {canResume && (
+            <button
+              type="button"
+              className="border-border-light bg-surface-secondary text-foreground hover:bg-surface-tertiary rounded-md border px-3 py-1.5 text-sm"
+              aria-label="Resume goal"
+              onClick={() => void setStatus("active")}
+            >
+              Resume
+            </button>
+          )}
+          {canComplete && (
+            <button
+              type="button"
+              className="border-border-light bg-surface-secondary text-foreground hover:bg-surface-tertiary rounded-md border px-3 py-1.5 text-sm"
+              aria-label="Mark goal complete"
+              onClick={(event) => openSummaryInput(event.currentTarget)}
+            >
+              Mark complete
+            </button>
+          )}
           <button
             type="button"
             className="border-border-light bg-surface-secondary text-foreground hover:bg-surface-tertiary rounded-md border px-3 py-1.5 text-sm"
-            aria-label="Pause goal"
-            onClick={() => void setStatus("paused")}
+            aria-label="Clear goal"
+            onClick={() => void clearGoal()}
           >
-            Pause
+            Clear
           </button>
-        )}
-        {canResume && (
-          <button
-            type="button"
-            className="border-border-light bg-surface-secondary text-foreground hover:bg-surface-tertiary rounded-md border px-3 py-1.5 text-sm"
-            aria-label="Resume goal"
-            onClick={() => void setStatus("active")}
-          >
-            Resume
-          </button>
-        )}
-        {canComplete && (
-          <button
-            type="button"
-            className="border-border-light bg-surface-secondary text-foreground hover:bg-surface-tertiary rounded-md border px-3 py-1.5 text-sm"
-            aria-label="Mark goal complete"
-            onClick={(event) => openSummaryInput(event.currentTarget)}
-          >
-            Mark complete
-          </button>
-        )}
-        <button
-          type="button"
-          className="border-border-light bg-surface-secondary text-foreground hover:bg-surface-tertiary rounded-md border px-3 py-1.5 text-sm"
-          aria-label="Clear goal"
-          onClick={() => void clearGoal()}
-        >
-          Clear
-        </button>
-      </div>
+        </div>
+      )}
 
       {isSummaryInputOpen && (
         <div

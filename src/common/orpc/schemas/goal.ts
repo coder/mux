@@ -63,6 +63,7 @@ export const GoalSnapshotSchema = z.object({
   turnCap: z.number().int().positive().nullable(),
   completionSummary: z.string().optional(),
   startedAtMs: z.number().int().nonnegative(),
+  pendingPersistence: z.boolean().optional(),
 });
 
 // Discriminated union so the oRPC handler can return typed errors for the

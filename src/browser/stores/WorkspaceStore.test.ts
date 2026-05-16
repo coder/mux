@@ -2605,7 +2605,8 @@ describe("WorkspaceStore", () => {
     it("tracks active goals across workspace activity snapshots", async () => {
       const makeSnapshot = (
         workspaceId: string,
-        status: "active" | "paused"
+        status: "active" | "paused",
+        options: { pendingPersistence?: boolean } = {}
       ): WorkspaceActivitySnapshot => ({
         recency: 1_000,
         streaming: false,
@@ -2620,6 +2621,7 @@ describe("WorkspaceStore", () => {
           turnsUsed: 0,
           turnCap: null,
           startedAtMs: 1_000,
+          ...(options.pendingPersistence === true ? { pendingPersistence: true } : {}),
         },
       });
       mockActivityList.mockResolvedValue({
@@ -2627,6 +2629,7 @@ describe("WorkspaceStore", () => {
         "2": makeSnapshot("2", "active"),
         "3": makeSnapshot("3", "active"),
         "4": makeSnapshot("4", "active"),
+        pending: makeSnapshot("6", "active", { pendingPersistence: true }),
         paused: makeSnapshot("5", "paused"),
       });
       recreateStore();
@@ -2634,6 +2637,55 @@ describe("WorkspaceStore", () => {
       await tick(0);
 
       expect(store.getActiveGoalCount()).toBe(4);
+    });
+
+    it("merges transient goal patches without replaying stale activity fields", () => {
+      const workspaceId = "transient-goal-patch";
+      createAndAddWorkspace(store, workspaceId, { createdAt: new Date(0).toISOString() }, false);
+      const storeAccess = store as unknown as {
+        applyWorkspaceActivitySnapshot: (
+          workspaceId: string,
+          snapshot: WorkspaceActivitySnapshot | null
+        ) => void;
+      };
+      const persistedSnapshot: WorkspaceActivitySnapshot = {
+        recency: 2_000,
+        streaming: false,
+        lastModel: "claude-sonnet-4",
+        lastThinkingLevel: null,
+        goal: {
+          goalId: "00000000-0000-4000-8000-000000000101",
+          status: "active",
+          objective: "Persisted goal",
+          budgetCents: null,
+          costCents: 0,
+          turnsUsed: 0,
+          turnCap: null,
+          startedAtMs: 1_000,
+        },
+      };
+
+      storeAccess.applyWorkspaceActivitySnapshot(workspaceId, persistedSnapshot);
+      storeAccess.applyWorkspaceActivitySnapshot(workspaceId, {
+        ...persistedSnapshot,
+        streaming: true,
+        recency: 1_000,
+        transientGoalOnly: true,
+        goal: {
+          ...persistedSnapshot.goal!,
+          goalId: "00000000-0000-4000-8000-000000000102",
+          objective: "Queued replacement",
+          pendingPersistence: true,
+        },
+      });
+
+      const state = store.getWorkspaceState(workspaceId);
+      expect(state.canInterrupt).toBe(false);
+      expect(state.recencyTimestamp).toBe(2_000);
+      expect(state.goal).toMatchObject({
+        objective: "Queued replacement",
+        pendingPersistence: true,
+      });
     });
 
     it("uses activity snapshots for non-active workspace sidebar fields", async () => {

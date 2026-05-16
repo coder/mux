@@ -221,6 +221,10 @@ export const WorkspaceActivitySnapshotSchema = z.object({
   goal: GoalSnapshotSchema.nullable().optional().meta({
     description: "Current workspace goal snapshot for sidebar indicators and the Goal tab",
   }),
+  transientGoalOnly: z.boolean().optional().meta({
+    description:
+      "Internal frontend hint: merge only the goal field from this activity event; do not replace persisted activity fields.",
+  }),
 });
 
 export const PostCompactionStateSchema = z.object({
