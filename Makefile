@@ -352,13 +352,15 @@ lint-zizmor: ## Run zizmor security analysis on GitHub Actions workflows
 SHELL_SRC_FILES := $(shell find . -not \( -path '*/.git/*' -o -path './node_modules/*' -o -path './mobile/node_modules/*' -o -path './build/*' -o -path './dist/*' -o -path './release/*' -o -path './benchmarks/terminal_bench/.leaderboard_cache/*' \) -type f -name '*.sh' 2>/dev/null)
 
 lint-shellcheck: ## Run shellcheck on shell scripts
-	shellcheck --external-sources $(SHELL_SRC_FILES)
+	@echo "Running shellcheck on $(words $(SHELL_SRC_FILES)) shell scripts..."
+	@shellcheck --external-sources $(SHELL_SRC_FILES)
 
 # Dockerfiles to lint (excludes node_modules, build artifacts, .git)
 DOCKERFILES := $(shell find . -not \( -path '*/.git/*' -o -path './node_modules/*' -o -path './mobile/node_modules/*' -o -path './build/*' -o -path './dist/*' -o -path './release/*' -o -path './benchmarks/terminal_bench/.leaderboard_cache/*' \) -type f -name 'Dockerfile' 2>/dev/null)
 
 lint-hadolint: ## Run hadolint on Dockerfiles
-	hadolint $(DOCKERFILES)
+	@echo "Running hadolint on $(words $(DOCKERFILES)) Dockerfiles..."
+	@hadolint $(DOCKERFILES)
 
 pin-actions: ## Pin GitHub Actions to SHA hashes (requires GH_TOKEN or gh CLI)
 	./scripts/pin-actions.sh .github/workflows/*.yml .github/actions/*/action.yml
