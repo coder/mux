@@ -738,47 +738,103 @@ export class SSHRuntime extends RemoteRuntime {
     projectPath: string,
     initLogger: InitLogger,
     abortSignal?: AbortSignal
-  ): Promise<string> {
+  ): Promise<{ baseRepoPathArg: string; freshlyCreated: boolean }> {
     const layout = this.getProjectLayout(projectPath);
     const baseRepoPath = layout.baseRepoPath;
     const baseRepoPathArg = expandTildeForSSH(baseRepoPath);
+    const parentDirArg = expandTildeForSSH(path.posix.dirname(baseRepoPath));
 
-    const check = await execBuffered(this, `test -d ${baseRepoPathArg}`, {
+    // STARTUP-PERF: This used to be 3-5 sequential SSH round-trips
+    // (test -d, mkdir, git init, unset core.bare, unset 3× promisor keys).
+    // Each round-trip costs ~80-100ms even over a multiplexed control channel,
+    // so on a cold SSH workspace this single batched command shaves ~500ms off
+    // the critical path of `mux run --runtime ssh <host>`.
+    //
+    // The script is split into two well-defined sections, each producing a
+    // status sentinel that the caller parses:
+    //
+    //   STATUS_CREATED=<existed|created>   — repo presence/creation outcome
+    //   STATUS_CORE_BARE=<unset|absent|locked|error>  — normalization result
+    //
+    // Promisor keys are idempotently neutered as a best-effort epilogue (no
+    // sentinel needed; failures fall through harmlessly because subsequent
+    // pushes can re-run the cleanup if a deadlock recurs).
+    const promisorUnsetCmds = BASE_REPO_PROMISOR_CONFIG_KEYS.map(
+      (key) => `git -C ${baseRepoPathArg} config --unset-all ${key} 2>/dev/null || true`
+    ).join("\n");
+
+    const cmd = [
+      "set -u",
+      // 1. Ensure repo directory exists (mkdir parent + git init --bare).
+      `if test -d ${baseRepoPathArg}; then`,
+      "  echo STATUS_CREATED=existed",
+      "else",
+      `  if ! mkdir -p ${parentDirArg}; then`,
+      `    echo "ERROR: mkdir parent failed" >&2`,
+      "    exit 1",
+      "  fi",
+      `  if ! git init --bare ${baseRepoPathArg} >/dev/null 2>&1; then`,
+      `    echo "ERROR: git init --bare failed" >&2`,
+      "    exit 1",
+      "  fi",
+      "  echo STATUS_CREATED=created",
+      "fi",
+      // 2. Normalize core.bare in the *local* config — see
+      //    normalizeBaseRepoSharedConfig() for full context.
+      //    Exit codes: 0 = removed, 5 = key absent.  Anything else needs the
+      //    retry/inspect dance, which the caller handles by re-running the
+      //    slow-path helper.
+      `git -C ${baseRepoPathArg} config --local --unset-all core.bare 2>/tmp/.mux-corebare.err`,
+      "rc=$?",
+      'if [ "$rc" -eq 0 ]; then',
+      "  echo STATUS_CORE_BARE=unset",
+      'elif [ "$rc" -eq 5 ]; then',
+      "  echo STATUS_CORE_BARE=absent",
+      "else",
+      // Surface the stderr to the caller so the slow-path retry can decide
+      // whether this is a lock conflict (transient) or a real error.
+      "  echo STATUS_CORE_BARE=error",
+      "  cat /tmp/.mux-corebare.err >&2 2>/dev/null || true",
+      "fi",
+      "rm -f /tmp/.mux-corebare.err 2>/dev/null || true",
+      // 3. Idempotently strip partial-clone / promisor keys (always best-effort).
+      //    See stripBaseRepoPromisorConfig() docstring for the upstream Git
+      //    sideband-deadlock bug this guards against.
+      promisorUnsetCmds,
+    ].join("\n");
+
+    const result = await execBuffered(this, cmd, {
       cwd: "/tmp",
-      timeout: 10,
+      timeout: 30,
       abortSignal,
     });
 
-    if (check.exitCode !== 0) {
-      initLogger.logStep("Creating shared base repository...");
-      const parentDir = path.posix.dirname(baseRepoPath);
-      await execBuffered(this, `mkdir -p ${expandTildeForSSH(parentDir)}`, {
-        cwd: "/tmp",
-        timeout: 10,
-        abortSignal,
-      });
-      const initResult = await execBuffered(this, `git init --bare ${baseRepoPathArg}`, {
-        cwd: "/tmp",
-        timeout: 30,
-        abortSignal,
-      });
-      if (initResult.exitCode !== 0) {
-        throw new Error(`Failed to create base repo: ${initResult.stderr || initResult.stdout}`);
+    if (result.exitCode !== 0) {
+      throw new Error(
+        `Failed to ensure base repo: ${result.stderr.trim() || result.stdout.trim() || `exit ${result.exitCode}`}`
+      );
+    }
+
+    const created = /STATUS_CREATED=created/.test(result.stdout);
+    const coreBareStatus = /STATUS_CORE_BARE=(\w+)/.exec(result.stdout)?.[1];
+
+    if (created) {
+      initLogger.logStep("Created shared base repository");
+    }
+
+    if (coreBareStatus === "unset") {
+      initLogger.logStep("Normalized shared base repository config for worktrees");
+    } else if (coreBareStatus === "error") {
+      // Fall back to the slow-path retry helper, which handles lock conflicts
+      // by re-trying with backoff and inspecting whether the key is still set.
+      const normalized = await this.normalizeBaseRepoSharedConfig(baseRepoPathArg, abortSignal);
+      if (normalized) {
+        initLogger.logStep("Normalized shared base repository config for worktrees");
       }
     }
+    // STATUS_CORE_BARE=absent: nothing to do.
 
-    const normalizedConfig = await this.normalizeBaseRepoSharedConfig(baseRepoPathArg, abortSignal);
-    if (normalizedConfig) {
-      initLogger.logStep("Normalized shared base repository config for worktrees");
-    }
-
-    // Defensively neuter partial-clone configuration on every init so that
-    // legacy bare repos populated by older Mux versions stop tripping the
-    // upstream `check_connected()` sideband deadlock on the very first
-    // push (instead of only after a retry-driven repair pass).
-    await this.stripBaseRepoPromisorConfig(baseRepoPathArg, abortSignal);
-
-    return baseRepoPathArg;
+    return { baseRepoPathArg, freshlyCreated: created };
   }
 
   /**
@@ -1077,8 +1133,21 @@ export class SSHRuntime extends RemoteRuntime {
     baseRepoPathArg: string,
     initLogger: InitLogger,
     abortSignal?: AbortSignal
-  ): Promise<void> {
-    // Ensure the remote base repo knows where origin is before fetching.
+  ): Promise<{ refreshedOrigin: boolean }> {
+    // Skip the entire prefetch dance when the local project has no `origin`
+    // remote. The fetch is *guaranteed* to fail in that case (no origin URL
+    // gets propagated to the remote base repo by `refreshBaseRepoOrigin`), and
+    // each SSH round-trip costs ~80–100ms on a fresh connection. On a cold SSH
+    // workspace startup against a project without `origin` (e.g. `mux run` on
+    // a scratch repo, local-only project, or fresh clone with no remote), this
+    // single guard removes ~500ms of pure overhead from the critical path.
+    const { originUrl } = await this.getOriginUrlForSync(projectPath, initLogger);
+    if (!originUrl) {
+      return { refreshedOrigin: false };
+    }
+
+    // Local has an origin; propagate it to the remote base repo so the fetch
+    // below has somewhere to pull from.
     await this.refreshBaseRepoOrigin(projectPath, baseRepoPathArg, initLogger, abortSignal);
 
     try {
@@ -1101,6 +1170,7 @@ export class SSHRuntime extends RemoteRuntime {
       // push will still transfer all required objects.
       initLogger.logStep("Pre-fetch from origin skipped (not reachable)");
     }
+    return { refreshedOrigin: true };
   }
 
   override async ensureReady(options?: EnsureReadyOptions): Promise<EnsureReadyResult> {
@@ -1677,11 +1747,22 @@ export class SSHRuntime extends RemoteRuntime {
     const currentSnapshotPath = layout.currentSnapshotPath;
     const useNativeGitPush = this.transport instanceof OpenSSHTransport;
     const snapshotDigest = await this.computeSnapshotDigest(projectPath);
-    const baseRepoPathArg = await this.ensureBaseRepo(projectPath, initLogger, abortSignal);
+    const { baseRepoPathArg, freshlyCreated } = await this.ensureBaseRepo(
+      projectPath,
+      initLogger,
+      abortSignal
+    );
 
     // Treat the shared bare repo as a managed cache: verify its health before
     // we ask Git to negotiate another sync against a fragmented object store.
-    await this.ensureHealthyBaseRepoForSync(baseRepoPathArg, initLogger, abortSignal);
+    //
+    // STARTUP-PERF: When ensureBaseRepo just created the bare repo, we know
+    // it has zero packs — there is nothing to be fragmented yet. Skip the
+    // remote `count-objects -v` probe (~80-100ms SSH round-trip) on the cold
+    // path; the next sync against a populated repo will run it normally.
+    if (!freshlyCreated) {
+      await this.ensureHealthyBaseRepoForSync(baseRepoPathArg, initLogger, abortSignal);
+    }
 
     const snapshotStatusCheck = await execBuffered(
       this,
@@ -1725,6 +1806,7 @@ export class SSHRuntime extends RemoteRuntime {
       );
     }
 
+    let originAlreadyRefreshed = false;
     if (useNativeGitPush) {
       // Pre-populate the remote base repo with objects from origin before the
       // local→remote push. The SSH host's datacenter connection is typically
@@ -1733,7 +1815,13 @@ export class SSHRuntime extends RemoteRuntime {
       // small incremental transfer instead of a full repo upload.
       // Only useful for git-push sync — bundle sync uploads a fresh local bundle
       // that can't reuse remote objects, so the prefetch would be wasted I/O.
-      await this.prefetchOriginOnRemote(projectPath, baseRepoPathArg, initLogger, abortSignal);
+      const prefetchResult = await this.prefetchOriginOnRemote(
+        projectPath,
+        baseRepoPathArg,
+        initLogger,
+        abortSignal
+      );
+      originAlreadyRefreshed = prefetchResult.refreshedOrigin;
 
       await this.syncProjectSnapshotViaGitPush(
         projectPath,
@@ -1756,7 +1844,11 @@ export class SSHRuntime extends RemoteRuntime {
 
     // Keep the bare base repo's origin aligned with the local project so later
     // fetchOriginTrunk() calls base new worktrees on the intended remote.
-    await this.refreshBaseRepoOrigin(projectPath, baseRepoPathArg, initLogger, abortSignal);
+    // Skip when prefetchOriginOnRemote already pushed the same origin URL this
+    // pass — saves one SSH round-trip on every cold sync.
+    if (!originAlreadyRefreshed) {
+      await this.refreshBaseRepoOrigin(projectPath, baseRepoPathArg, initLogger, abortSignal);
+    }
 
     const currentSnapshotWriter = this.writeFile(currentSnapshotPath).getWriter();
     try {
@@ -1901,7 +1993,7 @@ export class SSHRuntime extends RemoteRuntime {
       // or submodule sync run. Re-enter ensureBaseRepo() here so older shared repos still get their
       // local core.bare config normalized before we reuse them for a fresh worktree checkout.
       const baseRepoPath = this.getBaseRepoPath(projectPath);
-      const baseRepoPathArg = await this.ensureBaseRepo(projectPath, initLogger, abortSignal);
+      const { baseRepoPathArg } = await this.ensureBaseRepo(projectPath, initLogger, abortSignal);
 
       // Fetch latest from origin in the base repo so an explicit Source branch
       // means the upstream branch, not the local snapshot staged in refs/mux-bundle/*.

@@ -71,7 +71,8 @@ import { log, type LogLevel } from "../node/services/log";
 import chalk from "chalk";
 import type { InitLogger, WorkspaceInitResult } from "../node/runtime/Runtime";
 import { DockerRuntime } from "../node/runtime/DockerRuntime";
-import { runFullInit } from "../node/runtime/runtimeFactory";
+import { createRuntime, runFullInit } from "../node/runtime/runtimeFactory";
+import type { Runtime } from "../node/runtime/Runtime";
 import { execSync } from "child_process";
 import { getParseOptions } from "./argv";
 import { EXPERIMENT_IDS } from "../common/constants/experiments";
@@ -138,13 +139,40 @@ function generateWorkspaceId(): string {
   return `run-${timestamp}-${random}`;
 }
 
-function makeCliInitLogger(writeHumanLine: (text?: string) => void): InitLogger {
+/**
+ * Init logger that prepends elapsed/delta timestamps to each step so `mux run`
+ * can double as a startup-timing harness (especially useful for SSH workspaces
+ * where the slowest phases are hidden inside multi-second remote operations).
+ *
+ * Format: `[+12.3s +4.5s] message`
+ *   - first number: ms since the timed logger was created
+ *   - second number: ms since the previous logStep call
+ */
+function makeTimedCliInitLogger(writeHumanLine: (text?: string) => void): InitLogger {
+  const start = Date.now();
+  let lastStep = start;
+  const fmt = (ms: number): string => {
+    if (ms >= 10_000) return `${(ms / 1000).toFixed(1)}s`;
+    if (ms >= 1_000) return `${(ms / 1000).toFixed(2)}s`;
+    return `${ms}ms`;
+  };
   return {
-    logStep: (msg) => writeHumanLine(`  ${msg}`),
+    logStep: (msg) => {
+      const now = Date.now();
+      const stepMs = now - lastStep;
+      const totalMs = now - start;
+      lastStep = now;
+      writeHumanLine(`  [+${fmt(totalMs)} Δ${fmt(stepMs)}] ${msg}`);
+    },
     logStdout: (line) => writeHumanLine(`  ${line}`),
     logStderr: (line) => writeHumanLine(`  [stderr] ${line}`),
     logComplete: (exitCode) => {
-      if (exitCode !== 0) writeHumanLine(`  Init completed with exit code ${exitCode}`);
+      const totalMs = Date.now() - start;
+      if (exitCode !== 0) {
+        writeHumanLine(`  [+${fmt(totalMs)}] Init completed with exit code ${exitCode}`);
+      } else {
+        writeHumanLine(`  [+${fmt(totalMs)}] Init complete`);
+      }
     },
   };
 }
@@ -518,10 +546,24 @@ async function main(): Promise<number> {
   // instead of creating a duplicate.
   workspaceService.registerSession(workspaceId, session);
 
-  // For Docker runtime, create and initialize the container first
+  // For runtimes that need an actual workspace materialized before the agent
+  // can run (Docker container, SSH remote checkout), create + init it now so
+  // the agent's first tool call doesn't fail with "runtime not ready".
+  //
+  // The init logger is timed (`makeTimedCliInitLogger`) so `mux run --verbose`
+  // doubles as a startup-timing harness: each step is annotated with elapsed
+  // total + delta-since-last-step, making it easy to see which remote phase
+  // (sync / fetch / worktree add / hook) dominates startup latency.
   let workspacePath = projectDir;
-  if (runtimeConfig.type === "docker") {
-    const runtime = new DockerRuntime(runtimeConfig);
+  if (runtimeConfig.type === "docker" || runtimeConfig.type === "ssh") {
+    const runtime: Runtime =
+      runtimeConfig.type === "docker"
+        ? new DockerRuntime(runtimeConfig)
+        : createRuntime(runtimeConfig, {
+            projectPath: projectDir,
+            workspaceName: workspaceId,
+          });
+
     // Use a sanitized branch name (CLI runs are typically one-off, no real branch needed)
     const branchName = `cli-${workspaceId.replace(/[^a-zA-Z0-9-]/g, "-")}`;
 
@@ -545,7 +587,10 @@ async function main(): Promise<number> {
         (entry): entry is [string, string] => typeof entry[1] === "string"
       )
     );
-    const initLogger = makeCliInitLogger(writeHumanLine);
+    // Use the timed logger so --verbose surfaces per-phase startup latency.
+    const initLogger = makeTimedCliInitLogger(writeHumanLine);
+    const overallStartedAt = Date.now();
+    const createStartedAt = Date.now();
     const createResult = await runtime.createWorkspace({
       projectPath: projectDir,
       branchName,
@@ -555,12 +600,16 @@ async function main(): Promise<number> {
       env: createEnv,
       trusted,
     });
+    log.info(`[startup-perf] createWorkspace: ${Date.now() - createStartedAt}ms`);
     if (!createResult.success) {
-      console.error(`Failed to create Docker workspace: ${createResult.error ?? "unknown error"}`);
+      console.error(
+        `Failed to create ${runtimeConfig.type} workspace: ${createResult.error ?? "unknown error"}`
+      );
       process.exit(1);
     }
 
     // Use runFullInit to ensure postCreateSetup runs before initWorkspace
+    const initStartedAt = Date.now();
     let initResult: WorkspaceInitResult;
     try {
       initResult = await runFullInit(runtime, {
@@ -578,17 +627,20 @@ async function main(): Promise<number> {
       initLogger.logComplete(-1);
       initResult = { success: false, error: errorMessage };
     }
+    log.info(`[startup-perf] runFullInit: ${Date.now() - initStartedAt}ms`);
+    log.info(`[startup-perf] total create+init: ${Date.now() - overallStartedAt}ms`);
     if (!initResult.success) {
-      // Clean up orphaned container
+      // Best-effort cleanup of any orphaned container / remote checkout so a
+      // failed run doesn't leak resources on subsequent invocations.
       // eslint-disable-next-line @typescript-eslint/no-empty-function
       await runtime.deleteWorkspace(projectDir, branchName, true).catch(() => {});
       console.error(
-        `Failed to initialize Docker workspace: ${initResult.error ?? "unknown error"}`
+        `Failed to initialize ${runtimeConfig.type} workspace: ${initResult.error ?? "unknown error"}`
       );
       process.exit(1);
     }
 
-    // Docker workspacePath is /src; projectName stays as original
+    // Docker maps to /src in-container; SSH returns the remote checkout path.
     workspacePath = createResult.workspacePath!;
   }
 
