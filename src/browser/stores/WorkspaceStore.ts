@@ -1,7 +1,7 @@
 import assert from "@/common/utils/assert";
 import type { MuxMessage, DisplayedMessage, QueuedMessage } from "@/common/types/message";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import type { GoalSnapshot } from "@/common/types/goal";
+import { isGoalPendingPersistence, type GoalSnapshot } from "@/common/types/goal";
 import type {
   WorkspaceActivitySnapshot,
   WorkspaceChatMessage,
@@ -2480,7 +2480,7 @@ export class WorkspaceStore {
 
   private refreshActiveGoalCount(): void {
     const nextCount = Array.from(this.workspaceActivity.values()).filter(
-      (snapshot) => snapshot.goal?.status === "active"
+      (snapshot) => snapshot.goal?.status === "active" && !isGoalPendingPersistence(snapshot.goal)
     ).length;
     if (nextCount === this.activeGoalCount) {
       return;
@@ -2495,6 +2495,12 @@ export class WorkspaceStore {
     snapshot: WorkspaceActivitySnapshot | null
   ): void {
     const previous = this.workspaceActivity.get(workspaceId) ?? null;
+
+    if (snapshot?.transientGoalOnly === true) {
+      const snapshotWithoutHint: WorkspaceActivitySnapshot = { ...snapshot };
+      delete snapshotWithoutHint.transientGoalOnly;
+      snapshot = previous ? { ...previous, goal: snapshot.goal } : snapshotWithoutHint;
+    }
 
     if (snapshot) {
       this.workspaceActivity.set(workspaceId, snapshot);
@@ -2519,7 +2525,8 @@ export class WorkspaceStore {
       previous?.goal?.costCents !== snapshot?.goal?.costCents ||
       previous?.goal?.turnsUsed !== snapshot?.goal?.turnsUsed ||
       previous?.goal?.budgetCents !== snapshot?.goal?.budgetCents ||
-      previous?.goal?.turnCap !== snapshot?.goal?.turnCap;
+      previous?.goal?.turnCap !== snapshot?.goal?.turnCap ||
+      previous?.goal?.pendingPersistence !== snapshot?.goal?.pendingPersistence;
 
     if (!changed) {
       return;

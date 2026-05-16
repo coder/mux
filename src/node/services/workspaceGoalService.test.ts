@@ -19,6 +19,14 @@ import {
   waitForCondition,
 } from "./testDispatchHelpers";
 
+function captureGoalActivity(service: WorkspaceGoalService) {
+  const snapshots: Array<
+    NonNullable<Awaited<ReturnType<ExtensionMetadataService["getSnapshot"]>>>
+  > = [];
+  service.setOnActivityChange((_workspaceId, snapshot) => snapshots.push(snapshot));
+  return snapshots;
+}
+
 async function setGoalOk(
   service: WorkspaceGoalService,
   input: Parameters<WorkspaceGoalService["setGoal"]>[0]
@@ -825,6 +833,7 @@ describe("WorkspaceGoalService", () => {
       objective: "Original objective",
     });
 
+    const activityUpdates = captureGoalActivity(service);
     // Simulate a setGoal arriving mid-stream (this queues a pending
     // mutation in `pendingGoalMutations` because the workspace is streaming).
     // Override the private streaming check so setGoal hits the queueing path.
@@ -840,11 +849,20 @@ describe("WorkspaceGoalService", () => {
         expectedGoalId: created.goalId,
       });
       expect(queued.success).toBe(true);
+      expect(activityUpdates.at(-1)).toMatchObject({
+        goal: { objective: "Should be dropped after user stop", pendingPersistence: true },
+      });
+      expect(await extensionMetadata.getSnapshot(workspaceId)).toMatchObject({
+        goal: { goalId: created.goalId, objective: "Original objective" },
+      });
     } finally {
       serviceAccess.isWorkspaceStreaming = isStreamingOriginal;
     }
 
     await service.recordUserStoppedStream(workspaceId, created.createdAtMs + 5_000);
+    expect(await extensionMetadata.getSnapshot(workspaceId)).toMatchObject({
+      goal: { goalId: created.goalId, objective: "Original objective" },
+    });
 
     // applyPendingAfterStreamEnd should now be a no-op — the queued mutation
     // was discarded along with the continuation candidate.
@@ -1300,7 +1318,7 @@ describe("WorkspaceGoalService", () => {
     // setGoalImmediately, it would surface as an unhandled-rejection
     // process crash under `--unhandled-rejections=throw`. The fix wraps the
     // call in try/catch and logs+returns null so the pipeline stays alive.
-    await setGoalOk(service, { workspaceId, objective: "Original" });
+    const original = await setGoalOk(service, { workspaceId, objective: "Original" });
     await setGoalOk(service, { workspaceId, status: "paused" });
 
     // Force the streaming-branch path so the next setGoal queues a
@@ -1315,6 +1333,9 @@ describe("WorkspaceGoalService", () => {
       status: "paused",
     });
     expect(queueResult.success).toBe(true);
+    expect(await extensionMetadata.getSnapshot(workspaceId)).toMatchObject({
+      goal: { objective: "Original", status: "paused" },
+    });
     await extensionMetadata.setStreaming(workspaceId, false);
 
     // Without the fix, this rejection would propagate out of the async
@@ -1326,21 +1347,106 @@ describe("WorkspaceGoalService", () => {
       objective: "Original",
       status: "paused",
     });
+    expect(await extensionMetadata.getSnapshot(workspaceId)).toMatchObject({
+      goal: { goalId: original.goalId, objective: "Original", status: "paused" },
+    });
   });
 
   test("queues mid-stream objective changes and drains them after stream end", async () => {
     await extensionMetadata.setStreaming(workspaceId, true);
 
+    const activityUpdates = captureGoalActivity(service);
+
     const projected = await setGoalOk(service, { workspaceId, objective: "Queued goal" });
 
     expect(projected.objective).toBe("Queued goal");
+    // Mid-stream goals are not durable until stream accounting drains, but the
+    // activity snapshot feeds the Goal panel and should update immediately.
+    expect(activityUpdates.at(-1)).toMatchObject({
+      goal: { goalId: projected.goalId, objective: "Queued goal", pendingPersistence: true },
+    });
+    expect(await extensionMetadata.getSnapshot(workspaceId)).toMatchObject({ goal: null });
     expect(await service.getGoal(workspaceId)).toBeNull();
+    expect(activityUpdates.at(-1)).toMatchObject({
+      goal: { goalId: projected.goalId, objective: "Queued goal", pendingPersistence: true },
+    });
+    expect(await extensionMetadata.getSnapshot(workspaceId)).toMatchObject({ goal: null });
 
     await extensionMetadata.setStreaming(workspaceId, false);
     const drained = await service.applyPendingAfterStreamEnd(workspaceId);
 
     expect(drained?.objective).toBe("Queued goal");
     expect(await service.getGoal(workspaceId)).toMatchObject({ objective: "Queued goal" });
+    const drainedSnapshot = await extensionMetadata.getSnapshot(workspaceId);
+    expect(drainedSnapshot).toMatchObject({
+      goal: { goalId: drained?.goalId, objective: "Queued goal" },
+    });
+    expect(drainedSnapshot?.goal?.pendingPersistence).toBeUndefined();
+  });
+
+  test("rejects follow-up mutations while a mid-stream goal snapshot is pending", async () => {
+    await extensionMetadata.setStreaming(workspaceId, true);
+    const activityUpdates = captureGoalActivity(service);
+
+    const queued = await service.setGoal({ workspaceId, objective: "Queued goal" });
+    expect(queued.success).toBe(true);
+    expect(activityUpdates.at(-1)).toMatchObject({
+      goal: { objective: "Queued goal", pendingPersistence: true },
+    });
+
+    const budgetResult = await service.setGoal({ workspaceId, budgetCents: 500 });
+    expect(budgetResult.success).toBe(false);
+    if (!budgetResult.success) {
+      expect(budgetResult.error).toMatchObject({ type: "invalid_transition" });
+    }
+    expect(await service.getGoal(workspaceId)).toBeNull();
+    expect(await service.previewStreamAccounting({ workspaceId, costUsd: 1 })).toMatchObject({
+      objective: "Queued goal",
+      pendingPersistence: true,
+    });
+  });
+
+  test("successful no-op queued drains clear the pending snapshot", async () => {
+    const created = await setGoalOk(service, { workspaceId, objective: "Existing goal" });
+    await extensionMetadata.setStreaming(workspaceId, true);
+
+    const activityUpdates = captureGoalActivity(service);
+    const queued = await service.setGoal({ workspaceId, objective: "Existing goal" });
+    expect(queued.success).toBe(true);
+    expect(activityUpdates.at(-1)).toMatchObject({
+      goal: { objective: "Existing goal", pendingPersistence: true },
+    });
+
+    await extensionMetadata.setStreaming(workspaceId, false);
+    const drained = await service.applyPendingAfterStreamEnd(workspaceId);
+
+    expect(drained?.goalId).toBe(created.goalId);
+    const snapshot = await extensionMetadata.getSnapshot(workspaceId);
+    expect(snapshot).toMatchObject({
+      goal: { goalId: created.goalId, objective: "Existing goal" },
+    });
+    expect(snapshot?.goal?.pendingPersistence).toBeUndefined();
+  });
+
+  test("user stop clears queued mid-stream goal snapshot with no persisted goal", async () => {
+    await extensionMetadata.setStreaming(workspaceId, true);
+
+    const activityUpdates = captureGoalActivity(service);
+    const projected = await setGoalOk(service, { workspaceId, objective: "Dropped kickoff goal" });
+    expect(activityUpdates.at(-1)).toMatchObject({
+      goal: {
+        goalId: projected.goalId,
+        objective: "Dropped kickoff goal",
+        pendingPersistence: true,
+      },
+    });
+    expect(await extensionMetadata.getSnapshot(workspaceId)).toMatchObject({ goal: null });
+
+    await service.recordUserStoppedStream(workspaceId, projected.createdAtMs + 5_000);
+
+    expect(await service.applyPendingAfterStreamEnd(workspaceId)).toBeNull();
+    expect(await service.getGoal(workspaceId)).toBeNull();
+    expect(await extensionMetadata.getSnapshot(workspaceId)).toMatchObject({ goal: null });
   });
 
   test("rejects queued mid-stream budgeted goals when kickoff model has no pricing", async () => {
@@ -1807,6 +1913,32 @@ describe("WorkspaceGoalService", () => {
     expect(await extensionMetadata.getSnapshot(workspaceId)).toMatchObject({
       goal: { costCents: 125, budgetCents: 2_000 },
     });
+  });
+
+  test("previewStreamAccounting preserves queued replacement snapshots", async () => {
+    const created = await setGoalOk(service, { workspaceId, objective: "Old goal" });
+    await extensionMetadata.setStreaming(workspaceId, true);
+    const queued = await service.setGoal({
+      workspaceId,
+      objective: "Queued replacement goal",
+      expectedGoalId: created.goalId,
+    });
+    expect(queued.success).toBe(true);
+
+    const preview = await service.previewStreamAccounting({
+      workspaceId,
+      costUsd: 1.25,
+      streamStartedAtMs: created.createdAtMs + 1,
+    });
+
+    expect(preview).toMatchObject({
+      objective: "Queued replacement goal",
+      pendingPersistence: true,
+    });
+    expect(await extensionMetadata.getSnapshot(workspaceId)).toMatchObject({
+      goal: { goalId: created.goalId, objective: "Old goal" },
+    });
+    expect(await service.getGoal(workspaceId)).toMatchObject({ objective: "Old goal" });
   });
 
   test("previewStreamAccounting skips paused goals, compactions, and stale streams", async () => {
