@@ -2062,9 +2062,18 @@ export class SSHRuntime extends RemoteRuntime {
    * Why this matters: the slow path takes ~9 sequential SSH round-trips. Each
    * SSH command is ~80ms even on a multiplexed control channel, so just the
    * call overhead totals ~720ms before any real work. By fusing the probe +
-   * materialize into a single shell pipeline, we collapse that to a single
-   * round-trip (~120ms), bringing warm workspace creates well under the
-   * 2× SSH-RTT envelope.
+   * (optional origin fetch) + materialize into a single shell pipeline, we
+   * collapse that to a single client→host round-trip, keeping warm workspace
+   * creates well under the slow path's wall-clock budget.
+   *
+   * Origin freshness: when the local project has an `origin` remote, the
+   * fused script *also* runs `git fetch origin <trunkBranch>` on the host
+   * before `git worktree add`. The new worktree then bases on
+   * `refs/remotes/origin/<trunkBranch>` (matching the slow path's
+   * `resolveFreshWorkspaceSourceBase` semantics) and falls back to the
+   * bundle ref when the fetch fails. The fetch traverses the host's
+   * upstream link, not the client's SSH link, so it does not add a
+   * client-side round-trip.
    *
    * Returns true on a successful warm materialization. Returns false on miss
    * (and the caller falls through to the slow path). Throws only on
@@ -2075,8 +2084,8 @@ export class SSHRuntime extends RemoteRuntime {
    *   - no-base-repo          : shared base repo doesn't exist yet (cold start)
    *   - snapshot-marker-missing: snapshot identity file isn't present
    *   - snapshot-digest-drift : local refs have moved since last sync
-   *   - manifest-drift        : remote `refs/mux-bundle/*` tips don't match local
    *   - workspace-exists      : target workspace path already populated
+   *   - no-bundle-ref         : no bundle ref *and* no origin tracking ref available
    *   - worktree-add-failed   : git worktree add returned non-zero
    */
   /**
@@ -2089,7 +2098,7 @@ export class SSHRuntime extends RemoteRuntime {
     params: WorkspaceInitParams,
     nhp: string
   ): Promise<{ gitmodulesPresent: boolean } | null> {
-    const { projectPath, branchName, workspacePath, initLogger, abortSignal } = params;
+    const { projectPath, branchName, trunkBranch, workspacePath, initLogger, abortSignal } = params;
 
     // Local prerequisites — all computed without any SSH calls.
     //
@@ -2123,15 +2132,50 @@ export class SSHRuntime extends RemoteRuntime {
       workspacePath.includes("/") ? workspacePath.substring(0, workspacePath.lastIndexOf("/")) : "~"
     );
 
+    // CORRECTNESS (origin-freshness): When the local project has an `origin`
+    // remote, the slow path always prefers `origin/<trunkBranch>` over the
+    // bundle ref so new workspaces base on the freshest upstream tip — see
+    // `resolveFreshWorkspaceSourceBase()`. The warm path must match this or
+    // it would silently check out a stale local snapshot when upstream has
+    // advanced. We fold the same `git fetch origin <trunk>` into the fused
+    // SSH script (single round-trip on the wire; the network hop to the
+    // upstream stays on the datacenter side, so adding it preserves the
+    // single-SSH-RTT envelope on the *client* side).
+    const { originUrl } = await this.getOriginUrlForSync(projectPath, initLogger);
+
     // The remote bundle ref to base the worktree on. Prefer an exact match for
     // the requested branch (most projects use `main` or the trunk branch name
     // as the bundle ref), and we can let the remote script pick the first
     // available bundle ref as a fallback.
-    const bundleRefArg = shescape.quote(`${BUNDLE_REF_PREFIX}${params.trunkBranch}`);
+    const bundleRefArg = shescape.quote(`${BUNDLE_REF_PREFIX}${trunkBranch}`);
     const bundleRefFallbackPrefix = shescape.quote(BUNDLE_REF_PREFIX);
 
     const branchArg = shescape.quote(branchName);
     const digestArg = shescape.quote(snapshotDigest);
+    const trunkRefspecArg = shescape.quote(
+      `+refs/heads/${trunkBranch}:refs/remotes/origin/${trunkBranch}`
+    );
+    const trunkTrackingRefArg = shescape.quote(`refs/remotes/origin/${trunkBranch}`);
+    const originUrlArg = originUrl ? shescape.quote(originUrl) : null;
+
+    // Origin-freshness preamble (only when local has an `origin` URL):
+    //   1. Realign the remote base repo's `origin` URL with local — handles
+    //      the rare case where the user changed origin between syncs. Both
+    //      `remote set-url` and the fallback `remote add` are idempotent and
+    //      cost no network I/O.
+    //   2. Best-effort `git fetch origin +refs/heads/<trunk>:refs/remotes/origin/<trunk>`.
+    //      This mirrors `fetchOriginTrunk()` in the slow path: failure is
+    //      tolerated (logged via `fo=0`) and the worktree falls back to the
+    //      bundle ref, exactly like `resolveFreshWorkspaceSourceBase()` does
+    //      when `fetchedOrigin` is false. The fetch runs on the SSH host, so
+    //      its latency is upstream→datacenter (typically fast, and the same
+    //      cost the slow path pays separately).
+    const originPreamble = originUrlArg
+      ? [
+          `git -C ${baseRepoPathArg} remote set-url origin ${originUrlArg} 2>/dev/null || git -C ${baseRepoPathArg} remote add origin ${originUrlArg} >/dev/null 2>&1 || true`,
+          `if ${nhp}git -C ${baseRepoPathArg} fetch --quiet origin ${trunkRefspecArg} 2>/dev/null; then fo=1; else fo=0; fi`,
+        ]
+      : ["fo=0"];
 
     // Tight script: every byte matters because the script body is shipped
     // over the SSH wire on every warm probe. We avoid temp files, capture
@@ -2145,10 +2189,19 @@ export class SSHRuntime extends RemoteRuntime {
       `read -r s < ${currentSnapshotPathArg} || true`,
       `[ "$s" = ${digestArg} ] || { echo WARM_MISS:snapshot-digest-drift; exit 0; }`,
       `test -e ${workspacePathArg} && { echo WARM_MISS:workspace-exists; exit 0; }`,
-      // Bundle ref: prefer the trunk; otherwise grab the first available one.
-      `r=${bundleRefArg}`,
-      `git -C ${baseRepoPathArg} rev-parse --verify "$r" >/dev/null 2>&1 || r=$(git -C ${baseRepoPathArg} for-each-ref --count=1 --format='%(refname)' ${bundleRefFallbackPrefix})`,
-      `[ -n "$r" ] || { echo WARM_MISS:no-bundle-ref; exit 0; }`,
+      // Optional origin fetch (preserves slow-path origin-freshness).
+      ...originPreamble,
+      // Choose the worktree base ref. Prefer freshly-fetched
+      // `refs/remotes/origin/<trunk>` whenever the fetch succeeded; otherwise
+      // fall back to the local-snapshot bundle ref, matching
+      // resolveFreshWorkspaceSourceBase()'s fallback semantics.
+      `if [ "$fo" = "1" ] && git -C ${baseRepoPathArg} rev-parse --verify ${trunkTrackingRefArg} >/dev/null 2>&1; then`,
+      `  r=${trunkTrackingRefArg}`,
+      "else",
+      `  r=${bundleRefArg}`,
+      `  git -C ${baseRepoPathArg} rev-parse --verify "$r" >/dev/null 2>&1 || r=$(git -C ${baseRepoPathArg} for-each-ref --count=1 --format='%(refname)' ${bundleRefFallbackPrefix})`,
+      `  [ -n "$r" ] || { echo WARM_MISS:no-bundle-ref; exit 0; }`,
+      "fi",
       // Materialize.
       `mkdir -p ${workspaceParentArg}`,
       `${nhp}git -C ${baseRepoPathArg} worktree add ${workspacePathArg} -B ${branchArg} "$r" >/dev/null 2>&1 || { echo WARM_MISS:worktree-add-failed; exit 0; }`,
@@ -2160,7 +2213,7 @@ export class SSHRuntime extends RemoteRuntime {
     initLogger.logStep("Probing for warm-cached remote workspace...");
     const result = await execBuffered(this, script, {
       cwd: "/tmp",
-      timeout: 60,
+      timeout: 120,
       abortSignal,
     });
 
@@ -2178,6 +2231,14 @@ export class SSHRuntime extends RemoteRuntime {
     }
 
     const gitmodulesPresent = stdout.includes("GITMODULES=present");
+    // Mirror the slow path's snapshot-reuse log line — semantically the warm
+    // path *is* reusing the remote project snapshot (digest match → bundle/
+    // origin-trunk tip already on the host), just with the materialization
+    // fused into the same round-trip. Keeping the same step text means
+    // downstream tooling (and tests like
+    // "initWorkspace reuses snapshots and preserves remote-only tags...")
+    // continue to observe a consistent lifecycle event.
+    initLogger.logStep("Reusing existing remote project snapshot");
     initLogger.logStep(`Materialized workspace via warm fast-path (branch: ${branchName})`);
     return { gitmodulesPresent };
   }
