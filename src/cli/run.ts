@@ -104,7 +104,24 @@ function parseRuntimeConfig(value: string | undefined, srcBaseDir: string): Runt
     case RUNTIME_MODE.WORKTREE:
       return { type: "worktree", srcBaseDir };
     case RUNTIME_MODE.SSH:
-      return { type: "ssh", host: parsed.host, srcBaseDir };
+      // STARTUP-PERF: Use a STABLE remote `srcBaseDir` (default: `~/mux`,
+      // matching the desktop app) instead of the CLI's ephemeral temp dir.
+      //
+      // The remote `baseRepoPath` is derived as
+      //     <srcBaseDir>/<projectId>/.mux-base.git
+      // where `projectId` is keyed by the *local* project path. If
+      // `srcBaseDir` is ephemeral (a fresh `mux-run-*` temp dir per
+      // invocation), every CLI run gets a brand-new remote base repo even
+      // when running back-to-back against the same SSH host + project, so
+      // every run pays the full cold-init cost (git init, push, fetch,
+      // worktree-add ~2.2s).
+      //
+      // Anchoring `srcBaseDir` to the stable `~/mux` location lets the second
+      // and subsequent `mux run` invocations reuse the existing shared base
+      // repo on the remote, hitting the warm path
+      // (`Reusing existing remote project snapshot`) — a single bounded SSH
+      // round-trip instead of a full create + sync + push.
+      return { type: "ssh", host: parsed.host, srcBaseDir: "~/mux" };
     case RUNTIME_MODE.DOCKER:
       return { type: "docker", image: parsed.image };
     default:
@@ -414,7 +431,7 @@ async function main(): Promise<number> {
   await ensureDirectory(projectDir);
 
   const model: string = resolveModelAlias(opts.model);
-  const runtimeConfig = parseRuntimeConfig(opts.runtime, config.srcDir);
+  let runtimeConfig = parseRuntimeConfig(opts.runtime, config.srcDir);
   // Resolve thinking: numeric indices map to the model's allowed levels (0 = lowest)
   const thinkingLevel = resolveThinkingInput(parseThinkingLevel(opts.thinking), model);
   const initialMode = parseMode(opts.mode);
@@ -556,6 +573,25 @@ async function main(): Promise<number> {
   // (sync / fetch / worktree add / hook) dominates startup latency.
   let workspacePath = projectDir;
   if (runtimeConfig.type === "docker" || runtimeConfig.type === "ssh") {
+    // STARTUP-PERF: For SSH runtimes with a tilde-prefixed `srcBaseDir`
+    // (e.g. `~/mux`), resolve the tilde to an absolute remote path *once*
+    // up-front. This mirrors the desktop app's WORKSPACE_CREATE IPC handler
+    // (see `workspaceService.ts:2258`): persisting `~/mux/...` directly is
+    // wrong because `path.resolve()` inside `session.ensureMetadata()`
+    // expands tildes against the local cwd, producing nonsense like
+    // `/Users/.../~/mux/...` that subsequently fails SSH path validation.
+    // Resolving first makes the runtime config self-consistent and lets
+    // subsequent `mux run` invocations reuse the same stable shared base
+    // repo on the remote (warm fast-path).
+    if (runtimeConfig.type === "ssh" && runtimeConfig.srcBaseDir.startsWith("~")) {
+      const probeRuntime = createRuntime(runtimeConfig, {
+        projectPath: projectDir,
+        workspaceName: workspaceId,
+      });
+      const resolvedSrcBaseDir = await probeRuntime.resolvePath(runtimeConfig.srcBaseDir);
+      runtimeConfig = { ...runtimeConfig, srcBaseDir: resolvedSrcBaseDir };
+    }
+
     const runtime: Runtime =
       runtimeConfig.type === "docker"
         ? new DockerRuntime(runtimeConfig)

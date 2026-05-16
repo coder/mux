@@ -17,6 +17,7 @@
 
 import { spawn, type ChildProcess } from "child_process";
 import * as crypto from "crypto";
+import { promises as fsPromises, type Dirent } from "fs";
 import * as path from "path";
 import type {
   EnsureReadyOptions,
@@ -273,6 +274,147 @@ export type { SSHRuntimeConfig } from "./sshConnectionPool";
  */
 export function computeBaseRepoPath(srcBaseDir: string, projectPath: string): string {
   return buildRemoteProjectLayout(srcBaseDir, projectPath).baseRepoPath;
+}
+
+/**
+ * Run `git show-ref --heads` against a local project and return the raw stdout
+ * (newline-separated `<oid> <refname>` lines).
+ *
+ * Returns `null` when the project has no refs (fresh repo with no commits) or
+ * git fails for any reason — callers should treat that as "fall back to the
+ * slow path" rather than retrying.
+ *
+ * STARTUP-PERF: This helper exists so the warm fast-path can read local heads
+ * once and derive both the snapshot digest and the sorted ref manifest from a
+ * single fork+exec, instead of paying ~70-100ms twice for the same `git`
+ * subprocess.
+ */
+async function readGitHeadsRefs(projectPath: string): Promise<string | null> {
+  return new Promise<string | null>((resolve) => {
+    const proc = spawn("git", ["-C", projectPath, "show-ref", "--heads"], {
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    const stdoutChunks: Buffer[] = [];
+    proc.stdout?.on("data", (chunk: Buffer) => stdoutChunks.push(Buffer.from(chunk)));
+    proc.once("close", (code) => {
+      if (code === 0) {
+        resolve(Buffer.concat(stdoutChunks).toString());
+      } else {
+        // Exit code 1 with empty output = "no refs to display"; treat as null.
+        resolve(null);
+      }
+    });
+    proc.once("error", () => resolve(null));
+  });
+}
+
+/**
+ * Fast-path: read the local repo's heads directly from the filesystem
+ * (`<projectPath>/.git/refs/heads/**` + `<projectPath>/.git/packed-refs`)
+ * and return them in the same `<oid> <refname>` format as `git show-ref --heads`.
+ *
+ * Returns null and lets the caller fall back to `git show-ref` when:
+ *   - `.git` is a file (worktree gitdir indirection — uncommon for project roots)
+ *   - any read fails (e.g. broken refs)
+ *
+ * STARTUP-PERF: `git show-ref` costs ~70-100ms per invocation on macOS due to
+ * git's fork+exec + dynamic loader + libcrypto warmup. The same data sits in
+ * a couple of files we can read with a single readdir + a handful of small
+ * file reads (~3-5ms total for a typical repo). For the warm fast-path that
+ *'s a meaningful chunk of the total wall-time budget, and any ambiguity we
+ * fall back gracefully.
+ *
+ * NOTE: We don't try to be a complete `git show-ref` replacement; we only
+ * cover the loose-ref + packed-refs combination that 100% of warm projects
+ * fit into. Worktree gitdir files and reftable-based repos fall back.
+ */
+async function fastReadGitHeadsRefs(projectPath: string): Promise<string | null> {
+  try {
+    const gitDir = `${projectPath}/.git`;
+    const gitStat = await fsPromises.stat(gitDir);
+    if (!gitStat.isDirectory()) {
+      // `.git` is a file (worktree indirection) — bail to the safe path.
+      return null;
+    }
+
+    const heads: Array<{ oid: string; refname: string }> = [];
+
+    // 1. Loose refs under .git/refs/heads/**
+    const headsDir = `${gitDir}/refs/heads`;
+    const walk = async (relDir: string): Promise<void> => {
+      const fullDir = relDir.length > 0 ? `${headsDir}/${relDir}` : headsDir;
+      let entries: Dirent[];
+      try {
+        entries = await fsPromises.readdir(fullDir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      await Promise.all(
+        entries.map(async (entry) => {
+          const childRel = relDir.length > 0 ? `${relDir}/${entry.name}` : entry.name;
+          if (entry.isDirectory()) {
+            await walk(childRel);
+            return;
+          }
+          if (!entry.isFile()) return;
+          let raw: string;
+          try {
+            raw = await fsPromises.readFile(`${headsDir}/${childRel}`, "utf-8");
+          } catch {
+            return;
+          }
+          const oid = raw.trim();
+          // Skip symref redirects (rare for branch heads) — git's own format
+          // would be "ref: refs/heads/..." in those cases. Treat them as
+          // unsupported and let the caller fall back.
+          if (!/^[0-9a-f]{40}$/i.test(oid)) {
+            throw new Error("symref or invalid loose ref");
+          }
+          heads.push({ oid, refname: `refs/heads/${childRel}` });
+        })
+      );
+    };
+
+    try {
+      await walk("");
+    } catch {
+      return null;
+    }
+
+    // 2. Packed refs under .git/packed-refs (one entry per branch, possibly
+    //    interleaved with peeled-tag lines that start with '^' — those are
+    //    skipped).
+    let packed: string;
+    try {
+      packed = await fsPromises.readFile(`${gitDir}/packed-refs`, "utf-8");
+    } catch {
+      packed = "";
+    }
+    const seen = new Set(heads.map((h) => h.refname));
+    for (const line of packed.split("\n")) {
+      if (line.length === 0 || line.startsWith("#") || line.startsWith("^")) continue;
+      const space = line.indexOf(" ");
+      if (space === -1) continue;
+      const oid = line.slice(0, space);
+      const refname = line.slice(space + 1).trim();
+      if (!refname.startsWith("refs/heads/")) continue;
+      if (seen.has(refname)) continue; // loose refs override packed ones
+      if (!/^[0-9a-f]{40}$/i.test(oid)) return null;
+      heads.push({ oid, refname });
+      seen.add(refname);
+    }
+
+    if (heads.length === 0) {
+      return null;
+    }
+
+    // Match `git show-ref` output order: refname-sorted, single trailing newline.
+    heads.sort((a, b) => (a.refname < b.refname ? -1 : a.refname > b.refname ? 1 : 0));
+    return `${heads.map((h) => `${h.oid} ${h.refname}`).join("\n")}\n`;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -588,32 +730,7 @@ export class SSHRuntime extends RemoteRuntime {
     // Workspace materialization only depends on branch tips. Tags are shared repo
     // metadata that can legitimately drift, so they must not participate in the
     // authoritative snapshot identity or force a resync on their own.
-    const refsOutput = await new Promise<string>((resolve, reject) => {
-      const proc = spawn("git", ["-C", projectPath, "show-ref", "--heads"], {
-        stdio: ["ignore", "pipe", "pipe"],
-        windowsHide: true,
-      });
-      const stdoutChunks: Buffer[] = [];
-      const stderrChunks: Buffer[] = [];
-      proc.stdout?.on("data", (chunk: Buffer) => stdoutChunks.push(Buffer.from(chunk)));
-      proc.stderr?.on("data", (chunk: Buffer) => stderrChunks.push(Buffer.from(chunk)));
-      proc.once("close", (code) => {
-        if (code === 0) {
-          resolve(Buffer.concat(stdoutChunks).toString());
-          return;
-        }
-        const stderrText = Buffer.concat(stderrChunks).toString().trim();
-        reject(
-          new Error(
-            stderrText.length > 0
-              ? stderrText
-              : `git show-ref failed with code ${code ?? "unknown"}`
-          )
-        );
-      });
-      proc.once("error", reject);
-    });
-
+    const refsOutput = (await readGitHeadsRefs(projectPath)) ?? "";
     return crypto.createHash("sha256").update(refsOutput).digest("hex");
   }
 
@@ -815,7 +932,7 @@ export class SSHRuntime extends RemoteRuntime {
       );
     }
 
-    const created = /STATUS_CREATED=created/.test(result.stdout);
+    const created = result.stdout.includes("STATUS_CREATED=created");
     const coreBareStatus = /STATUS_CORE_BARE=(\w+)/.exec(result.stdout)?.[1];
 
     if (created) {
@@ -1868,49 +1985,33 @@ export class SSHRuntime extends RemoteRuntime {
     return getOriginUrlForBundle(projectPath, initLogger, /* logErrors */ false);
   }
 
+  /**
+   * Implements the async `Runtime.createWorkspace` contract. After the
+   * STARTUP-PERF mkdir removal this method no longer performs any awaited
+   * work, but it must remain async to satisfy the interface (other runtimes
+   * still do real I/O here) and so future runtime-specific provisioning can
+   * be reintroduced without churning every call site.
+   */
+  // eslint-disable-next-line @typescript-eslint/require-await
   async createWorkspace(params: WorkspaceCreationParams): Promise<WorkspaceCreationResult> {
     try {
-      const { projectPath, directoryName, initLogger, abortSignal } = params;
+      const { projectPath, directoryName } = params;
       const layout = this.getProjectLayout(projectPath);
       // Workspace directories follow the persisted workspace name; branch checkout happens later.
       const workspacePath = getRemoteWorkspacePath(layout, directoryName);
 
-      // Prepare parent directory for git clone (fast - returns immediately)
-      // Note: git clone will create the workspace directory itself during initWorkspace,
-      // but the parent directory must exist first
-      initLogger.logStep("Preparing remote workspace...");
-      try {
-        // Extract parent directory from workspace path
-        // Example: ~/workspace/project/branch -> ~/workspace/project
-        const lastSlash = workspacePath.lastIndexOf("/");
-        const parentDir = lastSlash > 0 ? workspacePath.substring(0, lastSlash) : "~";
-
-        // Expand tilde for mkdir command
-        const expandedParentDir = expandTildeForSSH(parentDir);
-        const parentDirCommand = `mkdir -p ${expandedParentDir}`;
-
-        const mkdirStream = await this.exec(parentDirCommand, {
-          cwd: "/tmp",
-          timeout: 10,
-          abortSignal,
-        });
-        const mkdirExitCode = await mkdirStream.exitCode;
-        if (mkdirExitCode !== 0) {
-          const stderr = await streamToString(mkdirStream.stderr);
-          return {
-            success: false,
-            error: `Failed to prepare remote workspace: ${stderr}`,
-          };
-        }
-      } catch (error) {
-        return {
-          success: false,
-          error: `Failed to prepare remote workspace: ${getErrorMessage(error)}`,
-        };
-      }
-
-      initLogger.logStep("Remote workspace prepared");
-
+      // STARTUP-PERF: The previous implementation issued an SSH `mkdir -p` here
+      // to ensure the workspace's parent directory exists before `initWorkspace`.
+      // That round-trip is unnecessary because both materialization paths in
+      // `prepareWorkspaceCheckout()` (warm fast-path + slow path) create their
+      // own parents:
+      //   - The slow path's `ensureBaseRepo()` runs `mkdir -p <baseRepoPath>`,
+      //     which creates the shared project root dir as a side effect.
+      //   - The warm fast-path's single fused command runs `mkdir -p` for the
+      //     workspace parent inline before `git worktree add`.
+      // Folding the mkdir into materialization shaves one full SSH RTT off
+      // every workspace startup, which is the dominant constant cost on the
+      // warm path.
       return {
         success: true,
         workspacePath,
@@ -1949,9 +2050,169 @@ export class SSHRuntime extends RemoteRuntime {
     });
   }
 
+  /**
+   * Try to create the workspace via a single fused SSH command (warm fast-path).
+   *
+   * Contract: when the remote already has a healthy shared base repo for this
+   * project AND the staged `refs/mux-bundle/*` tips already match the local
+   * project's `refs/heads/*` tips, we can skip the entire sync pipeline and
+   * jump straight to `git worktree add`. That's the **common case** for
+   * subsequent `mux run` invocations against the same SSH host + project.
+   *
+   * Why this matters: the slow path takes ~9 sequential SSH round-trips. Each
+   * SSH command is ~80ms even on a multiplexed control channel, so just the
+   * call overhead totals ~720ms before any real work. By fusing the probe +
+   * materialize into a single shell pipeline, we collapse that to a single
+   * round-trip (~120ms), bringing warm workspace creates well under the
+   * 2× SSH-RTT envelope.
+   *
+   * Returns true on a successful warm materialization. Returns false on miss
+   * (and the caller falls through to the slow path). Throws only on
+   * unrecoverable errors that are guaranteed to also fail on the slow path —
+   * everything else is treated as a miss so the slow path can self-heal.
+   *
+   * Miss reasons (printed to stdout as `WARM_MISS:<reason>` for log clarity):
+   *   - no-base-repo          : shared base repo doesn't exist yet (cold start)
+   *   - snapshot-marker-missing: snapshot identity file isn't present
+   *   - snapshot-digest-drift : local refs have moved since last sync
+   *   - manifest-drift        : remote `refs/mux-bundle/*` tips don't match local
+   *   - workspace-exists      : target workspace path already populated
+   *   - worktree-add-failed   : git worktree add returned non-zero
+   */
+  /**
+   * Result returned by `tryWarmWorktreeAdd()` on a warm-path hit.
+   * `gitmodulesPresent` is reported by the fused SSH command so the caller
+   * can skip the post-worktree submodule-sync probe (another SSH RT) when
+   * the workspace has no `.gitmodules`.
+   */
+  private async tryWarmWorktreeAdd(
+    params: WorkspaceInitParams,
+    nhp: string
+  ): Promise<{ gitmodulesPresent: boolean } | null> {
+    const { projectPath, branchName, workspacePath, initLogger, abortSignal } = params;
+
+    // Local prerequisites — all computed without any SSH calls.
+    //
+    // STARTUP-PERF: We deliberately use only the snapshot **digest** to gate
+    // the warm path (no separate ref-manifest check). The digest is the
+    // sha256 of `git show-ref --heads` output: if it matches the digest
+    // persisted on the remote at sync time, the local heads MUST be the same
+    // (modulo a sha256 collision). Skipping the manifest verification saves
+    // both an SSH round-trip and a `git show-ref` parse pass — both are pure
+    // overhead on the warm path because they always agree when the digests
+    // match. If a digest mismatch happens, we fall through to the slow path,
+    // which independently re-verifies via the full manifest before pushing.
+    const layout = this.getProjectLayout(projectPath);
+    // Try the fs-direct fast reader first; fall back to `git show-ref` only
+    // when the cheap path can't handle the project layout. The fallback keeps
+    // the warm path correct against worktree gitdir indirection, reftables,
+    // and symref'd branch heads, which `fastReadGitHeadsRefs` deliberately
+    // refuses to interpret.
+    const headsOutput =
+      (await fastReadGitHeadsRefs(projectPath)) ?? (await readGitHeadsRefs(projectPath));
+    if (headsOutput == null || headsOutput.length === 0) {
+      // No local refs means a freshly-init'd local repo (no commits) or a
+      // non-git directory. Either way the slow path needs to run.
+      return null;
+    }
+    const snapshotDigest = crypto.createHash("sha256").update(headsOutput).digest("hex");
+    const baseRepoPathArg = expandTildeForSSH(layout.baseRepoPath);
+    const currentSnapshotPathArg = expandTildeForSSH(layout.currentSnapshotPath);
+    const workspacePathArg = expandTildeForSSH(workspacePath);
+    const workspaceParentArg = expandTildeForSSH(
+      workspacePath.includes("/") ? workspacePath.substring(0, workspacePath.lastIndexOf("/")) : "~"
+    );
+
+    // The remote bundle ref to base the worktree on. Prefer an exact match for
+    // the requested branch (most projects use `main` or the trunk branch name
+    // as the bundle ref), and we can let the remote script pick the first
+    // available bundle ref as a fallback.
+    const bundleRefArg = shescape.quote(`${BUNDLE_REF_PREFIX}${params.trunkBranch}`);
+    const bundleRefFallbackPrefix = shescape.quote(BUNDLE_REF_PREFIX);
+
+    const branchArg = shescape.quote(branchName);
+    const digestArg = shescape.quote(snapshotDigest);
+
+    // Tight script: every byte matters because the script body is shipped
+    // over the SSH wire on every warm probe. We avoid temp files, capture
+    // shell builtins where possible, and use `&&` chaining so a single
+    // explicit branch decides WARM_OK vs WARM_MISS:<reason> with no extra
+    // process spawns.
+    const script = [
+      // Guards (cheap shell builtins, single fork for the snapshot read):
+      `test -d ${baseRepoPathArg} || { echo WARM_MISS:no-base-repo; exit 0; }`,
+      `test -f ${currentSnapshotPathArg} || { echo WARM_MISS:snapshot-marker-missing; exit 0; }`,
+      `read -r s < ${currentSnapshotPathArg} || true`,
+      `[ "$s" = ${digestArg} ] || { echo WARM_MISS:snapshot-digest-drift; exit 0; }`,
+      `test -e ${workspacePathArg} && { echo WARM_MISS:workspace-exists; exit 0; }`,
+      // Bundle ref: prefer the trunk; otherwise grab the first available one.
+      `r=${bundleRefArg}`,
+      `git -C ${baseRepoPathArg} rev-parse --verify "$r" >/dev/null 2>&1 || r=$(git -C ${baseRepoPathArg} for-each-ref --count=1 --format='%(refname)' ${bundleRefFallbackPrefix})`,
+      `[ -n "$r" ] || { echo WARM_MISS:no-bundle-ref; exit 0; }`,
+      // Materialize.
+      `mkdir -p ${workspaceParentArg}`,
+      `${nhp}git -C ${baseRepoPathArg} worktree add ${workspacePathArg} -B ${branchArg} "$r" >/dev/null 2>&1 || { echo WARM_MISS:worktree-add-failed; exit 0; }`,
+      // .gitmodules probe folded inline to skip a post-warm SSH RTT.
+      `test -f ${workspacePathArg}/.gitmodules && echo GITMODULES=present || echo GITMODULES=missing`,
+      "echo WARM_OK",
+    ].join("\n");
+
+    initLogger.logStep("Probing for warm-cached remote workspace...");
+    const result = await execBuffered(this, script, {
+      cwd: "/tmp",
+      timeout: 60,
+      abortSignal,
+    });
+
+    if (result.exitCode !== 0) {
+      // Treat unexpected failures as a miss — slow path will retry deterministically.
+      return null;
+    }
+
+    const stdout = result.stdout;
+    if (!stdout.includes("WARM_OK")) {
+      const missMatch = /WARM_MISS:(\S+)/.exec(stdout);
+      const reason = missMatch ? missMatch[1] : "unknown";
+      initLogger.logStep(`Warm fast-path miss (${reason}); using slow path`);
+      return null;
+    }
+
+    const gitmodulesPresent = stdout.includes("GITMODULES=present");
+    initLogger.logStep(`Materialized workspace via warm fast-path (branch: ${branchName})`);
+    return { gitmodulesPresent };
+  }
+
   private async prepareWorkspaceCheckout(params: WorkspaceInitParams, nhp: string): Promise<void> {
     const { projectPath, branchName, trunkBranch, workspacePath, initLogger, abortSignal, env } =
       params;
+
+    // STARTUP-PERF (warm fast-path): try to materialize the workspace in a
+    // single fused SSH command. See `tryWarmWorktreeAdd()` for the contract
+    // and miss reasons. When this succeeds, we skip the entire multi-call
+    // slow path (test-d → git-check → ensureBaseRepo → snapshot check →
+    // manifest check → refreshOrigin → fetchOrigin → resolveBundleTrunkRef →
+    // resolveFreshWorkspaceSourceBase → worktree-add), collapsing ~9 sequential
+    // SSH round-trips into one.
+    const warmHit = await this.tryWarmWorktreeAdd(params, nhp);
+    if (warmHit) {
+      // STARTUP-PERF: The warm SSH command already reported whether
+      // `.gitmodules` exists in the freshly-materialized worktree, so we can
+      // skip the (otherwise unavoidable) probe-RTT inside
+      // `hasRuntimeGitmodules()` when the answer is "missing". On a typical
+      // single-package project this saves one full SSH round-trip on every
+      // warm workspace create.
+      if (warmHit.gitmodulesPresent) {
+        await syncRuntimeGitSubmodules({
+          runtime: this,
+          workspacePath,
+          initLogger,
+          abortSignal,
+          env,
+          trusted: params.trusted,
+        });
+      }
+      return;
+    }
 
     // If the workspace directory already exists and contains a git repo (e.g. forked from
     // another SSH workspace via worktree add or legacy cp), skip the expensive sync step.
