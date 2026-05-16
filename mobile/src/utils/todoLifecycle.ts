@@ -1,4 +1,4 @@
-import { assert } from "./assert";
+import { assert } from "@/common/utils/assert";
 import type { WorkspaceChatEvent, DisplayedMessage } from "../types";
 import type { TodoItem } from "../components/TodoItemView";
 
