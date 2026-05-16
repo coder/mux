@@ -931,7 +931,14 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     setLayoutRaw((prevRaw) => {
       const prev = parseRightSidebarLayoutState(prevRaw, initialActiveTab);
       const hasGoal = collectAllTabs(prev.root).includes("goal");
-      const shouldShowGoal = goalsExperimentEnabled && goal != null;
+      // Keep the Goal tab visible whenever the workspace has a current goal
+      // OR any archived history — otherwise clearing the last goal would
+      // permanently hide the "Completed goals" list (Codex P2 review:
+      // "Preserve the Goal tab for history-only workspaces"). Visibility
+      // depends on `goalHistory.length` so the layout effect also re-runs
+      // when history populates after a fresh fetch.
+      const shouldShowGoal =
+        goalsExperimentEnabled && (goal != null || goalHistory.length > 0);
 
       if (shouldShowGoal && !hasGoal) {
         return addTabToFocusedTabset(prev, "goal", false);
@@ -943,7 +950,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
 
       return prev;
     });
-  }, [goal, goalsExperimentEnabled, initialActiveTab, setLayoutRaw]);
+  }, [goal, goalHistory.length, goalsExperimentEnabled, initialActiveTab, setLayoutRaw]);
 
   React.useEffect(() => {
     if (!desktopExperimentEnabled) {
