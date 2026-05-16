@@ -206,7 +206,7 @@ describe("WorkspaceGoalService", () => {
     }
   });
 
-    test("getGoalHistory tolerates corrupt JSONL lines without bricking the workspace", async () => {
+  test("getGoalHistory tolerates corrupt JSONL lines without bricking the workspace", async () => {
     const created = await setGoalOk(service, { workspaceId, objective: "Good entry" });
     await service.clearGoal(workspaceId);
 
