@@ -5,11 +5,10 @@ import { useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../theme";
 import { useORPC } from "../orpc/react";
-import { parseDiff, extractAllHunks } from "../utils/git/diffParser";
-import { parseNumstat, buildFileTree } from "../utils/git/numstatParser";
-import { buildGitDiffCommand } from "../utils/git/gitCommands";
+import { parseDiff, extractAllHunks, buildGitDiffCommand } from "@/common/utils/git/diffParser";
+import { parseNumstat, buildFileTree } from "@/common/utils/git/numstatParser";
 import type { DiffHunk } from "../types/review";
-import type { FileTreeNode } from "../utils/git/numstatParser";
+import type { FileTreeNode } from "@/common/utils/git/numstatParser";
 import { DiffHunkView } from "../components/git/DiffHunkView";
 import { ReviewFilters } from "../components/git/ReviewFilters";
 

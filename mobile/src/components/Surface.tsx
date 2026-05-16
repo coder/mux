@@ -3,7 +3,7 @@ import type { ViewProps, ViewStyle } from "react-native";
 import { View } from "react-native";
 import { useMemo } from "react";
 import { useTheme } from "../theme";
-import { assert } from "../utils/assert";
+import { assert } from "@/common/utils/assert";
 
 export type SurfaceVariant = "plain" | "raised" | "sunken" | "ghost";
 

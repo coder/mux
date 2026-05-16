@@ -3,7 +3,7 @@ import { memo, useState } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../../theme";
-import type { FileTreeNode } from "../../utils/git/numstatParser";
+import type { FileTreeNode } from "@/common/utils/git/numstatParser";
 
 interface ReviewFiltersProps {
   diffBase: string;

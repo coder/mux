@@ -1,7 +1,7 @@
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
-import { assert } from "./assert";
+import { assert } from "@/common/utils/assert";
 
 type KnownModelEntry = (typeof KNOWN_MODELS)[keyof typeof KNOWN_MODELS];
 

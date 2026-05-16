@@ -4,7 +4,7 @@ import { Text } from "react-native";
 import { useMemo } from "react";
 import { useTheme } from "../theme";
 import type { Theme } from "../theme";
-import { assert } from "../utils/assert";
+import { assert } from "@/common/utils/assert";
 
 export type TextVariant =
   | "titleLarge"

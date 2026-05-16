@@ -3,7 +3,7 @@ import type { PressableProps, ViewStyle } from "react-native";
 import { Pressable } from "react-native";
 import type { ReactNode } from "react";
 import { useTheme } from "../theme";
-import { assert } from "../utils/assert";
+import { assert } from "@/common/utils/assert";
 
 export type IconButtonVariant = "ghost" | "primary" | "danger";
 export type IconButtonSize = "sm" | "md";
