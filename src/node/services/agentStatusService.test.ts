@@ -292,6 +292,33 @@ describe("AgentStatusService", () => {
     expect(generateSpy.mock.calls[0][3]).toEqual({ streaming: true });
   });
 
+  test("dedup hash includes the streaming bit so liveness flips force a re-generation", async () => {
+    // Regression guard: `streaming` now changes the prompt's tense
+    // guidance, so it must participate in the dedup hash. Without this,
+    // an interrupted stream (which leaves partial.json unchanged) could
+    // stay settled on the streaming=true status forever, exactly the
+    // stale "Deploying service" sidebar bug this PR exists to fix.
+    await historyHandle.historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("u1", "user", "deploy the service")
+    );
+    await historyHandle.historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("a1", "assistant", "Deploying now")
+    );
+
+    const service = createService();
+    await getInternals(service).runForWorkspace(workspaceId, null, true);
+    expect(generateSpy).toHaveBeenCalledTimes(1);
+
+    // Same transcript bytes, streaming flipped to false. If `streaming`
+    // were missing from the hash, dedup would suppress this call and the
+    // sidebar would never re-evaluate tense after the stream ended.
+    await getInternals(service).runForWorkspace(workspaceId, null, false);
+    expect(generateSpy).toHaveBeenCalledTimes(2);
+    expect(generateSpy.mock.calls[1][3]).toEqual({ streaming: false });
+  });
+
   test("re-generates after the trailing transcript changes", async () => {
     await historyHandle.historyService.appendToHistory(
       workspaceId,

@@ -221,7 +221,15 @@ export class AgentStatusService {
   ): Promise<void> {
     try {
       const transcript = await this.buildTrailingTranscript(workspaceId);
-      const inputHash = computeInputHash(transcript);
+      // `streaming` participates in the dedup hash because it now changes
+      // the prompt's tense guidance and can change the generated status
+      // even when the transcript bytes are identical. Without this, a
+      // workspace whose stream ends without appending any new partial
+      // (e.g. interrupted stream leaving the same partial.json on disk)
+      // would stay settled on the streaming=true status forever — exactly
+      // the regression that re-introduces the "Deploying… service" stale
+      // sidebar bug this PR exists to fix.
+      const inputHash = computeInputHash(transcript, streaming);
       // dispatch() set lastRanAt to the tick start time before kicking us
       // off, so the scheduler won't reconsider this workspace until the next
       // interval boundary unless a newer user-recency timestamp indicates the
@@ -514,8 +522,15 @@ function formatMessageForTranscript(
   return segments.length === 0 ? "" : `${role}: ${segments.join("\n")}`;
 }
 
-function computeInputHash(transcript: string): string {
-  return createHash("sha256").update(transcript).digest("hex");
+function computeInputHash(transcript: string, streaming: boolean): string {
+  // The streaming bit is part of the prompt (it switches the liveness hint
+  // and the tense rule), so identical transcript bytes with different
+  // streaming values produce different generations and must dedup
+  // independently. A single-byte prefix keeps the hash cheap.
+  return createHash("sha256")
+    .update(streaming ? "S1\n" : "S0\n")
+    .update(transcript)
+    .digest("hex");
 }
 
 /**
