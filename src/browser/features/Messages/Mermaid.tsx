@@ -8,6 +8,11 @@ import { usePersistedState } from "@/browser/hooks/usePersistedState";
 const MIN_HEIGHT = 300;
 const MAX_HEIGHT = 1200;
 
+// Sanitizer lookup tables. Hoisted to module scope so they aren't reallocated on
+// every sanitizeMermaidSvg() call (which can run per render for large SVGs).
+const SANITIZER_URL_ATTRIBUTES = new Set(["href", "xlink:href", "src", "action", "formaction"]);
+const SANITIZER_BLOCKED_URL_SCHEMES = ["javascript:", "vbscript:", "data:text/html"];
+
 // Initialize mermaid
 mermaid.initialize({
   startOnLoad: false,
@@ -162,9 +167,6 @@ export function sanitizeMermaidSvg(svg: string): string | null {
     node.remove();
   });
 
-  const urlAttributes = new Set(["href", "xlink:href", "src", "action", "formaction"]);
-  const blockedSchemes = ["javascript:", "vbscript:", "data:text/html"];
-
   const elementsToScan: Element[] = [svgRoot, ...Array.from(svgRoot.querySelectorAll("*"))];
   elementsToScan.forEach((element) => {
     for (const attribute of Array.from(element.attributes)) {
@@ -177,8 +179,8 @@ export function sanitizeMermaidSvg(svg: string): string | null {
       }
 
       if (
-        urlAttributes.has(attributeName) &&
-        blockedSchemes.some((scheme) => canonicalUrlValue.startsWith(scheme))
+        SANITIZER_URL_ATTRIBUTES.has(attributeName) &&
+        SANITIZER_BLOCKED_URL_SCHEMES.some((scheme) => canonicalUrlValue.startsWith(scheme))
       ) {
         element.removeAttribute(attribute.name);
       }
