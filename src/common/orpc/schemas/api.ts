@@ -20,6 +20,8 @@ import {
 import { BranchListResultSchema, FilePartSchema, MuxMessageSchema } from "./message";
 import {
   GoalClearInputSchema,
+  GoalGetHistoryInputSchema,
+  GoalGetHistoryOutputSchema,
   GoalGetInputSchema,
   GoalRecordV1Schema,
   GoalSetErrorSchema,
@@ -1477,6 +1479,15 @@ export const workspace = {
   clearGoal: {
     input: GoalClearInputSchema,
     output: z.object({ cleared: z.boolean() }),
+  },
+  /**
+   * Read the workspace's append-only goal history. Returns entries newest
+   * first so the right-sidebar GoalTab can render a compact "completed goals"
+   * list below the current goal without paginating.
+   */
+  getGoalHistory: {
+    input: GoalGetHistoryInputSchema,
+    output: GoalGetHistoryOutputSchema,
   },
   getSessionUsage: {
     input: z.object({ workspaceId: z.string() }),

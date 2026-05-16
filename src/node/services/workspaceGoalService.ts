@@ -5,6 +5,8 @@ import assert from "@/common/utils/assert";
 import {
   toGoalSnapshot,
   toPendingGoalSnapshot,
+  type GoalHistoryEndReason,
+  type GoalHistoryEntry,
   type GoalRecordV1,
   type GoalSetError,
   type GoalSnapshot,
@@ -14,7 +16,7 @@ import type { WorkspaceActivitySnapshot } from "@/common/types/workspace";
 import type { Workspace } from "@/common/types/project";
 import type { Result } from "@/common/types/result";
 import { Err, Ok } from "@/common/types/result";
-import { GoalRecordV1Schema } from "@/common/orpc/schemas/goal";
+import { GoalHistoryEntrySchema, GoalRecordV1Schema } from "@/common/orpc/schemas/goal";
 import { createMuxMessage, pickStartupRetrySendOptions } from "@/common/types/message";
 import type { ProvidersConfigMap, SendMessageOptions } from "@/common/orpc/types";
 import { isWorkspaceArchived } from "@/common/utils/archive";
@@ -46,6 +48,12 @@ const GOAL_FILE = "goal.json";
 const PENDING_GOAL_EDIT_MESSAGE =
   "Goal is still being saved. Wait for the current stream to finish before editing it.";
 
+const GOAL_HISTORY_FILE = "goal-history.jsonl";
+// Cap the number of history entries returned to the renderer. Goal lifecycles
+// are coarse-grained (one entry per clear / replace / mark-complete) so a
+// generous cap still keeps the response payload bounded; older entries remain
+// on disk in the JSONL but are simply not surfaced to the UI.
+const GOAL_HISTORY_RENDER_CAP = 200;
 const MICRO_CENTS_PER_CENT = 1_000_000;
 
 function costUsdToMicroCents(costUsd: number | null | undefined): number {
@@ -91,6 +99,13 @@ export interface SetGoalInput {
   expectedGoalId?: string | null;
   requireUserAcknowledgmentSinceMs?: number | null;
   initiator?: GoalLifecycleInitiator;
+  /**
+   * When true and a current goal already exists, an objective update mutates
+   * the existing record in place (preserving goalId + accounting) instead of
+   * archiving + replacing. See the matching field on the public
+   * `GoalSetInputSchema` for the rationale.
+   */
+  editInPlace?: boolean | null;
 }
 
 export type GoalContinuationSkipReason =
@@ -338,6 +353,81 @@ export class WorkspaceGoalService {
   private getFilePath(workspaceId: string): string {
     assert(workspaceId.trim().length > 0, "WorkspaceGoalService requires non-empty workspaceId");
     return path.join(this.config.getSessionDir(workspaceId), GOAL_FILE);
+  }
+
+  private getHistoryFilePath(workspaceId: string): string {
+    assert(workspaceId.trim().length > 0, "WorkspaceGoalService requires non-empty workspaceId");
+    return path.join(this.config.getSessionDir(workspaceId), GOAL_HISTORY_FILE);
+  }
+
+  /**
+   * Append a goal record snapshot to the workspace's goal-history JSONL.
+   * Callers are expected to hold the workspace file lock so this never races
+   * with a `writeGoal` for the same workspace. A serialize-then-append failure
+   * is logged but never bubbled: the user's lifecycle action (clear, replace,
+   * complete) must succeed even if history persistence fails, because the
+   * authoritative state lives in `goal.json` and the lifecycle event log.
+   */
+  private async appendGoalHistoryEntry(
+    workspaceId: string,
+    goal: GoalRecordV1,
+    endReason: GoalHistoryEndReason
+  ): Promise<void> {
+    const entry: GoalHistoryEntry = {
+      version: 1,
+      endReason,
+      endedAtMs: Date.now(),
+      goal,
+    };
+    const filePath = this.getHistoryFilePath(workspaceId);
+    try {
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+      // JSONL append: one entry per line, no rewriting prior history. Newline
+      // first would corrupt readers expecting a trailing newline on the last
+      // record, so we always emit `<json>\n`.
+      await fs.appendFile(filePath, `${JSON.stringify(entry)}\n`, "utf-8");
+    } catch (error) {
+      log.warn("Failed to append goal history entry", { workspaceId, endReason, error });
+    }
+  }
+
+  /**
+   * Read the workspace's goal history newest-first. Tolerates per-line parse
+   * failures (a corrupted line is logged + skipped) so a single bad write
+   * cannot brick the right-sidebar GoalTab. Caps the returned list at
+   * `GOAL_HISTORY_RENDER_CAP` so the IPC response stays bounded; older entries
+   * stay on disk.
+   */
+  async getGoalHistory(workspaceId: string): Promise<GoalHistoryEntry[]> {
+    const filePath = this.getHistoryFilePath(workspaceId);
+    let raw: string;
+    try {
+      raw = await fs.readFile(filePath, "utf-8");
+    } catch (error) {
+      if (isNotFound(error)) {
+        return [];
+      }
+      log.warn("Failed to read goal history", { workspaceId, error });
+      return [];
+    }
+
+    const entries: GoalHistoryEntry[] = [];
+    for (const line of raw.split("\n")) {
+      const trimmed = line.trim();
+      if (trimmed.length === 0) {
+        continue;
+      }
+      try {
+        entries.push(GoalHistoryEntrySchema.parse(JSON.parse(trimmed)));
+      } catch (error) {
+        log.warn("Skipping corrupt goal history entry", { workspaceId, error });
+      }
+    }
+
+    // Sort by endedAtMs DESC so the renderer can stream from the top without
+    // an extra sort. Stable across equal timestamps via reverse insertion.
+    entries.sort((a, b) => b.endedAtMs - a.endedAtMs);
+    return entries.slice(0, GOAL_HISTORY_RENDER_CAP);
   }
 
   private createGoal(input: {
@@ -1495,6 +1585,55 @@ export class WorkspaceGoalService {
         );
       }
 
+      // Edit-in-place objective change: when the caller is the right-sidebar
+      // "Edit goal objective" affordance (or any other entry point that opts in
+      // via `editInPlace`), changing the objective on the existing goal should
+      // feel like editing budget / turn-cap — preserve `goalId` + accounting.
+      // The default `setGoal` path (slash command, kickoff prompts) still
+      // archives + recreates because callers there express the intent "start a
+      // new goal", not "rename the current one".
+      const isEditInPlace =
+        input.editInPlace === true && current != null && current.objective !== objective;
+      if (isEditInPlace) {
+        const previousStatus = current.status;
+        const renamed = GoalRecordV1Schema.parse({
+          ...current,
+          objective,
+          updatedAtMs: Date.now(),
+        });
+        // Apply other inline edits (status / budget / turnCap) on top of the
+        // renamed record so a single payload can rename and update budget
+        // atomically.
+        const withEdits = this.applyMutableFields(renamed, input);
+        if (
+          (withEdits.status === "active" || withEdits.status === "budget_limited") &&
+          !this.canRunBudgetedGoalOnKickoffModel(input.workspaceId, withEdits)
+        ) {
+          return Err({
+            type: "invalid_transition" as const,
+            message: UNPRICED_TARGET_MODEL_GOAL_MESSAGE,
+          });
+        }
+        await this.writeGoal(input.workspaceId, withEdits);
+        await this.pushSnapshot(input.workspaceId, withEdits);
+        this.emitBudgetChanged(current, withEdits, input);
+        this.emitBudgetLimited(withEdits, previousStatus);
+        this.emitStatusLifecycle(withEdits, previousStatus, input.initiator ?? "user");
+        // Lifecycle event: this is a rename, not a replace. Reuse
+        // `goal_replaced` (same-objective semantics already overloaded for
+        // attribute-only mutations) with `sameObjective: false` so analytics
+        // can still distinguish rename from a full reset by checking
+        // `goalId` continuity in the funnel.
+        this.emitLifecycle("goal_replaced", {
+          sameObjective: false,
+          objectiveLengthBucket: lengthBucket(objective.length),
+          hasBudget: withEdits.budgetCents != null,
+          hasTurnCap: withEdits.turnCap != null,
+          editInPlace: true,
+        });
+        return Ok(withEdits);
+      }
+
       if (current?.objective === objective) {
         const hasMutableChange =
           input.status != null ||
@@ -1561,6 +1700,18 @@ export class WorkspaceGoalService {
           type: "invalid_transition" as const,
           message: UNPRICED_TARGET_MODEL_GOAL_MESSAGE,
         });
+      }
+      // Archive the outgoing goal to history before we overwrite goal.json.
+      // The new goal gets a fresh `goalId` so the right-sidebar GoalTab needs
+      // a record of the prior one in its completed-goals list (cleared/
+      // replaced/completed all flow through here for the "previous current
+      // goal" snapshot).
+      if (current) {
+        await this.appendGoalHistoryEntry(
+          input.workspaceId,
+          current,
+          current.status === "complete" ? "completed" : "replaced"
+        );
       }
       await this.writeGoal(input.workspaceId, next);
       await this.pushSnapshot(input.workspaceId, next);
@@ -1990,6 +2141,17 @@ export class WorkspaceGoalService {
         await this.pushSnapshot(workspaceId, null);
         return null;
       }
+
+      // Archive the cleared goal to history before deleting the canonical
+      // record. `endReason` reflects the goal's *exit reason*: a manual clear
+      // of a goal that the user (or model) had already marked complete is
+      // recorded as "completed" so the UI can label it as such in the
+      // completed-goals list under the present goal.
+      await this.appendGoalHistoryEntry(
+        workspaceId,
+        current,
+        current.status === "complete" ? "completed" : "cleared"
+      );
 
       await fs.rm(this.getFilePath(workspaceId), { force: true });
       await this.pushSnapshot(workspaceId, null);

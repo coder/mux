@@ -66,6 +66,25 @@ export const GoalSnapshotSchema = z.object({
   pendingPersistence: z.boolean().optional(),
 });
 
+/**
+ * Why a goal left the workspace's "current goal" slot. Persisted in the
+ * goal-history JSONL so the right-sidebar GoalTab can show completed goals
+ * grouped under the current goal without re-creating the lifecycle context.
+ */
+export const GoalHistoryEndReasonSchema = z.enum(["completed", "cleared", "replaced"]);
+
+/**
+ * One entry in the workspace's append-only goal history. Captures a snapshot
+ * of the goal record at the moment it left the "current" slot, plus the
+ * reason and time of departure so the UI can sort + label entries.
+ */
+export const GoalHistoryEntrySchema = z.object({
+  version: z.literal(1),
+  endReason: GoalHistoryEndReasonSchema,
+  endedAtMs: z.number().int().nonnegative(),
+  goal: GoalRecordV1Schema,
+});
+
 // Discriminated union so the oRPC handler can return typed errors for the
 // invalid-transition / child-workspace branches that `setGoal` previously
 // allowed to escape as unhandled 500s (Coder-agents-review P3 DEREM-36).
@@ -99,6 +118,14 @@ export const GoalSetInputSchema = z.object({
   turnCap: z.number().int().positive().nullable().optional(),
   completionSummary: z.string().nullish(),
   expectedGoalId: z.string().uuid().nullish(),
+  // When true and a current goal already exists, an objective update mutates
+  // the existing record in place (preserving goalId + accounting) instead of
+  // replacing it with a fresh goal. This backs the right-sidebar "Edit goal
+  // objective" affordance, which should feel like the inline budget / turn-cap
+  // edits rather than starting over. `/goal <objective>` and other replace
+  // entry points omit the flag (default false) to keep their existing
+  // semantics.
+  editInPlace: z.boolean().nullish(),
   // NOTE: Internal-only fields like `requireUserAcknowledgmentSinceMs`
   // (crash-recovery acknowledgment gate), `initiator`, and other workflow
   // signals MUST NOT be exposed in the public oRPC schema (Coder-agents-
@@ -112,3 +139,7 @@ export const GoalSetInputSchema = z.object({
 
 export const GoalGetInputSchema = z.object({ workspaceId: z.string().min(1) });
 export const GoalClearInputSchema = z.object({ workspaceId: z.string().min(1) });
+export const GoalGetHistoryInputSchema = z.object({ workspaceId: z.string().min(1) });
+export const GoalGetHistoryOutputSchema = z.object({
+  entries: z.array(GoalHistoryEntrySchema),
+});

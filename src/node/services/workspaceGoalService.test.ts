@@ -136,6 +136,119 @@ describe("WorkspaceGoalService", () => {
     );
   });
 
+  test("appends a history entry on clear and exposes it newest-first", async () => {
+    const first = await setGoalOk(service, { workspaceId, objective: "First archived goal" });
+    await service.clearGoal(workspaceId);
+
+    const second = await setGoalOk(service, { workspaceId, objective: "Second archived goal" });
+    await service.clearGoal(workspaceId);
+
+    const history = await service.getGoalHistory(workspaceId);
+    expect(history).toHaveLength(2);
+    // Newest first: the second clear must be at index 0.
+    expect(history[0]).toMatchObject({
+      endReason: "cleared",
+      goal: { goalId: second.goalId, objective: "Second archived goal" },
+    });
+    expect(history[1]).toMatchObject({
+      endReason: "cleared",
+      goal: { goalId: first.goalId },
+    });
+  });
+
+  test("clearing a completed goal records the history endReason as completed", async () => {
+    const created = await setGoalOk(service, { workspaceId, objective: "Finishable goal" });
+    await setGoalOk(service, {
+      workspaceId,
+      objective: created.objective,
+      status: "complete",
+      completionSummary: "Wrapped up.",
+    });
+    await service.clearGoal(workspaceId);
+
+    const history = await service.getGoalHistory(workspaceId);
+    expect(history).toHaveLength(1);
+    // The goal's status at exit was "complete", so the history endReason
+    // should reflect that distinction in the right-sidebar UI (completed vs
+    // discarded-active).
+    expect(history[0]).toMatchObject({
+      endReason: "completed",
+      goal: {
+        goalId: created.goalId,
+        status: "complete",
+        completionSummary: "Wrapped up.",
+      },
+    });
+  });
+
+  test("getGoalHistory tolerates corrupt JSONL lines without bricking the workspace", async () => {
+    const created = await setGoalOk(service, { workspaceId, objective: "Good entry" });
+    await service.clearGoal(workspaceId);
+
+    // Simulate a partially-written line from a prior crash. The reader must
+    // skip it instead of throwing — otherwise one bad line would brick the
+    // right-sidebar's history list for the workspace.
+    const historyPath = path.join(config.getSessionDir(workspaceId), "goal-history.jsonl");
+    await fs.appendFile(historyPath, "{not-json}\n", "utf-8");
+
+    const history = await service.getGoalHistory(workspaceId);
+    expect(history).toHaveLength(1);
+    expect(history[0]).toMatchObject({ goal: { goalId: created.goalId } });
+  });
+
+  test("setGoal with editInPlace renames the current goal without resetting accounting", async () => {
+    const created = await setGoalOk(service, { workspaceId, objective: "Initial objective" });
+    await service.recordStreamAccounting({
+      workspaceId,
+      costUsd: 0.25,
+      streamStartedAtMs: created.createdAtMs + 1,
+      streamOriginKind: "user",
+    });
+
+    const renamed = await setGoalOk(service, {
+      workspaceId,
+      objective: "Refined objective",
+      editInPlace: true,
+    });
+
+    // Same `goalId`, preserved accounting — this is the contract that makes
+    // the inline editor behave like budget/turn-cap edits.
+    expect(renamed.goalId).toBe(created.goalId);
+    expect(renamed.objective).toBe("Refined objective");
+    expect(renamed.costCents).toBeGreaterThan(0);
+    expect(renamed.costCents).toBe(25);
+    // No history entry should be appended for in-place renames; that file
+    // is reserved for goals that *leave* the current slot.
+    expect(await service.getGoalHistory(workspaceId)).toHaveLength(0);
+  });
+
+  test("setGoal without editInPlace continues to archive + replace on objective change", async () => {
+    const created = await setGoalOk(service, { workspaceId, objective: "Initial objective" });
+    const replaced = await setGoalOk(service, { workspaceId, objective: "Different objective" });
+
+    // Replace flow: new goalId, prior goal archived to history.
+    expect(replaced.goalId).not.toBe(created.goalId);
+    const history = await service.getGoalHistory(workspaceId);
+    expect(history).toHaveLength(1);
+    expect(history[0]).toMatchObject({
+      endReason: "replaced",
+      goal: { goalId: created.goalId, objective: "Initial objective" },
+    });
+  });
+
+  test("editInPlace without a current goal still falls through to create", async () => {
+    // Without a current goal, `editInPlace` has nothing to mutate. Falling
+    // through to the normal create path keeps the right-sidebar resilient if
+    // the renderer race-loses to a backend clear between fetch and submit.
+    const created = await setGoalOk(service, {
+      workspaceId,
+      objective: "Fresh goal",
+      editInPlace: true,
+    });
+    expect(created.objective).toBe("Fresh goal");
+    expect(await service.getGoalHistory(workspaceId)).toHaveLength(0);
+  });
+
   test("treats zero-budget goals as unbudgeted even when kickoff model has no pricing", async () => {
     const dispatcher = new IdleDispatcher();
     service.registerGoalContinuationConsumer(dispatcher, {

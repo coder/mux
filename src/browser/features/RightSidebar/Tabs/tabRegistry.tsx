@@ -22,7 +22,7 @@ import { DesktopPanel } from "@/browser/features/desktop/DesktopPanel";
 import { BrowserTab } from "@/browser/features/RightSidebar/BrowserTab";
 import { DevToolsTab } from "@/browser/features/RightSidebar/DevToolsTab";
 import { GoalTab } from "@/browser/features/RightSidebar/GoalTab";
-import type { GoalSnapshot, GoalStatus } from "@/common/types/goal";
+import type { GoalHistoryEntry, GoalSnapshot, GoalStatus } from "@/common/types/goal";
 import type { ReviewNoteData } from "@/common/types/review";
 import { BASE_TAB_IDS, TAB_CONFIG, type BaseTabType, type TabConfig } from "./tabConfig";
 import {
@@ -78,11 +78,13 @@ export interface TabPanelContext {
   };
   goal: {
     snapshot: GoalSnapshot | null;
+    history: GoalHistoryEntry[];
     openCompleteInputRequest: number;
     onSetStatus: (
       status: Exclude<GoalStatus, "budget_limited">,
       completionSummary?: string
     ) => Promise<void>;
+    onUpdateObjective: (objective: string) => Promise<void>;
     onUpdateBudget: (budgetCents: number | null) => Promise<void>;
     onUpdateTurnCap: (turnCap: number | null) => Promise<void>;
     onClear: () => Promise<void>;
@@ -135,8 +137,10 @@ const TAB_RENDERERS = {
       <ErrorBoundary workspaceInfo="Goal tab">
         <GoalTab
           goal={ctx.goal.snapshot}
+          history={ctx.goal.history}
           openCompleteInputRequest={ctx.goal.openCompleteInputRequest}
           onSetStatus={ctx.goal.onSetStatus}
+          onUpdateObjective={ctx.goal.onUpdateObjective}
           onUpdateBudget={ctx.goal.onUpdateBudget}
           onUpdateTurnCap={ctx.goal.onUpdateTurnCap}
           onClear={ctx.goal.onClear}

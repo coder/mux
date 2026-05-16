@@ -1,5 +1,7 @@
 import type { z } from "zod";
 import type {
+  GoalHistoryEndReasonSchema,
+  GoalHistoryEntrySchema,
   GoalRecordV1Schema,
   GoalSetErrorSchema,
   GoalSnapshotSchema,
@@ -9,6 +11,8 @@ import type {
 export type GoalStatus = z.infer<typeof GoalStatusSchema>;
 export type GoalRecordV1 = z.infer<typeof GoalRecordV1Schema>;
 export type GoalSnapshot = z.infer<typeof GoalSnapshotSchema>;
+export type GoalHistoryEndReason = z.infer<typeof GoalHistoryEndReasonSchema>;
+export type GoalHistoryEntry = z.infer<typeof GoalHistoryEntrySchema>;
 
 export type GoalSetError = z.infer<typeof GoalSetErrorSchema>;
 

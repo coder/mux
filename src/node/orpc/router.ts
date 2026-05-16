@@ -4091,6 +4091,21 @@ export const router = (authToken?: string) => {
           const cleared = await context.workspaceGoalService.clearGoal(input.workspaceId);
           return { cleared: cleared !== null };
         }),
+      getGoalHistory: t
+        .input(schemas.workspace.getGoalHistory.input)
+        .output(schemas.workspace.getGoalHistory.output)
+        .handler(async ({ context, input }) => {
+          // Mirror getGoal: a missing workspace returns an empty history
+          // rather than a typed error, because the renderer treats this as a
+          // best-effort enrichment of the GoalTab.
+          const workspace = await context.workspaceService.getInfo(input.workspaceId);
+          if (!workspace) {
+            return { entries: [] };
+          }
+          return {
+            entries: await context.workspaceGoalService.getGoalHistory(input.workspaceId),
+          };
+        }),
       getSessionUsage: t
         .input(schemas.workspace.getSessionUsage.input)
         .output(schemas.workspace.getSessionUsage.output)

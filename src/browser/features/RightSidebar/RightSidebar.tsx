@@ -46,7 +46,7 @@ import {
 import { SidebarCollapseButton } from "@/browser/components/SidebarCollapseButton/SidebarCollapseButton";
 import { cn } from "@/common/lib/utils";
 import type { ReviewNoteData } from "@/common/types/review";
-import type { GoalSetError, GoalSnapshot, GoalStatus } from "@/common/types/goal";
+import type { GoalHistoryEntry, GoalSetError, GoalSnapshot, GoalStatus } from "@/common/types/goal";
 import { TerminalTab } from "@/browser/features/RightSidebar/TerminalTab";
 import { useOptionalWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import {
@@ -288,6 +288,7 @@ interface RightSidebarTabsetNodeProps {
   /** Terminal session ID that should be auto-focused (cleared once focus lands) */
   autoFocusTerminalSession: string | null;
   goal: GoalSnapshot | null;
+  goalHistory: GoalHistoryEntry[];
   goalCompleteInputRequest: number;
   // RightSidebar / GoalTab UI requests user-facing transitions only;
   // `budget_limited` is internal-only — see DEREM-53.
@@ -295,6 +296,7 @@ interface RightSidebarTabsetNodeProps {
     status: Exclude<GoalStatus, "budget_limited">,
     completionSummary?: string
   ) => Promise<void>;
+  onGoalUpdateObjective: (objective: string) => Promise<void>;
   onGoalUpdateBudget: (budgetCents: number | null) => Promise<void>;
   onGoalUpdateTurnCap: (turnCap: number | null) => Promise<void>;
   onGoalClear: () => Promise<void>;
@@ -448,8 +450,10 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
     },
     goal: {
       snapshot: props.goal,
+      history: props.goalHistory,
       openCompleteInputRequest: props.goalCompleteInputRequest,
       onSetStatus: props.onGoalSetStatus,
+      onUpdateObjective: props.onGoalUpdateObjective,
       onUpdateBudget: props.onGoalUpdateBudget,
       onUpdateTurnCap: props.onGoalUpdateTurnCap,
       onClear: props.onGoalClear,
@@ -652,6 +656,36 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   const sidebarState = useOptionalWorkspaceSidebarState(workspaceId);
   const goal = sidebarState?.goal ?? null;
   const [goalCompleteInputRequest, setGoalCompleteInputRequest] = React.useState(0);
+  const [goalHistory, setGoalHistory] = React.useState<GoalHistoryEntry[]>([]);
+
+  // Goal history is event-driven on the backend (entries are appended only
+  // on clear/replace/complete-via-replace), so we re-fetch whenever the
+  // current goal's identity changes — that's our proxy for "a lifecycle
+  // transition just happened in this workspace". This avoids subscribing to
+  // a dedicated history stream while still keeping the right-sidebar list
+  // fresh.
+  React.useEffect(() => {
+    if (!api) {
+      setGoalHistory([]);
+      return;
+    }
+    let cancelled = false;
+    void api.workspace
+      .getGoalHistory({ workspaceId })
+      .then((result) => {
+        if (!cancelled) {
+          setGoalHistory(result.entries);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setGoalHistory([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [api, workspaceId, goal?.goalId]);
   const [llmDebugLogsEnabled, setLlmDebugLogsEnabled] = React.useState<boolean | null>(null);
   const [desktopAvailable, setDesktopAvailable] = React.useState<boolean | null>(null);
   const [browserAvailable, setBrowserAvailable] = React.useState<boolean | null>(null);
@@ -663,9 +697,13 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     // excluded from the public oRPC `setGoal` input shape (Coder-agents-
     // review nit DEREM-53).
     status?: Exclude<GoalStatus, "budget_limited">;
+    objective?: string;
     budgetCents?: number | null;
     turnCap?: number | null;
     completionSummary?: string;
+    // `editInPlace` is forwarded verbatim to `setGoal`; it tells the backend
+    // to mutate the existing goal record instead of archiving+recreating.
+    editInPlace?: boolean;
   }) => {
     if (!api) {
       throw new Error("Backend is not connected.");
@@ -699,6 +737,14 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
 
   const handleGoalUpdateTurnCap = async (turnCap: number | null) => {
     await setGoalWithSingleConflictRetry({ turnCap });
+  };
+
+  const handleGoalUpdateObjective = async (objective: string) => {
+    // The inline objective editor matches the budget / turn-cap editors:
+    // mutate the current goal in place rather than archiving + recreating
+    // (which is what `/goal <new objective>` does). `editInPlace: true` is
+    // the toggle the backend reads to take the rename branch.
+    await setGoalWithSingleConflictRetry({ objective, editInPlace: true });
   };
 
   const handleGoalClear = async () => {
@@ -1535,8 +1581,10 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         onRequestTerminalFocus={setAutoFocusTerminalSession}
         autoFocusTerminalSession={autoFocusTerminalSession}
         goal={goal ?? null}
+        goalHistory={goalHistory}
         goalCompleteInputRequest={goalCompleteInputRequest}
         onGoalSetStatus={handleGoalSetStatus}
+        onGoalUpdateObjective={handleGoalUpdateObjective}
         onGoalUpdateBudget={handleGoalUpdateBudget}
         onGoalUpdateTurnCap={handleGoalUpdateTurnCap}
         onGoalClear={handleGoalClear}
