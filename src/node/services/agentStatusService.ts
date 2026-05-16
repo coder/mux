@@ -513,6 +513,21 @@ function extractMessageText(message: MuxMessage): string {
     .join("\n");
 }
 
+/**
+ * Lifecycle phase the status model sees for each AI SDK v5 tool-part `state`.
+ * This is the single highest-signal datum for distinguishing "Deploying
+ * service" (in flight) from "Deployed service" (finished) — without it the
+ * prompt was forced to guess from prose alone. States not listed here
+ * (e.g. `input-streaming`) intentionally yield no phase suffix so the
+ * model isn't asked to interpret transient pre-call states.
+ */
+const TOOL_PART_PHASE_BY_STATE: Record<string, "running" | "done"> = {
+  "input-available": "running",
+  "output-available": "done",
+  // Output returned but body stripped (still "done" for our purposes).
+  "output-redacted": "done",
+};
+
 function summarizeToolPart(part: unknown): string | null {
   if (typeof part !== "object" || part === null) return null;
   const record = part as { type?: unknown; toolName?: unknown; state?: unknown };
@@ -526,20 +541,8 @@ function summarizeToolPart(part: unknown): string | null {
         ? type.slice(5)
         : null;
   if (!toolName) return null;
-  // The lifecycle phase is the single highest-signal datum the status model
-  // needs to distinguish "Deploying service" (in flight) from "Deployed
-  // service" (finished). AI SDK v5 tool parts carry a `state` field:
-  //   - "input-available"  → call sent, no result yet (running)
-  //   - "output-available" → result returned (done)
-  //   - "output-redacted"  → result returned but body stripped (still done)
-  // Without this marker the prompt was forced to guess from prose alone.
   const state = typeof record.state === "string" ? record.state : null;
-  const phase =
-    state === "output-available" || state === "output-redacted"
-      ? "done"
-      : state === "input-available"
-        ? "running"
-        : null;
+  const phase = state !== null ? (TOOL_PART_PHASE_BY_STATE[state] ?? null) : null;
   return phase ? `[tool ${toolName} ${phase}]` : `[tool ${toolName}]`;
 }
 
