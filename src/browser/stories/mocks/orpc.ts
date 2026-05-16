@@ -1417,6 +1417,12 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       preflightArchive: () => Promise.resolve({ success: true, data: { kind: "ready" as const } }),
       archive: () => Promise.resolve({ success: true }),
       unarchive: () => Promise.resolve({ success: true }),
+      // Goal mocks: storybook stories don't drive lifecycle, but the
+      // right-sidebar RightSidebar component calls `getGoalHistory` on mount.
+      // Without these the mounted GoalTab errors out before its
+      // ErrorBoundary stabilizes (Storybook CI).
+      getGoal: () => Promise.resolve({ goal: null }),
+      getGoalHistory: () => Promise.resolve({ entries: [] }),
       create: (input: { projectPath: string; branchName: string }) => {
         createdWorkspaceCounter += 1;
 
