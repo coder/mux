@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { Command } from "cmdk";
 import { useCommandRegistry } from "@/browser/contexts/CommandRegistryContext";
 import { useAPI } from "@/browser/contexts/API";
+import { useExperimentValue } from "@/browser/hooks/useExperiments";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { CommandAction } from "@/browser/contexts/CommandRegistryContext";
@@ -12,8 +13,10 @@ import {
   matchesKeybind,
 } from "@/browser/utils/ui/keybinds";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
+import { resolveSlashCommandExperimentValue } from "@/browser/utils/slashCommands/experimentVisibility";
 import { getSlashCommandSuggestions } from "@/browser/utils/slashCommands/suggestions";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { getDisableWorkspaceAgentsKey, GLOBAL_SCOPE_ID } from "@/common/constants/storage";
 import { filterCommandsByPrefix } from "@/browser/utils/commandPaletteFiltering";
 import { rankByPaletteQuery } from "@/browser/utils/commandPaletteRanking";
@@ -57,6 +60,10 @@ interface PaletteGroup {
 export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext }) => {
   const { api } = useAPI();
 
+  const goalsExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.GOALS);
+  const workspaceHeartbeatsExperimentEnabled = useExperimentValue(
+    EXPERIMENT_IDS.WORKSPACE_HEARTBEATS
+  );
   const slashContext = getSlashContext?.();
   const slashWorkspaceId = slashContext?.workspaceId;
 
@@ -284,6 +291,11 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
       const suggestions = getSlashCommandSuggestions(q, {
         agentSkills,
         variant: ctx.workspaceId ? "workspace" : "creation",
+        isExperimentEnabled: (experimentId) =>
+          resolveSlashCommandExperimentValue(experimentId, {
+            goals: goalsExperimentEnabled,
+            workspaceHeartbeats: workspaceHeartbeatsExperimentEnabled,
+          }),
       });
       const section = "Slash Commands";
       const groups: PaletteGroup[] = [
@@ -350,7 +362,15 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
       groups,
       emptyText: filtered.length ? undefined : "No results",
     } satisfies { groups: PaletteGroup[]; emptyText: string | undefined };
-  }, [query, rawActions, recentIndex, getSlashContext, agentSkills]);
+  }, [
+    query,
+    rawActions,
+    recentIndex,
+    getSlashContext,
+    agentSkills,
+    goalsExperimentEnabled,
+    workspaceHeartbeatsExperimentEnabled,
+  ]);
 
   useEffect(() => {
     if (!activePrompt) return;

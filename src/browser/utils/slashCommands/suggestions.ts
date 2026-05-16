@@ -4,11 +4,9 @@
 
 import { matchesNameBySegmentPrefix } from "@/browser/utils/suggestionMatching";
 import { MODEL_ABBREVIATIONS } from "@/common/constants/knownModels";
-import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
-import { isExperimentEnabled } from "@/browser/hooks/useExperiments";
 import { getSlashCommandDefinitions } from "./parser";
-import { SLASH_COMMAND_DEFINITION_MAP } from "./registry";
+import { isSlashCommandVisible, SLASH_COMMAND_DEFINITION_MAP } from "./registry";
 import type {
   SlashCommandDefinition,
   SlashSuggestion,
@@ -17,8 +15,6 @@ import type {
 } from "./types";
 
 export type { SlashSuggestion } from "./types";
-
-import { WORKSPACE_ONLY_COMMAND_KEYS } from "@/constants/slashCommands";
 
 const COMMAND_DEFINITIONS = getSlashCommandDefinitions();
 
@@ -40,8 +36,6 @@ function buildTopLevelSuggestions(
   partial: string,
   context: SlashSuggestionContext
 ): SlashSuggestion[] {
-  const isCreation = context.variant === "creation";
-
   const commandSuggestions = filterAndMapSuggestions(
     COMMAND_DEFINITIONS,
     partial,
@@ -55,24 +49,7 @@ function buildTopLevelSuggestions(
         replacement,
       };
     },
-    (definition) => {
-      if (definition.key === "heartbeat") {
-        try {
-          if (!isExperimentEnabled(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS)) {
-            return false;
-          }
-        } catch {
-          // Experiment check unavailable (e.g., test environment) — hide by default.
-          return false;
-        }
-      }
-
-      if (isCreation && WORKSPACE_ONLY_COMMAND_KEYS.has(definition.key)) {
-        return false;
-      }
-
-      return true;
-    }
+    (definition) => isSlashCommandVisible(definition, context)
   );
 
   const formatScopeLabel = (scope: string): string => {
@@ -129,21 +106,27 @@ function buildTopLevelSuggestions(
 function buildSubcommandSuggestions(
   commandDefinition: SlashCommandDefinition,
   partial: string,
-  prefixTokens: string[]
+  prefixTokens: string[],
+  context: SlashSuggestionContext
 ): SlashSuggestion[] {
   const subcommands = commandDefinition.children ?? [];
 
-  return filterAndMapSuggestions(subcommands, partial, (definition) => {
-    const appendSpace = definition.appendSpace ?? true;
-    const replacementTokens = [...prefixTokens, definition.key];
-    const replacementBase = `/${replacementTokens.join(" ")}`;
-    return {
-      id: `command:${replacementTokens.join(":")}`,
-      display: definition.key,
-      description: definition.description,
-      replacement: `${replacementBase}${appendSpace ? " " : ""}`,
-    };
-  });
+  return filterAndMapSuggestions(
+    subcommands,
+    partial,
+    (definition) => {
+      const appendSpace = definition.appendSpace ?? true;
+      const replacementTokens = [...prefixTokens, definition.key];
+      const replacementBase = `/${replacementTokens.join(" ")}`;
+      return {
+        id: `command:${replacementTokens.join(":")}`,
+        display: definition.key,
+        description: definition.description,
+        replacement: `${replacementBase}${appendSpace ? " " : ""}`,
+      };
+    },
+    (definition) => isSlashCommandVisible(definition, context)
+  );
 }
 
 export function getSlashCommandSuggestions(
@@ -180,8 +163,7 @@ export function getSlashCommandSuggestions(
     return [];
   }
 
-  // In creation mode, don't show subcommand suggestions for workspace-only commands
-  if (context.variant === "creation" && WORKSPACE_ONLY_COMMAND_KEYS.has(rootKey)) {
+  if (!isSlashCommandVisible(rootDefinition, context)) {
     return [];
   }
 
@@ -194,6 +176,9 @@ export function getSlashCommandSuggestions(
 
     if (!nextDefinition) {
       break;
+    }
+    if (!isSlashCommandVisible(nextDefinition, context)) {
+      return [];
     }
 
     definitionPath.push(nextDefinition);
@@ -223,7 +208,12 @@ export function getSlashCommandSuggestions(
 
     if (definitionForSuggestions && (definitionForSuggestions.children ?? []).length > 0) {
       const prefixTokens = completedTokens.slice(0, stage);
-      return buildSubcommandSuggestions(definitionForSuggestions, partialToken, prefixTokens);
+      return buildSubcommandSuggestions(
+        definitionForSuggestions,
+        partialToken,
+        prefixTokens,
+        context
+      );
     }
   }
 

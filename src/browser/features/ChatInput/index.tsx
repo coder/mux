@@ -29,6 +29,7 @@ import {
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { useAPI } from "@/browser/contexts/API";
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
+import { useExperimentValue } from "@/browser/hooks/useExperiments";
 import { normalizeSelectedModel } from "@/common/utils/ai/models";
 import {
   useAdditionalSystemContextHydrated,
@@ -62,6 +63,7 @@ import {
 } from "@/browser/utils/chatCommands";
 import { Button } from "@/browser/components/Button/Button";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { findAtMentionAtCursor } from "@/common/utils/atMentions";
 import { findInlineSkillReferenceAtCursor } from "@/browser/utils/agentSkills/inlineSkillReferences";
 import {
@@ -75,6 +77,7 @@ import {
   getSlashCommandSuggestions,
   type SlashSuggestion,
 } from "@/browser/utils/slashCommands/suggestions";
+import { resolveSlashCommandExperimentValue } from "@/browser/utils/slashCommands/experimentVisibility";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
 import { AgentModePicker } from "@/browser/components/AgentModePicker/AgentModePicker";
 import { ContextUsageIndicatorButton } from "@/browser/components/ContextUsageIndicatorButton/ContextUsageIndicatorButton";
@@ -224,6 +227,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const creationProject =
     variant === "creation" ? userProjects.get(creationParentProjectPath) : undefined;
   const [thinkingLevel] = useThinkingLevel();
+  const goalsExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.GOALS);
+  const workspaceHeartbeatsExperimentEnabled = useExperimentValue(
+    EXPERIMENT_IDS.WORKSPACE_HEARTBEATS
+  );
   const atMentionProjectPath = variant === "creation" ? props.projectPath : null;
   const workspaceId = variant === "workspace" ? props.workspaceId : null;
 
@@ -1387,14 +1394,32 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     const suggestions = getSlashCommandSuggestions(input, {
       agentSkills: agentSkillDescriptors,
       variant,
+      isExperimentEnabled: (experimentId) =>
+        resolveSlashCommandExperimentValue(experimentId, {
+          goals: goalsExperimentEnabled,
+          workspaceHeartbeats: workspaceHeartbeatsExperimentEnabled,
+        }),
     });
     setCommandSuggestions((prev) => replaceSuggestions(prev, suggestions));
     setShowCommandSuggestions(suggestions.length > 0);
-  }, [input, agentSkillDescriptors, variant]);
+  }, [
+    input,
+    agentSkillDescriptors,
+    variant,
+    goalsExperimentEnabled,
+    workspaceHeartbeatsExperimentEnabled,
+  ]);
 
   // Derive ghost hint for slash-command argument syntax.
   // Show only when suggestions are hidden and the input is exactly "/command " with no args yet.
-  const commandGhostHint = getCommandGhostHint(input, showCommandSuggestions, variant);
+  const commandGhostHint = getCommandGhostHint(input, showCommandSuggestions, {
+    variant,
+    isExperimentEnabled: (experimentId) =>
+      resolveSlashCommandExperimentValue(experimentId, {
+        goals: goalsExperimentEnabled,
+        workspaceHeartbeats: workspaceHeartbeatsExperimentEnabled,
+      }),
+  });
 
   // Load agent skills for suggestions
   useEffect(() => {

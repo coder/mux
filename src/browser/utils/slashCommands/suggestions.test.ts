@@ -1,4 +1,5 @@
 import { describe, it, expect } from "bun:test";
+import { EXPERIMENT_IDS, type ExperimentId } from "@/common/constants/experiments";
 import { getSlashCommandSuggestions } from "./suggestions";
 
 describe("getSlashCommandSuggestions", () => {
@@ -19,6 +20,30 @@ describe("getSlashCommandSuggestions", () => {
     const suggestions = getSlashCommandSuggestions("/plan ", { variant: "creation" });
     expect(suggestions).toEqual([]);
   });
+  it("hides experiment-gated commands when their experiments are disabled", () => {
+    const suggestions = getSlashCommandSuggestions("/", {
+      isExperimentEnabled: () => false,
+    });
+    const labels = suggestions.map((s) => s.display);
+
+    expect(labels).not.toContain("/goal");
+    expect(labels).not.toContain("/heartbeat");
+  });
+
+  it("shows experiment-gated commands when their experiments are enabled", () => {
+    const enabledExperiments = new Set<ExperimentId>([
+      EXPERIMENT_IDS.GOALS,
+      EXPERIMENT_IDS.WORKSPACE_HEARTBEATS,
+    ]);
+    const suggestions = getSlashCommandSuggestions("/", {
+      isExperimentEnabled: (experimentId) => enabledExperiments.has(experimentId),
+    });
+    const labels = suggestions.map((s) => s.display);
+
+    expect(labels).toContain("/goal");
+    expect(labels).toContain("/heartbeat");
+  });
+
   it("suggests top level commands when starting with slash", () => {
     const suggestions = getSlashCommandSuggestions("/");
     const labels = suggestions.map((s) => s.display);

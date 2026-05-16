@@ -8,13 +8,14 @@ import type {
   SlashSuggestion,
   SuggestionDefinition,
   SlashSuggestionContext,
+  SlashCommandVisibilityContext,
 } from "./types";
 import minimist from "minimist";
-import { EXPERIMENT_IDS, type ExperimentId } from "@/common/constants/experiments";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { MODEL_ABBREVIATIONS } from "@/common/constants/knownModels";
 import { SLASH_COMMAND_HINTS } from "@/common/constants/slashCommandHints";
 import { assert } from "@/common/utils/assert";
-import { isExperimentEnabled } from "@/browser/hooks/useExperiments";
+import { isExperimentEnabled as readExperimentEnabled } from "@/browser/hooks/useExperiments";
 import { normalizeModelInput } from "@/browser/utils/models/normalizeModelInput";
 import { parseGoalBudgetInputCents } from "@/common/utils/goals/budgetParser";
 import { HEARTBEAT_MAX_INTERVAL_MS, HEARTBEAT_MIN_INTERVAL_MS } from "@/constants/heartbeat";
@@ -418,6 +419,7 @@ const idleCommandDefinition: SlashCommandDefinition = {
 
 const heartbeatCommandDefinition: SlashCommandDefinition = {
   key: "heartbeat",
+  experimentGate: EXPERIMENT_IDS.WORKSPACE_HEARTBEATS,
   description: `Configure workspace heartbeats. Usage: ${HEARTBEAT_USAGE}`,
   inputHint: SLASH_COMMAND_HINTS.heartbeat,
   appendSpace: false,
@@ -528,6 +530,7 @@ const SIMPLE_GOAL_LIFECYCLE_TYPES: Record<string, SimpleGoalLifecycleType> = {
 
 const goalCommandDefinition: SlashCommandDefinition = {
   key: "goal",
+  experimentGate: EXPERIMENT_IDS.GOALS,
   description: `Create, view, or clear a workspace goal. Usage: ${GOAL_USAGE}`,
   inputHint: SLASH_COMMAND_HINTS.goal,
   appendSpace: false,
@@ -710,22 +713,44 @@ export const SLASH_COMMAND_DEFINITION_MAP = new Map(
 
 const COMMAND_GHOST_HINT_PATTERN = /^\/(\S+) +$/;
 
+function normalizeVisibilityContext(
+  contextOrVariant?: SlashCommandVisibilityContext | SlashSuggestionContext["variant"]
+): SlashCommandVisibilityContext {
+  return typeof contextOrVariant === "string"
+    ? { variant: contextOrVariant }
+    : (contextOrVariant ?? {});
+}
+
 /**
- * Slash commands gated behind a single experiment flag — their ghost-hint is
- * suppressed when the experiment is off. Hiding on a thrown experiment check
- * (e.g., test environments where the hook is unavailable) is the safer
- * default. Adding a new gated command is a one-line entry here instead of a
- * duplicated try/catch block in `getCommandGhostHint`.
+ * Single visibility gate for every slash-command discovery surface. Keeping the
+ * experiment on the command definition prevents one surface from forgetting to
+ * hide a gated command when another surface already does.
  */
-const COMMAND_GHOST_HINT_EXPERIMENT_GATES: Readonly<Record<string, ExperimentId>> = {
-  goal: EXPERIMENT_IDS.GOALS,
-  heartbeat: EXPERIMENT_IDS.WORKSPACE_HEARTBEATS,
-};
+export function isSlashCommandVisible(
+  definition: SlashCommandDefinition,
+  context: SlashCommandVisibilityContext = {}
+): boolean {
+  if (context.variant === "creation" && WORKSPACE_ONLY_COMMAND_KEYS.has(definition.key)) {
+    return false;
+  }
+
+  if (definition.experimentGate == null) {
+    return true;
+  }
+
+  try {
+    const resolveExperiment = context.isExperimentEnabled ?? readExperimentEnabled;
+    return resolveExperiment(definition.experimentGate) === true;
+  } catch {
+    // Experiment check unavailable (e.g., test environments without window) — hide by default.
+    return false;
+  }
+}
 
 export function getCommandGhostHint(
   input: string,
   showCommandSuggestions: boolean,
-  variant?: SlashSuggestionContext["variant"]
+  contextOrVariant?: SlashCommandVisibilityContext | SlashSuggestionContext["variant"]
 ): string | null {
   if (showCommandSuggestions) {
     return null;
@@ -737,21 +762,13 @@ export function getCommandGhostHint(
   }
 
   const commandKey = match[1];
-  if (variant === "creation" && WORKSPACE_ONLY_COMMAND_KEYS.has(commandKey)) {
+  const definition = SLASH_COMMAND_DEFINITION_MAP.get(commandKey);
+  if (
+    !definition ||
+    !isSlashCommandVisible(definition, normalizeVisibilityContext(contextOrVariant))
+  ) {
     return null;
   }
 
-  const gateExperimentId = COMMAND_GHOST_HINT_EXPERIMENT_GATES[commandKey];
-  if (gateExperimentId != null) {
-    try {
-      if (!isExperimentEnabled(gateExperimentId)) {
-        return null;
-      }
-    } catch {
-      // Experiment check unavailable (e.g., test environment) — hide by default.
-      return null;
-    }
-  }
-
-  return SLASH_COMMAND_DEFINITION_MAP.get(commandKey)?.inputHint ?? null;
+  return definition.inputHint ?? null;
 }
