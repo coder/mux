@@ -256,6 +256,7 @@ describe("agentSkillsService", () => {
       "init",
       "mux-diagram",
       "mux-docs",
+      "orchestrate",
     ]);
 
     const foo = skills.find((s) => s.name === "foo");
@@ -662,6 +663,7 @@ describe("agentSkillsService", () => {
       "init",
       "mux-diagram",
       "mux-docs",
+      "orchestrate",
     ]);
 
     const invalidNames = diagnostics.invalidSkills.map((issue) => issue.directoryName).sort();
