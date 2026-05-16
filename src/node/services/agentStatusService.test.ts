@@ -519,6 +519,47 @@ describe("AgentStatusService", () => {
     expect(generateSpy.mock.calls[1][0]).toContain("User: Pivot after recency");
   });
 
+  test("recency catch-up wait still fires when only streaming flipped between ticks", async () => {
+    // The history-catch-up guard keys on the transcript-only hash so a
+    // streaming-bit flip (idle→streaming, common when a fresh user
+    // message kicks off provider streaming) does NOT look like a
+    // transcript change and bypass the wait. If we folded `streaming`
+    // into the same hash the guard uses, the service would generate
+    // against the still-old transcript and consume the recency bump.
+    await historyHandle.historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("u1", "user", "Initial request")
+    );
+
+    let recency = 100;
+    let streaming = false;
+    getAllSnapshotsMock.mockImplementation(() =>
+      Promise.resolve(
+        new Map<string, ActivitySnapshotForTest>([[workspaceId, { streaming, recency }]])
+      )
+    );
+
+    let now = 1_000_000;
+    const service = createService({ clock: () => now });
+    const internals = getInternals(service);
+
+    // First tick: settle on the initial transcript with streaming=false.
+    await internals.runTick();
+    expect(generateSpy).toHaveBeenCalledTimes(1);
+
+    // Recency advances (sendMessage fired) AND streaming flips on, but the
+    // pivot user message has not been appended to history yet. The guard
+    // must still defer — exactly the regression Codex caught: if the
+    // recency-catch-up comparison used a streaming-inclusive hash, the
+    // flipped bit would make the hashes diverge and the wait would be
+    // skipped.
+    now += 5_000;
+    recency = now;
+    streaming = true;
+    await internals.runTick();
+    expect(generateSpy).toHaveBeenCalledTimes(1);
+  });
+
   test("defers a first recent recency bump so startup cannot settle on stale pre-pivot history", async () => {
     await historyHandle.historyService.appendToHistory(
       workspaceId,

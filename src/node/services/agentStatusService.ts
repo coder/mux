@@ -221,15 +221,24 @@ export class AgentStatusService {
   ): Promise<void> {
     try {
       const transcript = await this.buildTrailingTranscript(workspaceId);
-      // `streaming` participates in the dedup hash because it now changes
-      // the prompt's tense guidance and can change the generated status
-      // even when the transcript bytes are identical. Without this, a
-      // workspace whose stream ends without appending any new partial
-      // (e.g. interrupted stream leaving the same partial.json on disk)
-      // would stay settled on the streaming=true status forever — exactly
-      // the regression that re-introduces the "Deploying… service" stale
-      // sidebar bug this PR exists to fix.
-      const inputHash = computeInputHash(transcript, streaming);
+      // Two hashes, two purposes:
+      //
+      //   transcriptHash — keyed only on transcript bytes. Used by the
+      //     history-catch-up guard (`isRecentRecencyAheadOfHistory` +
+      //     `lastSeenInputHash`) to detect "transcript unchanged since the
+      //     last look." Folding `streaming` into this comparison would make
+      //     the common idle→streaming transition look like a transcript
+      //     change and bypass the wait-for-history guard, letting the
+      //     service persist a stale pre-pivot status and consume the
+      //     recency signal.
+      //
+      //   dedupHash — keyed on transcript + streaming. Used by the
+      //     "settled, skip regeneration" branch (`state.lastInputHash`)
+      //     because `streaming` now changes the prompt's tense guidance
+      //     and therefore the generated status; identical transcript bytes
+      //     with different streaming values must dedup independently.
+      const transcriptHash = computeTranscriptHash(transcript);
+      const dedupHash = computeDedupHash(transcriptHash, streaming);
       // dispatch() set lastRanAt to the tick start time before kicking us
       // off, so the scheduler won't reconsider this workspace until the next
       // interval boundary unless a newer user-recency timestamp indicates the
@@ -250,19 +259,19 @@ export class AgentStatusService {
       // transcript when conditions change.
       const settleOnTranscript = () => {
         markRecencyObserved();
-        state.lastInputHash = inputHash;
+        state.lastInputHash = dedupHash;
       };
 
       if (
         isRecentRecencyAheadOfHistory(
           state,
-          inputHash,
+          transcriptHash,
           observedRecency,
           this.clock(),
           AGENT_STATUS_TICK_INTERVAL_MS
         )
       ) {
-        state.lastSeenInputHash = inputHash;
+        state.lastSeenInputHash = transcriptHash;
         // We may be seeing WorkspaceService's recency update before the
         // corresponding user message is appended to history. If the transcript
         // is unchanged from the last one we examined (or we have no baseline
@@ -275,7 +284,7 @@ export class AgentStatusService {
         });
         return;
       }
-      state.lastSeenInputHash = inputHash;
+      state.lastSeenInputHash = transcriptHash;
 
       // Empty workspace: nothing to summarize. Don't blank an existing
       // todoStatus — that would clobber a status produced before compaction.
@@ -290,7 +299,10 @@ export class AgentStatusService {
       // recent race path above already handles recency that may be ahead of
       // history, so any recency reaching this dedup branch is stale/non-racy:
       // consume it to avoid permanent recency-advanced priority.
-      if (state.lastInputHash === inputHash) {
+      // dedupHash (transcript + streaming) is the right key here: flipping
+      // the streaming bit must force a re-generation so the new liveness
+      // hint actually applies.
+      if (state.lastInputHash === dedupHash) {
         markRecencyObserved();
         return;
       }
@@ -522,14 +534,29 @@ function formatMessageForTranscript(
   return segments.length === 0 ? "" : `${role}: ${segments.join("\n")}`;
 }
 
-function computeInputHash(transcript: string, streaming: boolean): string {
-  // The streaming bit is part of the prompt (it switches the liveness hint
-  // and the tense rule), so identical transcript bytes with different
-  // streaming values produce different generations and must dedup
-  // independently. A single-byte prefix keeps the hash cheap.
+/**
+ * Stable hash of the transcript bytes alone. This is the input the
+ * history-catch-up guard uses to detect "transcript unchanged since the
+ * last look" so a freshly-bumped `observedRecency` can wait one tick for
+ * the corresponding history write to land. Folding `streaming` in here
+ * would make the common idle→streaming transition look like a transcript
+ * change and bypass the guard.
+ */
+function computeTranscriptHash(transcript: string): string {
+  return createHash("sha256").update(transcript).digest("hex");
+}
+
+/**
+ * Dedup key for generation: combines the transcript hash with the
+ * streaming bit, because `streaming` changes the prompt's tense guidance
+ * (and therefore the generated status). Same transcript + different
+ * streaming → must regenerate. Cheap: hashes a 3-byte prefix + the
+ * already-computed transcript hash.
+ */
+function computeDedupHash(transcriptHash: string, streaming: boolean): string {
   return createHash("sha256")
     .update(streaming ? "S1\n" : "S0\n")
-    .update(transcript)
+    .update(transcriptHash)
     .digest("hex");
 }
 
