@@ -183,6 +183,14 @@ interface PendingGoalMutation {
   completionSummary?: string | null;
   expectedGoalId?: string | null;
   initiator?: GoalLifecycleInitiator;
+  /**
+   * Carries the caller's `editInPlace` intent across the mid-stream deferral
+   * (Coder code review: "Preserve editInPlace through streaming deferral").
+   * Without this, a rename submitted while the agent is streaming would be
+   * replayed at stream end as a normal replace — losing goalId + accounting
+   * continuity that the inline editor contract requires.
+   */
+  editInPlace?: boolean | null;
 }
 
 export type GoalStreamOriginKind = "goal_continuation" | "goal_budget_limit" | "user" | "other";
@@ -397,37 +405,47 @@ export class WorkspaceGoalService {
    * cannot brick the right-sidebar GoalTab. Caps the returned list at
    * `GOAL_HISTORY_RENDER_CAP` so the IPC response stays bounded; older entries
    * stay on disk.
+   *
+   * Held under the same `fileLocks` as `appendGoalHistoryEntry` / `clearGoal`
+   * / `setGoalImmediately`'s replace branch (Codex P3 review feedback: "Read
+   * goal history under the workspace lock"). Without the lock, a concurrent
+   * append could leave a partially-written trailing line that the parse loop
+   * would skip — silently hiding the newest entry from the renderer until
+   * the next mutation triggers a re-fetch.
    */
   async getGoalHistory(workspaceId: string): Promise<GoalHistoryEntry[]> {
-    const filePath = this.getHistoryFilePath(workspaceId);
-    let raw: string;
-    try {
-      raw = await fs.readFile(filePath, "utf-8");
-    } catch (error) {
-      if (isNotFound(error)) {
+    return this.fileLocks.withLock(workspaceId, async () => {
+      const filePath = this.getHistoryFilePath(workspaceId);
+      let raw: string;
+      try {
+        raw = await fs.readFile(filePath, "utf-8");
+      } catch (error) {
+        if (isNotFound(error)) {
+          return [];
+        }
+        log.warn("Failed to read goal history", { workspaceId, error });
         return [];
       }
-      log.warn("Failed to read goal history", { workspaceId, error });
-      return [];
-    }
 
-    const entries: GoalHistoryEntry[] = [];
-    for (const line of raw.split("\n")) {
-      const trimmed = line.trim();
-      if (trimmed.length === 0) {
-        continue;
+      const entries: GoalHistoryEntry[] = [];
+      for (const line of raw.split("\n")) {
+        const trimmed = line.trim();
+        if (trimmed.length === 0) {
+          continue;
+        }
+        try {
+          entries.push(GoalHistoryEntrySchema.parse(JSON.parse(trimmed)));
+        } catch (error) {
+          log.warn("Skipping corrupt goal history entry", { workspaceId, error });
+        }
       }
-      try {
-        entries.push(GoalHistoryEntrySchema.parse(JSON.parse(trimmed)));
-      } catch (error) {
-        log.warn("Skipping corrupt goal history entry", { workspaceId, error });
-      }
-    }
 
-    // Sort by endedAtMs DESC so the renderer can stream from the top without
-    // an extra sort. Stable across equal timestamps via reverse insertion.
-    entries.sort((a, b) => b.endedAtMs - a.endedAtMs);
-    return entries.slice(0, GOAL_HISTORY_RENDER_CAP);
+      // Sort by endedAtMs DESC so the renderer can stream from the top
+      // without an extra sort. Stable across equal timestamps via reverse
+      // insertion.
+      entries.sort((a, b) => b.endedAtMs - a.endedAtMs);
+      return entries.slice(0, GOAL_HISTORY_RENDER_CAP);
+    });
   }
 
   private createGoal(input: {
@@ -1525,6 +1543,10 @@ export class WorkspaceGoalService {
             ? { expectedGoalId: input.expectedGoalId ?? null }
             : {}),
           ...(input.initiator != null ? { initiator: input.initiator } : {}),
+          // Forward `editInPlace` so an inline rename submitted while the
+          // agent is streaming still takes the rename branch when the
+          // pending mutation drains (Codex P2 review feedback).
+          ...(input.editInPlace != null ? { editInPlace: input.editInPlace } : {}),
         });
         // A user can run /goal while the first turn is still streaming. The
         // durable goal write must wait for stream accounting, but the Goal panel

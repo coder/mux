@@ -1585,6 +1585,39 @@ describe("WorkspaceGoalService", () => {
     expect(await service.getGoal(workspaceId)).toBeNull();
   });
 
+  test("queued mid-stream editInPlace rename preserves goalId + accounting at drain time", async () => {
+    const created = await setGoalOk(service, { workspaceId, objective: "Original objective" });
+    await service.recordStreamAccounting({
+      workspaceId,
+      costUsd: 0.25,
+      streamStartedAtMs: created.createdAtMs + 1,
+      streamOriginKind: "user",
+    });
+
+    await extensionMetadata.setStreaming(workspaceId, true);
+    const queued = await service.setGoal({
+      workspaceId,
+      objective: "Renamed objective",
+      editInPlace: true,
+      expectedGoalId: created.goalId,
+    });
+    expect(queued.success).toBe(true);
+
+    await extensionMetadata.setStreaming(workspaceId, false);
+    const drained = await service.applyPendingAfterStreamEnd(workspaceId);
+
+    // Codex P2 review: without forwarding `editInPlace` into the pending
+    // mutation, the drained mutation would take the archive+replace branch
+    // and lose goalId continuity / reset accounting. This guards against
+    // regression.
+    expect(drained?.goalId).toBe(created.goalId);
+    expect(drained?.objective).toBe("Renamed objective");
+    expect(drained?.costCents).toBe(25);
+    // No history entry should be appended for the in-place rename even when
+    // the rename was deferred through the streaming branch.
+    expect(await service.getGoalHistory(workspaceId)).toHaveLength(0);
+  });
+
   test("queued mid-stream goal replacement preserves expectedGoalId at drain time", async () => {
     const created = await setGoalOk(service, { workspaceId, objective: "Original" });
     await extensionMetadata.setStreaming(workspaceId, true);
