@@ -17,7 +17,11 @@ import { createTestHistoryService } from "./testHistoryService";
 
 interface AgentStatusServiceInternals {
   runTick(): Promise<void>;
-  runForWorkspace(workspaceId: string, observedRecency?: number | null): Promise<void>;
+  runForWorkspace(
+    workspaceId: string,
+    observedRecency?: number | null,
+    streaming?: boolean
+  ): Promise<void>;
 }
 
 interface ActivitySnapshotForTest {
@@ -213,10 +217,79 @@ describe("AgentStatusService", () => {
     await historyHandle.historyService.writePartial(workspaceId, partial);
 
     // Dedup would have suppressed this second call if the partial was missing
-    // from the trailing window.
+    // from the trailing window. The partial assistant message must also be
+    // tagged "(in progress)" so the prompt knows the prose isn't finalized —
+    // this is the marker that prevents stale past-tense statuses during
+    // long streams (e.g. emitting "Deployed service" while still deploying).
     await getInternals(service).runForWorkspace(workspaceId);
     expect(generateSpy).toHaveBeenCalledTimes(2);
-    expect(generateSpy.mock.calls[1][0]).toContain("Assistant: Reading config files");
+    expect(generateSpy.mock.calls[1][0]).toContain("Assistant (in progress): Reading config files");
+  });
+
+  test("transcript tags in-flight tool calls 'running' and completed ones 'done'", async () => {
+    // Lifecycle markers are the highest-signal datum the status model has
+    // for distinguishing "Deploying service" (call still running) from
+    // "Deployed service" (call returned). Regressing the phase suffix would
+    // bring back the historical past-tense-while-deploying bug.
+    await historyHandle.historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("u1", "user", "deploy the service")
+    );
+    await historyHandle.historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("a1", "assistant", "Kicking off deploy", undefined, [
+        {
+          type: "dynamic-tool",
+          toolCallId: "call-running",
+          toolName: "bash",
+          state: "input-available",
+          input: { command: "deploy.sh" },
+        },
+        {
+          type: "dynamic-tool",
+          toolCallId: "call-done",
+          toolName: "read_file",
+          state: "output-available",
+          input: { path: "README.md" },
+          output: "ok",
+        },
+      ])
+    );
+
+    const service = createService();
+    await getInternals(service).runForWorkspace(workspaceId);
+
+    expect(generateSpy).toHaveBeenCalledTimes(1);
+    const transcript = generateSpy.mock.calls[0][0];
+    expect(transcript).toContain("[tool bash running]");
+    expect(transcript).toContain("[tool read_file done]");
+  });
+
+  test("forwards the live streaming bit to the prompt builder", async () => {
+    // ExtensionMetadataService observes provider streaming state and
+    // AgentStatusService must forward it to generateWorkspaceStatus so the
+    // prompt can lock in present-progressive tense when the assistant is
+    // mid-response. Without this plumbing the model would have to infer
+    // liveness from prose alone — the exact failure mode this fix exists
+    // for.
+    await historyHandle.historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("u1", "user", "deploy the service")
+    );
+    await historyHandle.historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("a1", "assistant", "Deploying now")
+    );
+
+    const service = createService();
+    await getInternals(service).runForWorkspace(workspaceId, null, true);
+
+    expect(generateSpy).toHaveBeenCalledTimes(1);
+    // Generator signature: (transcript, candidates, aiService, options).
+    // Asserting the options object reaches the generator catches a
+    // regression where the streaming bit gets silently dropped at the
+    // dispatch boundary.
+    expect(generateSpy.mock.calls[0][3]).toEqual({ streaming: true });
   });
 
   test("re-generates after the trailing transcript changes", async () => {

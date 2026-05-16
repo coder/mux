@@ -24,6 +24,35 @@ describe("buildWorkspaceStatusPrompt", () => {
     // from a previous workspace.
     expect(prompt).toContain("(no recent transcript)");
   });
+
+  test("switches the liveness hint based on the streaming flag", () => {
+    // The streaming bit is the highest-signal input for the
+    // in-progress-vs-completed distinction the small model historically got
+    // wrong. The prompt must visibly switch between "actively streaming" and
+    // "finished streaming" guidance so behavior actually differs on each
+    // branch — not just receive the option silently.
+    const live = buildWorkspaceStatusPrompt("Assistant: Deploying now", { streaming: true });
+    const done = buildWorkspaceStatusPrompt("Assistant: Deploying now", { streaming: false });
+
+    expect(live).toContain("actively streaming");
+    expect(done).toContain("finished streaming");
+    // The streaming branch must rule out past tense; the non-streaming
+    // branch must explicitly warn that "finished streaming" ≠ activity
+    // complete. Both behaviors are part of the tense-correctness fix and
+    // would silently regress if the branches collapsed.
+    expect(live).not.toContain("finished streaming");
+    expect(done).not.toContain("actively streaming");
+  });
+
+  test("documents tool-call lifecycle markers so the model can read them", () => {
+    // formatMessageForTranscript emits [tool <name> running|done] markers;
+    // the prompt must teach the model what those mean. If this guidance is
+    // dropped, the markers become noise and the tense rule falls back to
+    // guessing from prose — the exact failure mode this fix addresses.
+    const prompt = buildWorkspaceStatusPrompt("Assistant: working\n[tool bash running]");
+    expect(prompt).toContain("[tool <name> running]");
+    expect(prompt).toContain("[tool <name> done]");
+  });
 });
 
 describe("generateWorkspaceStatus error paths", () => {

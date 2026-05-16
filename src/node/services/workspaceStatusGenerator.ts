@@ -47,26 +47,63 @@ export interface GenerateWorkspaceStatusFailure {
   reachedProvider: boolean;
 }
 
+export interface BuildWorkspaceStatusPromptOptions {
+  /**
+   * Whether the agent's last assistant turn is currently being streamed by
+   * the provider (as observed by ExtensionMetadataService at dispatch time).
+   * When true the prompt forces present-progressive tense; when false the
+   * prompt still requires per-activity completion evidence (tool-call
+   * `[done]` markers) before allowing past tense. This is the highest-signal
+   * input for the in-progress-vs-completed distinction the small model
+   * historically got wrong.
+   */
+  streaming?: boolean;
+}
+
 /**
  * Build the prompt used by {@link generateWorkspaceStatus}. The transcript
  * is supplied pre-trimmed (token budget enforced upstream). The prompt
  * intentionally targets "current activity" not "overall task scope" — this
  * is a sidebar status, not a workspace title.
  */
-export function buildWorkspaceStatusPrompt(transcript: string): string {
+export function buildWorkspaceStatusPrompt(
+  transcript: string,
+  options: BuildWorkspaceStatusPromptOptions = {}
+): string {
   // Sentinel for an empty window. AgentStatusService skips empty inputs in
   // practice, but the model still needs something to ground on.
   const body = transcript.trim().length > 0 ? transcript : "(no recent transcript)";
+  // Surface live streaming state as a leading instruction. AgentStatusService
+  // already tracks `snapshot.streaming` to pick cadence; passing it through
+  // lets the model resolve genuinely ambiguous transcripts (e.g. the model
+  // wrote "Deploying service…" but no [tool … done] has arrived yet) toward
+  // present-progressive tense instead of guessing past tense.
+  const livenessHint = options.streaming
+    ? 'The agent is actively streaming a response right now. The activity is in progress: prefer present-progressive tense (e.g. "Deploying service", not "Deployed service").\n\n'
+    : "The agent's most recent turn has finished streaming, but that does NOT necessarily mean the underlying activity completed. Only use past tense when there is direct evidence of completion in the transcript (see Tense rule below).\n\n";
   return [
     "You produce a short sidebar status summarizing the most recent activity in an AI coding agent's chat.\n\n",
+    livenessHint,
     "Recent chat transcript (oldest first, newest last):\n",
     "<transcript>\n",
     body,
     "\n</transcript>\n\n",
+    // Tool-call lifecycle markers come from formatMessageForTranscript in
+    // agentStatusService.ts. They distinguish in-flight calls (no result yet)
+    // from completed ones, which is the single best signal the small model
+    // has for deciding whether the activity has actually finished.
+    "Tool-call markers in the transcript:\n",
+    "- `[tool <name> running]` — the call was sent but no result has come back yet (in progress).\n",
+    "- `[tool <name> done]` — the tool returned (completed; may have succeeded or failed).\n",
+    "- A line prefixed `Assistant (in progress):` is the assistant message currently being streamed — it is not finalized.\n\n",
     "Requirements:\n",
     "- Describe the specific activity the agent was last working on, drawn from the actual transcript content.\n",
     "- Always name a concrete activity (file, feature, bug, command, etc.) from the transcript. Generic non-informative phrasing is rejected and not shown.\n",
-    "- Tense: use present tense if the agent appears to still be in the middle of the activity; use past tense if the most recent assistant turn looks complete (e.g. wrapped up with a summary, no pending tool calls).\n",
+    // Tense rule is the core fix for the historical "Deployed service" while
+    // still deploying bug. Past tense now requires *evidence* in the
+    // transcript, not vibes about how complete the prose sounds.
+    '- Tense: default to present-progressive (e.g. "Deploying service", "Running tests"). Use past tense ONLY when there is direct evidence the activity finished — every tool call relevant to it shows `[tool … done]` AND the assistant has summarized or otherwise handed back control. When uncertain, use present-progressive.\n',
+    '- Counter-example: if the transcript shows `[tool bash running]` for a deploy, write "Deploying service", not "Deployed service".\n',
     // The sidebar renders the emoji through EmojiIcon, which maps a fixed
     // set of glyphs to Lucide icons. Emojis outside this set fall back to
     // a generic Sparkles icon, which looks identical regardless of the
@@ -83,11 +120,16 @@ export function buildWorkspaceStatusPrompt(transcript: string): string {
  * Generate a sidebar agent-status summary using the same "small model" path
  * that powers workspace title generation. Tries up to 3 candidates so a
  * single misconfigured candidate can't permanently disable status updates.
+ *
+ * `options.streaming` is forwarded to {@link buildWorkspaceStatusPrompt} so
+ * the model can resolve ambiguous "in progress vs done" cases using the
+ * live provider state rather than guessing from prose.
  */
 export async function generateWorkspaceStatus(
   transcript: string,
   candidates: readonly string[],
-  aiService: AIService
+  aiService: AIService,
+  options: BuildWorkspaceStatusPromptOptions = {}
 ): Promise<Result<GenerateWorkspaceStatusResult, GenerateWorkspaceStatusFailure>> {
   if (candidates.length === 0) {
     return Err({
@@ -124,7 +166,7 @@ export async function generateWorkspaceStatus(
     try {
       const currentStream = streamText({
         model: modelResult.data,
-        prompt: buildWorkspaceStatusPrompt(transcript),
+        prompt: buildWorkspaceStatusPrompt(transcript, options),
         tools: {
           propose_status: tool({
             description: TOOL_DEFINITIONS.propose_status.description,
