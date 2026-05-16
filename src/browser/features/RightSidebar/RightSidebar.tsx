@@ -937,8 +937,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
       // "Preserve the Goal tab for history-only workspaces"). Visibility
       // depends on `goalHistory.length` so the layout effect also re-runs
       // when history populates after a fresh fetch.
-      const shouldShowGoal =
-        goalsExperimentEnabled && (goal != null || goalHistory.length > 0);
+      const shouldShowGoal = goalsExperimentEnabled && (goal != null || goalHistory.length > 0);
 
       if (shouldShowGoal && !hasGoal) {
         return addTabToFocusedTabset(prev, "goal", false);
