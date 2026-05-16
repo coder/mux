@@ -8105,6 +8105,74 @@ describe("WorkspaceService.getGoalContinuationRuntimeState", () => {
       expect(result?.agentId).toBe("exec");
     });
 
+    test("uses the persisted selected agent for initial goal kickoff options", async () => {
+      const projectPath = "/tmp/proj";
+      const workspaceId = "ws-selected-agent";
+      const projects = new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              {
+                id: workspaceId,
+                path: "/tmp/proj/ws",
+                agentId: "review",
+                aiSettingsByAgent: {
+                  review: { model: "anthropic:claude-sonnet-4-6", thinkingLevel: "off" as const },
+                  exec: { model: "openai:gpt-4o", thinkingLevel: "off" as const },
+                },
+              },
+            ],
+          },
+        ],
+      ]);
+      const service = await makeServiceWithConfig({
+        findWorkspace: mock(() => ({ projectPath, workspacePath: "/tmp/proj/ws" })),
+        loadConfigOrDefault: mock(() => ({ projects })),
+      });
+
+      const result = service.getGoalContinuationKickoffSendOptions(workspaceId);
+
+      expect(result).toEqual({
+        model: "anthropic:claude-sonnet-4-6",
+        agentId: "review",
+      });
+    });
+
+    test("falls back to exec when the selected agent cannot run goal continuations", async () => {
+      const projectPath = "/tmp/proj";
+      const workspaceId = "ws-plan-agent";
+      const projects = new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              {
+                id: workspaceId,
+                path: "/tmp/proj/ws",
+                agentId: "plan",
+                aiSettingsByAgent: {
+                  plan: { model: "anthropic:claude-sonnet-4-6", thinkingLevel: "off" as const },
+                  exec: { model: "openai:gpt-4o", thinkingLevel: "off" as const },
+                },
+              },
+            ],
+          },
+        ],
+      ]);
+      const service = await makeServiceWithConfig({
+        findWorkspace: mock(() => ({ projectPath, workspacePath: "/tmp/proj/ws" })),
+        loadConfigOrDefault: mock(() => ({ projects })),
+      });
+
+      const result = service.getGoalContinuationKickoffSendOptions(workspaceId);
+
+      expect(result).toEqual({
+        model: "openai:gpt-4o",
+        agentId: "exec",
+      });
+    });
+
     test("falls through to workspace default model when per-agent is missing", async () => {
       const projectPath = "/tmp/proj";
       const workspaceId = "ws-1";

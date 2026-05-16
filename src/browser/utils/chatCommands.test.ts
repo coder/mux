@@ -504,7 +504,7 @@ describe("processSlashCommand - goal experiment state", () => {
 });
 
 describe("processSlashCommand - workspace command gating", () => {
-  test("blocks known goal flag errors during workspace creation", async () => {
+  test("shows goal parse errors during workspace creation", async () => {
     const context = createGoalCommandContext(null);
     context.variant = "creation";
 
@@ -515,7 +515,7 @@ describe("processSlashCommand - workspace command gating", () => {
 
     expect(result).toEqual({ clearInput: false, toastShown: true });
     expect(context.setToast).toHaveBeenCalledWith(
-      expect.objectContaining({ message: "Command not available during workspace creation" })
+      expect.objectContaining({ message: "Unknown flag for /goal: --bogus" })
     );
   });
 });

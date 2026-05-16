@@ -56,6 +56,7 @@ import {
   getWorkspaceLastReadKey,
 } from "@/common/constants/storage";
 import {
+  isGoalsExperimentEnabledForCommand,
   prepareCompactionMessage,
   processSlashCommand,
   type SlashCommandContext,
@@ -804,13 +805,22 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
   // Creation-specific state (hook always called, but only used when variant === "creation")
   // This avoids conditional hook calls which violate React rules
+  const creationNameMessage =
+    variant === "creation"
+      ? (() => {
+          const parsedCreationCommand = parseCommand(input.trim());
+          return parsedCreationCommand?.type === "goal-set"
+            ? parsedCreationCommand.objective
+            : input;
+        })()
+      : "";
   const creationState = useCreationWorkspace(
     variant === "creation"
       ? {
           projectPath: creationParentProjectPath,
           subProjectPath: creationSubProjectPath,
           onWorkspaceCreated: props.onWorkspaceCreated,
-          message: input,
+          message: creationNameMessage,
           draftId: props.pendingDraftId,
           userModel: preferredModel,
         }
@@ -2113,12 +2123,23 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
     // Route to creation handler for creation variant
     if (variant === "creation") {
-      const commandHandled = await executeParsedCommand(parsed, input);
-      if (commandHandled) {
+      const initialGoalCommand = parsed?.type === "goal-set" ? parsed : undefined;
+      if (initialGoalCommand && !(await isGoalsExperimentEnabledForCommand({ api }))) {
+        setToast({
+          id: Date.now().toString(),
+          type: "error",
+          message: "Goal commands require the Goals experiment to be enabled",
+        });
         return;
       }
+      if (!initialGoalCommand) {
+        const commandHandled = await executeParsedCommand(parsed, input);
+        if (commandHandled) {
+          return;
+        }
+      }
 
-      let creationMessageTextForSend = messageText;
+      let creationMessageTextForSend = initialGoalCommand?.objective ?? messageText;
       let creationOptionsOverride: Partial<SendMessageOptions> | undefined;
 
       if (skillInvocation) {
@@ -2162,7 +2183,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       const creationResult = await creationState.handleSend(
         creationMessageTextForSend,
         creationFileParts.length > 0 ? creationFileParts : undefined,
-        creationOptionsOverride
+        creationOptionsOverride,
+        initialGoalCommand
       );
 
       if (creationResult.success) {

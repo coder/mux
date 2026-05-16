@@ -3237,7 +3237,8 @@ export const router = (authToken?: string) => {
           return context.workspaceService.updateAgentAISettings(
             input.workspaceId,
             input.agentId,
-            input.aiSettings
+            input.aiSettings,
+            { persistSelectedAgentId: input.persistSelectedAgentId === true }
           );
         }),
       rename: t

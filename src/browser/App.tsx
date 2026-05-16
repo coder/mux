@@ -1188,7 +1188,7 @@ function AppInner() {
                         // against its latest ref, so by the time setSelectedWorkspace() returns we
                         // know whether this creation actually won and can safely mark the
                         // optimistic starting barrier outside the updater callback.
-                        if (createdSelection) {
+                        if (createdSelection && options?.markPendingInitialSend !== false) {
                           workspaceStore.markPendingInitialSend(
                             metadata.id,
                             options?.pendingStreamModel ?? null

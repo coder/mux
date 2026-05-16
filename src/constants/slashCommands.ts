@@ -14,7 +14,6 @@ export const WORKSPACE_ONLY_COMMAND_KEYS: ReadonlySet<string> = new Set([
   "new",
   "plan",
   "heartbeat",
-  "goal",
 ]);
 
 /**

@@ -20,6 +20,8 @@ export interface WorkspaceCreatedOptions {
   autoNavigate?: boolean;
   /** Pending model for the optimistic startup barrier when navigation actually occurs. */
   pendingStreamModel?: string | null;
+  /** Set false when creation does not immediately enqueue an initial user send. */
+  markPendingInitialSend?: boolean;
 }
 
 // Workspace variant: full functionality for existing workspaces

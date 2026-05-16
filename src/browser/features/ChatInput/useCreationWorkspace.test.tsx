@@ -18,6 +18,7 @@ import {
   getThinkingLevelKey,
 } from "@/common/constants/storage";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
+import { EXPERIMENT_IDS, getExperimentKey } from "@/common/constants/experiments";
 import {
   CODER_RUNTIME_PLACEHOLDER,
   type CoderWorkspaceConfig,
@@ -241,6 +242,10 @@ type WorkspaceUpdateAgentAISettingsArgs = Parameters<
 type WorkspaceUpdateAgentAISettingsResult = Awaited<
   ReturnType<APIClient["workspace"]["updateAgentAISettings"]>
 >;
+type WorkspaceGetGoalArgs = Parameters<APIClient["workspace"]["getGoal"]>[0];
+type WorkspaceGetGoalResult = Awaited<ReturnType<APIClient["workspace"]["getGoal"]>>;
+type WorkspaceSetGoalArgs = Parameters<APIClient["workspace"]["setGoal"]>[0];
+type WorkspaceSetGoalResult = Awaited<ReturnType<APIClient["workspace"]["setGoal"]>>;
 type WorkspaceCreateResult = Awaited<ReturnType<APIClient["workspace"]["create"]>>;
 type NameGenerationArgs = Parameters<APIClient["nameGeneration"]["generate"]>[0];
 type NameGenerationResult = Awaited<ReturnType<APIClient["nameGeneration"]["generate"]>>;
@@ -250,7 +255,7 @@ type MockOrpcProjectsClient = Pick<
 >;
 type MockOrpcWorkspaceClient = Pick<
   APIClient["workspace"],
-  "sendMessage" | "create" | "updateAgentAISettings"
+  "sendMessage" | "create" | "updateAgentAISettings" | "getGoal" | "setGoal"
 >;
 type MockOrpcNameGenerationClient = Pick<APIClient["nameGeneration"], "generate">;
 type WindowWithApi = Window & typeof globalThis;
@@ -284,6 +289,12 @@ interface SetupWindowOptions {
       (args: WorkspaceUpdateAgentAISettingsArgs) => Promise<WorkspaceUpdateAgentAISettingsResult>
     >
   >;
+  getGoal?: ReturnType<
+    typeof mock<(args: WorkspaceGetGoalArgs) => Promise<WorkspaceGetGoalResult>>
+  >;
+  setGoal?: ReturnType<
+    typeof mock<(args: WorkspaceSetGoalArgs) => Promise<WorkspaceSetGoalResult>>
+  >;
   create?: ReturnType<typeof mock<(args: WorkspaceCreateArgs) => Promise<WorkspaceCreateResult>>>;
   nameGeneration?: ReturnType<
     typeof mock<(args: NameGenerationArgs) => Promise<NameGenerationResult>>
@@ -296,6 +307,8 @@ const setupWindow = ({
   sendMessage,
   create,
   updateAgentAISettings,
+  getGoal,
+  setGoal,
   nameGeneration,
 }: SetupWindowOptions = {}) => {
   // Sync the useProjectContext mock with the default trusted config.
@@ -334,6 +347,25 @@ const setupWindow = ({
         data: {},
       };
       return Promise.resolve(result);
+    });
+
+  const getGoalMock =
+    getGoal ??
+    mock<(args: WorkspaceGetGoalArgs) => Promise<WorkspaceGetGoalResult>>(() => {
+      return Promise.resolve({ goal: null } as WorkspaceGetGoalResult);
+    });
+
+  const setGoalMock =
+    setGoal ??
+    mock<(args: WorkspaceSetGoalArgs) => Promise<WorkspaceSetGoalResult>>(() => {
+      return Promise.resolve({
+        success: true,
+        data: {
+          goalId: "33333333-3333-4333-8333-333333333333",
+          objective: "test goal",
+          status: "active",
+        },
+      } as WorkspaceSetGoalResult);
     });
 
   const createMock =
@@ -387,6 +419,8 @@ const setupWindow = ({
       create: (input: WorkspaceCreateArgs) => createMock(input),
       updateAgentAISettings: (input: WorkspaceUpdateAgentAISettingsArgs) =>
         updateAgentAISettingsMock(input),
+      getGoal: (input: WorkspaceGetGoalArgs) => getGoalMock(input),
+      setGoal: (input: WorkspaceSetGoalArgs) => setGoalMock(input),
     },
     nameGeneration: {
       generate: (input: NameGenerationArgs) => nameGenerationMock(input),
@@ -493,6 +527,9 @@ const setupWindow = ({
     workspaceApi: {
       sendMessage: sendMessageMock,
       create: createMock,
+      updateAgentAISettings: updateAgentAISettingsMock,
+      getGoal: getGoalMock,
+      setGoal: setGoalMock,
     },
     nameGenerationApi: { generate: nameGenerationMock },
   };
@@ -697,6 +734,77 @@ describe("useCreationWorkspace", () => {
     // Thinking is workspace-scoped, but this test doesn't set a project-scoped thinking preference.
     expect(updatePersistedStateCalls).toContainEqual([pendingInputKey, ""]);
     expect(updatePersistedStateCalls).toContainEqual([pendingImagesKey, undefined]);
+  });
+
+  test("handleSend creates workspace and applies initial goal command without sending chat text", async () => {
+    const setGoalMock = mock(
+      (_args: WorkspaceSetGoalArgs): Promise<WorkspaceSetGoalResult> =>
+        Promise.resolve({
+          success: true,
+          data: {
+            goalId: "33333333-3333-4333-8333-333333333333",
+            objective: "ship the feature",
+            status: "active",
+          },
+        } as WorkspaceSetGoalResult)
+    );
+    const sendMessageMock = mock(
+      (_args: WorkspaceSendMessageArgs): Promise<WorkspaceSendMessageResult> =>
+        Promise.resolve({ success: true, data: {} } as WorkspaceSendMessageResult)
+    );
+    const { workspaceApi } = setupWindow({ setGoal: setGoalMock, sendMessage: sendMessageMock });
+    localStorage.setItem(getExperimentKey(EXPERIMENT_IDS.GOALS), JSON.stringify(true));
+
+    const onWorkspaceCreated = mock(
+      (
+        metadata: FrontendWorkspaceMetadata,
+        options?: {
+          autoNavigate?: boolean;
+          pendingStreamModel?: string | null;
+          markPendingInitialSend?: boolean;
+        }
+      ) => ({ metadata, options })
+    );
+    const getHook = renderUseCreationWorkspace({
+      projectPath: TEST_PROJECT_PATH,
+      onWorkspaceCreated,
+      message: "/goal ship the feature --no-budget",
+    });
+
+    await waitFor(() => expect(getHook().branches).toEqual([FALLBACK_BRANCH]));
+
+    let handleSendResult: CreationSendResult | undefined;
+    await act(async () => {
+      handleSendResult = await getHook().handleSend("ship the feature", undefined, undefined, {
+        type: "goal-set",
+        objective: "ship the feature",
+        budgetCents: null,
+      });
+    });
+
+    expect(handleSendResult).toEqual({ success: true });
+    expect(workspaceApi.create.mock.calls.length).toBe(1);
+    expect(workspaceApi.sendMessage.mock.calls.length).toBe(0);
+    expect(workspaceApi.updateAgentAISettings.mock.calls.length).toBe(1);
+    expect(workspaceApi.updateAgentAISettings).toHaveBeenCalledWith({
+      workspaceId: TEST_WORKSPACE_ID,
+      agentId: "exec",
+      aiSettings: { model: "gpt-4", thinkingLevel: "medium" },
+      persistSelectedAgentId: true,
+    });
+    expect(workspaceApi.getGoal.mock.calls.length).toBe(1);
+    expect(workspaceApi.setGoal).toHaveBeenCalledWith({
+      workspaceId: TEST_WORKSPACE_ID,
+      objective: "ship the feature",
+      budgetCents: null,
+      turnCap: null,
+      expectedGoalId: null,
+    });
+    expect(onWorkspaceCreated.mock.calls[0][1]).toEqual({
+      autoNavigate: true,
+      pendingStreamModel: "anthropic:claude-opus-4-7",
+      markPendingInitialSend: false,
+    });
   });
 
   test("handleSend shows trust dialog for untrusted projects", async () => {
@@ -988,7 +1096,11 @@ describe("useCreationWorkspace", () => {
     const onWorkspaceCreated = mock(
       (
         metadata: FrontendWorkspaceMetadata,
-        options?: { autoNavigate?: boolean; pendingStreamModel?: string | null }
+        options?: {
+          autoNavigate?: boolean;
+          pendingStreamModel?: string | null;
+          markPendingInitialSend?: boolean;
+        }
       ) => ({
         metadata,
         options,
@@ -1014,6 +1126,7 @@ describe("useCreationWorkspace", () => {
     expect(onWorkspaceCreated.mock.calls[0][1]).toEqual({
       autoNavigate: false,
       pendingStreamModel: null,
+      markPendingInitialSend: true,
     });
   });
 
@@ -1058,7 +1171,11 @@ describe("useCreationWorkspace", () => {
     const onWorkspaceCreated = mock(
       (
         metadata: FrontendWorkspaceMetadata,
-        options?: { autoNavigate?: boolean; pendingStreamModel?: string | null }
+        options?: {
+          autoNavigate?: boolean;
+          pendingStreamModel?: string | null;
+          markPendingInitialSend?: boolean;
+        }
       ) => ({ metadata, options })
     );
 
@@ -1081,6 +1198,7 @@ describe("useCreationWorkspace", () => {
     expect(onWorkspaceCreated.mock.calls[0][1]).toEqual({
       autoNavigate: true,
       pendingStreamModel: "anthropic:claude-opus-4-7",
+      markPendingInitialSend: true,
     });
   });
 
@@ -1249,7 +1367,11 @@ interface HookOptions {
   projectPath: string;
   onWorkspaceCreated: (
     metadata: FrontendWorkspaceMetadata,
-    options?: { autoNavigate?: boolean }
+    options?: {
+      autoNavigate?: boolean;
+      pendingStreamModel?: string | null;
+      markPendingInitialSend?: boolean;
+    }
   ) => void;
   message?: string;
   draftId?: string | null;

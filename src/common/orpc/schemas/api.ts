@@ -1046,6 +1046,7 @@ export const workspace = {
       workspaceId: z.string(),
       agentId: AgentIdSchema,
       aiSettings: WorkspaceAISettingsSchema,
+      persistSelectedAgentId: z.boolean().nullish(),
     }),
     output: ResultSchema(z.void(), z.string()),
   },

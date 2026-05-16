@@ -640,7 +640,7 @@ function resolveSlashGoalSetIntent(
   );
 }
 
-async function isGoalsExperimentEnabledForCommand(context: {
+export async function isGoalsExperimentEnabledForCommand(context: {
   api: CommandHandlerContext["api"] | SlashCommandContext["api"];
 }): Promise<boolean> {
   const localOverride = isExperimentEnabled(EXPERIMENT_IDS.GOALS);

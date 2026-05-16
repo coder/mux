@@ -5069,7 +5069,8 @@ export class WorkspaceService extends EventEmitter {
   async updateAgentAISettings(
     workspaceId: string,
     agentId: string,
-    aiSettings: WorkspaceAISettings
+    aiSettings: WorkspaceAISettings,
+    options?: { persistSelectedAgentId?: boolean }
   ): Promise<Result<void, string>> {
     try {
       const normalized = this.normalizeWorkspaceAISettings(aiSettings);
@@ -5103,6 +5104,7 @@ export class WorkspaceService extends EventEmitter {
         normalized.data,
         {
           emitMetadata: true,
+          ...(options?.persistSelectedAgentId === true ? { persistSelectedAgentId: true } : {}),
         }
       );
       if (!persistResult.success) {
@@ -7245,10 +7247,29 @@ export class WorkspaceService extends EventEmitter {
       project?.workspaces.find((w) => w.id === workspaceId) ??
       project?.workspaces.find((w) => w.path === workspaceMatch.workspacePath);
 
+    // Initial workspace `/goal` creation can arm a continuation before any normal
+    // sendMessage call runs, so resolve kickoff options from the persisted selected
+    // agent instead of assuming the default exec agent. Plan/compact are UI modes,
+    // not continuation-capable agents, so fall back to exec for the actual kickoff.
+    const persistedAgentId = normalizeAgentId(workspaceEntry?.agentId, WORKSPACE_DEFAULTS.agentId);
+    const agentId =
+      persistedAgentId === "plan" || persistedAgentId === "compact"
+        ? WORKSPACE_DEFAULTS.agentId
+        : persistedAgentId;
+    const selectedAgentSettings = workspaceEntry?.aiSettingsByAgent?.[agentId];
+    const execAgentSettings =
+      agentId !== WORKSPACE_DEFAULTS.agentId
+        ? workspaceEntry?.aiSettingsByAgent?.[WORKSPACE_DEFAULTS.agentId]
+        : undefined;
+
     const candidates: Array<string | undefined> = [
-      workspaceEntry?.aiSettingsByAgent?.[WORKSPACE_DEFAULTS.agentId]?.model,
+      selectedAgentSettings?.model,
       workspaceEntry?.aiSettings?.model,
-      config.agentAiDefaults?.[WORKSPACE_DEFAULTS.agentId]?.modelString,
+      config.agentAiDefaults?.[agentId]?.modelString,
+      execAgentSettings?.model,
+      agentId !== WORKSPACE_DEFAULTS.agentId
+        ? config.agentAiDefaults?.[WORKSPACE_DEFAULTS.agentId]?.modelString
+        : undefined,
       DEFAULT_MODEL,
     ];
 
@@ -7260,7 +7281,7 @@ export class WorkspaceService extends EventEmitter {
       if (isValidModelFormat(normalized)) {
         return {
           model: normalized,
-          agentId: WORKSPACE_DEFAULTS.agentId,
+          agentId,
         };
       }
     }
