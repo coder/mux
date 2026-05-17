@@ -79,6 +79,7 @@ import {
   type SlashSuggestion,
 } from "@/browser/utils/slashCommands/suggestions";
 import { resolveSlashCommandExperimentValue } from "@/browser/utils/slashCommands/experimentVisibility";
+import { getPlaceholderTip } from "./placeholderTips";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
 import { AgentModePicker } from "@/browser/components/AgentModePicker/AgentModePicker";
 import { ContextUsageIndicatorButton } from "@/browser/components/ContextUsageIndicatorButton/ContextUsageIndicatorButton";
@@ -2664,8 +2665,17 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       return `Compacting... (${formatKeybind(interruptKeybind)} cancel | ${formatKeybind(KEYBINDS.SEND_MESSAGE)} to queue)`;
     }
 
-    // Keep placeholder minimal; shortcut hints are rendered below the input.
-    return "Type a message...";
+    // Tip carousel: rotates the placeholder through a curated list of
+    // slash-command tricks on a wall-clock bucket so switching workspaces
+    // mid-bucket doesn't reroll the visible tip. See placeholderTips.ts.
+    //
+    // Mobile gets the plain placeholder because the on-screen keyboard already
+    // squeezes the input and a long English sentence in the placeholder looks
+    // like a wall of grey text instead of a hint.
+    if (isMobileTouch) {
+      return "Type a message...";
+    }
+    return getPlaceholderTip();
   })();
 
   const activeToast = toast ?? (variant === "creation" ? creationState.toast : null);

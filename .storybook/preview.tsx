@@ -13,6 +13,13 @@ import { NOW } from "../src/browser/stories/storyTime";
 import { updatePersistedState } from "../src/browser/hooks/usePersistedState";
 import { configure } from "storybook/test";
 
+// Signal Storybook runtime to modules that need to stabilize for Chromatic
+// (e.g. the ChatInput placeholder tip carousel pins to its lead tip so
+// tip-list reorders don't cascade into baseline diffs across every story).
+// Set as early as possible so it precedes any story-module import that might
+// evaluate carousel logic during render.
+(globalThis as { __MUX_STORYBOOK__?: boolean }).__MUX_STORYBOOK__ = true;
+
 // Raise the default async-util timeout from 1 000 ms → 5 000 ms.
 // waitFor / findBy* calls inherit this, so individual stories don't need
 // explicit `{ timeout }` unless they intentionally want a longer budget.
