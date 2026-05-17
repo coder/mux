@@ -40,6 +40,7 @@ import { createMuxConfigReadTool } from "@/node/services/tools/mux_config_read";
 import { createMuxConfigWriteTool } from "@/node/services/tools/mux_config_write";
 import { createAgentReportTool } from "@/node/services/tools/agent_report";
 import { createSwitchAgentTool } from "@/node/services/tools/switch_agent";
+import { createWebFetchTool } from "@/node/services/tools/web_fetch";
 import { wrapWithInitWait } from "@/node/services/tools/wrapWithInitWait";
 import { withHooks, type HookConfig } from "@/node/services/tools/withHooks";
 import { log } from "@/node/services/log";
@@ -407,10 +408,6 @@ export async function getToolsForModel(
   // Helper to reduce repetition when wrapping runtime tools
   const wrap = <TParameters, TResult>(tool: Tool<TParameters, TResult>) =>
     wrapWithInitWait(tool, workspaceId, initStateManager);
-
-  // Lazy-load web_fetch to avoid loading jsdom (ESM-only) at Jest setup time
-  // This allows integration tests to run without transforming jsdom's dependencies
-  const { createWebFetchTool } = await import("@/node/services/tools/web_fetch");
 
   // Runtime-dependent tools need to wait for workspace initialization
   // Wrap them to handle init waiting centrally instead of in each tool

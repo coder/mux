@@ -35,6 +35,18 @@ COPY scripts/postinstall.sh scripts/
 RUN bun install --frozen-lockfile && \
     touch node_modules/.installed
 
+# Archive all externalized packages and their transitive deps (including installed
+# optional deps such as platform-specific native binaries) into a single tarball.
+# The runtime stage extracts this in one step; the script auto-derives the full
+# closure so the Dockerfile never needs updating when transitive deps change.
+COPY scripts/collect-runtime-deps.js scripts/
+RUN node scripts/collect-runtime-deps.js /tmp/runtime-deps.tar.gz \
+    @lydell/node-pty node-pty \
+    ssh2 \
+    sharp \
+    @1password/sdk @1password/sdk-core \
+    jsdom
+
 # Copy build orchestration files used by Make targets.
 COPY Makefile fmt.mk ./
 
@@ -89,22 +101,13 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends git openssh-client ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
-# Copy runtime dependencies first so app-code changes don't invalidate these layers.
-# - @lydell/node-pty: native module for terminal support
-# - ssh2 + deps: externalized to avoid .node addon bundling issues
-COPY --from=builder /app/node_modules/@lydell ./node_modules/@lydell
-COPY --from=builder /app/node_modules/ssh2 ./node_modules/ssh2
-COPY --from=builder /app/node_modules/asn1 ./node_modules/asn1
-COPY --from=builder /app/node_modules/safer-buffer ./node_modules/safer-buffer
-COPY --from=builder /app/node_modules/bcrypt-pbkdf ./node_modules/bcrypt-pbkdf
-COPY --from=builder /app/node_modules/tweetnacl ./node_modules/tweetnacl
-# - sharp + runtime deps: externalized for attach_file raster resizing in bundled server mode
-COPY --from=builder /app/node_modules/sharp ./node_modules/sharp
-COPY --from=builder /app/node_modules/@img ./node_modules/@img
-COPY --from=builder /app/node_modules/detect-libc ./node_modules/detect-libc
-COPY --from=builder /app/node_modules/semver ./node_modules/semver
-# - @1password/sdk + sdk-core: externalized; contains native WASM for secret resolution
-COPY --from=builder /app/node_modules/@1password ./node_modules/@1password
+# Extract all externalized runtime packages (node-pty, ssh2, sharp, @1password, jsdom)
+# and their full transitive dependency closures in one step. The tarball is built by
+# scripts/collect-runtime-deps.js in the builder stage and self-maintains as deps change.
+COPY --from=builder /tmp/runtime-deps.tar.gz /tmp/
+RUN mkdir -p node_modules && \
+    tar xzf /tmp/runtime-deps.tar.gz -C node_modules && \
+    rm /tmp/runtime-deps.tar.gz
 
 # Copy frontend/static assets from least to most volatile for better cache reuse.
 # Vite outputs JS/CSS/HTML directly to dist/ (assetsDir: ".").
