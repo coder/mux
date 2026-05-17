@@ -16,12 +16,12 @@ Coordinate implementation by delegating investigation + coding to sub-agents, th
 
 ## Hard rules (delegate-first)
 
-- **Do not implement features/bugfixes directly in this workspace.** Spawn `exec` (simple) or `plan` (complex) sub-agents and have them complete the work end-to-end. Even though your `file_edit_*` tools are available, treat them as off-limits for this workflow.
+- **Do not implement features/bugfixes directly in this workspace.** Spawn `exec` sub-agents and have them complete the work end-to-end. Even though your `file_edit_*` tools are available, treat them as off-limits for this workflow.
 - **Do not do broad repo investigation here.** If you need context, spawn an `explore` sub-agent with a narrow prompt to preserve your context window for coordination.
 - **Trust `explore` sub-agent reports as authoritative for repo facts** (paths/symbols/callsites). Do not redo the same investigation yourself; only re-check if a report is ambiguous or contradicts other evidence. For correctness claims, an `explore` report counts as having read the referenced files.
-- **`bash` is for orchestration only:** `git` / `gh` repo coordination, targeted post-apply verification, and waiting on PR review/CI. Do not use `bash` for file reads/writes, manual code editing, or broad repo exploration. If a direct verification check fails due to a code issue, delegate the fix to `exec`/`plan` instead of patching it yourself.
+- **`bash` is for orchestration only:** `git` / `gh` repo coordination, targeted post-apply verification, and waiting on PR review/CI. Do not use `bash` for file reads/writes, manual code editing, or broad repo exploration. If a direct verification check fails due to a code issue, delegate the fix to `exec` instead of patching it yourself.
 - **Never read or scan session storage** (`~/.mux/sessions/**`, `~/.mux/sessions/subagent-patches/**`). Treat session storage as internal. Access patches only through `task_apply_git_patch`.
-- **Do not call `propose_plan`** from this workflow. If planning is needed, delegate to a `plan` sub-agent.
+- **Do not call `propose_plan`** from this workflow. If a complex subtask needs more shape before implementation, decompose it with one or more `explore` tasks and write a richer brief for `exec`, rather than spawning a `plan` sub-agent (plan is not runnable as a sub-agent).
 
 ## When a plan is present
 
@@ -34,10 +34,11 @@ If an accepted plan exists in this workspace:
 
 ## Delegation guide
 
-- **`explore`** — narrowly-scoped read-only questions (confirm an assumption, locate a symbol/callsite, find relevant tests). Avoid "scan the repo" prompts.
-- **`exec`** — straightforward, low-complexity implementation where the path is obvious from the brief. Good fit: single-file edits, localized wiring to existing helpers, narrowly scoped follow-ups with clear acceptance.
-- **`plan`** — higher-complexity subtasks that touch multiple files, require non-trivial investigation, or have an unclear approach. Default to `plan` when a subtask needs coordinated updates across multiple locations unless the edits are mechanical and fully specified. Plan subtasks automatically hand off to implementation after a successful `propose_plan`.
+- **`explore`** — narrowly-scoped read-only questions (confirm an assumption, locate a symbol/callsite, find relevant tests). Avoid "scan the repo" prompts. Use multiple `explore` tasks (potentially in parallel) to shape a richer brief for `exec` when a subtask is non-trivial.
+- **`exec`** — implementation work, simple or complex. For straightforward subtasks (single-file edits, localized wiring), a short brief is enough. For higher-complexity subtasks that touch multiple files or have an unclear approach, invest in the brief: include the goal, constraints, acceptance criteria, and any `explore` findings up front.
 - **`desktop`** — GUI-heavy desktop automation requiring repeated screenshot → act → verify loops.
+
+Note: `plan` is intentionally not runnable as a sub-agent. Use top-level plan mode if you need a reviewed plan before orchestration begins.
 
 ## Task brief template (Orchestrate → Exec)
 
@@ -60,7 +61,7 @@ If an accepted plan exists in this workspace:
   - Prefer `explore` tasks for repo investigation (paths/symbols/tests/patterns) to preserve your context window for implementation. Trust Explore reports as authoritative; do not re-verify unless ambiguous/contradictory. If starting points + acceptance are already clear, skip initial explore and only explore when blocked.
   - Create one or more git commits before `agent_report`.
 
-For `plan` briefs, prioritize goal + constraints + acceptance criteria over file-by-file diff instructions.
+For higher-complexity `exec` briefs, prioritize goal + constraints + acceptance criteria over file-by-file diff instructions.
 
 ## Dependency analysis (required before spawning implementation tasks)
 
@@ -87,9 +88,9 @@ Example dependency chain (schema download → generation):
 ## Patch integration loop (default)
 
 1. Identify a batch of independent subtasks.
-2. Spawn one implementation sub-agent task per subtask with `run_in_background: true` (`exec` for low complexity, `plan` for higher complexity).
+2. Spawn one `exec` sub-agent task per subtask with `run_in_background: true`.
 3. Await the batch via `task_await`.
-4. For each successful implementation task (`exec` directly, or `plan` after auto-handoff to implementation), integrate patches **one at a time**:
+4. For each successful implementation task, integrate patches **one at a time**:
    - Treat every successful child task with a `taskId` as pending patch integration, whether the completion arrived inline from `task` or later from `task_await`.
    - Complete each dry-run + real-apply pair before starting the next patch. Applying one patch changes `HEAD`, which can invalidate later dry-run results.
    - Dry-run apply: `task_apply_git_patch` with `dry_run: true`.
@@ -105,11 +106,11 @@ Example dependency chain (schema download → generation):
    - Run focused verification directly with `bash` when practical (targeted tests or the repo's standard full-validation command), or delegate verification to `explore`/`exec` when investigation/fixes are likely.
    - Use `git`/`gh` directly for PR orchestration when a PR already exists (pushes, review-request comments, replies to review remarks, and CI/check-status waiting loops). Create a new PR only when the user explicitly asks.
    - PASS: summary-only (no long logs).
-   - FAIL: include the failing command + key error lines; then delegate a fix to `exec`/`plan` and re-verify.
+   - FAIL: include the failing command + key error lines; then delegate a fix to `exec` and re-verify.
 
 ## Sequential protocol (only for dependency chains)
 
-1. Spawn the prerequisite implementation task (`exec` or `plan`, based on complexity) with `run_in_background: false`.
+1. Spawn the prerequisite `exec` implementation task with `run_in_background: false`.
 2. If step 1 returns `queued`/`running` without a completed report, call `task_await` with the returned `taskId` before attempting any patch apply. If step 1 returns `status: completed` inline, that same `taskId` still requires patch application.
 3. Dry-run apply its patch (`dry_run: true`); then apply for real (`dry_run: false`). If either step fails, follow the conflict playbook above (including `git am --abort` only when a real apply leaves a git-am session in progress).
 4. Only then spawn the dependent task.
