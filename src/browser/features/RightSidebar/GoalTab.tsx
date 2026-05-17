@@ -14,6 +14,19 @@ import { parseGoalBudgetInputCents } from "@/common/utils/goals/budgetParser";
 // drift further as Goal status grows.
 import { formatGoalElapsed, goalStatusLabel } from "@/browser/features/Tools/Goal/goalToolUtils";
 
+/**
+ * Inputs accepted by the in-tab "Set goal" form. Mirrors the slash-command
+ * `goal-set` shape (objective + optional budget + optional turn cap) so the
+ * UI and `/goal` paths agree on the create vocabulary. `budgetCents` is a
+ * tri-state: `undefined` means "apply default", `null`/`0` means "no
+ * budget", and a positive number is an explicit cents value.
+ */
+export interface GoalCreateIntent {
+  objective: string;
+  budgetCents?: number | null;
+  turnCap?: number | null;
+}
+
 interface GoalTabProps {
   goal: GoalSnapshot | null;
   /**
@@ -41,6 +54,13 @@ interface GoalTabProps {
   onUpdateBudget?: (budgetCents: number | null) => Promise<void> | void;
   onUpdateTurnCap?: (turnCap: number | null) => Promise<void> | void;
   onClear?: () => Promise<void> | void;
+  /**
+   * Create a brand-new goal for the workspace. Used by the empty-state form
+   * and the "Replace goal" button on the current-goal card. Optional so
+   * read-only storybook stories can omit it. Slash-command parity: same
+   * fields as `/goal <objective> [--budget …] [--turns …]`.
+   */
+  onCreate?: (intent: GoalCreateIntent) => Promise<void> | void;
 }
 
 // `parseBudgetInput` is now a thin alias for the canonical parser shared
@@ -210,10 +230,19 @@ export function GoalTab(props: GoalTabProps) {
   if (!props.goal) {
     return (
       <section className="flex h-full flex-col gap-4 p-4" aria-label="Workspace goal">
-        <div className="text-muted border-border-light flex flex-col items-center justify-center gap-2 rounded-md border border-dashed p-6 text-center text-sm">
-          <Target className="h-5 w-5" aria-hidden="true" />
-          <p>No goal is set for this workspace.</p>
-        </div>
+        {props.onCreate ? (
+          // Empty-state primary action: a goal-creation form with full
+          // slash-command parity (objective + optional budget + optional
+          // turn cap). Replaces the previous "No goal is set" placeholder
+          // — the placeholder is folded into the form's helper text so
+          // users don't need to know about `/goal` to start one.
+          <GoalCreateForm onCreate={props.onCreate} />
+        ) : (
+          <div className="text-muted border-border-light flex flex-col items-center justify-center gap-2 rounded-md border border-dashed p-6 text-center text-sm">
+            <Target className="h-5 w-5" aria-hidden="true" />
+            <p>No goal is set for this workspace.</p>
+          </div>
+        )}
         {filteredHistory.length > 0 && <GoalHistorySection entries={filteredHistory} />}
       </section>
     );
@@ -623,6 +652,183 @@ export function GoalTab(props: GoalTabProps) {
 
       {filteredHistory.length > 0 && <GoalHistorySection entries={filteredHistory} />}
     </section>
+  );
+}
+
+interface GoalCreateFormProps {
+  onCreate: (intent: GoalCreateIntent) => Promise<void> | void;
+}
+
+/**
+ * In-tab "Set goal" form. Mirrors the slash command's `goal-set` shape:
+ *
+ *   /goal <objective> [--budget $5|500c|--no-budget] [--turns N]
+ *
+ * Budget and turn-cap inputs reuse the same parsers (`parseBudgetInput`,
+ * `parseTurnCapInput`) as the inline budget / turn-cap editors so the
+ * accepted vocabulary is identical across all surfaces (slash, palette,
+ * tab). A blank budget defers to `goalDefaults` upstream (which is what
+ * `loadGoalDefaults` + `resolveGoalSetIntent` apply in the parent
+ * handler), so the form intentionally distinguishes "blank" (defer) from
+ * "0 / no budget" (explicit clear) by leaving the budget field optional
+ * and only emitting `budgetCents` when the user typed something.
+ */
+function GoalCreateForm(props: GoalCreateFormProps) {
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // Refs (instead of controlled state) for the same reason the inline
+  // budget / turn-cap editors use them: a single source of truth at submit
+  // time avoids stale-closure / test-timing surprises and matches the
+  // pattern users already see elsewhere in the GoalTab.
+  const objectiveRef = useRef<HTMLTextAreaElement | null>(null);
+  const budgetRef = useRef<HTMLInputElement | null>(null);
+  const turnCapRef = useRef<HTMLInputElement | null>(null);
+
+  const submit = async () => {
+    setIsSubmitting(true);
+    setError(null);
+    try {
+      const trimmedObjective = (objectiveRef.current?.value ?? "").trim();
+      if (trimmedObjective.length === 0) {
+        setError("Goal objective is required.");
+        objectiveRef.current?.focus();
+        return;
+      }
+
+      const intent: GoalCreateIntent = { objective: trimmedObjective };
+
+      // Budget: leave omitted when blank so the parent handler can apply
+      // `goalDefaults.defaultBudgetCents` (matching the palette / slash
+      // path). Explicit `0` or "no budget" wording flows through
+      // `parseBudgetInput` and lands as `null` ("explicit clear"), again
+      // matching the slash `--no-budget` flag.
+      const budgetRaw = (budgetRef.current?.value ?? "").trim();
+      if (budgetRaw.length > 0) {
+        const budgetCents = parseBudgetInput(budgetRaw);
+        if (budgetCents === undefined) {
+          setError("Enter a budget like $5 or 500c. Use 0 or blank for no budget.");
+          return;
+        }
+        intent.budgetCents = budgetCents;
+      }
+
+      // Turn cap: same tri-state rules — blank defers to defaults, a
+      // positive integer is explicit, anything else is rejected. The slash
+      // command rejects non-positive values too (see `parseGoalTurnCap`).
+      const turnCapRaw = (turnCapRef.current?.value ?? "").trim();
+      if (turnCapRaw.length > 0) {
+        const parsedTurnCap = parseTurnCapInput(turnCapRaw);
+        if (parsedTurnCap === undefined) {
+          setError("Enter a positive whole-number turn cap, or leave blank for no cap.");
+          return;
+        }
+        intent.turnCap = parsedTurnCap;
+      }
+
+      await props.onCreate(intent);
+      // Clear the form on success so a returning user sees a blank slate
+      // (if for some reason the goal didn't take, e.g., the workspace
+      // emitted `goal_conflict` after retry). The parent's `goal`
+      // becoming non-null is what actually unmounts the form.
+      if (objectiveRef.current) objectiveRef.current.value = "";
+      if (budgetRef.current) budgetRef.current.value = "";
+      if (turnCapRef.current) turnCapRef.current.value = "";
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Goal creation failed");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <form
+      className="border-border-light bg-surface-secondary flex flex-col gap-3 rounded-md border p-3"
+      aria-label="Create workspace goal"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void submit();
+      }}
+    >
+      <div className="text-muted flex items-center gap-1.5 text-xs font-medium uppercase">
+        <Target className="h-3.5 w-3.5" aria-hidden="true" />
+        Set a goal
+      </div>
+      <p className="text-muted text-xs leading-5">
+        Describe what success looks like. Equivalent to{" "}
+        <code className="font-mono">/goal &lt;objective&gt;</code> in chat.
+      </p>
+
+      <div className="flex flex-col gap-1">
+        <label className="text-foreground text-sm font-medium" htmlFor="goal-create-objective">
+          Objective
+        </label>
+        <textarea
+          ref={objectiveRef}
+          id="goal-create-objective"
+          className="border-border bg-surface-primary text-foreground focus:border-accent min-h-20 w-full rounded-md border p-2 text-sm outline-none"
+          aria-label="Goal objective"
+          placeholder="Ship the goal lifecycle slice"
+          defaultValue=""
+          onKeyDown={(event) => {
+            // Cmd/Ctrl+Enter mirrors the inline objective editor so users
+            // who already learned that gesture don't have to relearn it
+            // here. Plain Enter intentionally inserts a newline (Codex
+            // tip carousel says "Goals can be multiple lines").
+            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+              event.preventDefault();
+              void submit();
+            }
+          }}
+        />
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <div className="flex flex-col gap-1">
+          <label className="text-foreground text-sm font-medium" htmlFor="goal-create-budget">
+            Budget <span className="text-muted text-xs font-normal">(optional)</span>
+          </label>
+          <input
+            ref={budgetRef}
+            id="goal-create-budget"
+            className="border-border bg-surface-primary text-foreground focus:border-accent w-full rounded-md border p-2 text-sm outline-none"
+            aria-label="Goal budget"
+            placeholder="$5 or 500c"
+            defaultValue=""
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-foreground text-sm font-medium" htmlFor="goal-create-turncap">
+            Turn cap <span className="text-muted text-xs font-normal">(optional)</span>
+          </label>
+          <input
+            ref={turnCapRef}
+            id="goal-create-turncap"
+            className="border-border bg-surface-primary text-foreground focus:border-accent w-full rounded-md border p-2 text-sm outline-none"
+            aria-label="Goal turn cap"
+            placeholder="e.g. 25"
+            inputMode="numeric"
+            defaultValue=""
+          />
+        </div>
+      </div>
+
+      {error && (
+        <p className="text-danger-soft text-sm" role="alert">
+          {error}
+        </p>
+      )}
+
+      <div>
+        <button
+          type="submit"
+          className="bg-accent text-accent-foreground rounded-md px-3 py-1.5 text-sm disabled:opacity-60"
+          disabled={isSubmitting}
+          aria-label="Set goal"
+        >
+          {isSubmitting ? "Setting goal…" : "Set goal"}
+        </button>
+      </div>
+    </form>
   );
 }
 

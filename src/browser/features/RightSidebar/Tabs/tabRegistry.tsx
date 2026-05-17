@@ -21,7 +21,7 @@ import { ReviewPanel } from "@/browser/features/RightSidebar/CodeReview/ReviewPa
 import { DesktopPanel } from "@/browser/features/desktop/DesktopPanel";
 import { BrowserTab } from "@/browser/features/RightSidebar/BrowserTab";
 import { DevToolsTab } from "@/browser/features/RightSidebar/DevToolsTab";
-import { GoalTab } from "@/browser/features/RightSidebar/GoalTab";
+import { GoalTab, type GoalCreateIntent } from "@/browser/features/RightSidebar/GoalTab";
 import type { GoalHistoryEntry, GoalSnapshot, GoalStatus } from "@/common/types/goal";
 import type { ReviewNoteData } from "@/common/types/review";
 import { BASE_TAB_IDS, TAB_CONFIG, type BaseTabType, type TabConfig } from "./tabConfig";
@@ -88,6 +88,7 @@ export interface TabPanelContext {
     onUpdateBudget: (budgetCents: number | null) => Promise<void>;
     onUpdateTurnCap: (turnCap: number | null) => Promise<void>;
     onClear: () => Promise<void>;
+    onCreate: (intent: GoalCreateIntent) => Promise<void>;
   };
 }
 
@@ -132,7 +133,7 @@ const TAB_RENDERERS = {
     renderPanel: (ctx) => <InstructionsTab workspaceId={ctx.workspaceId} />,
   },
   goal: {
-    Label: GoalTabLabel,
+    Label: ({ workspaceId }) => <GoalTabLabel workspaceId={workspaceId} />,
     renderPanel: (ctx) => (
       <ErrorBoundary workspaceInfo="Goal tab">
         <GoalTab
@@ -144,6 +145,7 @@ const TAB_RENDERERS = {
           onUpdateBudget={ctx.goal.onUpdateBudget}
           onUpdateTurnCap={ctx.goal.onUpdateTurnCap}
           onClear={ctx.goal.onClear}
+          onCreate={ctx.goal.onCreate}
         />
       </ErrorBoundary>
     ),

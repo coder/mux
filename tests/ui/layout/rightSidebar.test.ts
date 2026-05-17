@@ -107,6 +107,7 @@ describeIntegration("RightSidebar (UI)", () => {
     updatePersistedState(RIGHT_SIDEBAR_TAB_KEY, null);
     updatePersistedState(RIGHT_SIDEBAR_COLLAPSED_KEY, null);
     updatePersistedState(getExperimentKey(EXPERIMENT_IDS.AGENT_BROWSER), null);
+    updatePersistedState(getExperimentKey(EXPERIMENT_IDS.GOALS), null);
     updatePersistedState(RIGHT_SIDEBAR_WIDTH_KEY, null);
     updatePersistedState(getRightSidebarLayoutKey(workspaceId), null);
     updatePersistedState(getTerminalTitlesKey(workspaceId), null);
@@ -192,6 +193,89 @@ describeIntegration("RightSidebar (UI)", () => {
         }
       });
     } finally {
+      await cleanupView(view, cleanupDom);
+    }
+  }, 60_000);
+
+  test("does not show the goal tab when the GOALS experiment is disabled", async () => {
+    const cleanupDom = installDom();
+
+    updatePersistedState(getExperimentKey(EXPERIMENT_IDS.GOALS), null);
+    updatePersistedState(RIGHT_SIDEBAR_TAB_KEY, null);
+    updatePersistedState(getRightSidebarLayoutKey(workspaceId), null);
+
+    const view = renderApp({
+      apiClient: env.orpc,
+      metadata,
+    });
+
+    try {
+      await setupWorkspaceView(view, metadata, workspaceId);
+
+      const sidebar = await waitFor(
+        () => {
+          const el = view.container.querySelector(
+            '[role="complementary"][aria-label="Workspace insights"]'
+          );
+          if (!el) throw new Error("RightSidebar not found");
+          return el as HTMLElement;
+        },
+        { timeout: 10_000 }
+      );
+
+      // Wait long enough for layout effects to flush, then assert the
+      // goal tab stays hidden — the experiment is what gates visibility,
+      // not the presence of a workspace goal.
+      await waitFor(() => {
+        const goalTab = sidebar.querySelector('[role="tab"][aria-controls*="goal"]');
+        expect(goalTab).toBeNull();
+      });
+    } finally {
+      await cleanupView(view, cleanupDom);
+    }
+  }, 60_000);
+
+  test("always shows the goal tab when the GOALS experiment is enabled (even without an active goal)", async () => {
+    const cleanupDom = installDom();
+
+    updatePersistedState(getExperimentKey(EXPERIMENT_IDS.GOALS), true);
+    updatePersistedState(RIGHT_SIDEBAR_TAB_KEY, null);
+    updatePersistedState(getRightSidebarLayoutKey(workspaceId), null);
+
+    const view = renderApp({
+      apiClient: env.orpc,
+      metadata,
+    });
+
+    try {
+      await setupWorkspaceView(view, metadata, workspaceId);
+
+      const sidebar = await waitFor(
+        () => {
+          const el = view.container.querySelector(
+            '[role="complementary"][aria-label="Workspace insights"]'
+          );
+          if (!el) throw new Error("RightSidebar not found");
+          return el as HTMLElement;
+        },
+        { timeout: 10_000 }
+      );
+
+      // Regression guard: the tab used to be gated on `goal != null ||
+      // goalHistory.length > 0`, so a brand-new workspace (no goal, no
+      // history) hid the tab entirely. The current contract is "always
+      // visible when the experiment is on" so the tab can surface the
+      // in-tab create form for new workspaces.
+      await waitFor(() => {
+        const goalTab = sidebar.querySelector(
+          '[role="tab"][aria-controls*="goal"]'
+        ) as HTMLElement | null;
+        if (!goalTab) {
+          throw new Error("Goal tab should be present when the experiment is enabled");
+        }
+      });
+    } finally {
+      updatePersistedState(getExperimentKey(EXPERIMENT_IDS.GOALS), null);
       await cleanupView(view, cleanupDom);
     }
   }, 60_000);

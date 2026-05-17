@@ -10,6 +10,26 @@ const meta: Meta<typeof GoalTab> = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
+export const EmptyWithCreateForm: Story = {
+  // Empty-state surface that wires the in-tab create form. Mirrors the
+  // slash-command `goal-set` shape (objective + optional budget + turn
+  // cap). The `onCreate` mock keeps the form interactive in Storybook
+  // without hitting a backend.
+  args: {
+    goal: null,
+    onCreate: () => undefined,
+  },
+};
+
+export const EmptyReadOnly: Story = {
+  // Read-only fallback when no create callback is wired (e.g., storybook
+  // stories that exercise the legacy placeholder). Asserts the empty-state
+  // gracefully degrades instead of crashing.
+  args: {
+    goal: null,
+  },
+};
+
 export const Active: Story = {
   args: {
     goal: {

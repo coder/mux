@@ -370,4 +370,110 @@ describe("GoalTab", () => {
     expect(getByText("No goal is set for this workspace.")).toBeTruthy();
     expect(getByText("Previously-cleared goal")).toBeTruthy();
   });
+
+  test("empty state shows the create form when onCreate is provided", () => {
+    const { getByLabelText, queryByText } = render(
+      <GoalTab goal={null} onSetStatus={mock()} onClear={mock()} onCreate={mock()} />
+    );
+
+    expect(getByLabelText("Create workspace goal")).toBeTruthy();
+    expect(getByLabelText("Goal objective")).toBeTruthy();
+    expect(getByLabelText("Goal budget")).toBeTruthy();
+    expect(getByLabelText("Goal turn cap")).toBeTruthy();
+    expect(getByLabelText("Set goal")).toBeTruthy();
+    // The "No goal is set" placeholder is replaced by the form when
+    // creation is wired through — keep both states from leaking.
+    expect(queryByText("No goal is set for this workspace.")).toBeNull();
+  });
+
+  test("create form submits objective with no budget or turn cap by default", async () => {
+    const onCreate = mock(() => Promise.resolve(undefined));
+
+    const { getByLabelText } = render(
+      <GoalTab goal={null} onSetStatus={mock()} onClear={mock()} onCreate={onCreate} />
+    );
+
+    const objective = getByLabelText("Goal objective") as HTMLTextAreaElement;
+    fireEvent.input(objective, { target: { value: "Ship the lifecycle slice" } });
+    fireEvent.click(getByLabelText("Set goal"));
+
+    await waitFor(() => {
+      expect(onCreate).toHaveBeenCalledTimes(1);
+    });
+    // Slash-command parity: blank budget / turn cap fields stay omitted so
+    // the parent can apply `goalDefaults` (matching the palette + `/goal`
+    // paths). Explicit `null` here would be a "no budget" clear, which is
+    // a different intent.
+    expect(onCreate).toHaveBeenCalledWith({ objective: "Ship the lifecycle slice" });
+  });
+
+  test("create form parses budget and turn cap inputs", async () => {
+    const onCreate = mock(() => Promise.resolve(undefined));
+
+    const { getByLabelText } = render(
+      <GoalTab goal={null} onSetStatus={mock()} onClear={mock()} onCreate={onCreate} />
+    );
+
+    fireEvent.input(getByLabelText("Goal objective") as HTMLTextAreaElement, {
+      target: { value: "Spike on lifecycle events" },
+    });
+    fireEvent.input(getByLabelText("Goal budget") as HTMLInputElement, {
+      target: { value: "$3.50" },
+    });
+    fireEvent.input(getByLabelText("Goal turn cap") as HTMLInputElement, {
+      target: { value: "12" },
+    });
+    fireEvent.click(getByLabelText("Set goal"));
+
+    await waitFor(() => {
+      expect(onCreate).toHaveBeenCalledTimes(1);
+    });
+    expect(onCreate).toHaveBeenCalledWith({
+      objective: "Spike on lifecycle events",
+      budgetCents: 350,
+      turnCap: 12,
+    });
+  });
+
+  test("create form rejects empty objective without calling onCreate", async () => {
+    const onCreate = mock(() => Promise.resolve(undefined));
+
+    const { getByLabelText, getByRole } = render(
+      <GoalTab goal={null} onSetStatus={mock()} onClear={mock()} onCreate={onCreate} />
+    );
+
+    // Submit with the objective left blank. The form must not invoke
+    // onCreate, and it must surface a localized error rather than letting
+    // the slash-command-equivalent payload (empty objective) hit the
+    // backend with `Goal objective cannot be empty`.
+    fireEvent.click(getByLabelText("Set goal"));
+
+    await waitFor(() => {
+      const alert = getByRole("alert");
+      expect(alert.textContent).toContain("Goal objective is required");
+    });
+    expect(onCreate).not.toHaveBeenCalled();
+  });
+
+  test("create form rejects malformed budget without calling onCreate", async () => {
+    const onCreate = mock(() => Promise.resolve(undefined));
+
+    const { getByLabelText, getByRole } = render(
+      <GoalTab goal={null} onSetStatus={mock()} onClear={mock()} onCreate={onCreate} />
+    );
+
+    fireEvent.input(getByLabelText("Goal objective") as HTMLTextAreaElement, {
+      target: { value: "Valid objective" },
+    });
+    fireEvent.input(getByLabelText("Goal budget") as HTMLInputElement, {
+      target: { value: "five bucks" },
+    });
+    fireEvent.click(getByLabelText("Set goal"));
+
+    await waitFor(() => {
+      const alert = getByRole("alert");
+      expect(alert.textContent).toContain("$5");
+    });
+    expect(onCreate).not.toHaveBeenCalled();
+  });
 });

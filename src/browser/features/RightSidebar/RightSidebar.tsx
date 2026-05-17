@@ -24,6 +24,8 @@ import {
   UNPRICED_CURRENT_MODEL_GOAL_MESSAGE,
 } from "@/common/utils/goals/budgetPricing";
 import { setGoalWithConflictRetry } from "@/browser/utils/goals/setGoalWithConflictRetry";
+import { loadGoalDefaults, resolveGoalSetIntent } from "@/browser/utils/goals/resolveGoalSetIntent";
+import type { GoalCreateIntent } from "@/browser/features/RightSidebar/GoalTab";
 import { usePopoverError } from "@/browser/hooks/usePopoverError";
 import { PopoverError } from "@/browser/components/PopoverError/PopoverError";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -300,6 +302,13 @@ interface RightSidebarTabsetNodeProps {
   onGoalUpdateBudget: (budgetCents: number | null) => Promise<void>;
   onGoalUpdateTurnCap: (turnCap: number | null) => Promise<void>;
   onGoalClear: () => Promise<void>;
+  /**
+   * Create a brand-new goal from the GoalTab's in-tab form. Matches the
+   * slash command's `goal-set` semantics (objective + optional budget +
+   * optional turn cap) and routes through the same defaults-resolution +
+   * unpriced-model pricing gate.
+   */
+  onGoalCreate: (intent: GoalCreateIntent) => Promise<void>;
   /** Callback to request terminal focus when a tab is selected */
   onRequestTerminalFocus: (sessionId: string) => void;
   /** Callback to clear the auto-focus state after it's been consumed */
@@ -457,6 +466,7 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
       onUpdateBudget: props.onGoalUpdateBudget,
       onUpdateTurnCap: props.onGoalUpdateTurnCap,
       onClear: props.onGoalClear,
+      onCreate: props.onGoalCreate,
     },
   };
 
@@ -754,6 +764,31 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     await api.workspace.clearGoal({ workspaceId });
   };
 
+  const handleGoalCreate = async (intent: GoalCreateIntent) => {
+    if (!api) {
+      throw new Error("Backend is not connected.");
+    }
+    // Apply shared defaults (turn cap + `alwaysRequireExplicitBudget`
+    // fallback) so the GoalTab form, slash command, and command palette
+    // all produce identical goals for identical inputs. Without this,
+    // a blank budget here would silently create an unbudgeted goal even
+    // when the user configured a default — the exact drift
+    // Coder-agents-review P3 DEREM-27 flagged on the palette path.
+    const defaults = await loadGoalDefaults(api);
+    const resolved = resolveGoalSetIntent(intent, defaults);
+    if (
+      hasGoalBudgetLimit(resolved.budgetCents) &&
+      !modelHasPricingData(sendMessageOptions.model, providersConfig)
+    ) {
+      throw new Error(UNPRICED_CURRENT_MODEL_GOAL_MESSAGE);
+    }
+    await setGoalWithSingleConflictRetry({
+      objective: resolved.objective,
+      budgetCents: resolved.budgetCents,
+      ...(resolved.turnCap != null ? { turnCap: resolved.turnCap } : {}),
+    });
+  };
+
   React.useEffect(() => {
     if (!api) {
       setLlmDebugLogsEnabled(null);
@@ -931,25 +966,23 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     setLayoutRaw((prevRaw) => {
       const prev = parseRightSidebarLayoutState(prevRaw, initialActiveTab);
       const hasGoal = collectAllTabs(prev.root).includes("goal");
-      // Keep the Goal tab visible whenever the workspace has a current goal
-      // OR any archived history — otherwise clearing the last goal would
-      // permanently hide the "Completed goals" list (Codex P2 review:
-      // "Preserve the Goal tab for history-only workspaces"). Visibility
-      // depends on `goalHistory.length` so the layout effect also re-runs
-      // when history populates after a fresh fetch.
-      const shouldShowGoal = goalsExperimentEnabled && (goal != null || goalHistory.length > 0);
-
-      if (shouldShowGoal && !hasGoal) {
+      // Goal tab is always visible when the GOALS experiment is enabled —
+      // the tab itself surfaces empty-state, create, current, and history
+      // affordances, so we no longer gate on `goal != null` or history
+      // length. Mirrors the desktop/browser experiment-add pattern; we
+      // can't switch to `inDefaultLayout: true` because that bypasses the
+      // experiment flag during layout migration.
+      if (goalsExperimentEnabled && !hasGoal) {
         return addTabToFocusedTabset(prev, "goal", false);
       }
 
-      if (!shouldShowGoal && hasGoal) {
+      if (!goalsExperimentEnabled && hasGoal) {
         return removeTabEverywhere(prev, "goal");
       }
 
       return prev;
     });
-  }, [goal, goalHistory.length, goalsExperimentEnabled, initialActiveTab, setLayoutRaw]);
+  }, [goalsExperimentEnabled, initialActiveTab, setLayoutRaw]);
 
   React.useEffect(() => {
     if (!desktopExperimentEnabled) {
@@ -1594,6 +1627,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         onGoalUpdateBudget={handleGoalUpdateBudget}
         onGoalUpdateTurnCap={handleGoalUpdateTurnCap}
         onGoalClear={handleGoalClear}
+        onGoalCreate={handleGoalCreate}
         onAutoFocusConsumed={() => setAutoFocusTerminalSession(null)}
       />
     );
