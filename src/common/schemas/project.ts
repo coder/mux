@@ -3,6 +3,7 @@ import { WorkspaceMCPOverridesSchema } from "@/common/orpc/schemas/mcp";
 import {
   BestOfGroupSchema,
   ProjectRefSchema,
+  WorkspaceGoalDefaultsOverrideSchema,
   WorkspaceHeartbeatSettingsSchema,
 } from "@/common/orpc/schemas/workspace";
 import {
@@ -90,6 +91,10 @@ export const WorkspaceConfigSchema = z.object({
   }),
   heartbeat: WorkspaceHeartbeatSettingsSchema.optional().meta({
     description: "Persisted heartbeat settings for this workspace.",
+  }),
+  goalDefaults: WorkspaceGoalDefaultsOverrideSchema.optional().meta({
+    description:
+      "Per-workspace overrides for goal creation defaults. Sparse; each null field follows the global `goalDefaults`.",
   }),
   parentWorkspaceId: z.string().optional().meta({
     description:

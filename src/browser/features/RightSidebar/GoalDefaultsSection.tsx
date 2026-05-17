@@ -1,0 +1,434 @@
+import { ChevronDown, Target } from "lucide-react";
+import React from "react";
+import { useEffect, useState } from "react";
+
+import { Input } from "@/browser/components/Input/Input";
+import { useAPI } from "@/browser/contexts/API";
+import { GoalDefaultsControls } from "@/browser/features/Settings/Sections/GoalsSection";
+import { cn } from "@/common/lib/utils";
+import type { WorkspaceGoalDefaultsOverride } from "@/browser/utils/goals/resolveGoalSetIntent";
+import { mergeGoalDefaults } from "@/browser/utils/goals/resolveGoalSetIntent";
+import { DEFAULT_GOAL_DEFAULTS, normalizeGoalDefaults, type GoalDefaults } from "@/constants/goals";
+
+/**
+ * In-tab editor for goal-creation defaults.
+ *
+ * Anchored at the bottom of the GoalTab so users can configure both their
+ * per-workspace overrides *and* their global defaults from the long-lived
+ * home for goal configuration. Two stacked panels:
+ *
+ *   1. **This workspace** — sparse override. Each of the three knobs
+ *      (budget / turn cap / always-require-explicit-budget) has an
+ *      "Inherit" vs "Override" toggle. Inherit shows the effective value
+ *      (from the global panel below) in muted text. Override reveals an
+ *      input so the user can pin a workspace-specific value.
+ *
+ *   2. **All workspaces** — the canonical global editor (`GoalDefaultsControls`
+ *      reused from Settings). Persists into `appConfig.goalDefaults` and
+ *      acts as the inherit-fallback for workspaces that don't override.
+ *
+ * Folded into a collapsible `<details>` so the section is unobtrusive when
+ * users are reading a goal's status but always one click away.
+ */
+interface GoalDefaultsSectionProps {
+  workspaceId: string;
+}
+
+function formatBudgetDollars(cents: number): string {
+  return (cents / 100).toFixed(2);
+}
+
+function parseBudgetDollars(value: string): number | null {
+  const normalized = value.trim().replace(/^\$/, "");
+  if (!/^\d+(?:\.\d{0,2})?$/.test(normalized)) {
+    return null;
+  }
+  return Math.round(Number(normalized) * 100);
+}
+
+function parseTurnCapValue(value: string): number | null {
+  if (value.trim() === "") {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+export function GoalDefaultsSection(props: GoalDefaultsSectionProps) {
+  const { api } = useAPI();
+  const [globalDefaults, setGlobalDefaults] = useState<GoalDefaults>(() => ({
+    ...DEFAULT_GOAL_DEFAULTS,
+  }));
+  const [override, setOverride] = useState<WorkspaceGoalDefaultsOverride | null>(null);
+  const [globalReloadKey, setGlobalReloadKey] = useState(0);
+
+  // Pull the global defaults so we can render inherited values inside the
+  // workspace-override panel. We re-read on every save from
+  // `GoalDefaultsControls` (signaled via `globalReloadKey`) so the inherit
+  // labels stay live when the user edits the global panel.
+  useEffect(() => {
+    if (!api) return;
+    let cancelled = false;
+    void api.config
+      .getConfig()
+      .then((config) => {
+        if (cancelled) return;
+        setGlobalDefaults(normalizeGoalDefaults(config?.goalDefaults));
+      })
+      .catch(() => {
+        // Defaults already initialized; keep going so the override panel
+        // remains editable even if the config read fails transiently.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [api, globalReloadKey]);
+
+  // Workspace override is loaded once per workspaceId. `null` (the
+  // canonical "no override" state) is what we expect for fresh workspaces.
+  useEffect(() => {
+    if (!api) return;
+    let cancelled = false;
+    void api.workspace.goalDefaults
+      .get({ workspaceId: props.workspaceId })
+      .then((value) => {
+        if (cancelled) return;
+        setOverride(value ?? null);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setOverride(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [api, props.workspaceId]);
+
+  const persistOverride = (next: WorkspaceGoalDefaultsOverride) => {
+    setOverride(next);
+    if (!api) return;
+    void api.workspace.goalDefaults.set({
+      workspaceId: props.workspaceId,
+      defaultBudgetCents: next.defaultBudgetCents,
+      defaultTurnCap: next.defaultTurnCap,
+      alwaysRequireExplicitBudget: next.alwaysRequireExplicitBudget,
+    });
+  };
+
+  // Synthesize a "current override" object (all-null is what the
+  // workspaceService stores for "no override at all") so the per-field
+  // toggles below have a stable shape to work against.
+  const currentOverride: WorkspaceGoalDefaultsOverride = override ?? {
+    defaultBudgetCents: null,
+    defaultTurnCap: null,
+    alwaysRequireExplicitBudget: null,
+  };
+
+  // Effective defaults this workspace would actually use right now (for the
+  // small "current effective values" summary at the top of the section).
+  const effective = mergeGoalDefaults(globalDefaults, override);
+  const hasAnyOverride =
+    currentOverride.defaultBudgetCents != null ||
+    currentOverride.defaultTurnCap != null ||
+    currentOverride.alwaysRequireExplicitBudget != null;
+
+  return (
+    <details
+      className="border-border-light bg-surface-secondary group rounded-md border"
+      // Defaults to closed so the section is unobtrusive while the user is
+      // looking at the current goal; one click away when needed.
+    >
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-2 p-3 text-sm">
+        <span className="text-foreground inline-flex items-center gap-1.5 font-medium">
+          <Target className="h-3.5 w-3.5" aria-hidden="true" />
+          Goal defaults
+          {hasAnyOverride && (
+            <span
+              className="bg-accent-soft text-accent rounded-full px-1.5 py-0.5 text-[10px] font-medium uppercase"
+              aria-label="Workspace overrides active"
+            >
+              Workspace
+            </span>
+          )}
+        </span>
+        <span className="text-muted inline-flex items-center gap-2 text-xs">
+          <span className="tabular-nums">
+            ${formatBudgetDollars(effective.defaultBudgetCents)}
+            {" • "}
+            {effective.defaultTurnCap == null ? "no turn cap" : `${effective.defaultTurnCap} turns`}
+          </span>
+          <ChevronDown
+            className="h-3.5 w-3.5 transition-transform group-open:rotate-180"
+            aria-hidden="true"
+          />
+        </span>
+      </summary>
+
+      <div className="border-border-light flex flex-col gap-4 border-t p-3">
+        <WorkspaceOverridePanel
+          override={currentOverride}
+          globalDefaults={globalDefaults}
+          onChange={persistOverride}
+        />
+
+        <details className="border-border-light rounded-md border">
+          <summary className="text-muted cursor-pointer list-none p-2 text-xs font-medium uppercase">
+            All workspaces (global default)
+          </summary>
+          <div className="bg-surface-primary border-border-light border-t p-3">
+            <GoalDefaultsControls
+              // Reload global defaults in the inherit-fallback row on every
+              // save from the wrapped editor.
+              onPersist={() => setGlobalReloadKey((k) => k + 1)}
+            />
+          </div>
+        </details>
+      </div>
+    </details>
+  );
+}
+
+interface WorkspaceOverridePanelProps {
+  override: WorkspaceGoalDefaultsOverride;
+  globalDefaults: GoalDefaults;
+  onChange: (next: WorkspaceGoalDefaultsOverride) => void;
+}
+
+function WorkspaceOverridePanel(props: WorkspaceOverridePanelProps) {
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="text-foreground text-xs font-medium uppercase">This workspace</div>
+
+      <BudgetOverrideRow
+        override={props.override.defaultBudgetCents}
+        inheritValue={props.globalDefaults.defaultBudgetCents}
+        onChange={(value) => props.onChange({ ...props.override, defaultBudgetCents: value })}
+      />
+
+      <TurnCapOverrideRow
+        override={props.override.defaultTurnCap}
+        inheritValue={props.globalDefaults.defaultTurnCap}
+        onChange={(value) => props.onChange({ ...props.override, defaultTurnCap: value })}
+      />
+
+      <ExplicitBudgetOverrideRow
+        override={props.override.alwaysRequireExplicitBudget}
+        inheritValue={props.globalDefaults.alwaysRequireExplicitBudget}
+        onChange={(value) =>
+          props.onChange({ ...props.override, alwaysRequireExplicitBudget: value })
+        }
+      />
+    </div>
+  );
+}
+
+interface BudgetOverrideRowProps {
+  override: number | null;
+  inheritValue: number;
+  onChange: (next: number | null) => void;
+}
+
+function BudgetOverrideRow(props: BudgetOverrideRowProps) {
+  const isOverriding = props.override != null;
+  const [draft, setDraft] = useState(isOverriding ? formatBudgetDollars(props.override ?? 0) : "");
+
+  // Keep the draft in sync when the override changes from outside (e.g.,
+  // toggling the inherit/override switch resets the input).
+  useEffect(() => {
+    if (props.override != null) {
+      setDraft(formatBudgetDollars(props.override));
+    }
+  }, [props.override]);
+
+  const commit = (value: string) => {
+    const parsed = parseBudgetDollars(value);
+    if (parsed == null) {
+      // Reject malformed value silently — revert the draft to the prior
+      // override (or the inherited value if not currently overriding).
+      setDraft(isOverriding ? formatBudgetDollars(props.override ?? 0) : "");
+      return;
+    }
+    setDraft(formatBudgetDollars(parsed));
+    props.onChange(parsed);
+  };
+
+  return (
+    <OverrideRow
+      label="Default budget"
+      helperInherit={`Inherits $${formatBudgetDollars(props.inheritValue)} from All workspaces`}
+      isOverriding={isOverriding}
+      onToggleOverride={(next) => {
+        if (next) {
+          props.onChange(props.inheritValue);
+        } else {
+          props.onChange(null);
+        }
+      }}
+      input={
+        <div className="flex items-center gap-1">
+          <span className="text-muted text-sm">$</span>
+          <Input
+            aria-label="Workspace default goal budget in dollars"
+            type="text"
+            inputMode="decimal"
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onBlur={(event) => commit(event.currentTarget.value)}
+            className="border-border-medium bg-background-secondary h-8 w-20 text-right text-sm"
+          />
+        </div>
+      }
+    />
+  );
+}
+
+interface TurnCapOverrideRowProps {
+  override: number | null;
+  inheritValue: number | null;
+  onChange: (next: number | null) => void;
+}
+
+function TurnCapOverrideRow(props: TurnCapOverrideRowProps) {
+  // The override is tri-state from the user's perspective but the schema
+  // we send is binary (`null` = inherit, positive integer = override).
+  // We track an explicit "is overriding" UI flag locally so the user can
+  // pick "Override → no cap" by toggling the override on while leaving
+  // the input blank — which on commit stays as `null` AND keeps the
+  // toggle on (handled below).
+  const [isOverriding, setIsOverriding] = useState(props.override != null);
+  const [draft, setDraft] = useState(props.override != null ? String(props.override) : "");
+
+  useEffect(() => {
+    setIsOverriding(props.override != null);
+    setDraft(props.override != null ? String(props.override) : "");
+  }, [props.override]);
+
+  const commit = (value: string) => {
+    const parsed = parseTurnCapValue(value);
+    setDraft(parsed == null ? "" : String(parsed));
+    // We don't allow "override on with null input" to round-trip — when
+    // the input clears, we drop back to inherit. Users who want "no cap"
+    // for this workspace specifically should set the global default to
+    // null instead (and we surface that effective value in the inherit
+    // label so they can see what they'd be inheriting).
+    if (parsed == null) {
+      setIsOverriding(false);
+      props.onChange(null);
+    } else {
+      props.onChange(parsed);
+    }
+  };
+
+  return (
+    <OverrideRow
+      label="Default turn cap"
+      helperInherit={
+        props.inheritValue == null
+          ? "Inherits no turn cap from All workspaces"
+          : `Inherits ${props.inheritValue} turns from All workspaces`
+      }
+      isOverriding={isOverriding}
+      onToggleOverride={(next) => {
+        setIsOverriding(next);
+        if (next) {
+          // Toggle-on without a global default starts the input blank;
+          // committing a blank value will toggle back off (above).
+          if (props.inheritValue != null) {
+            props.onChange(props.inheritValue);
+          }
+        } else {
+          props.onChange(null);
+        }
+      }}
+      input={
+        <Input
+          aria-label="Workspace default goal turn cap"
+          type="number"
+          inputMode="numeric"
+          min={1}
+          step={1}
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={(event) => commit(event.currentTarget.value)}
+          className="border-border-medium bg-background-secondary h-8 w-20 text-right text-sm"
+        />
+      }
+    />
+  );
+}
+
+interface ExplicitBudgetOverrideRowProps {
+  override: boolean | null;
+  inheritValue: boolean;
+  onChange: (next: boolean | null) => void;
+}
+
+function ExplicitBudgetOverrideRow(props: ExplicitBudgetOverrideRowProps) {
+  const isOverriding = props.override != null;
+  return (
+    <OverrideRow
+      label="Always require explicit budget"
+      helperInherit={`Inherits ${props.inheritValue ? "ON" : "OFF"} from All workspaces`}
+      isOverriding={isOverriding}
+      onToggleOverride={(next) => {
+        if (next) {
+          props.onChange(props.inheritValue);
+        } else {
+          props.onChange(null);
+        }
+      }}
+      input={
+        <label className="text-foreground inline-flex items-center gap-1.5 text-sm">
+          <input
+            aria-label="Workspace always-require-explicit-budget"
+            type="checkbox"
+            checked={props.override ?? false}
+            onChange={(event) => props.onChange(event.target.checked)}
+            className="accent-accent h-4 w-4"
+          />
+          <span className="text-muted text-xs">{(props.override ?? false) ? "ON" : "OFF"}</span>
+        </label>
+      }
+    />
+  );
+}
+
+interface OverrideRowProps {
+  label: string;
+  helperInherit: string;
+  isOverriding: boolean;
+  onToggleOverride: (next: boolean) => void;
+  input: React.ReactNode;
+}
+
+function OverrideRow(props: OverrideRowProps) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <div className="min-w-0 flex-1">
+        <div className="text-foreground text-sm font-medium">{props.label}</div>
+        <div className="text-muted mt-0.5 text-xs">
+          {props.isOverriding ? "Using a workspace-specific value." : props.helperInherit}
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => props.onToggleOverride(!props.isOverriding)}
+          className={cn(
+            "border-border-medium rounded-md border px-2 py-1 text-xs",
+            props.isOverriding
+              ? "bg-accent-soft text-accent border-accent"
+              : "bg-surface-primary text-muted hover:text-foreground"
+          )}
+          aria-pressed={props.isOverriding}
+          aria-label={
+            props.isOverriding ? `Stop overriding ${props.label}` : `Override ${props.label}`
+          }
+        >
+          {props.isOverriding ? "Override" : "Inherit"}
+        </button>
+        {props.isOverriding && props.input}
+      </div>
+    </div>
+  );
+}

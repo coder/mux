@@ -1423,6 +1423,12 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       // ErrorBoundary stabilizes (Storybook CI).
       getGoal: () => Promise.resolve({ goal: null }),
       getGoalHistory: () => Promise.resolve({ entries: [] }),
+      // Per-workspace goal-defaults override; stories don't drive it, but
+      // the in-tab `GoalDefaultsSection` reads it on mount via api.workspace.goalDefaults.get.
+      goalDefaults: {
+        get: () => Promise.resolve(null),
+        set: () => Promise.resolve({ success: true, data: undefined }),
+      },
       create: (input: { projectPath: string; branchName: string }) => {
         createdWorkspaceCounter += 1;
 

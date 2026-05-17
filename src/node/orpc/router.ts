@@ -3230,6 +3230,28 @@ export const router = (authToken?: string) => {
             })
           ),
       },
+      goalDefaults: {
+        // Per-workspace override of the global `goalDefaults` block.
+        // `get` returns `null` when this workspace has no override.
+        // `set` accepts a sparse shape — passing `null` for every field
+        // clears the record entirely (so workspace falls back to global).
+        get: t
+          .input(schemas.workspace.goalDefaults.get.input)
+          .output(schemas.workspace.goalDefaults.get.output)
+          .handler(({ context, input }) =>
+            context.workspaceService.getWorkspaceGoalDefaults(input.workspaceId)
+          ),
+        set: t
+          .input(schemas.workspace.goalDefaults.set.input)
+          .output(schemas.workspace.goalDefaults.set.output)
+          .handler(({ context, input }) =>
+            context.workspaceService.setWorkspaceGoalDefaults(input.workspaceId, {
+              defaultBudgetCents: input.defaultBudgetCents,
+              defaultTurnCap: input.defaultTurnCap,
+              alwaysRequireExplicitBudget: input.alwaysRequireExplicitBudget,
+            })
+          ),
+      },
       updateAgentAISettings: t
         .input(schemas.workspace.updateAgentAISettings.input)
         .output(schemas.workspace.updateAgentAISettings.output)

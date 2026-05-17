@@ -137,6 +137,7 @@ const TAB_RENDERERS = {
     renderPanel: (ctx) => (
       <ErrorBoundary workspaceInfo="Goal tab">
         <GoalTab
+          workspaceId={ctx.workspaceId}
           goal={ctx.goal.snapshot}
           history={ctx.goal.history}
           openCompleteInputRequest={ctx.goal.openCompleteInputRequest}

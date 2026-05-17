@@ -1506,6 +1506,7 @@ export class Config {
               runtimeConfig: workspace.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG,
               aiSettings: workspace.aiSettings,
               heartbeat: workspace.heartbeat,
+              goalDefaults: workspace.goalDefaults,
               aiSettingsByAgent:
                 workspace.aiSettingsByAgent ??
                 (workspace.aiSettings
@@ -1672,6 +1673,7 @@ export class Config {
               runtimeConfig: DEFAULT_RUNTIME_CONFIG,
               aiSettings: workspace.aiSettings,
               heartbeat: workspace.heartbeat,
+              goalDefaults: workspace.goalDefaults,
               aiSettingsByAgent:
                 workspace.aiSettingsByAgent ??
                 (workspace.aiSettings
@@ -1722,6 +1724,7 @@ export class Config {
             runtimeConfig: DEFAULT_RUNTIME_CONFIG,
             aiSettings: workspace.aiSettings,
             heartbeat: workspace.heartbeat,
+            goalDefaults: workspace.goalDefaults,
             aiSettingsByAgent:
               workspace.aiSettingsByAgent ??
               (workspace.aiSettings
@@ -1798,6 +1801,7 @@ export class Config {
         runtimeConfig: metadata.runtimeConfig,
         aiSettings: metadata.aiSettings,
         heartbeat: metadata.heartbeat,
+        goalDefaults: metadata.goalDefaults,
         parentWorkspaceId: metadata.parentWorkspaceId,
         agentType: metadata.agentType,
         agentId: metadata.agentId,

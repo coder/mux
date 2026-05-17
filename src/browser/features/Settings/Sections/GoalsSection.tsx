@@ -26,11 +26,19 @@ function parseTurnCap(value: string): number | null {
 
 interface GoalDefaultsControlsProps {
   loadConfig?: () => Promise<{ goalDefaults?: Partial<GoalDefaults> | null }>;
+  /**
+   * Fired after every successful persist of the global goal defaults.
+   * Callers that render inherited-value labels (e.g., the workspace
+   * override panel in the GoalTab) use this to re-pull the global defaults
+   * so their "Inherits X from All workspaces" copy stays accurate.
+   */
+  onPersist?: (next: GoalDefaults) => void;
 }
 
 export function GoalDefaultsControls(props: GoalDefaultsControlsProps) {
   const { api } = useAPI();
   const loadConfig = props.loadConfig;
+  const onPersist = props.onPersist;
   const [goalDefaults, setGoalDefaults] = useState<GoalDefaults>(() => ({
     ...DEFAULT_GOAL_DEFAULTS,
   }));
@@ -61,6 +69,7 @@ export function GoalDefaultsControls(props: GoalDefaultsControlsProps) {
     const normalized = normalizeGoalDefaults(next);
     setGoalDefaults(normalized);
     void api?.config?.updateGoalDefaults?.({ goalDefaults: normalized });
+    onPersist?.(normalized);
   };
 
   const saveBudget = (value: string) => {

@@ -774,7 +774,8 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     // a blank budget here would silently create an unbudgeted goal even
     // when the user configured a default — the exact drift
     // Coder-agents-review P3 DEREM-27 flagged on the palette path.
-    const defaults = await loadGoalDefaults(api);
+    // Pass workspaceId so any per-workspace override wins over the global.
+    const defaults = await loadGoalDefaults(api, workspaceId);
     const resolved = resolveGoalSetIntent(intent, defaults);
     if (
       hasGoalBudgetLimit(resolved.budgetCents) &&

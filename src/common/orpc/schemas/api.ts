@@ -59,6 +59,7 @@ import {
   GitStatusSchema,
   ProjectRefSchema,
   WorkspaceActivitySnapshotSchema,
+  WorkspaceGoalDefaultsOverrideSchema,
   WorkspaceHeartbeatSettingsSchema,
 } from "./workspace";
 import { WorkspaceAISettingsSchema } from "./workspaceAiSettings";
@@ -1038,6 +1039,23 @@ export const workspace = {
     },
     set: {
       input: WorkspaceHeartbeatSettingsSchema.extend({
+        workspaceId: z.string(),
+      }),
+      output: ResultSchema(z.void(), z.string()),
+    },
+  },
+  goalDefaults: {
+    // Per-workspace override of the global `goalDefaults` block. `get`
+    // returns `null` when no override is set (i.e., this workspace uses
+    // the global default). `set` accepts a sparse override; passing
+    // `null` for any field clears that override; passing all-null clears
+    // the whole record.
+    get: {
+      input: z.object({ workspaceId: z.string() }),
+      output: WorkspaceGoalDefaultsOverrideSchema.nullable(),
+    },
+    set: {
+      input: WorkspaceGoalDefaultsOverrideSchema.extend({
         workspaceId: z.string(),
       }),
       output: ResultSchema(z.void(), z.string()),

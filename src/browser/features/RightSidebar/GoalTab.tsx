@@ -13,6 +13,7 @@ import { parseGoalBudgetInputCents } from "@/common/utils/goals/budgetParser";
 // + DEREM-29). Local copies drifted in case (`active` vs `Active`) and could
 // drift further as Goal status grows.
 import { formatGoalElapsed, goalStatusLabel } from "@/browser/features/Tools/Goal/goalToolUtils";
+import { GoalDefaultsSection } from "@/browser/features/RightSidebar/GoalDefaultsSection";
 
 /**
  * Inputs accepted by the in-tab "Set goal" form. Mirrors the slash-command
@@ -28,6 +29,13 @@ export interface GoalCreateIntent {
 }
 
 interface GoalTabProps {
+  /**
+   * Workspace this tab is bound to. Required by the in-tab `GoalDefaultsSection`
+   * which reads + writes the per-workspace override of the global
+   * `goalDefaults` block; optional for the rest of the tab so existing
+   * read-only stories don't break.
+   */
+  workspaceId?: string;
   goal: GoalSnapshot | null;
   /**
    * Completed / cleared / replaced goals for this workspace, newest first.
@@ -244,6 +252,7 @@ export function GoalTab(props: GoalTabProps) {
           </div>
         )}
         {filteredHistory.length > 0 && <GoalHistorySection entries={filteredHistory} />}
+        {props.workspaceId != null && <GoalDefaultsSection workspaceId={props.workspaceId} />}
       </section>
     );
   }
@@ -651,6 +660,7 @@ export function GoalTab(props: GoalTabProps) {
       {error && <p className="text-danger-soft text-sm">{error}</p>}
 
       {filteredHistory.length > 0 && <GoalHistorySection entries={filteredHistory} />}
+      {props.workspaceId != null && <GoalDefaultsSection workspaceId={props.workspaceId} />}
     </section>
   );
 }

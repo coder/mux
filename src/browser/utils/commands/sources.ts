@@ -868,8 +868,11 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
               "Goal budget must be blank or formatted like $5.00 or 500c"
             );
             // Apply shared defaults for turn caps, while preserving the palette
-            // field contract that a blank budget means no budget.
-            const defaults = await loadGoalDefaults(api);
+            // field contract that a blank budget means no budget. Pass the
+            // workspaceId so a per-workspace override (configured from the
+            // GoalTab) wins over the global default for palette-initiated
+            // goal creation.
+            const defaults = await loadGoalDefaults(api, workspaceId);
             const intent = resolveGoalSetIntent(
               {
                 objective,

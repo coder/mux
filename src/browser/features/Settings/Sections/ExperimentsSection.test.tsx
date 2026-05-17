@@ -167,7 +167,11 @@ describe("PortableDesktopExperimentWarning", () => {
     globalThis.clearInterval = originalClearInterval;
   });
 
-  test("shows goal and heartbeat defaults inline only when their experiments are enabled", async () => {
+  test("shows heartbeat defaults inline only when its experiment is enabled; goal defaults point to the Goal tab", async () => {
+    // Goal defaults moved out of ExperimentsSection into the Goal tab
+    // (`GoalDefaultsSection`). The experiments panel now only renders a
+    // pointer to the new home for goal configuration. Heartbeat defaults
+    // remain inline here for now.
     experimentEnabled = false;
     experimentValues = {
       [EXPERIMENT_IDS.GOALS]: false,
@@ -186,15 +190,18 @@ describe("PortableDesktopExperimentWarning", () => {
     view.rerender(<ExperimentsSection />);
 
     await waitFor(() => {
-      expect(view.getByLabelText("Default goal budget in dollars")).toBeTruthy();
-    });
-    await waitFor(() => {
       expect(view.getByLabelText("Default heartbeat threshold in minutes")).toBeTruthy();
     });
-    expect(mockApi.config?.getConfig).toHaveBeenCalledTimes(1);
+    // Goal defaults are no longer rendered inline in the Experiments
+    // panel — they live in the Goal tab now.
+    expect(view.queryByLabelText("Default goal budget in dollars")).toBeNull();
+    // Pointer copy should mention the Goal tab as the new home.
+    expect(view.getByText(/Goal/, { selector: "span" })).toBeTruthy();
   });
 
   test("reloads experiment settings when inline controls remount", async () => {
+    // Only the heartbeat panel still triggers an inline `getConfig` —
+    // the goal panel was removed in favor of the Goal tab.
     experimentEnabled = false;
     experimentValues = {
       [EXPERIMENT_IDS.GOALS]: true,
@@ -203,9 +210,6 @@ describe("PortableDesktopExperimentWarning", () => {
 
     const view = render(<ExperimentsSection />);
 
-    await waitFor(() => {
-      expect(view.getByLabelText("Default goal budget in dollars")).toBeTruthy();
-    });
     await waitFor(() => {
       expect(view.getByLabelText("Default heartbeat threshold in minutes")).toBeTruthy();
     });
@@ -217,7 +221,6 @@ describe("PortableDesktopExperimentWarning", () => {
     };
     view.rerender(<ExperimentsSection />);
 
-    expect(view.queryByLabelText("Default goal budget in dollars")).toBeNull();
     expect(view.queryByLabelText("Default heartbeat threshold in minutes")).toBeNull();
 
     experimentValues = {
