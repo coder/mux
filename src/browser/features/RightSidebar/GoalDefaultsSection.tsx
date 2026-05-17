@@ -60,6 +60,13 @@ export function GoalDefaultsSection(props: GoalDefaultsSectionProps) {
     ...DEFAULT_GOAL_DEFAULTS,
   }));
   const [override, setOverride] = useState<WorkspaceGoalDefaultsOverride | null>(null);
+  // Distinguishes "loaded; no override stored" (override === null, isLoading
+  // === false) from "still loading" (override === null, isLoading === true).
+  // Without this flag, a user toggling a field before the read resolves
+  // would call persistOverride() against the synthesized all-null shape,
+  // which `set` then writes — clobbering any saved override on disk.
+  // Codex P2: preserve saved workspace defaults while loading.
+  const [isLoading, setIsLoading] = useState(true);
   const [globalReloadKey, setGlobalReloadKey] = useState(0);
 
   // Pull the global defaults so we can render inherited values inside the
@@ -86,18 +93,23 @@ export function GoalDefaultsSection(props: GoalDefaultsSectionProps) {
 
   // Workspace override is loaded once per workspaceId. `null` (the
   // canonical "no override" state) is what we expect for fresh workspaces.
+  // Reset `isLoading` whenever the workspaceId changes so a workspace
+  // switch doesn't let the new workspace's edits race the old read.
   useEffect(() => {
     if (!api) return;
     let cancelled = false;
+    setIsLoading(true);
     void api.workspace.goalDefaults
       .get({ workspaceId: props.workspaceId })
       .then((value) => {
         if (cancelled) return;
         setOverride(value ?? null);
+        setIsLoading(false);
       })
       .catch(() => {
         if (cancelled) return;
         setOverride(null);
+        setIsLoading(false);
       });
     return () => {
       cancelled = true;
@@ -105,6 +117,10 @@ export function GoalDefaultsSection(props: GoalDefaultsSectionProps) {
   }, [api, props.workspaceId]);
 
   const persistOverride = (next: WorkspaceGoalDefaultsOverride) => {
+    // Codex P2: ignore edits while the initial read is in flight.
+    // Otherwise a stale all-null shape could overwrite saved overrides.
+    // The UI also disables the toggles via `isLoading` below.
+    if (isLoading) return;
     setOverride(next);
     if (!api) return;
     void api.workspace.goalDefaults.set({
@@ -169,6 +185,7 @@ export function GoalDefaultsSection(props: GoalDefaultsSectionProps) {
           override={currentOverride}
           globalDefaults={globalDefaults}
           onChange={persistOverride}
+          isLoading={isLoading}
         />
 
         <details className="border-border-light rounded-md border">
@@ -192,23 +209,33 @@ interface WorkspaceOverridePanelProps {
   override: WorkspaceGoalDefaultsOverride;
   globalDefaults: GoalDefaults;
   onChange: (next: WorkspaceGoalDefaultsOverride) => void;
+  isLoading: boolean;
 }
 
 function WorkspaceOverridePanel(props: WorkspaceOverridePanelProps) {
   return (
     <div className="flex flex-col gap-3">
-      <div className="text-foreground text-xs font-medium uppercase">This workspace</div>
+      <div className="text-foreground flex items-center gap-2 text-xs font-medium uppercase">
+        This workspace
+        {props.isLoading && (
+          <span className="text-muted text-[10px] font-normal normal-case" aria-live="polite">
+            Loading…
+          </span>
+        )}
+      </div>
 
       <BudgetOverrideRow
         override={props.override.defaultBudgetCents}
         inheritValue={props.globalDefaults.defaultBudgetCents}
         onChange={(value) => props.onChange({ ...props.override, defaultBudgetCents: value })}
+        disabled={props.isLoading}
       />
 
       <TurnCapOverrideRow
         override={props.override.defaultTurnCap}
         inheritValue={props.globalDefaults.defaultTurnCap}
         onChange={(value) => props.onChange({ ...props.override, defaultTurnCap: value })}
+        disabled={props.isLoading}
       />
 
       <ExplicitBudgetOverrideRow
@@ -217,6 +244,7 @@ function WorkspaceOverridePanel(props: WorkspaceOverridePanelProps) {
         onChange={(value) =>
           props.onChange({ ...props.override, alwaysRequireExplicitBudget: value })
         }
+        disabled={props.isLoading}
       />
     </div>
   );
@@ -226,6 +254,7 @@ interface BudgetOverrideRowProps {
   override: number | null;
   inheritValue: number;
   onChange: (next: number | null) => void;
+  disabled?: boolean;
 }
 
 function BudgetOverrideRow(props: BudgetOverrideRowProps) {
@@ -264,6 +293,7 @@ function BudgetOverrideRow(props: BudgetOverrideRowProps) {
           props.onChange(null);
         }
       }}
+      disabled={props.disabled}
       input={
         <div className="flex items-center gap-1">
           <span className="text-muted text-sm">$</span>
@@ -286,6 +316,7 @@ interface TurnCapOverrideRowProps {
   override: number | null;
   inheritValue: number | null;
   onChange: (next: number | null) => void;
+  disabled?: boolean;
 }
 
 function TurnCapOverrideRow(props: TurnCapOverrideRowProps) {
@@ -340,6 +371,7 @@ function TurnCapOverrideRow(props: TurnCapOverrideRowProps) {
           props.onChange(null);
         }
       }}
+      disabled={props.disabled}
       input={
         <Input
           aria-label="Workspace default goal turn cap"
@@ -361,6 +393,7 @@ interface ExplicitBudgetOverrideRowProps {
   override: boolean | null;
   inheritValue: boolean;
   onChange: (next: boolean | null) => void;
+  disabled?: boolean;
 }
 
 function ExplicitBudgetOverrideRow(props: ExplicitBudgetOverrideRowProps) {
@@ -377,6 +410,7 @@ function ExplicitBudgetOverrideRow(props: ExplicitBudgetOverrideRowProps) {
           props.onChange(null);
         }
       }}
+      disabled={props.disabled}
       input={
         <label className="text-foreground inline-flex items-center gap-1.5 text-sm">
           <input
@@ -399,11 +433,18 @@ interface OverrideRowProps {
   isOverriding: boolean;
   onToggleOverride: (next: boolean) => void;
   input: React.ReactNode;
+  disabled?: boolean;
 }
 
 function OverrideRow(props: OverrideRowProps) {
   return (
-    <div className="flex items-center justify-between gap-3">
+    <div
+      className={cn(
+        "flex items-center justify-between gap-3",
+        props.disabled === true && "pointer-events-none opacity-60"
+      )}
+      aria-busy={props.disabled === true}
+    >
       <div className="min-w-0 flex-1">
         <div className="text-foreground text-sm font-medium">{props.label}</div>
         <div className="text-muted mt-0.5 text-xs">
@@ -424,6 +465,7 @@ function OverrideRow(props: OverrideRowProps) {
           aria-label={
             props.isOverriding ? `Stop overriding ${props.label}` : `Override ${props.label}`
           }
+          disabled={props.disabled === true}
         >
           {props.isOverriding ? "Override" : "Inherit"}
         </button>
