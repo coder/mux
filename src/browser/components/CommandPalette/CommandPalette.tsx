@@ -13,7 +13,7 @@ import {
   matchesKeybind,
 } from "@/browser/utils/ui/keybinds";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
-import { resolveSlashCommandExperimentValue } from "@/browser/utils/slashCommands/experimentVisibility";
+import { createSlashCommandExperimentResolver } from "@/browser/utils/slashCommands/experimentVisibility";
 import { getSlashCommandSuggestions } from "@/browser/utils/slashCommands/suggestions";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
@@ -290,10 +290,9 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
       const suggestions = getSlashCommandSuggestions(q, {
         agentSkills,
         variant: ctx.workspaceId ? "workspace" : "creation",
-        isExperimentEnabled: (experimentId) =>
-          resolveSlashCommandExperimentValue(experimentId, {
-            workspaceHeartbeats: workspaceHeartbeatsExperimentEnabled,
-          }),
+        isExperimentEnabled: createSlashCommandExperimentResolver({
+          workspaceHeartbeats: workspaceHeartbeatsExperimentEnabled,
+        }),
       });
       const section = "Slash Commands";
       const groups: PaletteGroup[] = [

@@ -85,7 +85,7 @@ import {
   getSlashCommandSuggestions,
   type SlashSuggestion,
 } from "@/browser/utils/slashCommands/suggestions";
-import { resolveSlashCommandExperimentValue } from "@/browser/utils/slashCommands/experimentVisibility";
+import { createSlashCommandExperimentResolver } from "@/browser/utils/slashCommands/experimentVisibility";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
 import { AgentModePicker } from "@/browser/components/AgentModePicker/AgentModePicker";
 import { ContextUsageIndicatorButton } from "@/browser/components/ContextUsageIndicatorButton/ContextUsageIndicatorButton";
@@ -1427,10 +1427,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     const suggestions = getSlashCommandSuggestions(input, {
       agentSkills: agentSkillDescriptors,
       variant,
-      isExperimentEnabled: (experimentId) =>
-        resolveSlashCommandExperimentValue(experimentId, {
-          workspaceHeartbeats: workspaceHeartbeatsExperimentEnabled,
-        }),
+      isExperimentEnabled: createSlashCommandExperimentResolver({
+        workspaceHeartbeats: workspaceHeartbeatsExperimentEnabled,
+      }),
     });
     setCommandSuggestions((prev) => replaceSuggestions(prev, suggestions));
     setShowCommandSuggestions(suggestions.length > 0);
@@ -1440,10 +1439,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   // Show only when suggestions are hidden and the input is exactly "/command " with no args yet.
   const commandGhostHint = getCommandGhostHint(input, showCommandSuggestions, {
     variant,
-    isExperimentEnabled: (experimentId) =>
-      resolveSlashCommandExperimentValue(experimentId, {
-        workspaceHeartbeats: workspaceHeartbeatsExperimentEnabled,
-      }),
+    isExperimentEnabled: createSlashCommandExperimentResolver({
+      workspaceHeartbeats: workspaceHeartbeatsExperimentEnabled,
+    }),
   });
 
   // Load agent skills for suggestions
