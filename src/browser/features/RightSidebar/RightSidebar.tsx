@@ -777,11 +777,27 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     // Pass workspaceId so any per-workspace override wins over the global.
     const defaults = await loadGoalDefaults(api, workspaceId);
     const resolved = resolveGoalSetIntent(intent, defaults);
-    if (
-      hasGoalBudgetLimit(resolved.budgetCents) &&
-      !modelHasPricingData(sendMessageOptions.model, providersConfig)
-    ) {
-      throw new Error(UNPRICED_CURRENT_MODEL_GOAL_MESSAGE);
+    if (hasGoalBudgetLimit(resolved.budgetCents)) {
+      // Codex P2: fetch the provider config at submit time instead of
+      // reading the `useProvidersConfig()` hook state. If the form is
+      // submitted before the hook has populated `providersConfig`, the
+      // hook value is `null` and `modelHasPricingData(model, null)`
+      // would incorrectly reject custom/mapped models that ARE priced
+      // through provider mapping (e.g. `custom:cheap-alias` mapped to a
+      // priced model). The slash command + palette paths both fetch
+      // here, so doing the same keeps the three create surfaces in
+      // lockstep.
+      let freshProvidersConfig: unknown = providersConfig;
+      try {
+        freshProvidersConfig = await api.providers.getConfig();
+      } catch {
+        // Fall back to the hook value (which may still be null). Better
+        // to surface the pricing-gate error than to leak the network
+        // failure to the user — they can retry.
+      }
+      if (!modelHasPricingData(sendMessageOptions.model, freshProvidersConfig)) {
+        throw new Error(UNPRICED_CURRENT_MODEL_GOAL_MESSAGE);
+      }
     }
     await setGoalWithSingleConflictRetry({
       objective: resolved.objective,
