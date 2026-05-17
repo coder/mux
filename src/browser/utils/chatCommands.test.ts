@@ -399,8 +399,7 @@ describe("processSlashCommand - model-set", () => {
     expect(context.setToast).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "error",
-        message:
-          "Target model has no pricing data. Pick a priced model or remove the active goal budget with /goal budget --no-budget before switching.",
+        message: "Target model has no pricing data. Pick a priced model before switching.",
       })
     );
   });
@@ -725,7 +724,7 @@ describe("processSlashCommand - goal lifecycle commands", () => {
       expect.objectContaining({
         type: "error",
         message:
-          "Current model has no pricing data. Pick a priced model, set --no-budget, or rely on --turns N only.",
+          "Current model has no pricing data. Pick a priced model, use -b 0 with a turn cap, or change goal budget defaults in Settings.",
       })
     );
   });
@@ -954,7 +953,7 @@ describe("processSlashCommand - goal budgets", () => {
       expect.objectContaining({
         type: "error",
         message:
-          "Current model has no pricing data. Pick a priced model, set --no-budget, or rely on --turns N only.",
+          "Current model has no pricing data. Pick a priced model, use -b 0 with a turn cap, or change goal budget defaults in Settings.",
       })
     );
   });

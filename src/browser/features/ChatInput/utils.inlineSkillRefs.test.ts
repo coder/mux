@@ -22,7 +22,7 @@ function slashInvocation(skill: AgentSkillDescriptor): SkillInvocation {
 }
 
 describe("parseCommandWithSkillInvocation", () => {
-  test("does not treat known-command flag errors as slash skill invocations", async () => {
+  test("does not treat known-command goal text as slash skill invocation", async () => {
     const result = await parseCommandWithSkillInvocation({
       messageText: "/goal --bogus\nBody",
       agentSkillDescriptors: [descriptor("goal")],
@@ -31,10 +31,9 @@ describe("parseCommandWithSkillInvocation", () => {
     });
 
     expect(result.skillInvocation).toBeNull();
-    expect(result.parsed).toMatchObject({
-      type: "command-unknown-flag",
-      command: "goal",
-      flag: "--bogus",
+    expect(result.parsed).toEqual({
+      type: "goal-set",
+      objective: "--bogus\nBody",
     });
   });
 });

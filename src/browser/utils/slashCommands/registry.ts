@@ -501,7 +501,7 @@ function parseGoalTurnCap(value: unknown): number | null {
 }
 
 const GOAL_USAGE = `/goal ${SLASH_COMMAND_HINTS.goal}`;
-const GOAL_BUDGET_USAGE = "/goal budget $5|500c|--no-budget";
+const GOAL_BUDGET_USAGE = "/goal budget <amount>";
 
 function invalidGoalBodyArgs(
   body: string
@@ -595,9 +595,6 @@ const goalCommandDefinition: SlashCommandDefinition = {
           usage: GOAL_BUDGET_USAGE,
         };
       }
-      if (budgetTokens[0] === "--no-budget") {
-        return { type: "goal-budget", budgetCents: null };
-      }
       const budgetCents = parseGoalBudgetCents(budgetTokens[0]);
       if (budgetCents == null) {
         return {
@@ -610,27 +607,55 @@ const goalCommandDefinition: SlashCommandDefinition = {
       return { type: "goal-budget", budgetCents };
     }
 
-    const noBudget = headerTokens.includes("--no-budget");
-    const parsed = minimist(
-      headerTokens.filter((token) => token !== "--no-budget"),
-      {
-        string: ["budget", "turns"],
-        unknown: (arg: string) => !arg.startsWith("-"),
+    let budgetCents: number | undefined;
+    let turnCap: number | undefined;
+    let objectiveStartIndex = 0;
+
+    if (headerTokens[0] === "-b") {
+      const budgetInput = headerTokens[1];
+      if (budgetInput == null) {
+        return {
+          type: "command-missing-args",
+          command: "goal",
+          usage: GOAL_USAGE,
+        };
       }
-    );
-    const unknownFlag = headerTokens.find((token) => {
-      return (
-        token.startsWith("-") &&
-        token !== "--budget" &&
-        token !== "--no-budget" &&
-        token !== "--turns"
-      );
-    });
-    if (unknownFlag) {
-      return unknownGoalFlag(unknownFlag);
+
+      const parsedBudgetCents = parseGoalBudgetCents(budgetInput);
+      if (parsedBudgetCents == null) {
+        return {
+          type: "command-invalid-args",
+          command: "goal",
+          input: budgetInput,
+          usage: GOAL_USAGE,
+        };
+      }
+
+      budgetCents = parsedBudgetCents;
+      objectiveStartIndex = 2;
     }
 
-    const headerObjective = parsed._.join(" ").trim();
+    if (headerTokens[objectiveStartIndex] === "--turns") {
+      const turnInput = headerTokens[objectiveStartIndex + 1];
+      const parsedTurnCap = parseGoalTurnCap(turnInput);
+      if (parsedTurnCap == null) {
+        return {
+          type: "command-invalid-args",
+          command: "goal",
+          input: String(turnInput),
+          usage: GOAL_USAGE,
+        };
+      }
+
+      turnCap = parsedTurnCap;
+      objectiveStartIndex += 2;
+    }
+
+    // Only a leading budget/turn flag prefix is command syntax; everything
+    // after that is user-authored goal text so objectives can mention
+    // flag-looking strings (including deprecated-looking budget flags).
+    const objectiveTokens = headerTokens.slice(objectiveStartIndex);
+    const headerObjective = objectiveTokens.join(" ").trim();
     const objective = [headerObjective, body]
       .filter((part): part is string => part != null && part.length > 0)
       .join(headerObjective && bodyHadLeadingBlankLine ? "\n\n" : "\n");
@@ -642,41 +667,11 @@ const goalCommandDefinition: SlashCommandDefinition = {
       };
     }
 
-    if (parsed.budget != null && noBudget) {
-      return {
-        type: "command-invalid-args",
-        command: "goal",
-        input: "--budget --no-budget",
-        usage: GOAL_USAGE,
-      };
-    }
-
     const result: Extract<ParsedCommand, { type: "goal-set" }> = { type: "goal-set", objective };
-    if (parsed.budget != null) {
-      const budgetCents = parseGoalBudgetCents(parsed.budget);
-      if (budgetCents == null) {
-        return {
-          type: "command-invalid-args",
-          command: "goal",
-          input: String(parsed.budget),
-          usage: GOAL_USAGE,
-        };
-      }
+    if (budgetCents !== undefined) {
       result.budgetCents = budgetCents;
-    } else if (noBudget) {
-      result.budgetCents = null;
     }
-
-    if (parsed.turns != null) {
-      const turnCap = parseGoalTurnCap(parsed.turns);
-      if (turnCap == null) {
-        return {
-          type: "command-invalid-args",
-          command: "goal",
-          input: String(parsed.turns),
-          usage: GOAL_USAGE,
-        };
-      }
+    if (turnCap !== undefined) {
       result.turnCap = turnCap;
     }
 

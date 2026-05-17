@@ -768,7 +768,7 @@ describe("useCreationWorkspace", () => {
     const getHook = renderUseCreationWorkspace({
       projectPath: TEST_PROJECT_PATH,
       onWorkspaceCreated,
-      message: "/goal ship the feature --no-budget",
+      message: "/goal -b 5 ship the feature",
     });
 
     await waitFor(() => expect(getHook().branches).toEqual([FALLBACK_BRANCH]));
@@ -778,7 +778,7 @@ describe("useCreationWorkspace", () => {
       handleSendResult = await getHook().handleSend("ship the feature", undefined, undefined, {
         type: "goal-set",
         objective: "ship the feature",
-        budgetCents: null,
+        budgetCents: 500,
       });
     });
 
@@ -796,7 +796,7 @@ describe("useCreationWorkspace", () => {
     expect(workspaceApi.setGoal).toHaveBeenCalledWith({
       workspaceId: TEST_WORKSPACE_ID,
       objective: "ship the feature",
-      budgetCents: null,
+      budgetCents: 500,
       turnCap: null,
       expectedGoalId: null,
     });

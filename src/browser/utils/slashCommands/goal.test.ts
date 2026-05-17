@@ -24,13 +24,13 @@ describe("/goal slash command", () => {
     });
   });
 
-  test("parses budget flags on goal creation", () => {
-    expect(parseCommand('/goal "ship the slice" --budget $5')).toEqual({
+  test("parses a leading budget flag on goal creation", () => {
+    expect(parseCommand('/goal -b $5 "ship the slice"')).toEqual({
       type: "goal-set",
       objective: "ship the slice",
       budgetCents: 500,
     });
-    expect(parseCommand('/goal "ship the slice" --budget $5.00')).toEqual({
+    expect(parseCommand('/goal -b $5.00 "ship the slice"')).toEqual({
       type: "goal-set",
       objective: "ship the slice",
       budgetCents: 500,
@@ -38,25 +38,20 @@ describe("/goal slash command", () => {
     // Bare numbers accept dollar amounts (Coder-agents-review P3 DEREM-21).
     // `5` and `5.00` parse identically to `$5` / `$5.00` so the GoalTab
     // editor and the slash command behave the same.
-    expect(parseCommand('/goal "ship the slice" --budget 5')).toEqual({
+    expect(parseCommand("/goal -b 5 ship the slice")).toEqual({
       type: "goal-set",
       objective: "ship the slice",
       budgetCents: 500,
     });
-    expect(parseCommand('/goal "ship the slice" --budget 5.00')).toEqual({
+    expect(parseCommand("/goal -b 5.00 ship the slice")).toEqual({
       type: "goal-set",
       objective: "ship the slice",
       budgetCents: 500,
     });
-    expect(parseCommand('/goal "ship the slice" --budget 500c')).toEqual({
+    expect(parseCommand("/goal -b 500c ship the slice")).toEqual({
       type: "goal-set",
       objective: "ship the slice",
       budgetCents: 500,
-    });
-    expect(parseCommand('/goal "ship the slice" --no-budget')).toEqual({
-      type: "goal-set",
-      objective: "ship the slice",
-      budgetCents: null,
     });
   });
 
@@ -67,22 +62,38 @@ describe("/goal slash command", () => {
     });
   });
 
-  test("parses header flags while preserving flag-looking body prose", () => {
-    expect(
-      parseCommand("/goal --budget $5 --turns 25\nShip it\n--budget stays prose\n- bullet")
-    ).toEqual({
+  test("uses leading budget flag while preserving flag-looking body prose", () => {
+    expect(parseCommand("/goal -b $5\nShip it\n--budget stays prose\n- bullet")).toEqual({
       type: "goal-set",
       objective: "Ship it\n--budget stays prose\n- bullet",
       budgetCents: 500,
-      turnCap: 25,
     });
   });
 
-  test("rejects unknown goal creation flags as known-command flag errors", () => {
-    expect(parseCommand("/goal --bogus\nBody")).toMatchObject({
-      type: "command-unknown-flag",
-      command: "goal",
-      flag: "--bogus",
+  test("treats non-leading flag-looking tokens as goal text", () => {
+    expect(parseCommand('/goal "ship the slice" --budget $5')).toEqual({
+      type: "goal-set",
+      objective: "ship the slice --budget $5",
+    });
+    expect(parseCommand("/goal ship the slice -b 5")).toEqual({
+      type: "goal-set",
+      objective: "ship the slice -b 5",
+    });
+    expect(parseCommand("/goal --no-budget ship the slice")).toEqual({
+      type: "goal-set",
+      objective: "--no-budget ship the slice",
+    });
+    expect(parseCommand("/goal ship the slice --no-budget")).toEqual({
+      type: "goal-set",
+      objective: "ship the slice --no-budget",
+    });
+    expect(parseCommand('/goal "ship the slice" --turns 25')).toEqual({
+      type: "goal-set",
+      objective: "ship the slice --turns 25",
+    });
+    expect(parseCommand("/goal --bogus\nBody")).toEqual({
+      type: "goal-set",
+      objective: "--bogus\nBody",
     });
   });
 
@@ -97,27 +108,30 @@ describe("/goal slash command", () => {
     });
   });
 
-  test("parses turn cap on goal creation", () => {
-    expect(parseCommand('/goal "ship the slice" --turns 25')).toEqual({
+  test("parses turn cap in the leading flag prefix", () => {
+    expect(parseCommand('/goal --turns 25 "ship the slice"')).toEqual({
       type: "goal-set",
       objective: "ship the slice",
       turnCap: 25,
     });
+    expect(parseCommand('/goal -b $5 --turns 25 "ship the slice"')).toEqual({
+      type: "goal-set",
+      objective: "ship the slice",
+      budgetCents: 500,
+      turnCap: 25,
+    });
   });
 
-  test("rejects invalid budget and turn flags", () => {
-    // DEREM-21 unified the parser; bare numbers (e.g. `--budget 5`) are
-    // now valid. The remaining invalid forms are: non-numeric garbage,
-    // conflicting `--budget` + `--no-budget`, and zero/negative turn caps.
-    expect(parseCommand('/goal "ship" --budget abc')).toMatchObject({
+  test("rejects invalid leading flags", () => {
+    expect(parseCommand("/goal -b abc ship")).toMatchObject({
       type: "command-invalid-args",
       command: "goal",
     });
-    expect(parseCommand('/goal "ship" --budget $5 --no-budget')).toMatchObject({
-      type: "command-invalid-args",
+    expect(parseCommand("/goal -b")).toMatchObject({
+      type: "command-missing-args",
       command: "goal",
     });
-    expect(parseCommand('/goal "ship" --turns 0')).toMatchObject({
+    expect(parseCommand("/goal --turns 0 ship")).toMatchObject({
       type: "command-invalid-args",
       command: "goal",
     });
@@ -143,15 +157,15 @@ describe("/goal slash command", () => {
     expect(parseCommand("/goal budget 5")).toEqual({ type: "goal-budget", budgetCents: 500 });
     expect(parseCommand("/goal budget 5.00")).toEqual({ type: "goal-budget", budgetCents: 500 });
     expect(parseCommand("/goal budget 500c")).toEqual({ type: "goal-budget", budgetCents: 500 });
-    expect(parseCommand("/goal budget --no-budget")).toEqual({
-      type: "goal-budget",
-      budgetCents: null,
-    });
   });
 
   test("rejects invalid budget update command", () => {
     // Non-numeric / malformed input still rejects after DEREM-21 — the
     // unified parser only loosened the dollar-prefix requirement.
+    expect(parseCommand("/goal budget --no-budget")).toMatchObject({
+      type: "command-invalid-args",
+      command: "goal",
+    });
     expect(parseCommand("/goal budget abc")).toMatchObject({
       type: "command-invalid-args",
       command: "goal",

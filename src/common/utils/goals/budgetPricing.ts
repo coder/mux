@@ -64,7 +64,7 @@ export function modelHasPricingData(model: string, providersConfig: unknown = nu
 }
 
 export const UNPRICED_CURRENT_MODEL_GOAL_MESSAGE =
-  "Current model has no pricing data. Pick a priced model, set --no-budget, or rely on --turns N only.";
+  "Current model has no pricing data. Pick a priced model, use -b 0 with a turn cap, or change goal budget defaults in Settings.";
 
 export const UNPRICED_TARGET_MODEL_GOAL_MESSAGE =
-  "Target model has no pricing data. Pick a priced model or remove the active goal budget with /goal budget --no-budget before switching.";
+  "Target model has no pricing data. Pick a priced model before switching.";

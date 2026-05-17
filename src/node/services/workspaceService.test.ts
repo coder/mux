@@ -3575,8 +3575,7 @@ describe("WorkspaceService maybePersistAISettingsFromOptions", () => {
 
     expect(result).toEqual({
       success: false,
-      error:
-        "Target model has no pricing data. Pick a priced model or remove the active goal budget with /goal budget --no-budget before switching.",
+      error: "Target model has no pricing data. Pick a priced model before switching.",
     });
   });
 
