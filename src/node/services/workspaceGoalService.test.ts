@@ -2514,14 +2514,74 @@ describe("WorkspaceGoalService", () => {
       status: "complete",
       completionSummary: "Done for good.",
     });
+    // User-initiated resume / pause out of `complete` is intentionally
+    // allowed: the user can revive a goal the agent marked complete too
+    // eagerly. Model/auto initiators are still blocked below.
     await expectSetGoalError(
-      { workspaceId, status: "paused" },
+      { workspaceId, status: "paused", initiator: "model" },
       "Cannot pause a completed goal. Clear it before starting another."
     );
     await expectSetGoalError(
-      { workspaceId, status: "active" },
+      { workspaceId, status: "active", initiator: "model" },
       "Cannot resume a completed goal. Clear it before starting another."
     );
+  });
+
+  test("user can resume a completed goal (revive after agent marked complete)", async () => {
+    // The agent marks the goal complete via the `complete_goal` tool
+    // (initiator: "model"), then a human in the GoalTab clicks "Resume"
+    // because the goal was not actually done. The backend must allow the
+    // transition out of `complete` for user-initiated callers, and emit
+    // `goal_resumed` so the lifecycle funnel sees the revive symmetrically
+    // with a paused→active resume.
+    const created = await setGoalOk(service, {
+      workspaceId,
+      objective: "Revive completed goal",
+    });
+    await setGoalOk(service, {
+      workspaceId,
+      status: "complete",
+      completionSummary: "Agent thought it was done.",
+      initiator: "model",
+    });
+
+    const revived = await setGoalOk(service, {
+      workspaceId,
+      status: "active",
+      initiator: "user",
+    });
+    expect(revived).toMatchObject({ goalId: created.goalId, status: "active" });
+    // Completion summary is cleared by `completionSummaryPatch` whenever
+    // status moves out of `complete` — keeps the visible "Completion
+    // summary" panel from lingering on a resumed goal.
+    expect(revived.completionSummary).toBeUndefined();
+    expect(analytics.recordGoalLifecycleEvent).toHaveBeenCalledWith(
+      "goal_resumed",
+      expect.objectContaining({ initiator: "user" })
+    );
+  });
+
+  test("user can pause a completed goal without resuming first", async () => {
+    // Symmetry with resume-from-complete: a user who wants to revive a
+    // completed goal but not immediately re-arm continuations can land it
+    // in `paused` directly.
+    const created = await setGoalOk(service, {
+      workspaceId,
+      objective: "Pause completed goal",
+    });
+    await setGoalOk(service, {
+      workspaceId,
+      status: "complete",
+      completionSummary: "Wrap-up first pass.",
+    });
+
+    const paused = await setGoalOk(service, {
+      workspaceId,
+      status: "paused",
+      initiator: "user",
+    });
+    expect(paused).toMatchObject({ goalId: created.goalId, status: "paused" });
+    expect(paused.completionSummary).toBeUndefined();
   });
 
   test("budget-only mutation against a missing goal returns invalid_transition (no plain Error 500)", async () => {

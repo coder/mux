@@ -1142,7 +1142,8 @@ export class WorkspaceGoalService {
   private validateStatusTransition(
     current: GoalRecordV1 | null,
     nextStatus: GoalStatus,
-    completionSummary: string | null
+    completionSummary: string | null,
+    initiator: GoalLifecycleInitiator
   ): void {
     if (!current) {
       throw new WorkspaceGoalTransitionError(
@@ -1150,17 +1151,27 @@ export class WorkspaceGoalService {
       );
     }
 
-    if (current.status === "complete" && nextStatus !== "complete") {
+    // Reviving a completed goal is a deliberate user action: agents that
+    // marked a goal complete via the `complete_goal` tool (initiator
+    // "model") must not be able to walk that back on the next turn — that
+    // would let a loop re-arm itself indefinitely. But a human in the
+    // GoalTab is allowed to resume the goal they archived themselves
+    // (e.g., the agent declared victory too early), so we only block
+    // non-user initiators here.
+    if (current.status === "complete" && nextStatus !== "complete" && initiator !== "user") {
       throw new WorkspaceGoalTransitionError(
         `Cannot ${actionForStatus(nextStatus)} a completed goal. Clear it before starting another.`
       );
     }
 
-    if (nextStatus === "paused" && current.status !== "active") {
+    // From `complete` the user may go to either `active` (resume work) or
+    // `paused` (revive without immediately re-arming continuations).
+    // From any other state the normal pause/resume guards still apply.
+    if (nextStatus === "paused" && current.status !== "active" && current.status !== "complete") {
       throw new WorkspaceGoalTransitionError("Cannot pause a goal that is not active.");
     }
 
-    if (nextStatus === "active" && current.status !== "paused") {
+    if (nextStatus === "active" && current.status !== "paused" && current.status !== "complete") {
       throw new WorkspaceGoalTransitionError("Cannot resume a goal that is not paused.");
     }
 
@@ -1193,7 +1204,12 @@ export class WorkspaceGoalService {
   private applyMutableFields(goal: GoalRecordV1, input: SetGoalInput): GoalRecordV1 {
     const completionSummary = input.completionSummary?.trim() ?? null;
     if (input.status != null) {
-      this.validateStatusTransition(goal, input.status, completionSummary);
+      this.validateStatusTransition(
+        goal,
+        input.status,
+        completionSummary,
+        input.initiator ?? "user"
+      );
     }
 
     const next: GoalRecordV1 = GoalRecordV1Schema.parse({
@@ -1360,9 +1376,16 @@ export class WorkspaceGoalService {
 
     if (goal.status === "paused") {
       this.emitLifecycle("goal_paused", { initiator });
-    } else if (goal.status === "active" && previousStatus === "paused") {
+    } else if (
+      goal.status === "active" &&
+      (previousStatus === "paused" || previousStatus === "complete")
+    ) {
       // BudgetLimited → Active is a budget-driven re-arm, not a user resume;
-      // it is reported via goal_budget_changed only.
+      // it is reported via goal_budget_changed only. Complete → Active is
+      // a user-initiated revive (validateStatusTransition only lets the
+      // `user` initiator out of `complete`) — surface it as `goal_resumed`
+      // so the lifecycle funnel sees revived goals symmetrically with
+      // paused→active resumes.
       this.emitLifecycle("goal_resumed", { initiator });
     } else if (goal.status === "complete") {
       this.emitLifecycle("goal_completed", {
@@ -1609,7 +1632,8 @@ export class WorkspaceGoalService {
           this.validateStatusTransition(
             null,
             input.status,
-            input.completionSummary?.trim() ?? null
+            input.completionSummary?.trim() ?? null,
+            input.initiator ?? "user"
           );
         }
         // No-objective + no-status path (e.g. RightSidebar "Update budget"
