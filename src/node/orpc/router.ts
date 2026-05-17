@@ -3408,6 +3408,12 @@ export const router = (authToken?: string) => {
 
           return { success: true, data: {} };
         }),
+      sideQuestion: t
+        .input(schemas.workspace.sideQuestion.input)
+        .output(schemas.workspace.sideQuestion.output)
+        .handler(async ({ context, input }) => {
+          return context.workspaceService.askSideQuestion(input.workspaceId, input.question);
+        }),
       answerAskUserQuestion: t
         .input(schemas.workspace.answerAskUserQuestion.input)
         .output(schemas.workspace.answerAskUserQuestion.output)

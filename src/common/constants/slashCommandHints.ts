@@ -12,4 +12,5 @@ export const SLASH_COMMAND_HINTS = {
   idle: "<hours>|off",
   heartbeat: "<minutes>|off",
   goal: "[-b <amount>] [--turns <n>] <objective>|budget <amount>|clear",
+  btw: "<question>",
 } as const satisfies Readonly<Record<string, string>>;

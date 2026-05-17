@@ -398,6 +398,42 @@ describe("prepareProviderRequestMessages", () => {
     expect(result.activeContextMessages.map((message) => message.id)).toEqual(["new-user"]);
     expect(result.providerRequestMessages.map((message) => message.id)).toEqual(["new-user"]);
   });
+
+  it("filters /btw side-question rows out of provider-bound context", () => {
+    const mainUser = createMuxMessage("main-user", "user", "normal follow-up", {
+      historySequence: 1,
+    });
+    const sideQuestion = createMuxMessage("btw-user", "user", "what is 1+1?", {
+      historySequence: 2,
+      muxMetadata: {
+        type: "side-question",
+        rawCommand: "/btw what is 1+1?",
+        commandPrefix: "/btw",
+      },
+    });
+    const sideAnswer = createMuxMessage("btw-answer", "assistant", "2", {
+      historySequence: 3,
+      muxMetadata: { type: "side-question-answer" },
+    });
+    const nextUser = createMuxMessage("next-user", "user", "continue normal work", {
+      historySequence: 4,
+    });
+
+    const result = prepareProviderRequestMessages(
+      [mainUser, sideQuestion, sideAnswer, nextUser],
+      "openai",
+      "off"
+    );
+
+    expect(result.activeContextMessages.map((message) => message.id)).toEqual([
+      "main-user",
+      "next-user",
+    ]);
+    expect(result.providerRequestMessages.map((message) => message.id)).toEqual([
+      "main-user",
+      "next-user",
+    ]);
+  });
 });
 
 describe("AIService", () => {

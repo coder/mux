@@ -41,6 +41,7 @@ const STORYBOOK_PINNED_TIP_INDEX = 0;
 
 export const PLACEHOLDER_TIPS: readonly string[] = [
   "Try /orchestrate to coordinate sub-agents and integrate their patches",
+  "Try /btw <question> to ask a side question without nudging the agent",
   "Try /haiku <msg> to send just this message on a different model",
   "Try /+high <msg> to crank up reasoning for this message only",
   "Try /compact to summarize the conversation when context gets tight",

@@ -8244,3 +8244,53 @@ describe("WorkspaceService.getGoalContinuationRuntimeState", () => {
     });
   });
 });
+
+describe("getSideQuestionModelCandidates", () => {
+  function makeServiceForSideQuestionCandidates(aiService: AIService): WorkspaceService {
+    return new WorkspaceService(
+      {} as Config,
+      {} as HistoryService,
+      aiService,
+      { on: mock(() => undefined) } as unknown as InitStateManager,
+      {} as ExtensionMetadataService,
+      {} as BackgroundProcessManager
+    );
+  }
+
+  test("prefers the live parent stream model before persisted chat settings", async () => {
+    const liveModel = "openai:gpt-live-override";
+    const configuredModel = "openai:gpt-configured";
+    const agentModel = "anthropic:claude-configured-agent";
+    const aiService = Object.assign(new EventEmitter(), {
+      getStreamInfo: mock(() => ({
+        messageId: "main-message",
+        model: liveModel,
+        historySequence: 1,
+        startTime: 1_000,
+        parts: [],
+        toolCompletionTimestamps: new Map(),
+      })),
+      getWorkspaceMetadata: mock(() =>
+        Promise.resolve(
+          Ok({
+            id: "ws-side-models",
+            name: "ws-side-models",
+            projectName: "project",
+            projectPath: "/tmp/project",
+            runtimeConfig: { type: "local" },
+            aiSettings: { model: configuredModel, thinkingLevel: "off" },
+            aiSettingsByAgent: { exec: { model: agentModel, thinkingLevel: "off" } },
+          } as WorkspaceMetadata)
+        )
+      ),
+    }) as unknown as AIService;
+
+    const service = makeServiceForSideQuestionCandidates(aiService);
+    const candidates = await service.getSideQuestionModelCandidates("ws-side-models");
+
+    expect(candidates[0]).toBe(liveModel);
+    expect(candidates).toContain(configuredModel);
+    expect(candidates).toContain(agentModel);
+    expect(candidates.filter((candidate) => candidate === liveModel)).toHaveLength(1);
+  });
+});

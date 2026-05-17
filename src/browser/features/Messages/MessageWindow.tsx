@@ -37,6 +37,7 @@ export const MessageWindow: React.FC<MessageWindowProps> = ({
   message,
   buttons = [],
   children,
+  className,
   rightLabel,
   backgroundEffect,
 }) => {
@@ -84,7 +85,12 @@ export const MessageWindow: React.FC<MessageWindowProps> = ({
         // Pair the extra bottom margin with the meta row so the surrounding transcript
         // space only changes at the same (settled) moment as the meta row appearing,
         // avoiding a second separate tear step.
-        isSettledLastPart && "mb-4"
+        isSettledLastPart && "mb-4",
+        // Caller-supplied class — used by side-question rendering to apply
+        // the "side branch" left-accent treatment. Previously declared but
+        // never spread onto the outer container, so callers couldn't theme
+        // a message block at all.
+        className
       )}
       data-message-block
     >

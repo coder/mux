@@ -85,6 +85,11 @@ import {
   normalizeQueuedMessage,
   type EditingMessageState,
 } from "@/browser/utils/chatEditing";
+import {
+  findActiveSideQuestionScrollHoldTarget,
+  findSideQuestionScrollHoldTarget,
+  type SideQuestionScrollHoldState,
+} from "./sideQuestionScrollHold";
 import { recordSyntheticReactRenderSample } from "@/browser/utils/perf/reactProfileCollector";
 
 // Perf e2e runs load the production bundle where React's onRender profiler callbacks may not
@@ -154,6 +159,15 @@ interface ChatPaneProps {
 type ReviewsState = ReturnType<typeof useReviews>;
 
 const AUTO_SCROLL_TRANSCRIPT_STYLE = { overflowAnchor: "none" } as const;
+
+function findTranscriptMessageElement(
+  scrollContainer: HTMLElement,
+  historyId: string
+): HTMLElement | undefined {
+  return Array.from(scrollContainer.querySelectorAll<HTMLElement>("[data-message-id]")).find(
+    (element) => element.getAttribute("data-message-id") === historyId
+  );
+}
 
 export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   const {
@@ -395,14 +409,147 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     handleScrollContainerKeyDown,
   } = useAutoScroll();
 
+  const sideQuestionScrollHoldRef = useRef<SideQuestionScrollHoldState>({
+    initialized: false,
+    heldSideQuestionIds: new Set<string>(),
+    previouslyStreamingSideAnswerIds: new Set<string>(),
+    heldSideAnswerIds: new Set<string>(),
+  });
+
+  const activeSideQuestionScrollHoldTargetRef = useRef<string | null>(null);
+
+  const clearActiveSideQuestionScrollHold = useCallback(() => {
+    activeSideQuestionScrollHoldTargetRef.current = null;
+  }, []);
+
+  useLayoutEffect(() => {
+    sideQuestionScrollHoldRef.current = {
+      initialized: false,
+      heldSideQuestionIds: new Set<string>(),
+      previouslyStreamingSideAnswerIds: new Set<string>(),
+      heldSideAnswerIds: new Set<string>(),
+    };
+    activeSideQuestionScrollHoldTargetRef.current = null;
+  }, [workspaceId]);
+
+  useLayoutEffect(() => {
+    if (loading || isHydratingTranscript || deferredMessages.length === 0) {
+      return;
+    }
+
+    const { nextState, targetHistoryId: detectedTargetHistoryId } =
+      findSideQuestionScrollHoldTarget(deferredMessages, sideQuestionScrollHoldRef.current);
+    sideQuestionScrollHoldRef.current = nextState;
+
+    const activeTargetHistoryId = activeSideQuestionScrollHoldTargetRef.current;
+    const activeHold = findActiveSideQuestionScrollHoldTarget(
+      deferredMessages,
+      activeTargetHistoryId
+    );
+    const continuingTargetHistoryId =
+      activeHold.targetHistoryId === activeTargetHistoryId ? activeHold.targetHistoryId : undefined;
+    const shouldStartHold = detectedTargetHistoryId !== undefined && autoScroll;
+    const targetHistoryId = shouldStartHold ? detectedTargetHistoryId : continuingTargetHistoryId;
+
+    if (!targetHistoryId) {
+      if (!activeHold.keepActive) {
+        activeSideQuestionScrollHoldTargetRef.current = null;
+      }
+      return;
+    }
+
+    const scrollContainer = contentRef.current;
+    if (!scrollContainer) {
+      return;
+    }
+
+    const alignSideBranchStart = (): void => {
+      findTranscriptMessageElement(scrollContainer, targetHistoryId)?.scrollIntoView({
+        block: "start",
+        inline: "nearest",
+      });
+    };
+
+    // The main stream can now keep rendering below an active /btw branch. Once
+    // that happens, bottom-lock would otherwise follow the main tail and yank
+    // the user away from the aside they just requested. Release bottom-lock once
+    // per side branch and keep the side-question row readable; Jump to bottom is
+    // then the explicit opt-in to resume watching the live tail. Keep re-aligning
+    // while the side answer grows because the first scroll may clamp at the old
+    // bottom before enough below-branch content exists to place the aside higher.
+    if (shouldStartHold) {
+      activeSideQuestionScrollHoldTargetRef.current = targetHistoryId;
+      disableAutoScroll();
+    }
+    alignSideBranchStart();
+
+    const currentHold = findActiveSideQuestionScrollHoldTarget(deferredMessages, targetHistoryId);
+    if (
+      !currentHold.keepActive &&
+      activeSideQuestionScrollHoldTargetRef.current === targetHistoryId
+    ) {
+      activeSideQuestionScrollHoldTargetRef.current = null;
+    }
+
+    const win = typeof window !== "undefined" ? window : undefined;
+    const raf = win?.requestAnimationFrame?.bind(win);
+    const cancelRaf = win?.cancelAnimationFrame?.bind(win);
+    if (!raf || !cancelRaf) {
+      return;
+    }
+
+    const frameId = raf(alignSideBranchStart);
+    return () => cancelRaf(frameId);
+  }, [autoScroll, contentRef, deferredMessages, disableAutoScroll, isHydratingTranscript, loading]);
+
+  const handleTranscriptWheel = useCallback(
+    (event: React.WheelEvent<HTMLDivElement>) => {
+      if (event.deltaX !== 0 || event.deltaY !== 0) {
+        clearActiveSideQuestionScrollHold();
+      }
+      handleScrollContainerWheel(event);
+    },
+    [clearActiveSideQuestionScrollHold, handleScrollContainerWheel]
+  );
+
+  const handleTranscriptMouseDown = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      clearActiveSideQuestionScrollHold();
+      handleScrollContainerMouseDown(event);
+    },
+    [clearActiveSideQuestionScrollHold, handleScrollContainerMouseDown]
+  );
+
+  const handleTranscriptTouchMove = useCallback(() => {
+    clearActiveSideQuestionScrollHold();
+    markUserScrollIntent();
+  }, [clearActiveSideQuestionScrollHold, markUserScrollIntent]);
+
+  const handleTranscriptKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      clearActiveSideQuestionScrollHold();
+      handleScrollContainerKeyDown(event);
+    },
+    [clearActiveSideQuestionScrollHold, handleScrollContainerKeyDown]
+  );
+
+  const handleJumpToBottom = useCallback(() => {
+    clearActiveSideQuestionScrollHold();
+    jumpToBottom();
+  }, [clearActiveSideQuestionScrollHold, jumpToBottom]);
+
   // Handler to navigate (scroll) to a specific message by historyId
   const handleNavigateToMessage = useCallback(
     (historyId: string) => {
       // Disable auto-scroll so the navigation isn't undone by streaming content
       disableAutoScroll();
       requestAnimationFrame(() => {
-        const element = contentRef.current?.querySelector(`[data-message-id="${historyId}"]`);
-        element?.scrollIntoView({ behavior: "smooth", block: "center" });
+        const scrollContainer = contentRef.current;
+        if (!scrollContainer) return;
+        findTranscriptMessageElement(scrollContainer, historyId)?.scrollIntoView({
+          behavior: "smooth",
+          block: "center",
+        });
       });
     },
     [contentRef, disableAutoScroll]
@@ -559,10 +706,12 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
 
     // Scroll to the message being edited
     requestAnimationFrame(() => {
-      const element = contentRef.current?.querySelector(
-        `[data-message-id="${lastUserMessage.historyId}"]`
-      );
-      element?.scrollIntoView({ behavior: "smooth", block: "center" });
+      const scrollContainer = contentRef.current;
+      if (!scrollContainer) return;
+      findTranscriptMessageElement(scrollContainer, lastUserMessage.historyId)?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
     });
   }, [restoreQueuedDraft, contentRef, disableAutoScroll, setEditingMessage, transcriptOnly]);
 
@@ -579,8 +728,8 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     // send success can be too late because the backend may not resolve until the
     // stream has already produced rows, leaving the first deltas offscreen when the
     // user had previously scrolled up.
-    jumpToBottom();
-  }, [jumpToBottom]);
+    handleJumpToBottom();
+  }, [handleJumpToBottom]);
 
   const handleMessageSent = useCallback(
     (dispatchMode: QueueDispatchMode = "tool-end") => {
@@ -593,31 +742,31 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
 
       // Slash-command send paths still report after backend success; keep this
       // harmless duplicate pin so those paths also re-arm auto-scroll.
-      jumpToBottom();
+      handleJumpToBottom();
     },
-    [autoBackgroundOnSend, jumpToBottom]
+    [autoBackgroundOnSend, handleJumpToBottom]
   );
 
   const handleClearHistory = useCallback(
     async (percentage = 1.0) => {
       // Re-arm the tail before clearing so the empty/starting state owns the bottom.
-      jumpToBottom();
+      handleJumpToBottom();
 
       // Truncate history in backend
       await api?.workspace.truncateHistory({ workspaceId, percentage });
     },
-    [workspaceId, jumpToBottom, api]
+    [workspaceId, handleJumpToBottom, api]
   );
 
   const handleResetContext = useCallback(async (): Promise<"reset" | "noop"> => {
-    jumpToBottom();
+    handleJumpToBottom();
 
     const result = await api?.workspace.resetContext({ workspaceId });
     if (!result?.success) {
       throw new Error(result?.error ?? "Failed to reset context");
     }
     return result.data;
-  }, [workspaceId, jumpToBottom, api]);
+  }, [workspaceId, handleJumpToBottom, api]);
 
   const openInEditor = useOpenInEditor();
   const handleOpenInEditor = useCallback(() => {
@@ -636,8 +785,8 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   // the ref-backed auto-scroll flag and pins any cached rows before paint; if rows are still
   // hydrating, the next content resize owns the tail instead of showing the prior workspace's state.
   useLayoutEffect(() => {
-    jumpToBottom();
-  }, [hasLoadedTranscriptRows, jumpToBottom, workspaceId]);
+    handleJumpToBottom();
+  }, [hasLoadedTranscriptRows, handleJumpToBottom, workspaceId]);
 
   // Compute showRetryBarrier once for both keybinds and UI.
   // Track if last message was interrupted or errored (for RetryBarrier).
@@ -757,7 +906,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
       (workspaceState?.canInterrupt ?? false) || (workspaceState?.isStreamStarting ?? false),
     showRetryBarrier,
     chatInputAPI,
-    jumpToBottom,
+    jumpToBottom: handleJumpToBottom,
     loadOlderHistory: shouldRenderLoadOlderMessagesButton ? handleLoadOlderHistory : null,
     handleOpenTerminal: onOpenTerminal,
     handleOpenInEditor,
@@ -852,12 +1001,12 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
           <div className="mobile-header-spacer relative flex-1 overflow-hidden">
             <div
               ref={contentRef}
-              onWheel={handleScrollContainerWheel}
-              onMouseDown={handleScrollContainerMouseDown}
+              onWheel={handleTranscriptWheel}
+              onMouseDown={handleTranscriptMouseDown}
               onMouseMove={handleScrollContainerMouseMove}
               onMouseUp={handleScrollContainerMouseUp}
-              onTouchMove={markUserScrollIntent}
-              onKeyDown={handleScrollContainerKeyDown}
+              onTouchMove={handleTranscriptTouchMove}
+              onKeyDown={handleTranscriptKeyDown}
               onScroll={handleScroll}
               onContextMenu={transcriptContextMenu.onContextMenu}
               role="log"
@@ -1012,7 +1161,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
             {transcriptContextMenu.menu}
             {!autoScroll && (
               <button
-                onClick={jumpToBottom}
+                onClick={handleJumpToBottom}
                 type="button"
                 className="assistant-chip font-primary text-foreground hover:assistant-chip-hover absolute bottom-2 left-1/2 z-20 -translate-x-1/2 cursor-pointer rounded-[20px] px-2 py-1 text-xs font-medium shadow-[0_4px_12px_rgba(0,0,0,0.3)] backdrop-blur-[1px] transition-all duration-200 hover:scale-105 active:scale-95"
               >

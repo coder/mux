@@ -1160,6 +1160,28 @@ export const workspace = {
     }),
     output: ResultSchema(z.object({}), SendMessageErrorSchema),
   },
+  sideQuestion: {
+    // `/btw` — forked, single-turn, read-only side question over the
+    // current conversation. Tools are denied client-side and prompt-side.
+    //
+    // The actual question + answer flow to the frontend through the normal
+    // `onChat` stream events (so they animate with TypewriterMarkdown and
+    // persist to chat.jsonl). This RPC only returns success/error so the
+    // caller can surface a toast on failure.
+    input: z
+      .object({
+        workspaceId: z.string(),
+        question: z.string().min(1),
+      })
+      .strict(),
+    output: z.discriminatedUnion("success", [
+      z.object({
+        success: z.literal(true),
+        modelUsed: z.string(),
+      }),
+      z.object({ success: z.literal(false), error: z.string() }),
+    ]),
+  },
   answerAskUserQuestion: {
     input: z
       .object({

@@ -11,6 +11,7 @@ import {
   MuxTextPartSchema,
   MuxToolPartSchema,
 } from "./message";
+import type { MuxMessageMetadata } from "../../types/message";
 import { MuxProviderOptionsSchema } from "./providerOptions";
 import { RuntimeModeSchema } from "./runtime";
 
@@ -244,6 +245,7 @@ export const StreamEndEventSchema = z.object({
       duration: z.number().optional(),
       ttftMs: z.number().optional(),
       systemMessageTokens: z.number().optional(),
+      muxMetadata: z.custom<MuxMessageMetadata>().optional(),
       historySequence: z.number().optional().meta({
         description: "Present when loading from history",
       }),

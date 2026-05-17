@@ -70,6 +70,10 @@ import {
   ADDITIONAL_SYSTEM_CONTEXT_FILENAME,
 } from "@/node/services/additionalSystemContext";
 import { generateWorkspaceIdentity } from "@/node/services/workspaceTitleGenerator";
+import {
+  askSideQuestion,
+  snapshotSideQuestionLiveStream,
+} from "@/node/services/sideQuestionService";
 import { NAME_GEN_PREFERRED_MODELS } from "@/common/constants/nameGeneration";
 import type { DevcontainerRuntime } from "@/node/runtime/DevcontainerRuntime";
 import { WorktreeRuntime } from "@/node/runtime/WorktreeRuntime";
@@ -4063,6 +4067,107 @@ export class WorkspaceService extends EventEmitter {
     }
 
     return candidates;
+  }
+
+  /**
+   * Build the candidate-model list for a /btw side question.
+   *
+   * Unlike title generation, /btw should prefer the live parent stream's
+   * actual model first (important for one-shot overrides like /opus), then the
+   * workspace's configured chat models. The title-gen list is appended as a
+   * last-resort fallback so a misconfigured chat model can still produce an
+   * answer.
+   */
+  public async getSideQuestionModelCandidates(
+    workspaceId: string,
+    liveStreamModelOverride?: string
+  ): Promise<string[]> {
+    const candidates: string[] = [];
+    const liveStreamModel =
+      liveStreamModelOverride ?? this.aiService.getStreamInfo(workspaceId)?.model;
+    if (liveStreamModel) {
+      candidates.push(liveStreamModel);
+    }
+
+    const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
+    if (metadataResult.success) {
+      const preferred = [
+        metadataResult.data.aiSettings?.model,
+        ...Object.values(metadataResult.data.aiSettingsByAgent ?? {}).map((s) => s.model),
+      ];
+      for (const model of preferred) {
+        if (model && !candidates.includes(model)) {
+          candidates.push(model);
+        }
+      }
+    }
+
+    // Fallback: small-model preference list (same set used by title/status
+    // generation). Keeps /btw working when no chat model has been chosen yet
+    // (e.g. brand-new workspace before the first send).
+    for (const model of NAME_GEN_PREFERRED_MODELS) {
+      if (!candidates.includes(model)) {
+        candidates.push(model);
+      }
+    }
+    return candidates;
+  }
+
+  /**
+   * Run a /btw side question over the workspace's current conversation.
+   *
+   * Both the user question and the assistant answer are persisted to
+   * chat.jsonl with side-question metadata, and stream lifecycle events
+   * are emitted through the standard chat-event channel so the renderer
+   * animates the response with TypewriterMarkdown.
+   *
+   * The workspace's "streaming" flag is intentionally NOT toggled here —
+   * /btw runs alongside the main agent without claiming busy state, so the
+   * user can fire a side question while the agent is mid-turn (or vice
+   * versa) without interfering with either.
+   */
+  public async askSideQuestion(
+    workspaceId: string,
+    question: string
+  ): Promise<{ success: true; modelUsed: string } | { success: false; error: string }> {
+    // Match other workspace ops: refuse on missing/in-flight workspaces so
+    // the user gets a clear error instead of a confusing model failure
+    // downstream.
+    const workspaceConfig = this.config.findWorkspace(workspaceId);
+    if (!workspaceConfig) {
+      return { success: false, error: "Workspace not found." };
+    }
+
+    const liveStreamSnapshot = snapshotSideQuestionLiveStream(
+      this.aiService.getStreamInfo(workspaceId)
+    );
+    const candidates = await this.getSideQuestionModelCandidates(
+      workspaceId,
+      liveStreamSnapshot?.model
+    );
+    const result = await askSideQuestion({
+      workspaceId,
+      question,
+      candidates,
+      aiService: this.aiService,
+      historyService: this.historyService,
+      liveStreamSnapshot,
+      // Re-use the session's existing chat-event emitter; this is the same
+      // path agentSession / streamManager use, so the frontend's onChat
+      // subscription handles side-question events identically to a normal
+      // agent stream (TypewriterMarkdown, smooth-text, replay all "just
+      // work").
+      emitChatEvent: (wsId, message) => {
+        this.sessions.get(wsId)?.emitChatEvent(message);
+      },
+    });
+    if (!result.success) {
+      return {
+        success: false,
+        error: result.error.raw ?? `Side question failed: ${result.error.type}`,
+      };
+    }
+    return { success: true, modelUsed: result.data.modelUsed };
   }
 
   private async maybeRunPendingAutoTitleFromMessage(

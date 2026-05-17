@@ -87,7 +87,6 @@ import {
   type SlashSuggestion,
 } from "@/browser/utils/slashCommands/suggestions";
 import { resolveSlashCommandExperimentValue } from "@/browser/utils/slashCommands/experimentVisibility";
-import { getPlaceholderTip } from "./placeholderTips";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
 import { AgentModePicker } from "@/browser/components/AgentModePicker/AgentModePicker";
 import { ContextUsageIndicatorButton } from "@/browser/components/ContextUsageIndicatorButton/ContextUsageIndicatorButton";
@@ -95,6 +94,7 @@ import {
   useOptionalWorkspaceSidebarState,
   useWorkspaceUsage,
 } from "@/browser/stores/WorkspaceStore";
+import { getPlaceholderTip } from "./placeholderTips";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { useAutoCompactionSettings } from "@/browser/hooks/useAutoCompactionSettings";
@@ -242,7 +242,16 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     EXPERIMENT_IDS.WORKSPACE_HEARTBEATS
   );
   const atMentionProjectPath = variant === "creation" ? props.projectPath : null;
+  const asyncCommandScopeRef = useRef<{ variant: typeof variant; workspaceId: string | null }>({
+    variant,
+    workspaceId: variant === "workspace" ? props.workspaceId : null,
+  });
+  const asyncCommandTokenRef = useRef(0);
   const workspaceId = variant === "workspace" ? props.workspaceId : null;
+
+  useEffect(() => {
+    asyncCommandScopeRef.current = { variant, workspaceId };
+  }, [variant, workspaceId]);
 
   const workspaceSidebarState = useOptionalWorkspaceSidebarState(workspaceId);
   const workspaceGoal = workspaceSidebarState?.goal ?? null;
@@ -1931,6 +1940,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     };
     // Prepare file parts for commands that need to send messages with attachments
     const commandFileParts = chatAttachmentsToFileParts(attachments, { validate: true });
+    const asyncCommandToken = ++asyncCommandTokenRef.current;
     const commandContext: SlashCommandContext = {
       api,
       variant,
@@ -1939,12 +1949,22 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       openSettings: open,
       currentModel: workspaceSidebarState?.currentModel ?? null,
       sendMessageOptions: commandSendMessageOptions,
+      getInput: () => getDraft().text,
       setInput,
       setAttachments,
       setSendingState: (increment: boolean) => setSendingCount((c) => c + (increment ? 1 : -1)),
       setToast,
       setPreferredModel,
       setVimEnabled,
+      asyncCommandToken,
+      isAsyncCommandCurrent: (token, originWorkspaceId) => {
+        const scope = asyncCommandScopeRef.current;
+        return (
+          token === asyncCommandTokenRef.current &&
+          scope.variant === "workspace" &&
+          scope.workspaceId === originWorkspaceId
+        );
+      },
       onResetContext: variant === "workspace" ? props.onResetContext : undefined,
       onTruncateHistory: variant === "workspace" ? props.onTruncateHistory : undefined,
       resetInputHeight: () => {
@@ -2248,6 +2268,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       if (commandHandled) {
         return;
       }
+
+      // A normal workspace send supersedes any pending fire-and-forget slash
+      // command completion (notably /btw). If that older async command fails
+      // after this send clears the composer, it must not restore stale command
+      // text over the newer turn.
+      asyncCommandTokenRef.current++;
 
       const modelOverride = modelOneShot?.modelString;
 

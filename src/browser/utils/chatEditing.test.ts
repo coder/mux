@@ -33,6 +33,10 @@ describe("canEditDisplayedUserMessage", () => {
     );
   });
 
+  test("excludes side-question rows from edit paths", () => {
+    expect(canEditDisplayedUserMessage(userMessage({ isSideQuestion: true }))).toBe(false);
+  });
+
   test("allows normal user messages", () => {
     expect(canEditDisplayedUserMessage(userMessage())).toBe(true);
   });

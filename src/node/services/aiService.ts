@@ -122,6 +122,7 @@ import {
 } from "./streamSimulation";
 import { applyToolPolicyAndExperiments, captureMcpToolTelemetry } from "./toolAssembly";
 import { getErrorMessage } from "@/common/utils/errors";
+import { filterSideQuestionMessages } from "@/common/utils/messages/sideQuestion";
 import { isProjectTrusted } from "@/node/utils/projectTrust";
 
 const STREAM_STARTUP_DIAGNOSTIC_THRESHOLD_MS = 1_000;
@@ -133,8 +134,19 @@ export function prepareProviderRequestMessages(
 ): {
   activeContextMessages: MuxMessage[];
   providerRequestMessages: MuxMessage[];
+  sideQuestionFilteredCount: number;
+  contextBoundarySlicedCount: number;
 } {
-  const activeContextMessages = sliceMessagesForProviderFromLatestContextBoundary(messages);
+  // /btw side questions are durable UI history, not main-agent context.
+  // Filter them before boundary slicing so future normal turns don't see
+  // side-question Q/A pairs and accidentally continue from an aside.
+  const messagesWithoutSideQuestions = filterSideQuestionMessages(messages);
+  const sideQuestionFilteredCount = messages.length - messagesWithoutSideQuestions.length;
+  const activeContextMessages = sliceMessagesForProviderFromLatestContextBoundary(
+    messagesWithoutSideQuestions
+  );
+  const contextBoundarySlicedCount =
+    messagesWithoutSideQuestions.length - activeContextMessages.length;
   const preserveReasoningOnly =
     canonicalProviderName === "anthropic" && effectiveThinkingLevel !== "off";
   return {
@@ -143,6 +155,8 @@ export function prepareProviderRequestMessages(
       activeContextMessages,
       preserveReasoningOnly
     ),
+    sideQuestionFilteredCount,
+    contextBoundarySlicedCount,
   };
 }
 
@@ -864,16 +878,19 @@ export class AIService extends EventEmitter {
 
       // Context Boundary request slicing happens before empty-assistant filtering so
       // provider-invisible reset rows can still bound the active context window.
-      const { activeContextMessages, providerRequestMessages } = prepareProviderRequestMessages(
-        messages,
-        canonicalProviderName,
-        effectiveThinkingLevel
-      );
-      if (activeContextMessages !== messages) {
-        log.debug("Sliced provider history from latest context boundary", {
+      const {
+        activeContextMessages,
+        providerRequestMessages,
+        sideQuestionFilteredCount,
+        contextBoundarySlicedCount,
+      } = prepareProviderRequestMessages(messages, canonicalProviderName, effectiveThinkingLevel);
+      if (sideQuestionFilteredCount > 0 || contextBoundarySlicedCount > 0) {
+        log.debug("Prepared provider history window", {
           workspaceId,
           originalCount: messages.length,
-          slicedCount: activeContextMessages.length,
+          sideQuestionFilteredCount,
+          contextBoundarySlicedCount,
+          activeContextCount: activeContextMessages.length,
         });
       }
       log.debug_obj(`${workspaceId}/1a_active_context_messages.json`, activeContextMessages);

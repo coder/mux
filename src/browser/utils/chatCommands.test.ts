@@ -146,6 +146,125 @@ function createGoalCommandContext(api: SlashCommandContext["api"]): SlashCommand
   });
 }
 
+describe("processSlashCommand - side-question", () => {
+  function createSideQuestionContext(
+    sideQuestion: (input: {
+      workspaceId: string;
+      question: string;
+    }) => Promise<{ success: boolean; error?: string }>,
+    overrides: Partial<SlashCommandContext> = {}
+  ): SlashCommandContext {
+    return {
+      api: {
+        workspace: { sideQuestion },
+      } as unknown as SlashCommandContext["api"],
+      workspaceId: "side-ws",
+      variant: "workspace",
+      projectPath: "/tmp/project",
+      sendMessageOptions: {
+        model: "anthropic:claude-sonnet-4-6",
+        thinkingLevel: "off",
+        toolPolicy: [],
+        agentId: "exec",
+      },
+      setPreferredModel: mock(() => undefined),
+      setVimEnabled: mock((cb: (prev: boolean) => boolean) => cb(false)),
+      resetInputHeight: mock(() => undefined),
+      getInput: mock(() => ""),
+      onTruncateHistory: mock(() => Promise.resolve(undefined)),
+      setInput: mock(() => undefined),
+      setToast: mock(() => undefined),
+      setAttachments: mock(() => undefined),
+      onDetachAllReviews: mock(() => undefined),
+      setSendingState: mock(() => undefined),
+      ...overrides,
+    };
+  }
+
+  test("clears input and launches the side question without awaiting the stream", async () => {
+    const sideQuestion = mock(() => Promise.resolve({ success: true }));
+    const context = createSideQuestionContext(sideQuestion);
+
+    const result = await processSlashCommand(
+      { type: "side-question", question: "what changed?" },
+      context
+    );
+
+    expect(result).toEqual({ clearInput: true, toastShown: false });
+    expect(context.setInput).toHaveBeenCalledWith("");
+    expect(context.setAttachments).toHaveBeenCalledWith([]);
+    expect(context.onDetachAllReviews).toHaveBeenCalled();
+    expect(sideQuestion).toHaveBeenCalledWith({
+      workspaceId: "side-ws",
+      question: "what changed?",
+    });
+  });
+
+  test("restores the command text when the side-question RPC fails", async () => {
+    let resolveSideQuestion: ((value: { success: false; error: string }) => void) | undefined;
+    const sideQuestion = mock(
+      () =>
+        new Promise<{ success: false; error: string }>((resolve) => {
+          resolveSideQuestion = resolve;
+        })
+    );
+    const context = createSideQuestionContext(sideQuestion);
+
+    await processSlashCommand({ type: "side-question", question: "will fail?" }, context);
+    resolveSideQuestion?.({ success: false, error: "disk full" });
+    await Promise.resolve();
+
+    expect(context.setInput).toHaveBeenCalledWith("");
+    expect(context.setInput).toHaveBeenCalledWith("/btw will fail?");
+    expect(context.setToast).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "Side question failed: disk full", type: "error" })
+    );
+  });
+
+  test("does not restore the command text over a newer draft", async () => {
+    let resolveSideQuestion: ((value: { success: false; error: string }) => void) | undefined;
+    const sideQuestion = mock(
+      () =>
+        new Promise<{ success: false; error: string }>((resolve) => {
+          resolveSideQuestion = resolve;
+        })
+    );
+    const context = createSideQuestionContext(sideQuestion, {
+      getInput: mock(() => "new draft"),
+    });
+
+    await processSlashCommand({ type: "side-question", question: "will fail?" }, context);
+    resolveSideQuestion?.({ success: false, error: "disk full" });
+    await Promise.resolve();
+
+    expect(context.setInput).toHaveBeenCalledWith("");
+    expect(context.setInput).not.toHaveBeenCalledWith("/btw will fail?");
+    expect(context.setToast).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "Side question failed: disk full", type: "error" })
+    );
+  });
+
+  test("ignores stale side-question failures", async () => {
+    let resolveSideQuestion: ((value: { success: false; error: string }) => void) | undefined;
+    const sideQuestion = mock(
+      () =>
+        new Promise<{ success: false; error: string }>((resolve) => {
+          resolveSideQuestion = resolve;
+        })
+    );
+    const context = createSideQuestionContext(sideQuestion, {
+      asyncCommandToken: 1,
+      isAsyncCommandCurrent: mock(() => false),
+    });
+
+    await processSlashCommand({ type: "side-question", question: "will fail?" }, context);
+    resolveSideQuestion?.({ success: false, error: "disk full" });
+    await Promise.resolve();
+
+    expect(context.setToast).not.toHaveBeenCalled();
+  });
+});
+
 describe("processSlashCommand - clear", () => {
   function createClearContext(overrides: Partial<SlashCommandContext> = {}): SlashCommandContext {
     return createSlashCommandContext({

@@ -21,6 +21,10 @@ import {
   getContextBoundaryKind,
 } from "@/common/utils/messages/compactionBoundary";
 import { isDynamicToolPart, type DynamicToolPart } from "@/common/types/toolParts";
+import {
+  isSideQuestionAnswerMessage,
+  isSideQuestionUserMessage,
+} from "@/common/utils/messages/sideQuestion";
 
 function isSuccessfulImageGenerateResult(
   result: unknown
@@ -350,6 +354,7 @@ function buildUserDisplayedMessages(options: {
       inlineSkillSnapshots,
       compactionRequest,
       reviews: muxMeta?.reviews,
+      isSideQuestion: isSideQuestionUserMessage(message) ? true : undefined,
     },
   ];
 }
@@ -447,6 +452,7 @@ function appendAssistantTextRow(
     // Support both new enum ("user"|"idle") and legacy boolean (true).
     isCompacted: !!message.metadata?.compacted,
     isIdleCompacted: message.metadata?.compacted === "idle",
+    isSideAnswer: isSideQuestionAnswerMessage(message) ? true : undefined,
     model: message.metadata?.model,
     routedThroughGateway: message.metadata?.routedThroughGateway,
     routeProvider: resolveRouteProvider(
