@@ -67,12 +67,13 @@ export function GoalDefaultsSection(props: GoalDefaultsSectionProps) {
   // which `set` then writes — clobbering any saved override on disk.
   // Codex P2: preserve saved workspace defaults while loading.
   const [isLoading, setIsLoading] = useState(true);
-  const [globalReloadKey, setGlobalReloadKey] = useState(0);
 
   // Pull the global defaults so we can render inherited values inside the
-  // workspace-override panel. We re-read on every save from
-  // `GoalDefaultsControls` (signaled via `globalReloadKey`) so the inherit
-  // labels stay live when the user edits the global panel.
+  // workspace-override panel. We only re-read on mount/api change; updates
+  // from the wrapped `GoalDefaultsControls` are pushed in via its
+  // `onPersist(next)` callback so we don't have to re-query the backend
+  // (Codex P2: re-reading after an unawaited `updateGoalDefaults` could
+  // race the underlying saveConfig and show stale inherited labels).
   useEffect(() => {
     if (!api) return;
     let cancelled = false;
@@ -89,7 +90,7 @@ export function GoalDefaultsSection(props: GoalDefaultsSectionProps) {
     return () => {
       cancelled = true;
     };
-  }, [api, globalReloadKey]);
+  }, [api]);
 
   // Workspace override is loaded once per workspaceId. `null` (the
   // canonical "no override" state) is what we expect for fresh workspaces.
@@ -194,9 +195,13 @@ export function GoalDefaultsSection(props: GoalDefaultsSectionProps) {
           </summary>
           <div className="bg-surface-primary border-border-light border-t p-3">
             <GoalDefaultsControls
-              // Reload global defaults in the inherit-fallback row on every
-              // save from the wrapped editor.
-              onPersist={() => setGlobalReloadKey((k) => k + 1)}
+              // Push the freshly-normalized global defaults straight into
+              // our local `globalDefaults` state so the inherited-value
+              // labels in the workspace override panel are always in
+              // sync. We avoid re-querying the config because the wrapped
+              // `updateGoalDefaults` write is async and a refetch can
+              // race it (Codex P2).
+              onPersist={(next) => setGlobalDefaults(next)}
             />
           </div>
         </details>
