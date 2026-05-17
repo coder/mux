@@ -11,11 +11,11 @@ import { mergeGoalDefaults } from "@/browser/utils/goals/resolveGoalSetIntent";
 import { DEFAULT_GOAL_DEFAULTS, normalizeGoalDefaults, type GoalDefaults } from "@/constants/goals";
 
 /**
- * In-tab editor for goal-creation defaults.
+ * Editor for goal-creation defaults. Lives inside `GoalDefaultsModal`
+ * (the primary surface — opened from "Change defaults" affordances in the
+ * GoalTab), or standalone as a long-lived embedded panel.
  *
- * Anchored at the bottom of the GoalTab so users can configure both their
- * per-workspace overrides *and* their global defaults from the long-lived
- * home for goal configuration. Two stacked panels:
+ * Two stacked panels:
  *
  *   1. **This workspace** — sparse override. Each of the three knobs
  *      (budget / turn cap / always-require-explicit-budget) has an
@@ -27,11 +27,24 @@ import { DEFAULT_GOAL_DEFAULTS, normalizeGoalDefaults, type GoalDefaults } from 
  *      reused from Settings). Persists into `appConfig.goalDefaults` and
  *      acts as the inherit-fallback for workspaces that don't override.
  *
- * Folded into a collapsible `<details>` so the section is unobtrusive when
- * users are reading a goal's status but always one click away.
+ * When `embedded === false` (the default), the section wraps itself in a
+ * collapsible `<details>` so it is unobtrusive on long-running tabs. When
+ * embedded inside the modal, the wrapper collapses since the modal itself
+ * is already the open/closed envelope.
  */
 interface GoalDefaultsSectionProps {
   workspaceId: string;
+  /**
+   * Hide the outer collapsible `<details>` wrapper. Used by
+   * `GoalDefaultsModal` where the Dialog is the open/closed envelope.
+   */
+  embedded?: boolean;
+  /**
+   * Notified whenever either the workspace override or the global defaults
+   * persist. Lets parent forms re-read effective defaults so pre-filled
+   * Budget / Turn cap inputs stay in sync after the user changes anything.
+   */
+  onPersist?: () => void;
 }
 
 function formatBudgetDollars(cents: number): string {
@@ -117,6 +130,7 @@ export function GoalDefaultsSection(props: GoalDefaultsSectionProps) {
     };
   }, [api, props.workspaceId]);
 
+  const onPersistProp = props.onPersist;
   const persistOverride = (next: WorkspaceGoalDefaultsOverride) => {
     // Codex P2: ignore edits while the initial read is in flight.
     // Otherwise a stale all-null shape could overwrite saved overrides.
@@ -124,12 +138,22 @@ export function GoalDefaultsSection(props: GoalDefaultsSectionProps) {
     if (isLoading) return;
     setOverride(next);
     if (!api) return;
-    void api.workspace.goalDefaults.set({
-      workspaceId: props.workspaceId,
-      defaultBudgetCents: next.defaultBudgetCents,
-      defaultTurnCap: next.defaultTurnCap,
-      alwaysRequireExplicitBudget: next.alwaysRequireExplicitBudget,
-    });
+    void api.workspace.goalDefaults
+      .set({
+        workspaceId: props.workspaceId,
+        defaultBudgetCents: next.defaultBudgetCents,
+        defaultTurnCap: next.defaultTurnCap,
+        alwaysRequireExplicitBudget: next.alwaysRequireExplicitBudget,
+      })
+      .then(() => {
+        // Notify parent so prefilled create-form inputs can re-read the
+        // effective defaults. Errors are swallowed (the optimistic
+        // `setOverride` above already updated local state).
+        onPersistProp?.();
+      })
+      .catch(() => {
+        /* swallow — same rationale as global panel */
+      });
   };
 
   // Synthesize a "current override" object (all-null is what the
@@ -148,6 +172,44 @@ export function GoalDefaultsSection(props: GoalDefaultsSectionProps) {
     currentOverride.defaultBudgetCents != null ||
     currentOverride.defaultTurnCap != null ||
     currentOverride.alwaysRequireExplicitBudget != null;
+
+  const body = (
+    <div className="flex flex-col gap-4">
+      <WorkspaceOverridePanel
+        override={currentOverride}
+        globalDefaults={globalDefaults}
+        onChange={persistOverride}
+        isLoading={isLoading}
+      />
+
+      <details className="border-border-light rounded-md border">
+        <summary className="text-muted cursor-pointer list-none p-2 text-xs font-medium uppercase">
+          All workspaces (global default)
+        </summary>
+        <div className="bg-surface-primary border-border-light border-t p-3">
+          <GoalDefaultsControls
+            // Push the freshly-normalized global defaults straight into
+            // our local `globalDefaults` state so the inherited-value
+            // labels in the workspace override panel are always in
+            // sync. We avoid re-querying the config because the wrapped
+            // `updateGoalDefaults` write is async and a refetch can
+            // race it (Codex P2).
+            onPersist={(next) => {
+              setGlobalDefaults(next);
+              onPersistProp?.();
+            }}
+          />
+        </div>
+      </details>
+    </div>
+  );
+
+  if (props.embedded === true) {
+    // Modal mode: skip the outer summary header — the Dialog title already
+    // owns the affordance — and render the body straight into the modal
+    // body.
+    return body;
+  }
 
   return (
     <details
@@ -181,31 +243,7 @@ export function GoalDefaultsSection(props: GoalDefaultsSectionProps) {
         </span>
       </summary>
 
-      <div className="border-border-light flex flex-col gap-4 border-t p-3">
-        <WorkspaceOverridePanel
-          override={currentOverride}
-          globalDefaults={globalDefaults}
-          onChange={persistOverride}
-          isLoading={isLoading}
-        />
-
-        <details className="border-border-light rounded-md border">
-          <summary className="text-muted cursor-pointer list-none p-2 text-xs font-medium uppercase">
-            All workspaces (global default)
-          </summary>
-          <div className="bg-surface-primary border-border-light border-t p-3">
-            <GoalDefaultsControls
-              // Push the freshly-normalized global defaults straight into
-              // our local `globalDefaults` state so the inherited-value
-              // labels in the workspace override panel are always in
-              // sync. We avoid re-querying the config because the wrapped
-              // `updateGoalDefaults` write is async and a refetch can
-              // race it (Codex P2).
-              onPersist={(next) => setGlobalDefaults(next)}
-            />
-          </div>
-        </details>
-      </div>
+      <div className="border-border-light border-t p-3">{body}</div>
     </details>
   );
 }

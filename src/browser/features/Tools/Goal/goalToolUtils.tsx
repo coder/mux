@@ -35,10 +35,15 @@ export function formatGoalBudgetSummary(costCents: number, budgetCents: number |
   return `${formatGoalCents(costCents)} / ${formatGoalCents(budgetCents)}`;
 }
 
+// Status labels reflect the conceptual model: `Active` (with a sub-mode in
+// parentheses when the goal is not running) is the workspace's lifecycle-
+// active goal; `Complete` is terminal. Paused / budget-limited are sub-
+// statuses *of* active — see `goalLifecycle()` / `goalActiveMode()` in
+// `src/common/types/goal.ts` for the storage→concept mapping.
 const STATUS_LABELS: Record<GoalStatus, string> = {
   active: "Active",
-  paused: "Paused",
-  budget_limited: "Budget limited",
+  paused: "Active (paused)",
+  budget_limited: "Active (budget limited)",
   complete: "Complete",
 };
 
@@ -46,9 +51,14 @@ export function goalStatusLabel(status: GoalStatus): string {
   return STATUS_LABELS[status];
 }
 
+// All "Active" sub-statuses share the success-tinted badge so the goal-
+// tab header reads as "this is the active goal" at a glance — paused /
+// budget-limited only modify the inner mode label, not the band color.
+// Complete keeps the success color too because it represents a successful
+// terminal state.
 const STATUS_BADGE_CLASSES: Record<GoalStatus, string> = {
   active: "bg-success/10 text-success border-success/40",
-  paused: "bg-pending/20 text-pending border-pending/40",
+  paused: "bg-success/10 text-success border-success/40",
   budget_limited: "bg-warning-overlay text-warning border-warning/40",
   complete: "bg-success/10 text-success border-success/40",
 };

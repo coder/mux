@@ -2,6 +2,31 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { installDom } from "../../../../tests/ui/dom";
 import type { GoalHistoryEntry, GoalSnapshot } from "@/common/types/goal";
+
+// The GoalTab now reaches into `useAPI` (via `useGoalDefaults`) when the
+// create form is mounted. The hook tolerates a null api gracefully, but
+// `useAPI` itself throws when used outside a provider. Mock the context
+// so renders without an APIProvider still work — the form falls back to
+// canonical defaults, which is exactly the storybook-without-provider
+// behavior we want at runtime too.
+void mock.module("@/browser/contexts/API", () => ({
+  useAPI: () => ({
+    api: null,
+    status: "error",
+    error: "API unavailable",
+    authenticate: () => undefined,
+    retry: () => undefined,
+  }),
+}));
+
+// `GoalDefaultsModal` opens a Radix Dialog with portaled content that
+// happy-dom can't render. The test never opens the modal — only that
+// the trigger button exists — so a stub here keeps the form tree
+// renderable without dragging the full Dialog primitive in.
+void mock.module("@/browser/features/RightSidebar/GoalDefaultsModal", () => ({
+  GoalDefaultsModal: () => null,
+}));
+
 import { GoalTab } from "./GoalTab";
 
 function goal(overrides: Partial<GoalSnapshot> = {}): GoalSnapshot {
@@ -52,8 +77,12 @@ describe("GoalTab", () => {
         onClear={mock()}
       />
     );
+    // Completed goals now expose a "Reopen" affordance so the user can
+    // revive a goal the agent marked done too eagerly. Pause / Mark
+    // complete remain hidden because the goal already left the active
+    // lifecycle state.
     expect(queryByLabelText("Pause goal")).toBeNull();
-    expect(queryByLabelText("Resume goal")).toBeNull();
+    expect(getByLabelText("Reopen goal")).toBeTruthy();
     expect(queryByLabelText("Mark goal complete")).toBeNull();
     expect(getByLabelText("Completion summary").textContent).toContain("All work is complete.");
 
@@ -205,21 +234,33 @@ describe("GoalTab", () => {
 
     // No-op edit: same value should close the editor without calling the
     // update handler (avoids spurious lifecycle events / IPC churn).
-    fireEvent.click(getByText("Save objective"));
-    await waitFor(() => expect(document.activeElement).toBe(opener));
+    // The inline editor's save button text is "Save" now (was "Save
+    // objective") since the button sits inside the header instead of a
+    // standalone panel with its own label.
+    fireEvent.click(getByText("Save"));
+
+    // The inline editor replaces the Edit button in the header while
+    // editing is open, so the original `opener` DOM node is detached on
+    // close. Re-query for the freshly-mounted button and assert focus
+    // landed there — that's the user-visible behavior the tab targets.
+    await waitFor(() => {
+      const restoredOpener = getByLabelText("Edit goal objective");
+      expect(document.activeElement).toBe(restoredOpener);
+    });
     expect(onUpdateObjective).not.toHaveBeenCalled();
 
     // Real edit propagates the trimmed objective.
-    fireEvent.click(opener);
+    const reopener = getByLabelText("Edit goal objective");
+    fireEvent.click(reopener);
     const reopenedInput = getByLabelText("Goal objective") as HTMLTextAreaElement;
     fireEvent.input(reopenedInput, { target: { value: "  Refined objective  " } });
-    fireEvent.click(getByText("Save objective"));
+    fireEvent.click(getByText("Save"));
 
     await waitFor(() => expect(onUpdateObjective).toHaveBeenCalledWith("Refined objective"));
   });
 
-  test("hides the objective editor for completed goals", () => {
-    const { queryByLabelText } = render(
+  test("keeps the objective editor available for completed goals (user revive path)", () => {
+    const { getByLabelText } = render(
       <GoalTab
         goal={goal({ status: "complete", completionSummary: "Wrapped up." })}
         onSetStatus={mock()}
@@ -228,9 +269,12 @@ describe("GoalTab", () => {
       />
     );
 
-    // Once a goal is complete the right-sidebar action set collapses to
-    // "Archive this goal" — renaming a frozen objective makes no UX sense.
-    expect(queryByLabelText("Edit goal objective")).toBeNull();
+    // Completed goals stay editable now — the user must be able to revive
+    // (and possibly rename) a goal the agent declared done too eagerly.
+    // The backend's `validateStatusTransition` only blocks non-user
+    // initiators from leaving `complete`, so the UI keeps the affordance
+    // visible. See workspaceGoalService.test.ts for the backend coverage.
+    expect(getByLabelText("Edit goal objective")).toBeTruthy();
   });
 
   test("clear control is de-prominent and relabels for completed goals", () => {

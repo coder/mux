@@ -1,6 +1,8 @@
-import { ChevronDown, ChevronRight, Pencil, Target } from "lucide-react";
+import { ChevronDown, ChevronRight, Pencil, Settings2, Target } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import {
+  goalActiveMode,
+  isGoalLifecycleActive,
   isGoalPendingPersistence,
   type GoalHistoryEntry,
   type GoalSnapshot,
@@ -8,12 +10,14 @@ import {
 } from "@/common/types/goal";
 import { formatGoalCents } from "@/common/utils/goals/budgetPricing";
 import { parseGoalBudgetInputCents } from "@/common/utils/goals/budgetParser";
+import { useGoalDefaults } from "@/browser/utils/goals/useGoalDefaults";
+import { cn } from "@/common/lib/utils";
 // Import shared formatters / status labels from goalToolUtils so the GoalTab
 // stays in sync with the tool-call cards (Coder-agents-review nits DEREM-28
 // + DEREM-29). Local copies drifted in case (`active` vs `Active`) and could
 // drift further as Goal status grows.
 import { formatGoalElapsed, goalStatusLabel } from "@/browser/features/Tools/Goal/goalToolUtils";
-import { GoalDefaultsSection } from "@/browser/features/RightSidebar/GoalDefaultsSection";
+import { GoalDefaultsModal } from "@/browser/features/RightSidebar/GoalDefaultsModal";
 
 /**
  * Inputs accepted by the in-tab "Set goal" form. Mirrors the slash-command
@@ -30,7 +34,7 @@ export interface GoalCreateIntent {
 
 interface GoalTabProps {
   /**
-   * Workspace this tab is bound to. Required by the in-tab `GoalDefaultsSection`
+   * Workspace this tab is bound to. Required by the in-tab `GoalDefaultsModal`
    * which reads + writes the per-workspace override of the global
    * `goalDefaults` block; optional for the rest of the tab so existing
    * read-only stories don't break.
@@ -95,22 +99,25 @@ export function GoalTab(props: GoalTabProps) {
   const [summary, setSummary] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The "Change defaults" link in both the empty-state create form and
+  // the active-goal action row opens this modal. Kept at the tab level
+  // so a single instance covers both surfaces — opening from either
+  // closes any other.
+  const [isDefaultsModalOpen, setIsDefaultsModalOpen] = useState(false);
   const editInputRef = useRef<HTMLInputElement | null>(null);
   const objectiveInputRef = useRef<HTMLTextAreaElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const originRef = useRef<HTMLElement | null>(null);
   const lastCompleteInputRequestRef = useRef(props.openCompleteInputRequest ?? 0);
 
-  // Hide the inline objective edit when the goal is `complete` — the
-  // workspace's only meaningful action there is to start a new goal, which
-  // goes through the existing replace flow rather than the in-place rename.
-  // Also gate on the pending-persistence flag (parity with `canEdit`) so
-  // mid-stream / pending goals don't expose a write affordance.
+  // Completed goals stay editable so the user can revive a goal the agent
+  // declared done too eagerly. The only hard gate is pending-persistence
+  // (mid-stream queued goal): writes would otherwise race the stream-end
+  // commit. Backend pairs with this — see
+  // workspaceGoalService.validateStatusTransition which only blocks
+  // non-user initiators from leaving `complete`.
   const canEditObjective =
-    props.goal != null &&
-    props.goal.status !== "complete" &&
-    !isGoalPendingPersistence(props.goal) &&
-    props.onUpdateObjective != null;
+    props.goal != null && !isGoalPendingPersistence(props.goal) && props.onUpdateObjective != null;
 
   const openSummaryInput = (origin: HTMLElement | null) => {
     originRef.current = origin;
@@ -205,6 +212,26 @@ export function GoalTab(props: GoalTabProps) {
     inputRef.current?.focus();
   }, [isSummaryInputOpen]);
 
+  // The inline objective editor *replaces* the Edit button in the header
+  // while editing, so the `originRef` we captured in `openObjectiveEditor`
+  // points to a detached DOM node by the time `closeEditor` calls
+  // `.focus()` — the focus restore silently no-ops. Defer focus to the
+  // re-rendered button by querying for it via aria-label once
+  // `editingField` transitions back to null after an objective edit. The
+  // budget / turn-cap editors don't have this problem because their
+  // Edit buttons stay mounted (the editor is a separate panel further
+  // down the tab).
+  const previousEditingFieldRef = useRef<EditingField | null>(null);
+  useEffect(() => {
+    if (previousEditingFieldRef.current === "objective" && editingField === null) {
+      const opener = document.querySelector<HTMLElement>(
+        'button[aria-label="Edit goal objective"]'
+      );
+      opener?.focus();
+    }
+    previousEditingFieldRef.current = editingField;
+  }, [editingField]);
+
   useEffect(() => {
     const request = props.openCompleteInputRequest ?? 0;
     if (request === lastCompleteInputRequestRef.current) {
@@ -244,7 +271,7 @@ export function GoalTab(props: GoalTabProps) {
           // turn cap). Replaces the previous "No goal is set" placeholder
           // — the placeholder is folded into the form's helper text so
           // users don't need to know about `/goal` to start one.
-          <GoalCreateForm onCreate={props.onCreate} />
+          <GoalCreateForm onCreate={props.onCreate} workspaceId={props.workspaceId} />
         ) : (
           <div className="text-muted border-border-light flex flex-col items-center justify-center gap-2 rounded-md border border-dashed p-6 text-center text-sm">
             <Target className="h-5 w-5" aria-hidden="true" />
@@ -252,17 +279,25 @@ export function GoalTab(props: GoalTabProps) {
           </div>
         )}
         {filteredHistory.length > 0 && <GoalHistorySection entries={filteredHistory} />}
-        {props.workspaceId != null && <GoalDefaultsSection workspaceId={props.workspaceId} />}
       </section>
     );
   }
 
   const isPendingPersistence = isGoalPendingPersistence(props.goal);
   const canEdit = !isPendingPersistence;
-  const canPause = canEdit && props.goal.status === "active";
-  const canResume = canEdit && props.goal.status === "paused";
-  const canComplete =
-    canEdit && (props.goal.status === "active" || props.goal.status === "budget_limited");
+  const lifecycle = isGoalLifecycleActive(props.goal.status) ? "active" : "complete";
+  const activeMode = goalActiveMode(props.goal.status);
+  // Pause / Resume now operate on the active goal's sub-mode rather than a
+  // peer status. Resume covers both "user paused → resume" and
+  // "completed → reopen" (the backend allows user-initiated revives out
+  // of `complete`; see workspaceGoalService.validateStatusTransition).
+  const canPause = canEdit && activeMode === "running";
+  const canResume = canEdit && (activeMode === "paused" || lifecycle === "complete");
+  // Mark-complete mirrors backend `validateStatusTransition` exactly:
+  // only `active` (running) and `budget_limited` are valid sources for
+  // the complete transition. Paused goals must be resumed first; this
+  // matches the slash command + palette gating.
+  const canComplete = canEdit && (activeMode === "running" || activeMode === "budget_limited");
 
   const setStatus = async (
     status: Exclude<GoalStatus, "budget_limited">,
@@ -338,29 +373,95 @@ export function GoalTab(props: GoalTabProps) {
     }
   };
 
+  // Accent-green styling when the goal is lifecycle-active: the panel
+  // header should communicate "this is the active goal" at a glance,
+  // visually distinct from the muted "Set a goal" empty-state form.
+  // Sub-status (paused / budget-limited) shifts the label text but keeps
+  // the green band so the user sees the lifecycle, not the mode.
+  const headerToneClass =
+    lifecycle === "active"
+      ? "border-success/40 bg-success/5"
+      : "border-border-light bg-surface-secondary";
+  const headerLabelClass = lifecycle === "active" ? "text-success" : "text-muted";
+
   return (
     <section className="flex h-full flex-col gap-4 overflow-y-auto p-4" aria-label="Workspace goal">
-      <header className="border-border-light bg-surface-secondary rounded-md border p-3">
-        <div className="text-muted mb-1 flex items-center gap-1.5 text-xs font-medium uppercase">
-          <Target className="h-3.5 w-3.5" aria-hidden="true" />
-          Goal {goalStatusLabel(props.goal.status)}
-        </div>
-        <div className="flex items-start gap-2">
-          <h2 className="text-foreground flex-1 text-sm leading-5 font-semibold whitespace-pre-wrap">
-            {props.goal.objective}
-          </h2>
-          {canEditObjective && (
-            <button
-              type="button"
-              className="text-muted hover:text-foreground inline-flex shrink-0 items-center gap-1 text-xs underline"
-              aria-label="Edit goal objective"
-              onClick={(event) => openObjectiveEditor(event.currentTarget)}
-            >
-              <Pencil className="h-3 w-3" aria-hidden="true" />
-              Edit
-            </button>
+      <header className={cn("rounded-md border p-3", headerToneClass)}>
+        <div
+          className={cn(
+            "mb-1 flex items-center gap-1.5 text-xs font-medium uppercase",
+            headerLabelClass
           )}
+        >
+          <Target className="h-3.5 w-3.5" aria-hidden="true" />
+          {goalStatusLabel(props.goal.status)}
         </div>
+        {editingField === "objective" ? (
+          // Inline objective editor: replaces the h2 in place rather than
+          // hopping the editor down to a separate panel further down the
+          // tab (which previously made the cursor target jump on click).
+          // Cmd/Ctrl+Enter submits, plain Enter inserts a newline.
+          <div className="flex flex-col gap-2">
+            <textarea
+              ref={objectiveInputRef}
+              id="goal-objective-editor"
+              aria-label="Goal objective"
+              className="border-border bg-surface-primary text-foreground focus:border-accent min-h-20 w-full rounded-md border p-2 text-sm leading-5 font-semibold outline-none"
+              value={editValue}
+              autoFocus
+              onFocus={(event) => event.currentTarget.select()}
+              onChange={(event) => setEditValue(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  closeEditor();
+                }
+                if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                  event.preventDefault();
+                  void submitEditor();
+                }
+              }}
+            />
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="bg-accent text-accent-foreground rounded-md px-3 py-1 text-xs font-medium disabled:opacity-60"
+                disabled={isSubmitting}
+                onClick={() => void submitEditor()}
+              >
+                Save
+              </button>
+              <button
+                type="button"
+                className="border-border-light bg-surface-primary text-foreground rounded-md border px-3 py-1 text-xs"
+                disabled={isSubmitting}
+                onClick={closeEditor}
+              >
+                Cancel
+              </button>
+              <span className="text-muted ml-auto text-[10px]">
+                Renames in place — accounting and goal ID are preserved.
+              </span>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-start gap-2">
+            <h2 className="text-foreground flex-1 text-sm leading-5 font-semibold whitespace-pre-wrap">
+              {props.goal.objective}
+            </h2>
+            {canEditObjective && (
+              <button
+                type="button"
+                className="text-muted hover:text-foreground inline-flex shrink-0 items-center gap-1 text-xs underline"
+                aria-label="Edit goal objective"
+                onClick={(event) => openObjectiveEditor(event.currentTarget)}
+              >
+                <Pencil className="h-3 w-3" aria-hidden="true" />
+                Edit
+              </button>
+            )}
+          </div>
+        )}
       </header>
 
       {isPendingPersistence && (
@@ -441,63 +542,9 @@ export function GoalTab(props: GoalTabProps) {
         </div>
       </dl>
 
-      {editingField === "objective" && (
-        <div
-          className="border-border-light bg-surface-secondary rounded-md border p-3"
-          role="group"
-          aria-label="Edit goal objective"
-        >
-          <label
-            className="text-foreground mb-2 block text-sm font-medium"
-            htmlFor="goal-objective-editor"
-          >
-            Objective
-          </label>
-          <textarea
-            ref={objectiveInputRef}
-            id="goal-objective-editor"
-            className="border-border bg-surface-primary text-foreground focus:border-accent min-h-20 w-full rounded-md border p-2 text-sm outline-none"
-            aria-label="Goal objective"
-            value={editValue}
-            autoFocus
-            onFocus={(event) => event.currentTarget.select()}
-            onChange={(event) => setEditValue(event.currentTarget.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") {
-                event.preventDefault();
-                closeEditor();
-              }
-              // Submit on Cmd/Ctrl+Enter to avoid trapping users mid-paragraph
-              // when they hit Enter for a newline.
-              if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                event.preventDefault();
-                void submitEditor();
-              }
-            }}
-          />
-          <p className="text-muted mt-1 text-xs">
-            Renames the current goal in place. Accounting and goal ID are preserved.
-          </p>
-          <div className="mt-2 flex gap-2">
-            <button
-              type="button"
-              className="bg-accent text-accent-foreground rounded-md px-3 py-1.5 text-sm disabled:opacity-60"
-              disabled={isSubmitting}
-              onClick={() => void submitEditor()}
-            >
-              Save objective
-            </button>
-            <button
-              type="button"
-              className="border-border-light bg-surface-primary text-foreground rounded-md border px-3 py-1.5 text-sm"
-              disabled={isSubmitting}
-              onClick={closeEditor}
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
+      {/* Objective editing is now inline inside the header above; the
+          standalone editor panel was removed so the cursor stays where
+          the user clicked (Codex P3 UX review). */}
 
       {(editingField === "budget" || editingField === "turnCap") && (
         <div
@@ -573,10 +620,13 @@ export function GoalTab(props: GoalTabProps) {
             <button
               type="button"
               className="border-border-light bg-surface-secondary text-foreground hover:bg-surface-tertiary rounded-md border px-3 py-1.5 text-sm"
-              aria-label="Resume goal"
+              aria-label={lifecycle === "complete" ? "Reopen goal" : "Resume goal"}
               onClick={() => void setStatus("active")}
             >
-              Resume
+              {/* "Reopen" reads better than "Resume" when the goal was
+                  marked complete — the user is reviving a goal the
+                  agent decided was done, not resuming a paused one. */}
+              {lifecycle === "complete" ? "Reopen" : "Resume"}
             </button>
           )}
           {canComplete && (
@@ -660,13 +710,39 @@ export function GoalTab(props: GoalTabProps) {
       {error && <p className="text-danger-soft text-sm">{error}</p>}
 
       {filteredHistory.length > 0 && <GoalHistorySection entries={filteredHistory} />}
-      {props.workspaceId != null && <GoalDefaultsSection workspaceId={props.workspaceId} />}
+
+      {props.workspaceId != null && (
+        <>
+          {/* "Change defaults" is the long-lived home for goal-defaults
+              config now — opens the modal that lets the user override
+              defaults for this workspace OR change the global defaults.
+              The link is muted so it doesn't compete with Pause / Resume
+              / Mark complete above. */}
+          <div className="mt-1 text-xs">
+            <button
+              type="button"
+              className="text-muted hover:text-foreground inline-flex items-center gap-1 underline"
+              aria-label="Change goal defaults"
+              onClick={() => setIsDefaultsModalOpen(true)}
+            >
+              <Settings2 className="h-3 w-3" aria-hidden="true" />
+              Change defaults
+            </button>
+          </div>
+          <GoalDefaultsModal
+            workspaceId={props.workspaceId}
+            open={isDefaultsModalOpen}
+            onOpenChange={setIsDefaultsModalOpen}
+          />
+        </>
+      )}
     </section>
   );
 }
 
 interface GoalCreateFormProps {
   onCreate: (intent: GoalCreateIntent) => Promise<void> | void;
+  workspaceId?: string;
 }
 
 /**
@@ -686,6 +762,16 @@ interface GoalCreateFormProps {
 function GoalCreateForm(props: GoalCreateFormProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Defaults modal is per-form because the empty-state lives outside the
+  // active-goal branch's modal state; sharing would require lifting more
+  // state up than is justified here.
+  const [isDefaultsModalOpen, setIsDefaultsModalOpen] = useState(false);
+  // Pre-fill Budget / Turn cap with the workspace's effective defaults
+  // (global config + per-workspace override) so the user can see what
+  // they'd get and edit only when they need to. `reload()` is wired
+  // through the defaults modal so a saved change updates the placeholders
+  // in real time.
+  const { defaults, reload: reloadDefaults } = useGoalDefaults(props.workspaceId);
   // Refs (instead of controlled state) for the same reason the inline
   // budget / turn-cap editors use them: a single source of truth at submit
   // time avoids stale-closure / test-timing surprises and matches the
@@ -693,6 +779,13 @@ function GoalCreateForm(props: GoalCreateFormProps) {
   const objectiveRef = useRef<HTMLTextAreaElement | null>(null);
   const budgetRef = useRef<HTMLInputElement | null>(null);
   const turnCapRef = useRef<HTMLInputElement | null>(null);
+
+  // Effective defaults shown as placeholder text. We seed the inputs with
+  // `defaultValue` rather than `value` so the user can clear them; the
+  // placeholder mirrors what would be applied if the field is left blank.
+  const budgetPlaceholder = `$${(defaults.defaultBudgetCents / 100).toFixed(2)} (default)`;
+  const turnCapPlaceholder =
+    defaults.defaultTurnCap == null ? "no cap (default)" : `${defaults.defaultTurnCap} (default)`;
 
   const submit = async () => {
     setIsSubmitting(true);
@@ -802,7 +895,7 @@ function GoalCreateForm(props: GoalCreateFormProps) {
             id="goal-create-budget"
             className="border-border bg-surface-primary text-foreground focus:border-accent w-full rounded-md border p-2 text-sm outline-none"
             aria-label="Goal budget"
-            placeholder="$5 or 500c"
+            placeholder={budgetPlaceholder}
             defaultValue=""
           />
         </div>
@@ -815,12 +908,27 @@ function GoalCreateForm(props: GoalCreateFormProps) {
             id="goal-create-turncap"
             className="border-border bg-surface-primary text-foreground focus:border-accent w-full rounded-md border p-2 text-sm outline-none"
             aria-label="Goal turn cap"
-            placeholder="e.g. 25"
+            placeholder={turnCapPlaceholder}
             inputMode="numeric"
             defaultValue=""
           />
         </div>
       </div>
+
+      {props.workspaceId != null && (
+        <div className="text-muted -mt-1 flex items-center justify-between text-[11px]">
+          <span>Leave Budget / Turn cap blank to use the defaults shown above.</span>
+          <button
+            type="button"
+            className="hover:text-foreground inline-flex items-center gap-1 underline"
+            aria-label="Change goal defaults"
+            onClick={() => setIsDefaultsModalOpen(true)}
+          >
+            <Settings2 className="h-3 w-3" aria-hidden="true" />
+            Change defaults
+          </button>
+        </div>
+      )}
 
       {error && (
         <p className="text-danger-soft text-sm" role="alert">
@@ -838,6 +946,14 @@ function GoalCreateForm(props: GoalCreateFormProps) {
           {isSubmitting ? "Setting goal…" : "Set goal"}
         </button>
       </div>
+      {props.workspaceId != null && (
+        <GoalDefaultsModal
+          workspaceId={props.workspaceId}
+          open={isDefaultsModalOpen}
+          onOpenChange={setIsDefaultsModalOpen}
+          onPersist={reloadDefaults}
+        />
+      )}
     </form>
   );
 }
