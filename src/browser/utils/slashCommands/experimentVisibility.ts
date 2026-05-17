@@ -15,3 +15,17 @@ export function resolveSlashCommandExperimentValue(
       return undefined;
   }
 }
+
+/**
+ * Build the `isExperimentEnabled` predicate consumed by slash-command
+ * discovery surfaces (suggestions, ghost hints, command palette). Each
+ * surface previously inlined the same `(experimentId) =>
+ * resolveSlashCommandExperimentValue(experimentId, snapshot)` lambda; this
+ * helper keeps the resolver wiring in one place so callsites only describe
+ * the snapshot they observe.
+ */
+export function createSlashCommandExperimentResolver(
+  snapshot: SlashCommandExperimentSnapshot
+): (experimentId: ExperimentId) => boolean | undefined {
+  return (experimentId) => resolveSlashCommandExperimentValue(experimentId, snapshot);
+}
