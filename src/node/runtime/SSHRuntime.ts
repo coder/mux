@@ -3119,16 +3119,49 @@ export class SSHRuntime extends RemoteRuntime {
         }
         stagingHasWorktreeRegistration = false;
       } else {
-        const moveResult = await execBuffered(
-          this,
-          [
-            `if [ -e ${newWorkspacePathArg} ]; then echo MUX_FORK_COLLISION; exit 7; fi`,
-            `mv ${stagingPathArg} ${newWorkspacePathArg}`,
-          ].join(" && "),
-          { cwd: "/tmp", timeout: 30 }
-        );
+        // Shell `mv <src-dir> <dest-dir>` has a nasty surprise: if `<dest-dir>`
+        // exists as a directory at the moment the rename(2) syscall runs, BOTH
+        // GNU coreutils mv and BSD mv fall back to "move source INTO dest" —
+        // i.e. they produce `<dest>/<src-basename>/…` instead of failing. The
+        // pre-check `test -e <dest>` mitigates the common case, but it cannot
+        // close the TOCTOU window between the check and the rename: two
+        // concurrent forks racing the cp-fallback path on the same
+        // `newWorkspaceName` would both observe an empty destination, both
+        // call `mv`, and the second `mv` would nest its staging dir under
+        // the first fork's freshly-created destination. Without a post-hoc
+        // detector, the second fork would then return success with
+        // `workspacePath = <dest>` while the actual content sits at
+        // `<dest>/.mux-fork-staging-<hex>/`.
+        //
+        // The shell snippet below does the pre-check, the mv, and a post-hoc
+        // nesting check in a single SSH round-trip. If the post-check finds
+        // our staging dir nested inside the destination, we know another
+        // fork raced ahead — we report it as `MUX_FORK_COLLISION` and clean
+        // up only our nested staging dir, leaving the winning fork's
+        // destination contents intact.
+        const stagingBaseArg = shescape.quote(stagingName);
+        // Multi-statement script (not `&&`-joined) because `&&` is invalid
+        // syntax inside `if/then/fi`. Each top-level statement either
+        // succeeds (and execution continues) or `exit`s on a known sentinel
+        // code: 0=ok, 7=collision (with cleanup already done), 8=mv failed.
+        const finalizeScript = [
+          `if [ -e ${newWorkspacePathArg} ]; then echo MUX_FORK_COLLISION; exit 7; fi`,
+          `mv ${stagingPathArg} ${newWorkspacePathArg} || { echo MUX_FORK_MV_FAILED; exit 8; }`,
+          // Post-hoc nesting detector: only triggers when another fork won
+          // the race after our pre-check passed. Removing only the nested
+          // path is safe because the staging name is unique to this attempt
+          // (96-bit suffix) and can never collide with a real workspace name.
+          `if [ -d ${newWorkspacePathArg}/${stagingBaseArg} ]; then rm -rf ${newWorkspacePathArg}/${stagingBaseArg}; echo MUX_FORK_COLLISION; exit 7; fi`,
+        ].join("; ");
+        const moveResult = await execBuffered(this, finalizeScript, {
+          cwd: "/tmp",
+          timeout: 30,
+        });
         if (moveResult.exitCode !== 0) {
           const collision = moveResult.stdout.includes("MUX_FORK_COLLISION");
+          // On `MUX_FORK_COLLISION` the inline script has already removed the
+          // nested staging dir (if any) and left the winning fork's dest
+          // untouched, so `removeStaging` here is a no-op safety net.
           await removeStaging(
             collision
               ? "finalize collision (destination created by another process)"

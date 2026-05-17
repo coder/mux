@@ -355,6 +355,73 @@ describe("SSHRuntime.forkWorkspace rm-rf-cannot-wipe-siblings invariant", () => 
   });
 });
 
+describe("SSHRuntime.forkWorkspace cp-fallback finalize race", () => {
+  it("detects when a concurrent cp-fallback fork nested our staging dir under the destination and reports a collision instead of returning a bogus path", async () => {
+    // Scenario: two forks race the cp-fallback path with the same
+    // `newWorkspaceName`. Fork A passes its initial `test -e`, wins the
+    // `mv`, and lands at `<dest>`. Fork B also passes its `test -e` (because
+    // A hadn't `mv`-ed yet) but by the time B's `mv` runs, `<dest>` exists
+    // as a directory — shell `mv <src-dir> <existing-dir>` then nests B's
+    // staging dir under `<dest>` instead of failing. We simulate Fork B
+    // here: the inline finalize script encodes the post-hoc nesting detector
+    // so the exit code drops to 7 and the cleanup removes only the nested
+    // staging dir (NOT Fork A's destination contents).
+    const runtime = new ForkTestSSHRuntime("/remote/src", {
+      project: "/Users/me/Projects/coder/mux",
+      name: "feature-source",
+      path: "/remote/src/mux-canonical/feature-source",
+    });
+
+    runtime.canned.push(
+      { matches: (c) => c.startsWith("test -e "), exitCode: 1 },
+      {
+        matches: (c) => c.includes("branch --show-current"),
+        stdout: "feature-source\n",
+        exitCode: 0,
+      },
+      { matches: (c) => c.startsWith("test -d "), exitCode: 1 }, // no base repo → cp fallback
+      { matches: (c) => c.startsWith("mkdir -p "), exitCode: 0 },
+      { matches: (c) => c.startsWith("cp -R -P "), exitCode: 0 },
+      // The finalize script reports MUX_FORK_COLLISION because the post-hoc
+      // nesting detector fired. Exit code 7 = collision.
+      {
+        matches: (c) =>
+          c.includes("MUX_FORK_COLLISION") && c.includes(".mux-fork-staging-") && c.includes("mv "),
+        stdout: "MUX_FORK_COLLISION\n",
+        exitCode: 7,
+      }
+    );
+
+    const result = await runtime.forkWorkspace(buildForkParams());
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/created by another process/);
+
+    // The finalize script must contain the post-hoc nesting detector that
+    // removes only the nested staging dir under the destination. This is
+    // the structural guarantee that protects Fork A's contents.
+    const finalizeCmd = runtime.commands.find(
+      (c) => c.includes("MUX_FORK_COLLISION") && c.includes("mv ")
+    );
+    expect(finalizeCmd).toBeDefined();
+    // The detector path: `<dest>/<stagingName>` — we rm only that nested
+    // path, never the destination itself. `shescape.quote` uses single
+    // quotes for `stagingName` and execBuffered's path arg uses double
+    // quotes for `newWorkspacePath`, so the concatenation produces
+    // `"<dest>"/'<stagingName>'`, which the shell resolves to a single
+    // word `<dest>/<stagingName>`.
+    expect(finalizeCmd!).toMatch(
+      /rm -rf\s+"\/remote\/src\/mux-[0-9a-f]{12}\/feature-new"\/'\.mux-fork-staging-[0-9a-f]{12}'/
+    );
+    // And critically: nowhere in the script does `rm -rf <dest>` appear
+    // without the nested staging suffix immediately after — that would be
+    // the destructive form that wiped real workspaces.
+    expect(finalizeCmd!).not.toMatch(
+      /rm -rf\s+"\/remote\/src\/mux-[0-9a-f]{12}\/feature-new"(\s|;|$)/
+    );
+  });
+});
+
 describe("SSHRuntime.forkWorkspace staging-name uniqueness", () => {
   it("uses a fresh staging id on every fork attempt", async () => {
     const runtime1 = new ForkTestSSHRuntime("/remote/src", {
