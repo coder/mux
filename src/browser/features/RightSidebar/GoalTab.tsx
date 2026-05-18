@@ -845,7 +845,15 @@ function GoalCreateForm(props: GoalCreateFormProps) {
   // Effective defaults shown as placeholder text. We seed the inputs with
   // `defaultValue` rather than `value` so the user can clear them; the
   // placeholder mirrors what would be applied if the field is left blank.
-  const budgetPlaceholder = `$${(defaults.defaultBudgetCents / 100).toFixed(2)} (default)`;
+  //
+  // Codex P2: when `alwaysRequireExplicitBudget` is OFF, a blank budget
+  // is intentionally resolved to `null` (no budget) by
+  // `resolveGoalSetIntent`, not to `defaultBudgetCents`. The placeholder
+  // must match that resolution or the form misrepresents what a blank
+  // submission will do.
+  const budgetPlaceholder = defaults.alwaysRequireExplicitBudget
+    ? `$${(defaults.defaultBudgetCents / 100).toFixed(2)} (default)`
+    : "no budget (default)";
   const turnCapPlaceholder =
     defaults.defaultTurnCap == null ? "no cap (default)" : `${defaults.defaultTurnCap} (default)`;
 
@@ -979,7 +987,11 @@ function GoalCreateForm(props: GoalCreateFormProps) {
 
       {props.workspaceId != null && (
         <div className="text-muted -mt-1 flex items-center justify-between text-[11px]">
-          <span>Leave Budget / Turn cap blank to use the defaults shown above.</span>
+          <span>
+            {defaults.alwaysRequireExplicitBudget
+              ? "Leave Budget / Turn cap blank to use the defaults shown above."
+              : "Leave Budget blank to create an unbudgeted goal; Turn cap blank uses the default shown above."}
+          </span>
           <button
             type="button"
             className="hover:text-foreground inline-flex items-center gap-1 underline"

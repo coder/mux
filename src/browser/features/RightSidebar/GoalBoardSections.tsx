@@ -668,7 +668,15 @@ function UpcomingAdder(props: UpcomingAdderProps) {
         <input
           ref={budgetRef}
           aria-label="Queued goal budget"
-          placeholder={`$${(defaults.defaultBudgetCents / 100).toFixed(2)} (default)`}
+          // Codex P2: blank budget resolves to `null` when
+          // `alwaysRequireExplicitBudget` is OFF (see
+          // `resolveGoalSetIntent`). The placeholder must match the
+          // actual resolution behavior or the form misleads the user.
+          placeholder={
+            defaults.alwaysRequireExplicitBudget
+              ? `$${(defaults.defaultBudgetCents / 100).toFixed(2)} (default)`
+              : "no budget (default)"
+          }
           className="border-border bg-surface-primary text-foreground focus:border-accent w-32 rounded-md border p-1.5 text-xs outline-none"
         />
         <button
