@@ -35,6 +35,7 @@ import { computeTaskReportLinking } from "@/browser/utils/messages/taskReportLin
 import { BashOutputCollapsedIndicator } from "@/browser/features/Tools/BashOutputCollapsedIndicator";
 import {
   getInterruptionContext,
+  getLastMainRetryCandidateMessage,
   getLastNonDecorativeMessage,
 } from "@/common/utils/messages/retryEligibility";
 import { TooltipIfPresent } from "@/browser/components/Tooltip/Tooltip";
@@ -818,10 +819,10 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     workspaceState.autoRetryStatus?.type === "auto-retry-scheduled" ||
     workspaceState.autoRetryStatus?.type === "auto-retry-starting";
 
-  const lastActionableMessage = getLastNonDecorativeMessage(workspaceState.messages);
+  const lastRetryCandidateMessage = getLastMainRetryCandidateMessage(workspaceState.messages);
   const suppressRetryBarrier =
-    lastActionableMessage?.type === "stream-error" &&
-    lastActionableMessage.errorType === "context_exceeded";
+    lastRetryCandidateMessage?.type === "stream-error" &&
+    lastRetryCandidateMessage.errorType === "context_exceeded";
   const shouldMountRetryBarrier = !suppressRetryBarrier;
   const showRetryBarrierUI = showRetryBarrier && !suppressRetryBarrier;
 

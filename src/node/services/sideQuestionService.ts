@@ -39,6 +39,7 @@ import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import { sliceMessagesForProviderFromLatestContextBoundary } from "@/common/utils/messages/compactionBoundary";
 import {
   SIDE_QUESTION_ANSWER_METADATA_TYPE,
+  SIDE_QUESTION_COMMAND,
   SIDE_QUESTION_METADATA_TYPE,
   filterSideQuestionMessages,
 } from "@/common/utils/messages/sideQuestion";
@@ -52,12 +53,27 @@ const SIDE_QUESTION_MAX_TRAILING_MESSAGES = 200;
 const SIDE_QUESTION_MAX_MESSAGE_CHARS = 8_000;
 /** Overall character budget for the transcript (defensive against runaway). */
 const SIDE_QUESTION_MAX_TRANSCRIPT_CHARS = 120_000;
+/**
+ * Lower bound on the number of model-creation attempts. Even when the
+ * workspace-preferred candidates fail or look stale, we walk far enough to
+ * exercise at least one entry from `NAME_GEN_PREFERRED_MODELS` so /btw stays
+ * usable. Three matches the historical behavior before this was named.
+ */
+const SIDE_QUESTION_MIN_FALLBACK_ATTEMPTS = 3;
+
+/**
+ * Narrow surface of `AIService` consumed by /btw. The full `AIService` includes
+ * the entire streaming/billing pipeline; /btw only needs to mint a model and
+ * peek at the live-stream registry. Stating the dependency precisely keeps
+ * `askSideQuestion` testable without an `as unknown as AIService` cast.
+ */
+export type SideQuestionAIService = Pick<AIService, "createModel" | "getStreamInfo">;
 
 export interface AskSideQuestionOptions {
   workspaceId: string;
   question: string;
   candidates: readonly string[];
-  aiService: AIService;
+  aiService: SideQuestionAIService;
   historyService: HistoryService;
   /** Optional pre-await snapshot captured by callers that must avoid async race windows. */
   liveStreamSnapshot?: ReturnType<AIService["getStreamInfo"]>;
@@ -202,7 +218,7 @@ export async function askSideQuestion(
   //    up in the chat immediately. Even if the model call fails, the user
   //    can see what they asked.
   // ---------------------------------------------------------------------
-  const rawCommand = `/btw ${trimmedQuestion}`;
+  const rawCommand = `${SIDE_QUESTION_COMMAND} ${trimmedQuestion}`;
   const userMessage: MuxMessage = createMuxMessage(createUserMessageId(), "user", trimmedQuestion, {
     timestamp: Date.now(),
     muxMetadata: {
@@ -210,7 +226,7 @@ export async function askSideQuestion(
       rawCommand,
       // `commandPrefix` is rendered as a small badge before the message
       // body — reuses the existing `/compact` / `/{skillName}` mechanism.
-      commandPrefix: "/btw",
+      commandPrefix: SIDE_QUESTION_COMMAND,
       // Spread the interruption snapshot only when a main-agent stream
       // was actually in flight — otherwise leave the fields off so the
       // renderer treats this as a "normal" side branch at the end of the
@@ -245,7 +261,10 @@ export async function askSideQuestion(
   // live/chat/agent model IDs sit ahead of the fallback list.
   const maxAttempts = Math.min(
     candidates.length,
-    Math.max(3, firstFallbackCandidateIndex >= 0 ? firstFallbackCandidateIndex + 1 : 0)
+    Math.max(
+      SIDE_QUESTION_MIN_FALLBACK_ATTEMPTS,
+      firstFallbackCandidateIndex >= 0 ? firstFallbackCandidateIndex + 1 : 0
+    )
   );
   let lastError: NameGenerationError | null = null;
 
@@ -312,10 +331,12 @@ export async function askSideQuestion(
     // stream-start fires. Without this, the aggregator's handleStreamStart
     // would create a fresh assistant message from the stream-start event
     // payload (which doesn't carry muxMetadata) and the marker that drives
-    // side-answer styling plus WorkspaceStore's main-agent buffering layer
-    // would be lost for the entire streaming window. On reconnect/replay
-    // the placeholder is re-emitted from chat.jsonl, so the marker survives
-    // there too.
+    // side-answer styling plus the aggregator's side-answer-aware lifecycle
+    // guards (skipping main-agent model switch, onResponseComplete, queued
+    // follow-up handling, and the WorkspaceStore stream-end pinned-todo
+    // collapse) would be lost for the entire streaming window. On
+    // reconnect/replay the placeholder is re-emitted from chat.jsonl, so
+    // the marker survives there too.
     emitChatEvent(workspaceId, { ...placeholderAssistant, type: "message" });
 
     // -------------------------------------------------------------------
@@ -494,10 +515,10 @@ export async function askSideQuestion(
  * before the next candidate is tried.
  *
  * Closes the stream with an empty `stream-end` first so side-question
- * terminal-event bookkeeping (including WorkspaceStore's buffered main-agent
- * replay) unwinds while the placeholder still carries side-answer metadata.
- * Then removes the placeholder from chat.jsonl and emits a `delete` chat
- * event so the live aggregator drops any partial failed text.
+ * terminal-event bookkeeping (including the aggregator/store side-answer
+ * terminal guards) unwinds while the placeholder still carries side-answer
+ * metadata. Then removes the placeholder from chat.jsonl and emits a `delete`
+ * chat event so the live aggregator drops any partial failed text.
  *
  * History deletion is best-effort: if the disk write fails we still emit
  * stream-end + delete so the live UI matches user expectations (the failed
@@ -522,11 +543,16 @@ async function deleteSideQuestionPlaceholder(opts: {
   } = opts;
 
   // Close the stream slot while the side-answer placeholder still exists.
-  // WorkspaceStore uses the placeholder's muxMetadata to recognize this as
-  // the side-question terminal event and drain any main-agent deltas that
-  // were buffered while the side answer was streaming. Deleting first would
-  // make the terminal event look like an unknown message and freeze the main
-  // transcript until reload.
+  // The aggregator and WorkspaceStore look up this message by id to check
+  // its muxMetadata before dispatching their side-answer-aware branches
+  // (e.g. WorkspaceStore.bufferedEventHandlers["stream-end"] skips
+  // collapsePinnedTodoOnStreamStop iff the terminal stream belongs to a
+  // side answer; the aggregator's handleStreamEnd skips main-agent
+  // onResponseComplete / lastCompletedStreamStats updates). Deleting the
+  // placeholder first would make those lookups fail, and the terminal
+  // event would fall through to the main-agent code paths — clobbering
+  // pinned-todo state and producing stale completion stats for a stream
+  // that should be invisible to main-agent lifecycle.
   emitChatEvent(workspaceId, {
     type: "stream-end",
     workspaceId,
@@ -629,12 +655,28 @@ async function buildSideQuestionTranscript(
 
 function extractMessageText(message: MuxMessage): string {
   return (message.parts ?? [])
-    .filter((part): part is { type: "text"; text: string } => part.type === "text")
+    .filter(
+      (part): part is { type: "text"; text: string } =>
+        typeof part === "object" &&
+        part !== null &&
+        "type" in part &&
+        part.type === "text" &&
+        "text" in part &&
+        typeof part.text === "string"
+    )
     .map((part) => part.text.trim())
     .filter((text) => text.length > 0)
     .join("\n");
 }
 
+/**
+ * Extract a short `[tool foo]` tag for inclusion in the /btw transcript.
+ * Returns null for non-tool parts (text/reasoning/file are handled by
+ * `extractMessageText`). This accepts `unknown` deliberately: history loading
+ * JSON-parses persisted rows and casts them to `MuxMessage`, so older or
+ * malformed chat.jsonl parts can still reach transcript construction. Skip
+ * unrecognized shapes instead of letting one bad part break /btw.
+ */
 function summarizeToolPart(part: unknown): string | null {
   if (typeof part !== "object" || part === null) return null;
   const record = part as { type?: unknown; toolName?: unknown };
@@ -644,7 +686,7 @@ function summarizeToolPart(part: unknown): string | null {
     typeof record.toolName === "string"
       ? record.toolName
       : type.startsWith("tool-")
-        ? type.slice(5)
+        ? type.slice("tool-".length)
         : null;
   return toolName ? `[tool ${toolName}]` : null;
 }

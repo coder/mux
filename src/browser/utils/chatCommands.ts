@@ -77,6 +77,7 @@ import { trackCommandUsed } from "@/common/telemetry";
 import { addEphemeralMessage } from "@/browser/stores/WorkspaceStore";
 import { setGoalWithConflictRetry } from "@/browser/utils/goals/setGoalWithConflictRetry";
 import { loadGoalDefaults, resolveGoalSetIntent } from "@/browser/utils/goals/resolveGoalSetIntent";
+import { SIDE_QUESTION_COMMAND } from "@/common/utils/messages/sideQuestion";
 
 const BUILT_IN_MODEL_SET = new Set<string>(Object.values(KNOWN_MODELS).map((model) => model.id));
 
@@ -591,7 +592,7 @@ export async function processSlashCommand(
           return { clearInput: false, toastShown: true };
         }
         const workspaceId = context.workspaceId;
-        const rawCommand = `/btw ${parsed.question}`;
+        const rawCommand = `${SIDE_QUESTION_COMMAND} ${parsed.question}`;
         const asyncCommandToken = context.asyncCommandToken;
         const isCurrentSideQuestion = (): boolean =>
           asyncCommandToken === undefined ||

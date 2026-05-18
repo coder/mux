@@ -3,6 +3,15 @@ import type { MuxMessage, MuxMetadata } from "@/common/types/message";
 export const SIDE_QUESTION_METADATA_TYPE = "side-question";
 export const SIDE_QUESTION_ANSWER_METADATA_TYPE = "side-question-answer";
 
+/**
+ * The user-facing slash-command literal that triggers a side question. Kept in
+ * one place so the backend (persisting the rendered user row) and the frontend
+ * (parsing input and restoring drafts on RPC failure) cannot drift apart.
+ *
+ * NOTE: includes no trailing space — render as `${SIDE_QUESTION_COMMAND} <q>`.
+ */
+export const SIDE_QUESTION_COMMAND = "/btw";
+
 type SideQuestionMetadata = Extract<
   NonNullable<MuxMetadata["muxMetadata"]>,
   { type: typeof SIDE_QUESTION_METADATA_TYPE }

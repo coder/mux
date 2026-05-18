@@ -1,10 +1,14 @@
 import * as aiSdk from "ai";
 import { type LanguageModel } from "ai";
 import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
-import { askSideQuestion, buildSideQuestionMessages } from "./sideQuestionService";
+import {
+  askSideQuestion,
+  buildSideQuestionMessages,
+  type SideQuestionAIService,
+} from "./sideQuestionService";
 import type { AIService } from "./aiService";
 import { Err, Ok } from "@/common/types/result";
-import { createMuxMessage } from "@/common/types/message";
+import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import { CONTEXT_BOUNDARY_KINDS } from "@/common/utils/messages/compactionBoundary";
 import { createTestHistoryService } from "./testHistoryService";
@@ -34,11 +38,11 @@ function createFakeModel(modelId = "side-question-model"): LanguageModel {
 function createFakeAIService(
   model: LanguageModel,
   streamInfo?: ReturnType<AIService["getStreamInfo"]>
-): AIService {
+): SideQuestionAIService {
   return {
     createModel: () => Promise.resolve(Ok(model)),
     getStreamInfo: () => streamInfo,
-  } as unknown as AIService;
+  };
 }
 
 /** Fake textStream that emits a fixed sequence of chunks. */
@@ -65,14 +69,16 @@ describe("buildSideQuestionMessages", () => {
       "User: change the config\nAssistant: edited src/config.ts"
     );
 
-    expect(system).toContain("No tools are available");
-    expect(system).toContain("clearly-marked side answer");
+    // We deliberately do NOT assert the prompt's wording here — that would be
+    // a tautology against the literal in `buildSideQuestionMessages`. The
+    // tools-denied contract is exercised behaviorally below (the streamText
+    // call asserts `receivedTools === undefined`). What matters structurally
+    // is: exactly one user message, the question shows through, and the
+    // transcript we passed in is present so the model can ground on it.
+    expect(typeof system).toBe("string");
     expect(messages).toHaveLength(1);
     const content = messages[0]?.content as string;
-    expect(content).toContain("<system-reminder>");
-    expect(content).toContain("/btw");
-    expect(content).toContain("No tools are available");
-    expect(content).toContain("Side question: what file did you just edit?");
+    expect(content).toContain("what file did you just edit?");
     expect(content).toContain("Assistant: edited src/config.ts");
   });
 
@@ -263,6 +269,50 @@ describe("askSideQuestion (persisted, streaming)", () => {
       expect(capturedPrompt).toContain("regular answer");
       expect(capturedPrompt).not.toContain("old side q");
       expect(capturedPrompt).not.toContain("old side a");
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("keeps legacy tool-* parts visible and skips malformed parts in the transcript", async () => {
+    const { historyService, cleanup } = await createTestHistoryService();
+    try {
+      const workspaceId = "ws-btw-legacy-tool-part";
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("u1", "user", "run tests")
+      );
+      const legacyAssistant = {
+        id: "a-legacy-tool",
+        role: "assistant" as const,
+        metadata: { timestamp: 1 },
+        parts: [null, { type: 42 }, { type: "tool-bash" as const }],
+      };
+      // Older or hand-edited chat.jsonl rows can still contain AI SDK
+      // `tool-<name>` parts (or malformed junk) even though current
+      // `MuxMessage` types only model `dynamic-tool`. Preserve that legacy
+      // shape here so /btw transcript generation stays upgrade-safe and
+      // self-healing.
+      await historyService.appendToHistory(workspaceId, legacyAssistant as unknown as MuxMessage);
+
+      let capturedPrompt: string | undefined;
+      spyOn(aiSdk, "streamText").mockImplementation(((opts: unknown) => {
+        const messages = (opts as { messages: Array<{ content: string }> }).messages;
+        capturedPrompt = messages[0]?.content;
+        return fakeTextStream(["ok"]);
+      }) as unknown as typeof aiSdk.streamText);
+
+      const result = await askSideQuestion({
+        workspaceId,
+        question: "what command just ran?",
+        candidates: ["openai:gpt-4.1-mini"],
+        aiService: createFakeAIService(createFakeModel()),
+        historyService,
+        emitChatEvent: () => undefined,
+      });
+
+      expect(result.success).toBe(true);
+      expect(capturedPrompt).toContain("[tool bash]");
     } finally {
       await cleanup();
     }

@@ -3977,14 +3977,6 @@ export class WorkspaceStore {
     aggregator: StreamingMessageAggregator,
     data: WorkspaceChatMessage
   ): void {
-    this.dispatchProcessStreamEvent(workspaceId, aggregator, data);
-  }
-
-  private dispatchProcessStreamEvent(
-    workspaceId: string,
-    aggregator: StreamingMessageAggregator,
-    data: WorkspaceChatMessage
-  ): void {
     // Handle special events first
     if (isStreamError(data)) {
       const transient = this.assertChatTransientState(workspaceId);
