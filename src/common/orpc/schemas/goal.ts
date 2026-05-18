@@ -7,8 +7,7 @@ export const GoalStatusSchema = z.enum(["active", "paused", "budget_limited", "c
  * internal transitions driven by `applyBudgetDrivenStatus` — accepting it
  * from the oRPC layer would let a caller transition a paused goal to
  * `budget_limited`, which the budget-driven re-arm logic would then flip
- * back to `active`, bypassing the normal resume validation
- * (Coder-agents-review nit DEREM-53).
+ * back to `active`, bypassing the normal resume validation.
  */
 export const PublicGoalStatusSchema = z.enum(["active", "paused", "complete"]);
 
@@ -18,7 +17,7 @@ export const PublicGoalStatusSchema = z.enum(["active", "paused", "complete"]);
  * decide whether to arm the wrap-up: only continuation/budget-limit/other
  * origins should trigger a synthetic wrap-up; if a user-origin stream hit
  * the budget the wrap-up was correctly suppressed pre-restart and must
- * stay suppressed (Coder-agents-review P3 DEREM-54).
+ * stay suppressed.
  *
  * `null` means the field has not been set (legacy goal records, goals that
  * are not currently `budget_limited`).
@@ -68,8 +67,8 @@ export const GoalSnapshotSchema = z.object({
 
 /**
  * Why a goal left the workspace's "current goal" slot. Persisted in the
- * goal-history JSONL so the right-sidebar GoalTab can show completed goals
- * grouped under the current goal without re-creating the lifecycle context.
+ * goal-history JSONL so the goal board can surface completed goals without
+ * re-creating lifecycle context from chat history.
  */
 export const GoalHistoryEndReasonSchema = z.enum(["completed", "cleared", "replaced"]);
 
@@ -87,13 +86,13 @@ export const GoalHistoryEntrySchema = z.object({
 
 // Discriminated union so the oRPC handler can return typed errors for the
 // invalid-transition / child-workspace branches that `setGoal` previously
-// allowed to escape as unhandled 500s (Coder-agents-review P3 DEREM-36).
+// allowed to escape as unhandled 500s.
 //
 // `goal_conflict` carries the expected and actual goal ids. `expectedGoalId:
 // null` means the caller explicitly expected no goal; `undefined` on input
 // means no optimistic-concurrency check.
-// The no-goal + status-set + no-objective path is now classified as
-// `invalid_transition` (DEREM-35 / DEREM-43).
+// The no-goal + status-set + no-objective path is classified as
+// `invalid_transition`.
 export const GoalSetErrorSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("goal_conflict"),
@@ -128,9 +127,8 @@ export const GoalSetInputSchema = z.object({
   editInPlace: z.boolean().nullish(),
   // NOTE: Internal-only fields like `requireUserAcknowledgmentSinceMs`
   // (crash-recovery acknowledgment gate), `initiator`, and other workflow
-  // signals MUST NOT be exposed in the public oRPC schema (Coder-agents-
-  // review P3 DEREM-22). A client that could pass
-  // `requireUserAcknowledgmentSinceMs: null` would otherwise be able to
+  // signals MUST NOT be exposed in the public oRPC schema. A client that
+  // could pass `requireUserAcknowledgmentSinceMs: null` would otherwise be able to
   // clear the gate without user interaction, bypassing both the
   // acknowledgment requirement and the auto-pause that `acknowledgeUser`
   // applies. Internal callers use `WorkspaceGoalService.SetGoalInput`
@@ -139,11 +137,6 @@ export const GoalSetInputSchema = z.object({
 
 export const GoalGetInputSchema = z.object({ workspaceId: z.string().min(1) });
 export const GoalClearInputSchema = z.object({ workspaceId: z.string().min(1) });
-export const GoalGetHistoryInputSchema = z.object({ workspaceId: z.string().min(1) });
-export const GoalGetHistoryOutputSchema = z.object({
-  entries: z.array(GoalHistoryEntrySchema),
-});
-
 /**
  * The "goal board" is the workspace's roadmap: a sequence of goals the
  * user has lined up, plus a holding pen for goals they have archived (so

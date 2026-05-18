@@ -195,10 +195,7 @@ function UpcomingSection(props: UpcomingSectionProps) {
     }
   };
 
-  const update = async (
-    goalId: string,
-    patch: { objective?: string; budgetCents?: number | null; turnCap?: number | null }
-  ) => {
+  const update = async (goalId: string, patch: UpcomingGoalPatch) => {
     if (!api) return;
     try {
       await api.workspace.updateUpcomingGoal({
@@ -250,11 +247,17 @@ function UpcomingSection(props: UpcomingSectionProps) {
   );
 }
 
+interface UpcomingGoalPatch {
+  objective?: string;
+  budgetCents?: number | null;
+  turnCap?: number | null;
+}
+
 interface UpcomingRowProps {
   goal: GoalRecordV1;
   onPromote: () => Promise<void> | void;
   onArchive: () => Promise<void> | void;
-  onSave: (patch: { objective?: string; budgetCents?: number | null }) => Promise<void>;
+  onSave: (patch: UpcomingGoalPatch) => Promise<void>;
 }
 
 function UpcomingRow(props: UpcomingRowProps) {
@@ -347,11 +350,7 @@ function UpcomingRow(props: UpcomingRowProps) {
 interface UpcomingRowEditorProps {
   goal: GoalRecordV1;
   onCancel: () => void;
-  onSubmit: (patch: {
-    objective?: string;
-    budgetCents?: number | null;
-    turnCap?: number | null;
-  }) => Promise<void>;
+  onSubmit: (patch: UpcomingGoalPatch) => Promise<void>;
 }
 
 function UpcomingRowEditor(props: UpcomingRowEditorProps) {
@@ -382,11 +381,8 @@ function UpcomingRowEditor(props: UpcomingRowEditorProps) {
       budgetPatch = parsed;
     }
 
-    // Use the shared `parseGoalTurnCapInput` (same parser GoalTab uses)
-    // so partial-int inputs like `1.5` or `12abc` correctly fail
-    // validation instead of silently truncating via `Number.parseInt`
-    // (Codex P2 follow-up). `parser → null` is the "blank = no cap"
-    // path the editor relies on.
+    // Use the shared parser so partial-int inputs like `1.5` or `12abc`
+    // fail validation; `null` is the editor's "blank = no cap" path.
     const parsedTurnCap = parseGoalTurnCapInput(turnCapRef.current?.value ?? "");
     if (parsedTurnCap === undefined) {
       setLocalError("Enter a positive whole-number turn cap, or leave blank for no cap.");
@@ -394,7 +390,7 @@ function UpcomingRowEditor(props: UpcomingRowEditorProps) {
     }
     const turnCapPatch: number | null = parsedTurnCap;
 
-    const patch: { objective?: string; budgetCents?: number | null; turnCap?: number | null } = {};
+    const patch: UpcomingGoalPatch = {};
     if (nextObjective !== props.goal.objective) patch.objective = nextObjective;
     if (budgetPatch !== props.goal.budgetCents) patch.budgetCents = budgetPatch;
     if (turnCapPatch !== props.goal.turnCap) patch.turnCap = turnCapPatch;
@@ -626,18 +622,10 @@ function UpcomingAdder(props: UpcomingAdderProps) {
       }
       budgetCents = parsed;
     }
-    // Codex P2: expose turn cap in the Adder. Without this, the field
-    // was hidden but `resolveGoalSetIntent` still inherited the
-    // workspace/global `defaultTurnCap`, so queued goals could hit an
-    // unexpected limit after auto-promote. Mirrors the main create
-    // form's UX: blank → fall through to defaults; explicit number →
-    // override.
-    //
-    // Use the shared `parseGoalTurnCapInput` (same parser GoalTab uses)
-    // so partial-int inputs like `1.5` or `12abc` correctly fail
-    // validation instead of silently truncating via `Number.parseInt`.
-    // Codex P2 follow-up: the previous local `Number.parseInt` accepted
-    // these and saved a different cap than the user typed.
+    // Queued goals expose turn caps so inherited workspace/global defaults
+    // are visible before auto-promote. Blank falls through to defaults;
+    // explicit values use the shared parser for the same validation as the
+    // main create form.
     let turnCap: number | null | undefined;
     const rawTurnCap = (turnCapRef.current?.value ?? "").trim();
     if (rawTurnCap.length > 0) {
@@ -654,13 +642,9 @@ function UpcomingAdder(props: UpcomingAdderProps) {
     setIsSubmitting(true);
     setError(null);
     try {
-      // Codex P2: load effective defaults at submit time, not at hook
-      // resolution time. `useGoalDefaults` serves the canonical
-      // `DEFAULT_GOAL_DEFAULTS` until its async fetch resolves, so a
-      // user who opens the form and submits before the fetch returns
-      // would otherwise persist a queued goal under the wrong limits.
-      // Falls back to the hook's `defaults` if the network read fails
-      // — same fallback as `loadGoalDefaults`.
+      // Load effective defaults at submit time so a quick submit before
+      // the hook fetch resolves still persists the current workspace/global
+      // limits. Fall back to the hook snapshot if the network read fails.
       let effective = defaults;
       try {
         effective = await loadGoalDefaults(api, props.workspaceId);
@@ -725,10 +709,9 @@ function UpcomingAdder(props: UpcomingAdderProps) {
         <input
           ref={budgetRef}
           aria-label="Queued goal budget"
-          // Codex P2: blank budget resolves to `null` when
-          // `alwaysRequireExplicitBudget` is OFF (see
-          // `resolveGoalSetIntent`). The placeholder must match the
-          // actual resolution behavior or the form misleads the user.
+          // Keep the placeholder aligned with resolveGoalSetIntent's
+          // blank-budget behavior so the queued goal uses the limit the
+          // user expects.
           placeholder={
             defaults.alwaysRequireExplicitBudget
               ? `$${(defaults.defaultBudgetCents / 100).toFixed(2)} (default)`
@@ -739,10 +722,8 @@ function UpcomingAdder(props: UpcomingAdderProps) {
         <input
           ref={turnCapRef}
           aria-label="Queued goal turn cap"
-          // Codex P2: previously hidden, so queued goals silently
-          // inherited the workspace/global `defaultTurnCap` and could
-          // hit an unexpected cap after auto-promote. Expose it
-          // explicitly with the same default-aware placeholder pattern.
+          // Show the inherited turn cap before auto-promote so queued
+          // goals do not pick up an invisible limit.
           placeholder={
             defaults.defaultTurnCap == null
               ? "no cap (default)"
