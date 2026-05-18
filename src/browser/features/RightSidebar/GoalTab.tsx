@@ -511,62 +511,45 @@ export function GoalTab(props: GoalTabProps) {
         </section>
       )}
 
+      {/*
+        Stat tiles. Previously this was a 5-cell 2-col grid where Cost,
+        Budget, and Remaining each lived in their own tile, which meant
+        the user had to mentally re-assemble "I've spent $1.25 of $5.00
+        so $3.75 is left" from three corners of the panel. Worse, the
+        Turn cap was only surfaced when explicitly set — a missing cap
+        rendered as bare turn count, indistinguishable from "no cap set
+        yet" vs "cap is just way above current usage". You had to click
+        Edit to find out.
+
+        Layout now consolidates by metric so each card answers a single
+        question:
+
+          • Budget (full-width): "Have I run out of money yet?"
+            shows cost / cap with remaining + a thin progress bar.
+          • Turns (half): "Have I run out of turns yet?"
+            always shows turns / cap (or `no cap`).
+          • Elapsed (half): wall-clock time, unchanged.
+
+        Edit affordances stay on each tile (same aria-labels as before)
+        so the inline editor path is untouched.
+      */}
       <dl className="grid grid-cols-2 gap-2 text-sm">
-        <div className="bg-surface-secondary rounded-md p-3">
-          <dt className="text-muted text-xs">Cost</dt>
-          <dd className="counter-nums text-foreground">{formatGoalCents(props.goal.costCents)}</dd>
-        </div>
-        <div className="bg-surface-secondary rounded-md p-3">
-          <dt className="text-muted text-xs">Budget</dt>
-          <dd className="counter-nums text-foreground flex items-center justify-between gap-2">
-            <span>
-              {props.goal.budgetCents == null
-                ? "No budget"
-                : formatGoalCents(props.goal.budgetCents)}
-            </span>
-            {canEdit && (
-              <button
-                type="button"
-                className="text-muted hover:text-foreground text-xs underline"
-                aria-label="Edit goal budget"
-                onClick={(event) => openBudgetEditor(event.currentTarget)}
-              >
-                Edit
-              </button>
-            )}
-          </dd>
-        </div>
-        <div className="bg-surface-secondary rounded-md p-3">
-          <dt className="text-muted text-xs">Remaining</dt>
-          <dd className="counter-nums text-foreground">
-            {props.goal.budgetCents == null
-              ? "—"
-              : formatGoalCents(Math.max(0, props.goal.budgetCents - props.goal.costCents))}
-          </dd>
-        </div>
-        <div className="bg-surface-secondary rounded-md p-3">
-          <dt className="text-muted text-xs">Turns</dt>
-          <dd className="counter-nums text-foreground flex items-center justify-between gap-2">
-            <span>
-              {props.goal.turnCap == null
-                ? String(props.goal.turnsUsed)
-                : `${props.goal.turnsUsed} / ${props.goal.turnCap}`}
-            </span>
-            {canEdit && (
-              <button
-                type="button"
-                className="text-muted hover:text-foreground text-xs underline"
-                aria-label="Edit goal turn cap"
-                onClick={(event) => openTurnCapEditor(event.currentTarget)}
-              >
-                Edit
-              </button>
-            )}
-          </dd>
-        </div>
+        <BudgetTile
+          costCents={props.goal.costCents}
+          budgetCents={props.goal.budgetCents}
+          status={props.goal.status}
+          canEdit={canEdit}
+          onEdit={(event) => openBudgetEditor(event.currentTarget)}
+        />
+        <TurnsTile
+          turnsUsed={props.goal.turnsUsed}
+          turnCap={props.goal.turnCap}
+          canEdit={canEdit}
+          onEdit={(event) => openTurnCapEditor(event.currentTarget)}
+        />
         <div className="bg-surface-secondary rounded-md p-3">
           <dt className="text-muted text-xs">Elapsed</dt>
-          <dd className="counter-nums text-foreground">
+          <dd className="counter-nums text-foreground mt-1 text-base leading-tight font-medium">
             {formatGoalElapsed(props.goal.startedAtMs)}
           </dd>
         </div>
@@ -798,6 +781,159 @@ export function GoalTab(props: GoalTabProps) {
         </>
       )}
     </section>
+  );
+}
+
+interface BudgetTileProps {
+  costCents: number;
+  budgetCents: number | null;
+  status: GoalStatus;
+  canEdit: boolean;
+  onEdit: (event: React.MouseEvent<HTMLButtonElement>) => void;
+}
+
+/**
+ * Cost / Budget / Remaining as a single tile. Consolidates the three
+ * pre-existing standalone tiles so a quick glance answers "how much of
+ * my budget have I used and how much is left". Layout:
+ *
+ *   ┌──────────────────────────────────────┐
+ *   │ Budget                          Edit │
+ *   │ $1.25 of $5.00         $3.75 left    │
+ *   │ ████░░░░░░░░░░░░░░░░░░░░░░░░░░░░     │
+ *   └──────────────────────────────────────┘
+ *
+ * • Numeric pieces (`$1.25`, `$5.00`, `$3.75`) are wrapped in their own
+ *   `<span>` so existing `getByText("$1.25")`-style asserts still match.
+ * • `counter-nums` is the semantic tabular-numeral utility (per AGENTS.md
+ *   styling guidance) — prevents jitter as `costCents` increments mid-
+ *   stream.
+ * • The progress bar uses `role="progressbar"` + `aria-valuetext` so
+ *   screen readers get the same info sighted users do.
+ * • When `budgetCents == null` the bar collapses and the secondary line
+ *   shows "no budget" — the tile is then a single-value Cost card.
+ */
+function BudgetTile(props: BudgetTileProps) {
+  const { costCents, budgetCents, status, canEdit, onEdit } = props;
+  const hasBudget = budgetCents != null;
+  const remainingCents = hasBudget ? Math.max(0, budgetCents - costCents) : null;
+  const overBudget = status === "budget_limited" || (hasBudget && costCents >= budgetCents);
+  // Clamp to [0, 100] so a slight over-spend (cost > budget) still
+  // renders as a fully-filled bar instead of overflowing visually.
+  const percent =
+    hasBudget && budgetCents > 0 ? Math.min(100, Math.round((costCents / budgetCents) * 100)) : 0;
+
+  return (
+    <div className="bg-surface-secondary col-span-2 rounded-md p-3">
+      <div className="flex items-baseline justify-between gap-2">
+        <dt className="text-muted text-xs">Budget</dt>
+        {canEdit && (
+          <button
+            type="button"
+            className="text-muted hover:text-foreground text-xs underline"
+            aria-label="Edit goal budget"
+            onClick={onEdit}
+          >
+            Edit
+          </button>
+        )}
+      </div>
+      <dd className="counter-nums text-foreground mt-1 flex items-baseline justify-between gap-3 leading-tight">
+        <span className="text-base font-medium">
+          <span>{formatGoalCents(costCents)}</span>
+          {hasBudget && (
+            <>
+              <span className="text-muted text-sm font-normal"> of </span>
+              <span className="text-muted text-sm font-normal">{formatGoalCents(budgetCents)}</span>
+            </>
+          )}
+        </span>
+        <span className="text-muted text-xs">
+          {hasBudget ? (
+            <>
+              <span>{formatGoalCents(remainingCents ?? 0)}</span>
+              {overBudget ? " over" : " left"}
+            </>
+          ) : (
+            "no budget"
+          )}
+        </span>
+      </dd>
+      {hasBudget && budgetCents > 0 && (
+        <div
+          role="progressbar"
+          aria-label="Budget used"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={percent}
+          aria-valuetext={`${formatGoalCents(costCents)} of ${formatGoalCents(budgetCents)} used (${percent}%)`}
+          className="bg-border-light mt-2 h-1 overflow-hidden rounded-full"
+        >
+          <div
+            className={cn(
+              "h-full rounded-full transition-[width]",
+              overBudget ? "bg-danger-soft" : "bg-accent"
+            )}
+            style={{ width: `${percent}%` }}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface TurnsTileProps {
+  turnsUsed: number;
+  turnCap: number | null;
+  canEdit: boolean;
+  onEdit: (event: React.MouseEvent<HTMLButtonElement>) => void;
+}
+
+/**
+ * Turns / Turn cap as a single tile. Unlike before, the cap is ALWAYS
+ * visible alongside usage — when `turnCap == null` we surface a "no cap"
+ * label so the user can distinguish "limit not set" from "limit set
+ * higher than current usage". The "X / Y" composite text is kept on a
+ * single `<span>` so the existing `getByText("3 / 10")` assertion still
+ * matches.
+ */
+function TurnsTile(props: TurnsTileProps) {
+  const { turnsUsed, turnCap, canEdit, onEdit } = props;
+  const hasCap = turnCap != null;
+  const remaining = hasCap ? Math.max(0, turnCap - turnsUsed) : null;
+  const overCap = hasCap && turnsUsed >= turnCap;
+
+  return (
+    <div className="bg-surface-secondary rounded-md p-3">
+      <div className="flex items-baseline justify-between gap-2">
+        <dt className="text-muted text-xs">Turns</dt>
+        {canEdit && (
+          <button
+            type="button"
+            className="text-muted hover:text-foreground text-xs underline"
+            aria-label="Edit goal turn cap"
+            onClick={onEdit}
+          >
+            Edit
+          </button>
+        )}
+      </div>
+      <dd className="counter-nums text-foreground mt-1 leading-tight">
+        <div className="text-base font-medium">
+          <span>{hasCap ? `${turnsUsed} / ${turnCap}` : String(turnsUsed)}</span>
+        </div>
+        <div className="text-muted text-xs">
+          {hasCap ? (
+            <>
+              <span>{remaining}</span>
+              {overCap ? " over" : " left"}
+            </>
+          ) : (
+            "no cap"
+          )}
+        </div>
+      </dd>
+    </div>
   );
 }
 

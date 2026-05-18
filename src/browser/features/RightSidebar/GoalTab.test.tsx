@@ -142,6 +142,61 @@ describe("GoalTab", () => {
     expect(getByText("3 / 10")).toBeTruthy();
   });
 
+  test("renders the turn cap alongside turns used even before the user opens the editor", () => {
+    // Before this redesign, the Turns tile rendered just `turnsUsed`
+    // when a cap was set elsewhere but the component thought it was
+    // null — this exercises the explicit `null` case to lock in the
+    // "no cap" indicator so the user can distinguish "no limit" from
+    // "limit not yet hit".
+    const { getByText, queryByText } = render(
+      <GoalTab goal={goal({ turnsUsed: 3, turnCap: null })} onSetStatus={mock()} onClear={mock()} />
+    );
+
+    expect(getByText("3")).toBeTruthy();
+    expect(getByText("no cap")).toBeTruthy();
+    // The legacy combined "3 / X" rendering should not appear when no
+    // cap is set; we should see the explicit "no cap" label instead.
+    expect(queryByText(/3 \/ /)).toBeNull();
+  });
+
+  test("budget tile shows cost / cap / remaining together as a single composite tile", () => {
+    // The redesign collapses the previous three standalone tiles
+    // (Cost, Budget, Remaining) into one tile so the user reads
+    // "spent / cap / remaining" without bouncing between corners of
+    // the panel. The progress bar is exposed via role=progressbar so
+    // screen readers and behavioral tests can target it.
+    const { getByText, getByRole } = render(
+      <GoalTab
+        goal={goal({ budgetCents: 500, costCents: 125 })}
+        onSetStatus={mock()}
+        onClear={mock()}
+      />
+    );
+
+    expect(getByText("$1.25")).toBeTruthy(); // cost
+    expect(getByText("$5.00")).toBeTruthy(); // cap
+    expect(getByText("$3.75")).toBeTruthy(); // remaining
+    const bar = getByRole("progressbar", { name: "Budget used" });
+    expect(bar.getAttribute("aria-valuenow")).toBe("25"); // 125/500 → 25%
+  });
+
+  test("budget tile shows 'no budget' instead of a remaining figure when the cap is unset", () => {
+    // When no budget is configured the tile is effectively a Cost
+    // card. We must not render a misleading "$0.00 left" or a
+    // progress bar.
+    const { getByText, queryByRole } = render(
+      <GoalTab
+        goal={goal({ budgetCents: null, costCents: 125 })}
+        onSetStatus={mock()}
+        onClear={mock()}
+      />
+    );
+
+    expect(getByText("$1.25")).toBeTruthy();
+    expect(getByText("no budget")).toBeTruthy();
+    expect(queryByRole("progressbar", { name: "Budget used" })).toBeNull();
+  });
+
   test("renders pending goals read-only until they are saved", () => {
     const { queryByLabelText } = render(
       <GoalTab
