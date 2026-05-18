@@ -78,7 +78,6 @@ export interface BuildSourcesParams {
   onStartWorkspaceCreation: (projectPath: string) => void;
   onStartMultiProjectWorkspaceCreation: () => void;
   multiProjectWorkspacesEnabled: boolean;
-  goalsEnabled: boolean;
   onArchiveMergedWorkspacesInProject: (projectPath: string) => Promise<void>;
   getBranchesForProject: (projectPath: string) => Promise<BranchListResult>;
   onSelectWorkspace: (sel: {
@@ -819,11 +818,19 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
   // Goals
   actions.push(() => {
     const selected = p.selectedWorkspace;
-    if (!p.goalsEnabled || !selected) {
+    if (!selected) {
       return [];
     }
 
     const workspaceId = selected.workspaceId;
+    const selectedMetadata = p.workspaceMetadata.get(workspaceId);
+    // Goal writes are rejected for child task workspaces by
+    // WorkspaceGoalService.assertParentWorkspace(), so keep palette actions
+    // hidden there just like the Goal tab.
+    if (selectedMetadata?.parentWorkspaceId != null) {
+      return [];
+    }
+
     const api = p.api;
     const goal = p.selectedWorkspaceState?.goal ?? null;
     const list: CommandAction[] = [

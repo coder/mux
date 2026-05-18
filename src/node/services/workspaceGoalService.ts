@@ -117,7 +117,6 @@ export interface SetGoalInput {
 export type GoalContinuationSkipReason =
   | "not_registered"
   | "no_pending_candidate"
-  | "experiment_disabled"
   | "workspace_not_found"
   | "archived"
   | "transcript_only"
@@ -148,7 +147,6 @@ export interface GoalContinuationRuntimeState {
 }
 
 export interface GoalContinuationRuntimeBridge {
-  isGoalExperimentEnabled(): boolean;
   hasActiveDescendantTasks(workspaceId: string): boolean;
   getRuntimeState(workspaceId: string): GoalContinuationRuntimeState;
   executeGoalContinuation(input: {
@@ -531,6 +529,13 @@ export class WorkspaceGoalService {
       await this.pushTransientGoalSnapshot(workspaceId, pendingSnapshot);
       return pendingSnapshot;
     }
+    if (!goal) {
+      // Goals are GA, so normal model/tool-availability paths call getGoal()
+      // for every turn. Avoid writing `goal: null` on every no-goal read;
+      // explicit lifecycle operations (clear/corrupt repair/etc.) still push
+      // null snapshots when state actually changes.
+      return null;
+    }
     return this.pushSnapshot(workspaceId, goal);
   }
 
@@ -577,20 +582,6 @@ export class WorkspaceGoalService {
       if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
       if (!(await this.isWorkspaceStreaming(workspaceId))) return;
     }
-  }
-
-  /**
-   * Returns true when the GOALS experiment is enabled at the bridge layer.
-   * Used as a hot-path short-circuit so users with the experiment off do
-   * not pay disk I/O cost (goal.json read + extensionMetadata write) on
-   * every stream-end.
-   *
-   * Returns false when no bridge is registered yet (e.g. headless tests
-   * that never wire continuations); callers should default-deny in that
-   * case to keep the off-experiment runtime cost truly identical to main.
-   */
-  isExperimentEnabled(): boolean {
-    return this.goalContinuationBridge?.isGoalExperimentEnabled() ?? false;
   }
 
   registerGoalContinuationConsumer(
@@ -655,13 +646,6 @@ export class WorkspaceGoalService {
       "requestContinuationAfterStreamEnd requires workspaceId"
     );
     if (this.goalContinuationDispatcher == null) {
-      return;
-    }
-    // Hot-path experiment gate: without this, every non-compaction
-    // stream-end pays the disk cost of `getGoal` even for users with the
-    // GOALS experiment off. The bridge is the source of truth for whether
-    // the experiment is on; default-deny when unset.
-    if (!this.isExperimentEnabled()) {
       return;
     }
 
@@ -841,10 +825,6 @@ export class WorkspaceGoalService {
     const bridge = this.goalContinuationBridge;
     if (!bridge) {
       return { eligible: false, reason: "not_registered" };
-    }
-    if (!bridge.isGoalExperimentEnabled()) {
-      this.pendingContinuationCandidates.delete(workspaceId);
-      return { eligible: false, reason: "experiment_disabled" };
     }
 
     const workspace = this.findWorkspaceConfigEntry(workspaceId);
@@ -1400,15 +1380,6 @@ export class WorkspaceGoalService {
     workspaceId: string,
     model: string | undefined
   ): Promise<Result<void, SendMessageError>> {
-    // Hot-path gate: every sendMessage / resumeStream lands here, so an
-    // experiment-off short-circuit avoids paying `getGoal`'s disk cost on
-    // workspaces that never used the GOALS feature (sibling to /
-    // / — ). Defaults to
-    // false when no bridge is registered (matches the existing
-    // `isExperimentEnabled` contract for headless tests).
-    if (!this.isExperimentEnabled()) {
-      return Ok(undefined);
-    }
     if (!model || modelHasPricingData(model, this.getProvidersConfigForPricing())) {
       return Ok(undefined);
     }
@@ -1576,7 +1547,7 @@ export class WorkspaceGoalService {
   }
 
   private canRunBudgetedGoalOnKickoffModel(workspaceId: string, goal: GoalRecordV1): boolean {
-    if (!this.isExperimentEnabled() || !hasBudgetedResumableGoal(goal)) {
+    if (!hasBudgetedResumableGoal(goal)) {
       return true;
     }
     const model = this.goalContinuationBridge?.getKickoffSendOptions?.(workspaceId)?.model;
@@ -2052,7 +2023,6 @@ export class WorkspaceGoalService {
       const current = await this.readGoalFile(input.workspaceId);
       if (!current) {
         this.recordLastGoalStream(input.workspaceId, originKind, null);
-        await this.pushSnapshot(input.workspaceId, null);
         return null;
       }
 
@@ -2112,7 +2082,6 @@ export class WorkspaceGoalService {
     return this.fileLocks.withLock(input.parentWorkspaceId, async () => {
       const current = await this.readGoalFile(input.parentWorkspaceId);
       if (!current) {
-        await this.pushSnapshot(input.parentWorkspaceId, null);
         return null;
       }
 

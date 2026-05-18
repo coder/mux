@@ -530,7 +530,6 @@ const SIMPLE_GOAL_LIFECYCLE_TYPES: Record<string, SimpleGoalLifecycleType> = {
 
 const goalCommandDefinition: SlashCommandDefinition = {
   key: "goal",
-  experimentGate: EXPERIMENT_IDS.GOALS,
   description: `Create, view, or clear a workspace goal. Usage: ${GOAL_USAGE}`,
   inputHint: SLASH_COMMAND_HINTS.goal,
   appendSpace: false,

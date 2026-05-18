@@ -18,7 +18,7 @@ import {
   getThinkingLevelKey,
 } from "@/common/constants/storage";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
-import { EXPERIMENT_IDS, getExperimentKey } from "@/common/constants/experiments";
+
 import {
   CODER_RUNTIME_PLACEHOLDER,
   type CoderWorkspaceConfig,
@@ -753,7 +753,6 @@ describe("useCreationWorkspace", () => {
         Promise.resolve({ success: true, data: {} } as WorkspaceSendMessageResult)
     );
     const { workspaceApi } = setupWindow({ setGoal: setGoalMock, sendMessage: sendMessageMock });
-    localStorage.setItem(getExperimentKey(EXPERIMENT_IDS.GOALS), JSON.stringify(true));
 
     const onWorkspaceCreated = mock(
       (

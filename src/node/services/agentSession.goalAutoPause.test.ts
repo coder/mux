@@ -239,7 +239,6 @@ describe("AgentSession goal safety hooks", () => {
       await createSessionHarness(workspaceId);
     cleanups.push(cleanup);
     goalService.registerGoalContinuationConsumer(new IdleDispatcher(), {
-      isGoalExperimentEnabled: () => true,
       hasActiveDescendantTasks: () => false,
       getRuntimeState: () => ({ isRuntimeCompatible: true }),
       executeGoalContinuation: () => Promise.resolve(true),
@@ -355,7 +354,6 @@ describe("AgentSession goal safety hooks", () => {
     const dispatcher = new IdleDispatcher();
     const execute = mock(() => Promise.resolve(true));
     goalService.registerGoalContinuationConsumer(dispatcher, {
-      isGoalExperimentEnabled: () => true,
       hasActiveDescendantTasks: () => false,
       getRuntimeState: () => ({ isRuntimeCompatible: true }),
       executeGoalContinuation: execute,

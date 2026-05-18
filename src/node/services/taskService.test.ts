@@ -6067,7 +6067,6 @@ describe("TaskService", () => {
       extensionMetadata
     );
     workspaceGoalService.registerGoalContinuationConsumer(new IdleDispatcher(), {
-      isGoalExperimentEnabled: () => true,
       hasActiveDescendantTasks: () => false,
       getRuntimeState: () => ({ isRuntimeCompatible: true }),
       executeGoalContinuation: () => Promise.resolve(true),

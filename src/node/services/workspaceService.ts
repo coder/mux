@@ -5214,7 +5214,7 @@ export class WorkspaceService extends EventEmitter {
         return Err(normalized.error);
       }
 
-      if (this.workspaceGoalService?.isExperimentEnabled() === true) {
+      if (this.workspaceGoalService) {
         const goal = await this.workspaceGoalService.getGoal(workspaceId);
         // Use the resumable check rather than active-only: a paused or
         // budget-limited budgeted goal will resume accounting when the user

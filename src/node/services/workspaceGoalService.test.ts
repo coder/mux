@@ -11,11 +11,7 @@ import type { GoalRecordV1, GoalStatus } from "@/common/types/goal";
 import { GOAL_BUDGET_LIMIT_KIND, GOAL_CONTINUATION_IDLE_CONSUMER_NAME } from "@/constants/goals";
 // Shared dispatch helpers live in `./testDispatchHelpers` instead of local
 // copies so future callers cannot drift.
-import {
-  drainPendingDispatches,
-  enableGoalsExperimentForTest,
-  waitForCondition,
-} from "./testDispatchHelpers";
+import { drainPendingDispatches, waitForCondition } from "./testDispatchHelpers";
 
 function captureGoalActivity(service: WorkspaceGoalService) {
   const snapshots: Array<
@@ -60,7 +56,6 @@ function continuationBridge(
     Promise.resolve(true)
 ): GoalContinuationRuntimeBridge {
   return {
-    isGoalExperimentEnabled: () => true,
     hasActiveDescendantTasks: () => false,
     getRuntimeState: () => ({ isRuntimeCompatible: true }),
     executeGoalContinuation,
@@ -94,6 +89,19 @@ describe("WorkspaceGoalService", () => {
 
   afterEach(async () => {
     await cleanup();
+  });
+
+  test("does not write null activity snapshots for ordinary no-goal reads", async () => {
+    // Goals are GA, so tool availability asks for the current goal on every
+    // turn. No-goal reads must stay read-only; lifecycle paths that actually
+    // clear/corrupt-repair a goal still publish explicit null snapshots.
+    const setGoalSpy = spyOn(extensionMetadata, "setGoal");
+
+    const goal = await service.getGoal(workspaceId);
+
+    expect(goal).toBeNull();
+    expect(setGoalSpy).not.toHaveBeenCalled();
+    setGoalSpy.mockRestore();
   });
 
   test("creates, reads, and clears a goal while updating snapshots", async () => {
@@ -313,7 +321,6 @@ describe("WorkspaceGoalService", () => {
     const dispatcher = new IdleDispatcher();
     const executed: Array<{ message: string; kind: string | undefined }> = [];
     service.registerGoalContinuationConsumer(dispatcher, {
-      isGoalExperimentEnabled: () => true,
       hasActiveDescendantTasks: () => false,
       getRuntimeState: () => ({ isRuntimeCompatible: true }),
       executeGoalContinuation: (input) => {
@@ -334,7 +341,6 @@ describe("WorkspaceGoalService", () => {
     const dispatcher = new IdleDispatcher();
     const executed: Array<{ message: string }> = [];
     service.registerGoalContinuationConsumer(dispatcher, {
-      isGoalExperimentEnabled: () => true,
       hasActiveDescendantTasks: () => false,
       getRuntimeState: () => ({ isRuntimeCompatible: true }),
       executeGoalContinuation: (input) => {
@@ -357,7 +363,6 @@ describe("WorkspaceGoalService", () => {
     const dispatcher = new IdleDispatcher();
     const executed: Array<{ message: string }> = [];
     service.registerGoalContinuationConsumer(dispatcher, {
-      isGoalExperimentEnabled: () => true,
       hasActiveDescendantTasks: () => false,
       getRuntimeState: () => ({ isRuntimeCompatible: true }),
       executeGoalContinuation: (input) => {
@@ -372,37 +377,6 @@ describe("WorkspaceGoalService", () => {
     await setGoalOk(service, { workspaceId, objective: "No kickoff defaults" });
 
     expect(executed).toHaveLength(0);
-  });
-
-  test("requestContinuationAfterStreamEnd is a no-op when the GOALS experiment is disabled", async () => {
-    // Pin the experiment-off short-circuit so a regression that removed or
-    // inverted the gate would be caught. Without the gate, every
-    // non-compaction stream-end pays a `goal.json` ENOENT read +
-    // `extensionMetadata.json` write for users with the experiment off.
-    await setGoalOk(service, { workspaceId, objective: "Should never dispatch" });
-    const dispatcher = new IdleDispatcher();
-    const execute = mock(() => Promise.resolve(true));
-    const getGoalSpy = spyOn(service, "getGoal");
-    service.registerGoalContinuationConsumer(dispatcher, {
-      isGoalExperimentEnabled: () => false,
-      hasActiveDescendantTasks: () => false,
-      getRuntimeState: () => ({ isRuntimeCompatible: true }),
-      executeGoalContinuation: execute,
-    });
-
-    // Reset the spy *after* registration so we can prove the
-    // request-continuation call below does not read goal.json again.
-    getGoalSpy.mockClear();
-
-    await service.requestContinuationAfterStreamEnd({
-      workspaceId,
-      sendOptions: { model: "openai:gpt-4o", agentId: "exec" },
-      streamEndedAtMs: 10_000,
-    });
-
-    expect(getGoalSpy).not.toHaveBeenCalled();
-    expect(execute).not.toHaveBeenCalled();
-    getGoalSpy.mockRestore();
   });
 
   test("falls back to priced kickoff options when stream options are unpriced for budgeted goals", async () => {
@@ -806,7 +780,6 @@ describe("WorkspaceGoalService", () => {
     const dispatcher = new IdleDispatcher();
     const executed: Array<{ kind: string | undefined; message: string }> = [];
     restartedService.registerGoalContinuationConsumer(dispatcher, {
-      isGoalExperimentEnabled: () => true,
       hasActiveDescendantTasks: () => false,
       getRuntimeState: () => ({ isRuntimeCompatible: true }),
       executeGoalContinuation: (input) => {
@@ -907,7 +880,6 @@ describe("WorkspaceGoalService", () => {
     const dispatcher = new IdleDispatcher();
     const execute = mock(() => Promise.resolve(true));
     restartedService.registerGoalContinuationConsumer(dispatcher, {
-      isGoalExperimentEnabled: () => true,
       hasActiveDescendantTasks: () => false,
       getRuntimeState: () => ({ isRuntimeCompatible: true }),
       executeGoalContinuation: execute,
@@ -1902,7 +1874,6 @@ describe("WorkspaceGoalService", () => {
     const dispatcher = new IdleDispatcher();
     const execute = mock(() => Promise.resolve(true));
     service.registerGoalContinuationConsumer(dispatcher, {
-      isGoalExperimentEnabled: () => true,
       hasActiveDescendantTasks: () => hasActiveDescendantTasks,
       getRuntimeState: () => ({ isRuntimeCompatible: true }),
       executeGoalContinuation: execute,
@@ -1941,7 +1912,6 @@ describe("WorkspaceGoalService", () => {
     const dispatcher = new IdleDispatcher();
     const executed: Array<{ kind: string | undefined }> = [];
     service.registerGoalContinuationConsumer(dispatcher, {
-      isGoalExperimentEnabled: () => true,
       hasActiveDescendantTasks: () => false,
       getRuntimeState: () => ({ isRuntimeCompatible: true }),
       executeGoalContinuation: (input) => {
@@ -1982,7 +1952,6 @@ describe("WorkspaceGoalService", () => {
     const dispatcher = new IdleDispatcher();
     const executed: Array<{ kind: string | undefined }> = [];
     service.registerGoalContinuationConsumer(dispatcher, {
-      isGoalExperimentEnabled: () => true,
       hasActiveDescendantTasks: () => false,
       getRuntimeState: () => ({ isRuntimeCompatible: true }),
       executeGoalContinuation: (input) => {
@@ -2681,15 +2650,7 @@ describe("WorkspaceGoalService", () => {
     const UNPRICED = "openai:not-priced-model";
     const PRICED = "openai:gpt-4o-mini";
 
-    // the gate now short-circuits when the
-    // GOALS experiment is off (default in headless tests). Use the shared
-    // `enableGoalsExperimentForTest` helper to register a no-op continuation
-    // consumer with `isGoalExperimentEnabled: () => true` per test so the
-    // gate exercises the live path ().
-    const enableGoalsExperiment = enableGoalsExperimentForTest;
-
     test("rejects unpriced model on a resumable budgeted goal", async () => {
-      enableGoalsExperiment(service);
       await setGoalOk(service, {
         workspaceId,
         objective: "ship",
@@ -2707,7 +2668,6 @@ describe("WorkspaceGoalService", () => {
     });
 
     test("rejects on paused budgeted goals (would resume on un-pause)", async () => {
-      enableGoalsExperiment(service);
       await setGoalOk(service, {
         workspaceId,
         objective: "ship",
@@ -2717,21 +2677,6 @@ describe("WorkspaceGoalService", () => {
 
       const result = await service.assertPricedModelForBudgetedGoal(workspaceId, UNPRICED);
       expect(result.success).toBe(false);
-    });
-
-    test("short-circuits when the GOALS experiment is disabled (no disk read)", async () => {
-      // don't pay `getGoal`'s disk cost on every send/resume for
-      // users who never used the GOALS feature. With no bridge registered,
-      // `isExperimentEnabled` returns false and the gate returns Ok without
-      // consulting goal.json (which would crash because no goal exists in
-      // this test setup with an unpriced model).
-      const getGoalSpy = spyOn(service, "getGoal");
-
-      const result = await service.assertPricedModelForBudgetedGoal(workspaceId, UNPRICED);
-
-      expect(result.success).toBe(true);
-      expect(getGoalSpy).not.toHaveBeenCalled();
-      getGoalSpy.mockRestore();
     });
 
     test("priced models short-circuit before reading goal.json", async () => {

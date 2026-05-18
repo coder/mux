@@ -655,7 +655,6 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   const api = apiState.api;
   const desktopExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.PORTABLE_DESKTOP);
   const browserExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.AGENT_BROWSER);
-  const goalsExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.GOALS);
   // Child task workspaces can't run goal actions — backend rejects them
   // via `WorkspaceGoalService.assertParentWorkspace`. We use this flag
   // both to hide the Goal tab below and to gate any inline goal UX.
@@ -948,14 +947,12 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     setLayoutRaw((prevRaw) => {
       const prev = parseRightSidebarLayoutState(prevRaw, initialActiveTab);
       const hasGoal = collectAllTabs(prev.root).includes("goal");
-      // Goal tab is always visible when the GOALS experiment is enabled
-      // AND the workspace is a top-level workspace. Child task
+      // Goal tab is always visible on top-level workspaces. Child task
       // workspaces can't use any goal action — every backend write goes
       // through `assertParentWorkspace()` which throws for workspaces
       // with `parentWorkspaceId`. Showing the tab there would surface
       // a create/queue UI whose submits fail.
-      const isChildWorkspace = isChildWorkspaceForGoal;
-      const goalTabShouldExist = goalsExperimentEnabled && !isChildWorkspace;
+      const goalTabShouldExist = !isChildWorkspaceForGoal;
       if (goalTabShouldExist && !hasGoal) {
         return addTabToFocusedTabset(prev, "goal", false);
       }
@@ -966,7 +963,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
 
       return prev;
     });
-  }, [goalsExperimentEnabled, initialActiveTab, setLayoutRaw, isChildWorkspaceForGoal]);
+  }, [initialActiveTab, setLayoutRaw, isChildWorkspaceForGoal]);
 
   React.useEffect(() => {
     if (!desktopExperimentEnabled) {

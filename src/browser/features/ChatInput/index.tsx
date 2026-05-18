@@ -65,7 +65,6 @@ import {
   getWorkspaceLastReadKey,
 } from "@/common/constants/storage";
 import {
-  isGoalsExperimentEnabledForCommand,
   prepareCompactionMessage,
   processSlashCommand,
   type SlashCommandContext,
@@ -237,7 +236,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const creationProject =
     variant === "creation" ? userProjects.get(creationParentProjectPath) : undefined;
   const [thinkingLevel] = useThinkingLevel();
-  const goalsExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.GOALS);
   const workspaceHeartbeatsExperimentEnabled = useExperimentValue(
     EXPERIMENT_IDS.WORKSPACE_HEARTBEATS
   );
@@ -1415,19 +1413,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       variant,
       isExperimentEnabled: (experimentId) =>
         resolveSlashCommandExperimentValue(experimentId, {
-          goals: goalsExperimentEnabled,
           workspaceHeartbeats: workspaceHeartbeatsExperimentEnabled,
         }),
     });
     setCommandSuggestions((prev) => replaceSuggestions(prev, suggestions));
     setShowCommandSuggestions(suggestions.length > 0);
-  }, [
-    input,
-    agentSkillDescriptors,
-    variant,
-    goalsExperimentEnabled,
-    workspaceHeartbeatsExperimentEnabled,
-  ]);
+  }, [input, agentSkillDescriptors, variant, workspaceHeartbeatsExperimentEnabled]);
 
   // Derive ghost hint for slash-command argument syntax.
   // Show only when suggestions are hidden and the input is exactly "/command " with no args yet.
@@ -1435,7 +1426,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     variant,
     isExperimentEnabled: (experimentId) =>
       resolveSlashCommandExperimentValue(experimentId, {
-        goals: goalsExperimentEnabled,
         workspaceHeartbeats: workspaceHeartbeatsExperimentEnabled,
       }),
   });
@@ -2158,14 +2148,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     // Route to creation handler for creation variant
     if (variant === "creation") {
       const initialGoalCommand = parsed?.type === "goal-set" ? parsed : undefined;
-      if (initialGoalCommand && !(await isGoalsExperimentEnabledForCommand({ api }))) {
-        setToast({
-          id: Date.now().toString(),
-          type: "error",
-          message: "Goal commands require the Goals experiment to be enabled",
-        });
-        return;
-      }
       if (!initialGoalCommand) {
         const commandHandled = await executeParsedCommand(parsed, input);
         if (commandHandled) {

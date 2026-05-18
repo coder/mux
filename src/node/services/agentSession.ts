@@ -4112,7 +4112,7 @@ export class AgentSession {
     metadataModel?: string;
     isCompaction?: boolean;
   }): Promise<void> {
-    if (this.workspaceGoalService?.isExperimentEnabled() !== true) {
+    if (!this.workspaceGoalService) {
       return;
     }
     const displayUsage = createDisplayUsage(
@@ -4138,7 +4138,7 @@ export class AgentSession {
   }
 
   private async restoreGoalAccountingSnapshot(): Promise<void> {
-    if (this.workspaceGoalService?.isExperimentEnabled() !== true) {
+    if (!this.workspaceGoalService) {
       return;
     }
 
@@ -4162,14 +4162,6 @@ export class AgentSession {
     agentInitiated?: boolean;
   }): Promise<void> {
     if (!this.workspaceGoalService) {
-      return;
-    }
-    // Hot-path gate: when the GOALS experiment is off, skip the goal-record
-    // disk I/O entirely so the off-experiment runtime really is identical to
-    // main (Coder-agents-review P3 DEREM-19). Without this short-circuit,
-    // every stream-end pays a goal.json read (ENOENT for users without
-    // goals) + an extensionMetadata write to push a null goal snapshot.
-    if (!this.workspaceGoalService.isExperimentEnabled()) {
       return;
     }
 
