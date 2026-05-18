@@ -2745,12 +2745,21 @@ export class WorkspaceGoalService {
       // schema parse rather than calling setGoal to avoid re-entering
       // the streaming/conflict path — promotion happens inside one
       // file lock and shouldn't fan out into the public setGoal flow.
+      //
+      // Codex P2: a previously-active goal demoted back into upcoming
+      // may already have cost ≥ budget or turnsUsed ≥ turnCap
+      // (e.g. it hit `budget_limited`, was demoted by a different
+      // promote, then re-queued). Run `applyBudgetDrivenStatus` so the
+      // re-activated record correctly lands in `budget_limited` if the
+      // limits are already exhausted; otherwise it would accept a send
+      // and only flip after the next chunk's accounting.
       const now = Date.now();
-      const activated = GoalRecordV1Schema.parse({
+      const baseActivated = GoalRecordV1Schema.parse({
         ...promoted,
         status: "active",
         updatedAtMs: now,
       });
+      const activated = this.applyBudgetDrivenStatus(baseActivated);
 
       // Codex P2: gate budgeted goal promotion on pricing data. A user
       // who queued a goal under a priced model and then switched to an
@@ -2891,11 +2900,16 @@ export class WorkspaceGoalService {
     }
     const [head, ...rest] = board.upcoming;
     const now = Date.now();
-    const activated = GoalRecordV1Schema.parse({
+    // Codex P2: same budget-driven normalization as
+    // `promoteUpcomingGoal`. Cover the auto-promote-on-complete path
+    // and the deferred stream-end path; both write the head into
+    // `goal.json` and need to respect already-exhausted limits.
+    const baseActivated = GoalRecordV1Schema.parse({
       ...head,
       status: "active",
       updatedAtMs: now,
     });
+    const activated = this.applyBudgetDrivenStatus(baseActivated);
     // Codex P2: same pricing gate as `promoteUpcomingGoal`. If the next
     // queued goal is budgeted and the workspace is currently on an
     // unpriced model, refuse the auto-promotion — otherwise we'd leave
