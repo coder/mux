@@ -31,6 +31,7 @@ import { useAPI } from "@/browser/contexts/API";
 import { useGoalDefaults } from "@/browser/utils/goals/useGoalDefaults";
 import { loadGoalDefaults, resolveGoalSetIntent } from "@/browser/utils/goals/resolveGoalSetIntent";
 import { cn } from "@/common/lib/utils";
+import { GOAL_OBJECTIVE_PLACEHOLDER } from "@/constants/goals";
 import type { GoalBoardEntry, GoalBoardSnapshot, GoalRecordV1 } from "@/common/types/goal";
 import { formatGoalCents } from "@/common/utils/goals/budgetPricing";
 import {
@@ -691,7 +692,7 @@ function UpcomingAdder(props: UpcomingAdderProps) {
       <input
         ref={objectiveRef}
         aria-label="Queued goal objective"
-        placeholder="Describe the next goal"
+        placeholder={GOAL_OBJECTIVE_PLACEHOLDER}
         className="border-border bg-surface-primary text-foreground focus:border-accent rounded-md border p-1.5 text-sm outline-none"
         autoFocus
         onKeyDown={(event) => {
