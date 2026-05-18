@@ -2713,15 +2713,18 @@ export class WorkspaceGoalService {
     if (board.upcoming.length === 0) {
       return;
     }
-    // Codex P2: check the pricing gate BEFORE appending history. If
-    // the next-up goal is budgeted and the kickoff model is unpriced,
-    // we skip the auto-promote and leave the completed goal in
-    // goal.json so the board's Completed section still shows it via
-    // the live active record. The user can fix the model and call
-    // `promoteUpcomingGoal` to retry, which archives the completed
-    // goal once. If we appended history here unconditionally, that
-    // later manual promote would archive again → duplicate Completed
-    // entry for one goal.
+    // Codex P1 + P2: check BOTH the streaming guard and the pricing
+    // gate BEFORE appending the completion history entry. Either
+    // failure here means promotion can't go through; we must leave
+    // the completed goal in `goal.json` so a later retry archives it
+    // exactly once instead of producing a duplicate Completed row.
+    if (await this.isWorkspaceStreaming(workspaceId)) {
+      log.warn("Auto-promote on complete skipped: workspace is still streaming", {
+        workspaceId,
+        goalId: board.upcoming[0].goalId,
+      });
+      return;
+    }
     const [head] = board.upcoming;
     const projected = GoalRecordV1Schema.parse({
       ...head,
@@ -2757,6 +2760,23 @@ export class WorkspaceGoalService {
   private async promoteNextUpcomingUnlocked(workspaceId: string): Promise<GoalRecordV1 | null> {
     const board = await this.readBoard(workspaceId);
     if (board.upcoming.length === 0) return null;
+    // Codex P1: same mid-stream guard as `promoteUpcomingGoal`.
+    // `clearGoal` and `maybeAutoPromoteOnComplete` invoke this helper
+    // while a stream may still be running (the agent's `complete_goal`
+    // tool fires mid-turn). Writing the queued goal to `goal.json` in
+    // that window lets the remaining stream cost get attributed to the
+    // newly-promoted record. Skip the auto-promote while streaming —
+    // the caller (manual setGoal/clearGoal flow) already succeeded;
+    // the upcoming head stays intact and the user can trigger a
+    // promote later (or stream-end will land here naturally on the
+    // next mutation).
+    if (await this.isWorkspaceStreaming(workspaceId)) {
+      log.warn("Auto-promote on complete skipped: workspace is still streaming", {
+        workspaceId,
+        goalId: board.upcoming[0].goalId,
+      });
+      return null;
+    }
     const [head, ...rest] = board.upcoming;
     const now = Date.now();
     const activated = GoalRecordV1Schema.parse({
