@@ -7,6 +7,7 @@ import {
   type GoalSnapshot,
   type GoalStatus,
 } from "@/common/types/goal";
+import { GOAL_OBJECTIVE_PLACEHOLDER } from "@/constants/goals";
 import { formatGoalCents } from "@/common/utils/goals/budgetPricing";
 import {
   parseGoalBudgetInputCents,
@@ -1057,9 +1058,14 @@ function GoalCreateForm(props: GoalCreateFormProps) {
         <textarea
           ref={objectiveRef}
           id="goal-create-objective"
-          className="border-border bg-surface-primary text-foreground focus:border-accent min-h-20 w-full rounded-md border p-2 text-sm outline-none"
+          // `min-h-28` (7rem) keeps the multi-sentence educational
+          // placeholder (`GOAL_OBJECTIVE_PLACEHOLDER`) fully visible at
+          // typical sidebar widths. Textareas don't scroll placeholder
+          // text, so dropping below ~5 lines starts truncating the
+          // example phrases the placeholder is meant to teach.
+          className="border-border bg-surface-primary text-foreground focus:border-accent min-h-28 w-full rounded-md border p-2 text-sm outline-none"
           aria-label="Goal objective"
-          placeholder="Ship the goal lifecycle slice"
+          placeholder={GOAL_OBJECTIVE_PLACEHOLDER}
           defaultValue=""
           onKeyDown={(event) => {
             // Cmd/Ctrl+Enter mirrors the inline objective editor. Plain

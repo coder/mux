@@ -44,6 +44,7 @@ import type { BranchListResult } from "@/common/orpc/types";
 import type { WorkspaceState } from "@/browser/stores/WorkspaceStore";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { isGoalPendingPersistence, type GoalSetError, type GoalStatus } from "@/common/types/goal";
+import { GOAL_OBJECTIVE_PLACEHOLDER } from "@/constants/goals";
 import { getErrorMessage } from "@/common/utils/errors";
 import { parseGoalBudgetCents } from "@/browser/utils/slashCommands/registry";
 import { setGoalWithConflictRetry } from "@/browser/utils/goals/setGoalWithConflictRetry";
@@ -840,7 +841,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
               type: "text",
               name: "objective",
               label: "Goal objective",
-              placeholder: "Describe the goal…",
+              placeholder: GOAL_OBJECTIVE_PLACEHOLDER,
               validate: (value) => (!value.trim() ? "Goal objective is required" : null),
             },
             {
