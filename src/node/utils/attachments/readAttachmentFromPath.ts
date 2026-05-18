@@ -4,6 +4,7 @@ import { MAX_SVG_TEXT_CHARS, SVG_MEDIA_TYPE } from "@/common/constants/imageAtta
 import { getErrorMessage } from "@/common/utils/errors";
 import {
   getSupportedAttachmentMediaType,
+  MARKDOWN_MEDIA_TYPE,
   normalizeAttachmentMediaType,
 } from "@/common/utils/attachments/supportedAttachmentMediaTypes";
 import type { FileStat, Runtime } from "@/node/runtime/Runtime";
@@ -46,7 +47,14 @@ const EXTENSION_TO_DISPLAY_MEDIA_TYPE: Record<string, string> = {
   mp3: "audio/mpeg",
   wav: "audio/wav",
   ogg: "audio/ogg",
+  md: MARKDOWN_MEDIA_TYPE,
+  markdown: MARKDOWN_MEDIA_TYPE,
+  mdown: MARKDOWN_MEDIA_TYPE,
 };
+
+// Markdown is intentionally display-only: agents should use file_read when they need
+// the contents, while attach_file gives users a quick preview/download affordance.
+const DISPLAY_ONLY_MARKDOWN_MEDIA_TYPES = new Set([MARKDOWN_MEDIA_TYPE, "text/x-markdown"]);
 
 const TEXT_EXTENSIONS_REQUIRING_FILE_READ = new Set([
   "c",
@@ -198,6 +206,9 @@ function getDisplayFileMediaTypeCandidate(
 
   if (rawMediaType != null) {
     const mediaType = normalizeAttachmentMediaType(rawMediaType);
+    if (DISPLAY_ONLY_MARKDOWN_MEDIA_TYPES.has(mediaType)) {
+      return { mediaType, requireBinaryContent: false };
+    }
     if (mediaType.startsWith("text/") || TEXT_MEDIA_TYPES_REQUIRING_FILE_READ.has(mediaType)) {
       return null;
     }

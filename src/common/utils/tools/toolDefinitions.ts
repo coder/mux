@@ -1031,7 +1031,7 @@ export const TOOL_DEFINITIONS = {
     description:
       "Attach a supported file from the filesystem so later model steps receive it as a real attachment instead of a huge base64 JSON blob. " +
       "Accepts absolute or relative paths, including files outside the workspace. " +
-      "Currently supports raster images, SVG, and PDF. Unsupported file types are shown to the user in chat when possible, but only a notice is sent to the model.",
+      "Currently supports raster images, SVG, and PDF as model attachments. Markdown files are shown to the user for preview/download only. Unsupported file types are shown to the user in chat when possible, but only a notice is sent to the model.",
     schema: z.preprocess(
       normalizeFilePath,
       z

@@ -1,6 +1,7 @@
 import { SVG_MEDIA_TYPE } from "@/common/constants/imageAttachments";
 
 export const PDF_MEDIA_TYPE = "application/pdf";
+export const MARKDOWN_MEDIA_TYPE = "text/markdown";
 
 const EXTENSION_TO_MEDIA_TYPE: Record<string, string> = {
   png: "image/png",

@@ -291,6 +291,58 @@ describe("attach_file tool", () => {
     });
   });
 
+  it("shows markdown files to the user without attaching them to the model", async () => {
+    using workspaceDir = new TestTempDir("attach-file-workspace");
+    const tool = createTestAttachFileTool(workspaceDir.path);
+    const markdownPath = path.join(workspaceDir.path, "release-notes.md");
+    const markdown = "# Release Notes\n\n- Added preview/download support.\n";
+    await fs.writeFile(markdownPath, markdown);
+
+    const result = expectSuccessfulAttachFileResult(
+      (await tool.execute!(
+        { path: "release-notes.md" },
+        mockToolCallOptions
+      )) as AttachFileToolResult
+    );
+
+    expect(result.value[0].type).toBe("text");
+    if (result.value[0].type !== "text") {
+      throw new Error("Expected display-only status text");
+    }
+    expect(result.value[0].text).toContain("release-notes.md (text/markdown)");
+    expect(result.value[0].text).toContain("not supported as a model attachment");
+    expect(result.value[1]).toEqual({
+      type: "display_file",
+      data: Buffer.from(markdown).toString("base64"),
+      mediaType: "text/markdown",
+      filename: "release-notes.md",
+      providerOptions: { mux: { displayOnly: true, size: Buffer.byteLength(markdown) } },
+    });
+  });
+
+  it("allows a markdown media type override for generated files with ambiguous extensions", async () => {
+    using workspaceDir = new TestTempDir("attach-file-workspace");
+    const tool = createTestAttachFileTool(workspaceDir.path);
+    const markdownPath = path.join(workspaceDir.path, "release-notes.out");
+    const markdown = "# Release Notes\n";
+    await fs.writeFile(markdownPath, markdown);
+
+    const result = expectSuccessfulAttachFileResult(
+      (await tool.execute!(
+        { path: "release-notes.out", mediaType: "text/markdown; charset=utf-8" },
+        mockToolCallOptions
+      )) as AttachFileToolResult
+    );
+
+    expect(result.value[1]).toEqual({
+      type: "display_file",
+      data: Buffer.from(markdown).toString("base64"),
+      mediaType: "text/markdown",
+      filename: "release-notes.out",
+      providerOptions: { mux: { displayOnly: true, size: Buffer.byteLength(markdown) } },
+    });
+  });
+
   it("rejects text-like unsupported files so the model can use file_read", async () => {
     using workspaceDir = new TestTempDir("attach-file-workspace");
     const tool = createTestAttachFileTool(workspaceDir.path);
