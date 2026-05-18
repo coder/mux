@@ -20,6 +20,13 @@ import {
 import { BranchListResultSchema, FilePartSchema, MuxMessageSchema } from "./message";
 import {
   GoalClearInputSchema,
+  GoalBoardAddUpcomingInputSchema,
+  GoalBoardArchiveInputSchema,
+  GoalBoardGetInputSchema,
+  GoalBoardPromoteInputSchema,
+  GoalBoardReorderInputSchema,
+  GoalBoardReviveInputSchema,
+  GoalBoardSnapshotSchema,
   GoalGetHistoryInputSchema,
   GoalGetHistoryOutputSchema,
   GoalGetInputSchema,
@@ -1506,6 +1513,39 @@ export const workspace = {
   getGoalHistory: {
     input: GoalGetHistoryInputSchema,
     output: GoalGetHistoryOutputSchema,
+  },
+  /**
+   * Goal board (multi-goal queue) endpoints. The board is the renderer-
+   * facing view of a workspace's goals across the four sections (active,
+   * upcoming, complete, archived). Backed by `goal.json` (active),
+   * `goal-board.json` (upcoming + archived), and `goal-history.jsonl`
+   * (complete). See `src/common/orpc/schemas/goal.ts` for the schema
+   * rationale and the deliberate decision to keep the agent's
+   * `get_goal` tool reading only the active goal.
+   */
+  getGoalBoard: {
+    input: GoalBoardGetInputSchema,
+    output: GoalBoardSnapshotSchema,
+  },
+  addUpcomingGoal: {
+    input: GoalBoardAddUpcomingInputSchema,
+    output: GoalRecordV1Schema,
+  },
+  archiveGoal: {
+    input: GoalBoardArchiveInputSchema,
+    output: z.void(),
+  },
+  reviveArchivedGoal: {
+    input: GoalBoardReviveInputSchema,
+    output: z.void(),
+  },
+  reorderUpcomingGoals: {
+    input: GoalBoardReorderInputSchema,
+    output: z.void(),
+  },
+  promoteUpcomingGoal: {
+    input: GoalBoardPromoteInputSchema,
+    output: GoalRecordV1Schema.nullable(),
   },
   getSessionUsage: {
     input: z.object({ workspaceId: z.string() }),

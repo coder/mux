@@ -19,6 +19,16 @@ export { ProjectConfigSchema, WorkspaceConfigSchema } from "./schemas/project";
 
 // Goal schemas
 export {
+  GoalBoardAddUpcomingInputSchema,
+  GoalBoardArchiveInputSchema,
+  GoalBoardEntrySchema,
+  GoalBoardGetInputSchema,
+  GoalBoardPromoteInputSchema,
+  GoalBoardReorderInputSchema,
+  GoalBoardReviveInputSchema,
+  GoalBoardSectionSchema,
+  GoalBoardSnapshotSchema,
+  GoalBoardV1Schema,
   GoalClearInputSchema,
   GoalGetInputSchema,
   GoalRecordV1Schema,

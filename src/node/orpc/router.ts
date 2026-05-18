@@ -4128,6 +4128,59 @@ export const router = (authToken?: string) => {
             entries: await context.workspaceGoalService.getGoalHistory(input.workspaceId),
           };
         }),
+      // ────────────────────────────────────────────────────────────────
+      // Goal board (multi-goal queue) endpoints. Each handler forwards
+      // to `workspaceGoalService` after a missing-workspace short-
+      // circuit (same pattern as getGoal / getGoalHistory) so the
+      // renderer can race a board fetch against a workspace deletion
+      // without hitting a 500.
+      // ────────────────────────────────────────────────────────────────
+      getGoalBoard: t
+        .input(schemas.workspace.getGoalBoard.input)
+        .output(schemas.workspace.getGoalBoard.output)
+        .handler(async ({ context, input }) => {
+          const workspace = await context.workspaceService.getInfo(input.workspaceId);
+          if (!workspace) return { entries: [] };
+          return context.workspaceGoalService.getGoalBoard(input.workspaceId);
+        }),
+      addUpcomingGoal: t
+        .input(schemas.workspace.addUpcomingGoal.input)
+        .output(schemas.workspace.addUpcomingGoal.output)
+        .handler(async ({ context, input }) => {
+          return context.workspaceGoalService.addUpcomingGoal({
+            workspaceId: input.workspaceId,
+            objective: input.objective,
+            budgetCents: input.budgetCents,
+            turnCap: input.turnCap,
+          });
+        }),
+      archiveGoal: t
+        .input(schemas.workspace.archiveGoal.input)
+        .output(schemas.workspace.archiveGoal.output)
+        .handler(async ({ context, input }) => {
+          await context.workspaceGoalService.archiveGoal(input.workspaceId, input.goalId);
+        }),
+      reviveArchivedGoal: t
+        .input(schemas.workspace.reviveArchivedGoal.input)
+        .output(schemas.workspace.reviveArchivedGoal.output)
+        .handler(async ({ context, input }) => {
+          await context.workspaceGoalService.reviveArchivedGoal(input.workspaceId, input.goalId);
+        }),
+      reorderUpcomingGoals: t
+        .input(schemas.workspace.reorderUpcomingGoals.input)
+        .output(schemas.workspace.reorderUpcomingGoals.output)
+        .handler(async ({ context, input }) => {
+          await context.workspaceGoalService.reorderUpcomingGoals(
+            input.workspaceId,
+            input.upcomingIds
+          );
+        }),
+      promoteUpcomingGoal: t
+        .input(schemas.workspace.promoteUpcomingGoal.input)
+        .output(schemas.workspace.promoteUpcomingGoal.output)
+        .handler(async ({ context, input }) => {
+          return context.workspaceGoalService.promoteUpcomingGoal(input.workspaceId, input.goalId);
+        }),
       getSessionUsage: t
         .input(schemas.workspace.getSessionUsage.input)
         .output(schemas.workspace.getSessionUsage.output)

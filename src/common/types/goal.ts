@@ -1,5 +1,9 @@
 import type { z } from "zod";
 import type {
+  GoalBoardEntrySchema,
+  GoalBoardSectionSchema,
+  GoalBoardSnapshotSchema,
+  GoalBoardV1Schema,
   GoalHistoryEndReasonSchema,
   GoalHistoryEntrySchema,
   GoalRecordV1Schema,
@@ -13,6 +17,10 @@ export type GoalRecordV1 = z.infer<typeof GoalRecordV1Schema>;
 export type GoalSnapshot = z.infer<typeof GoalSnapshotSchema>;
 export type GoalHistoryEndReason = z.infer<typeof GoalHistoryEndReasonSchema>;
 export type GoalHistoryEntry = z.infer<typeof GoalHistoryEntrySchema>;
+export type GoalBoardV1 = z.infer<typeof GoalBoardV1Schema>;
+export type GoalBoardSection = z.infer<typeof GoalBoardSectionSchema>;
+export type GoalBoardEntry = z.infer<typeof GoalBoardEntrySchema>;
+export type GoalBoardSnapshot = z.infer<typeof GoalBoardSnapshotSchema>;
 
 export type GoalSetError = z.infer<typeof GoalSetErrorSchema>;
 
@@ -25,12 +33,17 @@ export type GoalSetError = z.infer<typeof GoalSetErrorSchema>;
  *                  `GoalActiveMode` below for that sub-status.
  *   - `complete` — agent or user marked it done.
  *
- * `upcoming` / `archived` are reserved for the multi-goal queue model.
+ *   - `upcoming` — queued behind the active goal; the user has lined
+ *                  this up next but the agent is not yet driving it.
+ *   - `archived` — the user manually stashed this (after completion, or
+ *                  to deprioritize without losing the context). Hidden
+ *                  from the agent and from auto-promotion.
  *
- * The storage enum (`GoalStatus`) flattens these two axes (lifecycle +
- * active-mode) into one string because it predates the conceptual split.
- * `goalLifecycle()` maps from storage → lifecycle so the UI can group
- * goals on the board without learning the legacy flat-enum vocabulary.
+ * The storage enum (`GoalStatus`) does NOT carry `upcoming` / `archived`
+ * — those live on the per-workspace `goal-board.json` side table so the
+ * existing single-goal `goal.json` storage and agent contract stay
+ * unchanged. The UI gets the lifecycle by combining sources via
+ * `GoalBoardSection` instead of squinting at one flat enum.
  */
 export type GoalLifecycle = "active" | "complete";
 

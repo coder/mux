@@ -2716,4 +2716,152 @@ describe("WorkspaceGoalService", () => {
       expect(result.success).toBe(true);
     });
   });
+
+  describe("goal board (multi-goal queue)", () => {
+    test("getGoalBoard returns an empty snapshot when nothing exists", async () => {
+      const board = await service.getGoalBoard(workspaceId);
+      expect(board).toEqual({ entries: [] });
+    });
+
+    test("addUpcomingGoal appends to the upcoming list and getGoalBoard reflects it", async () => {
+      const queued = await service.addUpcomingGoal({
+        workspaceId,
+        objective: "Refactor auth flow",
+        budgetCents: 1000,
+        turnCap: 20,
+      });
+      expect(queued.objective).toBe("Refactor auth flow");
+      // Upcoming goals are stored with a placeholder `paused` status —
+      // promote/auto-promote is what flips them to `active`.
+      expect(queued.status).toBe("paused");
+
+      const board = await service.getGoalBoard(workspaceId);
+      expect(board.entries).toHaveLength(1);
+      expect(board.entries[0]).toMatchObject({
+        section: "upcoming",
+        goal: { goalId: queued.goalId, objective: "Refactor auth flow" },
+      });
+    });
+
+    test("board surfaces active + upcoming together with active first", async () => {
+      const active = await setGoalOk(service, { workspaceId, objective: "Active work" });
+      const upcoming = await service.addUpcomingGoal({ workspaceId, objective: "Next up" });
+      const board = await service.getGoalBoard(workspaceId);
+      expect(board.entries.map((e) => [e.section, e.goal.goalId])).toEqual([
+        ["active", active.goalId],
+        ["upcoming", upcoming.goalId],
+      ]);
+    });
+
+    test("auto-promotes the next upcoming goal when the active goal completes", async () => {
+      const active = await setGoalOk(service, { workspaceId, objective: "First" });
+      const queued = await service.addUpcomingGoal({ workspaceId, objective: "Second" });
+
+      // Mark the active goal complete. The board's invariant is: the
+      // completed goal moves to history + the next upcoming becomes
+      // active in the same write.
+      await setGoalOk(service, {
+        workspaceId,
+        status: "complete",
+        completionSummary: "Wrapped up first goal.",
+      });
+
+      const board = await service.getGoalBoard(workspaceId);
+      const activeEntry = board.entries.find((e) => e.section === "active");
+      expect(activeEntry?.goal.goalId).toBe(queued.goalId);
+      expect(activeEntry?.goal.status).toBe("active");
+
+      const completed = board.entries.find(
+        (e) => e.section === "complete" && e.goal.goalId === active.goalId
+      );
+      expect(completed).toBeDefined();
+    });
+
+    test("does NOT auto-promote when the upcoming list is empty (preserves single-goal UX)", async () => {
+      const active = await setGoalOk(service, { workspaceId, objective: "Solo" });
+      await setGoalOk(service, {
+        workspaceId,
+        status: "complete",
+        completionSummary: "All done.",
+      });
+
+      // Without queued upcoming goals, the active goal stays in
+      // `goal.json` with its completion summary so the existing
+      // single-goal UX is preserved.
+      const board = await service.getGoalBoard(workspaceId);
+      const activeEntry = board.entries.find((e) => e.section === "active");
+      expect(activeEntry?.goal.goalId).toBe(active.goalId);
+      expect(activeEntry?.goal.status).toBe("complete");
+      expect(activeEntry?.goal.completionSummary).toBe("All done.");
+    });
+
+    test("archiveGoal moves an upcoming goal to archived", async () => {
+      const queued = await service.addUpcomingGoal({ workspaceId, objective: "To archive" });
+      await service.archiveGoal(workspaceId, queued.goalId);
+
+      const board = await service.getGoalBoard(workspaceId);
+      expect(board.entries.find((e) => e.section === "upcoming")).toBeUndefined();
+      expect(board.entries.find((e) => e.section === "archived")?.goal.goalId).toBe(queued.goalId);
+    });
+
+    test("archiveGoal handles the active goal by clearing it and snapshotting into archived", async () => {
+      const active = await setGoalOk(service, { workspaceId, objective: "Active to archive" });
+      await service.archiveGoal(workspaceId, active.goalId);
+
+      const board = await service.getGoalBoard(workspaceId);
+      expect(board.entries.find((e) => e.section === "active")).toBeUndefined();
+      expect(board.entries.find((e) => e.section === "archived")?.goal.goalId).toBe(active.goalId);
+    });
+
+    test("reviveArchivedGoal returns an archived goal to upcoming", async () => {
+      const queued = await service.addUpcomingGoal({ workspaceId, objective: "Revivable" });
+      await service.archiveGoal(workspaceId, queued.goalId);
+      await service.reviveArchivedGoal(workspaceId, queued.goalId);
+
+      const board = await service.getGoalBoard(workspaceId);
+      expect(board.entries.find((e) => e.section === "archived")).toBeUndefined();
+      expect(board.entries.find((e) => e.section === "upcoming")?.goal.goalId).toBe(queued.goalId);
+    });
+
+    test("reorderUpcomingGoals applies the given id order, defensively dropping unknown ids", async () => {
+      const a = await service.addUpcomingGoal({ workspaceId, objective: "A" });
+      const b = await service.addUpcomingGoal({ workspaceId, objective: "B" });
+      const c = await service.addUpcomingGoal({ workspaceId, objective: "C" });
+
+      // Reorder to C, A, B with an unknown id mixed in.
+      await service.reorderUpcomingGoals(workspaceId, [
+        c.goalId,
+        "00000000-0000-4000-8000-000000000000",
+        a.goalId,
+        b.goalId,
+      ]);
+
+      const board = await service.getGoalBoard(workspaceId);
+      const upcomingIds = board.entries
+        .filter((e) => e.section === "upcoming")
+        .map((e) => e.goal.goalId);
+      expect(upcomingIds).toEqual([c.goalId, a.goalId, b.goalId]);
+    });
+
+    test("promoteUpcomingGoal swaps active with the chosen upcoming goal", async () => {
+      const active = await setGoalOk(service, { workspaceId, objective: "Currently active" });
+      const queued = await service.addUpcomingGoal({ workspaceId, objective: "Promote me" });
+
+      const promoted = await service.promoteUpcomingGoal(workspaceId, queued.goalId);
+      expect(promoted).not.toBeNull();
+      expect(promoted?.goalId).toBe(queued.goalId);
+      expect(promoted?.status).toBe("active");
+
+      const board = await service.getGoalBoard(workspaceId);
+      const activeEntry = board.entries.find((e) => e.section === "active");
+      expect(activeEntry?.goal.goalId).toBe(queued.goalId);
+
+      // The previously-active goal is demoted to the head of upcoming so
+      // the user's roadmap stays intact ("swap on drag-to-activate").
+      const upcomingIds = board.entries
+        .filter((e) => e.section === "upcoming")
+        .map((e) => e.goal.goalId);
+      expect(upcomingIds[0]).toBe(active.goalId);
+    });
+  });
 });
