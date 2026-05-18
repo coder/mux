@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useMemo } from "react";
-import { Check, Circle } from "lucide-react";
+import { Check, Circle, Sparkles } from "lucide-react";
 import type { DiffHunk, Review, ReviewNoteData } from "@/common/types/review";
 import { SelectableDiffRenderer } from "../../Shared/DiffRenderer";
 import type { ReviewActionCallbacks } from "../../Shared/InlineReviewNote";
@@ -51,6 +51,17 @@ interface HunkViewerProps {
   reviewActions?: ReviewActionCallbacks;
   /** Prefer a collapsed default for huge reviews so opening Review doesn't mount every diff line. */
   preferCollapsed?: boolean;
+  /**
+   * Optional comment from the agent (via `review_pane_update`) explaining
+   * why this hunk was flagged for review. Rendered above the hunk's header
+   * row when present.
+   */
+  assistedComment?: string;
+  /**
+   * Whether this hunk was flagged by the agent. Used to surface a subtle
+   * accent indicator on the hunk header even when no comment was provided.
+   */
+  isAssisted?: boolean;
 }
 
 function renderHighlightedFilePath(
@@ -129,6 +140,8 @@ export const HunkViewer = React.memo<HunkViewerProps>(
     reviewActions,
     includeUncommitted,
     preferCollapsed = false,
+    assistedComment,
+    isAssisted = false,
   }) => {
     // Ref for the hunk container to track visibility
     const hunkRef = React.useRef<HTMLDivElement>(null);
@@ -301,7 +314,25 @@ export const HunkViewer = React.memo<HunkViewerProps>(
         tabIndex={0}
         data-hunk-id={hunkId}
       >
-        <div className="border-border-light font-monospace flex items-center gap-1.5 border-b px-2 py-1 text-[11px]">
+        {(assistedComment ?? isAssisted) && (
+          <div
+            className="border-review-accent/40 bg-review-accent/5 text-foreground flex items-start gap-2 border-b px-2 py-1.5 text-[11px] leading-[1.4]"
+            data-testid="hunk-assisted-comment"
+          >
+            <Sparkles aria-hidden="true" className="text-review-accent mt-[2px] h-3 w-3 shrink-0" />
+            {assistedComment ? (
+              <span className="min-w-0 break-words whitespace-pre-wrap">{assistedComment}</span>
+            ) : (
+              <span className="text-muted italic">Flagged by agent for review</span>
+            )}
+          </div>
+        )}
+        <div
+          className={cn(
+            "border-border-light font-monospace flex items-center gap-1.5 border-b px-2 py-1 text-[11px]",
+            isAssisted && !assistedComment && "border-l-review-accent border-l-2"
+          )}
+        >
           {onToggleRead && (
             <Tooltip>
               <TooltipTrigger asChild>

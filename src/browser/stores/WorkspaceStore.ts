@@ -12,6 +12,10 @@ import type {
 import type { RouterClient } from "@orpc/server";
 import type { AppRouter } from "@/node/orpc/router";
 import type { TodoItem } from "@/common/types/tools";
+import type { AssistedReviewHunk } from "@/common/types/review";
+
+/** Stable empty reference returned when a workspace has no assisted hunks; keeps useSyncExternalStore snapshot identity stable. */
+const EMPTY_ASSISTED_REVIEW: AssistedReviewHunk[] = [];
 import { applyWorkspaceChatEventToAggregator } from "@/browser/utils/messages/applyWorkspaceChatEventToAggregator";
 import {
   StreamingMessageAggregator,
@@ -2178,6 +2182,16 @@ export class WorkspaceStore {
   getTodos(workspaceId: string): TodoItem[] {
     const aggregator = this.aggregators.get(workspaceId);
     return aggregator ? aggregator.getCurrentTodos() : [];
+  }
+
+  /**
+   * Get current Assisted Review hunks (agent-flagged) for a workspace.
+   * Updated when `review_pane_update` tool succeeds; consumed by the
+   * Review pane and ReviewControls to power the Assisted toggle.
+   */
+  getAssistedReviewHunks(workspaceId: string): AssistedReviewHunk[] {
+    const aggregator = this.aggregators.get(workspaceId);
+    return aggregator ? aggregator.getAssistedReviewHunks() : EMPTY_ASSISTED_REVIEW;
   }
 
   /**

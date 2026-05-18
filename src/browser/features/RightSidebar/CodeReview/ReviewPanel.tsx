@@ -24,7 +24,15 @@
 
 import { LRUCache } from "lru-cache";
 import { AlertTriangle, Lightbulb, Loader2 } from "lucide-react";
-import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import React, {
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+  useRef,
+  useSyncExternalStore,
+} from "react";
+import { findAssistedMatch } from "@/common/utils/review/assistedReview";
 import { createPortal } from "react-dom";
 import { HunkViewer } from "./HunkViewer";
 import { InlineReviewNote, type ReviewActionCallbacks } from "../../Shared/InlineReviewNote";
@@ -77,7 +85,7 @@ import { findNextHunkId, findNextHunkIdAfterFileRemoval } from "@/browser/utils/
 import { cn } from "@/common/lib/utils";
 import { useAPI, type APIClient } from "@/browser/contexts/API";
 import { useWorkspaceMetadata } from "@/browser/contexts/WorkspaceContext";
-import { workspaceStore } from "@/browser/stores/WorkspaceStore";
+import { workspaceStore, useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { invalidateGitStatus } from "@/browser/stores/GitStatusStore";
 import { getErrorMessage } from "@/common/utils/errors";
 
@@ -613,7 +621,29 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     diffBase: diffBase,
     includeUncommitted: includeUncommitted,
     sortOrder: sortOrder,
+    assistedOnly: false,
   });
+
+  // Subscribe to the agent's Assisted Review hunks for this workspace. The
+  // aggregator returns a stable reference (only changes when review_pane_update
+  // succeeds), so this snapshot is safe to use in useSyncExternalStore.
+  const rawWorkspaceStore = useWorkspaceStoreRaw();
+  const subscribeAssistedHunks = useCallback(
+    (callback: () => void) => rawWorkspaceStore.subscribeKey(workspaceId, callback),
+    [rawWorkspaceStore, workspaceId]
+  );
+  const assistedHunks = useSyncExternalStore(subscribeAssistedHunks, () =>
+    rawWorkspaceStore.getAssistedReviewHunks(workspaceId)
+  );
+  const hasAssistedHunks = assistedHunks.length > 0;
+
+  // Reset the Assisted toggle when the agent clears its hint set so the
+  // pane doesn't stay stuck on an empty filter.
+  useEffect(() => {
+    if (!hasAssistedHunks) {
+      setFilters((prev) => (prev.assistedOnly ? { ...prev, assistedOnly: false } : prev));
+    }
+  }, [hasAssistedHunks]);
 
   const handleDiffBaseInteraction = useCallback(
     (value: string) => {
@@ -1209,35 +1239,88 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     [fileReadStatusByPath]
   );
 
+  // Compute per-hunk assisted-match index so we can both gate the Assisted
+  // filter AND pin matching hunks to the top (in agent-declared order).
+  // Comments are looked up off this same map by HunkViewer.
+  const assistedMatchByHunkId = useMemo(() => {
+    if (assistedHunks.length === 0)
+      return new Map<string, { entry: (typeof assistedHunks)[number]; index: number }>();
+    const map = new Map<string, { entry: (typeof assistedHunks)[number]; index: number }>();
+    for (const h of hunks) {
+      const match = findAssistedMatch(h, assistedHunks);
+      if (match) map.set(h.id, match);
+    }
+    return map;
+  }, [hunks, assistedHunks]);
+
+  const assistedCommentByHunkId = useMemo(() => {
+    if (assistedMatchByHunkId.size === 0) return new Map<string, string>();
+    const result = new Map<string, string>();
+    for (const [hunkId, match] of assistedMatchByHunkId) {
+      if (match.entry.comment) result.set(hunkId, match.entry.comment);
+    }
+    return result;
+  }, [assistedMatchByHunkId]);
+
   // Apply frontend filters (read state, search term) and sorting
   // Note: selectedFilePath is a git-level filter, applied when fetching hunks
   const filteredHunks = useMemo(() => {
+    const assistedPredicate =
+      filters.assistedOnly && assistedMatchByHunkId.size > 0
+        ? (hunk: DiffHunk) => assistedMatchByHunkId.has(hunk.id)
+        : undefined;
+
     const filtered = applyFrontendFilters(hunks, {
       showReadHunks: filters.showReadHunks,
       isRead,
       searchTerm: debouncedSearchTerm,
       useRegex: searchState.useRegex,
       matchCase: searchState.matchCase,
+      isAssisted: assistedPredicate,
     });
 
     // Apply sorting based on sortOrder
+    let ordered: DiffHunk[];
     if (filters.sortOrder === "last-edit") {
       // Sort by first-seen timestamp (newest first = LIFO)
       // Hunks without a first-seen record use current time (treated as newest)
       const now = Date.now();
-      return [...filtered].sort((a, b) => {
+      ordered = [...filtered].sort((a, b) => {
         const aTime = firstSeenMap[a.id] ?? now;
         const bTime = firstSeenMap[b.id] ?? now;
         return bTime - aTime; // Descending (newest first)
       });
+    } else {
+      // Default: file-order (maintain original order from git diff)
+      ordered = filtered;
     }
 
-    // Default: file-order (maintain original order from git diff)
-    return filtered;
+    // Pin assisted hunks to the top, preserving the agent's declared order.
+    // We do this regardless of the assistedOnly toggle so the agent's
+    // focus is always surfaced when present.
+    if (assistedMatchByHunkId.size === 0) return ordered;
+
+    const assistedBucket: DiffHunk[] = [];
+    const rest: DiffHunk[] = [];
+    for (const hunk of ordered) {
+      if (assistedMatchByHunkId.has(hunk.id)) {
+        assistedBucket.push(hunk);
+      } else {
+        rest.push(hunk);
+      }
+    }
+    assistedBucket.sort((a, b) => {
+      const ai = assistedMatchByHunkId.get(a.id)?.index ?? 0;
+      const bi = assistedMatchByHunkId.get(b.id)?.index ?? 0;
+      return ai - bi;
+    });
+    return [...assistedBucket, ...rest];
   }, [
     hunks,
     filters.showReadHunks,
     filters.sortOrder,
+    filters.assistedOnly,
+    assistedMatchByHunkId,
     isRead,
     debouncedSearchTerm,
     searchState.useRegex,
@@ -1543,6 +1626,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         projectPath={projectPath}
         lastRefreshInfo={lastRefreshInfo}
         lastRefreshFailure={lastRefreshFailure}
+        assistedCount={assistedHunks.length}
       />
 
       {diffState.status === "error" ? (
@@ -1756,6 +1840,8 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
                       includeUncommitted={filters.includeUncommitted}
                       preferCollapsed={preferCollapsedHunks}
                       reviewActions={reviewActions}
+                      assistedComment={assistedCommentByHunkId.get(hunk.id)}
+                      isAssisted={assistedMatchByHunkId.has(hunk.id)}
                     />
                   );
                 })
