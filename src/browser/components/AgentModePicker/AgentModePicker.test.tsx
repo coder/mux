@@ -47,7 +47,6 @@ const CUSTOM_AGENT: AgentDefinitionDescriptor = {
   subagentRunnable: false,
 };
 
-// Default context value properties shared by all test harnesses
 const noop = () => {
   // intentional noop for tests
 };
@@ -72,64 +71,56 @@ describe("AgentModePicker", () => {
     cleanupDom = null;
   });
 
-  test("renders a stable label for explore before agent definitions load", () => {
-    function Harness() {
-      const [agentId, setAgentId] = React.useState("explore");
-      return (
-        <AgentProvider
-          value={{
-            agentId,
-            setAgentId,
-            agents: [],
-            loaded: false,
-            loadFailed: false,
-            refresh: () => Promise.resolve(),
-            refreshing: false,
-            ...defaultContextProps,
-          }}
-        >
-          <TooltipProvider>
-            <AgentModePicker />
-          </TooltipProvider>
-        </AgentProvider>
-      );
-    }
+  function Harness(props: {
+    initialAgentId?: string;
+    agents?: AgentDefinitionDescriptor[];
+    loaded?: boolean;
+    currentAgent?: AgentDefinitionDescriptor;
+    locked?: boolean;
+    showAgentId?: boolean;
+  }) {
+    const [agentId, setAgentId] = React.useState(props.initialAgentId ?? "exec");
+    const contextValue: AgentContextValue & { isAgentSelectionLocked?: boolean } = {
+      agentId,
+      setAgentId,
+      agents: props.agents ?? [...BUILT_INS, CUSTOM_AGENT],
+      loaded: props.loaded ?? true,
+      loadFailed: false,
+      refresh: () => Promise.resolve(),
+      refreshing: false,
+      ...defaultContextProps,
+      currentAgent: props.currentAgent,
+      isAgentSelectionLocked: props.locked ?? false,
+    };
 
-    const { getByText } = render(<Harness />);
+    return (
+      <AgentProvider value={contextValue}>
+        <TooltipProvider>
+          {props.showAgentId ? <div data-testid="agentId">{agentId}</div> : null}
+          <AgentModePicker />
+        </TooltipProvider>
+      </AgentProvider>
+    );
+  }
+
+  function renderPicker(props: Parameters<typeof Harness>[0] = {}) {
+    return render(<Harness {...props} />);
+  }
+
+  test("renders a stable label for explore before agent definitions load", () => {
+    const { getByText } = renderPicker({ initialAgentId: "explore", agents: [], loaded: false });
 
     // Regression: avoid "explore" -> "Explore" flicker while agents load.
     expect(getByText("Explore")).toBeTruthy();
   });
 
   test("locks the picker when workspace agent selection is locked", () => {
-    function Harness() {
-      const [agentId, setAgentId] = React.useState("exec");
-      const contextValue: AgentContextValue & { isAgentSelectionLocked?: boolean } = {
-        agentId,
-        setAgentId,
-        agents: [...BUILT_INS, HIDDEN_AGENT, CUSTOM_AGENT],
-        loaded: true,
-        loadFailed: false,
-        refresh: () => Promise.resolve(),
-        refreshing: false,
-        ...defaultContextProps,
-        currentAgent: BUILT_INS[0],
-        isAgentSelectionLocked: true,
-      };
-
-      return (
-        <AgentProvider value={contextValue}>
-          <TooltipProvider>
-            <div>
-              <div data-testid="agentId">{agentId}</div>
-              <AgentModePicker />
-            </div>
-          </TooltipProvider>
-        </AgentProvider>
-      );
-    }
-
-    const { getByLabelText, queryAllByTestId } = render(<Harness />);
+    const { getByLabelText, queryAllByTestId } = renderPicker({
+      agents: [...BUILT_INS, HIDDEN_AGENT, CUSTOM_AGENT],
+      currentAgent: BUILT_INS[0],
+      locked: true,
+      showAgentId: true,
+    });
 
     const triggerButton = getByLabelText("Select agent") as HTMLButtonElement;
     expect(triggerButton.textContent).toContain("Exec");
@@ -140,33 +131,12 @@ describe("AgentModePicker", () => {
   });
 
   test("uiSelectable false without lock flag does not disable the picker", async () => {
-    function Harness() {
-      const [agentId, setAgentId] = React.useState("explore");
-      const contextValue: AgentContextValue & { isAgentSelectionLocked?: boolean } = {
-        agentId,
-        setAgentId,
-        agents: [...BUILT_INS, HIDDEN_AGENT, CUSTOM_AGENT],
-        loaded: true,
-        loadFailed: false,
-        refresh: () => Promise.resolve(),
-        refreshing: false,
-        ...defaultContextProps,
-        currentAgent: HIDDEN_AGENT,
-      };
-
-      return (
-        <AgentProvider value={contextValue}>
-          <TooltipProvider>
-            <div>
-              <div data-testid="agentId">{agentId}</div>
-              <AgentModePicker />
-            </div>
-          </TooltipProvider>
-        </AgentProvider>
-      );
-    }
-
-    const { getByLabelText, queryAllByTestId } = render(<Harness />);
+    const { getByLabelText, queryAllByTestId } = renderPicker({
+      initialAgentId: "explore",
+      agents: [...BUILT_INS, HIDDEN_AGENT, CUSTOM_AGENT],
+      currentAgent: HIDDEN_AGENT,
+      showAgentId: true,
+    });
 
     const triggerButton = getByLabelText("Select agent") as HTMLButtonElement;
     expect(triggerButton.textContent).toContain("Explore");
@@ -180,41 +150,14 @@ describe("AgentModePicker", () => {
   });
 
   test("selects a custom agent from the dropdown", async () => {
-    function Harness() {
-      const [agentId, setAgentId] = React.useState("exec");
-      return (
-        <AgentProvider
-          value={{
-            agentId,
-            setAgentId,
-            agents: [...BUILT_INS, CUSTOM_AGENT],
-            loaded: true,
-            loadFailed: false,
-            refresh: () => Promise.resolve(),
-            refreshing: false,
-            ...defaultContextProps,
-          }}
-        >
-          <TooltipProvider>
-            <div>
-              <div data-testid="agentId">{agentId}</div>
-              <AgentModePicker />
-            </div>
-          </TooltipProvider>
-        </AgentProvider>
-      );
-    }
+    const { getByTestId, getByText, getByLabelText } = renderPicker({ showAgentId: true });
 
-    const { getByTestId, getByText, getByLabelText } = render(<Harness />);
-
-    // Open picker via dropdown trigger
     fireEvent.click(getByLabelText("Select agent"));
 
     await waitFor(() => {
       expect(getByText("Review")).toBeTruthy();
     });
 
-    // Pick the custom agent
     fireEvent.click(getByText("Review"));
 
     await waitFor(() => {
@@ -223,29 +166,7 @@ describe("AgentModePicker", () => {
   });
 
   test("does not render auto agent affordances", async () => {
-    function Harness() {
-      const [agentId, setAgentId] = React.useState("exec");
-      return (
-        <AgentProvider
-          value={{
-            agentId,
-            setAgentId,
-            agents: [...BUILT_INS, CUSTOM_AGENT],
-            loaded: true,
-            loadFailed: false,
-            refresh: () => Promise.resolve(),
-            refreshing: false,
-            ...defaultContextProps,
-          }}
-        >
-          <TooltipProvider>
-            <AgentModePicker />
-          </TooltipProvider>
-        </AgentProvider>
-      );
-    }
-
-    const { getByLabelText, queryByLabelText, queryByText } = render(<Harness />);
+    const { getByLabelText, queryByLabelText, queryByText } = renderPicker();
     const autoSelectLabel = ["Auto-select", "agent"].join(" ");
 
     fireEvent.click(getByLabelText("Select agent"));

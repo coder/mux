@@ -155,6 +155,70 @@ let archivePopoverShowErrorMock = mock(
   (_workspaceId: string, _error: string, _anchor?: { top: number; left: number }) => undefined
 );
 
+function setupProjectSidebarDom(projectPath = "/projects/demo-project") {
+  cleanupDom = installDom();
+  window.localStorage.clear();
+  window.localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify([projectPath]));
+  settingsOpenMock = mock(() => undefined);
+  projectContextValue = createProjectContextValue({
+    userProjects: new Map([[projectPath, { workspaces: [] }]]),
+  });
+  installProjectSidebarTestDoubles();
+}
+
+function cleanupProjectSidebarDom() {
+  cleanup();
+  cleanupDom?.();
+  cleanupDom = null;
+  mock.restore();
+}
+
+function renderProjectSidebarForWorkspace(
+  workspace: FrontendWorkspaceMetadata,
+  projectPath = "/projects/demo-project"
+) {
+  projectContextValue = createProjectContextValue({
+    userProjects: new Map([
+      [projectPath, { workspaces: [{ path: workspace.namedWorkspacePath }] }],
+    ]),
+  });
+
+  return render(
+    <ProjectSidebar
+      collapsed={false}
+      onToggleCollapsed={() => undefined}
+      sortedWorkspacesByProject={new Map([[projectPath, [workspace]]])}
+      workspaceRecency={{ [workspace.id]: Date.now() }}
+    />
+  );
+}
+
+function useArchiveActions(
+  actions: Pick<
+    ReturnType<typeof WorkspaceContextModule.useWorkspaceActions>,
+    "preflightArchiveWorkspace" | "archiveWorkspace"
+  >
+) {
+  spyOn(WorkspaceContextModule, "useWorkspaceActions").mockImplementation(
+    () =>
+      ({
+        selectedWorkspace: null,
+        setSelectedWorkspace: () => undefined,
+        removeWorkspace: () => Promise.resolve({ success: true }),
+        updateWorkspaceTitle: () => Promise.resolve({ success: true }),
+        refreshWorkspaceMetadata: () => Promise.resolve(),
+        pendingNewWorkspaceProject: null,
+        pendingNewWorkspaceDraftId: null,
+        workspaceDraftsByProject: {},
+        workspaceDraftPromotionsByProject: {},
+        createWorkspaceDraft: () => undefined,
+        openWorkspaceDraft: () => undefined,
+        deleteWorkspaceDraft: () => undefined,
+        ...actions,
+      }) as unknown as ReturnType<typeof WorkspaceContextModule.useWorkspaceActions>
+  );
+}
+
 function createProjectContextValue(
   overrides: Partial<ProjectContextModule.ProjectContext> = {}
 ): ProjectContextModule.ProjectContext {
@@ -1056,45 +1120,8 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
 });
 
 describe("ProjectSidebar archive confirmations", () => {
-  beforeEach(() => {
-    cleanupDom = installDom();
-    window.localStorage.clear();
-    window.localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify(["/projects/demo-project"]));
-    settingsOpenMock = mock(() => undefined);
-    projectContextValue = createProjectContextValue({
-      userProjects: new Map([["/projects/demo-project", { workspaces: [] }]]),
-    });
-    installProjectSidebarTestDoubles();
-  });
-
-  afterEach(() => {
-    cleanup();
-    cleanupDom?.();
-    cleanupDom = null;
-    mock.restore();
-  });
-
-  function renderArchiveSidebar(workspace: FrontendWorkspaceMetadata) {
-    projectContextValue = createProjectContextValue({
-      userProjects: new Map([
-        [
-          "/projects/demo-project",
-          {
-            workspaces: [{ path: workspace.namedWorkspacePath }],
-          },
-        ],
-      ]),
-    });
-
-    return render(
-      <ProjectSidebar
-        collapsed={false}
-        onToggleCollapsed={() => undefined}
-        sortedWorkspacesByProject={new Map([["/projects/demo-project", [workspace]]])}
-        workspaceRecency={{ [workspace.id]: Date.now() }}
-      />
-    );
-  }
+  beforeEach(() => setupProjectSidebarDom());
+  afterEach(cleanupProjectSidebarDom);
 
   test("opens the archive confirmation modal when preflight finds untracked files", async () => {
     preflightArchiveWorkspaceMock = mock(
@@ -1109,7 +1136,7 @@ describe("ProjectSidebar archive confirmations", () => {
       ...createWorkspace("archive-preflight-confirm"),
       projects: [{ projectPath: "/projects/demo-project", projectName: "demo-project" }],
     };
-    const view = renderArchiveSidebar(workspace);
+    const view = renderProjectSidebarForWorkspace(workspace);
 
     const archiveButton = document.createElement("button");
     expect(latestArchiveWorkspaceHandler).toBeTruthy();
@@ -1148,7 +1175,7 @@ describe("ProjectSidebar archive confirmations", () => {
       ...createWorkspace("archive-late-confirm"),
       projects: [{ projectPath: "/projects/demo-project", projectName: "demo-project" }],
     };
-    const view = renderArchiveSidebar(workspace);
+    const view = renderProjectSidebarForWorkspace(workspace);
 
     const archiveButton = document.createElement("button");
     expect(latestArchiveWorkspaceHandler).toBeTruthy();
@@ -1211,7 +1238,7 @@ describe("ProjectSidebar archive confirmations", () => {
       ...createWorkspace("archive-stable-untracked"),
       projects: [{ projectPath: "/projects/demo-project", projectName: "demo-project" }],
     };
-    const view = renderArchiveSidebar(workspace);
+    const view = renderProjectSidebarForWorkspace(workspace);
 
     const archiveButton = document.createElement("button");
     expect(latestArchiveWorkspaceHandler).toBeTruthy();
@@ -1290,24 +1317,7 @@ describe("ProjectSidebar archive errors", () => {
       ...createWorkspace("archive-target"),
       projects: [{ projectPath: "/projects/demo-project", projectName: "demo-project" }],
     };
-    projectContextValue = createProjectContextValue({
-      userProjects: new Map([
-        [
-          "/projects/demo-project",
-          {
-            workspaces: [{ path: workspace.namedWorkspacePath }],
-          },
-        ],
-      ]),
-    });
-    render(
-      <ProjectSidebar
-        collapsed={false}
-        onToggleCollapsed={() => undefined}
-        sortedWorkspacesByProject={new Map([["/projects/demo-project", [workspace]]])}
-        workspaceRecency={{ [workspace.id]: Date.now() }}
-      />
-    );
+    renderProjectSidebarForWorkspace(workspace);
 
     const archiveButton = document.createElement("button");
     expect(latestArchiveWorkspaceHandler).toBeTruthy();
@@ -1331,23 +1341,8 @@ describe("ProjectSidebar archive errors", () => {
 });
 
 describe("ProjectSidebar archive confirmations", () => {
-  beforeEach(() => {
-    cleanupDom = installDom();
-    window.localStorage.clear();
-    window.localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify(["/projects/demo-project"]));
-    settingsOpenMock = mock(() => undefined);
-    projectContextValue = createProjectContextValue({
-      userProjects: new Map([["/projects/demo-project", { workspaces: [] }]]),
-    });
-    installProjectSidebarTestDoubles();
-  });
-
-  afterEach(() => {
-    cleanup();
-    cleanupDom?.();
-    cleanupDom = null;
-    mock.restore();
-  });
+  beforeEach(() => setupProjectSidebarDom());
+  afterEach(cleanupProjectSidebarDom);
 
   test("opens the archive confirmation modal when preflight finds untracked files", async () => {
     const workspace = {
@@ -1362,34 +1357,9 @@ describe("ProjectSidebar archive confirmations", () => {
     );
     const archiveWorkspace = mock(() => Promise.resolve({ success: true as const }));
 
-    spyOn(WorkspaceContextModule, "useWorkspaceActions").mockImplementation(
-      () =>
-        ({
-          selectedWorkspace: null,
-          setSelectedWorkspace: () => undefined,
-          preflightArchiveWorkspace,
-          archiveWorkspace,
-          removeWorkspace: () => Promise.resolve({ success: true }),
-          updateWorkspaceTitle: () => Promise.resolve({ success: true }),
-          refreshWorkspaceMetadata: () => Promise.resolve(),
-          pendingNewWorkspaceProject: null,
-          pendingNewWorkspaceDraftId: null,
-          workspaceDraftsByProject: {},
-          workspaceDraftPromotionsByProject: {},
-          createWorkspaceDraft: () => undefined,
-          openWorkspaceDraft: () => undefined,
-          deleteWorkspaceDraft: () => undefined,
-        }) as unknown as ReturnType<typeof WorkspaceContextModule.useWorkspaceActions>
-    );
+    useArchiveActions({ preflightArchiveWorkspace, archiveWorkspace });
 
-    render(
-      <ProjectSidebar
-        collapsed={false}
-        onToggleCollapsed={() => undefined}
-        sortedWorkspacesByProject={new Map([["/projects/demo-project", [workspace]]])}
-        workspaceRecency={{ [workspace.id]: Date.now() }}
-      />
-    );
+    renderProjectSidebarForWorkspace(workspace);
 
     const archiveButton = document.createElement("button");
     expect(latestArchiveWorkspaceHandler).toBeTruthy();
@@ -1412,24 +1382,24 @@ describe("ProjectSidebar archive confirmations", () => {
       projects: [{ projectPath: "/projects/demo-project", projectName: "demo-project" }],
     };
     let preflightCallCount = 0;
-    const preflightArchiveWorkspace = mock<
-      (workspaceId: string) => Promise<{ success: true; data: { kind: string; paths?: string[] } }>
-    >((workspaceId: string) => {
-      if (workspaceId !== workspace.id) {
-        return Promise.resolve({ success: true, data: { kind: "ready" } });
-      }
-      preflightCallCount += 1;
-      if (preflightCallCount === 1) {
+    const preflightArchiveWorkspace = mock(
+      (workspaceId: string): Promise<ArchivePreflightActionResult> => {
+        if (workspaceId !== workspace.id) {
+          return Promise.resolve({ success: true, data: { kind: "ready" } });
+        }
+        preflightCallCount += 1;
+        if (preflightCallCount === 1) {
+          return Promise.resolve({
+            success: true,
+            data: { kind: "confirm-lossy-untracked-files", paths: ["a.txt"] },
+          });
+        }
         return Promise.resolve({
           success: true,
-          data: { kind: "confirm-lossy-untracked-files", paths: ["a.txt"] },
+          data: { kind: "confirm-lossy-untracked-files", paths: ["a.txt", "b.txt"] },
         });
       }
-      return Promise.resolve({
-        success: true,
-        data: { kind: "confirm-lossy-untracked-files", paths: ["a.txt", "b.txt"] },
-      });
-    });
+    );
     const archiveWorkspace = mock(() =>
       Promise.resolve({
         success: false as const,
@@ -1438,34 +1408,9 @@ describe("ProjectSidebar archive confirmations", () => {
       })
     );
 
-    spyOn(WorkspaceContextModule, "useWorkspaceActions").mockImplementation(
-      () =>
-        ({
-          selectedWorkspace: null,
-          setSelectedWorkspace: () => undefined,
-          preflightArchiveWorkspace,
-          archiveWorkspace,
-          removeWorkspace: () => Promise.resolve({ success: true }),
-          updateWorkspaceTitle: () => Promise.resolve({ success: true }),
-          refreshWorkspaceMetadata: () => Promise.resolve(),
-          pendingNewWorkspaceProject: null,
-          pendingNewWorkspaceDraftId: null,
-          workspaceDraftsByProject: {},
-          workspaceDraftPromotionsByProject: {},
-          createWorkspaceDraft: () => undefined,
-          openWorkspaceDraft: () => undefined,
-          deleteWorkspaceDraft: () => undefined,
-        }) as unknown as ReturnType<typeof WorkspaceContextModule.useWorkspaceActions>
-    );
+    useArchiveActions({ preflightArchiveWorkspace, archiveWorkspace });
 
-    render(
-      <ProjectSidebar
-        collapsed={false}
-        onToggleCollapsed={() => undefined}
-        sortedWorkspacesByProject={new Map([["/projects/demo-project", [workspace]]])}
-        workspaceRecency={{ [workspace.id]: Date.now() }}
-      />
-    );
+    renderProjectSidebarForWorkspace(workspace);
 
     const archiveButton = document.createElement("button");
     expect(latestArchiveWorkspaceHandler).toBeTruthy();
@@ -1494,25 +1439,8 @@ describe("ProjectSidebar archive confirmations", () => {
 describe("ProjectSidebar project actions menu", () => {
   const demoProjectPath = "/projects/demo-project";
 
-  beforeEach(() => {
-    cleanupDom = installDom();
-    window.localStorage.clear();
-    window.localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify([demoProjectPath]));
-
-    settingsOpenMock = mock(() => undefined);
-    projectContextValue = createProjectContextValue({
-      userProjects: new Map([[demoProjectPath, { workspaces: [] }]]),
-    });
-
-    installProjectSidebarTestDoubles();
-  });
-
-  afterEach(() => {
-    cleanup();
-    cleanupDom?.();
-    cleanupDom = null;
-    mock.restore();
-  });
+  beforeEach(() => setupProjectSidebarDom(demoProjectPath));
+  afterEach(cleanupProjectSidebarDom);
 
   function renderSidebar() {
     return render(

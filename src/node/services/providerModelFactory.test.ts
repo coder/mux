@@ -29,6 +29,65 @@ import { CodexOauthService } from "./codexOauthService";
 import { PolicyService } from "./policyService";
 import { ProviderService } from "./providerService";
 
+const LOCAL_VLLM_BASE_URL = "http://localhost:8000/v1";
+const LOCAL_VLLM_MODEL = "qwen3-coder";
+const COPILOT_TOKEN = "copilot-token";
+
+function saveLocalVllmConfig(config: Config, overrides: Record<string, unknown> = {}): void {
+  config.saveProvidersConfig({
+    "local-vllm": {
+      providerType: "openai-compatible",
+      baseUrl: LOCAL_VLLM_BASE_URL,
+      ...overrides,
+    },
+  } as Parameters<Config["saveProvidersConfig"]>[0]);
+}
+
+function saveCopilotConfig(config: Config, models: unknown): void {
+  config.saveProvidersConfig({
+    "github-copilot": {
+      apiKey: COPILOT_TOKEN,
+      models,
+    },
+  } as Parameters<Config["saveProvidersConfig"]>[0]);
+}
+
+async function saveRoutePriority(
+  config: Config,
+  routePriority: string[],
+  overrides: Record<string, unknown> = {}
+): Promise<void> {
+  await config.saveConfig({
+    ...config.loadConfigOrDefault(),
+    ...overrides,
+    routePriority,
+  });
+}
+
+type ResolveAndCreateModelResult = Awaited<
+  ReturnType<ProviderModelFactory["resolveAndCreateModel"]>
+>;
+type SuccessfulResolvedModel = Extract<ResolveAndCreateModelResult, { success: true }>["data"];
+
+function expectSuccessfulRouteResult(
+  result: ResolveAndCreateModelResult,
+  expected: {
+    effectiveModelString: string;
+    routeProvider: SuccessfulResolvedModel["routeProvider"];
+    routedThroughGateway?: boolean;
+  }
+): void {
+  expect(result.success).toBe(true);
+  if (!result.success) {
+    throw new Error(`Expected route creation to succeed, got ${result.error.type}`);
+  }
+  expect(result.data.effectiveModelString).toBe(expected.effectiveModelString);
+  expect(result.data.routeProvider).toBe(expected.routeProvider);
+  if (expected.routedThroughGateway !== undefined) {
+    expect(result.data.routedThroughGateway).toBe(expected.routedThroughGateway);
+  }
+}
+
 async function withTempConfig(
   run: (config: Config, factory: ProviderModelFactory) => Promise<void> | void
 ): Promise<void> {
@@ -305,12 +364,7 @@ describe("ProviderModelFactory.createModel", () => {
         },
       });
 
-      const projectConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...projectConfig,
-        muxGatewayEnabled: true,
-        routePriority: ["mux-gateway", "direct"],
-      });
+      await saveRoutePriority(config, ["mux-gateway", "direct"], { muxGatewayEnabled: true });
 
       const result = await factory.createModel("openai:gpt-5");
       if (!result.success) {
@@ -321,13 +375,7 @@ describe("ProviderModelFactory.createModel", () => {
 
   it("creates keyless custom OpenAI-compatible models and does not treat models as an allowlist", async () => {
     await withTempConfig(async (config, factory) => {
-      config.saveProvidersConfig({
-        "local-vllm": {
-          providerType: "openai-compatible",
-          baseUrl: "http://localhost:8000/v1",
-          models: ["qwen3-coder"],
-        },
-      });
+      saveLocalVllmConfig(config, { models: [LOCAL_VLLM_MODEL] });
 
       const listedModel = await factory.createModel("local-vllm:qwen3-coder");
       expect(listedModel.success).toBe(true);
@@ -400,13 +448,7 @@ describe("ProviderModelFactory.createModel", () => {
 
   it("returns provider_disabled for disabled custom OpenAI-compatible providers", async () => {
     await withTempConfig(async (config, factory) => {
-      config.saveProvidersConfig({
-        "local-vllm": {
-          providerType: "openai-compatible",
-          baseUrl: "http://localhost:8000/v1",
-          enabled: false,
-        },
-      });
+      saveLocalVllmConfig(config, { enabled: false });
 
       const result = await factory.createModel("local-vllm:qwen3-coder");
 
@@ -447,14 +489,7 @@ describe("ProviderModelFactory.createModel", () => {
   it("returns a path-specific API key file error for custom providers", async () => {
     await withTempConfig(async (config, factory) => {
       const missingPath = path.join(os.tmpdir(), "mux-missing-custom-provider-key");
-      config.saveProvidersConfig({
-        "local-vllm": {
-          providerType: "openai-compatible",
-          baseUrl: "http://localhost:8000/v1",
-          apiKeyFile: missingPath,
-          models: ["qwen3-coder"],
-        },
-      });
+      saveLocalVllmConfig(config, { apiKeyFile: missingPath, models: [LOCAL_VLLM_MODEL] });
 
       const result = await factory.createModel("local-vllm:qwen3-coder");
 
@@ -507,10 +542,7 @@ describe("ProviderModelFactory.createModel", () => {
   it("returns provider_not_supported for unknown provider entries without a custom provider type", async () => {
     await withTempConfig(async (config, factory) => {
       config.saveProvidersConfig({
-        "local-vllm": {
-          baseUrl: "http://localhost:8000/v1",
-          models: ["qwen3-coder"],
-        },
+        "local-vllm": { baseUrl: LOCAL_VLLM_BASE_URL, models: [LOCAL_VLLM_MODEL] },
       });
 
       const result = await factory.createModel("local-vllm:qwen3-coder");
@@ -612,12 +644,7 @@ describe("ProviderModelFactory GitHub Copilot", () => {
       const originalOpenAIRegistry = PROVIDER_REGISTRY.openai;
       let capturedProviderName: string | undefined;
 
-      config.saveProvidersConfig({
-        "github-copilot": {
-          apiKey: "copilot-token",
-          models: ["gpt-5.5"],
-        },
-      });
+      saveCopilotConfig(config, ["gpt-5.5"]);
 
       PROVIDER_REGISTRY.openai = async () => {
         const module = await originalOpenAIRegistry();
@@ -631,11 +658,7 @@ describe("ProviderModelFactory GitHub Copilot", () => {
       };
 
       try {
-        const projectConfig = config.loadConfigOrDefault();
-        await config.saveConfig({
-          ...projectConfig,
-          routePriority: ["github-copilot", "direct"],
-        });
+        await saveRoutePriority(config, ["github-copilot", "direct"]);
 
         const result = await factory.resolveAndCreateModel("openai:gpt-5.5", "off");
         expect(result.success).toBe(true);
@@ -661,12 +684,7 @@ describe("ProviderModelFactory GitHub Copilot", () => {
       const originalOpenAIRegistry = PROVIDER_REGISTRY.openai;
       let capturedModelId: string | undefined;
 
-      config.saveProvidersConfig({
-        "github-copilot": {
-          apiKey: "copilot-token",
-          models: ["claude-opus-4.6"],
-        },
-      });
+      saveCopilotConfig(config, ["claude-opus-4.6"]);
 
       PROVIDER_REGISTRY.openai = async () => {
         const module = await originalOpenAIRegistry();
@@ -706,18 +724,9 @@ describe("ProviderModelFactory GitHub Copilot", () => {
 
   it("routes Codex models through the Copilot Responses API path", async () => {
     await withTempConfig(async (config, factory) => {
-      config.saveProvidersConfig({
-        "github-copilot": {
-          apiKey: "copilot-token",
-          models: ["gpt-5.3-codex"],
-        },
-      });
+      saveCopilotConfig(config, ["gpt-5.3-codex"]);
 
-      const projectConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...projectConfig,
-        routePriority: ["github-copilot", "direct"],
-      });
+      await saveRoutePriority(config, ["github-copilot", "direct"]);
 
       const result = await factory.resolveAndCreateModel("openai:gpt-5.3-codex", "off");
       expect(result.success).toBe(true);
@@ -864,12 +873,7 @@ describe("ProviderModelFactory GitHub Copilot", () => {
 
   it("does not force store=false for Copilot Responses requests", async () => {
     await withTempConfig(async (config, factory) => {
-      config.saveProvidersConfig({
-        "github-copilot": {
-          apiKey: "copilot-token",
-          models: ["gpt-5.3-codex"],
-        },
-      });
+      saveCopilotConfig(config, ["gpt-5.3-codex"]);
 
       const result = await factory.createModel("github-copilot:gpt-5.3-codex");
       expect(result.success).toBe(true);
@@ -904,12 +908,7 @@ describe("ProviderModelFactory GitHub Copilot", () => {
 
   it("fails when the requested model is missing from the stored Copilot model list", async () => {
     await withTempConfig(async (config, factory) => {
-      config.saveProvidersConfig({
-        "github-copilot": {
-          apiKey: "copilot-token",
-          models: ["gpt-4.1"],
-        },
-      });
+      saveCopilotConfig(config, ["gpt-4.1"]);
 
       const result = await factory.createModel("github-copilot:gpt-5.5");
 
@@ -926,12 +925,7 @@ describe("ProviderModelFactory GitHub Copilot", () => {
 
   it("allows Copilot model creation when the stored model list is malformed", async () => {
     await withTempConfig(async (config, factory) => {
-      config.saveProvidersConfig({
-        "github-copilot": {
-          apiKey: "copilot-token",
-          models: "not-an-array",
-        },
-      } as unknown as Parameters<Config["saveProvidersConfig"]>[0]);
+      saveCopilotConfig(config, "not-an-array");
 
       const result = await factory.createModel("github-copilot:gpt-5.5");
 
@@ -946,12 +940,7 @@ describe("ProviderModelFactory GitHub Copilot", () => {
 
   it("allows Copilot model creation when the stored model list contains malformed entries", async () => {
     await withTempConfig(async (config, factory) => {
-      config.saveProvidersConfig({
-        "github-copilot": {
-          apiKey: "copilot-token",
-          models: ["   ", null],
-        },
-      } as unknown as Parameters<Config["saveProvidersConfig"]>[0]);
+      saveCopilotConfig(config, ["   ", null]);
 
       const result = await factory.createModel("github-copilot:gpt-5.5");
 
@@ -966,12 +955,7 @@ describe("ProviderModelFactory GitHub Copilot", () => {
 
   it("allows Copilot model creation when no stored model list exists yet", async () => {
     await withTempConfig(async (config, factory) => {
-      config.saveProvidersConfig({
-        "github-copilot": {
-          apiKey: "copilot-token",
-          models: [],
-        },
-      });
+      saveCopilotConfig(config, []);
 
       const result = await factory.createModel("github-copilot:gpt-5.5");
 
@@ -1181,11 +1165,7 @@ describe("ProviderModelFactory routing", () => {
         },
       });
 
-      const projectConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...projectConfig,
-        routePriority: ["openrouter", "direct"],
-      });
+      await saveRoutePriority(config, ["openrouter", "direct"]);
 
       const resolved = factory.resolveGatewayModelString("openai:gpt-5", "openai:gpt-5");
       expect(resolved).toBe("openrouter:openai/gpt-5");
@@ -1194,14 +1174,11 @@ describe("ProviderModelFactory routing", () => {
       expect(created.success).toBe(true);
 
       const result = await factory.resolveAndCreateModel("openai:gpt-5", "off");
-      expect(result.success).toBe(true);
-      if (!result.success) {
-        return;
-      }
-
-      expect(result.data.effectiveModelString).toBe("openrouter:openai/gpt-5");
-      expect(result.data.routeProvider).toBe("openrouter");
-      expect(result.data.routedThroughGateway).toBe(false);
+      expectSuccessfulRouteResult(result, {
+        effectiveModelString: "openrouter:openai/gpt-5",
+        routeProvider: "openrouter",
+        routedThroughGateway: false,
+      });
     });
   });
 
@@ -1217,21 +1194,14 @@ describe("ProviderModelFactory routing", () => {
         },
       });
 
-      const projectConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...projectConfig,
-        routePriority: ["github-copilot", "direct"],
-      });
+      await saveRoutePriority(config, ["github-copilot", "direct"]);
 
       const result = await factory.resolveAndCreateModel("openai:gpt-5.5", "off");
-      expect(result.success).toBe(true);
-      if (!result.success) {
-        return;
-      }
-
-      expect(result.data.effectiveModelString).toBe("openai:gpt-5.5");
-      expect(result.data.routeProvider).toBe("openai");
-      expect(result.data.routedThroughGateway).toBe(false);
+      expectSuccessfulRouteResult(result, {
+        effectiveModelString: "openai:gpt-5.5",
+        routeProvider: "openai",
+        routedThroughGateway: false,
+      });
     });
   });
 
@@ -1244,21 +1214,14 @@ describe("ProviderModelFactory routing", () => {
         },
       });
 
-      const projectConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...projectConfig,
-        routePriority: ["openrouter", "direct"],
-      });
+      await saveRoutePriority(config, ["openrouter", "direct"]);
 
       const result = await factory.resolveAndCreateModel("openai:gpt-5", "off");
-      expect(result.success).toBe(true);
-      if (!result.success) {
-        return;
-      }
-
-      expect(result.data.effectiveModelString).toBe("openrouter:openai/gpt-5");
-      expect(result.data.routeProvider).toBe("openrouter");
-      expect(result.data.routedThroughGateway).toBe(false);
+      expectSuccessfulRouteResult(result, {
+        effectiveModelString: "openrouter:openai/gpt-5",
+        routeProvider: "openrouter",
+        routedThroughGateway: false,
+      });
     });
   });
 
@@ -1269,17 +1232,13 @@ describe("ProviderModelFactory routing", () => {
         bedrock: { region: "us-east-1" },
       });
 
-      const projectConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...projectConfig,
-        routePriority: ["bedrock", "direct"],
-      });
+      await saveRoutePriority(config, ["bedrock", "direct"]);
 
       const result = await factory.resolveAndCreateModel("anthropic:claude-sonnet-4-5", "off");
-      expect(result.success).toBe(true);
-      if (!result.success) return;
-      expect(result.data.effectiveModelString).toBe("bedrock:anthropic.claude-sonnet-4-5");
-      expect(result.data.routeProvider).toBe("bedrock");
+      expectSuccessfulRouteResult(result, {
+        effectiveModelString: "bedrock:anthropic.claude-sonnet-4-5",
+        routeProvider: "bedrock",
+      });
     });
   });
 
@@ -1299,11 +1258,8 @@ describe("ProviderModelFactory routing", () => {
         },
       });
 
-      const projectConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...projectConfig,
+      await saveRoutePriority(config, ["openrouter", "mux-gateway", "direct"], {
         muxGatewayEnabled: true,
-        routePriority: ["openrouter", "mux-gateway", "direct"],
       });
 
       const resolved = factory.resolveGatewayModelString("openai:gpt-5", "openai:gpt-5");
@@ -1323,12 +1279,7 @@ describe("ProviderModelFactory routing", () => {
         },
       });
 
-      const projectConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...projectConfig,
-        muxGatewayEnabled: true,
-        routePriority: ["mux-gateway", "direct"],
-      });
+      await saveRoutePriority(config, ["mux-gateway", "direct"], { muxGatewayEnabled: true });
 
       const resolved = factory.resolveGatewayModelString("openai:gpt-5", "openai:gpt-5");
       expect(resolved).toBe("openai:gpt-5");
@@ -1347,11 +1298,7 @@ describe("ProviderModelFactory routing", () => {
         },
       });
 
-      const projectConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...projectConfig,
-        routePriority: ["mux-gateway", "openrouter", "direct"],
-      });
+      await saveRoutePriority(config, ["mux-gateway", "openrouter", "direct"]);
 
       const resolved = factory.resolveGatewayModelString("openai:gpt-5", "openai:gpt-5");
       expect(resolved).toBe("openrouter:openai/gpt-5");
@@ -1376,12 +1323,7 @@ describe("ProviderModelFactory routing", () => {
         },
       });
 
-      const projectConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...projectConfig,
-        muxGatewayEnabled: true,
-        routePriority: ["mux-gateway", "direct"],
-      });
+      await saveRoutePriority(config, ["mux-gateway", "direct"], { muxGatewayEnabled: true });
 
       const resolved = factory.resolveGatewayModelString(
         "openrouter:openai/gpt-5",
@@ -1391,14 +1333,11 @@ describe("ProviderModelFactory routing", () => {
       expect(resolved).toBe("openrouter:openai/gpt-5");
 
       const result = await factory.resolveAndCreateModel("openrouter:openai/gpt-5", "off");
-      expect(result.success).toBe(true);
-      if (!result.success) {
-        return;
-      }
-
-      expect(result.data.effectiveModelString).toBe("openrouter:openai/gpt-5");
-      expect(result.data.routeProvider).toBe("openrouter");
-      expect(result.data.routedThroughGateway).toBe(false);
+      expectSuccessfulRouteResult(result, {
+        effectiveModelString: "openrouter:openai/gpt-5",
+        routeProvider: "openrouter",
+        routedThroughGateway: false,
+      });
     });
   });
 
@@ -1418,11 +1357,8 @@ describe("ProviderModelFactory routing", () => {
         },
       });
 
-      const projectConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...projectConfig,
+      await saveRoutePriority(config, ["openrouter", "mux-gateway", "direct"], {
         muxGatewayEnabled: true,
-        routePriority: ["openrouter", "mux-gateway", "direct"],
       });
 
       const resolved = factory.resolveGatewayModelString(
@@ -1433,14 +1369,11 @@ describe("ProviderModelFactory routing", () => {
       expect(resolved).toBe("mux-gateway:openai/gpt-5");
 
       const result = await factory.resolveAndCreateModel("openrouter:openai/gpt-5", "off");
-      expect(result.success).toBe(true);
-      if (!result.success) {
-        return;
-      }
-
-      expect(result.data.effectiveModelString).toBe("mux-gateway:openai/gpt-5");
-      expect(result.data.routeProvider).toBe("mux-gateway");
-      expect(result.data.routedThroughGateway).toBe(true);
+      expectSuccessfulRouteResult(result, {
+        effectiveModelString: "mux-gateway:openai/gpt-5",
+        routeProvider: "mux-gateway",
+        routedThroughGateway: true,
+      });
     });
   });
 
@@ -1452,12 +1385,7 @@ describe("ProviderModelFactory routing", () => {
         },
       });
 
-      const projectConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...projectConfig,
-        muxGatewayEnabled: true,
-        routePriority: ["direct"],
-      });
+      await saveRoutePriority(config, ["direct"], { muxGatewayEnabled: true });
 
       const resolved = factory.resolveGatewayModelString(
         "mux-gateway:anthropic/claude-sonnet-4-6",
@@ -1470,14 +1398,11 @@ describe("ProviderModelFactory routing", () => {
         "mux-gateway:anthropic/claude-sonnet-4-6",
         "off"
       );
-      expect(result.success).toBe(true);
-      if (!result.success) {
-        return;
-      }
-
-      expect(result.data.effectiveModelString).toBe("mux-gateway:anthropic/claude-sonnet-4-6");
-      expect(result.data.routeProvider).toBe("mux-gateway");
-      expect(result.data.routedThroughGateway).toBe(true);
+      expectSuccessfulRouteResult(result, {
+        effectiveModelString: "mux-gateway:anthropic/claude-sonnet-4-6",
+        routeProvider: "mux-gateway",
+        routedThroughGateway: true,
+      });
     });
   });
 
@@ -1503,23 +1428,16 @@ describe("ProviderModelFactory routing", () => {
           },
         });
 
-        const projectConfig = config.loadConfigOrDefault();
-        await config.saveConfig({
-          ...projectConfig,
-          routePriority: ["direct", "openrouter"],
-        });
+        await saveRoutePriority(config, ["direct", "openrouter"]);
 
         // Direct OpenAI should win because Codex OAuth makes it available for routing.
         // Use a model from CODEX_OAUTH_ALLOWED_MODELS so createModel can route through OAuth.
         const result = await factory.resolveAndCreateModel("openai:gpt-5.2", "off");
-        expect(result.success).toBe(true);
-        if (!result.success) {
-          return;
-        }
-
-        expect(result.data.effectiveModelString).toBe("openai:gpt-5.2");
-        expect(result.data.routeProvider).toBe("openai");
-        expect(result.data.routedThroughGateway).toBe(false);
+        expectSuccessfulRouteResult(result, {
+          effectiveModelString: "openai:gpt-5.2",
+          routeProvider: "openai",
+          routedThroughGateway: false,
+        });
       });
     } finally {
       if (savedKey !== undefined) {
@@ -1542,11 +1460,8 @@ describe("ProviderModelFactory routing", () => {
         },
       });
 
-      const projectConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...projectConfig,
+      await saveRoutePriority(config, ["direct", "mux-gateway", "openrouter"], {
         muxGatewayEnabled: true,
-        routePriority: ["direct", "mux-gateway", "openrouter"],
       });
 
       const result = await factory.resolveAndCreateModel("openai:gpt-5", "off");

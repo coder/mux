@@ -2,173 +2,21 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
 import { describe, it, expect } from "bun:test";
-import type { ToolExecutionOptions } from "ai";
-
-const GLOBAL_WORKSPACE_ID = "workspace-global";
 import type { MuxToolScope } from "@/common/types/toolScope";
 import type { AgentSkillDeleteToolResult } from "@/common/types/tools";
-import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import { createAgentSkillDeleteTool } from "./agent_skill_delete";
-import { createTestToolConfig, TestTempDir } from "./testHelpers";
-
-const mockToolCallOptions: ToolExecutionOptions = {
-  toolCallId: "test-call-id",
-  messages: [],
-};
+import {
+  createTestToolConfig,
+  createWorkspaceSessionDir,
+  mockToolCallOptions,
+  RemotePathMappedRuntime,
+  restoreMuxRoot,
+  TEST_GLOBAL_WORKSPACE_ID as GLOBAL_WORKSPACE_ID,
+  TestTempDir,
+  writeSkillWithReference,
+} from "./testHelpers";
 
 const TILDE_WORKSPACE_ROOT = "~/mux/project/main";
-
-async function createWorkspaceSessionDir(muxHome: string, workspaceId: string): Promise<string> {
-  const workspaceSessionDir = path.join(muxHome, "sessions", workspaceId);
-  await fs.mkdir(workspaceSessionDir, { recursive: true });
-  return workspaceSessionDir;
-}
-
-function restoreMuxRoot(previousMuxRoot: string | undefined): void {
-  if (previousMuxRoot === undefined) {
-    delete process.env.MUX_ROOT;
-    return;
-  }
-
-  process.env.MUX_ROOT = previousMuxRoot;
-}
-
-class RemotePathMappedRuntime extends LocalRuntime {
-  private readonly localBase: string;
-  private readonly remoteBase: string;
-  private readonly localHomeForTildeRoot: string | null;
-
-  constructor(localBase: string, remoteBase: string) {
-    super(localBase);
-    this.localBase = path.resolve(localBase);
-    this.remoteBase = remoteBase === "/" ? remoteBase : remoteBase.replace(/\/+$/u, "");
-
-    if (this.remoteBase === "~") {
-      this.localHomeForTildeRoot = this.localBase;
-    } else if (this.remoteBase.startsWith("~/")) {
-      const homeRelativeSuffix = this.remoteBase.slice(1);
-      const normalizedLocalRoot = this.localBase.replaceAll("\\", "/");
-      if (normalizedLocalRoot.endsWith(homeRelativeSuffix)) {
-        const derivedHome = normalizedLocalRoot.slice(
-          0,
-          normalizedLocalRoot.length - homeRelativeSuffix.length
-        );
-        this.localHomeForTildeRoot = derivedHome.length > 0 ? derivedHome : "/";
-      } else {
-        this.localHomeForTildeRoot = null;
-      }
-    } else {
-      this.localHomeForTildeRoot = null;
-    }
-  }
-
-  private usesTildeWorkspaceRoot(): boolean {
-    return this.remoteBase === "~" || this.remoteBase.startsWith("~/");
-  }
-
-  protected toLocalPath(runtimePath: string): string {
-    const normalizedRuntimePath = runtimePath.replaceAll("\\", "/");
-
-    if (normalizedRuntimePath === this.remoteBase) {
-      return this.localBase;
-    }
-
-    if (normalizedRuntimePath.startsWith(`${this.remoteBase}/`)) {
-      const suffix = normalizedRuntimePath.slice(this.remoteBase.length + 1);
-      return path.join(this.localBase, ...suffix.split("/"));
-    }
-
-    return runtimePath;
-  }
-
-  private toRemotePath(localPath: string): string {
-    const resolvedLocalPath = path.resolve(localPath);
-
-    if (resolvedLocalPath === this.localBase) {
-      return this.remoteBase;
-    }
-
-    const localPrefix = `${this.localBase}${path.sep}`;
-    if (resolvedLocalPath.startsWith(localPrefix)) {
-      const suffix = resolvedLocalPath.slice(localPrefix.length).split(path.sep).join("/");
-      return `${this.remoteBase}/${suffix}`;
-    }
-
-    return localPath.replaceAll("\\", "/");
-  }
-
-  private translateCommandToLocal(command: string): string {
-    return command.split(this.remoteBase).join(this.localBase.replaceAll("\\", "/"));
-  }
-
-  override getWorkspacePath(projectPath: string, workspaceName: string): string {
-    return path.posix.join(this.remoteBase, path.basename(projectPath), workspaceName);
-  }
-
-  override normalizePath(targetPath: string, basePath: string): string {
-    const normalizedBasePath = this.toRemotePath(basePath);
-    const normalizedTargetPath = targetPath.replaceAll("\\", "/");
-
-    if (normalizedBasePath === "~" || normalizedBasePath.startsWith("~/")) {
-      if (
-        normalizedTargetPath === "~" ||
-        normalizedTargetPath.startsWith("~/") ||
-        normalizedTargetPath.startsWith("/")
-      ) {
-        return normalizedTargetPath;
-      }
-      return path.posix.normalize(path.posix.join(normalizedBasePath, normalizedTargetPath));
-    }
-
-    return path.posix.resolve(normalizedBasePath, normalizedTargetPath);
-  }
-
-  override async resolvePath(filePath: string): Promise<string> {
-    const resolvedLocalPath = await super.resolvePath(this.toLocalPath(filePath));
-    return this.toRemotePath(resolvedLocalPath);
-  }
-
-  override exec(
-    command: string,
-    options: Parameters<LocalRuntime["exec"]>[1]
-  ): ReturnType<LocalRuntime["exec"]> {
-    const usesTildeRoot = this.usesTildeWorkspaceRoot();
-    const localHomeForTildeRoot = this.localHomeForTildeRoot ?? process.env.HOME ?? this.localBase;
-
-    return super.exec(usesTildeRoot ? command : this.translateCommandToLocal(command), {
-      ...options,
-      cwd: this.toLocalPath(options.cwd),
-      env: usesTildeRoot
-        ? {
-            ...(options.env ?? {}),
-            HOME: localHomeForTildeRoot,
-          }
-        : options.env,
-    });
-  }
-
-  override stat(filePath: string, abortSignal?: AbortSignal): ReturnType<LocalRuntime["stat"]> {
-    return super.stat(this.toLocalPath(filePath), abortSignal);
-  }
-
-  override readFile(
-    filePath: string,
-    abortSignal?: AbortSignal
-  ): ReturnType<LocalRuntime["readFile"]> {
-    return super.readFile(this.toLocalPath(filePath), abortSignal);
-  }
-
-  override writeFile(
-    filePath: string,
-    abortSignal?: AbortSignal
-  ): ReturnType<LocalRuntime["writeFile"]> {
-    return super.writeFile(this.toLocalPath(filePath), abortSignal);
-  }
-
-  override ensureDir(dirPath: string): ReturnType<LocalRuntime["ensureDir"]> {
-    return super.ensureDir(this.toLocalPath(dirPath));
-  }
-}
 
 async function createDeleteTool(
   muxHome: string,
@@ -185,22 +33,11 @@ async function createDeleteTool(
   return createAgentSkillDeleteTool(config);
 }
 
-async function writeSkillFixture(muxHome: string, name: string): Promise<void> {
-  const skillDir = path.join(muxHome, "skills", name);
-  await fs.mkdir(path.join(skillDir, "references"), { recursive: true });
-  await fs.writeFile(
-    path.join(skillDir, "SKILL.md"),
-    `---\nname: ${name}\ndescription: fixture\n---\nBody\n`,
-    "utf-8"
-  );
-  await fs.writeFile(path.join(skillDir, "references", "foo.txt"), "fixture", "utf-8");
-}
-
 describe("agent_skill_delete", () => {
   it("requires confirm: true before deleting", async () => {
     using tempDir = new TestTempDir("test-agent-skill-delete-confirm");
 
-    await writeSkillFixture(tempDir.path, "demo-skill");
+    await writeSkillWithReference(tempDir.path, "demo-skill");
 
     const tool = await createDeleteTool(tempDir.path);
     const result = (await tool.execute!(
@@ -222,7 +59,7 @@ describe("agent_skill_delete", () => {
 
     const projectRoot = path.join(tempDir.path, "my-project");
     await fs.mkdir(path.join(projectRoot, ".mux", "skills"), { recursive: true });
-    await writeSkillFixture(path.join(projectRoot, ".mux"), "demo-skill");
+    await writeSkillWithReference(path.join(projectRoot, ".mux"), "demo-skill");
 
     const projectScope: MuxToolScope = {
       type: "project",
@@ -254,7 +91,7 @@ describe("agent_skill_delete", () => {
       const skillName = "my-skill";
       const remoteWorkspaceRoot = "/remote/workspace";
 
-      await writeSkillFixture(path.join(tempDir.path, ".mux"), skillName);
+      await writeSkillWithReference(path.join(tempDir.path, ".mux"), skillName);
 
       const remoteRuntime = new RemotePathMappedRuntime(tempDir.path, remoteWorkspaceRoot);
       const baseConfig = createTestToolConfig(tempDir.path, {
@@ -292,7 +129,7 @@ describe("agent_skill_delete", () => {
       const skillName = "my-skill";
       const runtimeWorkspaceRoot = path.join(tempDir.path, "remote-home", "mux", "project", "main");
 
-      await writeSkillFixture(path.join(runtimeWorkspaceRoot, ".mux"), skillName);
+      await writeSkillWithReference(path.join(runtimeWorkspaceRoot, ".mux"), skillName);
 
       const remoteRuntime = new RemotePathMappedRuntime(runtimeWorkspaceRoot, TILDE_WORKSPACE_ROOT);
       const baseConfig = createTestToolConfig(tempDir.path, {
@@ -361,7 +198,7 @@ describe("agent_skill_delete", () => {
       const skillName = "my-skill";
       const remoteWorkspaceRoot = "/remote/workspace";
 
-      await writeSkillFixture(path.join(tempDir.path, ".mux"), skillName);
+      await writeSkillWithReference(path.join(tempDir.path, ".mux"), skillName);
 
       const remoteRuntime = new RemotePathMappedRuntime(tempDir.path, remoteWorkspaceRoot);
       const baseConfig = createTestToolConfig(tempDir.path, {
@@ -417,7 +254,7 @@ describe("agent_skill_delete", () => {
       const skillName = "my-skill";
       const runtimeWorkspaceRoot = path.join(tempDir.path, "remote-home", "mux", "project", "main");
 
-      await writeSkillFixture(path.join(runtimeWorkspaceRoot, ".mux"), skillName);
+      await writeSkillWithReference(path.join(runtimeWorkspaceRoot, ".mux"), skillName);
 
       const remoteRuntime = new RemotePathMappedRuntime(runtimeWorkspaceRoot, TILDE_WORKSPACE_ROOT);
       const baseConfig = createTestToolConfig(tempDir.path, {
@@ -531,7 +368,7 @@ describe("agent_skill_delete", () => {
   it("deletes a specific file within a skill", async () => {
     using tempDir = new TestTempDir("test-agent-skill-delete-file");
 
-    await writeSkillFixture(tempDir.path, "demo-skill");
+    await writeSkillWithReference(tempDir.path, "demo-skill");
 
     const tool = await createDeleteTool(tempDir.path);
     const result = (await tool.execute!(
@@ -557,7 +394,7 @@ describe("agent_skill_delete", () => {
   it("deletes an entire skill directory when target is 'skill'", async () => {
     using tempDir = new TestTempDir("test-agent-skill-delete-skill-dir");
 
-    await writeSkillFixture(tempDir.path, "demo-skill");
+    await writeSkillWithReference(tempDir.path, "demo-skill");
 
     const tool = await createDeleteTool(tempDir.path);
     const result = (await tool.execute!(
@@ -580,7 +417,7 @@ describe("agent_skill_delete", () => {
   it("requires filePath when target is 'file'", async () => {
     using tempDir = new TestTempDir("test-agent-skill-delete-filepath-required");
 
-    await writeSkillFixture(tempDir.path, "demo-skill");
+    await writeSkillWithReference(tempDir.path, "demo-skill");
 
     const tool = await createDeleteTool(tempDir.path);
     const result = (await tool.execute!(
@@ -714,7 +551,7 @@ describe("agent_skill_delete", () => {
   it("refuses to delete a file via symlinked intermediate path", async () => {
     using tempDir = new TestTempDir("test-agent-skill-delete-intermediate-symlink");
 
-    await writeSkillFixture(tempDir.path, "demo-skill");
+    await writeSkillWithReference(tempDir.path, "demo-skill");
 
     const externalDir = path.join(tempDir.path, "external-escape");
     await fs.mkdir(externalDir, { recursive: true });
@@ -742,7 +579,7 @@ describe("agent_skill_delete", () => {
   it("rejects internal symlink alias pointing to existing file", async () => {
     using tempDir = new TestTempDir("test-agent-skill-delete-internal-alias-symlink");
 
-    await writeSkillFixture(tempDir.path, "demo-skill");
+    await writeSkillWithReference(tempDir.path, "demo-skill");
 
     const skillDir = path.join(tempDir.path, "skills", "demo-skill");
     const skillPath = path.join(skillDir, "SKILL.md");
@@ -774,7 +611,7 @@ describe("agent_skill_delete", () => {
     async (filePathValue) => {
       using tempDir = new TestTempDir("test-agent-skill-delete-invalid-path");
 
-      await writeSkillFixture(tempDir.path, "demo-skill");
+      await writeSkillWithReference(tempDir.path, "demo-skill");
 
       const tool = await createDeleteTool(tempDir.path);
       const result = (await tool.execute!(
@@ -835,7 +672,7 @@ describe("agent_skill_delete", () => {
   it("returns explicit not-found when deleting a file that does not exist within an existing skill", async () => {
     using tempDir = new TestTempDir("test-agent-skill-delete-missing-file");
 
-    await writeSkillFixture(tempDir.path, "demo-skill");
+    await writeSkillWithReference(tempDir.path, "demo-skill");
 
     const tool = await createDeleteTool(tempDir.path);
     const result = (await tool.execute!(

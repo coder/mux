@@ -167,6 +167,12 @@ function makeWorkspaceMetadata(
   };
 }
 
+const TEST_WORKSPACE_OPTIONS: Partial<FrontendWorkspaceMetadata> = {
+  name: "test-workspace",
+  projectPath: "/test/project",
+  namedWorkspacePath: "/test/project/test-workspace",
+};
+
 // Helper to create and add a workspace
 function createAndAddWorkspace(
   store: WorkspaceStore,
@@ -359,6 +365,152 @@ function mockChatStreamFor(
     await waitForAbortSignal(options?.signal);
   });
 }
+
+type ChatStep = WorkspaceChatMessage | Promise<void> | (() => void | Promise<void>);
+
+type ChatEvent<T extends WorkspaceChatMessage["type"]> = Extract<WorkspaceChatMessage, { type: T }>;
+
+async function runChatStep(step: ChatStep): Promise<WorkspaceChatMessage | undefined> {
+  if (typeof step === "function") {
+    await step();
+    return undefined;
+  }
+  if (step instanceof Promise) {
+    await step;
+    return undefined;
+  }
+  return step;
+}
+
+function mockChatScript(steps: ChatStep[], options: { keepOpen?: boolean } = {}): void {
+  mockOnChat.mockImplementation(async function* (
+    _input?: { workspaceId: string; mode?: unknown },
+    signalOptions?: { signal?: AbortSignal }
+  ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+    for (const step of steps) {
+      const event = await runChatStep(step);
+      if (event) {
+        yield event;
+      }
+    }
+    if (options.keepOpen ?? false) {
+      await waitForAbortSignal(signalOptions?.signal);
+    }
+  });
+}
+
+function mockChatReconnectScript(
+  getSteps: (subscriptionCount: number, signal: AbortSignal | undefined) => ChatStep[]
+): () => number {
+  let subscriptionCount = 0;
+  mockOnChat.mockImplementation(async function* (
+    _input?: { workspaceId: string; mode?: unknown },
+    options?: { signal?: AbortSignal }
+  ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+    subscriptionCount += 1;
+    for (const step of getSteps(subscriptionCount, options?.signal)) {
+      const event = await runChatStep(step);
+      if (event) {
+        yield event;
+      }
+    }
+  });
+  return () => subscriptionCount;
+}
+
+const caughtUpEvent = (overrides: Partial<ChatEvent<"caught-up">> = {}): WorkspaceChatMessage => ({
+  type: "caught-up",
+  ...overrides,
+});
+
+const sinceCaughtUpEvent = (
+  historySequence = 1,
+  messageId = `history-${historySequence}`,
+  stream?: { messageId: string; lastTimestamp: number }
+): WorkspaceChatMessage =>
+  caughtUpEvent({
+    replay: "since",
+    cursor: { history: { messageId, historySequence }, ...(stream ? { stream } : {}) },
+  });
+
+const streamEndEvent = (
+  workspaceId: string,
+  messageId: string,
+  overrides: Partial<ChatEvent<"stream-end">> = {}
+): WorkspaceChatMessage => ({
+  type: "stream-end",
+  workspaceId,
+  messageId,
+  metadata: { model: TEST_MODEL, historySequence: 1, timestamp: 1_001 },
+  parts: [],
+  ...overrides,
+});
+
+const streamAbortEvent = (
+  workspaceId: string,
+  messageId: string,
+  overrides: Partial<ChatEvent<"stream-abort">> = {}
+): WorkspaceChatMessage => ({
+  type: "stream-abort",
+  workspaceId,
+  messageId,
+  abortReason: "user",
+  metadata: {},
+  ...overrides,
+});
+
+const bashOutputEvent = (
+  workspaceId: string,
+  toolCallId: string,
+  text: string,
+  overrides: Partial<ChatEvent<"bash-output">> = {}
+): WorkspaceChatMessage => ({
+  type: "bash-output",
+  workspaceId,
+  toolCallId,
+  text,
+  isError: false,
+  timestamp: 1,
+  ...overrides,
+});
+
+const toolCallEndEvent = (
+  workspaceId: string,
+  toolCallId: string,
+  toolName: string,
+  result: unknown,
+  overrides: Partial<ChatEvent<"tool-call-end">> = {}
+): WorkspaceChatMessage => ({
+  type: "tool-call-end",
+  workspaceId,
+  messageId: `m-${toolCallId}`,
+  toolCallId,
+  toolName,
+  result,
+  timestamp: 1,
+  ...overrides,
+});
+
+const advisorPhaseEvent = (
+  workspaceId: string,
+  toolCallId: string,
+  phase: ChatEvent<"advisor-phase">["phase"],
+  timestamp: number
+): WorkspaceChatMessage => ({ type: "advisor-phase", workspaceId, toolCallId, phase, timestamp });
+
+const advisorOutputEvent = (
+  workspaceId: string,
+  toolCallId: string,
+  text: string,
+  timestamp: number
+): WorkspaceChatMessage => ({ type: "advisor-output", workspaceId, toolCallId, text, timestamp });
+
+const taskCreatedEvent = (
+  workspaceId: string,
+  toolCallId: string,
+  taskId: string,
+  timestamp: number
+): WorkspaceChatMessage => ({ type: "task-created", workspaceId, toolCallId, taskId, timestamp });
 
 const TEST_MODEL = "claude-sonnet-4";
 
@@ -574,20 +726,18 @@ describe("WorkspaceStore", () => {
       const workspaceId = "pinned-todo-stream-end";
       const pinnedTodoKey = getPinnedTodoExpandedKey(workspaceId);
 
-      mockOnChat.mockImplementation(async function* (
-        _input?: { workspaceId: string; mode?: unknown },
-        options?: { signal?: AbortSignal }
-      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
-        yield { type: "caught-up" };
-        await Promise.resolve();
-        yield* pinnedTodoStreamEvents(workspaceId, pinnedTodos, {
-          kind: "stream-end",
-          messageId: "stream-end-msg",
-          model: "claude-sonnet-4",
-        });
-
-        await waitForAbortSignal(options?.signal);
-      });
+      mockChatScript(
+        [
+          caughtUpEvent(),
+          Promise.resolve(),
+          ...pinnedTodoStreamEvents(workspaceId, pinnedTodos, {
+            kind: "stream-end",
+            messageId: "stream-end-msg",
+            model: TEST_MODEL,
+          }),
+        ],
+        { keepOpen: true }
+      );
 
       createAndAddWorkspace(store, workspaceId);
 
@@ -601,19 +751,17 @@ describe("WorkspaceStore", () => {
       const workspaceId = "pinned-todo-stream-abort";
       const pinnedTodoKey = getPinnedTodoExpandedKey(workspaceId);
 
-      mockOnChat.mockImplementation(async function* (
-        _input?: { workspaceId: string; mode?: unknown },
-        options?: { signal?: AbortSignal }
-      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
-        yield { type: "caught-up" };
-        await Promise.resolve();
-        yield* pinnedTodoStreamEvents(workspaceId, pinnedTodos, {
-          kind: "stream-abort",
-          messageId: "stream-abort-msg",
-        });
-
-        await waitForAbortSignal(options?.signal);
-      });
+      mockChatScript(
+        [
+          caughtUpEvent(),
+          Promise.resolve(),
+          ...pinnedTodoStreamEvents(workspaceId, pinnedTodos, {
+            kind: "stream-abort",
+            messageId: "stream-abort-msg",
+          }),
+        ],
+        { keepOpen: true }
+      );
 
       createAndAddWorkspace(store, workspaceId);
 
@@ -667,20 +815,18 @@ describe("WorkspaceStore", () => {
 
         await waitForAbortSignal(options?.signal);
       });
-      mockOnChat.mockImplementation(async function* (
-        _input?: { workspaceId: string; mode?: unknown },
-        options?: { signal?: AbortSignal }
-      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
-        yield { type: "caught-up" };
-        await Promise.resolve();
-        yield* pinnedTodoStreamEvents(workspaceId, pinnedTodos, {
-          kind: "stream-end",
-          messageId: "stream-end-msg",
-          model: "claude-sonnet-4",
-        });
-
-        await waitForAbortSignal(options?.signal);
-      });
+      mockChatScript(
+        [
+          caughtUpEvent(),
+          Promise.resolve(),
+          ...pinnedTodoStreamEvents(workspaceId, pinnedTodos, {
+            kind: "stream-end",
+            messageId: "stream-end-msg",
+            model: TEST_MODEL,
+          }),
+        ],
+        { keepOpen: true }
+      );
 
       recreateStore();
       await tick(0);
@@ -829,35 +975,18 @@ describe("WorkspaceStore", () => {
       const pinnedTodoKey = getPinnedTodoExpandedKey(workspaceId);
       let emittedStreamEnd = false;
 
-      mockOnChat.mockImplementation(async function* (
-        _input?: { workspaceId: string; mode?: unknown },
-        options?: { signal?: AbortSignal }
-      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
-        yield { type: "caught-up" };
-        await Promise.resolve();
-        yield {
-          type: "stream-start",
-          workspaceId,
-          messageId: "stream-no-todos-msg",
-          historySequence: 1,
-          model: "claude-sonnet-4",
-          startTime: 1_000,
-        };
-        yield {
-          type: "stream-end",
-          workspaceId,
-          messageId: "stream-no-todos-msg",
-          metadata: {
-            model: "claude-sonnet-4",
-            historySequence: 1,
-            timestamp: 1_001,
+      mockChatScript(
+        [
+          caughtUpEvent(),
+          Promise.resolve(),
+          streamStartEvent(workspaceId, "stream-no-todos-msg", { startTime: 1_000 }),
+          streamEndEvent(workspaceId, "stream-no-todos-msg"),
+          () => {
+            emittedStreamEnd = true;
           },
-          parts: [],
-        };
-        emittedStreamEnd = true;
-
-        await waitForAbortSignal(options?.signal);
-      });
+        ],
+        { keepOpen: true }
+      );
 
       createAndAddWorkspace(store, workspaceId);
 
@@ -891,14 +1020,7 @@ describe("WorkspaceStore", () => {
       const createdAt = new Date().toISOString();
 
       // Setup mock stream
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        yield { type: "caught-up" };
-        await tick(10);
-      });
+      mockChatScript([{ type: "caught-up" }, tick(10)]);
 
       createAndAddWorkspace(store, workspaceId, { name: "test-branch-2", createdAt });
 
@@ -926,21 +1048,10 @@ describe("WorkspaceStore", () => {
       const unsubscribe = store.subscribe(listener);
 
       // Setup mock stream
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        await Promise.resolve();
-        yield { type: "caught-up" };
-      });
+      mockChatScript([Promise.resolve(), { type: "caught-up" }]);
 
       // Add workspace (should trigger IPC subscription)
-      createAndAddWorkspace(store, "test-workspace", {
-        name: "test-workspace",
-        projectPath: "/test/project",
-        namedWorkspacePath: "/test/project/test-workspace",
-      });
+      createAndAddWorkspace(store, "test-workspace", TEST_WORKSPACE_OPTIONS);
 
       // Wait for async processing
       await tick(10);
@@ -955,22 +1066,11 @@ describe("WorkspaceStore", () => {
       const unsubscribe = store.subscribe(listener);
 
       // Setup mock stream
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        await Promise.resolve();
-        yield { type: "caught-up" };
-      });
+      mockChatScript([Promise.resolve(), { type: "caught-up" }]);
 
       // Unsubscribe before adding workspace (which triggers updates)
       unsubscribe();
-      createAndAddWorkspace(store, "test-workspace", {
-        name: "test-workspace",
-        projectPath: "/test/project",
-        namedWorkspacePath: "/test/project/test-workspace",
-      });
+      createAndAddWorkspace(store, "test-workspace", TEST_WORKSPACE_OPTIONS);
 
       // Wait for async processing
       await tick(10);
@@ -1043,13 +1143,7 @@ describe("WorkspaceStore", () => {
     });
 
     it("switches onChat subscriptions when active workspace changes", async () => {
-      // eslint-disable-next-line require-yield
-      mockOnChat.mockImplementation(async function* (
-        _input?: { workspaceId: string; mode?: unknown },
-        options?: { signal?: AbortSignal }
-      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
-        await waitForAbortSignal(options?.signal);
-      });
+      mockChatScript([], { keepOpen: true });
 
       createAndAddWorkspace(store, "workspace-1", {}, false);
       createAndAddWorkspace(store, "workspace-2", {}, false);
@@ -1069,13 +1163,7 @@ describe("WorkspaceStore", () => {
     });
 
     it("clears replay buffers before aborting the previous active workspace subscription", async () => {
-      // eslint-disable-next-line require-yield
-      mockOnChat.mockImplementation(async function* (
-        _input?: { workspaceId: string; mode?: unknown },
-        options?: { signal?: AbortSignal }
-      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
-        await waitForAbortSignal(options?.signal);
-      });
+      mockChatScript([], { keepOpen: true });
 
       createAndAddWorkspace(store, "workspace-1", {}, false);
       createAndAddWorkspace(store, "workspace-2", {}, false);
@@ -1126,14 +1214,13 @@ describe("WorkspaceStore", () => {
     it("keeps transcript hydration active across full replay resets", async () => {
       const workspaceId = "workspace-full-replay-hydration";
 
-      mockOnChat.mockImplementation(async function* (
-        _input?: { workspaceId: string; mode?: unknown },
-        options?: { signal?: AbortSignal }
-      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
-        // Full replay path emits history rows before the caught-up marker.
-        yield createHistoryMessageEvent("history-before-caught-up", 11);
-        await waitForAbortSignal(options?.signal);
-      });
+      mockChatScript(
+        [
+          // Full replay path emits history rows before the caught-up marker.
+          createHistoryMessageEvent("history-before-caught-up", 11),
+        ],
+        { keepOpen: true }
+      );
 
       createAndAddWorkspace(store, workspaceId, {}, false);
       store.setActiveWorkspaceId(workspaceId);
@@ -3807,29 +3894,21 @@ describe("WorkspaceStore", () => {
   describe("model tracking", () => {
     it("should call onModelUsed when stream starts", async () => {
       // Setup mock stream
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        yield { type: "caught-up" };
-        await tick(0);
-        yield {
+      mockChatScript([
+        { type: "caught-up" },
+        tick(0),
+        {
           type: "stream-start",
           historySequence: 1,
           messageId: "msg1",
           model: "claude-opus-4",
           workspaceId: "test-workspace",
           startTime: Date.now(),
-        };
-        await tick(10);
-      });
+        },
+        tick(10),
+      ]);
 
-      createAndAddWorkspace(store, "test-workspace", {
-        name: "test-workspace",
-        projectPath: "/test/project",
-        namedWorkspacePath: "/test/project/test-workspace",
-      });
+      createAndAddWorkspace(store, "test-workspace", TEST_WORKSPACE_OPTIONS);
 
       // Wait for async processing
       await tick(20);
@@ -3848,16 +3927,7 @@ describe("WorkspaceStore", () => {
     });
 
     it("getWorkspaceState() returns same reference when state hasn't changed", () => {
-      createAndAddWorkspace(
-        store,
-        "test-workspace",
-        {
-          name: "test-workspace",
-          projectPath: "/test/project",
-          namedWorkspacePath: "/test/project/test-workspace",
-        },
-        false
-      );
+      createAndAddWorkspace(store, "test-workspace", TEST_WORKSPACE_OPTIONS, false);
 
       const state1 = store.getWorkspaceState("test-workspace");
       const state2 = store.getWorkspaceState("test-workspace");
@@ -3963,29 +4033,21 @@ describe("WorkspaceStore", () => {
   describe("cache invalidation", () => {
     it("invalidates getWorkspaceState() cache when workspace changes", async () => {
       // Setup mock stream
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        yield { type: "caught-up" };
-        await tick(30);
-        yield {
+      mockChatScript([
+        { type: "caught-up" },
+        tick(30),
+        {
           type: "stream-start",
           historySequence: 1,
           messageId: "msg1",
           model: "claude-sonnet-4",
           workspaceId: "test-workspace",
           startTime: Date.now(),
-        };
-        await tick(10);
-      });
+        },
+        tick(10),
+      ]);
 
-      createAndAddWorkspace(store, "test-workspace", {
-        name: "test-workspace",
-        projectPath: "/test/project",
-        namedWorkspacePath: "/test/project/test-workspace",
-      });
+      createAndAddWorkspace(store, "test-workspace", TEST_WORKSPACE_OPTIONS);
 
       const state1 = store.getWorkspaceState("test-workspace");
 
@@ -3999,29 +4061,21 @@ describe("WorkspaceStore", () => {
 
     it("invalidates getAllStates() cache when workspace changes", async () => {
       // Setup mock stream
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        yield { type: "caught-up" };
-        await tick(0);
-        yield {
+      mockChatScript([
+        { type: "caught-up" },
+        tick(0),
+        {
           type: "stream-start",
           historySequence: 1,
           messageId: "msg1",
           model: "claude-sonnet-4",
           workspaceId: "test-workspace",
           startTime: Date.now(),
-        };
-        await tick(10);
-      });
+        },
+        tick(10),
+      ]);
 
-      createAndAddWorkspace(store, "test-workspace", {
-        name: "test-workspace",
-        projectPath: "/test/project",
-        namedWorkspacePath: "/test/project/test-workspace",
-      });
+      createAndAddWorkspace(store, "test-workspace", TEST_WORKSPACE_OPTIONS);
 
       const states1 = store.getAllStates();
 
@@ -4053,16 +4107,7 @@ describe("WorkspaceStore", () => {
     });
 
     it("maintains cache when no changes occur", () => {
-      createAndAddWorkspace(
-        store,
-        "test-workspace",
-        {
-          name: "test-workspace",
-          projectPath: "/test/project",
-          namedWorkspacePath: "/test/project/test-workspace",
-        },
-        false
-      );
+      createAndAddWorkspace(store, "test-workspace", TEST_WORKSPACE_OPTIONS, false);
 
       const state1 = store.getWorkspaceState("test-workspace");
       const state2 = store.getWorkspaceState("test-workspace");
@@ -4083,16 +4128,7 @@ describe("WorkspaceStore", () => {
 
   describe("race conditions", () => {
     it("properly cleans up workspace on removal", () => {
-      createAndAddWorkspace(
-        store,
-        "test-workspace",
-        {
-          name: "test-workspace",
-          projectPath: "/test/project",
-          namedWorkspacePath: "/test/project/test-workspace",
-        },
-        false
-      );
+      createAndAddWorkspace(store, "test-workspace", TEST_WORKSPACE_OPTIONS, false);
 
       // Verify workspace exists
       let allStates = store.getAllStates();
@@ -4141,16 +4177,7 @@ describe("WorkspaceStore", () => {
     });
 
     it("handles workspace removal during state access", () => {
-      createAndAddWorkspace(
-        store,
-        "test-workspace",
-        {
-          name: "test-workspace",
-          projectPath: "/test/project",
-          namedWorkspacePath: "/test/project/test-workspace",
-        },
-        false
-      );
+      createAndAddWorkspace(store, "test-workspace", TEST_WORKSPACE_OPTIONS, false);
 
       const state1 = store.getWorkspaceState("test-workspace");
       expect(state1).toBeDefined();
@@ -4169,40 +4196,20 @@ describe("WorkspaceStore", () => {
     it("retains live output when bash tool result has no output", async () => {
       const workspaceId = "bash-output-workspace-1";
 
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        yield { type: "caught-up" };
-        await Promise.resolve();
-        yield {
-          type: "bash-output",
-          workspaceId,
-          toolCallId: "call-1",
-          text: "out\n",
-          isError: false,
-          timestamp: 1,
-        };
-        yield {
-          type: "bash-output",
-          workspaceId,
-          toolCallId: "call-1",
-          text: "err\n",
-          isError: true,
-          timestamp: 2,
-        };
+      mockChatScript([
+        caughtUpEvent(),
+        Promise.resolve(),
+        bashOutputEvent(workspaceId, "call-1", "out\n"),
+        bashOutputEvent(workspaceId, "call-1", "err\n", { isError: true, timestamp: 2 }),
         // Simulate tmpfile overflow: tool result has no output field.
-        yield {
-          type: "tool-call-end",
+        toolCallEndEvent(
           workspaceId,
-          messageId: "m1",
-          toolCallId: "call-1",
-          toolName: "bash",
-          result: { success: false, error: "overflow", exitCode: -1, wall_duration_ms: 1 },
-          timestamp: 3,
-        };
-      });
+          "call-1",
+          "bash",
+          { success: false, error: "overflow", exitCode: -1, wall_duration_ms: 1 },
+          { messageId: "m1", timestamp: 3 }
+        ),
+      ]);
 
       createAndAddWorkspace(store, workspaceId);
       await tick(10);
@@ -4222,31 +4229,18 @@ describe("WorkspaceStore", () => {
     it("clears live output when bash tool result includes output", async () => {
       const workspaceId = "bash-output-workspace-2";
 
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        yield { type: "caught-up" };
-        await Promise.resolve();
-        yield {
-          type: "bash-output",
+      mockChatScript([
+        caughtUpEvent(),
+        Promise.resolve(),
+        bashOutputEvent(workspaceId, "call-2", "out\n"),
+        toolCallEndEvent(
           workspaceId,
-          toolCallId: "call-2",
-          text: "out\n",
-          isError: false,
-          timestamp: 1,
-        };
-        yield {
-          type: "tool-call-end",
-          workspaceId,
-          messageId: "m2",
-          toolCallId: "call-2",
-          toolName: "bash",
-          result: { success: true, output: "done", exitCode: 0, wall_duration_ms: 1 },
-          timestamp: 2,
-        };
-      });
+          "call-2",
+          "bash",
+          { success: true, output: "done", exitCode: 0, wall_duration_ms: 1 },
+          { messageId: "m2", timestamp: 2 }
+        ),
+      ]);
 
       createAndAddWorkspace(store, workspaceId);
       await tick(10);
@@ -4258,22 +4252,11 @@ describe("WorkspaceStore", () => {
     it("replays pre-caught-up bash output after full replay catches up", async () => {
       const workspaceId = "bash-output-workspace-3";
 
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        yield {
-          type: "bash-output",
-          workspaceId,
-          toolCallId: "call-3",
-          text: "buffered\n",
-          isError: false,
-          timestamp: 1,
-        };
-        await Promise.resolve();
-        yield { type: "caught-up", replay: "full" };
-      });
+      mockChatScript([
+        bashOutputEvent(workspaceId, "call-3", "buffered\n"),
+        Promise.resolve(),
+        caughtUpEvent({ replay: "full" }),
+      ]);
 
       createAndAddWorkspace(store, workspaceId);
       await tick(10);
@@ -4288,28 +4271,12 @@ describe("WorkspaceStore", () => {
     it("tracks the latest live advisor phase while the advisor tool is running", async () => {
       const workspaceId = "advisor-phase-workspace-1";
 
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        yield { type: "caught-up" };
-        await Promise.resolve();
-        yield {
-          type: "advisor-phase",
-          workspaceId,
-          toolCallId: "call-advisor-1",
-          phase: "preparing_context",
-          timestamp: 1,
-        };
-        yield {
-          type: "advisor-phase",
-          workspaceId,
-          toolCallId: "call-advisor-1",
-          phase: "waiting_for_response",
-          timestamp: 2,
-        };
-      });
+      mockChatScript([
+        caughtUpEvent(),
+        Promise.resolve(),
+        advisorPhaseEvent(workspaceId, "call-advisor-1", "preparing_context", 1),
+        advisorPhaseEvent(workspaceId, "call-advisor-1", "waiting_for_response", 2),
+      ]);
 
       createAndAddWorkspace(store, workspaceId);
 
@@ -4337,31 +4304,22 @@ describe("WorkspaceStore", () => {
         releaseToolEnd = resolve;
       });
 
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        yield { type: "caught-up" };
-        await Promise.resolve();
-        yield {
-          type: "advisor-phase",
+      mockChatScript([
+        caughtUpEvent(),
+        Promise.resolve(),
+        advisorPhaseEvent(workspaceId, "call-advisor-2", "finalizing_result", 1),
+        waitForToolEnd,
+        toolCallEndEvent(
           workspaceId,
-          toolCallId: "call-advisor-2",
-          phase: "finalizing_result",
-          timestamp: 1,
-        };
-        await waitForToolEnd;
-        yield {
-          type: "tool-call-end",
-          workspaceId,
-          messageId: "m-advisor-2",
-          toolCallId: "call-advisor-2",
-          toolName: "advisor",
-          result: { success: true },
-          timestamp: 2,
-        };
-      });
+          "call-advisor-2",
+          "advisor",
+          { success: true },
+          {
+            messageId: "m-advisor-2",
+            timestamp: 2,
+          }
+        ),
+      ]);
 
       createAndAddWorkspace(store, workspaceId);
 
@@ -4387,29 +4345,13 @@ describe("WorkspaceStore", () => {
         releaseDuplicate = resolve;
       });
 
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        yield { type: "caught-up" };
-        await Promise.resolve();
-        yield {
-          type: "advisor-phase",
-          workspaceId,
-          toolCallId: "call-advisor-3",
-          phase: "waiting_for_response",
-          timestamp: 1,
-        };
-        await waitForDuplicate;
-        yield {
-          type: "advisor-phase",
-          workspaceId,
-          toolCallId: "call-advisor-3",
-          phase: "waiting_for_response",
-          timestamp: 2,
-        };
-      });
+      mockChatScript([
+        caughtUpEvent(),
+        Promise.resolve(),
+        advisorPhaseEvent(workspaceId, "call-advisor-3", "waiting_for_response", 1),
+        waitForDuplicate,
+        advisorPhaseEvent(workspaceId, "call-advisor-3", "waiting_for_response", 2),
+      ]);
 
       createAndAddWorkspace(store, workspaceId);
 
@@ -4449,28 +4391,12 @@ describe("WorkspaceStore", () => {
     it("accumulates live advisor output while the advisor tool is running", async () => {
       const workspaceId = "advisor-output-workspace-1";
 
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        yield { type: "caught-up" };
-        await Promise.resolve();
-        yield {
-          type: "advisor-output",
-          workspaceId,
-          toolCallId: "call-advisor-output-1",
-          text: "first ",
-          timestamp: 1,
-        };
-        yield {
-          type: "advisor-output",
-          workspaceId,
-          toolCallId: "call-advisor-output-1",
-          text: "second",
-          timestamp: 2,
-        };
-      });
+      mockChatScript([
+        caughtUpEvent(),
+        Promise.resolve(),
+        advisorOutputEvent(workspaceId, "call-advisor-output-1", "first ", 1),
+        advisorOutputEvent(workspaceId, "call-advisor-output-1", "second", 2),
+      ]);
 
       createAndAddWorkspace(store, workspaceId);
 
@@ -4493,31 +4419,19 @@ describe("WorkspaceStore", () => {
         releaseToolEnd = resolve;
       });
 
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        yield { type: "caught-up" };
-        await Promise.resolve();
-        yield {
-          type: "advisor-output",
+      mockChatScript([
+        caughtUpEvent(),
+        Promise.resolve(),
+        advisorOutputEvent(workspaceId, "call-advisor-output-2", "partial advice", 1),
+        waitForToolEnd,
+        toolCallEndEvent(
           workspaceId,
-          toolCallId: "call-advisor-output-2",
-          text: "partial advice",
-          timestamp: 1,
-        };
-        await waitForToolEnd;
-        yield {
-          type: "tool-call-end",
-          workspaceId,
-          messageId: "m-advisor-output-2",
-          toolCallId: "call-advisor-output-2",
-          toolName: "advisor",
-          result: { type: "advice", advice: "partial advice" },
-          timestamp: 2,
-        };
-      });
+          "call-advisor-output-2",
+          "advisor",
+          { type: "advice", advice: "partial advice" },
+          { messageId: "m-advisor-output-2", timestamp: 2 }
+        ),
+      ]);
 
       createAndAddWorkspace(store, workspaceId);
 
@@ -4543,23 +4457,13 @@ describe("WorkspaceStore", () => {
         releaseDelete = resolve;
       });
 
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        yield { type: "caught-up" };
-        await Promise.resolve();
-        yield {
-          type: "advisor-output",
-          workspaceId,
-          toolCallId: "call-advisor-output-delete",
-          text: "stale partial advice",
-          timestamp: 1,
-        };
-        await waitForDelete;
-        yield { type: "delete", historySequences: [1] };
-      });
+      mockChatScript([
+        caughtUpEvent(),
+        Promise.resolve(),
+        advisorOutputEvent(workspaceId, "call-advisor-output-delete", "stale partial advice", 1),
+        waitForDelete,
+        { type: "delete", historySequences: [1] },
+      ]);
 
       createAndAddWorkspace(store, workspaceId);
 
@@ -4581,21 +4485,11 @@ describe("WorkspaceStore", () => {
     it("replays pre-caught-up advisor output after full replay catches up", async () => {
       const workspaceId = "advisor-output-workspace-3";
 
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        yield {
-          type: "advisor-output",
-          workspaceId,
-          toolCallId: "call-advisor-output-3",
-          text: "buffered advice",
-          timestamp: 1,
-        };
-        await Promise.resolve();
-        yield { type: "caught-up", replay: "full" };
-      });
+      mockChatScript([
+        advisorOutputEvent(workspaceId, "call-advisor-output-3", "buffered advice", 1),
+        Promise.resolve(),
+        caughtUpEvent({ replay: "full" }),
+      ]);
 
       createAndAddWorkspace(store, workspaceId);
 
@@ -4612,21 +4506,11 @@ describe("WorkspaceStore", () => {
     it("exposes live taskId while the task tool is running", async () => {
       const workspaceId = "task-created-workspace-1";
 
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        yield { type: "caught-up" };
-        await Promise.resolve();
-        yield {
-          type: "task-created",
-          workspaceId,
-          toolCallId: "call-task-1",
-          taskId: "child-workspace-1",
-          timestamp: 1,
-        };
-      });
+      mockChatScript([
+        caughtUpEvent(),
+        Promise.resolve(),
+        taskCreatedEvent(workspaceId, "call-task-1", "child-workspace-1", 1),
+      ]);
 
       createAndAddWorkspace(store, workspaceId);
       await tick(10);
@@ -4639,28 +4523,12 @@ describe("WorkspaceStore", () => {
     it("accumulates multiple live taskIds for best-of task tool calls", async () => {
       const workspaceId = "task-created-workspace-best-of";
 
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        yield { type: "caught-up" };
-        await Promise.resolve();
-        yield {
-          type: "task-created",
-          workspaceId,
-          toolCallId: "call-task-best-of",
-          taskId: "child-workspace-1",
-          timestamp: 1,
-        };
-        yield {
-          type: "task-created",
-          workspaceId,
-          toolCallId: "call-task-best-of",
-          taskId: "child-workspace-2",
-          timestamp: 2,
-        };
-      });
+      mockChatScript([
+        caughtUpEvent(),
+        Promise.resolve(),
+        taskCreatedEvent(workspaceId, "call-task-best-of", "child-workspace-1", 1),
+        taskCreatedEvent(workspaceId, "call-task-best-of", "child-workspace-2", 2),
+      ]);
 
       createAndAddWorkspace(store, workspaceId);
       await tick(10);
@@ -4674,30 +4542,18 @@ describe("WorkspaceStore", () => {
     it("clears live taskId on task tool-call-end", async () => {
       const workspaceId = "task-created-workspace-2";
 
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        yield { type: "caught-up" };
-        await Promise.resolve();
-        yield {
-          type: "task-created",
+      mockChatScript([
+        caughtUpEvent(),
+        Promise.resolve(),
+        taskCreatedEvent(workspaceId, "call-task-2", "child-workspace-2", 1),
+        toolCallEndEvent(
           workspaceId,
-          toolCallId: "call-task-2",
-          taskId: "child-workspace-2",
-          timestamp: 1,
-        };
-        yield {
-          type: "tool-call-end",
-          workspaceId,
-          messageId: "m-task-2",
-          toolCallId: "call-task-2",
-          toolName: "task",
-          result: { status: "queued", taskId: "child-workspace-2" },
-          timestamp: 2,
-        };
-      });
+          "call-task-2",
+          "task",
+          { status: "queued", taskId: "child-workspace-2" },
+          { messageId: "m-task-2", timestamp: 2 }
+        ),
+      ]);
 
       createAndAddWorkspace(store, workspaceId);
       await tick(10);
@@ -4708,10 +4564,7 @@ describe("WorkspaceStore", () => {
     it("preserves pagination state across since reconnect retries", async () => {
       const workspaceId = "pagination-since-retry";
       let subscriptionCount = 0;
-      let releaseFirstSubscription: (() => void) | undefined;
-      const holdFirstSubscription = new Promise<void>((resolve) => {
-        releaseFirstSubscription = resolve;
-      });
+      const firstSubscription = createReleaseGate();
 
       mockOnChat.mockImplementation(async function* (): AsyncGenerator<
         WorkspaceChatMessage,
@@ -4734,7 +4587,7 @@ describe("WorkspaceStore", () => {
             },
           };
 
-          await holdFirstSubscription;
+          await firstSubscription.wait;
           return;
         }
 
@@ -4757,7 +4610,7 @@ describe("WorkspaceStore", () => {
       );
       expect(seededPagination).toBe(true);
 
-      releaseFirstSubscription?.();
+      firstSubscription.release();
 
       const preservedPagination = await waitUntil(() => {
         return (
@@ -4769,53 +4622,18 @@ describe("WorkspaceStore", () => {
 
     it("clears stale live tool state when since replay reports no active stream", async () => {
       const workspaceId = "task-created-workspace-4";
-      let subscriptionCount = 0;
-      let releaseFirstSubscription: (() => void) | undefined;
-      const holdFirstSubscription = new Promise<void>((resolve) => {
-        releaseFirstSubscription = resolve;
-      });
-
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        subscriptionCount += 1;
-
-        if (subscriptionCount === 1) {
-          yield { type: "caught-up" };
-          await Promise.resolve();
-          yield {
-            type: "bash-output",
-            workspaceId,
-            toolCallId: "call-bash-4",
-            text: "stale-output\n",
-            isError: false,
-            timestamp: 1,
-          };
-          yield {
-            type: "task-created",
-            workspaceId,
-            toolCallId: "call-task-4",
-            taskId: "child-workspace-4",
-            timestamp: 2,
-          };
-
-          await holdFirstSubscription;
-          return;
-        }
-
-        yield {
-          type: "caught-up",
-          replay: "since",
-          cursor: {
-            history: {
-              messageId: "history-1",
-              historySequence: 1,
-            },
-          },
-        };
-      });
+      const firstSubscription = createReleaseGate();
+      const getSubscriptionCount = mockChatReconnectScript((subscriptionCount) =>
+        subscriptionCount === 1
+          ? [
+              caughtUpEvent(),
+              Promise.resolve(),
+              bashOutputEvent(workspaceId, "call-bash-4", "stale-output\n"),
+              taskCreatedEvent(workspaceId, "call-task-4", "child-workspace-4", 2),
+              firstSubscription.wait,
+            ]
+          : [sinceCaughtUpEvent()]
+      );
 
       createAndAddWorkspace(store, workspaceId);
 
@@ -4828,11 +4646,11 @@ describe("WorkspaceStore", () => {
       });
       expect(seededLiveState).toBe(true);
 
-      releaseFirstSubscription?.();
+      firstSubscription.release();
 
       const clearedLiveState = await waitUntil(() => {
         return (
-          subscriptionCount >= 2 &&
+          getSubscriptionCount() >= 2 &&
           store.getBashToolLiveOutput(workspaceId, "call-bash-4") === null &&
           store.getTaskToolLiveTaskIds(workspaceId, "call-task-4") === null
         );
@@ -4842,76 +4660,36 @@ describe("WorkspaceStore", () => {
 
     it("clears stale live tool state when server stream exists but local stream context is missing", async () => {
       const workspaceId = "task-created-workspace-7";
-      let subscriptionCount = 0;
-      let releaseFirstSubscription: (() => void) | undefined;
-      const holdFirstSubscription = new Promise<void>((resolve) => {
-        releaseFirstSubscription = resolve;
-      });
-
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        subscriptionCount += 1;
-
-        if (subscriptionCount === 1) {
-          yield { type: "caught-up" };
-          await Promise.resolve();
-          yield {
-            type: "stream-start",
-            workspaceId,
-            messageId: "msg-old-stream-missing-local",
-            historySequence: 1,
-            model: "claude-3-5-sonnet-20241022",
-            startTime: 1_000,
-          };
-          yield {
-            type: "bash-output",
-            workspaceId,
-            toolCallId: "call-bash-7",
-            text: "stale-after-end\n",
-            isError: false,
-            timestamp: 1_001,
-          };
-          yield {
-            type: "task-created",
-            workspaceId,
-            toolCallId: "call-task-7",
-            taskId: "child-workspace-7",
-            timestamp: 1_002,
-          };
-          yield {
-            type: "stream-end",
-            workspaceId,
-            messageId: "msg-old-stream-missing-local",
-            metadata: {
-              model: "claude-3-5-sonnet-20241022",
-              historySequence: 1,
-              timestamp: 1_003,
-            },
-            parts: [],
-          };
-
-          await holdFirstSubscription;
-          return;
-        }
-
-        yield {
-          type: "caught-up",
-          replay: "since",
-          cursor: {
-            history: {
-              messageId: "history-1",
-              historySequence: 1,
-            },
-            stream: {
-              messageId: "msg-new-stream-missing-local",
-              lastTimestamp: 2_000,
-            },
-          },
-        };
-      });
+      const firstSubscription = createReleaseGate();
+      const getSubscriptionCount = mockChatReconnectScript((subscriptionCount) =>
+        subscriptionCount === 1
+          ? [
+              caughtUpEvent(),
+              Promise.resolve(),
+              streamStartEvent(workspaceId, "msg-old-stream-missing-local", {
+                startTime: 1_000,
+                model: "claude-3-5-sonnet-20241022",
+              }),
+              bashOutputEvent(workspaceId, "call-bash-7", "stale-after-end\n", {
+                timestamp: 1_001,
+              }),
+              taskCreatedEvent(workspaceId, "call-task-7", "child-workspace-7", 1_002),
+              streamEndEvent(workspaceId, "msg-old-stream-missing-local", {
+                metadata: {
+                  model: "claude-3-5-sonnet-20241022",
+                  historySequence: 1,
+                  timestamp: 1_003,
+                },
+              }),
+              firstSubscription.wait,
+            ]
+          : [
+              sinceCaughtUpEvent(1, "history-1", {
+                messageId: "msg-new-stream-missing-local",
+                lastTimestamp: 2_000,
+              }),
+            ]
+      );
 
       createAndAddWorkspace(store, workspaceId);
 
@@ -4925,11 +4703,11 @@ describe("WorkspaceStore", () => {
       });
       expect(seededStaleLiveState).toBe(true);
 
-      releaseFirstSubscription?.();
+      firstSubscription.release();
 
       const clearedStaleLiveState = await waitUntil(() => {
         return (
-          subscriptionCount >= 2 &&
+          getSubscriptionCount() >= 2 &&
           store.getBashToolLiveOutput(workspaceId, "call-bash-7") === null &&
           store.getTaskToolLiveTaskIds(workspaceId, "call-task-7") === null
         );
@@ -4939,74 +4717,35 @@ describe("WorkspaceStore", () => {
 
     it("clears stale active stream context when since replay reports a different stream", async () => {
       const workspaceId = "task-created-workspace-5";
-      let subscriptionCount = 0;
-      let releaseFirstSubscription: (() => void) | undefined;
-      const holdFirstSubscription = new Promise<void>((resolve) => {
-        releaseFirstSubscription = resolve;
-      });
-
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        subscriptionCount += 1;
-
-        if (subscriptionCount === 1) {
-          yield { type: "caught-up" };
-          await Promise.resolve();
-          yield {
-            type: "stream-start",
-            workspaceId,
-            messageId: "msg-old-stream",
-            historySequence: 1,
-            model: "claude-3-5-sonnet-20241022",
-            startTime: 1_000,
-          };
-          yield {
-            type: "bash-output",
-            workspaceId,
-            toolCallId: "call-bash-5",
-            text: "old-stream-output\n",
-            isError: false,
-            timestamp: 1_001,
-          };
-          yield {
-            type: "task-created",
-            workspaceId,
-            toolCallId: "call-task-5",
-            taskId: "child-workspace-5",
-            timestamp: 1_002,
-          };
-
-          await holdFirstSubscription;
-          return;
-        }
-
-        yield {
-          type: "caught-up",
-          replay: "since",
-          cursor: {
-            history: {
-              messageId: "history-1",
-              historySequence: 1,
-            },
-            stream: {
-              messageId: "msg-new-stream",
-              lastTimestamp: 2_000,
-            },
-          },
-        };
-        await Promise.resolve();
-        yield {
-          type: "stream-start",
-          workspaceId,
-          messageId: "msg-new-stream",
-          historySequence: 2,
-          model: "claude-3-5-sonnet-20241022",
-          startTime: 2_000,
-        };
-      });
+      const firstSubscription = createReleaseGate();
+      const getSubscriptionCount = mockChatReconnectScript((subscriptionCount) =>
+        subscriptionCount === 1
+          ? [
+              caughtUpEvent(),
+              Promise.resolve(),
+              streamStartEvent(workspaceId, "msg-old-stream", {
+                startTime: 1_000,
+                model: "claude-3-5-sonnet-20241022",
+              }),
+              bashOutputEvent(workspaceId, "call-bash-5", "old-stream-output\n", {
+                timestamp: 1_001,
+              }),
+              taskCreatedEvent(workspaceId, "call-task-5", "child-workspace-5", 1_002),
+              firstSubscription.wait,
+            ]
+          : [
+              sinceCaughtUpEvent(1, "history-1", {
+                messageId: "msg-new-stream",
+                lastTimestamp: 2_000,
+              }),
+              Promise.resolve(),
+              streamStartEvent(workspaceId, "msg-new-stream", {
+                historySequence: 2,
+                model: "claude-3-5-sonnet-20241022",
+                startTime: 2_000,
+              }),
+            ]
+      );
 
       createAndAddWorkspace(store, workspaceId);
 
@@ -5024,11 +4763,11 @@ describe("WorkspaceStore", () => {
         "child-workspace-5",
       ]);
 
-      releaseFirstSubscription?.();
+      firstSubscription.release();
 
       const switchedToNewStream = await waitUntil(() => {
         return (
-          subscriptionCount >= 2 &&
+          getSubscriptionCount() >= 2 &&
           store.getAggregator(workspaceId)?.getOnChatCursor()?.stream?.messageId ===
             "msg-new-stream" &&
           store.getBashToolLiveOutput(workspaceId, "call-bash-5") === null &&
@@ -5040,47 +4779,21 @@ describe("WorkspaceStore", () => {
 
     it("clears stale abort reason when since reconnect is downgraded to full replay", async () => {
       const workspaceId = "task-created-workspace-6";
-      let subscriptionCount = 0;
-      let releaseFirstSubscription: (() => void) | undefined;
-      const holdFirstSubscription = new Promise<void>((resolve) => {
-        releaseFirstSubscription = resolve;
-      });
-
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        subscriptionCount += 1;
-
-        if (subscriptionCount === 1) {
-          yield { type: "caught-up" };
-          await Promise.resolve();
-          yield {
-            type: "stream-start",
-            workspaceId,
-            messageId: "msg-abort-old-stream",
-            historySequence: 1,
-            model: "claude-3-5-sonnet-20241022",
-            startTime: 1_000,
-          };
-          yield {
-            type: "stream-abort",
-            workspaceId,
-            messageId: "msg-abort-old-stream",
-            abortReason: "user",
-            metadata: {},
-          };
-
-          await holdFirstSubscription;
-          return;
-        }
-
-        yield {
-          type: "caught-up",
-          replay: "full",
-        };
-      });
+      const firstSubscription = createReleaseGate();
+      const getSubscriptionCount = mockChatReconnectScript((subscriptionCount) =>
+        subscriptionCount === 1
+          ? [
+              caughtUpEvent(),
+              Promise.resolve(),
+              streamStartEvent(workspaceId, "msg-abort-old-stream", {
+                startTime: 1_000,
+                model: "claude-3-5-sonnet-20241022",
+              }),
+              streamAbortEvent(workspaceId, "msg-abort-old-stream"),
+              firstSubscription.wait,
+            ]
+          : [caughtUpEvent({ replay: "full" })]
+      );
 
       createAndAddWorkspace(store, workspaceId);
 
@@ -5089,11 +4802,12 @@ describe("WorkspaceStore", () => {
       });
       expect(seededAbortReason).toBe(true);
 
-      releaseFirstSubscription?.();
+      firstSubscription.release();
 
       const clearedAbortReason = await waitUntil(() => {
         return (
-          subscriptionCount >= 2 && store.getWorkspaceState(workspaceId).lastAbortReason === null
+          getSubscriptionCount() >= 2 &&
+          store.getWorkspaceState(workspaceId).lastAbortReason === null
         );
       });
       expect(clearedAbortReason).toBe(true);
@@ -5101,36 +4815,17 @@ describe("WorkspaceStore", () => {
 
     it("clears stale auto-retry status when full replay reconnect replaces history", async () => {
       const workspaceId = "task-created-workspace-auto-retry-reset";
-      let subscriptionCount = 0;
-      let releaseFirstSubscription: (() => void) | undefined;
-      const holdFirstSubscription = new Promise<void>((resolve) => {
-        releaseFirstSubscription = resolve;
-      });
-
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        subscriptionCount += 1;
-
-        if (subscriptionCount === 1) {
-          yield { type: "caught-up" };
-          await Promise.resolve();
-          yield {
-            type: "auto-retry-starting",
-            attempt: 2,
-          };
-
-          await holdFirstSubscription;
-          return;
-        }
-
-        yield {
-          type: "caught-up",
-          replay: "full",
-        };
-      });
+      const firstSubscription = createReleaseGate();
+      const getSubscriptionCount = mockChatReconnectScript((subscriptionCount) =>
+        subscriptionCount === 1
+          ? [
+              caughtUpEvent(),
+              Promise.resolve(),
+              { type: "auto-retry-starting", attempt: 2 },
+              firstSubscription.wait,
+            ]
+          : [caughtUpEvent({ replay: "full" })]
+      );
 
       createAndAddWorkspace(store, workspaceId);
 
@@ -5139,11 +4834,12 @@ describe("WorkspaceStore", () => {
       });
       expect(seededRetryStatus).toBe(true);
 
-      releaseFirstSubscription?.();
+      firstSubscription.release();
 
       const clearedRetryStatus = await waitUntil(() => {
         return (
-          subscriptionCount >= 2 && store.getWorkspaceState(workspaceId).autoRetryStatus === null
+          getSubscriptionCount() >= 2 &&
+          store.getWorkspaceState(workspaceId).autoRetryStatus === null
         );
       });
       expect(clearedRetryStatus).toBe(true);
@@ -5152,21 +4848,17 @@ describe("WorkspaceStore", () => {
     it("replays pre-caught-up task-created after full replay catches up", async () => {
       const workspaceId = "task-created-workspace-3";
 
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        yield {
+      mockChatScript([
+        {
           type: "task-created",
           workspaceId,
           toolCallId: "call-task-3",
           taskId: "child-workspace-3",
           timestamp: 1,
-        };
-        await Promise.resolve();
-        yield { type: "caught-up", replay: "full" };
-      });
+        },
+        Promise.resolve(),
+        { type: "caught-up", replay: "full" },
+      ]);
 
       createAndAddWorkspace(store, workspaceId);
       await tick(10);
@@ -5178,56 +4870,36 @@ describe("WorkspaceStore", () => {
 
     it("preserves usage state while full replay resets the aggregator", async () => {
       const workspaceId = "usage-reset-replay-workspace";
-      let subscriptionCount = 0;
-      let releaseFirstSubscription: (() => void) | undefined;
-      const holdFirstSubscription = new Promise<void>((resolve) => {
-        releaseFirstSubscription = resolve;
-      });
-
-      let releaseSecondCaughtUp: (() => void) | undefined;
-      const holdSecondCaughtUp = new Promise<void>((resolve) => {
-        releaseSecondCaughtUp = resolve;
-      });
-
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        subscriptionCount += 1;
-
+      const firstSubscription = createReleaseGate();
+      const secondCaughtUp = createReleaseGate();
+      const getSubscriptionCount = mockChatReconnectScript((subscriptionCount, signal) => {
         if (subscriptionCount === 1) {
-          yield { type: "caught-up" };
-          await Promise.resolve();
-          yield {
-            type: "stream-start",
-            workspaceId,
-            messageId: "msg-live-usage",
-            historySequence: 1,
-            model: "claude-3-5-sonnet-20241022",
-            startTime: 1,
-          };
-          yield {
-            type: "usage-delta",
-            workspaceId,
-            messageId: "msg-live-usage",
-            usage: { inputTokens: 321, outputTokens: 9, totalTokens: 330 },
-            cumulativeUsage: { inputTokens: 500, outputTokens: 15, totalTokens: 515 },
-          };
-
-          await holdFirstSubscription;
-          return;
+          return [
+            caughtUpEvent(),
+            Promise.resolve(),
+            streamStartEvent(workspaceId, "msg-live-usage", {
+              startTime: 1,
+              model: "claude-3-5-sonnet-20241022",
+            }),
+            {
+              type: "usage-delta",
+              workspaceId,
+              messageId: "msg-live-usage",
+              usage: { inputTokens: 321, outputTokens: 9, totalTokens: 330 },
+              cumulativeUsage: { inputTokens: 500, outputTokens: 15, totalTokens: 515 },
+            },
+            firstSubscription.wait,
+          ];
         }
-
         if (subscriptionCount === 2) {
-          // Hold caught-up so the test can inspect usage after resetChatStateForReplay()
-          // cleared the aggregator but before replay completion.
-          await holdSecondCaughtUp;
-          yield { type: "caught-up", replay: "full" };
-          return;
+          return [
+            // Hold caught-up so the test can inspect usage after resetChatStateForReplay()
+            // cleared the aggregator but before replay completion.
+            secondCaughtUp.wait,
+            caughtUpEvent({ replay: "full" }),
+          ];
         }
-
-        await waitForAbortSignal();
+        return [() => waitForAbortSignal(signal)];
       });
 
       createAndAddWorkspace(store, workspaceId);
@@ -5238,16 +4910,16 @@ describe("WorkspaceStore", () => {
       });
       expect(seededUsage).toBe(true);
 
-      releaseFirstSubscription?.();
+      firstSubscription.release();
 
-      const startedSecondSubscription = await waitUntil(() => subscriptionCount >= 2);
+      const startedSecondSubscription = await waitUntil(() => getSubscriptionCount() >= 2);
       expect(startedSecondSubscription).toBe(true);
 
       const usageDuringReplay = store.getWorkspaceUsage(workspaceId);
       expect(usageDuringReplay.liveUsage?.input.tokens).toBe(321);
       expect(usageDuringReplay.liveCostUsage?.input.tokens).toBe(500);
 
-      releaseSecondCaughtUp?.();
+      secondCaughtUp.release();
       await tick(10);
 
       const usageAfterCaughtUp = store.getWorkspaceUsage(workspaceId);
@@ -5256,59 +4928,38 @@ describe("WorkspaceStore", () => {
 
     it("clears replay usage snapshot when reconnect fails before caught-up", async () => {
       const workspaceId = "usage-reset-replay-failure-workspace";
-      let subscriptionCount = 0;
-      let releaseFirstSubscription: (() => void) | undefined;
-      const holdFirstSubscription = new Promise<void>((resolve) => {
-        releaseFirstSubscription = resolve;
-      });
-
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        subscriptionCount += 1;
-
+      const firstSubscription = createReleaseGate();
+      const getSubscriptionCount = mockChatReconnectScript((subscriptionCount, signal) => {
         if (subscriptionCount === 1) {
-          yield { type: "caught-up" };
-          await Promise.resolve();
-          yield {
-            type: "stream-start",
-            workspaceId,
-            messageId: "msg-live-usage-failure",
-            historySequence: 1,
-            model: "claude-3-5-sonnet-20241022",
-            startTime: 1,
-          };
-          yield {
-            type: "usage-delta",
-            workspaceId,
-            messageId: "msg-live-usage-failure",
-            usage: { inputTokens: 111, outputTokens: 9, totalTokens: 120 },
-            cumulativeUsage: { inputTokens: 300, outputTokens: 15, totalTokens: 315 },
-          };
-          // Keep two active streams so reconnect cannot build a safe incremental cursor.
-          // This forces a full replay attempt, which executes resetChatStateForReplay().
-          yield {
-            type: "stream-start",
-            workspaceId,
-            messageId: "msg-live-usage-failure-2",
-            historySequence: 2,
-            model: "claude-3-5-sonnet-20241022",
-            startTime: 2,
-          };
-
-          await holdFirstSubscription;
-          return;
+          return [
+            caughtUpEvent(),
+            Promise.resolve(),
+            streamStartEvent(workspaceId, "msg-live-usage-failure", {
+              startTime: 1,
+              model: "claude-3-5-sonnet-20241022",
+            }),
+            {
+              type: "usage-delta",
+              workspaceId,
+              messageId: "msg-live-usage-failure",
+              usage: { inputTokens: 111, outputTokens: 9, totalTokens: 120 },
+              cumulativeUsage: { inputTokens: 300, outputTokens: 15, totalTokens: 315 },
+            },
+            // Keep two active streams so reconnect cannot build a safe incremental cursor.
+            // This forces a full replay attempt, which executes resetChatStateForReplay().
+            streamStartEvent(workspaceId, "msg-live-usage-failure-2", {
+              historySequence: 2,
+              startTime: 2,
+              model: "claude-3-5-sonnet-20241022",
+            }),
+            firstSubscription.wait,
+          ];
         }
-
         if (subscriptionCount === 2) {
           // Simulate reconnect failure before authoritative caught-up.
-          await Promise.resolve();
-          return;
+          return [Promise.resolve()];
         }
-
-        await waitForAbortSignal();
+        return [() => waitForAbortSignal(signal)];
       });
 
       createAndAddWorkspace(store, workspaceId);
@@ -5319,9 +4970,9 @@ describe("WorkspaceStore", () => {
       });
       expect(seededUsage).toBe(true);
 
-      releaseFirstSubscription?.();
+      firstSubscription.release();
 
-      const startedSecondSubscription = await waitUntil(() => subscriptionCount >= 2);
+      const startedSecondSubscription = await waitUntil(() => getSubscriptionCount() >= 2);
       expect(startedSecondSubscription).toBe(true);
 
       const usageSnapshotCleared = await waitUntil(() => {
@@ -5334,13 +4985,9 @@ describe("WorkspaceStore", () => {
     it("uses compaction boundary context usage when it is the newest usage in the active epoch", async () => {
       const workspaceId = "boundary-context-usage-workspace";
 
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        await Promise.resolve();
-        yield {
+      mockChatScript([
+        Promise.resolve(),
+        {
           type: "message",
           id: "pre-boundary-assistant",
           role: "assistant",
@@ -5351,9 +4998,8 @@ describe("WorkspaceStore", () => {
             model: "claude-3-5-sonnet-20241022",
             contextUsage: { inputTokens: 999, outputTokens: 10, totalTokens: undefined },
           },
-        };
-
-        yield {
+        },
+        {
           type: "message",
           id: "compaction-boundary-summary",
           role: "assistant",
@@ -5367,10 +5013,9 @@ describe("WorkspaceStore", () => {
             compactionEpoch: 1,
             contextUsage: { inputTokens: 42, outputTokens: 0, totalTokens: undefined },
           },
-        };
-
-        yield { type: "caught-up" };
-      });
+        },
+        { type: "caught-up" },
+      ]);
 
       createAndAddWorkspace(store, workspaceId);
       await tick(10);

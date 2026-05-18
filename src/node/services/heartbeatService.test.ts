@@ -158,6 +158,73 @@ describe("HeartbeatService", () => {
     return assistantMessage;
   }
 
+  function makeIdleSessionMock(): ReturnType<typeof mock<() => AgentSession>> {
+    return mock(
+      () =>
+        ({
+          isBusy: () => false,
+          hasQueuedMessages: () => false,
+        }) as unknown as AgentSession
+    );
+  }
+
+  function createRealWorkspaceServiceWithOverrides(
+    overrides: Partial<{
+      getChatHistory: typeof getChatHistoryMock;
+      getOrCreateSession: ReturnType<typeof mock<() => AgentSession>>;
+      sendMessage: ReturnType<typeof mock<WorkspaceService["sendMessage"]>>;
+      executeHeartbeat: ReturnType<typeof mock<(workspaceId: string) => Promise<void>>>;
+    }> = {}
+  ): WorkspaceService {
+    const realWorkspaceService = new WorkspaceService(
+      mockConfig,
+      {} as HistoryService,
+      new EventEmitter() as unknown as AIService,
+      new EventEmitter() as unknown as InitStateManager,
+      mockExtensionMetadata,
+      {} as BackgroundProcessManager
+    );
+    Object.assign(realWorkspaceService, overrides);
+    return realWorkspaceService;
+  }
+
+  function setIdleHeartbeatWorkspace(
+    params: {
+      heartbeat?: NonNullable<Workspace["heartbeat"]>;
+      globalDefaultPrompt?: string;
+      idleDurationMs?: number;
+    } = {}
+  ): void {
+    const heartbeat = params.heartbeat
+      ? {
+          ...params.heartbeat,
+          contextMode: params.heartbeat.contextMode ?? undefined,
+        }
+      : {
+          enabled: true,
+          intervalMs: HEARTBEAT_MIN_INTERVAL_MS,
+        };
+
+    currentProjectsConfig = {
+      ...makeProjectsConfig([
+        makeWorkspaceEntry({
+          heartbeat,
+        }),
+      ]),
+      ...(params.globalDefaultPrompt != null
+        ? { heartbeatDefaultPrompt: params.globalDefaultPrompt }
+        : {}),
+    };
+    getSnapshotMock.mockImplementation(() =>
+      Promise.resolve(
+        makeSnapshot({
+          recency: Date.now() - (params.idleDurationMs ?? 5 * 60_000),
+          streaming: false,
+        })
+      )
+    );
+  }
+
   beforeEach(() => {
     currentProjectsConfig = makeProjectsConfig([makeWorkspaceEntry()]);
 
@@ -200,120 +267,109 @@ describe("HeartbeatService", () => {
   });
 
   describe("checkEligibility", () => {
-    test("returns eligible for valid heartbeat-enabled workspace", async () => {
-      const result = await service.checkEligibility(testWorkspaceId, Date.now());
+    const cases: Array<{
+      name: string;
+      setup?: () => void;
+      eligible: boolean;
+      reason?: string;
+    }> = [
+      { name: "valid heartbeat-enabled workspace", eligible: true },
+      {
+        name: "workspace not found in config",
+        setup: () => (currentProjectsConfig = { projects: new Map() }),
+        eligible: false,
+        reason: "workspace_not_found",
+      },
+      {
+        name: "heartbeat is disabled",
+        setup: () =>
+          (currentProjectsConfig = makeProjectsConfig([
+            makeWorkspaceEntry({
+              heartbeat: { enabled: false, intervalMs: defaultHeartbeatIntervalMs },
+            }),
+          ])),
+        eligible: false,
+        reason: "heartbeat_disabled",
+      },
+      {
+        name: "workspace is archived",
+        setup: () =>
+          (currentProjectsConfig = makeProjectsConfig([
+            makeWorkspaceEntry({ archivedAt: new Date().toISOString() }),
+          ])),
+        eligible: false,
+        reason: "archived",
+      },
+      {
+        name: "workspace is a child",
+        setup: () =>
+          (currentProjectsConfig = makeProjectsConfig([
+            makeWorkspaceEntry({ parentWorkspaceId: "parent-ws" }),
+          ])),
+        eligible: false,
+        reason: "child_workspace",
+      },
+      {
+        name: "workspace is streaming",
+        setup: () => getSnapshotMock.mockResolvedValueOnce(makeSnapshot({ streaming: true })),
+        eligible: false,
+        reason: "currently_streaming",
+      },
+      {
+        name: "active descendant tasks exist",
+        setup: () => hasActiveDescendantTasksMock.mockReturnValueOnce(true),
+        eligible: false,
+        reason: "active_descendant_tasks",
+      },
+      {
+        name: "no completed turn (empty history)",
+        setup: () => getChatHistoryMock.mockResolvedValueOnce([]),
+        eligible: false,
+        reason: "no_completed_turn",
+      },
+      {
+        name: "no assistant message in history",
+        setup: () =>
+          getChatHistoryMock.mockResolvedValueOnce([
+            createMuxMessage("1", "user", "Hello", { timestamp: staleTimestamp }),
+            createMuxMessage("2", "user", "Still there?", { timestamp: staleTimestamp }),
+          ]),
+        eligible: false,
+        reason: "no_completed_turn",
+      },
+      {
+        name: "last message is from user (awaiting response)",
+        setup: () =>
+          getChatHistoryMock.mockResolvedValueOnce([
+            createMuxMessage("1", "user", "Hello", { timestamp: staleTimestamp }),
+            createMuxMessage("2", "assistant", "Hi!", { timestamp: staleTimestamp }),
+            createMuxMessage("3", "user", "Another question?", { timestamp: staleTimestamp }),
+          ]),
+        eligible: false,
+        reason: "awaiting_response",
+      },
+      {
+        name: "last assistant message has interactive tool input",
+        setup: () =>
+          getChatHistoryMock.mockResolvedValueOnce([
+            createMuxMessage("1", "user", "Hello", { timestamp: staleTimestamp }),
+            makeInteractiveAssistantMessage(),
+          ]),
+        eligible: false,
+        reason: "awaiting_interactive_input",
+      },
+    ];
 
-      expect(result.eligible).toBe(true);
-      expect(result.reason).toBeUndefined();
-    });
+    for (const testCase of cases) {
+      test(`returns ${testCase.eligible ? "eligible" : "ineligible"} when ${testCase.name}`, async () => {
+        testCase.setup?.();
 
-    test("returns ineligible when workspace not found in config", async () => {
-      currentProjectsConfig = { projects: new Map() };
+        const result = await service.checkEligibility(testWorkspaceId, Date.now());
 
-      const result = await service.checkEligibility(testWorkspaceId, Date.now());
-
-      expect(result.eligible).toBe(false);
-      expect(result.reason).toBe("workspace_not_found");
-    });
-
-    test("returns ineligible when heartbeat is disabled", async () => {
-      currentProjectsConfig = makeProjectsConfig([
-        makeWorkspaceEntry({
-          heartbeat: { enabled: false, intervalMs: defaultHeartbeatIntervalMs },
-        }),
-      ]);
-
-      const result = await service.checkEligibility(testWorkspaceId, Date.now());
-
-      expect(result.eligible).toBe(false);
-      expect(result.reason).toBe("heartbeat_disabled");
-    });
-
-    test("returns ineligible when workspace is archived", async () => {
-      currentProjectsConfig = makeProjectsConfig([
-        makeWorkspaceEntry({ archivedAt: new Date().toISOString() }),
-      ]);
-
-      const result = await service.checkEligibility(testWorkspaceId, Date.now());
-
-      expect(result.eligible).toBe(false);
-      expect(result.reason).toBe("archived");
-    });
-
-    test("returns ineligible when workspace is a child", async () => {
-      currentProjectsConfig = makeProjectsConfig([
-        makeWorkspaceEntry({ parentWorkspaceId: "parent-ws" }),
-      ]);
-
-      const result = await service.checkEligibility(testWorkspaceId, Date.now());
-
-      expect(result.eligible).toBe(false);
-      expect(result.reason).toBe("child_workspace");
-    });
-
-    test("returns ineligible when workspace is streaming", async () => {
-      getSnapshotMock.mockResolvedValueOnce(makeSnapshot({ streaming: true }));
-
-      const result = await service.checkEligibility(testWorkspaceId, Date.now());
-
-      expect(result.eligible).toBe(false);
-      expect(result.reason).toBe("currently_streaming");
-    });
-
-    test("returns ineligible when active descendant tasks exist", async () => {
-      hasActiveDescendantTasksMock.mockReturnValueOnce(true);
-
-      const result = await service.checkEligibility(testWorkspaceId, Date.now());
-
-      expect(result.eligible).toBe(false);
-      expect(result.reason).toBe("active_descendant_tasks");
-    });
-
-    test("returns ineligible when no completed turn (empty history)", async () => {
-      getChatHistoryMock.mockResolvedValueOnce([]);
-
-      const result = await service.checkEligibility(testWorkspaceId, Date.now());
-
-      expect(result.eligible).toBe(false);
-      expect(result.reason).toBe("no_completed_turn");
-    });
-
-    test("returns ineligible when no assistant message in history", async () => {
-      getChatHistoryMock.mockResolvedValueOnce([
-        createMuxMessage("1", "user", "Hello", { timestamp: staleTimestamp }),
-        createMuxMessage("2", "user", "Still there?", { timestamp: staleTimestamp }),
-      ]);
-
-      const result = await service.checkEligibility(testWorkspaceId, Date.now());
-
-      expect(result.eligible).toBe(false);
-      expect(result.reason).toBe("no_completed_turn");
-    });
-
-    test("returns ineligible when last message is from user (awaiting response)", async () => {
-      getChatHistoryMock.mockResolvedValueOnce([
-        createMuxMessage("1", "user", "Hello", { timestamp: staleTimestamp }),
-        createMuxMessage("2", "assistant", "Hi!", { timestamp: staleTimestamp }),
-        createMuxMessage("3", "user", "Another question?", { timestamp: staleTimestamp }),
-      ]);
-
-      const result = await service.checkEligibility(testWorkspaceId, Date.now());
-
-      expect(result.eligible).toBe(false);
-      expect(result.reason).toBe("awaiting_response");
-    });
-
-    test("returns ineligible when last assistant message has interactive tool input", async () => {
-      getChatHistoryMock.mockResolvedValueOnce([
-        createMuxMessage("1", "user", "Hello", { timestamp: staleTimestamp }),
-        makeInteractiveAssistantMessage(),
-      ]);
-
-      const result = await service.checkEligibility(testWorkspaceId, Date.now());
-
-      expect(result.eligible).toBe(false);
-      expect(result.reason).toBe("awaiting_interactive_input");
-    });
+        expect(result.eligible).toBe(testCase.eligible);
+        expect(result.reason).toBe(testCase.reason);
+      });
+    }
   });
 
   describe("start/stop lifecycle", () => {
@@ -446,46 +502,27 @@ describe("HeartbeatService", () => {
       expect(executeHeartbeatMock).not.toHaveBeenCalled();
     });
 
-    test("metadata event purges archived workspace", async () => {
-      service.start();
-      const internals = getInternals();
-      await internals.resyncFromConfig(0);
-
-      wsEmitter.emit("metadata", {
-        workspaceId: testWorkspaceId,
+    for (const testCase of [
+      {
+        name: "archived workspace",
         metadata: makeWorkspaceEntry({ archivedAt: new Date().toISOString() }),
+      },
+      { name: "child workspace", metadata: makeWorkspaceEntry({ parentWorkspaceId: "parent-ws" }) },
+      {
+        name: "tracked workspace with an invalid interval",
+        metadata: makeWorkspaceEntry({ heartbeat: { enabled: true, intervalMs: 60_000 } }),
+      },
+    ]) {
+      test(`metadata event purges ${testCase.name}`, async () => {
+        service.start();
+        const internals = getInternals();
+        await internals.resyncFromConfig(0);
+
+        wsEmitter.emit("metadata", { workspaceId: testWorkspaceId, metadata: testCase.metadata });
+
+        expect(internals.nextEligibleAtByWorkspaceId.has(testWorkspaceId)).toBe(false);
       });
-
-      expect(internals.nextEligibleAtByWorkspaceId.has(testWorkspaceId)).toBe(false);
-    });
-
-    test("metadata event purges child workspace", async () => {
-      service.start();
-      const internals = getInternals();
-      await internals.resyncFromConfig(0);
-
-      wsEmitter.emit("metadata", {
-        workspaceId: testWorkspaceId,
-        metadata: makeWorkspaceEntry({ parentWorkspaceId: "parent-ws" }),
-      });
-
-      expect(internals.nextEligibleAtByWorkspaceId.has(testWorkspaceId)).toBe(false);
-    });
-
-    test("metadata event purges a tracked workspace with an invalid interval", async () => {
-      service.start();
-      const internals = getInternals();
-      await internals.resyncFromConfig(0);
-
-      wsEmitter.emit("metadata", {
-        workspaceId: testWorkspaceId,
-        metadata: makeWorkspaceEntry({
-          heartbeat: { enabled: true, intervalMs: 60_000 },
-        }),
-      });
-
-      expect(internals.nextEligibleAtByWorkspaceId.has(testWorkspaceId)).toBe(false);
-    });
+    }
 
     test("metadata event updates the tracked deadline when the interval changes", async () => {
       service.start();
@@ -546,53 +583,18 @@ describe("HeartbeatService", () => {
 
     test("dispatches an eligible heartbeat end-to-end through executeHeartbeat", async () => {
       const heartbeatIntervalMs = HEARTBEAT_MIN_INTERVAL_MS;
-      const idleDurationMs = 5 * 60_000;
-      const idleRecency = Date.now() - idleDurationMs;
-
-      currentProjectsConfig = makeProjectsConfig([
-        makeWorkspaceEntry({
-          heartbeat: { enabled: true, intervalMs: heartbeatIntervalMs },
-        }),
-      ]);
-      getSnapshotMock.mockImplementation(() =>
-        Promise.resolve(
-          makeSnapshot({
-            recency: idleRecency,
-            streaming: false,
-          })
-        )
-      );
+      setIdleHeartbeatWorkspace();
 
       const sendMessageMock = mock(() => Promise.resolve(Ok(undefined)));
-      const getOrCreateSessionMock = mock(
-        () =>
-          ({
-            isBusy: () => false,
-            hasQueuedMessages: () => false,
-          }) as unknown as AgentSession
-      );
-
-      const realWorkspaceService = new WorkspaceService(
-        mockConfig,
-        {} as HistoryService,
-        new EventEmitter() as unknown as AIService,
-        new EventEmitter() as unknown as InitStateManager,
-        mockExtensionMetadata,
-        {} as BackgroundProcessManager
-      );
+      const getOrCreateSessionMock = makeIdleSessionMock();
+      const realWorkspaceService = createRealWorkspaceServiceWithOverrides({
+        getChatHistory: getChatHistoryMock,
+        getOrCreateSession: getOrCreateSessionMock,
+        sendMessage: sendMessageMock,
+      });
       const executeHeartbeatImpl = realWorkspaceService.executeHeartbeat.bind(realWorkspaceService);
       const executeHeartbeatSpy = mock((workspaceId: string) => executeHeartbeatImpl(workspaceId));
-
-      const workspaceServiceOverrides = realWorkspaceService as unknown as {
-        getChatHistory: typeof getChatHistoryMock;
-        getOrCreateSession: typeof getOrCreateSessionMock;
-        sendMessage: typeof sendMessageMock;
-        executeHeartbeat: typeof executeHeartbeatSpy;
-      };
-      workspaceServiceOverrides.getChatHistory = getChatHistoryMock;
-      workspaceServiceOverrides.getOrCreateSession = getOrCreateSessionMock;
-      workspaceServiceOverrides.sendMessage = sendMessageMock;
-      workspaceServiceOverrides.executeHeartbeat = executeHeartbeatSpy;
+      Object.assign(realWorkspaceService, { executeHeartbeat: executeHeartbeatSpy });
 
       service = new HeartbeatService(
         mockConfig,
@@ -652,55 +654,15 @@ describe("HeartbeatService", () => {
     });
 
     test("uses the global default heartbeat message when the workspace does not override it", async () => {
-      const heartbeatIntervalMs = HEARTBEAT_MIN_INTERVAL_MS;
-      const idleDurationMs = 5 * 60_000;
-      const idleRecency = Date.now() - idleDurationMs;
       const globalDefaultPrompt =
         "Review the workspace state and suggest the next concrete action.";
-
-      currentProjectsConfig = {
-        ...makeProjectsConfig([
-          makeWorkspaceEntry({
-            heartbeat: {
-              enabled: true,
-              intervalMs: heartbeatIntervalMs,
-            },
-          }),
-        ]),
-        heartbeatDefaultPrompt: globalDefaultPrompt,
-      };
-      getSnapshotMock.mockImplementation(() =>
-        Promise.resolve(
-          makeSnapshot({
-            recency: idleRecency,
-            streaming: false,
-          })
-        )
-      );
+      setIdleHeartbeatWorkspace({ globalDefaultPrompt });
 
       const sendMessageMock = mock(() => Promise.resolve(Ok(undefined)));
-      const getOrCreateSessionMock = mock(
-        () =>
-          ({
-            isBusy: () => false,
-            hasQueuedMessages: () => false,
-          }) as unknown as AgentSession
-      );
-
-      const realWorkspaceService = new WorkspaceService(
-        mockConfig,
-        {} as HistoryService,
-        new EventEmitter() as unknown as AIService,
-        new EventEmitter() as unknown as InitStateManager,
-        mockExtensionMetadata,
-        {} as BackgroundProcessManager
-      );
-      const workspaceServiceOverrides = realWorkspaceService as unknown as {
-        getOrCreateSession: typeof getOrCreateSessionMock;
-        sendMessage: typeof sendMessageMock;
-      };
-      workspaceServiceOverrides.getOrCreateSession = getOrCreateSessionMock;
-      workspaceServiceOverrides.sendMessage = sendMessageMock;
+      const realWorkspaceService = createRealWorkspaceServiceWithOverrides({
+        getOrCreateSession: makeIdleSessionMock(),
+        sendMessage: sendMessageMock,
+      });
 
       await realWorkspaceService.executeHeartbeat(testWorkspaceId);
 
@@ -721,57 +683,23 @@ describe("HeartbeatService", () => {
     });
 
     test("prefers the workspace heartbeat message over the global default", async () => {
-      const heartbeatIntervalMs = HEARTBEAT_MIN_INTERVAL_MS;
-      const idleDurationMs = 5 * 60_000;
-      const idleRecency = Date.now() - idleDurationMs;
       const globalDefaultPrompt =
         "Review the workspace state and suggest the next concrete action.";
       const customMessage = "Re-check open work, refresh stale context, and summarize next steps.";
-
-      currentProjectsConfig = {
-        ...makeProjectsConfig([
-          makeWorkspaceEntry({
-            heartbeat: {
-              enabled: true,
-              intervalMs: heartbeatIntervalMs,
-              message: customMessage,
-            },
-          }),
-        ]),
-        heartbeatDefaultPrompt: globalDefaultPrompt,
-      };
-      getSnapshotMock.mockImplementation(() =>
-        Promise.resolve(
-          makeSnapshot({
-            recency: idleRecency,
-            streaming: false,
-          })
-        )
-      );
+      setIdleHeartbeatWorkspace({
+        globalDefaultPrompt,
+        heartbeat: {
+          enabled: true,
+          intervalMs: HEARTBEAT_MIN_INTERVAL_MS,
+          message: customMessage,
+        },
+      });
 
       const sendMessageMock = mock(() => Promise.resolve(Ok(undefined)));
-      const getOrCreateSessionMock = mock(
-        () =>
-          ({
-            isBusy: () => false,
-            hasQueuedMessages: () => false,
-          }) as unknown as AgentSession
-      );
-
-      const realWorkspaceService = new WorkspaceService(
-        mockConfig,
-        {} as HistoryService,
-        new EventEmitter() as unknown as AIService,
-        new EventEmitter() as unknown as InitStateManager,
-        mockExtensionMetadata,
-        {} as BackgroundProcessManager
-      );
-      const workspaceServiceOverrides = realWorkspaceService as unknown as {
-        getOrCreateSession: typeof getOrCreateSessionMock;
-        sendMessage: typeof sendMessageMock;
-      };
-      workspaceServiceOverrides.getOrCreateSession = getOrCreateSessionMock;
-      workspaceServiceOverrides.sendMessage = sendMessageMock;
+      const realWorkspaceService = createRealWorkspaceServiceWithOverrides({
+        getOrCreateSession: makeIdleSessionMock(),
+        sendMessage: sendMessageMock,
+      });
 
       await realWorkspaceService.executeHeartbeat(testWorkspaceId);
 
@@ -792,50 +720,19 @@ describe("HeartbeatService", () => {
       expect(heartbeatPrompt).not.toContain(HEARTBEAT_DEFAULT_MESSAGE_BODY);
     });
     test("dispatches a real compaction request before heartbeat when context mode is compact", async () => {
-      const heartbeatIntervalMs = HEARTBEAT_MIN_INTERVAL_MS;
-      const idleRecency = Date.now() - 5 * 60_000;
-
-      currentProjectsConfig = makeProjectsConfig([
-        makeWorkspaceEntry({
-          heartbeat: {
-            enabled: true,
-            intervalMs: heartbeatIntervalMs,
-            contextMode: "compact",
-          },
-        }),
-      ]);
-      getSnapshotMock.mockImplementation(() =>
-        Promise.resolve(
-          makeSnapshot({
-            recency: idleRecency,
-            streaming: false,
-          })
-        )
-      );
+      setIdleHeartbeatWorkspace({
+        heartbeat: {
+          enabled: true,
+          intervalMs: HEARTBEAT_MIN_INTERVAL_MS,
+          contextMode: "compact",
+        },
+      });
 
       const sendMessageMock = mock(() => Promise.resolve(Ok(undefined)));
-      const getOrCreateSessionMock = mock(
-        () =>
-          ({
-            isBusy: () => false,
-            hasQueuedMessages: () => false,
-          }) as unknown as AgentSession
-      );
-
-      const realWorkspaceService = new WorkspaceService(
-        mockConfig,
-        {} as HistoryService,
-        new EventEmitter() as unknown as AIService,
-        new EventEmitter() as unknown as InitStateManager,
-        mockExtensionMetadata,
-        {} as BackgroundProcessManager
-      );
-      const workspaceServiceOverrides = realWorkspaceService as unknown as {
-        getOrCreateSession: typeof getOrCreateSessionMock;
-        sendMessage: typeof sendMessageMock;
-      };
-      workspaceServiceOverrides.getOrCreateSession = getOrCreateSessionMock;
-      workspaceServiceOverrides.sendMessage = sendMessageMock;
+      const realWorkspaceService = createRealWorkspaceServiceWithOverrides({
+        getOrCreateSession: makeIdleSessionMock(),
+        sendMessage: sendMessageMock,
+      });
 
       await realWorkspaceService.executeHeartbeat(testWorkspaceId);
 
@@ -884,26 +781,13 @@ describe("HeartbeatService", () => {
     });
 
     test("appends a reset boundary before heartbeat when context mode is reset", async () => {
-      const heartbeatIntervalMs = HEARTBEAT_MIN_INTERVAL_MS;
-      const idleRecency = Date.now() - 5 * 60_000;
-
-      currentProjectsConfig = makeProjectsConfig([
-        makeWorkspaceEntry({
-          heartbeat: {
-            enabled: true,
-            intervalMs: heartbeatIntervalMs,
-            contextMode: "reset",
-          },
-        }),
-      ]);
-      getSnapshotMock.mockImplementation(() =>
-        Promise.resolve(
-          makeSnapshot({
-            recency: idleRecency,
-            streaming: false,
-          })
-        )
-      );
+      setIdleHeartbeatWorkspace({
+        heartbeat: {
+          enabled: true,
+          intervalMs: HEARTBEAT_MIN_INTERVAL_MS,
+          contextMode: "reset",
+        },
+      });
 
       const appendHeartbeatContextResetBoundary = mock(
         (_params: {
@@ -923,17 +807,9 @@ describe("HeartbeatService", () => {
         dispatchPendingCompactionFollowUpIfNeeded,
       };
 
-      const realWorkspaceService = new WorkspaceService(
-        mockConfig,
-        {} as HistoryService,
-        new EventEmitter() as unknown as AIService,
-        new EventEmitter() as unknown as InitStateManager,
-        mockExtensionMetadata,
-        {} as BackgroundProcessManager
-      );
-      (
-        realWorkspaceService as unknown as { getOrCreateSession: () => AgentSession }
-      ).getOrCreateSession = mock(() => sessionStub as unknown as AgentSession);
+      const realWorkspaceService = createRealWorkspaceServiceWithOverrides({
+        getOrCreateSession: mock(() => sessionStub as unknown as AgentSession),
+      });
 
       await realWorkspaceService.executeHeartbeat(testWorkspaceId);
 

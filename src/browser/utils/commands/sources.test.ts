@@ -80,6 +80,58 @@ const mk = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) => {
   return buildCoreSources(params);
 };
 
+interface ToastEventDetail {
+  type: "success" | "error";
+  message: string;
+  title?: string;
+}
+
+const getActions = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) =>
+  mk(over).flatMap((source) => source());
+
+const workspaceApi = (workspace: Record<string, unknown>) =>
+  ({
+    workspace: {
+      resetContext: () => Promise.resolve({ success: true as const, data: "reset" as const }),
+      truncateHistory: () => Promise.resolve({ success: true as const, data: undefined }),
+      interruptStream: () => Promise.resolve({ success: true as const, data: undefined }),
+      ...workspace,
+    },
+  }) as unknown as APIClient;
+
+const getResetContextAction = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) => {
+  const action = getActions(over).find(
+    (candidate) => candidate.title === "Reset Context, Preserve History"
+  );
+  if (!action) {
+    throw new Error("Expected reset context action");
+  }
+  return action;
+};
+
+const collectCommandEvents = () => {
+  const receivedToasts: ToastEventDetail[] = [];
+  const clearEvents: string[] = [];
+  const handleToast = (event: Event) => {
+    receivedToasts.push((event as CustomEvent<ToastEventDetail>).detail);
+  };
+  const handleComposerClear = (event: Event) => {
+    clearEvents.push((event as CustomEvent<{ workspaceId: string }>).detail.workspaceId);
+  };
+
+  window.addEventListener(CUSTOM_EVENTS.ANALYTICS_REBUILD_TOAST, handleToast);
+  window.addEventListener(CUSTOM_EVENTS.CLEAR_CHAT_COMPOSER, handleComposerClear);
+
+  return {
+    receivedToasts,
+    clearEvents,
+    dispose: () => {
+      window.removeEventListener(CUSTOM_EVENTS.CLEAR_CHAT_COMPOSER, handleComposerClear);
+      window.removeEventListener(CUSTOM_EVENTS.ANALYTICS_REBUILD_TOAST, handleToast);
+    },
+  };
+};
+
 async function withTestWindow<T>(fn: () => Promise<T> | T): Promise<T> {
   const testWindow = new GlobalWindow();
   const originalWindow = globalThis.window;
@@ -110,16 +162,9 @@ test("chat commands include separate reset context and clear history actions", a
     const truncateHistory = mock(() =>
       Promise.resolve({ success: true as const, data: undefined })
     );
-    const sources = mk({
-      api: {
-        workspace: {
-          resetContext,
-          truncateHistory,
-          interruptStream: () => Promise.resolve({ success: true as const, data: undefined }),
-        },
-      } as unknown as APIClient,
+    const actions = getActions({
+      api: workspaceApi({ resetContext, truncateHistory }),
     });
-    const actions = sources.flatMap((s) => s());
 
     const resetAction = actions.find(
       (action) => action.title === "Reset Context, Preserve History"
@@ -148,154 +193,59 @@ test("chat commands include separate reset context and clear history actions", a
   });
 });
 
-test("reset context command dispatches toast feedback", async () => {
+test("reset context command dispatches composer and toast outcomes", async () => {
   await withTestWindow(async () => {
-    const resetContext = mock(() =>
-      Promise.resolve({ success: true as const, data: "reset" as const })
-    );
-    const receivedToasts: Array<{ type: "success" | "error"; message: string; title?: string }> =
-      [];
-    const handleToast = (event: Event) => {
-      receivedToasts.push(
-        (event as CustomEvent<{ type: "success" | "error"; message: string; title?: string }>)
-          .detail
-      );
-    };
-    window.addEventListener(CUSTOM_EVENTS.ANALYTICS_REBUILD_TOAST, handleToast);
-    const clearEvents: string[] = [];
-    const handleComposerClear = (event: Event) => {
-      clearEvents.push((event as CustomEvent<{ workspaceId: string }>).detail.workspaceId);
-    };
-    window.addEventListener(CUSTOM_EVENTS.CLEAR_CHAT_COMPOSER, handleComposerClear);
+    const cases = [
+      {
+        result: { success: true as const, data: "reset" as const },
+        clearEvents: ["w1"],
+        receivedToasts: [{ type: "success" as const, message: "Context reset; history preserved" }],
+      },
+      {
+        result: { success: true as const, data: "noop" as const },
+        clearEvents: [],
+        receivedToasts: [{ type: "success" as const, message: "No context to reset" }],
+      },
+      {
+        result: { success: false as const, error: "reset failed" },
+        clearEvents: [],
+        receivedToasts: [{ type: "error" as const, message: "reset failed" }],
+        errorMessage: "reset failed",
+      },
+    ];
 
-    try {
-      const sources = mk({
-        api: {
-          workspace: {
-            resetContext,
-            truncateHistory: () => Promise.resolve({ success: true as const, data: undefined }),
-            interruptStream: () => Promise.resolve({ success: true as const, data: undefined }),
-          },
-        } as unknown as APIClient,
-      });
-      const resetAction = sources
-        .flatMap((source) => source())
-        .find((action) => action.title === "Reset Context, Preserve History");
-
-      expect(resetAction).toBeDefined();
-      await resetAction?.run();
-
-      expect(clearEvents).toEqual(["w1"]);
-      expect(receivedToasts).toEqual([
-        { type: "success", message: "Context reset; history preserved" },
-      ]);
-    } finally {
-      window.removeEventListener(CUSTOM_EVENTS.CLEAR_CHAT_COMPOSER, handleComposerClear);
-      window.removeEventListener(CUSTOM_EVENTS.ANALYTICS_REBUILD_TOAST, handleToast);
-    }
-  });
-});
-
-test("reset context command preserves composer on no-op", async () => {
-  await withTestWindow(async () => {
-    const resetContext = mock(() =>
-      Promise.resolve({ success: true as const, data: "noop" as const })
-    );
-    const receivedToasts: Array<{ type: "success" | "error"; message: string; title?: string }> =
-      [];
-    const clearEvents: string[] = [];
-    const handleToast = (event: Event) =>
-      receivedToasts.push(
-        (event as CustomEvent<{ type: "success" | "error"; message: string; title?: string }>)
-          .detail
-      );
-    const handleComposerClear = (event: Event) =>
-      clearEvents.push((event as CustomEvent<{ workspaceId: string }>).detail.workspaceId);
-    window.addEventListener(CUSTOM_EVENTS.ANALYTICS_REBUILD_TOAST, handleToast);
-    window.addEventListener(CUSTOM_EVENTS.CLEAR_CHAT_COMPOSER, handleComposerClear);
-
-    try {
-      const sources = mk({
-        api: {
-          workspace: {
-            resetContext,
-            truncateHistory: () => Promise.resolve({ success: true as const, data: undefined }),
-            interruptStream: () => Promise.resolve({ success: true as const, data: undefined }),
-          },
-        } as unknown as APIClient,
-      });
-      const resetAction = sources
-        .flatMap((source) => source())
-        .find((action) => action.title === "Reset Context, Preserve History");
-
-      expect(resetAction).toBeDefined();
-      await resetAction?.run();
-
-      expect(clearEvents).toEqual([]);
-      expect(receivedToasts).toEqual([{ type: "success", message: "No context to reset" }]);
-    } finally {
-      window.removeEventListener(CUSTOM_EVENTS.CLEAR_CHAT_COMPOSER, handleComposerClear);
-      window.removeEventListener(CUSTOM_EVENTS.ANALYTICS_REBUILD_TOAST, handleToast);
-    }
-  });
-});
-
-test("reset context command shows error toast before rethrowing", async () => {
-  await withTestWindow(async () => {
-    const resetContext = mock(() =>
-      Promise.resolve({ success: false as const, error: "reset failed" })
-    );
-    const receivedToasts: Array<{ type: "success" | "error"; message: string; title?: string }> =
-      [];
-    const clearEvents: string[] = [];
-    const handleToast = (event: Event) =>
-      receivedToasts.push(
-        (event as CustomEvent<{ type: "success" | "error"; message: string; title?: string }>)
-          .detail
-      );
-    const handleComposerClear = (event: Event) =>
-      clearEvents.push((event as CustomEvent<{ workspaceId: string }>).detail.workspaceId);
-    window.addEventListener(CUSTOM_EVENTS.ANALYTICS_REBUILD_TOAST, handleToast);
-    window.addEventListener(CUSTOM_EVENTS.CLEAR_CHAT_COMPOSER, handleComposerClear);
-
-    try {
-      const sources = mk({
-        api: {
-          workspace: {
-            resetContext,
-            truncateHistory: () => Promise.resolve({ success: true as const, data: undefined }),
-            interruptStream: () => Promise.resolve({ success: true as const, data: undefined }),
-          },
-        } as unknown as APIClient,
-      });
-      const resetAction = sources
-        .flatMap((source) => source())
-        .find((action) => action.title === "Reset Context, Preserve History");
-
-      if (!resetAction) {
-        throw new Error("Expected reset context action");
-      }
-      let thrown: unknown;
+    for (const testCase of cases) {
+      const resetContext = mock(() => Promise.resolve(testCase.result));
+      const events = collectCommandEvents();
       try {
-        await Promise.resolve(resetAction.run());
-      } catch (error) {
-        thrown = error;
-      }
-      expect(thrown).toBeInstanceOf(Error);
-      expect(thrown instanceof Error ? thrown.message : undefined).toBe("reset failed");
+        const resetAction = getResetContextAction({
+          api: workspaceApi({ resetContext }),
+        });
 
-      expect(clearEvents).toEqual([]);
-      expect(receivedToasts).toEqual([{ type: "error", message: "reset failed" }]);
-    } finally {
-      window.removeEventListener(CUSTOM_EVENTS.CLEAR_CHAT_COMPOSER, handleComposerClear);
-      window.removeEventListener(CUSTOM_EVENTS.ANALYTICS_REBUILD_TOAST, handleToast);
+        let thrown: unknown;
+        try {
+          await Promise.resolve(resetAction.run());
+        } catch (error) {
+          thrown = error;
+        }
+
+        if (testCase.errorMessage) {
+          expect(thrown).toBeInstanceOf(Error);
+          expect(thrown instanceof Error ? thrown.message : undefined).toBe(testCase.errorMessage);
+        } else {
+          expect(thrown).toBeUndefined();
+        }
+        expect(events.clearEvents).toEqual(testCase.clearEvents);
+        expect(events.receivedToasts).toEqual(testCase.receivedToasts);
+      } finally {
+        events.dispose();
+      }
     }
   });
 });
 
 test("buildCoreSources includes create/switch workspace actions", () => {
-  const sources = mk();
-  const actions = sources.flatMap((s) => s());
+  const actions = getActions();
   const titles = actions.map((a) => a.title);
   expect(titles.some((t) => t.startsWith("Create New Workspace"))).toBe(true);
   // Workspace switcher shows workspace name (or title) as primary label
@@ -309,8 +259,7 @@ test("buildCoreSources includes create/switch workspace actions", () => {
 });
 
 test("appearance commands offer auto when a manual theme is selected", () => {
-  const sources = mk({ themePreference: "dark" });
-  const actions = sources.flatMap((source) => source());
+  const actions = getActions({ themePreference: "dark" });
 
   const autoAction = actions.find((action) => action.id === "appearance:theme:set:auto");
   expect(autoAction?.title).toBe("Use Auto Theme");
@@ -318,8 +267,7 @@ test("appearance commands offer auto when a manual theme is selected", () => {
 });
 
 test("appearance commands omit auto when auto preference is already selected", () => {
-  const sources = mk({ themePreference: "auto" });
-  const actions = sources.flatMap((source) => source());
+  const actions = getActions({ themePreference: "auto" });
 
   const themeSetCommandIds = actions
     .map((action) => action.id)
@@ -331,8 +279,7 @@ test("appearance commands omit auto when auto preference is already selected", (
 });
 
 test("buildCoreSources adds thinking effort command", () => {
-  const sources = mk({ getThinkingLevel: () => "medium" });
-  const actions = sources.flatMap((s) => s());
+  const actions = getActions({ getThinkingLevel: () => "medium" });
   const thinkingAction = actions.find((a) => a.id === "thinking:set-level");
 
   expect(thinkingAction).toBeDefined();
@@ -340,8 +287,7 @@ test("buildCoreSources adds thinking effort command", () => {
 });
 
 test("workspace switch commands include keywords for filtering", () => {
-  const sources = mk();
-  const actions = sources.flatMap((s) => s());
+  const actions = getActions();
   const switchAction = actions.find((a) => a.id.startsWith("ws:switch:"));
 
   expect(switchAction).toBeDefined();
@@ -367,8 +313,7 @@ test("workspace switch with title shows title as primary label", () => {
       },
     ],
   ]);
-  const sources = mk({ workspaceMetadata });
-  const actions = sources.flatMap((s) => s());
+  const actions = getActions({ workspaceMetadata });
   const switchAction = actions.find((a) => a.id === "ws:switch:w-titled");
 
   expect(switchAction).toBeDefined();
@@ -385,8 +330,7 @@ test("workspace switch with title shows title as primary label", () => {
 
 test("thinking effort command submits selected level", async () => {
   const onSetThinkingLevel = mock();
-  const sources = mk({ onSetThinkingLevel, getThinkingLevel: () => "low" });
-  const actions = sources.flatMap((s) => s());
+  const actions = getActions({ onSetThinkingLevel, getThinkingLevel: () => "low" });
   const thinkingAction = actions.find((a) => a.id === "thinking:set-level");
 
   expect(thinkingAction?.prompt).toBeDefined();
@@ -415,8 +359,7 @@ test("selected-workspace create action targets the workspace sub-project", async
     ],
   ]);
   const onStartWorkspaceCreation = mock();
-  const sources = mk({ userProjects, workspaceMetadata, onStartWorkspaceCreation });
-  const actions = sources.flatMap((s) => s());
+  const actions = getActions({ userProjects, workspaceMetadata, onStartWorkspaceCreation });
   const createAction = actions.find((action) => action.id === "ws:new");
 
   expect(createAction?.subtitle).toBe("for a / API");
@@ -425,8 +368,7 @@ test("selected-workspace create action targets the workspace sub-project", async
 });
 
 test("buildCoreSources includes archive merged workspaces in project action", () => {
-  const sources = mk();
-  const actions = sources.flatMap((s) => s());
+  const actions = getActions();
   const archiveAction = actions.find((a) => a.id === "ws:archive-merged-in-project");
 
   expect(archiveAction).toBeDefined();
@@ -435,8 +377,7 @@ test("buildCoreSources includes archive merged workspaces in project action", ()
 
 test("archive merged workspaces prompt submits selected project", async () => {
   const onArchiveMergedWorkspacesInProject = mock(() => Promise.resolve());
-  const sources = mk({ onArchiveMergedWorkspacesInProject });
-  const actions = sources.flatMap((s) => s());
+  const actions = getActions({ onArchiveMergedWorkspacesInProject });
   const archiveAction = actions.find((a) => a.id === "ws:archive-merged-in-project");
 
   expect(archiveAction).toBeDefined();
@@ -461,8 +402,7 @@ test("archive merged workspaces prompt submits selected project", async () => {
 
 test("multi-project workspace command triggers creation flow", async () => {
   const onStartMultiProjectWorkspaceCreation = mock();
-  const sources = mk({ onStartMultiProjectWorkspaceCreation });
-  const actions = sources.flatMap((s) => s());
+  const actions = getActions({ onStartMultiProjectWorkspaceCreation });
   const multiProjectAction = actions.find((a) => a.id === "ws:new-multi-project");
 
   expect(multiProjectAction).toBeDefined();
@@ -476,11 +416,10 @@ test("multi-project workspace command triggers creation flow", async () => {
 
 test("multi-project workspace command hides itself when the experiment is disabled", async () => {
   const onStartMultiProjectWorkspaceCreation = mock();
-  const sources = mk({
+  const actions = getActions({
     onStartMultiProjectWorkspaceCreation,
     multiProjectWorkspacesEnabled: false,
   });
-  const actions = sources.flatMap((s) => s());
   const multiProjectAction = actions.find((a) => a.id === "ws:new-multi-project");
 
   expect(multiProjectAction).toBeDefined();
@@ -514,8 +453,7 @@ test("project commands exclude system projects from options", async () => {
     [...allProjects].filter(([, config]) => config.projectKind !== "system")
   );
 
-  const sources = mk({ userProjects });
-  const actions = sources.flatMap((s) => s());
+  const actions = getActions({ userProjects });
 
   const createWorkspaceAction = actions.find((a) => a.title === "Create New Workspace in Project…");
   expect(createWorkspaceAction).toBeDefined();
@@ -935,8 +873,7 @@ test("goal open panel command dispatches the right-sidebar goal event", async ()
 });
 
 test("buildCoreSources includes rebuild analytics database action with discoverable keywords", () => {
-  const sources = mk();
-  const actions = sources.flatMap((s) => s());
+  const actions = getActions();
   const rebuildAction = actions.find((a) => a.id === "analytics:rebuild-database");
 
   expect(rebuildAction).toBeDefined();
@@ -977,7 +914,7 @@ test("analytics rebuild command calls route and dispatches toast feedback", asyn
   window.addEventListener(CUSTOM_EVENTS.ANALYTICS_REBUILD_TOAST, handleToast);
 
   try {
-    const sources = mk({
+    const actions = getActions({
       api: {
         workspace: {
           truncateHistory: () => Promise.resolve({ success: true, data: undefined }),
@@ -986,7 +923,6 @@ test("analytics rebuild command calls route and dispatches toast feedback", asyn
         analytics: { rebuildDatabase },
       } as unknown as APIClient,
     });
-    const actions = sources.flatMap((s) => s());
     const rebuildAction = actions.find((a) => a.id === "analytics:rebuild-database");
 
     expect(rebuildAction).toBeDefined();
@@ -1023,7 +959,7 @@ test("analytics rebuild command falls back to alert when chat input toast host i
   window.alert = alertMock as unknown as typeof window.alert;
 
   try {
-    const sources = mk({
+    const actions = getActions({
       api: {
         workspace: {
           truncateHistory: () => Promise.resolve({ success: true, data: undefined }),
@@ -1032,7 +968,6 @@ test("analytics rebuild command falls back to alert when chat input toast host i
         analytics: { rebuildDatabase },
       } as unknown as APIClient,
     });
-    const actions = sources.flatMap((s) => s());
     const rebuildAction = actions.find((a) => a.id === "analytics:rebuild-database");
 
     expect(rebuildAction).toBeDefined();
@@ -1050,7 +985,7 @@ test("analytics rebuild command falls back to alert when chat input toast host i
 });
 
 test("workspace generate title command is available for the current workspace", () => {
-  const sources = mk({
+  const actions = getActions({
     selectedWorkspace: {
       projectPath: "/repo/a",
       projectName: "a",
@@ -1058,7 +993,6 @@ test("workspace generate title command is available for the current workspace", 
       workspaceId: "w1",
     },
   });
-  const actions = sources.flatMap((s) => s());
 
   expect(actions.some((action) => action.id === "ws:generate-title")).toBe(true);
 });
@@ -1082,8 +1016,7 @@ test("workspace generate title command dispatches a title-generation request eve
   window.addEventListener(CUSTOM_EVENTS.WORKSPACE_GENERATE_TITLE_REQUESTED, handleRequest);
 
   try {
-    const sources = mk();
-    const actions = sources.flatMap((s) => s());
+    const actions = getActions();
     const generateTitleAction = actions.find((a) => a.id === "ws:generate-title");
 
     expect(generateTitleAction).toBeDefined();

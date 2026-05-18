@@ -208,6 +208,28 @@ async function writeSessionUsageJson(
   await fs.writeFile(path.join(sessionDir, "session-usage.json"), JSON.stringify(usage));
 }
 
+async function writeBasicChatJsonl(sessionDir: string): Promise<void> {
+  await writeChatJsonl(sessionDir, [makeUserLine(), makeAssistantLine({ sequence: 1 })]);
+}
+
+async function createArchivedSubagentTranscript(
+  parentSessionDir: string,
+  childWorkspaceId: string,
+  metadata?: Record<string, unknown>
+): Promise<string> {
+  const childSessionDir = path.join(
+    parentSessionDir,
+    SUBAGENT_TRANSCRIPTS_DIR_NAME,
+    childWorkspaceId
+  );
+  await fs.mkdir(childSessionDir, { recursive: true });
+  await writeBasicChatJsonl(childSessionDir);
+  if (metadata != null) {
+    await writeMetadataJson(childSessionDir, metadata);
+  }
+  return childSessionDir;
+}
+
 async function queryRows(
   conn: DuckDBConnection,
   sql: string,
@@ -924,16 +946,9 @@ describe("ingestArchivedSubagentTranscripts", () => {
     const childWorkspaceId = "child-1";
 
     const parentSessionDir = await createTempSessionDir();
-    await writeChatJsonl(parentSessionDir, [makeUserLine(), makeAssistantLine({ sequence: 1 })]);
+    await writeBasicChatJsonl(parentSessionDir);
 
-    const childSessionDir = path.join(
-      parentSessionDir,
-      SUBAGENT_TRANSCRIPTS_DIR_NAME,
-      childWorkspaceId
-    );
-    await fs.mkdir(childSessionDir, { recursive: true });
-    await writeChatJsonl(childSessionDir, [makeUserLine(), makeAssistantLine({ sequence: 1 })]);
-    await writeMetadataJson(childSessionDir, {
+    await createArchivedSubagentTranscript(parentSessionDir, childWorkspaceId, {
       parentWorkspaceId,
       projectPath: "/home/user/myproject",
       projectName: "myproject",
@@ -970,31 +985,13 @@ describe("ingestArchivedSubagentTranscripts", () => {
     const grandchildWorkspaceId = "child-c";
 
     const parentSessionDir = await createTempSessionDir();
-    await writeChatJsonl(parentSessionDir, [makeUserLine(), makeAssistantLine({ sequence: 1 })]);
+    await writeBasicChatJsonl(parentSessionDir);
 
-    const childSessionDir = path.join(
-      parentSessionDir,
-      SUBAGENT_TRANSCRIPTS_DIR_NAME,
-      childWorkspaceId
-    );
-    await fs.mkdir(childSessionDir, { recursive: true });
-    await writeChatJsonl(childSessionDir, [makeUserLine(), makeAssistantLine({ sequence: 1 })]);
-    await writeMetadataJson(childSessionDir, {
+    await createArchivedSubagentTranscript(parentSessionDir, childWorkspaceId, {
       parentWorkspaceId,
       name: "child-workspace",
     });
-
-    const grandchildSessionDir = path.join(
-      parentSessionDir,
-      SUBAGENT_TRANSCRIPTS_DIR_NAME,
-      grandchildWorkspaceId
-    );
-    await fs.mkdir(grandchildSessionDir, { recursive: true });
-    await writeChatJsonl(grandchildSessionDir, [
-      makeUserLine(),
-      makeAssistantLine({ sequence: 1 }),
-    ]);
-    await writeMetadataJson(grandchildSessionDir, {
+    await createArchivedSubagentTranscript(parentSessionDir, grandchildWorkspaceId, {
       parentWorkspaceId: childWorkspaceId,
       name: "grandchild-workspace",
     });
@@ -1029,16 +1026,9 @@ describe("ingestArchivedSubagentTranscripts", () => {
     const childWorkspaceId = "child-id";
 
     const parentSessionDir = await createTempSessionDir();
-    await writeChatJsonl(parentSessionDir, [makeUserLine(), makeAssistantLine({ sequence: 1 })]);
+    await writeBasicChatJsonl(parentSessionDir);
 
-    const childSessionDir = path.join(
-      parentSessionDir,
-      SUBAGENT_TRANSCRIPTS_DIR_NAME,
-      childWorkspaceId
-    );
-    await fs.mkdir(childSessionDir, { recursive: true });
-    await writeChatJsonl(childSessionDir, [makeUserLine(), makeAssistantLine({ sequence: 1 })]);
-    await writeMetadataJson(childSessionDir, {
+    await createArchivedSubagentTranscript(parentSessionDir, childWorkspaceId, {
       parentWorkspaceId,
       name: "child-workspace",
     });
@@ -1060,16 +1050,9 @@ describe("ingestArchivedSubagentTranscripts", () => {
     const childWorkspaceId = "child-id";
 
     const parentSessionDir = await createTempSessionDir();
-    await writeChatJsonl(parentSessionDir, [makeUserLine(), makeAssistantLine({ sequence: 1 })]);
+    await writeBasicChatJsonl(parentSessionDir);
 
-    const childSessionDir = path.join(
-      parentSessionDir,
-      SUBAGENT_TRANSCRIPTS_DIR_NAME,
-      childWorkspaceId
-    );
-    await fs.mkdir(childSessionDir, { recursive: true });
-    await writeChatJsonl(childSessionDir, [makeUserLine(), makeAssistantLine({ sequence: 1 })]);
-    await writeMetadataJson(childSessionDir, {
+    await createArchivedSubagentTranscript(parentSessionDir, childWorkspaceId, {
       parentWorkspaceId,
       name: "child-workspace",
     });
@@ -1102,16 +1085,9 @@ describe("ingestArchivedSubagentTranscripts", () => {
 
     const parentSessionDir = path.join(sessionsDir, parentWorkspaceId);
     await fs.mkdir(parentSessionDir, { recursive: true });
-    await writeChatJsonl(parentSessionDir, [makeUserLine(), makeAssistantLine({ sequence: 1 })]);
+    await writeBasicChatJsonl(parentSessionDir);
 
-    const childSessionDir = path.join(
-      parentSessionDir,
-      SUBAGENT_TRANSCRIPTS_DIR_NAME,
-      childWorkspaceId
-    );
-    await fs.mkdir(childSessionDir, { recursive: true });
-    await writeChatJsonl(childSessionDir, [makeUserLine(), makeAssistantLine({ sequence: 1 })]);
-    await writeMetadataJson(childSessionDir, {
+    await createArchivedSubagentTranscript(parentSessionDir, childWorkspaceId, {
       parentWorkspaceId,
       name: "child-workspace",
     });
@@ -1129,7 +1105,7 @@ describe("ingestArchivedSubagentTranscripts", () => {
     const parentWorkspaceId = "parent-id";
 
     const parentSessionDir = await createTempSessionDir();
-    await writeChatJsonl(parentSessionDir, [makeUserLine(), makeAssistantLine({ sequence: 1 })]);
+    await writeBasicChatJsonl(parentSessionDir);
 
     await ingestWorkspace(conn, parentWorkspaceId, parentSessionDir, { projectPath: "/test" });
 
@@ -1143,17 +1119,9 @@ describe("ingestArchivedSubagentTranscripts", () => {
     const childWorkspaceId = "legacy-child";
 
     const parentSessionDir = await createTempSessionDir();
-    await writeChatJsonl(parentSessionDir, [makeUserLine(), makeAssistantLine({ sequence: 1 })]);
+    await writeBasicChatJsonl(parentSessionDir);
 
-    // Create archived child WITHOUT metadata.json — simulates pre-existing archives
-    const childSessionDir = path.join(
-      parentSessionDir,
-      SUBAGENT_TRANSCRIPTS_DIR_NAME,
-      childWorkspaceId
-    );
-    await fs.mkdir(childSessionDir, { recursive: true });
-    await writeChatJsonl(childSessionDir, [makeUserLine(), makeAssistantLine({ sequence: 1 })]);
-    // Deliberately NOT writing metadata.json
+    await createArchivedSubagentTranscript(parentSessionDir, childWorkspaceId);
 
     await ingestWorkspace(conn, parentWorkspaceId, parentSessionDir, { projectPath: "/test" });
 
@@ -1178,7 +1146,7 @@ describe("ingestDelegationRollups", () => {
     const childWorkspaceId = "child-id";
 
     const parentSessionDir = await createTempSessionDir();
-    await writeChatJsonl(parentSessionDir, [makeUserLine(), makeAssistantLine({ sequence: 1 })]);
+    await writeBasicChatJsonl(parentSessionDir);
     await writeSessionUsageJson(parentSessionDir, {
       byModel: {},
       version: 1,
@@ -1231,7 +1199,7 @@ describe("ingestDelegationRollups", () => {
     const childWorkspaceId = "legacy-child";
 
     const parentSessionDir = await createTempSessionDir();
-    await writeChatJsonl(parentSessionDir, [makeUserLine(), makeAssistantLine({ sequence: 1 })]);
+    await writeBasicChatJsonl(parentSessionDir);
     await writeSessionUsageJson(parentSessionDir, {
       byModel: {},
       version: 1,

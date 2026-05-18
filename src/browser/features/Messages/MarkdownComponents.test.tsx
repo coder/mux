@@ -1,223 +1,62 @@
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { GlobalWindow } from "happy-dom";
+import { installDom } from "../../../../tests/ui/dom";
 import { ThemeProvider } from "@/browser/contexts/ThemeContext";
 import { MessageListProvider } from "./MessageListContext";
 import { getCurrentHighlightedCodeBlockLines, markdownComponents } from "./MarkdownComponents";
 
+function renderCodeBlock(
+  className: string,
+  children: string,
+  openTerminal = mock(() => undefined)
+) {
+  const view = render(
+    <ThemeProvider forcedTheme="dark">
+      <MessageListProvider value={{ workspaceId: "ws-1", latestMessageId: null, openTerminal }}>
+        {markdownComponents.code({ inline: false, className, children })}
+      </MessageListProvider>
+    </ThemeProvider>
+  );
+  return { ...view, openTerminal };
+}
+
+function renderMarkdownLink(href: string | undefined, children: string) {
+  return render(markdownComponents.a({ href, children }));
+}
+
+let cleanupDom: (() => void) | null = null;
+
+beforeEach(() => {
+  cleanupDom = installDom();
+});
+
+afterEach(() => {
+  cleanup();
+  cleanupDom?.();
+  cleanupDom = null;
+});
+
 describe("MarkdownComponents command code blocks", () => {
-  beforeEach(() => {
-    globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
-    globalThis.document = globalThis.window.document;
+  // prettier-ignore
+  test.each([
+    ["bash", "language-bash", "$ npm install\n", "npm install"],
+    ["powershell", "language-powershell", "PS C:\\Users\\mike> npm install mux\n", "npm install mux"],
+    ["cmd", "language-cmd", "C:\\Users\\mike> dir\n", "dir"],
+    ["cmd-continuation", "language-cmd", "C:\\> echo foo ^\n>bar\n", "echo foo ^\nbar"],
+    ["shell-continuation", "language-bash", "$ cat <<EOF\n> line 1\n> EOF\n", "cat <<EOF\nline 1\nEOF"],
+  ])("runs %s command blocks", (_name, className, children, initialCommand) => {
+    const { getByRole, openTerminal } = renderCodeBlock(className, children);
+
+    fireEvent.click(getByRole("button", { name: "Run command" }));
+
+    expect(openTerminal).toHaveBeenCalledWith({ initialCommand });
   });
 
-  afterEach(() => {
-    cleanup();
-
-    globalThis.window = undefined as unknown as Window & typeof globalThis;
-    globalThis.document = undefined as unknown as Document;
-  });
-
-  test("shows a Run button for bash blocks when terminal is available", () => {
-    const openTerminal = mock(() => undefined);
-
-    const element = markdownComponents.code({
-      inline: false,
-      className: "language-bash",
-      children: "$ npm install\n",
-    });
-
-    const { getByRole } = render(
-      <ThemeProvider forcedTheme="dark">
-        <MessageListProvider
-          value={{
-            workspaceId: "ws-1",
-            latestMessageId: null,
-            openTerminal,
-          }}
-        >
-          {element}
-        </MessageListProvider>
-      </ThemeProvider>
-    );
-
-    const runButton = getByRole("button", { name: "Run command" });
-    fireEvent.click(runButton);
-
-    expect(openTerminal).toHaveBeenCalledWith({ initialCommand: "npm install" });
-  });
-
-  test("strips PowerShell prompts", () => {
-    const openTerminal = mock(() => undefined);
-
-    const element = markdownComponents.code({
-      inline: false,
-      className: "language-powershell",
-      children: "PS C:\\Users\\mike> npm install mux\n",
-    });
-
-    const { getByRole } = render(
-      <ThemeProvider forcedTheme="dark">
-        <MessageListProvider
-          value={{
-            workspaceId: "ws-1",
-            latestMessageId: null,
-            openTerminal,
-          }}
-        >
-          {element}
-        </MessageListProvider>
-      </ThemeProvider>
-    );
-
-    const runButton = getByRole("button", { name: "Run command" });
-    fireEvent.click(runButton);
-
-    expect(openTerminal).toHaveBeenCalledWith({
-      initialCommand: "npm install mux",
-    });
-  });
-
-  test("strips cmd.exe prompts", () => {
-    const openTerminal = mock(() => undefined);
-
-    const element = markdownComponents.code({
-      inline: false,
-      className: "language-cmd",
-      children: "C:\\Users\\mike> dir\n",
-    });
-
-    const { getByRole } = render(
-      <ThemeProvider forcedTheme="dark">
-        <MessageListProvider
-          value={{
-            workspaceId: "ws-1",
-            latestMessageId: null,
-            openTerminal,
-          }}
-        >
-          {element}
-        </MessageListProvider>
-      </ThemeProvider>
-    );
-
-    const runButton = getByRole("button", { name: "Run command" });
-    fireEvent.click(runButton);
-
-    expect(openTerminal).toHaveBeenCalledWith({
-      initialCommand: "dir",
-    });
-  });
-
-  test("strips cmd.exe continuation prompts", () => {
-    const openTerminal = mock(() => undefined);
-
-    const element = markdownComponents.code({
-      inline: false,
-      className: "language-cmd",
-      children: "C:\\> echo foo ^\n>bar\n",
-    });
-
-    const { getByRole } = render(
-      <ThemeProvider forcedTheme="dark">
-        <MessageListProvider
-          value={{
-            workspaceId: "ws-1",
-            latestMessageId: null,
-            openTerminal,
-          }}
-        >
-          {element}
-        </MessageListProvider>
-      </ThemeProvider>
-    );
-
-    const runButton = getByRole("button", { name: "Run command" });
-    fireEvent.click(runButton);
-
-    expect(openTerminal).toHaveBeenCalledWith({
-      initialCommand: "echo foo ^\nbar",
-    });
-  });
-  test("strips multiline continuation prompts after a $ shell prompt", () => {
-    const openTerminal = mock(() => undefined);
-
-    const element = markdownComponents.code({
-      inline: false,
-      className: "language-bash",
-      children: "$ cat <<EOF\n> line 1\n> EOF\n",
-    });
-
-    const { getByRole } = render(
-      <ThemeProvider forcedTheme="dark">
-        <MessageListProvider
-          value={{
-            workspaceId: "ws-1",
-            latestMessageId: null,
-            openTerminal,
-          }}
-        >
-          {element}
-        </MessageListProvider>
-      </ThemeProvider>
-    );
-
-    const runButton = getByRole("button", { name: "Run command" });
-    fireEvent.click(runButton);
-
-    expect(openTerminal).toHaveBeenCalledWith({
-      initialCommand: "cat <<EOF\nline 1\nEOF",
-    });
-  });
-
-  test("does not show Run button for shell-session transcripts", () => {
-    const openTerminal = mock(() => undefined);
-
-    const element = markdownComponents.code({
-      inline: false,
-      className: "language-shell-session",
-      children: "$ echo hello\nhello\n",
-    });
-
-    const { queryByRole } = render(
-      <ThemeProvider forcedTheme="dark">
-        <MessageListProvider
-          value={{
-            workspaceId: "ws-1",
-            latestMessageId: null,
-            openTerminal,
-          }}
-        >
-          {element}
-        </MessageListProvider>
-      </ThemeProvider>
-    );
-
-    expect(queryByRole("button", { name: "Run command" })).toBeNull();
-  });
-
-  test("does not show Run button for non-shell languages", () => {
-    const openTerminal = mock(() => undefined);
-
-    const element = markdownComponents.code({
-      inline: false,
-      className: "language-typescript",
-      children: "console.log('hello')\n",
-    });
-
-    const { queryByRole } = render(
-      <ThemeProvider forcedTheme="dark">
-        <MessageListProvider
-          value={{
-            workspaceId: "ws-1",
-            latestMessageId: null,
-            openTerminal,
-          }}
-        >
-          {element}
-        </MessageListProvider>
-      </ThemeProvider>
-    );
+  test.each([
+    ["shell-session", "language-shell-session", "$ echo hello\nhello\n"],
+    ["non-shell", "language-typescript", "console.log('hello')\n"],
+  ])("hides Run for %s blocks", (_name, className, children) => {
+    const { queryByRole } = renderCodeBlock(className, children);
 
     expect(queryByRole("button", { name: "Run command" })).toBeNull();
   });
@@ -248,80 +87,28 @@ describe("MarkdownComponents command code blocks", () => {
 });
 
 describe("MarkdownComponents anchors", () => {
-  beforeEach(() => {
-    globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
-    globalThis.document = globalThis.window.document;
-  });
-
-  afterEach(() => {
-    cleanup();
-
-    globalThis.window = undefined as unknown as Window & typeof globalThis;
-    globalThis.document = undefined as unknown as Document;
-  });
-
-  test("rewrites loopback hrefs when proxy template is configured", () => {
-    window.location.href = "https://coder.example.com/@u/ws/apps/mux/";
+  // prettier-ignore
+  test.each([
+    ["proxy-template", "https://coder.example.com/@u/ws/apps/mux/", "https://proxy-{{port}}.{{host}}", "http://127.0.0.1:5173/docs?x=1#details", "Open local docs", "https://proxy-5173.coder.example.com/docs?x=1#details", true],
+    ["coder-template", "https://5173--dev--pog2--ethan--apps.sydney.fly.dev.coder.com/workspace/f5a5ed5f7e", undefined, "http://127.0.0.1:8080/api/health?x=1#ok", "Open forwarded health", "https://8080--dev--pog2--ethan--apps.sydney.fly.dev.coder.com/api/health?x=1#ok", false],
+    ["external", "https://coder.example.com/@u/ws/apps/mux/", "https://proxy-{{port}}.{{host}}", "https://example.com/docs?x=1#details", "Open external docs", "https://example.com/docs?x=1#details", true],
+  ])("handles %s links", (_name, locationHref, proxyTemplate, href, label, expectedHref, assertBlankAttrs) => {
+    window.location.href = locationHref;
     (window as Window & { __MUX_PROXY_URI_TEMPLATE__?: string }).__MUX_PROXY_URI_TEMPLATE__ =
-      "https://proxy-{{port}}.{{host}}";
+      proxyTemplate;
 
-    const element = markdownComponents.a({
-      href: "http://127.0.0.1:5173/docs?x=1#details",
-      children: "Open local docs",
-    });
+    const { getByRole } = renderMarkdownLink(href, label);
+    const link = getByRole("link", { name: label });
 
-    const { getByRole } = render(element);
-    const link = getByRole("link", { name: "Open local docs" });
-
-    expect(link.getAttribute("href")).toBe("https://proxy-5173.coder.example.com/docs?x=1#details");
-    expect(link.getAttribute("target")).toBe("_blank");
-    expect(link.getAttribute("rel")).toBe("noopener noreferrer");
-  });
-
-  test("derives coder-style template from current host when injected template is missing", () => {
-    window.location.href =
-      "https://5173--dev--pog2--ethan--apps.sydney.fly.dev.coder.com/workspace/f5a5ed5f7e";
-    (window as Window & { __MUX_PROXY_URI_TEMPLATE__?: string }).__MUX_PROXY_URI_TEMPLATE__ =
-      undefined;
-
-    const element = markdownComponents.a({
-      href: "http://127.0.0.1:8080/api/health?x=1#ok",
-      children: "Open forwarded health",
-    });
-
-    const { getByRole } = render(element);
-    const link = getByRole("link", { name: "Open forwarded health" });
-
-    expect(link.getAttribute("href")).toBe(
-      "https://8080--dev--pog2--ethan--apps.sydney.fly.dev.coder.com/api/health?x=1#ok"
-    );
-  });
-
-  test("keeps non-loopback hrefs unchanged", () => {
-    window.location.href = "https://coder.example.com/@u/ws/apps/mux/";
-    (window as Window & { __MUX_PROXY_URI_TEMPLATE__?: string }).__MUX_PROXY_URI_TEMPLATE__ =
-      "https://proxy-{{port}}.{{host}}";
-
-    const element = markdownComponents.a({
-      href: "https://example.com/docs?x=1#details",
-      children: "Open external docs",
-    });
-
-    const { getByRole } = render(element);
-    const link = getByRole("link", { name: "Open external docs" });
-
-    expect(link.getAttribute("href")).toBe("https://example.com/docs?x=1#details");
-    expect(link.getAttribute("target")).toBe("_blank");
-    expect(link.getAttribute("rel")).toBe("noopener noreferrer");
+    expect(link.getAttribute("href")).toBe(expectedHref);
+    if (assertBlankAttrs) {
+      expect(link.getAttribute("target")).toBe("_blank");
+      expect(link.getAttribute("rel")).toBe("noopener noreferrer");
+    }
   });
 
   test("keeps undefined href behavior unchanged", () => {
-    const element = markdownComponents.a({
-      href: undefined,
-      children: "Missing href",
-    });
-
-    const { container } = render(element);
+    const { container } = renderMarkdownLink(undefined, "Missing href");
     const link = container.querySelector("a");
 
     expect(link).not.toBeNull();

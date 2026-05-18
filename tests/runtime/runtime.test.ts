@@ -44,6 +44,10 @@ import { runFullInit } from "@/node/runtime/runtimeFactory";
 import { sshConnectionPool } from "@/node/runtime/sshConnectionPool";
 import { ssh2ConnectionPool } from "@/node/runtime/SSH2ConnectionPool";
 
+const SSH_TEST_CWD = "/home/testuser";
+const execSSH = (runtime: Runtime, command: string, timeout = 30) =>
+  execBuffered(runtime, command, { cwd: SSH_TEST_CWD, timeout });
+
 // Skip all tests if TEST_INTEGRATION is not set
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
@@ -142,15 +146,31 @@ describeIntegration("Runtime integration tests", () => {
             : undefined
         );
 
+      const execWorkspace = (
+        runtime: Runtime,
+        workspace: TestWorkspace,
+        command: string,
+        options: Partial<Parameters<typeof execBuffered>[2]> = {}
+      ) => execBuffered(runtime, command, { cwd: workspace.path, timeout: 30, ...options });
+
+      const withRuntimeWorkspace = async <T>(
+        run: (runtime: Runtime, workspace: TestWorkspace) => Promise<T>
+      ): Promise<T> => {
+        const runtime = createRuntime();
+        await using workspace = await TestWorkspace.create(runtime, type);
+        return await run(runtime, workspace);
+      };
+
       describe("exec() - Command execution", () => {
         testForRuntime("captures stdout and stderr separately", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
-          const result = await execBuffered(runtime, 'echo "output" && echo "error" >&2', {
-            cwd: workspace.path,
-            timeout: 30,
-          });
+          const result = await execWorkspace(
+            runtime,
+            workspace,
+            'echo "output" && echo "error" >&2'
+          );
 
           expect(result.stdout.trim()).toBe("output");
           expect(result.stderr.trim()).toBe("error");
@@ -162,10 +182,7 @@ describeIntegration("Runtime integration tests", () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
-          const result = await execBuffered(runtime, "exit 42", {
-            cwd: workspace.path,
-            timeout: 30,
-          });
+          const result = await execWorkspace(runtime, workspace, "exit 42");
 
           expect(result.exitCode).toBe(42);
         });
@@ -174,7 +191,7 @@ describeIntegration("Runtime integration tests", () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
-          const result = await execBuffered(runtime, "cat", {
+          const result = await execWorkspace(runtime, workspace, "cat", {
             cwd: workspace.path,
             timeout: 30,
             stdin: "hello from stdin",
@@ -216,7 +233,10 @@ describeIntegration("Runtime integration tests", () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
-          const result = await execBuffered(runtime, "true", { cwd: workspace.path, timeout: 30 });
+          const result = await execWorkspace(runtime, workspace, "true", {
+            cwd: workspace.path,
+            timeout: 30,
+          });
 
           expect(result.stdout).toBe("");
           expect(result.stderr).toBe("");
@@ -227,10 +247,7 @@ describeIntegration("Runtime integration tests", () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
-          const result = await execBuffered(runtime, 'echo "hello \\"world\\""', {
-            cwd: workspace.path,
-            timeout: 30,
-          });
+          const result = await execWorkspace(runtime, workspace, 'echo "hello \\"world\\""');
 
           expect(result.stdout.trim()).toBe('hello "world"');
         });
@@ -239,7 +256,10 @@ describeIntegration("Runtime integration tests", () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
-          const result = await execBuffered(runtime, "pwd", { cwd: workspace.path, timeout: 30 });
+          const result = await execWorkspace(runtime, workspace, "pwd", {
+            cwd: workspace.path,
+            timeout: 30,
+          });
 
           expect(result.stdout.trim()).toContain(workspace.path);
         });
@@ -368,166 +388,116 @@ describeIntegration("Runtime integration tests", () => {
       });
 
       describe("readFile() - File reading", () => {
-        testForRuntime("reads file contents", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          // Write test file
-          const testContent = "Hello, World!\nLine 2\nLine 3";
-          await writeFileString(runtime, `${workspace.path}/test.txt`, testContent);
-
-          // Read it back
-          const content = await readFileString(runtime, `${workspace.path}/test.txt`);
-
-          expect(content).toBe(testContent);
-        });
-
-        testForRuntime("reads empty file", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          // Write empty file
-          await writeFileString(runtime, `${workspace.path}/empty.txt`, "");
-
-          // Read it back
-          const content = await readFileString(runtime, `${workspace.path}/empty.txt`);
-
-          expect(content).toBe("");
-        });
+        for (const { name, fileName, content } of [
+          {
+            name: "reads file contents",
+            fileName: "test.txt",
+            content: "Hello, World!\nLine 2\nLine 3",
+          },
+          { name: "reads empty file", fileName: "empty.txt", content: "" },
+        ]) {
+          testForRuntime(name, async () => {
+            await withRuntimeWorkspace(async (runtime, workspace) => {
+              const path = `${workspace.path}/${fileName}`;
+              await writeFileString(runtime, path, content);
+              expect(await readFileString(runtime, path)).toBe(content);
+            });
+          });
+        }
 
         testLocalOnly("reads binary data correctly", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
+          await withRuntimeWorkspace(async (runtime, workspace) => {
+            const binaryData = new Uint8Array([0, 1, 2, 255, 254, 253]);
+            const writer = runtime.writeFile(`${workspace.path}/binary.dat`).getWriter();
+            await writer.write(binaryData);
+            await writer.close();
 
-          // Create binary file with specific bytes
-          const binaryData = new Uint8Array([0, 1, 2, 255, 254, 253]);
-          const writer = runtime.writeFile(`${workspace.path}/binary.dat`).getWriter();
-          await writer.write(binaryData);
-          await writer.close();
+            const reader = runtime.readFile(`${workspace.path}/binary.dat`).getReader();
+            const chunks: Uint8Array[] = [];
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              chunks.push(value);
+            }
 
-          // Read it back
-          const stream = runtime.readFile(`${workspace.path}/binary.dat`);
-          const reader = stream.getReader();
-          const chunks: Uint8Array[] = [];
-
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            chunks.push(value);
-          }
-
-          // Concatenate chunks
-          const readData = new Uint8Array(chunks.reduce((acc, chunk) => acc + chunk.length, 0));
-          let offset = 0;
-          for (const chunk of chunks) {
-            readData.set(chunk, offset);
-            offset += chunk.length;
-          }
-
-          expect(readData).toEqual(binaryData);
+            const readData = new Uint8Array(chunks.reduce((acc, chunk) => acc + chunk.length, 0));
+            let offset = 0;
+            for (const chunk of chunks) {
+              readData.set(chunk, offset);
+              offset += chunk.length;
+            }
+            expect(readData).toEqual(binaryData);
+          });
         });
 
-        testForRuntime("throws RuntimeError for non-existent file", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          await expect(
-            readFileString(runtime, `${workspace.path}/does-not-exist.txt`)
-          ).rejects.toThrow(RuntimeError);
-        });
-
-        testForRuntime("throws RuntimeError when reading a directory", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          // Create subdirectory
-          await execBuffered(runtime, `mkdir -p subdir`, { cwd: workspace.path, timeout: 30 });
-
-          await expect(readFileString(runtime, `${workspace.path}/subdir`)).rejects.toThrow();
-        });
+        for (const { name, setup, path, error } of [
+          {
+            name: "throws RuntimeError for non-existent file",
+            setup: async () => {},
+            path: "does-not-exist.txt",
+            error: RuntimeError,
+          },
+          {
+            name: "throws RuntimeError when reading a directory",
+            setup: (runtime: Runtime, workspace: TestWorkspace) =>
+              execWorkspace(runtime, workspace, "mkdir -p subdir"),
+            path: "subdir",
+            error: Error,
+          },
+        ]) {
+          testForRuntime(name, async () => {
+            await withRuntimeWorkspace(async (runtime, workspace) => {
+              await setup(runtime, workspace);
+              await expect(readFileString(runtime, `${workspace.path}/${path}`)).rejects.toThrow(
+                error
+              );
+            });
+          });
+        }
       });
 
       describe("writeFile() - File writing", () => {
-        testForRuntime("writes file contents", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          const content = "Test content\nLine 2";
-          await writeFileString(runtime, `${workspace.path}/output.txt`, content);
-
-          // Verify by reading back
-          const result = await execBuffered(runtime, "cat output.txt", {
-            cwd: workspace.path,
-            timeout: 30,
+        for (const { name, fileName, content, beforeWrite } of [
+          { name: "writes file contents", fileName: "output.txt", content: "Test content\nLine 2" },
+          {
+            name: "overwrites existing file",
+            fileName: "overwrite.txt",
+            content: "new content",
+            beforeWrite: (runtime: Runtime, path: string) =>
+              writeFileString(runtime, path, "original"),
+          },
+          { name: "writes empty file", fileName: "empty.txt", content: "" },
+          {
+            name: "creates parent directories if needed",
+            fileName: "nested/dir/file.txt",
+            content: "content",
+          },
+          {
+            name: "handles special characters in content",
+            fileName: "special.txt",
+            content: 'Special chars: \n\t"quotes"\'\r\n$VAR`cmd`',
+          },
+        ]) {
+          testForRuntime(name, async () => {
+            await withRuntimeWorkspace(async (runtime, workspace) => {
+              const path = `${workspace.path}/${fileName}`;
+              await beforeWrite?.(runtime, path);
+              await writeFileString(runtime, path, content);
+              expect(await readFileString(runtime, path)).toBe(content);
+            });
           });
-
-          expect(result.stdout).toBe(content);
-        });
-
-        testForRuntime("overwrites existing file", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          const path = `${workspace.path}/overwrite.txt`;
-
-          // Write initial content
-          await writeFileString(runtime, path, "original");
-
-          // Overwrite
-          await writeFileString(runtime, path, "new content");
-
-          // Verify
-          const content = await readFileString(runtime, path);
-          expect(content).toBe("new content");
-        });
-
-        testForRuntime("writes empty file", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          await writeFileString(runtime, `${workspace.path}/empty.txt`, "");
-
-          const content = await readFileString(runtime, `${workspace.path}/empty.txt`);
-          expect(content).toBe("");
-        });
+        }
 
         testLocalOnly("writes binary data", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
+          await withRuntimeWorkspace(async (runtime, workspace) => {
+            const binaryData = new Uint8Array([0, 1, 2, 255, 254, 253]);
+            const writer = runtime.writeFile(`${workspace.path}/binary.dat`).getWriter();
+            await writer.write(binaryData);
+            await writer.close();
 
-          const binaryData = new Uint8Array([0, 1, 2, 255, 254, 253]);
-          const writer = runtime.writeFile(`${workspace.path}/binary.dat`).getWriter();
-          await writer.write(binaryData);
-          await writer.close();
-
-          // Verify with wc -c (byte count)
-          const result = await execBuffered(runtime, "wc -c < binary.dat", {
-            cwd: workspace.path,
-            timeout: 30,
+            const result = await execWorkspace(runtime, workspace, "wc -c < binary.dat");
+            expect(result.stdout.trim()).toBe("6");
           });
-
-          expect(result.stdout.trim()).toBe("6");
-        });
-
-        testForRuntime("creates parent directories if needed", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          await writeFileString(runtime, `${workspace.path}/nested/dir/file.txt`, "content");
-
-          const content = await readFileString(runtime, `${workspace.path}/nested/dir/file.txt`);
-          expect(content).toBe("content");
-        });
-
-        testForRuntime("handles special characters in content", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          const specialContent = 'Special chars: \n\t"quotes"\'\r\n$VAR`cmd`';
-          await writeFileString(runtime, `${workspace.path}/special.txt`, specialContent);
-
-          const content = await readFileString(runtime, `${workspace.path}/special.txt`);
-          expect(content).toBe(specialContent);
         });
 
         testDockerOnly("preserves symlinks when editing target file", async () => {
@@ -540,17 +510,11 @@ describeIntegration("Runtime integration tests", () => {
 
           // Create a symlink to the target
           const linkPath = `${workspace.path}/link.txt`;
-          const result = await execBuffered(runtime, `ln -s target.txt link.txt`, {
-            cwd: workspace.path,
-            timeout: 30,
-          });
+          const result = await execWorkspace(runtime, workspace, `ln -s target.txt link.txt`);
           expect(result.exitCode).toBe(0);
 
           // Verify symlink was created
-          const lsResult = await execBuffered(runtime, "ls -la link.txt", {
-            cwd: workspace.path,
-            timeout: 30,
-          });
+          const lsResult = await execWorkspace(runtime, workspace, "ls -la link.txt");
           expect(lsResult.stdout).toContain("->");
           expect(lsResult.stdout).toContain("target.txt");
 
@@ -558,10 +522,7 @@ describeIntegration("Runtime integration tests", () => {
           await writeFileString(runtime, linkPath, "new content");
 
           // Verify the symlink is still a symlink (not replaced with a file)
-          const lsAfter = await execBuffered(runtime, "ls -la link.txt", {
-            cwd: workspace.path,
-            timeout: 30,
-          });
+          const lsAfter = await execWorkspace(runtime, workspace, "ls -la link.txt");
           expect(lsAfter.stdout).toContain("->");
           expect(lsAfter.stdout).toContain("target.txt");
 
@@ -582,35 +543,23 @@ describeIntegration("Runtime integration tests", () => {
           await writeFileString(runtime, targetPath, "original content");
 
           // Set permissions to 755
-          const chmodResult = await execBuffered(runtime, "chmod 755 target.txt", {
-            cwd: workspace.path,
-            timeout: 30,
-          });
+          const chmodResult = await execWorkspace(runtime, workspace, "chmod 755 target.txt");
           expect(chmodResult.exitCode).toBe(0);
 
           // Verify initial permissions
-          const statBefore = await execBuffered(runtime, "stat -c '%a' target.txt", {
-            cwd: workspace.path,
-            timeout: 30,
-          });
+          const statBefore = await execWorkspace(runtime, workspace, "stat -c '%a' target.txt");
           expect(statBefore.stdout.trim()).toBe("755");
 
           // Create a symlink to the target
           const linkPath = `${workspace.path}/link.txt`;
-          const lnResult = await execBuffered(runtime, "ln -s target.txt link.txt", {
-            cwd: workspace.path,
-            timeout: 30,
-          });
+          const lnResult = await execWorkspace(runtime, workspace, "ln -s target.txt link.txt");
           expect(lnResult.exitCode).toBe(0);
 
           // Edit the file via the symlink
           await writeFileString(runtime, linkPath, "new content");
 
           // Verify permissions are preserved
-          const statAfter = await execBuffered(runtime, "stat -c '%a' target.txt", {
-            cwd: workspace.path,
-            timeout: 30,
-          });
+          const statAfter = await execWorkspace(runtime, workspace, "stat -c '%a' target.txt");
           expect(statAfter.stdout.trim()).toBe("755");
 
           // Verify content was updated
@@ -641,7 +590,10 @@ describeIntegration("Runtime integration tests", () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
-          await execBuffered(runtime, "mkdir subdir", { cwd: workspace.path, timeout: 30 });
+          await execWorkspace(runtime, workspace, "mkdir subdir", {
+            cwd: workspace.path,
+            timeout: 30,
+          });
 
           const stat = await runtime.stat(`${workspace.path}/subdir`);
 
@@ -734,10 +686,7 @@ describeIntegration("Runtime integration tests", () => {
           await using workspace = await TestWorkspace.create(runtime, type);
 
           // Initialize git repo
-          const result = await execBuffered(runtime, "git init", {
-            cwd: workspace.path,
-            timeout: 30,
-          });
+          const result = await execWorkspace(runtime, workspace, "git init");
 
           expect(result.exitCode).toBe(0);
 
@@ -759,16 +708,14 @@ describeIntegration("Runtime integration tests", () => {
 
           // Create a file and commit
           await writeFileString(runtime, `${workspace.path}/test.txt`, "initial content");
-          await execBuffered(runtime, `git add test.txt && git commit -m "Initial commit"`, {
-            cwd: workspace.path,
-            timeout: 30,
-          });
+          await execWorkspace(
+            runtime,
+            workspace,
+            `git add test.txt && git commit -m "Initial commit"`
+          );
 
           // Verify commit exists
-          const logResult = await execBuffered(runtime, "git log --oneline", {
-            cwd: workspace.path,
-            timeout: 30,
-          });
+          const logResult = await execWorkspace(runtime, workspace, "git log --oneline");
 
           expect(logResult.stdout).toContain("Initial commit");
         });
@@ -786,22 +733,13 @@ describeIntegration("Runtime integration tests", () => {
 
           // Create initial commit
           await writeFileString(runtime, `${workspace.path}/file.txt`, "content");
-          await execBuffered(runtime, `git add file.txt && git commit -m "init"`, {
-            cwd: workspace.path,
-            timeout: 30,
-          });
+          await execWorkspace(runtime, workspace, `git add file.txt && git commit -m "init"`);
 
           // Create and checkout new branch
-          await execBuffered(runtime, "git checkout -b feature-branch", {
-            cwd: workspace.path,
-            timeout: 30,
-          });
+          await execWorkspace(runtime, workspace, "git checkout -b feature-branch");
 
           // Verify branch
-          const branchResult = await execBuffered(runtime, "git branch --show-current", {
-            cwd: workspace.path,
-            timeout: 30,
-          });
+          const branchResult = await execWorkspace(runtime, workspace, "git branch --show-current");
 
           expect(branchResult.stdout.trim()).toBe("feature-branch");
         });
@@ -817,19 +755,13 @@ describeIntegration("Runtime integration tests", () => {
             { cwd: workspace.path, timeout: 30 }
           );
           await writeFileString(runtime, `${workspace.path}/file.txt`, "original");
-          await execBuffered(runtime, `git add file.txt && git commit -m "init"`, {
-            cwd: workspace.path,
-            timeout: 30,
-          });
+          await execWorkspace(runtime, workspace, `git add file.txt && git commit -m "init"`);
 
           // Make changes
           await writeFileString(runtime, `${workspace.path}/file.txt`, "modified");
 
           // Check status
-          const statusResult = await execBuffered(runtime, "git status --short", {
-            cwd: workspace.path,
-            timeout: 30,
-          });
+          const statusResult = await execWorkspace(runtime, workspace, "git status --short");
 
           expect(statusResult.stdout).toContain("M file.txt");
         });
@@ -840,10 +772,7 @@ describeIntegration("Runtime integration tests", () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
-          const result = await execBuffered(runtime, 'echo "line1\nline2\nline3"', {
-            cwd: workspace.path,
-            timeout: 30,
-          });
+          const result = await execWorkspace(runtime, workspace, 'echo "line1\nline2\nline3"');
 
           expect(result.stdout).toContain("line1");
           expect(result.stdout).toContain("line2");
@@ -856,10 +785,7 @@ describeIntegration("Runtime integration tests", () => {
 
           await writeFileString(runtime, `${workspace.path}/test.txt`, "line1\nline2\nline3");
 
-          const result = await execBuffered(runtime, "cat test.txt | grep line2", {
-            cwd: workspace.path,
-            timeout: 30,
-          });
+          const result = await execWorkspace(runtime, workspace, "cat test.txt | grep line2");
 
           expect(result.stdout.trim()).toBe("line2");
         });
@@ -868,10 +794,11 @@ describeIntegration("Runtime integration tests", () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
-          const result = await execBuffered(runtime, 'echo "Current dir: $(basename $(pwd))"', {
-            cwd: workspace.path,
-            timeout: 30,
-          });
+          const result = await execWorkspace(
+            runtime,
+            workspace,
+            'echo "Current dir: $(basename $(pwd))"'
+          );
 
           expect(result.stdout).toContain("Current dir:");
         });
@@ -881,10 +808,7 @@ describeIntegration("Runtime integration tests", () => {
           await using workspace = await TestWorkspace.create(runtime, type);
 
           // Generate large output (1000 lines)
-          const result = await execBuffered(runtime, "seq 1 1000", {
-            cwd: workspace.path,
-            timeout: 30,
-          });
+          const result = await execWorkspace(runtime, workspace, "seq 1 1000");
 
           const lines = result.stdout.trim().split("\n");
           expect(lines.length).toBe(1000);
@@ -896,10 +820,7 @@ describeIntegration("Runtime integration tests", () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
-          const result = await execBuffered(runtime, "sleep 0.1", {
-            cwd: workspace.path,
-            timeout: 30,
-          });
+          const result = await execWorkspace(runtime, workspace, "sleep 0.1");
 
           expect(result.exitCode).toBe(0);
           expect(result.stdout).toBe("");
@@ -912,10 +833,7 @@ describeIntegration("Runtime integration tests", () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
-          const result = await execBuffered(runtime, "nonexistentcommand", {
-            cwd: workspace.path,
-            timeout: 30,
-          });
+          const result = await execWorkspace(runtime, workspace, "nonexistentcommand");
 
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr.toLowerCase()).toContain("not found");
@@ -925,10 +843,7 @@ describeIntegration("Runtime integration tests", () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
-          const result = await execBuffered(runtime, "if true; then echo 'missing fi'", {
-            cwd: workspace.path,
-            timeout: 30,
-          });
+          const result = await execWorkspace(runtime, workspace, "if true; then echo 'missing fi'");
 
           expect(result.exitCode).not.toBe(0);
         });
@@ -939,15 +854,9 @@ describeIntegration("Runtime integration tests", () => {
 
           // Create file without execute permission and try to execute it
           await writeFileString(runtime, `${workspace.path}/script.sh`, "#!/bin/sh\necho test");
-          await execBuffered(runtime, "chmod 644 script.sh", {
-            cwd: workspace.path,
-            timeout: 30,
-          });
+          await execWorkspace(runtime, workspace, "chmod 644 script.sh");
 
-          const result = await execBuffered(runtime, "./script.sh", {
-            cwd: workspace.path,
-            timeout: 30,
-          });
+          const result = await execWorkspace(runtime, workspace, "./script.sh");
 
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr.toLowerCase()).toContain("permission denied");
@@ -983,10 +892,9 @@ describeIntegration("Runtime integration tests", () => {
         const newWorkspacePath = getRemoteWorkspacePath(layout, "worktree-renamed");
 
         // Create the workspace directory structure where the runtime expects it
-        await execBuffered(
+        await execSSH(
           runtime,
-          `mkdir -p "${oldWorkspacePath}" && echo "test" > "${oldWorkspacePath}/test.txt"`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `mkdir -p "${oldWorkspacePath}" && echo "test" > "${oldWorkspacePath}/test.txt"`
         );
 
         // Rename the workspace
@@ -998,27 +906,22 @@ describeIntegration("Runtime integration tests", () => {
           expect(result.newPath).toBe(newWorkspacePath);
 
           // Verify old path no longer exists
-          const oldCheck = await execBuffered(
+          const oldCheck = await execSSH(
             runtime,
-            `test -d "${result.oldPath}" && echo "exists" || echo "missing"`,
-            { cwd: "/home/testuser", timeout: 30 }
+            `test -d "${result.oldPath}" && echo "exists" || echo "missing"`
           );
           expect(oldCheck.stdout.trim()).toBe("missing");
 
           // Verify new path exists with content
-          const newCheck = await execBuffered(
+          const newCheck = await execSSH(
             runtime,
-            `test -f "${result.newPath}/test.txt" && echo "exists" || echo "missing"`,
-            { cwd: "/home/testuser", timeout: 30 }
+            `test -f "${result.newPath}/test.txt" && echo "exists" || echo "missing"`
           );
           expect(newCheck.stdout.trim()).toBe("exists");
         }
 
         // Cleanup
-        await execBuffered(runtime, `rm -rf "${layout.projectRoot}"`, {
-          cwd: "/home/testuser",
-          timeout: 30,
-        });
+        await execSSH(runtime, `rm -rf "${layout.projectRoot}"`);
       });
 
       testForRuntime("returns error when trying to rename non-existent directory", async () => {
@@ -1050,7 +953,7 @@ describeIntegration("Runtime integration tests", () => {
         const newWorkspacePath = getRemoteWorkspacePath(layout, newWorkspaceName);
 
         // Create a source workspace repo with a non-trunk branch checked out.
-        await execBuffered(
+        await execSSH(
           runtime,
           [
             `mkdir -p "${sourceWorkspacePath}"`,
@@ -1067,15 +970,13 @@ describeIntegration("Runtime integration tests", () => {
             `git commit -m "feature"`,
             `echo "untracked" > untracked.txt`,
             `echo "local-change" >> feature.txt`,
-          ].join(" && "),
-          { cwd: "/home/testuser", timeout: 30 }
+          ].join(" && ")
         );
 
         // Sanity check the source branch.
-        const sourceBranchCheck = await execBuffered(
+        const sourceBranchCheck = await execSSH(
           runtime,
-          `git -C "${sourceWorkspacePath}" branch --show-current`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `git -C "${sourceWorkspacePath}" branch --show-current`
         );
         expect(sourceBranchCheck.stdout.trim()).toBe("feature");
 
@@ -1099,34 +1000,30 @@ describeIntegration("Runtime integration tests", () => {
         expect(forkResult.workspacePath).toBe(newWorkspacePath);
         expect(forkResult.sourceBranch).toBe("feature");
 
-        const newBranchCheck = await execBuffered(
+        const newBranchCheck = await execSSH(
           runtime,
-          `git -C "${newWorkspacePath}" branch --show-current`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `git -C "${newWorkspacePath}" branch --show-current`
         );
         expect(newBranchCheck.stdout.trim()).toBe(newWorkspaceName);
 
         // Verify the new workspace is based on the source branch commit.
-        const fileCheck = await execBuffered(
+        const fileCheck = await execSSH(
           runtime,
-          `test -f "${newWorkspacePath}/feature.txt" && echo "exists" || echo "missing"`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `test -f "${newWorkspacePath}/feature.txt" && echo "exists" || echo "missing"`
         );
 
         expect(fileCheck.stdout.trim()).toBe("exists");
 
         // Fork should preserve uncommitted working tree changes from the source workspace.
-        const untrackedCheck = await execBuffered(
+        const untrackedCheck = await execSSH(
           runtime,
-          `test -f "${newWorkspacePath}/untracked.txt" && echo "exists" || echo "missing"`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `test -f "${newWorkspacePath}/untracked.txt" && echo "exists" || echo "missing"`
         );
         expect(untrackedCheck.stdout.trim()).toBe("exists");
 
-        const modifiedCheck = await execBuffered(
+        const modifiedCheck = await execSSH(
           runtime,
-          `grep -q "local-change" "${newWorkspacePath}/feature.txt" && echo "present" || echo "missing"`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `grep -q "local-change" "${newWorkspacePath}/feature.txt" && echo "present" || echo "missing"`
         );
         expect(modifiedCheck.stdout.trim()).toBe("present");
 
@@ -1143,10 +1040,7 @@ describeIntegration("Runtime integration tests", () => {
         expect(initResult.success).toBe(true);
 
         // Cleanup
-        await execBuffered(runtime, `rm -rf "${layout.projectRoot}"`, {
-          cwd: "/home/testuser",
-          timeout: 30,
-        });
+        await execSSH(runtime, `rm -rf "${layout.projectRoot}"`);
       });
     });
 
@@ -1159,17 +1053,15 @@ describeIntegration("Runtime integration tests", () => {
         const workspacePath = getRemoteWorkspacePath(layout, "worktree-delete-test");
 
         // Create the workspace directory structure where the runtime expects it
-        await execBuffered(
+        await execSSH(
           runtime,
-          `mkdir -p "${workspacePath}" && echo "test" > "${workspacePath}/test.txt"`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `mkdir -p "${workspacePath}" && echo "test" > "${workspacePath}/test.txt"`
         );
 
         // Verify workspace exists
-        const beforeCheck = await execBuffered(
+        const beforeCheck = await execSSH(
           runtime,
-          `test -d "${workspacePath}" && echo "exists" || echo "missing"`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `test -d "${workspacePath}" && echo "exists" || echo "missing"`
         );
         expect(beforeCheck.stdout.trim()).toBe("exists");
 
@@ -1181,19 +1073,15 @@ describeIntegration("Runtime integration tests", () => {
           expect(result.deletedPath).toBe(workspacePath);
 
           // Verify workspace was deleted
-          const afterCheck = await execBuffered(
+          const afterCheck = await execSSH(
             runtime,
-            `test -d "${result.deletedPath}" && echo "exists" || echo "missing"`,
-            { cwd: "/home/testuser", timeout: 30 }
+            `test -d "${result.deletedPath}" && echo "exists" || echo "missing"`
           );
           expect(afterCheck.stdout.trim()).toBe("missing");
         }
 
         // Cleanup
-        await execBuffered(runtime, `rm -rf "${layout.projectRoot}"`, {
-          cwd: "/home/testuser",
-          timeout: 30,
-        });
+        await execSSH(runtime, `rm -rf "${layout.projectRoot}"`);
       });
 
       testForRuntime("returns success for non-existent directory (idempotent)", async () => {
@@ -1241,7 +1129,7 @@ describeIntegration("Runtime integration tests", () => {
 
       try {
         // 1. Create a bare base repo and populate it with a commit.
-        await execBuffered(
+        await execSSH(
           runtime,
           [
             `mkdir -p "${layout.projectRoot}"`,
@@ -1257,22 +1145,19 @@ describeIntegration("Runtime integration tests", () => {
             `git commit -m "initial"`,
             `git push origin HEAD:main`,
             `rm -rf "$TMPCLONE"`,
-          ].join(" && "),
-          { cwd: "/home/testuser", timeout: 30 }
+          ].join(" && ")
         );
 
         // 2. Create the source workspace as a worktree of the base repo.
-        await execBuffered(
+        await execSSH(
           runtime,
-          `git -C "${baseRepoPath}" worktree add "${sourceWorkspacePath}" -b source main`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `git -C "${baseRepoPath}" worktree add "${sourceWorkspacePath}" -b source main`
         );
 
         // Verify source workspace has the content.
-        const sourceCheck = await execBuffered(
+        const sourceCheck = await execSSH(
           runtime,
-          `test -f "${sourceWorkspacePath}/base.txt" && echo "exists" || echo "missing"`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `test -f "${sourceWorkspacePath}/base.txt" && echo "exists" || echo "missing"`
         );
         expect(sourceCheck.stdout.trim()).toBe("exists");
 
@@ -1290,39 +1175,28 @@ describeIntegration("Runtime integration tests", () => {
         expect(forkResult.sourceBranch).toBe("source");
 
         // 4. Verify the forked workspace is a worktree (.git is a file, not directory).
-        const gitTypeCheck = await execBuffered(
+        const gitTypeCheck = await execSSH(
           runtime,
-          `test -f "${newWorkspacePath}/.git" && echo "file" || (test -d "${newWorkspacePath}/.git" && echo "dir" || echo "missing")`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `test -f "${newWorkspacePath}/.git" && echo "file" || (test -d "${newWorkspacePath}/.git" && echo "dir" || echo "missing")`
         );
         expect(gitTypeCheck.stdout.trim()).toBe("file");
 
         // 5. Verify the worktree has the correct branch and files.
-        const branchCheck = await execBuffered(
+        const branchCheck = await execSSH(
           runtime,
-          `git -C "${newWorkspacePath}" branch --show-current`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `git -C "${newWorkspacePath}" branch --show-current`
         );
         expect(branchCheck.stdout.trim()).toBe(newWorkspaceName);
 
-        const fileCheck = await execBuffered(runtime, `cat "${newWorkspacePath}/base.txt"`, {
-          cwd: "/home/testuser",
-          timeout: 30,
-        });
+        const fileCheck = await execSSH(runtime, `cat "${newWorkspacePath}/base.txt"`);
         expect(fileCheck.stdout.trim()).toBe("base content");
 
         // 6. Verify the worktree is listed in the base repo.
-        const worktreeList = await execBuffered(runtime, `git -C "${baseRepoPath}" worktree list`, {
-          cwd: "/home/testuser",
-          timeout: 30,
-        });
+        const worktreeList = await execSSH(runtime, `git -C "${baseRepoPath}" worktree list`);
         expect(worktreeList.stdout).toContain(newWorkspaceName);
       } finally {
         // Cleanup: remove all worktrees and the project directory.
-        await execBuffered(runtime, `rm -rf "${layout.projectRoot}"`, {
-          cwd: "/home/testuser",
-          timeout: 30,
-        });
+        await execSSH(runtime, `rm -rf "${layout.projectRoot}"`);
       }
     }, 60000);
 
@@ -1337,7 +1211,7 @@ describeIntegration("Runtime integration tests", () => {
 
       try {
         // Create a legacy workspace (standalone git clone, no base repo).
-        await execBuffered(
+        await execSSH(
           runtime,
           [
             `mkdir -p "${sourceWorkspacePath}"`,
@@ -1349,15 +1223,13 @@ describeIntegration("Runtime integration tests", () => {
             `git add legacy.txt`,
             `git commit -m "legacy initial"`,
             `git checkout -b legacy-branch`,
-          ].join(" && "),
-          { cwd: "/home/testuser", timeout: 30 }
+          ].join(" && ")
         );
 
         // Verify no base repo exists.
-        const baseCheck = await execBuffered(
+        const baseCheck = await execSSH(
           runtime,
-          `test -d "${layout.baseRepoPath}" && echo "exists" || echo "missing"`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `test -d "${layout.baseRepoPath}" && echo "exists" || echo "missing"`
         );
         expect(baseCheck.stdout.trim()).toBe("missing");
 
@@ -1374,24 +1246,17 @@ describeIntegration("Runtime integration tests", () => {
         expect(forkResult.sourceBranch).toBe("legacy-branch");
 
         // Verify the forked workspace is a full clone (.git is a directory, not a file).
-        const gitTypeCheck = await execBuffered(
+        const gitTypeCheck = await execSSH(
           runtime,
-          `test -d "${newWorkspacePath}/.git" && echo "dir" || echo "not-dir"`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `test -d "${newWorkspacePath}/.git" && echo "dir" || echo "not-dir"`
         );
         expect(gitTypeCheck.stdout.trim()).toBe("dir");
 
         // Verify content was copied.
-        const fileCheck = await execBuffered(runtime, `cat "${newWorkspacePath}/legacy.txt"`, {
-          cwd: "/home/testuser",
-          timeout: 30,
-        });
+        const fileCheck = await execSSH(runtime, `cat "${newWorkspacePath}/legacy.txt"`);
         expect(fileCheck.stdout.trim()).toBe("legacy content");
       } finally {
-        await execBuffered(runtime, `rm -rf "${layout.projectRoot}"`, {
-          cwd: "/home/testuser",
-          timeout: 30,
-        });
+        await execSSH(runtime, `rm -rf "${layout.projectRoot}"`);
       }
     }, 60000);
 
@@ -1407,7 +1272,7 @@ describeIntegration("Runtime integration tests", () => {
 
       try {
         // 1. Create a bare base repo with a commit on 'main' (simulates a previous initWorkspace).
-        await execBuffered(
+        await execSSH(
           runtime,
           [
             `mkdir -p "${layout.projectRoot}"`,
@@ -1422,12 +1287,11 @@ describeIntegration("Runtime integration tests", () => {
             `git commit -m "initial"`,
             `git push origin HEAD:main`,
             `rm -rf "$TMPCLONE"`,
-          ].join(" && "),
-          { cwd: "/home/testuser", timeout: 30 }
+          ].join(" && ")
         );
 
         // 2. Create a legacy workspace (full clone) with a branch that does NOT exist in the base repo.
-        await execBuffered(
+        await execSSH(
           runtime,
           [
             `mkdir -p "${sourceWorkspacePath}"`,
@@ -1439,15 +1303,13 @@ describeIntegration("Runtime integration tests", () => {
             `git add legacy.txt`,
             `git commit -m "legacy commit"`,
             `git checkout -b only-on-legacy`,
-          ].join(" && "),
-          { cwd: "/home/testuser", timeout: 30 }
+          ].join(" && ")
         );
 
         // Confirm base repo exists (so forkWorkspace will try the worktree path first).
-        const baseCheck = await execBuffered(
+        const baseCheck = await execSSH(
           runtime,
-          `test -d "${baseRepoPath}" && echo "exists" || echo "missing"`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `test -d "${baseRepoPath}" && echo "exists" || echo "missing"`
         );
         expect(baseCheck.stdout.trim()).toBe("exists");
 
@@ -1465,24 +1327,17 @@ describeIntegration("Runtime integration tests", () => {
         expect(forkResult.sourceBranch).toBe("only-on-legacy");
 
         // 4. Verify the forked workspace is a full clone (cp -R -P path), not a worktree.
-        const gitTypeCheck = await execBuffered(
+        const gitTypeCheck = await execSSH(
           runtime,
-          `test -d "${newWorkspacePath}/.git" && echo "dir" || echo "not-dir"`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `test -d "${newWorkspacePath}/.git" && echo "dir" || echo "not-dir"`
         );
         expect(gitTypeCheck.stdout.trim()).toBe("dir");
 
         // 5. Verify content was copied.
-        const fileCheck = await execBuffered(runtime, `cat "${newWorkspacePath}/legacy.txt"`, {
-          cwd: "/home/testuser",
-          timeout: 30,
-        });
+        const fileCheck = await execSSH(runtime, `cat "${newWorkspacePath}/legacy.txt"`);
         expect(fileCheck.stdout.trim()).toBe("legacy content");
       } finally {
-        await execBuffered(runtime, `rm -rf "${layout.projectRoot}"`, {
-          cwd: "/home/testuser",
-          timeout: 30,
-        });
+        await execSSH(runtime, `rm -rf "${layout.projectRoot}"`);
       }
     }, 60000);
 
@@ -1497,7 +1352,7 @@ describeIntegration("Runtime integration tests", () => {
 
       try {
         // Create bare base repo with a commit.
-        await execBuffered(
+        await execSSH(
           runtime,
           [
             `mkdir -p "${layout.projectRoot}"`,
@@ -1510,22 +1365,19 @@ describeIntegration("Runtime integration tests", () => {
             `echo "x" > x.txt && git add x.txt && git commit -m "init"`,
             `git push origin HEAD:main`,
             `rm -rf "$TMPCLONE"`,
-          ].join(" && "),
-          { cwd: "/home/testuser", timeout: 30 }
+          ].join(" && ")
         );
 
         // Create a worktree workspace.
-        await execBuffered(
+        await execSSH(
           runtime,
-          `git -C "${baseRepoPath}" worktree add "${workspacePath}" -b ${workspaceName} main`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `git -C "${baseRepoPath}" worktree add "${workspacePath}" -b ${workspaceName} main`
         );
 
         // Verify it exists as a worktree.
-        const beforeCheck = await execBuffered(
+        const beforeCheck = await execSSH(
           runtime,
-          `test -f "${workspacePath}/.git" && echo "worktree" || echo "not-worktree"`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `test -f "${workspacePath}/.git" && echo "worktree" || echo "not-worktree"`
         );
         expect(beforeCheck.stdout.trim()).toBe("worktree");
 
@@ -1539,24 +1391,17 @@ describeIntegration("Runtime integration tests", () => {
         expect(deleteResult.success).toBe(true);
 
         // Verify directory is gone.
-        const afterCheck = await execBuffered(
+        const afterCheck = await execSSH(
           runtime,
-          `test -d "${workspacePath}" && echo "exists" || echo "missing"`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `test -d "${workspacePath}" && echo "exists" || echo "missing"`
         );
         expect(afterCheck.stdout.trim()).toBe("missing");
 
         // Verify worktree metadata is cleaned up in the base repo.
-        const worktreeList = await execBuffered(runtime, `git -C "${baseRepoPath}" worktree list`, {
-          cwd: "/home/testuser",
-          timeout: 30,
-        });
+        const worktreeList = await execSSH(runtime, `git -C "${baseRepoPath}" worktree list`);
         expect(worktreeList.stdout).not.toContain(workspaceName);
       } finally {
-        await execBuffered(runtime, `rm -rf "${layout.projectRoot}"`, {
-          cwd: "/home/testuser",
-          timeout: 30,
-        });
+        await execSSH(runtime, `rm -rf "${layout.projectRoot}"`);
       }
     }, 60000);
 
@@ -1569,7 +1414,7 @@ describeIntegration("Runtime integration tests", () => {
 
       try {
         // Create a legacy workspace (standalone git clone, .git is a directory).
-        await execBuffered(
+        await execSSH(
           runtime,
           [
             `mkdir -p "${workspacePath}"`,
@@ -1578,24 +1423,19 @@ describeIntegration("Runtime integration tests", () => {
             `git config user.email "test@test.com"`,
             `git config user.name "Test"`,
             `echo "x" > x.txt && git add x.txt && git commit -m "init"`,
-          ].join(" && "),
-          { cwd: "/home/testuser", timeout: 30 }
+          ].join(" && ")
         );
 
         const deleteResult = await runtime.deleteWorkspace(projectPath, "legacy-ws", true);
         expect(deleteResult.success).toBe(true);
 
-        const afterCheck = await execBuffered(
+        const afterCheck = await execSSH(
           runtime,
-          `test -d "${workspacePath}" && echo "exists" || echo "missing"`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `test -d "${workspacePath}" && echo "exists" || echo "missing"`
         );
         expect(afterCheck.stdout.trim()).toBe("missing");
       } finally {
-        await execBuffered(runtime, `rm -rf "${layout.projectRoot}"`, {
-          cwd: "/home/testuser",
-          timeout: 30,
-        });
+        await execSSH(runtime, `rm -rf "${layout.projectRoot}"`);
       }
     }, 60000);
 
@@ -1610,7 +1450,7 @@ describeIntegration("Runtime integration tests", () => {
 
       try {
         // Set up bare base repo with a commit.
-        await execBuffered(
+        await execSSH(
           runtime,
           [
             `mkdir -p "${layout.projectRoot}"`,
@@ -1623,15 +1463,13 @@ describeIntegration("Runtime integration tests", () => {
             `echo "x" > x.txt && git add x.txt && git commit -m "init"`,
             `git push origin HEAD:main`,
             `rm -rf "$TMPCLONE"`,
-          ].join(" && "),
-          { cwd: "/home/testuser", timeout: 30 }
+          ].join(" && ")
         );
 
         // Create a worktree workspace.
-        await execBuffered(
+        await execSSH(
           runtime,
-          `git -C "${baseRepoPath}" worktree add "${oldWorkspacePath}" -b old-name main`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `git -C "${baseRepoPath}" worktree add "${oldWorkspacePath}" -b old-name main`
         );
 
         // Rename the workspace.
@@ -1641,51 +1479,41 @@ describeIntegration("Runtime integration tests", () => {
         if (!result.success) return;
 
         // Verify old path doesn't exist and new path does.
-        const oldCheck = await execBuffered(
+        const oldCheck = await execSSH(
           runtime,
-          `test -d "${oldWorkspacePath}" && echo "exists" || echo "missing"`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `test -d "${oldWorkspacePath}" && echo "exists" || echo "missing"`
         );
         expect(oldCheck.stdout.trim()).toBe("missing");
 
-        const newCheck = await execBuffered(
+        const newCheck = await execSSH(
           runtime,
-          `test -f "${newWorkspacePath}/.git" && echo "worktree" || echo "not-worktree"`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `test -f "${newWorkspacePath}/.git" && echo "worktree" || echo "not-worktree"`
         );
         expect(newCheck.stdout.trim()).toBe("worktree");
 
         // Verify the worktree is tracked at the new path (not the old path).
         // Note: git worktree move changes the path but NOT the branch name, so
         // `git worktree list` shows `/new-name [old-name]`. Check path only.
-        const worktreeList = await execBuffered(runtime, `git -C "${baseRepoPath}" worktree list`, {
-          cwd: "/home/testuser",
-          timeout: 30,
-        });
+        const worktreeList = await execSSH(runtime, `git -C "${baseRepoPath}" worktree list`);
         expect(worktreeList.stdout).toContain("/new-name");
         expect(worktreeList.stdout).not.toContain("/old-name");
 
         const deleteResult = await runtime.deleteWorkspace(projectPath, "new-name", true);
         expect(deleteResult.success).toBe(true);
 
-        const deletedPathCheck = await execBuffered(
+        const deletedPathCheck = await execSSH(
           runtime,
-          `test -d "${newWorkspacePath}" && echo "exists" || echo "missing"`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `test -d "${newWorkspacePath}" && echo "exists" || echo "missing"`
         );
         expect(deletedPathCheck.stdout.trim()).toBe("missing");
 
-        const branchCheck = await execBuffered(
+        const branchCheck = await execSSH(
           runtime,
-          `git -C "${baseRepoPath}" branch --list old-name`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `git -C "${baseRepoPath}" branch --list old-name`
         );
         expect(branchCheck.stdout.trim()).toBe("");
       } finally {
-        await execBuffered(runtime, `rm -rf "${layout.projectRoot}"`, {
-          cwd: "/home/testuser",
-          timeout: 30,
-        });
+        await execSSH(runtime, `rm -rf "${layout.projectRoot}"`);
       }
     }, 60000);
 
@@ -1717,7 +1545,7 @@ describeIntegration("Runtime integration tests", () => {
       });
 
       try {
-        await execBuffered(
+        await execSSH(
           runtime,
           [
             `mkdir -p "${legacyLayout.projectRoot}"`,
@@ -1730,14 +1558,12 @@ describeIntegration("Runtime integration tests", () => {
             `echo "x" > x.txt && git add x.txt && git commit -m "init"`,
             `git push origin HEAD:main`,
             `rm -rf "$TMPCLONE"`,
-          ].join(" && "),
-          { cwd: "/home/testuser", timeout: 30 }
+          ].join(" && ")
         );
 
-        await execBuffered(
+        await execSSH(
           runtime,
-          `git -C "${baseRepoPath}" worktree add "${oldWorkspacePath}" -b old-name main`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `git -C "${baseRepoPath}" worktree add "${oldWorkspacePath}" -b old-name main`
         );
 
         const renameResult = await legacyRuntime.renameWorkspace(
@@ -1748,11 +1574,7 @@ describeIntegration("Runtime integration tests", () => {
         expect(renameResult.success).toBe(true);
         if (!renameResult.success) return;
 
-        const legacyWorktreeList = await execBuffered(
-          runtime,
-          `git -C "${baseRepoPath}" worktree list`,
-          { cwd: "/home/testuser", timeout: 30 }
-        );
+        const legacyWorktreeList = await execSSH(runtime, `git -C "${baseRepoPath}" worktree list`);
         expect(legacyWorktreeList.stdout).toContain("/new-name");
         expect(legacyWorktreeList.stdout).not.toContain("/old-name");
 
@@ -1768,24 +1590,19 @@ describeIntegration("Runtime integration tests", () => {
         );
         expect(deleteResult.success).toBe(true);
 
-        const deletedPathCheck = await execBuffered(
+        const deletedPathCheck = await execSSH(
           runtime,
-          `test -d "${newWorkspacePath}" && echo "exists" || echo "missing"`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `test -d "${newWorkspacePath}" && echo "exists" || echo "missing"`
         );
         expect(deletedPathCheck.stdout.trim()).toBe("missing");
 
-        const branchCheck = await execBuffered(
+        const branchCheck = await execSSH(
           runtime,
-          `git -C "${baseRepoPath}" branch --list old-name`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `git -C "${baseRepoPath}" branch --list old-name`
         );
         expect(branchCheck.stdout.trim()).toBe("");
       } finally {
-        await execBuffered(runtime, `rm -rf "${legacyLayout.projectRoot}"`, {
-          cwd: "/home/testuser",
-          timeout: 30,
-        });
+        await execSSH(runtime, `rm -rf "${legacyLayout.projectRoot}"`);
       }
     }, 60000);
 
@@ -1839,10 +1656,7 @@ describeIntegration("Runtime integration tests", () => {
         expect(results).toHaveLength(12);
       } finally {
         execSync(`rm -rf "${localProjectPath}"`);
-        await execBuffered(runtime, `rm -rf "${layout.projectRoot}"`, {
-          cwd: "/home/testuser",
-          timeout: 30,
-        });
+        await execSSH(runtime, `rm -rf "${layout.projectRoot}"`);
       }
     }, 120000);
   });
@@ -1918,10 +1732,9 @@ describeIntegration("Runtime integration tests", () => {
           // The base repo should have bundle branches in refs/mux-bundle/* (staging
           // namespace) and NOT in refs/heads/* (which would collide with worktrees)
           // or refs/remotes/origin/* (stale local tracking refs).
-          const baseRefs = await execBuffered(
+          const baseRefs = await execSSH(
             runtime,
-            `git -C "${baseRepoPath}" for-each-ref --format='%(refname)' refs/`,
-            { cwd: "/home/testuser", timeout: 30 }
+            `git -C "${baseRepoPath}" for-each-ref --format='%(refname)' refs/`
           );
 
           // Bundle branches should be in the staging namespace.
@@ -1931,10 +1744,7 @@ describeIntegration("Runtime integration tests", () => {
           expect(baseRefs.stdout).not.toContain("refs/remotes/origin/main");
           expect(baseRefs.stdout).not.toContain("refs/remotes/origin/stale-branch");
         } finally {
-          await execBuffered(runtime, `rm -rf "${layout.projectRoot}"`, {
-            cwd: "/home/testuser",
-            timeout: 30,
-          });
+          await execSSH(runtime, `rm -rf "${layout.projectRoot}"`);
         }
       } finally {
         execSync(`rm -rf "${localProjectPath}"`);
@@ -1987,19 +1797,17 @@ describeIntegration("Runtime integration tests", () => {
           throw new Error(`first initWorkspace failed: ${firstInit.error}`);
         }
 
-        const initialBaseHead = await execBuffered(
+        const initialBaseHead = await execSSH(
           runtime,
-          `git -C "${baseRepoPath}" rev-parse refs/mux-bundle/main`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `git -C "${baseRepoPath}" rev-parse refs/mux-bundle/main`
         );
         const initialBaseHeadOid = initialBaseHead.stdout.trim();
         expect(initialBaseHead.exitCode).toBe(0);
         expect(initialBaseHeadOid).not.toBe("");
 
-        const addRemoteOnlyTag = await execBuffered(
+        const addRemoteOnlyTag = await execSSH(
           runtime,
-          `git -C "${baseRepoPath}" update-ref refs/tags/remote-only ${initialBaseHeadOid}`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `git -C "${baseRepoPath}" update-ref refs/tags/remote-only ${initialBaseHeadOid}`
         );
         expect(addRemoteOnlyTag.exitCode).toBe(0);
 
@@ -2016,10 +1824,9 @@ describeIntegration("Runtime integration tests", () => {
         }
         expect(reuseSteps).toContain("Reusing existing remote project snapshot");
 
-        const remoteOnlyTagBeforeResync = await execBuffered(
+        const remoteOnlyTagBeforeResync = await execSSH(
           runtime,
-          `git -C "${baseRepoPath}" rev-parse refs/tags/remote-only`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `git -C "${baseRepoPath}" rev-parse refs/tags/remote-only`
         );
         expect(remoteOnlyTagBeforeResync.exitCode).toBe(0);
         expect(remoteOnlyTagBeforeResync.stdout.trim()).toBe(initialBaseHeadOid);
@@ -2048,27 +1855,22 @@ describeIntegration("Runtime integration tests", () => {
           throw new Error(`third initWorkspace failed: ${thirdInit.error}`);
         }
 
-        const updatedBaseHead = await execBuffered(
+        const updatedBaseHead = await execSSH(
           runtime,
-          `git -C "${baseRepoPath}" rev-parse refs/mux-bundle/main`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `git -C "${baseRepoPath}" rev-parse refs/mux-bundle/main`
         );
         expect(updatedBaseHead.exitCode).toBe(0);
         expect(updatedBaseHead.stdout.trim()).toBe(secondCommit);
 
-        const remoteOnlyTagAfterResync = await execBuffered(
+        const remoteOnlyTagAfterResync = await execSSH(
           runtime,
-          `git -C "${baseRepoPath}" rev-parse refs/tags/remote-only`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `git -C "${baseRepoPath}" rev-parse refs/tags/remote-only`
         );
         expect(remoteOnlyTagAfterResync.exitCode).toBe(0);
         expect(remoteOnlyTagAfterResync.stdout.trim()).toBe(initialBaseHeadOid);
       } finally {
         execSync(`rm -rf "${localProjectPath}"`);
-        await execBuffered(runtime, `rm -rf "${layout.projectRoot}"`, {
-          cwd: "/home/testuser",
-          timeout: 30,
-        });
+        await execSSH(runtime, `rm -rf "${layout.projectRoot}"`);
       }
     }, 120000);
 
@@ -2099,16 +1901,14 @@ describeIntegration("Runtime integration tests", () => {
           { stdio: "pipe" }
         );
 
-        await execBuffered(
+        await execSSH(
           runtime,
-          `mkdir -p "${layout.projectRoot}" && git init --bare "${baseRepoPath}"`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `mkdir -p "${layout.projectRoot}" && git init --bare "${baseRepoPath}"`
         );
 
-        const beforeCheck = await execBuffered(
+        const beforeCheck = await execSSH(
           runtime,
-          `git -C "${baseRepoPath}" config --get core.bare`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `git -C "${baseRepoPath}" config --get core.bare`
         );
         expect(beforeCheck.stdout.trim()).toBe("true");
 
@@ -2123,32 +1923,26 @@ describeIntegration("Runtime integration tests", () => {
           throw new Error(`initWorkspace failed: ${initResult.error}`);
         }
 
-        const baseRepoCoreBareCheck = await execBuffered(
+        const baseRepoCoreBareCheck = await execSSH(
           runtime,
-          `git -C "${baseRepoPath}" config --get core.bare`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `git -C "${baseRepoPath}" config --get core.bare`
         );
         expect(baseRepoCoreBareCheck.exitCode).toBe(1);
 
-        const insideWorkTreeCheck = await execBuffered(
+        const insideWorkTreeCheck = await execSSH(
           runtime,
-          `git -C "${workspacePath}" rev-parse --is-inside-work-tree`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `git -C "${workspacePath}" rev-parse --is-inside-work-tree`
         );
         expect(insideWorkTreeCheck.stdout.trim()).toBe("true");
 
-        const workspaceCoreBareCheck = await execBuffered(
+        const workspaceCoreBareCheck = await execSSH(
           runtime,
-          `git -C "${workspacePath}" config --get core.bare`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `git -C "${workspacePath}" config --get core.bare`
         );
         expect(workspaceCoreBareCheck.exitCode).toBe(1);
       } finally {
         execSync(`rm -rf "${localProjectPath}"`);
-        await execBuffered(runtime, `rm -rf "${layout.projectRoot}"`, {
-          cwd: "/home/testuser",
-          timeout: 30,
-        });
+        await execSSH(runtime, `rm -rf "${layout.projectRoot}"`);
       }
     }, 120000);
 
@@ -2192,18 +1986,13 @@ describeIntegration("Runtime integration tests", () => {
           throw new Error(`first initWorkspace failed: ${firstInit.error}`);
         }
 
-        const snapshotMarkerCheck = await execBuffered(
+        const snapshotMarkerCheck = await execSSH(
           runtime,
-          `test -f "${layout.currentSnapshotPath}" && cat "${layout.currentSnapshotPath}"`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `test -f "${layout.currentSnapshotPath}" && cat "${layout.currentSnapshotPath}"`
         );
         expect(snapshotMarkerCheck.stdout.trim()).not.toBe("");
 
-        await execBuffered(
-          runtime,
-          `rm -rf "${baseRepoPath}" && git init --bare "${baseRepoPath}"`,
-          { cwd: "/home/testuser", timeout: 30 }
-        );
+        await execSSH(runtime, `rm -rf "${baseRepoPath}" && git init --bare "${baseRepoPath}"`);
 
         const secondInit = await runtime.initWorkspace({
           projectPath: localProjectPath,
@@ -2216,25 +2005,20 @@ describeIntegration("Runtime integration tests", () => {
           throw new Error(`second initWorkspace failed: ${secondInit.error}`);
         }
 
-        const baseRefs = await execBuffered(
+        const baseRefs = await execSSH(
           runtime,
-          `git -C "${baseRepoPath}" for-each-ref --format='%(refname)' refs/mux-bundle/`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `git -C "${baseRepoPath}" for-each-ref --format='%(refname)' refs/mux-bundle/`
         );
         expect(baseRefs.stdout).toContain("refs/mux-bundle/main");
 
-        const insideWorkTreeCheck = await execBuffered(
+        const insideWorkTreeCheck = await execSSH(
           runtime,
-          `git -C "${secondWorkspacePath}" rev-parse --is-inside-work-tree`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `git -C "${secondWorkspacePath}" rev-parse --is-inside-work-tree`
         );
         expect(insideWorkTreeCheck.stdout.trim()).toBe("true");
       } finally {
         execSync(`rm -rf "${localProjectPath}"`);
-        await execBuffered(runtime, `rm -rf "${layout.projectRoot}"`, {
-          cwd: "/home/testuser",
-          timeout: 30,
-        });
+        await execSSH(runtime, `rm -rf "${layout.projectRoot}"`);
       }
     }, 120000);
 
@@ -2316,24 +2100,17 @@ describeIntegration("Runtime integration tests", () => {
           throw new Error(`third initWorkspace failed: ${thirdInit.error}`);
         }
 
-        const fileCheck = await execBuffered(runtime, `cat "${thirdWorkspacePath}/file.txt"`, {
-          cwd: "/home/testuser",
-          timeout: 30,
-        });
+        const fileCheck = await execSSH(runtime, `cat "${thirdWorkspacePath}/file.txt"`);
         expect(fileCheck.stdout.trim()).toBe("version-a");
 
-        const baseHead = await execBuffered(
+        const baseHead = await execSSH(
           runtime,
-          `git -C "${baseRepoPath}" rev-parse refs/mux-bundle/main`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `git -C "${baseRepoPath}" rev-parse refs/mux-bundle/main`
         );
         expect(baseHead.stdout.trim()).toBe(firstCommit);
       } finally {
         execSync(`rm -rf "${localProjectPath}"`);
-        await execBuffered(runtime, `rm -rf "${layout.projectRoot}"`, {
-          cwd: "/home/testuser",
-          timeout: 30,
-        });
+        await execSSH(runtime, `rm -rf "${layout.projectRoot}"`);
       }
     }, 120000);
   });
@@ -2385,31 +2162,27 @@ describeIntegration("Runtime integration tests", () => {
         );
 
         const expectHealthyWorktree = async (workspacePath: string, branchName: string) => {
-          const checkoutCheck = await execBuffered(
+          const checkoutCheck = await execSSH(
             runtime,
-            `test -f "${workspacePath}/.git" && git -C "${workspacePath}" branch --show-current`,
-            { cwd: "/home/testuser", timeout: 30 }
+            `test -f "${workspacePath}/.git" && git -C "${workspacePath}" branch --show-current`
           );
           expect(checkoutCheck.stdout.trim()).toBe(branchName);
 
-          const insideWorkTreeCheck = await execBuffered(
+          const insideWorkTreeCheck = await execSSH(
             runtime,
-            `git -C "${workspacePath}" rev-parse --is-inside-work-tree`,
-            { cwd: "/home/testuser", timeout: 30 }
+            `git -C "${workspacePath}" rev-parse --is-inside-work-tree`
           );
           expect(insideWorkTreeCheck.stdout.trim()).toBe("true");
 
-          const statusCheck = await execBuffered(
+          const statusCheck = await execSSH(
             runtime,
-            `git -C "${workspacePath}" status --porcelain`,
-            { cwd: "/home/testuser", timeout: 30 }
+            `git -C "${workspacePath}" status --porcelain`
           );
           expect(statusCheck.exitCode).toBe(0);
 
-          const coreBareCheck = await execBuffered(
+          const coreBareCheck = await execSSH(
             runtime,
-            `git -C "${workspacePath}" config --get core.bare`,
-            { cwd: "/home/testuser", timeout: 30 }
+            `git -C "${workspacePath}" config --get core.bare`
           );
           expect(coreBareCheck.exitCode).toBe(1);
         };
@@ -2427,17 +2200,15 @@ describeIntegration("Runtime integration tests", () => {
         }
         await expectHealthyWorktree(wsAPath, wsAName);
 
-        const baseRepoBareCheck = await execBuffered(
+        const baseRepoBareCheck = await execSSH(
           runtime,
-          `git -C "${baseRepoPath}" rev-parse --is-bare-repository`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `git -C "${baseRepoPath}" rev-parse --is-bare-repository`
         );
         expect(baseRepoBareCheck.stdout.trim()).toBe("true");
 
-        const baseRepoCoreBareConfigCheck = await execBuffered(
+        const baseRepoCoreBareConfigCheck = await execSSH(
           runtime,
-          `git -C "${baseRepoPath}" config --get core.bare`,
-          { cwd: "/home/testuser", timeout: 30 }
+          `git -C "${baseRepoPath}" config --get core.bare`
         );
         expect(baseRepoCoreBareConfigCheck.exitCode).toBe(1);
 
@@ -2457,18 +2228,12 @@ describeIntegration("Runtime integration tests", () => {
         await expectHealthyWorktree(wsBPath, wsBName);
 
         // Both worktrees should be tracked in the base repo.
-        const worktreeList = await execBuffered(runtime, `git -C "${baseRepoPath}" worktree list`, {
-          cwd: "/home/testuser",
-          timeout: 30,
-        });
+        const worktreeList = await execSSH(runtime, `git -C "${baseRepoPath}" worktree list`);
         expect(worktreeList.stdout).toContain(wsAName);
         expect(worktreeList.stdout).toContain(wsBName);
       } finally {
         execSync(`rm -rf "${localProjectPath}"`);
-        await execBuffered(runtime, `rm -rf "${layout.projectRoot}"`, {
-          cwd: "/home/testuser",
-          timeout: 30,
-        });
+        await execSSH(runtime, `rm -rf "${layout.projectRoot}"`);
       }
     }, 120000);
   });
@@ -2838,7 +2603,7 @@ describeIntegration("Runtime integration tests", () => {
         const sourceWorkspacePath = getRemoteWorkspacePath(layout, sourceWorkspaceName);
 
         // Create a source workspace repo
-        await execBuffered(
+        await execSSH(
           runtime,
           [
             `mkdir -p "${sourceWorkspacePath}"`,
@@ -2849,8 +2614,7 @@ describeIntegration("Runtime integration tests", () => {
             `echo "root" > root.txt`,
             `git add root.txt`,
             `git commit -m "root"`,
-          ].join(" && "),
-          { cwd: "/home/testuser", timeout: 30 }
+          ].join(" && ")
         );
 
         const initLogger = {
@@ -2929,7 +2693,7 @@ describeIntegration("Runtime integration tests", () => {
         const forkedWorkspacePath = getRemoteWorkspacePath(layout, newWorkspaceName);
 
         // Create a source workspace repo
-        await execBuffered(
+        await execSSH(
           runtime,
           [
             `mkdir -p "${sourceWorkspacePath}"`,
@@ -2940,8 +2704,7 @@ describeIntegration("Runtime integration tests", () => {
             `echo "root" > root.txt`,
             `git add root.txt`,
             `git commit -m "root"`,
-          ].join(" && "),
-          { cwd: "/home/testuser", timeout: 30 }
+          ].join(" && ")
         );
 
         const initLogger = {

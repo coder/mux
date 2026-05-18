@@ -211,6 +211,91 @@ async function createStaticTestServer(
   };
 }
 
+type TestOrpcServer = Awaited<ReturnType<typeof createOrpcServer>>;
+
+type ServerOptions = Omit<Parameters<typeof createOrpcServer>[0], "host" | "port" | "context">;
+
+async function withTestOrpcServer<T>(
+  run: (server: TestOrpcServer) => Promise<T>,
+  options: ServerOptions = {}
+): Promise<T> {
+  const server = await createOrpcServer({
+    host: "127.0.0.1",
+    port: 0,
+    // Tests in this file don't exercise context services unless explicitly supplied.
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+    context: {} as ORPCContext,
+    ...options,
+  });
+
+  try {
+    return await run(server);
+  } finally {
+    await server.close();
+  }
+}
+
+type OriginHeaders = Record<string, string> | ((server: TestOrpcServer) => Record<string, string>);
+
+function resolveOriginHeaders(
+  headers: OriginHeaders | undefined,
+  server: TestOrpcServer
+): Record<string, string> | undefined {
+  return typeof headers === "function" ? headers(server) : headers;
+}
+
+async function expectHttpOriginCase(input: {
+  headers?: OriginHeaders;
+  status: number;
+  allowOrigin?: string | null | ((server: TestOrpcServer) => string | null);
+  allowHttpOrigin?: boolean;
+}): Promise<void> {
+  await withTestOrpcServer(
+    async (server) => {
+      const response = await fetch(`${server.baseUrl}/api/spec.json`, {
+        headers: resolveOriginHeaders(input.headers, server),
+      });
+
+      expect(response.status).toBe(input.status);
+      if (input.allowOrigin !== undefined) {
+        const allowOrigin =
+          typeof input.allowOrigin === "function" ? input.allowOrigin(server) : input.allowOrigin;
+        expect(response.headers.get("access-control-allow-origin")).toBe(allowOrigin);
+        if (allowOrigin != null) {
+          expect(response.headers.get("access-control-allow-credentials")).toBe("true");
+        }
+      }
+    },
+    input.allowHttpOrigin ? { allowHttpOrigin: true } : {}
+  );
+}
+
+async function expectWebSocketOriginCase(input: {
+  headers?: OriginHeaders;
+  accepted: boolean;
+  allowHttpOrigin?: boolean;
+}): Promise<void> {
+  await withTestOrpcServer(
+    async (server) => {
+      const ws = new WebSocket(server.wsUrl, {
+        headers: resolveOriginHeaders(input.headers, server),
+      });
+
+      try {
+        if (input.accepted) {
+          await waitForWebSocketOpen(ws);
+          await closeWebSocket(ws);
+        } else {
+          await waitForWebSocketRejection(ws);
+        }
+      } finally {
+        ws.terminate();
+      }
+    },
+    input.allowHttpOrigin ? { allowHttpOrigin: true } : {}
+  );
+}
+
 describe("createOrpcServer", () => {
   test("serveStatic fallback does not swallow /api routes", async () => {
     // Minimal context stub - router won't be exercised by this test.
@@ -1157,330 +1242,118 @@ describe("createOrpcServer", () => {
     }
   });
 
-  test("blocks cross-origin HTTP requests with Origin headers", async () => {
-    const stubContext: Partial<ORPCContext> = {};
+  const httpOriginCases: Array<{
+    name: string;
+    headers?: OriginHeaders;
+    status: number;
+    allowOrigin?: string | null | ((server: TestOrpcServer) => string | null);
+    allowHttpOrigin?: boolean;
+  }> = [
+    {
+      name: "blocks cross-origin HTTP requests with Origin headers",
+      headers: { Origin: "https://evil.example.com" },
+      status: 403,
+    },
+    {
+      name: "allows same-origin HTTP requests with Origin headers",
+      headers: (server) => ({ Origin: server.baseUrl }),
+      status: 200,
+      allowOrigin: (server) => server.baseUrl,
+    },
+    {
+      name: "allows same-origin HTTP requests when X-Forwarded-Host does not match",
+      headers: (server) => ({
+        Origin: server.baseUrl,
+        "X-Forwarded-Host": "internal.proxy.local",
+      }),
+      status: 200,
+      allowOrigin: (server) => server.baseUrl,
+    },
+    {
+      name: "allows same-origin requests when X-Forwarded-Proto overrides inferred protocol",
+      headers: (server) => ({
+        Origin: server.baseUrl.replace(/^http:/, "https:"),
+        "X-Forwarded-Proto": "https",
+      }),
+      status: 200,
+      allowOrigin: (server) => server.baseUrl.replace(/^http:/, "https:"),
+    },
+    {
+      name: "allows HTTP origins when X-Forwarded-Proto includes multiple hops with leading http",
+      headers: (server) => ({
+        Origin: server.baseUrl,
+        "X-Forwarded-Proto": "http,https",
+      }),
+      status: 200,
+      allowOrigin: (server) => server.baseUrl,
+    },
+    {
+      name: "rejects HTTPS origins when X-Forwarded-Proto includes multiple hops with trailing https by default",
+      headers: (server) => ({
+        Origin: server.baseUrl.replace(/^http:/, "https:"),
+        "X-Forwarded-Proto": "http,https",
+      }),
+      status: 403,
+    },
+    {
+      name: "rejects HTTPS origins when X-Forwarded-Proto is overwritten to http by downstream proxy by default",
+      headers: {
+        Origin: "https://mux-public.example.com",
+        "X-Forwarded-Host": "mux-public.example.com",
+        "X-Forwarded-Proto": "http",
+      },
+      status: 403,
+    },
+    {
+      name: "accepts HTTPS origins when allowHttpOrigin is enabled and X-Forwarded-Proto is overwritten to http by downstream proxy",
+      headers: {
+        Origin: "https://mux-public.example.com",
+        "X-Forwarded-Host": "mux-public.example.com",
+        "X-Forwarded-Proto": "http",
+      },
+      status: 200,
+      allowOrigin: "https://mux-public.example.com",
+      allowHttpOrigin: true,
+    },
+    {
+      name: "allows HTTPS origins when allowHttpOrigin is enabled and overwritten proto uses forwarded host with explicit :443",
+      headers: {
+        Origin: "https://mux-public.example.com",
+        "X-Forwarded-Host": "mux-public.example.com:443",
+        "X-Forwarded-Proto": "http",
+      },
+      status: 200,
+      allowOrigin: "https://mux-public.example.com",
+      allowHttpOrigin: true,
+    },
+    {
+      name: "rejects downgraded HTTP origins when X-Forwarded-Proto pins https",
+      headers: (server) => ({
+        Origin: server.baseUrl,
+        "X-Forwarded-Proto": "https",
+      }),
+      status: 403,
+    },
+    {
+      name: "rejects downgraded HTTP origins when X-Forwarded-Proto includes multiple hops",
+      headers: (server) => ({
+        Origin: server.baseUrl,
+        "X-Forwarded-Proto": "https,http",
+      }),
+      status: 403,
+    },
+    {
+      name: "allows HTTP requests without Origin headers",
+      status: 200,
+      allowOrigin: null,
+    },
+  ];
 
-    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
-    try {
-      server = await createOrpcServer({
-        host: "127.0.0.1",
-        port: 0,
-        context: stubContext as ORPCContext,
-      });
-
-      const response = await fetch(`${server.baseUrl}/api/spec.json`, {
-        headers: { Origin: "https://evil.example.com" },
-      });
-
-      expect(response.status).toBe(403);
-    } finally {
-      await server?.close();
-    }
-  });
-
-  test("allows same-origin HTTP requests with Origin headers", async () => {
-    const stubContext: Partial<ORPCContext> = {};
-
-    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
-    try {
-      server = await createOrpcServer({
-        host: "127.0.0.1",
-        port: 0,
-        context: stubContext as ORPCContext,
-      });
-
-      const response = await fetch(`${server.baseUrl}/api/spec.json`, {
-        headers: { Origin: server.baseUrl },
-      });
-
-      expect(response.status).toBe(200);
-      expect(response.headers.get("access-control-allow-origin")).toBe(server.baseUrl);
-      expect(response.headers.get("access-control-allow-credentials")).toBe("true");
-    } finally {
-      await server?.close();
-    }
-  });
-
-  test("allows same-origin HTTP requests when X-Forwarded-Host does not match", async () => {
-    const stubContext: Partial<ORPCContext> = {};
-
-    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
-    try {
-      server = await createOrpcServer({
-        host: "127.0.0.1",
-        port: 0,
-        context: stubContext as ORPCContext,
-      });
-
-      const response = await fetch(`${server.baseUrl}/api/spec.json`, {
-        headers: {
-          Origin: server.baseUrl,
-          "X-Forwarded-Host": "internal.proxy.local",
-        },
-      });
-
-      expect(response.status).toBe(200);
-      expect(response.headers.get("access-control-allow-origin")).toBe(server.baseUrl);
-      expect(response.headers.get("access-control-allow-credentials")).toBe("true");
-    } finally {
-      await server?.close();
-    }
-  });
-
-  test("allows same-origin requests when X-Forwarded-Proto overrides inferred protocol", async () => {
-    const stubContext: Partial<ORPCContext> = {};
-
-    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
-    try {
-      server = await createOrpcServer({
-        host: "127.0.0.1",
-        port: 0,
-        context: stubContext as ORPCContext,
-      });
-
-      const forwardedOrigin = server.baseUrl.replace(/^http:/, "https:");
-      const response = await fetch(`${server.baseUrl}/api/spec.json`, {
-        headers: {
-          Origin: forwardedOrigin,
-          "X-Forwarded-Proto": "https",
-        },
-      });
-
-      expect(response.status).toBe(200);
-      expect(response.headers.get("access-control-allow-origin")).toBe(forwardedOrigin);
-      expect(response.headers.get("access-control-allow-credentials")).toBe("true");
-    } finally {
-      await server?.close();
-    }
-  });
-
-  test("allows HTTP origins when X-Forwarded-Proto includes multiple hops with leading http", async () => {
-    const stubContext: Partial<ORPCContext> = {};
-
-    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
-    try {
-      server = await createOrpcServer({
-        host: "127.0.0.1",
-        port: 0,
-        context: stubContext as ORPCContext,
-      });
-
-      const response = await fetch(`${server.baseUrl}/api/spec.json`, {
-        headers: {
-          Origin: server.baseUrl,
-          "X-Forwarded-Proto": "http,https",
-        },
-      });
-
-      expect(response.status).toBe(200);
-      expect(response.headers.get("access-control-allow-origin")).toBe(server.baseUrl);
-      expect(response.headers.get("access-control-allow-credentials")).toBe("true");
-    } finally {
-      await server?.close();
-    }
-  });
-
-  test("rejects HTTPS origins when X-Forwarded-Proto includes multiple hops with trailing https by default", async () => {
-    const stubContext: Partial<ORPCContext> = {};
-
-    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
-    try {
-      server = await createOrpcServer({
-        host: "127.0.0.1",
-        port: 0,
-        context: stubContext as ORPCContext,
-      });
-
-      const forwardedOrigin = server.baseUrl.replace(/^http:/, "https:");
-      const response = await fetch(`${server.baseUrl}/api/spec.json`, {
-        headers: {
-          Origin: forwardedOrigin,
-          "X-Forwarded-Proto": "http,https",
-        },
-      });
-
-      expect(response.status).toBe(403);
-    } finally {
-      await server?.close();
-    }
-  });
-
-  test("rejects HTTPS origins when X-Forwarded-Proto is overwritten to http by downstream proxy by default", async () => {
-    const stubContext: Partial<ORPCContext> = {};
-
-    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
-    try {
-      server = await createOrpcServer({
-        host: "127.0.0.1",
-        port: 0,
-        context: stubContext as ORPCContext,
-      });
-
-      const response = await fetch(`${server.baseUrl}/api/spec.json`, {
-        headers: {
-          Origin: "https://mux-public.example.com",
-          "X-Forwarded-Host": "mux-public.example.com",
-          "X-Forwarded-Proto": "http",
-        },
-      });
-
-      expect(response.status).toBe(403);
-    } finally {
-      await server?.close();
-    }
-  });
-
-  test("accepts HTTPS origins when allowHttpOrigin is enabled and X-Forwarded-Proto is overwritten to http by downstream proxy", async () => {
-    const stubContext: Partial<ORPCContext> = {};
-
-    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
-    try {
-      server = await createOrpcServer({
-        host: "127.0.0.1",
-        port: 0,
-        context: stubContext as ORPCContext,
-        allowHttpOrigin: true,
-      });
-
-      const response = await fetch(`${server.baseUrl}/api/spec.json`, {
-        headers: {
-          Origin: "https://mux-public.example.com",
-          "X-Forwarded-Host": "mux-public.example.com",
-          "X-Forwarded-Proto": "http",
-        },
-      });
-
-      expect(response.status).toBe(200);
-      expect(response.headers.get("access-control-allow-origin")).toBe(
-        "https://mux-public.example.com"
-      );
-      expect(response.headers.get("access-control-allow-credentials")).toBe("true");
-    } finally {
-      await server?.close();
-    }
-  });
-
-  test("allows HTTPS origins when allowHttpOrigin is enabled and overwritten proto uses forwarded host with explicit :443", async () => {
-    const stubContext: Partial<ORPCContext> = {};
-
-    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
-    try {
-      server = await createOrpcServer({
-        host: "127.0.0.1",
-        port: 0,
-        context: stubContext as ORPCContext,
-        allowHttpOrigin: true,
-      });
-
-      const response = await fetch(`${server.baseUrl}/api/spec.json`, {
-        headers: {
-          Origin: "https://mux-public.example.com",
-          "X-Forwarded-Host": "mux-public.example.com:443",
-          "X-Forwarded-Proto": "http",
-        },
-      });
-
-      expect(response.status).toBe(200);
-      expect(response.headers.get("access-control-allow-origin")).toBe(
-        "https://mux-public.example.com"
-      );
-      expect(response.headers.get("access-control-allow-credentials")).toBe("true");
-    } finally {
-      await server?.close();
-    }
-  });
-
-  test("rejects downgraded HTTP origins when X-Forwarded-Proto pins https", async () => {
-    const stubContext: Partial<ORPCContext> = {};
-
-    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
-    try {
-      server = await createOrpcServer({
-        host: "127.0.0.1",
-        port: 0,
-        context: stubContext as ORPCContext,
-      });
-
-      const response = await fetch(`${server.baseUrl}/api/spec.json`, {
-        headers: {
-          Origin: server.baseUrl,
-          "X-Forwarded-Proto": "https",
-        },
-      });
-
-      expect(response.status).toBe(403);
-    } finally {
-      await server?.close();
-    }
-  });
-
-  test("rejects downgraded HTTP origins when X-Forwarded-Proto includes multiple hops", async () => {
-    const stubContext: Partial<ORPCContext> = {};
-
-    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
-    try {
-      server = await createOrpcServer({
-        host: "127.0.0.1",
-        port: 0,
-        context: stubContext as ORPCContext,
-      });
-
-      const response = await fetch(`${server.baseUrl}/api/spec.json`, {
-        headers: {
-          Origin: server.baseUrl,
-          "X-Forwarded-Proto": "https,http",
-        },
-      });
-
-      expect(response.status).toBe(403);
-    } finally {
-      await server?.close();
-    }
-  });
-
-  test("allows HTTP requests without Origin headers", async () => {
-    const stubContext: Partial<ORPCContext> = {};
-
-    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
-    try {
-      server = await createOrpcServer({
-        host: "127.0.0.1",
-        port: 0,
-        context: stubContext as ORPCContext,
-      });
-
-      const response = await fetch(`${server.baseUrl}/api/spec.json`);
-
-      expect(response.status).toBe(200);
-      expect(response.headers.get("access-control-allow-origin")).toBeNull();
-    } finally {
-      await server?.close();
-    }
-  });
-
-  test("rejects cross-origin WebSocket connections", async () => {
-    const stubContext: Partial<ORPCContext> = {};
-
-    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
-    let ws: WebSocket | null = null;
-
-    try {
-      server = await createOrpcServer({
-        host: "127.0.0.1",
-        port: 0,
-        context: stubContext as ORPCContext,
-      });
-
-      ws = new WebSocket(server.wsUrl, {
-        headers: { origin: "https://evil.example.com" },
-      });
-
-      await waitForWebSocketRejection(ws);
-    } finally {
-      ws?.terminate();
-      await server?.close();
-    }
-  });
+  for (const httpCase of httpOriginCases) {
+    test(httpCase.name, async () => {
+      await expectHttpOriginCase(httpCase);
+    });
+  }
 
   test("routes desktop WebSocket connections to the bridge server without ORPC origin validation", async () => {
     const stubContext: Partial<ORPCContext> = {};
@@ -1554,283 +1427,101 @@ describe("createOrpcServer", () => {
     }
   });
 
-  test("accepts same-origin WebSocket connections", async () => {
-    const stubContext: Partial<ORPCContext> = {};
+  const webSocketOriginCases: Array<{
+    name: string;
+    headers?: OriginHeaders;
+    accepted: boolean;
+    allowHttpOrigin?: boolean;
+  }> = [
+    {
+      name: "rejects cross-origin WebSocket connections",
+      headers: { origin: "https://evil.example.com" },
+      accepted: false,
+    },
+    {
+      name: "accepts same-origin WebSocket connections",
+      headers: (server) => ({ origin: server.baseUrl }),
+      accepted: true,
+    },
+    {
+      name: "accepts same-origin WebSocket connections when X-Forwarded-Host does not match",
+      headers: (server) => ({
+        origin: server.baseUrl,
+        "x-forwarded-host": "internal.proxy.local",
+      }),
+      accepted: true,
+    },
+    {
+      name: "accepts proxied HTTPS WebSocket origins when forwarded headers describe public app URL",
+      headers: {
+        origin: "https://mux-public.example.com",
+        "x-forwarded-host": "mux-public.example.com",
+        "x-forwarded-proto": "https",
+      },
+      accepted: true,
+    },
+    {
+      name: "accepts HTTP WebSocket origins when X-Forwarded-Proto includes multiple hops with leading http",
+      headers: (server) => ({
+        origin: server.baseUrl,
+        "x-forwarded-proto": "http,https",
+      }),
+      accepted: true,
+    },
+    {
+      name: "rejects HTTPS WebSocket origins when X-Forwarded-Proto includes multiple hops with trailing https by default",
+      headers: (server) => ({
+        origin: server.baseUrl.replace(/^http:/, "https:"),
+        "x-forwarded-proto": "http,https",
+      }),
+      accepted: false,
+    },
+    {
+      name: "rejects HTTPS WebSocket origins when X-Forwarded-Proto is overwritten to http by downstream proxy by default",
+      headers: {
+        origin: "https://mux-public.example.com",
+        "x-forwarded-host": "mux-public.example.com",
+        "x-forwarded-proto": "http",
+      },
+      accepted: false,
+    },
+    {
+      name: "accepts HTTPS WebSocket origins when allowHttpOrigin is enabled and X-Forwarded-Proto is overwritten to http by downstream proxy",
+      headers: {
+        origin: "https://mux-public.example.com",
+        "x-forwarded-host": "mux-public.example.com",
+        "x-forwarded-proto": "http",
+      },
+      accepted: true,
+      allowHttpOrigin: true,
+    },
+    {
+      name: "rejects downgraded WebSocket origins when X-Forwarded-Proto pins https",
+      headers: (server) => ({
+        origin: server.baseUrl,
+        "x-forwarded-proto": "https",
+      }),
+      accepted: false,
+    },
+    {
+      name: "rejects downgraded WebSocket origins when X-Forwarded-Proto includes multiple hops",
+      headers: (server) => ({
+        origin: server.baseUrl,
+        "x-forwarded-proto": "https,http",
+      }),
+      accepted: false,
+    },
+    {
+      name: "accepts WebSocket connections without Origin headers",
+      accepted: true,
+    },
+  ];
 
-    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
-    let ws: WebSocket | null = null;
-
-    try {
-      server = await createOrpcServer({
-        host: "127.0.0.1",
-        port: 0,
-        context: stubContext as ORPCContext,
-      });
-
-      ws = new WebSocket(server.wsUrl, {
-        headers: { origin: server.baseUrl },
-      });
-
-      await waitForWebSocketOpen(ws);
-      await closeWebSocket(ws);
-      ws = null;
-    } finally {
-      ws?.terminate();
-      await server?.close();
-    }
-  });
-
-  test("accepts same-origin WebSocket connections when X-Forwarded-Host does not match", async () => {
-    const stubContext: Partial<ORPCContext> = {};
-
-    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
-    let ws: WebSocket | null = null;
-
-    try {
-      server = await createOrpcServer({
-        host: "127.0.0.1",
-        port: 0,
-        context: stubContext as ORPCContext,
-      });
-
-      ws = new WebSocket(server.wsUrl, {
-        headers: {
-          origin: server.baseUrl,
-          "x-forwarded-host": "internal.proxy.local",
-        },
-      });
-
-      await waitForWebSocketOpen(ws);
-      await closeWebSocket(ws);
-      ws = null;
-    } finally {
-      ws?.terminate();
-      await server?.close();
-    }
-  });
-
-  test("accepts proxied HTTPS WebSocket origins when forwarded headers describe public app URL", async () => {
-    const stubContext: Partial<ORPCContext> = {};
-
-    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
-    let ws: WebSocket | null = null;
-
-    try {
-      server = await createOrpcServer({
-        host: "127.0.0.1",
-        port: 0,
-        context: stubContext as ORPCContext,
-      });
-
-      ws = new WebSocket(server.wsUrl, {
-        headers: {
-          origin: "https://mux-public.example.com",
-          "x-forwarded-host": "mux-public.example.com",
-          "x-forwarded-proto": "https",
-        },
-      });
-
-      await waitForWebSocketOpen(ws);
-      await closeWebSocket(ws);
-      ws = null;
-    } finally {
-      ws?.terminate();
-      await server?.close();
-    }
-  });
-
-  test("accepts HTTP WebSocket origins when X-Forwarded-Proto includes multiple hops with leading http", async () => {
-    const stubContext: Partial<ORPCContext> = {};
-
-    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
-    let ws: WebSocket | null = null;
-
-    try {
-      server = await createOrpcServer({
-        host: "127.0.0.1",
-        port: 0,
-        context: stubContext as ORPCContext,
-      });
-
-      ws = new WebSocket(server.wsUrl, {
-        headers: {
-          origin: server.baseUrl,
-          "x-forwarded-proto": "http,https",
-        },
-      });
-
-      await waitForWebSocketOpen(ws);
-      await closeWebSocket(ws);
-      ws = null;
-    } finally {
-      ws?.terminate();
-      await server?.close();
-    }
-  });
-
-  test("rejects HTTPS WebSocket origins when X-Forwarded-Proto includes multiple hops with trailing https by default", async () => {
-    const stubContext: Partial<ORPCContext> = {};
-
-    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
-    let ws: WebSocket | null = null;
-
-    try {
-      server = await createOrpcServer({
-        host: "127.0.0.1",
-        port: 0,
-        context: stubContext as ORPCContext,
-      });
-
-      ws = new WebSocket(server.wsUrl, {
-        headers: {
-          origin: server.baseUrl.replace(/^http:/, "https:"),
-          "x-forwarded-proto": "http,https",
-        },
-      });
-
-      await waitForWebSocketRejection(ws);
-    } finally {
-      ws?.terminate();
-      await server?.close();
-    }
-  });
-
-  test("rejects HTTPS WebSocket origins when X-Forwarded-Proto is overwritten to http by downstream proxy by default", async () => {
-    const stubContext: Partial<ORPCContext> = {};
-
-    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
-    let ws: WebSocket | null = null;
-
-    try {
-      server = await createOrpcServer({
-        host: "127.0.0.1",
-        port: 0,
-        context: stubContext as ORPCContext,
-      });
-
-      ws = new WebSocket(server.wsUrl, {
-        headers: {
-          origin: "https://mux-public.example.com",
-          "x-forwarded-host": "mux-public.example.com",
-          "x-forwarded-proto": "http",
-        },
-      });
-
-      await waitForWebSocketRejection(ws);
-    } finally {
-      ws?.terminate();
-      await server?.close();
-    }
-  });
-
-  test("accepts HTTPS WebSocket origins when allowHttpOrigin is enabled and X-Forwarded-Proto is overwritten to http by downstream proxy", async () => {
-    const stubContext: Partial<ORPCContext> = {};
-
-    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
-    let ws: WebSocket | null = null;
-
-    try {
-      server = await createOrpcServer({
-        host: "127.0.0.1",
-        port: 0,
-        context: stubContext as ORPCContext,
-        allowHttpOrigin: true,
-      });
-
-      ws = new WebSocket(server.wsUrl, {
-        headers: {
-          origin: "https://mux-public.example.com",
-          "x-forwarded-host": "mux-public.example.com",
-          "x-forwarded-proto": "http",
-        },
-      });
-
-      await waitForWebSocketOpen(ws);
-      await closeWebSocket(ws);
-      ws = null;
-    } finally {
-      ws?.terminate();
-      await server?.close();
-    }
-  });
-
-  test("rejects downgraded WebSocket origins when X-Forwarded-Proto pins https", async () => {
-    const stubContext: Partial<ORPCContext> = {};
-
-    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
-    let ws: WebSocket | null = null;
-
-    try {
-      server = await createOrpcServer({
-        host: "127.0.0.1",
-        port: 0,
-        context: stubContext as ORPCContext,
-      });
-
-      ws = new WebSocket(server.wsUrl, {
-        headers: {
-          origin: server.baseUrl,
-          "x-forwarded-proto": "https",
-        },
-      });
-
-      await waitForWebSocketRejection(ws);
-    } finally {
-      ws?.terminate();
-      await server?.close();
-    }
-  });
-
-  test("rejects downgraded WebSocket origins when X-Forwarded-Proto includes multiple hops", async () => {
-    const stubContext: Partial<ORPCContext> = {};
-
-    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
-    let ws: WebSocket | null = null;
-
-    try {
-      server = await createOrpcServer({
-        host: "127.0.0.1",
-        port: 0,
-        context: stubContext as ORPCContext,
-      });
-
-      ws = new WebSocket(server.wsUrl, {
-        headers: {
-          origin: server.baseUrl,
-          "x-forwarded-proto": "https,http",
-        },
-      });
-
-      await waitForWebSocketRejection(ws);
-    } finally {
-      ws?.terminate();
-      await server?.close();
-    }
-  });
-
-  test("accepts WebSocket connections without Origin headers", async () => {
-    const stubContext: Partial<ORPCContext> = {};
-
-    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
-    let ws: WebSocket | null = null;
-
-    try {
-      server = await createOrpcServer({
-        host: "127.0.0.1",
-        port: 0,
-        context: stubContext as ORPCContext,
-      });
-
-      ws = new WebSocket(server.wsUrl);
-
-      await waitForWebSocketOpen(ws);
-      await closeWebSocket(ws);
-      ws = null;
-    } finally {
-      ws?.terminate();
-      await server?.close();
-    }
-  });
+  for (const wsCase of webSocketOriginCases) {
+    test(wsCase.name, async () => {
+      await expectWebSocketOriginCase(wsCase);
+    });
+  }
 
   test("returns restrictive CORS preflight headers for same-origin requests", async () => {
     const stubContext: Partial<ORPCContext> = {};

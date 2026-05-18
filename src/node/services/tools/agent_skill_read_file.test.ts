@@ -2,255 +2,34 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
 import { describe, it, expect } from "bun:test";
-import type { ToolExecutionOptions } from "ai";
-
-const GLOBAL_WORKSPACE_ID = "workspace-global";
-import { LocalRuntime } from "@/node/runtime/LocalRuntime";
-import { RemoteRuntime, type SpawnResult } from "@/node/runtime/RemoteRuntime";
 import { AgentSkillReadFileToolResultSchema } from "@/common/utils/tools/toolDefinitions";
 import { createAgentSkillReadFileTool } from "./agent_skill_read_file";
-import { createTestToolConfig, TestTempDir } from "./testHelpers";
+import {
+  createTestToolConfig,
+  mockToolCallOptions,
+  RemotePathMappedRuntime,
+  restoreMuxRoot,
+  TEST_GLOBAL_WORKSPACE_ID as GLOBAL_WORKSPACE_ID,
+  TestTempDir,
+  TrueRemotePathMappedRuntime,
+  writeGlobalSkill,
+  writeProjectSkill,
+} from "./testHelpers";
 
-const mockToolCallOptions: ToolExecutionOptions = {
-  toolCallId: "test-call-id",
-  messages: [],
-};
+type ReadFileTool = ReturnType<typeof createAgentSkillReadFileTool>;
+type ReadFileArgs = Parameters<NonNullable<ReadFileTool["execute"]>>[0];
 
-async function writeProjectSkill(
-  workspacePath: string,
-  name: string,
-  options?: {
-    description?: string;
-    body?: string;
-    files?: Record<string, string>;
+async function executeReadFile(tool: ReadFileTool, args: ReadFileArgs) {
+  const raw: unknown = await Promise.resolve(tool.execute!(args, mockToolCallOptions));
+  const parsed = AgentSkillReadFileToolResultSchema.safeParse(raw);
+  expect(parsed.success).toBe(true);
+  if (!parsed.success) {
+    throw new Error(parsed.error.message);
   }
-): Promise<void> {
-  const skillDir = path.join(workspacePath, ".mux", "skills", name);
-  await fs.mkdir(skillDir, { recursive: true });
-  await fs.writeFile(
-    path.join(skillDir, "SKILL.md"),
-    `---\nname: ${name}\ndescription: ${options?.description ?? "test"}\n---\n${options?.body ?? "Body"}\n`,
-    "utf-8"
-  );
-
-  for (const [relativePath, content] of Object.entries(options?.files ?? {})) {
-    const targetPath = path.join(skillDir, relativePath);
-    await fs.mkdir(path.dirname(targetPath), { recursive: true });
-    await fs.writeFile(targetPath, content, "utf-8");
-  }
-}
-
-async function writeGlobalSkill(
-  muxRoot: string,
-  name: string,
-  options?: {
-    description?: string;
-    body?: string;
-    files?: Record<string, string>;
-  }
-): Promise<void> {
-  const skillDir = path.join(muxRoot, "skills", name);
-  await fs.mkdir(skillDir, { recursive: true });
-  await fs.writeFile(
-    path.join(skillDir, "SKILL.md"),
-    `---\nname: ${name}\ndescription: ${options?.description ?? "test"}\n---\n${options?.body ?? "Body"}\n`,
-    "utf-8"
-  );
-
-  for (const [relativePath, content] of Object.entries(options?.files ?? {})) {
-    const targetPath = path.join(skillDir, relativePath);
-    await fs.mkdir(path.dirname(targetPath), { recursive: true });
-    await fs.writeFile(targetPath, content, "utf-8");
-  }
-}
-
-function restoreMuxRoot(previousMuxRoot: string | undefined): void {
-  if (previousMuxRoot === undefined) {
-    delete process.env.MUX_ROOT;
-    return;
-  }
-
-  process.env.MUX_ROOT = previousMuxRoot;
+  return parsed.data;
 }
 
 const REMOTE_WORKSPACE_ROOT = "/remote/workspace";
-
-class RemotePathMappedRuntime extends LocalRuntime {
-  private readonly localWorkspaceRoot: string;
-  private readonly remoteWorkspaceRoot: string;
-
-  constructor(localWorkspaceRoot: string, remoteWorkspaceRoot: string) {
-    super(localWorkspaceRoot);
-    this.localWorkspaceRoot = path.resolve(localWorkspaceRoot);
-    this.remoteWorkspaceRoot =
-      remoteWorkspaceRoot === "/" ? remoteWorkspaceRoot : remoteWorkspaceRoot.replace(/\/+$/u, "");
-  }
-
-  private toLocalPath(runtimePath: string): string {
-    const normalizedRuntimePath = runtimePath.replaceAll("\\", "/");
-
-    if (normalizedRuntimePath === this.remoteWorkspaceRoot) {
-      return this.localWorkspaceRoot;
-    }
-
-    if (normalizedRuntimePath.startsWith(`${this.remoteWorkspaceRoot}/`)) {
-      const suffix = normalizedRuntimePath.slice(this.remoteWorkspaceRoot.length + 1);
-      return path.join(this.localWorkspaceRoot, ...suffix.split("/"));
-    }
-
-    return runtimePath;
-  }
-
-  private toRemotePath(localPath: string): string {
-    const resolvedLocalPath = path.resolve(localPath);
-
-    if (resolvedLocalPath === this.localWorkspaceRoot) {
-      return this.remoteWorkspaceRoot;
-    }
-
-    const localPrefix = `${this.localWorkspaceRoot}${path.sep}`;
-    if (resolvedLocalPath.startsWith(localPrefix)) {
-      const suffix = resolvedLocalPath.slice(localPrefix.length).split(path.sep).join("/");
-      return `${this.remoteWorkspaceRoot}/${suffix}`;
-    }
-
-    return localPath.replaceAll("\\", "/");
-  }
-
-  private translateCommandToLocal(command: string): string {
-    return command
-      .split(this.remoteWorkspaceRoot)
-      .join(this.localWorkspaceRoot.replaceAll("\\", "/"));
-  }
-
-  override normalizePath(targetPath: string, basePath: string): string {
-    const normalizedBasePath = this.toRemotePath(basePath);
-    return path.posix.resolve(normalizedBasePath, targetPath.replaceAll("\\", "/"));
-  }
-
-  override async resolvePath(filePath: string): Promise<string> {
-    const resolvedLocalPath = await super.resolvePath(this.toLocalPath(filePath));
-    return this.toRemotePath(resolvedLocalPath);
-  }
-
-  override exec(
-    command: string,
-    options: Parameters<LocalRuntime["exec"]>[1]
-  ): ReturnType<LocalRuntime["exec"]> {
-    return super.exec(this.translateCommandToLocal(command), {
-      ...options,
-      cwd: this.toLocalPath(options.cwd),
-    });
-  }
-
-  override stat(filePath: string, abortSignal?: AbortSignal): ReturnType<LocalRuntime["stat"]> {
-    return super.stat(this.toLocalPath(filePath), abortSignal);
-  }
-
-  override readFile(
-    filePath: string,
-    abortSignal?: AbortSignal
-  ): ReturnType<LocalRuntime["readFile"]> {
-    return super.readFile(this.toLocalPath(filePath), abortSignal);
-  }
-
-  override writeFile(
-    filePath: string,
-    abortSignal?: AbortSignal
-  ): ReturnType<LocalRuntime["writeFile"]> {
-    return super.writeFile(this.toLocalPath(filePath), abortSignal);
-  }
-
-  override ensureDir(dirPath: string): ReturnType<LocalRuntime["ensureDir"]> {
-    return super.ensureDir(this.toLocalPath(dirPath));
-  }
-}
-
-/** RemoteRuntime-based helper (instanceof RemoteRuntime is true). */
-class TrueRemoteRuntime extends RemoteRuntime {
-  private readonly lr: LocalRuntime;
-  private readonly lb: string;
-  private readonly rb: string;
-
-  constructor(localBase: string, remoteBase: string) {
-    super();
-    this.lr = new LocalRuntime(localBase);
-    this.lb = path.resolve(localBase);
-    this.rb = remoteBase === "/" ? remoteBase : remoteBase.replace(/\/+$/u, "");
-  }
-
-  protected readonly commandPrefix = "TestRemote";
-  protected spawnRemoteProcess(): Promise<SpawnResult> {
-    throw new Error("not implemented");
-  }
-  protected getBasePath(): string {
-    return this.rb;
-  }
-  protected quoteForRemote(p: string): string {
-    return `'${p.replaceAll("'", "'\\''")}'`;
-  }
-  protected cdCommand(cwd: string): string {
-    return `cd ${this.quoteForRemote(cwd)}`;
-  }
-
-  private toLocal(p: string): string {
-    const n = p.replaceAll("\\", "/");
-    if (n === "/" || n === this.rb) return this.lb;
-    if (n.startsWith(`${this.rb}/`))
-      return path.join(this.lb, ...n.slice(this.rb.length + 1).split("/"));
-    return p;
-  }
-  private toRemote(p: string): string {
-    const r = path.resolve(p);
-    if (r === this.lb) return this.rb;
-    const pfx = `${this.lb}${path.sep}`;
-    if (r.startsWith(pfx)) return `${this.rb}/${r.slice(pfx.length).split(path.sep).join("/")}`;
-    return p.replaceAll("\\", "/");
-  }
-
-  override exec(cmd: string, opts: Parameters<LocalRuntime["exec"]>[1]) {
-    return this.lr.exec(cmd.split(this.rb).join(this.lb.replaceAll("\\", "/")), {
-      ...opts,
-      cwd: this.toLocal(opts.cwd),
-    });
-  }
-  override normalizePath(t: string, b: string): string {
-    return path.posix.resolve(this.toRemote(b), t.replaceAll("\\", "/"));
-  }
-  override async resolvePath(fp: string): Promise<string> {
-    return this.toRemote(await this.lr.resolvePath(this.toLocal(fp)));
-  }
-  override getWorkspacePath(pp: string, wn: string): string {
-    return path.posix.join(this.rb, path.basename(pp), wn);
-  }
-  override stat(fp: string, s?: AbortSignal) {
-    return this.lr.stat(this.toLocal(fp), s);
-  }
-  override readFile(fp: string, s?: AbortSignal) {
-    return this.lr.readFile(this.toLocal(fp), s);
-  }
-  override writeFile(fp: string, s?: AbortSignal) {
-    return this.lr.writeFile(this.toLocal(fp), s);
-  }
-  override ensureDir(dp: string) {
-    return this.lr.ensureDir(this.toLocal(dp));
-  }
-  override createWorkspace(_p: Parameters<LocalRuntime["createWorkspace"]>[0]) {
-    return Promise.resolve({ success: false as const, error: "not implemented" });
-  }
-  override initWorkspace(_p: Parameters<LocalRuntime["initWorkspace"]>[0]) {
-    return Promise.resolve({ success: false as const, error: "not implemented" });
-  }
-  override renameWorkspace(_a: string, _b: string, _c: string) {
-    return Promise.resolve({ success: false as const, error: "not implemented" });
-  }
-  override deleteWorkspace(_a: string, _b: string, _c: boolean) {
-    return Promise.resolve({ success: false as const, error: "not implemented" });
-  }
-  override forkWorkspace(_p: Parameters<LocalRuntime["forkWorkspace"]>[0]) {
-    return Promise.resolve({ success: false as const, error: "not implemented" });
-  }
-}
 
 function createRemoteRuntimeConfig(tempDirPath: string) {
   const runtime = new RemotePathMappedRuntime(tempDirPath, REMOTE_WORKSPACE_ROOT);
@@ -281,20 +60,12 @@ describe("agent_skill_read_file", () => {
 
     const tool = createAgentSkillReadFileTool(baseConfig);
 
-    const raw: unknown = await Promise.resolve(
-      tool.execute!(
-        { name: "mux-docs", filePath: "SKILL.md", offset: 1, limit: 25 },
-        mockToolCallOptions
-      )
-    );
-
-    const parsed = AgentSkillReadFileToolResultSchema.safeParse(raw);
-    expect(parsed.success).toBe(true);
-    if (!parsed.success) {
-      throw new Error(parsed.error.message);
-    }
-
-    const result = parsed.data;
+    const result = await executeReadFile(tool, {
+      name: "mux-docs",
+      filePath: "SKILL.md",
+      offset: 1,
+      limit: 25,
+    });
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.content).toMatch(/name:\s*mux-docs/i);
@@ -309,22 +80,15 @@ describe("agent_skill_read_file", () => {
 
     const tool = createAgentSkillReadFileTool(baseConfig);
 
-    const raw: unknown = await Promise.resolve(
-      tool.execute!(
-        { name: "imagegen", filePath: "SKILL.md", offset: 1, limit: 25 },
-        mockToolCallOptions
-      )
-    );
-
-    const parsed = AgentSkillReadFileToolResultSchema.safeParse(raw);
-    expect(parsed.success).toBe(true);
-    if (!parsed.success) {
-      throw new Error(parsed.error.message);
-    }
-
-    expect(parsed.data.success).toBe(false);
-    if (!parsed.data.success) {
-      expect(parsed.data.error).toContain("Image Tools experiment");
+    const result = await executeReadFile(tool, {
+      name: "imagegen",
+      filePath: "SKILL.md",
+      offset: 1,
+      limit: 25,
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("Image Tools experiment");
     }
   });
 
@@ -341,20 +105,12 @@ describe("agent_skill_read_file", () => {
       });
       const tool = createAgentSkillReadFileTool(baseConfig);
 
-      const raw: unknown = await Promise.resolve(
-        tool.execute!(
-          { name: "foo", filePath: "SKILL.md", offset: 1, limit: 5 },
-          mockToolCallOptions
-        )
-      );
-
-      const parsed = AgentSkillReadFileToolResultSchema.safeParse(raw);
-      expect(parsed.success).toBe(true);
-      if (!parsed.success) {
-        throw new Error(parsed.error.message);
-      }
-
-      const result = parsed.data;
+      const result = await executeReadFile(tool, {
+        name: "foo",
+        filePath: "SKILL.md",
+        offset: 1,
+        limit: 5,
+      });
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.content).toMatch(/name:\s*foo/i);
@@ -383,20 +139,12 @@ describe("agent_skill_read_file", () => {
     });
     const tool = createAgentSkillReadFileTool(baseConfig);
 
-    const raw: unknown = await Promise.resolve(
-      tool.execute!(
-        { name: "shadowed-skill", filePath: "references/data.txt", offset: 1, limit: 5 },
-        mockToolCallOptions
-      )
-    );
-
-    const parsed = AgentSkillReadFileToolResultSchema.safeParse(raw);
-    expect(parsed.success).toBe(true);
-    if (!parsed.success) {
-      throw new Error(parsed.error.message);
-    }
-
-    const result = parsed.data;
+    const result = await executeReadFile(tool, {
+      name: "shadowed-skill",
+      filePath: "references/data.txt",
+      offset: 1,
+      limit: 5,
+    });
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.content).toBe("1\tfrom global skill");
@@ -418,20 +166,12 @@ describe("agent_skill_read_file", () => {
     });
     const tool = createAgentSkillReadFileTool(baseConfig);
 
-    const raw: unknown = await Promise.resolve(
-      tool.execute!(
-        { name: "project-skill", filePath: "SKILL.md", offset: 1, limit: 5 },
-        mockToolCallOptions
-      )
-    );
-
-    const parsed = AgentSkillReadFileToolResultSchema.safeParse(raw);
-    expect(parsed.success).toBe(true);
-    if (!parsed.success) {
-      throw new Error(parsed.error.message);
-    }
-
-    const result = parsed.data;
+    const result = await executeReadFile(tool, {
+      name: "project-skill",
+      filePath: "SKILL.md",
+      offset: 1,
+      limit: 5,
+    });
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.content).toMatch(/name:\s*project-skill/i);
@@ -473,15 +213,7 @@ describe("agent_skill_read_file", () => {
 
     const tool = createAgentSkillReadFileTool(baseConfig);
 
-    const raw: unknown = await Promise.resolve(
-      tool.execute!({ name: "leaky-skill", filePath: "secret.txt" }, mockToolCallOptions)
-    );
-
-    const parsed = AgentSkillReadFileToolResultSchema.safeParse(raw);
-    expect(parsed.success).toBe(true);
-    if (!parsed.success) throw new Error(parsed.error.message);
-
-    const result = parsed.data;
+    const result = await executeReadFile(tool, { name: "leaky-skill", filePath: "secret.txt" });
     expect(result.success).toBe(false);
     if (!result.success) {
       expect(result.error).not.toContain("top secret");
@@ -512,17 +244,10 @@ describe("agent_skill_read_file", () => {
 
     const tool = createAgentSkillReadFileTool(config);
 
-    const raw: unknown = await Promise.resolve(
-      tool.execute!({ name: "my-skill", filePath: "references/data.txt" }, mockToolCallOptions)
-    );
-
-    const parsed = AgentSkillReadFileToolResultSchema.safeParse(raw);
-    expect(parsed.success).toBe(true);
-    if (!parsed.success) {
-      throw new Error(parsed.error.message);
-    }
-
-    const result = parsed.data;
+    const result = await executeReadFile(tool, {
+      name: "my-skill",
+      filePath: "references/data.txt",
+    });
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.content).toContain("hello from host");
@@ -589,7 +314,7 @@ describe("agent_skill_read_file", () => {
 
       // Must use a true RemoteRuntime subclass so instanceof RemoteRuntime triggers
       // the host-global fallback in the skills service.
-      const remoteRuntime = new TrueRemoteRuntime(tempDir.path, REMOTE_WORKSPACE_ROOT);
+      const remoteRuntime = new TrueRemotePathMappedRuntime(tempDir.path, REMOTE_WORKSPACE_ROOT);
       const baseConfig = createTestToolConfig(tempDir.path, {
         runtime: remoteRuntime,
         muxScope: {

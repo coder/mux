@@ -2,149 +2,22 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
 import { describe, it, expect } from "bun:test";
-import type { ToolExecutionOptions } from "ai";
-
-const GLOBAL_WORKSPACE_ID = "workspace-global";
 import type { MuxToolScope } from "@/common/types/toolScope";
 import { FILE_EDIT_DIFF_OMITTED_MESSAGE } from "@/common/types/tools";
 import type { AgentSkillReadToolResult, AgentSkillWriteToolResult } from "@/common/types/tools";
-import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import { createAgentSkillReadTool } from "./agent_skill_read";
 import { createAgentSkillWriteTool } from "./agent_skill_write";
 import { SKILL_FILENAME } from "./skillFileUtils";
-import { createTestToolConfig, TestTempDir } from "./testHelpers";
-
-const mockToolCallOptions: ToolExecutionOptions = {
-  toolCallId: "test-call-id",
-  messages: [],
-};
-
-async function createWorkspaceSessionDir(muxHome: string, workspaceId: string): Promise<string> {
-  const workspaceSessionDir = path.join(muxHome, "sessions", workspaceId);
-  await fs.mkdir(workspaceSessionDir, { recursive: true });
-  return workspaceSessionDir;
-}
-
-function restoreMuxRoot(previousMuxRoot: string | undefined): void {
-  if (previousMuxRoot === undefined) {
-    delete process.env.MUX_ROOT;
-    return;
-  }
-
-  process.env.MUX_ROOT = previousMuxRoot;
-}
-
-class RemotePathMappedRuntime extends LocalRuntime {
-  private readonly localBase: string;
-  private readonly remoteBase: string;
-
-  constructor(localBase: string, remoteBase: string) {
-    super(localBase);
-    this.localBase = path.resolve(localBase);
-    this.remoteBase = remoteBase === "/" ? remoteBase : remoteBase.replace(/\/+$/u, "");
-  }
-
-  protected toLocalPath(runtimePath: string): string {
-    const normalizedRuntimePath = runtimePath.replaceAll("\\", "/");
-
-    if (normalizedRuntimePath === this.remoteBase) {
-      return this.localBase;
-    }
-
-    if (normalizedRuntimePath.startsWith(`${this.remoteBase}/`)) {
-      const suffix = normalizedRuntimePath.slice(this.remoteBase.length + 1);
-      return path.join(this.localBase, ...suffix.split("/"));
-    }
-
-    return runtimePath;
-  }
-
-  private toRemotePath(localPath: string): string {
-    const resolvedLocalPath = path.resolve(localPath);
-
-    if (resolvedLocalPath === this.localBase) {
-      return this.remoteBase;
-    }
-
-    const localPrefix = `${this.localBase}${path.sep}`;
-    if (resolvedLocalPath.startsWith(localPrefix)) {
-      const suffix = resolvedLocalPath.slice(localPrefix.length).split(path.sep).join("/");
-      return `${this.remoteBase}/${suffix}`;
-    }
-
-    return localPath.replaceAll("\\", "/");
-  }
-
-  override getWorkspacePath(projectPath: string, workspaceName: string): string {
-    return path.posix.join(this.remoteBase, path.basename(projectPath), workspaceName);
-  }
-
-  override normalizePath(targetPath: string, basePath: string): string {
-    const normalizedBasePath = this.toRemotePath(basePath);
-    return path.posix.resolve(normalizedBasePath, targetPath.replaceAll("\\", "/"));
-  }
-
-  override async resolvePath(filePath: string): Promise<string> {
-    const resolvedLocalPath = await super.resolvePath(this.toLocalPath(filePath));
-    return this.toRemotePath(resolvedLocalPath);
-  }
-
-  override exec(
-    command: string,
-    options: Parameters<LocalRuntime["exec"]>[1]
-  ): ReturnType<LocalRuntime["exec"]> {
-    const translatedCommand = command
-      .split(this.remoteBase)
-      .join(this.localBase.replaceAll("\\", "/"));
-
-    return super.exec(translatedCommand, {
-      ...options,
-      cwd: this.toLocalPath(options.cwd),
-    });
-  }
-
-  override stat(filePath: string, abortSignal?: AbortSignal): ReturnType<LocalRuntime["stat"]> {
-    return super.stat(this.toLocalPath(filePath), abortSignal);
-  }
-
-  override readFile(
-    filePath: string,
-    abortSignal?: AbortSignal
-  ): ReturnType<LocalRuntime["readFile"]> {
-    return super.readFile(this.toLocalPath(filePath), abortSignal);
-  }
-
-  override writeFile(
-    filePath: string,
-    abortSignal?: AbortSignal
-  ): ReturnType<LocalRuntime["writeFile"]> {
-    return super.writeFile(this.toLocalPath(filePath), abortSignal);
-  }
-
-  override ensureDir(dirPath: string): ReturnType<LocalRuntime["ensureDir"]> {
-    return super.ensureDir(this.toLocalPath(dirPath));
-  }
-}
-
-function skillMarkdown(
-  name: string,
-  options?: { description?: string; advertise?: boolean; body?: string }
-): string {
-  const advertiseLine =
-    options?.advertise === undefined ? "" : `advertise: ${options.advertise ? "true" : "false"}\n`;
-
-  return [
-    "---",
-    `name: ${name}`,
-    `description: ${options?.description ?? `description for ${name}`}`,
-    advertiseLine.trimEnd(),
-    "---",
-    options?.body ?? "Body",
-    "",
-  ]
-    .filter((line) => line.length > 0)
-    .join("\n");
-}
+import {
+  createTestToolConfig,
+  createWorkspaceSessionDir,
+  mockToolCallOptions,
+  RemotePathMappedRuntime,
+  restoreMuxRoot,
+  skillMarkdown,
+  TEST_GLOBAL_WORKSPACE_ID as GLOBAL_WORKSPACE_ID,
+  TestTempDir,
+} from "./testHelpers";
 
 async function createWriteTool(
   muxHome: string,

@@ -823,79 +823,64 @@ describe("Config", () => {
         routeOverrides?: Record<string, string>;
       };
 
-    it("translates a single legacy allowlisted model into a mux-gateway routeOverride", () => {
-      writeRawConfig({
-        muxGatewayEnabled: true,
-        muxGatewayModels: ["anthropic/claude-sonnet-4-6"],
-      });
-
-      const loaded = config.loadConfigOrDefault();
-
-      expect(loaded.routePriority).toEqual(["direct"]);
-      expect(loaded.routeOverrides).toEqual({
-        "anthropic:claude-sonnet-4-6": "mux-gateway",
-      });
-    });
-
-    it("translates multiple legacy models and merges them with existing routeOverrides", () => {
-      writeRawConfig({
-        muxGatewayEnabled: true,
-        muxGatewayModels: ["anthropic:claude-sonnet-4-6", "openrouter:anthropic/claude-opus-4-6"],
-        routeOverrides: {
+    for (const { name, rawConfig, expectedOverrides } of [
+      {
+        name: "translates a single legacy allowlisted model into a mux-gateway routeOverride",
+        rawConfig: {
+          muxGatewayEnabled: true,
+          muxGatewayModels: ["anthropic/claude-sonnet-4-6"],
+        },
+        expectedOverrides: { "anthropic:claude-sonnet-4-6": "mux-gateway" },
+      },
+      {
+        name: "translates multiple legacy models and merges them with existing routeOverrides",
+        rawConfig: {
+          muxGatewayEnabled: true,
+          muxGatewayModels: ["anthropic:claude-sonnet-4-6", "openrouter:anthropic/claude-opus-4-6"],
+          routeOverrides: { "openai:gpt-4o": "direct" },
+        },
+        expectedOverrides: {
           "openai:gpt-4o": "direct",
+          "anthropic:claude-sonnet-4-6": "mux-gateway",
+          "anthropic:claude-opus-4-6": "mux-gateway",
         },
-      });
-
-      const loaded = config.loadConfigOrDefault();
-
-      expect(loaded.routePriority).toEqual(["direct"]);
-      expect(loaded.routeOverrides).toEqual({
-        "openai:gpt-4o": "direct",
-        "anthropic:claude-sonnet-4-6": "mux-gateway",
-        "anthropic:claude-opus-4-6": "mux-gateway",
-      });
-    });
-
-    it("keeps existing routeOverrides when a legacy model normalizes to the same canonical key", () => {
-      writeRawConfig({
-        muxGatewayEnabled: true,
-        muxGatewayModels: ["openrouter:anthropic/claude-opus-4-6"],
-        routeOverrides: {
-          "anthropic:claude-opus-4-6": "openrouter",
+      },
+      {
+        name: "keeps existing routeOverrides when a legacy model normalizes to the same canonical key",
+        rawConfig: {
+          muxGatewayEnabled: true,
+          muxGatewayModels: ["openrouter:anthropic/claude-opus-4-6"],
+          routeOverrides: { "anthropic:claude-opus-4-6": "openrouter" },
         },
+        expectedOverrides: { "anthropic:claude-opus-4-6": "openrouter" },
+      },
+      {
+        name: "synthesizes direct-only priority when the legacy allowlist is empty",
+        rawConfig: { muxGatewayEnabled: true, muxGatewayModels: [] },
+        expectedOverrides: undefined,
+      },
+      {
+        name: "synthesizes direct-only priority when the legacy gateway flag is disabled",
+        rawConfig: {
+          muxGatewayEnabled: false,
+          muxGatewayModels: ["anthropic/claude-sonnet-4-6"],
+        },
+        expectedOverrides: undefined,
+      },
+    ] as const) {
+      it(name, () => {
+        writeRawConfig(rawConfig);
+
+        const loaded = config.loadConfigOrDefault();
+
+        expect(loaded.routePriority).toEqual(["direct"]);
+        if (expectedOverrides === undefined) {
+          expect(loaded.routeOverrides).toBeUndefined();
+        } else {
+          expect(loaded.routeOverrides).toEqual(expectedOverrides);
+        }
       });
-
-      const loaded = config.loadConfigOrDefault();
-
-      expect(loaded.routePriority).toEqual(["direct"]);
-      expect(loaded.routeOverrides).toEqual({
-        "anthropic:claude-opus-4-6": "openrouter",
-      });
-    });
-
-    it("synthesizes direct-only priority when the legacy allowlist is empty", () => {
-      writeRawConfig({
-        muxGatewayEnabled: true,
-        muxGatewayModels: [],
-      });
-
-      const loaded = config.loadConfigOrDefault();
-
-      expect(loaded.routePriority).toEqual(["direct"]);
-      expect(loaded.routeOverrides).toBeUndefined();
-    });
-
-    it("synthesizes direct-only priority when the legacy gateway flag is disabled", () => {
-      writeRawConfig({
-        muxGatewayEnabled: false,
-        muxGatewayModels: ["anthropic/claude-sonnet-4-6"],
-      });
-
-      const loaded = config.loadConfigOrDefault();
-
-      expect(loaded.routePriority).toEqual(["direct"]);
-      expect(loaded.routeOverrides).toBeUndefined();
-    });
+    }
 
     it("preserves legacy fields on disk alongside synthesized modern routing state", () => {
       writeRawConfig({

@@ -67,6 +67,315 @@ import * as toolsModule from "@/common/utils/tools/tools";
 import * as providerOptionsModule from "@/common/utils/ai/providerOptions";
 import * as systemMessageModule from "./systemMessage";
 
+interface BasicAIServiceParts {
+  config: Config;
+  historyService: HistoryService;
+  initStateManager: InitStateManager;
+  providerService: ProviderService;
+  service: AIService;
+}
+
+type GeneratePrompt = Array<{
+  role: "system" | "user";
+  content: string | Array<{ type: "text"; text: string }>;
+}>;
+
+type RecordingFetch = (
+  input: Parameters<typeof fetch>[0],
+  init?: Parameters<typeof fetch>[1]
+) => Promise<Response>;
+
+interface RecordedFetchRequest {
+  input: Parameters<typeof fetch>[0];
+  init?: Parameters<typeof fetch>[1];
+}
+
+const TEST_CODEX_OAUTH = {
+  type: "oauth" as const,
+  access: "test-access-token",
+  refresh: "test-refresh-token",
+  expires: Date.now() + 60_000,
+  accountId: "test-account-id",
+};
+
+function createBasicAIService(
+  root?: string,
+  options?: {
+    sessionUsageService?: SessionUsageService;
+    devToolsService?: DevToolsService;
+    experimentsService?: ExperimentsService;
+  }
+): BasicAIServiceParts {
+  const config = new Config(root);
+  const historyService = new HistoryService(config);
+  const initStateManager = new InitStateManager(config);
+  const providerService = new ProviderService(config);
+  const service = new AIService(
+    config,
+    historyService,
+    initStateManager,
+    providerService,
+    undefined,
+    options?.sessionUsageService,
+    undefined,
+    undefined,
+    undefined,
+    options?.devToolsService,
+    undefined,
+    options?.experimentsService
+  );
+  return { config, historyService, initStateManager, providerService, service };
+}
+
+async function writeMainConfig(root: string, config: object): Promise<void> {
+  await fs.writeFile(
+    path.join(root, "config.json"),
+    JSON.stringify({ projects: [], ...config }, null, 2),
+    "utf-8"
+  );
+}
+
+async function writeProvidersConfig(root: string, config: object): Promise<void> {
+  await fs.writeFile(path.join(root, "providers.jsonc"), JSON.stringify(config, null, 2), "utf-8");
+}
+
+function toGatewayModelString(modelString: string): string {
+  const colonIndex = modelString.indexOf(":");
+  const provider = colonIndex === -1 ? modelString : modelString.slice(0, colonIndex);
+  const modelId = colonIndex === -1 ? "" : modelString.slice(colonIndex + 1);
+  return `mux-gateway:${provider}/${modelId}`;
+}
+
+function createRecordingOpenAIFetch(
+  requests: RecordedFetchRequest[],
+  model = "gpt-5.2"
+): RecordingFetch {
+  return (input, init) => {
+    requests.push({ input, init });
+    return Promise.resolve(
+      new Response(
+        JSON.stringify({
+          id: "resp_test",
+          created_at: 0,
+          model,
+          output: [
+            {
+              type: "message",
+              role: "assistant",
+              id: "msg_test",
+              content: [{ type: "output_text", text: "ok", annotations: [] }],
+            },
+          ],
+          usage: { input_tokens: 1, output_tokens: 1 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      )
+    );
+  };
+}
+
+function configureOpenAICodexOAuth(
+  service: AIService,
+  config: Config,
+  requests: RecordedFetchRequest[],
+  options?: { defaultAuth?: "apiKey"; responseModel?: string; setOauthService?: boolean }
+): void {
+  config.loadProvidersConfig = () => ({
+    openai: {
+      apiKey: "test-openai-api-key",
+      codexOauth: TEST_CODEX_OAUTH,
+      ...(options?.defaultAuth ? { codexOauthDefaultAuth: options.defaultAuth } : {}),
+      fetch: createRecordingOpenAIFetch(requests, options?.responseModel),
+    },
+  });
+
+  if (options?.setOauthService !== false) {
+    service.setCodexOauthService({
+      getValidAuth: () => Promise.resolve({ success: true, data: TEST_CODEX_OAUTH }),
+    } as CodexOauthService);
+  }
+}
+
+async function createGeneratedModel(
+  service: AIService,
+  modelString: string,
+  prompt: GeneratePrompt
+): Promise<void> {
+  const modelResult = await service.createModel(modelString);
+  expect(modelResult.success).toBe(true);
+  if (!modelResult.success) return;
+
+  const model = modelResult.data;
+  if (typeof model === "string") {
+    throw new Error("Expected a LanguageModelV2 instance, got a model id string");
+  }
+
+  const generateModel = model as unknown as {
+    doGenerate: (args: { prompt: GeneratePrompt }) => Promise<unknown>;
+  };
+  await generateModel.doGenerate({ prompt });
+}
+
+function getFetchUrl(input: Parameters<typeof fetch>[0]): string {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  if (typeof input === "object" && input !== null && "url" in input) {
+    const possibleUrl = (input as { url?: unknown }).url;
+    if (typeof possibleUrl === "string") return possibleUrl;
+  }
+  return "";
+}
+
+function createLocalWorkspaceMetadata(
+  workspaceId: string,
+  projectPath: string,
+  overrides?: Partial<WorkspaceMetadata>
+): WorkspaceMetadata {
+  return {
+    id: workspaceId,
+    name: "workspace-under-test",
+    projectName: "project-under-test",
+    projectPath,
+    runtimeConfig: { type: "local" },
+    ...overrides,
+  };
+}
+
+function resolvedAgentResultFor(
+  metadata: WorkspaceMetadata
+): Awaited<ReturnType<typeof agentResolution.resolveAgentForStream>> {
+  return {
+    success: true,
+    data: {
+      effectiveAgentId: "exec",
+      agentDefinition: {
+        id: "exec",
+        scope: "built-in",
+        frontmatter: { name: "Exec" },
+        body: "Exec agent body",
+      },
+      agentDiscoveryPath: metadata.projectPath,
+      isSubagentWorkspace: false,
+      agentInheritanceChain: [{ id: "exec", tools: { add: [".*"] } }],
+      agentIsPlanLike: false,
+      effectiveMode: "exec",
+      taskSettings: DEFAULT_TASK_SETTINGS,
+      taskDepth: 0,
+      shouldDisableTaskToolsForDepth: false,
+      effectiveToolPolicy: undefined,
+    },
+  };
+}
+
+function stubCommonStreamMessageDependencies(args: {
+  service: AIService;
+  config: Config;
+  historyService: HistoryService;
+  initStateManager: InitStateManager;
+  metadata: WorkspaceMetadata;
+  startStreamCalls?: unknown[][];
+  routeProvider?: ProviderName;
+  allTools?: Record<string, Tool>;
+  workspacePathOverride?: string;
+  historySequence?: number;
+  effectiveModelString?: string;
+  canonicalProviderName?: ProviderName;
+  canonicalModelId?: string;
+  onPlanPayloadMessageIds?: (messageIds: string[]) => void;
+  onBuildStreamSystemContext?: (
+    args: Parameters<typeof streamContextBuilder.buildStreamSystemContext>[0]
+  ) => void;
+  onPrepareMessagesForProvider?: (
+    args: Parameters<typeof messagePipeline.prepareMessagesForProvider>[0]
+  ) => void;
+}): ReturnType<typeof spyOn<typeof toolsModule, "getToolsForModel">> {
+  spyOn(agentResolution, "resolveAgentForStream").mockResolvedValue(
+    resolvedAgentResultFor(args.metadata)
+  );
+  spyOn(streamContextBuilder, "buildPlanInstructions").mockImplementation((planArgs) => {
+    args.onPlanPayloadMessageIds?.(planArgs.requestPayloadMessages.map((message) => message.id));
+    return Promise.resolve({
+      effectiveAdditionalInstructions: undefined,
+      planFilePath: path.join(args.metadata.projectPath, "plan.md"),
+      planContentForTransition: undefined,
+    });
+  });
+  spyOn(streamContextBuilder, "buildStreamSystemContext").mockImplementation((contextArgs) => {
+    args.onBuildStreamSystemContext?.(contextArgs);
+    return Promise.resolve({
+      agentSystemPrompt: "test-agent-prompt",
+      systemMessage: "test-system-message",
+      systemMessageTokens: 1,
+      agentDefinitions: undefined,
+      availableSkills: undefined,
+      ancestorPlanFilePaths: [],
+    });
+  });
+  spyOn(messagePipeline, "prepareMessagesForProvider").mockImplementation((pipelineArgs) => {
+    args.onPrepareMessagesForProvider?.(pipelineArgs);
+    return Promise.resolve(
+      pipelineArgs.messagesWithSentinel as unknown as Awaited<
+        ReturnType<typeof messagePipeline.prepareMessagesForProvider>
+      >
+    );
+  });
+  const getToolsForModelSpy = spyOn(toolsModule, "getToolsForModel").mockResolvedValue(
+    args.allTools ?? {}
+  );
+  spyOn(systemMessageModule, "readToolInstructions").mockResolvedValue({});
+
+  const providerModelFactory = Reflect.get(args.service, "providerModelFactory") as
+    | ProviderModelFactory
+    | undefined;
+  if (!providerModelFactory) {
+    throw new Error("Expected AIService.providerModelFactory in streamMessage test harness");
+  }
+  spyOn(providerModelFactory, "resolveAndCreateModel").mockResolvedValue({
+    success: true,
+    data: {
+      model: Object.create(null) as LanguageModel,
+      effectiveModelString: args.effectiveModelString ?? "openai:gpt-5.2",
+      canonicalModelString: args.effectiveModelString ?? "openai:gpt-5.2",
+      canonicalProviderName: args.canonicalProviderName ?? "openai",
+      canonicalModelId: args.canonicalModelId ?? "gpt-5.2",
+      routedThroughGateway: false,
+      ...(args.routeProvider != null ? { routeProvider: args.routeProvider } : {}),
+    },
+  });
+  spyOn(args.service, "getWorkspaceMetadata").mockResolvedValue({
+    success: true,
+    data: args.metadata,
+  });
+  spyOn(args.initStateManager, "waitForInit").mockResolvedValue(undefined);
+  spyOn(args.config, "findWorkspace").mockReturnValue({
+    workspacePath: args.workspacePathOverride ?? args.metadata.projectPath,
+    projectPath: args.metadata.projectPath,
+  });
+  spyOn(args.historyService, "commitPartial").mockResolvedValue({ success: true, data: undefined });
+  spyOn(args.historyService, "appendToHistory").mockImplementation((_workspaceId, message) => {
+    message.metadata = { ...(message.metadata ?? {}), historySequence: args.historySequence ?? 7 };
+    return Promise.resolve({ success: true, data: undefined });
+  });
+
+  const streamManager = (args.service as unknown as { streamManager: StreamManager }).streamManager;
+  const streamToken = "stream-token" as ReturnType<StreamManager["generateStreamToken"]>;
+  spyOn(streamManager, "generateStreamToken").mockReturnValue(streamToken);
+  spyOn(streamManager, "createTempDirForStream").mockResolvedValue(
+    path.join(args.metadata.projectPath, ".tmp-stream")
+  );
+  spyOn(streamManager, "isResponseIdLost").mockReturnValue(false);
+  if (args.startStreamCalls) {
+    spyOn(streamManager, "startStream").mockImplementation((...startArgs: unknown[]) => {
+      args.startStreamCalls?.push(startArgs);
+      return Promise.resolve({ success: true, data: streamToken });
+    });
+  } else {
+    spyOn(streamManager, "startStream").mockResolvedValue({ success: true, data: streamToken });
+  }
+
+  return getToolsForModelSpy;
+}
+
 describe("prepareProviderRequestMessages", () => {
   it("slices at reset boundaries before filtering empty assistant messages", () => {
     const oldMessage = createMuxMessage("old-user", "user", "old context", {
@@ -95,11 +404,7 @@ describe("AIService", () => {
   let service: AIService;
 
   beforeEach(() => {
-    const config = new Config();
-    const historyService = new HistoryService(config);
-    const initStateManager = new InitStateManager(config);
-    const providerService = new ProviderService(config);
-    service = new AIService(config, historyService, initStateManager, providerService);
+    service = createBasicAIService().service;
   });
 
   // Note: These tests are placeholders as Bun doesn't support Jest mocking
@@ -174,16 +479,19 @@ describe("resolveMuxProjectRootForHostFs", () => {
 });
 
 describe("AIService.setupStreamEventForwarding", () => {
-  afterEach(() => {
-    mock.restore();
-  });
+  interface ForwardingInternals {
+    streamManager: StreamManager;
+    pendingDevToolsRunMetadataByMessageId: Map<string, { workspaceId: string; metadataId: string }>;
+  }
 
-  it("forwards stream-abort even when partial cleanup throws", async () => {
-    using muxHome = new DisposableTempDir("ai-service-stream-abort-forwarding");
-    const config = new Config(muxHome.path);
-    const historyService = new HistoryService(config);
-    const initStateManager = new InitStateManager(config);
-    const providerService = new ProviderService(config);
+  function createForwardingHarness(tempDirName: string): {
+    historyService: HistoryService;
+    service: AIService;
+    internals: ForwardingInternals;
+    clearPendingRunMetadataSpy: ReturnType<typeof mock>;
+    [Symbol.dispose]: () => void;
+  } {
+    const muxHome = new DisposableTempDir(tempDirName);
     const clearPendingRunMetadataSpy = mock(
       (_workspaceId: string, _metadataId?: string) => undefined
     );
@@ -191,32 +499,27 @@ describe("AIService.setupStreamEventForwarding", () => {
       enabled: true,
       clearPendingRunMetadata: clearPendingRunMetadataSpy,
     } as unknown as DevToolsService;
-    const service = new AIService(
-      config,
+    const { historyService, service } = createBasicAIService(muxHome.path, { devToolsService });
+    return {
       historyService,
-      initStateManager,
-      providerService,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      devToolsService
-    );
+      service,
+      internals: service as unknown as ForwardingInternals,
+      clearPendingRunMetadataSpy,
+      [Symbol.dispose]: () => muxHome[Symbol.dispose](),
+    };
+  }
 
+  afterEach(() => {
+    mock.restore();
+  });
+
+  it("forwards stream-abort even when partial cleanup throws", async () => {
+    using harness = createForwardingHarness("ai-service-stream-abort-forwarding");
+    const { historyService, service, internals, clearPendingRunMetadataSpy } = harness;
     const cleanupError = new Error("disk full");
     const deletePartialSpy = spyOn(historyService, "deletePartial").mockImplementation(() =>
       Promise.reject(cleanupError)
     );
-
-    const internals = service as unknown as {
-      streamManager: StreamManager;
-      pendingDevToolsRunMetadataByMessageId: Map<
-        string,
-        { workspaceId: string; metadataId: string }
-      >;
-    };
-    const streamManager = internals.streamManager;
     const abortEvent: StreamAbortEvent = {
       type: "stream-abort",
       workspaceId: "workspace-1",
@@ -231,8 +534,7 @@ describe("AIService.setupStreamEventForwarding", () => {
     const forwardedAbortPromise = new Promise<StreamAbortEvent>((resolve) => {
       service.once("stream-abort", (event) => resolve(event as StreamAbortEvent));
     });
-
-    streamManager.emit("stream-abort", abortEvent);
+    internals.streamManager.emit("stream-abort", abortEvent);
 
     expect(await forwardedAbortPromise).toEqual(abortEvent);
     expect(deletePartialSpy).toHaveBeenCalledWith(abortEvent.workspaceId);
@@ -241,44 +543,12 @@ describe("AIService.setupStreamEventForwarding", () => {
   });
 
   it("forwards stream-abort with empty messageId without throwing", async () => {
-    using muxHome = new DisposableTempDir("ai-service-stream-abort-empty-message-id");
-    const config = new Config(muxHome.path);
-    const historyService = new HistoryService(config);
-    const initStateManager = new InitStateManager(config);
-    const providerService = new ProviderService(config);
-    const clearPendingRunMetadataSpy = mock(
-      (_workspaceId: string, _metadataId?: string) => undefined
-    );
-    const devToolsService = {
-      enabled: true,
-      clearPendingRunMetadata: clearPendingRunMetadataSpy,
-    } as unknown as DevToolsService;
-    const service = new AIService(
-      config,
-      historyService,
-      initStateManager,
-      providerService,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      devToolsService
-    );
-
-    const internals = service as unknown as {
-      streamManager: StreamManager;
-      pendingDevToolsRunMetadataByMessageId: Map<
-        string,
-        { workspaceId: string; metadataId: string }
-      >;
-    };
-    const streamManager = internals.streamManager;
+    using harness = createForwardingHarness("ai-service-stream-abort-empty-message-id");
+    const { service, internals, clearPendingRunMetadataSpy } = harness;
     internals.pendingDevToolsRunMetadataByMessageId.set("message-1", {
       workspaceId: "workspace-1",
       metadataId: "metadata-1",
     });
-
     const abortEvent: StreamAbortEvent = {
       type: "stream-abort",
       workspaceId: "workspace-1",
@@ -289,178 +559,56 @@ describe("AIService.setupStreamEventForwarding", () => {
     const forwardedAbortPromise = new Promise<StreamAbortEvent>((resolve) => {
       service.once("stream-abort", (event) => resolve(event as StreamAbortEvent));
     });
-
-    streamManager.emit("stream-abort", abortEvent);
+    internals.streamManager.emit("stream-abort", abortEvent);
 
     expect(await forwardedAbortPromise).toEqual(abortEvent);
     expect(clearPendingRunMetadataSpy).not.toHaveBeenCalled();
     expect(internals.pendingDevToolsRunMetadataByMessageId.has("message-1")).toBe(true);
   });
 
-  it("clears tracked devtools run metadata on stream error", async () => {
-    using muxHome = new DisposableTempDir("ai-service-stream-error-devtools-cleanup");
-    const config = new Config(muxHome.path);
-    const historyService = new HistoryService(config);
-    const initStateManager = new InitStateManager(config);
-    const providerService = new ProviderService(config);
-    const clearPendingRunMetadataSpy = mock(
-      (_workspaceId: string, _metadataId?: string) => undefined
-    );
-    const devToolsService = {
-      enabled: true,
-      clearPendingRunMetadata: clearPendingRunMetadataSpy,
-    } as unknown as DevToolsService;
-    const service = new AIService(
-      config,
-      historyService,
-      initStateManager,
-      providerService,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      devToolsService
-    );
-
-    const internals = service as unknown as {
-      streamManager: StreamManager;
-      pendingDevToolsRunMetadataByMessageId: Map<
-        string,
-        { workspaceId: string; metadataId: string }
-      >;
-    };
-    const streamManager = internals.streamManager;
-    const errorEvent: ErrorEvent = {
-      type: "error",
-      workspaceId: "workspace-1",
-      messageId: "message-1",
-      error: "request failed",
-      errorType: "rate_limit",
-    };
-    internals.pendingDevToolsRunMetadataByMessageId.set(errorEvent.messageId, {
-      workspaceId: errorEvent.workspaceId,
+  it.each([
+    {
+      name: "stream error",
+      eventName: "error" as const,
+      event: {
+        type: "error" as const,
+        workspaceId: "workspace-1",
+        messageId: "message-1",
+        error: "request failed",
+        errorType: "rate_limit" as const,
+      } satisfies ErrorEvent,
+    },
+    {
+      name: "stream-end",
+      eventName: "stream-end" as const,
+      event: {
+        type: "stream-end" as const,
+        workspaceId: "workspace-1",
+        messageId: "message-1",
+        metadata: { model: "anthropic:claude-opus-4-1" },
+        parts: [],
+      } satisfies StreamEndEvent,
+    },
+  ])("clears tracked devtools run metadata on $name", async ({ eventName, event }) => {
+    using harness = createForwardingHarness(`ai-service-${eventName}-devtools-cleanup`);
+    const { service, internals, clearPendingRunMetadataSpy } = harness;
+    internals.pendingDevToolsRunMetadataByMessageId.set(event.messageId, {
+      workspaceId: event.workspaceId,
       metadataId: "metadata-1",
     });
 
-    const forwardedErrorPromise = new Promise<ErrorEvent>((resolve) => {
-      service.once("error", (event) => resolve(event as ErrorEvent));
+    const forwardedPromise = new Promise<typeof event>((resolve) => {
+      service.once(eventName, (forwarded) => resolve(forwarded as typeof event));
     });
+    internals.streamManager.emit(eventName, event);
 
-    streamManager.emit("error", errorEvent);
-
-    expect(await forwardedErrorPromise).toEqual(errorEvent);
-    expect(clearPendingRunMetadataSpy).toHaveBeenCalledWith(errorEvent.workspaceId, "metadata-1");
-    expect(internals.pendingDevToolsRunMetadataByMessageId.has(errorEvent.messageId)).toBe(false);
-  });
-
-  it("clears tracked devtools run metadata on stream-end", async () => {
-    using muxHome = new DisposableTempDir("ai-service-stream-end-devtools-cleanup");
-    const config = new Config(muxHome.path);
-    const historyService = new HistoryService(config);
-    const initStateManager = new InitStateManager(config);
-    const providerService = new ProviderService(config);
-    const clearPendingRunMetadataSpy = mock(
-      (_workspaceId: string, _metadataId?: string) => undefined
-    );
-    const devToolsService = {
-      enabled: true,
-      clearPendingRunMetadata: clearPendingRunMetadataSpy,
-    } as unknown as DevToolsService;
-    const service = new AIService(
-      config,
-      historyService,
-      initStateManager,
-      providerService,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      devToolsService
-    );
-
-    const internals = service as unknown as {
-      streamManager: StreamManager;
-      pendingDevToolsRunMetadataByMessageId: Map<
-        string,
-        { workspaceId: string; metadataId: string }
-      >;
-    };
-    const streamManager = internals.streamManager;
-    const endEvent: StreamEndEvent = {
-      type: "stream-end",
-      workspaceId: "workspace-1",
-      messageId: "message-1",
-      metadata: {
-        model: "anthropic:claude-opus-4-1",
-      },
-      parts: [],
-    };
-    internals.pendingDevToolsRunMetadataByMessageId.set(endEvent.messageId, {
-      workspaceId: endEvent.workspaceId,
-      metadataId: "metadata-1",
-    });
-
-    const forwardedEndPromise = new Promise<StreamEndEvent>((resolve) => {
-      service.once("stream-end", (event) => resolve(event as StreamEndEvent));
-    });
-
-    streamManager.emit("stream-end", endEvent);
-
-    expect(await forwardedEndPromise).toEqual(endEvent);
-    expect(clearPendingRunMetadataSpy).toHaveBeenCalledWith(endEvent.workspaceId, "metadata-1");
-    expect(internals.pendingDevToolsRunMetadataByMessageId.has(endEvent.messageId)).toBe(false);
+    expect(await forwardedPromise).toEqual(event);
+    expect(clearPendingRunMetadataSpy).toHaveBeenCalledWith(event.workspaceId, "metadata-1");
+    expect(internals.pendingDevToolsRunMetadataByMessageId.has(event.messageId)).toBe(false);
   });
 });
 
 describe("AIService.resolveGatewayModelString", () => {
-  async function writeMainConfig(
-    root: string,
-    config: {
-      muxGatewayEnabled?: boolean;
-      muxGatewayModels?: string[];
-      routePriority?: string[];
-      routeOverrides?: Record<string, string>;
-    }
-  ): Promise<void> {
-    await fs.writeFile(
-      path.join(root, "config.json"),
-      JSON.stringify(
-        {
-          projects: [],
-          ...config,
-        },
-        null,
-        2
-      ),
-      "utf-8"
-    );
-  }
-
-  async function writeProvidersConfig(root: string, config: object): Promise<void> {
-    await fs.writeFile(
-      path.join(root, "providers.jsonc"),
-      JSON.stringify(config, null, 2),
-      "utf-8"
-    );
-  }
-
-  function toGatewayModelString(modelString: string): string {
-    const colonIndex = modelString.indexOf(":");
-    const provider = colonIndex === -1 ? modelString : modelString.slice(0, colonIndex);
-    const modelId = colonIndex === -1 ? "" : modelString.slice(colonIndex + 1);
-    return `mux-gateway:${provider}/${modelId}`;
-  }
-
-  function createService(root: string): AIService {
-    const config = new Config(root);
-    const historyService = new HistoryService(config);
-    const initStateManager = new InitStateManager(config);
-    const providerService = new ProviderService(config);
-    return new AIService(config, historyService, initStateManager, providerService);
-  }
-
   it("routes allowlisted models when gateway is enabled + configured", async () => {
     using muxHome = new DisposableTempDir("gateway-routing");
 
@@ -472,7 +620,7 @@ describe("AIService.resolveGatewayModelString", () => {
       "mux-gateway": { couponCode: "test-coupon" },
     });
 
-    const service = createService(muxHome.path);
+    const service = createBasicAIService(muxHome.path).service;
 
     // @ts-expect-error - accessing private field for testing
     const resolved = service.providerModelFactory.resolveGatewayModelString(KNOWN_MODELS.SONNET.id);
@@ -494,7 +642,7 @@ describe("AIService.resolveGatewayModelString", () => {
       },
     });
 
-    const service = createService(muxHome.path);
+    const service = createBasicAIService(muxHome.path).service;
 
     // @ts-expect-error - accessing private field for testing
     const resolved = service.providerModelFactory.resolveGatewayModelString(KNOWN_MODELS.SONNET.id);
@@ -510,7 +658,7 @@ describe("AIService.resolveGatewayModelString", () => {
       muxGatewayModels: [KNOWN_MODELS.SONNET.id],
     });
 
-    const service = createService(muxHome.path);
+    const service = createBasicAIService(muxHome.path).service;
 
     // @ts-expect-error - accessing private field for testing
     const resolved = service.providerModelFactory.resolveGatewayModelString(KNOWN_MODELS.SONNET.id);
@@ -530,7 +678,7 @@ describe("AIService.resolveGatewayModelString", () => {
       "mux-gateway": { couponCode: "test-coupon" },
     });
 
-    const service = createService(muxHome.path);
+    const service = createBasicAIService(muxHome.path).service;
 
     // @ts-expect-error - accessing private field for testing
     const resolved = service.providerModelFactory.resolveGatewayModelString(modelString);
@@ -550,7 +698,7 @@ describe("AIService.resolveGatewayModelString", () => {
       "mux-gateway": { couponCode: "test-coupon" },
     });
 
-    const service = createService(muxHome.path);
+    const service = createBasicAIService(muxHome.path).service;
 
     // @ts-expect-error - accessing private field for testing
     const resolved = service.providerModelFactory.resolveGatewayModelString(
@@ -572,7 +720,7 @@ describe("AIService.resolveGatewayModelString", () => {
       "mux-gateway": { couponCode: "test-coupon" },
     });
 
-    const service = createService(muxHome.path);
+    const service = createBasicAIService(muxHome.path).service;
 
     // @ts-expect-error - accessing private field for testing
     const resolved = service.providerModelFactory.resolveGatewayModelString(
@@ -586,38 +734,6 @@ describe("AIService.resolveGatewayModelString", () => {
 });
 
 describe("AIService.createModel (Codex OAuth routing)", () => {
-  async function writeProvidersConfig(root: string, config: object): Promise<void> {
-    await fs.writeFile(
-      path.join(root, "providers.jsonc"),
-      JSON.stringify(config, null, 2),
-      "utf-8"
-    );
-  }
-
-  function createService(root: string): AIService {
-    const config = new Config(root);
-    const historyService = new HistoryService(config);
-    const initStateManager = new InitStateManager(config);
-    const providerService = new ProviderService(config);
-    return new AIService(config, historyService, initStateManager, providerService);
-  }
-
-  function getFetchUrl(input: Parameters<typeof fetch>[0]): string {
-    if (typeof input === "string") {
-      return input;
-    }
-    if (input instanceof URL) {
-      return input.toString();
-    }
-    if (typeof input === "object" && input !== null && "url" in input) {
-      const possibleUrl = (input as { url?: unknown }).url;
-      if (typeof possibleUrl === "string") {
-        return possibleUrl;
-      }
-    }
-    return "";
-  }
-
   it("returns oauth_not_connected for required Codex models when both OAuth and API key are missing", async () => {
     using muxHome = new DisposableTempDir("codex-oauth-missing");
 
@@ -629,7 +745,7 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
     const savedKey = process.env.OPENAI_API_KEY;
     delete process.env.OPENAI_API_KEY;
     try {
-      const service = createService(muxHome.path);
+      const service = createBasicAIService(muxHome.path).service;
       const result = await service.createModel(KNOWN_MODELS.GPT_53_CODEX_SPARK.id);
 
       expect(result.success).toBe(false);
@@ -653,7 +769,7 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
     const savedKey = process.env.OPENAI_API_KEY;
     delete process.env.OPENAI_API_KEY;
     try {
-      const service = createService(muxHome.path);
+      const service = createBasicAIService(muxHome.path).service;
       const result = await service.createModel(KNOWN_MODELS.GPT_53_CODEX.id);
 
       expect(result.success).toBe(false);
@@ -677,7 +793,7 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
     const savedKey = process.env.OPENAI_API_KEY;
     delete process.env.OPENAI_API_KEY;
     try {
-      const service = createService(muxHome.path);
+      const service = createBasicAIService(muxHome.path).service;
       const result = await service.createModel(KNOWN_MODELS.GPT.id);
 
       expect(result.success).toBe(false);
@@ -698,7 +814,7 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
       openai: { apiKey: "sk-test-key" },
     });
 
-    const service = createService(muxHome.path);
+    const service = createBasicAIService(muxHome.path).service;
     const result = await service.createModel(KNOWN_MODELS.GPT_53_CODEX_SPARK.id);
 
     // Should succeed — falls back to API key instead of erroring with oauth_not_connected
@@ -720,298 +836,51 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
       },
     });
 
-    const service = createService(muxHome.path);
+    const service = createBasicAIService(muxHome.path).service;
     const result = await service.createModel(KNOWN_MODELS.GPT_53_CODEX_SPARK.id);
 
     expect(result.success).toBe(true);
   });
 
-  it("defaults OAuth-allowed models to ChatGPT OAuth when both auth methods are configured", async () => {
-    using muxHome = new DisposableTempDir("codex-oauth-default-auth-oauth");
+  it.each([
+    {
+      name: "defaults OAuth-allowed models to ChatGPT OAuth when both auth methods are configured",
+      tempDirName: "codex-oauth-default-auth-oauth",
+      defaultAuth: undefined,
+      endpointMatcher: (url: string) => expect(url).toBe(CODEX_ENDPOINT),
+    },
+    {
+      name: "does not rewrite OAuth-allowed models when default auth is set to apiKey",
+      tempDirName: "codex-oauth-default-auth-api-key",
+      defaultAuth: "apiKey" as const,
+      endpointMatcher: (url: string) => expect(url).not.toBe(CODEX_ENDPOINT),
+    },
+  ])("$name", async ({ tempDirName, defaultAuth, endpointMatcher }) => {
+    using muxHome = new DisposableTempDir(tempDirName);
+    const { config, service } = createBasicAIService(muxHome.path);
+    const requests: RecordedFetchRequest[] = [];
+    configureOpenAICodexOAuth(service, config, requests, { defaultAuth });
 
-    const config = new Config(muxHome.path);
-    const historyService = new HistoryService(config);
-    const initStateManager = new InitStateManager(config);
-    const providerService = new ProviderService(config);
-
-    const service = new AIService(config, historyService, initStateManager, providerService);
-
-    const requests: Array<{
-      input: Parameters<typeof fetch>[0];
-      init?: Parameters<typeof fetch>[1];
-    }> = [];
-
-    const baseFetch = (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
-      requests.push({ input, init });
-
-      // Minimal valid OpenAI Responses payload for the provider's response schema.
-      const responseBody = {
-        id: "resp_test",
-        created_at: 0,
-        model: "gpt-5.2",
-        output: [
-          {
-            type: "message",
-            role: "assistant",
-            id: "msg_test",
-            content: [{ type: "output_text", text: "ok", annotations: [] }],
-          },
-        ],
-        usage: {
-          input_tokens: 1,
-          output_tokens: 1,
-        },
-      };
-
-      return Promise.resolve(
-        new Response(JSON.stringify(responseBody), {
-          status: 200,
-          headers: {
-            "content-type": "application/json",
-          },
-        })
-      );
-    };
-
-    // Ensure createModel sees a function fetch (providers.jsonc can't store functions).
-    config.loadProvidersConfig = () => ({
-      openai: {
-        apiKey: "test-openai-api-key",
-        codexOauth: {
-          type: "oauth",
-          access: "test-access-token",
-          refresh: "test-refresh-token",
-          expires: Date.now() + 60_000,
-          accountId: "test-account-id",
-        },
-        fetch: baseFetch,
-      },
-    });
-
-    // fetchWithOpenAITruncation closes over codexOauthService during createModel.
-    service.setCodexOauthService({
-      getValidAuth: () =>
-        Promise.resolve({
-          success: true,
-          data: {
-            type: "oauth",
-            access: "test-access-token",
-            refresh: "test-refresh-token",
-            expires: Date.now() + 60_000,
-            accountId: "test-account-id",
-          },
-        }),
-    } as CodexOauthService);
-
-    const modelResult = await service.createModel(KNOWN_MODELS.GPT.id);
-    expect(modelResult.success).toBe(true);
-    if (!modelResult.success) return;
-
-    const model = modelResult.data;
-    if (typeof model === "string") {
-      throw new Error("Expected a LanguageModelV2 instance, got a model id string");
-    }
-
-    await model.doGenerate({
-      prompt: [
-        {
-          role: "user",
-          content: [{ type: "text", text: "Hello" }],
-        },
-      ],
-    });
+    await createGeneratedModel(service, KNOWN_MODELS.GPT.id, [
+      { role: "user", content: [{ type: "text", text: "Hello" }] },
+    ]);
 
     expect(requests.length).toBeGreaterThan(0);
     const lastRequest = requests[requests.length - 1];
-    expect(getFetchUrl(lastRequest.input)).toBe(CODEX_ENDPOINT);
-  });
-
-  it("does not rewrite OAuth-allowed models when default auth is set to apiKey", async () => {
-    using muxHome = new DisposableTempDir("codex-oauth-default-auth-api-key");
-
-    const config = new Config(muxHome.path);
-    const historyService = new HistoryService(config);
-    const initStateManager = new InitStateManager(config);
-    const providerService = new ProviderService(config);
-
-    const service = new AIService(config, historyService, initStateManager, providerService);
-
-    const requests: Array<{
-      input: Parameters<typeof fetch>[0];
-      init?: Parameters<typeof fetch>[1];
-    }> = [];
-
-    const baseFetch = (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
-      requests.push({ input, init });
-
-      // Minimal valid OpenAI Responses payload for the provider's response schema.
-      const responseBody = {
-        id: "resp_test",
-        created_at: 0,
-        model: "gpt-5.2",
-        output: [
-          {
-            type: "message",
-            role: "assistant",
-            id: "msg_test",
-            content: [{ type: "output_text", text: "ok", annotations: [] }],
-          },
-        ],
-        usage: {
-          input_tokens: 1,
-          output_tokens: 1,
-        },
-      };
-
-      return Promise.resolve(
-        new Response(JSON.stringify(responseBody), {
-          status: 200,
-          headers: {
-            "content-type": "application/json",
-          },
-        })
-      );
-    };
-
-    // Ensure createModel sees a function fetch (providers.jsonc can't store functions).
-    config.loadProvidersConfig = () => ({
-      openai: {
-        apiKey: "test-openai-api-key",
-        codexOauth: {
-          type: "oauth",
-          access: "test-access-token",
-          refresh: "test-refresh-token",
-          expires: Date.now() + 60_000,
-          accountId: "test-account-id",
-        },
-        codexOauthDefaultAuth: "apiKey",
-        fetch: baseFetch,
-      },
-    });
-
-    const modelResult = await service.createModel(KNOWN_MODELS.GPT.id);
-    expect(modelResult.success).toBe(true);
-    if (!modelResult.success) return;
-
-    const model = modelResult.data;
-    if (typeof model === "string") {
-      throw new Error("Expected a LanguageModelV2 instance, got a model id string");
-    }
-
-    await model.doGenerate({
-      prompt: [
-        {
-          role: "user",
-          content: [{ type: "text", text: "Hello" }],
-        },
-      ],
-    });
-
-    expect(requests.length).toBeGreaterThan(0);
-    const lastRequest = requests[requests.length - 1];
-    expect(getFetchUrl(lastRequest.input)).not.toBe(CODEX_ENDPOINT);
+    endpointMatcher(getFetchUrl(lastRequest.input));
   });
 
   it("ensures Codex OAuth routed Responses requests include non-empty instructions", async () => {
     using muxHome = new DisposableTempDir("codex-oauth-instructions");
-
-    const config = new Config(muxHome.path);
-    const historyService = new HistoryService(config);
-    const initStateManager = new InitStateManager(config);
-    const providerService = new ProviderService(config);
-
-    const service = new AIService(config, historyService, initStateManager, providerService);
-
-    const requests: Array<{
-      input: Parameters<typeof fetch>[0];
-      init?: Parameters<typeof fetch>[1];
-    }> = [];
-
-    const baseFetch = (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
-      requests.push({ input, init });
-
-      // Minimal valid OpenAI Responses payload for the provider's response schema.
-      const responseBody = {
-        id: "resp_test",
-        created_at: 0,
-        model: "gpt-5.3-codex",
-        output: [
-          {
-            type: "message",
-            role: "assistant",
-            id: "msg_test",
-            content: [{ type: "output_text", text: "ok", annotations: [] }],
-          },
-        ],
-        usage: {
-          input_tokens: 1,
-          output_tokens: 1,
-        },
-      };
-
-      return Promise.resolve(
-        new Response(JSON.stringify(responseBody), {
-          status: 200,
-          headers: {
-            "content-type": "application/json",
-          },
-        })
-      );
-    };
-
-    // Ensure createModel sees a function fetch (providers.jsonc can't store functions).
-    config.loadProvidersConfig = () => ({
-      openai: {
-        apiKey: "test-openai-api-key",
-        codexOauth: {
-          type: "oauth",
-          access: "test-access-token",
-          refresh: "test-refresh-token",
-          expires: Date.now() + 60_000,
-          accountId: "test-account-id",
-        },
-        fetch: baseFetch,
-      },
-    });
-
-    // fetchWithOpenAITruncation closes over codexOauthService during createModel.
-    service.setCodexOauthService({
-      getValidAuth: () =>
-        Promise.resolve({
-          success: true,
-          data: {
-            type: "oauth",
-            access: "test-access-token",
-            refresh: "test-refresh-token",
-            expires: Date.now() + 60_000,
-            accountId: "test-account-id",
-          },
-        }),
-    } as CodexOauthService);
-
-    const modelResult = await service.createModel(KNOWN_MODELS.GPT_53_CODEX.id);
-    expect(modelResult.success).toBe(true);
-    if (!modelResult.success) return;
-
-    const model = modelResult.data;
-    if (typeof model === "string") {
-      throw new Error("Expected a LanguageModelV2 instance, got a model id string");
-    }
-
+    const { config, service } = createBasicAIService(muxHome.path);
+    const requests: RecordedFetchRequest[] = [];
+    configureOpenAICodexOAuth(service, config, requests, { responseModel: "gpt-5.3-codex" });
     const systemPrompt = "Test system prompt";
 
-    await model.doGenerate({
-      prompt: [
-        {
-          role: "system",
-          content: systemPrompt,
-        },
-        {
-          role: "user",
-          content: [{ type: "text", text: "Hello" }],
-        },
-      ],
-    });
+    await createGeneratedModel(service, KNOWN_MODELS.GPT_53_CODEX.id, [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: [{ type: "text", text: "Hello" }] },
+    ]);
 
     expect(requests.length).toBeGreaterThan(0);
 
@@ -1064,88 +933,14 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
 
   it("filters out item_reference entries and preserves inline items when routing through Codex OAuth", async () => {
     using muxHome = new DisposableTempDir("codex-oauth-filter-refs");
+    const { config, service } = createBasicAIService(muxHome.path);
+    const requests: RecordedFetchRequest[] = [];
+    configureOpenAICodexOAuth(service, config, requests, { responseModel: "gpt-5.3-codex" });
 
-    const config = new Config(muxHome.path);
-    const historyService = new HistoryService(config);
-    const initStateManager = new InitStateManager(config);
-    const providerService = new ProviderService(config);
-
-    const service = new AIService(config, historyService, initStateManager, providerService);
-
-    const requests: Array<{
-      input: Parameters<typeof fetch>[0];
-      init?: Parameters<typeof fetch>[1];
-    }> = [];
-
-    const baseFetch = (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
-      requests.push({ input, init });
-
-      const responseBody = {
-        id: "resp_test",
-        created_at: 0,
-        model: "gpt-5.3-codex",
-        output: [
-          {
-            type: "message",
-            role: "assistant",
-            id: "msg_test",
-            content: [{ type: "output_text", text: "ok", annotations: [] }],
-          },
-        ],
-        usage: { input_tokens: 1, output_tokens: 1 },
-      };
-
-      return Promise.resolve(
-        new Response(JSON.stringify(responseBody), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        })
-      );
-    };
-
-    config.loadProvidersConfig = () => ({
-      openai: {
-        apiKey: "test-openai-api-key",
-        codexOauth: {
-          type: "oauth",
-          access: "test-access-token",
-          refresh: "test-refresh-token",
-          expires: Date.now() + 60_000,
-          accountId: "test-account-id",
-        },
-        fetch: baseFetch,
-      },
-    });
-
-    service.setCodexOauthService({
-      getValidAuth: () =>
-        Promise.resolve({
-          success: true,
-          data: {
-            type: "oauth",
-            access: "test-access-token",
-            refresh: "test-refresh-token",
-            expires: Date.now() + 60_000,
-            accountId: "test-account-id",
-          },
-        }),
-    } as CodexOauthService);
-
-    const modelResult = await service.createModel(KNOWN_MODELS.GPT_53_CODEX.id);
-    expect(modelResult.success).toBe(true);
-    if (!modelResult.success) return;
-
-    const model = modelResult.data;
-    if (typeof model === "string") {
-      throw new Error("Expected a LanguageModelV2 instance, got a model id string");
-    }
-
-    await model.doGenerate({
-      prompt: [
-        { role: "system", content: "You are a helpful assistant" },
-        { role: "user", content: [{ type: "text", text: "Hello" }] },
-      ],
-    });
+    await createGeneratedModel(service, KNOWN_MODELS.GPT_53_CODEX.id, [
+      { role: "system", content: "You are a helpful assistant" },
+      { role: "user", content: [{ type: "text", text: "Hello" }] },
+    ]);
 
     expect(requests.length).toBeGreaterThan(0);
 
@@ -1226,16 +1021,6 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     getToolsForModelSpy: ReturnType<typeof spyOn<typeof toolsModule, "getToolsForModel">>;
   }
 
-  function createWorkspaceMetadata(workspaceId: string, projectPath: string): WorkspaceMetadata {
-    return {
-      id: workspaceId,
-      name: "workspace-under-test",
-      projectName: "project-under-test",
-      projectPath,
-      runtimeConfig: { type: "local" },
-    };
-  }
-
   function messageIdsFromUnknownArray(messages: unknown): string[] {
     if (!Array.isArray(messages)) {
       throw new Error("Expected message array");
@@ -1288,19 +1073,12 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
       sessionUsageService?: SessionUsageService;
     }
   ): StreamMessageHarness {
-    const config = new Config(muxHomePath);
-    const historyService = new HistoryService(config);
-    const initStateManager = new InitStateManager(config);
-    const providerService = new ProviderService(config);
-    const service = new AIService(
-      config,
-      historyService,
-      initStateManager,
-      providerService,
-      undefined,
-      options?.sessionUsageService
+    const { config, historyService, initStateManager, service } = createBasicAIService(
+      muxHomePath,
+      {
+        sessionUsageService: options?.sessionUsageService,
+      }
     );
-
     const planPayloadMessageIds: string[][] = [];
     const preparedPayloadMessageIds: string[][] = [];
     const preparedToolNamesForSentinel: string[][] = [];
@@ -1308,149 +1086,35 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     const streamSystemContextAdvisorFlags: Array<boolean | undefined> = [];
     const startStreamCalls: unknown[][] = [];
 
-    const resolvedAgentResult: Awaited<ReturnType<typeof agentResolution.resolveAgentForStream>> = {
-      success: true,
-      data: {
-        effectiveAgentId: "exec",
-        agentDefinition: {
-          id: "exec",
-          scope: "built-in",
-          frontmatter: { name: "Exec" },
-          body: "Exec agent body",
-        },
-        agentDiscoveryPath: metadata.projectPath,
-        isSubagentWorkspace: false,
-        agentInheritanceChain: [{ id: "exec", tools: { add: [".*"] } }],
-        agentIsPlanLike: false,
-        effectiveMode: "exec",
-        taskSettings: DEFAULT_TASK_SETTINGS,
-        taskDepth: 0,
-        shouldDisableTaskToolsForDepth: false,
-        effectiveToolPolicy: undefined,
+    const getToolsForModelSpy = stubCommonStreamMessageDependencies({
+      service,
+      config,
+      historyService,
+      initStateManager,
+      metadata,
+      startStreamCalls,
+      routeProvider: options?.routeProvider,
+      allTools: options?.allTools,
+      onPlanPayloadMessageIds: (messageIds) => planPayloadMessageIds.push(messageIds),
+      onBuildStreamSystemContext: (contextArgs) => {
+        if (!contextArgs.muxScope) {
+          throw new Error("Expected muxScope in stream system context build args");
+        }
+        streamSystemContextMuxScopes.push(contextArgs.muxScope);
+        streamSystemContextAdvisorFlags.push(contextArgs.advisorToolAvailable);
       },
-    };
-    spyOn(agentResolution, "resolveAgentForStream").mockImplementation(() =>
-      Promise.resolve(resolvedAgentResult)
-    );
-
-    spyOn(streamContextBuilder, "buildPlanInstructions").mockImplementation((args) => {
-      planPayloadMessageIds.push(args.requestPayloadMessages.map((message) => message.id));
-
-      const planInstructionsResult: Awaited<
-        ReturnType<typeof streamContextBuilder.buildPlanInstructions>
-      > = {
-        effectiveAdditionalInstructions: undefined,
-        planFilePath: path.join(metadata.projectPath, "plan.md"),
-        planContentForTransition: undefined,
-      };
-
-      return Promise.resolve(planInstructionsResult);
+      onPrepareMessagesForProvider: (pipelineArgs) => {
+        preparedPayloadMessageIds.push(
+          pipelineArgs.messagesWithSentinel.map((message) => message.id)
+        );
+        preparedToolNamesForSentinel.push(pipelineArgs.toolNamesForSentinel);
+      },
     });
-
-    spyOn(streamContextBuilder, "buildStreamSystemContext").mockImplementation((args) => {
-      if (!args.muxScope) {
-        throw new Error("Expected muxScope in stream system context build args");
-      }
-      streamSystemContextMuxScopes.push(args.muxScope);
-      streamSystemContextAdvisorFlags.push(args.advisorToolAvailable);
-      return Promise.resolve({
-        agentSystemPrompt: "test-agent-prompt",
-        systemMessage: "test-system-message",
-        systemMessageTokens: 1,
-        agentDefinitions: undefined,
-        availableSkills: undefined,
-        ancestorPlanFilePaths: [],
-      });
-    });
-
-    spyOn(messagePipeline, "prepareMessagesForProvider").mockImplementation((args) => {
-      preparedPayloadMessageIds.push(args.messagesWithSentinel.map((message) => message.id));
-      preparedToolNamesForSentinel.push(args.toolNamesForSentinel);
-      const preparedMessages = args.messagesWithSentinel as unknown as Awaited<
-        ReturnType<typeof messagePipeline.prepareMessagesForProvider>
-      >;
-      return Promise.resolve(preparedMessages);
-    });
-
-    const allTools = options?.allTools ?? {};
-    const getToolsForModelSpy = spyOn(toolsModule, "getToolsForModel").mockResolvedValue(allTools);
     if (options?.postPolicyTools) {
       spyOn(toolAssembly, "applyToolPolicyAndExperiments").mockResolvedValue(
         options.postPolicyTools
       );
     }
-    spyOn(systemMessageModule, "readToolInstructions").mockResolvedValue({});
-
-    const fakeModel = Object.create(null) as LanguageModel;
-    const providerModelFactory = Reflect.get(service, "providerModelFactory") as
-      | ProviderModelFactory
-      | undefined;
-    if (!providerModelFactory) {
-      throw new Error("Expected AIService.providerModelFactory in streamMessage test harness");
-    }
-
-    const resolveAndCreateModelResult: Awaited<
-      ReturnType<ProviderModelFactory["resolveAndCreateModel"]>
-    > = {
-      success: true,
-      data: {
-        model: fakeModel,
-        effectiveModelString: "openai:gpt-5.2",
-        canonicalModelString: "openai:gpt-5.2",
-        canonicalProviderName: "openai",
-        canonicalModelId: "gpt-5.2",
-        routedThroughGateway: false,
-        ...(options?.routeProvider != null ? { routeProvider: options.routeProvider } : {}),
-      },
-    };
-    spyOn(providerModelFactory, "resolveAndCreateModel").mockResolvedValue(
-      resolveAndCreateModelResult
-    );
-
-    spyOn(service, "getWorkspaceMetadata").mockResolvedValue({
-      success: true,
-      data: metadata,
-    });
-
-    spyOn(initStateManager, "waitForInit").mockResolvedValue(undefined);
-
-    spyOn(config, "findWorkspace").mockReturnValue({
-      workspacePath: metadata.projectPath,
-      projectPath: metadata.projectPath,
-    });
-
-    spyOn(historyService, "commitPartial").mockResolvedValue({
-      success: true,
-      data: undefined,
-    });
-
-    spyOn(historyService, "appendToHistory").mockImplementation((_workspaceId, message) => {
-      message.metadata = {
-        ...(message.metadata ?? {}),
-        historySequence: 7,
-      };
-
-      return Promise.resolve({ success: true, data: undefined });
-    });
-
-    const streamManager = (service as unknown as { streamManager: StreamManager }).streamManager;
-    const streamToken = "stream-token" as ReturnType<StreamManager["generateStreamToken"]>;
-
-    spyOn(streamManager, "generateStreamToken").mockReturnValue(streamToken);
-    spyOn(streamManager, "createTempDirForStream").mockResolvedValue(
-      path.join(metadata.projectPath, ".tmp-stream")
-    );
-    spyOn(streamManager, "isResponseIdLost").mockReturnValue(false);
-    spyOn(streamManager, "startStream").mockImplementation((...args: unknown[]) => {
-      startStreamCalls.push(args);
-
-      const startStreamResult: Awaited<ReturnType<StreamManager["startStream"]>> = {
-        success: true,
-        data: streamToken,
-      };
-
-      return Promise.resolve(startStreamResult);
-    });
 
     return {
       config,
@@ -1578,7 +1242,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-startup-breadcrumbs";
-    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
     const harness = createHarness(muxHome.path, metadata);
     const runtimeStatusEvents: RuntimeStatusEvent[] = [];
 
@@ -1650,7 +1314,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-reuse-system-context";
-    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
     const harness = createHarness(muxHome.path, metadata);
 
     const result = await harness.service.streamMessage({
@@ -1673,7 +1337,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-rebuild-system-context-advisor";
-    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
     // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- stub for advisor availability gating
     const stubTool: Tool = {} as never;
     const harness = createHarness(muxHome.path, metadata, {
@@ -1703,7 +1367,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-system-tool-scope";
-    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
     const harness = createHarness(muxHome.path, metadata);
     await harness.config.editConfig((cfg) => {
       cfg.projects.set(projectPath, { workspaces: [], projectKind: "system" });
@@ -1727,7 +1391,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
   it("keeps _multi workspaces on the project mux tool scope", async () => {
     using muxHome = new DisposableTempDir("ai-service-multi-project-tool-scope");
     const workspaceId = "workspace-multi-project-tool-scope";
-    const metadata = createWorkspaceMetadata(workspaceId, MULTI_PROJECT_CONFIG_KEY);
+    const metadata = createLocalWorkspaceMetadata(workspaceId, MULTI_PROJECT_CONFIG_KEY);
     const harness = createHarness(muxHome.path, metadata);
     await harness.config.editConfig((cfg) => {
       cfg.projects.set(MULTI_PROJECT_CONFIG_KEY, { workspaces: [], projectKind: "system" });
@@ -1756,7 +1420,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-slice-latest";
-    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
     const harness = createHarness(muxHome.path, metadata);
 
     const messages: MuxMessage[] = [
@@ -1823,7 +1487,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-route-provider-present";
-    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
     const harness = createHarness(muxHome.path, metadata, { routeProvider: "openrouter" });
 
     const result = await harness.service.streamMessage({
@@ -1852,7 +1516,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-route-provider-absent";
-    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
     const harness = createHarness(muxHome.path, metadata);
 
     const result = await harness.service.streamMessage({
@@ -1881,7 +1545,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-sentinel-tools";
-    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
     // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- stub for tool-name extraction test
     const stubTool: Tool = {} as never;
     const finalTools: Record<string, Tool> = {
@@ -1919,7 +1583,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-slice-malformed";
-    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
     const harness = createHarness(muxHome.path, metadata);
 
     const messages: MuxMessage[] = [
@@ -1979,7 +1643,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-advisor-step-snapshot-boundary";
-    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
     const harness = createHarness(muxHome.path, metadata);
     await enableAdvisorForHarness(harness);
 
@@ -2017,7 +1681,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-advisor-step-snapshot-isolated";
-    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
     const harness = createHarness(muxHome.path, metadata);
     await enableAdvisorForHarness(harness);
 
@@ -2064,7 +1728,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-advisor-step-snapshot-reset";
-    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
     const harness = createHarness(muxHome.path, metadata);
     await enableAdvisorForHarness(harness);
 
@@ -2114,7 +1778,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-advisor-step-snapshot-consume";
-    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
     const harness = createHarness(muxHome.path, metadata);
     await enableAdvisorForHarness(harness);
 
@@ -2147,7 +1811,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-tool-model-usage";
-    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
     const recordUsage = mock(() => Promise.resolve(undefined));
     const getSessionUsage = mock(() => Promise.resolve(undefined));
     const sessionUsageService = {
@@ -2265,7 +1929,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-tool-model-usage-costs-included";
-    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
     const recordUsage = mock(() => Promise.resolve(undefined));
     const getSessionUsage = mock(() => Promise.resolve(undefined));
     const sessionUsageService = {
@@ -2378,7 +2042,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-tool-model-usage-failure";
-    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
     const recordUsageError = new Error("write failed");
     const recordUsage = mock(() => Promise.reject(recordUsageError));
     const getSessionUsage = mock(() => Promise.resolve(undefined));
@@ -2481,10 +2145,6 @@ describe("AIService.streamMessage multi-project trust gating", () => {
     multiProjectExperimentEnabled = true,
     workspacePathOverride?: string
   ): TrustGatingHarness {
-    const config = new Config(muxHomePath);
-    const historyService = new HistoryService(config);
-    const initStateManager = new InitStateManager(config);
-    const providerService = new ProviderService(config);
     const experimentsService = new ExperimentsService({
       telemetryService: new TelemetryService(muxHomePath),
       muxHome: muxHomePath,
@@ -2494,133 +2154,21 @@ describe("AIService.streamMessage multi-project trust gating", () => {
         ? multiProjectExperimentEnabled
         : false
     );
-    const service = new AIService(
+    const { config, historyService, initStateManager, service } = createBasicAIService(
+      muxHomePath,
+      {
+        experimentsService,
+      }
+    );
+    const getToolsForModelSpy = stubCommonStreamMessageDependencies({
+      service,
       config,
       historyService,
       initStateManager,
-      providerService,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      experimentsService
-    );
-
-    const resolvedAgentResult: Awaited<ReturnType<typeof agentResolution.resolveAgentForStream>> = {
-      success: true,
-      data: {
-        effectiveAgentId: "exec",
-        agentDefinition: {
-          id: "exec",
-          scope: "built-in",
-          frontmatter: { name: "Exec" },
-          body: "Exec agent body",
-        },
-        agentDiscoveryPath: metadata.projectPath,
-        isSubagentWorkspace: false,
-        agentInheritanceChain: [{ id: "exec", tools: { add: [".*"] } }],
-        agentIsPlanLike: false,
-        effectiveMode: "exec",
-        taskSettings: DEFAULT_TASK_SETTINGS,
-        taskDepth: 0,
-        shouldDisableTaskToolsForDepth: false,
-        effectiveToolPolicy: undefined,
-      },
-    };
-    spyOn(agentResolution, "resolveAgentForStream").mockResolvedValue(resolvedAgentResult);
-
-    spyOn(streamContextBuilder, "buildPlanInstructions").mockResolvedValue({
-      effectiveAdditionalInstructions: undefined,
-      planFilePath: path.join(metadata.projectPath, "plan.md"),
-      planContentForTransition: undefined,
+      metadata,
+      workspacePathOverride,
+      historySequence: 11,
     });
-
-    spyOn(streamContextBuilder, "buildStreamSystemContext").mockResolvedValue({
-      agentSystemPrompt: "test-agent-prompt",
-      systemMessage: "test-system-message",
-      systemMessageTokens: 1,
-      agentDefinitions: undefined,
-      availableSkills: undefined,
-      ancestorPlanFilePaths: [],
-    });
-
-    spyOn(messagePipeline, "prepareMessagesForProvider").mockImplementation((args) => {
-      const preparedMessages = args.messagesWithSentinel as unknown as Awaited<
-        ReturnType<typeof messagePipeline.prepareMessagesForProvider>
-      >;
-      return Promise.resolve(preparedMessages);
-    });
-
-    const getToolsForModelSpy = spyOn(toolsModule, "getToolsForModel").mockResolvedValue({});
-    spyOn(systemMessageModule, "readToolInstructions").mockResolvedValue({});
-
-    const fakeModel = Object.create(null) as LanguageModel;
-    const providerModelFactory = Reflect.get(service, "providerModelFactory") as
-      | ProviderModelFactory
-      | undefined;
-    if (!providerModelFactory) {
-      throw new Error("Expected AIService.providerModelFactory in trust gating test harness");
-    }
-
-    const resolveAndCreateModelResult: Awaited<
-      ReturnType<ProviderModelFactory["resolveAndCreateModel"]>
-    > = {
-      success: true,
-      data: {
-        model: fakeModel,
-        effectiveModelString: "openai:gpt-5.2",
-        canonicalModelString: "openai:gpt-5.2",
-        canonicalProviderName: "openai",
-        canonicalModelId: "gpt-5.2",
-        routedThroughGateway: false,
-      },
-    };
-    spyOn(providerModelFactory, "resolveAndCreateModel").mockResolvedValue(
-      resolveAndCreateModelResult
-    );
-
-    spyOn(service, "getWorkspaceMetadata").mockResolvedValue({
-      success: true,
-      data: metadata,
-    });
-
-    spyOn(initStateManager, "waitForInit").mockResolvedValue(undefined);
-
-    spyOn(config, "findWorkspace").mockReturnValue({
-      workspacePath: workspacePathOverride ?? metadata.projectPath,
-      projectPath: metadata.projectPath,
-    });
-
-    spyOn(historyService, "commitPartial").mockResolvedValue({
-      success: true,
-      data: undefined,
-    });
-
-    spyOn(historyService, "appendToHistory").mockImplementation((_workspaceId, message) => {
-      message.metadata = {
-        ...(message.metadata ?? {}),
-        historySequence: 11,
-      };
-
-      return Promise.resolve({ success: true, data: undefined });
-    });
-
-    const streamManager = (service as unknown as { streamManager: StreamManager }).streamManager;
-    const streamToken = "stream-token" as ReturnType<StreamManager["generateStreamToken"]>;
-
-    spyOn(streamManager, "generateStreamToken").mockReturnValue(streamToken);
-    spyOn(streamManager, "createTempDirForStream").mockResolvedValue(
-      path.join(metadata.projectPath, ".tmp-stream")
-    );
-    spyOn(streamManager, "isResponseIdLost").mockReturnValue(false);
-    spyOn(streamManager, "startStream").mockResolvedValue({
-      success: true,
-      data: streamToken,
-    });
-
     return { service, config, getToolsForModelSpy };
   }
 
@@ -2747,16 +2295,6 @@ describe("AIService.streamMessage model parameter overrides", () => {
     startStreamCalls: unknown[][];
   }
 
-  function createWorkspaceMetadata(workspaceId: string, projectPath: string): WorkspaceMetadata {
-    return {
-      id: workspaceId,
-      name: "workspace-model-overrides",
-      projectName: "project-model-overrides",
-      projectPath,
-      runtimeConfig: { type: "local" },
-    };
-  }
-
   function providerOptionsFromStartStreamCall(startStreamArgs: unknown[]): Record<string, unknown> {
     const providerOptions = startStreamArgs[11];
     if (!providerOptions || typeof providerOptions !== "object" || Array.isArray(providerOptions)) {
@@ -2786,138 +2324,22 @@ describe("AIService.streamMessage model parameter overrides", () => {
     metadata: WorkspaceMetadata,
     options?: { routeProvider?: ProviderName }
   ): ModelParameterOverridesHarness {
-    const config = new Config(muxHomePath);
-    const historyService = new HistoryService(config);
-    const initStateManager = new InitStateManager(config);
-    const providerService = new ProviderService(config);
-    const service = new AIService(config, historyService, initStateManager, providerService);
-
+    const { config, historyService, initStateManager, service } = createBasicAIService(muxHomePath);
     const startStreamCalls: unknown[][] = [];
-
-    const resolvedAgentResult: Awaited<ReturnType<typeof agentResolution.resolveAgentForStream>> = {
-      success: true,
-      data: {
-        effectiveAgentId: "exec",
-        agentDefinition: {
-          id: "exec",
-          scope: "built-in",
-          frontmatter: { name: "Exec" },
-          body: "Exec agent body",
-        },
-        agentDiscoveryPath: metadata.projectPath,
-        isSubagentWorkspace: false,
-        agentInheritanceChain: [{ id: "exec", tools: { add: [".*"] } }],
-        agentIsPlanLike: false,
-        effectiveMode: "exec",
-        taskSettings: DEFAULT_TASK_SETTINGS,
-        taskDepth: 0,
-        shouldDisableTaskToolsForDepth: false,
-        effectiveToolPolicy: undefined,
-      },
-    };
-    spyOn(agentResolution, "resolveAgentForStream").mockResolvedValue(resolvedAgentResult);
-
-    spyOn(streamContextBuilder, "buildPlanInstructions").mockResolvedValue({
-      effectiveAdditionalInstructions: undefined,
-      planFilePath: path.join(metadata.projectPath, "plan.md"),
-      planContentForTransition: undefined,
-    });
-
-    spyOn(streamContextBuilder, "buildStreamSystemContext").mockResolvedValue({
-      agentSystemPrompt: "test-agent-prompt",
-      systemMessage: "test-system-message",
-      systemMessageTokens: 1,
-      agentDefinitions: undefined,
-      availableSkills: undefined,
-      ancestorPlanFilePaths: [],
-    });
-
-    spyOn(messagePipeline, "prepareMessagesForProvider").mockImplementation((args) => {
-      const preparedMessages = args.messagesWithSentinel as unknown as Awaited<
-        ReturnType<typeof messagePipeline.prepareMessagesForProvider>
-      >;
-      return Promise.resolve(preparedMessages);
-    });
-
-    spyOn(toolsModule, "getToolsForModel").mockResolvedValue({});
-    spyOn(systemMessageModule, "readToolInstructions").mockResolvedValue({});
-
-    const fakeModel = Object.create(null) as LanguageModel;
-    const providerModelFactory = Reflect.get(service, "providerModelFactory") as
-      | ProviderModelFactory
-      | undefined;
-    if (!providerModelFactory) {
-      throw new Error("Expected AIService.providerModelFactory in streamMessage test harness");
-    }
-
-    const resolveAndCreateModelResult: Awaited<
-      ReturnType<ProviderModelFactory["resolveAndCreateModel"]>
-    > = {
-      success: true,
-      data: {
-        model: fakeModel,
-        effectiveModelString: ANTHROPIC_MODEL,
-        canonicalModelString: ANTHROPIC_MODEL,
-        canonicalProviderName: "anthropic",
-        canonicalModelId: "claude-sonnet-4-5",
-        routedThroughGateway: false,
-        ...(options?.routeProvider != null ? { routeProvider: options.routeProvider } : {}),
-      },
-    };
-    spyOn(providerModelFactory, "resolveAndCreateModel").mockResolvedValue(
-      resolveAndCreateModelResult
-    );
-
-    spyOn(service, "getWorkspaceMetadata").mockResolvedValue({
-      success: true,
-      data: metadata,
-    });
-
-    spyOn(initStateManager, "waitForInit").mockResolvedValue(undefined);
-
-    spyOn(config, "findWorkspace").mockReturnValue({
-      workspacePath: metadata.projectPath,
-      projectPath: metadata.projectPath,
-    });
-
-    spyOn(historyService, "commitPartial").mockResolvedValue({
-      success: true,
-      data: undefined,
-    });
-
-    spyOn(historyService, "appendToHistory").mockImplementation((_workspaceId, message) => {
-      message.metadata = {
-        ...(message.metadata ?? {}),
-        historySequence: 9,
-      };
-
-      return Promise.resolve({ success: true, data: undefined });
-    });
-
-    const streamManager = (service as unknown as { streamManager: StreamManager }).streamManager;
-    const streamToken = "stream-token" as ReturnType<StreamManager["generateStreamToken"]>;
-
-    spyOn(streamManager, "generateStreamToken").mockReturnValue(streamToken);
-    spyOn(streamManager, "createTempDirForStream").mockResolvedValue(
-      path.join(metadata.projectPath, ".tmp-stream")
-    );
-    spyOn(streamManager, "isResponseIdLost").mockReturnValue(false);
-    spyOn(streamManager, "startStream").mockImplementation((...args: unknown[]) => {
-      startStreamCalls.push(args);
-
-      const startStreamResult: Awaited<ReturnType<StreamManager["startStream"]>> = {
-        success: true,
-        data: streamToken,
-      };
-
-      return Promise.resolve(startStreamResult);
-    });
-
-    return {
+    stubCommonStreamMessageDependencies({
       service,
       config,
+      historyService,
+      initStateManager,
+      metadata,
       startStreamCalls,
-    };
+      routeProvider: options?.routeProvider,
+      historySequence: 9,
+      effectiveModelString: ANTHROPIC_MODEL,
+      canonicalProviderName: "anthropic",
+      canonicalModelId: "claude-sonnet-4-5",
+    });
+    return { service, config, startStreamCalls };
   }
 
   async function streamAndGetStartStreamArgs(
@@ -2953,7 +2375,7 @@ describe("AIService.streamMessage model parameter overrides", () => {
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-model-overrides-standard";
-    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
     const harness = createHarness(muxHome.path, metadata);
 
     spyOn(harness.config, "loadProvidersConfig").mockReturnValue({
@@ -2980,7 +2402,7 @@ describe("AIService.streamMessage model parameter overrides", () => {
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-model-overrides-provider-extras";
-    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
     const harness = createHarness(muxHome.path, metadata);
 
     spyOn(harness.config, "loadProvidersConfig").mockReturnValue({
@@ -3014,7 +2436,7 @@ describe("AIService.streamMessage model parameter overrides", () => {
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-model-overrides-routed-openai";
-    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
     const harness = createHarness(muxHome.path, metadata, { routeProvider: "openrouter" });
 
     const providerModelFactory = Reflect.get(
@@ -3078,7 +2500,7 @@ describe("AIService.streamMessage model parameter overrides", () => {
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-model-overrides-empty";
-    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
     const harness = createHarness(muxHome.path, metadata);
 
     spyOn(harness.config, "loadProvidersConfig").mockReturnValue({});
@@ -3093,7 +2515,7 @@ describe("AIService.streamMessage model parameter overrides", () => {
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-model-overrides-conflict";
-    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
     const harness = createHarness(muxHome.path, metadata);
 
     spyOn(harness.config, "loadProvidersConfig").mockReturnValue({
@@ -3130,7 +2552,7 @@ describe("AIService.streamMessage model parameter overrides", () => {
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-model-overrides-nested";
-    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
     const harness = createHarness(muxHome.path, metadata);
 
     // Override to OpenRouter provider
@@ -3194,7 +2616,7 @@ describe("AIService.streamMessage model parameter overrides", () => {
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-model-overrides-nested-conflict";
-    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
     const harness = createHarness(muxHome.path, metadata);
 
     // Override to OpenRouter provider

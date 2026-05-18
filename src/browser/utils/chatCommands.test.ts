@@ -54,127 +54,54 @@ beforeEach(() => {
 });
 
 describe("parseRuntimeString", () => {
-  test("returns undefined for undefined runtime (default to worktree)", () => {
-    expect(parseRuntimeString(undefined)).toBeUndefined();
-  });
+  test.each([undefined, "worktree", "WORKTREE", " worktree "])(
+    "returns undefined for default/worktree runtime %#",
+    (runtime) => {
+      expect(parseRuntimeString(runtime)).toBeUndefined();
+    }
+  );
 
-  test("returns undefined for explicit 'worktree' runtime", () => {
-    expect(parseRuntimeString("worktree")).toBeUndefined();
-    expect(parseRuntimeString("WORKTREE")).toBeUndefined();
-    expect(parseRuntimeString(" worktree ")).toBeUndefined();
-  });
-
-  test("returns local config for explicit 'local' runtime", () => {
+  test.each(["local", "LOCAL", " local "])("returns local config for %p", (runtime) => {
     // "local" now returns project-dir runtime config (no srcBaseDir)
-    expect(parseRuntimeString("local")).toEqual({ type: "local" });
-    expect(parseRuntimeString("LOCAL")).toEqual({ type: "local" });
-    expect(parseRuntimeString(" local ")).toEqual({ type: "local" });
+    expect(parseRuntimeString(runtime)).toEqual({ type: "local" });
   });
 
-  test("parses valid SSH runtime", () => {
-    const result = parseRuntimeString("ssh user@host");
-    expect(result).toEqual({
-      type: "ssh",
-      host: "user@host",
-      srcBaseDir: "~/mux",
-    });
+  test.each([
+    ["ssh user@host", { type: "ssh", host: "user@host", srcBaseDir: "~/mux" }],
+    [
+      "ssh User@Host.Example.Com",
+      { type: "ssh", host: "User@Host.Example.Com", srcBaseDir: "~/mux" },
+    ],
+    ["  ssh   user@host  ", { type: "ssh", host: "user@host", srcBaseDir: "~/mux" }],
+    ["ssh hostname", { type: "ssh", host: "hostname", srcBaseDir: "~/mux" }],
+    ["ssh dev.example.com", { type: "ssh", host: "dev.example.com", srcBaseDir: "~/mux" }],
+    ["ssh root@hostname", { type: "ssh", host: "root@hostname", srcBaseDir: "~/mux" }],
+    ["docker ubuntu:22.04", { type: "docker", image: "ubuntu:22.04" }],
+    ["docker ghcr.io/myorg/dev:latest", { type: "docker", image: "ghcr.io/myorg/dev:latest" }],
+    [
+      "devcontainer .devcontainer/devcontainer.json",
+      { type: "devcontainer", configPath: ".devcontainer/devcontainer.json" },
+    ],
+  ] as const)("parses %p", (runtime, expected) => {
+    expect(parseRuntimeString(runtime)).toEqual(expected);
   });
 
-  test("preserves case in SSH host", () => {
-    const result = parseRuntimeString("ssh User@Host.Example.Com");
-    expect(result).toEqual({
-      type: "ssh",
-      host: "User@Host.Example.Com",
-      srcBaseDir: "~/mux",
-    });
-  });
-
-  test("handles extra whitespace", () => {
-    const result = parseRuntimeString("  ssh   user@host  ");
-    expect(result).toEqual({
-      type: "ssh",
-      host: "user@host",
-      srcBaseDir: "~/mux",
-    });
-  });
-
-  test("throws error for SSH without host", () => {
-    expect(() => parseRuntimeString("ssh")).toThrow("SSH runtime requires host");
-    expect(() => parseRuntimeString("ssh ")).toThrow("SSH runtime requires host");
-  });
-
-  test("accepts SSH with hostname only (user will be inferred)", () => {
-    const result = parseRuntimeString("ssh hostname");
-    // Uses tilde path - backend will resolve it via runtime.resolvePath()
-    expect(result).toEqual({
-      type: "ssh",
-      host: "hostname",
-      srcBaseDir: "~/mux",
-    });
-  });
-
-  test("accepts SSH with hostname.domain only", () => {
-    const result = parseRuntimeString("ssh dev.example.com");
-    // Uses tilde path - backend will resolve it via runtime.resolvePath()
-    expect(result).toEqual({
-      type: "ssh",
-      host: "dev.example.com",
-      srcBaseDir: "~/mux",
-    });
-  });
-
-  test("uses tilde path for root user too", () => {
-    const result = parseRuntimeString("ssh root@hostname");
-    // Backend will resolve ~ to /root for root user
-    expect(result).toEqual({
-      type: "ssh",
-      host: "root@hostname",
-      srcBaseDir: "~/mux",
-    });
-  });
-
-  test("parses docker runtime with image", () => {
-    const result = parseRuntimeString("docker ubuntu:22.04");
-    expect(result).toEqual({
-      type: "docker",
-      image: "ubuntu:22.04",
-    });
-  });
-
-  test("parses devcontainer runtime with config path", () => {
-    const result = parseRuntimeString("devcontainer .devcontainer/devcontainer.json");
-    expect(result).toEqual({
-      type: "devcontainer",
-      configPath: ".devcontainer/devcontainer.json",
-    });
-  });
-
-  test("throws error for devcontainer without config path", () => {
-    expect(() => parseRuntimeString("devcontainer")).toThrow(
-      "Dev container runtime requires a config path"
-    );
-  });
-
-  test("parses docker with registry image", () => {
-    const result = parseRuntimeString("docker ghcr.io/myorg/dev:latest");
-    expect(result).toEqual({
-      type: "docker",
-      image: "ghcr.io/myorg/dev:latest",
-    });
-  });
-
-  test("throws error for docker without image", () => {
-    expect(() => parseRuntimeString("docker")).toThrow("Docker runtime requires image");
-    expect(() => parseRuntimeString("docker ")).toThrow("Docker runtime requires image");
-  });
-
-  test("throws error for unknown runtime type", () => {
-    expect(() => parseRuntimeString("remote")).toThrow(
-      "Unknown runtime type: 'remote'. Use 'ssh <host>', 'docker <image>', 'devcontainer <config>', 'worktree', or 'local'"
-    );
-    expect(() => parseRuntimeString("kubernetes")).toThrow(
-      "Unknown runtime type: 'kubernetes'. Use 'ssh <host>', 'docker <image>', 'devcontainer <config>', 'worktree', or 'local'"
-    );
+  test.each([
+    ["ssh", "SSH runtime requires host"],
+    ["ssh ", "SSH runtime requires host"],
+    ["devcontainer", "Dev container runtime requires a config path"],
+    ["docker", "Docker runtime requires image"],
+    ["docker ", "Docker runtime requires image"],
+    [
+      "remote",
+      "Unknown runtime type: 'remote'. Use 'ssh <host>', 'docker <image>', 'devcontainer <config>', 'worktree', or 'local'",
+    ],
+    [
+      "kubernetes",
+      "Unknown runtime type: 'kubernetes'. Use 'ssh <host>', 'docker <image>', 'devcontainer <config>', 'worktree', or 'local'",
+    ],
+  ])("throws for invalid runtime %p", (runtime, message) => {
+    expect(() => parseRuntimeString(runtime)).toThrow(message);
   });
 });
 
@@ -183,20 +110,17 @@ function enableGoalsExperiment(): void {
   Object.defineProperty(window, "dispatchEvent", { value: mock(() => true), configurable: true });
 }
 
-function createGoalCommandContext(api: SlashCommandContext["api"]): SlashCommandContext {
+function createSlashCommandContext(
+  overrides: Partial<SlashCommandContext> & Pick<SlashCommandContext, "api">
+): SlashCommandContext {
   return {
-    api,
-    workspaceId: "goal-ws",
+    workspaceId: "test-ws",
     variant: "workspace",
     projectPath: "/tmp/project",
     setPreferredModel: mock(() => undefined),
     setVimEnabled: mock((cb: (prev: boolean) => boolean) => cb(false)),
     resetInputHeight: mock(() => undefined),
     onTruncateHistory: mock(() => Promise.resolve(undefined)),
-    onMessageSent: mock(() => undefined),
-    onCheckReviews: mock(() => undefined),
-    attachedReviewIds: [],
-    openSettings: mock(() => undefined),
     sendMessageOptions: {
       model: "anthropic:claude-sonnet-4-6",
       thinkingLevel: "off",
@@ -207,34 +131,29 @@ function createGoalCommandContext(api: SlashCommandContext["api"]): SlashCommand
     setToast: mock(() => undefined),
     setAttachments: mock(() => undefined),
     setSendingState: mock(() => undefined),
+    ...overrides,
   };
+}
+
+function createGoalCommandContext(api: SlashCommandContext["api"]): SlashCommandContext {
+  return createSlashCommandContext({
+    api,
+    workspaceId: "goal-ws",
+    onMessageSent: mock(() => undefined),
+    onCheckReviews: mock(() => undefined),
+    attachedReviewIds: [],
+    openSettings: mock(() => undefined),
+  });
 }
 
 describe("processSlashCommand - clear", () => {
   function createClearContext(overrides: Partial<SlashCommandContext> = {}): SlashCommandContext {
-    return {
+    return createSlashCommandContext({
       api: null,
-      workspaceId: "test-ws",
-      variant: "workspace",
-      projectPath: "/tmp/project",
-      setPreferredModel: mock(() => undefined),
-      setVimEnabled: mock((cb: (prev: boolean) => boolean) => cb(false)),
-      resetInputHeight: mock(() => undefined),
       onDetachAllReviews: mock(() => undefined),
       onResetContext: mock(() => Promise.resolve("reset" as const)),
-      onTruncateHistory: mock(() => Promise.resolve(undefined)),
-      sendMessageOptions: {
-        model: "anthropic:claude-sonnet-4-6",
-        thinkingLevel: "off",
-        toolPolicy: [],
-        agentId: "exec",
-      },
-      setInput: mock(() => undefined),
-      setToast: mock(() => undefined),
-      setAttachments: mock(() => undefined),
-      setSendingState: mock(() => undefined),
       ...overrides,
-    };
+    });
   }
 
   test("hard clear truncates history", async () => {
@@ -312,30 +231,14 @@ describe("processSlashCommand - clear", () => {
 });
 
 describe("processSlashCommand - model-set", () => {
-  const createModelSetContext = (api: SlashCommandContext["api"]): SlashCommandContext => ({
-    api,
-    workspaceId: "test-ws",
-    variant: "workspace",
-    projectPath: "/tmp/project",
-    setPreferredModel: mock(() => undefined),
-    setVimEnabled: mock((cb: (prev: boolean) => boolean) => cb(false)),
-    resetInputHeight: mock(() => undefined),
-    onTruncateHistory: mock(() => Promise.resolve(undefined)),
-    onMessageSent: mock(() => undefined),
-    onCheckReviews: mock(() => undefined),
-    attachedReviewIds: [],
-    openSettings: mock(() => undefined),
-    sendMessageOptions: {
-      model: "anthropic:claude-sonnet-4-6",
-      thinkingLevel: "off",
-      toolPolicy: [],
-      agentId: "exec",
-    },
-    setInput: mock(() => undefined),
-    setToast: mock(() => undefined),
-    setAttachments: mock(() => undefined),
-    setSendingState: mock(() => undefined),
-  });
+  const createModelSetContext = (api: SlashCommandContext["api"]): SlashCommandContext =>
+    createSlashCommandContext({
+      api,
+      onMessageSent: mock(() => undefined),
+      onCheckReviews: mock(() => undefined),
+      attachedReviewIds: [],
+      openSettings: mock(() => undefined),
+    });
 
   test("reports backend verification failure for custom providers when config loading fails", async () => {
     const getConfig = mock(() => Promise.reject(new Error("backend offline")));
@@ -1251,6 +1154,18 @@ describe("prepareCompactionMessage", () => {
     agentId: "exec",
   });
 
+  function expectCompactionMetadata(
+    metadata: ReturnType<typeof prepareCompactionMessage>["metadata"]
+  ): asserts metadata is Extract<
+    ReturnType<typeof prepareCompactionMessage>["metadata"],
+    { type: "compaction-request" }
+  > {
+    expect(metadata.type).toBe("compaction-request");
+    if (metadata.type !== "compaction-request") {
+      throw new Error("Expected compaction metadata");
+    }
+  }
+
   test("builds followUpContent from input", () => {
     const sendMessageOptions = createBaseOptions();
 
@@ -1262,10 +1177,7 @@ describe("prepareCompactionMessage", () => {
       sendMessageOptions,
     });
 
-    expect(metadata.type).toBe("compaction-request");
-    if (metadata.type !== "compaction-request") {
-      throw new Error("Expected compaction metadata");
-    }
+    expectCompactionMetadata(metadata);
 
     // followUpContent includes model/agentId from sendMessageOptions (captured for follow-up)
     expect(metadata.parsed.followUpContent?.text).toBe("Keep building");
@@ -1281,10 +1193,7 @@ describe("prepareCompactionMessage", () => {
       sendMessageOptions,
     });
 
-    expect(metadata.type).toBe("compaction-request");
-    if (metadata.type !== "compaction-request") {
-      throw new Error("Expected compaction metadata");
-    }
+    expectCompactionMetadata(metadata);
 
     expect(metadata.parsed.followUpContent).toBeUndefined();
   });
@@ -1304,9 +1213,7 @@ describe("prepareCompactionMessage", () => {
       sendMessageOptions,
     });
 
-    if (metadata.type !== "compaction-request") {
-      throw new Error("Expected compaction metadata");
-    }
+    expectCompactionMetadata(metadata);
 
     // Follow-up should use the user's original model/agentId
     expect(metadata.parsed.followUpContent?.model).toBe("openai:gpt-4o");
@@ -1327,9 +1234,7 @@ describe("prepareCompactionMessage", () => {
       sendMessageOptions,
     });
 
-    if (metadata.type !== "compaction-request") {
-      throw new Error("Expected compaction metadata");
-    }
+    expectCompactionMetadata(metadata);
 
     expect(metadata.parsed.followUpContent?.agentId).toBe("exec");
   });
@@ -1342,9 +1247,7 @@ describe("prepareCompactionMessage", () => {
       sendMessageOptions,
     });
 
-    if (metadata.type !== "compaction-request") {
-      throw new Error("Expected compaction metadata");
-    }
+    expectCompactionMetadata(metadata);
 
     expect(metadata.parsed.followUpContent).toBeDefined();
     expect(metadata.parsed.followUpContent?.text).toBe("Continue with this");
@@ -1360,9 +1263,7 @@ describe("prepareCompactionMessage", () => {
       sendMessageOptions,
     });
 
-    if (metadata.type !== "compaction-request") {
-      throw new Error("Expected compaction metadata");
-    }
+    expectCompactionMetadata(metadata);
 
     expect(metadata.rawCommand).toBe(
       "/compact -t 2048 -m anthropic:claude-3-5-haiku\nLine 1\nLine 2"
@@ -1379,9 +1280,7 @@ describe("prepareCompactionMessage", () => {
 
     expect(messageText).not.toContain("The user wants to continue with: Continue");
 
-    if (metadata.type !== "compaction-request") {
-      throw new Error("Expected compaction metadata");
-    }
+    expectCompactionMetadata(metadata);
 
     // Still queued for auto-send after compaction
     expect(metadata.parsed.followUpContent?.text).toBe("Continue");
@@ -1409,9 +1308,7 @@ describe("prepareCompactionMessage", () => {
       sendMessageOptions,
     });
 
-    if (metadata.type !== "compaction-request") {
-      throw new Error("Expected compaction metadata");
-    }
+    expectCompactionMetadata(metadata);
 
     expect(metadata.parsed.followUpContent).toBeDefined();
     expect(metadata.parsed.followUpContent?.fileParts).toHaveLength(1);
@@ -1435,9 +1332,7 @@ describe("prepareCompactionMessage", () => {
       sendMessageOptions,
     });
 
-    if (metadata.type !== "compaction-request") {
-      throw new Error("Expected compaction metadata");
-    }
+    expectCompactionMetadata(metadata);
 
     expect(metadata.parsed.followUpContent).toBeDefined();
     expect(metadata.parsed.followUpContent?.reviews).toHaveLength(1);
@@ -1462,9 +1357,7 @@ describe("prepareCompactionMessage", () => {
       sendMessageOptions,
     });
 
-    if (metadata.type !== "compaction-request") {
-      throw new Error("Expected compaction metadata");
-    }
+    expectCompactionMetadata(metadata);
 
     expect(metadata.parsed.followUpContent).toBeDefined();
     expect(metadata.parsed.followUpContent?.text).toBe("Also check the tests");
@@ -1488,9 +1381,7 @@ describe("prepareCompactionMessage", () => {
       sendMessageOptions,
     });
 
-    if (metadata.type !== "compaction-request") {
-      throw new Error("Expected compaction metadata");
-    }
+    expectCompactionMetadata(metadata);
 
     // Follow-up content should be built from sourceContent.
     expect(metadata.parsed.followUpContent).toBeDefined();
@@ -1527,9 +1418,7 @@ describe("prepareCompactionMessage", () => {
     // because there's actual work to continue with (the reviews)
     expect(messageText).toContain("The user wants to continue with: Continue");
 
-    if (metadata.type !== "compaction-request") {
-      throw new Error("Expected compaction metadata");
-    }
+    expectCompactionMetadata(metadata);
 
     expect(metadata.parsed.followUpContent?.reviews).toHaveLength(1);
   });

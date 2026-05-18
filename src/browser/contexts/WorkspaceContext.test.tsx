@@ -49,6 +49,20 @@ const createWorkspaceMetadata = (
   ...overrides,
 });
 
+const createProjectWorkspaceMetadata = (
+  id: string,
+  projectPath: string,
+  overrides: Partial<FrontendWorkspaceMetadata> = {}
+): FrontendWorkspaceMetadata =>
+  createWorkspaceMetadata({
+    id,
+    projectPath,
+    projectName: projectPath.split("/").pop() ?? projectPath,
+    name: "main",
+    namedWorkspacePath: `${projectPath}-main`,
+    ...overrides,
+  });
+
 type NavigationType = "navigate" | "reload" | "back_forward" | "prerender";
 
 describe("WorkspaceContext", () => {
@@ -68,13 +82,7 @@ describe("WorkspaceContext", () => {
 
   test("syncs workspace store subscriptions when metadata loads", async () => {
     const initialWorkspaces: FrontendWorkspaceMetadata[] = [
-      createWorkspaceMetadata({
-        id: "ws-sync-load",
-        projectPath: "/alpha",
-        projectName: "alpha",
-        name: "main",
-        namedWorkspacePath: "/alpha-main",
-      }),
+      createProjectWorkspaceMetadata("ws-sync-load", "/alpha"),
     ];
 
     const { workspace: workspaceApi } = createMockAPI({
@@ -121,17 +129,8 @@ describe("WorkspaceContext", () => {
     const childId = "ws-child";
 
     const workspaces: FrontendWorkspaceMetadata[] = [
-      createWorkspaceMetadata({
-        id: parentId,
-        projectPath: "/alpha",
-        projectName: "alpha",
-        name: "main",
-        namedWorkspacePath: "/alpha-main",
-      }),
-      createWorkspaceMetadata({
-        id: childId,
-        projectPath: "/alpha",
-        projectName: "alpha",
+      createProjectWorkspaceMetadata(parentId, "/alpha"),
+      createProjectWorkspaceMetadata(childId, "/alpha", {
         name: "agent_explore_ws-child",
         namedWorkspacePath: "/alpha-agent",
         parentWorkspaceId: parentId,
@@ -186,13 +185,7 @@ describe("WorkspaceContext", () => {
     const projectPath = "/alpha";
 
     const workspaces: FrontendWorkspaceMetadata[] = [
-      createWorkspaceMetadata({
-        id: workspaceId,
-        projectPath,
-        projectName: "alpha",
-        name: "main",
-        namedWorkspacePath: "/alpha-main",
-      }),
+      createProjectWorkspaceMetadata(workspaceId, projectPath),
     ];
 
     let emitArchive:
@@ -232,12 +225,7 @@ describe("WorkspaceContext", () => {
     act(() => {
       emitArchive?.({
         workspaceId,
-        metadata: createWorkspaceMetadata({
-          id: workspaceId,
-          projectPath,
-          projectName: "alpha",
-          name: "main",
-          namedWorkspacePath: "/alpha-main",
+        metadata: createProjectWorkspaceMetadata(workspaceId, projectPath, {
           archivedAt: "2025-02-01T00:00:00.000Z",
         }),
       });
@@ -254,20 +242,8 @@ describe("WorkspaceContext", () => {
     const nextId = "ws-keep";
 
     const workspaces: FrontendWorkspaceMetadata[] = [
-      createWorkspaceMetadata({
-        id: archivedId,
-        projectPath: "/alpha",
-        projectName: "alpha",
-        name: "main",
-        namedWorkspacePath: "/alpha-main",
-      }),
-      createWorkspaceMetadata({
-        id: nextId,
-        projectPath: "/beta",
-        projectName: "beta",
-        name: "main",
-        namedWorkspacePath: "/beta-main",
-      }),
+      createProjectWorkspaceMetadata(archivedId, "/alpha"),
+      createProjectWorkspaceMetadata(nextId, "/beta"),
     ];
 
     let emitArchive:
@@ -341,17 +317,8 @@ describe("WorkspaceContext", () => {
     const childId = "ws-child";
 
     const workspaces: FrontendWorkspaceMetadata[] = [
-      createWorkspaceMetadata({
-        id: parentId,
-        projectPath: "/alpha",
-        projectName: "alpha",
-        name: "main",
-        namedWorkspacePath: "/alpha-main",
-      }),
-      createWorkspaceMetadata({
-        id: childId,
-        projectPath: "/alpha",
-        projectName: "alpha",
+      createProjectWorkspaceMetadata(parentId, "/alpha"),
+      createProjectWorkspaceMetadata(childId, "/alpha", {
         name: "agent_explore_ws-child",
         namedWorkspacePath: "/alpha-agent",
         parentWorkspaceId: parentId,
@@ -565,13 +532,7 @@ describe("WorkspaceContext", () => {
 
   test("loads workspace metadata on mount", async () => {
     const initialWorkspaces: FrontendWorkspaceMetadata[] = [
-      createWorkspaceMetadata({
-        id: "ws-1",
-        projectPath: "/alpha",
-        projectName: "alpha",
-        name: "main",
-        namedWorkspacePath: "/alpha-main",
-      }),
+      createProjectWorkspaceMetadata("ws-1", "/alpha"),
     ];
 
     createMockAPI({
@@ -655,15 +616,7 @@ describe("WorkspaceContext", () => {
   });
 
   test("removeWorkspace removes workspace and clears selection if active", async () => {
-    const initialWorkspaces = [
-      createWorkspaceMetadata({
-        id: "ws-remove",
-        projectPath: "/remove",
-        projectName: "remove",
-        name: "main",
-        namedWorkspacePath: "/remove-main",
-      }),
-    ];
+    const initialWorkspaces = [createProjectWorkspaceMetadata("ws-remove", "/remove")];
 
     createMockAPI({
       workspace: {
@@ -949,16 +902,7 @@ describe("WorkspaceContext", () => {
   test("beginWorkspaceCreation clears selection and tracks pending state", async () => {
     createMockAPI({
       workspace: {
-        list: () =>
-          Promise.resolve([
-            createWorkspaceMetadata({
-              id: "ws-existing",
-              projectPath: "/existing",
-              projectName: "existing",
-              name: "main",
-              namedWorkspacePath: "/existing-main",
-            }),
-          ]),
+        list: () => Promise.resolve([createProjectWorkspaceMetadata("ws-existing", "/existing")]),
       },
       localStorage: {
         [LAUNCH_BEHAVIOR_KEY]: JSON.stringify("last-workspace"),
@@ -1012,16 +956,7 @@ describe("WorkspaceContext", () => {
   test("root startup opens the recent project page instead of restoring selectedWorkspace localStorage", async () => {
     createMockAPI({
       workspace: {
-        list: () =>
-          Promise.resolve([
-            createWorkspaceMetadata({
-              id: "ws-restore",
-              projectPath: "/restore",
-              projectName: "restore",
-              name: "main",
-              namedWorkspacePath: "/restore-main",
-            }),
-          ]),
+        list: () => Promise.resolve([createProjectWorkspaceMetadata("ws-restore", "/restore")]),
       },
       projects: {
         list: () => Promise.resolve([["/restore", { workspaces: [] }]]),
@@ -1050,16 +985,7 @@ describe("WorkspaceContext", () => {
   test("browser reload restores the open workspace instead of reopening project creation", async () => {
     createMockAPI({
       workspace: {
-        list: () =>
-          Promise.resolve([
-            createWorkspaceMetadata({
-              id: "ws-open-chat",
-              projectPath: "/existing",
-              projectName: "existing",
-              name: "main",
-              namedWorkspacePath: "/existing-main",
-            }),
-          ]),
+        list: () => Promise.resolve([createProjectWorkspaceMetadata("ws-open-chat", "/existing")]),
       },
       localStorage: {
         [LAUNCH_BEHAVIOR_KEY]: JSON.stringify("dashboard"),
@@ -1150,15 +1076,7 @@ describe("WorkspaceContext", () => {
     createMockAPI({
       workspace: {
         list: () =>
-          Promise.resolve([
-            createWorkspaceMetadata({
-              id: "ws-existing",
-              projectPath: "/existing-project",
-              projectName: "existing-project",
-              name: "main",
-              namedWorkspacePath: "/existing-project-main",
-            }),
-          ]),
+          Promise.resolve([createProjectWorkspaceMetadata("ws-existing", "/existing-project")]),
       },
       projects: {
         list: () => Promise.resolve([]),
@@ -1186,13 +1104,7 @@ describe("WorkspaceContext", () => {
       workspace: {
         list: () =>
           Promise.resolve([
-            createWorkspaceMetadata({
-              id: "system-workspace",
-              projectPath: "/system/internal-project",
-              projectName: "internal-project",
-              name: "main",
-              namedWorkspacePath: "/system/internal-project-main",
-            }),
+            createProjectWorkspaceMetadata("system-workspace", "/system/internal-project"),
           ]),
       },
       projects: {
@@ -1222,15 +1134,7 @@ describe("WorkspaceContext", () => {
     createMockAPI({
       workspace: {
         list: () =>
-          Promise.resolve([
-            createWorkspaceMetadata({
-              id: "ws-existing",
-              projectPath: "/existing-project",
-              projectName: "existing-project",
-              name: "main",
-              namedWorkspacePath: "/existing-project-main",
-            }),
-          ]),
+          Promise.resolve([createProjectWorkspaceMetadata("ws-existing", "/existing-project")]),
       },
       projects: {
         list: () => Promise.resolve([]),
@@ -1256,15 +1160,7 @@ describe("WorkspaceContext", () => {
     createMockAPI({
       workspace: {
         list: () =>
-          Promise.resolve([
-            createWorkspaceMetadata({
-              id: "ws-existing",
-              projectPath: "/existing-project",
-              projectName: "existing-project",
-              name: "main",
-              namedWorkspacePath: "/existing-project-main",
-            }),
-          ]),
+          Promise.resolve([createProjectWorkspaceMetadata("ws-existing", "/existing-project")]),
       },
       projects: {
         list: () => Promise.resolve([["/existing-project", { workspaces: [] }]]),
@@ -1291,15 +1187,7 @@ describe("WorkspaceContext", () => {
     createMockAPI({
       workspace: {
         list: () =>
-          Promise.resolve([
-            createWorkspaceMetadata({
-              id: "ws-existing",
-              projectPath: "/existing-project",
-              projectName: "existing-project",
-              name: "main",
-              namedWorkspacePath: "/existing-project-main",
-            }),
-          ]),
+          Promise.resolve([createProjectWorkspaceMetadata("ws-existing", "/existing-project")]),
       },
       projects: {
         list: () => Promise.resolve([]),
@@ -1326,15 +1214,7 @@ describe("WorkspaceContext", () => {
     const { projects: projectsApi } = createMockAPI({
       workspace: {
         list: () =>
-          Promise.resolve([
-            createWorkspaceMetadata({
-              id: "ws-existing",
-              projectPath: "/existing-project",
-              projectName: "existing-project",
-              name: "main",
-              namedWorkspacePath: "/existing-project-main",
-            }),
-          ]),
+          Promise.resolve([createProjectWorkspaceMetadata("ws-existing", "/existing-project")]),
       },
       projects: {
         list: () => Promise.resolve([]),
@@ -1371,20 +1251,8 @@ describe("WorkspaceContext", () => {
       workspace: {
         list: () =>
           Promise.resolve([
-            createWorkspaceMetadata({
-              id: "ws-system",
-              projectPath: "/system/internal-project",
-              projectName: "internal-project",
-              name: "main",
-              namedWorkspacePath: "/system/internal-project-main",
-            }),
-            createWorkspaceMetadata({
-              id: "ws-user",
-              projectPath: "/existing-project",
-              projectName: "existing-project",
-              name: "main",
-              namedWorkspacePath: "/existing-project-main",
-            }),
+            createProjectWorkspaceMetadata("ws-system", "/system/internal-project"),
+            createProjectWorkspaceMetadata("ws-user", "/existing-project"),
           ]),
       },
       projects: {
@@ -1453,20 +1321,8 @@ describe("WorkspaceContext", () => {
       workspace: {
         list: () =>
           Promise.resolve([
-            createWorkspaceMetadata({
-              id: "ws-existing",
-              projectPath: "/existing",
-              projectName: "existing",
-              name: "main",
-              namedWorkspacePath: "/existing-main",
-            }),
-            createWorkspaceMetadata({
-              id: "ws-launch",
-              projectPath: "/launch-project",
-              projectName: "launch-project",
-              name: "main",
-              namedWorkspacePath: "/launch-project-main",
-            }),
+            createProjectWorkspaceMetadata("ws-existing", "/existing"),
+            createProjectWorkspaceMetadata("ws-launch", "/launch-project"),
           ]),
       },
       projects: {
@@ -1501,15 +1357,7 @@ describe("WorkspaceContext", () => {
       resolveLaunchProject = resolve;
     });
 
-    const initialWorkspaces = [
-      createWorkspaceMetadata({
-        id: "ws-launch",
-        projectPath: "/launch-project",
-        projectName: "launch-project",
-        name: "main",
-        namedWorkspacePath: "/launch-project-main",
-      }),
-    ];
+    const initialWorkspaces = [createProjectWorkspaceMetadata("ws-launch", "/launch-project")];
 
     createMockAPI({
       workspace: {
@@ -1612,28 +1460,8 @@ describe("WorkspaceContext", () => {
 });
 
 async function setup() {
-  const contextRef = { current: null as WorkspaceContext | null };
-  function ContextCapture() {
-    contextRef.current = useWorkspaceContext();
-    return null;
-  }
-
-  // WorkspaceProvider needs RouterProvider and ProjectProvider
-  render(
-    <RouterProvider>
-      <ProjectProvider>
-        <WorkspaceProvider>
-          <ContextCapture />
-        </WorkspaceProvider>
-      </ProjectProvider>
-    </RouterProvider>
-  );
-
-  // Inject client immediately to handle race conditions where effects run before store update
-  getWorkspaceStoreRaw().setClient(currentClientMock as APIClient);
-
-  await waitFor(() => expect(contextRef.current).toBeTruthy());
-  return () => contextRef.current!;
+  const contexts = await setupWithProjectContext();
+  return contexts.workspace;
 }
 
 async function setupWithProjectContext() {
@@ -1656,15 +1484,12 @@ async function setupWithProjectContext() {
     </RouterProvider>
   );
 
+  // Inject client immediately to handle race conditions where effects run before store update.
   getWorkspaceStoreRaw().setClient(currentClientMock as APIClient);
-
   await waitFor(() => expect(workspaceRef.current).toBeTruthy());
   await waitFor(() => expect(projectRef.current).toBeTruthy());
 
-  return {
-    workspace: () => workspaceRef.current!,
-    project: () => projectRef.current!,
-  };
+  return { workspace: () => workspaceRef.current!, project: () => projectRef.current! };
 }
 
 interface MockAPIOptions {

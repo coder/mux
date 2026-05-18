@@ -3,79 +3,24 @@ import os from "node:os";
 import * as path from "node:path";
 
 import { describe, expect, it, spyOn } from "bun:test";
-import type { ToolExecutionOptions } from "ai";
 
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
-const GLOBAL_WORKSPACE_ID = "workspace-global";
 import type { MuxToolScope } from "@/common/types/toolScope";
 import type { AgentSkillListToolResult } from "@/common/types/tools";
-import { LocalRuntime } from "@/node/runtime/LocalRuntime";
-import { RemoteRuntime, type SpawnResult } from "@/node/runtime/RemoteRuntime";
 import { createAgentSkillListTool } from "./agent_skill_list";
 import { MAX_FILE_SIZE } from "./fileCommon";
-import { createTestToolConfig, TestTempDir } from "./testHelpers";
-
-const mockToolCallOptions: ToolExecutionOptions = {
-  toolCallId: "test-call-id",
-  messages: [],
-};
-
-async function writeSkill(
-  skillsRoot: string,
-  name: string,
-  options?: { description?: string; advertise?: boolean }
-): Promise<void> {
-  const skillDir = path.join(skillsRoot, name);
-  await fs.mkdir(skillDir, { recursive: true });
-
-  const advertiseLine =
-    options?.advertise === undefined ? "" : `advertise: ${options.advertise ? "true" : "false"}\n`;
-
-  await fs.writeFile(
-    path.join(skillDir, "SKILL.md"),
-    `---\nname: ${name}\ndescription: ${options?.description ?? `description for ${name}`}\n${advertiseLine}---\nBody\n`,
-    "utf-8"
-  );
-}
-
-async function createWorkspaceSessionDir(muxHome: string, workspaceId: string): Promise<string> {
-  const workspaceSessionDir = path.join(muxHome, "sessions", workspaceId);
-  await fs.mkdir(workspaceSessionDir, { recursive: true });
-  return workspaceSessionDir;
-}
-
-async function writeGlobalSkill(
-  muxHome: string,
-  name: string,
-  options?: { description?: string; advertise?: boolean }
-): Promise<void> {
-  const skillDir = path.join(muxHome, "skills", name);
-  await fs.mkdir(skillDir, { recursive: true });
-
-  const advertiseLine =
-    options?.advertise === undefined ? "" : `advertise: ${options.advertise ? "true" : "false"}\n`;
-
-  await fs.writeFile(
-    path.join(skillDir, "SKILL.md"),
-    `---\nname: ${name}\ndescription: ${options?.description ?? `description for ${name}`}\n${advertiseLine}---\nBody\n`,
-    "utf-8"
-  );
-}
-
-async function withMuxRoot(muxRoot: string, callback: () => Promise<void>): Promise<void> {
-  const previousMuxRoot = process.env.MUX_ROOT;
-  process.env.MUX_ROOT = muxRoot;
-
-  try {
-    await callback();
-  } finally {
-    if (previousMuxRoot === undefined) {
-      delete process.env.MUX_ROOT;
-    } else {
-      process.env.MUX_ROOT = previousMuxRoot;
-    }
-  }
-}
+import {
+  createTestToolConfig,
+  createWorkspaceSessionDir,
+  mockToolCallOptions,
+  RemotePathMappedRuntime,
+  TEST_GLOBAL_WORKSPACE_ID as GLOBAL_WORKSPACE_ID,
+  TestTempDir,
+  TrueRemotePathMappedRuntime,
+  withMuxRoot,
+  writeGlobalSkill,
+  writeSkill,
+} from "./testHelpers";
 
 async function withHomeDir(homeDir: string, callback: () => Promise<void>): Promise<void> {
   const previousHome = process.env.HOME;
@@ -109,226 +54,6 @@ function getSkill(skills: AgentSkillDescriptor[], name: string): AgentSkillDescr
   const skill = skills.find((candidate) => candidate.name === name);
   expect(skill).toBeDefined();
   return skill!;
-}
-
-class RemotePathMappedRuntime extends LocalRuntime {
-  private readonly localBase: string;
-  private readonly remoteBase: string;
-  private readonly muxHomeOverride: string | null;
-  private readonly resolveToRemotePath: boolean;
-  public resolvePathCallCount = 0;
-
-  constructor(
-    localBase: string,
-    remoteBase: string,
-    options?: { muxHome?: string; resolveToRemotePath?: boolean }
-  ) {
-    super(localBase);
-    this.localBase = path.resolve(localBase);
-    this.remoteBase = remoteBase === "/" ? remoteBase : remoteBase.replace(/\/+$/u, "");
-    this.muxHomeOverride = options?.muxHome ?? null;
-    this.resolveToRemotePath = options?.resolveToRemotePath ?? true;
-  }
-
-  protected toLocalPath(runtimePath: string): string {
-    const normalizedRuntimePath = runtimePath.replaceAll("\\", "/");
-
-    if (normalizedRuntimePath === this.remoteBase) {
-      return this.localBase;
-    }
-
-    if (normalizedRuntimePath.startsWith(`${this.remoteBase}/`)) {
-      const suffix = normalizedRuntimePath.slice(this.remoteBase.length + 1);
-      return path.join(this.localBase, ...suffix.split("/"));
-    }
-
-    return runtimePath;
-  }
-
-  private toRemotePath(localPath: string): string {
-    const resolvedLocalPath = path.resolve(localPath);
-
-    if (resolvedLocalPath === this.localBase) {
-      return this.remoteBase;
-    }
-
-    const localPrefix = `${this.localBase}${path.sep}`;
-    if (resolvedLocalPath.startsWith(localPrefix)) {
-      const suffix = resolvedLocalPath.slice(localPrefix.length).split(path.sep).join("/");
-      return `${this.remoteBase}/${suffix}`;
-    }
-
-    return localPath.replaceAll("\\", "/");
-  }
-
-  override getWorkspacePath(projectPath: string, workspaceName: string): string {
-    return path.posix.join(this.remoteBase, path.basename(projectPath), workspaceName);
-  }
-
-  override getMuxHome(): string {
-    return this.muxHomeOverride ?? super.getMuxHome();
-  }
-
-  override normalizePath(targetPath: string, basePath: string): string {
-    const normalizedBasePath = this.toRemotePath(basePath);
-    return path.posix.resolve(normalizedBasePath, targetPath.replaceAll("\\", "/"));
-  }
-
-  override async resolvePath(filePath: string): Promise<string> {
-    this.resolvePathCallCount += 1;
-    const resolvedLocalPath = await super.resolvePath(this.toLocalPath(filePath));
-    if (!this.resolveToRemotePath) {
-      return resolvedLocalPath;
-    }
-    return this.toRemotePath(resolvedLocalPath);
-  }
-
-  override exec(
-    command: string,
-    options: Parameters<LocalRuntime["exec"]>[1]
-  ): ReturnType<LocalRuntime["exec"]> {
-    const translatedCommand = command
-      .split(this.remoteBase)
-      .join(this.localBase.replaceAll("\\", "/"));
-
-    return super.exec(translatedCommand, {
-      ...options,
-      cwd: this.toLocalPath(options.cwd),
-    });
-  }
-
-  override stat(filePath: string, abortSignal?: AbortSignal): ReturnType<LocalRuntime["stat"]> {
-    return super.stat(this.toLocalPath(filePath), abortSignal);
-  }
-
-  override readFile(
-    filePath: string,
-    abortSignal?: AbortSignal
-  ): ReturnType<LocalRuntime["readFile"]> {
-    return super.readFile(this.toLocalPath(filePath), abortSignal);
-  }
-
-  override writeFile(
-    filePath: string,
-    abortSignal?: AbortSignal
-  ): ReturnType<LocalRuntime["writeFile"]> {
-    return super.writeFile(this.toLocalPath(filePath), abortSignal);
-  }
-
-  override ensureDir(dirPath: string): ReturnType<LocalRuntime["ensureDir"]> {
-    return super.ensureDir(this.toLocalPath(dirPath));
-  }
-}
-
-/**
- * RemoteRuntime-based test helper for tests that need instanceof RemoteRuntime to be true.
- * The existing RemotePathMappedRuntime above extends LocalRuntime (for the older split-root tests).
- */
-class TrueRemotePathMappedRuntime extends RemoteRuntime {
-  private readonly localRuntime: LocalRuntime;
-  private readonly localBase: string;
-  private readonly remoteBase: string;
-
-  constructor(localBase: string, remoteBase: string) {
-    super();
-    this.localRuntime = new LocalRuntime(localBase);
-    this.localBase = path.resolve(localBase);
-    this.remoteBase = remoteBase === "/" ? remoteBase : remoteBase.replace(/\/+$/u, "");
-  }
-
-  protected readonly commandPrefix = "TestRemoteRuntime";
-
-  protected spawnRemoteProcess(): Promise<SpawnResult> {
-    throw new Error("spawnRemoteProcess should not be called");
-  }
-
-  protected getBasePath(): string {
-    return this.remoteBase;
-  }
-
-  protected quoteForRemote(targetPath: string): string {
-    return `'${targetPath.replaceAll("'", "'\\''")}'`;
-  }
-
-  protected cdCommand(cwd: string): string {
-    return `cd ${this.quoteForRemote(cwd)}`;
-  }
-
-  private toLocalPath(runtimePath: string): string {
-    const n = runtimePath.replaceAll("\\", "/");
-    if (n === "/" || n === this.remoteBase) return this.localBase;
-    if (n.startsWith(`${this.remoteBase}/`)) {
-      return path.join(this.localBase, ...n.slice(this.remoteBase.length + 1).split("/"));
-    }
-    return runtimePath;
-  }
-
-  private toRemotePath(localPath: string): string {
-    const r = path.resolve(localPath);
-    if (r === this.localBase) return this.remoteBase;
-    const pfx = `${this.localBase}${path.sep}`;
-    if (r.startsWith(pfx))
-      return `${this.remoteBase}/${r.slice(pfx.length).split(path.sep).join("/")}`;
-    return localPath.replaceAll("\\", "/");
-  }
-
-  override exec(
-    command: string,
-    options: Parameters<LocalRuntime["exec"]>[1]
-  ): ReturnType<LocalRuntime["exec"]> {
-    return this.localRuntime.exec(
-      command.split(this.remoteBase).join(this.localBase.replaceAll("\\", "/")),
-      { ...options, cwd: this.toLocalPath(options.cwd) }
-    );
-  }
-
-  override normalizePath(targetPath: string, basePath: string): string {
-    return path.posix.resolve(this.toRemotePath(basePath), targetPath.replaceAll("\\", "/"));
-  }
-
-  override async resolvePath(filePath: string): Promise<string> {
-    return this.toRemotePath(await this.localRuntime.resolvePath(this.toLocalPath(filePath)));
-  }
-
-  override getWorkspacePath(projectPath: string, workspaceName: string): string {
-    return path.posix.join(this.remoteBase, path.basename(projectPath), workspaceName);
-  }
-
-  override stat(fp: string, s?: AbortSignal): ReturnType<LocalRuntime["stat"]> {
-    return this.localRuntime.stat(this.toLocalPath(fp), s);
-  }
-
-  override readFile(fp: string, s?: AbortSignal): ReturnType<LocalRuntime["readFile"]> {
-    return this.localRuntime.readFile(this.toLocalPath(fp), s);
-  }
-
-  override writeFile(fp: string, s?: AbortSignal): ReturnType<LocalRuntime["writeFile"]> {
-    return this.localRuntime.writeFile(this.toLocalPath(fp), s);
-  }
-
-  override ensureDir(dp: string): ReturnType<LocalRuntime["ensureDir"]> {
-    return this.localRuntime.ensureDir(this.toLocalPath(dp));
-  }
-
-  override createWorkspace(_p: Parameters<LocalRuntime["createWorkspace"]>[0]) {
-    return Promise.resolve({ success: false as const, error: "not implemented" });
-  }
-
-  override initWorkspace(_p: Parameters<LocalRuntime["initWorkspace"]>[0]) {
-    return Promise.resolve({ success: false as const, error: "not implemented" });
-  }
-
-  override renameWorkspace(_a: string, _b: string, _c: string) {
-    return Promise.resolve({ success: false as const, error: "not implemented" });
-  }
-
-  override deleteWorkspace(_a: string, _b: string, _c: boolean) {
-    return Promise.resolve({ success: false as const, error: "not implemented" });
-  }
-
-  override forkWorkspace(_p: Parameters<LocalRuntime["forkWorkspace"]>[0]) {
-    return Promise.resolve({ success: false as const, error: "not implemented" });
-  }
 }
 
 describe("agent_skill_list", () => {

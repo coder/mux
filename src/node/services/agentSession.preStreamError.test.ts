@@ -15,6 +15,7 @@ import {
   type WorkspaceChatMessage,
 } from "@/common/orpc/types";
 import { AgentSession } from "./agentSession";
+import { createAgentSessionHarness } from "./agentSession.testHarness";
 import { createTestHistoryService } from "./testHistoryService";
 
 interface ReplayHarnessStreamInfo {
@@ -28,45 +29,24 @@ async function createReplaySessionHarness(
   workspaceId: string,
   options?: { streamInfo?: ReplayHarnessStreamInfo }
 ) {
-  const { historyService, config, cleanup } = await createTestHistoryService();
   const streamInfo = options?.streamInfo;
-
-  const aiEmitter = new EventEmitter();
   const replayStream = mock((_workspaceId: string, _opts?: { afterTimestamp?: number }) =>
     Promise.resolve()
   );
-  const aiService = Object.assign(aiEmitter, {
-    isStreaming: mock((_workspaceId: string) => false),
-    stopStream: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
-    streamMessage: mock((_history: MuxMessage[]) =>
-      Promise.resolve(Err({ type: "unknown", raw: "unused" }))
-    ) as unknown as (...args: Parameters<AIService["streamMessage"]>) => Promise<unknown>,
-    getStreamInfo: mock((_workspaceId: string) => streamInfo),
-    replayStream,
-  }) as unknown as AIService;
-
   const replayInit = mock((_workspaceId: string) => Promise.resolve());
-  const initStateManager = Object.assign(new EventEmitter(), {
-    replayInit,
-  }) as unknown as InitStateManager;
-
-  const backgroundProcessManager = {
-    cleanup: mock((_workspaceId: string) => Promise.resolve()),
-    setMessageQueued: mock((_workspaceId: string, _queued: boolean) => {
-      void _queued;
-    }),
-  } as unknown as BackgroundProcessManager;
-
-  const session = new AgentSession({
+  const harness = await createAgentSessionHarness({
     workspaceId,
-    config,
-    historyService,
-    aiService,
-    initStateManager,
-    backgroundProcessManager,
+    aiServiceOverrides: {
+      streamMessage: mock((_history: MuxMessage[]) =>
+        Promise.resolve(Err({ type: "unknown", raw: "unused" }))
+      ) as unknown as AIService["streamMessage"],
+      getStreamInfo: mock((_workspaceId: string) => streamInfo) as AIService["getStreamInfo"],
+      replayStream,
+    },
+    initStateManagerOverrides: { replayInit },
   });
 
-  return { session, cleanup, replayInit, replayStream, historyService, aiEmitter };
+  return { ...harness, replayInit, replayStream };
 }
 describe("AgentSession pre-stream errors", () => {
   let historyCleanup: (() => Promise<void>) | undefined;
@@ -77,10 +57,6 @@ describe("AgentSession pre-stream errors", () => {
   it("emits stream-error when stream startup fails", async () => {
     const workspaceId = "ws-test";
 
-    const { historyService, config, cleanup } = await createTestHistoryService();
-    historyCleanup = cleanup;
-
-    const aiEmitter = new EventEmitter();
     const streamMessage = mock((_history: MuxMessage[]) => {
       return Promise.resolve(
         Err({
@@ -89,36 +65,14 @@ describe("AgentSession pre-stream errors", () => {
         })
       );
     });
-    const aiService = Object.assign(aiEmitter, {
-      isStreaming: mock((_workspaceId: string) => false),
-      stopStream: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
-      streamMessage: streamMessage as unknown as (
-        ...args: Parameters<AIService["streamMessage"]>
-      ) => Promise<Result<void, SendMessageError>>,
-    }) as unknown as AIService;
-
-    const initStateManager = new EventEmitter() as unknown as InitStateManager;
-
-    const backgroundProcessManager = {
-      cleanup: mock((_workspaceId: string) => Promise.resolve()),
-      setMessageQueued: mock((_workspaceId: string, _queued: boolean) => {
-        void _queued;
-      }),
-    } as unknown as BackgroundProcessManager;
-
-    const session = new AgentSession({
+    const { session, cleanup, events } = await createAgentSessionHarness({
       workspaceId,
-      config,
-      historyService,
-      aiService,
-      initStateManager,
-      backgroundProcessManager,
+      aiServiceOverrides: {
+        streamMessage: streamMessage as unknown as AIService["streamMessage"],
+      },
+      captureEvents: true,
     });
-
-    const events: WorkspaceChatMessage[] = [];
-    session.onChatEvent((event) => {
-      events.push(event.message);
-    });
+    historyCleanup = cleanup;
 
     const result = await session.sendMessage("hello", {
       model: "anthropic:claude-3-5-sonnet-latest",
@@ -141,16 +95,6 @@ describe("AgentSession pre-stream errors", () => {
   it("acknowledges edited sends immediately and surfaces later startup failure via stream-error", async () => {
     const workspaceId = "ws-edit-startup-failed";
 
-    const { historyService, config, cleanup } = await createTestHistoryService();
-    historyCleanup = cleanup;
-
-    const originalMessageId = "editable-user-message";
-    await historyService.appendToHistory(
-      workspaceId,
-      createMuxMessage(originalMessageId, "user", "original", { historySequence: 0 })
-    );
-
-    const aiEmitter = new EventEmitter();
     const streamMessage = mock((_history: MuxMessage[]) => {
       return Promise.resolve(
         Err({
@@ -159,36 +103,20 @@ describe("AgentSession pre-stream errors", () => {
         })
       );
     });
-    const aiService = Object.assign(aiEmitter, {
-      isStreaming: mock((_workspaceId: string) => false),
-      stopStream: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
-      streamMessage: streamMessage as unknown as (
-        ...args: Parameters<AIService["streamMessage"]>
-      ) => Promise<Result<void, SendMessageError>>,
-    }) as unknown as AIService;
-
-    const initStateManager = new EventEmitter() as unknown as InitStateManager;
-
-    const backgroundProcessManager = {
-      cleanup: mock((_workspaceId: string) => Promise.resolve()),
-      setMessageQueued: mock((_workspaceId: string, _queued: boolean) => {
-        void _queued;
-      }),
-    } as unknown as BackgroundProcessManager;
-
-    const session = new AgentSession({
+    const { session, historyService, cleanup, events } = await createAgentSessionHarness({
       workspaceId,
-      config,
-      historyService,
-      aiService,
-      initStateManager,
-      backgroundProcessManager,
+      aiServiceOverrides: {
+        streamMessage: streamMessage as unknown as AIService["streamMessage"],
+      },
+      captureEvents: true,
     });
+    historyCleanup = cleanup;
 
-    const events: WorkspaceChatMessage[] = [];
-    session.onChatEvent((event) => {
-      events.push(event.message);
-    });
+    const originalMessageId = "editable-user-message";
+    await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage(originalMessageId, "user", "original", { historySequence: 0 })
+    );
 
     const result = await session.sendMessage("edited", {
       model: "anthropic:claude-3-5-sonnet-latest",
@@ -217,36 +145,21 @@ describe("AgentSession pre-stream errors", () => {
     replayedEvents: WorkspaceChatMessage[];
     replayInit: ReturnType<typeof mock<(workspaceId: string) => Promise<void>>>;
   }> {
-    const { historyService, config, cleanup } = await createTestHistoryService();
-    historyCleanup = cleanup;
-
-    const aiService = Object.assign(new EventEmitter(), {
-      isStreaming: mock((_workspaceId: string) => false),
-      stopStream: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
-      streamMessage: mock((_history: MuxMessage[]) =>
-        Promise.resolve(Err({ type: "api_key_not_found", provider: "anthropic" }))
-      ) as unknown as (...args: Parameters<AIService["streamMessage"]>) => Promise<unknown>,
-      getStreamInfo: mock((_workspaceId: string) => undefined),
-      replayStream: mock((_workspaceId: string, _opts?: { afterTimestamp?: number }) =>
-        Promise.resolve()
-      ),
-    }) as unknown as AIService;
     const replayInit = mock((_workspaceId: string) => Promise.resolve());
-    const session = new AgentSession({
+    const { session, cleanup } = await createAgentSessionHarness({
       workspaceId,
-      config,
-      historyService,
-      aiService,
-      initStateManager: Object.assign(new EventEmitter(), {
-        replayInit,
-      }) as unknown as InitStateManager,
-      backgroundProcessManager: {
-        cleanup: mock((_workspaceId: string) => Promise.resolve()),
-        setMessageQueued: mock((_workspaceId: string, _queued: boolean) => {
-          void _queued;
-        }),
-      } as unknown as BackgroundProcessManager,
+      aiServiceOverrides: {
+        streamMessage: mock((_history: MuxMessage[]) =>
+          Promise.resolve(Err({ type: "api_key_not_found", provider: "anthropic" }))
+        ) as unknown as AIService["streamMessage"],
+        getStreamInfo: mock((_workspaceId: string) => undefined) as AIService["getStreamInfo"],
+        replayStream: mock((_workspaceId: string, _opts?: { afterTimestamp?: number }) =>
+          Promise.resolve()
+        ),
+      },
+      initStateManagerOverrides: { replayInit },
     });
+    historyCleanup = cleanup;
 
     const sendResult = await session.sendMessage("hello", {
       model: "anthropic:claude-3-5-sonnet-latest",
@@ -350,10 +263,6 @@ describe("AgentSession pre-stream errors", () => {
   it("schedules auto-retry when runtime startup fails before stream events", async () => {
     const workspaceId = "ws-runtime-start-failed";
 
-    const { historyService, config, cleanup } = await createTestHistoryService();
-    historyCleanup = cleanup;
-
-    const aiEmitter = new EventEmitter();
     const streamMessage = mock((_history: MuxMessage[]) => {
       return Promise.resolve(
         Err({
@@ -362,36 +271,14 @@ describe("AgentSession pre-stream errors", () => {
         })
       );
     });
-    const aiService = Object.assign(aiEmitter, {
-      isStreaming: mock((_workspaceId: string) => false),
-      stopStream: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
-      streamMessage: streamMessage as unknown as (
-        ...args: Parameters<AIService["streamMessage"]>
-      ) => Promise<Result<void, SendMessageError>>,
-    }) as unknown as AIService;
-
-    const initStateManager = new EventEmitter() as unknown as InitStateManager;
-
-    const backgroundProcessManager = {
-      cleanup: mock((_workspaceId: string) => Promise.resolve()),
-      setMessageQueued: mock((_workspaceId: string, _queued: boolean) => {
-        void _queued;
-      }),
-    } as unknown as BackgroundProcessManager;
-
-    const session = new AgentSession({
+    const { session, cleanup, events } = await createAgentSessionHarness({
       workspaceId,
-      config,
-      historyService,
-      aiService,
-      initStateManager,
-      backgroundProcessManager,
+      aiServiceOverrides: {
+        streamMessage: streamMessage as unknown as AIService["streamMessage"],
+      },
+      captureEvents: true,
     });
-
-    const events: WorkspaceChatMessage[] = [];
-    session.onChatEvent((event) => {
-      events.push(event.message);
-    });
+    historyCleanup = cleanup;
 
     const result = await session.sendMessage("hello", {
       model: "anthropic:claude-3-5-sonnet-latest",
