@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { createContext } from "react";
 import { installDom } from "../../../../tests/ui/dom";
 import type { GoalHistoryEntry, GoalSnapshot } from "@/common/types/goal";
 
@@ -9,7 +10,14 @@ import type { GoalHistoryEntry, GoalSnapshot } from "@/common/types/goal";
 // so renders without an APIProvider still work — the form falls back to
 // canonical defaults, which is exactly the storybook-without-provider
 // behavior we want at runtime too.
+//
+// `useGoalDefaults` and `useGoalBoard` import `APIContext` directly so
+// they can short-circuit on a null context. The mock must export the
+// context with a null default; otherwise the `useContext(APIContext)`
+// call inside those hooks would crash with `undefined is not iterable`
+// (Codex P2).
 void mock.module("@/browser/contexts/API", () => ({
+  APIContext: createContext(null),
   useAPI: () => ({
     api: null,
     status: "error",
