@@ -2482,11 +2482,19 @@ export class WorkspaceGoalService {
       //     when a user archives a completed goal then revives it, the
       //     original history entry still exists; without this dedup
       //     the goal would render in both Upcoming and Completed).
+      //   - earlier history rows for the same goalId (Codex P2: a goal
+      //     completed → archived → revived → promoted → completed
+      //     again has TWO 'completed' rows; we want only the newest).
+      //     `history` is sorted newest-first, so the first row we see
+      //     for a goalId is the most recent.
+      const seenCompletedIds = new Set<string>();
       for (const entry of history) {
         if (entry.endReason !== "completed") continue;
         if (activeGoal && entry.goal.goalId === activeGoal.goalId) continue;
         if (board.archived.some((g) => g.goalId === entry.goal.goalId)) continue;
         if (board.upcoming.some((g) => g.goalId === entry.goal.goalId)) continue;
+        if (seenCompletedIds.has(entry.goal.goalId)) continue;
+        seenCompletedIds.add(entry.goal.goalId);
         entries.push({ section: "complete", goal: entry.goal, endedAtMs: entry.endedAtMs });
       }
       for (const goal of board.archived) {
