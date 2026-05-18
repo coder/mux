@@ -2265,6 +2265,18 @@ export class WorkspaceGoalService {
 
   async applyPendingAfterStreamEnd(workspaceId: string): Promise<GoalRecordV1 | null> {
     const pending = this.pendingGoalMutations.get(workspaceId);
+
+    // Even when there's no queued setGoal mutation, the stream may have
+    // ended on a goal that the agent marked complete via `complete_goal`
+    // mid-turn. In that case `maybeAutoPromoteOnComplete` was previously
+    // skipped (mid-stream guard, Codex P1), so we run the deferred
+    // auto-promote here once the stream has actually ended. This is the
+    // sole entry point for picking up the queued goal automatically;
+    // without it the next goal stays stuck in Upcoming until a manual
+    // mutation. We do this BEFORE draining `pending` so an interleaved
+    // setGoal can still observe the freshly-promoted goal.
+    await this.runDeferredAutoPromoteAfterStreamEnd(workspaceId);
+
     if (!pending) {
       return null;
     }
@@ -2292,6 +2304,60 @@ export class WorkspaceGoalService {
       // Always re-read the durable record: queued snapshots are optimistic, and
       // drains can succeed as persistence no-ops, reject, or throw.
       await this.restorePersistedGoalSnapshot(workspaceId);
+    }
+  }
+
+  /**
+   * Stream-end hook for deferred auto-promotion. When the agent marks
+   * the active goal complete mid-stream, `maybeAutoPromoteOnComplete`
+   * skips because `isWorkspaceStreaming` is still true. This method
+   * runs after the stream has settled and picks up where that skipped:
+   * if the current active goal is `complete` and there's an upcoming
+   * head, archive the completed goal to history and promote the head.
+   *
+   * Same pricing + (now-unused) streaming gates apply via
+   * `promoteNextUpcomingUnlocked`; the streaming check is defensive
+   * since we've just transitioned out of streaming.
+   *
+   * Failures are logged + swallowed; the stream-end pipeline must not
+   * be disrupted by board mutations.
+   */
+  private async runDeferredAutoPromoteAfterStreamEnd(workspaceId: string): Promise<void> {
+    try {
+      await this.fileLocks.withLock(workspaceId, async () => {
+        const current = await this.readGoalFile(workspaceId);
+        if (current?.status !== "complete") {
+          return;
+        }
+        const board = await this.readBoard(workspaceId);
+        if (board.upcoming.length === 0) {
+          return;
+        }
+        const [head] = board.upcoming;
+        const projected = GoalRecordV1Schema.parse({
+          ...head,
+          status: "active",
+          updatedAtMs: Date.now(),
+        });
+        if (!this.canRunBudgetedGoalOnKickoffModel(workspaceId, projected)) {
+          log.warn(
+            "Deferred auto-promote skipped: queued goal is budgeted but kickoff model is unpriced",
+            { workspaceId, goalId: head.goalId }
+          );
+          return;
+        }
+        // Same as `maybeAutoPromoteOnComplete`: archive the completed
+        // goal then write the promotion. Both happen under the same
+        // workspace lock as the stream-end accounting drain so the UI
+        // sees a consistent board.
+        await this.appendGoalHistoryEntry(workspaceId, current, "completed");
+        await this.promoteNextUpcomingUnlocked(workspaceId);
+      });
+    } catch (error) {
+      log.warn("Deferred auto-promote after stream end failed", {
+        workspaceId,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
