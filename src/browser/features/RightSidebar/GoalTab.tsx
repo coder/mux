@@ -821,10 +821,16 @@ function BudgetTile(props: BudgetTileProps) {
   // budget-tile "over" branch strictly on the budget numbers.
   const { costCents, budgetCents, canEdit, onEdit } = props;
   const hasBudget = budgetCents != null;
-  const overBudget = hasBudget && costCents >= budgetCents;
+  // Codex P2 (round 3): reserve the "over" copy for STRICT inequality.
+  // At exact equality the goal is at the cap, not past it, so the
+  // surfaced text should be "$0.00 left" rather than "$0.00 over". The
+  // bar fill / danger color still uses `>=` so reaching the cap is
+  // visually flagged.
+  const overBudget = hasBudget && costCents > budgetCents;
+  const atOrOverBudget = hasBudget && costCents >= budgetCents;
   // Compute both deltas with `Math.max(0, …)` so each branch surfaces a
   // non-negative magnitude:
-  //   • `leftCents`     — used by the under-budget branch
+  //   • `leftCents`     — used by the at-or-under-budget branch
   //   • `overByCents`   — used by the over-budget branch (Codex P2:
   //                       the original code clamped a single
   //                       `remainingCents` to 0 and then rendered it
@@ -888,7 +894,10 @@ function BudgetTile(props: BudgetTileProps) {
           <div
             className={cn(
               "h-full rounded-full transition-[width]",
-              overBudget ? "bg-danger-soft" : "bg-accent"
+              // `atOrOverBudget` (not strict `>`) so reaching the cap
+              // exactly still flags visually — the user wants to see
+              // "you've hit it" the moment they reach $X of $X.
+              atOrOverBudget ? "bg-danger-soft" : "bg-accent"
             )}
             style={{ width: `${percent}%` }}
           />
@@ -916,12 +925,13 @@ interface TurnsTileProps {
 function TurnsTile(props: TurnsTileProps) {
   const { turnsUsed, turnCap, canEdit, onEdit } = props;
   const hasCap = turnCap != null;
-  const overCap = hasCap && turnsUsed >= turnCap;
-  // Codex P2 (mirror of BudgetTile): the over-cap branch must surface
-  // the actual overage instead of a clamped 0, e.g. for a goal whose
-  // `turnsUsed` already exceeds `turnCap` (child attribution can push
-  // turns past the cap before the lifecycle re-evaluates). Two
-  // non-negative deltas — pick the one that matches the branch.
+  // Codex P2 (round 3): reserve "over" for STRICT inequality. At
+  // exact saturation (`turnsUsed === turnCap`, the normal cap-reached
+  // path used by `hasReachedTurnLimit()`) render "0 left" rather than
+  // a misleading "0 over". Children can still push `turnsUsed` past
+  // the cap before lifecycle re-evaluates, and that real-overage
+  // case is what the over branch is for.
+  const overCap = hasCap && turnsUsed > turnCap;
   const turnsLeft = hasCap ? Math.max(0, turnCap - turnsUsed) : 0;
   const turnsOverBy = hasCap ? Math.max(0, turnsUsed - turnCap) : 0;
 

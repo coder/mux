@@ -198,6 +198,34 @@ describe("GoalTab", () => {
     expect(getByText(/over$/)).toBeTruthy();
   });
 
+  test("tiles render exact-equality cap saturation as 'left', not 'over' (Codex P2)", () => {
+    // At exact `costCents === budgetCents` and `turnsUsed === turnCap`,
+    // the goal has REACHED the limit but not exceeded it. Render "0
+    // left" — both linguistically more accurate than "0 over" and the
+    // expected Codex resolution. The progress bar still uses the
+    // at-or-over color so the user sees the visual at-limit signal.
+    const { getAllByText, queryByText, getByRole } = render(
+      <GoalTab
+        goal={goal({
+          status: "budget_limited",
+          budgetCents: 500,
+          costCents: 500,
+          turnCap: 10,
+          turnsUsed: 10,
+        })}
+        onSetStatus={mock()}
+        onClear={mock()}
+      />
+    );
+
+    // Both Budget and Turns tiles should land in the "left" branch.
+    expect(getAllByText(/left$/).length).toBe(2);
+    expect(queryByText(/over$/)).toBeNull();
+    // Progress bar should be visually full at the cap.
+    const bar = getByRole("progressbar", { name: "Budget used" });
+    expect(bar.getAttribute("aria-valuenow")).toBe("100");
+  });
+
   test("budget tile does not claim 'over' when budget_limited is caused by the turn cap (Codex P2)", () => {
     // `budget_limited` is shared lifecycle for "hit budget OR hit turn
     // cap". The Budget tile must base its over/under-budget rendering
