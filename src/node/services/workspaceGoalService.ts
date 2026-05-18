@@ -2753,11 +2753,19 @@ export class WorkspaceGoalService {
       // re-activated record correctly lands in `budget_limited` if the
       // limits are already exhausted; otherwise it would accept a send
       // and only flip after the next chunk's accounting.
+      //
+      // Also clear `completionSummary` so a previously-completed goal
+      // that's been archived → revived → promoted doesn't carry its
+      // 'done' message into the new active turn. The agent's
+      // `get_goal` tool reads goal.json directly and would otherwise
+      // see a stale summary (Codex P2). Matches the
+      // `completionSummaryPatch` invariant for non-complete statuses.
       const now = Date.now();
       const baseActivated = GoalRecordV1Schema.parse({
         ...promoted,
         status: "active",
         updatedAtMs: now,
+        completionSummary: undefined,
       });
       const activated = this.applyBudgetDrivenStatus(baseActivated);
 
@@ -2904,10 +2912,14 @@ export class WorkspaceGoalService {
     // `promoteUpcomingGoal`. Cover the auto-promote-on-complete path
     // and the deferred stream-end path; both write the head into
     // `goal.json` and need to respect already-exhausted limits.
+    // Also clear `completionSummary` (see `promoteUpcomingGoal` for
+    // the rationale — agent's `get_goal` would otherwise see a stale
+    // 'done' message on a revived/promoted goal).
     const baseActivated = GoalRecordV1Schema.parse({
       ...head,
       status: "active",
       updatedAtMs: now,
+      completionSummary: undefined,
     });
     const activated = this.applyBudgetDrivenStatus(baseActivated);
     // Codex P2: same pricing gate as `promoteUpcomingGoal`. If the next
