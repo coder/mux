@@ -19,6 +19,17 @@ export { ProjectConfigSchema, WorkspaceConfigSchema } from "./schemas/project";
 
 // Goal schemas
 export {
+  GoalBoardAddUpcomingInputSchema,
+  GoalBoardArchiveInputSchema,
+  GoalBoardEntrySchema,
+  GoalBoardGetInputSchema,
+  GoalBoardPromoteInputSchema,
+  GoalBoardReorderInputSchema,
+  GoalBoardReviveInputSchema,
+  GoalBoardUpdateUpcomingInputSchema,
+  GoalBoardSectionSchema,
+  GoalBoardSnapshotSchema,
+  GoalBoardV1Schema,
   GoalClearInputSchema,
   GoalGetInputSchema,
   GoalRecordV1Schema,
@@ -35,6 +46,7 @@ export {
   GitStatusSchema,
   ProjectRefSchema,
   WorkspaceActivitySnapshotSchema,
+  WorkspaceGoalDefaultsOverrideSchema,
   WorkspaceHeartbeatSettingsSchema,
   WorkspaceMetadataSchema,
 } from "./schemas/workspace";

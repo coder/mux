@@ -81,6 +81,11 @@ export const ImageGenerationEnabled: Story = {
 };
 
 export const GoalAndHeartbeatSettingsEnabled: Story = {
+  // Goal-defaults editing moved to the in-tab `GoalDefaultsSection` in
+  // the workspace sidebar (see `src/browser/features/RightSidebar/`),
+  // so the Experiments panel no longer mounts the budget / turn-cap
+  // inputs. Heartbeat defaults still render inline here. This story
+  // now asserts the new pointer copy + the heartbeat fields.
   render: () => (
     <SettingsSectionStory
       setup={() =>
@@ -104,12 +109,12 @@ export const GoalAndHeartbeatSettingsEnabled: Story = {
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    const budgetInput = await canvas.findByLabelText("Default goal budget in dollars");
-    await waitFor(() => expect(budgetInput).toHaveValue("3.50"));
 
-    const turnCapInput = await canvas.findByLabelText("Default goal turn cap");
-    await waitFor(() => expect(turnCapInput).toHaveValue(8));
+    // Goal defaults no longer render inline — they live in the Goal tab.
+    await expect(canvas.queryByLabelText("Default goal budget in dollars")).toBeNull();
+    await expect(canvas.queryByLabelText("Default goal turn cap")).toBeNull();
 
+    // Heartbeat defaults still render inline.
     const heartbeatThresholdInput = await canvas.findByLabelText(
       "Default heartbeat threshold in minutes"
     );

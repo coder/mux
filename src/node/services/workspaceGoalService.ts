@@ -5,6 +5,8 @@ import assert from "@/common/utils/assert";
 import {
   toGoalSnapshot,
   toPendingGoalSnapshot,
+  type GoalHistoryEndReason,
+  type GoalHistoryEntry,
   type GoalRecordV1,
   type GoalSetError,
   type GoalSnapshot,
@@ -14,7 +16,12 @@ import type { WorkspaceActivitySnapshot } from "@/common/types/workspace";
 import type { Workspace } from "@/common/types/project";
 import type { Result } from "@/common/types/result";
 import { Err, Ok } from "@/common/types/result";
-import { GoalRecordV1Schema } from "@/common/orpc/schemas/goal";
+import {
+  GoalBoardV1Schema,
+  GoalHistoryEntrySchema,
+  GoalRecordV1Schema,
+} from "@/common/orpc/schemas/goal";
+import type { GoalBoardEntry, GoalBoardSnapshot, GoalBoardV1 } from "@/common/types/goal";
 import { createMuxMessage, pickStartupRetrySendOptions } from "@/common/types/message";
 import type { ProvidersConfigMap, SendMessageOptions } from "@/common/orpc/types";
 import { isWorkspaceArchived } from "@/common/utils/archive";
@@ -43,9 +50,16 @@ import type { IdleDispatcher, IdleDispatchPayload } from "./idleDispatcher";
 import { log } from "./log";
 
 const GOAL_FILE = "goal.json";
+const GOAL_BOARD_FILE = "goal-board.json";
 const PENDING_GOAL_EDIT_MESSAGE =
   "Goal is still being saved. Wait for the current stream to finish before editing it.";
 
+const GOAL_HISTORY_FILE = "goal-history.jsonl";
+// Cap the number of history entries returned to the renderer. Goal lifecycles
+// are coarse-grained (one entry per clear / replace / mark-complete) so a
+// generous cap still keeps the response payload bounded; older entries remain
+// on disk in the JSONL but are simply not surfaced to the UI.
+const GOAL_HISTORY_RENDER_CAP = 200;
 const MICRO_CENTS_PER_CENT = 1_000_000;
 
 function costUsdToMicroCents(costUsd: number | null | undefined): number {
@@ -91,6 +105,13 @@ export interface SetGoalInput {
   expectedGoalId?: string | null;
   requireUserAcknowledgmentSinceMs?: number | null;
   initiator?: GoalLifecycleInitiator;
+  /**
+   * When true and a current goal already exists, an objective update mutates
+   * the existing record in place (preserving goalId + accounting) instead of
+   * archiving + replacing. See the matching field on the public
+   * `GoalSetInputSchema` for the rationale.
+   */
+  editInPlace?: boolean | null;
 }
 
 export type GoalContinuationSkipReason =
@@ -168,6 +189,14 @@ interface PendingGoalMutation {
   completionSummary?: string | null;
   expectedGoalId?: string | null;
   initiator?: GoalLifecycleInitiator;
+  /**
+   * Carries the caller's `editInPlace` intent across the mid-stream deferral
+   * (Coder code review: "Preserve editInPlace through streaming deferral").
+   * Without this, a rename submitted while the agent is streaming would be
+   * replayed at stream end as a normal replace — losing goalId + accounting
+   * continuity that the inline editor contract requires.
+   */
+  editInPlace?: boolean | null;
 }
 
 export type GoalStreamOriginKind = "goal_continuation" | "goal_budget_limit" | "user" | "other";
@@ -322,6 +351,15 @@ export class WorkspaceGoalService {
 
   private onActivityChange?: (workspaceId: string, snapshot: WorkspaceActivitySnapshot) => void;
 
+  /**
+   * Injected callback that interrupts the active stream for a workspace.
+   * Wired in `coreServices` via `WorkspaceService.interruptStream`. Tests
+   * that don't supply one simply skip the interrupt step — `promote
+   * UpcomingGoal` then falls back to its file-lock body as a plain
+   * stream-free promotion, which keeps unit tests deterministic.
+   */
+  private streamInterrupter?: (workspaceId: string) => Promise<void>;
+
   constructor(
     private readonly config: Config,
     private readonly historyService: HistoryService,
@@ -335,9 +373,113 @@ export class WorkspaceGoalService {
     this.onActivityChange = listener;
   }
 
+  setStreamInterrupter(interrupter: (workspaceId: string) => Promise<void>): void {
+    this.streamInterrupter = interrupter;
+  }
+
   private getFilePath(workspaceId: string): string {
     assert(workspaceId.trim().length > 0, "WorkspaceGoalService requires non-empty workspaceId");
     return path.join(this.config.getSessionDir(workspaceId), GOAL_FILE);
+  }
+
+  private getHistoryFilePath(workspaceId: string): string {
+    assert(workspaceId.trim().length > 0, "WorkspaceGoalService requires non-empty workspaceId");
+    return path.join(this.config.getSessionDir(workspaceId), GOAL_HISTORY_FILE);
+  }
+
+  /**
+   * Append a goal record snapshot to the workspace's goal-history JSONL.
+   * Callers are expected to hold the workspace file lock so this never races
+   * with a `writeGoal` for the same workspace. A serialize-then-append failure
+   * is logged but never bubbled: the user's lifecycle action (clear, replace,
+   * complete) must succeed even if history persistence fails, because the
+   * authoritative state lives in `goal.json` and the lifecycle event log.
+   */
+  private async appendGoalHistoryEntry(
+    workspaceId: string,
+    goal: GoalRecordV1,
+    endReason: GoalHistoryEndReason
+  ): Promise<void> {
+    const entry: GoalHistoryEntry = {
+      version: 1,
+      endReason,
+      endedAtMs: Date.now(),
+      goal,
+    };
+    const filePath = this.getHistoryFilePath(workspaceId);
+    try {
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+      // JSONL append: one entry per line, no rewriting prior history. Newline
+      // first would corrupt readers expecting a trailing newline on the last
+      // record, so we always emit `<json>\n`.
+      await fs.appendFile(filePath, `${JSON.stringify(entry)}\n`, "utf-8");
+    } catch (error) {
+      log.warn("Failed to append goal history entry", { workspaceId, endReason, error });
+    }
+  }
+
+  /**
+   * Read the workspace's goal history newest-first. Tolerates per-line parse
+   * failures (a corrupted line is logged + skipped) so a single bad write
+   * cannot brick the right-sidebar GoalTab. Caps the returned list at
+   * `GOAL_HISTORY_RENDER_CAP` so the IPC response stays bounded; older entries
+   * stay on disk.
+   *
+   * Held under the same `fileLocks` as `appendGoalHistoryEntry` / `clearGoal`
+   * / `setGoalImmediately`'s replace branch (Codex P3 review feedback: "Read
+   * goal history under the workspace lock"). Without the lock, a concurrent
+   * append could leave a partially-written trailing line that the parse loop
+   * would skip — silently hiding the newest entry from the renderer until
+   * the next mutation triggers a re-fetch.
+   */
+  async getGoalHistory(workspaceId: string): Promise<GoalHistoryEntry[]> {
+    return this.fileLocks.withLock(workspaceId, async () => {
+      const filePath = this.getHistoryFilePath(workspaceId);
+      let raw: string;
+      try {
+        raw = await fs.readFile(filePath, "utf-8");
+      } catch (error) {
+        if (isNotFound(error)) {
+          return [];
+        }
+        log.warn("Failed to read goal history", { workspaceId, error });
+        return [];
+      }
+
+      // Track the original JSONL append index so we can break ties when two
+      // lifecycle operations land in the same millisecond (Codex P2 review:
+      // "Add a tie-breaker for goal history sorting"). Without this, a stable
+      // sort by `endedAtMs` would preserve append order (oldest-first) for
+      // ties — violating the documented "newest first" contract and
+      // potentially making consecutive-clear tests flaky on fast machines.
+      const indexed: Array<{ index: number; entry: GoalHistoryEntry }> = [];
+      let appendIndex = 0;
+      for (const line of raw.split("\n")) {
+        const trimmed = line.trim();
+        if (trimmed.length === 0) {
+          continue;
+        }
+        try {
+          indexed.push({
+            index: appendIndex,
+            entry: GoalHistoryEntrySchema.parse(JSON.parse(trimmed)),
+          });
+        } catch (error) {
+          log.warn("Skipping corrupt goal history entry", { workspaceId, error });
+        }
+        appendIndex += 1;
+      }
+
+      // Sort by endedAtMs DESC, with append-index DESC as the tie-breaker so
+      // the latest line in the JSONL wins for same-ms entries.
+      indexed.sort((a, b) => {
+        if (b.entry.endedAtMs !== a.entry.endedAtMs) {
+          return b.entry.endedAtMs - a.entry.endedAtMs;
+        }
+        return b.index - a.index;
+      });
+      return indexed.slice(0, GOAL_HISTORY_RENDER_CAP).map((row) => row.entry);
+    });
   }
 
   private createGoal(input: {
@@ -488,6 +630,20 @@ export class WorkspaceGoalService {
   private async isWorkspaceStreaming(workspaceId: string): Promise<boolean> {
     const snapshot = await this.extensionMetadata.getSnapshot(workspaceId);
     return snapshot?.streaming === true;
+  }
+
+  /**
+   * Bounded poll for the workspace's streaming flag to drop. Same backoff
+   * as `runDeferredAutoPromoteAfterStreamEnd` so callers never wait more
+   * than ~600ms. Returns silently when the timer exhausts; the caller is
+   * expected to proceed regardless (promote falls open).
+   */
+  private async waitForStreamSettled(workspaceId: string): Promise<void> {
+    const backoffMs = [0, 50, 100, 200, 250];
+    for (const delay of backoffMs) {
+      if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+      if (!(await this.isWorkspaceStreaming(workspaceId))) return;
+    }
   }
 
   /**
@@ -1019,7 +1175,8 @@ export class WorkspaceGoalService {
   private validateStatusTransition(
     current: GoalRecordV1 | null,
     nextStatus: GoalStatus,
-    completionSummary: string | null
+    completionSummary: string | null,
+    initiator: GoalLifecycleInitiator
   ): void {
     if (!current) {
       throw new WorkspaceGoalTransitionError(
@@ -1027,17 +1184,27 @@ export class WorkspaceGoalService {
       );
     }
 
-    if (current.status === "complete" && nextStatus !== "complete") {
+    // Reviving a completed goal is a deliberate user action: agents that
+    // marked a goal complete via the `complete_goal` tool (initiator
+    // "model") must not be able to walk that back on the next turn — that
+    // would let a loop re-arm itself indefinitely. But a human in the
+    // GoalTab is allowed to resume the goal they archived themselves
+    // (e.g., the agent declared victory too early), so we only block
+    // non-user initiators here.
+    if (current.status === "complete" && nextStatus !== "complete" && initiator !== "user") {
       throw new WorkspaceGoalTransitionError(
         `Cannot ${actionForStatus(nextStatus)} a completed goal. Clear it before starting another.`
       );
     }
 
-    if (nextStatus === "paused" && current.status !== "active") {
+    // From `complete` the user may go to either `active` (resume work) or
+    // `paused` (revive without immediately re-arming continuations).
+    // From any other state the normal pause/resume guards still apply.
+    if (nextStatus === "paused" && current.status !== "active" && current.status !== "complete") {
       throw new WorkspaceGoalTransitionError("Cannot pause a goal that is not active.");
     }
 
-    if (nextStatus === "active" && current.status !== "paused") {
+    if (nextStatus === "active" && current.status !== "paused" && current.status !== "complete") {
       throw new WorkspaceGoalTransitionError("Cannot resume a goal that is not paused.");
     }
 
@@ -1070,7 +1237,12 @@ export class WorkspaceGoalService {
   private applyMutableFields(goal: GoalRecordV1, input: SetGoalInput): GoalRecordV1 {
     const completionSummary = input.completionSummary?.trim() ?? null;
     if (input.status != null) {
-      this.validateStatusTransition(goal, input.status, completionSummary);
+      this.validateStatusTransition(
+        goal,
+        input.status,
+        completionSummary,
+        input.initiator ?? "user"
+      );
     }
 
     const next: GoalRecordV1 = GoalRecordV1Schema.parse({
@@ -1237,9 +1409,16 @@ export class WorkspaceGoalService {
 
     if (goal.status === "paused") {
       this.emitLifecycle("goal_paused", { initiator });
-    } else if (goal.status === "active" && previousStatus === "paused") {
+    } else if (
+      goal.status === "active" &&
+      (previousStatus === "paused" || previousStatus === "complete")
+    ) {
       // BudgetLimited → Active is a budget-driven re-arm, not a user resume;
-      // it is reported via goal_budget_changed only.
+      // it is reported via goal_budget_changed only. Complete → Active is
+      // a user-initiated revive (validateStatusTransition only lets the
+      // `user` initiator out of `complete`) — surface it as `goal_resumed`
+      // so the lifecycle funnel sees revived goals symmetrically with
+      // paused→active resumes.
       this.emitLifecycle("goal_resumed", { initiator });
     } else if (goal.status === "complete") {
       this.emitLifecycle("goal_completed", {
@@ -1405,13 +1584,38 @@ export class WorkspaceGoalService {
         if (conflict) {
           return Err(conflict);
         }
-        const projected = this.createGoal({
-          objective,
-          budgetCents: input.budgetCents ?? null,
-          turnCap: input.turnCap ?? null,
-          status: input.status,
-          completionSummary: input.completionSummary,
-        });
+        // Codex P2: for an `editInPlace` rename, the eventual drain
+        // RENAMES the existing record (preserves goalId, cost/turns,
+        // budget/turnCap, attributed children) instead of creating a
+        // fresh one. The optimistic snapshot must mirror that so the
+        // Goal tab does not flash zeroed accounting + a new id between
+        // submit and stream end.
+        //
+        // We mirror the drain's full path: overlay the rename onto
+        // `current`, then run `applyMutableFields` (which itself ends
+        // in `applyBudgetDrivenStatus`) so a payload that lowers the
+        // budget below the already-accrued cost projects to the same
+        // `budget_limited` status the persisted record will adopt at
+        // drain time. Without this, a rename with a tightening budget
+        // would publish a stale `active` snapshot until stream end
+        // (Codex P2 follow-up).
+        let projected: GoalRecordV1;
+        if (input.editInPlace === true && current) {
+          const renamed = GoalRecordV1Schema.parse({
+            ...current,
+            objective,
+            updatedAtMs: Date.now(),
+          });
+          projected = this.applyMutableFields(renamed, input);
+        } else {
+          projected = this.createGoal({
+            objective,
+            budgetCents: input.budgetCents ?? null,
+            turnCap: input.turnCap ?? null,
+            status: input.status,
+            completionSummary: input.completionSummary,
+          });
+        }
         if (
           (projected.status === "active" || projected.status === "budget_limited") &&
           !this.canRunBudgetedGoalOnKickoffModel(input.workspaceId, projected)
@@ -1435,6 +1639,10 @@ export class WorkspaceGoalService {
             ? { expectedGoalId: input.expectedGoalId ?? null }
             : {}),
           ...(input.initiator != null ? { initiator: input.initiator } : {}),
+          // Forward `editInPlace` so an inline rename submitted while the
+          // agent is streaming still takes the rename branch when the
+          // pending mutation drains (Codex P2 review feedback).
+          ...(input.editInPlace != null ? { editInPlace: input.editInPlace } : {}),
         });
         // A user can run /goal while the first turn is still streaming. The
         // durable goal write must wait for stream accounting, but the Goal panel
@@ -1482,7 +1690,8 @@ export class WorkspaceGoalService {
           this.validateStatusTransition(
             null,
             input.status,
-            input.completionSummary?.trim() ?? null
+            input.completionSummary?.trim() ?? null,
+            input.initiator ?? "user"
           );
         }
         // No-objective + no-status path (e.g. RightSidebar "Update budget"
@@ -1493,6 +1702,56 @@ export class WorkspaceGoalService {
         throw new WorkspaceGoalTransitionError(
           "Goal objective is required because no goal currently exists for this workspace."
         );
+      }
+
+      // Edit-in-place objective change: when the caller is the right-sidebar
+      // "Edit goal objective" affordance (or any other entry point that opts in
+      // via `editInPlace`), changing the objective on the existing goal should
+      // feel like editing budget / turn-cap — preserve `goalId` + accounting.
+      // The default `setGoal` path (slash command, kickoff prompts) still
+      // archives + recreates because callers there express the intent "start a
+      // new goal", not "rename the current one".
+      const isEditInPlace =
+        input.editInPlace === true && current != null && current.objective !== objective;
+      if (isEditInPlace) {
+        const previousStatus = current.status;
+        const renamed = GoalRecordV1Schema.parse({
+          ...current,
+          objective,
+          updatedAtMs: Date.now(),
+        });
+        // Apply other inline edits (status / budget / turnCap) on top of the
+        // renamed record so a single payload can rename and update budget
+        // atomically.
+        const withEdits = this.applyMutableFields(renamed, input);
+        if (
+          (withEdits.status === "active" || withEdits.status === "budget_limited") &&
+          !this.canRunBudgetedGoalOnKickoffModel(input.workspaceId, withEdits)
+        ) {
+          return Err({
+            type: "invalid_transition" as const,
+            message: UNPRICED_TARGET_MODEL_GOAL_MESSAGE,
+          });
+        }
+        await this.writeGoal(input.workspaceId, withEdits);
+        await this.pushSnapshot(input.workspaceId, withEdits);
+        this.emitBudgetChanged(current, withEdits, input);
+        this.emitBudgetLimited(withEdits, previousStatus);
+        this.emitStatusLifecycle(withEdits, previousStatus, input.initiator ?? "user");
+        // Lifecycle event: this is a rename, not a replace. Reuse
+        // `goal_replaced` (same-objective semantics already overloaded for
+        // attribute-only mutations) with `sameObjective: false` so analytics
+        // can still distinguish rename from a full reset by checking
+        // `goalId` continuity in the funnel.
+        this.emitLifecycle("goal_replaced", {
+          sameObjective: false,
+          objectiveLengthBucket: lengthBucket(objective.length),
+          hasBudget: withEdits.budgetCents != null,
+          hasTurnCap: withEdits.turnCap != null,
+          editInPlace: true,
+        });
+        await this.maybeAutoPromoteOnComplete(input.workspaceId, withEdits, previousStatus);
+        return Ok(withEdits);
       }
 
       if (current?.objective === objective) {
@@ -1534,6 +1793,7 @@ export class WorkspaceGoalService {
           this.emitBudgetChanged(current, updated, input);
           this.emitBudgetLimited(updated, previousStatus);
           this.emitStatusLifecycle(updated, previousStatus, input.initiator ?? "user");
+          await this.maybeAutoPromoteOnComplete(input.workspaceId, updated, previousStatus);
         }
         if (input.objective != null) {
           this.emitLifecycle("goal_replaced", {
@@ -1561,6 +1821,18 @@ export class WorkspaceGoalService {
           type: "invalid_transition" as const,
           message: UNPRICED_TARGET_MODEL_GOAL_MESSAGE,
         });
+      }
+      // Archive the outgoing goal to history before we overwrite goal.json.
+      // The new goal gets a fresh `goalId` so the right-sidebar GoalTab needs
+      // a record of the prior one in its completed-goals list (cleared/
+      // replaced/completed all flow through here for the "previous current
+      // goal" snapshot).
+      if (current) {
+        await this.appendGoalHistoryEntry(
+          input.workspaceId,
+          current,
+          current.status === "complete" ? "completed" : "replaced"
+        );
       }
       await this.writeGoal(input.workspaceId, next);
       await this.pushSnapshot(input.workspaceId, next);
@@ -1991,6 +2263,17 @@ export class WorkspaceGoalService {
         return null;
       }
 
+      // Archive the cleared goal to history before deleting the canonical
+      // record. `endReason` reflects the goal's *exit reason*: a manual clear
+      // of a goal that the user (or model) had already marked complete is
+      // recorded as "completed" so the UI can label it as such in the
+      // completed-goals list under the present goal.
+      await this.appendGoalHistoryEntry(
+        workspaceId,
+        current,
+        current.status === "complete" ? "completed" : "cleared"
+      );
+
       await fs.rm(this.getFilePath(workspaceId), { force: true });
       await this.pushSnapshot(workspaceId, null);
       this.emitLifecycle("goal_cleared", {
@@ -1998,6 +2281,11 @@ export class WorkspaceGoalService {
         costCentsBucket: centsBucket(current.costCents),
         turnsUsed: current.turnsUsed,
       });
+      // Auto-promote the head of `upcoming` (if any) to the active slot
+      // so the workspace's roadmap continues without an extra user
+      // action. Promotion uses initiator-neutral lifecycle reporting
+      // (`goal_created`); the user can still pause / replace as desired.
+      await this.promoteNextUpcomingUnlocked(workspaceId);
       return current;
     });
 
@@ -2009,7 +2297,19 @@ export class WorkspaceGoalService {
   }
 
   private async appendClearSummary(workspaceId: string, goal: GoalRecordV1): Promise<void> {
-    // Keep the persisted summary self-describing for model context; the renderer hides the redundant label.
+    // The goal-cleared summary exists for MODEL context — after a goal
+    // is cleared the agent still needs to know what just happened so it
+    // can answer follow-up questions ("what did we just finish?",
+    // "resume the previous one"). The right-sidebar Goal Board already
+    // surfaces the same information visually (Completed / Archived
+    // sections), so rendering this synthetic message as a full assistant
+    // chat bubble was pure noise — it appeared inline whenever the user
+    // cleared, replaced, or completed a goal, and clobbered the actual
+    // conversation flow.
+    //
+    // `uiVisible: false` (the default for synthetic messages) keeps it
+    // in the AI request payload but hides it from the rendered transcript,
+    // which is what we want here.
     const summary = `Goal cleared: "${goal.objective}" — spent $${formatCentsBare(goal.costCents)} over ${goal.turnsUsed} turns (status: ${goal.status})`;
     const message = createMuxMessage(
       `goal-cleared-${Date.now()}-${crypto.randomUUID()}`,
@@ -2017,7 +2317,6 @@ export class WorkspaceGoalService {
       summary,
       {
         synthetic: true,
-        uiVisible: true,
         muxMetadata: { type: "goal-cleared-summary" },
       }
     );
@@ -2029,33 +2328,776 @@ export class WorkspaceGoalService {
 
   async applyPendingAfterStreamEnd(workspaceId: string): Promise<GoalRecordV1 | null> {
     const pending = this.pendingGoalMutations.get(workspaceId);
-    if (!pending) {
-      return null;
+    let drained: GoalRecordV1 | null = null;
+
+    if (pending) {
+      this.pendingGoalMutations.delete(workspaceId);
+      this.pendingGoalSnapshots.delete(workspaceId);
+      // Mirror the `setGoal` wrapper (DEREM-36) here: `setGoalImmediately`
+      // rethrows `WorkspaceGoalTransitionError` / `WorkspaceGoalChildWorkspaceError`
+      // for invalid transitions (e.g. a queued `/goal pause` against an
+      // already-paused goal). Two of three call sites invoke this method via
+      // `void` so an uncaught rejection would surface as an unhandled-rejection
+      // process crash under `--unhandled-rejections=throw` (Coder-agents-review
+      // P2 DEREM-47). Log + swallow so the stream-end pipeline stays alive;
+      // the caller already treats null as "no apply happened".
+      try {
+        const result = await this.setGoalImmediately({ workspaceId, ...pending });
+        drained = result.success ? result.data : null;
+      } catch (error) {
+        log.warn("applyPendingAfterStreamEnd: dropped invalid queued goal mutation", {
+          workspaceId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      } finally {
+        // Always re-read the durable record: queued snapshots are optimistic, and
+        // drains can succeed as persistence no-ops, reject, or throw.
+        await this.restorePersistedGoalSnapshot(workspaceId);
+      }
     }
 
-    this.pendingGoalMutations.delete(workspaceId);
-    this.pendingGoalSnapshots.delete(workspaceId);
-    // Mirror the `setGoal` wrapper (DEREM-36) here: `setGoalImmediately`
-    // rethrows `WorkspaceGoalTransitionError` / `WorkspaceGoalChildWorkspaceError`
-    // for invalid transitions (e.g. a queued `/goal pause` against an
-    // already-paused goal). Two of three call sites invoke this method via
-    // `void` so an uncaught rejection would surface as an unhandled-rejection
-    // process crash under `--unhandled-rejections=throw` (Coder-agents-review
-    // P2 DEREM-47). Log + swallow so the stream-end pipeline stays alive;
-    // the caller already treats null as "no apply happened".
+    // Stream-end deferred auto-promotion (Codex P1).
+    //
+    // Runs AFTER any queued setGoal drains so the deferred setGoal can
+    // target the same goal it was queued against — otherwise its
+    // `expectedGoalId` would race ahead of the promote and the
+    // setGoalImmediately call would return `goal_conflict` and silently
+    // drop the user's edit (Codex P2).
+    //
+    // Two reasons this helper might find work to do at this point:
+    //   (a) The agent called `complete_goal` mid-stream — goal.json is
+    //       already complete and no pending mutation queued.
+    //   (b) The queued mutation we just drained completed the goal —
+    //       `maybeAutoPromoteOnComplete` skipped because the stream
+    //       was still live during the drain's `applyMutableFields`.
+    // Either way, the active goal is `complete` on disk by now and the
+    // upcoming head deserves promotion.
+    await this.runDeferredAutoPromoteAfterStreamEnd(workspaceId);
+
+    return drained;
+  }
+
+  /**
+   * Stream-end hook for deferred auto-promotion. When the agent marks
+   * the active goal complete mid-stream, `maybeAutoPromoteOnComplete`
+   * skips because `isWorkspaceStreaming` is still true. This method
+   * runs after the stream has settled and picks up where that skipped:
+   * if the current active goal is `complete` and there's an upcoming
+   * head, archive the completed goal to history and promote the head.
+   *
+   * **Retry on streaming race (Codex P2).** `applyPendingAfterStreamEnd`
+   * is called from AgentSession once per stream; the
+   * `extensionMetadata.setStreaming(false)` call comes from a separate
+   * async listener in WorkspaceService and may not have run yet. We
+   * poll `isWorkspaceStreaming` with a small bounded backoff so we
+   * don't drop the auto-promote on this race. If after all retries
+   * we still see streaming, give up — the next manual mutation will
+   * land here naturally.
+   *
+   * Failures are logged + swallowed; the stream-end pipeline must not
+   * be disrupted by board mutations.
+   */
+  private async runDeferredAutoPromoteAfterStreamEnd(workspaceId: string): Promise<void> {
+    // Quick early exit if there's nothing to promote — avoids the
+    // streaming-poll cost on the hot path for single-goal workspaces.
+    const earlyBoard = await this.readBoard(workspaceId);
+    if (earlyBoard.upcoming.length === 0) {
+      return;
+    }
+    const earlyGoal = await this.readGoalFile(workspaceId);
+    if (earlyGoal?.status !== "complete") {
+      return;
+    }
+
+    // Codex P2: poll for stop-streaming up to ~600ms total. The races
+    // we've seen in practice resolve in one or two ticks; the longer
+    // bound is defensive against laggy listeners. We stop polling the
+    // first time we see streaming=false (so the common case is fast).
+    const POLL_DELAYS_MS = [0, 50, 100, 200, 250];
+    let stillStreaming = true;
+    for (const delayMs of POLL_DELAYS_MS) {
+      if (delayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+      if (!(await this.isWorkspaceStreaming(workspaceId))) {
+        stillStreaming = false;
+        break;
+      }
+    }
+    if (stillStreaming) {
+      log.warn(
+        "Deferred auto-promote skipped: workspace still streaming after retries; will rearm on next mutation",
+        { workspaceId, goalId: earlyBoard.upcoming[0].goalId }
+      );
+      return;
+    }
+
     try {
-      const result = await this.setGoalImmediately({ workspaceId, ...pending });
-      return result.success ? result.data : null;
+      await this.fileLocks.withLock(workspaceId, async () => {
+        const current = await this.readGoalFile(workspaceId);
+        if (current?.status !== "complete") {
+          return;
+        }
+        const board = await this.readBoard(workspaceId);
+        if (board.upcoming.length === 0) {
+          return;
+        }
+        const [head] = board.upcoming;
+        const projected = GoalRecordV1Schema.parse({
+          ...head,
+          status: "active",
+          updatedAtMs: Date.now(),
+        });
+        if (!this.canRunBudgetedGoalOnKickoffModel(workspaceId, projected)) {
+          log.warn(
+            "Deferred auto-promote skipped: queued goal is budgeted but kickoff model is unpriced",
+            { workspaceId, goalId: head.goalId }
+          );
+          return;
+        }
+        // Same as `maybeAutoPromoteOnComplete`: archive the completed
+        // goal then write the promotion. Both happen under the same
+        // workspace lock as the stream-end accounting drain so the UI
+        // sees a consistent board.
+        await this.appendGoalHistoryEntry(workspaceId, current, "completed");
+        await this.promoteNextUpcomingUnlocked(workspaceId);
+      });
     } catch (error) {
-      log.warn("applyPendingAfterStreamEnd: dropped invalid queued goal mutation", {
+      log.warn("Deferred auto-promote after stream end failed", {
         workspaceId,
         error: error instanceof Error ? error.message : String(error),
       });
-      return null;
-    } finally {
-      // Always re-read the durable record: queued snapshots are optimistic, and
-      // drains can succeed as persistence no-ops, reject, or throw.
-      await this.restorePersistedGoalSnapshot(workspaceId);
     }
+  }
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Goal board (multi-goal queue)
+  //
+  // The board is stored at `goal-board.json` next to `goal.json` so the
+  // existing single-goal storage + agent contract are untouched. The
+  // agent's `get_goal` tool still reads only `goal.json` and never sees
+  // upcoming or archived goals — the user owns the queue, not the agent.
+  //
+  // Concurrency uses the same per-workspace `fileLocks` as goal.json so
+  // a board mutation can't race a setGoal write that flips the active
+  // goal. Auto-promotion (`promoteNextOnComplete`) reads/writes both
+  // files inside one lock for the same reason.
+  // ───────────────────────────────────────────────────────────────────────
+
+  private getBoardFilePath(workspaceId: string): string {
+    assert(workspaceId.trim().length > 0, "WorkspaceGoalService requires non-empty workspaceId");
+    return path.join(this.config.getSessionDir(workspaceId), GOAL_BOARD_FILE);
+  }
+
+  private async readBoard(workspaceId: string): Promise<GoalBoardV1> {
+    const filePath = this.getBoardFilePath(workspaceId);
+    try {
+      const raw = await fs.readFile(filePath, "utf-8");
+      return GoalBoardV1Schema.parse(JSON.parse(raw));
+    } catch (error) {
+      if (isNotFound(error)) {
+        return { version: 1, upcoming: [], archived: [] };
+      }
+      log.warn("Ignoring corrupt goal-board.json", { workspaceId, error });
+      return { version: 1, upcoming: [], archived: [] };
+    }
+  }
+
+  private async writeBoard(workspaceId: string, board: GoalBoardV1): Promise<void> {
+    const filePath = this.getBoardFilePath(workspaceId);
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    // When both lists are empty, drop the file entirely so a workspace
+    // that never used the board stays bit-identical to a never-touched
+    // one (matches the heartbeat / goal-defaults pattern).
+    if (board.upcoming.length === 0 && board.archived.length === 0) {
+      await fs.rm(filePath, { force: true });
+      return;
+    }
+    await writeFileAtomic(filePath, `${JSON.stringify(board, null, 2)}\n`, "utf-8");
+  }
+
+  /**
+   * Renderer-facing snapshot of all four board sections, oldest-first
+   * within each section. Active comes from `goal.json`, completed from
+   * `goal-history.jsonl` (newest first, capped at the existing render
+   * cap), upcoming + archived from `goal-board.json`.
+   */
+  async getGoalBoard(workspaceId: string): Promise<GoalBoardSnapshot> {
+    return this.fileLocks.withLock(workspaceId, async () => {
+      const [activeGoal, board, history] = await Promise.all([
+        this.readGoalFile(workspaceId),
+        this.readBoard(workspaceId),
+        this.readHistoryUnlocked(workspaceId),
+      ]);
+
+      const entries: GoalBoardEntry[] = [];
+
+      if (activeGoal) {
+        entries.push({ section: "active", goal: activeGoal });
+      }
+      for (const goal of board.upcoming) {
+        entries.push({ section: "upcoming", goal });
+      }
+      // Completed entries come from history. We dedupe against:
+      //   - the active goal id (stale history line race during edit)
+      //   - the archived list (archived-from-complete goals)
+      //   - the upcoming list (revived-from-archived goals — Codex P2:
+      //     when a user archives a completed goal then revives it, the
+      //     original history entry still exists; without this dedup
+      //     the goal would render in both Upcoming and Completed).
+      //   - earlier history rows for the same goalId (Codex P2: a goal
+      //     completed → archived → revived → promoted → completed
+      //     again has TWO 'completed' rows; we want only the newest).
+      //     `history` is sorted newest-first, so the first row we see
+      //     for a goalId is the most recent.
+      const seenCompletedIds = new Set<string>();
+      for (const entry of history) {
+        if (entry.endReason !== "completed") continue;
+        if (activeGoal && entry.goal.goalId === activeGoal.goalId) continue;
+        if (board.archived.some((g) => g.goalId === entry.goal.goalId)) continue;
+        if (board.upcoming.some((g) => g.goalId === entry.goal.goalId)) continue;
+        if (seenCompletedIds.has(entry.goal.goalId)) continue;
+        seenCompletedIds.add(entry.goal.goalId);
+        entries.push({ section: "complete", goal: entry.goal, endedAtMs: entry.endedAtMs });
+      }
+      for (const goal of board.archived) {
+        entries.push({ section: "archived", goal });
+      }
+
+      return { entries };
+    });
+  }
+
+  /**
+   * Read history WITHOUT acquiring the lock. Only callers that already
+   * hold the lock may use this (`getGoalBoard` reads goal.json + board
+   * + history under one lock). External callers should use the public
+   * `getGoalHistory()` which takes the lock itself.
+   */
+  private async readHistoryUnlocked(workspaceId: string) {
+    const filePath = this.getHistoryFilePath(workspaceId);
+    try {
+      const raw = await fs.readFile(filePath, "utf-8");
+      const indexed: Array<{
+        index: number;
+        entry: GoalHistoryEntry;
+      }> = [];
+      let appendIndex = 0;
+      for (const line of raw.split("\n")) {
+        const trimmed = line.trim();
+        if (trimmed.length === 0) continue;
+        try {
+          indexed.push({
+            index: appendIndex,
+            entry: GoalHistoryEntrySchema.parse(JSON.parse(trimmed)),
+          });
+        } catch {
+          // Per-line parse failures are tolerated — same as getGoalHistory.
+        }
+        appendIndex += 1;
+      }
+      indexed.sort((a, b) => {
+        if (b.entry.endedAtMs !== a.entry.endedAtMs) {
+          return b.entry.endedAtMs - a.entry.endedAtMs;
+        }
+        return b.index - a.index;
+      });
+      // Apply the same render cap as the public `getGoalHistory` so
+      // `getGoalBoard` can't return an unbounded payload over IPC for
+      // workspaces with thousands of completed/replaced goals (Codex
+      // P2). Older entries stay on disk in the JSONL but aren't
+      // surfaced to the renderer.
+      return indexed.slice(0, GOAL_HISTORY_RENDER_CAP).map((row) => row.entry);
+    } catch (error) {
+      if (isNotFound(error)) return [];
+      log.warn("Failed to read goal history", { workspaceId, error });
+      return [];
+    }
+  }
+
+  /**
+   * Append a new goal to the workspace's `upcoming` list. The goal is
+   * created in the standard way (via `createGoal`) so it has a stable
+   * goalId + cost accounting fields, but its status is the placeholder
+   * `paused` — meaningless until promotion, but it satisfies the
+   * non-empty status constraint on `GoalRecordV1`. Promotion (manual or
+   * auto) is what actually flips it to `active`.
+   */
+  async addUpcomingGoal(input: {
+    workspaceId: string;
+    objective: string;
+    budgetCents?: number | null;
+    turnCap?: number | null;
+  }): Promise<GoalRecordV1> {
+    this.assertParentWorkspace(input.workspaceId);
+    const objective = input.objective.trim();
+    assert(objective.length > 0, "addUpcomingGoal requires a non-empty objective");
+
+    return this.fileLocks.withLock(input.workspaceId, async () => {
+      const board = await this.readBoard(input.workspaceId);
+      const goal = this.createGoal({
+        objective,
+        budgetCents: input.budgetCents ?? null,
+        turnCap: input.turnCap ?? null,
+        // `paused` is the placeholder status for upcoming goals — they
+        // are not actively running and not yet acknowledged by the
+        // agent. The promote path replaces this with `active` after a
+        // proper write through setGoal.
+        status: "paused",
+      });
+      const next: GoalBoardV1 = {
+        ...board,
+        upcoming: [...board.upcoming, goal],
+      };
+      await this.writeBoard(input.workspaceId, next);
+      return goal;
+    });
+  }
+
+  /**
+   * Patch an upcoming goal in place. Used by the right-sidebar Upcoming
+   * row's inline editor — users can change a queued goal's objective,
+   * budget, or turn cap without first promoting it. Returns the patched
+   * record on success and `null` when the id is unknown (idempotent for
+   * double-submit). Fields explicitly set to `null` clear the limit;
+   * fields left as `undefined` are preserved from the existing record
+   * so the UI can patch a single column.
+   *
+   * Active goals do not flow through this method — they keep using
+   * `setGoal` with `editInPlace: true` so the agent's view stays in sync
+   * via the lifecycle event stream. Upcoming goals are not visible to
+   * the agent, so a pure file-locked write is sufficient here.
+   */
+  async updateUpcomingGoal(input: {
+    workspaceId: string;
+    goalId: string;
+    objective?: string;
+    budgetCents?: number | null;
+    turnCap?: number | null;
+  }): Promise<GoalRecordV1 | null> {
+    this.assertParentWorkspace(input.workspaceId);
+    if (input.objective?.trim().length === 0) {
+      throw new WorkspaceGoalTransitionError("Goal objective cannot be empty.");
+    }
+    return this.fileLocks.withLock(input.workspaceId, async () => {
+      const board = await this.readBoard(input.workspaceId);
+      const idx = board.upcoming.findIndex((g) => g.goalId === input.goalId);
+      if (idx === -1) return null;
+      const existing = board.upcoming[idx];
+      const updated: GoalRecordV1 = GoalRecordV1Schema.parse({
+        ...existing,
+        objective: input.objective === undefined ? existing.objective : input.objective.trim(),
+        budgetCents: input.budgetCents === undefined ? existing.budgetCents : input.budgetCents,
+        turnCap: input.turnCap === undefined ? existing.turnCap : input.turnCap,
+        updatedAtMs: Date.now(),
+      });
+      const nextUpcoming = [...board.upcoming];
+      nextUpcoming[idx] = updated;
+      await this.writeBoard(input.workspaceId, { ...board, upcoming: nextUpcoming });
+      return updated;
+    });
+  }
+
+  /**
+   * Move a goal from one board location to archived. The goal can come
+   * from any section: active (the slot is cleared and history records a
+   * "cleared" entry), upcoming (removed from queue), or complete
+   * (snapshotted from history into the board so the user can still see
+   * it after the history line scrolls off the render cap).
+   *
+   * The user is the only initiator of archive — the agent never sees
+   * archived goals (filtered out of `goal-board.json` reads in the
+   * agent tool boundary if/when those tools are added).
+   */
+  async archiveGoal(workspaceId: string, goalId: string): Promise<void> {
+    this.assertParentWorkspace(workspaceId);
+    await this.fileLocks.withLock(workspaceId, async () => {
+      const [activeGoal, board, history] = await Promise.all([
+        this.readGoalFile(workspaceId),
+        this.readBoard(workspaceId),
+        this.readHistoryUnlocked(workspaceId),
+      ]);
+
+      // Already archived: idempotent no-op so a double-click doesn't
+      // surprise the user.
+      if (board.archived.some((g) => g.goalId === goalId)) {
+        return;
+      }
+
+      // Source priority (Codex P2): always prefer the currently-active
+      // slot. A goal that was completed → archived → revived →
+      // promoted → completed-again has both a stale history entry AND
+      // is the current active. Checking history first would snapshot
+      // the stale history row and leave the live active slot in
+      // place; the user's archive click would then appear not to
+      // work and could surface duplicate Archived rows.
+      if (activeGoal?.goalId === goalId) {
+        // Append a "cleared" history entry so the user's view of
+        // completed/cleared history stays accurate, then place a
+        // snapshot in archived. We use the current ACTIVE record
+        // (with its latest accounting) rather than any older history
+        // entry for the same id.
+        await this.appendGoalHistoryEntry(workspaceId, activeGoal, "cleared");
+        await fs.rm(this.getFilePath(workspaceId), { force: true });
+        await this.pushSnapshot(workspaceId, null);
+        const next: GoalBoardV1 = {
+          ...board,
+          archived: [activeGoal, ...board.archived],
+        };
+        await this.writeBoard(workspaceId, next);
+        return;
+      }
+
+      // Source: upcoming list.
+      const upcomingIdx = board.upcoming.findIndex((g) => g.goalId === goalId);
+      if (upcomingIdx !== -1) {
+        const [removed] = board.upcoming.splice(upcomingIdx, 1);
+        const next: GoalBoardV1 = {
+          ...board,
+          archived: [removed, ...board.archived],
+        };
+        await this.writeBoard(workspaceId, next);
+        return;
+      }
+
+      // Source: history (completed goal). Add to archived; the
+      // `getGoalBoard` dedup filters the history line so the goal
+      // doesn't double-render.
+      const historyEntry = history.find(
+        (e) => e.goal.goalId === goalId && e.endReason === "completed"
+      );
+      if (historyEntry) {
+        const next: GoalBoardV1 = {
+          ...board,
+          archived: [historyEntry.goal, ...board.archived],
+        };
+        await this.writeBoard(workspaceId, next);
+        return;
+      }
+      // Unknown id: silently ignored. The renderer can race a board
+      // refresh against a concurrent clear; throwing here would
+      // surface confusing errors for what is a benign race.
+    });
+  }
+
+  /**
+   * Move an archived goal back into `upcoming`. The user can then
+   * promote it to active or leave it in the queue.
+   */
+  async reviveArchivedGoal(workspaceId: string, goalId: string): Promise<void> {
+    this.assertParentWorkspace(workspaceId);
+    await this.fileLocks.withLock(workspaceId, async () => {
+      const board = await this.readBoard(workspaceId);
+      const idx = board.archived.findIndex((g) => g.goalId === goalId);
+      if (idx === -1) return;
+      const [revived] = board.archived.splice(idx, 1);
+      const next: GoalBoardV1 = {
+        ...board,
+        upcoming: [...board.upcoming, revived],
+      };
+      await this.writeBoard(workspaceId, next);
+    });
+  }
+
+  /**
+   * Reorder the `upcoming` list to match the given goalId sequence.
+   * Goals whose ids aren't in the input list are appended at the end
+   * (defensive against concurrent additions); ids in the input that
+   * don't match an upcoming goal are silently dropped (defensive
+   * against stale UI state).
+   */
+  async reorderUpcomingGoals(workspaceId: string, upcomingIds: string[]): Promise<void> {
+    this.assertParentWorkspace(workspaceId);
+    await this.fileLocks.withLock(workspaceId, async () => {
+      const board = await this.readBoard(workspaceId);
+      const byId = new Map(board.upcoming.map((g) => [g.goalId, g]));
+      const reordered: GoalRecordV1[] = [];
+      for (const id of upcomingIds) {
+        const goal = byId.get(id);
+        if (goal) {
+          reordered.push(goal);
+          byId.delete(id);
+        }
+      }
+      // Anything still in the map wasn't covered by the input order;
+      // preserve their relative order at the end.
+      for (const goal of board.upcoming) {
+        if (byId.has(goal.goalId)) {
+          reordered.push(goal);
+        }
+      }
+      const next: GoalBoardV1 = { ...board, upcoming: reordered };
+      await this.writeBoard(workspaceId, next);
+    });
+  }
+
+  /**
+   * Promote an upcoming goal to active. If a goal is already active,
+   * it is demoted to the head of `upcoming` so the user's roadmap
+   * stays intact (matches the design's "swap on drag-to-activate"
+   * semantics — the demoted goal is the natural next pick).
+   *
+   * **Mid-stream guard (Codex P1).** Promotion overwrites `goal.json`,
+   * which `recordStreamAccounting` reads on every chunk to attribute
+   * cost. If we promote while a stream is still running for the
+   * current active goal, the freshly-promoted goal would absorb the
+   * previous goal's cost. Reject up front with a typed transition
+   * error; the caller surfaces a "wait for the stream to finish"
+   * message and the user retries.
+   *
+   * Returns the new active record (the promoted goal, with status
+   * flipped to `active` via the normal createGoal-like path) or
+   * `null` when the requested upcoming id doesn't exist.
+   */
+  async promoteUpcomingGoal(workspaceId: string, goalId: string): Promise<GoalRecordV1 | null> {
+    this.assertParentWorkspace(workspaceId);
+
+    // Interrupt the active stream (if any) before promoting so the
+    // in-flight turn's costs are attributed to the goal that ran them.
+    // The promoted goal's view (via the agent's `get_goal` tool) then
+    // takes effect on the next user message. Without this, a user who
+    // promotes mid-stream would see the rest of the current stream
+    // attributed to the new active goal, surfaced earlier as the Codex
+    // P1 "cost-attribution race" finding.
+    //
+    // Behavior intentionally fails open: if no interrupter is wired
+    // (tests) or the interrupt errors, we still proceed to promote.
+    // The next turn picks up the new goal via `get_goal`; worst case
+    // is the small slice of stream tail that lands before the abort
+    // settles. We log so production paths flag the rare error.
+    if (await this.isWorkspaceStreaming(workspaceId)) {
+      if (this.streamInterrupter) {
+        try {
+          await this.streamInterrupter(workspaceId);
+        } catch (error) {
+          log.warn("promoteUpcomingGoal: stream interrupt failed; continuing with promote", {
+            workspaceId,
+            error,
+          });
+        }
+        // Stream tear-down may not flip `streaming=false` synchronously
+        // with `interruptStream` resolving. Poll briefly (same backoff
+        // as `runDeferredAutoPromoteAfterStreamEnd`) so the file-lock
+        // body sees the post-interrupt state.
+        await this.waitForStreamSettled(workspaceId);
+      }
+    }
+
+    return this.fileLocks.withLock(workspaceId, async () => {
+      const [currentActive, board] = await Promise.all([
+        this.readGoalFile(workspaceId),
+        this.readBoard(workspaceId),
+      ]);
+      const idx = board.upcoming.findIndex((g) => g.goalId === goalId);
+      if (idx === -1) return null;
+      const [promoted] = board.upcoming.splice(idx, 1);
+
+      // Flip status to active. We reuse `createGoal` shape via direct
+      // schema parse rather than calling setGoal to avoid re-entering
+      // the streaming/conflict path — promotion happens inside one
+      // file lock and shouldn't fan out into the public setGoal flow.
+      //
+      // Codex P2: a previously-active goal demoted back into upcoming
+      // may already have cost ≥ budget or turnsUsed ≥ turnCap
+      // (e.g. it hit `budget_limited`, was demoted by a different
+      // promote, then re-queued). Run `applyBudgetDrivenStatus` so the
+      // re-activated record correctly lands in `budget_limited` if the
+      // limits are already exhausted; otherwise it would accept a send
+      // and only flip after the next chunk's accounting.
+      //
+      // Also clear `completionSummary` so a previously-completed goal
+      // that's been archived → revived → promoted doesn't carry its
+      // 'done' message into the new active turn. The agent's
+      // `get_goal` tool reads goal.json directly and would otherwise
+      // see a stale summary (Codex P2). Matches the
+      // `completionSummaryPatch` invariant for non-complete statuses.
+      const now = Date.now();
+      const baseActivated = GoalRecordV1Schema.parse({
+        ...promoted,
+        status: "active",
+        updatedAtMs: now,
+        completionSummary: undefined,
+      });
+      const activated = this.applyBudgetDrivenStatus(baseActivated);
+
+      // Codex P2: gate budgeted goal promotion on pricing data. A user
+      // who queued a goal under a priced model and then switched to an
+      // unpriced one would otherwise activate a budgeted goal they
+      // can't actually send messages against — `assertPricedModelFor
+      // BudgetedGoal` would block every send until the model is
+      // changed or the goal cleared. Same guard `setGoal` uses for
+      // direct creates.
+      if (!this.canRunBudgetedGoalOnKickoffModel(workspaceId, activated)) {
+        throw new WorkspaceGoalTransitionError(UNPRICED_TARGET_MODEL_GOAL_MESSAGE);
+      }
+
+      // Demote the previously-active goal to the head of upcoming, but
+      // ONLY if it's still alive. A completed goal sitting in the active
+      // slot (the user-marked-complete + queued-next workflow) must NOT
+      // re-enter the queue (Codex P2): completed goals are terminal
+      // from the queue's perspective. Push them to history under the
+      // "completed" reason so the board's Completed section surfaces
+      // them, and skip the upcoming demote.
+      let nextUpcoming: GoalRecordV1[];
+      if (currentActive) {
+        if (currentActive.status === "complete") {
+          await this.appendGoalHistoryEntry(workspaceId, currentActive, "completed");
+          nextUpcoming = board.upcoming;
+        } else {
+          nextUpcoming = [currentActive, ...board.upcoming];
+        }
+      } else {
+        nextUpcoming = board.upcoming;
+      }
+
+      await this.writeBoard(workspaceId, {
+        ...board,
+        upcoming: nextUpcoming,
+      });
+      await this.writeGoal(workspaceId, activated);
+      await this.pushSnapshot(workspaceId, activated);
+      this.emitLifecycle("goal_resumed", { initiator: "user" });
+      return activated;
+    });
+  }
+
+  /**
+   * Called after a `complete` status transition inside `setGoal` to
+   * implement the user's queue UX: "when a goal is marked complete it
+   * moves into the complete list and the next Goal becomes its focussed."
+   *
+   * Behavior:
+   *   - If the transition isn't into `complete`, no-op.
+   *   - If there are no upcoming goals queued, no-op — the existing
+   *     UX (completion summary on the active card) stays intact for
+   *     users who don't use the queue. This preserves backward compat.
+   *   - Otherwise: append the completed goal to `goal-history.jsonl`
+   *     under `completed` endReason, then promote the head of upcoming
+   *     into the active slot. The previously-completed goal then only
+   *     lives in history (the Board renders it under the Completed
+   *     section).
+   *
+   * Caller must hold the workspace file lock; promotion + history
+   * append happen under the same lock as the original mutation so the
+   * board snapshot is always consistent.
+   */
+  private async maybeAutoPromoteOnComplete(
+    workspaceId: string,
+    completedGoal: GoalRecordV1,
+    previousStatus: GoalStatus
+  ): Promise<void> {
+    if (completedGoal.status !== "complete" || previousStatus === "complete") {
+      return;
+    }
+    const board = await this.readBoard(workspaceId);
+    if (board.upcoming.length === 0) {
+      return;
+    }
+    // Codex P1 + P2: check BOTH the streaming guard and the pricing
+    // gate BEFORE appending the completion history entry. Either
+    // failure here means promotion can't go through; we must leave
+    // the completed goal in `goal.json` so a later retry archives it
+    // exactly once instead of producing a duplicate Completed row.
+    if (await this.isWorkspaceStreaming(workspaceId)) {
+      log.warn("Auto-promote on complete skipped: workspace is still streaming", {
+        workspaceId,
+        goalId: board.upcoming[0].goalId,
+      });
+      return;
+    }
+    const [head] = board.upcoming;
+    const projected = GoalRecordV1Schema.parse({
+      ...head,
+      status: "active",
+      updatedAtMs: Date.now(),
+    });
+    if (!this.canRunBudgetedGoalOnKickoffModel(workspaceId, projected)) {
+      log.warn(
+        "Auto-promote on complete skipped: queued goal is budgeted but kickoff model is unpriced",
+        { workspaceId, goalId: head.goalId }
+      );
+      return;
+    }
+    // Move the completed goal into history before overwriting goal.json
+    // with the promoted goal. The board's Completed section reads from
+    // history, so this is what makes the just-completed goal visible
+    // there.
+    await this.appendGoalHistoryEntry(workspaceId, completedGoal, "completed");
+    await this.promoteNextUpcomingUnlocked(workspaceId);
+  }
+
+  /**
+   * Called after a goal is marked complete (by agent or user) or
+   * cleared. If `upcoming` has a head, promote it to active so the
+   * agent has a roadmap to pick up on the next user message. Does NOT
+   * auto-fire a continuation turn — the user controls when work
+   * resumes (consistent with the no-auto-message-on-promotion design
+   * decision).
+   *
+   * Caller must hold the workspace file lock. Returns the new active
+   * record if a promotion happened, null otherwise.
+   */
+  private async promoteNextUpcomingUnlocked(workspaceId: string): Promise<GoalRecordV1 | null> {
+    const board = await this.readBoard(workspaceId);
+    if (board.upcoming.length === 0) return null;
+    // Codex P1: same mid-stream guard as `promoteUpcomingGoal`.
+    // `clearGoal` and `maybeAutoPromoteOnComplete` invoke this helper
+    // while a stream may still be running (the agent's `complete_goal`
+    // tool fires mid-turn). Writing the queued goal to `goal.json` in
+    // that window lets the remaining stream cost get attributed to the
+    // newly-promoted record. Skip the auto-promote while streaming —
+    // the caller (manual setGoal/clearGoal flow) already succeeded;
+    // the upcoming head stays intact and the user can trigger a
+    // promote later (or stream-end will land here naturally on the
+    // next mutation).
+    if (await this.isWorkspaceStreaming(workspaceId)) {
+      log.warn("Auto-promote on complete skipped: workspace is still streaming", {
+        workspaceId,
+        goalId: board.upcoming[0].goalId,
+      });
+      return null;
+    }
+    const [head, ...rest] = board.upcoming;
+    const now = Date.now();
+    // Codex P2: same budget-driven normalization as
+    // `promoteUpcomingGoal`. Cover the auto-promote-on-complete path
+    // and the deferred stream-end path; both write the head into
+    // `goal.json` and need to respect already-exhausted limits.
+    // Also clear `completionSummary` (see `promoteUpcomingGoal` for
+    // the rationale — agent's `get_goal` would otherwise see a stale
+    // 'done' message on a revived/promoted goal).
+    const baseActivated = GoalRecordV1Schema.parse({
+      ...head,
+      status: "active",
+      updatedAtMs: now,
+      completionSummary: undefined,
+    });
+    const activated = this.applyBudgetDrivenStatus(baseActivated);
+    // Codex P2: same pricing gate as `promoteUpcomingGoal`. If the next
+    // queued goal is budgeted and the workspace is currently on an
+    // unpriced model, refuse the auto-promotion — otherwise we'd leave
+    // the workspace in a state where the user can't send messages
+    // (their active goal is blocked by `assertPricedModelForBudgetedGoal`).
+    // The completion mutation still succeeds; the upcoming list keeps
+    // its head and the user is left to either change models or clear
+    // the head goal before the next promote attempt.
+    if (!this.canRunBudgetedGoalOnKickoffModel(workspaceId, activated)) {
+      log.warn(
+        "Auto-promote on complete skipped: queued goal is budgeted but kickoff model is unpriced",
+        { workspaceId, goalId: head.goalId }
+      );
+      return null;
+    }
+    await this.writeBoard(workspaceId, { ...board, upcoming: rest });
+    await this.writeGoal(workspaceId, activated);
+    await this.pushSnapshot(workspaceId, activated);
+    this.emitLifecycle("goal_created", {
+      viaFork: false,
+      sourceStatus: head.status,
+      objectiveLengthBucket: lengthBucket(head.objective.length),
+      hasBudget: activated.budgetCents != null,
+      hasTurnCap: activated.turnCap != null,
+    });
+    return activated;
   }
 }

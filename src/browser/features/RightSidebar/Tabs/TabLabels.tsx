@@ -27,7 +27,11 @@ import {
   useWorkspaceInstructionsFileCount,
 } from "@/browser/utils/workspaceInstructionsStore";
 import { cn } from "@/common/lib/utils";
-import { useWorkspaceUsage } from "@/browser/stores/WorkspaceStore";
+import {
+  useOptionalWorkspaceSidebarState,
+  useWorkspaceUsage,
+} from "@/browser/stores/WorkspaceStore";
+import { isGoalPendingPersistence } from "@/common/types/goal";
 import { sumUsageHistory, type ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 
 interface StatsTabLabelProps {
@@ -119,12 +123,38 @@ export const DebugTabLabel: React.FC = () => (
   </span>
 );
 
-export const GoalTabLabel: React.FC = () => (
-  <span className="inline-flex items-center gap-1">
-    <Target className="h-3 w-3 shrink-0" />
-    Goal
-  </span>
-);
+interface GoalTabLabelProps {
+  workspaceId: string;
+}
+
+/**
+ * Goal tab label.
+ *
+ * Subscribes directly to the workspace's sidebar state so the label can apply
+ * the canonical goal-green accent (`text-success`, the same token used by
+ * `CompleteGoalToolCall` and the TodoList completion cue) when the workspace
+ * has a *live* goal in chat. The accent is intentionally restricted to the
+ * `status === "active"` && non-pending case so paused, complete, history-only,
+ * and mid-stream pending goals don't claim the success cue. This mirrors the
+ * `useActiveGoalCount` / `ActiveGoalsWarningToast` predicate, so a workspace
+ * that contributes to the global "active goals" toast is also the one that
+ * lights up its Goal tab.
+ */
+export const GoalTabLabel: React.FC<GoalTabLabelProps> = ({ workspaceId }) => {
+  const sidebarState = useOptionalWorkspaceSidebarState(workspaceId);
+  const goal = sidebarState?.goal ?? null;
+  const isGoalActive = goal?.status === "active" && !isGoalPendingPersistence(goal);
+
+  return (
+    <span
+      className={cn("inline-flex items-center gap-1", isGoalActive && "text-success")}
+      aria-label={isGoalActive ? "Goal (active)" : "Goal"}
+    >
+      <Target className="h-3 w-3 shrink-0" />
+      Goal
+    </span>
+  );
+};
 
 export function OutputTabLabel() {
   return <>Output</>;

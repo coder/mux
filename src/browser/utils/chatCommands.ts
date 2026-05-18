@@ -619,8 +619,10 @@ async function setGoalWithSingleConflictRetry(
 async function getGoalDefaults(context: CommandHandlerContext): Promise<GoalDefaults> {
   // Centralized in `@/browser/utils/goals/` so the slash command path and
   // the command palette path read defaults the same way (Coder-agents-
-  // review P3 DEREM-27).
-  return loadGoalDefaults(context.api);
+  // review P3 DEREM-27). Pass the workspaceId so the helper layers any
+  // per-workspace override on top of the global default — workspace rules
+  // win for `/goal` invocations inside that workspace.
+  return loadGoalDefaults(context.api, context.workspaceId);
 }
 
 function resolveSlashGoalSetIntent(

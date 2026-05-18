@@ -1417,6 +1417,44 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       preflightArchive: () => Promise.resolve({ success: true, data: { kind: "ready" as const } }),
       archive: () => Promise.resolve({ success: true }),
       unarchive: () => Promise.resolve({ success: true }),
+      // Goal mocks: storybook stories don't drive lifecycle, but the
+      // right-sidebar RightSidebar component calls `getGoalHistory` on mount.
+      // Without these the mounted GoalTab errors out before its
+      // ErrorBoundary stabilizes (Storybook CI).
+      getGoal: () => Promise.resolve({ goal: null }),
+      getGoalHistory: () => Promise.resolve({ entries: [] }),
+      // Per-workspace goal-defaults override; stories don't drive it, but
+      // the in-tab `GoalDefaultsSection` reads it on mount via api.workspace.goalDefaults.get.
+      goalDefaults: {
+        get: () => Promise.resolve(null),
+        set: () => Promise.resolve({ success: true, data: undefined }),
+      },
+      // Goal board (multi-goal queue) endpoints. Stories never call into
+      // these but the GoalTab subscribes to `getGoalBoard` on mount; the
+      // mutation endpoints exist for stories that simulate user
+      // interactions (currently none — they resolve voids).
+      getGoalBoard: () => Promise.resolve({ entries: [] }),
+      addUpcomingGoal: () =>
+        Promise.resolve({
+          version: 1 as const,
+          goalId: "00000000-0000-4000-8000-000000000000",
+          objective: "stub",
+          status: "paused" as const,
+          budgetCents: null,
+          turnCap: null,
+          costCents: 0,
+          turnsUsed: 0,
+          attributedChildren: [],
+          budgetLimitInjectedForGoalId: null,
+          requireUserAcknowledgmentSinceMs: null,
+          createdAtMs: Date.now(),
+          updatedAtMs: Date.now(),
+        }),
+      archiveGoal: () => Promise.resolve(undefined),
+      reviveArchivedGoal: () => Promise.resolve(undefined),
+      reorderUpcomingGoals: () => Promise.resolve(undefined),
+      promoteUpcomingGoal: () => Promise.resolve(null),
+      updateUpcomingGoal: () => Promise.resolve(null),
       create: (input: { projectPath: string; branchName: string }) => {
         createdWorkspaceCounter += 1;
 

@@ -26,11 +26,19 @@ function parseTurnCap(value: string): number | null {
 
 interface GoalDefaultsControlsProps {
   loadConfig?: () => Promise<{ goalDefaults?: Partial<GoalDefaults> | null }>;
+  /**
+   * Fired after every successful persist of the global goal defaults.
+   * Callers that render inherited-value labels (e.g., the workspace
+   * override panel in the GoalTab) use this to re-pull the global defaults
+   * so their "Inherits X from All workspaces" copy stays accurate.
+   */
+  onPersist?: (next: GoalDefaults) => void;
 }
 
 export function GoalDefaultsControls(props: GoalDefaultsControlsProps) {
   const { api } = useAPI();
   const loadConfig = props.loadConfig;
+  const onPersist = props.onPersist;
   const [goalDefaults, setGoalDefaults] = useState<GoalDefaults>(() => ({
     ...DEFAULT_GOAL_DEFAULTS,
   }));
@@ -60,7 +68,21 @@ export function GoalDefaultsControls(props: GoalDefaultsControlsProps) {
   const persistGoalDefaults = (next: GoalDefaults) => {
     const normalized = normalizeGoalDefaults(next);
     setGoalDefaults(normalized);
-    void api?.config?.updateGoalDefaults?.({ goalDefaults: normalized });
+    // Codex P2: await the update before firing `onPersist`. If we
+    // notified synchronously, the parent (e.g., GoalDefaultsSection)
+    // could re-read `api.config.getConfig()` *before* the underlying
+    // saveConfig commits, leaving the inherited-value labels stale.
+    // Tradeoff: a transient `updateGoalDefaults` failure leaves the
+    // local optimistic state ahead of disk, but the next save (or a
+    // reload) recovers; that's preferable to letting consumers see
+    // stale defaults.
+    void (async () => {
+      try {
+        await api?.config?.updateGoalDefaults?.({ goalDefaults: normalized });
+      } finally {
+        onPersist?.(normalized);
+      }
+    })();
   };
 
   const saveBudget = (value: string) => {

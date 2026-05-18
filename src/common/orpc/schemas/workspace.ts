@@ -37,6 +37,36 @@ export const BestOfGroupSchema = z.object({
   }),
 });
 
+/**
+ * Sparse per-workspace override of the global `goalDefaults` block.
+ *
+ * Each field is independently nullable so a workspace can override (e.g.)
+ * the default budget without also pinning the turn cap. A `null` value
+ * means "follow the global default"; an explicit value means "use this
+ * value for new goals in this workspace". A workspace with all three
+ * fields null is semantically identical to no override at all — the
+ * backend should drop the entire object in that case to keep
+ * `~/.mux/config.json` tidy.
+ *
+ * Mirrors the heartbeat pattern (per-workspace override of a global
+ * default, persisted inside `WorkspaceConfigSchema`) so the
+ * frontend-visible metadata stream picks it up automatically.
+ */
+export const WorkspaceGoalDefaultsOverrideSchema = z.object({
+  defaultBudgetCents: z.number().int().nonnegative().nullable().meta({
+    description:
+      "Per-workspace override for `goalDefaults.defaultBudgetCents`. `null` follows the global default.",
+  }),
+  defaultTurnCap: z.number().int().positive().nullable().meta({
+    description:
+      "Per-workspace override for `goalDefaults.defaultTurnCap`. `null` follows the global default (which itself may be null = no cap).",
+  }),
+  alwaysRequireExplicitBudget: z.boolean().nullable().meta({
+    description:
+      "Per-workspace override for `goalDefaults.alwaysRequireExplicitBudget`. `null` follows the global default.",
+  }),
+});
+
 export const HeartbeatContextModeSchema = z.enum(HEARTBEAT_CONTEXT_MODE_VALUES);
 
 export const WorkspaceHeartbeatSettingsSchema = z.object({
@@ -97,6 +127,10 @@ export const WorkspaceMetadataSchema = z.object({
   }),
   heartbeat: WorkspaceHeartbeatSettingsSchema.optional().meta({
     description: "Persisted heartbeat settings for this workspace.",
+  }),
+  goalDefaults: WorkspaceGoalDefaultsOverrideSchema.optional().meta({
+    description:
+      "Per-workspace overrides for goal creation defaults (budget, turn cap, explicit-budget). Layered on top of the global `goalDefaults` from app config.",
   }),
   parentWorkspaceId: z.string().optional().meta({
     description:

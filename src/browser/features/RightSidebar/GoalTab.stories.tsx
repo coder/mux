@@ -10,6 +10,26 @@ const meta: Meta<typeof GoalTab> = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
+export const EmptyWithCreateForm: Story = {
+  // Empty-state surface that wires the in-tab create form. Mirrors the
+  // slash-command `goal-set` shape (objective + optional budget + turn
+  // cap). The `onCreate` mock keeps the form interactive in Storybook
+  // without hitting a backend.
+  args: {
+    goal: null,
+    onCreate: () => undefined,
+  },
+};
+
+export const EmptyReadOnly: Story = {
+  // Read-only fallback when no create callback is wired (e.g., storybook
+  // stories that exercise the legacy placeholder). Asserts the empty-state
+  // gracefully degrades instead of crashing.
+  args: {
+    goal: null,
+  },
+};
+
 export const Active: Story = {
   args: {
     goal: {
@@ -83,5 +103,67 @@ export const Complete: Story = {
       completionSummary: "The lifecycle controls shipped with persistence and tests.",
       startedAtMs: Date.now(),
     },
+  },
+};
+
+export const ActiveWithHistory: Story = {
+  args: {
+    goal: {
+      goalId: "66666666-6666-4666-8666-666666666666",
+      status: "active",
+      objective: "Ship the goal-history UX iteration",
+      budgetCents: 1000,
+      costCents: 150,
+      turnsUsed: 2,
+      turnCap: null,
+      startedAtMs: Date.now() - 30_000,
+    },
+    history: [
+      {
+        version: 1,
+        endReason: "completed",
+        endedAtMs: Date.now() - 60_000,
+        goal: {
+          version: 1,
+          goalId: "77777777-7777-4777-8777-777777777777",
+          objective: "Wire up budget + turn-cap accounting",
+          status: "complete",
+          budgetCents: 500,
+          costCents: 480,
+          costMicroCents: 480_000_000,
+          turnsUsed: 8,
+          turnCap: 10,
+          attributedChildren: [],
+          budgetLimitInjectedForGoalId: null,
+          requireUserAcknowledgmentSinceMs: null,
+          lastContinuationFiredAtMs: null,
+          completionSummary: "All accounting tests pass and budgets propagate end-to-end.",
+          createdAtMs: Date.now() - 5 * 60_000,
+          updatedAtMs: Date.now() - 60_000,
+        },
+      },
+      {
+        version: 1,
+        endReason: "cleared",
+        endedAtMs: Date.now() - 5 * 60_000,
+        goal: {
+          version: 1,
+          goalId: "88888888-8888-4888-8888-888888888888",
+          objective: "Spike on lifecycle events without committing",
+          status: "paused",
+          budgetCents: null,
+          costCents: 25,
+          costMicroCents: 25_000_000,
+          turnsUsed: 1,
+          turnCap: null,
+          attributedChildren: [],
+          budgetLimitInjectedForGoalId: null,
+          requireUserAcknowledgmentSinceMs: null,
+          lastContinuationFiredAtMs: null,
+          createdAtMs: Date.now() - 10 * 60_000,
+          updatedAtMs: Date.now() - 5 * 60_000,
+        },
+      },
+    ],
   },
 };

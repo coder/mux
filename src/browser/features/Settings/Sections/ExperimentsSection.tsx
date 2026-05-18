@@ -29,7 +29,6 @@ import { useAPI, type APIClient } from "@/browser/contexts/API";
 import { useTelemetry } from "@/browser/hooks/useTelemetry";
 import { ImageGenerationExperimentConfig } from "./ImageGenerationExperimentConfig";
 import { AdvisorToolExperimentConfig } from "./AdvisorToolExperimentConfig";
-import { GoalDefaultsControls } from "./GoalsSection";
 import { HeartbeatDefaultsControls } from "./HeartbeatSection";
 
 const PORTABLE_DESKTOP_INSTALL_URL = "https://github.com/coder/portabledesktop";
@@ -718,10 +717,17 @@ export function ExperimentsSection() {
                 </ExperimentSettingsPanel>
               )}
               {exp.id === EXPERIMENT_IDS.GOALS && goalsEnabled && (
+                // Goal-defaults editing has moved to the Goal tab — see
+                // `src/browser/features/RightSidebar/GoalDefaultsSection.tsx`.
+                // The tab is the long-lived home for goal configuration
+                // (workspace overrides + global defaults), so we no longer
+                // duplicate the controls here. Leaving a tiny pointer in the
+                // experiment panel for users who learned the old location.
                 <ExperimentSettingsPanel>
-                  <GoalDefaultsControls
-                    loadConfig={api ? loadExperimentSettingsConfig : undefined}
-                  />
+                  <p className="text-muted text-xs">
+                    Configure goal defaults (budget, turn cap, explicit-budget) from the{" "}
+                    <span className="text-foreground">Goal</span> tab in the workspace sidebar.
+                  </p>
                 </ExperimentSettingsPanel>
               )}
               {exp.id === EXPERIMENT_IDS.PORTABLE_DESKTOP && <PortableDesktopExperimentWarning />}

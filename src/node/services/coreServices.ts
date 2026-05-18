@@ -13,6 +13,7 @@ import { ProviderService } from "@/node/services/providerService";
 import { AIService } from "@/node/services/aiService";
 import { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import { SessionUsageService } from "@/node/services/sessionUsageService";
+import { log } from "@/node/services/log";
 import {
   WorkspaceGoalService,
   type GoalLifecycleAnalyticsSink,
@@ -128,6 +129,22 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
   workspaceService.setWorkspaceGoalService(workspaceGoalService);
   workspaceGoalService.setOnActivityChange((workspaceId, snapshot) => {
     workspaceService.emit("activity", { workspaceId, activity: snapshot });
+  });
+  // Wire user-initiated `promoteUpcomingGoal` through `interruptStream`
+  // so promoting mid-stream cleanly aborts the in-flight turn before
+  // the new active goal lands. Without this, the goal service would
+  // proceed without aborting and the tail of the current stream could
+  // leak token usage into the newly-promoted goal's accounting (the
+  // earlier Codex P1 concern). Soft hand-off here means a queued
+  // message stays in the user's input box; the next `sendMessage`
+  // will start fresh against the promoted goal.
+  workspaceGoalService.setStreamInterrupter(async (workspaceId) => {
+    const result = await workspaceService.interruptStream(workspaceId);
+    if (!result.success) {
+      // The goal service logs + falls back; we just surface a warning
+      // here so production paths flag the rare error.
+      log.warn("coreServices: promote interrupt failed", { workspaceId, error: result.error });
+    }
   });
 
   const taskService = new TaskService(

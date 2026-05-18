@@ -20,6 +20,16 @@ import {
 import { BranchListResultSchema, FilePartSchema, MuxMessageSchema } from "./message";
 import {
   GoalClearInputSchema,
+  GoalBoardAddUpcomingInputSchema,
+  GoalBoardArchiveInputSchema,
+  GoalBoardGetInputSchema,
+  GoalBoardPromoteInputSchema,
+  GoalBoardReorderInputSchema,
+  GoalBoardReviveInputSchema,
+  GoalBoardUpdateUpcomingInputSchema,
+  GoalBoardSnapshotSchema,
+  GoalGetHistoryInputSchema,
+  GoalGetHistoryOutputSchema,
   GoalGetInputSchema,
   GoalRecordV1Schema,
   GoalSetErrorSchema,
@@ -57,6 +67,7 @@ import {
   GitStatusSchema,
   ProjectRefSchema,
   WorkspaceActivitySnapshotSchema,
+  WorkspaceGoalDefaultsOverrideSchema,
   WorkspaceHeartbeatSettingsSchema,
 } from "./workspace";
 import { WorkspaceAISettingsSchema } from "./workspaceAiSettings";
@@ -1041,6 +1052,23 @@ export const workspace = {
       output: ResultSchema(z.void(), z.string()),
     },
   },
+  goalDefaults: {
+    // Per-workspace override of the global `goalDefaults` block. `get`
+    // returns `null` when no override is set (i.e., this workspace uses
+    // the global default). `set` accepts a sparse override; passing
+    // `null` for any field clears that override; passing all-null clears
+    // the whole record.
+    get: {
+      input: z.object({ workspaceId: z.string() }),
+      output: WorkspaceGoalDefaultsOverrideSchema.nullable(),
+    },
+    set: {
+      input: WorkspaceGoalDefaultsOverrideSchema.extend({
+        workspaceId: z.string(),
+      }),
+      output: ResultSchema(z.void(), z.string()),
+    },
+  },
   updateAgentAISettings: {
     input: z.object({
       workspaceId: z.string(),
@@ -1477,6 +1505,52 @@ export const workspace = {
   clearGoal: {
     input: GoalClearInputSchema,
     output: z.object({ cleared: z.boolean() }),
+  },
+  /**
+   * Read the workspace's append-only goal history. Returns entries newest
+   * first so the right-sidebar GoalTab can render a compact "completed goals"
+   * list below the current goal without paginating.
+   */
+  getGoalHistory: {
+    input: GoalGetHistoryInputSchema,
+    output: GoalGetHistoryOutputSchema,
+  },
+  /**
+   * Goal board (multi-goal queue) endpoints. The board is the renderer-
+   * facing view of a workspace's goals across the four sections (active,
+   * upcoming, complete, archived). Backed by `goal.json` (active),
+   * `goal-board.json` (upcoming + archived), and `goal-history.jsonl`
+   * (complete). See `src/common/orpc/schemas/goal.ts` for the schema
+   * rationale and the deliberate decision to keep the agent's
+   * `get_goal` tool reading only the active goal.
+   */
+  getGoalBoard: {
+    input: GoalBoardGetInputSchema,
+    output: GoalBoardSnapshotSchema,
+  },
+  addUpcomingGoal: {
+    input: GoalBoardAddUpcomingInputSchema,
+    output: GoalRecordV1Schema,
+  },
+  archiveGoal: {
+    input: GoalBoardArchiveInputSchema,
+    output: z.void(),
+  },
+  reviveArchivedGoal: {
+    input: GoalBoardReviveInputSchema,
+    output: z.void(),
+  },
+  reorderUpcomingGoals: {
+    input: GoalBoardReorderInputSchema,
+    output: z.void(),
+  },
+  promoteUpcomingGoal: {
+    input: GoalBoardPromoteInputSchema,
+    output: GoalRecordV1Schema.nullable(),
+  },
+  updateUpcomingGoal: {
+    input: GoalBoardUpdateUpcomingInputSchema,
+    output: GoalRecordV1Schema.nullable(),
   },
   getSessionUsage: {
     input: z.object({ workspaceId: z.string() }),

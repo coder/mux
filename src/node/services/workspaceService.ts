@@ -158,6 +158,7 @@ import type { TerminalService } from "@/node/services/terminalService";
 import type { DesktopSessionManager } from "@/node/services/desktop/DesktopSessionManager";
 import type {
   WorkspaceAISettingsSchema,
+  WorkspaceGoalDefaultsOverrideSchema,
   WorkspaceHeartbeatSettingsSchema,
 } from "@/common/orpc/schemas";
 import type {
@@ -228,6 +229,7 @@ const AUTO_NEW_WORKSPACE_BASE_NAME = "workspace";
 // Shared type for workspace-scoped AI settings (model + thinking)
 type WorkspaceAISettings = z.infer<typeof WorkspaceAISettingsSchema>;
 type WorkspaceHeartbeatSettings = z.infer<typeof WorkspaceHeartbeatSettingsSchema>;
+type WorkspaceGoalDefaultsOverride = z.infer<typeof WorkspaceGoalDefaultsOverrideSchema>;
 interface HeartbeatExecutionRequest {
   contextMode: HeartbeatContextMode;
   sendOptions: SendMessageOptions;
@@ -3518,6 +3520,140 @@ export class WorkspaceService extends EventEmitter {
     } catch (error) {
       const message = getErrorMessage(error);
       return Err(`Failed to set heartbeat settings: ${message}`);
+    }
+  }
+
+  /**
+   * Read the per-workspace goal-defaults override.
+   *
+   * Returns `null` when this workspace has no override (callers should fall
+   * back to `appConfig.goalDefaults`). The override is *sparse*: each field
+   * is independently nullable so a workspace can pin (e.g.) a custom budget
+   * without also overriding the turn cap.
+   */
+  getWorkspaceGoalDefaults(workspaceId: string): WorkspaceGoalDefaultsOverride | null {
+    const normalizedWorkspaceId = workspaceId.trim();
+    assert(
+      normalizedWorkspaceId.length > 0,
+      "getWorkspaceGoalDefaults requires a non-empty workspaceId"
+    );
+
+    const found = this.config.findWorkspace(normalizedWorkspaceId);
+    if (!found) {
+      return null;
+    }
+
+    const config = this.config.loadConfigOrDefault();
+    const projectConfig = config.projects.get(found.projectPath);
+    const workspaceEntry =
+      projectConfig?.workspaces.find((workspace) => workspace.id === normalizedWorkspaceId) ??
+      projectConfig?.workspaces.find((workspace) => workspace.path === found.workspacePath);
+    const override = workspaceEntry?.goalDefaults;
+    if (!override) {
+      return null;
+    }
+    // Normalize sparse shape: each field defaults to null when absent so
+    // the frontend can treat "missing" and "explicitly inherit" identically.
+    return {
+      defaultBudgetCents: override.defaultBudgetCents ?? null,
+      defaultTurnCap: override.defaultTurnCap ?? null,
+      alwaysRequireExplicitBudget: override.alwaysRequireExplicitBudget ?? null,
+    };
+  }
+
+  /**
+   * Write the per-workspace goal-defaults override.
+   *
+   * `null` fields mean "follow the global default" — when *every* field is
+   * null, the entire override is dropped from `~/.mux/config.json` so the
+   * workspace is indistinguishable from never having had one. Modeled on
+   * `setHeartbeatSettings` so consumers re-fetch via the existing workspace
+   * metadata subscription.
+   */
+  async setWorkspaceGoalDefaults(
+    workspaceId: string,
+    override: WorkspaceGoalDefaultsOverride
+  ): Promise<Result<void, string>> {
+    try {
+      const normalizedWorkspaceId = workspaceId.trim();
+      assert(
+        normalizedWorkspaceId.length > 0,
+        "setWorkspaceGoalDefaults requires a non-empty workspaceId"
+      );
+
+      const defaultBudgetCents = override.defaultBudgetCents;
+      assert(
+        defaultBudgetCents == null ||
+          (Number.isInteger(defaultBudgetCents) && defaultBudgetCents >= 0),
+        "Goal default budget must be a non-negative integer or null"
+      );
+      const defaultTurnCap = override.defaultTurnCap;
+      assert(
+        defaultTurnCap == null || (Number.isInteger(defaultTurnCap) && defaultTurnCap > 0),
+        "Goal default turn cap must be a positive integer or null"
+      );
+      assert(
+        override.alwaysRequireExplicitBudget == null ||
+          typeof override.alwaysRequireExplicitBudget === "boolean",
+        "alwaysRequireExplicitBudget must be a boolean or null"
+      );
+
+      const found = this.config.findWorkspace(normalizedWorkspaceId);
+      if (!found) {
+        return Err("Workspace not found");
+      }
+
+      const { projectPath, workspacePath } = found;
+      const config = this.config.loadConfigOrDefault();
+      const projectConfig = config.projects.get(projectPath);
+      if (!projectConfig) {
+        return Err(`Project not found: ${projectPath}`);
+      }
+
+      const workspaceEntry =
+        projectConfig.workspaces.find((workspace) => workspace.id === normalizedWorkspaceId) ??
+        projectConfig.workspaces.find((workspace) => workspace.path === workspacePath);
+      if (!workspaceEntry) {
+        return Err("Workspace not found");
+      }
+
+      // Drop the whole record when every field is null — keeps the
+      // config.json minimal and makes "no override" the canonical state
+      // that resolves to global defaults.
+      const allNull =
+        override.defaultBudgetCents == null &&
+        override.defaultTurnCap == null &&
+        override.alwaysRequireExplicitBudget == null;
+
+      const prior = workspaceEntry.goalDefaults;
+      if (allNull) {
+        if (prior == null) {
+          return Ok(undefined);
+        }
+        delete workspaceEntry.goalDefaults;
+      } else {
+        const next: WorkspaceGoalDefaultsOverride = {
+          defaultBudgetCents: override.defaultBudgetCents ?? null,
+          defaultTurnCap: override.defaultTurnCap ?? null,
+          alwaysRequireExplicitBudget: override.alwaysRequireExplicitBudget ?? null,
+        };
+        const unchanged =
+          prior != null &&
+          (prior.defaultBudgetCents ?? null) === next.defaultBudgetCents &&
+          (prior.defaultTurnCap ?? null) === next.defaultTurnCap &&
+          (prior.alwaysRequireExplicitBudget ?? null) === next.alwaysRequireExplicitBudget;
+        if (unchanged) {
+          return Ok(undefined);
+        }
+        workspaceEntry.goalDefaults = next;
+      }
+
+      await this.config.saveConfig(config);
+      await this.emitCurrentWorkspaceMetadata(normalizedWorkspaceId);
+      return Ok(undefined);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return Err(`Failed to set workspace goal defaults: ${message}`);
     }
   }
 

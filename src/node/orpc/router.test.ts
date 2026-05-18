@@ -15,6 +15,7 @@ describe("router workspace goal validation", () => {
     const setGoal = mock(() =>
       Promise.resolve({ success: true, data: { goalId: "should-not-set" } })
     );
+    const getGoalHistory = mock(() => Promise.resolve([]));
     const context = {
       workspaceService: {
         getInfo: mock(() => Promise.resolve(null)),
@@ -23,6 +24,7 @@ describe("router workspace goal validation", () => {
         getGoal,
         clearGoal,
         setGoal,
+        getGoalHistory,
       },
     } as unknown as ORPCContext;
     const client = createRouterClient(router(), { context });
@@ -35,6 +37,10 @@ describe("router workspace goal validation", () => {
       client.workspace.clearGoal({ workspaceId: "../../tmp/not-a-workspace" })
     );
     expect(clearResult).toEqual({ cleared: false });
+    const historyResult = await Promise.resolve(
+      client.workspace.getGoalHistory({ workspaceId: "../../tmp/not-a-workspace" })
+    );
+    expect(historyResult).toEqual({ entries: [] });
     const setResult = await Promise.resolve(
       client.workspace.setGoal({
         workspaceId: "../../tmp/not-a-workspace",
@@ -49,6 +55,7 @@ describe("router workspace goal validation", () => {
     expect(getGoal).not.toHaveBeenCalled();
     expect(setGoal).not.toHaveBeenCalled();
     expect(clearGoal).not.toHaveBeenCalled();
+    expect(getGoalHistory).not.toHaveBeenCalled();
   });
 });
 

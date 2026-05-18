@@ -66,6 +66,25 @@ export const GoalSnapshotSchema = z.object({
   pendingPersistence: z.boolean().optional(),
 });
 
+/**
+ * Why a goal left the workspace's "current goal" slot. Persisted in the
+ * goal-history JSONL so the right-sidebar GoalTab can show completed goals
+ * grouped under the current goal without re-creating the lifecycle context.
+ */
+export const GoalHistoryEndReasonSchema = z.enum(["completed", "cleared", "replaced"]);
+
+/**
+ * One entry in the workspace's append-only goal history. Captures a snapshot
+ * of the goal record at the moment it left the "current" slot, plus the
+ * reason and time of departure so the UI can sort + label entries.
+ */
+export const GoalHistoryEntrySchema = z.object({
+  version: z.literal(1),
+  endReason: GoalHistoryEndReasonSchema,
+  endedAtMs: z.number().int().nonnegative(),
+  goal: GoalRecordV1Schema,
+});
+
 // Discriminated union so the oRPC handler can return typed errors for the
 // invalid-transition / child-workspace branches that `setGoal` previously
 // allowed to escape as unhandled 500s (Coder-agents-review P3 DEREM-36).
@@ -99,6 +118,14 @@ export const GoalSetInputSchema = z.object({
   turnCap: z.number().int().positive().nullable().optional(),
   completionSummary: z.string().nullish(),
   expectedGoalId: z.string().uuid().nullish(),
+  // When true and a current goal already exists, an objective update mutates
+  // the existing record in place (preserving goalId + accounting) instead of
+  // replacing it with a fresh goal. This backs the right-sidebar "Edit goal
+  // objective" affordance, which should feel like the inline budget / turn-cap
+  // edits rather than starting over. `/goal <objective>` and other replace
+  // entry points omit the flag (default false) to keep their existing
+  // semantics.
+  editInPlace: z.boolean().nullish(),
   // NOTE: Internal-only fields like `requireUserAcknowledgmentSinceMs`
   // (crash-recovery acknowledgment gate), `initiator`, and other workflow
   // signals MUST NOT be exposed in the public oRPC schema (Coder-agents-
@@ -112,3 +139,110 @@ export const GoalSetInputSchema = z.object({
 
 export const GoalGetInputSchema = z.object({ workspaceId: z.string().min(1) });
 export const GoalClearInputSchema = z.object({ workspaceId: z.string().min(1) });
+export const GoalGetHistoryInputSchema = z.object({ workspaceId: z.string().min(1) });
+export const GoalGetHistoryOutputSchema = z.object({
+  entries: z.array(GoalHistoryEntrySchema),
+});
+
+/**
+ * The "goal board" is the workspace's roadmap: a sequence of goals the
+ * user has lined up, plus a holding pen for goals they have archived (so
+ * archives stay visible in the UI without polluting the active or
+ * upcoming lists). Completed goals come from the existing append-only
+ * `goal-history.jsonl` and are not stored on the board.
+ *
+ * Persisted at `goal-board.json` next to `goal.json`. Kept as a separate
+ * file so the existing goal.json + agent contract are untouched: the
+ * agent's `get_goal` tool reads only `goal.json` and never learns about
+ * upcoming or archived goals (the agent doesn't get to reorder its own
+ * roadmap; the user owns the queue).
+ */
+export const GoalBoardV1Schema = z.object({
+  version: z.literal(1),
+  upcoming: z.array(GoalRecordV1Schema),
+  archived: z.array(GoalRecordV1Schema),
+});
+
+/**
+ * Where in the board a goal lives. `active` and `complete` are computed
+ * from `goal.json` + `goal-history.jsonl`; `upcoming` and `archived`
+ * live in `goal-board.json`. The renderer uses this to drive section
+ * placement in the GoalTab without having to learn each underlying
+ * storage location.
+ */
+export const GoalBoardSectionSchema = z.enum(["active", "upcoming", "complete", "archived"]);
+
+/**
+ * One row in the renderer-facing board response. Carries the goal record
+ * plus its section so the UI can render four lists without having to
+ * splice together the underlying sources itself.
+ */
+export const GoalBoardEntrySchema = z.object({
+  section: GoalBoardSectionSchema,
+  goal: GoalRecordV1Schema,
+  /**
+   * Append timestamp (ms since epoch) of the underlying history entry.
+   * Only set for `complete` and `archived` entries — `active` /
+   * `upcoming` don't have a meaningful "when did it leave" timestamp.
+   */
+  endedAtMs: z.number().int().nonnegative().optional(),
+});
+
+export const GoalBoardSnapshotSchema = z.object({
+  entries: z.array(GoalBoardEntrySchema),
+});
+
+export const GoalBoardGetInputSchema = z.object({ workspaceId: z.string().min(1) });
+
+/**
+ * Add a new goal to the workspace's `upcoming` list. Mirrors the
+ * objective + budget + turn-cap shape of `GoalSetInputSchema` for
+ * symmetry; the backend resolves defaults the same way (
+ * `resolveGoalSetIntent` is invoked client-side before this lands).
+ */
+export const GoalBoardAddUpcomingInputSchema = z.object({
+  workspaceId: z.string().min(1),
+  objective: z.string().min(1),
+  budgetCents: z.number().int().nonnegative().nullable().optional(),
+  turnCap: z.number().int().positive().nullable().optional(),
+});
+
+export const GoalBoardArchiveInputSchema = z.object({
+  workspaceId: z.string().min(1),
+  goalId: z.string().uuid(),
+});
+
+export const GoalBoardReviveInputSchema = z.object({
+  workspaceId: z.string().min(1),
+  goalId: z.string().uuid(),
+});
+
+export const GoalBoardReorderInputSchema = z.object({
+  workspaceId: z.string().min(1),
+  /**
+   * The full new ordering of the `upcoming` list. We require the client
+   * to pass the entire reordered list rather than (fromIndex, toIndex)
+   * so concurrent edits don't drift the index — the server validates
+   * the IDs match what it has and ignores out-of-band entries.
+   */
+  upcomingIds: z.array(z.string().uuid()),
+});
+
+export const GoalBoardPromoteInputSchema = z.object({
+  workspaceId: z.string().min(1),
+  goalId: z.string().uuid(),
+});
+
+/**
+ * Patch an existing upcoming goal in place. Each field is optional so
+ * the renderer can patch a single column (e.g. only objective) without
+ * resending the others. `null` for budgetCents/turnCap explicitly
+ * clears the limit; omitting the field leaves it untouched.
+ */
+export const GoalBoardUpdateUpcomingInputSchema = z.object({
+  workspaceId: z.string().min(1),
+  goalId: z.string().uuid(),
+  objective: z.string().min(1).optional(),
+  budgetCents: z.number().int().nonnegative().nullable().optional(),
+  turnCap: z.number().int().positive().nullable().optional(),
+});

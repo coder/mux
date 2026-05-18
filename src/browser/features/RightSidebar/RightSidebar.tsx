@@ -17,6 +17,7 @@ import {
 } from "@/browser/hooks/usePersistedState";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { useAPI } from "@/browser/contexts/API";
+import { useWorkspaceMetadata } from "@/browser/contexts/WorkspaceContext";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import {
   hasGoalBudgetLimit,
@@ -24,6 +25,8 @@ import {
   UNPRICED_CURRENT_MODEL_GOAL_MESSAGE,
 } from "@/common/utils/goals/budgetPricing";
 import { setGoalWithConflictRetry } from "@/browser/utils/goals/setGoalWithConflictRetry";
+import { loadGoalDefaults, resolveGoalSetIntent } from "@/browser/utils/goals/resolveGoalSetIntent";
+import type { GoalCreateIntent } from "@/browser/features/RightSidebar/GoalTab";
 import { usePopoverError } from "@/browser/hooks/usePopoverError";
 import { PopoverError } from "@/browser/components/PopoverError/PopoverError";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -46,7 +49,7 @@ import {
 import { SidebarCollapseButton } from "@/browser/components/SidebarCollapseButton/SidebarCollapseButton";
 import { cn } from "@/common/lib/utils";
 import type { ReviewNoteData } from "@/common/types/review";
-import type { GoalSetError, GoalSnapshot, GoalStatus } from "@/common/types/goal";
+import type { GoalHistoryEntry, GoalSetError, GoalSnapshot, GoalStatus } from "@/common/types/goal";
 import { TerminalTab } from "@/browser/features/RightSidebar/TerminalTab";
 import { useOptionalWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import {
@@ -288,6 +291,7 @@ interface RightSidebarTabsetNodeProps {
   /** Terminal session ID that should be auto-focused (cleared once focus lands) */
   autoFocusTerminalSession: string | null;
   goal: GoalSnapshot | null;
+  goalHistory: GoalHistoryEntry[];
   goalCompleteInputRequest: number;
   // RightSidebar / GoalTab UI requests user-facing transitions only;
   // `budget_limited` is internal-only — see DEREM-53.
@@ -295,9 +299,17 @@ interface RightSidebarTabsetNodeProps {
     status: Exclude<GoalStatus, "budget_limited">,
     completionSummary?: string
   ) => Promise<void>;
+  onGoalUpdateObjective: (objective: string) => Promise<void>;
   onGoalUpdateBudget: (budgetCents: number | null) => Promise<void>;
   onGoalUpdateTurnCap: (turnCap: number | null) => Promise<void>;
   onGoalClear: () => Promise<void>;
+  /**
+   * Create a brand-new goal from the GoalTab's in-tab form. Matches the
+   * slash command's `goal-set` semantics (objective + optional budget +
+   * optional turn cap) and routes through the same defaults-resolution +
+   * unpriced-model pricing gate.
+   */
+  onGoalCreate: (intent: GoalCreateIntent) => Promise<void>;
   /** Callback to request terminal focus when a tab is selected */
   onRequestTerminalFocus: (sessionId: string) => void;
   /** Callback to clear the auto-focus state after it's been consumed */
@@ -448,11 +460,14 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
     },
     goal: {
       snapshot: props.goal,
+      history: props.goalHistory,
       openCompleteInputRequest: props.goalCompleteInputRequest,
       onSetStatus: props.onGoalSetStatus,
+      onUpdateObjective: props.onGoalUpdateObjective,
       onUpdateBudget: props.onGoalUpdateBudget,
       onUpdateTurnCap: props.onGoalUpdateTurnCap,
       onClear: props.onGoalClear,
+      onCreate: props.onGoalCreate,
     },
   };
 
@@ -643,6 +658,13 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   const desktopExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.PORTABLE_DESKTOP);
   const browserExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.AGENT_BROWSER);
   const goalsExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.GOALS);
+  // Child task workspaces can't run goal actions — backend rejects them
+  // via `WorkspaceGoalService.assertParentWorkspace`. We use this flag
+  // both to hide the Goal tab below and to gate any inline goal UX.
+  const workspaceMetadataContext = useWorkspaceMetadata();
+  const currentWorkspaceMetadata =
+    workspaceMetadataContext.workspaceMetadata.get(workspaceId) ?? null;
+  const isChildWorkspaceForGoal = currentWorkspaceMetadata?.parentWorkspaceId != null;
   // Safe variant: storybook stories may render before addWorkspace() runs; the
   // optional hook returns null instead of throwing assertGet on the unregistered
   // workspace. Real workspaces always have an aggregator by the time RightSidebar
@@ -652,6 +674,36 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   const sidebarState = useOptionalWorkspaceSidebarState(workspaceId);
   const goal = sidebarState?.goal ?? null;
   const [goalCompleteInputRequest, setGoalCompleteInputRequest] = React.useState(0);
+  const [goalHistory, setGoalHistory] = React.useState<GoalHistoryEntry[]>([]);
+
+  // Goal history is event-driven on the backend (entries are appended only
+  // on clear/replace/complete-via-replace), so we re-fetch whenever the
+  // current goal's identity changes — that's our proxy for "a lifecycle
+  // transition just happened in this workspace". This avoids subscribing to
+  // a dedicated history stream while still keeping the right-sidebar list
+  // fresh.
+  React.useEffect(() => {
+    if (!api) {
+      setGoalHistory([]);
+      return;
+    }
+    let cancelled = false;
+    void api.workspace
+      .getGoalHistory({ workspaceId })
+      .then((result) => {
+        if (!cancelled) {
+          setGoalHistory(result.entries);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setGoalHistory([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [api, workspaceId, goal?.goalId]);
   const [llmDebugLogsEnabled, setLlmDebugLogsEnabled] = React.useState<boolean | null>(null);
   const [desktopAvailable, setDesktopAvailable] = React.useState<boolean | null>(null);
   const [browserAvailable, setBrowserAvailable] = React.useState<boolean | null>(null);
@@ -663,9 +715,13 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     // excluded from the public oRPC `setGoal` input shape (Coder-agents-
     // review nit DEREM-53).
     status?: Exclude<GoalStatus, "budget_limited">;
+    objective?: string;
     budgetCents?: number | null;
     turnCap?: number | null;
     completionSummary?: string;
+    // `editInPlace` is forwarded verbatim to `setGoal`; it tells the backend
+    // to mutate the existing goal record instead of archiving+recreating.
+    editInPlace?: boolean;
   }) => {
     if (!api) {
       throw new Error("Backend is not connected.");
@@ -701,11 +757,61 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     await setGoalWithSingleConflictRetry({ turnCap });
   };
 
+  const handleGoalUpdateObjective = async (objective: string) => {
+    // The inline objective editor matches the budget / turn-cap editors:
+    // mutate the current goal in place rather than archiving + recreating
+    // (which is what `/goal <new objective>` does). `editInPlace: true` is
+    // the toggle the backend reads to take the rename branch.
+    await setGoalWithSingleConflictRetry({ objective, editInPlace: true });
+  };
+
   const handleGoalClear = async () => {
     if (!api) {
       throw new Error("Backend is not connected.");
     }
     await api.workspace.clearGoal({ workspaceId });
+  };
+
+  const handleGoalCreate = async (intent: GoalCreateIntent) => {
+    if (!api) {
+      throw new Error("Backend is not connected.");
+    }
+    // Apply shared defaults (turn cap + `alwaysRequireExplicitBudget`
+    // fallback) so the GoalTab form, slash command, and command palette
+    // all produce identical goals for identical inputs. Without this,
+    // a blank budget here would silently create an unbudgeted goal even
+    // when the user configured a default — the exact drift
+    // Coder-agents-review P3 DEREM-27 flagged on the palette path.
+    // Pass workspaceId so any per-workspace override wins over the global.
+    const defaults = await loadGoalDefaults(api, workspaceId);
+    const resolved = resolveGoalSetIntent(intent, defaults);
+    if (hasGoalBudgetLimit(resolved.budgetCents)) {
+      // Codex P2: fetch the provider config at submit time instead of
+      // reading the `useProvidersConfig()` hook state. If the form is
+      // submitted before the hook has populated `providersConfig`, the
+      // hook value is `null` and `modelHasPricingData(model, null)`
+      // would incorrectly reject custom/mapped models that ARE priced
+      // through provider mapping (e.g. `custom:cheap-alias` mapped to a
+      // priced model). The slash command + palette paths both fetch
+      // here, so doing the same keeps the three create surfaces in
+      // lockstep.
+      let freshProvidersConfig: unknown = providersConfig;
+      try {
+        freshProvidersConfig = await api.providers.getConfig();
+      } catch {
+        // Fall back to the hook value (which may still be null). Better
+        // to surface the pricing-gate error than to leak the network
+        // failure to the user — they can retry.
+      }
+      if (!modelHasPricingData(sendMessageOptions.model, freshProvidersConfig)) {
+        throw new Error(UNPRICED_CURRENT_MODEL_GOAL_MESSAGE);
+      }
+    }
+    await setGoalWithSingleConflictRetry({
+      objective: resolved.objective,
+      budgetCents: resolved.budgetCents,
+      ...(resolved.turnCap != null ? { turnCap: resolved.turnCap } : {}),
+    });
   };
 
   React.useEffect(() => {
@@ -885,19 +991,25 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     setLayoutRaw((prevRaw) => {
       const prev = parseRightSidebarLayoutState(prevRaw, initialActiveTab);
       const hasGoal = collectAllTabs(prev.root).includes("goal");
-      const shouldShowGoal = goalsExperimentEnabled && goal != null;
-
-      if (shouldShowGoal && !hasGoal) {
+      // Goal tab is always visible when the GOALS experiment is enabled
+      // AND the workspace is a top-level workspace. Child task
+      // workspaces can't use any goal action — every backend write goes
+      // through `assertParentWorkspace()` which throws for workspaces
+      // with `parentWorkspaceId`. Showing the tab there would surface
+      // a create/queue UI whose submits silently fail (Codex P2).
+      const isChildWorkspace = isChildWorkspaceForGoal;
+      const goalTabShouldExist = goalsExperimentEnabled && !isChildWorkspace;
+      if (goalTabShouldExist && !hasGoal) {
         return addTabToFocusedTabset(prev, "goal", false);
       }
 
-      if (!shouldShowGoal && hasGoal) {
+      if (!goalTabShouldExist && hasGoal) {
         return removeTabEverywhere(prev, "goal");
       }
 
       return prev;
     });
-  }, [goal, goalsExperimentEnabled, initialActiveTab, setLayoutRaw]);
+  }, [goalsExperimentEnabled, initialActiveTab, setLayoutRaw, isChildWorkspaceForGoal]);
 
   React.useEffect(() => {
     if (!desktopExperimentEnabled) {
@@ -1535,11 +1647,14 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         onRequestTerminalFocus={setAutoFocusTerminalSession}
         autoFocusTerminalSession={autoFocusTerminalSession}
         goal={goal ?? null}
+        goalHistory={goalHistory}
         goalCompleteInputRequest={goalCompleteInputRequest}
         onGoalSetStatus={handleGoalSetStatus}
+        onGoalUpdateObjective={handleGoalUpdateObjective}
         onGoalUpdateBudget={handleGoalUpdateBudget}
         onGoalUpdateTurnCap={handleGoalUpdateTurnCap}
         onGoalClear={handleGoalClear}
+        onGoalCreate={handleGoalCreate}
         onAutoFocusConsumed={() => setAutoFocusTerminalSession(null)}
       />
     );
