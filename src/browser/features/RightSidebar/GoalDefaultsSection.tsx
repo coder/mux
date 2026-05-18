@@ -1,6 +1,6 @@
 import { ChevronDown, Target } from "lucide-react";
 import React from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Input } from "@/browser/components/Input/Input";
 import { useAPI } from "@/browser/contexts/API";
@@ -131,6 +131,14 @@ export function GoalDefaultsSection(props: GoalDefaultsSectionProps) {
   }, [api, props.workspaceId]);
 
   const onPersistProp = props.onPersist;
+  // Codex P2: serialize workspace-default saves. The backend setter
+  // reads → mutates → writes the full config record, so two saves in
+  // flight could land out of order — a slower first request could
+  // complete after a later edit and overwrite it on disk while the UI
+  // continues to show the latest optimistic state, silently reverting
+  // the user's edit on next refetch. Chain saves via a promise ref so
+  // each request awaits the previous before issuing its own write.
+  const saveChainRef = useRef<Promise<void>>(Promise.resolve());
   const persistOverride = (next: WorkspaceGoalDefaultsOverride) => {
     // Codex P2: ignore edits while the initial read is in flight.
     // Otherwise a stale all-null shape could overwrite saved overrides.
@@ -138,22 +146,31 @@ export function GoalDefaultsSection(props: GoalDefaultsSectionProps) {
     if (isLoading) return;
     setOverride(next);
     if (!api) return;
-    void api.workspace.goalDefaults
-      .set({
-        workspaceId: props.workspaceId,
-        defaultBudgetCents: next.defaultBudgetCents,
-        defaultTurnCap: next.defaultTurnCap,
-        alwaysRequireExplicitBudget: next.alwaysRequireExplicitBudget,
-      })
-      .then(() => {
-        // Notify parent so prefilled create-form inputs can re-read the
-        // effective defaults. Errors are swallowed (the optimistic
-        // `setOverride` above already updated local state).
-        onPersistProp?.();
-      })
+    saveChainRef.current = saveChainRef.current
       .catch(() => {
-        /* swallow — same rationale as global panel */
-      });
+        // Previous save failed; we already swallowed its error in its
+        // own `.catch`, but the chain still has to continue so the
+        // next save isn't permanently rejected.
+      })
+      .then(() =>
+        api.workspace.goalDefaults
+          .set({
+            workspaceId: props.workspaceId,
+            defaultBudgetCents: next.defaultBudgetCents,
+            defaultTurnCap: next.defaultTurnCap,
+            alwaysRequireExplicitBudget: next.alwaysRequireExplicitBudget,
+          })
+          .then(() => {
+            // Notify parent so prefilled create-form inputs can re-read
+            // the effective defaults. Errors are swallowed (the
+            // optimistic `setOverride` above already updated local
+            // state).
+            onPersistProp?.();
+          })
+          .catch(() => {
+            /* swallow — same rationale as global panel */
+          })
+      );
   };
 
   // Synthesize a "current override" object (all-null is what the

@@ -33,7 +33,10 @@ import { loadGoalDefaults, resolveGoalSetIntent } from "@/browser/utils/goals/re
 import { cn } from "@/common/lib/utils";
 import type { GoalBoardEntry, GoalBoardSnapshot, GoalRecordV1 } from "@/common/types/goal";
 import { formatGoalCents } from "@/common/utils/goals/budgetPricing";
-import { parseGoalBudgetInputCents } from "@/common/utils/goals/budgetParser";
+import {
+  parseGoalBudgetInputCents,
+  parseGoalTurnCapInput,
+} from "@/common/utils/goals/budgetParser";
 
 /**
  * Renderer for the three non-active board sections (upcoming, completed,
@@ -379,22 +382,17 @@ function UpcomingRowEditor(props: UpcomingRowEditorProps) {
       budgetPatch = parsed;
     }
 
-    let turnCapPatch: number | null | undefined;
-    const rawTurnCap = (turnCapRef.current?.value ?? "").trim();
-    if (rawTurnCap.length === 0) {
-      // Empty input ⇒ clear the cap (null). Matches the Adder UX: an
-      // explicitly blank turn cap on an existing queued goal means "no
-      // cap", distinct from "use the workspace default" (the default
-      // already applied when the goal was first queued).
-      turnCapPatch = null;
-    } else {
-      const parsed = Number.parseInt(rawTurnCap, 10);
-      if (!Number.isInteger(parsed) || parsed <= 0) {
-        setLocalError("Enter a positive whole-number turn cap, or leave blank for no cap.");
-        return;
-      }
-      turnCapPatch = parsed;
+    // Use the shared `parseGoalTurnCapInput` (same parser GoalTab uses)
+    // so partial-int inputs like `1.5` or `12abc` correctly fail
+    // validation instead of silently truncating via `Number.parseInt`
+    // (Codex P2 follow-up). `parser → null` is the "blank = no cap"
+    // path the editor relies on.
+    const parsedTurnCap = parseGoalTurnCapInput(turnCapRef.current?.value ?? "");
+    if (parsedTurnCap === undefined) {
+      setLocalError("Enter a positive whole-number turn cap, or leave blank for no cap.");
+      return;
     }
+    const turnCapPatch: number | null = parsedTurnCap;
 
     const patch: { objective?: string; budgetCents?: number | null; turnCap?: number | null } = {};
     if (nextObjective !== props.goal.objective) patch.objective = nextObjective;
@@ -633,16 +631,25 @@ function UpcomingAdder(props: UpcomingAdderProps) {
     // workspace/global `defaultTurnCap`, so queued goals could hit an
     // unexpected limit after auto-promote. Mirrors the main create
     // form's UX: blank → fall through to defaults; explicit number →
-    // override; explicit `0` (invalid) → form error.
+    // override.
+    //
+    // Use the shared `parseGoalTurnCapInput` (same parser GoalTab uses)
+    // so partial-int inputs like `1.5` or `12abc` correctly fail
+    // validation instead of silently truncating via `Number.parseInt`.
+    // Codex P2 follow-up: the previous local `Number.parseInt` accepted
+    // these and saved a different cap than the user typed.
     let turnCap: number | null | undefined;
     const rawTurnCap = (turnCapRef.current?.value ?? "").trim();
     if (rawTurnCap.length > 0) {
-      const parsed = Number.parseInt(rawTurnCap, 10);
-      if (!Number.isInteger(parsed) || parsed <= 0) {
+      const parsed = parseGoalTurnCapInput(rawTurnCap);
+      if (parsed === undefined) {
         setError("Enter a positive whole-number turn cap, or leave blank for the default.");
         return;
       }
-      turnCap = parsed;
+      // `null` from the parser means "blank input" — handled by the
+      // length check above, so this branch only ever gets a positive
+      // integer. Use `??` to coerce `null → undefined` explicitly.
+      turnCap = parsed ?? undefined;
     }
     setIsSubmitting(true);
     setError(null);

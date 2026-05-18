@@ -9,7 +9,10 @@ import {
   type GoalStatus,
 } from "@/common/types/goal";
 import { formatGoalCents } from "@/common/utils/goals/budgetPricing";
-import { parseGoalBudgetInputCents } from "@/common/utils/goals/budgetParser";
+import {
+  parseGoalBudgetInputCents,
+  parseGoalTurnCapInput,
+} from "@/common/utils/goals/budgetParser";
 import { APIContext } from "@/browser/contexts/API";
 import { useGoalDefaults } from "@/browser/utils/goals/useGoalDefaults";
 import { cn } from "@/common/lib/utils";
@@ -83,15 +86,11 @@ interface GoalTabProps {
 // DEREM-21).
 const parseBudgetInput = parseGoalBudgetInputCents;
 
-function parseTurnCapInput(value: string): number | null | undefined {
-  const trimmed = value.trim();
-  if (trimmed.length === 0) {
-    return null;
-  }
-
-  const parsed = Number(trimmed);
-  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
-}
+// Alias kept for callsite stability; canonical parser lives next to
+// `parseGoalBudgetInputCents` so every entry point validates the same way
+// (Codex P2 follow-up — partial-int inputs like `1.5` / `12abc` are
+// rejected here instead of silently truncating).
+const parseTurnCapInput = parseGoalTurnCapInput;
 
 type EditingField = "objective" | "budget" | "turnCap";
 
