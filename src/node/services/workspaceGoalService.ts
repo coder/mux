@@ -2609,6 +2609,30 @@ export class WorkspaceGoalService {
         return;
       }
 
+      // Source priority (Codex P2): always prefer the currently-active
+      // slot. A goal that was completed → archived → revived →
+      // promoted → completed-again has both a stale history entry AND
+      // is the current active. Checking history first would snapshot
+      // the stale history row and leave the live active slot in
+      // place; the user's archive click would then appear not to
+      // work and could surface duplicate Archived rows.
+      if (activeGoal?.goalId === goalId) {
+        // Append a "cleared" history entry so the user's view of
+        // completed/cleared history stays accurate, then place a
+        // snapshot in archived. We use the current ACTIVE record
+        // (with its latest accounting) rather than any older history
+        // entry for the same id.
+        await this.appendGoalHistoryEntry(workspaceId, activeGoal, "cleared");
+        await fs.rm(this.getFilePath(workspaceId), { force: true });
+        await this.pushSnapshot(workspaceId, null);
+        const next: GoalBoardV1 = {
+          ...board,
+          archived: [activeGoal, ...board.archived],
+        };
+        await this.writeBoard(workspaceId, next);
+        return;
+      }
+
       // Source: upcoming list.
       const upcomingIdx = board.upcoming.findIndex((g) => g.goalId === goalId);
       if (upcomingIdx !== -1) {
@@ -2631,21 +2655,6 @@ export class WorkspaceGoalService {
         const next: GoalBoardV1 = {
           ...board,
           archived: [historyEntry.goal, ...board.archived],
-        };
-        await this.writeBoard(workspaceId, next);
-        return;
-      }
-
-      // Source: the currently-active goal. Clear it + append a
-      // "cleared" history entry so the user's view of completed/cleared
-      // history stays accurate, then place a snapshot in archived.
-      if (activeGoal?.goalId === goalId) {
-        await this.appendGoalHistoryEntry(workspaceId, activeGoal, "cleared");
-        await fs.rm(this.getFilePath(workspaceId), { force: true });
-        await this.pushSnapshot(workspaceId, null);
-        const next: GoalBoardV1 = {
-          ...board,
-          archived: [activeGoal, ...board.archived],
         };
         await this.writeBoard(workspaceId, next);
         return;
