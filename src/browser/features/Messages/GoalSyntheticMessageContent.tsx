@@ -37,7 +37,33 @@ function extractFirstParagraph(content: string): string | null {
   return paragraph;
 }
 
-/** Hides model-only goal prompt internals while surfacing the user-facing goal event. */
+/**
+ * Hides model-only goal prompt internals while surfacing the user-
+ * facing goal event.
+ *
+ * Aesthetic rationale (this is the card the user sees in the
+ * transcript when Mux auto-continues an active goal or wraps up at a
+ * budget limit):
+ *
+ *  • The card renders INSIDE the user-message bubble — the parent
+ *    bubble already contributes `border + rounded-lg + px-3 py-2` plus
+ *    a tinted surface. The pre-existing implementation added a second
+ *    border + tinted background + extra padding inside that bubble,
+ *    which doubled the chrome and made the card look heavy and out of
+ *    place; the `min-w-[18rem]` blew out the bubble even for short
+ *    objectives so it sat awkwardly mid-transcript. The new layout
+ *    treats this content as plain text inside the bubble and lets the
+ *    bubble do the framing.
+ *
+ *  • A small inline icon replaces the chunky icon "badge" so the icon
+ *    sits at the same scale as the title text. `mt-0.5` vertically
+ *    centers it against the first text line (the 16px icon vs 20px
+ *    line-height of `text-sm` needs the 2px nudge).
+ *
+ *  • The `goal continuation` / `budget limit wrap-up` pill in the
+ *    message meta row remains, so the user still sees the synthetic-
+ *    nature label below the bubble alongside the timestamp.
+ */
 export function GoalSyntheticMessageContent(props: GoalSyntheticMessageContentProps): ReactElement {
   const objective = extractObjective(props.content);
   let title = "Continuing active goal";
@@ -51,23 +77,25 @@ export function GoalSyntheticMessageContent(props: GoalSyntheticMessageContentPr
   }
 
   return (
-    <section className="bg-muted/10 max-w-[42rem] min-w-[18rem] rounded-md border border-[var(--color-user-border)] p-3 not-italic">
-      <div className="flex items-start gap-3">
-        <div className="bg-muted/20 text-muted mt-0.5 rounded-md p-1.5">
-          <Icon aria-hidden="true" className="h-4 w-4" />
-        </div>
-        <div className="min-w-0 flex-1 space-y-2">
-          <div>
-            <div className="text-sm font-medium text-[var(--color-user-text)]">{title}</div>
-            <div className="text-muted mt-0.5 text-xs">{description}</div>
+    <div className="not-italic">
+      <div className="flex items-start gap-2.5">
+        <Icon aria-hidden="true" className="text-muted mt-0.5 size-4 shrink-0" />
+        <div className="min-w-0 flex-1">
+          <div className="text-sm leading-snug font-medium text-[var(--color-user-text)]">
+            {title}
           </div>
-          {objective && (
-            <blockquote className="border-l-2 border-[var(--color-user-border)] pl-3 text-sm leading-relaxed whitespace-pre-wrap text-[var(--color-user-text)]">
-              {objective}
-            </blockquote>
-          )}
+          <div className="text-muted mt-0.5 text-xs leading-snug">{description}</div>
         </div>
       </div>
-    </section>
+      {objective && (
+        // The blockquote is intentionally outside the icon row so it
+        // can span the full bubble width. A small top margin keeps it
+        // visually grouped with the title/description above without
+        // resurrecting the heavier `space-y-2` rhythm.
+        <blockquote className="mt-2 border-l-2 border-[var(--color-user-border)] pl-3 text-sm leading-relaxed whitespace-pre-wrap text-[var(--color-user-text)]">
+          {objective}
+        </blockquote>
+      )}
+    </div>
   );
 }

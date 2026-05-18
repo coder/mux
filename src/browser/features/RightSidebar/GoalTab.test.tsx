@@ -198,6 +198,37 @@ describe("GoalTab", () => {
     expect(getByText(/over$/)).toBeTruthy();
   });
 
+  test("budget tile does not claim 'over' when budget_limited is caused by the turn cap (Codex P2)", () => {
+    // `budget_limited` is shared lifecycle for "hit budget OR hit turn
+    // cap". The Budget tile must base its over/under-budget rendering
+    // on the actual budget numbers, not the lifecycle status — else a
+    // goal with $1.25 of $5.00 spent and 10/10 turns used would lie
+    // about the money ("$0.00 over") simply because the turn cap was
+    // hit.
+    // `turnsUsed` is intentionally below `turnCap` so the Turns tile
+    // can't independently render "over" — this isolates the assertion
+    // to the Budget tile.
+    const { getByText, queryByText } = render(
+      <GoalTab
+        goal={goal({
+          status: "budget_limited",
+          budgetCents: 500,
+          costCents: 125,
+          turnCap: 10,
+          turnsUsed: 5,
+        })}
+        onSetStatus={mock()}
+        onClear={mock()}
+      />
+    );
+
+    // Budget should show under-budget figures, since $1.25 < $5.00.
+    expect(getByText("$1.25")).toBeTruthy();
+    expect(getByText("$3.75")).toBeTruthy();
+    // Neither tile should render the "over" branch in this state.
+    expect(queryByText(/over$/)).toBeNull();
+  });
+
   test("turns tile reports the actual overage when turns exceed the cap (Codex P2)", () => {
     // Same defect for the Turns tile: when `turnsUsed > turnCap`, the
     // pre-fix render clamped to `0 over`. Verify the true delta is

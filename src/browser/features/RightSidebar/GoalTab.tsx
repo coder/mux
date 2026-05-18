@@ -537,7 +537,6 @@ export function GoalTab(props: GoalTabProps) {
         <BudgetTile
           costCents={props.goal.costCents}
           budgetCents={props.goal.budgetCents}
-          status={props.goal.status}
           canEdit={canEdit}
           onEdit={(event) => openBudgetEditor(event.currentTarget)}
         />
@@ -787,7 +786,6 @@ export function GoalTab(props: GoalTabProps) {
 interface BudgetTileProps {
   costCents: number;
   budgetCents: number | null;
-  status: GoalStatus;
   canEdit: boolean;
   onEdit: (event: React.MouseEvent<HTMLButtonElement>) => void;
 }
@@ -814,9 +812,16 @@ interface BudgetTileProps {
  *   shows "no budget" — the tile is then a single-value Cost card.
  */
 function BudgetTile(props: BudgetTileProps) {
-  const { costCents, budgetCents, status, canEdit, onEdit } = props;
+  // `status` is intentionally unread — Codex P2: the lifecycle's
+  // `budget_limited` state can be triggered by EITHER hitting the
+  // budget OR hitting the turn cap (see `hasReachedAnyLimit()` in
+  // `workspaceGoalService.ts`). If we OR'd `status === "budget_limited"`
+  // into `overBudget`, a goal like cost `$1.25 of $5.00` with turns
+  // `10 / 10` would lie ("$0.00 over") about the money. Base the
+  // budget-tile "over" branch strictly on the budget numbers.
+  const { costCents, budgetCents, canEdit, onEdit } = props;
   const hasBudget = budgetCents != null;
-  const overBudget = status === "budget_limited" || (hasBudget && costCents >= budgetCents);
+  const overBudget = hasBudget && costCents >= budgetCents;
   // Compute both deltas with `Math.max(0, …)` so each branch surfaces a
   // non-negative magnitude:
   //   • `leftCents`     — used by the under-budget branch
