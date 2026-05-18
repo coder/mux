@@ -792,6 +792,39 @@ export function GoalTab(props: GoalTabProps) {
   );
 }
 
+interface StatTileHeaderProps {
+  /** Tile label rendered as a `<dt>` (the parent `<dl>` lives in the active-goal section). */
+  label: string;
+  canEdit: boolean;
+  /** Aria label for the inline "Edit" button — distinguishes the budget vs turn-cap openers in tests + a11y. */
+  editAriaLabel: string;
+  onEdit: (event: React.MouseEvent<HTMLButtonElement>) => void;
+}
+
+/**
+ * Shared header row for the active-goal stat tiles (Budget, Turns):
+ * a `<dt>` label on the left and an optional inline "Edit" button on
+ * the right. Kept scoped to this file because the styling is intentionally
+ * local to the dashboard tile look and not reused elsewhere.
+ */
+function StatTileHeader(props: StatTileHeaderProps) {
+  return (
+    <div className="flex items-baseline justify-between gap-2">
+      <dt className="text-muted text-xs">{props.label}</dt>
+      {props.canEdit && (
+        <button
+          type="button"
+          className="text-muted hover:text-foreground text-xs underline"
+          aria-label={props.editAriaLabel}
+          onClick={props.onEdit}
+        >
+          Edit
+        </button>
+      )}
+    </div>
+  );
+}
+
 interface BudgetTileProps {
   costCents: number;
   budgetCents: number | null;
@@ -853,19 +886,12 @@ function BudgetTile(props: BudgetTileProps) {
 
   return (
     <div className="bg-surface-secondary col-span-2 rounded-md p-3">
-      <div className="flex items-baseline justify-between gap-2">
-        <dt className="text-muted text-xs">Budget</dt>
-        {canEdit && (
-          <button
-            type="button"
-            className="text-muted hover:text-foreground text-xs underline"
-            aria-label="Edit goal budget"
-            onClick={onEdit}
-          >
-            Edit
-          </button>
-        )}
-      </div>
+      <StatTileHeader
+        label="Budget"
+        canEdit={canEdit}
+        editAriaLabel="Edit goal budget"
+        onEdit={onEdit}
+      />
       <dd className="counter-nums text-foreground mt-1 flex items-baseline justify-between gap-3 leading-tight">
         <span className="text-base font-medium">
           <span>{formatGoalCents(costCents)}</span>
@@ -939,19 +965,12 @@ function TurnsTile(props: TurnsTileProps) {
 
   return (
     <div className="bg-surface-secondary rounded-md p-3">
-      <div className="flex items-baseline justify-between gap-2">
-        <dt className="text-muted text-xs">Turns</dt>
-        {canEdit && (
-          <button
-            type="button"
-            className="text-muted hover:text-foreground text-xs underline"
-            aria-label="Edit goal turn cap"
-            onClick={onEdit}
-          >
-            Edit
-          </button>
-        )}
-      </div>
+      <StatTileHeader
+        label="Turns"
+        canEdit={canEdit}
+        editAriaLabel="Edit goal turn cap"
+        onEdit={onEdit}
+      />
       <dd className="counter-nums text-foreground mt-1 leading-tight">
         <div className="text-base font-medium">
           <span>{hasCap ? `${turnsUsed} / ${turnCap}` : String(turnsUsed)}</span>
