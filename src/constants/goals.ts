@@ -7,6 +7,20 @@ export const GOAL_OBJECTIVE_OPEN_TAG = "<untrusted_objective>";
 export const GOAL_OBJECTIVE_CLOSE_TAG = "</untrusted_objective>";
 
 /**
+ * Synthesized completion summary used when the agent ends a goal-continuation
+ * turn with a text-only response (no tool calls). Real models occasionally
+ * finish a continuation with a plain "looks done" reply instead of calling
+ * `complete_goal`; without an implicit completion the continuation loop
+ * would re-fire on the same idle output until budget/cooldown gates
+ * intervene. Prefer the last text part from the turn (truncated to
+ * {@link SILENT_CONTINUATION_COMPLETION_SUMMARY_MAX_LENGTH}); fall back to
+ * this constant when no usable text exists.
+ */
+export const SILENT_CONTINUATION_COMPLETION_SUMMARY_FALLBACK =
+  "Agent ended the goal-continuation turn without calling complete_goal — treated as goal completion.";
+export const SILENT_CONTINUATION_COMPLETION_SUMMARY_MAX_LENGTH = 500;
+
+/**
  * Placeholder shown wherever a user is asked to write a goal objective
  * (right-sidebar form, command palette, queued-goal input). The text is
  * deliberately educational: it teaches what a good agent goal looks like

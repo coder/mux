@@ -30,6 +30,8 @@ import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import {
   GOAL_BUDGET_LIMIT_KIND,
   GOAL_CONTINUATION_KIND,
+  SILENT_CONTINUATION_COMPLETION_SUMMARY_FALLBACK,
+  SILENT_CONTINUATION_COMPLETION_SUMMARY_MAX_LENGTH,
   type GoalSyntheticMessageKind,
 } from "@/constants/goals";
 import type { SendMessageError } from "@/common/types/errors";
@@ -4627,6 +4629,21 @@ export class AgentSession {
             agentId: WORKSPACE_DEFAULTS.agentId,
           };
           if (sendOptions.agentId !== "plan" && sendOptions.agentId !== "compact") {
+            // If a `goal_continuation` turn ended without any tool calls,
+            // interpret the text-only finish as an implicit `complete_goal`.
+            // The continuation prompt asks the agent to call `complete_goal`
+            // explicitly, but real models sometimes finish with a plain
+            // "looks done" reply instead — without this fallback the
+            // continuation loop would re-fire on the same idle output until
+            // budget/cooldown gates intervene. We restrict to continuation
+            // turns (not user messages, not budget-limit wrap-ups) so a
+            // user's first manual turn answered with text is never
+            // mistaken for completion. `requestContinuationAfterStreamEnd`
+            // below safely no-ops once the goal flips to `complete`.
+            if (activeStreamGoalKind === GOAL_CONTINUATION_KIND) {
+              await this.maybeAutoCompleteGoalFromSilentContinuation(streamEndPayload);
+            }
+
             goalContinuationRequest = {
               sendOptions,
               streamEndedAtMs: Date.now(),
@@ -4886,6 +4903,61 @@ export class AgentSession {
           }
         });
     }
+  }
+
+  /**
+   * If a `goal_continuation` turn finished with no `dynamic-tool` parts,
+   * treat it as an implicit `complete_goal` call. The caller is expected
+   * to have already gated on `activeStreamGoalKind === GOAL_CONTINUATION_KIND`
+   * and on the standard plan/compact/queued-input exclusions; this helper
+   * owns the parts inspection + summary synthesis.
+   */
+  private async maybeAutoCompleteGoalFromSilentContinuation(
+    payload: StreamEndEvent
+  ): Promise<void> {
+    if (!this.workspaceGoalService) {
+      return;
+    }
+    if (payload.parts.some((part) => part.type === "dynamic-tool")) {
+      return;
+    }
+    const summary = this.synthesizeSilentContinuationSummary(payload.parts);
+    try {
+      await this.workspaceGoalService.completeGoalFromSilentContinuation({
+        workspaceId: this.workspaceId,
+        completionSummary: summary,
+      });
+    } catch (error) {
+      // Best-effort: never let goal-completion bookkeeping break the
+      // stream-end cleanup path. The service already swallows typed
+      // `Result` errors; this catch is defense-in-depth for unexpected
+      // throws.
+      log.warn("Failed to auto-complete goal from silent continuation", {
+        workspaceId: this.workspaceId,
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
+  /** Last non-empty text part, trimmed and length-capped; falls back to a constant. */
+  private synthesizeSilentContinuationSummary(parts: StreamEndEvent["parts"]): string {
+    for (let index = parts.length - 1; index >= 0; index -= 1) {
+      const part = parts[index];
+      if (part.type !== "text") {
+        continue;
+      }
+      const trimmed = part.text.trim();
+      if (trimmed.length === 0) {
+        continue;
+      }
+      if (trimmed.length <= SILENT_CONTINUATION_COMPLETION_SUMMARY_MAX_LENGTH) {
+        return trimmed;
+      }
+      // Reserve one character for the ellipsis so the persisted summary
+      // stays under the configured cap.
+      return `${trimmed.slice(0, SILENT_CONTINUATION_COMPLETION_SUMMARY_MAX_LENGTH - 1)}…`;
+    }
+    return SILENT_CONTINUATION_COMPLETION_SUMMARY_FALLBACK;
   }
 
   /** Extract a successful switch_agent tool result from stream-end parts (latest wins). */
