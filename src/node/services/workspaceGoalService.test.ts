@@ -2864,6 +2864,34 @@ describe("WorkspaceGoalService", () => {
       expect(upcomingIds[0]).toBe(active.goalId);
     });
 
+    test("promoteUpcomingGoal archives a completed active goal instead of demoting to upcoming (Codex P2)", async () => {
+      // Complete the active goal but leave it sitting in goal.json
+      // (single-goal UX path — no auto-promote because upcoming is
+      // empty at completion time). Then queue an upcoming goal and
+      // promote it: the previously-active complete goal must NOT
+      // re-enter the queue.
+      await setGoalOk(service, { workspaceId, objective: "Finish first" });
+      const completed = await setGoalOk(service, {
+        workspaceId,
+        status: "complete",
+        completionSummary: "Marked complete by user.",
+      });
+      const queued = await service.addUpcomingGoal({
+        workspaceId,
+        objective: "Next goal",
+      });
+
+      const promoted = await service.promoteUpcomingGoal(workspaceId, queued.goalId);
+      expect(promoted?.goalId).toBe(queued.goalId);
+
+      const board = await service.getGoalBoard(workspaceId);
+      // The completed goal is in the Completed section, not Upcoming.
+      const upcoming = board.entries.filter((e) => e.section === "upcoming");
+      expect(upcoming.find((e) => e.goal.goalId === completed.goalId)).toBeUndefined();
+      const complete = board.entries.filter((e) => e.section === "complete");
+      expect(complete.find((e) => e.goal.goalId === completed.goalId)).toBeDefined();
+    });
+
     test("promoteUpcomingGoal rejects mid-stream to avoid cost mis-attribution (Codex P1)", async () => {
       await setGoalOk(service, { workspaceId, objective: "Currently active" });
       const queued = await service.addUpcomingGoal({ workspaceId, objective: "Promote me" });

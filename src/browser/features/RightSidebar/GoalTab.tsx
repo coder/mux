@@ -110,7 +110,14 @@ export function GoalTab(props: GoalTabProps) {
   // branches can render the Upcoming / Completed / Archived sections.
   // Mutations route through `refreshBoard` so the renderer re-reads after
   // a queue/archive/revive/promote/reorder.
-  const { board, refresh: refreshBoard } = useGoalBoard(props.workspaceId);
+  //
+  // `activeGoalKey` carries the parent's view of the active goal so the
+  // hook also re-fetches when setGoal/clearGoal mutates the active slot
+  // (Codex P2: 'Refresh the board after auto-promotion'). Without this,
+  // marking the active goal complete would update the header but leave
+  // the board's Upcoming list stale until another board mutation.
+  const activeGoalKey = props.goal ? `${props.goal.goalId}:${props.goal.status}` : null;
+  const { board, refresh: refreshBoard } = useGoalBoard(props.workspaceId, activeGoalKey);
   const editInputRef = useRef<HTMLInputElement | null>(null);
   const objectiveInputRef = useRef<HTMLTextAreaElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);

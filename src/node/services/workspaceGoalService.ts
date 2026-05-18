@@ -2633,12 +2633,24 @@ export class WorkspaceGoalService {
         updatedAtMs: now,
       });
 
-      // Demote the previously-active goal to the head of upcoming. We
-      // do NOT change its status — if it was paused / budget_limited
-      // / running, it keeps that state for when the user comes back to
-      // it. This is the only place we treat a non-upcoming goal as
-      // landing in upcoming, so it's flagged explicitly here.
-      const nextUpcoming = currentActive ? [currentActive, ...board.upcoming] : board.upcoming;
+      // Demote the previously-active goal to the head of upcoming, but
+      // ONLY if it's still alive. A completed goal sitting in the active
+      // slot (the user-marked-complete + queued-next workflow) must NOT
+      // re-enter the queue (Codex P2): completed goals are terminal
+      // from the queue's perspective. Push them to history under the
+      // "completed" reason so the board's Completed section surfaces
+      // them, and skip the upcoming demote.
+      let nextUpcoming: GoalRecordV1[];
+      if (currentActive) {
+        if (currentActive.status === "complete") {
+          await this.appendGoalHistoryEntry(workspaceId, currentActive, "completed");
+          nextUpcoming = board.upcoming;
+        } else {
+          nextUpcoming = [currentActive, ...board.upcoming];
+        }
+      } else {
+        nextUpcoming = board.upcoming;
+      }
 
       await this.writeBoard(workspaceId, {
         ...board,

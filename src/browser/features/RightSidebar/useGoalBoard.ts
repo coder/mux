@@ -26,7 +26,21 @@ export interface UseGoalBoardResult {
   refresh: () => void;
 }
 
-export function useGoalBoard(workspaceId: string | undefined): UseGoalBoardResult {
+/**
+ * @param workspaceId — Workspace whose board to read.
+ * @param activeGoalKey — Optional cache-busting key derived from the
+ *   parent's view of the active goal (typically
+ *   `${goalId}:${status}`). Including this in the effect deps makes
+ *   the hook re-fetch when `setGoal` or `clearGoal` mutates the
+ *   active goal — for example, when the backend's
+ *   `maybeAutoPromoteOnComplete` swaps the active slot. Without this,
+ *   the board would show stale Upcoming/Completed lists until another
+ *   board mutation forced a refetch.
+ */
+export function useGoalBoard(
+  workspaceId: string | undefined,
+  activeGoalKey?: string | null
+): UseGoalBoardResult {
   // Read APIContext directly (vs `useAPI()`) so the hook tolerates
   // missing provider in storybook stories. Same rationale as
   // `useGoalDefaults`.
@@ -59,7 +73,7 @@ export function useGoalBoard(workspaceId: string | undefined): UseGoalBoardResul
     return () => {
       cancelled = true;
     };
-  }, [api, workspaceId, refreshKey]);
+  }, [api, workspaceId, refreshKey, activeGoalKey]);
 
   const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
 
