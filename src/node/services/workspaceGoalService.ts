@@ -2706,6 +2706,28 @@ export class WorkspaceGoalService {
     if (board.upcoming.length === 0) {
       return;
     }
+    // Codex P2: check the pricing gate BEFORE appending history. If
+    // the next-up goal is budgeted and the kickoff model is unpriced,
+    // we skip the auto-promote and leave the completed goal in
+    // goal.json so the board's Completed section still shows it via
+    // the live active record. The user can fix the model and call
+    // `promoteUpcomingGoal` to retry, which archives the completed
+    // goal once. If we appended history here unconditionally, that
+    // later manual promote would archive again → duplicate Completed
+    // entry for one goal.
+    const [head] = board.upcoming;
+    const projected = GoalRecordV1Schema.parse({
+      ...head,
+      status: "active",
+      updatedAtMs: Date.now(),
+    });
+    if (!this.canRunBudgetedGoalOnKickoffModel(workspaceId, projected)) {
+      log.warn(
+        "Auto-promote on complete skipped: queued goal is budgeted but kickoff model is unpriced",
+        { workspaceId, goalId: head.goalId }
+      );
+      return;
+    }
     // Move the completed goal into history before overwriting goal.json
     // with the promoted goal. The board's Completed section reads from
     // history, so this is what makes the just-completed goal visible
