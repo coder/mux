@@ -1,4 +1,12 @@
-import React, { useState, useRef, useCallback, useEffect, useId, useMemo } from "react";
+import React, {
+  useState,
+  useRef,
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useLayoutEffect,
+} from "react";
 import {
   CommandSuggestions,
   COMMAND_SUGGESTION_KEYS,
@@ -1400,8 +1408,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     setShowSkillSuggestions(nextSuggestions.length > 0);
   }, [input, showAtMentionSuggestions, agentSkillDescriptors, atMentionCursorNonce]);
 
-  // Watch input for slash commands
-  useEffect(() => {
+  // Keep slash suggestions current before Enter can accept a stale item.
+  useLayoutEffect(() => {
     const suggestions = getSlashCommandSuggestions(input, {
       agentSkills: agentSkillDescriptors,
       variant,
