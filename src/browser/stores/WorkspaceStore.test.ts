@@ -4445,6 +4445,169 @@ describe("WorkspaceStore", () => {
     });
   });
 
+  describe("advisor-output events", () => {
+    it("accumulates live advisor output while the advisor tool is running", async () => {
+      const workspaceId = "advisor-output-workspace-1";
+
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        yield { type: "caught-up" };
+        await Promise.resolve();
+        yield {
+          type: "advisor-output",
+          workspaceId,
+          toolCallId: "call-advisor-output-1",
+          text: "first ",
+          timestamp: 1,
+        };
+        yield {
+          type: "advisor-output",
+          workspaceId,
+          toolCallId: "call-advisor-output-1",
+          text: "second",
+          timestamp: 2,
+        };
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const hasLiveOutput = await waitUntil(
+        () =>
+          store.getAdvisorToolLiveOutput(workspaceId, "call-advisor-output-1")?.text ===
+          "first second"
+      );
+      expect(hasLiveOutput).toBe(true);
+
+      const live = store.getAdvisorToolLiveOutput(workspaceId, "call-advisor-output-1");
+      expect(live).toEqual({ text: "first second", timestamp: 2 });
+      expect(store.getAdvisorToolLiveOutput(workspaceId, "call-advisor-output-1")).toBe(live);
+    });
+
+    it("clears live advisor output on advisor tool-call-end", async () => {
+      const workspaceId = "advisor-output-workspace-2";
+      let releaseToolEnd: (() => void) | undefined;
+      const waitForToolEnd = new Promise<void>((resolve) => {
+        releaseToolEnd = resolve;
+      });
+
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        yield { type: "caught-up" };
+        await Promise.resolve();
+        yield {
+          type: "advisor-output",
+          workspaceId,
+          toolCallId: "call-advisor-output-2",
+          text: "partial advice",
+          timestamp: 1,
+        };
+        await waitForToolEnd;
+        yield {
+          type: "tool-call-end",
+          workspaceId,
+          messageId: "m-advisor-output-2",
+          toolCallId: "call-advisor-output-2",
+          toolName: "advisor",
+          result: { type: "advice", advice: "partial advice" },
+          timestamp: 2,
+        };
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const hasLiveOutput = await waitUntil(
+        () =>
+          store.getAdvisorToolLiveOutput(workspaceId, "call-advisor-output-2")?.text ===
+          "partial advice"
+      );
+      expect(hasLiveOutput).toBe(true);
+
+      releaseToolEnd?.();
+
+      const clearedLiveOutput = await waitUntil(
+        () => store.getAdvisorToolLiveOutput(workspaceId, "call-advisor-output-2") === null
+      );
+      expect(clearedLiveOutput).toBe(true);
+    });
+
+    it("clears stale live advisor output after message deletion", async () => {
+      const workspaceId = "advisor-output-workspace-delete";
+      let releaseDelete: (() => void) | undefined;
+      const waitForDelete = new Promise<void>((resolve) => {
+        releaseDelete = resolve;
+      });
+
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        yield { type: "caught-up" };
+        await Promise.resolve();
+        yield {
+          type: "advisor-output",
+          workspaceId,
+          toolCallId: "call-advisor-output-delete",
+          text: "stale partial advice",
+          timestamp: 1,
+        };
+        await waitForDelete;
+        yield { type: "delete", historySequences: [1] };
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const hasLiveOutput = await waitUntil(
+        () =>
+          store.getAdvisorToolLiveOutput(workspaceId, "call-advisor-output-delete")?.text ===
+          "stale partial advice"
+      );
+      expect(hasLiveOutput).toBe(true);
+
+      releaseDelete?.();
+
+      const clearedLiveOutput = await waitUntil(
+        () => store.getAdvisorToolLiveOutput(workspaceId, "call-advisor-output-delete") === null
+      );
+      expect(clearedLiveOutput).toBe(true);
+    });
+
+    it("replays pre-caught-up advisor output after full replay catches up", async () => {
+      const workspaceId = "advisor-output-workspace-3";
+
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        yield {
+          type: "advisor-output",
+          workspaceId,
+          toolCallId: "call-advisor-output-3",
+          text: "buffered advice",
+          timestamp: 1,
+        };
+        await Promise.resolve();
+        yield { type: "caught-up", replay: "full" };
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const hasLiveOutput = await waitUntil(
+        () =>
+          store.getAdvisorToolLiveOutput(workspaceId, "call-advisor-output-3")?.text ===
+          "buffered advice"
+      );
+      expect(hasLiveOutput).toBe(true);
+    });
+  });
+
   describe("task-created events", () => {
     it("exposes live taskId while the task tool is running", async () => {
       const workspaceId = "task-created-workspace-1";

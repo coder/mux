@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { generateText, tool, type Tool } from "ai";
+import { streamText, tool, type Tool } from "ai";
 
 import {
   ADVISOR_HANDOFF_MAX_REASONING_CHARS,
@@ -10,9 +10,10 @@ import {
 import type { ModelMessage } from "@/common/types/message";
 import { THINKING_LEVEL_OFF, coerceThinkingLevel } from "@/common/types/thinking";
 import { buildProviderOptions } from "@/common/utils/ai/providerOptions";
+import { extractChunkDeltaText } from "@/common/utils/ai/streamChunks";
 import { getErrorMessage } from "@/common/utils/errors";
 import { sanitizeErrorMessageForDisplay } from "@/common/utils/providerOutputSanitization";
-import type { AdvisorPhaseEvent } from "@/common/types/stream";
+import type { AdvisorOutputEvent, AdvisorPhaseEvent } from "@/common/types/stream";
 import { AdvisorToolInputSchema, TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { AdvisorToolCallSnapshot, ToolConfiguration } from "@/common/utils/tools/tools";
 import { log } from "@/node/services/log";
@@ -91,6 +92,20 @@ function buildAdvisorHandoffMessage(
   };
 }
 
+function getAdvisorTextDelta(chunk: unknown): string | undefined {
+  if (typeof chunk !== "object" || chunk === null) {
+    return undefined;
+  }
+
+  const record = chunk as Record<string, unknown>;
+  if (record.type !== "text-delta" && record.type !== "text") {
+    return undefined;
+  }
+
+  const text = extractChunkDeltaText(record, ["text", "delta", "textDelta"]);
+  return text.length > 0 ? text : undefined;
+}
+
 export function createAdvisorTool(config: ToolConfiguration): Tool {
   assert(config.advisorRuntime, "advisorRuntime must be set when advisor tool is registered");
 
@@ -155,6 +170,21 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
         } satisfies AdvisorPhaseEvent);
       };
 
+      const emitAdvisorOutput = (text: string): void => {
+        assert(text.length > 0, "advisor output chunks must be non-empty");
+        if (!config.emitChatEvent || !config.workspaceId || !toolCallId) {
+          return;
+        }
+
+        config.emitChatEvent({
+          type: "advisor-output",
+          workspaceId: config.workspaceId,
+          toolCallId,
+          text,
+          timestamp: Date.now(),
+        } satisfies AdvisorOutputEvent);
+      };
+
       emitAdvisorPhase("preparing_context");
 
       if (runtime.maxUsesPerTurn !== null && usesThisTurn >= runtime.maxUsesPerTurn) {
@@ -185,7 +215,9 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
 
         emitAdvisorPhase("waiting_for_response");
 
-        const result = await generateText({
+        let advisorStreamError: unknown;
+        const streamedAdviceChunks: string[] = [];
+        const result = streamText({
           model,
           system: ADVISOR_SYSTEM_PROMPT,
           messages,
@@ -194,11 +226,38 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
           providerOptions,
           abortSignal: abortSignal ?? runtime.abortSignal,
           ...(runtime.maxOutputTokens != null ? { maxOutputTokens: runtime.maxOutputTokens } : {}),
+          onError: ({ error }) => {
+            advisorStreamError = error;
+          },
+          onChunk: ({ chunk }) => {
+            const text = getAdvisorTextDelta(chunk);
+            if (text == null) {
+              return;
+            }
+
+            streamedAdviceChunks.push(text);
+            emitAdvisorOutput(text);
+          },
         });
+        const finalAdvice = await result.text;
+        const finishReason = await result.finishReason;
+        if (advisorStreamError != null || finishReason === "error") {
+          return {
+            type: "error" as const,
+            isError: true,
+            message: `Advisor request failed: ${sanitizeErrorMessageForDisplay(
+              getErrorMessage(advisorStreamError ?? new Error("Stream finished with an error."))
+            )}`,
+          };
+        }
+
+        const advice = finalAdvice.length > 0 ? finalAdvice : streamedAdviceChunks.join("");
+        const usage = await result.usage;
+        const providerMetadata = await result.providerMetadata;
 
         emitAdvisorPhase("finalizing_result");
 
-        if (config.reportModelUsage != null && result.usage != null) {
+        if (config.reportModelUsage != null && usage != null) {
           try {
             assert(
               advisorModelString.length > 0,
@@ -210,8 +269,8 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
               source: "tool",
               toolName: "advisor",
               model: advisorModelString,
-              usage: result.usage,
-              providerMetadata: result.providerMetadata as Record<string, unknown> | undefined,
+              usage,
+              providerMetadata: providerMetadata as Record<string, unknown> | undefined,
               toolCallId,
               timestamp: Date.now(),
             });
@@ -224,7 +283,7 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
 
         return {
           type: "advice" as const,
-          advice: result.text,
+          advice,
           advisorModel: advisorModelString,
           reasoningLevel,
           remainingUses,

@@ -6,6 +6,13 @@ import { GlobalWindow } from "happy-dom";
 
 import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 
+const useAdvisorToolLiveOutputMock = mock(
+  (
+    _workspaceId: string | undefined,
+    _toolCallId: string | undefined
+  ): WorkspaceStoreModule.AdvisorLiveOutputState | null => null
+);
+
 const useAdvisorToolLivePhaseMock = mock(
   (
     _workspaceId: string | undefined,
@@ -20,6 +27,7 @@ const actualWorkspaceStore =
 
 void mock.module("@/browser/stores/WorkspaceStore", () => ({
   ...actualWorkspaceStore,
+  useAdvisorToolLiveOutput: useAdvisorToolLiveOutputMock,
   useAdvisorToolLivePhase: useAdvisorToolLivePhaseMock,
 }));
 
@@ -67,6 +75,7 @@ describe("AdvisorToolCall", () => {
     globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
     globalThis.document = globalThis.window.document;
 
+    useAdvisorToolLiveOutputMock.mockReset();
     useAdvisorToolLivePhaseMock.mockReset();
   });
 
@@ -135,6 +144,49 @@ describe("AdvisorToolCall", () => {
 
     expect(view.getByText("Question")).toBeTruthy();
     expect(view.getByText("Should we split the refactor into smaller commits?")).toBeTruthy();
+  });
+
+  test("renders live advisor output while executing", () => {
+    useAdvisorToolLivePhaseMock.mockReturnValue({
+      phase: "waiting_for_response",
+      timestamp: 1,
+    });
+    useAdvisorToolLiveOutputMock.mockReturnValue({
+      text: "Streamed partial advice",
+      timestamp: 2,
+    });
+
+    const view = renderAdvisorToolCall({ status: "executing" });
+
+    expect(useAdvisorToolLiveOutputMock).toHaveBeenCalledWith("workspace-1", "advisor-call-1");
+
+    fireEvent.click(view.getByText("advisor"));
+
+    expect(view.getByText("Advice")).toBeTruthy();
+    expect(view.getByText("Streamed partial advice")).toBeTruthy();
+  });
+
+  test("completed advice supersedes live advisor output", () => {
+    useAdvisorToolLivePhaseMock.mockReturnValue(undefined);
+    useAdvisorToolLiveOutputMock.mockReturnValue({
+      text: "Older streamed partial advice",
+      timestamp: 2,
+    });
+
+    const view = renderAdvisorToolCall({
+      status: "completed",
+      result: {
+        type: "advice",
+        advice: "Final persisted advice",
+        advisorModel: "openai:gpt-4.1-mini",
+        remainingUses: 1,
+      },
+    });
+
+    fireEvent.click(view.getByText("advisor"));
+
+    expect(view.getByText("Final persisted advice")).toBeTruthy();
+    expect(view.queryByText("Older streamed partial advice")).toBeNull();
   });
 
   test("continues rendering completed advice results", () => {

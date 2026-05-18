@@ -181,6 +181,21 @@ export class StreamTranslator {
         ];
       }
 
+      case "advisor-output": {
+        return [
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: event.toolCallId,
+            status: "in_progress",
+            content: [textToolContent(event.text)],
+            _meta: {
+              source: "advisor-output",
+              timestamp: event.timestamp,
+            },
+          },
+        ];
+      }
+
       case "error":
         return this.translateToolFailure(sessionId, event.messageId, event.error, event.errorType);
 
