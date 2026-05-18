@@ -120,7 +120,10 @@ describe("WorkspaceGoalService", () => {
       throw new Error(history.error);
     }
     expect(history.data[0]?.metadata?.synthetic).toBe(true);
-    expect(history.data[0]?.metadata?.uiVisible).toBe(true);
+    // Hidden from the chat UI (the right-sidebar Goal Board already
+    // shows cleared/completed goals). Still in the AI request payload
+    // because synthetic + uiVisible:false stays in the model context.
+    expect(history.data[0]?.metadata?.uiVisible).toBeUndefined();
     expect(history.data[0]?.parts[0]).toMatchObject({
       type: "text",
       text: 'Goal cleared: "Ship goal primitive" — spent $0.00 over 0 turns (status: active)',
@@ -1646,6 +1649,40 @@ describe("WorkspaceGoalService", () => {
       expect(queued.data.costCents).toBe(25);
       expect(queued.data.budgetCents).toBe(500);
       expect(queued.data.turnCap).toBe(7);
+    }
+  });
+
+  test("mid-stream editInPlace optimistic snapshot reflects budget_limited when new budget is below accrued cost", async () => {
+    // Codex P2 follow-up: a rename that lowers `budgetCents` below
+    // the already-accrued cost would otherwise publish a stale
+    // `active` snapshot until stream end. The fix mirrors the drain
+    // by running `applyMutableFields` (→ `applyBudgetDrivenStatus`)
+    // on the projection.
+    const created = await setGoalOk(service, {
+      workspaceId,
+      objective: "Original objective",
+      budgetCents: 500,
+    });
+    await service.recordStreamAccounting({
+      workspaceId,
+      costUsd: 1.5, // 150¢, well above the tightening 50¢ target below
+      streamStartedAtMs: created.createdAtMs + 1,
+      streamOriginKind: "user",
+    });
+
+    await extensionMetadata.setStreaming(workspaceId, true);
+    const queued = await service.setGoal({
+      workspaceId,
+      objective: "Renamed + tighter budget",
+      editInPlace: true,
+      expectedGoalId: created.goalId,
+      budgetCents: 50, // strictly below the 150¢ already spent
+    });
+    expect(queued.success).toBe(true);
+    if (queued.success) {
+      expect(queued.data.goalId).toBe(created.goalId);
+      expect(queued.data.budgetCents).toBe(50);
+      expect(queued.data.status).toBe("budget_limited");
     }
   });
 

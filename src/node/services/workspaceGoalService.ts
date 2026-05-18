@@ -1589,33 +1589,33 @@ export class WorkspaceGoalService {
         // budget/turnCap, attributed children) instead of creating a
         // fresh one. The optimistic snapshot must mirror that so the
         // Goal tab does not flash zeroed accounting + a new id between
-        // submit and stream end. We overlay the rename onto `current`
-        // (when it exists) and only swap to a brand-new `createGoal`
-        // for non-editInPlace branches (replace/new-goal). Fields that
-        // were explicitly provided still win — the budget gate below
-        // continues to enforce pricing on the projected record.
-        const projected: GoalRecordV1 =
-          input.editInPlace === true && current
-            ? GoalRecordV1Schema.parse({
-                ...current,
-                objective,
-                ...(Object.hasOwn(input, "budgetCents")
-                  ? { budgetCents: input.budgetCents ?? null }
-                  : {}),
-                ...(Object.hasOwn(input, "turnCap") ? { turnCap: input.turnCap ?? null } : {}),
-                ...(input.status != null ? { status: input.status } : {}),
-                ...(input.completionSummary != null
-                  ? { completionSummary: input.completionSummary }
-                  : {}),
-                updatedAtMs: Date.now(),
-              })
-            : this.createGoal({
-                objective,
-                budgetCents: input.budgetCents ?? null,
-                turnCap: input.turnCap ?? null,
-                status: input.status,
-                completionSummary: input.completionSummary,
-              });
+        // submit and stream end.
+        //
+        // We mirror the drain's full path: overlay the rename onto
+        // `current`, then run `applyMutableFields` (which itself ends
+        // in `applyBudgetDrivenStatus`) so a payload that lowers the
+        // budget below the already-accrued cost projects to the same
+        // `budget_limited` status the persisted record will adopt at
+        // drain time. Without this, a rename with a tightening budget
+        // would publish a stale `active` snapshot until stream end
+        // (Codex P2 follow-up).
+        let projected: GoalRecordV1;
+        if (input.editInPlace === true && current) {
+          const renamed = GoalRecordV1Schema.parse({
+            ...current,
+            objective,
+            updatedAtMs: Date.now(),
+          });
+          projected = this.applyMutableFields(renamed, input);
+        } else {
+          projected = this.createGoal({
+            objective,
+            budgetCents: input.budgetCents ?? null,
+            turnCap: input.turnCap ?? null,
+            status: input.status,
+            completionSummary: input.completionSummary,
+          });
+        }
         if (
           (projected.status === "active" || projected.status === "budget_limited") &&
           !this.canRunBudgetedGoalOnKickoffModel(input.workspaceId, projected)
@@ -2297,7 +2297,19 @@ export class WorkspaceGoalService {
   }
 
   private async appendClearSummary(workspaceId: string, goal: GoalRecordV1): Promise<void> {
-    // Keep the persisted summary self-describing for model context; the renderer hides the redundant label.
+    // The goal-cleared summary exists for MODEL context — after a goal
+    // is cleared the agent still needs to know what just happened so it
+    // can answer follow-up questions ("what did we just finish?",
+    // "resume the previous one"). The right-sidebar Goal Board already
+    // surfaces the same information visually (Completed / Archived
+    // sections), so rendering this synthetic message as a full assistant
+    // chat bubble was pure noise — it appeared inline whenever the user
+    // cleared, replaced, or completed a goal, and clobbered the actual
+    // conversation flow.
+    //
+    // `uiVisible: false` (the default for synthetic messages) keeps it
+    // in the AI request payload but hides it from the rendered transcript,
+    // which is what we want here.
     const summary = `Goal cleared: "${goal.objective}" — spent $${formatCentsBare(goal.costCents)} over ${goal.turnsUsed} turns (status: ${goal.status})`;
     const message = createMuxMessage(
       `goal-cleared-${Date.now()}-${crypto.randomUUID()}`,
@@ -2305,7 +2317,6 @@ export class WorkspaceGoalService {
       summary,
       {
         synthetic: true,
-        uiVisible: true,
         muxMetadata: { type: "goal-cleared-summary" },
       }
     );
