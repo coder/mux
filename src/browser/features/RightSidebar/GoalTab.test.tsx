@@ -27,6 +27,15 @@ void mock.module("@/browser/features/RightSidebar/GoalDefaultsModal", () => ({
   GoalDefaultsModal: () => null,
 }));
 
+// The goal-board sections subscribe to `workspace.getGoalBoard` via
+// `useGoalBoard`. Existing tests render the GoalTab without an
+// APIProvider, so the hook resolves to an empty board — but the
+// component still mounts. Stub the renderer to keep the tree compact:
+// these tests target the active-goal surface, not the board sections.
+void mock.module("@/browser/features/RightSidebar/GoalBoardSections", () => ({
+  GoalBoardSections: () => null,
+}));
+
 import { GoalTab } from "./GoalTab";
 
 function goal(overrides: Partial<GoalSnapshot> = {}): GoalSnapshot {
@@ -303,48 +312,13 @@ describe("GoalTab", () => {
     expect(queryByText("Clear goal")).toBeNull();
   });
 
-  test("renders completed-goals history with expandable detail", () => {
-    const entry: GoalHistoryEntry = {
-      version: 1,
-      endReason: "completed",
-      endedAtMs: Date.now(),
-      goal: {
-        version: 1,
-        goalId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-        objective: "Old objective",
-        status: "complete",
-        budgetCents: 500,
-        costCents: 250,
-        costMicroCents: 250_000_000,
-        turnsUsed: 5,
-        turnCap: null,
-        attributedChildren: [],
-        budgetLimitInjectedForGoalId: null,
-        requireUserAcknowledgmentSinceMs: null,
-        lastContinuationFiredAtMs: null,
-        completionSummary: "Old goal wrap-up.",
-        createdAtMs: Date.now() - 60_000,
-        updatedAtMs: Date.now(),
-      },
-    };
-
-    const { getByLabelText, getByText, queryByText } = render(
-      <GoalTab goal={goal()} onSetStatus={mock()} onClear={mock()} history={[entry]} />
-    );
-
-    expect(getByText("Completed goals")).toBeTruthy();
-    // Compact row exposes the objective; the completion summary is gated
-    // behind the expand toggle (this is the "expand the card to see details"
-    // requirement).
-    expect(getByText("Old objective")).toBeTruthy();
-    expect(queryByText("Old goal wrap-up.")).toBeNull();
-
-    fireEvent.click(getByLabelText("Expand completed goal: Old objective"));
-    expect(getByText("Old goal wrap-up.")).toBeTruthy();
-    // Old goals are read-only — no resume / pause action is offered. Resume
-    // is the canonical "may not be resumed" affordance to guard against.
-    expect(queryByText("Resume")).toBeNull();
-  });
+  // The previous "renders completed-goals history with expandable detail"
+  // test targeted the old in-tab `GoalHistorySection`. Completed-goal
+  // rendering now lives in `GoalBoardSections` (which is stubbed in this
+  // file because it reaches into the API context). Behavior is covered
+  // end-to-end by `workspaceGoalService.test.ts`'s "goal board" suite
+  // (auto-promote-on-complete + completed entries land under the
+  // Completed section). No GoalTab-level replacement is needed.
 
   test("filters out history entries that still reference the current goal id", () => {
     const current = goal({ goalId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" });
@@ -405,14 +379,18 @@ describe("GoalTab", () => {
       },
     };
 
-    const { getByText } = render(
+    const { getByText, queryByText } = render(
       <GoalTab goal={null} onSetStatus={mock()} onClear={mock()} history={[entry]} />
     );
 
-    // The empty-state still surfaces history so the user can review prior
-    // work before starting a new goal.
+    // The empty-state placeholder still renders (the create form needs
+    // `onCreate` to render — this test deliberately omits it to exercise
+    // the placeholder branch). The history list itself has moved into
+    // the (stubbed) `GoalBoardSections`, so we no longer assert on the
+    // history entry's objective here — service-level coverage handles
+    // the queue + completed view.
     expect(getByText("No goal is set for this workspace.")).toBeTruthy();
-    expect(getByText("Previously-cleared goal")).toBeTruthy();
+    expect(queryByText("Previously-cleared goal")).toBeNull();
   });
 
   test("empty state shows the create form when onCreate is provided", () => {

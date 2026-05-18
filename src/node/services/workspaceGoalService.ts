@@ -2395,7 +2395,7 @@ export class WorkspaceGoalService {
       const raw = await fs.readFile(filePath, "utf-8");
       const indexed: Array<{
         index: number;
-        entry: import("@/common/types/goal").GoalHistoryEntry;
+        entry: GoalHistoryEntry;
       }> = [];
       let appendIndex = 0;
       for (const line of raw.split("\n")) {
@@ -2520,7 +2520,7 @@ export class WorkspaceGoalService {
       // Source: the currently-active goal. Clear it + append a
       // "cleared" history entry so the user's view of completed/cleared
       // history stays accurate, then place a snapshot in archived.
-      if (activeGoal && activeGoal.goalId === goalId) {
+      if (activeGoal?.goalId === goalId) {
         await this.appendGoalHistoryEntry(workspaceId, activeGoal, "cleared");
         await fs.rm(this.getFilePath(workspaceId), { force: true });
         await this.pushSnapshot(workspaceId, null);

@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, Pencil, Settings2, Target } from "lucide-react";
+import { Pencil, Settings2, Target } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import {
   goalActiveMode,
@@ -18,6 +18,8 @@ import { cn } from "@/common/lib/utils";
 // drift further as Goal status grows.
 import { formatGoalElapsed, goalStatusLabel } from "@/browser/features/Tools/Goal/goalToolUtils";
 import { GoalDefaultsModal } from "@/browser/features/RightSidebar/GoalDefaultsModal";
+import { GoalBoardSections } from "@/browser/features/RightSidebar/GoalBoardSections";
+import { useGoalBoard } from "@/browser/features/RightSidebar/useGoalBoard";
 
 /**
  * Inputs accepted by the in-tab "Set goal" form. Mirrors the slash-command
@@ -104,6 +106,11 @@ export function GoalTab(props: GoalTabProps) {
   // so a single instance covers both surfaces — opening from either
   // closes any other.
   const [isDefaultsModalOpen, setIsDefaultsModalOpen] = useState(false);
+  // Goal-board state lives here so both the empty-state and active-goal
+  // branches can render the Upcoming / Completed / Archived sections.
+  // Mutations route through `refreshBoard` so the renderer re-reads after
+  // a queue/archive/revive/promote/reorder.
+  const { board, refresh: refreshBoard } = useGoalBoard(props.workspaceId);
   const editInputRef = useRef<HTMLInputElement | null>(null);
   const objectiveInputRef = useRef<HTMLTextAreaElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -250,17 +257,12 @@ export function GoalTab(props: GoalTabProps) {
     }
   }, [props.openCompleteInputRequest, props.goal]);
 
-  const history = props.history ?? [];
-  // Hide history entries whose goalId still matches the current goal: this
-  // happens when a stale snapshot of the renderer still shows a goal that the
-  // backend has just archived (e.g., race during /goal replace). Dedup keeps
-  // the list from briefly double-rendering the present goal. The React
-  // Compiler memoizes the result of this expression, so no manual `useMemo`
-  // is needed (per AGENTS.md "React Compiler enabled").
-  const currentGoalId = props.goal?.goalId ?? null;
-  const filteredHistory = currentGoalId
-    ? history.filter((entry) => entry.goal.goalId !== currentGoalId)
-    : history;
+  // The legacy `props.history` is still passed in for back-compat with
+  // older callers but is no longer rendered here — completed + archived
+  // goals are now sourced from the goal-board (`useGoalBoard` above),
+  // which reads the same `goal-history.jsonl`. We deliberately do
+  // nothing with `props.history` in this branch; remove from the
+  // `GoalTabProps` interface when no callers still pass it.
 
   if (!props.goal) {
     return (
@@ -278,7 +280,19 @@ export function GoalTab(props: GoalTabProps) {
             <p>No goal is set for this workspace.</p>
           </div>
         )}
-        {filteredHistory.length > 0 && <GoalHistorySection entries={filteredHistory} />}
+        {/*
+          The board (Upcoming / Completed / Archived) lives below the
+          empty-state form so a returning user can still see goals they
+          completed or archived in this workspace. Active is the form
+          itself in this branch.
+        */}
+        {props.workspaceId != null && (
+          <GoalBoardSections
+            workspaceId={props.workspaceId}
+            board={board}
+            onMutated={refreshBoard}
+          />
+        )}
       </section>
     );
   }
@@ -709,10 +723,20 @@ export function GoalTab(props: GoalTabProps) {
 
       {error && <p className="text-danger-soft text-sm">{error}</p>}
 
-      {filteredHistory.length > 0 && <GoalHistorySection entries={filteredHistory} />}
+      {/*
+        The legacy filteredHistory list is no longer rendered here —
+        completed + archived goals show up inside the board's Completed
+        and Archived sections below. The board reads the same history
+        file, so nothing is lost.
+      */}
 
       {props.workspaceId != null && (
         <>
+          <GoalBoardSections
+            workspaceId={props.workspaceId}
+            board={board}
+            onMutated={refreshBoard}
+          />
           {/* "Change defaults" is the long-lived home for goal-defaults
               config now — opens the modal that lets the user override
               defaults for this workspace OR change the global defaults.
@@ -958,117 +982,9 @@ function GoalCreateForm(props: GoalCreateFormProps) {
   );
 }
 
-const END_REASON_LABELS = {
-  completed: "Completed",
-  cleared: "Cleared",
-  replaced: "Replaced",
-} as const;
-
-interface GoalHistorySectionProps {
-  entries: GoalHistoryEntry[];
-}
-
-function GoalHistorySection(props: GoalHistorySectionProps) {
-  return (
-    <section aria-label="Completed goals" className="flex flex-col gap-2">
-      <h3 className="text-muted text-xs font-medium uppercase">
-        Completed goals
-        <span className="text-muted ml-1 lowercase">({props.entries.length})</span>
-      </h3>
-      <ul className="flex flex-col gap-1.5">
-        {props.entries.map((entry) => (
-          <GoalHistoryItem key={`${entry.goal.goalId}-${entry.endedAtMs}`} entry={entry} />
-        ))}
-      </ul>
-    </section>
-  );
-}
-
-interface GoalHistoryItemProps {
-  entry: GoalHistoryEntry;
-}
-
-function GoalHistoryItem(props: GoalHistoryItemProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
-  const { entry } = props;
-  const { goal } = entry;
-  const reasonLabel = END_REASON_LABELS[entry.endReason];
-  // Old goals are intentionally read-only here: the spec is "old goals may
-  // not be 'resumed' but the user may expand their card to see details".
-  // Resume/Pause/Edit affordances are deliberately absent.
-
-  return (
-    <li className="border-border-light bg-surface-secondary rounded-md border">
-      <button
-        type="button"
-        className="hover:bg-surface-tertiary flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs"
-        aria-expanded={isExpanded}
-        aria-label={`${isExpanded ? "Collapse" : "Expand"} completed goal: ${goal.objective}`}
-        onClick={() => setIsExpanded((prev) => !prev)}
-      >
-        {isExpanded ? (
-          <ChevronDown className="text-muted h-3 w-3 shrink-0" aria-hidden="true" />
-        ) : (
-          <ChevronRight className="text-muted h-3 w-3 shrink-0" aria-hidden="true" />
-        )}
-        <span className="text-foreground line-clamp-1 flex-1 font-medium">{goal.objective}</span>
-        <span className="text-muted counter-nums shrink-0">
-          {formatGoalCents(goal.costCents)} · {goal.turnsUsed}t
-        </span>
-        <span className="text-muted shrink-0 tracking-wide uppercase">{reasonLabel}</span>
-      </button>
-      {isExpanded && (
-        <div className="border-border-light border-t px-2.5 py-2 text-xs">
-          <dl className="grid grid-cols-2 gap-x-3 gap-y-1">
-            <div>
-              <dt className="text-muted">Final status</dt>
-              <dd className="text-foreground">{goalStatusLabel(goal.status)}</dd>
-            </div>
-            <div>
-              <dt className="text-muted">Ended</dt>
-              <dd className="text-foreground">{formatTimestamp(entry.endedAtMs)}</dd>
-            </div>
-            <div>
-              <dt className="text-muted">Cost</dt>
-              <dd className="counter-nums text-foreground">{formatGoalCents(goal.costCents)}</dd>
-            </div>
-            <div>
-              <dt className="text-muted">Budget</dt>
-              <dd className="counter-nums text-foreground">
-                {goal.budgetCents == null ? "No budget" : formatGoalCents(goal.budgetCents)}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-muted">Turns</dt>
-              <dd className="counter-nums text-foreground">
-                {goal.turnCap == null
-                  ? String(goal.turnsUsed)
-                  : `${goal.turnsUsed} / ${goal.turnCap}`}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-muted">Duration</dt>
-              <dd className="counter-nums text-foreground">
-                {formatGoalElapsed(goal.createdAtMs, entry.endedAtMs)}
-              </dd>
-            </div>
-          </dl>
-          {goal.completionSummary && (
-            <div className="mt-2">
-              <dt className="text-muted">Completion summary</dt>
-              <dd className="text-foreground whitespace-pre-wrap">{goal.completionSummary}</dd>
-            </div>
-          )}
-        </div>
-      )}
-    </li>
-  );
-}
-
-function formatTimestamp(ms: number): string {
-  try {
-    return new Date(ms).toLocaleString();
-  } catch {
-    return new Date(ms).toISOString();
-  }
-}
+// Completed-goal rendering moved into `GoalBoardSections` as part of the
+// multi-goal queue. The previous `GoalHistorySection` / `GoalHistoryItem`
+// / `formatTimestamp` helpers are no longer needed here — the board
+// reads the same `goal-history.jsonl` and surfaces completed goals
+// under its Completed section with consistent styling alongside
+// Upcoming and Archived.

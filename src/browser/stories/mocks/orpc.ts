@@ -1429,6 +1429,31 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         get: () => Promise.resolve(null),
         set: () => Promise.resolve({ success: true, data: undefined }),
       },
+      // Goal board (multi-goal queue) endpoints. Stories never call into
+      // these but the GoalTab subscribes to `getGoalBoard` on mount; the
+      // mutation endpoints exist for stories that simulate user
+      // interactions (currently none — they resolve voids).
+      getGoalBoard: () => Promise.resolve({ entries: [] }),
+      addUpcomingGoal: () =>
+        Promise.resolve({
+          version: 1 as const,
+          goalId: "00000000-0000-4000-8000-000000000000",
+          objective: "stub",
+          status: "paused" as const,
+          budgetCents: null,
+          turnCap: null,
+          costCents: 0,
+          turnsUsed: 0,
+          attributedChildren: [],
+          budgetLimitInjectedForGoalId: null,
+          requireUserAcknowledgmentSinceMs: null,
+          createdAtMs: Date.now(),
+          updatedAtMs: Date.now(),
+        }),
+      archiveGoal: () => Promise.resolve(undefined),
+      reviveArchivedGoal: () => Promise.resolve(undefined),
+      reorderUpcomingGoals: () => Promise.resolve(undefined),
+      promoteUpcomingGoal: () => Promise.resolve(null),
       create: (input: { projectPath: string; branchName: string }) => {
         createdWorkspaceCounter += 1;
 
