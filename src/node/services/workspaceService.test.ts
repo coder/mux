@@ -33,6 +33,7 @@ import type { DesktopSessionManager } from "@/node/services/desktop/DesktopSessi
 import type { WorktreeArchiveSnapshot } from "@/common/schemas/project";
 import type { BashToolResult } from "@/common/types/tools";
 import { createMuxMessage } from "@/common/types/message";
+import { getPlanFilePath } from "@/common/utils/planStorage";
 import * as todoStorageModule from "@/node/services/todos/todoStorage";
 import * as runtimeFactory from "@/node/runtime/runtimeFactory";
 import * as bashToolModule from "@/node/services/tools/bash";
@@ -88,9 +89,8 @@ async function writePlanFile(
   projectName: string,
   workspaceName: string
 ): Promise<string> {
-  const planDir = path.join(root, "plans", projectName);
-  await fsPromises.mkdir(planDir, { recursive: true });
-  const planFile = path.join(planDir, `${workspaceName}.md`);
+  const planFile = getPlanFilePath(workspaceName, projectName, root);
+  await fsPromises.mkdir(path.dirname(planFile), { recursive: true });
   await fsPromises.writeFile(planFile, "# Plan\n");
   return planFile;
 }
@@ -433,6 +433,37 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
       } finally {
         pendingSpy.mockRestore();
       }
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("context reset preserves plan files", async () => {
+    const { config, historyService, workspaceService, cleanup } = await createServices();
+    const workspaceId = "context-reset-preserves-plan-file";
+    const projectName = "context-reset-preserves-plan-project";
+    try {
+      await config.addWorkspace(`/tmp/${projectName}`, {
+        id: workspaceId,
+        name: workspaceId,
+        projectName,
+        projectPath: `/tmp/${projectName}`,
+        runtimeConfig: { type: "local" },
+      });
+      const planFile = await writePlanFile(config.rootDir, projectName, workspaceId);
+      expect(
+        (
+          await historyService.appendToHistory(
+            workspaceId,
+            createMuxMessage("pre-reset-user", "user", "before reset", {})
+          )
+        ).success
+      ).toBe(true);
+
+      const result = await workspaceService.resetContext(workspaceId);
+
+      expect(result).toEqual({ success: true, data: "reset" });
+      await fsPromises.access(planFile);
     } finally {
       await cleanup();
     }

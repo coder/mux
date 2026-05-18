@@ -6444,11 +6444,6 @@ export class WorkspaceService extends EventEmitter {
         this.emit("chat", { workspaceId, message: typedBoundaryMessage });
       }
 
-      const metadata = await this.getInfo(workspaceId);
-      if (metadata) {
-        await this.deletePlanFilesForWorkspace(workspaceId, metadata);
-      }
-
       try {
         await this.workspaceGoalService?.requireUserAcknowledgment(workspaceId);
       } catch (error) {
