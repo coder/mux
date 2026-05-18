@@ -57,6 +57,10 @@ ESBUILD_SERVER_FLAGS := --bundle --platform=node --target=node22 --format=cjs --
 # Common esbuild flags for tokenizer worker bundle used by server-bundle runtime.
 ESBUILD_TOKENIZER_WORKER_FLAGS := --bundle --platform=node --target=node22 --format=cjs --outfile=dist/runtime/tokenizer.worker.js --minify
 
+# Common esbuild flags for analytics worker bundle used by server-bundle runtime.
+# @duckdb/node-api is externalized because it loads a platform-specific .node binary at runtime.
+ESBUILD_ANALYTICS_WORKER_FLAGS := --bundle --platform=node --target=node22 --format=cjs --outfile=dist/runtime/analyticsWorker.js --external:@duckdb/node-api --minify
+
 # Include formatting rules
 include fmt.mk
 
@@ -270,11 +274,12 @@ build-static: ## Copy static assets to dist
 		cp "$$f" "dist/typescript-lib/$$(basename $$f).txt"; \
 	done
 
-build-docker-runtime: build-main build-renderer build-static dist/runtime/server-bundle.js dist/runtime/tokenizer.worker.js dist/static/.copied ## Build Docker runtime artifacts
+build-docker-runtime: build-main build-renderer build-static dist/runtime/server-bundle.js dist/runtime/tokenizer.worker.js dist/runtime/analyticsWorker.js dist/static/.copied ## Build Docker runtime artifacts
 
 verify-docker-runtime-artifacts: build-docker-runtime ## Verify required Docker runtime artifacts exist
 	@test -f dist/runtime/server-bundle.js
 	@test -f dist/runtime/tokenizer.worker.js
+	@test -f dist/runtime/analyticsWorker.js
 	@test -f dist/static/splash.html
 
 # Bundle server runtime for Docker image to reduce runtime dependencies/image size.
@@ -292,6 +297,14 @@ dist/runtime/tokenizer.worker.js: build-main
 	@test -f dist/node/utils/main/tokenizer.worker.js
 	@mkdir -p dist/runtime
 	@bun x esbuild dist/node/utils/main/tokenizer.worker.js $(ESBUILD_TOKENIZER_WORKER_FLAGS)
+
+# Bundle analytics worker next to server-bundle.js so analyticsService resolves it at runtime.
+# Depend on build-main explicitly because analytics worker JS is emitted under dist/node/ as a side effect.
+dist/runtime/analyticsWorker.js: build-main
+	@echo "Bundling analytics worker for Docker..."
+	@test -f dist/node/services/analytics/analyticsWorker.js
+	@mkdir -p dist/runtime
+	@bun x esbuild dist/node/services/analytics/analyticsWorker.js $(ESBUILD_ANALYTICS_WORKER_FLAGS)
 
 # Docker runtime keeps static assets under dist/static/ for compatibility with existing image layout.
 dist/static/.copied: static/splash.html

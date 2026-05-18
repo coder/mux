@@ -45,7 +45,8 @@ RUN node scripts/collect-runtime-deps.js /tmp/runtime-deps.tar.gz \
     ssh2 \
     sharp \
     @1password/sdk @1password/sdk-core \
-    jsdom
+    jsdom \
+    @duckdb/node-api
 
 # Copy build orchestration files used by Make targets.
 COPY Makefile fmt.mk ./
