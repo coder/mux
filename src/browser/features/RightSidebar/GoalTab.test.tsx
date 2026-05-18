@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { createContext } from "react";
 import { installDom } from "../../../../tests/ui/dom";
-import type { GoalHistoryEntry, GoalSnapshot } from "@/common/types/goal";
+import type { GoalSnapshot } from "@/common/types/goal";
 
 // The GoalTab now reaches into `useAPI` (via `useGoalDefaults`) when the
 // create form is mounted. The hook tolerates a null api gracefully, but
@@ -15,7 +15,7 @@ import type { GoalHistoryEntry, GoalSnapshot } from "@/common/types/goal";
 // they can short-circuit on a null context. The mock must export the
 // context with a null default; otherwise the `useContext(APIContext)`
 // call inside those hooks would crash with `undefined is not iterable`
-// (Codex P2).
+// This keeps tests outside an APIProvider aligned with Storybook rendering.
 void mock.module("@/browser/contexts/API", () => ({
   APIContext: createContext(null),
   useAPI: () => ({
@@ -103,7 +103,7 @@ describe("GoalTab", () => {
     expect(queryByLabelText("Mark goal complete")).toBeNull();
     expect(getByLabelText("Completion summary").textContent).toContain("All work is complete.");
 
-    // Coder-agents-review P3 DEREM-39: budget_limited must keep the manual
+    // budget_limited must keep the manual
     // "Mark goal complete" button so the user can wrap up after exhausting
     // the budget. Pause is hidden because the goal is already paused-ish
     // (no auto-continuation), and Resume is hidden because the goal is
@@ -180,7 +180,7 @@ describe("GoalTab", () => {
     expect(bar.getAttribute("aria-valuenow")).toBe("25"); // 125/500 → 25%
   });
 
-  test("budget tile reports the actual overage when the goal is over budget (Codex P2)", () => {
+  test("budget tile reports the actual overage when the goal is over budget", () => {
     // Critical: the pre-fix render clamped `remaining` to 0 and then
     // showed "$0.00 over" for any overspend, which made the tile lie
     // about how far past the cap the goal was. The over-budget branch
@@ -198,11 +198,11 @@ describe("GoalTab", () => {
     expect(getByText(/over$/)).toBeTruthy();
   });
 
-  test("tiles render exact-equality cap saturation as 'left', not 'over' (Codex P2)", () => {
+  test("tiles render exact-equality cap saturation as 'left', not 'over'", () => {
     // At exact `costCents === budgetCents` and `turnsUsed === turnCap`,
     // the goal has REACHED the limit but not exceeded it. Render "0
     // left" — both linguistically more accurate than "0 over" and the
-    // expected Codex resolution. The progress bar still uses the
+    // expected behavior. The progress bar still uses the
     // at-or-over color so the user sees the visual at-limit signal.
     const { getAllByText, queryByText, getByRole } = render(
       <GoalTab
@@ -226,7 +226,7 @@ describe("GoalTab", () => {
     expect(bar.getAttribute("aria-valuenow")).toBe("100");
   });
 
-  test("budget tile does not claim 'over' when budget_limited is caused by the turn cap (Codex P2)", () => {
+  test("budget tile does not claim 'over' when budget_limited is caused by the turn cap", () => {
     // `budget_limited` is shared lifecycle for "hit budget OR hit turn
     // cap". The Budget tile must base its over/under-budget rendering
     // on the actual budget numbers, not the lifecycle status — else a
@@ -257,7 +257,7 @@ describe("GoalTab", () => {
     expect(queryByText(/over$/)).toBeNull();
   });
 
-  test("turns tile reports the actual overage when turns exceed the cap (Codex P2)", () => {
+  test("turns tile reports the actual overage when turns exceed the cap", () => {
     // Same defect for the Turns tile: when `turnsUsed > turnCap`, the
     // pre-fix render clamped to `0 over`. Verify the true delta is
     // surfaced.
@@ -467,87 +467,6 @@ describe("GoalTab", () => {
     expect(getByLabelText("Archive goal")).toBeTruthy();
     expect(getByText("Archive this goal")).toBeTruthy();
     expect(queryByText("Clear goal")).toBeNull();
-  });
-
-  // The previous "renders completed-goals history with expandable detail"
-  // test targeted the old in-tab `GoalHistorySection`. Completed-goal
-  // rendering now lives in `GoalBoardSections` (which is stubbed in this
-  // file because it reaches into the API context). Behavior is covered
-  // end-to-end by `workspaceGoalService.test.ts`'s "goal board" suite
-  // (auto-promote-on-complete + completed entries land under the
-  // Completed section). No GoalTab-level replacement is needed.
-
-  test("filters out history entries that still reference the current goal id", () => {
-    const current = goal({ goalId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" });
-    const entry: GoalHistoryEntry = {
-      version: 1,
-      endReason: "replaced",
-      endedAtMs: Date.now(),
-      goal: {
-        version: 1,
-        goalId: current.goalId,
-        objective: current.objective,
-        status: "active",
-        budgetCents: null,
-        costCents: 0,
-        costMicroCents: 0,
-        turnsUsed: 0,
-        turnCap: null,
-        attributedChildren: [],
-        budgetLimitInjectedForGoalId: null,
-        requireUserAcknowledgmentSinceMs: null,
-        lastContinuationFiredAtMs: null,
-        createdAtMs: Date.now() - 1_000,
-        updatedAtMs: Date.now(),
-      },
-    };
-
-    const { queryByText } = render(
-      <GoalTab goal={current} onSetStatus={mock()} onClear={mock()} history={[entry]} />
-    );
-
-    // The stale-mirror entry must not appear: it would otherwise render the
-    // present goal twice during the brief window between an in-place edit and
-    // the next history re-fetch.
-    expect(queryByText("Completed goals")).toBeNull();
-  });
-
-  test("renders history list when no current goal is set", () => {
-    const entry: GoalHistoryEntry = {
-      version: 1,
-      endReason: "cleared",
-      endedAtMs: Date.now(),
-      goal: {
-        version: 1,
-        goalId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
-        objective: "Previously-cleared goal",
-        status: "paused",
-        budgetCents: null,
-        costCents: 100,
-        costMicroCents: 100_000_000,
-        turnsUsed: 2,
-        turnCap: null,
-        attributedChildren: [],
-        budgetLimitInjectedForGoalId: null,
-        requireUserAcknowledgmentSinceMs: null,
-        lastContinuationFiredAtMs: null,
-        createdAtMs: Date.now() - 60_000,
-        updatedAtMs: Date.now(),
-      },
-    };
-
-    const { getByText, queryByText } = render(
-      <GoalTab goal={null} onSetStatus={mock()} onClear={mock()} history={[entry]} />
-    );
-
-    // The empty-state placeholder still renders (the create form needs
-    // `onCreate` to render — this test deliberately omits it to exercise
-    // the placeholder branch). The history list itself has moved into
-    // the (stubbed) `GoalBoardSections`, so we no longer assert on the
-    // history entry's objective here — service-level coverage handles
-    // the queue + completed view.
-    expect(getByText("No goal is set for this workspace.")).toBeTruthy();
-    expect(queryByText("Previously-cleared goal")).toBeNull();
   });
 
   test("empty state shows the create form when onCreate is provided", () => {

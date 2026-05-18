@@ -78,14 +78,14 @@ export function GoalDefaultsSection(props: GoalDefaultsSectionProps) {
   // Without this flag, a user toggling a field before the read resolves
   // would call persistOverride() against the synthesized all-null shape,
   // which `set` then writes — clobbering any saved override on disk.
-  // Codex P2: preserve saved workspace defaults while loading.
+  // Preserve saved workspace defaults while loading.
   const [isLoading, setIsLoading] = useState(true);
 
   // Pull the global defaults so we can render inherited values inside the
   // workspace-override panel. We only re-read on mount/api change; updates
   // from the wrapped `GoalDefaultsControls` are pushed in via its
   // `onPersist(next)` callback so we don't have to re-query the backend
-  // (Codex P2: re-reading after an unawaited `updateGoalDefaults` could
+  // Re-reading after an unawaited `updateGoalDefaults` could
   // race the underlying saveConfig and show stale inherited labels).
   useEffect(() => {
     if (!api) return;
@@ -131,7 +131,7 @@ export function GoalDefaultsSection(props: GoalDefaultsSectionProps) {
   }, [api, props.workspaceId]);
 
   const onPersistProp = props.onPersist;
-  // Codex P2: serialize workspace-default saves. The backend setter
+  // Serialize workspace-default saves. The backend setter
   // reads → mutates → writes the full config record, so two saves in
   // flight could land out of order — a slower first request could
   // complete after a later edit and overwrite it on disk while the UI
@@ -140,7 +140,7 @@ export function GoalDefaultsSection(props: GoalDefaultsSectionProps) {
   // each request awaits the previous before issuing its own write.
   const saveChainRef = useRef<Promise<void>>(Promise.resolve());
   const persistOverride = (next: WorkspaceGoalDefaultsOverride) => {
-    // Codex P2: ignore edits while the initial read is in flight.
+    // Ignore edits while the initial read is in flight.
     // Otherwise a stale all-null shape could overwrite saved overrides.
     // The UI also disables the toggles via `isLoading` below.
     if (isLoading) return;
@@ -210,7 +210,7 @@ export function GoalDefaultsSection(props: GoalDefaultsSectionProps) {
             // labels in the workspace override panel are always in
             // sync. We avoid re-querying the config because the wrapped
             // `updateGoalDefaults` write is async and a refetch can
-            // race it (Codex P2).
+            // race it.
             onPersist={(next) => {
               setGlobalDefaults(next);
               onPersistProp?.();

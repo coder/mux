@@ -190,11 +190,8 @@ interface PendingGoalMutation {
   expectedGoalId?: string | null;
   initiator?: GoalLifecycleInitiator;
   /**
-   * Carries the caller's `editInPlace` intent across the mid-stream deferral
-   * (Coder code review: "Preserve editInPlace through streaming deferral").
-   * Without this, a rename submitted while the agent is streaming would be
-   * replayed at stream end as a normal replace — losing goalId + accounting
-   * continuity that the inline editor contract requires.
+   * Carries the caller's `editInPlace` intent across mid-stream deferral so
+   * a queued rename preserves goalId + accounting when it drains.
    */
   editInPlace?: boolean | null;
 }
@@ -418,70 +415,6 @@ export class WorkspaceGoalService {
     }
   }
 
-  /**
-   * Read the workspace's goal history newest-first. Tolerates per-line parse
-   * failures (a corrupted line is logged + skipped) so a single bad write
-   * cannot brick the right-sidebar GoalTab. Caps the returned list at
-   * `GOAL_HISTORY_RENDER_CAP` so the IPC response stays bounded; older entries
-   * stay on disk.
-   *
-   * Held under the same `fileLocks` as `appendGoalHistoryEntry` / `clearGoal`
-   * / `setGoalImmediately`'s replace branch (Codex P3 review feedback: "Read
-   * goal history under the workspace lock"). Without the lock, a concurrent
-   * append could leave a partially-written trailing line that the parse loop
-   * would skip — silently hiding the newest entry from the renderer until
-   * the next mutation triggers a re-fetch.
-   */
-  async getGoalHistory(workspaceId: string): Promise<GoalHistoryEntry[]> {
-    return this.fileLocks.withLock(workspaceId, async () => {
-      const filePath = this.getHistoryFilePath(workspaceId);
-      let raw: string;
-      try {
-        raw = await fs.readFile(filePath, "utf-8");
-      } catch (error) {
-        if (isNotFound(error)) {
-          return [];
-        }
-        log.warn("Failed to read goal history", { workspaceId, error });
-        return [];
-      }
-
-      // Track the original JSONL append index so we can break ties when two
-      // lifecycle operations land in the same millisecond (Codex P2 review:
-      // "Add a tie-breaker for goal history sorting"). Without this, a stable
-      // sort by `endedAtMs` would preserve append order (oldest-first) for
-      // ties — violating the documented "newest first" contract and
-      // potentially making consecutive-clear tests flaky on fast machines.
-      const indexed: Array<{ index: number; entry: GoalHistoryEntry }> = [];
-      let appendIndex = 0;
-      for (const line of raw.split("\n")) {
-        const trimmed = line.trim();
-        if (trimmed.length === 0) {
-          continue;
-        }
-        try {
-          indexed.push({
-            index: appendIndex,
-            entry: GoalHistoryEntrySchema.parse(JSON.parse(trimmed)),
-          });
-        } catch (error) {
-          log.warn("Skipping corrupt goal history entry", { workspaceId, error });
-        }
-        appendIndex += 1;
-      }
-
-      // Sort by endedAtMs DESC, with append-index DESC as the tie-breaker so
-      // the latest line in the JSONL wins for same-ms entries.
-      indexed.sort((a, b) => {
-        if (b.entry.endedAtMs !== a.entry.endedAtMs) {
-          return b.entry.endedAtMs - a.entry.endedAtMs;
-        }
-        return b.index - a.index;
-      });
-      return indexed.slice(0, GOAL_HISTORY_RENDER_CAP).map((row) => row.entry);
-    });
-  }
-
   private createGoal(input: {
     objective: string;
     budgetCents: number | null;
@@ -650,7 +583,7 @@ export class WorkspaceGoalService {
    * Returns true when the GOALS experiment is enabled at the bridge layer.
    * Used as a hot-path short-circuit so users with the experiment off do
    * not pay disk I/O cost (goal.json read + extensionMetadata write) on
-   * every stream-end (Coder-agents-review P3 DEREM-19).
+   * every stream-end.
    *
    * Returns false when no bridge is registered yet (e.g. headless tests
    * that never wire continuations); callers should default-deny in that
@@ -724,12 +657,10 @@ export class WorkspaceGoalService {
     if (this.goalContinuationDispatcher == null) {
       return;
     }
-    // Hot-path experiment gate (Coder-agents-review P3 DEREM-37, sibling to
-    // DEREM-19). Without this, every non-compaction stream-end pays the
-    // disk cost of `getGoal` (goal.json read + extensionMetadata write)
-    // even for users with the GOALS experiment off, breaking the
-    // off-experiment runtime invariant. The bridge is the source of truth
-    // for whether the experiment is on; default-deny when unset.
+    // Hot-path experiment gate: without this, every non-compaction
+    // stream-end pays the disk cost of `getGoal` even for users with the
+    // GOALS experiment off. The bridge is the source of truth for whether
+    // the experiment is on; default-deny when unset.
     if (!this.isExperimentEnabled()) {
       return;
     }
@@ -769,7 +700,7 @@ export class WorkspaceGoalService {
     this.lastUserStopAtMsByWorkspace.set(workspaceId, stoppedAtMs);
     this.pendingContinuationCandidates.delete(workspaceId);
     this.pendingGoalSnapshots.delete(workspaceId);
-    // Drop queued goal mutations too (Coder-agents-review P2 DEREM-18). If a
+    // Drop queued goal mutations too. If a
     // user sets a goal mid-stream then stops the stream, the mutation would
     // otherwise stay queued and apply on the NEXT stream's stream-end via
     // applyPendingAfterStreamEnd, writing goal.json with createdAtMs > the
@@ -881,7 +812,7 @@ export class WorkspaceGoalService {
    * continuation stream fails immediately and the stream-end handler writes a
    * NEW candidate during the yield, an unconditional delete-by-key would drop
    * that fresh candidate — the next dispatch cycle would then find no
-   * candidate and skip silently (Coder-agents-review P2 DEREM-17).
+   * candidate and skip silently.
    *
    * Reference equality is the simplest correct guard: each pending candidate
    * is a distinct object, so identity checks against the captured closure
@@ -1315,10 +1246,9 @@ export class WorkspaceGoalService {
       budgetLimitInjectedForGoalId: shouldRearmBudgetLimitedGoal
         ? null
         : normalized.budgetLimitInjectedForGoalId,
-      // Persist the origin kind on the active→budget_limited transition so
-      // `recoverPendingDispatchAfterRestart` can decide whether to arm a
-      // wrap-up after restart (Coder-agents-review P3 DEREM-54). When
-      // re-arming back to `active` (budget raised / removed), clear it.
+      // Persist the origin kind on active→budget_limited so restart recovery
+      // can decide whether to arm a wrap-up. Clear it when re-arming back to
+      // `active` after the budget is raised or removed.
       budgetLimitOriginKind: shouldLimitActiveGoal
         ? (options?.originKind ?? null)
         : shouldRearmBudgetLimitedGoal
@@ -1472,8 +1402,8 @@ export class WorkspaceGoalService {
   ): Promise<Result<void, SendMessageError>> {
     // Hot-path gate: every sendMessage / resumeStream lands here, so an
     // experiment-off short-circuit avoids paying `getGoal`'s disk cost on
-    // workspaces that never used the GOALS feature (sibling to DEREM-19 /
-    // DEREM-37 / DEREM-40 — Coder-agents-review P3 DEREM-52). Defaults to
+    // workspaces that never used the GOALS feature (sibling to /
+    // / — ). Defaults to
     // false when no bridge is registered (matches the existing
     // `isExperimentEnabled` contract for headless tests).
     if (!this.isExperimentEnabled()) {
@@ -1537,7 +1467,7 @@ export class WorkspaceGoalService {
     // Catch the two known throw paths (`assertParentWorkspace` and
     // `applyMutableFields`/`validateStatusTransition`) and surface them as
     // typed Result errors so the oRPC `setGoal` handler does not leak them as
-    // unhandled 500s (Coder-agents-review P3 DEREM-36).
+    // unhandled 500s.
     try {
       return await this.setGoalInternal(input);
     } catch (error) {
@@ -1573,7 +1503,7 @@ export class WorkspaceGoalService {
     // `setGoalImmediately`/`createGoal` on stream-end, so the projected id is
     // throwaway. Re-fetch via `getGoal` after the stream ends before issuing
     // any optimistic-concurrency mutation. The `goalId` mismatch is a known
-    // footgun (Coder-agents-review P3 DEREM-23) — current callers all
+    // footgun — current callers all
     // re-fetch first so no bug manifests today, but new callers must respect
     // this contract.
     // -----------------------------------------------------------------------
@@ -1584,21 +1514,10 @@ export class WorkspaceGoalService {
         if (conflict) {
           return Err(conflict);
         }
-        // Codex P2: for an `editInPlace` rename, the eventual drain
-        // RENAMES the existing record (preserves goalId, cost/turns,
-        // budget/turnCap, attributed children) instead of creating a
-        // fresh one. The optimistic snapshot must mirror that so the
-        // Goal tab does not flash zeroed accounting + a new id between
-        // submit and stream end.
-        //
-        // We mirror the drain's full path: overlay the rename onto
-        // `current`, then run `applyMutableFields` (which itself ends
-        // in `applyBudgetDrivenStatus`) so a payload that lowers the
-        // budget below the already-accrued cost projects to the same
-        // `budget_limited` status the persisted record will adopt at
-        // drain time. Without this, a rename with a tightening budget
-        // would publish a stale `active` snapshot until stream end
-        // (Codex P2 follow-up).
+        // For an `editInPlace` rename, the eventual drain renames the
+        // existing record instead of creating a fresh one. Mirror that path
+        // here so the optimistic Goal tab snapshot preserves id/accounting
+        // and applies budget-driven status before stream end.
         let projected: GoalRecordV1;
         if (input.editInPlace === true && current) {
           const renamed = GoalRecordV1Schema.parse({
@@ -1641,7 +1560,7 @@ export class WorkspaceGoalService {
           ...(input.initiator != null ? { initiator: input.initiator } : {}),
           // Forward `editInPlace` so an inline rename submitted while the
           // agent is streaming still takes the rename branch when the
-          // pending mutation drains (Codex P2 review feedback).
+          // pending mutation drains.
           ...(input.editInPlace != null ? { editInPlace: input.editInPlace } : {}),
         });
         // A user can run /goal while the first turn is still streaming. The
@@ -1684,7 +1603,7 @@ export class WorkspaceGoalService {
         // `validateStatusTransition(null, ...)` below, which throws a typed
         // `WorkspaceGoalTransitionError`. That throw is caught by the outer
         // `setGoal` wrapper and surfaced as a typed `invalid_transition`
-        // Result error (Coder-agents-review P3 DEREM-35 / DEREM-36) — no
+        // Result error — no
         // unhandled 500 reaches the oRPC layer.
         if (input.status != null) {
           this.validateStatusTransition(
@@ -1698,7 +1617,7 @@ export class WorkspaceGoalService {
         // race where another window cleared the goal concurrently): use the
         // typed transition error so the outer `setGoal` wrapper surfaces it
         // as a typed `invalid_transition` Result instead of letting a plain
-        // Error escape as an unhandled 500 (Coder-agents-review P2 DEREM-43).
+        // Error escape as an unhandled 500.
         throw new WorkspaceGoalTransitionError(
           "Goal objective is required because no goal currently exists for this workspace."
         );
@@ -1904,7 +1823,7 @@ export class WorkspaceGoalService {
    * restart. `pendingContinuationCandidates` and `lastGoalStreamStamps` are
    * in-memory and are wiped on restart; the goal record on disk is the
    * persisted source of truth, so we re-derive whatever dispatch state is
-   * owed by the persisted status (Coder-agents-review P2 DEREM-16).
+   * owed by the persisted status.
    *
    * Without this, a `budget_limited` goal with `budgetLimitInjectedForGoalId
    * === null` (i.e. the budget was hit but the wrap-up message had not yet
@@ -1933,7 +1852,7 @@ export class WorkspaceGoalService {
       return;
     }
     if (goal.status === "budget_limited" && goal.budgetLimitInjectedForGoalId === null) {
-      // DEREM-54: only synthesize a wrap-up if the stream that hit the
+      // only synthesize a wrap-up if the stream that hit the
       // budget was goal-attributable. A user-origin stream that exhausted
       // the budget was correctly suppressed pre-restart
       // (`checkGoalContinuationEligibility` rejects it as
@@ -1959,11 +1878,10 @@ export class WorkspaceGoalService {
    * Called from two paths:
    *   1. `recoverPendingDispatchAfterRestart` — in-memory dispatch state was
    *      wiped on restart and the persisted goal is `budget_limited` with no
-   *      wrap-up injected (Coder-agents-review P2 DEREM-16).
+   *      wrap-up injected.
    *   2. `attributeChildReport` — a child task's cost rolled the goal into
    *      `budget_limited`. Without this the wrap-up never fires because the
-   *      attribution path does not produce a continuation-origin stream
-   *      (Coder-agents-review P2 DEREM-33).
+   *      attribution path does not produce a continuation-origin stream.
    */
   private armBudgetWrapupForBudgetLimitedGoal(workspaceId: string, goal: GoalRecordV1): void {
     if (this.goalContinuationDispatcher == null || this.goalContinuationBridge == null) {
@@ -2151,8 +2069,7 @@ export class WorkspaceGoalService {
       }
 
       // Only count goal-attributable turns. A rare `user`-origin stream that
-      // reaches here while still active must not consume a turn against the cap
-      // (Coder-agents-review P3 DEREM-24).
+      // reaches here while still active must not consume a turn against the cap.
       const turnsDelta = originKind === "user" ? 0 : 1;
       const accounted = GoalRecordV1Schema.parse({
         ...current,
@@ -2217,7 +2134,7 @@ export class WorkspaceGoalService {
         updatedAtMs: Date.now(),
       });
       // Tag the budget-limit transition so post-restart recovery knows the
-      // wrap-up is owed (DEREM-54). `goal_continuation` is the right tag here
+      // wrap-up is owed . `goal_continuation` is the right tag here
       // because the wrap-up MUST fire — child attribution is goal-attributable
       // work. The recovery path checks for `!= "user"`.
       const next = this.applyBudgetDrivenStatus(accounted, { originKind: "goal_continuation" });
@@ -2226,7 +2143,7 @@ export class WorkspaceGoalService {
       await this.writeGoal(input.parentWorkspaceId, next);
       await this.pushSnapshot(input.parentWorkspaceId, next);
       this.emitBudgetLimited(next, current.status, { "caused-by-child": true });
-      // Coder-agents-review P2 DEREM-33: when child attribution drives the
+      // when child attribution drives the
       // goal into budget_limited, arm the same wrap-up stamp + candidate the
       // restart-recovery path uses. Without this the goal sits stuck in
       // budget_limited with no mechanism to fire the wrap-up because the
@@ -2333,14 +2250,9 @@ export class WorkspaceGoalService {
     if (pending) {
       this.pendingGoalMutations.delete(workspaceId);
       this.pendingGoalSnapshots.delete(workspaceId);
-      // Mirror the `setGoal` wrapper (DEREM-36) here: `setGoalImmediately`
-      // rethrows `WorkspaceGoalTransitionError` / `WorkspaceGoalChildWorkspaceError`
-      // for invalid transitions (e.g. a queued `/goal pause` against an
-      // already-paused goal). Two of three call sites invoke this method via
-      // `void` so an uncaught rejection would surface as an unhandled-rejection
-      // process crash under `--unhandled-rejections=throw` (Coder-agents-review
-      // P2 DEREM-47). Log + swallow so the stream-end pipeline stays alive;
-      // the caller already treats null as "no apply happened".
+      // Mirror the `setGoal` wrapper here: invalid queued transitions must
+      // be logged and swallowed so the stream-end pipeline stays alive.
+      // The caller already treats null as "no apply happened".
       try {
         const result = await this.setGoalImmediately({ workspaceId, ...pending });
         drained = result.success ? result.data : null;
@@ -2356,13 +2268,13 @@ export class WorkspaceGoalService {
       }
     }
 
-    // Stream-end deferred auto-promotion (Codex P1).
+    // Stream-end deferred auto-promotion.
     //
     // Runs AFTER any queued setGoal drains so the deferred setGoal can
     // target the same goal it was queued against — otherwise its
     // `expectedGoalId` would race ahead of the promote and the
     // setGoalImmediately call would return `goal_conflict` and silently
-    // drop the user's edit (Codex P2).
+    // drop the user's edit.
     //
     // Two reasons this helper might find work to do at this point:
     //   (a) The agent called `complete_goal` mid-stream — goal.json is
@@ -2385,7 +2297,7 @@ export class WorkspaceGoalService {
    * if the current active goal is `complete` and there's an upcoming
    * head, archive the completed goal to history and promote the head.
    *
-   * **Retry on streaming race (Codex P2).** `applyPendingAfterStreamEnd`
+   * **Retry on streaming race.** `applyPendingAfterStreamEnd`
    * is called from AgentSession once per stream; the
    * `extensionMetadata.setStreaming(false)` call comes from a separate
    * async listener in WorkspaceService and may not have run yet. We
@@ -2409,7 +2321,7 @@ export class WorkspaceGoalService {
       return;
     }
 
-    // Codex P2: poll for stop-streaming up to ~600ms total. The races
+    // poll for stop-streaming up to ~600ms total. The races
     // we've seen in practice resolve in one or two ticks; the longer
     // bound is defensive against laggy listeners. We stop polling the
     // first time we see streaming=false (so the common case is fast).
@@ -2541,11 +2453,10 @@ export class WorkspaceGoalService {
       // Completed entries come from history. We dedupe against:
       //   - the active goal id (stale history line race during edit)
       //   - the archived list (archived-from-complete goals)
-      //   - the upcoming list (revived-from-archived goals — Codex P2:
-      //     when a user archives a completed goal then revives it, the
-      //     original history entry still exists; without this dedup
-      //     the goal would render in both Upcoming and Completed).
-      //   - earlier history rows for the same goalId (Codex P2: a goal
+      //   - the upcoming list (when a user archives a completed goal then
+      //     revives it, the original history entry still exists; without
+      //     this dedup the goal would render in both Upcoming and Completed).
+      //   - earlier history rows for the same goalId (a goal
       //     completed → archived → revived → promoted → completed
       //     again has TWO 'completed' rows; we want only the newest).
       //     `history` is sorted newest-first, so the first row we see
@@ -2571,17 +2482,16 @@ export class WorkspaceGoalService {
   /**
    * Read history WITHOUT acquiring the lock. Only callers that already
    * hold the lock may use this (`getGoalBoard` reads goal.json + board
-   * + history under one lock). External callers should use the public
-   * `getGoalHistory()` which takes the lock itself.
+   * + history under one lock).
    */
-  private async readHistoryUnlocked(workspaceId: string) {
+  private async readHistoryUnlocked(
+    workspaceId: string,
+    logCorruptLines = false
+  ): Promise<GoalHistoryEntry[]> {
     const filePath = this.getHistoryFilePath(workspaceId);
     try {
       const raw = await fs.readFile(filePath, "utf-8");
-      const indexed: Array<{
-        index: number;
-        entry: GoalHistoryEntry;
-      }> = [];
+      const indexed: Array<{ index: number; entry: GoalHistoryEntry }> = [];
       let appendIndex = 0;
       for (const line of raw.split("\n")) {
         const trimmed = line.trim();
@@ -2591,8 +2501,10 @@ export class WorkspaceGoalService {
             index: appendIndex,
             entry: GoalHistoryEntrySchema.parse(JSON.parse(trimmed)),
           });
-        } catch {
-          // Per-line parse failures are tolerated — same as getGoalHistory.
+        } catch (error) {
+          if (logCorruptLines) {
+            log.warn("Skipping corrupt goal history entry", { workspaceId, error });
+          }
         }
         appendIndex += 1;
       }
@@ -2602,11 +2514,6 @@ export class WorkspaceGoalService {
         }
         return b.index - a.index;
       });
-      // Apply the same render cap as the public `getGoalHistory` so
-      // `getGoalBoard` can't return an unbounded payload over IPC for
-      // workspaces with thousands of completed/replaced goals (Codex
-      // P2). Older entries stay on disk in the JSONL but aren't
-      // surfaced to the renderer.
       return indexed.slice(0, GOAL_HISTORY_RENDER_CAP).map((row) => row.entry);
     } catch (error) {
       if (isNotFound(error)) return [];
@@ -2724,7 +2631,7 @@ export class WorkspaceGoalService {
         return;
       }
 
-      // Source priority (Codex P2): always prefer the currently-active
+      // Source priority: always prefer the currently-active
       // slot. A goal that was completed → archived → revived →
       // promoted → completed-again has both a stale history entry AND
       // is the current active. Checking history first would snapshot
@@ -2837,7 +2744,7 @@ export class WorkspaceGoalService {
    * stays intact (matches the design's "swap on drag-to-activate"
    * semantics — the demoted goal is the natural next pick).
    *
-   * **Mid-stream guard (Codex P1).** Promotion overwrites `goal.json`,
+   * **Mid-stream guard.** Promotion overwrites `goal.json`,
    * which `recordStreamAccounting` reads on every chunk to attribute
    * cost. If we promote while a stream is still running for the
    * current active goal, the freshly-promoted goal would absorb the
@@ -2855,10 +2762,8 @@ export class WorkspaceGoalService {
     // Interrupt the active stream (if any) before promoting so the
     // in-flight turn's costs are attributed to the goal that ran them.
     // The promoted goal's view (via the agent's `get_goal` tool) then
-    // takes effect on the next user message. Without this, a user who
-    // promotes mid-stream would see the rest of the current stream
-    // attributed to the new active goal, surfaced earlier as the Codex
-    // P1 "cost-attribution race" finding.
+    // takes effect on the next user message; otherwise a mid-stream
+    // promote could attribute the current stream tail to the new goal.
     //
     // Behavior intentionally fails open: if no interrupter is wired
     // (tests) or the interrupt errors, we still proceed to promote.
@@ -2897,7 +2802,7 @@ export class WorkspaceGoalService {
       // the streaming/conflict path — promotion happens inside one
       // file lock and shouldn't fan out into the public setGoal flow.
       //
-      // Codex P2: a previously-active goal demoted back into upcoming
+      // a previously-active goal demoted back into upcoming
       // may already have cost ≥ budget or turnsUsed ≥ turnCap
       // (e.g. it hit `budget_limited`, was demoted by a different
       // promote, then re-queued). Run `applyBudgetDrivenStatus` so the
@@ -2909,7 +2814,7 @@ export class WorkspaceGoalService {
       // that's been archived → revived → promoted doesn't carry its
       // 'done' message into the new active turn. The agent's
       // `get_goal` tool reads goal.json directly and would otherwise
-      // see a stale summary (Codex P2). Matches the
+      // see a stale summary. Matches the
       // `completionSummaryPatch` invariant for non-complete statuses.
       const now = Date.now();
       const baseActivated = GoalRecordV1Schema.parse({
@@ -2920,7 +2825,7 @@ export class WorkspaceGoalService {
       });
       const activated = this.applyBudgetDrivenStatus(baseActivated);
 
-      // Codex P2: gate budgeted goal promotion on pricing data. A user
+      // gate budgeted goal promotion on pricing data. A user
       // who queued a goal under a priced model and then switched to an
       // unpriced one would otherwise activate a budgeted goal they
       // can't actually send messages against — `assertPricedModelFor
@@ -2934,7 +2839,7 @@ export class WorkspaceGoalService {
       // Demote the previously-active goal to the head of upcoming, but
       // ONLY if it's still alive. A completed goal sitting in the active
       // slot (the user-marked-complete + queued-next workflow) must NOT
-      // re-enter the queue (Codex P2): completed goals are terminal
+      // re-enter the queue: completed goals are terminal
       // from the queue's perspective. Push them to history under the
       // "completed" reason so the board's Completed section surfaces
       // them, and skip the upcoming demote.
@@ -2962,9 +2867,9 @@ export class WorkspaceGoalService {
   }
 
   /**
-   * Called after a `complete` status transition inside `setGoal` to
-   * implement the user's queue UX: "when a goal is marked complete it
-   * moves into the complete list and the next Goal becomes its focussed."
+   * Called after a `complete` status transition inside `setGoal` to move the
+   * completed goal into the Complete board section and promote the next queued
+   * goal into focus.
    *
    * Behavior:
    *   - If the transition isn't into `complete`, no-op.
@@ -2993,7 +2898,7 @@ export class WorkspaceGoalService {
     if (board.upcoming.length === 0) {
       return;
     }
-    // Codex P1 + P2: check BOTH the streaming guard and the pricing
+    // check BOTH the streaming guard and the pricing
     // gate BEFORE appending the completion history entry. Either
     // failure here means promotion can't go through; we must leave
     // the completed goal in `goal.json` so a later retry archives it
@@ -3040,7 +2945,7 @@ export class WorkspaceGoalService {
   private async promoteNextUpcomingUnlocked(workspaceId: string): Promise<GoalRecordV1 | null> {
     const board = await this.readBoard(workspaceId);
     if (board.upcoming.length === 0) return null;
-    // Codex P1: same mid-stream guard as `promoteUpcomingGoal`.
+    // same mid-stream guard as `promoteUpcomingGoal`.
     // `clearGoal` and `maybeAutoPromoteOnComplete` invoke this helper
     // while a stream may still be running (the agent's `complete_goal`
     // tool fires mid-turn). Writing the queued goal to `goal.json` in
@@ -3059,7 +2964,7 @@ export class WorkspaceGoalService {
     }
     const [head, ...rest] = board.upcoming;
     const now = Date.now();
-    // Codex P2: same budget-driven normalization as
+    // same budget-driven normalization as
     // `promoteUpcomingGoal`. Cover the auto-promote-on-complete path
     // and the deferred stream-end path; both write the head into
     // `goal.json` and need to respect already-exhausted limits.
@@ -3073,7 +2978,7 @@ export class WorkspaceGoalService {
       completionSummary: undefined,
     });
     const activated = this.applyBudgetDrivenStatus(baseActivated);
-    // Codex P2: same pricing gate as `promoteUpcomingGoal`. If the next
+    // same pricing gate as `promoteUpcomingGoal`. If the next
     // queued goal is budgeted and the workspace is currently on an
     // unpriced model, refuse the auto-promotion — otherwise we'd leave
     // the workspace in a state where the user can't send messages
