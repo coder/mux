@@ -28,6 +28,17 @@ let AgentListItem!: typeof AgentListItemComponent;
 const TEST_WORKSPACE_ID = "workspace-archiving";
 const TEST_WORKSPACE_TITLE = "Archiving Workspace";
 const HEARTBEAT_INTERVAL_MS = 60_000;
+const SUBAGENT_ROW_META: AgentRowRenderMeta = {
+  depth: 1,
+  rowKind: "subagent",
+  connectorPosition: "single",
+  connectorStartsAtParent: true,
+  sharedTrunkActiveThroughRow: false,
+  sharedTrunkActiveBelowRow: false,
+  ancestorTrunks: [],
+  hasHiddenCompletedChildren: false,
+  visibleCompletedChildrenCount: 0,
+};
 
 type MockWorkspaceUnreadState = ReturnType<typeof WorkspaceUnreadModule.useWorkspaceUnread>;
 type MockWorkspaceSidebarState = ReturnType<typeof WorkspaceStoreModule.useWorkspaceSidebarState>;
@@ -88,6 +99,12 @@ function createSystemAbortReason(): StreamAbortReasonSnapshot {
     reason: "system",
     at: Date.now(),
   };
+}
+
+function createHeartbeatMetadata(overrides: Partial<FrontendWorkspaceMetadata["heartbeat"]> = {}) {
+  return createMetadata({
+    heartbeat: { enabled: true, intervalMs: HEARTBEAT_INTERVAL_MS, ...overrides },
+  });
 }
 
 function installAgentListItemTestDoubles() {
@@ -315,9 +332,7 @@ describe("AgentListItem", () => {
     mockWorkspaceHeartbeatsEnabled = true;
 
     const { row } = renderWorkspaceItem({
-      metadata: createMetadata({
-        heartbeat: { enabled: true, intervalMs: HEARTBEAT_INTERVAL_MS },
-      }),
+      metadata: createHeartbeatMetadata(),
     });
     const rowView = within(row);
     const heartbeatIcon = rowView.getByTestId("heartbeat-icon");
@@ -333,62 +348,41 @@ describe("AgentListItem", () => {
     ).toBeNull();
   });
 
-  test("anchors sub-agent connectors to the parent and child leading status slots", () => {
+  test.each([
+    [
+      "sub-agent connectors to the parent and child leading status slots",
+      1,
+      "default" as const,
+      "18px",
+      "8px",
+    ],
+    [
+      "task-group member connectors to the task-group rail",
+      2.5,
+      "task-group-member" as const,
+      "38px",
+      "1px",
+    ],
+  ])("anchors %s", (_name, depth, subAgentConnectorLayout, left, width) => {
     const { view } = renderWorkspaceItem({
-      depth: 1,
-      rowRenderMeta: {
-        depth: 1,
-        rowKind: "subagent",
-        connectorPosition: "single",
-        connectorStartsAtParent: true,
-        sharedTrunkActiveThroughRow: false,
-        sharedTrunkActiveBelowRow: false,
-        ancestorTrunks: [],
-        hasHiddenCompletedChildren: false,
-        visibleCompletedChildrenCount: 0,
-      },
+      depth,
+      subAgentConnectorLayout,
+      rowRenderMeta: SUBAGENT_ROW_META,
     });
 
     const topSegment = view.getByTestId("subagent-connector-top-segment");
     const elbow = view.getByTestId("subagent-connector-elbow");
 
-    expect(topSegment.getAttribute("style")).toContain("left: 18px");
-    expect(elbow.getAttribute("style")).toContain("left: 18px");
-    expect(elbow.getAttribute("style")).toContain("width: 8px");
-  });
-
-  test("anchors task-group member connectors to the task-group rail", () => {
-    const { view } = renderWorkspaceItem({
-      depth: 2.5,
-      subAgentConnectorLayout: "task-group-member",
-      rowRenderMeta: {
-        depth: 1,
-        rowKind: "subagent",
-        connectorPosition: "single",
-        connectorStartsAtParent: true,
-        sharedTrunkActiveThroughRow: false,
-        sharedTrunkActiveBelowRow: false,
-        ancestorTrunks: [],
-        hasHiddenCompletedChildren: false,
-        visibleCompletedChildrenCount: 0,
-      },
-    });
-
-    const topSegment = view.getByTestId("subagent-connector-top-segment");
-    const elbow = view.getByTestId("subagent-connector-elbow");
-
-    expect(topSegment.getAttribute("style")).toContain("left: 38px");
-    expect(elbow.getAttribute("style")).toContain("left: 38px");
-    expect(elbow.getAttribute("style")).toContain("width: 1px");
+    expect(topSegment.getAttribute("style")).toContain(`left: ${left}`);
+    expect(elbow.getAttribute("style")).toContain(`left: ${left}`);
+    expect(elbow.getAttribute("style")).toContain(`width: ${width}`);
   });
 
   test("does not render a heartbeat icon fallback when completed children indicator is shown", () => {
     mockWorkspaceHeartbeatsEnabled = true;
 
     const { row, metadata } = renderWorkspaceItem({
-      metadata: createMetadata({
-        heartbeat: { enabled: true, intervalMs: HEARTBEAT_INTERVAL_MS },
-      }),
+      metadata: createHeartbeatMetadata(),
       rowRenderMeta: {
         depth: 0,
         rowKind: "primary",
@@ -414,32 +408,14 @@ describe("AgentListItem", () => {
     ).toBeNull();
   });
 
-  test("does not render a heartbeat icon fallback when the heartbeat experiment is disabled", () => {
-    const { row } = renderWorkspaceItem({
-      metadata: createMetadata({
-        heartbeat: { enabled: true, intervalMs: HEARTBEAT_INTERVAL_MS },
-      }),
-    });
+  test.each([
+    ["the heartbeat experiment is disabled", false, createHeartbeatMetadata()],
+    ["heartbeat is disabled", true, createHeartbeatMetadata({ enabled: false })],
+    ["heartbeat settings are missing", true, createMetadata()],
+  ])("does not render a heartbeat icon fallback when %s", (_name, experimentEnabled, metadata) => {
+    mockWorkspaceHeartbeatsEnabled = experimentEnabled;
 
-    expect(within(row).queryByTestId("heartbeat-icon")).toBeNull();
-  });
-
-  test("does not render a heartbeat icon fallback when heartbeat is disabled", () => {
-    mockWorkspaceHeartbeatsEnabled = true;
-
-    const { row } = renderWorkspaceItem({
-      metadata: createMetadata({
-        heartbeat: { enabled: false, intervalMs: HEARTBEAT_INTERVAL_MS },
-      }),
-    });
-
-    expect(within(row).queryByTestId("heartbeat-icon")).toBeNull();
-  });
-
-  test("does not render a heartbeat icon fallback when heartbeat settings are missing", () => {
-    mockWorkspaceHeartbeatsEnabled = true;
-
-    const { row } = renderWorkspaceItem();
+    const { row } = renderWorkspaceItem({ metadata });
 
     expect(within(row).queryByTestId("heartbeat-icon")).toBeNull();
   });
@@ -449,9 +425,7 @@ describe("AgentListItem", () => {
     mockWorkspaceUnreadState = createWorkspaceUnreadState({ isUnread: true });
 
     const { row } = renderWorkspaceItem({
-      metadata: createMetadata({
-        heartbeat: { enabled: true, intervalMs: HEARTBEAT_INTERVAL_MS },
-      }),
+      metadata: createHeartbeatMetadata(),
     });
 
     expect(within(row).queryByTestId("heartbeat-icon")).toBeNull();

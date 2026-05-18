@@ -26,6 +26,80 @@ async function createLocalGitRepository(rootDir: string, repoName: string): Prom
   return repoPath;
 }
 
+const ARCHIVED_AT = "2026-01-01T00:00:00.000Z";
+
+async function withEnv<T>(
+  updates: Record<string, string | undefined>,
+  run: () => Promise<T>
+): Promise<T> {
+  const originals = Object.fromEntries(Object.keys(updates).map((key) => [key, process.env[key]]));
+  for (const [key, value] of Object.entries(updates)) {
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+  try {
+    return await run();
+  } finally {
+    for (const [key, value] of Object.entries(originals)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+}
+
+async function writeFakeGitCloneShim(fakeGitPath: string): Promise<void> {
+  await fs.writeFile(
+    fakeGitPath,
+    `#!/bin/sh
+printf '%s\n' "$@" > "$FAKE_GIT_ARGS_LOG"
+if [ "$1" = "clone" ]; then
+  mkdir -p "$5/.git"
+  exit 0
+fi
+exit 1
+`,
+    "utf-8"
+  );
+  await fs.chmod(fakeGitPath, 0o755);
+}
+
+async function cloneWithFakeGit(
+  tempDir: string,
+  service: ProjectService,
+  input: { testCaseId: string; repoUrl: string; cloneParentDir: string; sshAuthSock?: string }
+) {
+  if (process.platform === "win32") {
+    // These tests rely on a POSIX shell shim named "git" in PATH.
+    return null;
+  }
+
+  const fakeBinDir = path.join(tempDir, `fake-bin-${input.testCaseId}`);
+  const fakeGitArgsLogPath = path.join(tempDir, `fake-git-${input.testCaseId}-args.log`);
+  await fs.mkdir(fakeBinDir, { recursive: true });
+  await writeFakeGitCloneShim(path.join(fakeBinDir, "git"));
+
+  const result = await withEnv(
+    {
+      PATH: `${fakeBinDir}${path.delimiter}${process.env.PATH ?? ""}`,
+      FAKE_GIT_ARGS_LOG: fakeGitArgsLogPath,
+      HOME: tempDir,
+      SSH_AUTH_SOCK: input.sshAuthSock,
+    },
+    () => service.clone({ repoUrl: input.repoUrl, cloneParentDir: input.cloneParentDir })
+  );
+
+  expect(result.success).toBe(true);
+  if (!result.success) throw new Error("Expected success");
+  const loggedArgs = (await fs.readFile(fakeGitArgsLogPath, "utf-8")).trim().split("\n");
+  return { result, loggedArgs, cloneWorkPath: loggedArgs[4] ?? "" };
+}
+
 describe("ProjectService", () => {
   let tempDir: string;
   let config: Config;
@@ -198,379 +272,101 @@ describe("ProjectService", () => {
       expect(loadedConfig.defaultProjectDir).toBeUndefined();
     });
 
-    it("normalizes trailing-slash owner/repo shorthand to GitHub HTTPS when SSH agent is unavailable", async () => {
-      if (process.platform === "win32") {
-        // This test relies on a POSIX shell shim named "git" in PATH.
-        return;
-      }
+    const fakeGitCloneCases = [
+      {
+        name: "normalizes trailing-slash owner/repo shorthand to GitHub HTTPS when SSH agent is unavailable",
+        testCaseId: "shorthand",
+        cloneDir: "shorthand-clones",
+        repoUrl: "owner/repo/",
+        expectedRepoUrl: "https://github.com/owner/repo.git",
+        expectedFolderName: "repo",
+        sshAuthSock: undefined,
+      },
+      {
+        name: "normalizes owner/repo shorthand to GitHub SSH when SSH credentials are available",
+        testCaseId: "ssh-shorthand",
+        cloneDir: "ssh-shorthand-clones",
+        repoUrl: "owner/repo",
+        expectedRepoUrl: "git@github.com:owner/repo.git",
+        expectedFolderName: "repo",
+        sshAuthSock: "fake-ssh-agent.sock",
+      },
+      {
+        name: "preserves combining-mark script names when deriving clone folder names",
+        testCaseId: "unicode",
+        cloneDir: "unicode-clones",
+        repoUrl: "https://example.com/org/हिन्दी.git",
+        expectedFolderName: "हिन्दी",
+      },
+      {
+        name: "falls back to deterministic safe folder names when repo basename sanitizes to empty",
+        testCaseId: "fallback",
+        cloneDir: "fallback-clones",
+        repoUrl: "https://example.com/org/🚀🚀.git",
+        expectedFolderName: `repo-${createHash("sha256")
+          .update("https://example.com/org/🚀🚀.git")
+          .digest("hex")
+          .slice(0, 10)}`,
+      },
+      {
+        name: "avoids Windows reserved destination names",
+        testCaseId: "reserved",
+        cloneDir: "reserved-name-clones",
+        repoUrl: "https://example.com/org/con.txt.git",
+        expectedFolderName: "con-repo.txt",
+      },
+    ];
 
-      const cloneParentDir = path.join(tempDir, "shorthand-clones");
-      const fakeBinDir = path.join(tempDir, "fake-bin");
-      const fakeGitPath = path.join(fakeBinDir, "git");
-      const fakeGitArgsLogPath = path.join(tempDir, "fake-git-args.log");
-      const originalPath = process.env.PATH ?? "";
-      const originalFakeGitArgsLogPath = process.env.FAKE_GIT_ARGS_LOG;
-      const originalHome = process.env.HOME;
-      const originalSshAuthSock = process.env.SSH_AUTH_SOCK;
-
-      await fs.mkdir(fakeBinDir, { recursive: true });
-      await fs.writeFile(
-        fakeGitPath,
-        `#!/bin/sh
-printf '%s\n' "$@" > "$FAKE_GIT_ARGS_LOG"
-if [ "$1" = "clone" ]; then
-  mkdir -p "$5/.git"
-  exit 0
-fi
-exit 1
-`,
-        "utf-8"
-      );
-      await fs.chmod(fakeGitPath, 0o755);
-
-      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
-      process.env.FAKE_GIT_ARGS_LOG = fakeGitArgsLogPath;
-      process.env.HOME = tempDir;
-      delete process.env.SSH_AUTH_SOCK;
-
-      try {
-        const result = await service.clone({
-          repoUrl: "owner/repo/",
+    for (const testCase of fakeGitCloneCases) {
+      it(testCase.name, async () => {
+        const cloneParentDir = path.join(tempDir, testCase.cloneDir);
+        const captured = await cloneWithFakeGit(tempDir, service, {
+          testCaseId: testCase.testCaseId,
+          repoUrl: testCase.repoUrl,
           cloneParentDir,
+          sshAuthSock: testCase.sshAuthSock
+            ? path.join(tempDir, testCase.sshAuthSock)
+            : testCase.sshAuthSock,
         });
+        if (!captured) return;
 
-        expect(result.success).toBe(true);
-        if (!result.success) throw new Error("Expected success");
-
-        const loggedArgs = (await fs.readFile(fakeGitArgsLogPath, "utf-8")).trim().split("\n");
-
-        expect(loggedArgs[0]).toBe("clone");
-        expect(loggedArgs[1]).toBe("--progress");
-        expect(loggedArgs[2]).toBe("--");
-        expect(loggedArgs[3]).toBe("https://github.com/owner/repo.git");
-        expect(path.dirname(loggedArgs[4])).toBe(path.resolve(cloneParentDir));
-        expect(path.basename(loggedArgs[4])).toMatch(/^repo\.mux-clone-[a-f0-9]{12}$/);
-      } finally {
-        process.env.PATH = originalPath;
-        if (originalFakeGitArgsLogPath === undefined) {
-          delete process.env.FAKE_GIT_ARGS_LOG;
-        } else {
-          process.env.FAKE_GIT_ARGS_LOG = originalFakeGitArgsLogPath;
+        if (testCase.expectedRepoUrl) {
+          expect(captured.loggedArgs[0]).toBe("clone");
+          expect(captured.loggedArgs[1]).toBe("--progress");
+          expect(captured.loggedArgs[2]).toBe("--");
+          expect(captured.loggedArgs[3]).toBe(testCase.expectedRepoUrl);
         }
-        if (originalHome === undefined) {
-          delete process.env.HOME;
-        } else {
-          process.env.HOME = originalHome;
-        }
-        if (originalSshAuthSock === undefined) {
-          delete process.env.SSH_AUTH_SOCK;
-        } else {
-          process.env.SSH_AUTH_SOCK = originalSshAuthSock;
-        }
-      }
-    });
-
-    it("normalizes owner/repo shorthand to GitHub SSH when SSH credentials are available", async () => {
-      if (process.platform === "win32") {
-        // This test relies on a POSIX shell shim named "git" in PATH.
-        return;
-      }
-
-      const cloneParentDir = path.join(tempDir, "ssh-shorthand-clones");
-      const fakeBinDir = path.join(tempDir, "fake-bin-ssh");
-      const fakeGitPath = path.join(fakeBinDir, "git");
-      const fakeGitArgsLogPath = path.join(tempDir, "fake-git-ssh-args.log");
-      const originalPath = process.env.PATH ?? "";
-      const originalFakeGitArgsLogPath = process.env.FAKE_GIT_ARGS_LOG;
-      const originalHome = process.env.HOME;
-      const originalSshAuthSock = process.env.SSH_AUTH_SOCK;
-
-      await fs.mkdir(fakeBinDir, { recursive: true });
-      await fs.writeFile(
-        fakeGitPath,
-        `#!/bin/sh
-printf '%s\n' "$@" > "$FAKE_GIT_ARGS_LOG"
-if [ "$1" = "clone" ]; then
-  mkdir -p "$5/.git"
-  exit 0
-fi
-exit 1
-`,
-        "utf-8"
-      );
-      await fs.chmod(fakeGitPath, 0o755);
-
-      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
-      process.env.FAKE_GIT_ARGS_LOG = fakeGitArgsLogPath;
-      process.env.HOME = tempDir;
-      process.env.SSH_AUTH_SOCK = path.join(tempDir, "fake-ssh-agent.sock");
-
-      try {
-        const result = await service.clone({
-          repoUrl: "owner/repo",
-          cloneParentDir,
-        });
-
-        expect(result.success).toBe(true);
-        if (!result.success) throw new Error("Expected success");
-
-        const loggedArgs = (await fs.readFile(fakeGitArgsLogPath, "utf-8")).trim().split("\n");
-
-        expect(loggedArgs[0]).toBe("clone");
-        expect(loggedArgs[1]).toBe("--progress");
-        expect(loggedArgs[2]).toBe("--");
-        expect(loggedArgs[3]).toBe("git@github.com:owner/repo.git");
-        expect(path.dirname(loggedArgs[4])).toBe(path.resolve(cloneParentDir));
-        expect(path.basename(loggedArgs[4])).toMatch(/^repo\.mux-clone-[a-f0-9]{12}$/);
-      } finally {
-        process.env.PATH = originalPath;
-        if (originalFakeGitArgsLogPath === undefined) {
-          delete process.env.FAKE_GIT_ARGS_LOG;
-        } else {
-          process.env.FAKE_GIT_ARGS_LOG = originalFakeGitArgsLogPath;
-        }
-        if (originalHome === undefined) {
-          delete process.env.HOME;
-        } else {
-          process.env.HOME = originalHome;
-        }
-        if (originalSshAuthSock === undefined) {
-          delete process.env.SSH_AUTH_SOCK;
-        } else {
-          process.env.SSH_AUTH_SOCK = originalSshAuthSock;
-        }
-      }
-    });
+        expect(path.dirname(captured.cloneWorkPath)).toBe(path.resolve(cloneParentDir));
+        expect(path.basename(captured.cloneWorkPath)).toMatch(
+          new RegExp(`^${testCase.expectedFolderName}[.]mux-clone-[a-f0-9]{12}$`)
+        );
+        expect(captured.result.data.normalizedPath).toBe(
+          path.resolve(cloneParentDir, testCase.expectedFolderName)
+        );
+      });
+    }
 
     it("sanitizes repo-derived folder names that contain shell metacharacters", async () => {
-      if (process.platform === "win32") {
-        // This test relies on a POSIX shell shim named "git" in PATH.
-        return;
-      }
-
+      const markerName = `WIN_marker_${Date.now().toString(36)}_${Math.random()
+        .toString(36)
+        .slice(2, 8)}`;
       const cloneParentDir = path.join(tempDir, "sanitized-clones");
-      const fakeBinDir = path.join(tempDir, "fake-bin-sanitize");
-      const fakeGitPath = path.join(fakeBinDir, "git");
-      const fakeGitArgsLogPath = path.join(tempDir, "fake-git-sanitize-args.log");
-      const originalPath = process.env.PATH ?? "";
-      const originalFakeGitArgsLogPath = process.env.FAKE_GIT_ARGS_LOG;
-      const markerName = `WIN_marker_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      const captured = await cloneWithFakeGit(tempDir, service, {
+        testCaseId: "sanitize",
+        repoUrl: `git://localhost/$(touch ${markerName}).git`,
+        cloneParentDir,
+      });
+      if (!captured) return;
 
-      await fs.mkdir(fakeBinDir, { recursive: true });
-      await fs.writeFile(
-        fakeGitPath,
-        `#!/bin/sh
-printf '%s\n' "$@" > "$FAKE_GIT_ARGS_LOG"
-if [ "$1" = "clone" ]; then
-  mkdir -p "$5/.git"
-  exit 0
-fi
-exit 1
-`,
-        "utf-8"
+      const expectedFolderName = `touch-${markerName}`;
+      expect(captured.cloneWorkPath).not.toContain("$(");
+      expect(path.dirname(captured.cloneWorkPath)).toBe(path.resolve(cloneParentDir));
+      expect(path.basename(captured.cloneWorkPath)).toMatch(
+        new RegExp(`^${expectedFolderName}[.]mux-clone-[a-f0-9]{12}$`)
       );
-      await fs.chmod(fakeGitPath, 0o755);
-
-      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
-      process.env.FAKE_GIT_ARGS_LOG = fakeGitArgsLogPath;
-
-      try {
-        const result = await service.clone({
-          repoUrl: `git://localhost/$(touch ${markerName}).git`,
-          cloneParentDir,
-        });
-
-        expect(result.success).toBe(true);
-        if (!result.success) throw new Error("Expected success");
-
-        const loggedArgs = (await fs.readFile(fakeGitArgsLogPath, "utf-8")).trim().split("\n");
-        const cloneWorkPath = loggedArgs[4] ?? "";
-        const expectedFolderName = `touch-${markerName}`;
-
-        expect(cloneWorkPath).not.toContain("$(");
-        expect(path.dirname(cloneWorkPath)).toBe(path.resolve(cloneParentDir));
-        expect(path.basename(cloneWorkPath)).toMatch(
-          new RegExp(`^${expectedFolderName}\\.mux-clone-[a-f0-9]{12}$`)
-        );
-        expect(result.data.normalizedPath).toBe(path.resolve(cloneParentDir, expectedFolderName));
-      } finally {
-        process.env.PATH = originalPath;
-        if (originalFakeGitArgsLogPath === undefined) {
-          delete process.env.FAKE_GIT_ARGS_LOG;
-        } else {
-          process.env.FAKE_GIT_ARGS_LOG = originalFakeGitArgsLogPath;
-        }
-      }
-    });
-
-    it("preserves combining-mark script names when deriving clone folder names", async () => {
-      if (process.platform === "win32") {
-        // This test relies on a POSIX shell shim named "git" in PATH.
-        return;
-      }
-
-      const cloneParentDir = path.join(tempDir, "unicode-clones");
-      const fakeBinDir = path.join(tempDir, "fake-bin-unicode");
-      const fakeGitPath = path.join(fakeBinDir, "git");
-      const fakeGitArgsLogPath = path.join(tempDir, "fake-git-unicode-args.log");
-      const originalPath = process.env.PATH ?? "";
-      const originalFakeGitArgsLogPath = process.env.FAKE_GIT_ARGS_LOG;
-      const repoUrl = "https://example.com/org/हिन्दी.git";
-
-      await fs.mkdir(fakeBinDir, { recursive: true });
-      await fs.writeFile(
-        fakeGitPath,
-        `#!/bin/sh
-printf '%s\n' "$@" > "$FAKE_GIT_ARGS_LOG"
-if [ "$1" = "clone" ]; then
-  mkdir -p "$5/.git"
-  exit 0
-fi
-exit 1
-`,
-        "utf-8"
+      expect(captured.result.data.normalizedPath).toBe(
+        path.resolve(cloneParentDir, expectedFolderName)
       );
-      await fs.chmod(fakeGitPath, 0o755);
-
-      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
-      process.env.FAKE_GIT_ARGS_LOG = fakeGitArgsLogPath;
-
-      try {
-        const result = await service.clone({ repoUrl, cloneParentDir });
-
-        expect(result.success).toBe(true);
-        if (!result.success) throw new Error("Expected success");
-
-        const loggedArgs = (await fs.readFile(fakeGitArgsLogPath, "utf-8")).trim().split("\n");
-        const cloneWorkPath = loggedArgs[4] ?? "";
-        const expectedFolderName = "हिन्दी";
-
-        expect(path.basename(cloneWorkPath)).toMatch(
-          new RegExp(`^${expectedFolderName}\\.mux-clone-[a-f0-9]{12}$`)
-        );
-        expect(result.data.normalizedPath).toBe(path.resolve(cloneParentDir, expectedFolderName));
-      } finally {
-        process.env.PATH = originalPath;
-        if (originalFakeGitArgsLogPath === undefined) {
-          delete process.env.FAKE_GIT_ARGS_LOG;
-        } else {
-          process.env.FAKE_GIT_ARGS_LOG = originalFakeGitArgsLogPath;
-        }
-      }
-    });
-
-    it("falls back to deterministic safe folder names when repo basename sanitizes to empty", async () => {
-      if (process.platform === "win32") {
-        // This test relies on a POSIX shell shim named "git" in PATH.
-        return;
-      }
-
-      const cloneParentDir = path.join(tempDir, "fallback-clones");
-      const fakeBinDir = path.join(tempDir, "fake-bin-fallback");
-      const fakeGitPath = path.join(fakeBinDir, "git");
-      const fakeGitArgsLogPath = path.join(tempDir, "fake-git-fallback-args.log");
-      const originalPath = process.env.PATH ?? "";
-      const originalFakeGitArgsLogPath = process.env.FAKE_GIT_ARGS_LOG;
-      const repoUrl = "https://example.com/org/🚀🚀.git";
-      const expectedFolderName = `repo-${createHash("sha256").update(repoUrl).digest("hex").slice(0, 10)}`;
-
-      await fs.mkdir(fakeBinDir, { recursive: true });
-      await fs.writeFile(
-        fakeGitPath,
-        `#!/bin/sh
-printf '%s\n' "$@" > "$FAKE_GIT_ARGS_LOG"
-if [ "$1" = "clone" ]; then
-  mkdir -p "$5/.git"
-  exit 0
-fi
-exit 1
-`,
-        "utf-8"
-      );
-      await fs.chmod(fakeGitPath, 0o755);
-
-      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
-      process.env.FAKE_GIT_ARGS_LOG = fakeGitArgsLogPath;
-
-      try {
-        const result = await service.clone({ repoUrl, cloneParentDir });
-
-        expect(result.success).toBe(true);
-        if (!result.success) throw new Error("Expected success");
-
-        const loggedArgs = (await fs.readFile(fakeGitArgsLogPath, "utf-8")).trim().split("\n");
-        const cloneWorkPath = loggedArgs[4] ?? "";
-
-        expect(path.basename(cloneWorkPath)).toMatch(
-          new RegExp(`^${expectedFolderName}\\.mux-clone-[a-f0-9]{12}$`)
-        );
-        expect(result.data.normalizedPath).toBe(path.resolve(cloneParentDir, expectedFolderName));
-      } finally {
-        process.env.PATH = originalPath;
-        if (originalFakeGitArgsLogPath === undefined) {
-          delete process.env.FAKE_GIT_ARGS_LOG;
-        } else {
-          process.env.FAKE_GIT_ARGS_LOG = originalFakeGitArgsLogPath;
-        }
-      }
-    });
-
-    it("avoids Windows reserved destination names", async () => {
-      if (process.platform === "win32") {
-        // This test relies on a POSIX shell shim named "git" in PATH.
-        return;
-      }
-
-      const cloneParentDir = path.join(tempDir, "reserved-name-clones");
-      const fakeBinDir = path.join(tempDir, "fake-bin-reserved");
-      const fakeGitPath = path.join(fakeBinDir, "git");
-      const fakeGitArgsLogPath = path.join(tempDir, "fake-git-reserved-args.log");
-      const originalPath = process.env.PATH ?? "";
-      const originalFakeGitArgsLogPath = process.env.FAKE_GIT_ARGS_LOG;
-
-      await fs.mkdir(fakeBinDir, { recursive: true });
-      await fs.writeFile(
-        fakeGitPath,
-        `#!/bin/sh
-printf '%s\n' "$@" > "$FAKE_GIT_ARGS_LOG"
-if [ "$1" = "clone" ]; then
-  mkdir -p "$5/.git"
-  exit 0
-fi
-exit 1
-`,
-        "utf-8"
-      );
-      await fs.chmod(fakeGitPath, 0o755);
-
-      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
-      process.env.FAKE_GIT_ARGS_LOG = fakeGitArgsLogPath;
-
-      try {
-        const result = await service.clone({
-          repoUrl: "https://example.com/org/con.txt.git",
-          cloneParentDir,
-        });
-
-        expect(result.success).toBe(true);
-        if (!result.success) throw new Error("Expected success");
-
-        const loggedArgs = (await fs.readFile(fakeGitArgsLogPath, "utf-8")).trim().split("\n");
-        const cloneWorkPath = loggedArgs[4] ?? "";
-        const expectedFolderName = "con-repo.txt";
-
-        expect(path.basename(cloneWorkPath)).toMatch(
-          new RegExp(`^${expectedFolderName}\\.mux-clone-[a-f0-9]{12}$`)
-        );
-        expect(result.data.normalizedPath).toBe(path.resolve(cloneParentDir, expectedFolderName));
-      } finally {
-        process.env.PATH = originalPath;
-        if (originalFakeGitArgsLogPath === undefined) {
-          delete process.env.FAKE_GIT_ARGS_LOG;
-        } else {
-          process.env.FAKE_GIT_ARGS_LOG = originalFakeGitArgsLogPath;
-        }
-      }
     });
 
     it("returns error when clone destination already exists", async () => {
@@ -957,10 +753,6 @@ exit 1
       const fakeBinDir = path.join(tempDir, `fake-bin-${options.testCaseId}`);
       const fakeGitPath = path.join(fakeBinDir, "git");
       const fakeGitEnvLogPath = path.join(tempDir, `fake-git-${options.testCaseId}-env.log`);
-      const originalPath = process.env.PATH ?? "";
-      const originalHome = process.env.HOME;
-      const originalSshAuthSock = process.env.SSH_AUTH_SOCK;
-      const originalFakeGitEnvLogPath = process.env.FAKE_GIT_ENV_LOG;
 
       await fs.mkdir(fakeBinDir, { recursive: true });
       await writeFakeGitCloneEnvLoggingShim(fakeGitPath, {
@@ -975,36 +767,29 @@ exit 1
       };
       sshPromptService.on("request", onRequest);
 
-      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
-      process.env.HOME = tempDir;
-      process.env.SSH_AUTH_SOCK = path.join(tempDir, "fake-ssh-agent.sock");
-      process.env.FAKE_GIT_ENV_LOG = fakeGitEnvLogPath;
-
       try {
-        const events = await collectCloneEvents(sshCloneService, options.repoUrl, cloneParentDir);
-        const successEvent = events.find((event) => event.type === "success");
-        expect(successEvent?.type).toBe("success");
+        return await withEnv(
+          {
+            PATH: `${fakeBinDir}${path.delimiter}${process.env.PATH ?? ""}`,
+            HOME: tempDir,
+            SSH_AUTH_SOCK: path.join(tempDir, "fake-ssh-agent.sock"),
+            FAKE_GIT_ENV_LOG: fakeGitEnvLogPath,
+          },
+          async () => {
+            const events = await collectCloneEvents(
+              sshCloneService,
+              options.repoUrl,
+              cloneParentDir
+            );
+            const successEvent = events.find((event) => event.type === "success");
+            expect(successEvent?.type).toBe("success");
 
-        return await readLoggedEnv(fakeGitEnvLogPath);
+            return await readLoggedEnv(fakeGitEnvLogPath);
+          }
+        );
       } finally {
         sshPromptService.off("request", onRequest);
         release();
-        process.env.PATH = originalPath;
-        if (originalHome === undefined) {
-          delete process.env.HOME;
-        } else {
-          process.env.HOME = originalHome;
-        }
-        if (originalSshAuthSock === undefined) {
-          delete process.env.SSH_AUTH_SOCK;
-        } else {
-          process.env.SSH_AUTH_SOCK = originalSshAuthSock;
-        }
-        if (originalFakeGitEnvLogPath === undefined) {
-          delete process.env.FAKE_GIT_ENV_LOG;
-        } else {
-          process.env.FAKE_GIT_ENV_LOG = originalFakeGitEnvLogPath;
-        }
       }
     }
 
@@ -1703,73 +1488,56 @@ exit 1
       }
     });
 
-    it("sets SSH askpass env for ssh:// clone URL", async () => {
-      if (process.platform === "win32") {
-        // This test relies on a POSIX shell shim named "git" in PATH.
-        return;
-      }
-
-      const env = await cloneAndCaptureAskpassEnv({
+    const askpassTransportCases = [
+      {
+        name: "sets SSH askpass env for ssh:// clone URL",
         testCaseId: "ssh-transport-ssh-scheme",
         repoUrl: "ssh://github.com/testuser/testrepo.git",
-        failIfSshAskpassIsSet: false,
-      });
-
-      expect(env.SSH_ASKPASS).not.toBe("");
-      expect(env.SSH_ASKPASS_REQUIRE).toBe("force");
-      expect(env.GIT_TERMINAL_PROMPT).toBe("0");
-    });
-
-    it("sets SSH askpass env for git+ssh:// clone URL", async () => {
-      if (process.platform === "win32") {
-        // This test relies on a POSIX shell shim named "git" in PATH.
-        return;
-      }
-
-      const env = await cloneAndCaptureAskpassEnv({
+        expectAskpass: true,
+      },
+      {
+        name: "sets SSH askpass env for git+ssh:// clone URL",
         testCaseId: "ssh-transport-git-plus-ssh",
         repoUrl: "git+ssh://github.com/testuser/testrepo.git",
-        failIfSshAskpassIsSet: false,
-      });
-
-      expect(env.SSH_ASKPASS).not.toBe("");
-      expect(env.SSH_ASKPASS_REQUIRE).toBe("force");
-      expect(env.GIT_TERMINAL_PROMPT).toBe("0");
-    });
-
-    it("sets SSH askpass env for ssh+git:// clone URL", async () => {
-      if (process.platform === "win32") {
-        // This test relies on a POSIX shell shim named "git" in PATH.
-        return;
-      }
-
-      const env = await cloneAndCaptureAskpassEnv({
+        expectAskpass: true,
+      },
+      {
+        name: "sets SSH askpass env for ssh+git:// clone URL",
         testCaseId: "ssh-transport-ssh-plus-git",
         repoUrl: "ssh+git://github.com/testuser/testrepo.git",
-        failIfSshAskpassIsSet: false,
-      });
-
-      expect(env.SSH_ASKPASS).not.toBe("");
-      expect(env.SSH_ASKPASS_REQUIRE).toBe("force");
-      expect(env.GIT_TERMINAL_PROMPT).toBe("0");
-    });
-
-    it("does not set SSH askpass env for git:// clone URL", async () => {
-      if (process.platform === "win32") {
-        // This test relies on a POSIX shell shim named "git" in PATH.
-        return;
-      }
-
-      const env = await cloneAndCaptureAskpassEnv({
+        expectAskpass: true,
+      },
+      {
+        name: "does not set SSH askpass env for git:// clone URL",
         testCaseId: "ssh-transport-git-scheme",
         repoUrl: "git://github.com/testuser/testrepo.git",
-        failIfSshAskpassIsSet: true,
-      });
+        expectAskpass: false,
+      },
+    ];
 
-      expect(env.SSH_ASKPASS).toBe("");
-      expect(env.SSH_ASKPASS_REQUIRE).toBe("");
-      expect(env.GIT_TERMINAL_PROMPT).toBe("0");
-    });
+    for (const testCase of askpassTransportCases) {
+      it(testCase.name, async () => {
+        if (process.platform === "win32") {
+          // This test relies on a POSIX shell shim named "git" in PATH.
+          return;
+        }
+
+        const env = await cloneAndCaptureAskpassEnv({
+          testCaseId: testCase.testCaseId,
+          repoUrl: testCase.repoUrl,
+          failIfSshAskpassIsSet: !testCase.expectAskpass,
+        });
+
+        if (testCase.expectAskpass) {
+          expect(env.SSH_ASKPASS).not.toBe("");
+          expect(env.SSH_ASKPASS_REQUIRE).toBe("force");
+        } else {
+          expect(env.SSH_ASKPASS).toBe("");
+          expect(env.SSH_ASKPASS_REQUIRE).toBe("");
+        }
+        expect(env.GIT_TERMINAL_PROMPT).toBe("0");
+      });
+    }
   });
 
   describe("gitInit", () => {
@@ -1942,51 +1710,88 @@ exit 1
       expect(result.error.type).toBe("project_not_found");
     });
 
-    it("with force=true cascade-deletes archived workspaces then removes project", async () => {
-      const archivedWorkspaceDirOne = path.join(tempDir, "archived-workspace-one");
-      const archivedWorkspaceDirTwo = path.join(tempDir, "archived-workspace-two");
-      await fs.mkdir(archivedWorkspaceDirOne, { recursive: true });
-      await fs.mkdir(archivedWorkspaceDirTwo, { recursive: true });
-
-      const archivedAt = new Date("2026-01-01T00:00:00.000Z").toISOString();
-      const projectPath = "/fake/project";
-      const cfg = config.loadConfigOrDefault();
-      cfg.projects.set(projectPath, {
+    const forceRemovalCases = [
+      {
+        name: "with force=true cascade-deletes archived workspaces then removes project",
         workspaces: [
-          { id: "archived-workspace-1", path: archivedWorkspaceDirOne, archivedAt },
-          { id: "archived-workspace-2", path: archivedWorkspaceDirTwo, archivedAt },
+          { id: "archived-workspace-1", dir: "archived-workspace-one", archived: true },
+          { id: "archived-workspace-2", dir: "archived-workspace-two", archived: true },
         ],
+        expectedRemovedIds: ["archived-workspace-1", "archived-workspace-2"],
+      },
+      {
+        name: "with force=true deletes active and archived workspaces then removes project",
+        workspaces: [
+          { id: "active-workspace-1", dir: "active-workspace" },
+          { id: "archived-workspace-1", dir: "archived-workspace", archived: true },
+        ],
+        expectedRemovedIds: ["active-workspace-1", "archived-workspace-1"],
+      },
+      {
+        name: "force=true cascade-deletes active workspaces then removes project",
+        workspaces: [
+          { id: "active-workspace-1", dir: "active-workspace-one" },
+          { id: "active-workspace-2", dir: "active-workspace-two" },
+        ],
+        expectedRemovedIds: ["active-workspace-1", "active-workspace-2"],
+      },
+      {
+        name: "force=true cascade-deletes mixed active + archived workspaces then removes project",
+        workspaces: [
+          { id: "mixed-active-workspace-id", dir: "mixed-active-workspace" },
+          {
+            id: "mixed-archived-workspace-id",
+            dir: "mixed-archived-workspace",
+            archived: true,
+          },
+        ],
+        expectedRemovedIds: ["mixed-active-workspace-id", "mixed-archived-workspace-id"],
+      },
+    ];
+
+    for (const testCase of forceRemovalCases) {
+      it(testCase.name, async () => {
+        const projectPath = "/fake/project";
+        const workspaces = testCase.workspaces.map((workspace) => ({
+          id: workspace.id,
+          path: path.join(tempDir, workspace.dir),
+          ...(workspace.archived ? { archivedAt: ARCHIVED_AT } : {}),
+        }));
+        await Promise.all(
+          workspaces.map((workspace) => fs.mkdir(workspace.path, { recursive: true }))
+        );
+
+        const cfg = config.loadConfigOrDefault();
+        cfg.projects.set(projectPath, { workspaces });
+        await config.saveConfig(cfg);
+
+        const removedWorkspaceIds: string[] = [];
+        service.setWorkspaceService({
+          remove: async (workspaceId) => {
+            removedWorkspaceIds.push(workspaceId);
+            await config.removeWorkspace(workspaceId);
+            return Ok(undefined);
+          },
+        });
+
+        const result = await service.remove(projectPath, true);
+
+        expect(result.success).toBe(true);
+        expect(removedWorkspaceIds.sort()).toEqual(testCase.expectedRemovedIds);
+        const after = config.loadConfigOrDefault();
+        expect(after.projects.has(projectPath)).toBe(false);
       });
-      await config.saveConfig(cfg);
-
-      const removedWorkspaceIds: string[] = [];
-      service.setWorkspaceService({
-        remove: async (workspaceId) => {
-          removedWorkspaceIds.push(workspaceId);
-          await config.removeWorkspace(workspaceId);
-          return Ok(undefined);
-        },
-      });
-
-      const result = await service.remove(projectPath, true);
-
-      expect(result.success).toBe(true);
-      expect(removedWorkspaceIds.sort()).toEqual(["archived-workspace-1", "archived-workspace-2"]);
-
-      const after = config.loadConfigOrDefault();
-      expect(after.projects.has(projectPath)).toBe(false);
-    });
+    }
 
     it("with force=true resolves metadata IDs for workspaces missing config IDs", async () => {
       const archivedWorkspaceDir = path.join(tempDir, "legacy-archived-workspace");
       await fs.mkdir(archivedWorkspaceDir, { recursive: true });
 
-      const archivedAt = new Date("2026-01-01T00:00:00.000Z").toISOString();
       const projectPath = "/fake/project";
       const migratedWorkspaceId = "migrated-archived-workspace-id";
       const cfg = config.loadConfigOrDefault();
       cfg.projects.set(projectPath, {
-        workspaces: [{ path: archivedWorkspaceDir, archivedAt }],
+        workspaces: [{ path: archivedWorkspaceDir, archivedAt: ARCHIVED_AT }],
       });
       await config.saveConfig(cfg);
 
@@ -2012,113 +1817,6 @@ exit 1
 
       expect(result.success).toBe(true);
       expect(removedWorkspaceIds).toEqual([migratedWorkspaceId]);
-
-      const after = config.loadConfigOrDefault();
-      expect(after.projects.has(projectPath)).toBe(false);
-    });
-
-    it("with force=true deletes active and archived workspaces then removes project", async () => {
-      const activeWorkspaceDir = path.join(tempDir, "active-workspace");
-      const archivedWorkspaceDir = path.join(tempDir, "archived-workspace");
-      await fs.mkdir(activeWorkspaceDir, { recursive: true });
-      await fs.mkdir(archivedWorkspaceDir, { recursive: true });
-
-      const archivedAt = new Date("2026-01-01T00:00:00.000Z").toISOString();
-      const projectPath = "/fake/project";
-      const cfg = config.loadConfigOrDefault();
-      cfg.projects.set(projectPath, {
-        workspaces: [
-          { id: "active-workspace-1", path: activeWorkspaceDir },
-          { id: "archived-workspace-1", path: archivedWorkspaceDir, archivedAt },
-        ],
-      });
-      await config.saveConfig(cfg);
-
-      const removedWorkspaceIds: string[] = [];
-      service.setWorkspaceService({
-        remove: async (workspaceId) => {
-          removedWorkspaceIds.push(workspaceId);
-          await config.removeWorkspace(workspaceId);
-          return Ok(undefined);
-        },
-      });
-
-      const result = await service.remove(projectPath, true);
-
-      expect(result.success).toBe(true);
-      expect(removedWorkspaceIds.sort()).toEqual(["active-workspace-1", "archived-workspace-1"]);
-
-      const after = config.loadConfigOrDefault();
-      expect(after.projects.has(projectPath)).toBe(false);
-    });
-
-    it("force=true cascade-deletes active workspaces then removes project", async () => {
-      const activeWorkspaceDirOne = path.join(tempDir, "active-workspace-one");
-      const activeWorkspaceDirTwo = path.join(tempDir, "active-workspace-two");
-      await fs.mkdir(activeWorkspaceDirOne, { recursive: true });
-      await fs.mkdir(activeWorkspaceDirTwo, { recursive: true });
-
-      const projectPath = "/fake/project";
-      const cfg = config.loadConfigOrDefault();
-      cfg.projects.set(projectPath, {
-        workspaces: [
-          { id: "active-workspace-1", path: activeWorkspaceDirOne },
-          { id: "active-workspace-2", path: activeWorkspaceDirTwo },
-        ],
-      });
-      await config.saveConfig(cfg);
-
-      const removedWorkspaceIds: string[] = [];
-      service.setWorkspaceService({
-        remove: async (workspaceId) => {
-          removedWorkspaceIds.push(workspaceId);
-          await config.removeWorkspace(workspaceId);
-          return Ok(undefined);
-        },
-      });
-
-      const result = await service.remove(projectPath, true);
-
-      expect(result.success).toBe(true);
-      expect(removedWorkspaceIds.sort()).toEqual(["active-workspace-1", "active-workspace-2"]);
-
-      const after = config.loadConfigOrDefault();
-      expect(after.projects.has(projectPath)).toBe(false);
-    });
-
-    it("force=true cascade-deletes mixed active + archived workspaces then removes project", async () => {
-      const activeWorkspaceDir = path.join(tempDir, "mixed-active-workspace");
-      const archivedWorkspaceDir = path.join(tempDir, "mixed-archived-workspace");
-      await fs.mkdir(activeWorkspaceDir, { recursive: true });
-      await fs.mkdir(archivedWorkspaceDir, { recursive: true });
-
-      const archivedAt = new Date("2026-01-01T00:00:00.000Z").toISOString();
-      const projectPath = "/fake/project";
-      const cfg = config.loadConfigOrDefault();
-      cfg.projects.set(projectPath, {
-        workspaces: [
-          { id: "mixed-active-workspace-id", path: activeWorkspaceDir },
-          { id: "mixed-archived-workspace-id", path: archivedWorkspaceDir, archivedAt },
-        ],
-      });
-      await config.saveConfig(cfg);
-
-      const removedWorkspaceIds: string[] = [];
-      service.setWorkspaceService({
-        remove: async (workspaceId) => {
-          removedWorkspaceIds.push(workspaceId);
-          await config.removeWorkspace(workspaceId);
-          return Ok(undefined);
-        },
-      });
-
-      const result = await service.remove(projectPath, true);
-
-      expect(result.success).toBe(true);
-      expect(removedWorkspaceIds.sort()).toEqual([
-        "mixed-active-workspace-id",
-        "mixed-archived-workspace-id",
-      ]);
 
       const after = config.loadConfigOrDefault();
       expect(after.projects.has(projectPath)).toBe(false);

@@ -10,6 +10,35 @@ import { log } from "@/node/services/log";
 import { PolicyService } from "@/node/services/policyService";
 import { ProviderService } from "./providerService";
 
+const OPENAI_API_KEY = "sk-test";
+const LOCAL_VLLM_BASE_URL = "http://localhost:8000/v1";
+
+function saveOpenAIConfig(config: Config, overrides: Record<string, unknown> = {}): void {
+  config.saveProvidersConfig({
+    openai: { apiKey: OPENAI_API_KEY, ...overrides },
+  } as Parameters<Config["saveProvidersConfig"]>[0]);
+}
+
+function localVllmConfig(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    providerType: "openai-compatible",
+    baseUrl: LOCAL_VLLM_BASE_URL,
+    ...overrides,
+  };
+}
+
+async function saveRoutePriority(
+  config: Config,
+  routePriority: string[],
+  overrides: Record<string, unknown> = {}
+): Promise<void> {
+  await config.saveConfig({ ...config.loadConfigOrDefault(), ...overrides, routePriority });
+}
+
+function saveMuxGatewayConfig(config: Config): void {
+  config.saveProvidersConfig({ "mux-gateway": { couponCode: "gateway-token" } });
+}
+
 function withTempConfig(run: (config: Config, service: ProviderService) => void): void {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "mux-provider-service-"));
   try {
@@ -106,139 +135,87 @@ async function withTempPolicyProviderService(
 }
 
 describe("ProviderService.getConfig", () => {
-  it("surfaces valid OpenAI serviceTier", () => {
-    withTempConfig((config, service) => {
-      config.saveProvidersConfig({
-        openai: {
-          apiKey: "sk-test",
-          serviceTier: "flex",
-        },
+  for (const { name, openai, property, expected, ownsProperty, baseChecks } of [
+    {
+      name: "surfaces valid OpenAI serviceTier",
+      openai: { serviceTier: "flex" },
+      property: "serviceTier",
+      expected: "flex",
+      ownsProperty: true,
+      baseChecks: true,
+    },
+    {
+      name: "omits invalid OpenAI serviceTier",
+      openai: { serviceTier: "fast" },
+      property: "serviceTier",
+      expected: undefined,
+      ownsProperty: false,
+      baseChecks: true,
+    },
+    {
+      name: "surfaces valid OpenAI wireFormat",
+      openai: { wireFormat: "chatCompletions" },
+      property: "wireFormat",
+      expected: "chatCompletions",
+      ownsProperty: true,
+      baseChecks: false,
+    },
+    {
+      name: "omits invalid OpenAI wireFormat",
+      openai: { wireFormat: "graphql" },
+      property: "wireFormat",
+      expected: undefined,
+      ownsProperty: false,
+      baseChecks: false,
+    },
+    {
+      name: "surfaces store: false for OpenAI",
+      openai: { store: false },
+      property: "store",
+      expected: false,
+      ownsProperty: true,
+      baseChecks: false,
+    },
+    {
+      name: "omits store when not set for OpenAI",
+      openai: {},
+      property: "store",
+      expected: undefined,
+      ownsProperty: false,
+      baseChecks: false,
+    },
+    {
+      name: "surfaces valid OpenAI WebSocket transport preference",
+      openai: { webSocketTransportEnabled: true },
+      property: "webSocketTransportEnabled",
+      expected: true,
+      ownsProperty: true,
+      baseChecks: false,
+    },
+    {
+      name: "omits invalid OpenAI WebSocket transport preference",
+      openai: { webSocketTransportEnabled: "true" },
+      property: "webSocketTransportEnabled",
+      expected: undefined,
+      ownsProperty: false,
+      baseChecks: false,
+    },
+  ] as const) {
+    it(name, () => {
+      withTempConfig((config, service) => {
+        saveOpenAIConfig(config, openai);
+
+        const openaiConfig = service.getConfig().openai as Record<string, unknown>;
+
+        if (baseChecks) {
+          expect(openaiConfig.apiKeySet).toBe(true);
+          expect(openaiConfig.isEnabled).toBe(true);
+        }
+        expect(openaiConfig[property]).toBe(expected);
+        expect(Object.hasOwn(openaiConfig, property)).toBe(ownsProperty);
       });
-
-      const cfg = service.getConfig();
-
-      expect(cfg.openai.apiKeySet).toBe(true);
-      expect(cfg.openai.isEnabled).toBe(true);
-      expect(cfg.openai.serviceTier).toBe("flex");
-      expect(Object.prototype.hasOwnProperty.call(cfg.openai, "serviceTier")).toBe(true);
     });
-  });
-
-  it("omits invalid OpenAI serviceTier", () => {
-    withTempConfig((config, service) => {
-      config.saveProvidersConfig({
-        openai: {
-          apiKey: "sk-test",
-          // Intentionally invalid
-          serviceTier: "fast",
-        },
-      });
-
-      const cfg = service.getConfig();
-
-      expect(cfg.openai.apiKeySet).toBe(true);
-      expect(cfg.openai.isEnabled).toBe(true);
-      expect(cfg.openai.serviceTier).toBeUndefined();
-      expect(Object.prototype.hasOwnProperty.call(cfg.openai, "serviceTier")).toBe(false);
-    });
-  });
-
-  it("surfaces valid OpenAI wireFormat", () => {
-    withTempConfig((config, service) => {
-      config.saveProvidersConfig({
-        openai: {
-          apiKey: "sk-test",
-          wireFormat: "chatCompletions",
-        },
-      });
-
-      const cfg = service.getConfig();
-
-      expect(cfg.openai.wireFormat).toBe("chatCompletions");
-      expect(Object.prototype.hasOwnProperty.call(cfg.openai, "wireFormat")).toBe(true);
-    });
-  });
-
-  it("omits invalid OpenAI wireFormat", () => {
-    withTempConfig((config, service) => {
-      config.saveProvidersConfig({
-        openai: {
-          apiKey: "sk-test",
-          wireFormat: "graphql",
-        },
-      });
-
-      const cfg = service.getConfig();
-
-      expect(cfg.openai.wireFormat).toBeUndefined();
-      expect(Object.prototype.hasOwnProperty.call(cfg.openai, "wireFormat")).toBe(false);
-    });
-  });
-
-  it("surfaces store: false for OpenAI", () => {
-    withTempConfig((config, service) => {
-      config.saveProvidersConfig({
-        openai: {
-          apiKey: "sk-test",
-          store: false,
-        },
-      });
-
-      const cfg = service.getConfig();
-
-      expect(cfg.openai.store).toBe(false);
-    });
-  });
-
-  it("omits store when not set for OpenAI", () => {
-    withTempConfig((config, service) => {
-      config.saveProvidersConfig({
-        openai: {
-          apiKey: "sk-test",
-        },
-      });
-
-      const cfg = service.getConfig();
-
-      expect(Object.prototype.hasOwnProperty.call(cfg.openai, "store")).toBe(false);
-    });
-  });
-
-  it("surfaces valid OpenAI WebSocket transport preference", () => {
-    withTempConfig((config, service) => {
-      config.saveProvidersConfig({
-        openai: {
-          apiKey: "sk-test",
-          webSocketTransportEnabled: true,
-        },
-      });
-
-      const cfg = service.getConfig();
-
-      expect(cfg.openai.webSocketTransportEnabled).toBe(true);
-      expect(Object.prototype.hasOwnProperty.call(cfg.openai, "webSocketTransportEnabled")).toBe(
-        true
-      );
-    });
-  });
-
-  it("omits invalid OpenAI WebSocket transport preference", () => {
-    withTempConfig((config, service) => {
-      config.saveProvidersConfig({
-        openai: {
-          apiKey: "sk-test",
-          webSocketTransportEnabled: "true",
-        },
-      });
-
-      const cfg = service.getConfig();
-
-      expect(cfg.openai.webSocketTransportEnabled).toBeUndefined();
-      expect(Object.prototype.hasOwnProperty.call(cfg.openai, "webSocketTransportEnabled")).toBe(
-        false
-      );
-    });
-  });
+  }
 
   it("surfaces non-secret op:// API key references", () => {
     withTempConfig((config, service) => {
@@ -259,12 +236,7 @@ describe("ProviderService.getConfig", () => {
 
   it("marks providers disabled when enabled is false", () => {
     withTempConfig((config, service) => {
-      config.saveProvidersConfig({
-        openai: {
-          apiKey: "sk-test",
-          enabled: false,
-        },
-      });
+      saveOpenAIConfig(config, { enabled: false });
 
       const cfg = service.getConfig();
 
@@ -276,11 +248,7 @@ describe("ProviderService.getConfig", () => {
 
   it("marks mux-gateway disabled when muxGatewayEnabled is false in main config", () => {
     withTempConfig((config, service) => {
-      config.saveProvidersConfig({
-        "mux-gateway": {
-          couponCode: "gateway-token",
-        },
-      });
+      saveMuxGatewayConfig(config);
 
       const defaultMainConfig = config.loadConfigOrDefault();
       const loadConfigSpy = spyOn(config, "loadConfigOrDefault");
@@ -366,7 +334,7 @@ describe("ProviderService.getConfig", () => {
     withTempConfig((config, service) => {
       config.saveProvidersConfig({
         openai: {
-          apiKey: "sk-test",
+          apiKey: OPENAI_API_KEY,
           baseURL: "https://legacy.openai.test",
         },
       });
@@ -450,7 +418,7 @@ describe("ProviderService.getConfig", () => {
         "local-vllm": {
           providerType: "openai-compatible",
           displayName: "Local vLLM",
-          baseUrl: "http://localhost:8000/v1",
+          baseUrl: LOCAL_VLLM_BASE_URL,
         },
       });
 
@@ -463,7 +431,7 @@ describe("ProviderService.getConfig", () => {
         apiKeyOpLabel: undefined,
         apiKeyFile: undefined,
         apiKeySource: "keyless",
-        baseUrl: "http://localhost:8000/v1",
+        baseUrl: LOCAL_VLLM_BASE_URL,
         models: [],
         displayName: "Local vLLM",
         providerType: "openai-compatible",
@@ -477,11 +445,7 @@ describe("ProviderService.getConfig", () => {
   it("surfaces disabled custom providers as unconfigured", () => {
     withTempConfig((config, service) => {
       config.saveProvidersConfig({
-        "local-vllm": {
-          providerType: "openai-compatible",
-          baseUrl: "http://localhost:8000/v1",
-          enabled: false,
-        },
+        "local-vllm": localVllmConfig({ enabled: false }),
       });
 
       const cfg = service.getConfig();
@@ -511,11 +475,11 @@ describe("ProviderService.getConfig", () => {
     withTempConfig((config, service) => {
       config.saveProvidersConfig({
         openai: {
-          apiKey: "sk-test",
+          apiKey: OPENAI_API_KEY,
         },
         "local-vllm": {
           providerType: "openai-compatible",
-          baseURL: "http://localhost:8000/v1",
+          baseURL: LOCAL_VLLM_BASE_URL,
         },
       });
 
@@ -523,7 +487,7 @@ describe("ProviderService.getConfig", () => {
 
       expect(cfg.openai.apiKeySet).toBe(true);
       expect(cfg.openai.isConfigured).toBe(true);
-      expect(cfg["local-vllm"].baseUrl).toBe("http://localhost:8000/v1");
+      expect(cfg["local-vllm"].baseUrl).toBe(LOCAL_VLLM_BASE_URL);
       expect(cfg["local-vllm"].isConfigured).toBe(true);
       expect(service.list()).toContain("local-vllm");
     });
@@ -535,7 +499,7 @@ describe("ProviderService.getConfig", () => {
         openai: {
           providerType: "openai-compatible",
           displayName: "Shadowed OpenAI",
-          baseUrl: "http://localhost:8000/v1",
+          baseUrl: LOCAL_VLLM_BASE_URL,
         },
       });
 
@@ -554,7 +518,7 @@ describe("ProviderService.getConfig", () => {
         openai: {
           providerType: "openai-compatible",
           displayName: "Shadowed OpenAI",
-          baseUrl: "http://localhost:8000/v1",
+          baseUrl: LOCAL_VLLM_BASE_URL,
         },
       });
       const warnSpy = spyOn(log, "warn").mockImplementation(() => undefined);
@@ -590,11 +554,7 @@ describe("ProviderService.getConfig", () => {
       },
       (config, service) => {
         config.saveProvidersConfig({
-          "local-vllm": {
-            providerType: "openai-compatible",
-            baseUrl: "http://localhost:8000/v1",
-            models: ["llama-3", "mistral"],
-          },
+          "local-vllm": localVllmConfig({ models: ["llama-3", "mistral"] }),
           "another-custom": {
             providerType: "openai-compatible",
             baseUrl: "http://localhost:8001/v1",
@@ -625,7 +585,7 @@ describe("ProviderService model normalization", () => {
     withTempConfig((config, service) => {
       config.saveProvidersConfig({
         openai: {
-          apiKey: "sk-test",
+          apiKey: OPENAI_API_KEY,
           models: [
             "  gpt-5  ",
             { id: "custom-model", contextWindowTokens: 128_000 },
@@ -703,10 +663,7 @@ describe("ProviderService custom provider mutations", () => {
   it("rejects duplicate custom provider ids", () => {
     withTempConfig((config, service) => {
       config.saveProvidersConfig({
-        "local-vllm": {
-          providerType: "openai-compatible",
-          baseUrl: "http://localhost:8000/v1",
-        },
+        "local-vllm": localVllmConfig(),
       });
 
       const result = service.addCustomOpenAICompatibleProvider({
@@ -766,7 +723,7 @@ describe("ProviderService custom provider mutations", () => {
         providerType: "openai-compatible",
         isEnabled: true,
         isConfigured: true,
-        baseUrl: "http://localhost:8000/v1",
+        baseUrl: LOCAL_VLLM_BASE_URL,
       });
       expect(result.data.models).toEqual([
         "llama-3",
@@ -775,7 +732,7 @@ describe("ProviderService custom provider mutations", () => {
 
       expect(config.loadProvidersConfig()?.["local-vllm"]).toEqual({
         providerType: "openai-compatible",
-        baseUrl: "http://localhost:8000/v1",
+        baseUrl: LOCAL_VLLM_BASE_URL,
         enabled: true,
         displayName: "Local vLLM",
         apiKey: "sk-local",
@@ -797,7 +754,7 @@ describe("ProviderService custom provider mutations", () => {
       (config, service) => {
         const result = service.addCustomOpenAICompatibleProvider({
           provider: "local-vllm",
-          baseUrl: "http://localhost:8000/v1",
+          baseUrl: LOCAL_VLLM_BASE_URL,
         });
 
         expect(result.success).toBe(false);
@@ -818,7 +775,7 @@ describe("ProviderService custom provider mutations", () => {
       (config, service) => {
         const result = service.addCustomOpenAICompatibleProvider({
           provider: "local-vllm",
-          baseUrl: "http://localhost:8000/v1",
+          baseUrl: LOCAL_VLLM_BASE_URL,
         });
 
         expect(result.success).toBe(false);
@@ -839,7 +796,7 @@ describe("ProviderService custom provider mutations", () => {
       (config, service) => {
         const result = service.addCustomOpenAICompatibleProvider({
           provider: "local-vllm",
-          baseUrl: "http://localhost:8000/v1",
+          baseUrl: LOCAL_VLLM_BASE_URL,
           models: ["llama-3", "mixtral"],
         });
 
@@ -866,9 +823,7 @@ describe("ProviderService custom provider mutations", () => {
 
   it("rejects removing a built-in providers config entry without a custom discriminator", async () => {
     await withTempConfigAsync(async (config, service) => {
-      config.saveProvidersConfig({
-        openai: { apiKey: "sk-test" },
-      });
+      saveOpenAIConfig(config);
 
       const result = await service.removeCustomProvider("openai");
 
@@ -885,7 +840,7 @@ describe("ProviderService custom provider mutations", () => {
       config.saveProvidersConfig({
         openai: {
           providerType: "openai-compatible",
-          baseUrl: "http://localhost:8000/v1",
+          baseUrl: LOCAL_VLLM_BASE_URL,
         },
       });
       await config.saveConfig({
@@ -936,11 +891,8 @@ describe("ProviderService custom provider mutations", () => {
   it("removes a valid custom provider from providers config", async () => {
     await withTempConfigAsync(async (config, service) => {
       config.saveProvidersConfig({
-        openai: { apiKey: "sk-test" },
-        "local-vllm": {
-          providerType: "openai-compatible",
-          baseUrl: "http://localhost:8000/v1",
-        },
+        openai: { apiKey: OPENAI_API_KEY },
+        "local-vllm": localVllmConfig(),
         "other-custom": {
           providerType: "openai-compatible",
           baseUrl: "http://localhost:8001/v1",
@@ -960,10 +912,7 @@ describe("ProviderService custom provider mutations", () => {
   it("does not repair app config if provider deletion fails", async () => {
     await withTempConfigAsync(async (config, service) => {
       config.saveProvidersConfig({
-        "local-vllm": {
-          providerType: "openai-compatible",
-          baseUrl: "http://localhost:8000/v1",
-        },
+        "local-vllm": localVllmConfig(),
       });
       await config.saveConfig({
         ...config.loadConfigOrDefault(),
@@ -989,10 +938,7 @@ describe("ProviderService custom provider mutations", () => {
   it("reports partial success and notifies when config repair fails after deletion", async () => {
     await withTempConfigAsync(async (config, service) => {
       config.saveProvidersConfig({
-        "local-vllm": {
-          providerType: "openai-compatible",
-          baseUrl: "http://localhost:8000/v1",
-        },
+        "local-vllm": localVllmConfig(),
       });
       await config.saveConfig({
         ...config.loadConfigOrDefault(),
@@ -1028,10 +974,10 @@ describe("ProviderService custom provider mutations", () => {
     await withTempConfigAsync(async (config, service) => {
       const provider = "local-vllm";
       config.saveProvidersConfig({
-        openai: { apiKey: "sk-test" },
+        openai: { apiKey: OPENAI_API_KEY },
         [provider]: {
           providerType: "openai-compatible",
-          baseUrl: "http://localhost:8000/v1",
+          baseUrl: LOCAL_VLLM_BASE_URL,
         },
         "other-custom": {
           providerType: "openai-compatible",
@@ -1175,7 +1121,7 @@ describe("ProviderService custom provider mutations", () => {
       config.saveProvidersConfig({
         [provider]: {
           providerType: "openai-compatible",
-          baseUrl: "http://localhost:8000/v1",
+          baseUrl: LOCAL_VLLM_BASE_URL,
         },
       });
       await writeFile(
@@ -1234,7 +1180,7 @@ describe("ProviderService.setConfig", () => {
     await withTempConfigAsync(async (config, service) => {
       config.saveProvidersConfig({
         openai: {
-          apiKey: "sk-test",
+          apiKey: OPENAI_API_KEY,
           baseURL: "https://legacy.openai.test",
         },
       });
@@ -1250,7 +1196,7 @@ describe("ProviderService.setConfig", () => {
 
       config.saveProvidersConfig({
         openai: {
-          apiKey: "sk-test",
+          apiKey: OPENAI_API_KEY,
           baseURL: "https://legacy.openai.test",
         },
       });
@@ -1266,7 +1212,7 @@ describe("ProviderService.setConfig", () => {
     await withTempConfigAsync(async (config, service) => {
       config.saveProvidersConfig({
         openai: {
-          apiKey: "sk-test",
+          apiKey: OPENAI_API_KEY,
           serviceTier: "auto",
         },
       });
@@ -1283,7 +1229,7 @@ describe("ProviderService.setConfig", () => {
     await withTempConfigAsync(async (config, service) => {
       config.saveProvidersConfig({
         openai: {
-          apiKey: "sk-test",
+          apiKey: OPENAI_API_KEY,
           baseUrl: "https://api.openai.com/v1",
         },
       });
@@ -1338,10 +1284,7 @@ describe("ProviderService.setConfig", () => {
   it("rejects custom providers as route override targets", () => {
     withTempConfig((config, service) => {
       config.saveProvidersConfig({
-        "local-vllm": {
-          providerType: "openai-compatible",
-          baseUrl: "http://localhost:8000/v1",
-        },
+        "local-vllm": localVllmConfig(),
       });
 
       const result = service.validateRouteOverrides({ "openai:gpt-5": "local-vllm" });
@@ -1461,11 +1404,7 @@ describe("ProviderService denied keyPath segments", () => {
 describe("ProviderService gateway lifecycle", () => {
   it("auto-inserts gateway into routePriority when configured", async () => {
     await withTempConfigAsync(async (config, service) => {
-      const existingConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...existingConfig,
-        routePriority: ["direct"],
-      });
+      await saveRoutePriority(config, ["direct"]);
 
       const result = await service.setConfig("mux-gateway", ["couponCode"], "gateway-token");
 
@@ -1476,16 +1415,8 @@ describe("ProviderService gateway lifecycle", () => {
 
   it("does not auto-insert configured-but-disabled gateways into routePriority", async () => {
     await withTempConfigAsync(async (config, service) => {
-      const existingConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...existingConfig,
-        routePriority: ["direct"],
-      });
-      config.saveProvidersConfig({
-        "mux-gateway": {
-          couponCode: "gateway-token",
-        },
-      });
+      await saveRoutePriority(config, ["direct"]);
+      saveMuxGatewayConfig(config);
 
       const result = await service.setConfig("mux-gateway", ["enabled"], false);
 
@@ -1496,16 +1427,8 @@ describe("ProviderService gateway lifecycle", () => {
 
   it("auto-removes gateway from routePriority when disabled", async () => {
     await withTempConfigAsync(async (config, service) => {
-      const existingConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...existingConfig,
-        routePriority: ["mux-gateway", "direct"],
-      });
-      config.saveProvidersConfig({
-        "mux-gateway": {
-          couponCode: "gateway-token",
-        },
-      });
+      await saveRoutePriority(config, ["mux-gateway", "direct"]);
+      saveMuxGatewayConfig(config);
 
       const result = await service.setConfig("mux-gateway", ["enabled"], false);
 
@@ -1516,11 +1439,7 @@ describe("ProviderService gateway lifecycle", () => {
 
   it("does not auto-insert bedrock into routePriority when only region is configured", async () => {
     await withTempConfigAsync(async (config, service) => {
-      const existingConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...existingConfig,
-        routePriority: ["direct"],
-      });
+      await saveRoutePriority(config, ["direct"]);
 
       const result = await service.setConfig("bedrock", ["region"], "us-east-1");
 
@@ -1531,11 +1450,7 @@ describe("ProviderService gateway lifecycle", () => {
 
   it("preserves manual bedrock routePriority entry when only region is configured", async () => {
     await withTempConfigAsync(async (config, service) => {
-      const existingConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...existingConfig,
-        routePriority: ["bedrock", "direct"],
-      });
+      await saveRoutePriority(config, ["bedrock", "direct"]);
       config.saveProvidersConfig({
         bedrock: { region: "us-east-1" },
       });
@@ -1551,11 +1466,7 @@ describe("ProviderService gateway lifecycle", () => {
 
   it("removes bedrock from routePriority when fully deconfigured", async () => {
     await withTempConfigAsync(async (config, service) => {
-      const existingConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...existingConfig,
-        routePriority: ["bedrock", "direct"],
-      });
+      await saveRoutePriority(config, ["bedrock", "direct"]);
       config.saveProvidersConfig({
         bedrock: { region: "us-east-1" },
       });
@@ -1571,11 +1482,7 @@ describe("ProviderService gateway lifecycle", () => {
 
   it("removes bedrock from routePriority when explicitly disabled", async () => {
     await withTempConfigAsync(async (config, service) => {
-      const existingConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...existingConfig,
-        routePriority: ["bedrock", "direct"],
-      });
+      await saveRoutePriority(config, ["bedrock", "direct"]);
       config.saveProvidersConfig({
         bedrock: { region: "us-east-1" },
       });
@@ -1590,12 +1497,7 @@ describe("ProviderService gateway lifecycle", () => {
 
   it("clears legacy muxGatewayEnabled: false when adding gateway to routePriority", async () => {
     await withTempConfigAsync(async (config, service) => {
-      const existingConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...existingConfig,
-        muxGatewayEnabled: false,
-        routePriority: ["direct"],
-      });
+      await saveRoutePriority(config, ["direct"], { muxGatewayEnabled: false });
 
       const result = await service.setConfig("mux-gateway", ["couponCode"], "token");
 
@@ -1608,16 +1510,8 @@ describe("ProviderService gateway lifecycle", () => {
 
   it("preserves user order when inserting a second gateway before direct", async () => {
     await withTempConfigAsync(async (config, service) => {
-      const existingConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...existingConfig,
-        routePriority: ["mux-gateway", "direct"],
-      });
-      config.saveProvidersConfig({
-        "mux-gateway": {
-          couponCode: "gateway-token",
-        },
-      });
+      await saveRoutePriority(config, ["mux-gateway", "direct"]);
+      saveMuxGatewayConfig(config);
 
       const result = await service.setConfig("openrouter", ["apiKey"], "sk-or-test");
 
@@ -1632,16 +1526,8 @@ describe("ProviderService gateway lifecycle", () => {
 
   it("appends gateway when direct is absent from routePriority", async () => {
     await withTempConfigAsync(async (config, service) => {
-      const existingConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...existingConfig,
-        routePriority: ["mux-gateway"],
-      });
-      config.saveProvidersConfig({
-        "mux-gateway": {
-          couponCode: "gateway-token",
-        },
-      });
+      await saveRoutePriority(config, ["mux-gateway"]);
+      saveMuxGatewayConfig(config);
 
       const result = await service.setConfig("openrouter", ["apiKey"], "sk-or-test");
 
@@ -1652,16 +1538,8 @@ describe("ProviderService gateway lifecycle", () => {
 
   it("auto-removes gateway from routePriority when deconfigured", async () => {
     await withTempConfigAsync(async (config, service) => {
-      const existingConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...existingConfig,
-        routePriority: ["mux-gateway", "direct"],
-      });
-      config.saveProvidersConfig({
-        "mux-gateway": {
-          couponCode: "gateway-token",
-        },
-      });
+      await saveRoutePriority(config, ["mux-gateway", "direct"]);
+      saveMuxGatewayConfig(config);
 
       const result = await service.setConfig("mux-gateway", ["couponCode"], "");
 
@@ -1673,12 +1551,7 @@ describe("ProviderService gateway lifecycle", () => {
 
   it("clears stale muxGatewayEnabled: false when gateway is already in routePriority", async () => {
     await withTempConfigAsync(async (config, service) => {
-      const existingConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...existingConfig,
-        muxGatewayEnabled: false,
-        routePriority: ["mux-gateway", "direct"],
-      });
+      await saveRoutePriority(config, ["mux-gateway", "direct"], { muxGatewayEnabled: false });
 
       const result = await service.setConfig("mux-gateway", ["couponCode"], "test-token");
 
@@ -1692,11 +1565,7 @@ describe("ProviderService gateway lifecycle", () => {
 
   it("does not duplicate gateway already in routePriority", async () => {
     await withTempConfigAsync(async (config, service) => {
-      const existingConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...existingConfig,
-        routePriority: ["mux-gateway", "direct"],
-      });
+      await saveRoutePriority(config, ["mux-gateway", "direct"]);
 
       const result = await service.setConfig("mux-gateway", ["couponCode"], "gateway-token");
 
@@ -1708,11 +1577,7 @@ describe("ProviderService gateway lifecycle", () => {
 
   it("does not modify routePriority for direct providers", async () => {
     await withTempConfigAsync(async (config, service) => {
-      const existingConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...existingConfig,
-        routePriority: ["direct"],
-      });
+      await saveRoutePriority(config, ["direct"]);
       const initialRoutePriority = config.loadConfigOrDefault().routePriority;
 
       const result = await service.setConfig("anthropic", ["apiKey"], "sk-ant-test");
@@ -1724,11 +1589,7 @@ describe("ProviderService gateway lifecycle", () => {
 
   it("setConfigValue also triggers lifecycle", async () => {
     await withTempConfigAsync(async (config, service) => {
-      const existingConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...existingConfig,
-        routePriority: ["direct"],
-      });
+      await saveRoutePriority(config, ["direct"]);
 
       const result = await service.setConfigValue("mux-gateway", ["couponCode"], "gateway-token");
 

@@ -73,244 +73,127 @@ describe("resolveProviderOptionsNamespaceKey", () => {
   });
 });
 
+const baseAnthropicOptions = {
+  disableParallelToolUse: false,
+  sendReasoning: true,
+};
+
+function anthropicProviderOptions(
+  result: ReturnType<typeof buildProviderOptions>
+): Record<string, unknown> {
+  return (result as Record<string, unknown>).anthropic as Record<string, unknown>;
+}
+
 describe("buildProviderOptions - Anthropic", () => {
   describe("Opus 4.5 (effort parameter)", () => {
-    test("should use effort and thinking parameters for claude-opus-4-5", () => {
-      const result = buildProviderOptions("anthropic:claude-opus-4-5", "medium");
-
-      expect(result).toEqual({
-        anthropic: {
-          disableParallelToolUse: false,
-          sendReasoning: true,
-          thinking: {
-            type: "enabled",
-            budgetTokens: 10000, // ANTHROPIC_THINKING_BUDGETS.medium
+    for (const { model, thinking, budgetTokens, effort } of [
+      { model: "claude-opus-4-5", thinking: "medium", budgetTokens: 10000, effort: "medium" },
+      { model: "claude-opus-4-5-20251101", thinking: "high", budgetTokens: 20000, effort: "high" },
+    ] as const) {
+      test(`uses effort and thinking parameters for ${model}`, () => {
+        expect(buildProviderOptions(`anthropic:${model}`, thinking)).toEqual({
+          anthropic: {
+            ...baseAnthropicOptions,
+            thinking: { type: "enabled", budgetTokens },
+            effort,
           },
-          effort: "medium",
-        },
+        });
       });
-    });
-
-    test("should use effort and thinking parameters for claude-opus-4-5-20251101", () => {
-      const result = buildProviderOptions("anthropic:claude-opus-4-5-20251101", "high");
-
-      expect(result).toEqual({
-        anthropic: {
-          disableParallelToolUse: false,
-          sendReasoning: true,
-          thinking: {
-            type: "enabled",
-            budgetTokens: 20000, // ANTHROPIC_THINKING_BUDGETS.high
-          },
-          effort: "high",
-        },
-      });
-    });
+    }
 
     test("should use effort 'low' with no thinking when off for Opus 4.5", () => {
-      const result = buildProviderOptions("anthropic:claude-opus-4-5", "off");
-
-      expect(result).toEqual({
-        anthropic: {
-          disableParallelToolUse: false,
-          sendReasoning: true,
-          effort: "low", // "off" maps to effort: "low" for efficiency
-        },
+      expect(buildProviderOptions("anthropic:claude-opus-4-5", "off")).toEqual({
+        anthropic: { ...baseAnthropicOptions, effort: "low" },
       });
     });
   });
 
-  describe("Opus 4.6 (adaptive thinking + effort)", () => {
-    test("should use adaptive thinking and effort for claude-opus-4-6", () => {
-      const result = buildProviderOptions("anthropic:claude-opus-4-6", "medium");
-      // SDK types don't include "adaptive" or "max" yet; verify runtime values
-      const anthropic = (result as Record<string, unknown>).anthropic as Record<string, unknown>;
+  for (const model of ["claude-opus-4-6", "claude-sonnet-4-6"] as const) {
+    describe(`${model} (adaptive thinking + effort)`, () => {
+      for (const { thinking, expectedThinking, effort } of [
+        { thinking: "medium", expectedThinking: { type: "adaptive" }, effort: "medium" },
+        { thinking: "xhigh", expectedThinking: { type: "adaptive" }, effort: "max" },
+        { thinking: "off", expectedThinking: { type: "disabled" }, effort: "low" },
+      ] as const) {
+        test(`maps ${thinking} to ${effort} effort`, () => {
+          const anthropic = anthropicProviderOptions(
+            buildProviderOptions(`anthropic:${model}`, thinking)
+          );
 
-      expect(anthropic.disableParallelToolUse).toBe(false);
-      expect(anthropic.sendReasoning).toBe(true);
-      expect(anthropic.thinking).toEqual({ type: "adaptive" });
-      expect(anthropic.effort).toBe("medium");
+          if (thinking === "medium") {
+            expect(anthropic.disableParallelToolUse).toBe(false);
+            expect(anthropic.sendReasoning).toBe(true);
+          }
+          expect(anthropic.thinking).toEqual(expectedThinking);
+          expect(anthropic.effort).toBe(effort);
+        });
+      }
     });
-
-    test("should map xhigh to max effort for Opus 4.6", () => {
-      const result = buildProviderOptions("anthropic:claude-opus-4-6", "xhigh");
-      const anthropic = (result as Record<string, unknown>).anthropic as Record<string, unknown>;
-
-      expect(anthropic.thinking).toEqual({ type: "adaptive" });
-      expect(anthropic.effort).toBe("max");
-    });
-
-    test("should use disabled thinking when off for Opus 4.6", () => {
-      const result = buildProviderOptions("anthropic:claude-opus-4-6", "off");
-      const anthropic = (result as Record<string, unknown>).anthropic as Record<string, unknown>;
-
-      expect(anthropic.thinking).toEqual({ type: "disabled" });
-      expect(anthropic.effort).toBe("low");
-    });
-  });
-
-  describe("Sonnet 4.6 (adaptive thinking + effort)", () => {
-    test("should use adaptive thinking and effort for claude-sonnet-4-6", () => {
-      const result = buildProviderOptions("anthropic:claude-sonnet-4-6", "medium");
-      const anthropic = (result as Record<string, unknown>).anthropic as Record<string, unknown>;
-
-      expect(anthropic.disableParallelToolUse).toBe(false);
-      expect(anthropic.sendReasoning).toBe(true);
-      expect(anthropic.thinking).toEqual({ type: "adaptive" });
-      expect(anthropic.effort).toBe("medium");
-    });
-
-    test("should map xhigh to max effort for Sonnet 4.6", () => {
-      const result = buildProviderOptions("anthropic:claude-sonnet-4-6", "xhigh");
-      const anthropic = (result as Record<string, unknown>).anthropic as Record<string, unknown>;
-
-      expect(anthropic.thinking).toEqual({ type: "adaptive" });
-      expect(anthropic.effort).toBe("max");
-    });
-
-    test("should use disabled thinking when off for Sonnet 4.6", () => {
-      const result = buildProviderOptions("anthropic:claude-sonnet-4-6", "off");
-      const anthropic = (result as Record<string, unknown>).anthropic as Record<string, unknown>;
-
-      expect(anthropic.thinking).toEqual({ type: "disabled" });
-      expect(anthropic.effort).toBe("low");
-    });
-  });
+  }
 
   describe("Other Anthropic models (thinking/budgetTokens)", () => {
-    test("should use thinking.budgetTokens for claude-sonnet-4-5", () => {
-      const result = buildProviderOptions("anthropic:claude-sonnet-4-5", "medium");
-
-      expect(result).toEqual({
-        anthropic: {
-          disableParallelToolUse: false,
-          sendReasoning: true,
-          thinking: {
-            type: "enabled",
-            budgetTokens: 10000,
+    for (const { model, thinking, budgetTokens } of [
+      { model: "claude-sonnet-4-5", thinking: "medium", budgetTokens: 10000 },
+      { model: "claude-opus-4-1", thinking: "high", budgetTokens: 20000 },
+      { model: "claude-haiku-4-5", thinking: "low", budgetTokens: 4000 },
+    ] as const) {
+      test(`should use thinking.budgetTokens for ${model}`, () => {
+        expect(buildProviderOptions(`anthropic:${model}`, thinking)).toEqual({
+          anthropic: {
+            ...baseAnthropicOptions,
+            thinking: { type: "enabled", budgetTokens },
           },
-        },
+        });
       });
-    });
-
-    test("should use thinking.budgetTokens for claude-opus-4-1", () => {
-      const result = buildProviderOptions("anthropic:claude-opus-4-1", "high");
-
-      expect(result).toEqual({
-        anthropic: {
-          disableParallelToolUse: false,
-          sendReasoning: true,
-          thinking: {
-            type: "enabled",
-            budgetTokens: 20000,
-          },
-        },
-      });
-    });
-
-    test("should use thinking.budgetTokens for claude-haiku-4-5", () => {
-      const result = buildProviderOptions("anthropic:claude-haiku-4-5", "low");
-
-      expect(result).toEqual({
-        anthropic: {
-          disableParallelToolUse: false,
-          sendReasoning: true,
-          thinking: {
-            type: "enabled",
-            budgetTokens: 4000,
-          },
-        },
-      });
-    });
+    }
 
     test("should omit thinking when thinking is off for non-Opus 4.5", () => {
-      const result = buildProviderOptions("anthropic:claude-sonnet-4-5", "off");
-
-      expect(result).toEqual({
-        anthropic: {
-          disableParallelToolUse: false,
-          sendReasoning: true,
-        },
+      expect(buildProviderOptions("anthropic:claude-sonnet-4-5", "off")).toEqual({
+        anthropic: baseAnthropicOptions,
       });
     });
   });
 
   describe("Anthropic cache TTL overrides", () => {
-    test("should omit top-level cacheControl even when cache TTL is configured", () => {
-      const result = buildProviderOptions(
-        "anthropic:claude-sonnet-4-5",
-        "off",
-        undefined,
-        undefined,
-        {
-          anthropic: { cacheTtl: "1h" },
-        }
-      );
-
-      expect(result).toEqual({
-        anthropic: {
-          disableParallelToolUse: false,
-          sendReasoning: true,
-        },
+    for (const { name, model, thinking, cacheTtl, expected } of [
+      {
+        name: "should omit top-level cacheControl even when cache TTL is configured",
+        model: "claude-sonnet-4-5",
+        thinking: "off",
+        cacheTtl: "1h",
+        expected: baseAnthropicOptions,
+      },
+      {
+        name: "should preserve Opus 4.6 reasoning options without top-level cacheControl",
+        model: "claude-opus-4-6",
+        thinking: "medium",
+        cacheTtl: "5m",
+        expected: { ...baseAnthropicOptions, thinking: { type: "adaptive" }, effort: "medium" },
+      },
+    ] as const) {
+      test(name, () => {
+        expect(
+          buildProviderOptions(`anthropic:${model}`, thinking, undefined, undefined, {
+            anthropic: { cacheTtl },
+          })
+        ).toEqual({ anthropic: expected });
       });
-    });
-
-    test("should preserve Opus 4.6 reasoning options without top-level cacheControl", () => {
-      const result = buildProviderOptions(
-        "anthropic:claude-opus-4-6",
-        "medium",
-        undefined,
-        undefined,
-        {
-          anthropic: { cacheTtl: "5m" },
-        }
-      );
-
-      expect(result).toEqual({
-        anthropic: {
-          disableParallelToolUse: false,
-          sendReasoning: true,
-          thinking: {
-            type: "adaptive",
-          },
-          effort: "medium",
-        },
-      });
-    });
+    }
   });
 
   describe("disableBetaFeatures", () => {
-    test("should keep omitting top-level cacheControl when disableBetaFeatures is true", () => {
-      const result = buildProviderOptions(
-        "anthropic:claude-sonnet-4-5",
-        "medium",
-        undefined,
-        undefined,
-        {
-          anthropic: { cacheTtl: "1h", disableBetaFeatures: true },
-        }
-      );
-      const anthropic = (result as Record<string, unknown>).anthropic as Record<string, unknown>;
+    for (const disableBetaFeatures of [true, false] as const) {
+      test(`keeps omitting top-level cacheControl when disableBetaFeatures is ${disableBetaFeatures}`, () => {
+        const anthropic = anthropicProviderOptions(
+          buildProviderOptions("anthropic:claude-sonnet-4-5", "medium", undefined, undefined, {
+            anthropic: { cacheTtl: "1h", disableBetaFeatures },
+          })
+        );
 
-      expect(anthropic.cacheControl).toBeUndefined();
-      expect(anthropic.sendReasoning).toBe(true);
-    });
-
-    test("should keep omitting top-level cacheControl when disableBetaFeatures is false", () => {
-      const result = buildProviderOptions(
-        "anthropic:claude-sonnet-4-5",
-        "medium",
-        undefined,
-        undefined,
-        {
-          anthropic: { cacheTtl: "1h", disableBetaFeatures: false },
-        }
-      );
-      const anthropic = (result as Record<string, unknown>).anthropic as Record<string, unknown>;
-
-      expect(anthropic.cacheControl).toBeUndefined();
-      expect(anthropic.sendReasoning).toBe(true);
-    });
+        expect(anthropic.cacheControl).toBeUndefined();
+        expect(anthropic.sendReasoning).toBe(true);
+      });
+    }
   });
 });
 
@@ -867,190 +750,170 @@ describe("buildProviderOptions - OpenAI", () => {
 });
 
 describe("buildRequestHeaders", () => {
-  test("should return anthropic-beta header for beta-only Sonnet models with use1MContext", () => {
-    const result = buildRequestHeaders("anthropic:claude-sonnet-4-5", {
-      anthropic: { use1MContext: true },
+  for (const { name, model, options, expected } of [
+    {
+      name: "should return anthropic-beta header for beta-only Sonnet models with use1MContext",
+      model: "anthropic:claude-sonnet-4-5",
+      options: { anthropic: { use1MContext: true } },
+      expected: { "anthropic-beta": ANTHROPIC_1M_CONTEXT_HEADER },
+    },
+    {
+      name: "should return anthropic-beta header for gateway-routed beta Anthropic model",
+      model: "mux-gateway:anthropic/claude-sonnet-4-5",
+      options: { anthropic: { use1MContext: true } },
+      expected: { "anthropic-beta": ANTHROPIC_1M_CONTEXT_HEADER },
+    },
+    {
+      name: "should return undefined for native 1M Anthropic models even when use1MContext is set",
+      model: "anthropic:claude-opus-4-6",
+      options: { anthropic: { use1MContext: true } },
+      expected: undefined,
+    },
+    {
+      name: "should return undefined when disableBetaFeatures is true even with use1MContext",
+      model: "anthropic:claude-sonnet-4-5",
+      options: { anthropic: { use1MContext: true, disableBetaFeatures: true } },
+      expected: undefined,
+    },
+    {
+      name: "should still return header when disableBetaFeatures is false",
+      model: "anthropic:claude-sonnet-4-5",
+      options: { anthropic: { use1MContext: true, disableBetaFeatures: false } },
+      expected: { "anthropic-beta": ANTHROPIC_1M_CONTEXT_HEADER },
+    },
+    {
+      name: "should return undefined for non-Anthropic model",
+      model: "openai:gpt-5.2",
+      options: { anthropic: { use1MContext: true } },
+      expected: undefined,
+    },
+    {
+      name: "should return undefined when use1MContext is false",
+      model: "anthropic:claude-sonnet-4-5",
+      options: { anthropic: { use1MContext: false } },
+      expected: undefined,
+    },
+    {
+      name: "should return undefined for unsupported model even with use1MContext",
+      model: "anthropic:claude-opus-4-1",
+      options: { anthropic: { use1MContext: true } },
+      expected: undefined,
+    },
+    {
+      name: "should return header when model is in use1MContextModels list",
+      model: "anthropic:claude-sonnet-4-5",
+      options: { anthropic: { use1MContextModels: ["anthropic:claude-sonnet-4-5"] } },
+      expected: { "anthropic-beta": ANTHROPIC_1M_CONTEXT_HEADER },
+    },
+  ] as const) {
+    test(name, () => {
+      expect(
+        buildRequestHeaders(model, options as Parameters<typeof buildRequestHeaders>[1])
+      ).toEqual(expected);
     });
-    expect(result).toEqual({ "anthropic-beta": ANTHROPIC_1M_CONTEXT_HEADER });
-  });
-
-  test("should return anthropic-beta header for gateway-routed beta Anthropic model", () => {
-    const result = buildRequestHeaders("mux-gateway:anthropic/claude-sonnet-4-5", {
-      anthropic: { use1MContext: true },
-    });
-    expect(result).toEqual({ "anthropic-beta": ANTHROPIC_1M_CONTEXT_HEADER });
-  });
-
-  test("should return undefined for native 1M Anthropic models even when use1MContext is set", () => {
-    const result = buildRequestHeaders("anthropic:claude-opus-4-6", {
-      anthropic: { use1MContext: true },
-    });
-    expect(result).toBeUndefined();
-  });
-
-  test("should return undefined when disableBetaFeatures is true even with use1MContext", () => {
-    const result = buildRequestHeaders("anthropic:claude-sonnet-4-5", {
-      anthropic: { use1MContext: true, disableBetaFeatures: true },
-    });
-    expect(result).toBeUndefined();
-  });
-
-  test("should still return header when disableBetaFeatures is false", () => {
-    const result = buildRequestHeaders("anthropic:claude-sonnet-4-5", {
-      anthropic: { use1MContext: true, disableBetaFeatures: false },
-    });
-    expect(result).toEqual({ "anthropic-beta": ANTHROPIC_1M_CONTEXT_HEADER });
-  });
-
-  test("should return undefined for non-Anthropic model", () => {
-    const result = buildRequestHeaders("openai:gpt-5.2", {
-      anthropic: { use1MContext: true },
-    });
-    expect(result).toBeUndefined();
-  });
-
-  test("should return undefined when use1MContext is false", () => {
-    const result = buildRequestHeaders("anthropic:claude-sonnet-4-5", {
-      anthropic: { use1MContext: false },
-    });
-    expect(result).toBeUndefined();
-  });
+  }
 
   describe("Opus 4.7 xhigh effort override", () => {
-    test("emits override header when thinkingLevel=xhigh for Opus 4.7", () => {
-      const result = buildRequestHeaders(
-        "anthropic:claude-opus-4-7",
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        "xhigh"
-      );
-      expect(result).toEqual({ [MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER]: "xhigh" });
-    });
-
-    test("emits override header for gateway-routed Opus 4.7 with xhigh (passthrough)", () => {
-      const result = buildRequestHeaders(
-        "mux-gateway:anthropic/claude-opus-4-7",
-        undefined,
-        undefined,
-        undefined,
-        "mux-gateway",
-        "xhigh"
-      );
-      expect(result).toEqual({ [MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER]: "xhigh" });
-    });
-
-    test("emits override header for hypothetical Opus 4.8", () => {
-      // Detection should match future versions so xhigh doesn't silently collapse to max.
-      const result = buildRequestHeaders(
-        "anthropic:claude-opus-4-8",
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        "xhigh"
-      );
-      expect(result).toEqual({ [MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER]: "xhigh" });
-    });
-
-    test("does not emit override header for Opus 4.7 with thinkingLevel=max", () => {
-      const result = buildRequestHeaders(
-        "anthropic:claude-opus-4-7",
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        "max"
-      );
-      expect(result).toBeUndefined();
-    });
-
-    test("does not emit override header for Opus 4.6 with xhigh", () => {
-      // Opus 4.6 maps xhigh -> "max" effort; SDK accepts "max" so no wire rewrite needed.
-      const result = buildRequestHeaders(
-        "anthropic:claude-opus-4-6",
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        "xhigh"
-      );
-      expect(result).toBeUndefined();
-    });
-
-    test("does not emit override header for non-passthrough gateway (openrouter)", () => {
-      // Non-passthrough gateways (OpenRouter/Bedrock) must not receive this
-      // Mux-internal header because they don't run through our Anthropic fetch
-      // wrapper that strips it; it would leak to upstream proxies.
-      const result = buildRequestHeaders(
-        "anthropic:claude-opus-4-7",
-        undefined,
-        undefined,
-        undefined,
-        "openrouter",
-        "xhigh"
-      );
-      expect(result).toBeUndefined();
-    });
+    for (const { name, model, routeProvider, thinkingLevel, expected } of [
+      {
+        name: "emits override header when thinkingLevel=xhigh for Opus 4.7",
+        model: "anthropic:claude-opus-4-7",
+        routeProvider: undefined,
+        thinkingLevel: "xhigh",
+        expected: { [MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER]: "xhigh" },
+      },
+      {
+        name: "emits override header for gateway-routed Opus 4.7 with xhigh (passthrough)",
+        model: "mux-gateway:anthropic/claude-opus-4-7",
+        routeProvider: "mux-gateway",
+        thinkingLevel: "xhigh",
+        expected: { [MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER]: "xhigh" },
+      },
+      {
+        name: "emits override header for hypothetical Opus 4.8",
+        // Detection should match future versions so xhigh doesn't silently collapse to max.
+        model: "anthropic:claude-opus-4-8",
+        routeProvider: undefined,
+        thinkingLevel: "xhigh",
+        expected: { [MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER]: "xhigh" },
+      },
+      {
+        name: "does not emit override header for Opus 4.7 with thinkingLevel=max",
+        model: "anthropic:claude-opus-4-7",
+        routeProvider: undefined,
+        thinkingLevel: "max",
+        expected: undefined,
+      },
+      {
+        name: "does not emit override header for Opus 4.6 with xhigh",
+        // Opus 4.6 maps xhigh -> "max" effort; SDK accepts "max" so no wire rewrite needed.
+        model: "anthropic:claude-opus-4-6",
+        routeProvider: undefined,
+        thinkingLevel: "xhigh",
+        expected: undefined,
+      },
+      {
+        name: "does not emit override header for non-passthrough gateway (openrouter)",
+        // Non-passthrough gateways must not receive this Mux-internal header.
+        model: "anthropic:claude-opus-4-7",
+        routeProvider: "openrouter",
+        thinkingLevel: "xhigh",
+        expected: undefined,
+      },
+    ] as const) {
+      test(name, () => {
+        expect(
+          buildRequestHeaders(model, undefined, undefined, undefined, routeProvider, thinkingLevel)
+        ).toEqual(expected);
+      });
+    }
   });
 
-  test("should include X-Mux-Workspace-Id for non-Anthropic provider when workspaceId provided", () => {
-    const result = buildRequestHeaders("openai:gpt-5.2", undefined, "a1b2c3d4e5");
-    expect(result).toEqual({ [MUX_WORKSPACE_ID_HEADER]: "a1b2c3d4e5" });
-  });
-
-  test("should encode non-header-safe workspace IDs before attaching request header", () => {
-    const workspaceId = "workspace-😀";
-    const result = buildRequestHeaders("openai:gpt-5.2", undefined, workspaceId);
-
-    expect(result).toEqual({
-      [MUX_WORKSPACE_ID_HEADER]: `b64:${Buffer.from(workspaceId, "utf8").toString("base64url")}`,
+  for (const { name, model, options, workspaceId, expected } of [
+    {
+      name: "should include X-Mux-Workspace-Id for non-Anthropic provider when workspaceId provided",
+      model: "openai:gpt-5.2",
+      options: undefined,
+      workspaceId: "a1b2c3d4e5",
+      expected: { [MUX_WORKSPACE_ID_HEADER]: "a1b2c3d4e5" },
+    },
+    {
+      name: "should encode non-header-safe workspace IDs before attaching request header",
+      model: "openai:gpt-5.2",
+      options: undefined,
+      workspaceId: "workspace-😀",
+      expected: {
+        [MUX_WORKSPACE_ID_HEADER]: `b64:${Buffer.from("workspace-😀", "utf8").toString("base64url")}`,
+      },
+    },
+    {
+      name: "should include both X-Mux-Workspace-Id and anthropic-beta when both apply",
+      model: "anthropic:claude-sonnet-4-20250514",
+      options: { anthropic: { use1MContext: true } },
+      workspaceId: "a1b2c3d4e5",
+      expected: {
+        [MUX_WORKSPACE_ID_HEADER]: "a1b2c3d4e5",
+        "anthropic-beta": ANTHROPIC_1M_CONTEXT_HEADER,
+      },
+    },
+    {
+      name: "should include X-Mux-Workspace-Id but not anthropic-beta for Anthropic without beta 1M intent",
+      model: "anthropic:claude-sonnet-4-20250514",
+      options: undefined,
+      workspaceId: "deadbeef00",
+      expected: { [MUX_WORKSPACE_ID_HEADER]: "deadbeef00" },
+    },
+  ] as const) {
+    test(name, () => {
+      expect(buildRequestHeaders(model, options, workspaceId)).toEqual(expected);
     });
-  });
-
-  test("should include both X-Mux-Workspace-Id and anthropic-beta when both apply", () => {
-    const result = buildRequestHeaders(
-      "anthropic:claude-sonnet-4-20250514",
-      { anthropic: { use1MContext: true } },
-      "a1b2c3d4e5"
-    );
-    expect(result).toEqual({
-      [MUX_WORKSPACE_ID_HEADER]: "a1b2c3d4e5",
-      "anthropic-beta": ANTHROPIC_1M_CONTEXT_HEADER,
-    });
-  });
-
-  test("should include X-Mux-Workspace-Id but not anthropic-beta for Anthropic without beta 1M intent", () => {
-    const result = buildRequestHeaders(
-      "anthropic:claude-sonnet-4-20250514",
-      undefined,
-      "deadbeef00"
-    );
-    expect(result).toEqual({ [MUX_WORKSPACE_ID_HEADER]: "deadbeef00" });
-  });
+  }
 
   test("should return undefined when no workspaceId and no provider-specific headers apply", () => {
-    const result = buildRequestHeaders("openai:gpt-5.2");
-    expect(result).toBeUndefined();
+    expect(buildRequestHeaders("openai:gpt-5.2")).toBeUndefined();
   });
 
   test("should return undefined when no muxProviderOptions provided", () => {
-    const result = buildRequestHeaders("anthropic:claude-sonnet-4-5");
-    expect(result).toBeUndefined();
-  });
-
-  test("should return undefined for unsupported model even with use1MContext", () => {
-    const result = buildRequestHeaders("anthropic:claude-opus-4-1", {
-      anthropic: { use1MContext: true },
-    });
-    expect(result).toBeUndefined();
-  });
-
-  test("should return header when model is in use1MContextModels list", () => {
-    const result = buildRequestHeaders("anthropic:claude-sonnet-4-5", {
-      anthropic: { use1MContextModels: ["anthropic:claude-sonnet-4-5"] },
-    });
-    expect(result).toEqual({ "anthropic-beta": ANTHROPIC_1M_CONTEXT_HEADER });
+    expect(buildRequestHeaders("anthropic:claude-sonnet-4-5")).toBeUndefined();
   });
 });

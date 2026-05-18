@@ -20,11 +20,15 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 describe("SessionTimingService", () => {
   let tempDir: string;
   let config: Config;
+  let telemetry: Pick<TelemetryService, "capture" | "getFeatureFlag">;
+  let service: SessionTimingService;
 
   beforeEach(async () => {
     tempDir = path.join(os.tmpdir(), `mux-session-timing-test-${Date.now()}-${Math.random()}`);
     await fs.mkdir(tempDir, { recursive: true });
     config = new Config(tempDir);
+    telemetry = createMockTelemetryService();
+    service = new SessionTimingService(config, telemetry as unknown as TelemetryService);
   });
 
   afterEach(async () => {
@@ -36,58 +40,13 @@ describe("SessionTimingService", () => {
   });
 
   it("persists aborted stream stats to session-timing.json", async () => {
-    const telemetry = createMockTelemetryService();
-    const service = new SessionTimingService(config, telemetry as unknown as TelemetryService);
-
-    const workspaceId = "test-workspace";
-    const messageId = "m1";
-    const model = "openai:gpt-4o";
-    const startTime = 1_000_000;
-
-    service.handleStreamStart({
-      type: "stream-start",
-      workspaceId,
-      messageId,
-      model,
-      historySequence: 1,
-      startTime,
-      mode: "exec",
-    });
-
-    service.handleStreamDelta({
-      type: "stream-delta",
-      workspaceId,
-      messageId,
-      delta: "hi",
-      tokens: 5,
-      timestamp: startTime + 1000,
-    });
-
-    service.handleToolCallStart({
-      type: "tool-call-start",
-      workspaceId,
-      messageId,
-      toolCallId: "t1",
-      toolName: "bash",
-      args: { cmd: "echo hi" },
-      tokens: 3,
-      timestamp: startTime + 2000,
-    });
-
-    service.handleToolCallEnd({
-      type: "tool-call-end",
-      workspaceId,
-      messageId,
-      toolCallId: "t1",
-      toolName: "bash",
-      result: { ok: true },
-      timestamp: startTime + 3000,
-    });
-
+    emitStreamStart();
+    emitStreamDelta();
+    emitToolCall();
     service.handleStreamAbort({
       type: "stream-abort",
-      workspaceId,
-      messageId,
+      workspaceId: "test-workspace",
+      messageId: "m1",
       metadata: {
         duration: 5000,
         usage: {
@@ -101,10 +60,10 @@ describe("SessionTimingService", () => {
       abandonPartial: true,
     });
 
-    await service.waitForIdle(workspaceId);
+    await service.waitForIdle("test-workspace");
 
-    const snapshot = await service.getSnapshot(workspaceId);
-    expect(snapshot.lastRequest?.messageId).toBe(messageId);
+    const snapshot = await service.getSnapshot("test-workspace");
+    expect(snapshot.lastRequest?.messageId).toBe("m1");
     expect(snapshot.lastRequest?.totalDurationMs).toBe(5000);
     expect(snapshot.lastRequest?.toolExecutionMs).toBe(1000);
     expect(snapshot.lastRequest?.ttftMs).toBe(1000);
@@ -115,45 +74,165 @@ describe("SessionTimingService", () => {
   });
 
   it("ignores empty aborted streams", async () => {
-    const telemetry = createMockTelemetryService();
-    const service = new SessionTimingService(config, telemetry as unknown as TelemetryService);
-
-    const workspaceId = "test-workspace";
-    const messageId = "m1";
-    const model = "openai:gpt-4o";
-    const startTime = 1_000_000;
-
-    service.handleStreamStart({
-      type: "stream-start",
-      workspaceId,
-      messageId,
-      model,
-      historySequence: 1,
-      startTime,
-      mode: "exec",
-    });
-
+    emitStreamStart();
     service.handleStreamAbort({
       type: "stream-abort",
-      workspaceId,
-      messageId,
+      workspaceId: "test-workspace",
+      messageId: "m1",
       metadata: { duration: 1000 },
       abortReason: "user",
       abandonPartial: true,
     });
 
-    await service.waitForIdle(workspaceId);
+    await service.waitForIdle("test-workspace");
 
-    const snapshot = await service.getSnapshot(workspaceId);
+    const snapshot = await service.getSnapshot("test-workspace");
     expect(snapshot.lastRequest).toBeUndefined();
     expect(snapshot.session?.responseCount).toBe(0);
   });
 
+  function emitStreamStart(
+    params: {
+      workspaceId?: string;
+      messageId?: string;
+      model?: string;
+      startTime?: number;
+      historySequence?: number;
+      mode?: "exec" | "plan";
+      agentId?: string;
+      replay?: true;
+    } = {}
+  ): void {
+    service.handleStreamStart({
+      type: "stream-start",
+      workspaceId: params.workspaceId ?? "test-workspace",
+      messageId: params.messageId ?? "m1",
+      model: params.model ?? "openai:gpt-4o",
+      historySequence: params.historySequence ?? 1,
+      startTime: params.startTime ?? 1_000_000,
+      mode: params.mode ?? "exec",
+      ...(params.agentId != null ? { agentId: params.agentId } : {}),
+      ...(params.replay != null ? { replay: params.replay } : {}),
+    });
+  }
+
+  function emitStreamDelta(
+    params: {
+      workspaceId?: string;
+      messageId?: string;
+      delta?: string;
+      tokens?: number;
+      timestamp?: number;
+      replay?: true;
+    } = {}
+  ): void {
+    service.handleStreamDelta({
+      type: "stream-delta",
+      workspaceId: params.workspaceId ?? "test-workspace",
+      messageId: params.messageId ?? "m1",
+      delta: params.delta ?? "hi",
+      tokens: params.tokens ?? 5,
+      timestamp: params.timestamp ?? 1_001_000,
+      ...(params.replay != null ? { replay: params.replay } : {}),
+    });
+  }
+
+  function emitToolCall(
+    params: {
+      workspaceId?: string;
+      messageId?: string;
+      toolCallId?: string;
+      toolName?: string;
+      args?: Record<string, unknown>;
+      tokens?: number;
+      startTimestamp?: number;
+      endTimestamp?: number;
+      replay?: true;
+      deferEnd?: true;
+    } = {}
+  ): void | (() => void) {
+    const workspaceId = params.workspaceId ?? "test-workspace";
+    const messageId = params.messageId ?? "m1";
+    const toolCallId = params.toolCallId ?? "t1";
+    const toolName = params.toolName ?? "bash";
+
+    service.handleToolCallStart({
+      type: "tool-call-start",
+      workspaceId,
+      messageId,
+      toolCallId,
+      toolName,
+      args: params.args ?? { cmd: "echo hi" },
+      tokens: params.tokens ?? 3,
+      timestamp: params.startTimestamp ?? 1_002_000,
+      ...(params.replay != null ? { replay: params.replay } : {}),
+    });
+    const emitEnd = () =>
+      service.handleToolCallEnd({
+        type: "tool-call-end",
+        workspaceId,
+        messageId,
+        toolCallId,
+        toolName,
+        result: { ok: true },
+        timestamp: params.endTimestamp ?? 1_003_000,
+        ...(params.replay != null ? { replay: params.replay } : {}),
+      });
+    if (params.deferEnd) {
+      return emitEnd;
+    }
+    emitEnd();
+  }
+
+  function emitStreamEnd(
+    params: {
+      workspaceId?: string;
+      messageId?: string;
+      model?: string;
+      duration?: number;
+      inputTokens?: number;
+      outputTokens?: number;
+      totalTokens?: number;
+      reasoningTokens?: number;
+    } = {}
+  ): void {
+    service.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: params.workspaceId ?? "test-workspace",
+      messageId: params.messageId ?? "m1",
+      metadata: {
+        model: params.model ?? "openai:gpt-4o",
+        duration: params.duration ?? 5000,
+        usage: {
+          inputTokens: params.inputTokens ?? 1,
+          outputTokens: params.outputTokens ?? 10,
+          totalTokens: params.totalTokens ?? 11,
+          ...(params.reasoningTokens != null ? { reasoningTokens: params.reasoningTokens } : {}),
+        },
+      },
+      parts: [],
+    });
+  }
+
+  function emitCompletedStreamWithOneTool(
+    params: {
+      workspaceId?: string;
+      messageId?: string;
+      model?: string;
+      startTime?: number;
+      duration?: number;
+      reasoningTokens?: number;
+    } = {}
+  ): void {
+    const startTime = params.startTime ?? 1_000_000;
+    emitStreamStart({ ...params, startTime });
+    emitStreamDelta({ ...params, timestamp: startTime + 1000 });
+    emitToolCall({ ...params, startTimestamp: startTime + 2000, endTimestamp: startTime + 3000 });
+    emitStreamEnd(params);
+  }
+
   describe("rollUpTimingIntoParent", () => {
     it("should roll up child timing into parent without changing parent's lastRequest", async () => {
-      const telemetry = createMockTelemetryService();
-      const service = new SessionTimingService(config, telemetry as unknown as TelemetryService);
-
       const projectPath = "/tmp/mux-session-timing-rollup-test-project";
       const model = "openai:gpt-4o";
 
@@ -176,104 +255,34 @@ describe("SessionTimingService", () => {
         parentWorkspaceId: parentWorkspaceId,
       });
 
-      // Parent stream.
       const parentMessageId = "p1";
-      const startTimeParent = 1_000_000;
-
-      service.handleStreamStart({
-        type: "stream-start",
+      emitCompletedStreamWithOneTool({
         workspaceId: parentWorkspaceId,
         messageId: parentMessageId,
         model,
-        historySequence: 1,
-        startTime: startTimeParent,
-        mode: "exec",
+        reasoningTokens: 2,
       });
 
-      service.handleStreamDelta({
-        type: "stream-delta",
-        workspaceId: parentWorkspaceId,
-        messageId: parentMessageId,
-        delta: "hi",
-        tokens: 5,
-        timestamp: startTimeParent + 1000,
-      });
-
-      service.handleToolCallStart({
-        type: "tool-call-start",
-        workspaceId: parentWorkspaceId,
-        messageId: parentMessageId,
-        toolCallId: "t1",
-        toolName: "bash",
-        args: { cmd: "echo hi" },
-        tokens: 3,
-        timestamp: startTimeParent + 2000,
-      });
-
-      service.handleToolCallEnd({
-        type: "tool-call-end",
-        workspaceId: parentWorkspaceId,
-        messageId: parentMessageId,
-        toolCallId: "t1",
-        toolName: "bash",
-        result: { ok: true },
-        timestamp: startTimeParent + 3000,
-      });
-
-      service.handleStreamEnd({
-        type: "stream-end",
-        workspaceId: parentWorkspaceId,
-        messageId: parentMessageId,
-        metadata: {
-          model,
-          duration: 5000,
-          usage: {
-            inputTokens: 1,
-            outputTokens: 10,
-            totalTokens: 11,
-            reasoningTokens: 2,
-          },
-        },
-        parts: [],
-      });
-
-      // Child stream.
       const childMessageId = "c1";
       const startTimeChild = 2_000_000;
-
-      service.handleStreamStart({
-        type: "stream-start",
+      emitStreamStart({
         workspaceId: childWorkspaceId,
         messageId: childMessageId,
         model,
-        historySequence: 1,
         startTime: startTimeChild,
-        mode: "exec",
       });
-
-      service.handleStreamDelta({
-        type: "stream-delta",
+      emitStreamDelta({
         workspaceId: childWorkspaceId,
         messageId: childMessageId,
-        delta: "hi",
-        tokens: 5,
         timestamp: startTimeChild + 200,
       });
-
-      service.handleStreamEnd({
-        type: "stream-end",
+      emitStreamEnd({
         workspaceId: childWorkspaceId,
         messageId: childMessageId,
-        metadata: {
-          model,
-          duration: 1500,
-          usage: {
-            inputTokens: 1,
-            outputTokens: 5,
-            totalTokens: 6,
-          },
-        },
-        parts: [],
+        model,
+        duration: 1500,
+        outputTokens: 5,
+        totalTokens: 6,
       });
 
       await service.waitForIdle(parentWorkspaceId);
@@ -292,7 +301,6 @@ describe("SessionTimingService", () => {
 
       const after = await service.getSnapshot(parentWorkspaceId);
 
-      // lastRequest is preserved
       expect(after.lastRequest).toEqual(beforeLastRequest);
 
       expect(after.session?.responseCount).toBe(2);
@@ -310,9 +318,6 @@ describe("SessionTimingService", () => {
     });
 
     it("should be idempotent for the same child workspace", async () => {
-      const telemetry = createMockTelemetryService();
-      const service = new SessionTimingService(config, telemetry as unknown as TelemetryService);
-
       const projectPath = "/tmp/mux-session-timing-rollup-test-project";
       const model = "openai:gpt-4o";
 
@@ -327,43 +332,26 @@ describe("SessionTimingService", () => {
         runtimeConfig: { type: "local" },
       });
 
-      // Child stream.
       const childMessageId = "c1";
       const startTimeChild = 2_000_000;
-
-      service.handleStreamStart({
-        type: "stream-start",
+      emitStreamStart({
         workspaceId: childWorkspaceId,
         messageId: childMessageId,
         model,
-        historySequence: 1,
         startTime: startTimeChild,
-        mode: "exec",
       });
-
-      service.handleStreamDelta({
-        type: "stream-delta",
+      emitStreamDelta({
         workspaceId: childWorkspaceId,
         messageId: childMessageId,
-        delta: "hi",
-        tokens: 5,
         timestamp: startTimeChild + 200,
       });
-
-      service.handleStreamEnd({
-        type: "stream-end",
+      emitStreamEnd({
         workspaceId: childWorkspaceId,
         messageId: childMessageId,
-        metadata: {
-          model,
-          duration: 1500,
-          usage: {
-            inputTokens: 1,
-            outputTokens: 5,
-            totalTokens: 6,
-          },
-        },
-        parts: [],
+        model,
+        duration: 1500,
+        outputTokens: 5,
+        totalTokens: 6,
       });
 
       await service.waitForIdle(childWorkspaceId);
@@ -387,71 +375,11 @@ describe("SessionTimingService", () => {
     });
   });
   it("persists completed stream stats to session-timing.json", async () => {
-    const telemetry = createMockTelemetryService();
-    const service = new SessionTimingService(config, telemetry as unknown as TelemetryService);
-
     const workspaceId = "test-workspace";
     const messageId = "m1";
     const model = "openai:gpt-4o";
-    const startTime = 1_000_000;
 
-    service.handleStreamStart({
-      type: "stream-start",
-      workspaceId,
-      messageId,
-      model,
-      historySequence: 1,
-      startTime,
-      mode: "exec",
-    });
-
-    service.handleStreamDelta({
-      type: "stream-delta",
-      workspaceId,
-      messageId,
-      delta: "hi",
-      tokens: 5,
-      timestamp: startTime + 1000,
-    });
-
-    service.handleToolCallStart({
-      type: "tool-call-start",
-      workspaceId,
-      messageId,
-      toolCallId: "t1",
-      toolName: "bash",
-      args: { cmd: "echo hi" },
-      tokens: 3,
-      timestamp: startTime + 2000,
-    });
-
-    service.handleToolCallEnd({
-      type: "tool-call-end",
-      workspaceId,
-      messageId,
-      toolCallId: "t1",
-      toolName: "bash",
-      result: { ok: true },
-      timestamp: startTime + 3000,
-    });
-
-    service.handleStreamEnd({
-      type: "stream-end",
-      workspaceId,
-      messageId,
-      metadata: {
-        model,
-        duration: 5000,
-        usage: {
-          inputTokens: 1,
-          outputTokens: 10,
-          totalTokens: 11,
-          reasoningTokens: 2,
-        },
-      },
-      parts: [],
-    });
-
+    emitCompletedStreamWithOneTool({ workspaceId, messageId, model, reasoningTokens: 2 });
     await service.waitForIdle(workspaceId);
 
     const filePath = path.join(config.getSessionDir(workspaceId), "session-timing.json");
@@ -482,49 +410,12 @@ describe("SessionTimingService", () => {
   });
 
   it("uses agentId for the per-model breakdown when available", async () => {
-    const telemetry = createMockTelemetryService();
-    const service = new SessionTimingService(config, telemetry as unknown as TelemetryService);
-
     const workspaceId = "test-workspace";
-    const messageId = "m1";
     const model = "openai:gpt-4o";
-    const startTime = 1_000_000;
 
-    service.handleStreamStart({
-      type: "stream-start",
-      workspaceId,
-      messageId,
-      model,
-      historySequence: 1,
-      startTime,
-      mode: "exec",
-      agentId: "explore",
-    });
-
-    service.handleStreamDelta({
-      type: "stream-delta",
-      workspaceId,
-      messageId,
-      delta: "hi",
-      tokens: 5,
-      timestamp: startTime + 100,
-    });
-
-    service.handleStreamEnd({
-      type: "stream-end",
-      workspaceId,
-      messageId,
-      metadata: {
-        model,
-        duration: 500,
-        usage: {
-          inputTokens: 1,
-          outputTokens: 10,
-          totalTokens: 11,
-        },
-      },
-      parts: [],
-    });
+    emitStreamStart({ workspaceId, model, agentId: "explore" });
+    emitStreamDelta({ workspaceId, timestamp: 1_000_100 });
+    emitStreamEnd({ workspaceId, model, duration: 500 });
 
     await service.waitForIdle(workspaceId);
 
@@ -542,70 +433,12 @@ describe("SessionTimingService", () => {
   });
 
   it("ignores replayed events so timing stats aren't double-counted", async () => {
-    const telemetry = createMockTelemetryService();
-    const service = new SessionTimingService(config, telemetry as unknown as TelemetryService);
-
     const workspaceId = "test-workspace";
     const messageId = "m1";
     const model = "openai:gpt-4o";
     const startTime = 4_000_000;
 
-    // Normal completed stream
-    service.handleStreamStart({
-      type: "stream-start",
-      workspaceId,
-      messageId,
-      model,
-      historySequence: 1,
-      startTime,
-      mode: "exec",
-    });
-
-    service.handleStreamDelta({
-      type: "stream-delta",
-      workspaceId,
-      messageId,
-      delta: "hi",
-      tokens: 5,
-      timestamp: startTime + 1000,
-    });
-
-    service.handleToolCallStart({
-      type: "tool-call-start",
-      workspaceId,
-      messageId,
-      toolCallId: "t1",
-      toolName: "bash",
-      args: { cmd: "echo hi" },
-      tokens: 3,
-      timestamp: startTime + 2000,
-    });
-
-    service.handleToolCallEnd({
-      type: "tool-call-end",
-      workspaceId,
-      messageId,
-      toolCallId: "t1",
-      toolName: "bash",
-      result: { ok: true },
-      timestamp: startTime + 3000,
-    });
-
-    service.handleStreamEnd({
-      type: "stream-end",
-      workspaceId,
-      messageId,
-      metadata: {
-        model,
-        duration: 5000,
-        usage: {
-          inputTokens: 1,
-          outputTokens: 10,
-          totalTokens: 11,
-        },
-      },
-      parts: [],
-    });
+    emitCompletedStreamWithOneTool({ workspaceId, messageId, model, startTime });
 
     await service.waitForIdle(workspaceId);
 
@@ -617,48 +450,14 @@ describe("SessionTimingService", () => {
     expect(beforeSnapshot.lastRequest?.messageId).toBe(messageId);
 
     // Replay the same events (e.g., reconnect)
-    service.handleStreamStart({
-      type: "stream-start",
+    emitStreamStart({ workspaceId, messageId, model, startTime, replay: true });
+    emitStreamDelta({ workspaceId, messageId, timestamp: startTime + 1000, replay: true });
+    emitToolCall({
       workspaceId,
       messageId,
+      startTimestamp: startTime + 2000,
+      endTimestamp: startTime + 3000,
       replay: true,
-      model,
-      historySequence: 1,
-      startTime,
-      mode: "exec",
-    });
-
-    service.handleStreamDelta({
-      type: "stream-delta",
-      workspaceId,
-      messageId,
-      replay: true,
-      delta: "hi",
-      tokens: 5,
-      timestamp: startTime + 1000,
-    });
-
-    service.handleToolCallStart({
-      type: "tool-call-start",
-      workspaceId,
-      messageId,
-      replay: true,
-      toolCallId: "t1",
-      toolName: "bash",
-      args: { cmd: "echo hi" },
-      tokens: 3,
-      timestamp: startTime + 2000,
-    });
-
-    service.handleToolCallEnd({
-      type: "tool-call-end",
-      workspaceId,
-      messageId,
-      replay: true,
-      toolCallId: "t1",
-      toolName: "bash",
-      result: { ok: true },
-      timestamp: startTime + 3000,
     });
 
     await service.waitForIdle(workspaceId);
@@ -674,92 +473,38 @@ describe("SessionTimingService", () => {
   });
 
   it("does not double-count overlapping tool calls", async () => {
-    const telemetry = createMockTelemetryService();
-    const service = new SessionTimingService(config, telemetry as unknown as TelemetryService);
-
     const workspaceId = "test-workspace";
     const messageId = "m1";
     const model = "openai:gpt-4o";
     const startTime = 3_000_000;
 
-    service.handleStreamStart({
-      type: "stream-start",
-      workspaceId,
-      messageId,
-      model,
-      historySequence: 1,
-      startTime,
-      mode: "exec",
-    });
-
-    // First token arrives quickly.
-    service.handleStreamDelta({
-      type: "stream-delta",
-      workspaceId,
-      messageId,
-      delta: "hi",
-      tokens: 2,
-      timestamp: startTime + 500,
-    });
+    emitStreamStart({ workspaceId, messageId, model, startTime });
+    emitStreamDelta({ workspaceId, messageId, tokens: 2, timestamp: startTime + 500 });
 
     // Two tools overlap: [1000, 3000] and [1500, 4000]
-    service.handleToolCallStart({
-      type: "tool-call-start",
+    const endFirstTool = emitToolCall({
       workspaceId,
       messageId,
-      toolCallId: "t1",
-      toolName: "bash",
       args: { cmd: "sleep 2" },
       tokens: 1,
-      timestamp: startTime + 1000,
-    });
-
-    service.handleToolCallStart({
-      type: "tool-call-start",
+      startTimestamp: startTime + 1000,
+      endTimestamp: startTime + 3000,
+      deferEnd: true,
+    }) as () => void;
+    const endSecondTool = emitToolCall({
       workspaceId,
       messageId,
       toolCallId: "t2",
-      toolName: "bash",
       args: { cmd: "sleep 3" },
       tokens: 1,
-      timestamp: startTime + 1500,
-    });
+      startTimestamp: startTime + 1500,
+      endTimestamp: startTime + 4000,
+      deferEnd: true,
+    }) as () => void;
+    endFirstTool();
+    endSecondTool();
 
-    service.handleToolCallEnd({
-      type: "tool-call-end",
-      workspaceId,
-      messageId,
-      toolCallId: "t1",
-      toolName: "bash",
-      result: { ok: true },
-      timestamp: startTime + 3000,
-    });
-
-    service.handleToolCallEnd({
-      type: "tool-call-end",
-      workspaceId,
-      messageId,
-      toolCallId: "t2",
-      toolName: "bash",
-      result: { ok: true },
-      timestamp: startTime + 4000,
-    });
-
-    service.handleStreamEnd({
-      type: "stream-end",
-      workspaceId,
-      messageId,
-      metadata: {
-        model,
-        duration: 5000,
-        usage: {
-          inputTokens: 1,
-          outputTokens: 1,
-          totalTokens: 2,
-        },
-      },
-      parts: [],
-    });
+    emitStreamEnd({ workspaceId, messageId, model, outputTokens: 1, totalTokens: 2 });
 
     await service.waitForIdle(workspaceId);
 
@@ -778,67 +523,34 @@ describe("SessionTimingService", () => {
   });
 
   it("emits invalid timing telemetry when tool percent would exceed 100%", async () => {
-    const telemetry = createMockTelemetryService();
-    const service = new SessionTimingService(config, telemetry as unknown as TelemetryService);
-
     const workspaceId = "test-workspace";
     const messageId = "m1";
     const model = "openai:gpt-4o";
     const startTime = 2_000_000;
 
-    service.handleStreamStart({
-      type: "stream-start",
+    emitStreamStart({ workspaceId, messageId, model, startTime });
+
+    emitToolCall({
+      workspaceId,
+      messageId,
+      args: { cmd: "sleep" },
+      tokens: 1,
+      startTimestamp: startTime + 100,
+      endTimestamp: startTime + 10_100,
+    });
+    emitStreamEnd({
       workspaceId,
       messageId,
       model,
-      historySequence: 1,
-      startTime,
-    });
-
-    // Tool runs 10s, but we lie in metadata.duration=1s.
-    service.handleToolCallStart({
-      type: "tool-call-start",
-      workspaceId,
-      messageId,
-      toolCallId: "t1",
-      toolName: "bash",
-      args: { cmd: "sleep" },
-      tokens: 1,
-      timestamp: startTime + 100,
-    });
-
-    service.handleToolCallEnd({
-      type: "tool-call-end",
-      workspaceId,
-      messageId,
-      toolCallId: "t1",
-      toolName: "bash",
-      result: { ok: true },
-      timestamp: startTime + 10_100,
-    });
-
-    service.handleStreamEnd({
-      type: "stream-end",
-      workspaceId,
-      messageId,
-      metadata: {
-        model,
-        duration: 1000,
-        usage: {
-          inputTokens: 1,
-          outputTokens: 1,
-          totalTokens: 2,
-        },
-      },
-      parts: [],
+      duration: 1000,
+      outputTokens: 1,
+      totalTokens: 2,
     });
 
     await service.waitForIdle(workspaceId);
 
     expect(telemetry.capture).toHaveBeenCalled();
 
-    // Bun's mock() returns a callable with `.mock.calls`, but our TelemetryService typing
-    // does not expose that. Introspect via unknown.
     const calls = (telemetry.capture as unknown as { mock: { calls: Array<[unknown]> } }).mock
       .calls;
 
@@ -857,12 +569,7 @@ describe("SessionTimingService", () => {
   });
 
   it("throttles delta-driven change events per workspace", async () => {
-    const telemetry = createMockTelemetryService();
-    const service = new SessionTimingService(config, telemetry as unknown as TelemetryService);
-
     const workspaceId = "test-workspace";
-    const messageId = "m1";
-    const model = "openai:gpt-4o";
     const startTime = 5_000_000;
 
     const onChange = mock<(workspaceId: string) => void>(() => undefined);
@@ -871,36 +578,19 @@ describe("SessionTimingService", () => {
     service.addSubscriber(workspaceId);
 
     try {
-      service.handleStreamStart({
-        type: "stream-start",
-        workspaceId,
-        messageId,
-        model,
-        historySequence: 1,
-        startTime,
-        mode: "exec",
-      });
+      emitStreamStart({ workspaceId, startTime });
 
       expect(onChange).toHaveBeenCalledTimes(1);
 
       // First token should be emitted immediately so TTFT updates promptly.
-      service.handleStreamDelta({
-        type: "stream-delta",
-        workspaceId,
-        messageId,
-        delta: "hi",
-        tokens: 1,
-        timestamp: startTime + 100,
-      });
+      emitStreamDelta({ workspaceId, tokens: 1, timestamp: startTime + 100 });
 
       expect(onChange).toHaveBeenCalledTimes(2);
 
       // Burst of deltas should coalesce into a single trailing emit.
       for (let i = 0; i < 25; i++) {
-        service.handleStreamDelta({
-          type: "stream-delta",
+        emitStreamDelta({
           workspaceId,
-          messageId,
           delta: "x",
           tokens: 1,
           timestamp: startTime + 200 + i,
@@ -923,12 +613,7 @@ describe("SessionTimingService", () => {
   });
 
   it("clears scheduled delta emits when the last subscriber disconnects", async () => {
-    const telemetry = createMockTelemetryService();
-    const service = new SessionTimingService(config, telemetry as unknown as TelemetryService);
-
     const workspaceId = "test-workspace";
-    const messageId = "m1";
-    const model = "openai:gpt-4o";
     const startTime = 6_000_000;
 
     const onChange = mock<(workspaceId: string) => void>(() => undefined);
@@ -937,32 +622,14 @@ describe("SessionTimingService", () => {
     service.addSubscriber(workspaceId);
 
     try {
-      service.handleStreamStart({
-        type: "stream-start",
-        workspaceId,
-        messageId,
-        model,
-        historySequence: 1,
-        startTime,
-        mode: "exec",
-      });
-
-      service.handleStreamDelta({
-        type: "stream-delta",
-        workspaceId,
-        messageId,
-        delta: "hi",
-        tokens: 1,
-        timestamp: startTime + 100,
-      });
+      emitStreamStart({ workspaceId, startTime });
+      emitStreamDelta({ workspaceId, tokens: 1, timestamp: startTime + 100 });
 
       expect(onChange).toHaveBeenCalledTimes(2);
 
       // Schedule a throttled emit.
-      service.handleStreamDelta({
-        type: "stream-delta",
+      emitStreamDelta({
         workspaceId,
-        messageId,
         delta: "x",
         tokens: 1,
         timestamp: startTime + 200,

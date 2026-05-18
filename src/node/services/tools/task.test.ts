@@ -1,17 +1,10 @@
 import { describe, it, expect, mock } from "bun:test";
-import type { ToolExecutionOptions } from "ai";
 import type { TaskCreatedEvent } from "@/common/types/stream";
 
 import { createTaskTool } from "./task";
-import { TestTempDir, createTestToolConfig } from "./testHelpers";
+import { createTestToolConfig, mockToolCallOptions, TestTempDir } from "./testHelpers";
 import { Ok, Err } from "@/common/types/result";
 import { ForegroundWaitBackgroundedError, type TaskService } from "@/node/services/taskService";
-
-// Mock ToolCallOptions for testing
-const mockToolCallOptions: ToolExecutionOptions = {
-  toolCallId: "test-call-id",
-  messages: [],
-};
 
 function expectQueuedOrRunningTaskToolResult(
   result: unknown,

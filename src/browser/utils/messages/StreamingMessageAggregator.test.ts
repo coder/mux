@@ -62,38 +62,256 @@ function seedPendingStreamState(aggregator: StreamingMessageAggregator): void {
   });
 }
 
+type TodoStatus = "pending" | "in_progress" | "completed";
+interface TodoItem {
+  content: string;
+  status: TodoStatus;
+}
+
+const TEST_WORKSPACE_ID = "test-workspace";
+const TEST_MODEL = "claude-3-5-sonnet-20241022";
+
+function createTestAggregator(): StreamingMessageAggregator {
+  return new StreamingMessageAggregator(TEST_CREATED_AT);
+}
+
+function startTestStream(
+  aggregator: StreamingMessageAggregator,
+  options: { messageId?: string; historySequence?: number } = {}
+): void {
+  aggregator.handleStreamStart({
+    type: "stream-start",
+    workspaceId: TEST_WORKSPACE_ID,
+    messageId: options.messageId ?? "msg1",
+    historySequence: options.historySequence ?? 1,
+    model: TEST_MODEL,
+    startTime: Date.now(),
+  });
+}
+
+function endTestStream(aggregator: StreamingMessageAggregator, messageId = "msg1"): void {
+  aggregator.handleStreamEnd({
+    type: "stream-end",
+    workspaceId: TEST_WORKSPACE_ID,
+    messageId,
+    metadata: {
+      historySequence: 1,
+      timestamp: Date.now(),
+      model: TEST_MODEL,
+    },
+    parts: [],
+  });
+}
+
+function startToolCall(
+  aggregator: StreamingMessageAggregator,
+  options: {
+    messageId?: string;
+    toolCallId: string;
+    toolName: string;
+    args: Record<string, unknown>;
+    tokens?: number;
+    timestamp?: number;
+    parentToolCallId?: string;
+  }
+): void {
+  aggregator.handleToolCallStart({
+    type: "tool-call-start",
+    workspaceId: TEST_WORKSPACE_ID,
+    messageId: options.messageId ?? "msg-1",
+    toolCallId: options.toolCallId,
+    toolName: options.toolName,
+    args: options.args,
+    tokens: options.tokens ?? 0,
+    timestamp: options.timestamp ?? Date.now(),
+    parentToolCallId: options.parentToolCallId,
+  });
+}
+
+function endToolCall(
+  aggregator: StreamingMessageAggregator,
+  options: {
+    messageId?: string;
+    toolCallId: string;
+    toolName: string;
+    result: unknown;
+    timestamp?: number;
+    parentToolCallId?: string;
+  }
+): void {
+  aggregator.handleToolCallEnd({
+    type: "tool-call-end",
+    workspaceId: TEST_WORKSPACE_ID,
+    messageId: options.messageId ?? "msg-1",
+    toolCallId: options.toolCallId,
+    toolName: options.toolName,
+    result: options.result,
+    timestamp: options.timestamp ?? Date.now(),
+    parentToolCallId: options.parentToolCallId,
+  });
+}
+
+function startParentTool(aggregator: StreamingMessageAggregator, code = "test"): void {
+  startTestStream(aggregator, { messageId: "msg-1" });
+  startToolCall(aggregator, {
+    toolCallId: "parent-tool-1",
+    toolName: "code_execution",
+    args: { code },
+    tokens: 10,
+    timestamp: 1000,
+  });
+}
+
+function parentToolMessage(aggregator: StreamingMessageAggregator) {
+  return aggregator
+    .getDisplayedMessages()
+    .find((m) => m.type === "tool" && m.toolCallId === "parent-tool-1");
+}
+
+function runTestTool(
+  aggregator: StreamingMessageAggregator,
+  options: {
+    messageId?: string;
+    toolCallId?: string;
+    toolName: string;
+    args: Record<string, unknown>;
+    result?: unknown;
+    tokens?: number;
+  }
+): void {
+  const messageId = options.messageId ?? "msg1";
+  const toolCallId = options.toolCallId ?? "tool1";
+
+  aggregator.handleToolCallStart({
+    messageId,
+    toolCallId,
+    toolName: options.toolName,
+    args: options.args,
+    tokens: options.tokens ?? 10,
+    timestamp: Date.now(),
+    type: "tool-call-start",
+    workspaceId: TEST_WORKSPACE_ID,
+  });
+
+  aggregator.handleToolCallEnd({
+    type: "tool-call-end",
+    workspaceId: TEST_WORKSPACE_ID,
+    messageId,
+    toolCallId,
+    toolName: options.toolName,
+    result: options.result ?? { success: true },
+    timestamp: Date.now(),
+  });
+}
+
+function writeTodos(
+  aggregator: StreamingMessageAggregator,
+  todos: TodoItem[],
+  options: { messageId?: string; toolCallId?: string } = {}
+): void {
+  runTestTool(aggregator, {
+    messageId: options.messageId,
+    toolCallId: options.toolCallId,
+    toolName: "todo_write",
+    args: { todos },
+  });
+}
+
+function historicalToolMessage(
+  id: string,
+  toolName: string,
+  input: Record<string, unknown>,
+  options: {
+    toolCallId?: string;
+    output?: unknown;
+    historySequence?: number;
+    partial?: boolean;
+  } = {}
+) {
+  const message = createMuxMessage(id, "assistant", "", {
+    partial: options.partial,
+    historySequence: options.historySequence ?? 1,
+    timestamp: Date.now(),
+    muxMetadata: { type: "normal", requestedModel: TEST_MODEL },
+  });
+  message.parts.push({
+    type: "dynamic-tool",
+    toolCallId: options.toolCallId ?? "tool1",
+    toolName,
+    state: "output-available",
+    input,
+    output: options.output ?? { success: true },
+  });
+  return message;
+}
+
+function historicalTodoMessage(
+  id: string,
+  todos: TodoItem[],
+  options: { historySequence?: number; partial?: boolean } = {}
+) {
+  return historicalToolMessage(id, "todo_write", { todos }, options);
+}
+
+function imageGenerateOutput(prompt: string, path: string, extra: Record<string, unknown> = {}) {
+  return {
+    success: true,
+    model: "openai:gpt-image-1.5",
+    prompt,
+    requestedCount: 1,
+    images: [{ path, filename: "image-1.png", mediaType: "image/png" }],
+    ...extra,
+  };
+}
+
+function imageEditOutput(prompt: string, path: string, extra: Record<string, unknown> = {}) {
+  return {
+    ...imageGenerateOutput(prompt, path),
+    source: {
+      path: "/tmp/source.png",
+      resolvedPath: "/tmp/source.png",
+      sizeBytes: 100,
+      dimensions: { width: 16, height: 16 },
+    },
+    images: [
+      {
+        path,
+        filename: "image-1.png",
+        mediaType: "image/png",
+        outputDimensions: { width: 16, height: 16 },
+      },
+    ],
+    ...extra,
+  };
+}
+
+function displayedFromTool(
+  toolName: string,
+  input: Record<string, unknown>,
+  output: unknown,
+  options: { id?: string; toolCallId?: string; partial?: boolean } = {}
+): DisplayedMessage[] {
+  const aggregator = createTestAggregator();
+  aggregator.loadHistoricalMessages([
+    historicalToolMessage(options.id ?? "assistant-tool", toolName, input, {
+      toolCallId: options.toolCallId,
+      output,
+      partial: options.partial,
+    }),
+  ]);
+  return aggregator.getDisplayedMessages();
+}
+
 describe("StreamingMessageAggregator", () => {
   describe("image generation display messages", () => {
     test("renders successful image_generate tool output as a generated-image row", () => {
-      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
-      const assistantMessage = createMuxMessage("assistant-image", "assistant", "", {
-        historySequence: 7,
-        timestamp: 1234,
-      });
-      assistantMessage.parts.push({
-        type: "dynamic-tool",
-        toolCallId: "image-tool-1",
-        toolName: "image_generate",
-        input: { prompt: "A small blue square" },
-        state: "output-available",
-        output: {
-          success: true,
-          model: "openai:gpt-image-1.5",
-          prompt: "A small blue square",
-          requestedCount: 1,
-          images: [
-            {
-              path: "/tmp/mux/imagegen/image-tool-1/image-1.png",
-              filename: "image-1.png",
-              mediaType: "image/png",
-            },
-          ],
-        },
-      });
+      const displayed = displayedFromTool(
+        "image_generate",
+        { prompt: "A small blue square" },
+        imageGenerateOutput("A small blue square", "/tmp/mux/imagegen/image-tool-1/image-1.png"),
+        { id: "assistant-image", toolCallId: "image-tool-1" }
+      );
 
-      aggregator.loadHistoricalMessages([assistantMessage]);
-
-      const displayed = aggregator.getDisplayedMessages();
       expect(displayed).toHaveLength(1);
       expect(displayed[0]?.type).toBe("generated-image");
       if (displayed[0]?.type !== "generated-image") {
@@ -105,36 +323,15 @@ describe("StreamingMessageAggregator", () => {
     });
 
     test("keeps image_generate output with hook output as a normal tool row", () => {
-      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
-      const assistantMessage = createMuxMessage("assistant-image-hook", "assistant", "", {
-        historySequence: 8,
-        timestamp: 1235,
-      });
-      assistantMessage.parts.push({
-        type: "dynamic-tool",
-        toolCallId: "image-tool-hook",
-        toolName: "image_generate",
-        input: { prompt: "A small blue square" },
-        state: "output-available",
-        output: {
-          success: true,
-          model: "openai:gpt-image-1.5",
-          prompt: "A small blue square",
-          requestedCount: 1,
-          images: [
-            {
-              path: "/tmp/mux/imagegen/image-tool-1/image-1.png",
-              filename: "image-1.png",
-              mediaType: "image/png",
-            },
-          ],
+      const displayed = displayedFromTool(
+        "image_generate",
+        { prompt: "A small blue square" },
+        imageGenerateOutput("A small blue square", "/tmp/mux/imagegen/image-tool-1/image-1.png", {
           hook_output: "post-processing hook ran",
-        },
-      });
+        }),
+        { id: "assistant-image-hook", toolCallId: "image-tool-hook" }
+      );
 
-      aggregator.loadHistoricalMessages([assistantMessage]);
-
-      const displayed = aggregator.getDisplayedMessages();
       expect(displayed).toHaveLength(1);
       expect(displayed[0]?.type).toBe("tool");
       if (displayed[0]?.type !== "tool") {
@@ -145,31 +342,14 @@ describe("StreamingMessageAggregator", () => {
     });
 
     test("renders nested PTC image_generate output as a generated-image row", () => {
-      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
-      const assistantMessage = createMuxMessage("assistant-ptc-image", "assistant", "", {
-        historySequence: 8,
-        timestamp: 1235,
-      });
-      const imageOutput = {
-        success: true,
-        model: "openai:gpt-image-1.5",
-        prompt: "A nested blue square",
-        requestedCount: 1,
-        images: [
-          {
-            path: "/tmp/mux/generated_images/ptc-image/image-1.png",
-            filename: "image-1.png",
-            mediaType: "image/png",
-          },
-        ],
-      };
-      assistantMessage.parts.push({
-        type: "dynamic-tool",
-        toolCallId: "code-tool-1",
-        toolName: "code_execution",
-        input: { code: "await mux.image_generate(...)" },
-        state: "output-available",
-        output: {
+      const imageOutput = imageGenerateOutput(
+        "A nested blue square",
+        "/tmp/mux/generated_images/ptc-image/image-1.png"
+      );
+      const displayed = displayedFromTool(
+        "code_execution",
+        { code: "await mux.image_generate(...)" },
+        {
           success: true,
           result: "done",
           toolCalls: [
@@ -181,11 +361,9 @@ describe("StreamingMessageAggregator", () => {
             },
           ],
         },
-      });
+        { id: "assistant-ptc-image", toolCallId: "code-tool-1" }
+      );
 
-      aggregator.loadHistoricalMessages([assistantMessage]);
-
-      const displayed = aggregator.getDisplayedMessages();
       expect(displayed).toHaveLength(2);
       expect(displayed[0]?.type).toBe("tool");
       expect(displayed[1]?.type).toBe("generated-image");
@@ -202,42 +380,16 @@ describe("StreamingMessageAggregator", () => {
     });
 
     test("renders successful image_edit tool output as an edited-image row", () => {
-      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
-      const assistantMessage = createMuxMessage("assistant-edit-image", "assistant", "", {
-        historySequence: 8,
-        timestamp: 1235,
-      });
-      assistantMessage.parts.push({
-        type: "dynamic-tool",
-        toolCallId: "image-edit-tool-1",
-        toolName: "image_edit",
-        input: { sourcePath: "/tmp/source.png", prompt: "Make the square blue" },
-        state: "output-available",
-        output: {
-          success: true,
-          model: "openai:gpt-image-1.5",
-          prompt: "Make the square blue",
-          requestedCount: 1,
-          source: {
-            path: "/tmp/source.png",
-            resolvedPath: "/tmp/source.png",
-            sizeBytes: 100,
-            dimensions: { width: 16, height: 16 },
-          },
-          images: [
-            {
-              path: "/tmp/mux/edited_images/image-edit-tool-1/image-1.png",
-              filename: "image-1.png",
-              mediaType: "image/png",
-              outputDimensions: { width: 16, height: 16 },
-            },
-          ],
-        },
-      });
+      const displayed = displayedFromTool(
+        "image_edit",
+        { sourcePath: "/tmp/source.png", prompt: "Make the square blue" },
+        imageEditOutput(
+          "Make the square blue",
+          "/tmp/mux/edited_images/image-edit-tool-1/image-1.png"
+        ),
+        { id: "assistant-edit-image", toolCallId: "image-edit-tool-1" }
+      );
 
-      aggregator.loadHistoricalMessages([assistantMessage]);
-
-      const displayed = aggregator.getDisplayedMessages();
       expect(displayed).toHaveLength(1);
       expect(displayed[0]?.type).toBe("edited-image");
       if (displayed[0]?.type !== "edited-image") {
@@ -249,38 +401,14 @@ describe("StreamingMessageAggregator", () => {
     });
 
     test("renders nested PTC image_edit output as an edited-image row", () => {
-      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
-      const assistantMessage = createMuxMessage("assistant-ptc-edit-image", "assistant", "", {
-        historySequence: 8,
-        timestamp: 1235,
-      });
-      const imageOutput = {
-        success: true,
-        model: "openai:gpt-image-1.5",
-        prompt: "Make a nested square blue",
-        requestedCount: 1,
-        source: {
-          path: "/tmp/source.png",
-          resolvedPath: "/tmp/source.png",
-          sizeBytes: 100,
-          dimensions: { width: 16, height: 16 },
-        },
-        images: [
-          {
-            path: "/tmp/mux/edited_images/ptc-edit/image-1.png",
-            filename: "image-1.png",
-            mediaType: "image/png",
-            outputDimensions: { width: 16, height: 16 },
-          },
-        ],
-      };
-      assistantMessage.parts.push({
-        type: "dynamic-tool",
-        toolCallId: "code-tool-edit-1",
-        toolName: "code_execution",
-        input: { code: "await mux.image_edit(...)" },
-        state: "output-available",
-        output: {
+      const imageOutput = imageEditOutput(
+        "Make a nested square blue",
+        "/tmp/mux/edited_images/ptc-edit/image-1.png"
+      );
+      const displayed = displayedFromTool(
+        "code_execution",
+        { code: "await mux.image_edit(...)" },
+        {
           success: true,
           result: "done",
           toolCalls: [
@@ -292,11 +420,9 @@ describe("StreamingMessageAggregator", () => {
             },
           ],
         },
-      });
+        { id: "assistant-ptc-edit-image", toolCallId: "code-tool-edit-1" }
+      );
 
-      aggregator.loadHistoricalMessages([assistantMessage]);
-
-      const displayed = aggregator.getDisplayedMessages();
       expect(displayed).toHaveLength(2);
       expect(displayed[0]?.type).toBe("tool");
       expect(displayed[1]?.type).toBe("edited-image");
@@ -312,220 +438,101 @@ describe("StreamingMessageAggregator", () => {
       expect(displayed[1].isLastPartOfMessage).toBe(true);
     });
 
-    test("keeps malformed successful image_edit output as a normal tool row", () => {
-      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
-      const assistantMessage = createMuxMessage("assistant-edit-image-malformed", "assistant", "", {
-        historySequence: 8,
-        timestamp: 1235,
-      });
-      assistantMessage.parts.push({
-        type: "dynamic-tool",
+    const toolRowScenarios = [
+      {
+        name: "keeps malformed successful image_edit output as a normal tool row",
+        toolName: "image_edit",
         toolCallId: "image-edit-tool-malformed",
-        toolName: "image_edit",
         input: { sourcePath: "/tmp/source.png", prompt: "Make the square blue" },
-        state: "output-available",
-        output: {
-          success: true,
-          model: "openai:gpt-image-1.5",
-          prompt: "Make the square blue",
-          requestedCount: 1,
-          source: {
-            path: "/tmp/source.png",
-            resolvedPath: "/tmp/source.png",
-            sizeBytes: 100,
-            dimensions: { width: 16, height: 16 },
-          },
-          images: [
-            {
-              path: "/tmp/mux/edited_images/image-edit-tool-1/image-1.png",
-              filename: "image-1.png",
-              mediaType: "image/png",
-            },
-          ],
-        },
-      });
-
-      aggregator.loadHistoricalMessages([assistantMessage]);
-
-      const displayed = aggregator.getDisplayedMessages();
-      expect(displayed).toHaveLength(1);
-      expect(displayed[0]?.type).toBe("tool");
-      if (displayed[0]?.type !== "tool") {
-        throw new Error("Expected malformed image edit to remain a tool row");
-      }
-      expect(displayed[0].toolName).toBe("image_edit");
-    });
-
-    test("keeps malformed successful image_generate output as a normal tool row", () => {
-      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
-      const assistantMessage = createMuxMessage("assistant-image-malformed", "assistant", "", {
-        historySequence: 8,
-        timestamp: 1235,
-      });
-      assistantMessage.parts.push({
-        type: "dynamic-tool",
+        output: imageEditOutput(
+          "Make the square blue",
+          "/tmp/mux/edited_images/image-edit-tool-1/image-1.png",
+          {
+            images: [
+              {
+                path: "/tmp/mux/edited_images/image-edit-tool-1/image-1.png",
+                filename: "image-1.png",
+                mediaType: "image/png",
+              },
+            ],
+          }
+        ),
+        error: "Expected malformed image edit to remain a tool row",
+      },
+      {
+        name: "keeps malformed successful image_generate output as a normal tool row",
+        toolName: "image_generate",
         toolCallId: "image-tool-malformed",
-        toolName: "image_generate",
         input: { prompt: "A small blue square" },
-        state: "output-available",
-        output: {
-          success: true,
-          model: "openai:gpt-image-1.5",
-          prompt: "A small blue square",
-          requestedCount: 1,
-          images: [null],
-        },
-      });
-
-      aggregator.loadHistoricalMessages([assistantMessage]);
-
-      const displayed = aggregator.getDisplayedMessages();
-      expect(displayed).toHaveLength(1);
-      expect(displayed[0]?.type).toBe("tool");
-      if (displayed[0]?.type !== "tool") {
-        throw new Error("Expected malformed image generation to remain a tool row");
-      }
-      expect(displayed[0].toolName).toBe("image_generate");
-      expect(displayed[0].status).toBe("completed");
-    });
-
-    test("keeps non-string image_generate warnings as a normal tool row", () => {
-      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
-      const assistantMessage = createMuxMessage("assistant-image-bad-warnings", "assistant", "", {
-        historySequence: 9,
-        timestamp: 1236,
-      });
-      assistantMessage.parts.push({
-        type: "dynamic-tool",
+        output: imageGenerateOutput("A small blue square", "", { images: [null] }),
+        expectedStatus: "completed",
+        error: "Expected malformed image generation to remain a tool row",
+      },
+      {
+        name: "keeps non-string image_generate warnings as a normal tool row",
+        toolName: "image_generate",
         toolCallId: "image-tool-bad-warnings",
-        toolName: "image_generate",
         input: { prompt: "A small blue square" },
-        state: "output-available",
-        output: {
-          success: true,
-          model: "openai:gpt-image-1.5",
-          prompt: "A small blue square",
-          requestedCount: 1,
-          images: [
-            {
-              path: "/tmp/mux/generated_images/image-tool-1/image-1.png",
-              filename: "image-1.png",
-              mediaType: "image/png",
-            },
-          ],
-          warnings: "thumbnail warning",
-        },
-      });
-
-      aggregator.loadHistoricalMessages([assistantMessage]);
-
-      const displayed = aggregator.getDisplayedMessages();
-      expect(displayed).toHaveLength(1);
-      expect(displayed[0]?.type).toBe("tool");
-      if (displayed[0]?.type !== "tool") {
-        throw new Error("Expected bad image warnings to remain a tool row");
-      }
-      expect(displayed[0].toolName).toBe("image_generate");
-    });
-
-    test("keeps successful image_generate output as a normal tool row when the message is partial", () => {
-      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
-      const assistantMessage = createMuxMessage("assistant-image-partial", "assistant", "", {
-        historySequence: 10,
-        timestamp: 1237,
-        partial: true,
-      });
-      assistantMessage.parts.push({
-        type: "dynamic-tool",
+        output: imageGenerateOutput(
+          "A small blue square",
+          "/tmp/mux/generated_images/image-tool-1/image-1.png",
+          {
+            warnings: "thumbnail warning",
+          }
+        ),
+        error: "Expected bad image warnings to remain a tool row",
+      },
+      {
+        name: "keeps successful image_generate output as a normal tool row when the message is partial",
+        toolName: "image_generate",
         toolCallId: "image-tool-partial",
-        toolName: "image_generate",
         input: { prompt: "A small blue square" },
-        state: "output-available",
-        output: {
-          success: true,
-          model: "openai:gpt-image-1.5",
-          prompt: "A small blue square",
-          requestedCount: 1,
-          images: [
-            {
-              path: "/tmp/mux/generated_images/image-tool-1/image-1.png",
-              filename: "image-1.png",
-              mediaType: "image/png",
-            },
-          ],
-        },
-      });
-
-      aggregator.loadHistoricalMessages([assistantMessage]);
-
-      const displayed = aggregator.getDisplayedMessages();
-      expect(displayed).toHaveLength(1);
-      expect(displayed[0]?.type).toBe("tool");
-      if (displayed[0]?.type !== "tool") {
-        throw new Error("Expected partial image generation to remain a tool row");
-      }
-      expect(displayed[0].status).toBe("completed");
-    });
-
-    test("keeps failed image_edit output as a normal tool row", () => {
-      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
-      const assistantMessage = createMuxMessage("assistant-edit-image-failed", "assistant", "", {
-        historySequence: 8,
-        timestamp: 1235,
-      });
-      assistantMessage.parts.push({
-        type: "dynamic-tool",
-        toolCallId: "image-edit-tool-failed",
+        output: imageGenerateOutput(
+          "A small blue square",
+          "/tmp/mux/generated_images/image-tool-1/image-1.png"
+        ),
+        partial: true,
+        expectedStatus: "completed",
+        error: "Expected partial image generation to remain a tool row",
+      },
+      {
+        name: "keeps failed image_edit output as a normal tool row",
         toolName: "image_edit",
+        toolCallId: "image-edit-tool-failed",
         input: { sourcePath: "/tmp/source.png", prompt: "Make the square blue" },
-        state: "output-available",
-        output: {
-          success: false,
-          error: "Image editing requires upload consent.",
-        },
-      });
-
-      aggregator.loadHistoricalMessages([assistantMessage]);
-
-      const displayed = aggregator.getDisplayedMessages();
-      expect(displayed).toHaveLength(1);
-      expect(displayed[0]?.type).toBe("tool");
-      if (displayed[0]?.type !== "tool") {
-        throw new Error("Expected failed image edit to remain a tool row");
-      }
-      expect(displayed[0].toolName).toBe("image_edit");
-      expect(displayed[0].status).toBe("failed");
-    });
-
-    test("keeps failed image_generate output as a normal tool row", () => {
-      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
-      const assistantMessage = createMuxMessage("assistant-image-failed", "assistant", "", {
-        historySequence: 8,
-        timestamp: 1235,
-      });
-      assistantMessage.parts.push({
-        type: "dynamic-tool",
-        toolCallId: "image-tool-failed",
+        output: { success: false, error: "Image editing requires upload consent." },
+        expectedStatus: "failed",
+        error: "Expected failed image edit to remain a tool row",
+      },
+      {
+        name: "keeps failed image_generate output as a normal tool row",
         toolName: "image_generate",
+        toolCallId: "image-tool-failed",
         input: { prompt: "A small blue square" },
-        state: "output-available",
-        output: {
-          success: false,
-          error: "Image generation requires an OpenAI API key.",
-        },
+        output: { success: false, error: "Image generation requires an OpenAI API key." },
+        expectedStatus: "failed",
+        error: "Expected failed image generation to remain a tool row",
+      },
+    ] as const;
+
+    for (const scenario of toolRowScenarios) {
+      test(scenario.name, () => {
+        const displayed = displayedFromTool(scenario.toolName, scenario.input, scenario.output, {
+          toolCallId: scenario.toolCallId,
+          partial: "partial" in scenario ? scenario.partial : undefined,
+        });
+
+        expect(displayed).toHaveLength(1);
+        expect(displayed[0]?.type).toBe("tool");
+        if (displayed[0]?.type !== "tool") {
+          throw new Error(scenario.error);
+        }
+        expect(displayed[0].toolName).toBe(scenario.toolName);
+        if ("expectedStatus" in scenario) {
+          expect(displayed[0].status).toBe(scenario.expectedStatus);
+        }
       });
-
-      aggregator.loadHistoricalMessages([assistantMessage]);
-
-      const displayed = aggregator.getDisplayedMessages();
-      expect(displayed).toHaveLength(1);
-      expect(displayed[0]?.type).toBe("tool");
-      if (displayed[0]?.type !== "tool") {
-        throw new Error("Expected failed image generation to remain a tool row");
-      }
-      expect(displayed[0].toolName).toBe("image_generate");
-      expect(displayed[0].status).toBe("failed");
-    });
+    }
   });
 
   describe("init state reference stability", () => {
@@ -1052,128 +1059,39 @@ describe("StreamingMessageAggregator", () => {
 
   describe("todo lifecycle", () => {
     test("should preserve incomplete todos when stream ends", () => {
-      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      const aggregator = createTestAggregator();
+      startTestStream(aggregator);
+      writeTodos(aggregator, [
+        { content: "Do task 1", status: "in_progress" },
+        { content: "Do task 2", status: "pending" },
+      ]);
 
-      // Start a stream
-      aggregator.handleStreamStart({
-        type: "stream-start",
-        workspaceId: "test-workspace",
-        messageId: "msg1",
-        historySequence: 1,
-        model: "claude-3-5-sonnet-20241022",
-        startTime: Date.now(),
-      });
-
-      // Simulate todo_write tool call
-      aggregator.handleToolCallStart({
-        messageId: "msg1",
-        toolCallId: "tool1",
-        toolName: "todo_write",
-        args: {
-          todos: [
-            { content: "Do task 1", status: "in_progress" },
-            { content: "Do task 2", status: "pending" },
-          ],
-        },
-        tokens: 10,
-        timestamp: Date.now(),
-        type: "tool-call-start",
-        workspaceId: "test-workspace",
-      });
-
-      aggregator.handleToolCallEnd({
-        type: "tool-call-end",
-        workspaceId: "test-workspace",
-        messageId: "msg1",
-        toolCallId: "tool1",
-        toolName: "todo_write",
-        result: { success: true },
-        timestamp: Date.now(),
-      });
-
-      // Verify todos are set
       expect(aggregator.getCurrentTodos()).toHaveLength(2);
       expect(aggregator.getCurrentTodos()[0].content).toBe("Do task 1");
 
-      // End the stream
-      aggregator.handleStreamEnd({
-        type: "stream-end",
-        workspaceId: "test-workspace",
-        messageId: "msg1",
-        metadata: {
-          historySequence: 1,
-          timestamp: Date.now(),
-          model: "claude-3-5-sonnet-20241022",
-        },
-        parts: [],
-      });
-
-      // Todos should persist after stream end
+      endTestStream(aggregator);
       expect(aggregator.getCurrentTodos()).toHaveLength(2);
     });
 
     test("marks in-progress todos completed when propose_plan succeeds", () => {
-      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      const aggregator = createTestAggregator();
+      startTestStream(aggregator);
+      writeTodos(aggregator, [
+        { content: "Inspected relevant files", status: "completed" },
+        { content: "Writing the plan", status: "in_progress" },
+        { content: "Wait for approval", status: "pending" },
+      ]);
 
-      aggregator.handleStreamStart({
-        type: "stream-start",
-        workspaceId: "test-workspace",
-        messageId: "msg1",
-        historySequence: 1,
-        model: "claude-3-5-sonnet-20241022",
-        startTime: Date.now(),
-      });
-
-      aggregator.handleToolCallStart({
-        messageId: "msg1",
-        toolCallId: "tool1",
-        toolName: "todo_write",
-        args: {
-          todos: [
-            { content: "Inspected relevant files", status: "completed" },
-            { content: "Writing the plan", status: "in_progress" },
-            { content: "Wait for approval", status: "pending" },
-          ],
-        },
-        tokens: 10,
-        timestamp: Date.now(),
-        type: "tool-call-start",
-        workspaceId: "test-workspace",
-      });
-
-      aggregator.handleToolCallEnd({
-        type: "tool-call-end",
-        workspaceId: "test-workspace",
-        messageId: "msg1",
-        toolCallId: "tool1",
-        toolName: "todo_write",
-        result: { success: true },
-        timestamp: Date.now(),
-      });
-
-      aggregator.handleToolCallStart({
-        messageId: "msg1",
+      runTestTool(aggregator, {
         toolCallId: "tool2",
         toolName: "propose_plan",
         args: {},
         tokens: 1,
-        timestamp: Date.now(),
-        type: "tool-call-start",
-        workspaceId: "test-workspace",
-      });
-
-      aggregator.handleToolCallEnd({
-        type: "tool-call-end",
-        workspaceId: "test-workspace",
-        messageId: "msg1",
-        toolCallId: "tool2",
-        toolName: "propose_plan",
         result: {
           success: true,
           planPath: "/tmp/plan.md",
           message: "Plan proposed. Waiting for user approval.",
         },
-        timestamp: Date.now(),
       });
 
       expect(aggregator.getCurrentTodos()).toEqual([
@@ -1184,214 +1102,83 @@ describe("StreamingMessageAggregator", () => {
     });
 
     test("should clear fully completed todos when the final stream ends", () => {
-      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
-
-      aggregator.handleStreamStart({
-        type: "stream-start",
-        workspaceId: "test-workspace",
-        messageId: "msg1",
-        historySequence: 1,
-        model: "claude-3-5-sonnet-20241022",
-        startTime: Date.now(),
-      });
-
-      aggregator.handleToolCallStart({
-        messageId: "msg1",
-        toolCallId: "tool1",
-        toolName: "todo_write",
-        args: {
-          todos: [
-            { content: "Do task 1", status: "completed" },
-            { content: "Do task 2", status: "completed" },
-          ],
-        },
-        tokens: 10,
-        timestamp: Date.now(),
-        type: "tool-call-start",
-        workspaceId: "test-workspace",
-      });
-
-      aggregator.handleToolCallEnd({
-        type: "tool-call-end",
-        workspaceId: "test-workspace",
-        messageId: "msg1",
-        toolCallId: "tool1",
-        toolName: "todo_write",
-        result: { success: true },
-        timestamp: Date.now(),
-      });
+      const aggregator = createTestAggregator();
+      startTestStream(aggregator);
+      writeTodos(aggregator, [
+        { content: "Do task 1", status: "completed" },
+        { content: "Do task 2", status: "completed" },
+      ]);
 
       expect(aggregator.getCurrentTodos()).toHaveLength(2);
-
-      aggregator.handleStreamEnd({
-        type: "stream-end",
-        workspaceId: "test-workspace",
-        messageId: "msg1",
-        metadata: {
-          historySequence: 1,
-          timestamp: Date.now(),
-          model: "claude-3-5-sonnet-20241022",
-        },
-        parts: [],
-      });
-
+      endTestStream(aggregator);
       expect(aggregator.getCurrentTodos()).toHaveLength(0);
     });
 
     test("should preserve todos when stream aborts", () => {
-      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
-
-      aggregator.handleStreamStart({
-        type: "stream-start",
-        workspaceId: "test-workspace",
-        messageId: "msg1",
-        historySequence: 1,
-        model: "claude-3-5-sonnet-20241022",
-        startTime: Date.now(),
-      });
-
-      // Simulate todo_write
-      aggregator.handleToolCallStart({
-        messageId: "msg1",
-        toolCallId: "tool1",
-        toolName: "todo_write",
-        args: {
-          todos: [{ content: "Task", status: "in_progress" }],
-        },
-        tokens: 10,
-        timestamp: Date.now(),
-        type: "tool-call-start",
-        workspaceId: "test-workspace",
-      });
-
-      aggregator.handleToolCallEnd({
-        type: "tool-call-end",
-        workspaceId: "test-workspace",
-        messageId: "msg1",
-        toolCallId: "tool1",
-        toolName: "todo_write",
-        result: { success: true },
-        timestamp: Date.now(),
-      });
+      const aggregator = createTestAggregator();
+      startTestStream(aggregator);
+      writeTodos(aggregator, [{ content: "Task", status: "in_progress" }]);
 
       expect(aggregator.getCurrentTodos()).toHaveLength(1);
-
-      // Abort the stream
       aggregator.handleStreamAbort({
         type: "stream-abort",
-        workspaceId: "test-workspace",
+        workspaceId: TEST_WORKSPACE_ID,
         messageId: "msg1",
         metadata: {},
       });
-
-      // Todos should persist after stream abort
       expect(aggregator.getCurrentTodos()).toHaveLength(1);
     });
 
     test("should keep completed todos on reload only while reconnecting to an active stream", () => {
-      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      const historicalMessage = historicalTodoMessage("msg1", [
+        { content: "Historical task 1", status: "completed" },
+        { content: "Historical task 2", status: "completed" },
+      ]);
 
-      const historicalMessage = {
-        id: "msg1",
-        role: "assistant" as const,
-        parts: [
-          {
-            type: "dynamic-tool" as const,
-            toolCallId: "tool1",
-            toolName: "todo_write",
-            state: "output-available" as const,
-            input: {
-              todos: [
-                { content: "Historical task 1", status: "completed" },
-                { content: "Historical task 2", status: "completed" },
-              ],
-            },
-            output: { success: true },
-          },
-        ],
-        metadata: {
-          historySequence: 1,
-          timestamp: Date.now(),
-          model: "claude-3-5-sonnet-20241022",
-        },
-      };
-
-      // Scenario 1: Reload with active stream (hasActiveStream = true)
+      const aggregator = createTestAggregator();
       aggregator.loadHistoricalMessages([historicalMessage], true);
       expect(aggregator.getCurrentTodos()).toHaveLength(2);
       expect(aggregator.getCurrentTodos()[0].content).toBe("Historical task 1");
 
-      // Reset for next scenario
-      const aggregator2 = new StreamingMessageAggregator(TEST_CREATED_AT);
-
-      // Scenario 2: Reload without active stream (hasActiveStream = false)
+      const aggregator2 = createTestAggregator();
       aggregator2.loadHistoricalMessages([historicalMessage], false);
       expect(aggregator2.getCurrentTodos()).toHaveLength(0);
     });
 
     test("preserves completed todos on idle reload when they came from a partial assistant message", () => {
-      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
-
-      const historicalMessage = {
-        id: "msg-partial",
-        role: "assistant" as const,
-        parts: [
-          {
-            type: "dynamic-tool" as const,
-            toolCallId: "tool1",
-            toolName: "todo_write",
-            state: "output-available" as const,
-            input: {
-              todos: [
-                { content: "Recovered task 1", status: "completed" },
-                { content: "Recovered task 2", status: "completed" },
-              ],
-            },
-            output: { success: true },
-          },
+      const aggregator = createTestAggregator();
+      aggregator.loadHistoricalMessages(
+        [
+          historicalTodoMessage(
+            "msg-partial",
+            [
+              { content: "Recovered task 1", status: "completed" },
+              { content: "Recovered task 2", status: "completed" },
+            ],
+            { partial: true, historySequence: 11 }
+          ),
         ],
-        metadata: {
-          partial: true,
-          historySequence: 11,
-          timestamp: Date.now(),
-          model: "claude-3-5-sonnet-20241022",
-        },
-      };
-
-      aggregator.loadHistoricalMessages([historicalMessage], false);
+        false
+      );
 
       expect(aggregator.getCurrentTodos()).toHaveLength(2);
     });
 
     test("does not clear completed todos when appending older history without derived-state replay", () => {
-      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
-
-      const completedHistoricalMessage = {
-        id: "msg1",
-        role: "assistant" as const,
-        parts: [
-          {
-            type: "dynamic-tool" as const,
-            toolCallId: "tool1",
-            toolName: "todo_write",
-            state: "output-available" as const,
-            input: {
-              todos: [
-                { content: "Historical task 1", status: "completed" },
-                { content: "Historical task 2", status: "completed" },
-              ],
-            },
-            output: { success: true },
-          },
+      const aggregator = createTestAggregator();
+      aggregator.loadHistoricalMessages(
+        [
+          historicalTodoMessage(
+            "msg1",
+            [
+              { content: "Historical task 1", status: "completed" },
+              { content: "Historical task 2", status: "completed" },
+            ],
+            { historySequence: 10 }
+          ),
         ],
-        metadata: {
-          historySequence: 10,
-          timestamp: Date.now(),
-          model: "claude-3-5-sonnet-20241022",
-        },
-      };
-
-      aggregator.loadHistoricalMessages([completedHistoricalMessage], true);
+        true
+      );
       expect(aggregator.getCurrentTodos()).toHaveLength(2);
 
       aggregator.loadHistoricalMessages(
@@ -1404,48 +1191,20 @@ describe("StreamingMessageAggregator", () => {
         false,
         { mode: "append", skipDerivedState: true }
       );
-
       expect(aggregator.getCurrentTodos()).toHaveLength(2);
     });
 
     test("does not clear completed todos during replay when an active stream is already tracked", () => {
-      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
-
-      aggregator.handleStreamStart({
-        type: "stream-start",
-        workspaceId: "test-workspace",
-        messageId: "msg-live",
-        historySequence: 20,
-        model: "claude-3-5-sonnet-20241022",
-        startTime: Date.now(),
-      });
-
-      aggregator.handleToolCallStart({
-        messageId: "msg-live",
-        toolCallId: "tool-live",
-        toolName: "todo_write",
-        args: {
-          todos: [
-            { content: "Live task 1", status: "completed" },
-            { content: "Live task 2", status: "completed" },
-          ],
-        },
-        tokens: 10,
-        timestamp: Date.now(),
-        type: "tool-call-start",
-        workspaceId: "test-workspace",
-      });
-
-      aggregator.handleToolCallEnd({
-        type: "tool-call-end",
-        workspaceId: "test-workspace",
-        messageId: "msg-live",
-        toolCallId: "tool-live",
-        toolName: "todo_write",
-        result: { success: true },
-        timestamp: Date.now(),
-      });
-
+      const aggregator = createTestAggregator();
+      startTestStream(aggregator, { messageId: "msg-live", historySequence: 20 });
+      writeTodos(
+        aggregator,
+        [
+          { content: "Live task 1", status: "completed" },
+          { content: "Live task 2", status: "completed" },
+        ],
+        { messageId: "msg-live", toolCallId: "tool-live" }
+      );
       expect(aggregator.getCurrentTodos()).toHaveLength(2);
 
       aggregator.loadHistoricalMessages(
@@ -1458,94 +1217,35 @@ describe("StreamingMessageAggregator", () => {
         false,
         { mode: "append" }
       );
-
       expect(aggregator.getCurrentTodos()).toHaveLength(2);
     });
 
     test("should reconstruct agentStatus and incomplete todos when no active stream", () => {
-      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      const aggregator = createTestAggregator();
+      const historicalMessage = historicalTodoMessage("msg1", [
+        { content: "Task 1", status: "in_progress" },
+      ]);
+      historicalMessage.parts.push({
+        type: "dynamic-tool",
+        toolCallId: "tool2",
+        toolName: "status_set",
+        state: "output-available",
+        input: { emoji: "🔧", message: "Working on it" },
+        output: { success: true, emoji: "🔧", message: "Working on it" },
+      });
 
-      const historicalMessage = {
-        type: "message" as const,
-        id: "msg1",
-        role: "assistant" as const,
-        parts: [
-          {
-            type: "dynamic-tool" as const,
-            toolCallId: "tool1",
-            toolName: "todo_write",
-            state: "output-available" as const,
-            input: {
-              todos: [{ content: "Task 1", status: "in_progress" }],
-            },
-            output: { success: true },
-          },
-          {
-            type: "dynamic-tool" as const,
-            toolCallId: "tool2",
-            toolName: "status_set",
-            state: "output-available" as const,
-            input: { emoji: "🔧", message: "Working on it" },
-            output: { success: true, emoji: "🔧", message: "Working on it" },
-          },
-        ],
-        metadata: {
-          historySequence: 1,
-          timestamp: Date.now(),
-          model: "claude-3-5-sonnet-20241022",
-        },
-      };
-
-      // Load without active stream
       aggregator.loadHistoricalMessages([historicalMessage], false);
 
-      // agentStatus should be reconstructed (persists across sessions)
       expect(aggregator.getAgentStatus()).toEqual({ emoji: "🔧", message: "Working on it" });
-
-      // TODOs should be reconstructed from history
       expect(aggregator.getCurrentTodos()).toHaveLength(1);
     });
 
     test("should preserve todos when new user message arrives during active stream", () => {
-      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      const aggregator = createTestAggregator();
+      startTestStream(aggregator);
+      writeTodos(aggregator, [{ content: "Task", status: "completed" }]);
 
-      // Simulate an active stream with todos
-      aggregator.handleStreamStart({
-        type: "stream-start",
-        workspaceId: "test-workspace",
-        messageId: "msg1",
-        historySequence: 1,
-        model: "claude-3-5-sonnet-20241022",
-        startTime: Date.now(),
-      });
-
-      aggregator.handleToolCallStart({
-        messageId: "msg1",
-        toolCallId: "tool1",
-        toolName: "todo_write",
-        args: {
-          todos: [{ content: "Task", status: "completed" }],
-        },
-        tokens: 10,
-        timestamp: Date.now(),
-        type: "tool-call-start",
-        workspaceId: "test-workspace",
-      });
-
-      aggregator.handleToolCallEnd({
-        type: "tool-call-end",
-        workspaceId: "test-workspace",
-        messageId: "msg1",
-        toolCallId: "tool1",
-        toolName: "todo_write",
-        result: { success: true },
-        timestamp: Date.now(),
-      });
-
-      // TODOs should be set
       expect(aggregator.getCurrentTodos()).toHaveLength(1);
-
-      // Add new user message (simulating user sending a new message)
       aggregator.handleMessage({
         type: "message",
         id: "msg2",
@@ -1553,8 +1253,6 @@ describe("StreamingMessageAggregator", () => {
         parts: [{ type: "text", text: "Hello" }],
         metadata: { historySequence: 2, timestamp: Date.now() },
       });
-
-      // Todos should persist when a new user message arrives
       expect(aggregator.getCurrentTodos()).toHaveLength(1);
     });
   });
@@ -3088,48 +2786,18 @@ describe("StreamingMessageAggregator", () => {
 
   describe("nested tool calls (PTC code_execution)", () => {
     test("adds nested call to parent tool part on tool-call-start with parentToolCallId", () => {
-      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
-
-      // Start a stream with a code_execution tool call
-      aggregator.handleStreamStart({
-        type: "stream-start",
-        workspaceId: "test-workspace",
-        messageId: "msg-1",
-        historySequence: 1,
-        model: "claude-3-5-sonnet-20241022",
-        startTime: Date.now(),
-      });
-
-      // Start parent code_execution tool
-      aggregator.handleToolCallStart({
-        type: "tool-call-start",
-        workspaceId: "test-workspace",
-        messageId: "msg-1",
-        toolCallId: "parent-tool-1",
-        toolName: "code_execution",
-        args: { code: "mux.file_read({ filePath: 'test.txt' })" },
-        tokens: 10,
-        timestamp: 1000,
-      });
-
-      // Start nested tool call with parentToolCallId
-      aggregator.handleToolCallStart({
-        type: "tool-call-start",
-        workspaceId: "test-workspace",
-        messageId: "msg-1",
+      const aggregator = createTestAggregator();
+      startParentTool(aggregator, "mux.file_read({ filePath: 'test.txt' })");
+      startToolCall(aggregator, {
         toolCallId: "nested-tool-1",
         toolName: "file_read",
         args: { filePath: "test.txt" },
-        tokens: 0,
         timestamp: 1100,
         parentToolCallId: "parent-tool-1",
       });
 
-      // Tool parts become "tool" type in displayed messages (not "assistant")
-      const messages = aggregator.getDisplayedMessages();
-      const toolMsg = messages.find((m) => m.type === "tool" && m.toolCallId === "parent-tool-1");
+      const toolMsg = parentToolMessage(aggregator);
       expect(toolMsg).toBeDefined();
-
       if (toolMsg?.type === "tool") {
         expect(toolMsg.nestedCalls).toHaveLength(1);
         expect(toolMsg.nestedCalls![0]).toEqual({
@@ -3143,46 +2811,16 @@ describe("StreamingMessageAggregator", () => {
     });
 
     test("updates nested call with output on tool-call-end with parentToolCallId", () => {
-      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
-
-      // Setup: stream with parent and nested tool
-      aggregator.handleStreamStart({
-        type: "stream-start",
-        workspaceId: "test-workspace",
-        messageId: "msg-1",
-        historySequence: 1,
-        model: "claude-3-5-sonnet-20241022",
-        startTime: Date.now(),
-      });
-
-      aggregator.handleToolCallStart({
-        type: "tool-call-start",
-        workspaceId: "test-workspace",
-        messageId: "msg-1",
-        toolCallId: "parent-tool-1",
-        toolName: "code_execution",
-        args: { code: "test" },
-        tokens: 10,
-        timestamp: 1000,
-      });
-
-      aggregator.handleToolCallStart({
-        type: "tool-call-start",
-        workspaceId: "test-workspace",
-        messageId: "msg-1",
+      const aggregator = createTestAggregator();
+      startParentTool(aggregator);
+      startToolCall(aggregator, {
         toolCallId: "nested-tool-1",
         toolName: "file_read",
         args: { filePath: "test.txt" },
-        tokens: 0,
         timestamp: 1100,
         parentToolCallId: "parent-tool-1",
       });
-
-      // End nested tool call with result
-      aggregator.handleToolCallEnd({
-        type: "tool-call-end",
-        workspaceId: "test-workspace",
-        messageId: "msg-1",
+      endToolCall(aggregator, {
         toolCallId: "nested-tool-1",
         toolName: "file_read",
         result: { success: true, content: "file content" },
@@ -3190,9 +2828,7 @@ describe("StreamingMessageAggregator", () => {
         parentToolCallId: "parent-tool-1",
       });
 
-      const messages = aggregator.getDisplayedMessages();
-      const toolMsg = messages.find((m) => m.type === "tool" && m.toolCallId === "parent-tool-1");
-
+      const toolMsg = parentToolMessage(aggregator);
       if (toolMsg?.type === "tool") {
         expect(toolMsg.nestedCalls).toHaveLength(1);
         expect(toolMsg.nestedCalls![0].state).toBe("output-available");
@@ -3204,153 +2840,74 @@ describe("StreamingMessageAggregator", () => {
     });
 
     test("handles multiple nested calls in sequence", () => {
-      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      const aggregator = createTestAggregator();
+      startParentTool(aggregator, "multi-tool code");
 
-      aggregator.handleStreamStart({
-        type: "stream-start",
-        workspaceId: "test-workspace",
-        messageId: "msg-1",
-        historySequence: 1,
-        model: "claude-3-5-sonnet-20241022",
-        startTime: Date.now(),
-      });
+      for (const nested of [
+        {
+          toolCallId: "nested-1",
+          toolName: "file_read",
+          args: { filePath: "a.txt" },
+          result: { success: true, content: "content A" },
+          start: 1100,
+          end: 1150,
+        },
+        {
+          toolCallId: "nested-2",
+          toolName: "bash",
+          args: { script: "echo hello" },
+          result: { success: true, output: "hello" },
+          start: 1200,
+          end: 1250,
+        },
+      ]) {
+        startToolCall(aggregator, {
+          toolCallId: nested.toolCallId,
+          toolName: nested.toolName,
+          args: nested.args,
+          timestamp: nested.start,
+          parentToolCallId: "parent-tool-1",
+        });
+        endToolCall(aggregator, {
+          toolCallId: nested.toolCallId,
+          toolName: nested.toolName,
+          result: nested.result,
+          timestamp: nested.end,
+          parentToolCallId: "parent-tool-1",
+        });
+      }
 
-      aggregator.handleToolCallStart({
-        type: "tool-call-start",
-        workspaceId: "test-workspace",
-        messageId: "msg-1",
-        toolCallId: "parent-tool-1",
-        toolName: "code_execution",
-        args: { code: "multi-tool code" },
-        tokens: 10,
-        timestamp: 1000,
-      });
-
-      // First nested call
-      aggregator.handleToolCallStart({
-        type: "tool-call-start",
-        workspaceId: "test-workspace",
-        messageId: "msg-1",
-        toolCallId: "nested-1",
-        toolName: "file_read",
-        args: { filePath: "a.txt" },
-        tokens: 0,
-        timestamp: 1100,
-        parentToolCallId: "parent-tool-1",
-      });
-
-      aggregator.handleToolCallEnd({
-        type: "tool-call-end",
-        workspaceId: "test-workspace",
-        messageId: "msg-1",
-        toolCallId: "nested-1",
-        toolName: "file_read",
-        result: { success: true, content: "content A" },
-        timestamp: 1150,
-        parentToolCallId: "parent-tool-1",
-      });
-
-      // Second nested call
-      aggregator.handleToolCallStart({
-        type: "tool-call-start",
-        workspaceId: "test-workspace",
-        messageId: "msg-1",
-        toolCallId: "nested-2",
-        toolName: "bash",
-        args: { script: "echo hello" },
-        tokens: 0,
-        timestamp: 1200,
-        parentToolCallId: "parent-tool-1",
-      });
-
-      aggregator.handleToolCallEnd({
-        type: "tool-call-end",
-        workspaceId: "test-workspace",
-        messageId: "msg-1",
-        toolCallId: "nested-2",
-        toolName: "bash",
-        result: { success: true, output: "hello" },
-        timestamp: 1250,
-        parentToolCallId: "parent-tool-1",
-      });
-
-      const messages = aggregator.getDisplayedMessages();
-      const toolMsg = messages.find((m) => m.type === "tool" && m.toolCallId === "parent-tool-1");
-
+      const toolMsg = parentToolMessage(aggregator);
       if (toolMsg?.type === "tool") {
         expect(toolMsg.nestedCalls).toHaveLength(2);
-
         expect(toolMsg.nestedCalls![0].toolName).toBe("file_read");
         expect(toolMsg.nestedCalls![0].state).toBe("output-available");
-
         expect(toolMsg.nestedCalls![1].toolName).toBe("bash");
         expect(toolMsg.nestedCalls![1].state).toBe("output-available");
       }
     });
 
     test("falls through to create regular tool if parent not found", () => {
-      // Note: This is defensive behavior - if parentToolCallId is provided but parent
-      // doesn't exist, we fall through and create a regular tool part rather than dropping it.
-      // This handles edge cases where events arrive out of order.
-      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
-
-      aggregator.handleStreamStart({
-        type: "stream-start",
-        workspaceId: "test-workspace",
-        messageId: "msg-1",
-        historySequence: 1,
-        model: "claude-3-5-sonnet-20241022",
-        startTime: Date.now(),
-      });
-
-      // Try to add nested call with non-existent parent
-      aggregator.handleToolCallStart({
-        type: "tool-call-start",
-        workspaceId: "test-workspace",
-        messageId: "msg-1",
+      // Defensive behavior: out-of-order nested calls should become regular tool parts.
+      const aggregator = createTestAggregator();
+      startTestStream(aggregator, { messageId: "msg-1" });
+      startToolCall(aggregator, {
         toolCallId: "nested-orphan",
         toolName: "file_read",
         args: { filePath: "test.txt" },
-        tokens: 0,
         timestamp: 1000,
         parentToolCallId: "non-existent-parent",
       });
 
-      // Falls through and creates a regular tool part (defensive behavior)
-      const messages = aggregator.getDisplayedMessages();
-      const toolParts = messages.filter((m) => m.type === "tool");
+      const toolParts = aggregator.getDisplayedMessages().filter((m) => m.type === "tool");
       expect(toolParts).toHaveLength(1);
       expect(toolParts[0].toolCallId).toBe("nested-orphan");
     });
 
     test("nested call end is ignored if nested call not found in parent", () => {
-      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
-
-      aggregator.handleStreamStart({
-        type: "stream-start",
-        workspaceId: "test-workspace",
-        messageId: "msg-1",
-        historySequence: 1,
-        model: "claude-3-5-sonnet-20241022",
-        startTime: Date.now(),
-      });
-
-      aggregator.handleToolCallStart({
-        type: "tool-call-start",
-        workspaceId: "test-workspace",
-        messageId: "msg-1",
-        toolCallId: "parent-tool-1",
-        toolName: "code_execution",
-        args: { code: "test" },
-        tokens: 10,
-        timestamp: 1000,
-      });
-
-      // Try to end a nested call that was never started - should not throw
-      aggregator.handleToolCallEnd({
-        type: "tool-call-end",
-        workspaceId: "test-workspace",
-        messageId: "msg-1",
+      const aggregator = createTestAggregator();
+      startParentTool(aggregator);
+      endToolCall(aggregator, {
         toolCallId: "unknown-nested",
         toolName: "file_read",
         result: { success: true },
@@ -3358,12 +2915,8 @@ describe("StreamingMessageAggregator", () => {
         parentToolCallId: "parent-tool-1",
       });
 
-      // Parent should still exist with empty nestedCalls
-      const messages = aggregator.getDisplayedMessages();
-      const toolMsg = messages.find((m) => m.type === "tool" && m.toolCallId === "parent-tool-1");
+      const toolMsg = parentToolMessage(aggregator);
       expect(toolMsg).toBeDefined();
-
-      // nestedCalls may be undefined or empty, both are fine
       if (toolMsg?.type === "tool") {
         expect(toolMsg.nestedCalls ?? []).toHaveLength(0);
       }

@@ -137,6 +137,50 @@ const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
   cleanup: mock(() => Promise.resolve()),
 };
 
+type WorkspaceServiceArgs = ConstructorParameters<typeof WorkspaceService>;
+
+function createMockAIService(overrides: Partial<AIService> = {}): AIService {
+  return {
+    on: mock(() => undefined),
+    off: mock(() => undefined),
+    isStreaming: mock(() => false),
+    ...overrides,
+  } as unknown as AIService;
+}
+
+function createWorkspaceServiceForTest(options: {
+  config: Partial<Config> | Config;
+  historyService?: HistoryService;
+  aiService?: AIService;
+  initStateManager?: InitStateManager;
+  extensionMetadata?: ExtensionMetadataService;
+  backgroundProcessManager?: BackgroundProcessManager;
+  sessionUsageService?: WorkspaceServiceArgs[6];
+  policyService?: WorkspaceServiceArgs[7];
+  telemetryService?: WorkspaceServiceArgs[8];
+  experimentsService?: WorkspaceServiceArgs[9];
+  sessionTimingService?: WorkspaceServiceArgs[10];
+  opResolver?: WorkspaceServiceArgs[11];
+}): WorkspaceService {
+  // Test helpers often don't exercise HistoryService; use a narrow stub for those cases.
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+  const defaultHistoryService: HistoryService = {} as HistoryService;
+  return new WorkspaceService(
+    options.config as Config,
+    options.historyService ?? defaultHistoryService,
+    options.aiService ?? createMockAIService(),
+    options.initStateManager ?? (mockInitStateManager as InitStateManager),
+    options.extensionMetadata ?? (mockExtensionMetadataService as ExtensionMetadataService),
+    options.backgroundProcessManager ?? (mockBackgroundProcessManager as BackgroundProcessManager),
+    options.sessionUsageService,
+    options.policyService,
+    options.telemetryService,
+    options.experimentsService,
+    options.sessionTimingService,
+    options.opResolver
+  );
+}
+
 async function setWorkspaceGoalOk(
   goalService: WorkspaceGoalService,
   input: Parameters<WorkspaceGoalService["setGoal"]>[0]
@@ -787,14 +831,11 @@ describe("WorkspaceService initialize", () => {
       off: mock(() => undefined),
     } as unknown as AIService;
 
-    workspaceService = new WorkspaceService(
+    workspaceService = createWorkspaceServiceForTest({
       config,
-      {} as HistoryService,
       aiService,
-      mockInitStateManager as InitStateManager,
-      mockExtensionMetadataService as ExtensionMetadataService,
-      mockBackgroundProcessManager as BackgroundProcessManager
-    );
+      initStateManager: mockInitStateManager as InitStateManager,
+    });
   });
 
   test("schedules startup recovery for non-task, non-archived chats", async () => {
@@ -955,19 +996,12 @@ describe("WorkspaceService rename lock", () => {
       on: mock(() => undefined as unknown as InitStateManager),
       getInitState: mock(() => undefined),
     };
-    const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
-    const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
-      cleanup: mock(() => Promise.resolve()),
-    };
-
-    workspaceService = new WorkspaceService(
-      mockConfig as Config,
+    workspaceService = createWorkspaceServiceForTest({
+      config: mockConfig,
       historyService,
-      mockAIService,
-      mockInitStateManager as InitStateManager,
-      mockExtensionMetadataService as ExtensionMetadataService,
-      mockBackgroundProcessManager as BackgroundProcessManager
-    );
+      aiService: mockAIService,
+      initStateManager: mockInitStateManager as InitStateManager,
+    });
   });
 
   afterEach(async () => {
@@ -1097,14 +1131,13 @@ describe("WorkspaceService sendMessage status clearing", () => {
       ),
     };
 
-    workspaceService = new WorkspaceService(
-      mockConfig as Config,
+    workspaceService = createWorkspaceServiceForTest({
+      config: mockConfig,
       historyService,
       aiService,
-      mockInitStateManager as InitStateManager,
-      mockExtensionMetadata as ExtensionMetadataService,
-      mockBackgroundProcessManager as BackgroundProcessManager
-    );
+      extensionMetadata: mockExtensionMetadata as ExtensionMetadataService,
+      initStateManager: mockInitStateManager as InitStateManager,
+    });
 
     fakeSession = {
       isBusy: mock(() => true),
@@ -1952,14 +1985,12 @@ describe("WorkspaceService idle compaction dispatch", () => {
       findWorkspace: mock(() => null),
     };
 
-    workspaceService = new WorkspaceService(
-      mockConfig as Config,
+    workspaceService = createWorkspaceServiceForTest({
+      config: mockConfig,
       historyService,
       aiService,
-      mockInitStateManager as InitStateManager,
-      mockExtensionMetadataService as ExtensionMetadataService,
-      mockBackgroundProcessManager as BackgroundProcessManager
-    );
+      initStateManager: mockInitStateManager as InitStateManager,
+    });
   });
 
   afterEach(async () => {
@@ -2387,14 +2418,12 @@ describe("WorkspaceService streaming generation guard", () => {
       findWorkspace: mock(() => null),
     };
 
-    workspaceService = new WorkspaceService(
-      mockConfig as Config,
+    workspaceService = createWorkspaceServiceForTest({
+      config: mockConfig,
       historyService,
       aiService,
-      mockInitStateManager as InitStateManager,
-      mockExtensionMetadataService as ExtensionMetadataService,
-      mockBackgroundProcessManager as BackgroundProcessManager
-    );
+      initStateManager: mockInitStateManager as InitStateManager,
+    });
   });
 
   afterEach(async () => {
@@ -2663,19 +2692,12 @@ describe("WorkspaceService executeBash archive guards", () => {
       waitForInit: waitForInitMock,
     };
 
-    const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
-    const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
-      cleanup: mock(() => Promise.resolve()),
-    };
-
-    workspaceService = new WorkspaceService(
-      mockConfig as Config,
+    workspaceService = createWorkspaceServiceForTest({
+      config: mockConfig,
       historyService,
       aiService,
-      mockInitStateManager as InitStateManager,
-      mockExtensionMetadataService as ExtensionMetadataService,
-      mockBackgroundProcessManager as BackgroundProcessManager
-    );
+      initStateManager: mockInitStateManager as InitStateManager,
+    });
   });
 
   afterEach(async () => {
@@ -2781,19 +2803,12 @@ describe("WorkspaceService executeBash workspace path resolution", () => {
       getInitState: mock(() => undefined),
       waitForInit: waitForInitMock,
     };
-    const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
-    const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
-      cleanup: mock(() => Promise.resolve()),
-    };
-
-    workspaceService = new WorkspaceService(
-      mockConfig as Config,
+    workspaceService = createWorkspaceServiceForTest({
+      config: mockConfig,
       historyService,
       aiService,
-      mockInitStateManager as InitStateManager,
-      mockExtensionMetadataService as ExtensionMetadataService,
-      mockBackgroundProcessManager as BackgroundProcessManager
-    );
+      initStateManager: mockInitStateManager as InitStateManager,
+    });
 
     createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockReturnValue({
       ensureReady: mock(() => Promise.resolve({ ready: true })),
@@ -2883,19 +2898,12 @@ describe("WorkspaceService getFileCompletions", () => {
       on: mock(() => undefined as unknown as InitStateManager),
       getInitState: mock(() => undefined),
     };
-    const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
-    const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
-      cleanup: mock(() => Promise.resolve()),
-    };
-
-    workspaceService = new WorkspaceService(
-      mockConfig as Config,
+    workspaceService = createWorkspaceServiceForTest({
+      config: mockConfig,
       historyService,
       aiService,
-      mockInitStateManager as InitStateManager,
-      mockExtensionMetadataService as ExtensionMetadataService,
-      mockBackgroundProcessManager as BackgroundProcessManager
-    );
+      initStateManager: mockInitStateManager as InitStateManager,
+    });
 
     createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockImplementation(
       (_runtimeConfig, options) => {
@@ -3173,19 +3181,12 @@ describe("WorkspaceService getProjectGitStatuses", () => {
       on: mock(() => undefined as unknown as InitStateManager),
       getInitState: mock(() => undefined),
     };
-    const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
-    const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
-      cleanup: mock(() => Promise.resolve()),
-    };
-
-    const workspaceService = new WorkspaceService(
-      mockConfig as Config,
+    const workspaceService = createWorkspaceServiceForTest({
+      config: mockConfig,
       historyService,
       aiService,
-      mockInitStateManager as InitStateManager,
-      mockExtensionMetadataService as ExtensionMetadataService,
-      mockBackgroundProcessManager as BackgroundProcessManager
-    );
+      initStateManager: mockInitStateManager as InitStateManager,
+    });
 
     const executeBashMock = mock(params.executeBashImpl);
 
@@ -3413,19 +3414,12 @@ describe("WorkspaceService post-compaction metadata refresh", () => {
       on: mock(() => undefined as unknown as InitStateManager),
       getInitState: mock(() => undefined),
     };
-    const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
-    const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
-      cleanup: mock(() => Promise.resolve()),
-    };
-
-    workspaceService = new WorkspaceService(
-      mockConfig as Config,
+    workspaceService = createWorkspaceServiceForTest({
+      config: mockConfig,
       historyService,
       aiService,
-      mockInitStateManager as InitStateManager,
-      mockExtensionMetadataService as ExtensionMetadataService,
-      mockBackgroundProcessManager as BackgroundProcessManager
-    );
+      initStateManager: mockInitStateManager as InitStateManager,
+    });
   });
 
   afterEach(async () => {
@@ -3574,19 +3568,12 @@ describe("WorkspaceService maybePersistAISettingsFromOptions", () => {
       on: mock(() => undefined as unknown as InitStateManager),
       getInitState: mock(() => undefined),
     };
-    const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
-    const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
-      cleanup: mock(() => Promise.resolve()),
-    };
-
-    workspaceService = new WorkspaceService(
-      mockConfig as Config,
+    workspaceService = createWorkspaceServiceForTest({
+      config: mockConfig,
       historyService,
       aiService,
-      mockInitStateManager as InitStateManager,
-      mockExtensionMetadataService as ExtensionMetadataService,
-      mockBackgroundProcessManager as BackgroundProcessManager
-    );
+      initStateManager: mockInitStateManager as InitStateManager,
+    });
   });
 
   afterEach(async () => {
@@ -4061,14 +4048,12 @@ describe("WorkspaceService remove desktop session cleanup", () => {
       loadConfigOrDefault: mock(() => ({ projects: new Map() })),
     };
 
-    workspaceService = new WorkspaceService(
-      mockConfig as Config,
+    workspaceService = createWorkspaceServiceForTest({
+      config: mockConfig,
       historyService,
       aiService,
-      mockInitStateManager as InitStateManager,
-      mockExtensionMetadataService as ExtensionMetadataService,
-      mockBackgroundProcessManager as BackgroundProcessManager
-    );
+      initStateManager: mockInitStateManager as InitStateManager,
+    });
   });
 
   afterEach(async () => {
@@ -4184,14 +4169,12 @@ describe("WorkspaceService remove preserved descendants", () => {
       loadConfigOrDefault: mock(() => configState),
     };
 
-    workspaceService = new WorkspaceService(
-      mockConfig as Config,
+    workspaceService = createWorkspaceServiceForTest({
+      config: mockConfig,
       historyService,
-      mockAIService,
-      mockInitStateManager as InitStateManager,
-      mockExtensionMetadataService as ExtensionMetadataService,
-      mockBackgroundProcessManager as BackgroundProcessManager
-    );
+      aiService: mockAIService,
+      initStateManager: mockInitStateManager as InitStateManager,
+    });
   });
 
   afterEach(async () => {
@@ -4618,14 +4601,12 @@ describe("WorkspaceService archive lifecycle hooks", () => {
       off: mock(() => {}),
     } as unknown as AIService;
 
-    workspaceService = new WorkspaceService(
-      mockConfig as Config,
+    workspaceService = createWorkspaceServiceForTest({
+      config: mockConfig,
       historyService,
-      mockAIService,
-      mockInitStateManager as InitStateManager,
-      mockExtensionMetadataService as ExtensionMetadataService,
-      mockBackgroundProcessManager as BackgroundProcessManager
-    );
+      aiService: mockAIService,
+      initStateManager: mockInitStateManager as InitStateManager,
+    });
   });
 
   afterEach(async () => {
@@ -5048,14 +5029,12 @@ describe("WorkspaceService unarchive lifecycle hooks", () => {
       off: mock(() => {}),
     } as unknown as AIService;
 
-    workspaceService = new WorkspaceService(
-      mockConfig as Config,
+    workspaceService = createWorkspaceServiceForTest({
+      config: mockConfig,
       historyService,
       aiService,
-      mockInitStateManager as InitStateManager,
-      mockExtensionMetadataService as ExtensionMetadataService,
-      mockBackgroundProcessManager as BackgroundProcessManager
-    );
+      initStateManager: mockInitStateManager as InitStateManager,
+    });
   });
 
   afterEach(async () => {
@@ -5188,14 +5167,12 @@ describe("WorkspaceService archive snapshots", () => {
       off: mock(() => undefined),
     } as unknown as AIService;
 
-    workspaceService = new WorkspaceService(
-      mockConfig as Config,
+    workspaceService = createWorkspaceServiceForTest({
+      config: mockConfig,
       historyService,
       aiService,
-      mockInitStateManager as InitStateManager,
-      mockExtensionMetadataService as ExtensionMetadataService,
-      mockBackgroundProcessManager as BackgroundProcessManager
-    );
+      initStateManager: mockInitStateManager as InitStateManager,
+    });
   });
 
   afterEach(async () => {
@@ -5377,14 +5354,12 @@ describe("WorkspaceService preflightArchive and acknowledged archive", () => {
       off: mock(() => undefined),
     } as unknown as AIService;
 
-    workspaceService = new WorkspaceService(
-      mockConfig as Config,
+    workspaceService = createWorkspaceServiceForTest({
+      config: mockConfig,
       historyService,
       aiService,
-      mockInitStateManager as InitStateManager,
-      mockExtensionMetadataService as ExtensionMetadataService,
-      mockBackgroundProcessManager as BackgroundProcessManager
-    );
+      initStateManager: mockInitStateManager as InitStateManager,
+    });
   });
 
   afterEach(async () => {
@@ -5633,14 +5608,12 @@ describe("WorkspaceService unarchive snapshot restore", () => {
       off: mock(() => undefined),
     } as unknown as AIService;
 
-    workspaceService = new WorkspaceService(
-      mockConfig as Config,
+    workspaceService = createWorkspaceServiceForTest({
+      config: mockConfig,
       historyService,
       aiService,
-      mockInitStateManager as InitStateManager,
-      mockExtensionMetadataService as ExtensionMetadataService,
-      mockBackgroundProcessManager as BackgroundProcessManager
-    );
+      initStateManager: mockInitStateManager as InitStateManager,
+    });
   });
 
   afterEach(async () => {
@@ -5783,14 +5756,12 @@ describe("WorkspaceService deleteWorktree", () => {
       off: mock(() => undefined),
     } as unknown as AIService;
 
-    const workspaceService = new WorkspaceService(
-      mockConfig as Config,
+    const workspaceService = createWorkspaceServiceForTest({
+      config: mockConfig,
       historyService,
       aiService,
-      mockInitStateManager as InitStateManager,
-      mockExtensionMetadataService as ExtensionMetadataService,
-      mockBackgroundProcessManager as BackgroundProcessManager
-    );
+      initStateManager: mockInitStateManager as InitStateManager,
+    });
 
     const metadataEvents: Array<FrontendWorkspaceMetadata | null> = [];
     workspaceService.on("metadata", (event: unknown) => {
@@ -5983,14 +5954,12 @@ describe("WorkspaceService archiveMergedInProject", () => {
         return this;
       },
     } as unknown as AIService;
-    const workspaceService = new WorkspaceService(
-      mockConfig as Config,
+    const workspaceService = createWorkspaceServiceForTest({
+      config: mockConfig,
       historyService,
       aiService,
-      mockInitStateManager as InitStateManager,
-      mockExtensionMetadataService as ExtensionMetadataService,
-      mockBackgroundProcessManager as BackgroundProcessManager
-    );
+      initStateManager: mockInitStateManager as InitStateManager,
+    });
 
     const executeBashMock = mock(executeBashImpl);
     const archiveMock = mock(archiveImpl);
@@ -6238,14 +6207,12 @@ describe("WorkspaceService init cancellation", () => {
       getInitState: mock(() => undefined),
     };
 
-    const workspaceService = new WorkspaceService(
-      mockConfig as Config,
+    const workspaceService = createWorkspaceServiceForTest({
+      config: mockConfig,
       historyService,
-      mockAIService,
-      mockInitStateManager as InitStateManager,
-      mockExtensionMetadataService as ExtensionMetadataService,
-      mockBackgroundProcessManager as BackgroundProcessManager
-    );
+      aiService: mockAIService,
+      initStateManager: mockInitStateManager as InitStateManager,
+    });
 
     const result = await workspaceService.create(projectPath, "ws-branch", undefined, "title", {
       type: "local",
@@ -6299,14 +6266,12 @@ describe("WorkspaceService init cancellation", () => {
       ),
       clearInMemoryState: clearInMemoryStateMock,
     };
-    const workspaceService = new WorkspaceService(
-      mockConfig as Config,
+    const workspaceService = createWorkspaceServiceForTest({
+      config: mockConfig,
       historyService,
-      mockAIService,
-      mockInitStateManager as InitStateManager,
-      mockExtensionMetadataService as ExtensionMetadataService,
-      mockBackgroundProcessManager as BackgroundProcessManager
-    );
+      aiService: mockAIService,
+      initStateManager: mockInitStateManager as InitStateManager,
+    });
 
     // Make it obvious if archive() incorrectly chooses deletion.
     workspaceService.remove = removeMock as unknown as typeof workspaceService.remove;
@@ -6357,14 +6322,12 @@ describe("WorkspaceService init cancellation", () => {
       ),
       clearInMemoryState: mock((_workspaceId: string) => undefined),
     };
-    const workspaceService = new WorkspaceService(
-      mockConfig as Config,
+    const workspaceService = createWorkspaceServiceForTest({
+      config: mockConfig,
       historyService,
-      mockAIService,
-      mockInitStateManager as InitStateManager,
-      mockExtensionMetadataService as ExtensionMetadataService,
-      mockBackgroundProcessManager as BackgroundProcessManager
-    );
+      aiService: mockAIService,
+      initStateManager: mockInitStateManager as InitStateManager,
+    });
 
     // Make it obvious if archive() incorrectly chooses deletion.
     workspaceService.remove = removeMock as unknown as typeof workspaceService.remove;
@@ -6420,14 +6383,12 @@ describe("WorkspaceService init cancellation", () => {
           : undefined
       ),
     };
-    const workspaceService = new WorkspaceService(
-      mockConfig as Config,
+    const workspaceService = createWorkspaceServiceForTest({
+      config: mockConfig,
       historyService,
-      mockAIService,
-      mockInitStateManager as InitStateManager,
-      mockExtensionMetadataService as ExtensionMetadataService,
-      mockBackgroundProcessManager as BackgroundProcessManager
-    );
+      aiService: mockAIService,
+      initStateManager: mockInitStateManager as InitStateManager,
+    });
 
     const list = await workspaceService.list();
     expect(list).toHaveLength(1);
@@ -6940,14 +6901,12 @@ describe("WorkspaceService regenerateTitle", () => {
       getInitState: mock(() => undefined),
     };
 
-    workspaceService = new WorkspaceService(
-      mockConfig as Config,
+    workspaceService = createWorkspaceServiceForTest({
+      config: mockConfig,
       historyService,
-      mockAIService,
-      mockInitStateManager as InitStateManager,
-      mockExtensionMetadataService as ExtensionMetadataService,
-      mockBackgroundProcessManager as BackgroundProcessManager
-    );
+      aiService: mockAIService,
+      initStateManager: mockInitStateManager as InitStateManager,
+    });
   });
 
   afterEach(async () => {
@@ -7161,14 +7120,12 @@ describe("WorkspaceService fork", () => {
       })),
     };
 
-    const workspaceService = new WorkspaceService(
-      mockConfig as Config,
+    const workspaceService = createWorkspaceServiceForTest({
+      config: mockConfig,
       historyService,
-      mockAIService,
-      mockInitStateManager as InitStateManager,
-      mockExtensionMetadataService as ExtensionMetadataService,
-      mockBackgroundProcessManager as BackgroundProcessManager
-    );
+      aiService: mockAIService,
+      initStateManager: mockInitStateManager as InitStateManager,
+    });
 
     const getOrCreateSessionSpy = spyOn(workspaceService, "getOrCreateSession").mockReturnValue({
       emitMetadata: mock(() => undefined),
@@ -7810,14 +7767,12 @@ describe("WorkspaceService interruptStream", () => {
       off: mock(() => {}),
     } as unknown as AIService;
 
-    const workspaceService = new WorkspaceService(
-      mockConfig as Config,
+    const workspaceService = createWorkspaceServiceForTest({
+      config: mockConfig,
       historyService,
-      mockAIService,
-      mockInitStateManager as InitStateManager,
-      mockExtensionMetadataService as ExtensionMetadataService,
-      mockBackgroundProcessManager as BackgroundProcessManager
-    );
+      aiService: mockAIService,
+      initStateManager: mockInitStateManager as InitStateManager,
+    });
 
     const resetAutoResumeCount = mock(() => undefined);
     const markParentWorkspaceInterrupted = mock(() => undefined);

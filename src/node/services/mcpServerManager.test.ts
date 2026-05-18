@@ -24,6 +24,76 @@ interface MCPServerManagerTestAccess {
   startSingleServerImpl: (...args: unknown[]) => Promise<unknown>;
 }
 
+const PROJECT_PATH = "/tmp/project";
+const WORKSPACE_PATH = "/tmp/workspace";
+// Tests use only Runtime identity for workspace request plumbing.
+// eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+const TEST_RUNTIME = {} as Runtime;
+
+function workspaceRequest(workspaceId: string, options: Record<string, unknown> = {}) {
+  return {
+    workspaceId,
+    projectPath: PROJECT_PATH,
+    runtime: TEST_RUNTIME,
+    workspacePath: WORKSPACE_PATH,
+    ...options,
+  };
+}
+
+function stdioConfig(command: string, disabled = false) {
+  return { transport: "stdio" as const, command, disabled };
+}
+
+function testTool(result: unknown = { ok: true }): Tool {
+  return { execute: mock(() => Promise.resolve(result)) } as unknown as Tool;
+}
+
+function testInstance(
+  name: string,
+  options: {
+    tools?: Record<string, Tool>;
+    close?: ReturnType<typeof mock>;
+    isClosed?: boolean;
+  } = {}
+) {
+  return {
+    name,
+    resolvedTransport: "stdio" as const,
+    autoFallbackUsed: false,
+    tools: options.tools ?? {},
+    isClosed: options.isClosed ?? false,
+    close: options.close ?? mock(() => Promise.resolve(undefined)),
+  };
+}
+
+function startResult(
+  entries: Array<[string, Parameters<typeof testInstance>[1]?]>,
+  options: { failedServerNames?: string[]; timedOutServerNames?: string[] } = {}
+) {
+  return {
+    instances: new Map(
+      entries.map(([name, instanceOptions]) => [name, testInstance(name, instanceOptions)])
+    ),
+    failedServerNames: options.failedServerNames ?? [],
+    timedOutServerNames: options.timedOutServerNames ?? [],
+  };
+}
+
+function cachedStats(overrides: Record<string, unknown> = {}) {
+  return {
+    enabledServerCount: 1,
+    startedServerCount: 0,
+    failedServerCount: 1,
+    autoFallbackCount: 0,
+    failedServerNames: ["slow"],
+    hasStdio: false,
+    hasHttp: false,
+    hasSse: false,
+    transportMode: "none",
+    ...overrides,
+  };
+}
+
 describe("MCPServerManager", () => {
   let configService: {
     listServers: ReturnType<typeof mock>;
@@ -50,29 +120,16 @@ describe("MCPServerManager", () => {
 
     const close = mock(() => Promise.resolve(undefined));
 
-    const instance = {
-      name: "server",
-      resolvedTransport: "stdio",
-      autoFallbackUsed: false,
-      tools: {},
-      isClosed: false,
-      close,
-    };
-
     const entry = {
       configSignature: "sig",
-      instances: new Map([["server", instance]]),
-      stats: {
-        enabledServerCount: 1,
+      instances: new Map([["server", testInstance("server", { close })]]),
+      stats: cachedStats({
         startedServerCount: 1,
         failedServerCount: 0,
-        autoFallbackCount: 0,
         failedServerNames: [],
         hasStdio: true,
-        hasHttp: false,
-        hasSse: false,
         transportMode: "stdio_only",
-      },
+      }),
       lastActivity: Date.now() - 11 * 60_000,
     };
 
@@ -89,29 +146,16 @@ describe("MCPServerManager", () => {
 
     const close = mock(() => Promise.resolve(undefined));
 
-    const instance = {
-      name: "server",
-      resolvedTransport: "stdio",
-      autoFallbackUsed: false,
-      tools: {},
-      isClosed: false,
-      close,
-    };
-
     const entry = {
       configSignature: "sig",
-      instances: new Map([["server", instance]]),
-      stats: {
-        enabledServerCount: 1,
+      instances: new Map([["server", testInstance("server", { close })]]),
+      stats: cachedStats({
         startedServerCount: 1,
         failedServerCount: 0,
-        autoFallbackCount: 0,
         failedServerNames: [],
         hasStdio: true,
-        hasHttp: false,
-        hasSse: false,
         transportMode: "stdio_only",
-      },
+      }),
       lastActivity: Date.now() - 11 * 60_000,
     };
 
@@ -145,10 +189,10 @@ describe("MCPServerManager", () => {
       try {
         await access.startSingleServer(
           "stuck-server",
-          { transport: "stdio", command: "never" },
-          {} as Runtime,
-          "/tmp/project",
-          "/tmp/workspace",
+          stdioConfig("never"),
+          TEST_RUNTIME,
+          PROJECT_PATH,
+          WORKSPACE_PATH,
           undefined,
           () => undefined
         );
@@ -206,10 +250,10 @@ describe("MCPServerManager", () => {
       const startPromise = access
         .startSingleServer(
           "cleanup-server",
-          { transport: "stdio", command: "never" },
-          {} as Runtime,
-          "/tmp/project",
-          "/tmp/workspace",
+          stdioConfig("never"),
+          TEST_RUNTIME,
+          PROJECT_PATH,
+          WORKSPACE_PATH,
           undefined,
           () => undefined
         )
@@ -272,10 +316,10 @@ describe("MCPServerManager", () => {
       try {
         await access.startSingleServer(
           "cleanup-hang-server",
-          { transport: "stdio", command: "never" },
-          {} as Runtime,
-          "/tmp/project",
-          "/tmp/workspace",
+          stdioConfig("never"),
+          TEST_RUNTIME,
+          PROJECT_PATH,
+          WORKSPACE_PATH,
           undefined,
           () => undefined
         );
@@ -303,14 +347,7 @@ describe("MCPServerManager", () => {
         return Promise.reject(new Error("invalid MCP server config"));
       }
 
-      return Promise.resolve({
-        name: String(name),
-        resolvedTransport: "stdio",
-        autoFallbackUsed: false,
-        tools: {},
-        isClosed: false,
-        close: mock(() => Promise.resolve(undefined)),
-      });
+      return Promise.resolve(testInstance(String(name)));
     });
 
     const originalSetTimeout = globalThis.setTimeout;
@@ -324,12 +361,12 @@ describe("MCPServerManager", () => {
     try {
       const result = await access.startServers(
         {
-          "slow-server": { transport: "stdio", command: "slow", disabled: false },
-          "broken-server": { transport: "stdio", command: "broken", disabled: false },
+          "slow-server": stdioConfig("slow"),
+          "broken-server": stdioConfig("broken"),
         },
-        {} as Runtime,
-        "/tmp/project",
-        "/tmp/workspace",
+        TEST_RUNTIME,
+        PROJECT_PATH,
+        WORKSPACE_PATH,
         undefined,
         () => undefined
       );
@@ -367,10 +404,10 @@ describe("MCPServerManager", () => {
 
     const result = await access.startSingleServerImpl(
       "stdio-aborted-after-exec",
-      { transport: "stdio", command: "never" },
+      stdioConfig("never"),
       { exec } as unknown as Runtime,
-      "/tmp/project",
-      "/tmp/workspace",
+      PROJECT_PATH,
+      WORKSPACE_PATH,
       undefined,
       () => undefined,
       controller.signal
@@ -413,7 +450,7 @@ describe("MCPServerManager", () => {
 
       const startup = access.startSingleServerImpl(
         "stdio-late-client-cleanup",
-        { transport: "stdio", command: "never" },
+        stdioConfig("never"),
         { exec } as unknown as Runtime,
         "/tmp/project",
         "/tmp/workspace",
@@ -454,9 +491,9 @@ describe("MCPServerManager", () => {
       const startup = access.startSingleServerImpl(
         "http-late-client-cleanup",
         { transport: "http", url: "https://example.com/mcp" },
-        {} as Runtime,
-        "/tmp/project",
-        "/tmp/workspace",
+        TEST_RUNTIME,
+        PROJECT_PATH,
+        WORKSPACE_PATH,
         undefined,
         () => undefined,
         controller.signal
@@ -478,13 +515,10 @@ describe("MCPServerManager", () => {
 
   test("getToolsForWorkspace tracks failed server names in stats", async () => {
     const workspaceId = "ws-failed-names";
-    const projectPath = "/tmp/project";
-    const workspacePath = "/tmp/workspace";
-
     configService.listServers = mock(() =>
       Promise.resolve({
-        "healthy-server": { transport: "stdio", command: "ok", disabled: false },
-        "broken-server": { transport: "stdio", command: "bad", disabled: false },
+        "healthy-server": stdioConfig("ok"),
+        "broken-server": stdioConfig("bad"),
       })
     );
 
@@ -494,22 +528,10 @@ describe("MCPServerManager", () => {
         return Promise.reject(new Error("invalid MCP server config"));
       }
 
-      return Promise.resolve({
-        name: String(name),
-        resolvedTransport: "stdio",
-        autoFallbackUsed: false,
-        tools: {},
-        isClosed: false,
-        close,
-      });
+      return Promise.resolve(testInstance(String(name), { close }));
     });
 
-    const result = await manager.getToolsForWorkspace({
-      workspaceId,
-      projectPath,
-      runtime: {} as unknown as Runtime,
-      workspacePath,
-    });
+    const result = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
 
     expect(result.stats.failedServerCount).toBe(1);
     expect(result.stats.failedServerNames).toContain("broken-server");
@@ -517,82 +539,42 @@ describe("MCPServerManager", () => {
 
   test("getToolsForWorkspace retries timed-out servers from cached workspace state", async () => {
     const workspaceId = "ws-timeout-retry";
-    const projectPath = "/tmp/project";
-    const workspacePath = "/tmp/workspace";
-
     configService.listServers = mock(() =>
       Promise.resolve({
-        serverA: { transport: "stdio", command: "cmd-a", disabled: false },
-        serverB: { transport: "stdio", command: "cmd-b", disabled: false },
+        serverA: stdioConfig("cmd-a"),
+        serverB: stdioConfig("cmd-b"),
       })
     );
 
-    const toolA = { execute: mock(() => Promise.resolve({ ok: true })) } as unknown as Tool;
-    const toolB = { execute: mock(() => Promise.resolve({ ok: true })) } as unknown as Tool;
+    const toolA = testTool();
+    const toolB = testTool();
 
     const startServersMock = mock((servers: unknown) => {
       const serverMap = servers as Record<string, unknown>;
       if (startServersMock.mock.calls.length === 1) {
         expect(Object.keys(serverMap)).toEqual(["serverA", "serverB"]);
-        return Promise.resolve({
-          instances: new Map([
-            [
-              "serverA",
-              {
-                name: "serverA",
-                resolvedTransport: "stdio",
-                autoFallbackUsed: false,
-                tools: { toolA },
-                isClosed: false,
-                close: mock(() => Promise.resolve(undefined)),
-              },
-            ],
-          ]),
-          failedServerNames: ["serverB"],
-          timedOutServerNames: ["serverB"],
-        });
+        return Promise.resolve(
+          startResult([["serverA", { tools: { toolA } }]], {
+            failedServerNames: ["serverB"],
+            timedOutServerNames: ["serverB"],
+          })
+        );
       }
 
       expect(Object.keys(serverMap)).toEqual(["serverB"]);
-      return Promise.resolve({
-        instances: new Map([
-          [
-            "serverB",
-            {
-              name: "serverB",
-              resolvedTransport: "stdio",
-              autoFallbackUsed: false,
-              tools: { toolB },
-              isClosed: false,
-              close: mock(() => Promise.resolve(undefined)),
-            },
-          ],
-        ]),
-        failedServerNames: [],
-        timedOutServerNames: [],
-      });
+      return Promise.resolve(startResult([["serverB", { tools: { toolB } }]]));
     });
 
     access.startServers = startServersMock;
 
-    const initial = await manager.getToolsForWorkspace({
-      workspaceId,
-      projectPath,
-      runtime: {} as unknown as Runtime,
-      workspacePath,
-    });
+    const initial = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
 
     expect(initial.stats.failedServerCount).toBe(1);
     expect(initial.stats.failedServerNames).toEqual(["serverB"]);
     expect(initial.stats.startedServerCount).toBe(1);
     expect(Object.keys(initial.tools)).toEqual(["servera_toola"]);
 
-    const retried = await manager.getToolsForWorkspace({
-      workspaceId,
-      projectPath,
-      runtime: {} as unknown as Runtime,
-      workspacePath,
-    });
+    const retried = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
 
     expect(startServersMock).toHaveBeenCalledTimes(2);
     expect(retried.stats.failedServerCount).toBe(0);
@@ -610,12 +592,9 @@ describe("MCPServerManager", () => {
 
   test("getToolsForWorkspace does not overlap timed-out retries for concurrent cached requests", async () => {
     const workspaceId = "ws-timeout-retry-concurrent";
-    const projectPath = "/tmp/project";
-    const workspacePath = "/tmp/workspace";
-
     configService.listServers = mock(() =>
       Promise.resolve({
-        slow: { transport: "stdio", command: "cmd-slow", disabled: false },
+        slow: stdioConfig("cmd-slow"),
       })
     );
 
@@ -627,7 +606,7 @@ describe("MCPServerManager", () => {
     }>();
     let hasSignaledRetryStart = false;
 
-    const slowTool = { execute: mock(() => Promise.resolve({ ok: true })) } as unknown as Tool;
+    const slowTool = testTool();
     const startServersMock = mock(() => {
       if (!hasSignaledRetryStart) {
         hasSignaledRetryStart = true;
@@ -643,55 +622,19 @@ describe("MCPServerManager", () => {
         slow: { transport: "stdio", command: "cmd-slow" },
       }),
       instances: new Map(),
-      stats: {
-        enabledServerCount: 1,
-        startedServerCount: 0,
-        failedServerCount: 1,
-        autoFallbackCount: 0,
-        failedServerNames: ["slow"],
-        hasStdio: false,
-        hasHttp: false,
-        hasSse: false,
-        transportMode: "none",
-      },
+      stats: cachedStats(),
       timedOutServerNames: ["slow"],
       lastActivity: Date.now(),
     });
 
-    const firstPromise = manager.getToolsForWorkspace({
-      workspaceId,
-      projectPath,
-      runtime: {} as unknown as Runtime,
-      workspacePath,
-    });
+    const firstPromise = manager.getToolsForWorkspace(workspaceRequest(workspaceId));
     await retryStarted.promise;
 
-    const secondPromise = manager.getToolsForWorkspace({
-      workspaceId,
-      projectPath,
-      runtime: {} as unknown as Runtime,
-      workspacePath,
-    });
+    const secondPromise = manager.getToolsForWorkspace(workspaceRequest(workspaceId));
 
     expect(startServersMock).toHaveBeenCalledTimes(1);
 
-    retryFinished.resolve({
-      instances: new Map([
-        [
-          "slow",
-          {
-            name: "slow",
-            resolvedTransport: "stdio",
-            autoFallbackUsed: false,
-            tools: { tool: slowTool },
-            isClosed: false,
-            close: mock(() => Promise.resolve(undefined)),
-          },
-        ],
-      ]),
-      failedServerNames: [],
-      timedOutServerNames: [],
-    });
+    retryFinished.resolve(startResult([["slow", { tools: { tool: slowTool } }]]));
 
     const [first] = await Promise.all([firstPromise, secondPromise]);
 
@@ -711,9 +654,6 @@ describe("MCPServerManager", () => {
 
   test("getToolsForWorkspace closes timed-out retry results when cache entry is replaced mid-retry", async () => {
     const workspaceId = "ws-timeout-retry-replaced";
-    const projectPath = "/tmp/project";
-    const workspacePath = "/tmp/workspace";
-
     let command = "cmd-1";
     configService.listServers = mock(() =>
       Promise.resolve({
@@ -731,22 +671,14 @@ describe("MCPServerManager", () => {
 
     const retriedClose = mock(() => Promise.resolve(undefined));
     const replacementClose = mock(() => Promise.resolve(undefined));
-    const retriedInstance = {
-      name: "slow",
-      resolvedTransport: "stdio",
-      autoFallbackUsed: false,
-      tools: { retry: { execute: mock(() => Promise.resolve({ ok: true })) } as unknown as Tool },
-      isClosed: false,
+    const retriedInstance = testInstance("slow", {
+      tools: { retry: testTool() },
       close: retriedClose,
-    };
-    const replacementInstance = {
-      name: "slow",
-      resolvedTransport: "stdio",
-      autoFallbackUsed: false,
-      tools: { active: { execute: mock(() => Promise.resolve({ ok: true })) } as unknown as Tool },
-      isClosed: false,
+    });
+    const replacementInstance = testInstance("slow", {
+      tools: { active: testTool() },
       close: replacementClose,
-    };
+    });
 
     const startServersMock = mock((servers: unknown) => {
       startServersCallCount += 1;
@@ -774,48 +706,26 @@ describe("MCPServerManager", () => {
         slow: { transport: "stdio", command: "cmd-1" },
       }),
       instances: new Map(),
-      stats: {
-        enabledServerCount: 1,
-        startedServerCount: 0,
-        failedServerCount: 1,
-        autoFallbackCount: 0,
-        failedServerNames: ["slow"],
-        hasStdio: false,
-        hasHttp: false,
-        hasSse: false,
-        transportMode: "none",
-      },
+      stats: cachedStats(),
       timedOutServerNames: ["slow"],
       retryingTimedOutServerNames: new Set<string>(),
       lastActivity: Date.now(),
     };
     access.workspaceServers.set(workspaceId, staleEntry);
 
-    const retryPromise = manager.getToolsForWorkspace({
-      workspaceId,
-      projectPath,
-      runtime: {} as unknown as Runtime,
-      workspacePath,
-    });
+    const retryPromise = manager.getToolsForWorkspace(workspaceRequest(workspaceId));
     await retryStarted.promise;
 
     expect(staleEntry.retryingTimedOutServerNames.has("slow")).toBe(true);
 
     command = "cmd-2";
-    const replacementResult = await manager.getToolsForWorkspace({
-      workspaceId,
-      projectPath,
-      runtime: {} as unknown as Runtime,
-      workspacePath,
-    });
+    const replacementResult = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
 
     expect(Object.keys(replacementResult.tools)).toEqual(["slow_active"]);
 
-    retryFinished.resolve({
-      instances: new Map([["slow", retriedInstance]]),
-      failedServerNames: [],
-      timedOutServerNames: [],
-    });
+    retryFinished.resolve(
+      startResult([["slow", { tools: retriedInstance.tools, close: retriedClose }]])
+    );
 
     const retriedResult = await retryPromise;
 
@@ -837,9 +747,6 @@ describe("MCPServerManager", () => {
 
   test("getToolsForWorkspace defers restarts while leased and applies them on next request", async () => {
     const workspaceId = "ws-defer";
-    const projectPath = "/tmp/project";
-    const workspacePath = "/tmp/workspace";
-
     let command = "cmd-1";
     configService.listServers = mock(() =>
       Promise.resolve({
@@ -849,49 +756,20 @@ describe("MCPServerManager", () => {
 
     const close = mock(() => Promise.resolve(undefined));
 
-    const dummyTool = {
-      execute: mock(() => Promise.resolve({ ok: true })),
-    } as unknown as Tool;
-
     const startServersMock = mock(() =>
-      Promise.resolve({
-        instances: new Map([
-          [
-            "server",
-            {
-              name: "server",
-              resolvedTransport: "stdio",
-              autoFallbackUsed: false,
-              tools: { tool: dummyTool },
-              isClosed: false,
-              close,
-            },
-          ],
-        ]),
-        failedServerNames: [],
-      })
+      Promise.resolve(startResult([["server", { tools: { tool: testTool() }, close }]]))
     );
 
     access.startServers = startServersMock;
 
-    await manager.getToolsForWorkspace({
-      workspaceId,
-      projectPath,
-      runtime: {} as unknown as Runtime,
-      workspacePath,
-    });
+    await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
 
     manager.acquireLease(workspaceId);
 
     // Change signature while leased.
     command = "cmd-2";
 
-    await manager.getToolsForWorkspace({
-      workspaceId,
-      projectPath,
-      runtime: {} as unknown as Runtime,
-      workspacePath,
-    });
+    await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
 
     expect(startServersMock).toHaveBeenCalledTimes(1);
 
@@ -903,12 +781,7 @@ describe("MCPServerManager", () => {
     expect(close).toHaveBeenCalledTimes(0);
 
     // Next request (no lease) applies the pending restart.
-    await manager.getToolsForWorkspace({
-      workspaceId,
-      projectPath,
-      runtime: {} as unknown as Runtime,
-      workspacePath,
-    });
+    await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
 
     expect(startServersMock).toHaveBeenCalledTimes(2);
     expect(close).toHaveBeenCalledTimes(1);
@@ -916,12 +789,9 @@ describe("MCPServerManager", () => {
 
   test("getToolsForWorkspace restarts when cached instances are marked closed", async () => {
     const workspaceId = "ws-closed";
-    const projectPath = "/tmp/project";
-    const workspacePath = "/tmp/workspace";
-
     configService.listServers = mock(() =>
       Promise.resolve({
-        server: { transport: "stdio", command: "cmd", disabled: false },
+        server: stdioConfig("cmd"),
       })
     );
 
@@ -931,32 +801,14 @@ describe("MCPServerManager", () => {
     let startCount = 0;
     const startServersMock = mock(() => {
       startCount += 1;
-      return Promise.resolve({
-        instances: new Map([
-          [
-            "server",
-            {
-              name: "server",
-              resolvedTransport: "stdio",
-              autoFallbackUsed: false,
-              tools: {},
-              isClosed: false,
-              close: startCount === 1 ? close1 : close2,
-            },
-          ],
-        ]),
-        failedServerNames: [],
-      });
+      return Promise.resolve(
+        startResult([["server", { close: startCount === 1 ? close1 : close2 }]])
+      );
     });
 
     access.startServers = startServersMock;
 
-    await manager.getToolsForWorkspace({
-      workspaceId,
-      projectPath,
-      runtime: {} as unknown as Runtime,
-      workspacePath,
-    });
+    await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
 
     // Simulate an active stream lease.
     manager.acquireLease(workspaceId);
@@ -971,12 +823,7 @@ describe("MCPServerManager", () => {
       instance.isClosed = true;
     }
 
-    await manager.getToolsForWorkspace({
-      workspaceId,
-      projectPath,
-      runtime: {} as unknown as Runtime,
-      workspacePath,
-    });
+    await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
 
     expect(startServersMock).toHaveBeenCalledTimes(2);
     expect(close1).toHaveBeenCalledTimes(1);
@@ -984,13 +831,10 @@ describe("MCPServerManager", () => {
 
   test("getToolsForWorkspace does not close healthy instances when restarting closed ones while leased", async () => {
     const workspaceId = "ws-closed-partial";
-    const projectPath = "/tmp/project";
-    const workspacePath = "/tmp/workspace";
-
     configService.listServers = mock(() =>
       Promise.resolve({
-        serverA: { transport: "stdio", command: "cmd-a", disabled: false },
-        serverB: { transport: "stdio", command: "cmd-b", disabled: false },
+        serverA: stdioConfig("cmd-a"),
+        serverB: stdioConfig("cmd-b"),
       })
     );
 
@@ -1003,61 +847,20 @@ describe("MCPServerManager", () => {
       startCount += 1;
 
       if (startCount === 1) {
-        return Promise.resolve({
-          instances: new Map([
-            [
-              "serverA",
-              {
-                name: "serverA",
-                resolvedTransport: "stdio",
-                autoFallbackUsed: false,
-                tools: {},
-                isClosed: false,
-                close: closeA1,
-              },
-            ],
-            [
-              "serverB",
-              {
-                name: "serverB",
-                resolvedTransport: "stdio",
-                autoFallbackUsed: false,
-                tools: {},
-                isClosed: false,
-                close: closeB1,
-              },
-            ],
-          ]),
-          failedServerNames: [],
-        });
+        return Promise.resolve(
+          startResult([
+            ["serverA", { close: closeA1 }],
+            ["serverB", { close: closeB1 }],
+          ])
+        );
       }
 
-      return Promise.resolve({
-        instances: new Map([
-          [
-            "serverA",
-            {
-              name: "serverA",
-              resolvedTransport: "stdio",
-              autoFallbackUsed: false,
-              tools: {},
-              isClosed: false,
-              close: closeA2,
-            },
-          ],
-        ]),
-        failedServerNames: [],
-      });
+      return Promise.resolve(startResult([["serverA", { close: closeA2 }]]));
     });
 
     access.startServers = startServersMock;
 
-    await manager.getToolsForWorkspace({
-      workspaceId,
-      projectPath,
-      runtime: {} as unknown as Runtime,
-      workspacePath,
-    });
+    await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
 
     // Simulate an active stream lease.
     manager.acquireLease(workspaceId);
@@ -1072,12 +875,7 @@ describe("MCPServerManager", () => {
       instanceA.isClosed = true;
     }
 
-    await manager.getToolsForWorkspace({
-      workspaceId,
-      projectPath,
-      runtime: {} as unknown as Runtime,
-      workspacePath,
-    });
+    await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
 
     // Restart should only close the dead instance.
     expect(closeA1).toHaveBeenCalledTimes(1);
@@ -1086,69 +884,31 @@ describe("MCPServerManager", () => {
 
   test("getToolsForWorkspace does not return tools from newly-disabled servers while leased", async () => {
     const workspaceId = "ws-disable-while-leased";
-    const projectPath = "/tmp/project";
-    const workspacePath = "/tmp/workspace";
-
     configService.listServers = mock(() =>
       Promise.resolve({
-        serverA: { transport: "stdio", command: "cmd-a", disabled: false },
-        serverB: { transport: "stdio", command: "cmd-b", disabled: false },
+        serverA: stdioConfig("cmd-a"),
+        serverB: stdioConfig("cmd-b"),
       })
     );
 
-    const dummyToolA = { execute: mock(() => Promise.resolve({ ok: true })) } as unknown as Tool;
-    const dummyToolB = { execute: mock(() => Promise.resolve({ ok: true })) } as unknown as Tool;
-
     const startServersMock = mock(() =>
-      Promise.resolve({
-        instances: new Map([
-          [
-            "serverA",
-            {
-              name: "serverA",
-              resolvedTransport: "stdio",
-              autoFallbackUsed: false,
-              tools: { tool: dummyToolA },
-              isClosed: false,
-              close: mock(() => Promise.resolve(undefined)),
-            },
-          ],
-          [
-            "serverB",
-            {
-              name: "serverB",
-              resolvedTransport: "stdio",
-              autoFallbackUsed: false,
-              tools: { tool: dummyToolB },
-              isClosed: false,
-              close: mock(() => Promise.resolve(undefined)),
-            },
-          ],
-        ]),
-        failedServerNames: [],
-      })
+      Promise.resolve(
+        startResult([
+          ["serverA", { tools: { tool: testTool() } }],
+          ["serverB", { tools: { tool: testTool() } }],
+        ])
+      )
     );
 
     access.startServers = startServersMock;
 
-    await manager.getToolsForWorkspace({
-      workspaceId,
-      projectPath,
-      runtime: {} as unknown as Runtime,
-      workspacePath,
-    });
+    await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
 
     manager.acquireLease(workspaceId);
 
-    const toolsResult = await manager.getToolsForWorkspace({
-      workspaceId,
-      projectPath,
-      runtime: {} as unknown as Runtime,
-      workspacePath,
-      overrides: {
-        disabledServers: ["serverB"],
-      },
-    });
+    const toolsResult = await manager.getToolsForWorkspace(
+      workspaceRequest(workspaceId, { overrides: { disabledServers: ["serverB"] } })
+    );
 
     // Tool names are normalized to provider-safe keys (lowercase + underscore-delimited).
     expect(Object.keys(toolsResult.tools)).toContain("servera_tool");
@@ -1157,59 +917,32 @@ describe("MCPServerManager", () => {
 
   test("getToolsForWorkspace filters disabled-server failures from leased stats", async () => {
     const workspaceId = "ws-disable-failed-while-leased";
-    const projectPath = "/tmp/project";
-    const workspacePath = "/tmp/workspace";
-
     configService.listServers = mock(() =>
       Promise.resolve({
-        serverA: { transport: "stdio", command: "cmd-a", disabled: false },
-        serverB: { transport: "stdio", command: "cmd-b", disabled: false },
+        serverA: stdioConfig("cmd-a"),
+        serverB: stdioConfig("cmd-b"),
       })
     );
 
-    const dummyToolA = { execute: mock(() => Promise.resolve({ ok: true })) } as unknown as Tool;
-
     const startServersMock = mock(() =>
-      Promise.resolve({
-        instances: new Map([
-          [
-            "serverA",
-            {
-              name: "serverA",
-              resolvedTransport: "stdio",
-              autoFallbackUsed: false,
-              tools: { tool: dummyToolA },
-              isClosed: false,
-              close: mock(() => Promise.resolve(undefined)),
-            },
-          ],
-        ]),
-        failedServerNames: ["serverB"],
-      })
+      Promise.resolve(
+        startResult([["serverA", { tools: { tool: testTool() } }]], {
+          failedServerNames: ["serverB"],
+        })
+      )
     );
 
     access.startServers = startServersMock;
 
-    const initial = await manager.getToolsForWorkspace({
-      workspaceId,
-      projectPath,
-      runtime: {} as unknown as Runtime,
-      workspacePath,
-    });
+    const initial = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
 
     expect(initial.stats.failedServerCount).toBe(1);
 
     manager.acquireLease(workspaceId);
 
-    const leased = await manager.getToolsForWorkspace({
-      workspaceId,
-      projectPath,
-      runtime: {} as unknown as Runtime,
-      workspacePath,
-      overrides: {
-        disabledServers: ["serverB"],
-      },
-    });
+    const leased = await manager.getToolsForWorkspace(
+      workspaceRequest(workspaceId, { overrides: { disabledServers: ["serverB"] } })
+    );
 
     expect(startServersMock).toHaveBeenCalledTimes(1);
     expect(leased.stats.failedServerCount).toBe(0);
@@ -1217,65 +950,37 @@ describe("MCPServerManager", () => {
   });
 
   test("getToolsForWorkspace only exposes repo-defined servers for trusted projects", async () => {
-    const projectPath = "/tmp/project";
-    const workspacePath = "/tmp/workspace";
-
     configService.listServers = mock((_projectPath: string, trusted?: boolean) =>
       Promise.resolve(
         trusted
           ? {
-              global: { transport: "stdio", command: "global-cmd", disabled: false },
-              repo: { transport: "stdio", command: "repo-cmd", disabled: false },
+              global: stdioConfig("global-cmd"),
+              repo: stdioConfig("repo-cmd"),
             }
           : {
-              global: { transport: "stdio", command: "global-cmd", disabled: false },
+              global: stdioConfig("global-cmd"),
             }
       )
     );
 
     const startServersMock = mock((servers: Record<string, unknown>) =>
-      Promise.resolve({
-        instances: new Map(
-          Object.keys(servers).map((name) => [
-            name,
-            {
-              name,
-              resolvedTransport: "stdio",
-              autoFallbackUsed: false,
-              tools: {
-                tool: { execute: mock(() => Promise.resolve({ ok: true })) } as unknown as Tool,
-              },
-              isClosed: false,
-              close: mock(() => Promise.resolve(undefined)),
-            },
-          ])
-        ),
-        failedServerNames: [],
-      })
+      Promise.resolve(
+        startResult(Object.keys(servers).map((name) => [name, { tools: { tool: testTool() } }]))
+      )
     );
 
     access.startServers = startServersMock as unknown as typeof access.startServers;
 
-    const runtime = {} satisfies Partial<Runtime>;
+    const untrustedResult = await manager.getToolsForWorkspace(
+      workspaceRequest("ws-untrusted-mcp", { trusted: false })
+    );
 
-    const untrustedResult = await manager.getToolsForWorkspace({
-      workspaceId: "ws-untrusted-mcp",
-      projectPath,
-      runtime: runtime as Runtime,
-      workspacePath,
-      trusted: false,
-    });
+    const trustedResult = await manager.getToolsForWorkspace(
+      workspaceRequest("ws-trusted-mcp", { trusted: true })
+    );
 
-    const trustedResult = await manager.getToolsForWorkspace({
-      workspaceId: "ws-trusted-mcp",
-      projectPath,
-      runtime: runtime as Runtime,
-      workspacePath,
-      trusted: true,
-    });
-
-    expect(configService.listServers).toHaveBeenNthCalledWith(1, projectPath, false);
-    expect(configService.listServers).toHaveBeenNthCalledWith(2, projectPath, true);
+    expect(configService.listServers).toHaveBeenNthCalledWith(1, PROJECT_PATH, false);
+    expect(configService.listServers).toHaveBeenNthCalledWith(2, PROJECT_PATH, true);
     expect(Object.keys(untrustedResult.tools)).toEqual(["global_tool"]);
     expect(Object.keys(trustedResult.tools).sort()).toEqual(["global_tool", "repo_tool"]);
 
@@ -1309,7 +1014,7 @@ describe("MCPServerManager", () => {
       resourceMetadataUrl = `${baseUrl}.well-known/oauth-protected-resource`;
 
       const result = await manager.test({
-        projectPath: "/tmp/project",
+        projectPath: PROJECT_PATH,
         transport: "http",
         url: baseUrl,
       });
@@ -1330,12 +1035,9 @@ describe("MCPServerManager", () => {
 
   test("tool execution failure with closed-client error marks instance isClosed for restart", async () => {
     const workspaceId = "ws-tool-closed";
-    const projectPath = "/tmp/project";
-    const workspacePath = "/tmp/workspace";
-
     configService.listServers = mock(() =>
       Promise.resolve({
-        "test-server": { transport: "stdio", command: "cmd", disabled: false },
+        "test-server": stdioConfig("cmd"),
       })
     );
 
@@ -1373,12 +1075,7 @@ describe("MCPServerManager", () => {
 
     access.startServers = startServersMock;
 
-    const result1 = await manager.getToolsForWorkspace({
-      workspaceId,
-      projectPath,
-      runtime: {} as unknown as Runtime,
-      workspacePath,
-    });
+    const result1 = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
     expect(startServersMock).toHaveBeenCalledTimes(1);
 
     const firstTool = Object.values(result1.tools)[0];
@@ -1407,36 +1104,22 @@ describe("MCPServerManager", () => {
       expect(inst.isClosed).toBe(true);
     }
 
-    await manager.getToolsForWorkspace({
-      workspaceId,
-      projectPath,
-      runtime: {} as unknown as Runtime,
-      workspacePath,
-    });
+    await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
     expect(startServersMock).toHaveBeenCalledTimes(2);
   });
 });
 
 describe("isClosedClientError", () => {
-  test("returns true for 'Attempted to send a request from a closed client'", () => {
-    expect(isClosedClientError(new Error("Attempted to send a request from a closed client"))).toBe(
-      true
-    );
-  });
-
-  test("returns true for 'Connection closed'", () => {
-    expect(isClosedClientError(new Error("Connection closed"))).toBe(true);
-  });
-
-  test("returns true for 'MCP SSE Transport Error: Connection closed unexpectedly'", () => {
-    expect(
-      isClosedClientError(new Error("MCP SSE Transport Error: Connection closed unexpectedly"))
-    ).toBe(true);
-  });
-
-  test("returns true for 'Not connected'", () => {
-    expect(isClosedClientError(new Error("MCP SSE Transport Error: Not connected"))).toBe(true);
-  });
+  for (const message of [
+    "Attempted to send a request from a closed client",
+    "Connection closed",
+    "MCP SSE Transport Error: Connection closed unexpectedly",
+    "MCP SSE Transport Error: Not connected",
+  ]) {
+    test(`returns true for '${message}'`, () => {
+      expect(isClosedClientError(new Error(message))).toBe(true);
+    });
+  }
 
   test("returns true for chained error with closed-client cause", () => {
     const cause = new Error("Connection closed");
@@ -1450,60 +1133,45 @@ describe("isClosedClientError", () => {
     expect(isClosedClientError(wrapper)).toBe(false);
   });
 
-  test("returns false for unrelated errors", () => {
-    expect(isClosedClientError(new Error("timeout"))).toBe(false);
-    expect(isClosedClientError(new Error("ECONNREFUSED"))).toBe(false);
-  });
-
-  test("returns false for non-Error values", () => {
-    expect(isClosedClientError(null)).toBe(false);
-    expect(isClosedClientError(undefined)).toBe(false);
-    expect(isClosedClientError("string error")).toBe(false);
+  test("returns false for unrelated errors and non-Error values", () => {
+    for (const value of [
+      new Error("timeout"),
+      new Error("ECONNREFUSED"),
+      null,
+      undefined,
+      "string error",
+    ]) {
+      expect(isClosedClientError(value)).toBe(false);
+    }
   });
 });
 
 describe("wrapMCPTools", () => {
-  test("calls onClosed when execute throws a closed-client error", async () => {
-    const onClosed = mock(() => undefined);
-    const closedError = new Error("Attempted to send a request from a closed client");
-    const tool = {
-      execute: mock(() => Promise.reject(closedError)),
-      parameters: {},
-    } as unknown as Tool;
+  for (const [message, expectedOnClosedCalls] of [
+    ["Attempted to send a request from a closed client", 1],
+    ["some other failure", 0],
+  ] as const) {
+    test(`calls onClosed ${expectedOnClosedCalls} times for '${message}'`, async () => {
+      const onClosed = mock(() => undefined);
+      const expectedError = new Error(message);
+      const tool = {
+        execute: mock(() => Promise.reject(expectedError)),
+        parameters: {},
+      } as unknown as Tool;
 
-    const wrapped = wrapMCPTools({ myTool: tool }, { onClosed });
+      const wrapped = wrapMCPTools({ myTool: tool }, { onClosed });
 
-    let executeError: unknown;
-    try {
-      await wrapped.myTool.execute!({}, {} as never);
-    } catch (error) {
-      executeError = error;
-    }
+      let executeError: unknown;
+      try {
+        await wrapped.myTool.execute!({}, {} as never);
+      } catch (error) {
+        executeError = error;
+      }
 
-    expect(executeError).toBe(closedError);
-    expect(onClosed).toHaveBeenCalledTimes(1);
-  });
-
-  test("does NOT call onClosed for non-closed-client errors", async () => {
-    const onClosed = mock(() => undefined);
-    const otherError = new Error("some other failure");
-    const tool = {
-      execute: mock(() => Promise.reject(otherError)),
-      parameters: {},
-    } as unknown as Tool;
-
-    const wrapped = wrapMCPTools({ myTool: tool }, { onClosed });
-
-    let executeError: unknown;
-    try {
-      await wrapped.myTool.execute!({}, {} as never);
-    } catch (error) {
-      executeError = error;
-    }
-
-    expect(executeError).toBe(otherError);
-    expect(onClosed).toHaveBeenCalledTimes(0);
-  });
+      expect(executeError).toBe(expectedError);
+      expect(onClosed).toHaveBeenCalledTimes(expectedOnClosedCalls);
+    });
+  }
 
   test("wraps multiple tools and failure in one does not affect others", async () => {
     const onClosed = mock(() => undefined);
