@@ -194,7 +194,7 @@ function UpcomingSection(props: UpcomingSectionProps) {
 
   const update = async (
     goalId: string,
-    patch: { objective?: string; budgetCents?: number | null }
+    patch: { objective?: string; budgetCents?: number | null; turnCap?: number | null }
   ) => {
     if (!api) return;
     try {
@@ -203,6 +203,7 @@ function UpcomingSection(props: UpcomingSectionProps) {
         goalId,
         objective: patch.objective,
         budgetCents: patch.budgetCents,
+        turnCap: patch.turnCap,
       });
       clearError();
       props.onMutated();
@@ -343,12 +344,17 @@ function UpcomingRow(props: UpcomingRowProps) {
 interface UpcomingRowEditorProps {
   goal: GoalRecordV1;
   onCancel: () => void;
-  onSubmit: (patch: { objective?: string; budgetCents?: number | null }) => Promise<void>;
+  onSubmit: (patch: {
+    objective?: string;
+    budgetCents?: number | null;
+    turnCap?: number | null;
+  }) => Promise<void>;
 }
 
 function UpcomingRowEditor(props: UpcomingRowEditorProps) {
   const objectiveRef = useRef<HTMLInputElement | null>(null);
   const budgetRef = useRef<HTMLInputElement | null>(null);
+  const turnCapRef = useRef<HTMLInputElement | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -373,9 +379,27 @@ function UpcomingRowEditor(props: UpcomingRowEditorProps) {
       budgetPatch = parsed;
     }
 
-    const patch: { objective?: string; budgetCents?: number | null } = {};
+    let turnCapPatch: number | null | undefined;
+    const rawTurnCap = (turnCapRef.current?.value ?? "").trim();
+    if (rawTurnCap.length === 0) {
+      // Empty input ⇒ clear the cap (null). Matches the Adder UX: an
+      // explicitly blank turn cap on an existing queued goal means "no
+      // cap", distinct from "use the workspace default" (the default
+      // already applied when the goal was first queued).
+      turnCapPatch = null;
+    } else {
+      const parsed = Number.parseInt(rawTurnCap, 10);
+      if (!Number.isInteger(parsed) || parsed <= 0) {
+        setLocalError("Enter a positive whole-number turn cap, or leave blank for no cap.");
+        return;
+      }
+      turnCapPatch = parsed;
+    }
+
+    const patch: { objective?: string; budgetCents?: number | null; turnCap?: number | null } = {};
     if (nextObjective !== props.goal.objective) patch.objective = nextObjective;
     if (budgetPatch !== props.goal.budgetCents) patch.budgetCents = budgetPatch;
+    if (turnCapPatch !== props.goal.turnCap) patch.turnCap = turnCapPatch;
     if (Object.keys(patch).length === 0) {
       // Nothing to save — just close.
       props.onCancel();
@@ -419,7 +443,15 @@ function UpcomingRowEditor(props: UpcomingRowEditorProps) {
             props.goal.budgetCents == null ? "" : (props.goal.budgetCents / 100).toFixed(2)
           }
           placeholder="$ budget (blank = no budget)"
-          className="border-border bg-surface-primary text-foreground focus:border-accent w-32 rounded-md border p-1.5 text-xs outline-none"
+          className="border-border bg-surface-primary text-foreground focus:border-accent w-28 rounded-md border p-1.5 text-xs outline-none"
+        />
+        <input
+          ref={turnCapRef}
+          aria-label="Goal turn cap"
+          defaultValue={props.goal.turnCap == null ? "" : String(props.goal.turnCap)}
+          placeholder="turns (blank = no cap)"
+          inputMode="numeric"
+          className="border-border bg-surface-primary text-foreground focus:border-accent w-28 rounded-md border p-1.5 text-xs outline-none"
         />
         <button
           type="button"
@@ -569,10 +601,12 @@ function UpcomingAdder(props: UpcomingAdderProps) {
   const [error, setError] = useState<string | null>(null);
   const objectiveRef = useRef<HTMLInputElement | null>(null);
   const budgetRef = useRef<HTMLInputElement | null>(null);
+  const turnCapRef = useRef<HTMLInputElement | null>(null);
 
   const reset = () => {
     if (objectiveRef.current) objectiveRef.current.value = "";
     if (budgetRef.current) budgetRef.current.value = "";
+    if (turnCapRef.current) turnCapRef.current.value = "";
     setError(null);
   };
 
@@ -594,6 +628,22 @@ function UpcomingAdder(props: UpcomingAdderProps) {
       }
       budgetCents = parsed;
     }
+    // Codex P2: expose turn cap in the Adder. Without this, the field
+    // was hidden but `resolveGoalSetIntent` still inherited the
+    // workspace/global `defaultTurnCap`, so queued goals could hit an
+    // unexpected limit after auto-promote. Mirrors the main create
+    // form's UX: blank → fall through to defaults; explicit number →
+    // override; explicit `0` (invalid) → form error.
+    let turnCap: number | null | undefined;
+    const rawTurnCap = (turnCapRef.current?.value ?? "").trim();
+    if (rawTurnCap.length > 0) {
+      const parsed = Number.parseInt(rawTurnCap, 10);
+      if (!Number.isInteger(parsed) || parsed <= 0) {
+        setError("Enter a positive whole-number turn cap, or leave blank for the default.");
+        return;
+      }
+      turnCap = parsed;
+    }
     setIsSubmitting(true);
     setError(null);
     try {
@@ -611,7 +661,7 @@ function UpcomingAdder(props: UpcomingAdderProps) {
         // Keep `effective` at the hook value (which is itself a
         // best-effort snapshot or the canonical default).
       }
-      const resolved = resolveGoalSetIntent({ objective, budgetCents }, effective);
+      const resolved = resolveGoalSetIntent({ objective, budgetCents, turnCap }, effective);
       await api.workspace.addUpcomingGoal({
         workspaceId: props.workspaceId,
         objective: resolved.objective,
@@ -677,7 +727,22 @@ function UpcomingAdder(props: UpcomingAdderProps) {
               ? `$${(defaults.defaultBudgetCents / 100).toFixed(2)} (default)`
               : "no budget (default)"
           }
-          className="border-border bg-surface-primary text-foreground focus:border-accent w-32 rounded-md border p-1.5 text-xs outline-none"
+          className="border-border bg-surface-primary text-foreground focus:border-accent w-28 rounded-md border p-1.5 text-xs outline-none"
+        />
+        <input
+          ref={turnCapRef}
+          aria-label="Queued goal turn cap"
+          // Codex P2: previously hidden, so queued goals silently
+          // inherited the workspace/global `defaultTurnCap` and could
+          // hit an unexpected cap after auto-promote. Expose it
+          // explicitly with the same default-aware placeholder pattern.
+          placeholder={
+            defaults.defaultTurnCap == null
+              ? "no cap (default)"
+              : `${defaults.defaultTurnCap} turns (default)`
+          }
+          inputMode="numeric"
+          className="border-border bg-surface-primary text-foreground focus:border-accent w-28 rounded-md border p-1.5 text-xs outline-none"
         />
         <button
           type="button"
