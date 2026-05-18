@@ -2633,6 +2633,17 @@ export class WorkspaceGoalService {
         updatedAtMs: now,
       });
 
+      // Codex P2: gate budgeted goal promotion on pricing data. A user
+      // who queued a goal under a priced model and then switched to an
+      // unpriced one would otherwise activate a budgeted goal they
+      // can't actually send messages against — `assertPricedModelFor
+      // BudgetedGoal` would block every send until the model is
+      // changed or the goal cleared. Same guard `setGoal` uses for
+      // direct creates.
+      if (!this.canRunBudgetedGoalOnKickoffModel(workspaceId, activated)) {
+        throw new WorkspaceGoalTransitionError(UNPRICED_TARGET_MODEL_GOAL_MESSAGE);
+      }
+
       // Demote the previously-active goal to the head of upcoming, but
       // ONLY if it's still alive. A completed goal sitting in the active
       // slot (the user-marked-complete + queued-next workflow) must NOT
@@ -2724,6 +2735,21 @@ export class WorkspaceGoalService {
       status: "active",
       updatedAtMs: now,
     });
+    // Codex P2: same pricing gate as `promoteUpcomingGoal`. If the next
+    // queued goal is budgeted and the workspace is currently on an
+    // unpriced model, refuse the auto-promotion — otherwise we'd leave
+    // the workspace in a state where the user can't send messages
+    // (their active goal is blocked by `assertPricedModelForBudgetedGoal`).
+    // The completion mutation still succeeds; the upcoming list keeps
+    // its head and the user is left to either change models or clear
+    // the head goal before the next promote attempt.
+    if (!this.canRunBudgetedGoalOnKickoffModel(workspaceId, activated)) {
+      log.warn(
+        "Auto-promote on complete skipped: queued goal is budgeted but kickoff model is unpriced",
+        { workspaceId, goalId: head.goalId }
+      );
+      return null;
+    }
     await this.writeBoard(workspaceId, { ...board, upcoming: rest });
     await this.writeGoal(workspaceId, activated);
     await this.pushSnapshot(workspaceId, activated);
