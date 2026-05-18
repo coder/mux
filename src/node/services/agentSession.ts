@@ -4911,11 +4911,21 @@ export class AgentSession {
    * to have already gated on `activeStreamGoalKind === GOAL_CONTINUATION_KIND`
    * and on the standard plan/compact/queued-input exclusions; this helper
    * owns the parts inspection + summary synthesis.
+   *
+   * Requires `finishReason === "stop"` so truncated turns
+   * (`"length"` / `"content-filter"` / unknown) keep the goal active and
+   * can resume on the next continuation. Matches the same conservatism
+   * `TaskService` uses for implicit task-report finalization (see
+   * `taskService.ts` comment at the `finishReason === "stop"` gate):
+   * partial assistant text must not prematurely finalize the goal.
    */
   private async maybeAutoCompleteGoalFromSilentContinuation(
     payload: StreamEndEvent
   ): Promise<void> {
     if (!this.workspaceGoalService) {
+      return;
+    }
+    if (payload.metadata.finishReason !== "stop") {
       return;
     }
     if (payload.parts.some((part) => part.type === "dynamic-tool")) {

@@ -410,7 +410,8 @@ describe("AgentSession goal safety hooks", () => {
     aiService: AIService & EventEmitter,
     workspaceId: string,
     messageId: string,
-    parts: unknown[]
+    parts: unknown[],
+    options?: { finishReason?: string }
   ): void {
     aiService.emit("stream-end", {
       type: "stream-end",
@@ -421,6 +422,10 @@ describe("AgentSession goal safety hooks", () => {
         model: "openai:gpt-4o",
         contextUsage: { inputTokens: 5, outputTokens: 5, totalTokens: 10 },
         providerMetadata: {},
+        // Default to a clean natural stop so the silent-continuation
+        // auto-complete gate matches; individual tests override to
+        // exercise truncated / non-stop paths.
+        finishReason: options?.finishReason ?? "stop",
       },
     });
   }
@@ -523,6 +528,39 @@ describe("AgentSession goal safety hooks", () => {
 
     // Give the async stream-end handler a tick to run so any stray
     // auto-completion would have a chance to corrupt the steering state.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(await goalService.getGoal(workspaceId)).toMatchObject({ status: "active" });
+    session.dispose();
+  });
+
+  test("length-truncated text-only stream-end does not auto-complete the goal", async () => {
+    // Codex review feedback (#3326 PRRT_kwDOPxxmWM6DAGFi): when the provider
+    // hits the output-token limit, the turn has text + no tools but was
+    // truncated, not finished. Marking it complete would lose work. The
+    // helper requires `finishReason === "stop"` so length-truncated turns
+    // keep the goal active and can resume on the next continuation.
+    const workspaceId = "length-truncated-stays-active";
+    const { session, goalService, aiService, cleanup } = await createSessionHarness(workspaceId);
+    cleanups.push(cleanup);
+    await setGoalOk(goalService, { workspaceId, objective: "Keep working" });
+
+    aiService.streamMessage = mock(() => {
+      emitStreamEnd(
+        aiService,
+        workspaceId,
+        "assistant-truncated",
+        [{ type: "text", text: "Mid-sentence, then cut off by the token limit" }],
+        { finishReason: "length" }
+      );
+      return Promise.resolve(Ok(undefined));
+    }) as unknown as AIService["streamMessage"];
+
+    const result = await session.sendMessage("Synthetic continuation", SEND_OPTIONS, {
+      synthetic: true,
+      goalContinuation: true,
+    });
+    expect(result.success).toBe(true);
+
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(await goalService.getGoal(workspaceId)).toMatchObject({ status: "active" });
     session.dispose();
