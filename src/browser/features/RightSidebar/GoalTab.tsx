@@ -1,5 +1,5 @@
 import { Pencil, Settings2, Target } from "lucide-react";
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useContext, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import {
   goalActiveMode,
   isGoalLifecycleActive,
@@ -10,7 +10,7 @@ import {
 } from "@/common/types/goal";
 import { formatGoalCents } from "@/common/utils/goals/budgetPricing";
 import { parseGoalBudgetInputCents } from "@/common/utils/goals/budgetParser";
-import { useAPI } from "@/browser/contexts/API";
+import { APIContext } from "@/browser/contexts/API";
 import { useGoalDefaults } from "@/browser/utils/goals/useGoalDefaults";
 import { cn } from "@/common/lib/utils";
 // Import shared formatters / status labels from goalToolUtils so the GoalTab
@@ -107,7 +107,12 @@ export function GoalTab(props: GoalTabProps) {
   // so a single instance covers both surfaces — opening from either
   // closes any other.
   const [isDefaultsModalOpen, setIsDefaultsModalOpen] = useState(false);
-  const { api } = useAPI();
+  // Same opt-in API context pattern as `useGoalDefaults` / `useGoalBoard`:
+  // tolerate being mounted outside an `APIProvider` (storybook stories
+  // render the GoalTab in isolation) by reading the context directly.
+  // The Archive-on-complete handler short-circuits when `api` is null.
+  const apiContext = useContext(APIContext);
+  const api = apiContext?.api ?? null;
   // Goal-board state lives here so both the empty-state and active-goal
   // branches can render the Upcoming / Completed / Archived sections.
   // Mutations route through `refreshBoard` so the renderer re-reads after
