@@ -1,17 +1,12 @@
 import type {
   MuxMessage,
   MuxMetadata,
-  MuxFilePart,
   DisplayedMessage,
   CompactionRequestData,
   InlineSkillSnapshotMap,
   AgentSkillReference,
 } from "@/common/types/message";
-import {
-  createMuxMessage,
-  getCompactionFollowUpContent,
-  isCompactionSummaryMetadata,
-} from "@/common/types/message";
+import { createMuxMessage, isCompactionSummaryMetadata } from "@/common/types/message";
 
 import {
   copyStreamLifecycleSnapshot,
@@ -30,16 +25,15 @@ import {
   type StreamLifecycleEvent,
   type StreamLifecycleSnapshot,
 } from "@/common/types/stream";
-import { GOAL_BUDGET_LIMIT_KIND, GOAL_CONTINUATION_KIND } from "@/constants/goals";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
-import type { StreamErrorType } from "@/common/types/errors";
-import type { ImageEditToolResult, ImageGenerateToolResult } from "@/common/types/tools";
-import type { TodoItem, StatusSetToolResult, NotifyToolResult } from "@/common/types/tools";
+import type {
+  TodoItem,
+  StatusSetToolResult,
+  NotifyToolResult,
+  AgentSkillReadToolResult,
+} from "@/common/types/tools";
 import { completeInProgressTodoItems } from "@/common/utils/todoList";
-import {
-  ImageEditToolResultSchema,
-  ImageGenerateToolResultSchema,
-} from "@/common/utils/tools/toolDefinitions";
+import { AgentSkillReadToolResultSchema } from "@/common/utils/tools/toolDefinitions";
 import { getToolOutputUiOnly } from "@/common/utils/tools/toolOutputUiOnly";
 
 import { computePriorHistoryFingerprint } from "@/common/orpc/onChatCursorFingerprint";
@@ -55,12 +49,16 @@ import {
   buildResponseCompleteMetadata,
   type ResponseCompleteHandler,
 } from "./responseCompletionMetadata";
+import {
+  buildDisplayedMessagesForMessage,
+  getTextPartContent,
+  hasSuccessResult,
+  mergeAdjacentParts,
+  normalizeMessageRouteProvider,
+  resolveRouteProvider,
+} from "./displayedMessageBuilder";
 import { showBrowserNotification } from "@/browser/utils/ui/showBrowserNotification";
-import type {
-  DynamicToolPart,
-  DynamicToolPartPending,
-  DynamicToolPartAvailable,
-} from "@/common/types/toolParts";
+import type { DynamicToolPart, DynamicToolPartPending } from "@/common/types/toolParts";
 import type { AgentSkillDescriptor, AgentSkillScope } from "@/common/types/agentSkill";
 import { INIT_HOOK_MAX_LINES } from "@/common/constants/toolLimits";
 import { isDynamicToolPart } from "@/common/types/toolParts";
@@ -70,12 +68,10 @@ import { buildTranscriptTruncationPlan } from "./transcriptTruncationPlan";
 import { computeRecencyTimestamp } from "./recency";
 import { assert } from "@/common/utils/assert";
 import { getStatusStateKey } from "@/common/constants/storage";
-import { getFollowUpContentText } from "@/browser/utils/compaction/format";
 import {
   CONTEXT_BOUNDARY_KINDS,
   getContextBoundaryKind,
 } from "@/common/utils/messages/compactionBoundary";
-import { getGoalClearedSummaryDisplayText } from "@/common/utils/goalClearedSummaryDisplay";
 
 // Maximum number of messages to display in the DOM for performance
 // Full history is still maintained internally for token counting and stats
@@ -93,6 +89,69 @@ const AgentSkillSnapshotMetadataSchema = z.object({
   sha256: z.string().optional(),
   frontmatterYaml: z.string().optional(),
 });
+
+const TodoWriteInputSchema = z.object({
+  todos: z.array(
+    z.object({
+      content: z.string(),
+      status: z.enum(["pending", "in_progress", "completed"]),
+    })
+  ),
+});
+
+const StatusSetSuccessResultSchema = z.object({
+  success: z.literal(true),
+  emoji: z.string(),
+  message: z.string(),
+  url: z.string().optional(),
+}) satisfies z.ZodType<Extract<StatusSetToolResult, { success: true }>>;
+
+const NotifySuccessResultSchema = z.object({
+  success: z.literal(true),
+  title: z.string(),
+  message: z.string().optional(),
+}) satisfies z.ZodType<Extract<NotifyToolResult, { success: true }>>;
+
+const AgentSkillReadInputSchema = z.object({
+  name: z.string().optional(),
+});
+
+function parseLegacyNotifyRouting(
+  output: unknown
+): { notifiedVia?: string; workspaceId?: string } | null {
+  if (typeof output !== "object" || output === null) {
+    return null;
+  }
+  const record = output as Record<string, unknown>;
+  return {
+    notifiedVia: typeof record.notifiedVia === "string" ? record.notifiedVia : undefined,
+    workspaceId: typeof record.workspaceId === "string" ? record.workspaceId : undefined,
+  };
+}
+
+function parseAgentSkillReadToolResult(output: unknown): AgentSkillReadToolResult | null {
+  const parsed = AgentSkillReadToolResultSchema.safeParse(output);
+  return parsed.success ? parsed.data : null;
+}
+
+function parseTodoWriteInput(input: unknown): { todos: TodoItem[] } | null {
+  const parsed = TodoWriteInputSchema.safeParse(input);
+  return parsed.success ? parsed.data : null;
+}
+
+function parseStatusSetSuccessResult(
+  output: unknown
+): Extract<StatusSetToolResult, { success: true }> | null {
+  const parsed = StatusSetSuccessResultSchema.safeParse(output);
+  return parsed.success ? parsed.data : null;
+}
+
+function parseNotifySuccessResult(
+  output: unknown
+): Extract<NotifyToolResult, { success: true }> | null {
+  const parsed = NotifySuccessResultSchema.safeParse(output);
+  return parsed.success ? parsed.data : null;
+}
 
 /** Re-export for consumers that need the loaded skill type */
 export type LoadedSkill = AgentSkillDescriptor;
@@ -173,28 +232,6 @@ interface PendingCompactionRequest {
   source?: "idle-compaction" | "auto-compaction";
 }
 
-function isSuccessfulImageGenerateResult(
-  result: unknown
-): result is Extract<ImageGenerateToolResult, { success: true }> {
-  const parsed = ImageGenerateToolResultSchema.safeParse(result);
-  return parsed.success && parsed.data.success;
-}
-
-function isSuccessfulImageEditResult(
-  result: unknown
-): result is Extract<ImageEditToolResult, { success: true }> {
-  const parsed = ImageEditToolResultSchema.safeParse(result);
-  return parsed.success && parsed.data.success;
-}
-
-function hasVisibleHookOutput(result: unknown): boolean {
-  if (typeof result !== "object" || result === null || Array.isArray(result)) {
-    return false;
-  }
-  const hookOutput = (result as Record<string, unknown>).hook_output;
-  return typeof hookOutput === "string" && hookOutput.length > 0;
-}
-
 function markRowsBeforeLatestContextBoundary(messages: DisplayedMessage[]): DisplayedMessage[] {
   let latestBoundarySequence: number | null = null;
   for (const message of messages) {
@@ -229,177 +266,6 @@ function markRowsBeforeLatestContextBoundary(messages: DisplayedMessage[]): Disp
   });
 
   return changed ? marked : messages;
-}
-
-function appendGeneratedImageMessage(
-  displayedMessages: DisplayedMessage[],
-  options: {
-    id: string;
-    historyId: string;
-    toolCallId: string;
-    output: Extract<ImageGenerateToolResult, { success: true }>;
-    isPartial: boolean;
-    historySequence: number;
-    streamSequence: number;
-    isLastPartOfMessage: boolean;
-    timestamp?: number;
-  }
-): void {
-  displayedMessages.push({
-    type: "generated-image",
-    id: options.id,
-    historyId: options.historyId,
-    toolCallId: options.toolCallId,
-    prompt: options.output.prompt,
-    model: options.output.model,
-    images: options.output.images,
-    warnings: options.output.warnings,
-    isPartial: options.isPartial,
-    historySequence: options.historySequence,
-    streamSequence: options.streamSequence,
-    isLastPartOfMessage: options.isLastPartOfMessage,
-    timestamp: options.timestamp,
-  });
-}
-
-function appendEditedImageMessage(
-  displayedMessages: DisplayedMessage[],
-  options: {
-    id: string;
-    historyId: string;
-    toolCallId: string;
-    output: Extract<ImageEditToolResult, { success: true }>;
-    isPartial: boolean;
-    historySequence: number;
-    streamSequence: number;
-    isLastPartOfMessage: boolean;
-    timestamp?: number;
-  }
-): void {
-  displayedMessages.push({
-    type: "edited-image",
-    id: options.id,
-    historyId: options.historyId,
-    toolCallId: options.toolCallId,
-    prompt: options.output.prompt,
-    model: options.output.model,
-    source: options.output.source,
-    images: options.output.images,
-    warnings: options.output.warnings,
-    isPartial: options.isPartial,
-    historySequence: options.historySequence,
-    streamSequence: options.streamSequence,
-    isLastPartOfMessage: options.isLastPartOfMessage,
-    timestamp: options.timestamp,
-  });
-}
-
-/**
- * Check if a tool result indicates success (for tools that return { success: boolean })
- */
-function hasSuccessResult(result: unknown): boolean {
-  return (
-    typeof result === "object" && result !== null && "success" in result && result.success === true
-  );
-}
-
-/**
- * Check if a tool result indicates failure.
- * Handles both explicit failure ({ success: false }) and implicit failure ({ error: "..." })
- */
-function hasFailureResult(result: unknown): boolean {
-  if (typeof result !== "object" || result === null) return false;
-  // Explicit failure
-  if ("success" in result && result.success === false) return true;
-  // Implicit failure - error field present
-  if ("error" in result && result.error) return true;
-  return false;
-}
-
-function resolveRouteProvider(
-  routeProvider: string | undefined,
-  routedThroughGateway: boolean | undefined
-): string | undefined {
-  return routeProvider ?? (routedThroughGateway === true ? "mux-gateway" : undefined);
-}
-
-function normalizeMessageRouteProvider(message: MuxMessage): MuxMessage {
-  const routeProvider = resolveRouteProvider(
-    message.metadata?.routeProvider,
-    message.metadata?.routedThroughGateway
-  );
-
-  if (!message.metadata || routeProvider === message.metadata.routeProvider) {
-    return message;
-  }
-
-  return {
-    ...message,
-    metadata: {
-      ...message.metadata,
-      routeProvider,
-    },
-  };
-}
-
-/**
- * Merge adjacent text/reasoning parts using array accumulation + join().
- * Avoids O(n²) string allocations from repeated concatenation.
- * Tool parts are preserved as-is between merged text/reasoning runs.
- */
-function mergeAdjacentParts(parts: MuxMessage["parts"]): MuxMessage["parts"] {
-  if (parts.length <= 1) return parts;
-
-  const merged: MuxMessage["parts"] = [];
-  let pendingTexts: string[] = [];
-  let pendingTextTimestamp: number | undefined;
-  let pendingReasonings: string[] = [];
-  let pendingReasoningTimestamp: number | undefined;
-
-  const flushText = () => {
-    if (pendingTexts.length > 0) {
-      merged.push({
-        type: "text",
-        text: pendingTexts.join(""),
-        timestamp: pendingTextTimestamp,
-      });
-      pendingTexts = [];
-      pendingTextTimestamp = undefined;
-    }
-  };
-
-  const flushReasoning = () => {
-    if (pendingReasonings.length > 0) {
-      merged.push({
-        type: "reasoning",
-        text: pendingReasonings.join(""),
-        timestamp: pendingReasoningTimestamp,
-      });
-      pendingReasonings = [];
-      pendingReasoningTimestamp = undefined;
-    }
-  };
-
-  for (const part of parts) {
-    if (part.type === "text") {
-      flushReasoning();
-      pendingTexts.push(part.text);
-      pendingTextTimestamp ??= part.timestamp;
-    } else if (part.type === "reasoning") {
-      flushText();
-      pendingReasonings.push(part.text);
-      pendingReasoningTimestamp ??= part.timestamp;
-    } else {
-      // Tool part - flush and keep as-is
-      flushText();
-      flushReasoning();
-      merged.push(part);
-    }
-  }
-  flushText();
-  flushReasoning();
-
-  return merged;
 }
 
 function extractAgentSkillSnapshotBody(snapshotText: string): string | null {
@@ -448,14 +314,15 @@ interface InlineSkillSnapshotDisplayState {
   cacheKey?: string;
 }
 
-function getTextPartContent(parts: ReadonlyArray<MuxMessage["parts"][number]>): string {
-  const content: string[] = [];
-  for (const part of parts) {
-    if (part.type === "text") {
-      content.push(part.text);
-    }
-  }
-  return content.join("");
+function getAgentSkillSnapshotDisplayCacheKey(snapshot: AgentSkillSnapshotContent): string {
+  // Displayed skill rows render both frontmatter and body. Include all rendered
+  // fields rather than trusting optional legacy sha256, so cache reuse is safe
+  // for old histories and synthetic snapshot edits.
+  return JSON.stringify({
+    sha256: snapshot.sha256 ?? "",
+    frontmatterYaml: snapshot.frontmatterYaml ?? "",
+    body: snapshot.body ?? "",
+  });
 }
 
 function getAgentSkillSnapshotKey(scope: AgentSkillScope, skillName: string): string {
@@ -527,7 +394,11 @@ function deriveInlineSkillSnapshotDisplayState(
     };
     cacheEntryBySkillName.set(
       ref.skillName,
-      `${ref.scope}|${ref.skillName}|${snapshot.sha256 ?? ""}`
+      JSON.stringify({
+        scope: ref.scope,
+        skillName: ref.skillName,
+        snapshot: getAgentSkillSnapshotDisplayCacheKey(snapshot),
+      })
     );
   }
 
@@ -1250,9 +1121,7 @@ export class StreamingMessageAggregator {
               if (
                 part.toolName === "todo_write" &&
                 hasSuccessResult(part.output) &&
-                part.input != null &&
-                typeof part.input === "object" &&
-                Array.isArray((part.input as { todos?: unknown }).todos)
+                parseTodoWriteInput(part.input)
               ) {
                 assistantUpdatedTodos = true;
               }
@@ -2138,15 +2007,18 @@ export class StreamingMessageAggregator {
           // Sync up the tool results from the backend's parts array
           for (const backendPart of data.parts) {
             if (backendPart.type === "dynamic-tool" && backendPart.state === "output-available") {
-              // Find and update existing tool part
-              const toolPart = message.parts.find(
-                (part): part is DynamicToolPart =>
-                  part.type === "dynamic-tool" && part.toolCallId === backendPart.toolCallId
+              const toolPartIndex = message.parts.findIndex(
+                (part) => part.type === "dynamic-tool" && part.toolCallId === backendPart.toolCallId
               );
-              if (toolPart) {
-                // Update with result from backend
-                (toolPart as DynamicToolPartAvailable).output = backendPart.output;
-                (toolPart as DynamicToolPartAvailable).state = "output-available";
+              const toolPart = message.parts[toolPartIndex];
+              if (toolPart?.type === "dynamic-tool") {
+                // Replace the discriminated-union member instead of mutating its
+                // discriminator in place; this keeps TypeScript and runtime shape aligned.
+                message.parts[toolPartIndex] = {
+                  ...toolPart,
+                  state: "output-available",
+                  output: backendPart.output,
+                };
               }
             }
           }
@@ -2378,7 +2250,7 @@ export class StreamingMessageAggregator {
       input: data.args,
       timestamp: data.timestamp,
     };
-    message.parts.push(toolPart as never);
+    message.parts.push(toolPart);
 
     // Track tokens for tool input
     this.trackDelta(data.messageId, data.tokens, data.timestamp, "tool-args");
@@ -2447,15 +2319,12 @@ export class StreamingMessageAggregator {
   }
 
   private handleAgentSkillReadResult(input: unknown, output: unknown): void {
-    if (hasSuccessResult(output)) {
-      const result = output as {
-        success: true;
-        skill: {
-          scope: AgentSkillScope;
-          directoryName: string;
-          frontmatter: { name: string; description: string };
-        };
-      };
+    const result = parseAgentSkillReadToolResult(output);
+    if (!result) {
+      return;
+    }
+
+    if (result.success) {
       const skill = result.skill;
       this.trackLoadedSkill({
         name: skill.frontmatter.name,
@@ -2465,14 +2334,10 @@ export class StreamingMessageAggregator {
       return;
     }
 
-    if (!hasFailureResult(output)) {
-      return;
-    }
-
-    const args = input as { name?: string } | undefined;
-    const errorResult = output as { error?: string };
-    if (args?.name) {
-      this.trackSkillLoadError(args.name, errorResult.error ?? "Unknown error");
+    const parsedInput = AgentSkillReadInputSchema.safeParse(input);
+    const skillName = parsedInput.success ? parsedInput.data.name : undefined;
+    if (skillName) {
+      this.trackSkillLoadError(skillName, result.error);
     }
   }
 
@@ -2491,16 +2356,11 @@ export class StreamingMessageAggregator {
     // Update TODO state if this was a successful todo_write.
     // We still reconstruct from history so interrupted/incomplete plans survive reloads;
     // final completed plans are cleared later when the last active stream ends.
-    if (
-      toolName === "todo_write" &&
-      hasSuccessResult(output) &&
-      input != null &&
-      typeof input === "object"
-    ) {
-      const args = input as { todos: TodoItem[] };
-      // Guard against malformed historical data - skip silently for self-healing
-      if (Array.isArray(args.todos) && !this.todosEqual(this.currentTodos, args.todos)) {
-        // Only update if todos actually changed (prevents flickering from reference changes)
+    if (toolName === "todo_write" && hasSuccessResult(output)) {
+      const args = parseTodoWriteInput(input);
+      if (args && !this.todosEqual(this.currentTodos, args.todos)) {
+        // Guard against malformed historical data and update only on real changes
+        // to prevent flicker from equivalent-but-new todo array references.
         this.currentTodos = args.todos;
       }
     }
@@ -2515,33 +2375,36 @@ export class StreamingMessageAggregator {
     // Update agent status if this was a successful status_set
     // agentStatus persists: update both during streaming and on historical reload
     // Use output instead of input to get the truncated message
-    if (toolName === "status_set" && hasSuccessResult(output)) {
-      const result = output as Extract<StatusSetToolResult, { success: true }>;
+    if (toolName === "status_set") {
+      const result = parseStatusSetSuccessResult(output);
+      if (result) {
+        // Use the provided URL, or fall back to the last URL ever set.
+        const url = result.url ?? this.lastStatusUrl;
+        if (url) {
+          this.lastStatusUrl = url;
+        }
 
-      // Use the provided URL, or fall back to the last URL ever set
-      const url = result.url ?? this.lastStatusUrl;
-      if (url) {
-        this.lastStatusUrl = url;
+        this.agentStatus = {
+          emoji: result.emoji,
+          message: result.message,
+          url,
+        };
+        this.savePersistedAgentStatus(this.agentStatus);
       }
-
-      this.agentStatus = {
-        emoji: result.emoji,
-        message: result.message,
-        url,
-      };
-      this.savePersistedAgentStatus(this.agentStatus);
     }
 
     // Handle browser notifications when Electron wasn't available
-    if (toolName === "notify" && hasSuccessResult(output)) {
-      const result = output as Extract<NotifyToolResult, { success: true }>;
-      const uiOnlyNotify = getToolOutputUiOnly(output)?.notify;
-      const legacyNotify = output as { notifiedVia?: string; workspaceId?: string };
-      const notifiedVia = uiOnlyNotify?.notifiedVia ?? legacyNotify.notifiedVia;
-      const workspaceId = uiOnlyNotify?.workspaceId ?? legacyNotify.workspaceId;
+    if (toolName === "notify") {
+      const result = parseNotifySuccessResult(output);
+      if (result) {
+        const uiOnlyNotify = getToolOutputUiOnly(output)?.notify;
+        const legacyNotify = parseLegacyNotifyRouting(output);
+        const notifiedVia = uiOnlyNotify?.notifiedVia ?? legacyNotify?.notifiedVia;
+        const workspaceId = uiOnlyNotify?.workspaceId ?? legacyNotify?.workspaceId;
 
-      if (notifiedVia === "browser") {
-        this.sendBrowserNotification(result.title, result.message, workspaceId);
+        if (notifiedVia === "browser") {
+          this.sendBrowserNotification(result.title, result.message, workspaceId);
+        }
       }
     }
 
@@ -2614,16 +2477,18 @@ export class StreamingMessageAggregator {
         }
       }
 
-      // Find the specific tool part by its ID and update it with the result
-      // We don't move it - it stays in its original temporal position
-      const toolPart = message.parts.find(
-        (part): part is DynamicToolPart =>
-          part.type === "dynamic-tool" && part.toolCallId === data.toolCallId
+      // Find the specific tool part by its ID and update it with the result.
+      // We don't move it - it stays in its original temporal position.
+      const toolPartIndex = message.parts.findIndex(
+        (part) => part.type === "dynamic-tool" && part.toolCallId === data.toolCallId
       );
-      if (toolPart) {
-        // Type assertion needed because TypeScript can't narrow the discriminated union
-        (toolPart as DynamicToolPartAvailable).state = "output-available";
-        (toolPart as DynamicToolPartAvailable).output = data.result;
+      const toolPart = message.parts[toolPartIndex];
+      if (toolPart?.type === "dynamic-tool") {
+        message.parts[toolPartIndex] = {
+          ...toolPart,
+          state: "output-available",
+          output: data.result,
+        };
 
         // Process tool result to update derived state (todos, agentStatus, etc.)
         this.processToolResult(data.toolName, toolPart.input, data.result);
@@ -2719,11 +2584,20 @@ export class StreamingMessageAggregator {
   }
 
   handleMessage(data: WorkspaceChatMessage): void {
-    // Handle init hook events (ephemeral, not persisted to history)
     if (this.shouldSkipReplayInitEvent(data)) {
       return;
     }
 
+    if (this.handleInitMessage(data)) {
+      return;
+    }
+
+    if (isMuxMessage(data)) {
+      this.handleMuxMessage(data);
+    }
+  }
+
+  private handleInitMessage(data: WorkspaceChatMessage): boolean {
     if (isInitStart(data)) {
       const isReplay = (data as { replay?: boolean }).replay === true;
       if (
@@ -2736,7 +2610,7 @@ export class StreamingMessageAggregator {
         // as a no-op so switching back never clears the visible SSH/setup output mid-replay.
         this.replayInitVisiblePrefix = [...this.initState.lines];
         this.replayInitVisiblePrefixIndex = 0;
-        return;
+        return true;
       }
 
       this.clearReplayInitVisiblePrefix();
@@ -2749,54 +2623,53 @@ export class StreamingMessageAggregator {
         endTime: null,
       };
       this.invalidateCache();
-      return;
+      return true;
     }
 
     if (isInitOutput(data)) {
       if (!this.initState) {
         console.error("Received init-output without init-start", { data });
-        return;
+        return true;
       }
       if (!data.line) {
         console.error("Received init-output with missing line field", { data });
-        return;
+        return true;
       }
       const line = data.line.trimEnd();
       const isError = data.isError === true;
       const isReplay = (data as { replay?: boolean }).replay === true;
       if (isReplay && this.shouldSkipVisibleReplayInitOutput(line, isError)) {
-        return;
+        return true;
       }
 
-      // Truncation: keep only the most recent MAX_LINES (matches backend)
+      // Truncation: keep only the most recent MAX_LINES (matches backend).
       if (this.initState.lines.length >= INIT_HOOK_MAX_LINES) {
-        this.initState.lines.shift(); // Drop oldest line
+        this.initState.lines.shift();
         this.initState.truncatedLines = (this.initState.truncatedLines ?? 0) + 1;
       }
       this.initState.lines.push({ line, isError });
 
-      // Throttle cache invalidation during fast streaming to avoid re-render per line
+      // Throttle cache invalidation during fast streaming to avoid re-render per line.
       this.initOutputThrottleTimer ??= setTimeout(() => {
         this.initOutputThrottleTimer = null;
         this.invalidateCache();
       }, StreamingMessageAggregator.INIT_OUTPUT_THROTTLE_MS);
-      return;
+      return true;
     }
 
     if (isInitEnd(data)) {
       this.clearReplayInitVisiblePrefix();
       if (!this.initState) {
         console.error("Received init-end without init-start", { data });
-        return;
+        return true;
       }
       this.initState.exitCode = data.exitCode;
       this.initState.status = data.exitCode === 0 ? "success" : "error";
       this.initState.endTime = data.timestamp;
-      // Use backend truncation count if larger (covers replay of old data)
+      // Use backend truncation count if larger (covers replay of old data).
       if (data.truncatedLines && data.truncatedLines > (this.initState.truncatedLines ?? 0)) {
         this.initState.truncatedLines = data.truncatedLines;
       }
-      // Cancel any pending throttled update and flush immediately
       if (this.initOutputThrottleTimer) {
         clearTimeout(this.initOutputThrottleTimer);
         this.initOutputThrottleTimer = null;
@@ -2807,94 +2680,80 @@ export class StreamingMessageAggregator {
         this.setPendingStreamStartTime(Date.now());
       }
       this.invalidateCache();
+      return true;
+    }
+
+    return false;
+  }
+
+  private handleMuxMessage(data: MuxMessage): void {
+    const incomingMessage = normalizeMessageRouteProvider(data);
+
+    // Smart replacement logic for edits: if history was truncated, remove the
+    // existing message at the incoming sequence and all subsequent messages.
+    const incomingSequence = incomingMessage.metadata?.historySequence;
+    if (incomingSequence !== undefined) {
+      for (const [_id, msg] of this.messages.entries()) {
+        const existingSequence = msg.metadata?.historySequence;
+        if (existingSequence !== undefined && existingSequence >= incomingSequence) {
+          const messagesToRemove: string[] = [];
+          for (const [removeId, removeMsg] of this.messages.entries()) {
+            const removeSeq = removeMsg.metadata?.historySequence;
+            if (removeSeq !== undefined && removeSeq >= incomingSequence) {
+              messagesToRemove.push(removeId);
+            }
+          }
+          for (const removeId of messagesToRemove) {
+            this.deleteMessage(removeId);
+          }
+          break;
+        }
+      }
+    }
+
+    // When a compaction boundary arrives during a live session, prune messages
+    // older than the incoming boundary sequence so the UI matches a fresh load
+    // while older epochs remain available via Load More history pagination.
+    if (this.isCompactionBoundaryMessage(incomingMessage)) {
+      this.pruneBeforeLatestBoundary(incomingMessage);
+    }
+
+    this.addMessage(incomingMessage);
+    this.maybeTrackLoadedSkillFromAgentSkillSnapshot(incomingMessage.metadata?.agentSkillSnapshot);
+
+    if (incomingMessage.role !== "user") {
       return;
     }
 
-    // Handle regular messages (user messages, historical messages)
-    // Check if it's a MuxMessage (has role property but no type)
-    if (isMuxMessage(data)) {
-      const incomingMessage = normalizeMessageRouteProvider(data);
+    // Reset terminal lifecycle snapshots from the previous turn immediately so
+    // the next accepted send never inherits a stale interrupted/failed state.
+    this.streamLifecycle = null;
 
-      // Smart replacement logic for edits:
-      // If a message arrives with a historySequence that already exists,
-      // it means history was truncated (edit operation). Remove the existing
-      // message at that sequence and all subsequent messages, then add the new one.
-      const incomingSequence = incomingMessage.metadata?.historySequence;
-      if (incomingSequence !== undefined) {
-        // Check if there's already a message with this sequence
-        for (const [_id, msg] of this.messages.entries()) {
-          const existingSequence = msg.metadata?.historySequence;
-          if (existingSequence !== undefined && existingSequence >= incomingSequence) {
-            // Found a conflict - remove this message and all after it
-            const messagesToRemove: string[] = [];
-            for (const [removeId, removeMsg] of this.messages.entries()) {
-              const removeSeq = removeMsg.metadata?.historySequence;
-              if (removeSeq !== undefined && removeSeq >= incomingSequence) {
-                messagesToRemove.push(removeId);
-              }
-            }
-            for (const removeId of messagesToRemove) {
-              this.deleteMessage(removeId);
-            }
-            break; // Found and handled the conflict
+    const muxMeta = incomingMessage.metadata?.muxMetadata as
+      | { displayStatus?: { emoji: string; message: string } }
+      | undefined;
+    const muxMetadata = incomingMessage.metadata?.muxMetadata;
+    this.pendingCompactionRequest =
+      muxMetadata?.type === "compaction-request"
+        ? {
+            parsed: muxMetadata.parsed,
+            source: muxMetadata.source,
           }
-        }
-      }
+        : null;
 
-      // When a compaction boundary arrives during a live session, prune messages
-      // older than the incoming boundary sequence so the UI matches a fresh load
-      // (emitHistoricalEvents now reads from skip=0, the latest boundary only).
-      // This keeps only the current epoch visible in-session; older epochs remain
-      // available via Load More history pagination.
-      if (this.isCompactionBoundaryMessage(incomingMessage)) {
-        this.pruneBeforeLatestBoundary(incomingMessage);
-      }
+    this.optimisticPendingStreamStart = false;
+    this.optimisticPendingStreamStartIdleCaughtUpCount = 0;
+    this.pendingStreamModel = muxMetadata?.requestedModel ?? null;
 
-      // Now add the new message
-      this.addMessage(incomingMessage);
-
-      this.maybeTrackLoadedSkillFromAgentSkillSnapshot(
-        incomingMessage.metadata?.agentSkillSnapshot
-      );
-
-      // If this is a user message, clear derived state and record timestamp
-      if (incomingMessage.role === "user") {
-        // Reset terminal lifecycle snapshots from the previous turn immediately so the next
-        // accepted send never inherits a stale interrupted/failed classification while we wait
-        // for the backend's authoritative PREPARING lifecycle event.
-        this.streamLifecycle = null;
-
-        const muxMeta = incomingMessage.metadata?.muxMetadata as
-          | { displayStatus?: { emoji: string; message: string } }
-          | undefined;
-
-        // Capture pending compaction metadata for pre-stream UI ("starting" phase).
-        const muxMetadata = incomingMessage.metadata?.muxMetadata;
-        this.pendingCompactionRequest =
-          muxMetadata?.type === "compaction-request"
-            ? {
-                parsed: muxMetadata.parsed,
-                source: muxMetadata.source,
-              }
-            : null;
-
-        this.optimisticPendingStreamStart = false;
-        this.optimisticPendingStreamStartIdleCaughtUpCount = 0;
-        this.pendingStreamModel = muxMetadata?.requestedModel ?? null;
-
-        if (muxMeta?.displayStatus) {
-          // Background operation - show requested status (don't persist)
-          this.agentStatus = muxMeta.displayStatus;
-        } else {
-          // Normal user turn - clear status
-          this.agentStatus = undefined;
-          this.clearPersistedAgentStatus();
-        }
-
-        this.lastAbortReason = null;
-        this.setPendingStreamStartTime(Date.now());
-      }
+    if (muxMeta?.displayStatus) {
+      this.agentStatus = muxMeta.displayStatus;
+    } else {
+      this.agentStatus = undefined;
+      this.clearPersistedAgentStatus();
     }
+
+    this.lastAbortReason = null;
+    this.setPendingStreamStartTime(Date.now());
   }
 
   private isContextBoundaryMessage(message: MuxMessage): boolean {
@@ -2954,493 +2813,19 @@ export class StreamingMessageAggregator {
     }
   }
 
-  private createCompactionBoundaryRow(
-    message: MuxMessage,
-    historySequence: number
-  ): Extract<DisplayedMessage, { type: "compaction-boundary" }> {
-    assert(
-      message.role === "assistant",
-      "compaction boundaries must belong to assistant summaries"
-    );
-
-    const rawCompactionEpoch = message.metadata?.compactionEpoch;
-    const compactionEpoch =
-      typeof rawCompactionEpoch === "number" &&
-      Number.isInteger(rawCompactionEpoch) &&
-      rawCompactionEpoch > 0
-        ? rawCompactionEpoch
-        : undefined;
-
-    // Self-healing read path: malformed persisted compactionEpoch should not crash transcript rendering.
-    return {
-      type: "compaction-boundary",
-      id: `${message.id}-compaction-boundary`,
-      historySequence,
-      boundaryKind: getContextBoundaryKind(message) ?? CONTEXT_BOUNDARY_KINDS.COMPACTION,
-      position: "start",
-      compactionEpoch,
-    };
-  }
-
   private buildDisplayedMessagesForMessage(
     message: MuxMessage,
     agentSkillSnapshot?: { frontmatterYaml?: string; body?: string },
     inlineSkillSnapshots?: InlineSkillSnapshotMap
   ): DisplayedMessage[] {
-    const displayedMessages: DisplayedMessage[] = [];
-    const baseTimestamp = message.metadata?.timestamp;
-    const historySequence = message.metadata?.historySequence ?? 0;
-
-    // Check for plan-display messages (ephemeral /plan output)
-    const muxMeta = message.metadata?.muxMetadata;
-    if (muxMeta?.type === "plan-display") {
-      const content = getTextPartContent(message.parts);
-      displayedMessages.push({
-        type: "plan-display",
-        id: message.id,
-        historyId: message.id,
-        content,
-        path: muxMeta.path,
-        historySequence,
-      });
-      return displayedMessages;
-    }
-
-    if (message.role === "user") {
-      // User messages: combine all text parts into single block, extract attachments
-      const partsContent = getTextPartContent(message.parts);
-
-      const fileParts = message.parts
-        .filter((p): p is MuxFilePart => p.type === "file")
-        .map((p) => ({
-          url: typeof p.url === "string" ? p.url : "",
-          mediaType: p.mediaType,
-          filename: p.filename,
-        }));
-
-      // Extract slash command from muxMetadata (present for /compact, /skill, etc.)
-      let rawCommand = muxMeta && "rawCommand" in muxMeta ? muxMeta.rawCommand : undefined;
-
-      const agentSkill =
-        muxMeta?.type === "agent-skill"
-          ? {
-              skillName: muxMeta.skillName,
-              scope: muxMeta.scope,
-              snapshot: agentSkillSnapshot,
-            }
-          : undefined;
-
-      const compactionFollowUp = getCompactionFollowUpContent(muxMeta);
-
-      const compactionRequest =
-        muxMeta?.type === "compaction-request"
-          ? {
-              parsed: {
-                model: muxMeta.parsed.model,
-                maxOutputTokens: muxMeta.parsed.maxOutputTokens,
-                followUpContent: compactionFollowUp,
-              } satisfies CompactionRequestData,
-            }
-          : undefined;
-
-      // Reconstruct full rawCommand if follow-up text isn't already included
-      if (rawCommand && compactionRequest?.parsed.followUpContent && !rawCommand.includes("\n")) {
-        const followUpText = getFollowUpContentText(compactionRequest.parsed.followUpContent);
-        if (followUpText) {
-          rawCommand = `${rawCommand}\n${followUpText}`;
-        }
-      }
-
-      // Content is rawCommand (what user typed) or parts (normal message)
-      const content = rawCommand ?? partsContent;
-
-      // commandPrefix comes directly from metadata - no reconstruction needed
-      const commandPrefix = muxMeta?.commandPrefix;
-
-      // Extract reviews from muxMetadata for rich UI display (orthogonal to message type)
-      const reviews = muxMeta?.reviews;
-
-      displayedMessages.push({
-        type: "user",
-        id: message.id,
-        historyId: message.id,
-        content,
-        commandPrefix,
-        fileParts: fileParts.length > 0 ? fileParts : undefined,
-        historySequence,
-        isSynthetic: message.metadata?.synthetic === true ? true : undefined,
-        isGoalContinuation: message.metadata?.kind === GOAL_CONTINUATION_KIND ? true : undefined,
-        isBudgetLimitWrapup: message.metadata?.kind === GOAL_BUDGET_LIMIT_KIND ? true : undefined,
-        timestamp: baseTimestamp,
-        agentSkill,
-        inlineSkillSnapshots,
-        compactionRequest,
-        reviews,
-      });
-      return displayedMessages;
-    }
-
-    if (message.role === "assistant") {
-      // Assistant messages: each part becomes a separate DisplayedMessage
-      // Use streamSequence to order parts within this message
-      let streamSeq = 0;
-
-      // Check if this message has an active stream (for inferring streaming status)
-      // Direct Map.has() check - O(1) instead of O(n) iteration
-      const hasActiveStream = this.activeStreams.has(message.id);
-      const streamContext = hasActiveStream ? this.activeStreams.get(message.id) : undefined;
-
-      // isPartial from metadata (set by stream-abort event)
-      const isPartial = message.metadata?.partial === true;
-
-      // Merge adjacent text/reasoning parts for display
-      const mergedParts = mergeAdjacentParts(message.parts);
-
-      // A part is "renderable" when getDisplayedMessages will emit a row for
-      // it. Empty text parts and other unsupported types are silently skipped
-      // by the loop below, so any flag derived from "what the user sees" must
-      // share this predicate to stay in sync. The text check uses a truthy
-      // test (rather than `.length > 0`) to keep self-healing behavior for
-      // malformed history entries where `part.text` may be undefined.
-      const isRenderablePart = (part: (typeof mergedParts)[number]): boolean =>
-        part.type === "reasoning" ||
-        (part.type === "text" && Boolean(part.text)) ||
-        isDynamicToolPart(part);
-
-      // Find the last part that will produce a DisplayedMessage and tally
-      // renderable parts to detect reasoning-only turns. Done in a single
-      // pass so the two derivations can't drift.
-      let lastPartIndex = -1;
-      let renderableCount = 0;
-      let renderableReasoningCount = 0;
-      for (let i = 0; i < mergedParts.length; i++) {
-        const part = mergedParts[i];
-        if (!isRenderablePart(part)) continue;
-        lastPartIndex = i;
-        renderableCount++;
-        if (part.type === "reasoning") renderableReasoningCount++;
-      }
-
-      const isContextBoundary = this.isContextBoundaryMessage(message);
-      if (isContextBoundary) {
-        displayedMessages.push(this.createCompactionBoundaryRow(message, historySequence));
-      }
-
-      // A turn whose *renderable* parts are entirely reasoning (no text, no tool
-      // calls) is the visible signature of a max_tokens truncation mid-thinking.
-      // We pass this hint down so ReasoningMessage can skip its auto-collapse —
-      // otherwise the user is left looking at a single collapsed "Thinking"
-      // header with no other output to read.
-      const isReasoningOnlyMessage =
-        renderableCount > 0 && renderableCount === renderableReasoningCount;
-
-      mergedParts.forEach((part, partIndex) => {
-        const isLastPart = partIndex === lastPartIndex;
-        // Part is streaming if: active stream exists AND this is the last part
-        const isStreaming = hasActiveStream && isLastPart;
-
-        if (part.type === "reasoning") {
-          // Reasoning part - shows thinking/reasoning content
-          displayedMessages.push({
-            type: "reasoning",
-            id: `${message.id}-${partIndex}`,
-            historyId: message.id,
-            content: part.text,
-            historySequence,
-            streamSequence: streamSeq++,
-            isStreaming,
-            isPartial,
-            isLastPartOfMessage: isLastPart,
-            isOnlyMessageContent: isReasoningOnlyMessage,
-            timestamp: part.timestamp ?? baseTimestamp,
-            streamPresentation: isStreaming
-              ? { source: streamContext?.isReplay ? "replay" : "live" }
-              : undefined,
-          });
-        } else if (part.type === "text" && part.text) {
-          // Skip empty text parts
-          displayedMessages.push({
-            type: "assistant",
-            id: `${message.id}-${partIndex}`,
-            historyId: message.id,
-            content: getGoalClearedSummaryDisplayText(part.text, muxMeta),
-            historySequence,
-            streamSequence: streamSeq++,
-            isStreaming,
-            isPartial,
-            isLastPartOfMessage: isLastPart,
-            // Support both new enum ("user"|"idle") and legacy boolean (true)
-            isCompacted: !!message.metadata?.compacted,
-            isIdleCompacted: message.metadata?.compacted === "idle",
-            model: message.metadata?.model,
-            routedThroughGateway: message.metadata?.routedThroughGateway,
-            routeProvider: resolveRouteProvider(
-              message.metadata?.routeProvider,
-              message.metadata?.routedThroughGateway
-            ),
-            mode: message.metadata?.mode,
-            agentId: message.metadata?.agentId ?? message.metadata?.mode,
-            timestamp: part.timestamp ?? baseTimestamp,
-            streamPresentation: isStreaming
-              ? { source: streamContext?.isReplay ? "replay" : "live" }
-              : undefined,
-          });
-        } else if (isDynamicToolPart(part)) {
-          // Determine status based on part state and result
-          let status: "pending" | "executing" | "completed" | "failed" | "interrupted" | "redacted";
-          if (part.state === "output-available") {
-            // Check if result indicates failure (for tools that return { success: boolean })
-            status = hasFailureResult(part.output) ? "failed" : "completed";
-          } else if (part.state === "output-redacted") {
-            status = part.failed ? "failed" : "redacted";
-          } else if (part.state === "input-available") {
-            // Most unfinished tool calls in partial messages represent an interruption.
-            // ask_user_question is different: it's intentionally waiting on user input,
-            // so after restart we should keep it answerable ("executing") instead of
-            // showing retry/auto-resume UX.
-            if (part.toolName === "ask_user_question") {
-              status = "executing";
-            } else if (isPartial) {
-              status = "interrupted";
-            } else {
-              status = "executing";
-            }
-          } else {
-            status = "pending";
-          }
-
-          // For code_execution, use streaming nestedCalls if present, or reconstruct from result
-          let nestedCalls = part.nestedCalls;
-          if (
-            !nestedCalls &&
-            part.toolName === "code_execution" &&
-            part.state === "output-available"
-          ) {
-            // Reconstruct nestedCalls from result.toolCalls (for historical replay)
-            const result = part.output as
-              | {
-                  toolCalls?: Array<{
-                    toolName: string;
-                    args: unknown;
-                    result?: unknown;
-                    error?: string;
-                    duration_ms: number;
-                  }>;
-                }
-              | undefined;
-            if (result?.toolCalls) {
-              nestedCalls = result.toolCalls.map((tc, idx) => ({
-                toolCallId: `${part.toolCallId}-nested-${idx}`,
-                toolName: tc.toolName,
-                input: tc.args,
-                output: tc.result ?? (tc.error ? { error: tc.error } : undefined),
-                state: "output-available" as const,
-                timestamp: part.timestamp,
-              }));
-            }
-          }
-
-          const nestedImageMessages: Array<
-            | {
-                kind: "generated";
-                nestedCall: {
-                  toolCallId: string;
-                  timestamp?: number;
-                  output: Extract<ImageGenerateToolResult, { success: true }>;
-                };
-              }
-            | {
-                kind: "edited";
-                nestedCall: {
-                  toolCallId: string;
-                  timestamp?: number;
-                  output: Extract<ImageEditToolResult, { success: true }>;
-                };
-              }
-          > = [];
-          if (!isPartial && nestedCalls) {
-            for (const nestedCall of nestedCalls) {
-              if (
-                nestedCall.toolName === "image_generate" &&
-                nestedCall.state === "output-available" &&
-                !hasVisibleHookOutput(nestedCall.output) &&
-                isSuccessfulImageGenerateResult(nestedCall.output)
-              ) {
-                nestedImageMessages.push({
-                  kind: "generated",
-                  nestedCall: {
-                    toolCallId: nestedCall.toolCallId,
-                    timestamp: nestedCall.timestamp,
-                    output: nestedCall.output,
-                  },
-                });
-                continue;
-              }
-              if (
-                nestedCall.toolName === "image_edit" &&
-                nestedCall.state === "output-available" &&
-                !hasVisibleHookOutput(nestedCall.output) &&
-                isSuccessfulImageEditResult(nestedCall.output)
-              ) {
-                nestedImageMessages.push({
-                  kind: "edited",
-                  nestedCall: {
-                    toolCallId: nestedCall.toolCallId,
-                    timestamp: nestedCall.timestamp,
-                    output: nestedCall.output,
-                  },
-                });
-              }
-            }
-          }
-
-          const nestedImageMessageIds = new Set(
-            nestedImageMessages.map(({ nestedCall }) => nestedCall.toolCallId)
-          );
-          const nestedCallsForToolRow = nestedCalls?.filter(
-            (nestedCall) => !nestedImageMessageIds.has(nestedCall.toolCallId)
-          );
-
-          if (
-            part.toolName === "image_generate" &&
-            part.state === "output-available" &&
-            status === "completed" &&
-            !isPartial &&
-            !hasVisibleHookOutput(part.output) &&
-            isSuccessfulImageGenerateResult(part.output)
-          ) {
-            appendGeneratedImageMessage(displayedMessages, {
-              id: `${message.id}-${partIndex}`,
-              historyId: message.id,
-              toolCallId: part.toolCallId,
-              output: part.output,
-              isPartial,
-              historySequence,
-              streamSequence: streamSeq++,
-              isLastPartOfMessage: isLastPart,
-              timestamp: part.timestamp ?? baseTimestamp,
-            });
-          } else if (
-            part.toolName === "image_edit" &&
-            part.state === "output-available" &&
-            status === "completed" &&
-            !isPartial &&
-            !hasVisibleHookOutput(part.output) &&
-            isSuccessfulImageEditResult(part.output)
-          ) {
-            appendEditedImageMessage(displayedMessages, {
-              id: `${message.id}-${partIndex}`,
-              historyId: message.id,
-              toolCallId: part.toolCallId,
-              output: part.output,
-              isPartial,
-              historySequence,
-              streamSequence: streamSeq++,
-              isLastPartOfMessage: isLastPart,
-              timestamp: part.timestamp ?? baseTimestamp,
-            });
-          } else {
-            displayedMessages.push({
-              type: "tool",
-              id: `${message.id}-${partIndex}`,
-              historyId: message.id,
-              toolCallId: part.toolCallId,
-              toolName: part.toolName,
-              args: part.input,
-              result: part.state === "output-available" ? part.output : undefined,
-              status,
-              isPartial,
-              historySequence,
-              streamSequence: streamSeq++,
-              isLastPartOfMessage: isLastPart && nestedImageMessages.length === 0,
-              timestamp: part.timestamp ?? baseTimestamp,
-              nestedCalls: nestedCallsForToolRow,
-            });
-            nestedImageMessages.forEach(({ kind, nestedCall }, nestedIndex) => {
-              const isLastNestedImage = nestedIndex === nestedImageMessages.length - 1;
-              if (kind === "generated") {
-                appendGeneratedImageMessage(displayedMessages, {
-                  id: `${message.id}-${partIndex}-nested-image-${nestedIndex}`,
-                  historyId: message.id,
-                  toolCallId: nestedCall.toolCallId,
-                  output: nestedCall.output,
-                  isPartial,
-                  historySequence,
-                  streamSequence: streamSeq++,
-                  isLastPartOfMessage: isLastPart && isLastNestedImage,
-                  timestamp: nestedCall.timestamp ?? part.timestamp ?? baseTimestamp,
-                });
-                return;
-              }
-              appendEditedImageMessage(displayedMessages, {
-                id: `${message.id}-${partIndex}-nested-edited-image-${nestedIndex}`,
-                historyId: message.id,
-                toolCallId: nestedCall.toolCallId,
-                output: nestedCall.output,
-                isPartial,
-                historySequence,
-                streamSequence: streamSeq++,
-                isLastPartOfMessage: isLastPart && isLastNestedImage,
-                timestamp: nestedCall.timestamp ?? part.timestamp ?? baseTimestamp,
-              });
-            });
-          }
-        }
-      });
-
-      // Both stream-error rows (real error metadata + synthesized
-      // max_tokens truncation) share the same parent-message-derived
-      // fields. Capture them in one place so adding a new branch later
-      // can't accidentally drift on `model` / `routedThroughGateway` /
-      // `historySequence` / `timestamp`.
-      const pushStreamErrorRow = (
-        idSuffix: string,
-        error: string,
-        errorType: StreamErrorType
-      ): void => {
-        displayedMessages.push({
-          type: "stream-error",
-          id: `${message.id}-${idSuffix}`,
-          historyId: message.id,
-          error,
-          errorType,
-          historySequence,
-          model: message.metadata?.model,
-          routedThroughGateway: message.metadata?.routedThroughGateway,
-          timestamp: baseTimestamp,
-        });
-      };
-
-      // Create stream-error DisplayedMessage if message has error metadata
-      // This happens after all parts are displayed, so error appears at the end
-      if (message.metadata?.error) {
-        pushStreamErrorRow(
-          "error",
-          message.metadata.error,
-          message.metadata.errorType ?? "unknown"
-        );
-      } else if (
-        // Stream ended cleanly *but* the provider truncated us at max_tokens.
-        // The backend's stream-end path treats this as a successful completion
-        // (no error metadata), so without this synthesis the chat appears to
-        // silently end — especially painful for reasoning-only turns where
-        // ReasoningMessage would otherwise auto-collapse the only output.
-        // Skip while still streaming: finishReason is only authoritative once
-        // the stream has settled.
-        message.role === "assistant" &&
-        !hasActiveStream &&
-        message.metadata?.finishReason === "length"
-      ) {
-        pushStreamErrorRow(
-          "length",
-          "The model hit its max output token limit before finishing this response. " +
-            "Lower the thinking level (or split the turn into smaller steps) to give it more headroom.",
-          "max_output_tokens"
-        );
-      }
-    }
-
-    return displayedMessages;
+    return buildDisplayedMessagesForMessage({
+      message,
+      agentSkillSnapshot,
+      inlineSkillSnapshots,
+      hasActiveStream: this.activeStreams.has(message.id),
+      streamIsReplay: this.activeStreams.get(message.id)?.isReplay,
+      isContextBoundaryMessage: (candidate) => this.isContextBoundaryMessage(candidate),
+    });
   }
 
   /**
@@ -3518,7 +2903,7 @@ export class StreamingMessageAggregator {
           : undefined;
 
         const agentSkillSnapshotCacheKey = agentSkillSnapshot
-          ? `${agentSkillSnapshot.sha256 ?? ""}\n${agentSkillSnapshot.frontmatterYaml ?? ""}`
+          ? getAgentSkillSnapshotDisplayCacheKey(agentSkillSnapshot)
           : undefined;
 
         const inlineSkillSnapshotState =

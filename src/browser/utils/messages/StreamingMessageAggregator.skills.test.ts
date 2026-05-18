@@ -650,6 +650,87 @@ describe("Agent skill snapshot association", () => {
     });
   });
 
+  it("invalidates slash skill display cache when snapshot body changes without sha change", () => {
+    const aggregator = createAggregator();
+    const snapshot = createSkillSnapshotMessage({
+      id: "snapshot-tdd",
+      skillName: "tdd",
+      scope: "project",
+      historySequence: 1,
+      body: "# TDD v1",
+      frontmatterYaml: "name: tdd\ndescription: Test-first changes",
+    });
+    const invocation = createSkillInvocationMessage({
+      id: "invoke-tdd",
+      skillName: "tdd",
+      scope: "project",
+      historySequence: 2,
+    });
+
+    aggregator.addMessage(snapshot);
+    aggregator.addMessage(invocation);
+    const firstMessage = getSingleDisplayedUserMessage(aggregator);
+    expect(firstMessage.agentSkill?.snapshot?.body).toBe("# TDD v1");
+
+    aggregator.addMessage(
+      createSkillSnapshotMessage({
+        id: "snapshot-tdd",
+        skillName: "tdd",
+        scope: "project",
+        historySequence: 1,
+        body: "# TDD v2",
+        frontmatterYaml: "name: tdd\ndescription: Test-first changes",
+      })
+    );
+
+    const secondMessage = getSingleDisplayedUserMessage(aggregator);
+    expect(secondMessage.agentSkill?.snapshot?.body).toBe("# TDD v2");
+    expect(secondMessage).not.toBe(firstMessage);
+  });
+
+  it("invalidates inline skill display cache when snapshot body or frontmatter changes", () => {
+    const aggregator = createAggregator();
+    const snapshot = createSkillSnapshotMessage({
+      id: "snapshot-tdd",
+      skillName: "tdd",
+      scope: "project",
+      historySequence: 1,
+      body: "# TDD v1",
+      frontmatterYaml: "name: tdd\ndescription: Test-first changes v1",
+    });
+    const invocation = createInlineSkillMessage({
+      historySequence: 2,
+      content: "Use $tdd",
+      refs: [{ skillName: "tdd", scope: "project", source: "inline" }],
+    });
+
+    aggregator.addMessage(snapshot);
+    aggregator.addMessage(invocation);
+    const firstMessage = getSingleDisplayedUserMessage(aggregator);
+    expect(firstMessage.inlineSkillSnapshots?.tdd?.snapshot).toEqual({
+      frontmatterYaml: "name: tdd\ndescription: Test-first changes v1",
+      body: "# TDD v1",
+    });
+
+    aggregator.addMessage(
+      createSkillSnapshotMessage({
+        id: "snapshot-tdd",
+        skillName: "tdd",
+        scope: "project",
+        historySequence: 1,
+        body: "# TDD v2",
+        frontmatterYaml: "name: tdd\ndescription: Test-first changes v2",
+      })
+    );
+
+    const secondMessage = getSingleDisplayedUserMessage(aggregator);
+    expect(secondMessage.inlineSkillSnapshots?.tdd?.snapshot).toEqual({
+      frontmatterYaml: "name: tdd\ndescription: Test-first changes v2",
+      body: "# TDD v2",
+    });
+    expect(secondMessage).not.toBe(firstMessage);
+  });
+
   it("omits inline refs that do not have an available snapshot", () => {
     const aggregator = createAggregator();
     const invocation = createInlineSkillMessage({
