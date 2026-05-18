@@ -291,6 +291,41 @@ function getAdvisorSwitchState(
   return { checked, title };
 }
 
+// Renders the per-agent advisor toggle (Tooltip + Switch + optional Reset button).
+// The same block previously lived inline in renderAgentDefaults and
+// renderUnknownAgentDefaults; extracting it keeps the two call sites byte-for-byte
+// identical (same aria-label, same tooltip text, same reset semantics).
+function AdvisorSwitch(props: {
+  agentId: string;
+  advisorEnabledOverride: boolean | undefined;
+  onChange: (checked: boolean) => void;
+  onReset: () => void;
+}): React.ReactNode {
+  const state = getAdvisorSwitchState(props.agentId, props.advisorEnabledOverride);
+  return (
+    <>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <div className="flex items-center gap-2">
+            <div className="text-muted text-xs">Advisor</div>
+            <Switch
+              checked={state.checked}
+              onCheckedChange={props.onChange}
+              aria-label={`Toggle ${props.agentId} advisor`}
+            />
+          </div>
+        </TooltipTrigger>
+        <TooltipContent>{state.title}</TooltipContent>
+      </Tooltip>
+      {props.advisorEnabledOverride !== undefined ? (
+        <Button type="button" variant="ghost" size="sm" className="px-2" onClick={props.onReset}>
+          Reset
+        </Button>
+      ) : null}
+    </>
+  );
+}
+
 function areTaskSettingsEqual(a: TaskSettings, b: TaskSettings): boolean {
   return (
     a.maxParallelAgentTasks === b.maxParallelAgentTasks &&
@@ -881,7 +916,6 @@ export function TasksSection() {
     const writesSubagentAiDefaults = agent.subagentRunnable && !agent.uiSelectable;
     const enabledOverride = entry?.enabled;
     const advisorEnabledOverride = entry?.advisorEnabled;
-    const advisorSwitchState = getAdvisorSwitchState(agent.id, advisorEnabledOverride);
 
     const enablementLocked =
       agent.id === "exec" || agent.id === "plan" || agent.id === "compact" || agent.id === "mux";
@@ -1001,30 +1035,12 @@ export function TasksSection() {
             </div>
             {advisorToolEnabled ? (
               <div className="flex items-center gap-3">
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <div className="flex items-center gap-2">
-                      <div className="text-muted text-xs">Advisor</div>
-                      <Switch
-                        checked={advisorSwitchState.checked}
-                        onCheckedChange={(checked) => setAgentAdvisorEnabled(agent.id, checked)}
-                        aria-label={`Toggle ${agent.id} advisor`}
-                      />
-                    </div>
-                  </TooltipTrigger>
-                  <TooltipContent>{advisorSwitchState.title}</TooltipContent>
-                </Tooltip>
-                {advisorEnabledOverride !== undefined ? (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="px-2"
-                    onClick={() => resetAgentAdvisorEnabled(agent.id)}
-                  >
-                    Reset
-                  </Button>
-                ) : null}
+                <AdvisorSwitch
+                  agentId={agent.id}
+                  advisorEnabledOverride={advisorEnabledOverride}
+                  onChange={(checked) => setAgentAdvisorEnabled(agent.id, checked)}
+                  onReset={() => resetAgentAdvisorEnabled(agent.id)}
+                />
               </div>
             ) : null}
           </div>
@@ -1106,7 +1122,6 @@ export function TasksSection() {
     const modelValue = entry?.modelString ?? INHERIT;
     const thinkingValue = entry?.thinkingLevel ?? INHERIT;
     const advisorEnabledOverride = entry?.advisorEnabled;
-    const advisorSwitchState = getAdvisorSwitchState(agentId, advisorEnabledOverride);
     const effectiveModel = modelValue !== INHERIT ? modelValue : inheritedEffectiveModel;
 
     return (
@@ -1121,30 +1136,12 @@ export function TasksSection() {
           </div>
           {advisorToolEnabled ? (
             <div className="flex shrink-0 items-center gap-3">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className="flex items-center gap-2">
-                    <div className="text-muted text-xs">Advisor</div>
-                    <Switch
-                      checked={advisorSwitchState.checked}
-                      onCheckedChange={(checked) => setAgentAdvisorEnabled(agentId, checked)}
-                      aria-label={`Toggle ${agentId} advisor`}
-                    />
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent>{advisorSwitchState.title}</TooltipContent>
-              </Tooltip>
-              {advisorEnabledOverride !== undefined ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="px-2"
-                  onClick={() => resetAgentAdvisorEnabled(agentId)}
-                >
-                  Reset
-                </Button>
-              ) : null}
+              <AdvisorSwitch
+                agentId={agentId}
+                advisorEnabledOverride={advisorEnabledOverride}
+                onChange={(checked) => setAgentAdvisorEnabled(agentId, checked)}
+                onReset={() => resetAgentAdvisorEnabled(agentId)}
+              />
             </div>
           ) : null}
         </div>
