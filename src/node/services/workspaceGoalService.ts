@@ -1584,13 +1584,38 @@ export class WorkspaceGoalService {
         if (conflict) {
           return Err(conflict);
         }
-        const projected = this.createGoal({
-          objective,
-          budgetCents: input.budgetCents ?? null,
-          turnCap: input.turnCap ?? null,
-          status: input.status,
-          completionSummary: input.completionSummary,
-        });
+        // Codex P2: for an `editInPlace` rename, the eventual drain
+        // RENAMES the existing record (preserves goalId, cost/turns,
+        // budget/turnCap, attributed children) instead of creating a
+        // fresh one. The optimistic snapshot must mirror that so the
+        // Goal tab does not flash zeroed accounting + a new id between
+        // submit and stream end. We overlay the rename onto `current`
+        // (when it exists) and only swap to a brand-new `createGoal`
+        // for non-editInPlace branches (replace/new-goal). Fields that
+        // were explicitly provided still win — the budget gate below
+        // continues to enforce pricing on the projected record.
+        const projected: GoalRecordV1 =
+          input.editInPlace === true && current
+            ? GoalRecordV1Schema.parse({
+                ...current,
+                objective,
+                ...(Object.hasOwn(input, "budgetCents")
+                  ? { budgetCents: input.budgetCents ?? null }
+                  : {}),
+                ...(Object.hasOwn(input, "turnCap") ? { turnCap: input.turnCap ?? null } : {}),
+                ...(input.status != null ? { status: input.status } : {}),
+                ...(input.completionSummary != null
+                  ? { completionSummary: input.completionSummary }
+                  : {}),
+                updatedAtMs: Date.now(),
+              })
+            : this.createGoal({
+                objective,
+                budgetCents: input.budgetCents ?? null,
+                turnCap: input.turnCap ?? null,
+                status: input.status,
+                completionSummary: input.completionSummary,
+              });
         if (
           (projected.status === "active" || projected.status === "budget_limited") &&
           !this.canRunBudgetedGoalOnKickoffModel(input.workspaceId, projected)

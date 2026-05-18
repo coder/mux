@@ -1610,6 +1610,45 @@ describe("WorkspaceGoalService", () => {
     expect(await service.getGoal(workspaceId)).toBeNull();
   });
 
+  test("mid-stream editInPlace rename returns an optimistic snapshot that preserves goalId + accounting", async () => {
+    // Codex P2: when an editInPlace rename arrives mid-stream, the
+    // projected snapshot returned to the UI is what the Goal tab reads
+    // until stream end drains the queued mutation. Building it via
+    // `createGoal` (the pre-fix behavior) would flash a brand-new id +
+    // zero cost/turns + cleared budget for the duration of the stream,
+    // even though the persisted mutation will rename in place. Mirror
+    // the drain semantics here: overlay the rename onto the current
+    // record.
+    const created = await setGoalOk(service, {
+      workspaceId,
+      objective: "Original objective",
+      budgetCents: 500,
+      turnCap: 7,
+    });
+    await service.recordStreamAccounting({
+      workspaceId,
+      costUsd: 0.25,
+      streamStartedAtMs: created.createdAtMs + 1,
+      streamOriginKind: "user",
+    });
+
+    await extensionMetadata.setStreaming(workspaceId, true);
+    const queued = await service.setGoal({
+      workspaceId,
+      objective: "Renamed objective",
+      editInPlace: true,
+      expectedGoalId: created.goalId,
+    });
+    expect(queued.success).toBe(true);
+    if (queued.success) {
+      expect(queued.data.goalId).toBe(created.goalId);
+      expect(queued.data.objective).toBe("Renamed objective");
+      expect(queued.data.costCents).toBe(25);
+      expect(queued.data.budgetCents).toBe(500);
+      expect(queued.data.turnCap).toBe(7);
+    }
+  });
+
   test("queued mid-stream editInPlace rename preserves goalId + accounting at drain time", async () => {
     const created = await setGoalOk(service, { workspaceId, objective: "Original objective" });
     await service.recordStreamAccounting({
