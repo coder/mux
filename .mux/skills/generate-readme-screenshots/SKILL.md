@@ -92,7 +92,6 @@ If **any** of these fail:
 | `CostsTabRich`            | `costs-tab.webp`          | No                              |
 | `ContextManagementDialog` | `context-management.webp` | Yes (open settings dialog)      |
 | `MobileServerMode`        | `mobile-server-mode.webp` | No                              |
-| `OrchestrateAgents`       | `orchestrate-agents.webp` | No                              |
 
 ### Key Files
 
@@ -141,7 +140,7 @@ bun run scripts/capture-readme-screenshots.ts --storybook-url http://localhost:6
 
 The script:
 
-- Iterates all 8 stories sequentially
+- Iterates all 7 stories sequentially
 - Opens a fresh Playwright page per story
 - Waits for `networkidle` + 2s stabilization
 - Runs `playInteraction` if defined (with up to 3 retries for flaky interactions)
@@ -163,8 +162,8 @@ bun run scripts/capture-readme-screenshots.ts --story ContextManagementDialog
 ### 5. Verify & Commit
 
 ```bash
-# Check all 8 files are present and 3800px wide
-for f in code-review agent-status git-status plan-mermaid costs-tab context-management mobile-server-mode orchestrate-agents; do
+# Check all 7 generated files are present
+for f in code-review agent-status git-status plan-mermaid costs-tab context-management mobile-server-mode; do
   bun -e "const s = require('sharp'); const m = await s('docs/img/${f}.webp').metadata(); console.log('${f}:', m.width + 'x' + m.height)"
 done
 
@@ -209,6 +208,6 @@ The retry logic handles most cases. If persistent:
 
 ### Why there is no ProductHero screenshot story
 
-Intentional — README now uses `mux-demo.gif` as the hero media. The README
-screenshot pipeline covers only the 9 `docs/img/*.webp` assets that remain in
+Intentional. README now uses `mux-demo.gif` as the hero media. The README
+screenshot pipeline covers only the 7 generated WebP assets that remain in
 README, starting with `code-review.webp`.
