@@ -733,7 +733,13 @@ export class WorkspaceGoalService {
   async buildGoalContinuationPayload(workspaceId: string): Promise<IdleDispatchPayload | null> {
     const eligibility = await this.checkGoalContinuationEligibility(workspaceId, Date.now());
     if (!eligibility.eligible) {
-      log.info("WorkspaceGoalService: skipped goal continuation", {
+      // Self-deferring reasons (e.g. `currently_streaming`, `initializing`)
+      // re-request dispatch on a ~1s timer, so logging at info level produces
+      // one line per retry for the entire duration of an active stream. Drop
+      // those to debug; keep terminal reasons at info since they fire once
+      // and are useful diagnostic signal.
+      const logFn = eligibility.deferUntilMs != null ? log.debug : log.info;
+      logFn("WorkspaceGoalService: skipped goal continuation", {
         workspaceId,
         reason: eligibility.reason,
       });
