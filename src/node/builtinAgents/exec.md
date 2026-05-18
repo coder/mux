@@ -32,7 +32,6 @@ tools:
   remove:
     # Exec mode doesn't use planning tools
     - propose_plan
-    - ask_user_question
     # Global config and catalog tools stay out of general-purpose agents
     - mux_agents_.*
     - agent_skill_write
