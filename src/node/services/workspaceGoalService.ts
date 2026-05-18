@@ -2265,46 +2265,53 @@ export class WorkspaceGoalService {
 
   async applyPendingAfterStreamEnd(workspaceId: string): Promise<GoalRecordV1 | null> {
     const pending = this.pendingGoalMutations.get(workspaceId);
+    let drained: GoalRecordV1 | null = null;
 
-    // Even when there's no queued setGoal mutation, the stream may have
-    // ended on a goal that the agent marked complete via `complete_goal`
-    // mid-turn. In that case `maybeAutoPromoteOnComplete` was previously
-    // skipped (mid-stream guard, Codex P1), so we run the deferred
-    // auto-promote here once the stream has actually ended. This is the
-    // sole entry point for picking up the queued goal automatically;
-    // without it the next goal stays stuck in Upcoming until a manual
-    // mutation. We do this BEFORE draining `pending` so an interleaved
-    // setGoal can still observe the freshly-promoted goal.
+    if (pending) {
+      this.pendingGoalMutations.delete(workspaceId);
+      this.pendingGoalSnapshots.delete(workspaceId);
+      // Mirror the `setGoal` wrapper (DEREM-36) here: `setGoalImmediately`
+      // rethrows `WorkspaceGoalTransitionError` / `WorkspaceGoalChildWorkspaceError`
+      // for invalid transitions (e.g. a queued `/goal pause` against an
+      // already-paused goal). Two of three call sites invoke this method via
+      // `void` so an uncaught rejection would surface as an unhandled-rejection
+      // process crash under `--unhandled-rejections=throw` (Coder-agents-review
+      // P2 DEREM-47). Log + swallow so the stream-end pipeline stays alive;
+      // the caller already treats null as "no apply happened".
+      try {
+        const result = await this.setGoalImmediately({ workspaceId, ...pending });
+        drained = result.success ? result.data : null;
+      } catch (error) {
+        log.warn("applyPendingAfterStreamEnd: dropped invalid queued goal mutation", {
+          workspaceId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      } finally {
+        // Always re-read the durable record: queued snapshots are optimistic, and
+        // drains can succeed as persistence no-ops, reject, or throw.
+        await this.restorePersistedGoalSnapshot(workspaceId);
+      }
+    }
+
+    // Stream-end deferred auto-promotion (Codex P1).
+    //
+    // Runs AFTER any queued setGoal drains so the deferred setGoal can
+    // target the same goal it was queued against — otherwise its
+    // `expectedGoalId` would race ahead of the promote and the
+    // setGoalImmediately call would return `goal_conflict` and silently
+    // drop the user's edit (Codex P2).
+    //
+    // Two reasons this helper might find work to do at this point:
+    //   (a) The agent called `complete_goal` mid-stream — goal.json is
+    //       already complete and no pending mutation queued.
+    //   (b) The queued mutation we just drained completed the goal —
+    //       `maybeAutoPromoteOnComplete` skipped because the stream
+    //       was still live during the drain's `applyMutableFields`.
+    // Either way, the active goal is `complete` on disk by now and the
+    // upcoming head deserves promotion.
     await this.runDeferredAutoPromoteAfterStreamEnd(workspaceId);
 
-    if (!pending) {
-      return null;
-    }
-
-    this.pendingGoalMutations.delete(workspaceId);
-    this.pendingGoalSnapshots.delete(workspaceId);
-    // Mirror the `setGoal` wrapper (DEREM-36) here: `setGoalImmediately`
-    // rethrows `WorkspaceGoalTransitionError` / `WorkspaceGoalChildWorkspaceError`
-    // for invalid transitions (e.g. a queued `/goal pause` against an
-    // already-paused goal). Two of three call sites invoke this method via
-    // `void` so an uncaught rejection would surface as an unhandled-rejection
-    // process crash under `--unhandled-rejections=throw` (Coder-agents-review
-    // P2 DEREM-47). Log + swallow so the stream-end pipeline stays alive;
-    // the caller already treats null as "no apply happened".
-    try {
-      const result = await this.setGoalImmediately({ workspaceId, ...pending });
-      return result.success ? result.data : null;
-    } catch (error) {
-      log.warn("applyPendingAfterStreamEnd: dropped invalid queued goal mutation", {
-        workspaceId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return null;
-    } finally {
-      // Always re-read the durable record: queued snapshots are optimistic, and
-      // drains can succeed as persistence no-ops, reject, or throw.
-      await this.restorePersistedGoalSnapshot(workspaceId);
-    }
+    return drained;
   }
 
   /**
@@ -2331,6 +2338,21 @@ export class WorkspaceGoalService {
         }
         const board = await this.readBoard(workspaceId);
         if (board.upcoming.length === 0) {
+          return;
+        }
+        // Codex P1: re-check the streaming gate BEFORE any side effects.
+        // `stopStreamingStatus` is driven by a separate async listener
+        // and can lag the `applyPendingAfterStreamEnd` call by a tick.
+        // If the workspace still reports streaming, bail without
+        // touching history — `promoteNextUpcomingUnlocked` would also
+        // bail and we'd be left with the completed goal in history
+        // AND in goal.json, causing duplicate Completed rows on the
+        // next retry.
+        if (await this.isWorkspaceStreaming(workspaceId)) {
+          log.warn("Deferred auto-promote skipped: workspace still streaming at drain time", {
+            workspaceId,
+            goalId: board.upcoming[0].goalId,
+          });
           return;
         }
         const [head] = board.upcoming;
