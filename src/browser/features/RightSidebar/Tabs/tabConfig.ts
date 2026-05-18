@@ -50,7 +50,6 @@ const TAB_CONFIG_DEF = {
   goal: {
     name: "Goal",
     contentClassName: "overflow-y-auto p-0",
-    featureFlag: EXPERIMENT_IDS.GOALS,
     defaultOrder: 35,
     paletteKeywords: ["goal", "target", "objective"],
   },

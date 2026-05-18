@@ -661,12 +661,15 @@ export const ToolPolicySchema = z.array(ToolPolicyFilterSchema).meta({
     "Tool policy - array of filters applied in order. Default behavior is allow all tools.",
 });
 
-// Experiments schema for feature gating
+// Experiments schema for feature gating.
+//
+// Unknown keys (e.g. `goals` from older persisted send-options written
+// before the Goals experiment graduated to GA) are stripped by Zod's
+// default behavior, so we do not need to retain a deprecated field.
 export const ExperimentsSchema = z.object({
   programmaticToolCalling: z.boolean().optional(),
   programmaticToolCallingExclusive: z.boolean().optional(),
   advisorTool: z.boolean().optional(),
-  goals: z.boolean().optional(),
   execSubagentHardRestart: z.boolean().optional(),
   imageGenerationTool: z.boolean().optional(),
 });

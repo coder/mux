@@ -3582,7 +3582,6 @@ describe("WorkspaceService maybePersistAISettingsFromOptions", () => {
 
   test("refuses unpriced model persistence for budgeted active goals", async () => {
     workspaceService.setWorkspaceGoalService({
-      isExperimentEnabled: mock(() => true),
       getGoal: mock(() => Promise.resolve({ status: "active", budgetCents: 500 })),
     } as unknown as WorkspaceGoalService);
 
@@ -3597,11 +3596,11 @@ describe("WorkspaceService maybePersistAISettingsFromOptions", () => {
     });
   });
 
-  test("allows unpriced model persistence when goals experiment is disabled", async () => {
+  test("allows unpriced model persistence when no budgeted goal is active", async () => {
     const persistSpy = mock(() => Promise.resolve({ success: true as const, data: true }));
     workspaceService.setWorkspaceGoalService({
-      isExperimentEnabled: mock(() => false),
-      getGoal: mock(() => Promise.resolve({ status: "active", budgetCents: 500 })),
+      // No goal record (or one without a budget) — the gate must pass through.
+      getGoal: mock(() => Promise.resolve(null)),
     } as unknown as WorkspaceGoalService);
     (
       workspaceService as unknown as {
@@ -7990,7 +7989,6 @@ describe("WorkspaceService.getGoalContinuationRuntimeState", () => {
       const dispatcher = new IdleDispatcher();
       const execute = mock(() => Promise.resolve(true));
       goalService.registerGoalContinuationConsumer(dispatcher, {
-        isGoalExperimentEnabled: () => true,
         hasActiveDescendantTasks: () => false,
         getRuntimeState: (id) => service.getGoalContinuationRuntimeState(id),
         executeGoalContinuation: execute,

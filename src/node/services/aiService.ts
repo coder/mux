@@ -1177,15 +1177,13 @@ export class AIService extends EventEmitter {
       const advisorToolEligible =
         advisorExperimentEnabled && agentAdvisorEnabled && advisorModelString.length > 0;
 
-      const goalsExperimentEnabled =
-        experiments?.goals ??
-        this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.GOALS) === true;
+      // Goals graduated to GA: tools are gated solely on the workspace's
+      // current goal status + agent capability, not on an experiment flag.
       let currentGoalForTools: GoalRecordV1 | null = null;
-      if (goalsExperimentEnabled && workspaceGoalService) {
+      if (workspaceGoalService) {
         currentGoalForTools = await workspaceGoalService.getGoal(workspaceId);
       }
       const goalToolAvailability = getGoalToolAvailability({
-        goalsExperimentEnabled,
         goalStatus: currentGoalForTools?.status ?? null,
         agentInheritanceChain,
       });

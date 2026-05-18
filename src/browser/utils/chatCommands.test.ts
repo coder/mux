@@ -105,8 +105,7 @@ describe("parseRuntimeString", () => {
   });
 });
 
-function enableGoalsExperiment(): void {
-  localStorage.setItem(getExperimentKey(EXPERIMENT_IDS.GOALS), JSON.stringify(true));
+function ensureWindowDispatchEvent(): void {
   Object.defineProperty(window, "dispatchEvent", { value: mock(() => true), configurable: true });
 }
 
@@ -390,7 +389,7 @@ describe("processSlashCommand - model-set", () => {
   });
 
   test("refuses switching budgeted active goals to an unpriced model", async () => {
-    enableGoalsExperiment();
+    ensureWindowDispatchEvent();
     const setPreferredModel = mock(() => undefined);
     const context = createModelSetContext({
       providers: {
@@ -426,36 +425,6 @@ describe("processSlashCommand - model-set", () => {
     );
   });
 
-  test("allows unpriced model switch with stale budgeted goal when goals experiment is disabled", async () => {
-    const setPreferredModel = mock(() => undefined);
-    const getGoal = mock(() =>
-      Promise.resolve({
-        goal: {
-          goalId: "11111111-1111-4111-8111-111111111111",
-          status: "active",
-          budgetCents: 500,
-        },
-      })
-    );
-    const context = createModelSetContext({
-      providers: {
-        getConfig: mock(() => Promise.resolve({})),
-        setModels: mock(() => Promise.resolve(undefined)),
-      },
-      workspace: { getGoal },
-    } as unknown as SlashCommandContext["api"]);
-    context.setPreferredModel = setPreferredModel;
-
-    const result = await processSlashCommand(
-      { type: "model-set", modelString: "openai:not-priced-model" },
-      context
-    );
-
-    expect(result).toEqual({ clearInput: true, toastShown: true });
-    expect(getGoal).not.toHaveBeenCalled();
-    expect(setPreferredModel).toHaveBeenCalledWith("openai:not-priced-model");
-  });
-
   test("allows switching unbudgeted active goals to an unpriced model", async () => {
     const setPreferredModel = mock(() => undefined);
     const context = createModelSetContext({
@@ -487,43 +456,6 @@ describe("processSlashCommand - model-set", () => {
   });
 });
 
-describe("processSlashCommand - goal experiment state", () => {
-  test("allows goal commands when backend experiment assignment enables Goals", async () => {
-    const setGoal = mock(() =>
-      Promise.resolve({
-        success: true,
-        data: {
-          goalId: "33333333-3333-4333-8333-333333333333",
-          objective: "remote objective",
-        },
-      })
-    );
-    const context = createGoalCommandContext({
-      experiments: {
-        getAll: mock(() =>
-          Promise.resolve({ [EXPERIMENT_IDS.GOALS]: { value: true, source: "posthog" } })
-        ),
-      },
-      workspace: {
-        getGoal: mock(() => Promise.resolve({ goal: null })),
-        setGoal,
-        clearGoal: mock(),
-      },
-    } as unknown as SlashCommandContext["api"]);
-
-    const result = await processSlashCommand(
-      { type: "goal-set", objective: "remote objective" },
-      context
-    );
-
-    expect(result).toEqual({ clearInput: true, toastShown: false });
-    expect(setGoal).toHaveBeenCalledWith(
-      expect.objectContaining({ objective: "remote objective" })
-    );
-    expect(context.setToast).not.toHaveBeenCalled();
-  });
-});
-
 describe("processSlashCommand - workspace command gating", () => {
   test("shows goal parse errors during workspace creation", async () => {
     const context = createGoalCommandContext(null);
@@ -543,7 +475,7 @@ describe("processSlashCommand - workspace command gating", () => {
 
 describe("processSlashCommand - goal optimistic concurrency", () => {
   test("retries once after a goal conflict and reapplies the slash command intent", async () => {
-    enableGoalsExperiment();
+    ensureWindowDispatchEvent();
     const getGoal = mock()
       .mockResolvedValueOnce({
         goal: {
@@ -602,7 +534,7 @@ describe("processSlashCommand - goal optimistic concurrency", () => {
   });
 
   test("surfaces a toast and stops after two consecutive goal conflicts", async () => {
-    enableGoalsExperiment();
+    ensureWindowDispatchEvent();
     const getGoal = mock()
       .mockResolvedValueOnce({
         goal: {
@@ -656,7 +588,7 @@ describe("processSlashCommand - goal optimistic concurrency", () => {
 
 describe("processSlashCommand - goal lifecycle commands", () => {
   test("surfaces invalid transition messages for lifecycle commands", async () => {
-    enableGoalsExperiment();
+    ensureWindowDispatchEvent();
     const context = createGoalCommandContext({
       workspace: {
         getGoal: mock(() => Promise.resolve({ goal: null })),
@@ -679,7 +611,7 @@ describe("processSlashCommand - goal lifecycle commands", () => {
   });
 
   test("dispatches pause, resume, and complete goal commands", async () => {
-    enableGoalsExperiment();
+    ensureWindowDispatchEvent();
     const setGoal = mock(() =>
       Promise.resolve({
         success: true,
@@ -718,7 +650,7 @@ describe("processSlashCommand - goal lifecycle commands", () => {
   });
 
   test("refuses to resume a budgeted goal on an unpriced current model", async () => {
-    enableGoalsExperiment();
+    ensureWindowDispatchEvent();
     const setGoal = mock(() => Promise.resolve({ success: true, data: {} }));
     const context = createGoalCommandContext({
       providers: { getConfig: mock(() => Promise.resolve({})) },
@@ -754,7 +686,7 @@ describe("processSlashCommand - goal lifecycle commands", () => {
 
 describe("processSlashCommand - goal budgets", () => {
   test("applies configured defaults when budget and turn cap are omitted", async () => {
-    enableGoalsExperiment();
+    ensureWindowDispatchEvent();
     const setGoal = mock().mockResolvedValueOnce({
       success: true,
       data: { goalId: "33333333-3333-4333-8333-333333333333", objective: "new objective" },
@@ -790,7 +722,7 @@ describe("processSlashCommand - goal budgets", () => {
   });
 
   test("passes parsed multiline goal objectives through to setGoal", async () => {
-    enableGoalsExperiment();
+    ensureWindowDispatchEvent();
     const objective = "Implement PRD\n\nRead first:\n- CONTEXT.md\n- PRD.md";
     const setGoal = mock().mockResolvedValueOnce({
       success: true,
@@ -827,7 +759,7 @@ describe("processSlashCommand - goal budgets", () => {
   });
 
   test("passes explicit no-budget and turn cap through to setGoal", async () => {
-    enableGoalsExperiment();
+    ensureWindowDispatchEvent();
     const setGoal = mock().mockResolvedValueOnce({
       success: true,
       data: { goalId: "33333333-3333-4333-8333-333333333333", objective: "new objective" },
@@ -856,7 +788,7 @@ describe("processSlashCommand - goal budgets", () => {
   });
 
   test("updates an existing goal budget without applying defaults", async () => {
-    enableGoalsExperiment();
+    ensureWindowDispatchEvent();
     const currentGoal = {
       goalId: "11111111-1111-4111-8111-111111111111",
       objective: "existing objective",
@@ -894,7 +826,7 @@ describe("processSlashCommand - goal budgets", () => {
   });
 
   test("passes no-budget budget updates through on unpriced current model", async () => {
-    enableGoalsExperiment();
+    ensureWindowDispatchEvent();
     const currentGoal = {
       goalId: "11111111-1111-4111-8111-111111111111",
       objective: "existing objective",
@@ -923,7 +855,7 @@ describe("processSlashCommand - goal budgets", () => {
   });
 
   test("passes zero-dollar budget updates through on unpriced current model", async () => {
-    enableGoalsExperiment();
+    ensureWindowDispatchEvent();
     const currentGoal = {
       goalId: "11111111-1111-4111-8111-111111111111",
       objective: "existing objective",
@@ -952,7 +884,7 @@ describe("processSlashCommand - goal budgets", () => {
   });
 
   test("refuses budgeted goals on an unpriced current model", async () => {
-    enableGoalsExperiment();
+    ensureWindowDispatchEvent();
     const setGoal = mock();
     const context = createGoalCommandContext({
       config: { getConfig: mock(() => Promise.resolve({})) },

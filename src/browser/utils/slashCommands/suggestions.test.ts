@@ -26,22 +26,21 @@ describe("getSlashCommandSuggestions", () => {
     });
     const labels = suggestions.map((s) => s.display);
 
-    expect(labels).not.toContain("/goal");
     expect(labels).not.toContain("/heartbeat");
+    // `/goal` graduated to GA — it must surface regardless of experiment state.
+    expect(labels).toContain("/goal");
   });
 
   it("shows experiment-gated commands when their experiments are enabled", () => {
-    const enabledExperiments = new Set<ExperimentId>([
-      EXPERIMENT_IDS.GOALS,
-      EXPERIMENT_IDS.WORKSPACE_HEARTBEATS,
-    ]);
+    const enabledExperiments = new Set<ExperimentId>([EXPERIMENT_IDS.WORKSPACE_HEARTBEATS]);
     const suggestions = getSlashCommandSuggestions("/", {
       isExperimentEnabled: (experimentId) => enabledExperiments.has(experimentId),
     });
     const labels = suggestions.map((s) => s.display);
 
-    expect(labels).toContain("/goal");
     expect(labels).toContain("/heartbeat");
+    // `/goal` is always available post-GA.
+    expect(labels).toContain("/goal");
   });
 
   it("suggests top level commands when starting with slash", () => {

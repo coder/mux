@@ -705,32 +705,9 @@ function resolveSlashGoalSetIntent(
   );
 }
 
-export async function isGoalsExperimentEnabledForCommand(context: {
-  api: CommandHandlerContext["api"] | SlashCommandContext["api"];
-}): Promise<boolean> {
-  const localOverride = isExperimentEnabled(EXPERIMENT_IDS.GOALS);
-  if (localOverride != null) {
-    return localOverride;
-  }
-
-  if (!context.api) {
-    return false;
-  }
-
-  try {
-    const allExperiments = await context.api.experiments.getAll();
-    return allExperiments[EXPERIMENT_IDS.GOALS]?.value === true;
-  } catch {
-    return false;
-  }
-}
-
 async function hasBudgetedResumableGoalForWorkspaceModelSwitch(
   context: SlashCommandContext
 ): Promise<boolean> {
-  if (!(await isGoalsExperimentEnabledForCommand(context))) {
-    return false;
-  }
   if (context.variant !== "workspace" || !context.api || !context.workspaceId) {
     return false;
   }
@@ -799,15 +776,6 @@ async function handleGoalCommand(
   context: CommandHandlerContext
 ): Promise<CommandHandlerResult> {
   const { api, workspaceId, setInput, setToast } = context;
-
-  if (!(await isGoalsExperimentEnabledForCommand(context))) {
-    setToast({
-      id: Date.now().toString(),
-      type: "error",
-      message: "Goal commands require the Goals experiment to be enabled",
-    });
-    return { clearInput: false, toastShown: true };
-  }
 
   setInput("");
 

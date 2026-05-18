@@ -54,21 +54,20 @@ export async function waitForCondition(
 }
 
 /**
- * Flip the GOALS experiment ON for `WorkspaceGoalService` instances created
- * in tests. Many goal-service tests need the experiment-on path because the
- * pricing gate (DEREM-52) and other hot-path predicates short-circuit when
- * the bridge is missing. Registering a no-op continuation consumer with
- * `isGoalExperimentEnabled: () => true` is the canonical way to do that.
+ * Register a no-op continuation consumer on a test `WorkspaceGoalService`
+ * instance so paths that require an active continuation bridge (e.g. the
+ * idle dispatcher / kickoff send-options lookup) can run end-to-end. Used by
+ * goal-service, agent-session, and task-service tests that need to exercise
+ * production-like behavior without standing up the full ServiceContainer.
  *
- * Coder-agents-review nit DEREM-55: previously duplicated byte-for-byte in
- * `workspaceGoalService.test.ts` and `agentSession.budgetGate.test.ts`.
+ * Previously this helper also flipped the (now-removed) GOALS experiment
+ * flag; goals are GA, so the bridge registration alone is sufficient.
  */
-export function enableGoalsExperimentForTest(
+export function registerNoopContinuationBridgeForTest(
   service: WorkspaceGoalService,
   dispatcher: IdleDispatcher = new IdleDispatcher()
 ): () => void {
   return service.registerGoalContinuationConsumer(dispatcher, {
-    isGoalExperimentEnabled: () => true,
     hasActiveDescendantTasks: () => false,
     getRuntimeState: () => ({ isRuntimeCompatible: true }),
     executeGoalContinuation: () => Promise.resolve(true),

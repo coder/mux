@@ -167,14 +167,12 @@ describe("PortableDesktopExperimentWarning", () => {
     globalThis.clearInterval = originalClearInterval;
   });
 
-  test("shows heartbeat defaults inline only when its experiment is enabled; goal defaults point to the Goal tab", async () => {
+  test("shows heartbeat defaults inline only when its experiment is enabled", async () => {
     // Goal defaults moved out of ExperimentsSection into the Goal tab
-    // (`GoalDefaultsSection`). The experiments panel now only renders a
-    // pointer to the new home for goal configuration. Heartbeat defaults
-    // remain inline here for now.
+    // (`GoalDefaultsSection`); goals graduated to GA so it is no longer
+    // shown here at all. Heartbeat defaults remain inline here for now.
     experimentEnabled = false;
     experimentValues = {
-      [EXPERIMENT_IDS.GOALS]: false,
       [EXPERIMENT_IDS.WORKSPACE_HEARTBEATS]: false,
     };
 
@@ -184,7 +182,6 @@ describe("PortableDesktopExperimentWarning", () => {
     expect(view.queryByLabelText("Default heartbeat threshold in minutes")).toBeNull();
 
     experimentValues = {
-      [EXPERIMENT_IDS.GOALS]: true,
       [EXPERIMENT_IDS.WORKSPACE_HEARTBEATS]: true,
     };
     view.rerender(<ExperimentsSection />);
@@ -192,19 +189,15 @@ describe("PortableDesktopExperimentWarning", () => {
     await waitFor(() => {
       expect(view.getByLabelText("Default heartbeat threshold in minutes")).toBeTruthy();
     });
-    // Goal defaults are no longer rendered inline in the Experiments
-    // panel — they live in the Goal tab now.
+    // Goal defaults are no longer rendered in the Experiments panel —
+    // they live in the Goal tab now.
     expect(view.queryByLabelText("Default goal budget in dollars")).toBeNull();
-    // Pointer copy should mention the Goal tab as the new home.
-    expect(view.getByText(/Goal/, { selector: "span" })).toBeTruthy();
   });
 
   test("reloads experiment settings when inline controls remount", async () => {
-    // Only the heartbeat panel still triggers an inline `getConfig` —
-    // the goal panel was removed in favor of the Goal tab.
+    // Only the heartbeat panel still triggers an inline `getConfig`.
     experimentEnabled = false;
     experimentValues = {
-      [EXPERIMENT_IDS.GOALS]: true,
       [EXPERIMENT_IDS.WORKSPACE_HEARTBEATS]: true,
     };
 
@@ -216,7 +209,6 @@ describe("PortableDesktopExperimentWarning", () => {
     expect(mockApi.config?.getConfig).toHaveBeenCalledTimes(1);
 
     experimentValues = {
-      [EXPERIMENT_IDS.GOALS]: false,
       [EXPERIMENT_IDS.WORKSPACE_HEARTBEATS]: false,
     };
     view.rerender(<ExperimentsSection />);
@@ -224,7 +216,6 @@ describe("PortableDesktopExperimentWarning", () => {
     expect(view.queryByLabelText("Default heartbeat threshold in minutes")).toBeNull();
 
     experimentValues = {
-      [EXPERIMENT_IDS.GOALS]: true,
       [EXPERIMENT_IDS.WORKSPACE_HEARTBEATS]: true,
     };
     view.rerender(<ExperimentsSection />);
@@ -237,7 +228,6 @@ describe("PortableDesktopExperimentWarning", () => {
   test("starts a fresh settings load when the API client changes", async () => {
     experimentEnabled = false;
     experimentValues = {
-      [EXPERIMENT_IDS.GOALS]: true,
       [EXPERIMENT_IDS.WORKSPACE_HEARTBEATS]: true,
     };
 

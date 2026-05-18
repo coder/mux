@@ -139,7 +139,6 @@ export interface TaskCreateArgs {
     programmaticToolCallingExclusive?: boolean;
     advisorTool?: boolean;
     imageGenerationTool?: boolean;
-    goals?: boolean;
     execSubagentHardRestart?: boolean;
   };
 }
@@ -3821,7 +3820,7 @@ export class TaskService {
       childWorkspaceId.trim().length > 0,
       "attributeChildReportToParentGoal requires childWorkspaceId"
     );
-    if (!this.workspaceGoalService?.isExperimentEnabled()) {
+    if (!this.workspaceGoalService) {
       return;
     }
 

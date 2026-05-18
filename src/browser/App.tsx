@@ -188,7 +188,6 @@ function AppInner() {
   );
 
   const [isMultiProjectWorkspaceModalOpen, setMultiProjectWorkspaceModalOpen] = useState(false);
-  const goalsEnabled = useExperimentValue(EXPERIMENT_IDS.GOALS);
   const multiProjectWorkspacesEnabled = useExperimentValue(EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES);
 
   // Left sidebar is drag-resizable (mirrors RightSidebar). Width is persisted globally;
@@ -717,7 +716,6 @@ function AppInner() {
     onStartWorkspaceCreation: openNewWorkspaceFromPalette,
     onStartMultiProjectWorkspaceCreation: openNewMultiProjectWorkspaceFromPalette,
     multiProjectWorkspacesEnabled,
-    goalsEnabled,
     onArchiveMergedWorkspacesInProject: archiveMergedWorkspacesInProjectFromPalette,
     getBranchesForProject,
     onSelectWorkspace: selectWorkspaceFromPalette,
@@ -1220,7 +1218,7 @@ function AppInner() {
             )}
           </div>
         </div>
-        <WorkspaceActiveGoalsWarningToast enabled={goalsEnabled} />
+        <WorkspaceActiveGoalsWarningToast />
         <CommandPalette getSlashContext={() => ({ workspaceId: selectedWorkspace?.workspaceId })} />
         <ProjectCreateModal
           initialPath={projectCreateInitialPath}

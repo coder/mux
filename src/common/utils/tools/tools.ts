@@ -137,7 +137,7 @@ export interface ToolConfiguration {
   taskService?: TaskService;
   /** Workspace goal lifecycle service for model-facing goal tools. */
   goalService?: WorkspaceGoalService;
-  /** Per-request goal tool gates derived from experiment, goal status, and agent capabilities. */
+  /** Per-request goal tool gates derived from goal status and agent capabilities. */
   enableGoalTools?: {
     getGoal: boolean;
     completeGoal: boolean;
@@ -149,7 +149,6 @@ export interface ToolConfiguration {
     programmaticToolCalling?: boolean;
     programmaticToolCallingExclusive?: boolean;
     advisorTool?: boolean;
-    goals?: boolean;
     imageGenerationTool?: boolean;
     execSubagentHardRestart?: boolean;
   };

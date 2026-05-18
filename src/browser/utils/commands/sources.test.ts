@@ -47,7 +47,6 @@ const mk = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) => {
     onSetThinkingLevel: () => undefined,
     onStartWorkspaceCreation: () => undefined,
     onStartMultiProjectWorkspaceCreation: () => undefined,
-    goalsEnabled: false,
     multiProjectWorkspacesEnabled: true,
     onArchiveMergedWorkspacesInProject: () => Promise.resolve(),
     onSelectWorkspace: () => undefined,
@@ -546,7 +545,7 @@ function makeWorkspaceState(goal: WorkspaceState["goal"]): WorkspaceState {
 }
 
 const getVisibleGoalActions = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) => {
-  const sources = mk({ goalsEnabled: true, ...over });
+  const sources = mk(over);
   return sources
     .flatMap((source) => source())
     .filter((action) => action.visible?.() ?? true)
@@ -558,8 +557,33 @@ const getVisibleGoalTitles = (over: Partial<Parameters<typeof buildCoreSources>[
     .map((action) => action.title)
     .sort();
 
-test("goal palette commands are hidden when the experiment is disabled", () => {
-  expect(getVisibleGoalTitles({ goalsEnabled: false })).toEqual([]);
+test("goal palette commands are hidden when no workspace is selected", () => {
+  expect(getVisibleGoalTitles({ selectedWorkspace: null })).toEqual([]);
+});
+
+test("goal palette commands are hidden for child task workspaces", () => {
+  const childMetadata = new Map<string, FrontendWorkspaceMetadata>();
+  childMetadata.set("child-ws", {
+    id: "child-ws",
+    name: "child-task",
+    projectName: "a",
+    projectPath: "/repo/a",
+    namedWorkspacePath: "/repo/a/child-task",
+    runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+    parentWorkspaceId: "parent-ws",
+  });
+
+  expect(
+    getVisibleGoalTitles({
+      workspaceMetadata: childMetadata,
+      selectedWorkspace: {
+        projectPath: "/repo/a",
+        projectName: "a",
+        namedWorkspacePath: "/repo/a/child-task",
+        workspaceId: "child-ws",
+      },
+    })
+  ).toEqual([]);
 });
 
 test("goal palette commands only show set objective with no current goal", () => {
@@ -623,7 +647,6 @@ test("goal set objective prompt treats blank budget as explicit no-budget", asyn
   // slash-command path, there is no separate --no-budget flag in this prompt.
   const setGoalCalls: Array<Record<string, unknown>> = [];
   const sources = mk({
-    goalsEnabled: true,
     selectedWorkspaceState: {
       lifecycle: "active",
       goal: null,

@@ -8,7 +8,6 @@ const wrapperClassName =
 
 interface ActiveGoalsWarningToastProps {
   activeGoalCount: number;
-  enabled?: boolean;
 }
 
 export function ActiveGoalsWarningToast(props: ActiveGoalsWarningToastProps) {
@@ -16,12 +15,6 @@ export function ActiveGoalsWarningToast(props: ActiveGoalsWarningToastProps) {
   const wasAboveThresholdRef = useRef(false);
 
   useEffect(() => {
-    if (props.enabled === false) {
-      wasAboveThresholdRef.current = false;
-      setToastCount(null);
-      return;
-    }
-
     const isAboveThreshold = props.activeGoalCount > ACTIVE_GOAL_WARNING_THRESHOLD;
     if (!isAboveThreshold) {
       wasAboveThresholdRef.current = false;
@@ -37,7 +30,7 @@ export function ActiveGoalsWarningToast(props: ActiveGoalsWarningToastProps) {
 
     wasAboveThresholdRef.current = true;
     setToastCount(props.activeGoalCount);
-  }, [props.activeGoalCount, props.enabled]);
+  }, [props.activeGoalCount]);
 
   useEffect(() => {
     if (toastCount == null || typeof window === "undefined") {
@@ -69,8 +62,8 @@ export function ActiveGoalsWarningToast(props: ActiveGoalsWarningToastProps) {
   );
 }
 
-export function WorkspaceActiveGoalsWarningToast(props: { enabled?: boolean }) {
+export function WorkspaceActiveGoalsWarningToast() {
   const activeGoalCount = useActiveGoalCount();
 
-  return <ActiveGoalsWarningToast activeGoalCount={activeGoalCount} enabled={props.enabled} />;
+  return <ActiveGoalsWarningToast activeGoalCount={activeGoalCount} />;
 }

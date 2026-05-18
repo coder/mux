@@ -80,18 +80,15 @@ export const ImageGenerationEnabled: Story = {
   },
 };
 
-export const GoalAndHeartbeatSettingsEnabled: Story = {
-  // Goal-defaults editing moved to the in-tab `GoalDefaultsSection` in
-  // the workspace sidebar (see `src/browser/features/RightSidebar/`),
-  // so the Experiments panel no longer mounts the budget / turn-cap
-  // inputs. Heartbeat defaults still render inline here. This story
-  // now asserts the new pointer copy + the heartbeat fields.
+export const HeartbeatSettingsEnabled: Story = {
+  // Goals graduated to GA, so they no longer appear in the Experiments
+  // panel at all (configuration lives in the Goal tab's
+  // `GoalDefaultsSection`). Heartbeat defaults still render inline here.
   render: () => (
     <SettingsSectionStory
       setup={() =>
         setupSettingsStory({
           experiments: {
-            [EXPERIMENT_IDS.GOALS]: true,
             [EXPERIMENT_IDS.WORKSPACE_HEARTBEATS]: true,
           },
           goalDefaults: {
