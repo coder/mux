@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 
-import { useAPI } from "@/browser/contexts/API";
+import { APIContext } from "@/browser/contexts/API";
 import { loadGoalDefaults } from "@/browser/utils/goals/resolveGoalSetIntent";
 import { DEFAULT_GOAL_DEFAULTS, type GoalDefaults } from "@/constants/goals";
 
@@ -22,7 +22,13 @@ export interface UseGoalDefaultsResult {
 }
 
 export function useGoalDefaults(workspaceId?: string): UseGoalDefaultsResult {
-  const { api } = useAPI();
+  // Read APIContext directly rather than via `useAPI()` so the hook
+  // tolerates being mounted outside an APIProvider — required by
+  // storybook stories that render the GoalTab without provisioning the
+  // full app shell. When no provider is present, we serve canonical
+  // defaults and skip the fetch.
+  const context = useContext(APIContext);
+  const api = context?.api ?? null;
   const [defaults, setDefaults] = useState<GoalDefaults>({ ...DEFAULT_GOAL_DEFAULTS });
   const [isLoading, setIsLoading] = useState(true);
   // Bump to force a reload after the user changes defaults via the modal.

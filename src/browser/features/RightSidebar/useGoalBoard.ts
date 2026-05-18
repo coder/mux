@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useContext, useEffect, useState } from "react";
 
-import { useAPI } from "@/browser/contexts/API";
+import { APIContext } from "@/browser/contexts/API";
 import type { GoalBoardSnapshot } from "@/common/types/goal";
 
 /**
@@ -27,7 +27,11 @@ export interface UseGoalBoardResult {
 }
 
 export function useGoalBoard(workspaceId: string | undefined): UseGoalBoardResult {
-  const { api } = useAPI();
+  // Read APIContext directly (vs `useAPI()`) so the hook tolerates
+  // missing provider in storybook stories. Same rationale as
+  // `useGoalDefaults`.
+  const context = useContext(APIContext);
+  const api = context?.api ?? null;
   const [board, setBoard] = useState<GoalBoardSnapshot>({ entries: [] });
   const [isLoading, setIsLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
