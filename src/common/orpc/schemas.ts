@@ -26,6 +26,7 @@ export {
   GoalBoardPromoteInputSchema,
   GoalBoardReorderInputSchema,
   GoalBoardReviveInputSchema,
+  GoalBoardUpdateUpcomingInputSchema,
   GoalBoardSectionSchema,
   GoalBoardSnapshotSchema,
   GoalBoardV1Schema,

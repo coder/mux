@@ -1,13 +1,29 @@
 import {
+  type DragEndEvent,
+  DndContext,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import {
   ArchiveRestore,
-  ArrowDown,
-  ArrowUp,
   ChevronDown,
   ChevronRight,
+  GripVertical,
   Inbox,
+  Pencil,
   Play,
   Plus,
   Trash2,
+  X,
 } from "lucide-react";
 import { useRef, useState } from "react";
 
@@ -28,13 +44,14 @@ import { parseGoalBudgetInputCents } from "@/common/utils/goals/budgetParser";
  * (it's the user's roadmap), completed + archived default to closed
  * (out of the way until explicitly opened). Each row has compact ops:
  *
- *   upcoming → up/down/Promote/Archive
+ *   upcoming → drag handle (reorder) / Edit (inline) / Promote / Remove
  *   completed → Archive
  *   archived → Revive (back to upcoming)
  *
- * DnD (free drag-to-reorder) is intentionally deferred to a follow-up
- * — up/down buttons cover the same intent with keyboard accessibility
- * and without a new dependency.
+ * Reordering uses `@dnd-kit/sortable` (same pattern as the Settings →
+ * Providers route-priority list). The grip handle is a separate button
+ * so clicking the row content doesn't fire a drag; `PointerSensor`'s
+ * `distance: 6` activation keeps normal clicks intact.
  */
 interface GoalBoardSectionsProps {
   workspaceId: string;
@@ -115,62 +132,109 @@ interface UpcomingSectionProps {
 
 function UpcomingSection(props: UpcomingSectionProps) {
   const { api } = useAPI();
-  // Surfaces the mid-stream rejection (Codex P1) so users see why the
-  // Promote click did nothing. Cleared on next mutation.
+  // Surfaces any backend rejection so users see why a click had no
+  // effect. Cleared on next mutation. Backend errors arrive with the
+  // server-side `error.message` intact via `ORPCError("BAD_REQUEST")`
+  // (router translates `WorkspaceGoalTransitionError`), so this branch
+  // shows the real reason instead of the generic "Internal server
+  // error" the renderer used to receive.
   const [error, setError] = useState<string | null>(null);
-
   const clearError = () => setError(null);
+  const reportError = (caught: unknown, fallback: string) => {
+    setError(caught instanceof Error && caught.message ? caught.message : fallback);
+  };
 
-  const move = async (index: number, direction: -1 | 1) => {
-    const target = index + direction;
-    if (target < 0 || target >= props.entries.length) return;
-    if (!api) return;
+  const sensors = useSensors(
+    // distance:6 keeps clicks on the row's action buttons (Promote /
+    // Edit / Remove) firing instead of being captured as a drag start.
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
+  );
+
+  const handleDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!api || !over || active.id === over.id) return;
     const ids = props.entries.map((e) => e.goal.goalId);
-    [ids[index], ids[target]] = [ids[target], ids[index]];
-    await api.workspace.reorderUpcomingGoals({
-      workspaceId: props.workspaceId,
-      upcomingIds: ids,
-    });
-    clearError();
-    props.onMutated();
+    const fromIndex = ids.indexOf(String(active.id));
+    const toIndex = ids.indexOf(String(over.id));
+    if (fromIndex === -1 || toIndex === -1) return;
+    const next = arrayMove(ids, fromIndex, toIndex);
+    try {
+      await api.workspace.reorderUpcomingGoals({
+        workspaceId: props.workspaceId,
+        upcomingIds: next,
+      });
+      clearError();
+      props.onMutated();
+    } catch (caught) {
+      reportError(caught, "Failed to reorder goals.");
+    }
   };
 
   const promote = async (goalId: string) => {
     if (!api) return;
-    clearError();
     try {
       await api.workspace.promoteUpcomingGoal({ workspaceId: props.workspaceId, goalId });
+      clearError();
       props.onMutated();
     } catch (caught) {
-      // Mid-stream promote rejection (or any other backend transition
-      // error) lands here. Show a localized message so the user knows
-      // why their click had no effect.
-      setError(caught instanceof Error ? caught.message : "Failed to promote goal.");
+      reportError(caught, "Failed to promote goal.");
     }
   };
 
   const archive = async (goalId: string) => {
     if (!api) return;
-    await api.workspace.archiveGoal({ workspaceId: props.workspaceId, goalId });
-    clearError();
-    props.onMutated();
+    try {
+      await api.workspace.archiveGoal({ workspaceId: props.workspaceId, goalId });
+      clearError();
+      props.onMutated();
+    } catch (caught) {
+      reportError(caught, "Failed to remove goal.");
+    }
   };
+
+  const update = async (
+    goalId: string,
+    patch: { objective?: string; budgetCents?: number | null }
+  ) => {
+    if (!api) return;
+    try {
+      await api.workspace.updateUpcomingGoal({
+        workspaceId: props.workspaceId,
+        goalId,
+        objective: patch.objective,
+        budgetCents: patch.budgetCents,
+      });
+      clearError();
+      props.onMutated();
+    } catch (caught) {
+      reportError(caught, "Failed to update goal.");
+      // Rethrow so the editor knows to stay open on validation errors.
+      throw caught;
+    }
+  };
+
+  const ids = props.entries.map((e) => e.goal.goalId);
 
   return (
     <SectionShell title="Upcoming" count={props.entries.length} defaultOpen>
       <div className="flex flex-col gap-1.5">
-        {props.entries.map((entry, idx) => (
-          <UpcomingRow
-            key={entry.goal.goalId}
-            goal={entry.goal}
-            isFirst={idx === 0}
-            isLast={idx === props.entries.length - 1}
-            onMoveUp={() => move(idx, -1)}
-            onMoveDown={() => move(idx, +1)}
-            onPromote={() => promote(entry.goal.goalId)}
-            onArchive={() => archive(entry.goal.goalId)}
-          />
-        ))}
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={(event) => void handleDragEnd(event)}
+        >
+          <SortableContext items={ids} strategy={verticalListSortingStrategy}>
+            {props.entries.map((entry) => (
+              <UpcomingRow
+                key={entry.goal.goalId}
+                goal={entry.goal}
+                onPromote={() => promote(entry.goal.goalId)}
+                onArchive={() => archive(entry.goal.goalId)}
+                onSave={(patch) => update(entry.goal.goalId, patch)}
+              />
+            ))}
+          </SortableContext>
+        </DndContext>
         {error && (
           <p className="text-danger-soft text-xs" role="alert">
             {error}
@@ -184,38 +248,61 @@ function UpcomingSection(props: UpcomingSectionProps) {
 
 interface UpcomingRowProps {
   goal: GoalRecordV1;
-  isFirst: boolean;
-  isLast: boolean;
-  onMoveUp: () => Promise<void> | void;
-  onMoveDown: () => Promise<void> | void;
   onPromote: () => Promise<void> | void;
   onArchive: () => Promise<void> | void;
+  onSave: (patch: { objective?: string; budgetCents?: number | null }) => Promise<void>;
 }
 
 function UpcomingRow(props: UpcomingRowProps) {
-  return (
-    <div className="border-border-light bg-surface-primary flex items-center gap-2 rounded-md border px-2 py-1.5 text-sm">
-      <div className="flex flex-col">
-        {/* Reorder buttons — keyboard-accessible substitute for DnD. */}
-        <button
-          type="button"
-          className="text-muted hover:text-foreground disabled:opacity-30"
-          disabled={props.isFirst}
-          aria-label="Move goal up"
-          onClick={() => void props.onMoveUp()}
-        >
-          <ArrowUp className="h-3 w-3" aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          className="text-muted hover:text-foreground disabled:opacity-30"
-          disabled={props.isLast}
-          aria-label="Move goal down"
-          onClick={() => void props.onMoveDown()}
-        >
-          <ArrowDown className="h-3 w-3" aria-hidden="true" />
-        </button>
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: props.goal.goalId,
+  });
+  const [isEditing, setIsEditing] = useState(false);
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : undefined,
+  };
+
+  if (isEditing) {
+    return (
+      <div ref={setNodeRef} style={style}>
+        <UpcomingRowEditor
+          goal={props.goal}
+          onCancel={() => setIsEditing(false)}
+          onSubmit={async (patch) => {
+            try {
+              await props.onSave(patch);
+              setIsEditing(false);
+            } catch {
+              // Surface stays handled by the parent error banner; keep
+              // the editor open so the user can correct the input.
+            }
+          }}
+        />
       </div>
+    );
+  }
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className="border-border-light bg-surface-primary flex items-center gap-2 rounded-md border px-2 py-1.5 text-sm"
+    >
+      <button
+        type="button"
+        // Drag handle: keeps the rest of the row clickable. The button
+        // semantics (vs a bare div) preserve keyboard focus and screen-
+        // reader access; `aria-describedby` is unnecessary because the
+        // row contents are already announced before the handle.
+        className="text-muted hover:text-foreground cursor-grab rounded p-0.5 active:cursor-grabbing"
+        aria-label={`Reorder ${props.goal.objective}`}
+        {...attributes}
+        {...(listeners ?? {})}
+      >
+        <GripVertical className="h-3.5 w-3.5" aria-hidden="true" />
+      </button>
       <span className="text-foreground line-clamp-1 flex-1 font-medium">
         {props.goal.objective}
       </span>
@@ -223,6 +310,14 @@ function UpcomingRow(props: UpcomingRowProps) {
         {props.goal.budgetCents == null ? "no budget" : formatGoalCents(props.goal.budgetCents)}
       </span>
       <div className="flex items-center gap-1">
+        <button
+          type="button"
+          className="text-muted hover:text-foreground inline-flex items-center gap-0.5 text-xs"
+          aria-label={`Edit ${props.goal.objective}`}
+          onClick={() => setIsEditing(true)}
+        >
+          <Pencil className="h-3 w-3" aria-hidden="true" />
+        </button>
         <button
           type="button"
           className="text-muted hover:text-success inline-flex items-center gap-0.5 text-xs"
@@ -235,12 +330,120 @@ function UpcomingRow(props: UpcomingRowProps) {
         <button
           type="button"
           className="text-muted hover:text-danger-soft inline-flex items-center gap-0.5 text-xs"
-          aria-label={`Archive ${props.goal.objective}`}
+          aria-label={`Remove ${props.goal.objective}`}
           onClick={() => void props.onArchive()}
         >
           <Trash2 className="h-3 w-3" aria-hidden="true" />
         </button>
       </div>
+    </div>
+  );
+}
+
+interface UpcomingRowEditorProps {
+  goal: GoalRecordV1;
+  onCancel: () => void;
+  onSubmit: (patch: { objective?: string; budgetCents?: number | null }) => Promise<void>;
+}
+
+function UpcomingRowEditor(props: UpcomingRowEditorProps) {
+  const objectiveRef = useRef<HTMLInputElement | null>(null);
+  const budgetRef = useRef<HTMLInputElement | null>(null);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+
+  const submit = async () => {
+    const nextObjective = (objectiveRef.current?.value ?? "").trim();
+    if (nextObjective.length === 0) {
+      setLocalError("Goal objective is required.");
+      objectiveRef.current?.focus();
+      return;
+    }
+    let budgetPatch: number | null | undefined;
+    const rawBudget = (budgetRef.current?.value ?? "").trim();
+    if (rawBudget.length === 0) {
+      // Empty input ⇒ clear the limit (null). Matches the Adder UX.
+      budgetPatch = null;
+    } else {
+      const parsed = parseGoalBudgetInputCents(rawBudget);
+      if (parsed === undefined) {
+        setLocalError("Enter a budget like $5 or 500c. Use 0 or blank for no budget.");
+        return;
+      }
+      budgetPatch = parsed;
+    }
+
+    const patch: { objective?: string; budgetCents?: number | null } = {};
+    if (nextObjective !== props.goal.objective) patch.objective = nextObjective;
+    if (budgetPatch !== props.goal.budgetCents) patch.budgetCents = budgetPatch;
+    if (Object.keys(patch).length === 0) {
+      // Nothing to save — just close.
+      props.onCancel();
+      return;
+    }
+
+    setIsSaving(true);
+    setLocalError(null);
+    try {
+      await props.onSubmit(patch);
+    } catch (caught) {
+      setLocalError(caught instanceof Error && caught.message ? caught.message : "Save failed.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div className="border-border-light bg-surface-primary flex flex-col gap-2 rounded-md border p-2">
+      <input
+        ref={objectiveRef}
+        aria-label="Goal objective"
+        defaultValue={props.goal.objective}
+        className="border-border bg-surface-primary text-foreground focus:border-accent rounded-md border p-1.5 text-sm outline-none"
+        autoFocus
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            void submit();
+          } else if (event.key === "Escape") {
+            event.preventDefault();
+            props.onCancel();
+          }
+        }}
+      />
+      <div className="flex items-center gap-2">
+        <input
+          ref={budgetRef}
+          aria-label="Goal budget"
+          defaultValue={
+            props.goal.budgetCents == null ? "" : (props.goal.budgetCents / 100).toFixed(2)
+          }
+          placeholder="$ budget (blank = no budget)"
+          className="border-border bg-surface-primary text-foreground focus:border-accent w-32 rounded-md border p-1.5 text-xs outline-none"
+        />
+        <button
+          type="button"
+          className="bg-accent text-accent-foreground rounded-md px-2 py-1 text-xs disabled:opacity-60"
+          disabled={isSaving}
+          onClick={() => void submit()}
+        >
+          {isSaving ? "Saving…" : "Save"}
+        </button>
+        <button
+          type="button"
+          className="border-border-light text-muted hover:text-foreground inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs"
+          onClick={props.onCancel}
+          aria-label="Cancel goal edit"
+        >
+          <X className="h-3 w-3" aria-hidden="true" />
+          Cancel
+        </button>
+      </div>
+      {localError && (
+        <p className="text-danger-soft text-xs" role="alert">
+          {localError}
+        </p>
+      )}
     </div>
   );
 }
@@ -253,13 +456,19 @@ interface CompletedSectionProps {
 
 function CompletedSection(props: CompletedSectionProps) {
   const { api } = useAPI();
+  const [error, setError] = useState<string | null>(null);
 
   if (props.entries.length === 0) return null;
 
   const archive = async (goalId: string) => {
     if (!api) return;
-    await api.workspace.archiveGoal({ workspaceId: props.workspaceId, goalId });
-    props.onMutated();
+    try {
+      await api.workspace.archiveGoal({ workspaceId: props.workspaceId, goalId });
+      setError(null);
+      props.onMutated();
+    } catch (caught) {
+      setError(caught instanceof Error && caught.message ? caught.message : "Failed to archive.");
+    }
   };
 
   return (
@@ -285,6 +494,11 @@ function CompletedSection(props: CompletedSectionProps) {
             </button>
           </div>
         ))}
+        {error && (
+          <p className="text-danger-soft text-xs" role="alert">
+            {error}
+          </p>
+        )}
       </div>
     </SectionShell>
   );
@@ -298,12 +512,18 @@ interface ArchivedSectionProps {
 
 function ArchivedSection(props: ArchivedSectionProps) {
   const { api } = useAPI();
+  const [error, setError] = useState<string | null>(null);
   if (props.entries.length === 0) return null;
 
   const revive = async (goalId: string) => {
     if (!api) return;
-    await api.workspace.reviveArchivedGoal({ workspaceId: props.workspaceId, goalId });
-    props.onMutated();
+    try {
+      await api.workspace.reviveArchivedGoal({ workspaceId: props.workspaceId, goalId });
+      setError(null);
+      props.onMutated();
+    } catch (caught) {
+      setError(caught instanceof Error && caught.message ? caught.message : "Failed to revive.");
+    }
   };
 
   return (
@@ -326,6 +546,11 @@ function ArchivedSection(props: ArchivedSectionProps) {
             </button>
           </div>
         ))}
+        {error && (
+          <p className="text-danger-soft text-xs" role="alert">
+            {error}
+          </p>
+        )}
       </div>
     </SectionShell>
   );

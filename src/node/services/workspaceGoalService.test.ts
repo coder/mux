@@ -2892,28 +2892,110 @@ describe("WorkspaceGoalService", () => {
       expect(complete.find((e) => e.goal.goalId === completed.goalId)).toBeDefined();
     });
 
-    test("promoteUpcomingGoal rejects mid-stream to avoid cost mis-attribution (Codex P1)", async () => {
+    test("promoteUpcomingGoal interrupts the active stream and proceeds with the promotion", async () => {
       await setGoalOk(service, { workspaceId, objective: "Currently active" });
       const queued = await service.addUpcomingGoal({ workspaceId, objective: "Promote me" });
 
-      // Mark the workspace as streaming via the extension metadata.
-      // `isWorkspaceStreaming` reads from `extensionMetadata.getSnapshot`,
-      // so flipping that flag is sufficient.
+      // Mark the workspace as streaming. The wired interrupter flips
+      // the flag back to false as part of its work — mirrors what
+      // `WorkspaceService.interruptStream` does in production.
       await extensionMetadata.setStreaming(workspaceId, true);
 
+      let interruptCalls = 0;
+      service.setStreamInterrupter(async (id) => {
+        interruptCalls += 1;
+        expect(id).toBe(workspaceId);
+        await extensionMetadata.setStreaming(id, false);
+      });
+
+      const promoted = await service.promoteUpcomingGoal(workspaceId, queued.goalId);
+      expect(interruptCalls).toBe(1);
+      expect(promoted?.goalId).toBe(queued.goalId);
+
+      // Idempotent: with no live stream, the second call must succeed
+      // without invoking the interrupter (promotion already happened
+      // above, so a second call on the same id returns null — but the
+      // important check is that the guard does not block).
+      const repeat = await service.promoteUpcomingGoal(workspaceId, queued.goalId);
+      expect(repeat).toBeNull();
+      expect(interruptCalls).toBe(1);
+    });
+
+    test("promoteUpcomingGoal proceeds even when no interrupter is wired", async () => {
+      await setGoalOk(service, { workspaceId, objective: "Currently active" });
+      const queued = await service.addUpcomingGoal({ workspaceId, objective: "Promote me" });
+
+      // No `setStreamInterrupter` call. We mimic the brief stream
+      // tail-end where streaming flips to false while waitForStream
+      // Settled is polling — set false up front so the bounded poll
+      // returns immediately and promotion proceeds.
+      await extensionMetadata.setStreaming(workspaceId, false);
+
+      const promoted = await service.promoteUpcomingGoal(workspaceId, queued.goalId);
+      expect(promoted?.goalId).toBe(queued.goalId);
+    });
+
+    test("updateUpcomingGoal patches an upcoming goal in place", async () => {
+      await setGoalOk(service, { workspaceId, objective: "Currently active" });
+      const queued = await service.addUpcomingGoal({
+        workspaceId,
+        objective: "Original objective",
+        budgetCents: 500,
+      });
+
+      const patched = await service.updateUpcomingGoal({
+        workspaceId,
+        goalId: queued.goalId,
+        objective: "Updated objective",
+        budgetCents: 1000,
+      });
+      expect(patched?.objective).toBe("Updated objective");
+      expect(patched?.budgetCents).toBe(1000);
+
+      // Reload from disk to confirm the write landed.
+      const board = await service.getGoalBoard(workspaceId);
+      const upcoming = board.entries.find((e) => e.goal.goalId === queued.goalId);
+      expect(upcoming?.goal.objective).toBe("Updated objective");
+      expect(upcoming?.goal.budgetCents).toBe(1000);
+    });
+
+    test("updateUpcomingGoal returns null for unknown ids", async () => {
+      const result = await service.updateUpcomingGoal({
+        workspaceId,
+        goalId: "00000000-0000-4000-8000-000000000000",
+        objective: "noop",
+      });
+      expect(result).toBeNull();
+    });
+
+    test("updateUpcomingGoal rejects an empty objective", async () => {
+      const queued = await service.addUpcomingGoal({ workspaceId, objective: "Original" });
       let caught: unknown = null;
       try {
-        await service.promoteUpcomingGoal(workspaceId, queued.goalId);
+        await service.updateUpcomingGoal({
+          workspaceId,
+          goalId: queued.goalId,
+          objective: "   ",
+        });
       } catch (error) {
         caught = error;
       }
       expect(caught).toBeInstanceOf(Error);
-      expect((caught as Error).message).toContain("streaming");
+      expect((caught as Error).message).toContain("objective");
+    });
 
-      // After the stream ends, promote should succeed.
-      await extensionMetadata.setStreaming(workspaceId, false);
-      const promoted = await service.promoteUpcomingGoal(workspaceId, queued.goalId);
-      expect(promoted?.goalId).toBe(queued.goalId);
+    test("updateUpcomingGoal can clear the budget by passing null", async () => {
+      const queued = await service.addUpcomingGoal({
+        workspaceId,
+        objective: "Has budget",
+        budgetCents: 500,
+      });
+      const patched = await service.updateUpcomingGoal({
+        workspaceId,
+        goalId: queued.goalId,
+        budgetCents: null,
+      });
+      expect(patched?.budgetCents).toBeNull();
     });
   });
 });

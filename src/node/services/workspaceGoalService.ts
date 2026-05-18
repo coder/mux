@@ -351,6 +351,15 @@ export class WorkspaceGoalService {
 
   private onActivityChange?: (workspaceId: string, snapshot: WorkspaceActivitySnapshot) => void;
 
+  /**
+   * Injected callback that interrupts the active stream for a workspace.
+   * Wired in `coreServices` via `WorkspaceService.interruptStream`. Tests
+   * that don't supply one simply skip the interrupt step — `promote
+   * UpcomingGoal` then falls back to its file-lock body as a plain
+   * stream-free promotion, which keeps unit tests deterministic.
+   */
+  private streamInterrupter?: (workspaceId: string) => Promise<void>;
+
   constructor(
     private readonly config: Config,
     private readonly historyService: HistoryService,
@@ -362,6 +371,10 @@ export class WorkspaceGoalService {
     listener: (workspaceId: string, snapshot: WorkspaceActivitySnapshot) => void
   ): void {
     this.onActivityChange = listener;
+  }
+
+  setStreamInterrupter(interrupter: (workspaceId: string) => Promise<void>): void {
+    this.streamInterrupter = interrupter;
   }
 
   private getFilePath(workspaceId: string): string {
@@ -617,6 +630,20 @@ export class WorkspaceGoalService {
   private async isWorkspaceStreaming(workspaceId: string): Promise<boolean> {
     const snapshot = await this.extensionMetadata.getSnapshot(workspaceId);
     return snapshot?.streaming === true;
+  }
+
+  /**
+   * Bounded poll for the workspace's streaming flag to drop. Same backoff
+   * as `runDeferredAutoPromoteAfterStreamEnd` so callers never wait more
+   * than ~600ms. Returns silently when the timer exhausts; the caller is
+   * expected to proceed regardless (promote falls open).
+   */
+  private async waitForStreamSettled(workspaceId: string): Promise<void> {
+    const backoffMs = [0, 50, 100, 200, 250];
+    for (const delay of backoffMs) {
+      if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+      if (!(await this.isWorkspaceStreaming(workspaceId))) return;
+    }
   }
 
   /**
@@ -2592,6 +2619,50 @@ export class WorkspaceGoalService {
   }
 
   /**
+   * Patch an upcoming goal in place. Used by the right-sidebar Upcoming
+   * row's inline editor — users can change a queued goal's objective,
+   * budget, or turn cap without first promoting it. Returns the patched
+   * record on success and `null` when the id is unknown (idempotent for
+   * double-submit). Fields explicitly set to `null` clear the limit;
+   * fields left as `undefined` are preserved from the existing record
+   * so the UI can patch a single column.
+   *
+   * Active goals do not flow through this method — they keep using
+   * `setGoal` with `editInPlace: true` so the agent's view stays in sync
+   * via the lifecycle event stream. Upcoming goals are not visible to
+   * the agent, so a pure file-locked write is sufficient here.
+   */
+  async updateUpcomingGoal(input: {
+    workspaceId: string;
+    goalId: string;
+    objective?: string;
+    budgetCents?: number | null;
+    turnCap?: number | null;
+  }): Promise<GoalRecordV1 | null> {
+    this.assertParentWorkspace(input.workspaceId);
+    if (input.objective?.trim().length === 0) {
+      throw new WorkspaceGoalTransitionError("Goal objective cannot be empty.");
+    }
+    return this.fileLocks.withLock(input.workspaceId, async () => {
+      const board = await this.readBoard(input.workspaceId);
+      const idx = board.upcoming.findIndex((g) => g.goalId === input.goalId);
+      if (idx === -1) return null;
+      const existing = board.upcoming[idx];
+      const updated: GoalRecordV1 = GoalRecordV1Schema.parse({
+        ...existing,
+        objective: input.objective === undefined ? existing.objective : input.objective.trim(),
+        budgetCents: input.budgetCents === undefined ? existing.budgetCents : input.budgetCents,
+        turnCap: input.turnCap === undefined ? existing.turnCap : input.turnCap,
+        updatedAtMs: Date.now(),
+      });
+      const nextUpcoming = [...board.upcoming];
+      nextUpcoming[idx] = updated;
+      await this.writeBoard(input.workspaceId, { ...board, upcoming: nextUpcoming });
+      return updated;
+    });
+  }
+
+  /**
    * Move a goal from one board location to archived. The goal can come
    * from any section: active (the slot is cleared and history records a
    * "cleared" entry), upcoming (removed from queue), or complete
@@ -2744,11 +2815,38 @@ export class WorkspaceGoalService {
    */
   async promoteUpcomingGoal(workspaceId: string, goalId: string): Promise<GoalRecordV1 | null> {
     this.assertParentWorkspace(workspaceId);
+
+    // Interrupt the active stream (if any) before promoting so the
+    // in-flight turn's costs are attributed to the goal that ran them.
+    // The promoted goal's view (via the agent's `get_goal` tool) then
+    // takes effect on the next user message. Without this, a user who
+    // promotes mid-stream would see the rest of the current stream
+    // attributed to the new active goal, surfaced earlier as the Codex
+    // P1 "cost-attribution race" finding.
+    //
+    // Behavior intentionally fails open: if no interrupter is wired
+    // (tests) or the interrupt errors, we still proceed to promote.
+    // The next turn picks up the new goal via `get_goal`; worst case
+    // is the small slice of stream tail that lands before the abort
+    // settles. We log so production paths flag the rare error.
     if (await this.isWorkspaceStreaming(workspaceId)) {
-      throw new WorkspaceGoalTransitionError(
-        "Cannot promote a goal while the current goal is streaming. Wait for the stream to finish and try again."
-      );
+      if (this.streamInterrupter) {
+        try {
+          await this.streamInterrupter(workspaceId);
+        } catch (error) {
+          log.warn("promoteUpcomingGoal: stream interrupt failed; continuing with promote", {
+            workspaceId,
+            error,
+          });
+        }
+        // Stream tear-down may not flip `streaming=false` synchronously
+        // with `interruptStream` resolving. Poll briefly (same backoff
+        // as `runDeferredAutoPromoteAfterStreamEnd`) so the file-lock
+        // body sees the post-interrupt state.
+        await this.waitForStreamSettled(workspaceId);
+      }
     }
+
     return this.fileLocks.withLock(workspaceId, async () => {
       const [currentActive, board] = await Promise.all([
         this.readGoalFile(workspaceId),

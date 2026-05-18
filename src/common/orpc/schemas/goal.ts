@@ -232,3 +232,17 @@ export const GoalBoardPromoteInputSchema = z.object({
   workspaceId: z.string().min(1),
   goalId: z.string().uuid(),
 });
+
+/**
+ * Patch an existing upcoming goal in place. Each field is optional so
+ * the renderer can patch a single column (e.g. only objective) without
+ * resending the others. `null` for budgetCents/turnCap explicitly
+ * clears the limit; omitting the field leaves it untouched.
+ */
+export const GoalBoardUpdateUpcomingInputSchema = z.object({
+  workspaceId: z.string().min(1),
+  goalId: z.string().uuid(),
+  objective: z.string().min(1).optional(),
+  budgetCents: z.number().int().nonnegative().nullable().optional(),
+  turnCap: z.number().int().positive().nullable().optional(),
+});

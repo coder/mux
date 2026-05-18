@@ -1454,6 +1454,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       reviveArchivedGoal: () => Promise.resolve(undefined),
       reorderUpcomingGoals: () => Promise.resolve(undefined),
       promoteUpcomingGoal: () => Promise.resolve(null),
+      updateUpcomingGoal: () => Promise.resolve(null),
       create: (input: { projectPath: string; branchName: string }) => {
         createdWorkspaceCounter += 1;
 

@@ -26,6 +26,7 @@ import {
   GoalBoardPromoteInputSchema,
   GoalBoardReorderInputSchema,
   GoalBoardReviveInputSchema,
+  GoalBoardUpdateUpcomingInputSchema,
   GoalBoardSnapshotSchema,
   GoalGetHistoryInputSchema,
   GoalGetHistoryOutputSchema,
@@ -1545,6 +1546,10 @@ export const workspace = {
   },
   promoteUpcomingGoal: {
     input: GoalBoardPromoteInputSchema,
+    output: GoalRecordV1Schema.nullable(),
+  },
+  updateUpcomingGoal: {
+    input: GoalBoardUpdateUpcomingInputSchema,
     output: GoalRecordV1Schema.nullable(),
   },
   getSessionUsage: {

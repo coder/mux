@@ -14,6 +14,10 @@ import { resolveProviderCredentials } from "@/node/utils/providerRequirements";
 import { isErrnoWithCode } from "@/node/utils/fs";
 import { isPathInsideDir, stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { generateWorkspaceIdentity } from "@/node/services/workspaceTitleGenerator";
+import {
+  WorkspaceGoalChildWorkspaceError,
+  WorkspaceGoalTransitionError,
+} from "@/node/services/workspaceGoalService";
 import type {
   UpdateStatus,
   WorkspaceActivitySnapshot,
@@ -398,6 +402,33 @@ async function getCurrentServerAuthSessionId(context: ORPCContext): Promise<stri
   }
 
   return null;
+}
+
+/**
+ * Translate goal-board service errors (`WorkspaceGoalTransitionError`,
+ * `WorkspaceGoalChildWorkspaceError`) into `ORPCError("BAD_REQUEST", …)`
+ * so the original message reaches the renderer. Without this wrapper,
+ * the oRPC server normalizes thrown plain Errors to the generic
+ * `INTERNAL_SERVER_ERROR` ("Internal server error"), making the UI
+ * unable to explain why a click did nothing. Unrelated errors are
+ * rethrown untouched so the existing logging path still fires.
+ */
+async function withGoalErrorTranslation<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (error) {
+    if (
+      error instanceof WorkspaceGoalTransitionError ||
+      error instanceof WorkspaceGoalChildWorkspaceError
+    ) {
+      throw new ORPCError("BAD_REQUEST", {
+        message: error.message,
+        cause: error,
+        data: { code: error.code },
+      });
+    }
+    throw error;
+  }
 }
 
 export const router = (authToken?: string) => {
@@ -4147,39 +4178,60 @@ export const router = (authToken?: string) => {
         .input(schemas.workspace.addUpcomingGoal.input)
         .output(schemas.workspace.addUpcomingGoal.output)
         .handler(async ({ context, input }) => {
-          return context.workspaceGoalService.addUpcomingGoal({
-            workspaceId: input.workspaceId,
-            objective: input.objective,
-            budgetCents: input.budgetCents,
-            turnCap: input.turnCap,
-          });
+          return withGoalErrorTranslation(() =>
+            context.workspaceGoalService.addUpcomingGoal({
+              workspaceId: input.workspaceId,
+              objective: input.objective,
+              budgetCents: input.budgetCents,
+              turnCap: input.turnCap,
+            })
+          );
         }),
       archiveGoal: t
         .input(schemas.workspace.archiveGoal.input)
         .output(schemas.workspace.archiveGoal.output)
         .handler(async ({ context, input }) => {
-          await context.workspaceGoalService.archiveGoal(input.workspaceId, input.goalId);
+          await withGoalErrorTranslation(() =>
+            context.workspaceGoalService.archiveGoal(input.workspaceId, input.goalId)
+          );
         }),
       reviveArchivedGoal: t
         .input(schemas.workspace.reviveArchivedGoal.input)
         .output(schemas.workspace.reviveArchivedGoal.output)
         .handler(async ({ context, input }) => {
-          await context.workspaceGoalService.reviveArchivedGoal(input.workspaceId, input.goalId);
+          await withGoalErrorTranslation(() =>
+            context.workspaceGoalService.reviveArchivedGoal(input.workspaceId, input.goalId)
+          );
         }),
       reorderUpcomingGoals: t
         .input(schemas.workspace.reorderUpcomingGoals.input)
         .output(schemas.workspace.reorderUpcomingGoals.output)
         .handler(async ({ context, input }) => {
-          await context.workspaceGoalService.reorderUpcomingGoals(
-            input.workspaceId,
-            input.upcomingIds
+          await withGoalErrorTranslation(() =>
+            context.workspaceGoalService.reorderUpcomingGoals(input.workspaceId, input.upcomingIds)
           );
         }),
       promoteUpcomingGoal: t
         .input(schemas.workspace.promoteUpcomingGoal.input)
         .output(schemas.workspace.promoteUpcomingGoal.output)
         .handler(async ({ context, input }) => {
-          return context.workspaceGoalService.promoteUpcomingGoal(input.workspaceId, input.goalId);
+          return withGoalErrorTranslation(() =>
+            context.workspaceGoalService.promoteUpcomingGoal(input.workspaceId, input.goalId)
+          );
+        }),
+      updateUpcomingGoal: t
+        .input(schemas.workspace.updateUpcomingGoal.input)
+        .output(schemas.workspace.updateUpcomingGoal.output)
+        .handler(async ({ context, input }) => {
+          return withGoalErrorTranslation(() =>
+            context.workspaceGoalService.updateUpcomingGoal({
+              workspaceId: input.workspaceId,
+              goalId: input.goalId,
+              objective: input.objective,
+              budgetCents: input.budgetCents,
+              turnCap: input.turnCap,
+            })
+          );
         }),
       getSessionUsage: t
         .input(schemas.workspace.getSessionUsage.input)
