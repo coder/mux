@@ -148,6 +148,7 @@ export interface ToolConfiguration {
   experiments?: {
     programmaticToolCalling?: boolean;
     programmaticToolCallingExclusive?: boolean;
+    advisorTool?: boolean;
     goals?: boolean;
     imageGenerationTool?: boolean;
     execSubagentHardRestart?: boolean;

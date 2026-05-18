@@ -11,6 +11,7 @@
  * - Tool policy composition (agent → caller)
  */
 
+import { resolveAdvisorEnabledForAgent } from "@/common/constants/advisor";
 import { AgentIdSchema } from "@/common/orpc/schemas";
 import type { SendMessageError } from "@/common/types/errors";
 import type { Result } from "@/common/types/result";
@@ -216,7 +217,10 @@ export async function resolveAgentForStream(
   // Caller policy then narrows further if needed.
   const advisorEnabled =
     isAdvisorExperimentEnabled === true &&
-    cfg.agentAiDefaults?.[effectiveAgentId]?.advisorEnabled === true;
+    resolveAdvisorEnabledForAgent(
+      effectiveAgentId,
+      cfg.agentAiDefaults?.[effectiveAgentId]?.advisorEnabled
+    );
   const agentToolPolicy = resolveToolPolicyForAgent({
     agents: agentsForInheritance,
     isSubagent: isSubagentWorkspace,

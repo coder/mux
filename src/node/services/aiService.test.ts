@@ -1682,13 +1682,6 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     });
     await harness.config.editConfig((cfg) => {
       cfg.advisorModelString = KNOWN_MODELS.SONNET.id;
-      cfg.agentAiDefaults = {
-        ...cfg.agentAiDefaults,
-        exec: {
-          ...(cfg.agentAiDefaults?.exec ?? {}),
-          advisorEnabled: true,
-        },
-      };
       return cfg;
     });
 

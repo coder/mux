@@ -12,7 +12,10 @@ import type { WorkspaceMetadata } from "@/common/types/workspace";
 import type { SendMessageOptions, ProvidersConfigMap } from "@/common/orpc/types";
 
 import type { DebugLlmRequestSnapshot } from "@/common/types/debugLlmRequest";
-import { ADVISOR_DEFAULT_MAX_USES_PER_TURN } from "@/common/constants/advisor";
+import {
+  ADVISOR_DEFAULT_MAX_USES_PER_TURN,
+  resolveAdvisorEnabledForAgent,
+} from "@/common/constants/advisor";
 import {
   DEFAULT_IMAGE_GENERATION_MAX_IMAGES,
   DEFAULT_IMAGE_GENERATION_MODEL,
@@ -1167,7 +1170,10 @@ export class AIService extends EventEmitter {
       } = agentResult.data;
       const projectTrusted = isProjectTrusted(this.config, metadata.projectPath);
       const sharedExecutionTrusted = isWorkspaceTrustedForSharedExecution(metadata, cfg.projects);
-      const agentAdvisorEnabled = cfg.agentAiDefaults?.[effectiveAgentId]?.advisorEnabled === true;
+      const agentAdvisorEnabled = resolveAdvisorEnabledForAgent(
+        effectiveAgentId,
+        cfg.agentAiDefaults?.[effectiveAgentId]?.advisorEnabled
+      );
       const advisorModelString = cfg.advisorModelString?.trim() ?? "";
       const advisorToolEligible =
         advisorExperimentEnabled && agentAdvisorEnabled && advisorModelString.length > 0;
@@ -1676,7 +1682,7 @@ export class AIService extends EventEmitter {
           taskService: this.taskService,
           analyticsService: this.analyticsService,
           desktopSessionManager: this.desktopSessionManager,
-          // PTC experiments for inheritance to subagents
+          // Experiments for inheritance to subagents.
           experiments,
           // Dynamic context for tool descriptions (moved from system prompt for better model attention)
           availableSubagents: agentDefinitions,

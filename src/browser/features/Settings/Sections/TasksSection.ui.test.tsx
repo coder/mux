@@ -10,6 +10,8 @@ import {
 import { getThinkingOptionLabel } from "@/common/types/thinking";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 
+let advisorExperimentEnabled = false;
+
 let apiMock: {
   config: {
     getConfig: ReturnType<typeof mock>;
@@ -26,7 +28,7 @@ void mock.module("@/browser/contexts/WorkspaceContext", () => ({
 }));
 
 void mock.module("@/browser/hooks/useExperiments", () => ({
-  useExperimentValue: () => false,
+  useExperimentValue: () => advisorExperimentEnabled,
 }));
 
 void mock.module("@/browser/hooks/useModelsFromSettings", () => ({
@@ -151,6 +153,7 @@ describe("TasksSection Exec subagent defaults", () => {
 
   beforeEach(() => {
     restoreDom = installDom();
+    advisorExperimentEnabled = false;
     apiMock = null;
   });
 
@@ -168,6 +171,17 @@ describe("TasksSection Exec subagent defaults", () => {
     expect(within(getExecSubagentRow(view)).getByText("Exec")).toBeTruthy();
     expect(view.getByText("UI agents")).toBeTruthy();
     expect(view.getByText("Sub-agents")).toBeTruthy();
+  });
+
+  test("defaults advisor on for Exec and Plan when the experiment is enabled", async () => {
+    advisorExperimentEnabled = true;
+    const view = renderTasksSection();
+
+    const planAdvisorSwitch = await view.findByRole("switch", { name: "Toggle plan advisor" });
+    const execAdvisorSwitch = view.getByRole("switch", { name: "Toggle exec advisor" });
+
+    expect(execAdvisorSwitch.getAttribute("aria-checked")).toBe("true");
+    expect(planAdvisorSwitch.getAttribute("aria-checked")).toBe("true");
   });
 
   test("resetting a mirrored subagent model removes the stale mirrored entry", async () => {

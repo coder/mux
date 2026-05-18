@@ -1,5 +1,20 @@
+import { normalizeAgentId } from "@/common/utils/agentIds";
+
 /** Default per-turn usage cap for the experimental advisor tool. */
 export const ADVISOR_DEFAULT_MAX_USES_PER_TURN = 3;
+
+const ADVISOR_ENABLED_BY_DEFAULT_AGENT_IDS = new Set(["exec", "plan"]);
+
+export function isAdvisorEnabledByDefaultForAgent(agentId: string): boolean {
+  return ADVISOR_ENABLED_BY_DEFAULT_AGENT_IDS.has(normalizeAgentId(agentId, ""));
+}
+
+export function resolveAdvisorEnabledForAgent(
+  agentId: string,
+  advisorEnabledOverride: boolean | undefined
+): boolean {
+  return advisorEnabledOverride ?? isAdvisorEnabledByDefaultForAgent(agentId);
+}
 
 /** Tail-biased truncation budget for same-step commentary included in advisor handoffs. */
 export const ADVISOR_HANDOFF_MAX_TEXT_CHARS = 4000;
