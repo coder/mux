@@ -25,6 +25,7 @@ import type {
   ToolCallEndEventSchema,
   ToolCallStartEventSchema,
   BashOutputEventSchema,
+  AdvisorOutputEventSchema,
   TaskCreatedEventSchema,
   AdvisorPhaseEventSchema,
   UsageDeltaEventSchema,
@@ -64,6 +65,7 @@ export type StreamAbortEvent = z.infer<typeof StreamAbortEventSchema>;
 export type ErrorEvent = z.infer<typeof ErrorEventSchema>;
 
 export type BashOutputEvent = z.infer<typeof BashOutputEventSchema>;
+export type AdvisorOutputEvent = z.infer<typeof AdvisorOutputEventSchema>;
 export type TaskCreatedEvent = z.infer<typeof TaskCreatedEventSchema>;
 export type AdvisorPhaseEvent = z.infer<typeof AdvisorPhaseEventSchema>;
 export type ToolCallStartEvent = z.infer<typeof ToolCallStartEventSchema>;

@@ -67,6 +67,7 @@ import type { SessionUsageService } from "./sessionUsageService";
 import { sumUsageHistory, getTotalCost } from "@/common/utils/tokens/usageAggregator";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { normalizeToCanonical } from "@/common/utils/ai/models";
+import { extractChunkDeltaText } from "@/common/utils/ai/streamChunks";
 import { readToolInstructions } from "./systemMessage";
 import {
   effectiveAdditionalSystemContext,
@@ -226,25 +227,6 @@ function markProviderMetadataCostsIncluded(
 interface ToolExecutionContext {
   toolCallId?: string;
   abortSignal?: AbortSignal;
-}
-
-/**
- * Extract the first string-typed value from a chunk object by trying field names
- * in priority order. Different AI SDK chunk types (`text-delta`, `reasoning-delta`)
- * surface the delta text under varying field names; this avoids duplicating the
- * probe logic for each case.
- */
-function extractChunkDeltaText(
-  chunk: Record<string, unknown>,
-  fieldPriority: readonly string[]
-): string {
-  for (const field of fieldPriority) {
-    const value = chunk[field];
-    if (typeof value === "string") {
-      return value;
-    }
-  }
-  return "";
 }
 
 function isToolExecutionContext(value: unknown): value is ToolExecutionContext {

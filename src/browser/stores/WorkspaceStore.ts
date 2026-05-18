@@ -24,7 +24,10 @@ import {
   type ResponseCompleteHandler,
 } from "@/browser/utils/messages/responseCompletionMetadata";
 import { isAbortError } from "@/browser/utils/isAbortError";
-import { BASH_TRUNCATE_MAX_TOTAL_BYTES } from "@/common/constants/toolLimits";
+import {
+  ADVISOR_LIVE_OUTPUT_MAX_CHARS,
+  BASH_TRUNCATE_MAX_TOTAL_BYTES,
+} from "@/common/constants/toolLimits";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { useCallback, useSyncExternalStore } from "react";
 import {
@@ -36,6 +39,7 @@ import {
   isInitEnd,
   isInitOutput,
   isInitStart,
+  isAdvisorOutputEvent,
   isAdvisorPhaseEvent,
   isBashOutputEvent,
   isTaskCreatedEvent,
@@ -216,6 +220,11 @@ export interface AdvisorLivePhaseState {
   timestamp: number;
 }
 
+export interface AdvisorLiveOutputState {
+  text: string;
+  timestamp: number;
+}
+
 interface WorkspaceChatTransientState {
   caughtUp: boolean;
   isHydratingTranscript: boolean;
@@ -224,6 +233,7 @@ interface WorkspaceChatTransientState {
   replayingHistory: boolean;
   queuedMessage: QueuedMessage | null;
   liveBashOutput: Map<string, LiveBashOutputInternal>;
+  liveAdvisorOutput: Map<string, AdvisorLiveOutputState>;
   liveAdvisorPhase: Map<string, AdvisorLivePhaseState>;
   liveTaskIds: Map<string, string[]>;
   autoRetryStatus: AutoRetryStatus | null;
@@ -311,6 +321,7 @@ function createInitialChatTransientState(): WorkspaceChatTransientState {
     replayingHistory: false,
     queuedMessage: null,
     liveBashOutput: new Map(),
+    liveAdvisorOutput: new Map(),
     liveAdvisorPhase: new Map(),
     liveTaskIds: new Map(),
     autoRetryStatus: null,
@@ -804,6 +815,7 @@ export class WorkspaceStore {
 
       // Cleanup ephemeral advisor/task state once the actual tool result is available.
       if (toolCallEnd.toolName === "advisor") {
+        transient?.liveAdvisorOutput.delete(toolCallEnd.toolCallId);
         transient?.liveAdvisorPhase.delete(toolCallEnd.toolCallId);
       }
       if (toolCallEnd.toolName === "task") {
@@ -1544,23 +1556,36 @@ export class WorkspaceStore {
     }
   }
 
-  private cleanupStaleLiveBashOutput(
+  private cleanupStaleLiveToolState(
     workspaceId: string,
     aggregator: StreamingMessageAggregator
   ): void {
-    const perWorkspace = this.chatTransientState.get(workspaceId)?.liveBashOutput;
-    if (!perWorkspace || perWorkspace.size === 0) return;
+    const transient = this.chatTransientState.get(workspaceId);
+    if (!transient) return;
+    if (transient.liveBashOutput.size === 0 && transient.liveAdvisorOutput.size === 0) return;
 
-    const activeToolCallIds = new Set<string>();
+    const activeBashToolCallIds = new Set<string>();
+    const activeAdvisorToolCallIds = new Set<string>();
     for (const msg of aggregator.getDisplayedMessages()) {
-      if (msg.type === "tool" && msg.toolName === "bash") {
-        activeToolCallIds.add(msg.toolCallId);
+      if (msg.type !== "tool") continue;
+
+      if (msg.toolName === "bash") {
+        activeBashToolCallIds.add(msg.toolCallId);
+      }
+      if (msg.toolName === "advisor") {
+        activeAdvisorToolCallIds.add(msg.toolCallId);
       }
     }
 
-    for (const toolCallId of Array.from(perWorkspace.keys())) {
-      if (!activeToolCallIds.has(toolCallId)) {
-        perWorkspace.delete(toolCallId);
+    for (const toolCallId of Array.from(transient.liveBashOutput.keys())) {
+      if (!activeBashToolCallIds.has(toolCallId)) {
+        transient.liveBashOutput.delete(toolCallId);
+      }
+    }
+
+    for (const toolCallId of Array.from(transient.liveAdvisorOutput.keys())) {
+      if (!activeAdvisorToolCallIds.has(toolCallId)) {
+        transient.liveAdvisorOutput.delete(toolCallId);
       }
     }
   }
@@ -1590,6 +1615,12 @@ export class WorkspaceStore {
 
     // Important: return the stored object reference so useSyncExternalStore sees a stable snapshot.
     // (Returning a fresh object every call can trigger an infinite re-render loop.)
+    return state ?? null;
+  }
+
+  getAdvisorToolLiveOutput(workspaceId: string, toolCallId: string): AdvisorLiveOutputState | null {
+    const state = this.chatTransientState.get(workspaceId)?.liveAdvisorOutput.get(toolCallId);
+
     return state ?? null;
   }
 
@@ -3705,6 +3736,7 @@ export class WorkspaceStore {
     return (
       data.type in this.bufferedEventHandlers ||
       data.type === "bash-output" ||
+      data.type === "advisor-output" ||
       data.type === "advisor-phase" ||
       data.type === "task-created"
     );
@@ -3780,6 +3812,7 @@ export class WorkspaceStore {
         // Live tool-call UI is tied to the active stream context; clear it when replay
         // replaces history, reports no active stream, or reports a different stream ID.
         transient.liveBashOutput.clear();
+        transient.liveAdvisorOutput.clear();
         transient.liveAdvisorPhase.clear();
         transient.liveTaskIds.clear();
       }
@@ -3937,7 +3970,7 @@ export class WorkspaceStore {
 
     if (isDeleteMessage(data)) {
       applyWorkspaceChatEventToAggregator(aggregator, data);
-      this.cleanupStaleLiveBashOutput(workspaceId, aggregator);
+      this.cleanupStaleLiveToolState(workspaceId, aggregator);
       this.states.bump(workspaceId);
       this.checkAndBumpRecencyIfChanged();
       this.usageStore.bump(workspaceId);
@@ -3964,6 +3997,28 @@ export class WorkspaceStore {
 
       // High-frequency: throttle UI updates like other delta-style events.
       this.scheduleIdleStateBump(workspaceId);
+      return;
+    }
+
+    if (isAdvisorOutputEvent(data)) {
+      if (data.text.length === 0) return;
+
+      const transient = this.assertChatTransientState(workspaceId);
+      const prev = transient.liveAdvisorOutput.get(data.toolCallId);
+      const appendedText = `${prev?.text ?? ""}${data.text}`;
+      const text =
+        appendedText.length > ADVISOR_LIVE_OUTPUT_MAX_CHARS
+          ? appendedText.slice(-ADVISOR_LIVE_OUTPUT_MAX_CHARS)
+          : appendedText;
+
+      if (prev?.text === text && prev.timestamp === data.timestamp) return;
+
+      transient.liveAdvisorOutput.set(data.toolCallId, {
+        text,
+        timestamp: data.timestamp,
+      });
+
+      this.scheduleStreamingStateBump(workspaceId);
       return;
     }
 
@@ -4205,6 +4260,27 @@ export function useBashToolLiveOutput(
     () => {
       if (!workspaceId || !toolCallId) return null;
       return store.getBashToolLiveOutput(workspaceId, toolCallId);
+    }
+  );
+}
+
+/**
+ * Hook to get UI-only live output for a running advisor tool call.
+ */
+export function useAdvisorToolLiveOutput(
+  workspaceId: string | undefined,
+  toolCallId: string | undefined
+): AdvisorLiveOutputState | null {
+  const store = getStoreInstance();
+
+  return useSyncExternalStore(
+    (listener) => {
+      if (!workspaceId) return () => undefined;
+      return store.subscribeKey(workspaceId, listener);
+    },
+    () => {
+      if (!workspaceId || !toolCallId) return null;
+      return store.getAdvisorToolLiveOutput(workspaceId, toolCallId);
     }
   );
 }

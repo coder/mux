@@ -5,6 +5,7 @@ import { MarkdownRenderer } from "../Messages/MarkdownRenderer";
 import { cn } from "@/common/lib/utils";
 import {
   type AdvisorLivePhaseState,
+  useAdvisorToolLiveOutput,
   useAdvisorToolLivePhase,
 } from "@/browser/stores/WorkspaceStore";
 import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
@@ -223,23 +224,25 @@ export const AdvisorToolCall: React.FC<AdvisorToolCallProps> = ({
   const { expanded, toggleExpanded } = useToolExpansion();
   const toolStatus = isToolStatus(status) ? status : "pending";
   const livePhase = useAdvisorToolLivePhase(workspaceId, toolCallId);
+  const liveOutput = useAdvisorToolLiveOutput(workspaceId, toolCallId);
   const question = getAdvisorQuestion(args);
   const advisorResult = isAdvisorToolResult(result) ? result : null;
   const hasUnrecognizedResult = result !== undefined && result !== null && advisorResult === null;
+  const isExecutingWithoutResult =
+    toolStatus === "executing" && advisorResult === null && !hasUnrecognizedResult;
+  const liveAdviceText = isExecutingWithoutResult && liveOutput?.text ? liveOutput.text : undefined;
   const detailsText =
     advisorResult?.type === "advice"
       ? advisorResult.advice
       : advisorResult?.type === "limit_reached" || advisorResult?.type === "error"
         ? advisorResult.message
-        : undefined;
+        : liveAdviceText;
   const statusPresentation = hasUnrecognizedResult
     ? {
         status: "failed" as const,
         content: getStatusDisplay("failed"),
       }
     : getAdvisorStatusPresentation(advisorResult, toolStatus);
-  const isExecutingWithoutResult =
-    toolStatus === "executing" && advisorResult === null && !hasUnrecognizedResult;
   const executingStatusLabel = livePhase ? ADVISOR_PHASE_LABELS[livePhase.phase] : "Running";
   const headerStatusContent = isExecutingWithoutResult ? (
     <>
@@ -296,6 +299,15 @@ export const AdvisorToolCall: React.FC<AdvisorToolCallProps> = ({
                 </DetailSection>
               )}
             </>
+          )}
+
+          {advisorResult === null && liveAdviceText && (
+            <DetailSection>
+              <DetailLabel>Advice</DetailLabel>
+              <div className="bg-code-bg rounded px-3 py-2 text-[12px] leading-relaxed">
+                <MarkdownRenderer content={liveAdviceText} preserveLineBreaks />
+              </div>
+            </DetailSection>
           )}
 
           {advisorResult?.type === "limit_reached" && (
