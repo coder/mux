@@ -13,7 +13,7 @@ import { useRef, useState } from "react";
 
 import { useAPI } from "@/browser/contexts/API";
 import { useGoalDefaults } from "@/browser/utils/goals/useGoalDefaults";
-import { resolveGoalSetIntent } from "@/browser/utils/goals/resolveGoalSetIntent";
+import { loadGoalDefaults, resolveGoalSetIntent } from "@/browser/utils/goals/resolveGoalSetIntent";
 import { cn } from "@/common/lib/utils";
 import type { GoalBoardEntry, GoalBoardSnapshot, GoalRecordV1 } from "@/common/types/goal";
 import { formatGoalCents } from "@/common/utils/goals/budgetPricing";
@@ -369,17 +369,24 @@ function UpcomingAdder(props: UpcomingAdderProps) {
       }
       budgetCents = parsed;
     }
-    // Codex P2: resolve goal defaults BEFORE the IPC so a queued goal
-    // ends up with the same effective budget / turn cap as a freshly
-    // created one. The create form (handleGoalCreate in RightSidebar)
-    // already does this for setGoal; the addUpcomingGoal path must
-    // match or the queued goal silently lands unbudgeted/uncapped
-    // when `alwaysRequireExplicitBudget` is on or a defaultTurnCap is
-    // configured.
-    const resolved = resolveGoalSetIntent({ objective, budgetCents }, defaults);
     setIsSubmitting(true);
     setError(null);
     try {
+      // Codex P2: load effective defaults at submit time, not at hook
+      // resolution time. `useGoalDefaults` serves the canonical
+      // `DEFAULT_GOAL_DEFAULTS` until its async fetch resolves, so a
+      // user who opens the form and submits before the fetch returns
+      // would otherwise persist a queued goal under the wrong limits.
+      // Falls back to the hook's `defaults` if the network read fails
+      // — same fallback as `loadGoalDefaults`.
+      let effective = defaults;
+      try {
+        effective = await loadGoalDefaults(api, props.workspaceId);
+      } catch {
+        // Keep `effective` at the hook value (which is itself a
+        // best-effort snapshot or the canonical default).
+      }
+      const resolved = resolveGoalSetIntent({ objective, budgetCents }, effective);
       await api.workspace.addUpcomingGoal({
         workspaceId: props.workspaceId,
         objective: resolved.objective,

@@ -2322,14 +2322,53 @@ export class WorkspaceGoalService {
    * if the current active goal is `complete` and there's an upcoming
    * head, archive the completed goal to history and promote the head.
    *
-   * Same pricing + (now-unused) streaming gates apply via
-   * `promoteNextUpcomingUnlocked`; the streaming check is defensive
-   * since we've just transitioned out of streaming.
+   * **Retry on streaming race (Codex P2).** `applyPendingAfterStreamEnd`
+   * is called from AgentSession once per stream; the
+   * `extensionMetadata.setStreaming(false)` call comes from a separate
+   * async listener in WorkspaceService and may not have run yet. We
+   * poll `isWorkspaceStreaming` with a small bounded backoff so we
+   * don't drop the auto-promote on this race. If after all retries
+   * we still see streaming, give up — the next manual mutation will
+   * land here naturally.
    *
    * Failures are logged + swallowed; the stream-end pipeline must not
    * be disrupted by board mutations.
    */
   private async runDeferredAutoPromoteAfterStreamEnd(workspaceId: string): Promise<void> {
+    // Quick early exit if there's nothing to promote — avoids the
+    // streaming-poll cost on the hot path for single-goal workspaces.
+    const earlyBoard = await this.readBoard(workspaceId);
+    if (earlyBoard.upcoming.length === 0) {
+      return;
+    }
+    const earlyGoal = await this.readGoalFile(workspaceId);
+    if (earlyGoal?.status !== "complete") {
+      return;
+    }
+
+    // Codex P2: poll for stop-streaming up to ~600ms total. The races
+    // we've seen in practice resolve in one or two ticks; the longer
+    // bound is defensive against laggy listeners. We stop polling the
+    // first time we see streaming=false (so the common case is fast).
+    const POLL_DELAYS_MS = [0, 50, 100, 200, 250];
+    let stillStreaming = true;
+    for (const delayMs of POLL_DELAYS_MS) {
+      if (delayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+      if (!(await this.isWorkspaceStreaming(workspaceId))) {
+        stillStreaming = false;
+        break;
+      }
+    }
+    if (stillStreaming) {
+      log.warn(
+        "Deferred auto-promote skipped: workspace still streaming after retries; will rearm on next mutation",
+        { workspaceId, goalId: earlyBoard.upcoming[0].goalId }
+      );
+      return;
+    }
+
     try {
       await this.fileLocks.withLock(workspaceId, async () => {
         const current = await this.readGoalFile(workspaceId);
@@ -2338,21 +2377,6 @@ export class WorkspaceGoalService {
         }
         const board = await this.readBoard(workspaceId);
         if (board.upcoming.length === 0) {
-          return;
-        }
-        // Codex P1: re-check the streaming gate BEFORE any side effects.
-        // `stopStreamingStatus` is driven by a separate async listener
-        // and can lag the `applyPendingAfterStreamEnd` call by a tick.
-        // If the workspace still reports streaming, bail without
-        // touching history — `promoteNextUpcomingUnlocked` would also
-        // bail and we'd be left with the completed goal in history
-        // AND in goal.json, causing duplicate Completed rows on the
-        // next retry.
-        if (await this.isWorkspaceStreaming(workspaceId)) {
-          log.warn("Deferred auto-promote skipped: workspace still streaming at drain time", {
-            workspaceId,
-            goalId: board.upcoming[0].goalId,
-          });
           return;
         }
         const [head] = board.upcoming;
