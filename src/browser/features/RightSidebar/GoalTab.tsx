@@ -816,8 +816,19 @@ interface BudgetTileProps {
 function BudgetTile(props: BudgetTileProps) {
   const { costCents, budgetCents, status, canEdit, onEdit } = props;
   const hasBudget = budgetCents != null;
-  const remainingCents = hasBudget ? Math.max(0, budgetCents - costCents) : null;
   const overBudget = status === "budget_limited" || (hasBudget && costCents >= budgetCents);
+  // Compute both deltas with `Math.max(0, …)` so each branch surfaces a
+  // non-negative magnitude:
+  //   • `leftCents`     — used by the under-budget branch
+  //   • `overByCents`   — used by the over-budget branch (Codex P2:
+  //                       the original code clamped a single
+  //                       `remainingCents` to 0 and then rendered it
+  //                       with the `over` suffix, so a 25¢ overspend
+  //                       was reported as "$0.00 over". Reporting the
+  //                       actual overage matches what the user wants
+  //                       to see when the goal is budget_limited.)
+  const leftCents = hasBudget ? Math.max(0, budgetCents - costCents) : 0;
+  const overByCents = hasBudget ? Math.max(0, costCents - budgetCents) : 0;
   // Clamp to [0, 100] so a slight over-spend (cost > budget) still
   // renders as a fully-filled bar instead of overflowing visually.
   const percent =
@@ -851,7 +862,7 @@ function BudgetTile(props: BudgetTileProps) {
         <span className="text-muted text-xs">
           {hasBudget ? (
             <>
-              <span>{formatGoalCents(remainingCents ?? 0)}</span>
+              <span>{formatGoalCents(overBudget ? overByCents : leftCents)}</span>
               {overBudget ? " over" : " left"}
             </>
           ) : (
@@ -900,8 +911,14 @@ interface TurnsTileProps {
 function TurnsTile(props: TurnsTileProps) {
   const { turnsUsed, turnCap, canEdit, onEdit } = props;
   const hasCap = turnCap != null;
-  const remaining = hasCap ? Math.max(0, turnCap - turnsUsed) : null;
   const overCap = hasCap && turnsUsed >= turnCap;
+  // Codex P2 (mirror of BudgetTile): the over-cap branch must surface
+  // the actual overage instead of a clamped 0, e.g. for a goal whose
+  // `turnsUsed` already exceeds `turnCap` (child attribution can push
+  // turns past the cap before the lifecycle re-evaluates). Two
+  // non-negative deltas — pick the one that matches the branch.
+  const turnsLeft = hasCap ? Math.max(0, turnCap - turnsUsed) : 0;
+  const turnsOverBy = hasCap ? Math.max(0, turnsUsed - turnCap) : 0;
 
   return (
     <div className="bg-surface-secondary rounded-md p-3">
@@ -925,7 +942,7 @@ function TurnsTile(props: TurnsTileProps) {
         <div className="text-muted text-xs">
           {hasCap ? (
             <>
-              <span>{remaining}</span>
+              <span>{overCap ? turnsOverBy : turnsLeft}</span>
               {overCap ? " over" : " left"}
             </>
           ) : (

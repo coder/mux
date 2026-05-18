@@ -180,6 +180,38 @@ describe("GoalTab", () => {
     expect(bar.getAttribute("aria-valuenow")).toBe("25"); // 125/500 → 25%
   });
 
+  test("budget tile reports the actual overage when the goal is over budget (Codex P2)", () => {
+    // Critical: the pre-fix render clamped `remaining` to 0 and then
+    // showed "$0.00 over" for any overspend, which made the tile lie
+    // about how far past the cap the goal was. The over-budget branch
+    // must surface the true magnitude (`costCents - budgetCents`).
+    const { getByText } = render(
+      <GoalTab
+        goal={goal({ status: "budget_limited", budgetCents: 500, costCents: 525 })}
+        onSetStatus={mock()}
+        onClear={mock()}
+      />
+    );
+
+    // 525 - 500 = 25¢ = $0.25 over.
+    expect(getByText("$0.25")).toBeTruthy();
+    expect(getByText(/over$/)).toBeTruthy();
+  });
+
+  test("turns tile reports the actual overage when turns exceed the cap (Codex P2)", () => {
+    // Same defect for the Turns tile: when `turnsUsed > turnCap`, the
+    // pre-fix render clamped to `0 over`. Verify the true delta is
+    // surfaced.
+    const { getByText } = render(
+      <GoalTab goal={goal({ turnsUsed: 12, turnCap: 10 })} onSetStatus={mock()} onClear={mock()} />
+    );
+
+    expect(getByText("12 / 10")).toBeTruthy();
+    // 12 - 10 = 2 over.
+    expect(getByText("2")).toBeTruthy();
+    expect(getByText(/over$/)).toBeTruthy();
+  });
+
   test("budget tile shows 'no budget' instead of a remaining figure when the cap is unset", () => {
     // When no budget is configured the tile is effectively a Cost
     // card. We must not render a misleading "$0.00 left" or a
