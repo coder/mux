@@ -273,7 +273,10 @@ export function GoalTab(props: GoalTabProps) {
 
   if (!props.goal) {
     return (
-      <section className="flex h-full flex-col gap-4 p-4" aria-label="Workspace goal">
+      <section
+        className="flex h-full flex-col gap-4 overflow-y-auto p-4"
+        aria-label="Workspace goal"
+      >
         {props.onCreate ? (
           // Empty-state primary action: a goal-creation form with full
           // slash-command parity (objective + optional budget + optional
