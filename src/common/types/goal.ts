@@ -52,9 +52,9 @@ export type GoalLifecycle = "active" | "complete";
  * agent is doing with it right now:
  *
  *   - `running`        — the agent may auto-continue this goal.
- *   - `paused`         — explicit user pause, OR auto-pause (e.g., when the
- *                        user sends a fresh message mid-stream). Continuations
- *                        are suppressed until the user resumes.
+ *   - `paused`         — explicit user pause, explicit send-and-pause, or safety
+ *                        gates such as an interrupted stream. Continuations are
+ *                        suppressed until the user resumes.
  *   - `budget_limited` — internal-only transient state set by the budget
  *                        gate when cost or turn caps are hit.
  *

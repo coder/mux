@@ -118,13 +118,33 @@ describe("AgentSession goal safety hooks", () => {
     }
   });
 
-  test("manual user messages auto-pause active goals before streaming", async () => {
+  test("manual user messages steer active goals by default", async () => {
+    const workspaceId = "manual-steers-active-goal";
+    const { session, goalService, analytics, cleanup } = await createSessionHarness(workspaceId);
+    cleanups.push(cleanup);
+    await setGoalOk(goalService, { workspaceId, objective: "Keep working" });
+
+    const result = await session.sendMessage("I need to steer this goal", SEND_OPTIONS);
+
+    expect(result.success).toBe(true);
+    expect(await goalService.getGoal(workspaceId)).toMatchObject({ status: "active" });
+    expect(analytics.recordGoalLifecycleEvent).not.toHaveBeenCalledWith(
+      "goal_paused",
+      expect.anything()
+    );
+    session.dispose();
+  });
+
+  test("manual user messages can explicitly pause active goals", async () => {
     const workspaceId = "manual-pauses-active-goal";
     const { session, goalService, analytics, cleanup } = await createSessionHarness(workspaceId);
     cleanups.push(cleanup);
     await setGoalOk(goalService, { workspaceId, objective: "Keep working" });
 
-    const result = await session.sendMessage("I need to intervene", SEND_OPTIONS);
+    const result = await session.sendMessage("I need to pause this goal", {
+      ...SEND_OPTIONS,
+      goalInterventionPolicy: "pause",
+    });
 
     expect(result.success).toBe(true);
     expect(await goalService.getGoal(workspaceId)).toMatchObject({ status: "paused" });
@@ -196,7 +216,7 @@ describe("AgentSession goal safety hooks", () => {
     session.dispose();
   });
 
-  test("manual user messages clear acknowledgment flags before auto-pausing", async () => {
+  test("manual user messages clear acknowledgment flags while steering by default", async () => {
     const workspaceId = "manual-clears-ack";
     const { session, goalService, cleanup } = await createSessionHarness(workspaceId);
     cleanups.push(cleanup);
@@ -207,7 +227,7 @@ describe("AgentSession goal safety hooks", () => {
 
     expect(result.success).toBe(true);
     expect(await goalService.getGoal(workspaceId)).toMatchObject({
-      status: "paused",
+      status: "active",
       requireUserAcknowledgmentSinceMs: null,
     });
     session.dispose();
@@ -332,7 +352,7 @@ describe("AgentSession goal safety hooks", () => {
     session.dispose();
   });
 
-  test("manual acknowledgment plus explicit resume allows a gated continuation to fire after restart", async () => {
+  test("manual acknowledgment clears stale gated continuations after restart", async () => {
     const workspaceId = "restart-gated-continuation";
     const { session, goalService, historyService, cleanup } =
       await createSessionHarness(workspaceId);
@@ -369,14 +389,13 @@ describe("AgentSession goal safety hooks", () => {
     const manualResult = await session.sendMessage("I saw the recovered response", SEND_OPTIONS);
     expect(manualResult.success).toBe(true);
     expect(await goalService.getGoal(workspaceId)).toMatchObject({
-      status: "paused",
+      status: "active",
       requireUserAcknowledgmentSinceMs: null,
     });
 
-    await setGoalOk(goalService, { workspaceId, status: "active" });
     await dispatcher.requestDispatch(workspaceId, GOAL_CONTINUATION_IDLE_CONSUMER_NAME);
 
-    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).not.toHaveBeenCalled();
     session.dispose();
   });
 });

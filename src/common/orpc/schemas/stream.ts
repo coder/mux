@@ -674,6 +674,8 @@ export const ExperimentsSchema = z.object({
   imageGenerationTool: z.boolean().optional(),
 });
 
+export const GoalInterventionPolicySchema = z.enum(["steer", "pause"]);
+
 // SendMessage options
 export const SendMessageOptionsSchema = z.object({
   editMessageId: z.string().optional(),
@@ -711,6 +713,7 @@ export const SendMessageOptionsSchema = z.object({
    * iterating on agent files - a broken agent in the worktree won't affect message sending.
    */
   disableWorkspaceAgents: z.boolean().optional(),
+  goalInterventionPolicy: GoalInterventionPolicySchema.nullish(),
   queueDispatchMode: z.enum(["tool-end", "turn-end"]).nullish(),
 });
 

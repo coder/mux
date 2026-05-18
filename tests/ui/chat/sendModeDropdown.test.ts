@@ -1,9 +1,16 @@
 import "../dom";
+
+jest.mock("lottie-react", () => ({
+  __esModule: true,
+  default: () => null,
+}));
+
 import { fireEvent, waitFor } from "@testing-library/react";
 
 import { preloadTestModules, type TestEnvironment } from "../../ipc/setup";
 
 import { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
+import { workspaceStore } from "@/browser/stores/WorkspaceStore";
 
 import { createAppHarness, type AppHarness } from "../harness";
 
@@ -120,6 +127,55 @@ describe("Send dispatch modes (mock AI router)", () => {
         'button[aria-label="Send mode options"]'
       );
       expect(modeTrigger).toBeNull();
+    } finally {
+      await app.dispose();
+    }
+  }, 60_000);
+
+  test("running goals steer by default and expose an explicit pause send action", async () => {
+    const app = await createAppHarness({ branchPrefix: "send-mode-goal-policy" });
+
+    try {
+      const created = await app.env.orpc.workspace.setGoal({
+        workspaceId: app.workspaceId,
+        objective: "Keep dogfooding send policy",
+        budgetCents: null,
+      });
+      expect(created.success).toBe(true);
+
+      await waitFor(() => {
+        expect(workspaceStore.getWorkspaceSidebarState(app.workspaceId).goal?.status).toBe(
+          "active"
+        );
+      });
+
+      await app.chat.typeWithoutSending("Steer without pausing");
+      const sendButton = await waitForSendModeMenuTrigger(app.view.container);
+      fireEvent.click(sendButton);
+      await app.chat.expectStreamComplete();
+
+      await waitFor(async () => {
+        const { goal } = await app.env.orpc.workspace.getGoal({ workspaceId: app.workspaceId });
+        expect(goal?.status).toBe("active");
+      });
+
+      await app.chat.typeWithoutSending("Pause after this steering note");
+      await openSendModeMenu(app.view.container);
+      const pauseRow = await waitFor(() => {
+        const rows = Array.from(app.view.container.querySelectorAll("button"));
+        const row = rows.find((button) => button.textContent?.includes("Send and pause goal"));
+        if (!row) {
+          throw new Error("Send and pause goal row not found");
+        }
+        return row;
+      });
+      fireEvent.click(pauseRow);
+      await app.chat.expectStreamComplete();
+
+      await waitFor(async () => {
+        const { goal } = await app.env.orpc.workspace.getGoal({ workspaceId: app.workspaceId });
+        expect(goal?.status).toBe("paused");
+      });
     } finally {
       await app.dispose();
     }

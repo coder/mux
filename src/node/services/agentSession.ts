@@ -175,6 +175,8 @@ interface CompactionRequestMetadata {
   };
 }
 
+type GoalInterventionPolicy = NonNullable<SendMessageOptions["goalInterventionPolicy"]>;
+
 interface AutoRetryResumeRequest {
   // Same-session auto-retry must preserve the full normalized request because
   // ACP correlation/delegation lives in transient send options that are
@@ -188,6 +190,12 @@ interface SwitchAgentResult {
   agentId: string;
   reason?: string;
   followUp?: string;
+}
+
+function stripGoalInterventionPolicy(options: SendMessageOptions): SendMessageOptions {
+  const streamOptions: SendMessageOptions = { ...options };
+  delete streamOptions.goalInterventionPolicy;
+  return streamOptions;
 }
 
 function getGoalStreamOriginKind(input: {
@@ -1161,16 +1169,26 @@ export class AgentSession {
     }
   }
 
-  private async applyManualUserMessageGoalSafety(): Promise<void> {
+  private async applyManualUserMessageGoalSafety(input: {
+    policy: GoalInterventionPolicy;
+  }): Promise<void> {
     const goalService = this.workspaceGoalService;
     if (!goalService) {
       return;
     }
 
-    // One real user turn acknowledges any /clear or crash-recovery gate, then
-    // pauses active goal automation so the user explicitly resumes after intervening.
+    assert(
+      input.policy === "steer" || input.policy === "pause",
+      `invalid goal intervention policy: ${input.policy}`
+    );
+
+    // Accepted manual user turns acknowledge /clear or crash-recovery gates. Steering
+    // is the default for normal sends: the agent should see the user's intervention
+    // and the active goal may continue afterward. Rejected sends use "pause" below
+    // because the model never saw the steering content.
+    goalService.clearPendingContinuationForManualUserMessage(this.workspaceId);
     const goal = await goalService.acknowledgeUser(this.workspaceId);
-    if (goal?.status !== "active") {
+    if (goal?.status !== "active" || input.policy !== "pause") {
       return;
     }
 
@@ -2198,7 +2216,7 @@ export class AgentSession {
           // payloads (Codex P2 PRRT_kwDOPxxmWM5_tUsx) would otherwise silently
           // disable goal continuation after a blank submit / invalid payload.
           if (persisted) {
-            await this.applyManualUserMessageGoalSafety();
+            await this.applyManualUserMessageGoalSafety({ policy: "pause" });
           }
         }
         return Err(pricingGate.error);
@@ -2216,6 +2234,10 @@ export class AgentSession {
     const trimmedMessage = message.trim();
     const fileParts = options?.fileParts;
     const editMessageId = options?.editMessageId;
+
+    const manualGoalInterventionPolicy: GoalInterventionPolicy | undefined = isManualUserMessage
+      ? (options?.goalInterventionPolicy ?? (editMessageId ? "pause" : "steer"))
+      : undefined;
 
     // Edits are implemented as truncate+replace. If the frontend omits fileParts,
     // preserve the original message's attachments.
@@ -2467,15 +2489,11 @@ export class AgentSession {
     let agentInitiated = internal?.agentInitiated === true;
 
     let modelForStream = options.model;
-    let optionsForStream: SendMessageOptions = {
+    let optionsForStream: SendMessageOptions = stripGoalInterventionPolicy({
       ...options,
       ...(acpPromptId != null ? { acpPromptId } : {}),
       ...(delegatedToolNames != null ? { delegatedToolNames } : {}),
-    };
-
-    if (isManualUserMessage) {
-      await this.applyManualUserMessageGoalSafety();
-    }
+    });
 
     const userMessage = createMuxMessage(
       messageId,
@@ -2601,10 +2619,10 @@ export class AgentSession {
         });
 
         modelForStream = autoCompactionRequest.sendOptions.model;
-        optionsForStream = {
+        optionsForStream = stripGoalInterventionPolicy({
           ...autoCompactionRequest.sendOptions,
           muxMetadata: autoCompactionRequest.metadata,
-        };
+        });
         agentInitiated = autoCompactionRequest.agentInitiated;
       }
     }
@@ -2645,6 +2663,10 @@ export class AgentSession {
         // the orphan via the truncation logic that removes preceding snapshots.
         return Err(createUnknownSendMessageError(appendResult.error));
       }
+    }
+
+    if (manualGoalInterventionPolicy != null) {
+      await this.applyManualUserMessageGoalSafety({ policy: manualGoalInterventionPolicy });
     }
 
     // Workspace may be tearing down while we await filesystem IO.

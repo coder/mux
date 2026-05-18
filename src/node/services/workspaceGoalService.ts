@@ -678,6 +678,14 @@ export class WorkspaceGoalService {
     );
   }
 
+  clearPendingContinuationForManualUserMessage(workspaceId: string): void {
+    assert(
+      workspaceId.trim().length > 0,
+      "clearPendingContinuationForManualUserMessage requires workspaceId"
+    );
+    this.pendingContinuationCandidates.delete(workspaceId);
+  }
+
   async recordUserStoppedStream(workspaceId: string, stoppedAtMs = Date.now()): Promise<void> {
     assert(workspaceId.trim().length > 0, "recordUserStoppedStream requires workspaceId");
     assert(Number.isFinite(stoppedAtMs) && stoppedAtMs >= 0, "user stop timestamp must be valid");

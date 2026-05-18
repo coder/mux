@@ -151,7 +151,12 @@ import type { FilePart, SendMessageOptions } from "@/common/orpc/types";
 
 import { CreationCenterContent } from "./CreationCenterContent";
 import { cn } from "@/common/lib/utils";
-import type { ChatInputProps, ChatInputAPI, QueueDispatchMode } from "./types";
+import type {
+  ChatInputProps,
+  ChatInputAPI,
+  GoalInterventionPolicy,
+  QueueDispatchMode,
+} from "./types";
 import { CreationControls } from "./CreationControls";
 import { SEND_DISPATCH_MODES } from "./sendDispatchModes";
 import { CodexOauthWarningBanner } from "./CodexOauthWarningBanner";
@@ -178,6 +183,7 @@ import {
   type SkillResolutionTarget,
 } from "./utils";
 import { normalizeAgentId } from "@/common/utils/agentIds";
+import { isGoalRunning } from "@/common/types/goal";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 // localStorage quotas are environment-dependent and relatively small.
@@ -988,6 +994,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     !sendInFlightBlocksInput &&
     !coderPresetsLoading &&
     !policyBlocksCreateSend;
+  const runningGoalActive =
+    variant === "workspace" && isGoalRunning(workspaceGoal?.status ?? "paused");
+  const shouldDefaultSteerGoal = runningGoalActive && !editingMessageForUi;
+
   // Send defaults to tool-end on click; advanced dispatch modes remain available via
   // right-click and touch long-press whenever there's a sendable workspace draft.
   const canChooseDispatchMode = variant === "workspace" && canSend;
@@ -1891,7 +1901,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const executeParsedCommand = async (
     parsed: ParsedCommand | null,
     restoreInput: string,
-    options?: { skipConfirmation?: boolean; queueDispatchMode?: QueueDispatchMode }
+    options?: {
+      skipConfirmation?: boolean;
+      queueDispatchMode?: QueueDispatchMode;
+      goalInterventionPolicy?: GoalInterventionPolicy;
+    }
   ): Promise<boolean> => {
     if (!parsed) {
       return false;
@@ -1926,6 +1940,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     // Thread dispatch mode into send options so queued command sends stay in sync with normal sends.
     const commandSendMessageOptions: SendMessageOptions = {
       ...sendMessageOptions,
+      ...(options?.goalInterventionPolicy
+        ? { goalInterventionPolicy: options.goalInterventionPolicy }
+        : {}),
       ...(dispatchMode === "tool-end" ? {} : { queueDispatchMode: dispatchMode }),
     };
     // Prepare file parts for commands that need to send messages with attachments
@@ -2131,7 +2148,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     [setInput]
   );
 
-  const handleSend = async (overrides?: { queueDispatchMode?: QueueDispatchMode }) => {
+  const handleSend = async (overrides?: {
+    queueDispatchMode?: QueueDispatchMode;
+    goalInterventionPolicy?: GoalInterventionPolicy;
+  }) => {
     if (!canSend) {
       return;
     }
@@ -2245,6 +2265,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       const commandHandled = modelOneShot
         ? false
         : await executeParsedCommand(parsed, input, {
+            goalInterventionPolicy:
+              overrides?.goalInterventionPolicy ?? (shouldDefaultSteerGoal ? "steer" : undefined),
             queueDispatchMode: overrides?.queueDispatchMode,
           });
       if (commandHandled) {
@@ -2435,12 +2457,16 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           rawThinkingOverride != null
             ? resolveThinkingInput(rawThinkingOverride, policyModel)
             : undefined;
+        const goalInterventionPolicy =
+          overrides?.goalInterventionPolicy ?? (shouldDefaultSteerGoal ? "steer" : undefined);
+
         const sendOptions = {
           ...sendMessageOptions,
           ...compactionOptions,
           ...(modelOverride ? { model: modelOverride } : {}),
           ...(thinkingOverride ? { thinkingLevel: thinkingOverride } : {}),
           ...(modelOneShot ? { skipAiSettingsPersistence: true } : {}),
+          ...(goalInterventionPolicy ? { goalInterventionPolicy } : {}),
           ...(overrides?.queueDispatchMode
             ? { queueDispatchMode: overrides.queueDispatchMode }
             : {}),
@@ -3042,6 +3068,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                           <br />
                           <br />
                           <strong>Right-click or long-press for advanced send modes:</strong>
+                          {runningGoalActive && !editingMessageForUi && (
+                            <>
+                              <br />
+                              Send and pause goal: right-click menu
+                            </>
+                          )}
                           {SEND_DISPATCH_MODES.map((entry) => (
                             <React.Fragment key={entry.mode}>
                               <br />
@@ -3075,6 +3107,18 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                           </kbd>
                         </button>
                       ))}
+                      {runningGoalActive && !editingMessageForUi && (
+                        <button
+                          type="button"
+                          className="hover:bg-hover focus-visible:bg-hover text-foreground flex w-full items-center justify-between gap-2 rounded-sm px-2.5 py-1 text-left text-xs"
+                          onClick={() => {
+                            closeSendModeMenu();
+                            void handleSend({ goalInterventionPolicy: "pause" });
+                          }}
+                        >
+                          <span className="whitespace-nowrap">Send and pause goal</span>
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
