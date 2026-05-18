@@ -313,9 +313,12 @@ describe("GoalTab", () => {
         onClear={mock()}
       />
     );
-    // Completed goals: the action is "archive" (move into history). The label
-    // wording is part of the user-visible UX contract.
-    expect(getByLabelText("Clear goal")).toBeTruthy();
+    // Completed goals: the action is "archive" (moves the goal into the
+    // board's Archived section via `workspace.archiveGoal`, not into
+    // history under `endReason: "completed"`). The visible label,
+    // aria-label, and the absence of the "Clear goal" wording are all
+    // part of the user-visible UX contract.
+    expect(getByLabelText("Archive goal")).toBeTruthy();
     expect(getByText("Archive this goal")).toBeTruthy();
     expect(queryByText("Clear goal")).toBeNull();
   });

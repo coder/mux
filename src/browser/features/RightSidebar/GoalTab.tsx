@@ -10,6 +10,7 @@ import {
 } from "@/common/types/goal";
 import { formatGoalCents } from "@/common/utils/goals/budgetPricing";
 import { parseGoalBudgetInputCents } from "@/common/utils/goals/budgetParser";
+import { useAPI } from "@/browser/contexts/API";
 import { useGoalDefaults } from "@/browser/utils/goals/useGoalDefaults";
 import { cn } from "@/common/lib/utils";
 // Import shared formatters / status labels from goalToolUtils so the GoalTab
@@ -106,6 +107,7 @@ export function GoalTab(props: GoalTabProps) {
   // so a single instance covers both surfaces — opening from either
   // closes any other.
   const [isDefaultsModalOpen, setIsDefaultsModalOpen] = useState(false);
+  const { api } = useAPI();
   // Goal-board state lives here so both the empty-state and active-goal
   // branches can render the Upcoming / Completed / Archived sections.
   // Mutations route through `refreshBoard` so the renderer re-reads after
@@ -681,10 +683,31 @@ export function GoalTab(props: GoalTabProps) {
           <button
             type="button"
             className="text-muted hover:text-foreground underline"
-            aria-label="Clear goal"
-            onClick={() => void clearGoal()}
+            aria-label={lifecycle === "complete" ? "Archive goal" : "Clear goal"}
+            onClick={() => {
+              // Codex P3: when the active goal is complete, the user-
+              // visible "Archive this goal" label needs to land in the
+              // Archived board section. The legacy `clearGoal()` path
+              // records an `endReason: "completed"` history entry, so
+              // it would land in Completed instead. Route to the new
+              // `archiveGoal` endpoint for complete goals; everything
+              // else still uses `clearGoal()`.
+              if (lifecycle === "complete" && api && props.goal) {
+                void api.workspace
+                  .archiveGoal({
+                    workspaceId: props.workspaceId ?? "",
+                    goalId: props.goal.goalId,
+                  })
+                  .then(() => refreshBoard())
+                  .catch(() => {
+                    /* swallow; UI stays at the current state */
+                  });
+              } else {
+                void clearGoal();
+              }
+            }}
           >
-            {props.goal.status === "complete" ? "Archive this goal" : "Clear goal"}
+            {lifecycle === "complete" ? "Archive this goal" : "Clear goal"}
           </button>
         </div>
       )}
