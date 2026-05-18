@@ -2863,5 +2863,29 @@ describe("WorkspaceGoalService", () => {
         .map((e) => e.goal.goalId);
       expect(upcomingIds[0]).toBe(active.goalId);
     });
+
+    test("promoteUpcomingGoal rejects mid-stream to avoid cost mis-attribution (Codex P1)", async () => {
+      await setGoalOk(service, { workspaceId, objective: "Currently active" });
+      const queued = await service.addUpcomingGoal({ workspaceId, objective: "Promote me" });
+
+      // Mark the workspace as streaming via the extension metadata.
+      // `isWorkspaceStreaming` reads from `extensionMetadata.getSnapshot`,
+      // so flipping that flag is sufficient.
+      await extensionMetadata.setStreaming(workspaceId, true);
+
+      let caught: unknown = null;
+      try {
+        await service.promoteUpcomingGoal(workspaceId, queued.goalId);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      expect((caught as Error).message).toContain("streaming");
+
+      // After the stream ends, promote should succeed.
+      await extensionMetadata.setStreaming(workspaceId, false);
+      const promoted = await service.promoteUpcomingGoal(workspaceId, queued.goalId);
+      expect(promoted?.goalId).toBe(queued.goalId);
+    });
   });
 });

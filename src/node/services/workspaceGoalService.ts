@@ -2594,11 +2594,25 @@ export class WorkspaceGoalService {
    * stays intact (matches the design's "swap on drag-to-activate"
    * semantics — the demoted goal is the natural next pick).
    *
+   * **Mid-stream guard (Codex P1).** Promotion overwrites `goal.json`,
+   * which `recordStreamAccounting` reads on every chunk to attribute
+   * cost. If we promote while a stream is still running for the
+   * current active goal, the freshly-promoted goal would absorb the
+   * previous goal's cost. Reject up front with a typed transition
+   * error; the caller surfaces a "wait for the stream to finish"
+   * message and the user retries.
+   *
    * Returns the new active record (the promoted goal, with status
-   * flipped to `active` via the normal createGoal-like path).
+   * flipped to `active` via the normal createGoal-like path) or
+   * `null` when the requested upcoming id doesn't exist.
    */
   async promoteUpcomingGoal(workspaceId: string, goalId: string): Promise<GoalRecordV1 | null> {
     this.assertParentWorkspace(workspaceId);
+    if (await this.isWorkspaceStreaming(workspaceId)) {
+      throw new WorkspaceGoalTransitionError(
+        "Cannot promote a goal while the current goal is streaming. Wait for the stream to finish and try again."
+      );
+    }
     return this.fileLocks.withLock(workspaceId, async () => {
       const [currentActive, board] = await Promise.all([
         this.readGoalFile(workspaceId),

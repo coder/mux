@@ -13,6 +13,7 @@ import { useRef, useState } from "react";
 
 import { useAPI } from "@/browser/contexts/API";
 import { useGoalDefaults } from "@/browser/utils/goals/useGoalDefaults";
+import { resolveGoalSetIntent } from "@/browser/utils/goals/resolveGoalSetIntent";
 import { cn } from "@/common/lib/utils";
 import type { GoalBoardEntry, GoalBoardSnapshot, GoalRecordV1 } from "@/common/types/goal";
 import { formatGoalCents } from "@/common/utils/goals/budgetPricing";
@@ -114,6 +115,11 @@ interface UpcomingSectionProps {
 
 function UpcomingSection(props: UpcomingSectionProps) {
   const { api } = useAPI();
+  // Surfaces the mid-stream rejection (Codex P1) so users see why the
+  // Promote click did nothing. Cleared on next mutation.
+  const [error, setError] = useState<string | null>(null);
+
+  const clearError = () => setError(null);
 
   const move = async (index: number, direction: -1 | 1) => {
     const target = index + direction;
@@ -125,18 +131,28 @@ function UpcomingSection(props: UpcomingSectionProps) {
       workspaceId: props.workspaceId,
       upcomingIds: ids,
     });
+    clearError();
     props.onMutated();
   };
 
   const promote = async (goalId: string) => {
     if (!api) return;
-    await api.workspace.promoteUpcomingGoal({ workspaceId: props.workspaceId, goalId });
-    props.onMutated();
+    clearError();
+    try {
+      await api.workspace.promoteUpcomingGoal({ workspaceId: props.workspaceId, goalId });
+      props.onMutated();
+    } catch (caught) {
+      // Mid-stream promote rejection (or any other backend transition
+      // error) lands here. Show a localized message so the user knows
+      // why their click had no effect.
+      setError(caught instanceof Error ? caught.message : "Failed to promote goal.");
+    }
   };
 
   const archive = async (goalId: string) => {
     if (!api) return;
     await api.workspace.archiveGoal({ workspaceId: props.workspaceId, goalId });
+    clearError();
     props.onMutated();
   };
 
@@ -155,6 +171,11 @@ function UpcomingSection(props: UpcomingSectionProps) {
             onArchive={() => archive(entry.goal.goalId)}
           />
         ))}
+        {error && (
+          <p className="text-danger-soft text-xs" role="alert">
+            {error}
+          </p>
+        )}
         <UpcomingAdder workspaceId={props.workspaceId} onAdded={props.onMutated} />
       </div>
     </SectionShell>
@@ -348,13 +369,22 @@ function UpcomingAdder(props: UpcomingAdderProps) {
       }
       budgetCents = parsed;
     }
+    // Codex P2: resolve goal defaults BEFORE the IPC so a queued goal
+    // ends up with the same effective budget / turn cap as a freshly
+    // created one. The create form (handleGoalCreate in RightSidebar)
+    // already does this for setGoal; the addUpcomingGoal path must
+    // match or the queued goal silently lands unbudgeted/uncapped
+    // when `alwaysRequireExplicitBudget` is on or a defaultTurnCap is
+    // configured.
+    const resolved = resolveGoalSetIntent({ objective, budgetCents }, defaults);
     setIsSubmitting(true);
     setError(null);
     try {
       await api.workspace.addUpcomingGoal({
         workspaceId: props.workspaceId,
-        objective,
-        ...(budgetCents !== undefined ? { budgetCents } : {}),
+        objective: resolved.objective,
+        budgetCents: resolved.budgetCents,
+        turnCap: resolved.turnCap,
       });
       reset();
       setIsOpen(false);
