@@ -201,6 +201,22 @@ class RemotePathMappedRuntime extends RemoteRuntime {
   }
 }
 
+/**
+ * Built-in skill names exposed by `discoverAgentSkills` /
+ * `discoverAgentSkillsDiagnostics` in this repo. Centralized so adding (or
+ * removing) a built-in only requires updating one list instead of every
+ * assertion that enumerates the full set. `orchestrate` is unadvertised but
+ * still discoverable, so it appears here for the same reason it appears in
+ * the discovery output.
+ */
+const BUILT_IN_SKILL_NAMES = [
+  "imagegen",
+  "init",
+  "mux-diagram",
+  "mux-docs",
+  "orchestrate",
+] as const;
+
 describe("agentSkillsService", () => {
   test("getDefaultAgentSkillsRoots derives global root from runtime mux home", () => {
     class MuxHomeRuntime extends LocalRuntime {
@@ -249,15 +265,7 @@ describe("agentSkillsService", () => {
 
     // Should include project/global skills plus built-in skills
     // Note: deep-review skill is a project skill in the Mux repo, not a built-in
-    expect(skills.map((s) => s.name)).toEqual([
-      "bar",
-      "foo",
-      "imagegen",
-      "init",
-      "mux-diagram",
-      "mux-docs",
-      "orchestrate",
-    ]);
+    expect(skills.map((s) => s.name)).toEqual(["bar", "foo", ...BUILT_IN_SKILL_NAMES]);
 
     const foo = skills.find((s) => s.name === "foo");
     expect(foo).toBeDefined();
@@ -657,14 +665,7 @@ describe("agentSkillsService", () => {
 
     const diagnostics = await discoverAgentSkillsDiagnostics(runtime, project.path, { roots });
 
-    expect(diagnostics.skills.map((s) => s.name)).toEqual([
-      "foo",
-      "imagegen",
-      "init",
-      "mux-diagram",
-      "mux-docs",
-      "orchestrate",
-    ]);
+    expect(diagnostics.skills.map((s) => s.name)).toEqual(["foo", ...BUILT_IN_SKILL_NAMES]);
 
     const invalidNames = diagnostics.invalidSkills.map((issue) => issue.directoryName).sort();
     expect(invalidNames).toEqual(
