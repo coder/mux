@@ -17,6 +17,7 @@ import {
 } from "@/browser/hooks/usePersistedState";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { useAPI } from "@/browser/contexts/API";
+import { useWorkspaceMetadata } from "@/browser/contexts/WorkspaceContext";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import {
   hasGoalBudgetLimit,
@@ -657,6 +658,13 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   const desktopExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.PORTABLE_DESKTOP);
   const browserExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.AGENT_BROWSER);
   const goalsExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.GOALS);
+  // Child task workspaces can't run goal actions — backend rejects them
+  // via `WorkspaceGoalService.assertParentWorkspace`. We use this flag
+  // both to hide the Goal tab below and to gate any inline goal UX.
+  const workspaceMetadataContext = useWorkspaceMetadata();
+  const currentWorkspaceMetadata =
+    workspaceMetadataContext.workspaceMetadata.get(workspaceId) ?? null;
+  const isChildWorkspaceForGoal = currentWorkspaceMetadata?.parentWorkspaceId != null;
   // Safe variant: storybook stories may render before addWorkspace() runs; the
   // optional hook returns null instead of throwing assertGet on the unregistered
   // workspace. Real workspaces always have an aggregator by the time RightSidebar
@@ -983,23 +991,25 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     setLayoutRaw((prevRaw) => {
       const prev = parseRightSidebarLayoutState(prevRaw, initialActiveTab);
       const hasGoal = collectAllTabs(prev.root).includes("goal");
-      // Goal tab is always visible when the GOALS experiment is enabled —
-      // the tab itself surfaces empty-state, create, current, and history
-      // affordances, so we no longer gate on `goal != null` or history
-      // length. Mirrors the desktop/browser experiment-add pattern; we
-      // can't switch to `inDefaultLayout: true` because that bypasses the
-      // experiment flag during layout migration.
-      if (goalsExperimentEnabled && !hasGoal) {
+      // Goal tab is always visible when the GOALS experiment is enabled
+      // AND the workspace is a top-level workspace. Child task
+      // workspaces can't use any goal action — every backend write goes
+      // through `assertParentWorkspace()` which throws for workspaces
+      // with `parentWorkspaceId`. Showing the tab there would surface
+      // a create/queue UI whose submits silently fail (Codex P2).
+      const isChildWorkspace = isChildWorkspaceForGoal;
+      const goalTabShouldExist = goalsExperimentEnabled && !isChildWorkspace;
+      if (goalTabShouldExist && !hasGoal) {
         return addTabToFocusedTabset(prev, "goal", false);
       }
 
-      if (!goalsExperimentEnabled && hasGoal) {
+      if (!goalTabShouldExist && hasGoal) {
         return removeTabEverywhere(prev, "goal");
       }
 
       return prev;
     });
-  }, [goalsExperimentEnabled, initialActiveTab, setLayoutRaw]);
+  }, [goalsExperimentEnabled, initialActiveTab, setLayoutRaw, isChildWorkspaceForGoal]);
 
   React.useEffect(() => {
     if (!desktopExperimentEnabled) {
