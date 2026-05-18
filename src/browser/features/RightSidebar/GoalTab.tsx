@@ -1,4 +1,4 @@
-import { Pencil, Settings2, Target } from "lucide-react";
+import { CheckCircle2, Pause, Pencil, Play, RotateCcw, Settings2, Target } from "lucide-react";
 import { useContext, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import {
   goalActiveMode,
@@ -377,16 +377,24 @@ export function GoalTab(props: GoalTabProps) {
     }
   };
 
-  // Accent-green styling when the goal is lifecycle-active: the panel
-  // header should communicate "this is the active goal" at a glance,
-  // visually distinct from the muted "Set a goal" empty-state form.
-  // Sub-status (paused / budget-limited) shifts the label text but keeps
-  // the green band so the user sees the lifecycle, not the mode.
+  // Header tone keys off `activeMode` (not just lifecycle) so the user
+  // can tell at a glance whether the active goal is actually progressing
+  // (`running` → success/green) or stalled waiting for them (`paused` /
+  // `budget_limited` → warning/amber). Complete + read-only fall back to
+  // the muted surface tone. Amber consistently means "lifecycle-active
+  // but not auto-running" across the header band, the lifecycle status
+  // badge (`GoalStatusBadge` in `goalToolUtils.tsx`), and the sidebar
+  // tab label accent so the cue is reinforced wherever the workspace's
+  // goal status surfaces.
+  const isStalledActive = activeMode === "paused" || activeMode === "budget_limited";
   const headerToneClass =
-    lifecycle === "active"
+    activeMode === "running"
       ? "border-success/40 bg-success/5"
-      : "border-border-light bg-surface-secondary";
-  const headerLabelClass = lifecycle === "active" ? "text-success" : "text-muted";
+      : isStalledActive
+        ? "border-warning/40 bg-warning-overlay"
+        : "border-border-light bg-surface-secondary";
+  const headerLabelClass =
+    activeMode === "running" ? "text-success" : isStalledActive ? "text-warning" : "text-muted";
 
   return (
     <section className="flex h-full flex-col gap-4 overflow-y-auto p-4" aria-label="Workspace goal">
@@ -591,20 +599,33 @@ export function GoalTab(props: GoalTabProps) {
           {canPause && (
             <button
               type="button"
-              className="border-border-light bg-surface-secondary text-foreground hover:bg-surface-tertiary rounded-md border px-3 py-1.5 text-sm"
+              className="border-border-light bg-surface-secondary text-foreground hover:bg-surface-tertiary inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm"
               aria-label="Pause goal"
               onClick={() => void setStatus("paused")}
             >
+              <Pause className="h-3.5 w-3.5" aria-hidden="true" />
               Pause
             </button>
           )}
           {canResume && (
+            // Resume / Reopen tints with the goal-green accent so the
+            // primary "get this goal running again" action is the
+            // obvious next step when the header is amber. The same
+            // styling covers both `paused → resume` and `complete →
+            // reopen`; the icon swaps (`Play` vs `RotateCcw`) to make
+            // the difference between resuming an in-flight goal and
+            // reviving a closed one explicit.
             <button
               type="button"
-              className="border-border-light bg-surface-secondary text-foreground hover:bg-surface-tertiary rounded-md border px-3 py-1.5 text-sm"
+              className="border-success/40 bg-success/10 text-success hover:bg-success/20 inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm"
               aria-label={lifecycle === "complete" ? "Reopen goal" : "Resume goal"}
               onClick={() => void setStatus("active")}
             >
+              {lifecycle === "complete" ? (
+                <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+              ) : (
+                <Play className="h-3.5 w-3.5" aria-hidden="true" />
+              )}
               {/* "Reopen" reads better than "Resume" when the goal was
                   marked complete — the user is reviving a goal the
                   agent decided was done, not resuming a paused one. */}
@@ -614,10 +635,11 @@ export function GoalTab(props: GoalTabProps) {
           {canComplete && (
             <button
               type="button"
-              className="border-border-light bg-surface-secondary text-foreground hover:bg-surface-tertiary rounded-md border px-3 py-1.5 text-sm"
+              className="border-border-light bg-surface-secondary text-foreground hover:bg-surface-tertiary inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm"
               aria-label="Mark goal complete"
               onClick={(event) => openSummaryInput(event.currentTarget)}
             >
+              <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
               Mark complete
             </button>
           )}

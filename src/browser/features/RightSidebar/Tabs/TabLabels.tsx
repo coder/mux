@@ -31,7 +31,7 @@ import {
   useOptionalWorkspaceSidebarState,
   useWorkspaceUsage,
 } from "@/browser/stores/WorkspaceStore";
-import { isGoalPendingPersistence } from "@/common/types/goal";
+import { goalActiveMode, isGoalPendingPersistence } from "@/common/types/goal";
 import { sumUsageHistory, type ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 
 interface StatsTabLabelProps {
@@ -131,24 +131,46 @@ interface GoalTabLabelProps {
  * Goal tab label.
  *
  * Subscribes directly to the workspace's sidebar state so the label can apply
- * the canonical goal-green accent (`text-success`, the same token used by
- * `CompleteGoalToolCall` and the TodoList completion cue) when the workspace
- * has a *live* goal in chat. The accent is intentionally restricted to the
- * `status === "active"` && non-pending case so paused, complete, history-only,
- * and mid-stream pending goals don't claim the success cue. This mirrors the
- * `useActiveGoalCount` / `ActiveGoalsWarningToast` predicate, so a workspace
- * that contributes to the global "active goals" toast is also the one that
- * lights up its Goal tab.
+ * a semantic accent (`text-success` or `text-warning`) when the workspace
+ * has a *live* goal in chat:
+ *
+ *   • `text-success` — the goal is running (`status === "active"` &&
+ *     non-pending). Mirrors the `useActiveGoalCount` /
+ *     `ActiveGoalsWarningToast` predicate so a workspace that contributes
+ *     to the global "active goals" toast is also the one that lights up
+ *     green here.
+ *   • `text-warning` — the goal is lifecycle-active but stalled (paused
+ *     or budget-limited). Surfaces a glanceable cue that the workspace
+ *     needs the user's attention even though no agent is currently
+ *     burning turns. This mirrors the amber tinting on the Goals-tab
+ *     header band and the `GoalStatusBadge` paused/budget-limited
+ *     color.
+ *
+ * Pending-persistence goals (mid-stream / unsaved) stay unaccented so
+ * the accent doesn't flicker during a stream — same gating as before.
  */
 export const GoalTabLabel: React.FC<GoalTabLabelProps> = ({ workspaceId }) => {
   const sidebarState = useOptionalWorkspaceSidebarState(workspaceId);
   const goal = sidebarState?.goal ?? null;
-  const isGoalActive = goal?.status === "active" && !isGoalPendingPersistence(goal);
+  const activeMode = goal && !isGoalPendingPersistence(goal) ? goalActiveMode(goal.status) : null;
+  const isRunning = activeMode === "running";
+  const isStalled = activeMode === "paused" || activeMode === "budget_limited";
+  const ariaLabel = isRunning
+    ? "Goal (active)"
+    : activeMode === "paused"
+      ? "Goal (paused)"
+      : activeMode === "budget_limited"
+        ? "Goal (budget limited)"
+        : "Goal";
 
   return (
     <span
-      className={cn("inline-flex items-center gap-1", isGoalActive && "text-success")}
-      aria-label={isGoalActive ? "Goal (active)" : "Goal"}
+      className={cn(
+        "inline-flex items-center gap-1",
+        isRunning && "text-success",
+        isStalled && "text-warning"
+      )}
+      aria-label={ariaLabel}
     >
       <Target className="h-3 w-3 shrink-0" />
       Goal

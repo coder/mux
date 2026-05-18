@@ -120,6 +120,61 @@ describe("GoalTab", () => {
     expect(queryByLabelText("Resume goal")).toBeNull();
   });
 
+  test("header tone differentiates running vs paused / budget-limited", () => {
+    // Running goals get the success/green band; paused + budget_limited
+    // share the warning/amber band so the user can spot a stalled
+    // workspace at a glance instead of every active goal looking the
+    // same. Complete falls back to the muted surface tone. The
+    // `aria-label="Workspace goal"` section wraps the colored header,
+    // so we look up the header element via its tone classes — that's
+    // the actual user-visible cue and the contract we want to lock in.
+    const { container, rerender } = render(
+      <GoalTab goal={goal({ status: "active" })} onSetStatus={mock()} onClear={mock()} />
+    );
+    expect(container.querySelector("header")?.className).toContain("border-success");
+    expect(container.querySelector("header")?.className).not.toContain("border-warning");
+
+    rerender(<GoalTab goal={goal({ status: "paused" })} onSetStatus={mock()} onClear={mock()} />);
+    // Paused: amber tone replaces the green band so the lifecycle is
+    // legible without reading the badge text.
+    expect(container.querySelector("header")?.className).toContain("border-warning");
+    expect(container.querySelector("header")?.className).not.toContain("border-success");
+
+    rerender(
+      <GoalTab
+        goal={goal({ status: "budget_limited", budgetCents: 100, costCents: 100 })}
+        onSetStatus={mock()}
+        onClear={mock()}
+      />
+    );
+    // Budget-limited shares the amber tone with paused: both mean
+    // "active but not auto-running".
+    expect(container.querySelector("header")?.className).toContain("border-warning");
+    expect(container.querySelector("header")?.className).not.toContain("border-success");
+  });
+
+  test("lifecycle action buttons surface their semantic icon", () => {
+    // The lifecycle row (Pause / Resume / Reopen / Mark complete) now
+    // carries semantic icons in addition to the text label. The icons
+    // are inside the button DOM with `aria-hidden`, so we assert on the
+    // button containing an SVG to guard against accidentally regressing
+    // back to the text-only buttons. This is the user-visible cue that
+    // distinguishes "Pause" from "Resume" in the pre-mouse-hover
+    // glance, which is the whole point of this UX iteration.
+    const { rerender, getByLabelText } = render(
+      <GoalTab goal={goal({ status: "active" })} onSetStatus={mock()} onClear={mock()} />
+    );
+    expect(getByLabelText("Pause goal").querySelector("svg")).not.toBeNull();
+    expect(getByLabelText("Mark goal complete").querySelector("svg")).not.toBeNull();
+
+    rerender(<GoalTab goal={goal({ status: "paused" })} onSetStatus={mock()} onClear={mock()} />);
+    // Resume is the success-tinted primary action when paused so the
+    // user knows what to click next; the icon confirms the affordance.
+    const resume = getByLabelText("Resume goal");
+    expect(resume.querySelector("svg")).not.toBeNull();
+    expect(resume.className).toContain("text-success");
+  });
+
   test("renders accounting breakdown", () => {
     const startedAtMs = Date.now() - 90_000;
     const { getByText } = render(

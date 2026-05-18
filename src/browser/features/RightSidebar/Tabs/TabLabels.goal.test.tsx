@@ -75,11 +75,30 @@ describe("GoalTabLabel", () => {
     expect(container.querySelector(".text-success")).not.toBeNull();
   });
 
-  test("does not accent paused goals", () => {
+  test("uses warning amber accent for paused goals (active but not auto-running)", () => {
+    // Paused is a lifecycle-active sub-status: the goal is still the
+    // workspace's active goal but won't progress without user action.
+    // The tab label surfaces this with the warning amber accent
+    // (matching the Goals-tab header band + `GoalStatusBadge` paused
+    // color) so the workspace shows "needs attention" without claiming
+    // the goal-green "running" cue.
     mockedSidebarState = makeSidebarState(makeGoal({ status: "paused" }));
 
     const { container } = render(<GoalTabLabel workspaceId="w1" />);
 
+    expect(container.querySelector(".text-warning")).not.toBeNull();
+    expect(container.querySelector(".text-success")).toBeNull();
+  });
+
+  test("uses warning amber accent for budget-limited goals", () => {
+    // budget_limited shares the "active but not auto-running" semantics
+    // with paused — the goal hit its cost or turn cap and is waiting
+    // for the user to raise the cap or wrap up. Same amber accent.
+    mockedSidebarState = makeSidebarState(makeGoal({ status: "budget_limited" }));
+
+    const { container } = render(<GoalTabLabel workspaceId="w1" />);
+
+    expect(container.querySelector(".text-warning")).not.toBeNull();
     expect(container.querySelector(".text-success")).toBeNull();
   });
 
@@ -91,6 +110,7 @@ describe("GoalTabLabel", () => {
     const { container } = render(<GoalTabLabel workspaceId="w1" />);
 
     expect(container.querySelector(".text-success")).toBeNull();
+    expect(container.querySelector(".text-warning")).toBeNull();
   });
 
   test("does not accent pending-persistence goals (mid-stream / unsaved)", () => {

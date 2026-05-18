@@ -51,14 +51,17 @@ export function goalStatusLabel(status: GoalStatus): string {
   return STATUS_LABELS[status];
 }
 
-// All "Active" sub-statuses share the success-tinted badge so the goal-
-// tab header reads as "this is the active goal" at a glance — paused /
-// budget-limited only modify the inner mode label, not the band color.
-// Complete keeps the success color too because it represents a successful
-// terminal state.
+// Color semantics:
+//   success/green — the active goal is running (or terminally complete).
+//   warning/amber — the active goal is paused or budget-limited
+//     (lifecycle-active but NOT auto-running). Amber consistently means
+//     "this goal is the workspace's active goal but won't progress until
+//     you act" so users can spot a stalled workspace at a glance — the
+//     band color matches the Goals-tab header tone and the sidebar tab
+//     label accent for the same status.
 const STATUS_BADGE_CLASSES: Record<GoalStatus, string> = {
   active: "bg-success/10 text-success border-success/40",
-  paused: "bg-success/10 text-success border-success/40",
+  paused: "bg-warning-overlay text-warning border-warning/40",
   budget_limited: "bg-warning-overlay text-warning border-warning/40",
   complete: "bg-success/10 text-success border-success/40",
 };
