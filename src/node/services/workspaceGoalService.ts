@@ -2363,16 +2363,18 @@ export class WorkspaceGoalService {
       for (const goal of board.upcoming) {
         entries.push({ section: "upcoming", goal });
       }
-      // Completed entries come from history. We dedupe against the
-      // current active id so a stale history line doesn't double-render
-      // the present goal (matches the renderer's existing dedup).
+      // Completed entries come from history. We dedupe against:
+      //   - the active goal id (stale history line race during edit)
+      //   - the archived list (archived-from-complete goals)
+      //   - the upcoming list (revived-from-archived goals — Codex P2:
+      //     when a user archives a completed goal then revives it, the
+      //     original history entry still exists; without this dedup
+      //     the goal would render in both Upcoming and Completed).
       for (const entry of history) {
         if (entry.endReason !== "completed") continue;
         if (activeGoal && entry.goal.goalId === activeGoal.goalId) continue;
-        // Archived items also live in history under "completed" if they
-        // were archived after completion; skip those so they only render
-        // in the archived section.
         if (board.archived.some((g) => g.goalId === entry.goal.goalId)) continue;
+        if (board.upcoming.some((g) => g.goalId === entry.goal.goalId)) continue;
         entries.push({ section: "complete", goal: entry.goal, endedAtMs: entry.endedAtMs });
       }
       for (const goal of board.archived) {
@@ -2417,7 +2419,12 @@ export class WorkspaceGoalService {
         }
         return b.index - a.index;
       });
-      return indexed.map((row) => row.entry);
+      // Apply the same render cap as the public `getGoalHistory` so
+      // `getGoalBoard` can't return an unbounded payload over IPC for
+      // workspaces with thousands of completed/replaced goals (Codex
+      // P2). Older entries stay on disk in the JSONL but aren't
+      // surfaced to the renderer.
+      return indexed.slice(0, GOAL_HISTORY_RENDER_CAP).map((row) => row.entry);
     } catch (error) {
       if (isNotFound(error)) return [];
       log.warn("Failed to read goal history", { workspaceId, error });
