@@ -687,13 +687,22 @@ check_coder_agents_status_once() {
   fi
 
   case "$latest_review_state" in
-    APPROVED | COMMENTED)
+    APPROVED)
       echo ""
       echo "✅ coder-agents-review gate passed for PR #$PR_NUMBER"
       if [[ -n "$latest_review_at" ]]; then
         echo "Review timestamp: $latest_review_at"
       fi
       return 0
+      ;;
+    COMMENTED)
+      echo ""
+      echo "❌ coder-agents-review left a commented review without approval text on PR #$PR_NUMBER."
+      if [[ -n "$latest_review_at" ]]; then
+        echo "Review timestamp: $latest_review_at"
+      fi
+      echo "Reply to the finding(s) and request another review with '$REQUEST_COMMAND'."
+      return "$RC_FAILED"
       ;;
     "")
       echo ""
