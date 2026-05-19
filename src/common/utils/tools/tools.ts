@@ -1,3 +1,4 @@
+import type { ExtensionSkillSource } from "@/common/extensions/extensionSkillSource";
 import { type ImageModel, type LanguageModel, type Tool } from "ai";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
@@ -164,6 +165,7 @@ export interface ToolConfiguration {
   availableSubagents?: AgentDefinitionDescriptor[];
   /** Available skills for the agent_skill_read tool description (dynamic context) */
   availableSkills?: AgentSkillDescriptor[];
+  extensionSkills?: ExtensionSkillSource[];
   /** Whether the project is trusted for hook/script execution */
   trusted?: boolean;
   /** Analytics service for raw SQL queries against DuckDB analytics data */

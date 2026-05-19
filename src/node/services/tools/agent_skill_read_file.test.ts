@@ -1,7 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, spyOn } from "bun:test";
 import { AgentSkillReadFileToolResultSchema } from "@/common/utils/tools/toolDefinitions";
 import { createAgentSkillReadFileTool } from "./agent_skill_read_file";
 import {
@@ -69,6 +69,262 @@ describe("agent_skill_read_file", () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.content).toMatch(/name:\s*mux-docs/i);
+    }
+  });
+
+  it("allows reading files from extension-contributed skills", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-read-file-extension");
+    const skillDir = path.join(tempDir.path, "extension-skill");
+    await fs.mkdir(skillDir, { recursive: true });
+    const skillFilePath = path.join(skillDir, "SKILL.md");
+    await fs.writeFile(
+      skillFilePath,
+      "---\nname: mux-extensions\ndescription: Demo extension skill\n---\nBody",
+      "utf-8"
+    );
+    await fs.writeFile(path.join(skillDir, "notes.md"), "extension notes", "utf-8");
+
+    const tool = createAgentSkillReadFileTool(
+      createTestToolConfig(tempDir.path, {
+        extensionSkills: [
+          {
+            name: "mux-extensions",
+            displayName: "Mux Extensions",
+            description: "Demo extension skill",
+            advertise: true,
+            bodyAbsolutePath: skillFilePath,
+            extensionId: "mux.platformdemo",
+          },
+        ],
+      })
+    );
+
+    const raw: unknown = await Promise.resolve(
+      tool.execute!(
+        { name: "mux-extensions", filePath: "notes.md", offset: 1, limit: 5 },
+        mockToolCallOptions
+      )
+    );
+
+    const parsed = AgentSkillReadFileToolResultSchema.safeParse(raw);
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) throw new Error(parsed.error.message);
+    expect(parsed.data.success).toBe(true);
+    if (parsed.data.success) {
+      expect(parsed.data.content).toContain("extension notes");
+    }
+  });
+
+  it("rejects extension reference directories instead of returning empty content", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-read-file-extension-directory");
+    const skillDir = path.join(tempDir.path, "extension-skill");
+    await fs.mkdir(path.join(skillDir, "refs"), { recursive: true });
+    const skillFilePath = path.join(skillDir, "SKILL.md");
+    await fs.writeFile(
+      skillFilePath,
+      "---\nname: mux-extensions\ndescription: Demo extension skill\n---\nBody",
+      "utf-8"
+    );
+
+    const tool = createAgentSkillReadFileTool(
+      createTestToolConfig(tempDir.path, {
+        extensionSkills: [
+          {
+            name: "mux-extensions",
+            displayName: "Mux Extensions",
+            description: "Demo extension skill",
+            advertise: true,
+            bodyAbsolutePath: skillFilePath,
+            extensionId: "mux.platformdemo",
+          },
+        ],
+      })
+    );
+
+    const raw: unknown = await Promise.resolve(
+      tool.execute!({ name: "mux-extensions", filePath: "refs" }, mockToolCallOptions)
+    );
+
+    const parsed = AgentSkillReadFileToolResultSchema.safeParse(raw);
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) throw new Error(parsed.error.message);
+    expect(parsed.data.success).toBe(false);
+    if (!parsed.data.success) {
+      expect(parsed.data.error).toMatch(/directory/i);
+    }
+  });
+
+  it("rejects non-regular extension reference files before opening them", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-read-file-extension-nonregular");
+    const skillDir = path.join(tempDir.path, "extension-skill");
+    const refsDir = path.join(skillDir, "refs");
+    await fs.mkdir(refsDir, { recursive: true });
+    const skillFilePath = path.join(skillDir, "SKILL.md");
+    await fs.writeFile(
+      skillFilePath,
+      "---\nname: mux-extensions\ndescription: Demo extension skill\n---\nBody",
+      "utf-8"
+    );
+
+    const originalOpen = fs.open;
+    const openSpy = spyOn(fs, "open");
+    let openedRefsDir = false;
+    openSpy.mockImplementation(((
+      target: Parameters<typeof fs.open>[0],
+      flags?: Parameters<typeof fs.open>[1],
+      mode?: Parameters<typeof fs.open>[2]
+    ) => {
+      if (String(target) === refsDir) openedRefsDir = true;
+      return originalOpen(target, flags, mode);
+    }) as typeof fs.open);
+
+    try {
+      const tool = createAgentSkillReadFileTool(
+        createTestToolConfig(tempDir.path, {
+          extensionSkills: [
+            {
+              name: "mux-extensions",
+              displayName: "Mux Extensions",
+              description: "Demo extension skill",
+              advertise: true,
+              bodyAbsolutePath: skillFilePath,
+              extensionId: "mux.platformdemo",
+            },
+          ],
+        })
+      );
+
+      const raw: unknown = await Promise.resolve(
+        tool.execute!({ name: "mux-extensions", filePath: "refs" }, mockToolCallOptions)
+      );
+
+      const parsed = AgentSkillReadFileToolResultSchema.safeParse(raw);
+      expect(parsed.success).toBe(true);
+      if (!parsed.success) throw new Error(parsed.error.message);
+      expect(parsed.data.success).toBe(false);
+      expect(openedRefsDir).toBe(false);
+      if (!parsed.data.success) {
+        expect(parsed.data.error).toMatch(/directory|regular file/i);
+      }
+    } finally {
+      openSpy.mockRestore();
+    }
+  });
+
+  it("does not follow extension reference files swapped to symlinks after containment", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-read-file-extension-race");
+    const skillDir = path.join(tempDir.path, "extension-skill");
+    const outsideDir = path.join(tempDir.path, "outside");
+    await fs.mkdir(skillDir, { recursive: true });
+    await fs.mkdir(outsideDir, { recursive: true });
+    const skillFilePath = path.join(skillDir, "SKILL.md");
+    const notesPath = path.join(skillDir, "notes.md");
+    const secretPath = path.join(outsideDir, "secret.txt");
+    await fs.writeFile(
+      skillFilePath,
+      "---\nname: mux-extensions\ndescription: Demo extension skill\n---\nBody",
+      "utf-8"
+    );
+    await fs.writeFile(notesPath, "extension notes", "utf-8");
+    await fs.writeFile(secretPath, "outside secret", "utf-8");
+    const originalLstat = fs.lstat;
+    const lstatSpy = spyOn(fs, "lstat");
+    lstatSpy.mockImplementation((async (target: Parameters<typeof fs.lstat>[0]) => {
+      const result = await originalLstat(target);
+      if (String(target) === notesPath) {
+        await fs.rm(notesPath, { force: true });
+        await fs.symlink(secretPath, notesPath);
+      }
+      return result;
+    }) as unknown as typeof fs.lstat);
+
+    try {
+      const tool = createAgentSkillReadFileTool(
+        createTestToolConfig(tempDir.path, {
+          extensionSkills: [
+            {
+              name: "mux-extensions",
+              displayName: "Mux Extensions",
+              description: "Demo extension skill",
+              advertise: true,
+              bodyAbsolutePath: skillFilePath,
+              extensionId: "mux.platformdemo",
+            },
+          ],
+        })
+      );
+
+      const raw: unknown = await Promise.resolve(
+        tool.execute!({ name: "mux-extensions", filePath: "notes.md" }, mockToolCallOptions)
+      );
+
+      const parsed = AgentSkillReadFileToolResultSchema.safeParse(raw);
+      expect(parsed.success).toBe(true);
+      if (!parsed.success) throw new Error(parsed.error.message);
+      expect(parsed.data.success).toBe(false);
+      if (!parsed.data.success) {
+        expect(parsed.data.error).not.toContain("outside secret");
+      }
+    } finally {
+      lstatSpy.mockRestore();
+    }
+  });
+
+  it("does not follow extension reference parent directories swapped after containment", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-read-file-extension-parent-race");
+    const skillDir = path.join(tempDir.path, "extension-skill");
+    const refsDir = path.join(skillDir, "refs");
+    const outsideDir = path.join(tempDir.path, "outside");
+    await fs.mkdir(refsDir, { recursive: true });
+    await fs.mkdir(outsideDir, { recursive: true });
+    const skillFilePath = path.join(skillDir, "SKILL.md");
+    const notesPath = path.join(refsDir, "notes.md");
+    await fs.writeFile(
+      skillFilePath,
+      "---\nname: mux-extensions\ndescription: Demo extension skill\n---\nBody",
+      "utf-8"
+    );
+    const outsideNotesPath = path.join(outsideDir, "notes.md");
+    await fs.writeFile(notesPath, "extension notes", "utf-8");
+    await fs.writeFile(outsideNotesPath, "outside secret", "utf-8");
+    const originalOpen = fs.open;
+    const openSpy = spyOn(fs, "open");
+    openSpy.mockImplementation(((
+      target: Parameters<typeof fs.open>[0],
+      flags?: Parameters<typeof fs.open>[1]
+    ) => {
+      return originalOpen(String(target) === notesPath ? outsideNotesPath : target, flags);
+    }) as unknown as typeof fs.open);
+
+    try {
+      const tool = createAgentSkillReadFileTool(
+        createTestToolConfig(tempDir.path, {
+          extensionSkills: [
+            {
+              name: "mux-extensions",
+              displayName: "Mux Extensions",
+              description: "Demo extension skill",
+              advertise: true,
+              bodyAbsolutePath: skillFilePath,
+              extensionId: "mux.platformdemo",
+            },
+          ],
+        })
+      );
+
+      const raw: unknown = await Promise.resolve(
+        tool.execute!({ name: "mux-extensions", filePath: "refs/notes.md" }, mockToolCallOptions)
+      );
+
+      const parsed = AgentSkillReadFileToolResultSchema.safeParse(raw);
+      expect(parsed.success).toBe(true);
+      if (!parsed.success) throw new Error(parsed.error.message);
+      expect(parsed.data.success).toBe(false);
+      if (!parsed.data.success) {
+        expect(parsed.data.error).not.toContain("outside secret");
+      }
+    } finally {
+      openSpy.mockRestore();
     }
   });
 

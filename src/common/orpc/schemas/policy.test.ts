@@ -40,8 +40,28 @@ describe("policy provider ids", () => {
       ],
       mcp: { allowUserDefined: { stdio: true, remote: true } },
       runtimes: null,
+      extensionPlatform: null,
     });
 
     expect(parsed.success).toBe(true);
+  });
+
+  test("PolicyFileSchema accepts deprecated extensionPlatform for compatibility", () => {
+    const parsed = PolicyFileSchema.safeParse({
+      policy_format_version: "0.1",
+      extensionPlatform: false,
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.extensionPlatform).toBe(false);
+    }
+  });
+
+  test("PolicyFileSchema rejects unknown top-level fields", () => {
+    const parsed = PolicyFileSchema.safeParse({
+      policy_format_version: "0.1",
+      extensionPlatfrom: false,
+    });
+    expect(parsed.success).toBe(false);
   });
 });

@@ -90,9 +90,12 @@ const AgentStatusSchema = z.object({
 
 // Synthetic agent-skill snapshot messages include metadata.agentSkillSnapshot.
 // We use this to keep the SkillIndicator in sync for /{skillName} invocations.
+// The enum mirrors AgentSkillScopeSchema in src/common/orpc/schemas/agentSkill.ts
+// — keep them in sync, since a narrower local enum here silently drops valid
+// snapshots and breaks the inline / slash skill highlighting + hover preview.
 const AgentSkillSnapshotMetadataSchema = z.object({
   skillName: z.string().min(1),
-  scope: z.enum(["project", "global", "built-in"]),
+  scope: z.enum(["project", "global", "extension", "built-in"]),
   sha256: z.string().optional(),
   frontmatterYaml: z.string().optional(),
 });

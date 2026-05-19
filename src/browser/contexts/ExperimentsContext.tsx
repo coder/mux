@@ -272,6 +272,31 @@ export function ExperimentsProvider(props: { children: React.ReactNode }) {
     void syncLocalOverrides();
   }, [apiState.status, apiState.api, loadRemoteExperiments]);
 
+  useEffect(() => {
+    if (apiState.status !== "connected" || !apiState.api) {
+      return;
+    }
+
+    const abortController = new AbortController();
+    const signal = abortController.signal;
+
+    (async () => {
+      try {
+        const iterator = await apiState.api.experiments.onChanged(undefined, { signal });
+        for await (const _experimentId of iterator) {
+          if (signal.aborted) {
+            break;
+          }
+          void loadRemoteExperiments();
+        }
+      } catch {
+        // Expected on unmount or older injected test clients.
+      }
+    })();
+
+    return () => abortController.abort();
+  }, [apiState.status, apiState.api, loadRemoteExperiments]);
+
   // On cold start, experiments.getAll can return { source: "cache", value: null } while
   // ExperimentsService refreshes from PostHog in the background. Poll a few times so the
   // renderer picks up remote variants without requiring a manual reload.

@@ -5,6 +5,7 @@ import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import type { MuxMessage } from "@/common/types/message";
 import { Ok } from "@/common/types/result";
 import type { Config } from "@/node/config";
+import type { ExtensionSkillSource } from "@/common/extensions/extensionSkillSource";
 import type { AIService } from "@/node/services/aiService";
 import { AgentSession } from "@/node/services/agentSession";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
@@ -65,6 +66,7 @@ export interface AgentSessionHarnessOptions {
   backgroundProcessManager?: BackgroundProcessManager;
   backgroundProcessManagerOverrides?: Partial<BackgroundProcessManager>;
   captureEvents?: boolean;
+  getExtensionSkillSources?: (projectPath: string) => readonly ExtensionSkillSource[];
 }
 
 export interface AgentSessionHarness {
@@ -105,6 +107,7 @@ export async function createAgentSessionHarness(
     aiService,
     initStateManager,
     backgroundProcessManager,
+    getExtensionSkillSources: options.getExtensionSkillSources,
   });
 
   const events: WorkspaceChatMessage[] = [];

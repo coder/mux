@@ -15,6 +15,7 @@ import { delegatedToolCallManager } from "@/node/services/delegatedToolCallManag
 import { log } from "@/node/services/log";
 import { isPathInsideDir } from "@/node/utils/pathUtils";
 import { AgentSession } from "@/node/services/agentSession";
+import type { ExtensionSkillSource } from "@/common/extensions/extensionSkillSource";
 import type { HistoryService } from "@/node/services/historyService";
 import type { AIService } from "@/node/services/aiService";
 import type { InitStateManager } from "@/node/services/initStateManager";
@@ -1327,6 +1328,11 @@ export class WorkspaceService extends EventEmitter {
   private terminalService?: TerminalService;
   private desktopSessionManager?: DesktopSessionManager;
   private readonly sessionTimingService?: SessionTimingService;
+  // Resolves extension-contributed skills for /skill-name dispatch inside
+  // AgentSession. Set after construction by ServiceContainer to avoid the
+  // WorkspaceService → ExtensionRegistry → AIService → WorkspaceService
+  // cycle that direct injection would create.
+  private getExtensionSkillSources?: (projectPath: string) => readonly ExtensionSkillSource[];
   private workspaceLifecycleHooks?: WorkspaceLifecycleHooks;
   private worktreeArchiveSnapshotService?: WorktreeArchiveSnapshotLifecycleService;
   private taskService?: TaskService;
@@ -1931,6 +1937,12 @@ export class WorkspaceService extends EventEmitter {
       });
   }
 
+  setExtensionSkillSourcesProvider(
+    provider: ((projectPath: string) => readonly ExtensionSkillSource[]) | undefined
+  ): void {
+    this.getExtensionSkillSources = provider;
+  }
+
   private createSession(workspaceId: string): AgentSession {
     return new AgentSession({
       workspaceId,
@@ -1948,6 +1960,7 @@ export class WorkspaceService extends EventEmitter {
       onPostCompactionStateChange: () => {
         this.schedulePostCompactionMetadataRefresh(workspaceId);
       },
+      getExtensionSkillSources: this.getExtensionSkillSources,
     });
   }
 

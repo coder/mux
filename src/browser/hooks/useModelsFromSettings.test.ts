@@ -1,6 +1,7 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
+import * as APIModule from "@/browser/contexts/API";
 import {
   filterHiddenModels,
   getDefaultModel,
@@ -14,6 +15,12 @@ import type {
   ProvidersConfigMap,
 } from "@/common/orpc/types";
 import { DEFAULT_MODEL_KEY, HIDDEN_MODELS_KEY } from "@/common/constants/storage";
+
+const actualAPIModule = { ...APIModule };
+
+afterAll(async () => {
+  await mock.module("@/browser/contexts/API", () => actualAPIModule);
+});
 
 function countOccurrences(haystack: string[], needle: string): number {
   return haystack.filter((v) => v === needle).length;
@@ -87,6 +94,7 @@ void mock.module("@/browser/hooks/useRouting", () => ({
 }));
 
 void mock.module("@/browser/contexts/API", () => ({
+  ...actualAPIModule,
   useAPI: () => ({ api: apiMock }),
 }));
 

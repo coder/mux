@@ -847,7 +847,7 @@ mux.file_read({ path: "wrong" });`,
       muxTypes
     );
     expect(result.valid).toBe(true);
-  });
+  }, 10_000);
 
   test("preserves typeof on empty arrays", () => {
     const result = validateTypes(

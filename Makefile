@@ -53,7 +53,7 @@ MAKEFLAGS += -j
 endif
 
 # Common esbuild flags for CLI API bundle (ESM format for trpc-cli)
-ESBUILD_CLI_FLAGS := --bundle --format=esm --platform=node --target=node20 --outfile=dist/cli/api.mjs --external:zod --external:commander --external:jsonc-parser --external:@trpc/server --external:ssh2 --external:cpu-features --external:@1password/sdk --external:@1password/sdk-core --banner:js="import{createRequire}from'module';globalThis.require=createRequire(import.meta.url);"
+ESBUILD_CLI_FLAGS := --bundle --format=esm --platform=node --target=node20 --outfile=dist/cli/api.mjs --external:zod --external:commander --external:jsonc-parser --external:@trpc/server --external:ssh2 --external:cpu-features --external:typescript --external:@1password/sdk --external:@1password/sdk-core --banner:js="import{createRequire}from'module';globalThis.require=createRequire(import.meta.url);"
 
 # Common esbuild flags for server runtime Docker bundle.
 # Place runtime bundles under dist/runtime so frontend dist/*.js layers remain stable.
@@ -77,6 +77,7 @@ include fmt.mk
 .PHONY: benchmark-terminal
 .PHONY: ensure-deps rebuild-native mux
 .PHONY: check-eager-imports check-bundle-size check-startup
+.PHONY: bundled-extensions-validate bundled-extensions-build bundled-extensions-assemble
 
 # Build tools
 TSGO := bun run node_modules/@typescript/native-preview/bin/tsgo.js
@@ -136,7 +137,7 @@ rebuild-native: node_modules/.installed ## Rebuild native modules (node-pty, Duc
 	@echo "Native modules rebuilt successfully"
 
 # Run compiled CLI with trailing arguments (builds only if missing)
-mux: ## Run the compiled mux CLI (e.g., make mux server --port 3000)
+mux: bundled-extensions-assemble ## Run the compiled mux CLI (e.g., make mux server --port 3000)
 	@test -f dist/cli/index.js -a -f dist/cli/api.mjs || $(MAKE) build-main
 	@node dist/cli/index.js $(filter-out $@,$(MAKECMDGOALS))
 
@@ -155,7 +156,7 @@ help: ## Show this help message
 
 ## Development
 ifeq ($(OS),Windows_NT)
-dev: node_modules/.installed build-main ## Start development server (Vite + nodemon watcher for Windows compatibility)
+dev: node_modules/.installed build-main bundled-extensions-assemble ## Start development server (Vite + nodemon watcher for Windows compatibility)
 	@echo "Starting dev mode (3 watchers: nodemon for main process, esbuild for api, vite for renderer)..."
 	# On Windows, use npm run because bunx doesn't correctly pass arguments to concurrently
 	# https://github.com/oven-sh/bun/issues/18275
@@ -165,7 +166,7 @@ dev: node_modules/.installed build-main ## Start development server (Vite + node
 		'npx esbuild src/cli/api.ts $(ESBUILD_CLI_FLAGS) --watch' \
 		"vite"
 else
-dev: node_modules/.installed build-main build-preload ## Start development server (Vite + tsgo watcher for 10x faster type checking)
+dev: node_modules/.installed build-main build-preload bundled-extensions-assemble ## Start development server (Vite + tsgo watcher for 10x faster type checking)
 	@bun x concurrently -k \
 		"bun x concurrently \"$(TSGO) -w -p tsconfig.main.json\" \"bun x tsc-alias -w -p tsconfig.main.json\"" \
 		'bun x esbuild src/cli/api.ts $(ESBUILD_CLI_FLAGS) --watch' \
@@ -173,7 +174,7 @@ dev: node_modules/.installed build-main build-preload ## Start development serve
 endif
 
 ifeq ($(OS),Windows_NT)
-dev-server: node_modules/.installed build-main ## Start server mode with hot reload (backend :3000 + frontend :5173). Use VITE_HOST=0.0.0.0 VITE_ALLOWED_HOSTS=<public-host> for remote access
+dev-server: node_modules/.installed build-main bundled-extensions-assemble ## Start server mode with hot reload (backend :3000 + frontend :5173). Use VITE_HOST=0.0.0.0 VITE_ALLOWED_HOSTS=<public-host> for remote access
 	@echo "Starting dev-server..."
 	@echo "  Backend (IPC/WebSocket): http://$(or $(BACKEND_HOST),127.0.0.1):$(or $(BACKEND_PORT),3000)"
 	@echo "  Frontend (with HMR):     http://$(or $(VITE_HOST),localhost):$(or $(VITE_PORT),5173)"
@@ -186,7 +187,7 @@ dev-server: node_modules/.installed build-main ## Start server mode with hot rel
 		"set NODE_ENV=development&& nodemon --watch dist/cli/index.js --watch dist/cli/server.js --delay 500ms dist/cli/index.js server --no-auth --host $(or $(BACKEND_HOST),127.0.0.1) --port $(or $(BACKEND_PORT),3000)" \
 		"set MUX_VITE_HOST=$(or $(VITE_HOST),127.0.0.1)&& set MUX_VITE_PORT=$(or $(VITE_PORT),5173)&& set MUX_VITE_ALLOWED_HOSTS=$(VITE_ALLOWED_HOSTS)&& set MUX_BACKEND_PORT=$(or $(BACKEND_PORT),3000)&& vite"
 else
-dev-server: node_modules/.installed build-main ## Start server mode with hot reload (backend :3000 + frontend :5173). Use VITE_HOST=0.0.0.0 VITE_ALLOWED_HOSTS=<public-host> for remote access
+dev-server: node_modules/.installed build-main bundled-extensions-assemble ## Start server mode with hot reload (backend :3000 + frontend :5173). Use VITE_HOST=0.0.0.0 VITE_ALLOWED_HOSTS=<public-host> for remote access
 	@echo "Starting dev-server..."
 	@echo "  Backend (IPC/WebSocket): http://$(or $(BACKEND_HOST),127.0.0.1):$(or $(BACKEND_PORT),3000)"
 	@echo "  Frontend (with HMR):     http://$(or $(VITE_HOST),localhost):$(or $(VITE_PORT),5173)"
@@ -208,11 +209,24 @@ dev-desktop-sandbox: ## Start an isolated Electron dev instance (fresh MUX_ROOT 
 dev-server-sandbox: ## Start an isolated dev-server instance (fresh MUX_ROOT + free ports)
 	@bun scripts/dev-server-sandbox.ts $(DEV_SERVER_SANDBOX_ARGS)
 
-start: node_modules/.installed build-main build-preload build-static ## Build and start Electron app
+start: node_modules/.installed build-main build-preload build-static bundled-extensions-assemble ## Build and start Electron app
 	@NODE_ENV=development MUX_PROFILE_REACT=$(MUX_PROFILE_REACT) bunx electron --remote-debugging-port=9222 .
 
+## Bundled Extensions pipeline
+# Source the bundled-extensions script for validate/build/assemble. Outputs land
+# under build/extensions/ (the "<build>/extensions/" path electron-builder will
+# pick up via extraResources in US-020).
+bundled-extensions-validate: node_modules/.installed ## Validate each packages/<name> manifest via the production Manifest Validator
+	@bun scripts/bundled-extensions.ts validate
+
+bundled-extensions-build: node_modules/.installed ## Run each bundled extension package's build script (no-op when absent)
+	@bun scripts/bundled-extensions.ts build
+
+bundled-extensions-assemble: node_modules/.installed bundled-extensions-validate bundled-extensions-build ## Pack and extract bundled extensions into build/extensions/ (deterministic, offline)
+	@bun scripts/bundled-extensions.ts assemble
+
 ## Build targets (can run in parallel)
-build: node_modules/.installed src/version.ts build-renderer build-main build-preload build-icons build-static ## Build all targets
+build: node_modules/.installed src/version.ts build-renderer build-main build-preload build-icons build-static bundled-extensions-assemble ## Build all targets
 
 build-main: node_modules/.installed dist/cli/index.js dist/cli/api.mjs ## Build main process
 
@@ -333,7 +347,7 @@ build/icon.png: docs/img/logo-white.svg scripts/generate-icons.ts
 ## Quality checks (can run in parallel)
 # Keep the default local path fast. Docs link crawling and lockfile-free bench-agent
 # verification stay in static-check-full so local validation remains responsive.
-static-check: lint typecheck fmt-check check-eager-imports check-code-docs-links lint-shellcheck lint-hadolint ## Run fast local static checks
+static-check: lint typecheck fmt-check check-eager-imports check-code-docs-links lint-shellcheck lint-hadolint bundled-extensions-validate ## Run fast local static checks
 
 static-check-full: static-check check-bench-agent check-docs-links ## Run the full CI static check suite
 
@@ -439,11 +453,11 @@ check-deadcode: node_modules/.installed ## Check for potential dead code (manual
 		|| echo "✓ No obvious dead code found"
 
 ## Testing
-test-integration: node_modules/.installed build-main ## Run all tests (unit + integration)
+test-integration: node_modules/.installed build-main bundled-extensions-assemble ## Run all tests (unit + integration)
 	@bun test src
 	@TEST_INTEGRATION=1 bun x jest tests
 
-test-unit: node_modules/.installed build-main ## Run unit tests
+test-unit: node_modules/.installed build-main bundled-extensions-assemble ## Run unit tests
 	@bun test src
 	@bun test ./tests/ui/storybook/
 
@@ -607,7 +621,7 @@ benchmark-terminal: ## Run Terminal-Bench 2.0 with Harbor (use TB_HARBOR_PACKAGE
 ## Clean
 clean: ## Clean build artifacts
 	@echo "Cleaning build artifacts..."
-	@rm -rf dist release build/icon.icns build/icon.png
+	@rm -rf dist release build/icon.icns build/icon.png build/extensions
 	@echo "Done!"
 
 ## Startup Performance Checks

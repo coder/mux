@@ -88,6 +88,13 @@ export const CommandIds = {
 
   // Help commands
   helpKeybinds: () => "help:keybinds" as const,
+
+  // Extensions commands
+  extensionsOpenSettings: () => "ext:open-settings" as const,
+  extensionsReload: () => "ext:reload" as const,
+  extensionsInitializeUserRoot: () => "ext:initialize-user-root" as const,
+  extensionsShowRootPath: () => "ext:show-root-path" as const,
+  extensionsReviewPending: () => "ext:review-pending" as const,
 } as const;
 
 /**

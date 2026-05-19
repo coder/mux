@@ -7,12 +7,15 @@ interface CompactionMetadata {
   rawCommand: string;
 }
 
-// Type guard for agent skill metadata (for display + batching constraints)
+// Type guard for agent skill metadata (for display + batching constraints).
+// The scope union mirrors AgentSkillScopeSchema (src/common/orpc/schemas/agentSkill.ts)
+// — keep them in sync, since a narrower scope here silently rejects queued
+// extension-skill invocations and they get treated as plain messages.
 interface AgentSkillMetadata {
   type: "agent-skill";
   rawCommand: string;
   skillName: string;
-  scope: "project" | "global" | "built-in";
+  scope: "project" | "global" | "extension" | "built-in";
 }
 
 function isAgentSkillMetadata(meta: unknown): meta is AgentSkillMetadata {
@@ -21,7 +24,13 @@ function isAgentSkillMetadata(meta: unknown): meta is AgentSkillMetadata {
   if (obj.type !== "agent-skill") return false;
   if (typeof obj.rawCommand !== "string") return false;
   if (typeof obj.skillName !== "string") return false;
-  if (obj.scope !== "project" && obj.scope !== "global" && obj.scope !== "built-in") return false;
+  if (
+    obj.scope !== "project" &&
+    obj.scope !== "global" &&
+    obj.scope !== "extension" &&
+    obj.scope !== "built-in"
+  )
+    return false;
   return true;
 }
 
