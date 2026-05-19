@@ -50,7 +50,6 @@ export const PLACEHOLDER_TIPS: readonly string[] = [
   "Try /clear --soft to reset context while keeping the chat visible",
   "Try /new <start> to start a fresh workspace from the trunk branch",
   "Try /vim to toggle vim keybindings in the chat input",
-  "Try /truncate 50 to drop the oldest half of the conversation",
 ];
 
 /**

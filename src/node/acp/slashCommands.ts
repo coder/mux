@@ -11,12 +11,10 @@ import {
 import minimist from "minimist";
 
 const CLEAR_COMMAND_NAME = "clear";
-const TRUNCATE_COMMAND_NAME = "truncate";
 const COMPACT_COMMAND_NAME = "compact";
 const FORK_COMMAND_NAME = "fork";
 const NEW_COMMAND_NAME = "new";
 
-const TRUNCATE_USAGE = `/truncate ${SLASH_COMMAND_HINTS.truncate}`;
 const COMPACT_USAGE = `/compact ${SLASH_COMMAND_HINTS.compact}`;
 
 interface ServerCommandDefinition {
@@ -29,11 +27,6 @@ const SERVER_COMMAND_DEFINITIONS: readonly ServerCommandDefinition[] = [
   {
     name: CLEAR_COMMAND_NAME,
     description: "Clear conversation history for this workspace.",
-  },
-  {
-    name: TRUNCATE_COMMAND_NAME,
-    description: "Truncate conversation history by percentage (0-100).",
-    inputHint: SLASH_COMMAND_HINTS.truncate,
   },
   {
     name: COMPACT_COMMAND_NAME,
@@ -66,7 +59,6 @@ interface ParsedMultilineCommand {
 
 export type ParsedAcpSlashCommand =
   | { kind: "clear" }
-  | { kind: "truncate"; percentage: number }
   | {
       kind: "compact";
       rawCommand: string;
@@ -162,10 +154,6 @@ export function parseAcpSlashCommand(
     return { kind: "clear" };
   }
 
-  if (commandName === TRUNCATE_COMMAND_NAME) {
-    return parseTruncateCommand(remainingTokens);
-  }
-
   if (commandName === COMPACT_COMMAND_NAME) {
     return parseCompactCommand(rawInput, trimmed);
   }
@@ -179,38 +167,6 @@ export function parseAcpSlashCommand(
   }
 
   return parseSkillCommand(trimmed, commandName, skillsByName);
-}
-
-function parseTruncateCommand(remainingTokens: string[]): ParsedAcpSlashCommand {
-  if (remainingTokens.length !== 1) {
-    return {
-      kind: "invalid",
-      message: `Usage: ${TRUNCATE_USAGE}`,
-    };
-  }
-
-  const percentageText = remainingTokens[0];
-  // Require the entire token to be numeric so typos like "25oops" are rejected
-  // instead of silently executing a destructive truncate command.
-  if (!/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(percentageText)) {
-    return {
-      kind: "invalid",
-      message: `Invalid percentage "${percentageText}". Usage: ${TRUNCATE_USAGE}`,
-    };
-  }
-
-  const percentageValue = Number(percentageText);
-  if (!Number.isFinite(percentageValue) || percentageValue < 0 || percentageValue > 100) {
-    return {
-      kind: "invalid",
-      message: `Invalid percentage "${percentageText}". Usage: ${TRUNCATE_USAGE}`,
-    };
-  }
-
-  return {
-    kind: "truncate",
-    percentage: percentageValue / 100,
-  };
 }
 
 function parseCompactCommand(rawInput: string, rawCommand: string): ParsedAcpSlashCommand {

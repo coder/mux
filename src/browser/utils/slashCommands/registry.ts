@@ -114,48 +114,6 @@ const clearCommandDefinition: SlashCommandDefinition = {
   },
 };
 
-const TRUNCATE_USAGE = `/truncate ${SLASH_COMMAND_HINTS.truncate} (percentage to remove)`;
-
-const truncateCommandDefinition: SlashCommandDefinition = {
-  key: "truncate",
-  description: "Truncate conversation history by percentage (0-100)",
-  inputHint: SLASH_COMMAND_HINTS.truncate,
-  handler: ({ cleanRemainingTokens }): ParsedCommand => {
-    if (cleanRemainingTokens.length === 0) {
-      return {
-        type: "command-missing-args",
-        command: "truncate",
-        usage: TRUNCATE_USAGE,
-      };
-    }
-
-    if (cleanRemainingTokens.length > 1) {
-      return {
-        type: "command-invalid-args",
-        command: "truncate",
-        input: cleanRemainingTokens.join(" "),
-        usage: TRUNCATE_USAGE,
-      };
-    }
-
-    // Parse percentage (0-100)
-    const pctStr = cleanRemainingTokens[0];
-    const pct = parseFloat(pctStr);
-
-    if (isNaN(pct) || pct < 0 || pct > 100) {
-      return {
-        type: "command-invalid-args",
-        command: "truncate",
-        input: pctStr,
-        usage: TRUNCATE_USAGE,
-      };
-    }
-
-    // Convert to 0.0-1.0
-    return { type: "truncate", percentage: pct / 100 };
-  },
-};
-
 const compactCommandDefinition: SlashCommandDefinition = {
   key: "compact",
   description:
@@ -708,7 +666,6 @@ const debugLlmRequestCommandDefinition: SlashCommandDefinition = {
 
 export const SLASH_COMMAND_DEFINITIONS: readonly SlashCommandDefinition[] = [
   clearCommandDefinition,
-  truncateCommandDefinition,
   compactCommandDefinition,
   modelCommandDefinition,
   planCommandDefinition,

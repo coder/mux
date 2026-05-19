@@ -508,8 +508,6 @@ export async function processSlashCommand(
     switch (parsed.type) {
       case "clear":
         return handleClearCommand(parsed, context);
-      case "truncate":
-        return handleTruncateCommand(parsed, context);
       case "compact":
         // handleCompactCommand expects workspaceId in context
         if (!context.workspaceId) throw new Error("Workspace ID required");
@@ -973,37 +971,6 @@ async function handleClearCommand(
   } catch (error) {
     const normalized = error instanceof Error ? error : new Error("Failed to clear history");
     console.error("Failed to clear history:", normalized);
-    setToast({
-      id: Date.now().toString(),
-      type: "error",
-      message: normalized.message,
-    });
-    return { clearInput: false, toastShown: true };
-  }
-}
-
-async function handleTruncateCommand(
-  parsed: Extract<ParsedCommand, { type: "truncate" }>,
-  context: SlashCommandContext
-): Promise<CommandHandlerResult> {
-  const { setInput, onTruncateHistory, resetInputHeight, setToast } = context;
-
-  setInput("");
-  resetInputHeight();
-
-  if (!onTruncateHistory) return { clearInput: true, toastShown: false };
-
-  try {
-    await onTruncateHistory(parsed.percentage);
-    setToast({
-      id: Date.now().toString(),
-      type: "success",
-      message: `Chat history truncated by ${Math.round(parsed.percentage * 100)}%`,
-    });
-    return { clearInput: true, toastShown: true };
-  } catch (error) {
-    const normalized = error instanceof Error ? error : new Error("Failed to truncate history");
-    console.error("Failed to truncate history:", normalized);
     setToast({
       id: Date.now().toString(),
       type: "error",

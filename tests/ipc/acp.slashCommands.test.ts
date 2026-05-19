@@ -30,22 +30,12 @@ describe("ACP slash command support", () => {
     const availableCommands = buildAcpAvailableCommands(skills);
     const commandNames = availableCommands.map((command) => command.name);
 
-    expect(commandNames).toEqual(["clear", "truncate", "compact", "fork", "new", "react-effects"]);
+    expect(commandNames).toEqual(["clear", "compact", "fork", "new", "react-effects"]);
 
     const skillCommand = availableCommands.find((command) => command.name === "react-effects");
     expect(skillCommand).toBeDefined();
     expect(skillCommand?.description).toContain("Guidance on avoiding unnecessary useEffect");
     expect(skillCommand?.input?.hint).toContain("Describe how to apply this skill");
-  });
-
-  it("parses /truncate commands", () => {
-    const parsed = parseAcpSlashCommand("/truncate 25", mapSkillsByName(skills));
-    expect(parsed).toEqual({ kind: "truncate", percentage: 0.25 });
-
-    const trailingChars = parseAcpSlashCommand("/truncate 25oops", mapSkillsByName(skills));
-    expect(trailingChars?.kind).toBe("invalid");
-    const invalid = parseAcpSlashCommand("/truncate nope", mapSkillsByName(skills));
-    expect(invalid?.kind).toBe("invalid");
   });
 
   it("rejects malformed /compact -t values", () => {

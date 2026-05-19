@@ -508,7 +508,7 @@ export class AIService extends EventEmitter {
             await this.historyService.deletePartial(data.workspaceId);
           } else {
             // Commit interrupted message to history with partial:true metadata
-            // This ensures /clear and /truncate can clean up interrupted messages
+            // This ensures /clear can clean up interrupted messages
             const partial = await this.historyService.readPartial(data.workspaceId);
             if (partial) {
               await this.historyService.commitPartial(data.workspaceId);
