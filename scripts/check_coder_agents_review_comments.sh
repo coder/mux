@@ -23,32 +23,6 @@ source "$SCRIPT_DIR/lib/coder_agents_review.sh"
 BOT_LOGIN_REGEX="${CODER_AGENTS_REVIEW_BOT_LOGIN_REGEX:-^coder-agents-review(\[bot\])?$}"
 UNRESOLVED=""
 
-resolve_repo_context() {
-  if [[ -n "${MUX_GH_OWNER:-}" || -n "${MUX_GH_REPO:-}" ]]; then
-    if [[ -z "${MUX_GH_OWNER:-}" || -z "${MUX_GH_REPO:-}" ]]; then
-      echo "❌ assertion failed: MUX_GH_OWNER and MUX_GH_REPO must both be set when one is provided" >&2
-      return 1
-    fi
-
-    OWNER="$MUX_GH_OWNER"
-    REPO="$MUX_GH_REPO"
-  else
-    local repo_info
-    if ! repo_info=$(gh repo view --json owner,name --jq '{owner: .owner.login, name: .name}'); then
-      echo "❌ Failed to resolve repository owner/name via 'gh repo view'." >&2
-      return 1
-    fi
-
-    OWNER=$(echo "$repo_info" | jq -r '.owner // empty')
-    REPO=$(echo "$repo_info" | jq -r '.name // empty')
-  fi
-
-  if [[ -z "$OWNER" || -z "$REPO" ]]; then
-    echo "❌ assertion failed: owner/repo must be non-empty" >&2
-    return 1
-  fi
-}
-
 append_unresolved_records() {
   local records="$1"
 
@@ -61,38 +35,6 @@ append_unresolved_records() {
   fi
 
   UNRESOLVED+="$records"
-}
-
-MAX_ATTEMPTS=5
-BACKOFF_SECS=2
-
-graphql_with_retries() {
-  local query="$1"
-  local cursor="$2"
-  local attempt
-  local backoff="$BACKOFF_SECS"
-  local response
-
-  for ((attempt = 1; attempt <= MAX_ATTEMPTS; attempt++)); do
-    if response=$(gh api graphql \
-      -f query="$query" \
-      -F owner="$OWNER" \
-      -F repo="$REPO" \
-      -F pr="$PR_NUMBER" \
-      -F cursor="$cursor"); then
-      printf '%s\n' "$response"
-      return 0
-    fi
-
-    if [ "$attempt" -eq "$MAX_ATTEMPTS" ]; then
-      echo "❌ GraphQL query failed after ${MAX_ATTEMPTS} attempts" >&2
-      return 1
-    fi
-
-    echo "⚠️ GraphQL query failed (attempt ${attempt}/${MAX_ATTEMPTS}); retrying in ${backoff}s..." >&2
-    sleep "$backoff"
-    backoff=$((backoff * 2))
-  done
 }
 
 fetch_unresolved_via_api() {
