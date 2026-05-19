@@ -27,6 +27,8 @@ import { TodoToolCall } from "../TodoToolCall";
 import { StatusSetToolCall } from "../StatusSetToolCall";
 import { SwitchAgentToolCall } from "../SwitchAgentToolCall";
 import { NotifyToolCall } from "../NotifyToolCall";
+import { ReviewPaneUpdateToolCall } from "../ReviewPaneUpdateToolCall";
+import { ReviewPaneGetToolCall } from "../ReviewPaneGetToolCall";
 import { BashBackgroundListToolCall } from "../BashBackgroundListToolCall";
 import { BashBackgroundTerminateToolCall } from "../BashBackgroundTerminateToolCall";
 import { BashOutputToolCall } from "../BashOutputToolCall";
@@ -175,6 +177,14 @@ const TOOL_REGISTRY: Record<string, ToolRegistryEntry> = {
   complete_goal: {
     component: CompleteGoalToolCall,
     schema: TOOL_DEFINITIONS.complete_goal.schema,
+  },
+  review_pane_update: {
+    component: ReviewPaneUpdateToolCall,
+    schema: TOOL_DEFINITIONS.review_pane_update.schema,
+  },
+  review_pane_get: {
+    component: ReviewPaneGetToolCall,
+    schema: TOOL_DEFINITIONS.review_pane_get.schema,
   },
   // Provider-defined tool (Anthropic/OpenAI) - no TOOL_DEFINITIONS entry
   // Anthropic: args.query, OpenAI: args={}, query in result.action.query

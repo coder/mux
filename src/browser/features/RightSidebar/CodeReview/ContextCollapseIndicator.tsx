@@ -4,24 +4,35 @@ interface ContextCollapseIndicatorProps {
   lineCount: number;
   onCollapse: (e: React.MouseEvent) => void;
   position: "above" | "below";
+  /**
+   * - "collapse" (default): button text reads "Collapse N lines …"; used to
+   *   hide previously-loaded context.
+   * - "expand": button text reads "Show N lines …"; used to reveal context
+   *   that is currently hidden (Assisted-review trim).
+   */
+  mode?: "collapse" | "expand";
 }
 
 /**
- * Visual indicator for collapsing expanded context lines.
+ * Visual indicator for collapsing/expanding context lines.
  * Uses the squiggly line pattern established in BashOutputCollapsedIndicator.
- * Placed between expanded context and the main hunk content.
+ * Used between the main hunk content and surrounding context.
  */
 export const ContextCollapseIndicator: React.FC<ContextCollapseIndicatorProps> = ({
   lineCount,
   onCollapse,
   position,
+  mode = "collapse",
 }) => {
+  const verb = mode === "collapse" ? "Collapse" : "Show";
+  const ariaLabel =
+    mode === "collapse" ? `Collapse context ${position}` : `Show context ${position}`;
   return (
     <div className="flex items-center justify-center">
       <button
         onClick={onCollapse}
         className="text-muted hover:bg-background-highlight inline-flex cursor-pointer items-center gap-1 rounded px-1.5 py-px transition-colors"
-        aria-label={`Collapse context ${position}`}
+        aria-label={ariaLabel}
       >
         {/* Squiggly line SVG - horizontal orientation for separator */}
         <svg
@@ -41,7 +52,7 @@ export const ContextCollapseIndicator: React.FC<ContextCollapseIndicatorProps> =
           />
         </svg>
         <span className="text-[10px] font-medium">
-          Collapse {lineCount} line{lineCount === 1 ? "" : "s"} {position}
+          {verb} {lineCount} line{lineCount === 1 ? "" : "s"} {position}
         </span>
         <svg
           className="text-border shrink-0"

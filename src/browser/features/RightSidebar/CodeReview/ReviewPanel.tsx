@@ -1262,6 +1262,18 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     return result;
   }, [assistedMatchByHunkId]);
 
+  // Mirror map of new-side ranges so HunkViewer can trim to just the
+  // agent-flagged lines. Built off the same matchByHunkId so identity is
+  // stable across renders (React.memo on HunkViewer relies on this).
+  const assistedRangeByHunkId = useMemo(() => {
+    if (assistedMatchByHunkId.size === 0) return new Map<string, { start: number; end: number }>();
+    const result = new Map<string, { start: number; end: number }>();
+    for (const [hunkId, match] of assistedMatchByHunkId) {
+      if (match.entry.range) result.set(hunkId, match.entry.range);
+    }
+    return result;
+  }, [assistedMatchByHunkId]);
+
   // Apply frontend filters (read state, search term) and sorting
   // Note: selectedFilePath is a git-level filter, applied when fetching hunks
   const filteredHunks = useMemo(() => {
@@ -1842,6 +1854,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
                       reviewActions={reviewActions}
                       assistedComment={assistedCommentByHunkId.get(hunk.id)}
                       isAssisted={assistedMatchByHunkId.has(hunk.id)}
+                      visibleNewLineRange={assistedRangeByHunkId.get(hunk.id)}
                     />
                   );
                 })
