@@ -91,11 +91,11 @@ describe("createRuntime", () => {
 });
 
 describe("runBackgroundInit", () => {
-  it("runs runtime cleanup when background init returns failure", async () => {
-    let cleanupReason: string | null = null;
-    let cleanupResolve: (() => void) | undefined;
-    const cleanupDone = new Promise<void>((resolve) => {
-      cleanupResolve = resolve;
+  it("does not run runtime cleanup when init returns failure after materialization", async () => {
+    let cleanupCalled = false;
+    let loggedFailureResolve: (() => void) | undefined;
+    const loggedFailure = new Promise<void>((resolve) => {
+      loggedFailureResolve = resolve;
     });
     const initLogger = {
       logStep: noop,
@@ -104,10 +104,9 @@ describe("runBackgroundInit", () => {
       logComplete: noop,
     };
     const runtime = {
-      initWorkspace: () => Promise.resolve({ success: false, error: "checkout failed" }),
-      cleanupFailedInit: (_params: unknown, reason: string) => {
-        cleanupReason = reason;
-        cleanupResolve?.();
+      initWorkspace: () => Promise.resolve({ success: false, error: "submodule failed" }),
+      cleanupFailedInit: () => {
+        cleanupCalled = true;
         return Promise.resolve();
       },
     };
@@ -121,17 +120,23 @@ describe("runBackgroundInit", () => {
         workspacePath: "/remote/workspace",
         initLogger,
       },
-      "workspace-id"
+      "workspace-id",
+      {
+        error: () => {
+          loggedFailureResolve?.();
+        },
+      }
     );
 
     await Promise.race([
-      cleanupDone,
+      loggedFailure,
       new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("cleanupFailedInit was not called")), 100)
+        setTimeout(() => reject(new Error("init failure was not logged")), 100)
       ),
     ]);
+    await Promise.resolve();
 
-    expect(cleanupReason ?? "").toBe("checkout failed");
+    expect(cleanupCalled).toBe(false);
   });
 });
 

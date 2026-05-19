@@ -530,14 +530,6 @@ export interface Runtime {
   postCreateSetup?(params: WorkspaceInitParams): Promise<void>;
 
   /**
-   * Optional compensating cleanup after workspace initialization fails or is aborted.
-   * Used by runtimes that create shared cache state during init (for example SSH
-   * base repos and remote worktrees) so canceling creation does not leave hidden
-   * partial state behind.
-   */
-  cleanupFailedInit?(params: WorkspaceInitParams, reason: string): Promise<void>;
-
-  /**
    * Initialize workspace asynchronously (may be slow, streams progress)
    * - LocalRuntime: Runs init hook if present
    * - SSHRuntime: Syncs files, checks out branch, runs init hook

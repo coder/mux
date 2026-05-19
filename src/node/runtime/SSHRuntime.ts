@@ -109,6 +109,16 @@ interface BaseRepoHealth {
   freeBytes: number | null;
 }
 
+interface PartialWorkspaceCleanupParams {
+  projectPath: string;
+  workspaceName: string;
+  workspacePath: string;
+  reason: string;
+  trusted?: boolean;
+  deleteWorkspaceBranch?: boolean;
+  removeWorkspaceDirectory?: boolean;
+}
+
 interface BaseRepoTmpCleanupStats {
   removedCount: number;
   removedBytes: number;
@@ -2355,24 +2365,18 @@ export class SSHRuntime extends RemoteRuntime {
     });
   }
 
-  async cleanupFailedInit(params: WorkspaceInitParams, reason: string): Promise<void> {
-    await this.cleanupPartialWorkspaceState(
-      params.projectPath,
-      params.branchName,
-      params.workspacePath,
-      reason,
-      params.trusted
-    );
-  }
-
   protected async cleanupPartialWorkspaceState(
-    projectPath: string,
-    workspaceName: string,
-    workspacePath: string,
-    reason: string,
-    trusted?: boolean,
-    deleteWorkspaceBranch = true
+    params: PartialWorkspaceCleanupParams
   ): Promise<void> {
+    const {
+      projectPath,
+      workspaceName,
+      workspacePath,
+      reason,
+      trusted,
+      deleteWorkspaceBranch = true,
+      removeWorkspaceDirectory = true,
+    } = params;
     const layout = this.getProjectLayout(projectPath);
     const baseRepoPathArg = expandTildeForSSH(layout.baseRepoPath);
     const workspacePathArg = expandTildeForSSH(workspacePath);
@@ -2381,12 +2385,19 @@ export class SSHRuntime extends RemoteRuntime {
       !deleteWorkspaceBranch || isProtectedWorkspaceBranch(workspaceName)
         ? "true"
         : `${nhp}git -C ${baseRepoPathArg} branch -D -- ${shescape.quote(workspaceName)} 2>/dev/null || true`;
+    const workspaceDirectoryCleanup = removeWorkspaceDirectory
+      ? // SAFETY: workspacePath is the exact runtime-computed directory for this workspace.
+        // Callers pass removeWorkspaceDirectory only when this init/delete path owns the path.
+        `rm -rf ${workspacePathArg}`
+      : "true";
 
     log.info("Cleaning partial SSH workspace state", {
       projectPath,
       workspaceName,
       workspacePath,
       reason,
+      deleteWorkspaceBranch,
+      removeWorkspaceDirectory,
     });
 
     try {
@@ -2411,9 +2422,7 @@ export class SSHRuntime extends RemoteRuntime {
           `  ${nhp}git -C ${baseRepoPathArg} worktree prune 2>/dev/null || true`,
           `  ${branchCleanup}`,
           "fi",
-          // SAFETY: workspacePath is the exact runtime-computed directory for this workspace.
-          // Failed init/cancel cleanup must remove partial materialization so a retry starts cleanly.
-          `rm -rf ${workspacePathArg}`,
+          workspaceDirectoryCleanup,
         ].join("\n"),
         { cwd: "/tmp", timeout: 30 }
       );
@@ -2616,13 +2625,13 @@ export class SSHRuntime extends RemoteRuntime {
       const missMatch = /WARM_MISS:(\S+)/.exec(stdout);
       const reason = missMatch ? missMatch[1] : "unknown";
       if (reason === "worktree-add-failed") {
-        await this.cleanupPartialWorkspaceState(
+        await this.cleanupPartialWorkspaceState({
           projectPath,
-          branchName,
+          workspaceName: branchName,
           workspacePath,
-          "warm fast-path worktree add failed",
-          params.trusted
-        );
+          reason: "warm fast-path worktree add failed",
+          trusted: params.trusted,
+        });
       }
       initLogger.logStep(`Warm fast-path miss (${reason}); using slow path`);
       return null;
@@ -2641,67 +2650,17 @@ export class SSHRuntime extends RemoteRuntime {
     return { gitmodulesPresent };
   }
 
-  private async prepareWorkspaceCheckout(params: WorkspaceInitParams, nhp: string): Promise<void> {
-    const { projectPath, branchName, trunkBranch, workspacePath, initLogger, abortSignal, env } =
-      params;
-
-    // STARTUP-PERF (warm fast-path): try to materialize the workspace in a
-    // single fused SSH command. See `tryWarmWorktreeAdd()` for the contract
-    // and miss reasons. When this succeeds, we skip the entire multi-call
-    // slow path (test-d → git-check → ensureBaseRepo → snapshot check →
-    // manifest check → refreshOrigin → fetchOrigin → resolveBundleTrunkRef →
-    // resolveFreshWorkspaceSourceBase → worktree-add), collapsing ~9 sequential
-    // SSH round-trips into one.
-    const warmHit = await this.tryWarmWorktreeAdd(params, nhp);
-    if (warmHit) {
-      // STARTUP-PERF: The warm SSH command already reported whether
-      // `.gitmodules` exists in the freshly-materialized worktree, so we can
-      // skip the (otherwise unavoidable) probe-RTT inside
-      // `hasRuntimeGitmodules()` when the answer is "missing". On a typical
-      // single-package project this saves one full SSH round-trip on every
-      // warm workspace create.
-      if (warmHit.gitmodulesPresent) {
-        await syncRuntimeGitSubmodules({
-          runtime: this,
-          workspacePath,
-          initLogger,
-          abortSignal,
-          env,
-          trusted: params.trusted,
-        });
-      }
-      return;
-    }
-
-    // If the workspace directory already exists and contains a git repo (e.g. forked from
-    // another SSH workspace via worktree add or legacy cp), skip the expensive sync step.
+  private async materializeFreshWorkspaceCheckout(
+    params: WorkspaceInitParams,
+    nhp: string,
+    removeWorkspaceDirectoryOnFailure: boolean
+  ): Promise<void> {
+    const { projectPath, branchName, trunkBranch, workspacePath, initLogger, abortSignal } = params;
     const workspacePathArg = expandTildeForSSH(workspacePath);
-    let needsWorktreeCheckout = true;
+    let attemptedWorktreeAdd = false;
+    let worktreeCreated = false;
 
     try {
-      const dirCheck = await execBuffered(this, `test -d ${workspacePathArg}`, {
-        cwd: "/tmp",
-        timeout: 10,
-        abortSignal,
-      });
-      if (dirCheck.exitCode === 0) {
-        const gitCheck = await execBuffered(
-          this,
-          `git -C ${workspacePathArg} rev-parse --is-inside-work-tree`,
-          {
-            cwd: "/tmp",
-            timeout: 20,
-            abortSignal,
-          }
-        );
-        needsWorktreeCheckout = gitCheck.exitCode !== 0;
-      }
-    } catch {
-      // Default to materializing the workspace on unexpected errors.
-      needsWorktreeCheckout = true;
-    }
-
-    if (needsWorktreeCheckout) {
       // SSH workspace initialization owns repo materialization: it syncs the project into
       // the shared base repo, checks out the worktree, and then materializes submodules
       // before repo-controlled init hooks run.
@@ -2749,6 +2708,7 @@ export class SSHRuntime extends RemoteRuntime {
       initLogger.logStep(`Creating worktree for branch: ${branchName}`);
       const worktreeCmd = `${nhp}git -C ${baseRepoPathArg} worktree add ${workspacePathArg} -B ${shescape.quote(branchName)} ${shescape.quote(newBranchBase)}`;
 
+      attemptedWorktreeAdd = true;
       const worktreeResult = await execBuffered(this, worktreeCmd, {
         cwd: "/tmp",
         timeout: 300,
@@ -2760,7 +2720,93 @@ export class SSHRuntime extends RemoteRuntime {
           `Failed to create worktree: ${worktreeResult.stderr || worktreeResult.stdout}`
         );
       }
+
+      worktreeCreated = true;
       initLogger.logStep("Worktree created successfully");
+    } catch (error) {
+      if (!worktreeCreated) {
+        // Cleanup belongs at the materialization boundary. After a worktree is
+        // created, later submodule or init-hook failures should preserve the
+        // usable checkout so the persisted workspace remains repairable.
+        await this.cleanupPartialWorkspaceState({
+          projectPath,
+          workspaceName: branchName,
+          workspacePath,
+          reason: `workspace materialization failed: ${getErrorMessage(error)}`,
+          trusted: params.trusted,
+          deleteWorkspaceBranch: attemptedWorktreeAdd,
+          removeWorkspaceDirectory: removeWorkspaceDirectoryOnFailure,
+        });
+      }
+      throw error;
+    }
+  }
+
+  private async prepareWorkspaceCheckout(params: WorkspaceInitParams, nhp: string): Promise<void> {
+    const { trunkBranch, workspacePath, initLogger, abortSignal, env } = params;
+
+    // STARTUP-PERF (warm fast-path): try to materialize the workspace in a
+    // single fused SSH command. See `tryWarmWorktreeAdd()` for the contract
+    // and miss reasons. When this succeeds, we skip the entire multi-call
+    // slow path (test-d → git-check → ensureBaseRepo → snapshot check →
+    // manifest check → refreshOrigin → fetchOrigin → resolveBundleTrunkRef →
+    // resolveFreshWorkspaceSourceBase → worktree-add), collapsing ~9 sequential
+    // SSH round-trips into one.
+    const warmHit = await this.tryWarmWorktreeAdd(params, nhp);
+    if (warmHit) {
+      // STARTUP-PERF: The warm SSH command already reported whether
+      // `.gitmodules` exists in the freshly-materialized worktree, so we can
+      // skip the (otherwise unavoidable) probe-RTT inside
+      // `hasRuntimeGitmodules()` when the answer is "missing". On a typical
+      // single-package project this saves one full SSH round-trip on every
+      // warm workspace create.
+      if (warmHit.gitmodulesPresent) {
+        await syncRuntimeGitSubmodules({
+          runtime: this,
+          workspacePath,
+          initLogger,
+          abortSignal,
+          env,
+          trusted: params.trusted,
+        });
+      }
+      return;
+    }
+
+    // If the workspace directory already exists and contains a git repo (e.g. forked from
+    // another SSH workspace via worktree add or legacy cp), skip the expensive sync step.
+    const workspacePathArg = expandTildeForSSH(workspacePath);
+    let needsWorktreeCheckout = true;
+    let workspacePathWasMissing = false;
+
+    try {
+      const dirCheck = await execBuffered(this, `test -d ${workspacePathArg}`, {
+        cwd: "/tmp",
+        timeout: 10,
+        abortSignal,
+      });
+      workspacePathWasMissing = dirCheck.exitCode !== 0;
+      if (dirCheck.exitCode === 0) {
+        const gitCheck = await execBuffered(
+          this,
+          `git -C ${workspacePathArg} rev-parse --is-inside-work-tree`,
+          {
+            cwd: "/tmp",
+            timeout: 20,
+            abortSignal,
+          }
+        );
+        needsWorktreeCheckout = gitCheck.exitCode !== 0;
+      }
+    } catch {
+      // Default to materializing the workspace on unexpected errors, but do
+      // not later rm -rf a path whose pre-existing state we could not verify.
+      needsWorktreeCheckout = true;
+      workspacePathWasMissing = false;
+    }
+
+    if (needsWorktreeCheckout) {
+      await this.materializeFreshWorkspaceCheckout(params, nhp, workspacePathWasMissing);
     } else {
       initLogger.logStep("Remote workspace already contains a git repo; skipping sync");
 
@@ -3109,13 +3155,13 @@ export class SSHRuntime extends RemoteRuntime {
         // `git worktree add` fully materialized the path. Still prune the base
         // repo and stale tmp packs so the invisible partial state cannot grow.
         if (force) {
-          await this.cleanupPartialWorkspaceState(
+          await this.cleanupPartialWorkspaceState({
             projectPath,
             workspaceName,
-            deletedPath,
-            "force delete missing workspace path",
-            trusted
-          );
+            workspacePath: deletedPath,
+            reason: "force delete missing workspace path",
+            trusted,
+          });
         }
         return { success: true, deletedPath };
       }
@@ -3226,14 +3272,15 @@ export class SSHRuntime extends RemoteRuntime {
       }
 
       if (force) {
-        await this.cleanupPartialWorkspaceState(
+        await this.cleanupPartialWorkspaceState({
           projectPath,
           workspaceName,
-          deletedPath,
-          "force delete post-cleanup",
+          workspacePath: deletedPath,
+          reason: "force delete post-cleanup",
           trusted,
-          false
-        );
+          deleteWorkspaceBranch: false,
+          removeWorkspaceDirectory: false,
+        });
       }
 
       return { success: true, deletedPath };

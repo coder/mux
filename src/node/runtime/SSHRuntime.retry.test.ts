@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type { ExecOptions, ExecStream, InitLogger } from "./Runtime";
+import type { ExecOptions, ExecStream, InitLogger, WorkspaceInitParams } from "./Runtime";
 import { SSHRuntime } from "./SSHRuntime";
 import type { RemoteProjectLayout } from "./remoteProjectLayout";
 import type { SSHRuntimeConfig } from "./sshConnectionPool";
@@ -196,13 +196,13 @@ class CleanupCommandSSHRuntime extends SSHRuntime {
     workspacePath: string,
     trusted?: boolean
   ): Promise<void> {
-    await this.cleanupPartialWorkspaceState(
+    await this.cleanupPartialWorkspaceState({
       projectPath,
       workspaceName,
       workspacePath,
-      "test cleanup",
-      trusted
-    );
+      reason: "test cleanup",
+      trusted,
+    });
   }
 
   override exec(command: string, options: ExecOptions): Promise<ExecStream> {
@@ -227,6 +227,84 @@ class CleanupCommandSSHRuntime extends SSHRuntime {
     if (command.includes(" gc --prune=now")) {
       return Promise.resolve(createExecStream(this.gcStdout, this.gcStderr, this.gcExitCode));
     }
+    return Promise.resolve(createExecStream(""));
+  }
+}
+
+class InitMaterializationSSHRuntime extends SSHRuntime {
+  readonly commands: string[] = [];
+  worktreeAddExitCode = 0;
+  worktreeAddStderr = "";
+  gitmodulesPresent = false;
+  submoduleUpdateExitCode = 0;
+
+  constructor() {
+    const config: SSHRuntimeConfig = {
+      host: "example.test",
+      srcBaseDir: "/remote/src",
+    };
+    super(config, createMockTransport(config));
+  }
+
+  protected override syncProjectToRemote(
+    _projectPath: string,
+    _initLogger: InitLogger,
+    _abortSignal?: AbortSignal
+  ): Promise<void> {
+    return Promise.resolve();
+  }
+
+  createInitParams(workspaceName: string): WorkspaceInitParams {
+    return {
+      projectPath: "/local/project",
+      branchName: workspaceName,
+      trunkBranch: "main",
+      workspacePath: `/remote/src/project/${workspaceName}`,
+      initLogger: noopInitLogger,
+      trusted: true,
+    };
+  }
+
+  override exec(command: string, _options: ExecOptions): Promise<ExecStream> {
+    this.commands.push(command);
+
+    if (command.includes("STATUS_CREATED=")) {
+      return Promise.resolve(createExecStream("STATUS_CREATED=existed\nSTATUS_CORE_BARE=absent\n"));
+    }
+    if (command.startsWith("test -d ")) {
+      return Promise.resolve(createExecStream("", "", 1));
+    }
+    if (command.includes(" fetch origin ")) {
+      return Promise.resolve(createExecStream("", "origin unavailable", 1));
+    }
+    if (command.includes("rev-parse --verify 'refs/mux-bundle/main'")) {
+      return Promise.resolve(createExecStream("refs/mux-bundle/main\n"));
+    }
+    if (command.includes(" worktree add ")) {
+      return Promise.resolve(
+        createExecStream("", this.worktreeAddStderr, this.worktreeAddExitCode)
+      );
+    }
+    if (command.startsWith("pack_dir=")) {
+      return Promise.resolve(createExecStream(""));
+    }
+    if (command.includes("worktree prune")) {
+      return Promise.resolve(createExecStream(""));
+    }
+    if (command.startsWith("if [ -f .gitmodules ]")) {
+      return this.gitmodulesPresent
+        ? Promise.resolve(createExecStream("present"))
+        : Promise.resolve(createExecStream("missing", "", 2));
+    }
+    if (command === "git submodule sync --recursive") {
+      return Promise.resolve(createExecStream(""));
+    }
+    if (command === "git submodule update --init --recursive") {
+      return Promise.resolve(
+        createExecStream("", "submodule update failed", this.submoduleUpdateExitCode)
+      );
+    }
+
     return Promise.resolve(createExecStream(""));
   }
 }
@@ -405,7 +483,7 @@ describe("SSHRuntime project sync retry orchestration", () => {
     expectMaintenanceCommands(runtime, baseRepoPathArg);
   });
 
-  it("cleans partial SSH workspace state after failed init or cancel", async () => {
+  it("cleans partial SSH workspace state when materialization cleanup is requested", async () => {
     const runtime = new CleanupCommandSSHRuntime();
 
     await runtime.runPartialCleanup(
@@ -422,6 +500,41 @@ describe("SSHRuntime project sync retry orchestration", () => {
     expect(cleanupCommand).toBeDefined();
     expect(cleanupCommand ?? "").toContain("branch -D -- 'feature-cancelled'");
     expect(cleanupCommand ?? "").toContain('rm -rf "/remote/src/project/feature-cancelled"');
+  });
+
+  it("cleans only partial state when slow worktree materialization fails", async () => {
+    const runtime = new InitMaterializationSSHRuntime();
+    runtime.worktreeAddExitCode = 1;
+    runtime.worktreeAddStderr = "fatal: worktree add failed";
+
+    const result = await runtime.initWorkspace(runtime.createInitParams("feature-materialize"));
+
+    expect(result.success).toBe(false);
+    expect(result.error ?? "").toContain("Failed to create worktree");
+    expectCommandMatching(runtime.commands, isTmpPackCleanupCommand);
+    const cleanupCommand = runtime.commands.find(
+      (command) => command.includes("worktree prune") && command.includes("rm -rf")
+    );
+    expect(cleanupCommand).toBeDefined();
+    expect(cleanupCommand ?? "").toContain("branch -D -- 'feature-materialize'");
+    expect(cleanupCommand ?? "").toContain('rm -rf "/remote/src/project/feature-materialize"');
+  });
+
+  it("preserves materialized workspaces when submodule initialization fails", async () => {
+    const runtime = new InitMaterializationSSHRuntime();
+    runtime.gitmodulesPresent = true;
+    runtime.submoduleUpdateExitCode = 1;
+
+    const result = await runtime.initWorkspace(runtime.createInitParams("feature-submodule"));
+
+    expect(result.success).toBe(false);
+    expect(result.error ?? "").toContain("Failed to initialize git submodules");
+    expect(runtime.commands.some(isTmpPackCleanupCommand)).toBe(false);
+    expect(
+      runtime.commands.some(
+        (command) => command.includes("worktree prune") && command.includes("rm -rf")
+      )
+    ).toBe(false);
   });
 
   it("propagates aborts during proactive maintenance preflight", async () => {

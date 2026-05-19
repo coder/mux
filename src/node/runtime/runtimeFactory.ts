@@ -57,34 +57,17 @@ export function runBackgroundInit(
   workspaceId: string,
   logger?: { error: (msg: string, ctx: object) => void }
 ): void {
-  const cleanupFailedInit = async (reason: string): Promise<void> => {
-    if (!runtime.cleanupFailedInit) {
-      return;
-    }
-    try {
-      params.initLogger.logStep("Cleaning up partial workspace initialization...");
-      await runtime.cleanupFailedInit(params, reason);
-    } catch (cleanupError: unknown) {
-      logger?.error(`Workspace init cleanup failed for ${workspaceId}:`, { error: cleanupError });
-      params.initLogger.logStderr(
-        `Initialization cleanup failed: ${getErrorMessage(cleanupError)}`
-      );
-    }
-  };
-
   void runFullInit(runtime, params)
-    .then(async (result) => {
+    .then((result) => {
       if (!result.success) {
         const reason = result.error ?? "Initialization failed";
         logger?.error(`Workspace init failed for ${workspaceId}:`, { error: reason });
-        await cleanupFailedInit(reason);
       }
     })
-    .catch(async (error: unknown) => {
+    .catch((error: unknown) => {
       const errorMsg = getErrorMessage(error);
       logger?.error(`Workspace init failed for ${workspaceId}:`, { error });
       params.initLogger.logStderr(`Initialization failed: ${errorMsg}`);
-      await cleanupFailedInit(errorMsg);
       params.initLogger.logComplete(-1);
     });
 }
