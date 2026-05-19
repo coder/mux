@@ -36,8 +36,8 @@ fi
 REQUEST_COMMAND="/coder-agents-review"
 # Match both the app slug and GitHub's bot-login form.
 BOT_LOGIN_REGEX="${CODER_AGENTS_REVIEW_BOT_LOGIN_REGEX:-^coder-agents-review(\[bot\])?$}"
-CODER_AGENTS_BOT_APPROVAL_REGEX="no (issues|problems)|no major issues|looks good|lgtm|didn.t find|(^|[[:space:][:punct:]])review complete(d)?([[:space:][:punct:]]|$)|(^|[[:space:][:punct:]])approved([[:space:][:punct:]]|$)"
-CODER_AGENTS_BOT_NEGATIVE_BEFORE_APPROVAL_REGEX="not approved|not yet approved|review failed|failed to review|unable to review|cannot review|could not review|review timed out|request timed out|review cancelled|request cancelled|is blocked|blocked until|needs changes|changes requested( for|:)|without author response|unaddressed findings|to unblock"
+CODER_AGENTS_BOT_APPROVAL_REGEX="no (issues|problems)|no major issues|didn.t find|zero open findings|(^|[[:space:][:punct:]])review complete(d)?([[:space:][:punct:]]|$)"
+CODER_AGENTS_BOT_NEGATIVE_BEFORE_APPROVAL_REGEX="^[[:space:]]*(Round [0-9]+ is blocked|Review failed|Failed to review|Unable to review|Cannot review|Could not review|Review timed out|Request timed out|Review cancelled|Request cancelled)"
 CODER_AGENTS_BOT_PROGRESS_REGEX="^[[:space:]]*(queued|started|running|in progress|reviewing|will review)[[:space:][:punct:]]*$"
 POLL_INTERVAL_SECS=30
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
