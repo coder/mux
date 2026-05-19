@@ -32,6 +32,8 @@ fi
 REQUEST_COMMAND="/coder-agents-review"
 # Match both the app slug and GitHub's bot-login form.
 BOT_LOGIN_REGEX="${CODER_AGENTS_REVIEW_BOT_LOGIN_REGEX:-^coder-agents-review(\[bot\])?$}"
+CODER_AGENTS_ISSUE_COMMENT_APPROVAL_REGEX="no (issues|problems)|no major issues|looks good|lgtm|approved|didn.t find"
+CODER_AGENTS_ISSUE_COMMENT_PROGRESS_REGEX="queued|started|running|in progress|reviewing|will review|working"
 POLL_INTERVAL_SECS=30
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 SKIP_FETCH_SYNC="${MUX_SKIP_FETCH_SYNC:-0}"
@@ -467,6 +469,8 @@ check_coder_agents_status_once() {
   local response_count
   local latest_review_state
   local latest_review_at
+  local latest_issue_comment_body
+  local latest_issue_comment_at
 
   resolve_repo_context || return 1
   if load_pr_data; then
@@ -566,6 +570,31 @@ check_coder_agents_status_once() {
       return 10
     fi
 
+    latest_issue_comment_body=$(jq -rn \
+      --argjson comments "$COMMENTS_JSON" \
+      --arg bot_regex "$BOT_LOGIN_REGEX" \
+      --arg request_at "$request_at" '
+        [
+          $comments[]
+          | select(((.author.login // "") | test($bot_regex)) and (.createdAt > $request_at))
+        ]
+        | sort_by(.createdAt)
+        | last
+        | .body // empty
+      ')
+    latest_issue_comment_at=$(jq -rn \
+      --argjson comments "$COMMENTS_JSON" \
+      --arg bot_regex "$BOT_LOGIN_REGEX" \
+      --arg request_at "$request_at" '
+        [
+          $comments[]
+          | select(((.author.login // "") | test($bot_regex)) and (.createdAt > $request_at))
+        ]
+        | sort_by(.createdAt)
+        | last
+        | .createdAt // empty
+      ')
+
     latest_review_state=$(jq -rn \
       --argjson reviews "$REVIEWS_JSON" \
       --arg bot_regex "$BOT_LOGIN_REGEX" \
@@ -602,6 +631,29 @@ check_coder_agents_status_once() {
       ')
   else
     response_count="$bot_activity_count"
+    latest_issue_comment_body=$(jq -rn \
+      --argjson comments "$COMMENTS_JSON" \
+      --arg bot_regex "$BOT_LOGIN_REGEX" '
+        [
+          $comments[]
+          | select((.author.login // "") | test($bot_regex))
+        ]
+        | sort_by(.createdAt)
+        | last
+        | .body // empty
+      ')
+    latest_issue_comment_at=$(jq -rn \
+      --argjson comments "$COMMENTS_JSON" \
+      --arg bot_regex "$BOT_LOGIN_REGEX" '
+        [
+          $comments[]
+          | select((.author.login // "") | test($bot_regex))
+        ]
+        | sort_by(.createdAt)
+        | last
+        | .createdAt // empty
+      ')
+
     latest_review_state=$(jq -rn \
       --argjson reviews "$REVIEWS_JSON" \
       --arg bot_regex "$BOT_LOGIN_REGEX" '
@@ -643,9 +695,33 @@ check_coder_agents_status_once() {
       return 0
       ;;
     "")
+      if [[ -z "$latest_issue_comment_body" ]]; then
+        echo ""
+        echo "✅ coder-agents-review gate passed for PR #$PR_NUMBER"
+        return 0
+      fi
+
+      if printf '%s\n' "$latest_issue_comment_body" | grep -Eiq "$CODER_AGENTS_ISSUE_COMMENT_APPROVAL_REGEX"; then
+        echo ""
+        echo "✅ coder-agents-review gate passed for PR #$PR_NUMBER via issue comment"
+        if [[ -n "$latest_issue_comment_at" ]]; then
+          echo "Comment timestamp: $latest_issue_comment_at"
+        fi
+        return 0
+      fi
+
+      if printf '%s\n' "$latest_issue_comment_body" | grep -Eiq "$CODER_AGENTS_ISSUE_COMMENT_PROGRESS_REGEX"; then
+        return 10
+      fi
+
       echo ""
-      echo "✅ coder-agents-review gate passed for PR #$PR_NUMBER"
-      return 0
+      echo "❌ coder-agents-review responded with an unclassified issue comment on PR #$PR_NUMBER."
+      if [[ -n "$latest_issue_comment_at" ]]; then
+        echo "Comment timestamp: $latest_issue_comment_at"
+      fi
+      echo ""
+      echo "$latest_issue_comment_body"
+      return 1
       ;;
     CHANGES_REQUESTED)
       echo ""
