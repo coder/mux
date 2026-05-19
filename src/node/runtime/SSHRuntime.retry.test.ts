@@ -159,6 +159,7 @@ class CleanupCommandSSHRuntime extends SSHRuntime {
   countObjectsStdout = "count: 0\npacks: 0\n";
   countObjectsStderr = "";
   countObjectsExitCode = 0;
+  tmpCleanupStdout = "";
   promisorStdout = "/remote/src/project/.mux-base.git/objects/pack/pack-a.promisor\n";
   gcStdout = "";
   gcStderr = "";
@@ -189,6 +190,21 @@ class CleanupCommandSSHRuntime extends SSHRuntime {
     );
   }
 
+  async runPartialCleanup(
+    projectPath: string,
+    workspaceName: string,
+    workspacePath: string,
+    trusted?: boolean
+  ): Promise<void> {
+    await this.cleanupPartialWorkspaceState(
+      projectPath,
+      workspaceName,
+      workspacePath,
+      "test cleanup",
+      trusted
+    );
+  }
+
   override exec(command: string, options: ExecOptions): Promise<ExecStream> {
     this.commands.push(command);
     this.timeouts.push(options.timeout ?? -1);
@@ -202,6 +218,9 @@ class CleanupCommandSSHRuntime extends SSHRuntime {
         )
       );
     }
+    if (command.startsWith("pack_dir=")) {
+      return Promise.resolve(createExecStream(this.tmpCleanupStdout));
+    }
     if (command.startsWith("find ")) {
       return Promise.resolve(createExecStream(this.promisorStdout));
     }
@@ -212,12 +231,50 @@ class CleanupCommandSSHRuntime extends SSHRuntime {
   }
 }
 
+function expectCommandMatching(
+  commands: string[],
+  predicate: (command: string) => boolean
+): number {
+  const index = commands.findIndex(predicate);
+  expect(index).toBeGreaterThanOrEqual(0);
+  return index;
+}
+
+function isTmpPackCleanupCommand(command: string): boolean {
+  return command.startsWith("pack_dir=") && command.includes("tmp_pack_*");
+}
+
 // Single-line shell pipeline that strips partial-clone config from a shared
 // bare base repo. The exact text is asserted in tests because order matters:
 // the strip must precede the on-disk `.promisor` marker cleanup so that even
 // a half-completed repair leaves the repo non-promisor (and therefore safe
 // from the upstream `check_connected()` sideband deadlock — see the doc
 // comment on `stripBaseRepoPromisorConfig` in SSHRuntime.ts).
+function isHealthProbeCommand(command: string): boolean {
+  return command.includes("count-objects -v") && command.includes("MUX_HEALTH_TMP_PACK_COUNT");
+}
+
+function expectMaintenanceCommands(
+  runtime: { commands: string[]; timeouts: number[] },
+  baseRepoPathArg: string
+): void {
+  const stripIndex = runtime.commands.indexOf(expectedStripPromisorCommand(baseRepoPathArg));
+  const tmpCleanupIndex = expectCommandMatching(runtime.commands, isTmpPackCleanupCommand);
+  const promisorCleanupIndex = runtime.commands.indexOf(
+    `find ${baseRepoPathArg}/objects/pack -name '*.promisor' -print -delete 2>/dev/null || true`
+  );
+  const gcIndex = runtime.commands.indexOf(`git -C ${baseRepoPathArg} gc --prune=now`);
+
+  expect(stripIndex).toBeGreaterThanOrEqual(0);
+  expect(stripIndex).toBeLessThan(tmpCleanupIndex);
+  expect(tmpCleanupIndex).toBeLessThan(promisorCleanupIndex);
+  expect(promisorCleanupIndex).toBeLessThan(gcIndex);
+  expect(runtime.timeouts[stripIndex]).toBe(10);
+  expect(runtime.timeouts[tmpCleanupIndex]).toBe(10);
+  expect(runtime.timeouts[promisorCleanupIndex]).toBe(10);
+  expect(runtime.timeouts[gcIndex]).toBe(120);
+}
+
 function expectedStripPromisorCommand(baseRepoPathArg: string): string {
   return (
     `git -C ${baseRepoPathArg} config --unset-all remote.origin.promisor; ` +
@@ -234,9 +291,18 @@ describe("SSHRuntime project sync retry orchestration", () => {
 
     await runtime.runCleanup(baseRepoPathArg);
 
-    // Strip must be the first remote call in repair — see comment above.
-    expect(runtime.commands[0]).toBe(expectedStripPromisorCommand(baseRepoPathArg));
-    expect(runtime.timeouts[0]).toBe(10);
+    const stripIndex = runtime.commands.indexOf(expectedStripPromisorCommand(baseRepoPathArg));
+    expect(stripIndex).toBeGreaterThanOrEqual(0);
+    expect(stripIndex).toBeLessThan(
+      expectCommandMatching(runtime.commands, isTmpPackCleanupCommand)
+    );
+    expect(stripIndex).toBeLessThan(
+      expectCommandMatching(runtime.commands, (command) => command.startsWith("find "))
+    );
+    expect(stripIndex).toBeLessThan(
+      expectCommandMatching(runtime.commands, (command) => command.includes(" gc --prune=now"))
+    );
+    expect(runtime.timeouts[stripIndex]).toBe(10);
   });
 
   it("removes stale promisor markers before running git gc", async () => {
@@ -245,12 +311,17 @@ describe("SSHRuntime project sync retry orchestration", () => {
 
     await runtime.runCleanup(baseRepoPathArg);
 
-    expect(runtime.commands).toEqual([
-      expectedStripPromisorCommand(baseRepoPathArg),
-      `find ${baseRepoPathArg}/objects/pack -name '*.promisor' -print -delete 2>/dev/null || true`,
-      `git -C ${baseRepoPathArg} gc --prune=now`,
-    ]);
-    expect(runtime.timeouts).toEqual([10, 10, 120]);
+    const tmpCleanupIndex = expectCommandMatching(runtime.commands, isTmpPackCleanupCommand);
+    const promisorCleanupIndex = runtime.commands.indexOf(
+      `find ${baseRepoPathArg}/objects/pack -name '*.promisor' -print -delete 2>/dev/null || true`
+    );
+    const gcIndex = runtime.commands.indexOf(`git -C ${baseRepoPathArg} gc --prune=now`);
+
+    expect(promisorCleanupIndex).toBeGreaterThan(tmpCleanupIndex);
+    expect(gcIndex).toBeGreaterThan(promisorCleanupIndex);
+    expect(runtime.timeouts[tmpCleanupIndex]).toBe(10);
+    expect(runtime.timeouts[promisorCleanupIndex]).toBe(10);
+    expect(runtime.timeouts[gcIndex]).toBe(120);
   });
 
   it("proactively repairs fragmented base repos before sync", async () => {
@@ -260,16 +331,35 @@ describe("SSHRuntime project sync retry orchestration", () => {
 
     await runtime.runEnsureHealthy(baseRepoPathArg);
 
-    expect(runtime.steps).toEqual([
-      "Shared base repository is fragmented (50 pack files); running maintenance before sync...",
-    ]);
-    expect(runtime.commands).toEqual([
-      `git -C ${baseRepoPathArg} count-objects -v`,
-      expectedStripPromisorCommand(baseRepoPathArg),
-      `find ${baseRepoPathArg}/objects/pack -name '*.promisor' -print -delete 2>/dev/null || true`,
-      `git -C ${baseRepoPathArg} gc --prune=now`,
-    ]);
-    expect(runtime.timeouts).toEqual([10, 10, 10, 120]);
+    expect(runtime.steps).toHaveLength(1);
+    expect(runtime.steps[0]).toContain("50 pack files");
+    expect(runtime.steps[0]).toContain("running maintenance before sync");
+    expect(isHealthProbeCommand(runtime.commands[0] ?? "")).toBe(true);
+    expectMaintenanceCommands(runtime, baseRepoPathArg);
+  });
+
+  it("proactively repairs base repos with stale tmp packs before sync", async () => {
+    const runtime = new CleanupCommandSSHRuntime();
+    const baseRepoPathArg = '"/remote/src/project/.mux-base.git"';
+    runtime.countObjectsStdout = [
+      "count: 0",
+      "packs: 5",
+      "size-pack: 10",
+      "MUX_HEALTH_TMP_PACK_COUNT=3",
+      "MUX_HEALTH_TMP_PACK_BYTES=4096",
+      "MUX_HEALTH_STALE_TMP_PACK_COUNT=2",
+      "MUX_HEALTH_STALE_TMP_PACK_BYTES=2048",
+      "MUX_HEALTH_FREE_BYTES=9999999999",
+      "",
+    ].join("\n");
+    runtime.tmpCleanupStdout = "1024\t/tmp/tmp_pack_a\n1024\t/tmp/tmp_idx_a\n";
+
+    await runtime.runEnsureHealthy(baseRepoPathArg);
+
+    expect(runtime.steps).toHaveLength(1);
+    expect(runtime.steps[0]).toContain("2 stale tmp packs");
+    expect(isHealthProbeCommand(runtime.commands[0] ?? "")).toBe(true);
+    expectMaintenanceCommands(runtime, baseRepoPathArg);
   });
 
   it("skips proactive maintenance for healthy base repos", async () => {
@@ -280,7 +370,8 @@ describe("SSHRuntime project sync retry orchestration", () => {
     await runtime.runEnsureHealthy(baseRepoPathArg);
 
     expect(runtime.steps).toEqual([]);
-    expect(runtime.commands).toEqual([`git -C ${baseRepoPathArg} count-objects -v`]);
+    expect(runtime.commands).toHaveLength(1);
+    expect(isHealthProbeCommand(runtime.commands[0] ?? "")).toBe(true);
     expect(runtime.timeouts).toEqual([10]);
   });
 
@@ -293,7 +384,8 @@ describe("SSHRuntime project sync retry orchestration", () => {
     await runtime.runEnsureHealthy(baseRepoPathArg);
 
     expect(runtime.steps).toEqual([]);
-    expect(runtime.commands).toEqual([`git -C ${baseRepoPathArg} count-objects -v`]);
+    expect(runtime.commands).toHaveLength(1);
+    expect(isHealthProbeCommand(runtime.commands[0] ?? "")).toBe(true);
     expect(runtime.timeouts).toEqual([10]);
   });
 
@@ -306,16 +398,30 @@ describe("SSHRuntime project sync retry orchestration", () => {
 
     await runtime.runEnsureHealthy(baseRepoPathArg);
 
-    expect(runtime.steps).toEqual([
-      "Shared base repository is fragmented (50 pack files); running maintenance before sync...",
-    ]);
-    expect(runtime.commands).toEqual([
-      `git -C ${baseRepoPathArg} count-objects -v`,
-      expectedStripPromisorCommand(baseRepoPathArg),
-      `find ${baseRepoPathArg}/objects/pack -name '*.promisor' -print -delete 2>/dev/null || true`,
-      `git -C ${baseRepoPathArg} gc --prune=now`,
-    ]);
-    expect(runtime.timeouts).toEqual([10, 10, 10, 120]);
+    expect(runtime.steps).toHaveLength(1);
+    expect(runtime.steps[0]).toContain("50 pack files");
+    expect(runtime.steps[0]).toContain("running maintenance before sync");
+    expect(isHealthProbeCommand(runtime.commands[0] ?? "")).toBe(true);
+    expectMaintenanceCommands(runtime, baseRepoPathArg);
+  });
+
+  it("cleans partial SSH workspace state after failed init or cancel", async () => {
+    const runtime = new CleanupCommandSSHRuntime();
+
+    await runtime.runPartialCleanup(
+      "/local/project",
+      "feature-cancelled",
+      "/remote/src/project/feature-cancelled",
+      true
+    );
+
+    expectCommandMatching(runtime.commands, isTmpPackCleanupCommand);
+    const cleanupCommand = runtime.commands.find(
+      (command) => command.includes("worktree prune") && command.includes("rm -rf")
+    );
+    expect(cleanupCommand).toBeDefined();
+    expect(cleanupCommand ?? "").toContain("branch -D -- 'feature-cancelled'");
+    expect(cleanupCommand ?? "").toContain('rm -rf "/remote/src/project/feature-cancelled"');
   });
 
   it("propagates aborts during proactive maintenance preflight", async () => {

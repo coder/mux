@@ -86,6 +86,7 @@ function createMockExecResult(
 class CommandCaptureSSHRuntime extends SSHRuntime {
   readonly commands: string[] = [];
 
+  healthStdout = "count: 0\npacks: 0\nMUX_HEALTH_FREE_BYTES=9999999999\n";
   constructor() {
     const config: SSHRuntimeConfig = {
       host: "example.test",
@@ -96,6 +97,9 @@ class CommandCaptureSSHRuntime extends SSHRuntime {
 
   override exec(command: string, _options: ExecOptions): Promise<ExecStream> {
     this.commands.push(command);
+    if (command.includes("count-objects -v")) {
+      return Promise.resolve(createExecStream(this.healthStdout));
+    }
     return Promise.resolve(createExecStream(""));
   }
 }
@@ -244,6 +248,38 @@ describe("SSHRuntime authoritative sync contract", () => {
     expect(pushCalls[1]).not.toContain("+refs/heads/*:refs/mux-bundle/*");
   });
 
+  it("blocks git-push sync before transfer when remote disk headroom is low", async () => {
+    const runtime = new CommandCaptureSSHRuntime();
+    runtime.healthStdout = "count: 0\npacks: 0\nMUX_HEALTH_FREE_BYTES=1\n";
+    const layout = createLayout();
+    const gitCalls: string[][] = [];
+
+    spyOn(disposableExec, "execFileAsync").mockImplementation((file, args) => {
+      gitCalls.push([file, ...args]);
+      return createMockExecResult(Promise.resolve({ stdout: "", stderr: "" }));
+    });
+
+    let failure: unknown;
+    try {
+      await (runtime as unknown as GitPushPrivateApi).syncProjectSnapshotViaGitPush(
+        "/local/project",
+        layout,
+        layout.currentSnapshotPath,
+        noopInitLogger
+      );
+      throw new Error("Expected low remote disk headroom to fail before git push");
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(Error);
+    if (!(failure instanceof Error)) {
+      throw new Error("Expected low headroom failure to surface as an Error");
+    }
+    expect(failure.message).toContain("Remote disk headroom too low");
+    expect(gitCalls).toEqual([]);
+  });
+
   it("skips the metadata tag push when the local repo has no tags", async () => {
     const runtime = new CommandCaptureSSHRuntime();
     const layout = createLayout();
@@ -327,6 +363,40 @@ describe("SSHRuntime authoritative sync contract", () => {
     expect(runtime.commands).toContain(
       "git fetch origin '+refs/heads/main:refs/remotes/origin/main'"
     );
+  });
+
+  it("blocks bundle sync before upload when remote disk headroom is low", async () => {
+    const runtime = new CommandCaptureSSHRuntime();
+    runtime.healthStdout = "count: 0\npacks: 0\nMUX_HEALTH_FREE_BYTES=1\n";
+    const layout = createLayout();
+    const privateApi = runtime as unknown as BundleSyncPrivateApi;
+    let transferCalled = false;
+    privateApi.transferBundleToRemote = () => {
+      transferCalled = true;
+      return Promise.resolve();
+    };
+
+    let failure: unknown;
+    try {
+      await privateApi.syncProjectSnapshotViaBundle(
+        "/local/project",
+        layout,
+        layout.currentSnapshotPath,
+        "snapshot-digest",
+        '"/remote/src/project/.mux-base.git"',
+        noopInitLogger
+      );
+      throw new Error("Expected low remote disk headroom to fail before bundle upload");
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(Error);
+    if (!(failure instanceof Error)) {
+      throw new Error("Expected low headroom failure to surface as an Error");
+    }
+    expect(failure.message).toContain("Remote disk headroom too low");
+    expect(transferCalled).toBe(false);
   });
 
   it("fetches pruneable bundle branches separately from shared tags", async () => {

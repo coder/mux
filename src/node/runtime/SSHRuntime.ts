@@ -39,6 +39,7 @@ import { expandTildeForSSH, cdCommandForSSH } from "./tildeExpansion";
 import { sleepWithAbort } from "@/node/utils/abort";
 import { execBuffered } from "@/node/utils/runtime/helpers";
 import { getErrorMessage } from "@/common/utils/errors";
+import { formatBytes } from "@/common/utils/formatBytes";
 import {
   type SSHRuntimeConfig,
   getControlPath,
@@ -70,6 +71,9 @@ const BUNDLE_REF_PREFIX = "refs/mux-bundle/";
 const BASE_REPO_CONFIG_LOCK_RETRY_DELAYS_MS = [50, 100, 200];
 const BASE_REPO_HEALTH_PROBE_TIMEOUT_SECONDS = 10;
 const BASE_REPO_PROMISOR_CLEANUP_TIMEOUT_SECONDS = 10;
+const BASE_REPO_TMP_PACK_MIN_AGE_MINUTES = 30;
+const BASE_REPO_TMP_PACK_SWEEP_TIMEOUT_SECONDS = 10;
+const BASE_REPO_MIN_FREE_BYTES = 5 * 1024 * 1024 * 1024;
 /** Git config keys that announce a bare repo as a promisor remote to
  *  `repo_has_promisor_remote()`. Unsetting all three is what makes
  *  receive-pack's `check_connected()` skip the buggy partial-clone fast
@@ -89,7 +93,26 @@ const PROJECT_SYNC_RETRYABLE_ERRORS = [
   "Broken pipe",
   "EPIPE",
   "Command killed by signal",
+  "No space left on device",
+  "ENOSPC",
 ] as const;
+
+const PROTECTED_WORKSPACE_BRANCHES = ["main", "master", "trunk", "develop", "default"] as const;
+
+interface BaseRepoHealth {
+  packCount: number | null;
+  packBytes: number | null;
+  tmpPackCount: number;
+  tmpPackBytes: number;
+  staleTmpPackCount: number;
+  staleTmpPackBytes: number;
+  freeBytes: number | null;
+}
+
+interface BaseRepoTmpCleanupStats {
+  removedCount: number;
+  removedBytes: number;
+}
 
 const sharedProjectSyncTails = new Map<string, Promise<void>>();
 
@@ -151,6 +174,60 @@ function isGitConfigLockConflict(message: string): boolean {
 function logSSHBackoffWait(initLogger: InitLogger, waitMs: number): void {
   const secs = Math.max(1, Math.ceil(waitMs / 1000));
   initLogger.logStep(`SSH unavailable; retrying in ${secs}s...`);
+}
+
+function parseNumber(value: string | undefined): number | null {
+  if (value === undefined || value.trim().length === 0) {
+    return null;
+  }
+  const parsed = Number.parseInt(value.trim(), 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseCountObjectsValue(stdout: string, key: string): number | null {
+  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp(`^${escapedKey}:\\s*(\\d+)\\s*$`, "m").exec(stdout);
+  return parseNumber(match?.[1]);
+}
+
+function parseHealthLabel(stdout: string, label: string): number | null {
+  const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp(`^${escapedLabel}=(\\d*)\\s*$`, "m").exec(stdout);
+  return parseNumber(match?.[1]);
+}
+
+function parseTmpCleanupStats(stdout: string): BaseRepoTmpCleanupStats {
+  let removedCount = 0;
+  let removedBytes = 0;
+  for (const line of stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const [rawBytes] = trimmed.split(/\s+/, 1);
+    const bytes = parseNumber(rawBytes) ?? 0;
+    removedCount += 1;
+    removedBytes += bytes;
+  }
+  return { removedCount, removedBytes };
+}
+
+function baseRepoHealthFields(health: BaseRepoHealth): Record<string, unknown> {
+  return {
+    packCount: health.packCount,
+    packBytes: health.packBytes,
+    tmpPackCount: health.tmpPackCount,
+    tmpPackBytes: health.tmpPackBytes,
+    staleTmpPackCount: health.staleTmpPackCount,
+    staleTmpPackBytes: health.staleTmpPackBytes,
+    freeBytes: health.freeBytes,
+  };
+}
+
+function isProtectedWorkspaceBranch(branchName: string): boolean {
+  return PROTECTED_WORKSPACE_BRANCHES.includes(
+    branchName as (typeof PROTECTED_WORKSPACE_BRANCHES)[number]
+  );
 }
 
 async function pipeReadableToWebWritable(
@@ -512,22 +589,189 @@ export class SSHRuntime extends RemoteRuntime {
   private async probeBaseRepoHealth(
     baseRepoPathArg: string,
     abortSignal?: AbortSignal
-  ): Promise<{ packCount: number | null }> {
-    const result = await execBuffered(this, `git -C ${baseRepoPathArg} count-objects -v`, {
-      cwd: "/tmp",
-      timeout: BASE_REPO_HEALTH_PROBE_TIMEOUT_SECONDS,
-      abortSignal,
-    });
+  ): Promise<BaseRepoHealth> {
+    const tmpFindExpression = "\\( -name 'tmp_pack_*' -o -name 'tmp_idx_*' \\)";
+    const result = await execBuffered(
+      this,
+      [
+        `base=${baseRepoPathArg}`,
+        'pack_dir="$base/objects/pack"',
+        'git -C "$base" count-objects -v',
+        `tmp_stats=$(find "$pack_dir" -maxdepth 1 ${tmpFindExpression} -type f -exec du -sk {} + 2>/dev/null | awk 'BEGIN { count=0; bytes=0 } { count += 1; bytes += $1 * 1024 } END { printf "%d %d", count, bytes }')`,
+        `stale_tmp_stats=$(find "$pack_dir" -maxdepth 1 ${tmpFindExpression} -type f -mmin +${BASE_REPO_TMP_PACK_MIN_AGE_MINUTES} -exec du -sk {} + 2>/dev/null | awk 'BEGIN { count=0; bytes=0 } { count += 1; bytes += $1 * 1024 } END { printf "%d %d", count, bytes }')`,
+        'free_bytes=$(df -Pk "$base" 2>/dev/null | awk \'NR==2 { printf "%d", $4 * 1024 }\')',
+        "printf 'MUX_HEALTH_TMP_PACK_COUNT=%s\\n' \"$(printf '%s' \"$tmp_stats\" | awk '{ print $1 + 0 }')\"",
+        "printf 'MUX_HEALTH_TMP_PACK_BYTES=%s\\n' \"$(printf '%s' \"$tmp_stats\" | awk '{ print $2 + 0 }')\"",
+        "printf 'MUX_HEALTH_STALE_TMP_PACK_COUNT=%s\\n' \"$(printf '%s' \"$stale_tmp_stats\" | awk '{ print $1 + 0 }')\"",
+        "printf 'MUX_HEALTH_STALE_TMP_PACK_BYTES=%s\\n' \"$(printf '%s' \"$stale_tmp_stats\" | awk '{ print $2 + 0 }')\"",
+        "printf 'MUX_HEALTH_FREE_BYTES=%s\\n' \"$free_bytes\"",
+      ].join("\n"),
+      {
+        cwd: "/tmp",
+        timeout: BASE_REPO_HEALTH_PROBE_TIMEOUT_SECONDS,
+        abortSignal,
+      }
+    );
     if (result.exitCode !== 0) {
       throw new Error(
         `Failed to inspect shared base repository health: ${result.stderr || result.stdout}`
       );
     }
 
-    const packCountMatch = /^packs:\s*(\d+)\s*$/m.exec(result.stdout);
+    const sizePackKiB = parseCountObjectsValue(result.stdout, "size-pack");
     return {
-      packCount: packCountMatch ? Number.parseInt(packCountMatch[1], 10) : null,
+      packCount: parseCountObjectsValue(result.stdout, "packs"),
+      packBytes: sizePackKiB == null ? null : sizePackKiB * 1024,
+      tmpPackCount: parseHealthLabel(result.stdout, "MUX_HEALTH_TMP_PACK_COUNT") ?? 0,
+      tmpPackBytes: parseHealthLabel(result.stdout, "MUX_HEALTH_TMP_PACK_BYTES") ?? 0,
+      staleTmpPackCount: parseHealthLabel(result.stdout, "MUX_HEALTH_STALE_TMP_PACK_COUNT") ?? 0,
+      staleTmpPackBytes: parseHealthLabel(result.stdout, "MUX_HEALTH_STALE_TMP_PACK_BYTES") ?? 0,
+      freeBytes: parseHealthLabel(result.stdout, "MUX_HEALTH_FREE_BYTES"),
     };
+  }
+
+  private async probeBaseRepoHealthForLogging(
+    baseRepoPathArg: string,
+    context: string,
+    abortSignal?: AbortSignal
+  ): Promise<BaseRepoHealth | null> {
+    try {
+      return await this.probeBaseRepoHealth(baseRepoPathArg, abortSignal);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      if (abortSignal?.aborted || message === "Operation aborted") {
+        throw error instanceof Error ? error : new Error(message);
+      }
+      log.warn(`Shared base repository health probe failed during ${context}: ${message}`);
+      return null;
+    }
+  }
+
+  private logBaseRepoHealth(context: string, health: BaseRepoHealth): void {
+    log.info(`Shared base repository health (${context})`, baseRepoHealthFields(health));
+  }
+
+  private shouldRepairBaseRepoForSync(health: BaseRepoHealth): boolean {
+    return (
+      (health.packCount != null && health.packCount >= BASE_REPO_FRAGMENTED_PACK_THRESHOLD) ||
+      health.staleTmpPackCount > 0
+    );
+  }
+
+  private describeBaseRepoMaintenanceReason(health: BaseRepoHealth): string {
+    const reasons: string[] = [];
+    if (health.packCount != null && health.packCount >= BASE_REPO_FRAGMENTED_PACK_THRESHOLD) {
+      const packFileLabel = health.packCount === 1 ? "pack file" : "pack files";
+      reasons.push(`${health.packCount} ${packFileLabel}`);
+    }
+    if (health.staleTmpPackCount > 0) {
+      const tmpFileLabel = health.staleTmpPackCount === 1 ? "stale tmp pack" : "stale tmp packs";
+      reasons.push(
+        `${health.staleTmpPackCount} ${tmpFileLabel} (${formatBytes(health.staleTmpPackBytes)})`
+      );
+    }
+    return reasons.join(", ");
+  }
+
+  protected async sweepStaleBaseRepoTmpPacks(
+    baseRepoPathArg: string,
+    cleanupContext: string,
+    abortSignal?: AbortSignal
+  ): Promise<BaseRepoTmpCleanupStats> {
+    if (abortSignal?.aborted) {
+      throw new Error("Operation aborted");
+    }
+
+    const packDirArg = `${baseRepoPathArg}/objects/pack`;
+    const tmpFindExpression = "\\( -name 'tmp_pack_*' -o -name 'tmp_idx_*' \\)";
+    const cleanupResult = await execBuffered(
+      this,
+      [
+        `pack_dir=${packDirArg}`,
+        `find "$pack_dir" -maxdepth 1 ${tmpFindExpression} -type f -mmin +${BASE_REPO_TMP_PACK_MIN_AGE_MINUTES} -print 2>/dev/null | while IFS= read -r file; do`,
+        '  bytes=$(du -sk "$file" 2>/dev/null | awk \'{ printf "%d", $1 * 1024 }\')',
+        '  printf \'%s\\t%s\\n\' "${bytes:-0}" "$file"',
+        '  rm -f -- "$file" 2>/dev/null || true',
+        "done",
+      ].join("\n"),
+      {
+        cwd: "/tmp",
+        timeout: BASE_REPO_TMP_PACK_SWEEP_TIMEOUT_SECONDS,
+        abortSignal,
+      }
+    );
+
+    if (cleanupResult.exitCode !== 0) {
+      log.warn(
+        `Stale tmp-pack cleanup exited ${cleanupResult.exitCode} during ${cleanupContext}: ${cleanupResult.stderr || cleanupResult.stdout}`
+      );
+    }
+
+    const stats = parseTmpCleanupStats(cleanupResult.stdout);
+    if (stats.removedCount > 0) {
+      log.info("Removed stale shared base repository tmp-pack files", {
+        context: cleanupContext,
+        removedCount: stats.removedCount,
+        removedBytes: stats.removedBytes,
+        minAgeMinutes: BASE_REPO_TMP_PACK_MIN_AGE_MINUTES,
+      });
+    }
+    return stats;
+  }
+
+  private async checkRemoteDiskHeadroom(
+    baseRepoPathArg: string,
+    operationName: string,
+    abortSignal?: AbortSignal
+  ): Promise<
+    | { ok: true; health: BaseRepoHealth | null }
+    | { ok: false; message: string; health: BaseRepoHealth }
+  > {
+    const health = await this.probeBaseRepoHealthForLogging(
+      baseRepoPathArg,
+      `disk headroom check for ${operationName}`,
+      abortSignal
+    );
+    if (!health) {
+      return { ok: true, health: null };
+    }
+
+    this.logBaseRepoHealth(`before ${operationName}`, health);
+    if (health.freeBytes == null || health.freeBytes >= BASE_REPO_MIN_FREE_BYTES) {
+      return { ok: true, health };
+    }
+
+    const message =
+      `Remote disk headroom too low before ${operationName}: ` +
+      `${formatBytes(health.freeBytes)} free, need at least ${formatBytes(BASE_REPO_MIN_FREE_BYTES)}. ` +
+      "Clean remote disk space or stale .mux-base.git tmp packs before retrying.";
+    log.warn(message, baseRepoHealthFields(health));
+    return { ok: false, message, health };
+  }
+
+  private async ensureRemoteDiskHeadroom(
+    baseRepoPathArg: string,
+    operationName: string,
+    abortSignal?: AbortSignal
+  ): Promise<void> {
+    const result = await this.checkRemoteDiskHeadroom(baseRepoPathArg, operationName, abortSignal);
+    if (!result.ok) {
+      throw new Error(result.message);
+    }
+  }
+
+  private async hasRemoteDiskHeadroomForBestEffortTransfer(
+    baseRepoPathArg: string,
+    operationName: string,
+    initLogger: InitLogger,
+    abortSignal?: AbortSignal
+  ): Promise<boolean> {
+    const result = await this.checkRemoteDiskHeadroom(baseRepoPathArg, operationName, abortSignal);
+    if (result.ok) {
+      return true;
+    }
+    initLogger.logStep(`Skipping ${operationName}: ${result.message}`);
+    return false;
   }
 
   /**
@@ -615,7 +859,8 @@ export class SSHRuntime extends RemoteRuntime {
   protected async repairBaseRepoForSync(
     baseRepoPathArg: string,
     repairContext: string,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    knownBeforeHealth?: BaseRepoHealth
   ): Promise<void> {
     if (abortSignal?.aborted) {
       throw new Error("Operation aborted");
@@ -623,11 +868,31 @@ export class SSHRuntime extends RemoteRuntime {
 
     log.info(repairContext);
 
+    const beforeHealth =
+      knownBeforeHealth ??
+      (await this.probeBaseRepoHealthForLogging(
+        baseRepoPathArg,
+        `${repairContext} preflight`,
+        abortSignal
+      ));
+    if (beforeHealth) {
+      this.logBaseRepoHealth(`${repairContext} (before maintenance)`, beforeHealth);
+    }
+
     // Strip partial-clone config before the on-disk cleanup so that even
     // if `git gc` fails, subsequent pushes no longer route through the
     // buggy `check_connected()` promisor fast path. See the doc comment
     // on stripBaseRepoPromisorConfig for the full upstream-bug story.
     await this.stripBaseRepoPromisorConfig(baseRepoPathArg, abortSignal);
+
+    // Product cleanup must never blindly delete Git's active temp files.
+    // The age gate turns the incident's manual tmp_pack_* cleanup into a
+    // safe self-healing path for orphaned files left by killed fetch/push/index-pack.
+    const tmpCleanupStats = await this.sweepStaleBaseRepoTmpPacks(
+      baseRepoPathArg,
+      repairContext,
+      abortSignal
+    );
 
     const promisorPackDirArg = `${baseRepoPathArg}/objects/pack`;
     const promisorCleanupResult = await execBuffered(
@@ -659,6 +924,21 @@ export class SSHRuntime extends RemoteRuntime {
         `Remote git gc exited ${gcResult.exitCode} during base repo maintenance: ${gcResult.stderr || gcResult.stdout}`
       );
     }
+
+    const afterHealth = await this.probeBaseRepoHealthForLogging(
+      baseRepoPathArg,
+      `${repairContext} postflight`,
+      abortSignal
+    );
+    if (afterHealth) {
+      log.info("Shared base repository maintenance complete", {
+        context: repairContext,
+        reclaimedTmpBytes: tmpCleanupStats.removedBytes,
+        removedTmpPackCount: tmpCleanupStats.removedCount,
+        removedPromisorCount,
+        ...baseRepoHealthFields(afterHealth),
+      });
+    }
   }
 
   protected async ensureHealthyBaseRepoForSync(
@@ -671,19 +951,21 @@ export class SSHRuntime extends RemoteRuntime {
     }
 
     try {
-      const { packCount } = await this.probeBaseRepoHealth(baseRepoPathArg, abortSignal);
-      if (packCount == null || packCount < BASE_REPO_FRAGMENTED_PACK_THRESHOLD) {
+      const health = await this.probeBaseRepoHealth(baseRepoPathArg, abortSignal);
+      this.logBaseRepoHealth("pre-sync", health);
+      if (!this.shouldRepairBaseRepoForSync(health)) {
         return;
       }
 
-      const packFileLabel = packCount === 1 ? "pack file" : "pack files";
+      const reason = this.describeBaseRepoMaintenanceReason(health);
       initLogger.logStep(
-        `Shared base repository is fragmented (${packCount} ${packFileLabel}); running maintenance before sync...`
+        `Shared base repository needs maintenance (${reason}); running maintenance before sync...`
       );
       await this.repairBaseRepoForSync(
         baseRepoPathArg,
-        `Running shared base repository maintenance before sync (${packCount} ${packFileLabel})`,
-        abortSignal
+        `Running shared base repository maintenance before sync (${reason})`,
+        abortSignal,
+        health
       );
     } catch (healthError) {
       const healthErrorMsg = getErrorMessage(healthError);
@@ -707,7 +989,7 @@ export class SSHRuntime extends RemoteRuntime {
     try {
       await this.repairBaseRepoForSync(
         baseRepoPathArg,
-        `Running remote promisor cleanup and git gc before retrying sync push (attempt ${attempt + 1}/${maxAttempts})`,
+        `Running remote base repo cleanup before retrying sync push (attempt ${attempt + 1}/${maxAttempts})`,
         abortSignal
       );
     } catch (cleanupError) {
@@ -1267,6 +1549,17 @@ export class SSHRuntime extends RemoteRuntime {
     // below has somewhere to pull from.
     await this.refreshBaseRepoOrigin(projectPath, baseRepoPathArg, initLogger, abortSignal);
 
+    if (
+      !(await this.hasRemoteDiskHeadroomForBestEffortTransfer(
+        baseRepoPathArg,
+        "remote origin prefetch",
+        initLogger,
+        abortSignal
+      ))
+    ) {
+      return { refreshedOrigin: false };
+    }
+
     try {
       initLogger.logStep("Pre-fetching from origin on remote host...");
       const result = await execBuffered(
@@ -1526,6 +1819,12 @@ export class SSHRuntime extends RemoteRuntime {
       );
     }
 
+    await this.ensureRemoteDiskHeadroom(
+      baseRepoPathArg,
+      "remote bundle upload/import",
+      abortSignal
+    );
+
     await this.transferBundleToRemote(projectPath, remoteBundlePath, initLogger, abortSignal);
 
     try {
@@ -1641,6 +1940,12 @@ export class SSHRuntime extends RemoteRuntime {
         `Failed to prepare remote snapshot directory: ${prepareSnapshotDir.stderr || prepareSnapshotDir.stdout}`
       );
     }
+
+    await this.ensureRemoteDiskHeadroom(
+      expandTildeForSSH(layout.baseRepoPath),
+      "remote git push sync",
+      abortSignal
+    );
 
     await this.transport.acquireConnection({
       abortSignal,
@@ -2050,6 +2355,90 @@ export class SSHRuntime extends RemoteRuntime {
     });
   }
 
+  async cleanupFailedInit(params: WorkspaceInitParams, reason: string): Promise<void> {
+    await this.cleanupPartialWorkspaceState(
+      params.projectPath,
+      params.branchName,
+      params.workspacePath,
+      reason,
+      params.trusted
+    );
+  }
+
+  protected async cleanupPartialWorkspaceState(
+    projectPath: string,
+    workspaceName: string,
+    workspacePath: string,
+    reason: string,
+    trusted?: boolean,
+    deleteWorkspaceBranch = true
+  ): Promise<void> {
+    const layout = this.getProjectLayout(projectPath);
+    const baseRepoPathArg = expandTildeForSSH(layout.baseRepoPath);
+    const workspacePathArg = expandTildeForSSH(workspacePath);
+    const nhp = gitNoHooksPrefix(trusted);
+    const branchCleanup =
+      !deleteWorkspaceBranch || isProtectedWorkspaceBranch(workspaceName)
+        ? "true"
+        : `${nhp}git -C ${baseRepoPathArg} branch -D -- ${shescape.quote(workspaceName)} 2>/dev/null || true`;
+
+    log.info("Cleaning partial SSH workspace state", {
+      projectPath,
+      workspaceName,
+      workspacePath,
+      reason,
+    });
+
+    try {
+      await this.sweepStaleBaseRepoTmpPacks(
+        baseRepoPathArg,
+        `partial workspace cleanup (${reason})`
+      );
+    } catch (error) {
+      log.warn("Partial SSH workspace tmp-pack cleanup failed", {
+        projectPath,
+        workspaceName,
+        reason,
+        error: getErrorMessage(error),
+      });
+    }
+
+    try {
+      const cleanupResult = await execBuffered(
+        this,
+        [
+          `if test -d ${baseRepoPathArg}; then`,
+          `  ${nhp}git -C ${baseRepoPathArg} worktree prune 2>/dev/null || true`,
+          `  ${branchCleanup}`,
+          "fi",
+          // SAFETY: workspacePath is the exact runtime-computed directory for this workspace.
+          // Failed init/cancel cleanup must remove partial materialization so a retry starts cleanly.
+          `rm -rf ${workspacePathArg}`,
+        ].join("\n"),
+        { cwd: "/tmp", timeout: 30 }
+      );
+
+      if (cleanupResult.exitCode !== 0) {
+        log.warn("Partial SSH workspace cleanup exited non-zero", {
+          projectPath,
+          workspaceName,
+          workspacePath,
+          reason,
+          exitCode: cleanupResult.exitCode,
+          output: cleanupResult.stderr || cleanupResult.stdout,
+        });
+      }
+    } catch (error) {
+      log.warn("Partial SSH workspace cleanup failed", {
+        projectPath,
+        workspaceName,
+        workspacePath,
+        reason,
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
   /**
    * Try to create the workspace via a single fused SSH command (warm fast-path).
    *
@@ -2226,6 +2615,15 @@ export class SSHRuntime extends RemoteRuntime {
     if (!stdout.includes("WARM_OK")) {
       const missMatch = /WARM_MISS:(\S+)/.exec(stdout);
       const reason = missMatch ? missMatch[1] : "unknown";
+      if (reason === "worktree-add-failed") {
+        await this.cleanupPartialWorkspaceState(
+          projectPath,
+          branchName,
+          workspacePath,
+          "warm fast-path worktree add failed",
+          params.trusted
+        );
+      }
       initLogger.logStep(`Warm fast-path miss (${reason}); using slow path`);
       return null;
     }
@@ -2707,7 +3105,18 @@ export class SSHRuntime extends RemoteRuntime {
 
       // Handle check results
       if (checkExitCode === 3) {
-        // Directory doesn't exist - deletion is idempotent (success).
+        // Directory doesn't exist, but force-cancel may have aborted before
+        // `git worktree add` fully materialized the path. Still prune the base
+        // repo and stale tmp packs so the invisible partial state cannot grow.
+        if (force) {
+          await this.cleanupPartialWorkspaceState(
+            projectPath,
+            workspaceName,
+            deletedPath,
+            "force delete missing workspace path",
+            trusted
+          );
+        }
         return { success: true, deletedPath };
       }
 
@@ -2789,11 +3198,10 @@ export class SSHRuntime extends RemoteRuntime {
         // that re-forking with the same workspace name can use the fast worktree
         // path (git worktree add -b fails if the branch already exists).
         // Skip protected trunk branch names to avoid accidental deletion.
-        const PROTECTED_BRANCHES = ["main", "master", "trunk", "develop", "default"];
-        if (branchToDelete && !PROTECTED_BRANCHES.includes(branchToDelete)) {
+        if (branchToDelete && !isProtectedWorkspaceBranch(branchToDelete)) {
           await execBuffered(
             this,
-            `${nhp}git -C ${baseRepoPathArg} branch -D ${shescape.quote(branchToDelete)} 2>/dev/null || true`,
+            `${nhp}git -C ${baseRepoPathArg} branch -D -- ${shescape.quote(branchToDelete)} 2>/dev/null || true`,
             { cwd: "/tmp", timeout: 10 }
           ).catch(() => undefined);
         }
@@ -2815,6 +3223,17 @@ export class SSHRuntime extends RemoteRuntime {
             error: `Failed to delete directory: ${stderr.trim() || "Unknown error"}`,
           };
         }
+      }
+
+      if (force) {
+        await this.cleanupPartialWorkspaceState(
+          projectPath,
+          workspaceName,
+          deletedPath,
+          "force delete post-cleanup",
+          trusted,
+          false
+        );
       }
 
       return { success: true, deletedPath };
