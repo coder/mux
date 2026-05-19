@@ -37,7 +37,7 @@ REQUEST_COMMAND="/coder-agents-review"
 # Match both the app slug and GitHub's bot-login form.
 BOT_LOGIN_REGEX="${CODER_AGENTS_REVIEW_BOT_LOGIN_REGEX:-^coder-agents-review(\[bot\])?$}"
 CODER_AGENTS_BOT_APPROVAL_REGEX="no (issues|problems)|no major issues|looks good|lgtm|didn.t find|(^|[[:space:][:punct:]])approved([[:space:][:punct:]]|$)"
-CODER_AGENTS_BOT_NEGATIVE_BEFORE_APPROVAL_REGEX="not approved|not yet approved|review failed|failed to review|unable to review|cannot review|could not review|timed out|cancelled|blocked|needs changes|changes requested|without author response|unaddressed|to unblock"
+CODER_AGENTS_BOT_NEGATIVE_BEFORE_APPROVAL_REGEX="not approved|not yet approved|review failed|failed to review|unable to review|cannot review|could not review|review timed out|request timed out|review cancelled|request cancelled|is blocked|blocked until|needs changes|changes requested( for|:)|without author response|unaddressed findings|to unblock"
 CODER_AGENTS_BOT_PROGRESS_REGEX="^[[:space:]]*(queued|started|running|in progress|reviewing|will review)[[:space:][:punct:]]*$"
 POLL_INTERVAL_SECS=30
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -605,7 +605,6 @@ check_coder_agents_status_once() {
         | .reviewedAt // empty
       ')
   else
-    response_count="$bot_activity_count"
     latest_issue_comment_body=$(jq -rn \
       --argjson comments "$COMMENTS_JSON" \
       --arg bot_regex "$BOT_LOGIN_REGEX" '
@@ -673,7 +672,7 @@ check_coder_agents_status_once() {
     if [[ -n "$latest_review_at" ]]; then
       echo "Review timestamp: $latest_review_at"
     fi
-    echo "Resolve/address the feedback and request another review with '$REQUEST_COMMAND'."
+    echo "Resolve/address the feedback, reply to the finding(s), and request another review with '$REQUEST_COMMAND'."
     return "$RC_FAILED"
   fi
 

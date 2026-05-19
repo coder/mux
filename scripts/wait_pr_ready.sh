@@ -202,7 +202,7 @@ while true; do
       echo "(no output)"
     fi
     echo ""
-    echo "Address coder-agents-review feedback, push, and request another optional review if desired:"
+    echo "Address coder-agents-review feedback, reply to the finding(s), push, and request another optional review:"
     echo ""
     echo "  gh pr comment $PR_NUMBER --body '/coder-agents-review'"
     exit 1
