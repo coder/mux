@@ -41,6 +41,7 @@ import {
   LEFT_SIDEBAR_MIN_WIDTH_PX,
 } from "@/constants/layout";
 import { buildCoreSources, type BuildSourcesParams } from "./utils/commands/sources";
+import { useExtensionsPaletteSource } from "./hooks/useExtensionsPaletteSource";
 
 import { getTopLevelProjectEntries } from "@/common/utils/subProjects";
 import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
@@ -782,6 +783,8 @@ function AppInner() {
     });
     return unregister;
   }, [registerSource, workspaceStore]);
+
+  useExtensionsPaletteSource(openSettings);
 
   // Handle keyboard shortcuts
   useEffect(() => {

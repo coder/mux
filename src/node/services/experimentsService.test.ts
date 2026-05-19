@@ -87,6 +87,8 @@ describe("ExperimentsService", () => {
       cacheTtlMs: 0,
     });
 
+    const changed = mock((_experimentId: string) => undefined);
+    const unsubscribe = service.onExperimentChanged(changed);
     await service.initialize();
     await service.refreshExperiment(EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING);
 
@@ -107,6 +109,8 @@ describe("ExperimentsService", () => {
       EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING,
       "test"
     );
+    expect(changed).toHaveBeenCalledWith(EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING);
+    unsubscribe();
   });
 
   test("persists backend overrides and applies them before remote gating", async () => {
@@ -118,6 +122,8 @@ describe("ExperimentsService", () => {
     } as unknown as TelemetryService;
 
     const service = new ExperimentsService({ telemetryService, muxHome: tempDir });
+    const changed = mock((_experimentId: string) => undefined);
+    const unsubscribe = service.onExperimentChanged(changed);
     await service.initialize();
     await service.setOverride(EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES, true);
 
@@ -130,6 +136,8 @@ describe("ExperimentsService", () => {
       EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES,
       true
     );
+    expect(changed).toHaveBeenCalledWith(EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES);
+    unsubscribe();
 
     const cacheFilePath = path.join(tempDir, "feature_flags.json");
     const disk = JSON.parse(await fs.readFile(cacheFilePath, "utf-8")) as {
@@ -215,7 +223,7 @@ describe("ExperimentsService", () => {
     expect(setFeatureFlagVariant).toHaveBeenCalledWith(EXPERIMENT_IDS.PORTABLE_DESKTOP, null);
   });
 
-  test("returns disabled when telemetry is disabled", async () => {
+  test("falls back to false for default-off experiments when telemetry is disabled", async () => {
     const telemetryService = {
       getPostHogClient: mock(() => null),
       getDistinctId: mock(() => null),

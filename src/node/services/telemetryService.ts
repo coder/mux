@@ -20,6 +20,7 @@ import * as path from "path";
 import { getMuxHome } from "@/common/constants/paths";
 import { VERSION } from "@/version";
 import type { TelemetryEventPayload, BaseTelemetryProperties } from "@/common/telemetry/payload";
+import type { ExtensionTelemetryEventName } from "@/common/extensions/extensionTelemetry";
 
 // Default configuration (public keys, safe to commit)
 const DEFAULT_POSTHOG_KEY = "phc_vF1bLfiD5MXEJkxojjsmV5wgpLffp678yhJd3w9Sl4G";
@@ -303,6 +304,29 @@ export class TelemetryService {
       distinctId: this.distinctId,
       event: payload.event,
       properties,
+    });
+  }
+
+  /**
+   * Forward a pre-sanitized Extension event to PostHog.
+   *
+   * Callers MUST run the payload through `gateExtensionTelemetryEvent()` first
+   * (see `ExtensionTelemetryLayer`). The gate is what guarantees identifying
+   * strings (extensionId, contributionId) only appear when the value matches
+   * the Reserved Extension Identity Prefix AND the source rootKind is
+   * 'bundled'. This method does NOT re-validate the payload.
+   */
+  captureExtensionEvent(
+    event: ExtensionTelemetryEventName,
+    properties: Record<string, string | number | boolean>
+  ): void {
+    if (isTelemetryDisabledByEnv(process.env) || !this.client || !this.distinctId) {
+      return;
+    }
+    this.client.capture({
+      distinctId: this.distinctId,
+      event,
+      properties: { ...this.getBaseProperties(), ...properties },
     });
   }
 

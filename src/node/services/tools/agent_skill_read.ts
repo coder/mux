@@ -86,6 +86,7 @@ export const createAgentSkillReadTool: ToolFactory = (config: ToolConfiguration)
           {
             roots: skillCtx.roots,
             containment: skillCtx.containment,
+            extensionSkills: config.extensionSkills,
           }
         );
         if (

@@ -1,0 +1,218 @@
+---
+title: Extension Platform Release Checklist
+description: Pre-release dogfood checklist for the Mux Extension Platform with screenshot/video evidence requirements.
+---
+
+A reproducible sign-off pass for the Mux Extension Platform. Every step
+listed below MUST be executed manually against a release build before a
+v1 release ships, with the evidence below attached to the release PR.
+
+- **Screenshot** = a still image of the relevant UI state.
+- **Video** = a short screen recording covering the full interaction
+  (start to stable end state).
+
+The Consent Shortcut flow and the always-on restart smoke always require
+**video** because they exercise multi-step state transitions; everything
+else is screenshot-only unless noted.
+
+## Before you start
+
+- Build the release artifact you intend to ship (Electron + dev-server).
+- Use a clean macOS, Windows, and Linux profile each — the user-global
+  root sits at `~/.mux/extensions/` and prior dogfood runs leak state
+  across runs unless deleted.
+- Have one third-party Extension package available locally for the
+  install / update / drift steps. The bundled
+  [Demo Extension](/extensions/authoring) is fine as a copy-paste base.
+
+## Checklist
+
+The order below matches the natural cold-start → install → drift →
+recovery progression, so a single pass produces a coherent narrative for
+the release PR.
+
+### 1. Cold start with no user-global root
+
+**Goal.** Section renders the initialize affordance with no errors.
+
+- Delete `~/.mux/extensions/`.
+- Launch Mux. Open **Settings → Extensions**.
+- Confirm: header shows zero error and zero warning counts; the
+  user-global subsection shows the **Initialize User Extensions Root**
+  affordance plus a 2-sentence explanation.
+
+**Evidence.** Screenshot of the section in this state.
+
+### 2. Cold start with a malformed user-global module
+
+**Goal.** Section surfaces module diagnostics; the app starts normally.
+
+- With Mux closed, create
+  `~/.mux/extensions/local/broken-extension/extension.ts` with a malformed
+  static manifest export.
+- Launch Mux. Open **Settings → Extensions**.
+- Confirm: the user-global subsection shows a diagnostic for the broken
+  Extension Module and the rest of the app remains usable.
+
+**Evidence.** Screenshot of the diagnostic state.
+
+### 3. Initialize, install, reload
+
+**Goal.** Newly-installed Extensions become visible without restart.
+
+- Click **Initialize User Extensions Root** in the action row.
+- In a terminal: `create or copy a module under ~/.mux/extensions/local/<name>`.
+- Run **Reload Extensions** from the command palette.
+- Confirm: the new Extension appears as a card in the user-global
+  subsection.
+
+**Evidence.** Screenshot **before** reload (no card) and **after**
+reload (card visible).
+
+### 4. Project-local trust ladder
+
+**Goal.** Pre-trust shows the prerequisite card; approving trust unlocks
+inspection-only mode.
+
+- Open a project that contains a `.mux/extensions/` directory, with
+  project trust unapproved.
+- Confirm: the project-local subsection shows the **project-trust
+  prerequisite** card and renders no Extension cards.
+- Approve project trust (the existing Mux project-trust flow).
+- Confirm: Safe Manifest Inspection runs and Extension cards appear in
+  **inspection-only mode** (no Enable / Approve actions yet).
+
+**Evidence.** Screenshot of each state (untrusted, trusted +
+inspection-only).
+
+### 5. Consent Shortcut flow (video)
+
+**Goal.** The one-click Consent Shortcut applies trust + enable + approval
+in one transaction; **Review individually** falls through to the
+granular ladder.
+
+- Click **Quick Setup** on a project-local Extension card.
+- In the Consent Shortcut Modal, verify the summary lists: identity,
+  Extension Name, description, and the requested
+  capabilities.
+- Confirm Quick Setup. Verify the card reaches `Enabled`.
+- Repeat the install on a second Extension and click **Review
+  individually** instead. Verify the granular Trust → Enable → Approve
+  controls become visible on the card and that each step succeeds
+  independently.
+
+**Evidence.** **Video** capturing both the shortcut and granular paths
+end-to-end.
+
+### 6. Drift surfacing on capability update
+
+**Goal.** Adding a new requested capability shows `Pending re-approval`
+without a modal; previously available contributions remain available.
+
+- Update an installed Extension to request a new capability.
+- Run **Reload Extensions**.
+- Confirm: the card shows a `Pending re-approval` pill and the
+  **Review Pending Extension Capabilities** action appears in the action
+  row. No modal is shown. Previously available contributions are still
+  marked Available.
+
+**Evidence.** Screenshot of the card with the `Pending re-approval` pill.
+
+### 7. Drift surfacing on new contribution type
+
+**Goal.** Adding a new contribution type triggers Capability approval
+drift; the new contribution stays Unavailable until re-approval.
+
+- Update the same Extension to add a contribution of a type it did not
+  previously declare (e.g., add a `themes` entry to a previously
+  skill-only Extension).
+- Run **Reload Extensions**.
+- Confirm: the card surfaces drift; the new contribution row shows
+  `Unavailable` until re-approval.
+- Re-approve. Confirm: the new contribution becomes Available.
+
+**Evidence.** Screenshot of the Unavailable state pre-approval and the
+Available state post-approval.
+
+### 8. Always-on restart smoke (video)
+
+**Goal.** The Extension Platform remains available across reloads and
+restart-like renderer refreshes with no experiment or Governor kill switch.
+
+- Open **Settings → Extensions** and confirm the section is visible.
+- Run **Reload Extensions** and confirm the bundled Demo Extension remains
+  visible.
+- Reload the renderer or restart the app.
+- Confirm: the **Extensions** section and previously trusted roots, enabled
+  Extensions, and approved capabilities are intact; no consent shortcut
+  fires for bundled Extensions.
+
+**Evidence.** **Video** covering the reload/restart round trip.
+
+### 9. Reserved-prefix rejection
+
+**Goal.** A non-bundled Extension claiming a `mux.*` identity is
+rejected with `extension.identity.reserved` and contributes nothing.
+
+- Install (user-global or project-local) a third-party Extension whose
+  manifest declares `id: "mux.foo"`.
+- Run **Reload Extensions**.
+- Confirm: the card surfaces the `extension.identity.reserved`
+  diagnostic; the contributions table is empty (or every row marked
+  Unavailable); the Extension does not register any capability.
+
+**Evidence.** Screenshot of the card with the diagnostic visible.
+
+### 10. Debug snapshot capture
+
+**Goal.** `bun run debug extensions` produces structured JSON in cold,
+post-install, and post-failure states; no third-party identifiers leak
+into telemetry.
+
+- Run `bun run debug extensions` (cold), `bun run debug extensions`
+  (post-install), and `bun run debug extensions` (post-failure: induce
+  a malformed manifest and re-run).
+- Optionally narrow with `--root <rootId>`.
+- Spot-check telemetry events captured during the same session
+  (PostHog console, dev tools, or whichever sink is configured): no
+  event payload contains a third-party Extension identifier. The
+  catalog this should be checked against lives at
+  [Extension Telemetry](/extensions/telemetry).
+
+**Evidence.** Output capture (text) of each run; brief note confirming
+the telemetry spot-check.
+
+### 11. Stale Record handling
+
+**Goal.** Removing an installed Extension from disk leaves its Approval
+Record visible with explicit **Forget** and **Keep** actions.
+
+- Uninstall an Extension you previously approved (delete from
+  `~/.mux/extensions/local/<name>` or remove the source lock entry).
+- Run **Reload Extensions**.
+- Confirm: the section's **Stale Approval Records** group shows the prior
+  Extension as `Stale (extension not currently installed)` with both
+  **Forget** and **Keep** actions wired.
+
+**Evidence.** Screenshot of the Stale Record card.
+
+## Sign-off
+
+- All 11 steps above produce the expected evidence with no unexpected
+  diagnostics.
+- The release PR description links to each piece of evidence and notes
+  the OS / build profile each step was captured on.
+- A migration release does **not** alter this checklist —
+  `MIGRATION*<feature>` switches are exercised separately in the migration
+  release's own checklist.
+
+## Related
+
+- [Extension Authoring Quickstart](/extensions/authoring) — manifest
+  reference and copy-paste starter.
+- [Extension Telemetry](/extensions/telemetry) — full v1 events
+  catalog used in step 10.
+- [Telemetry overview](/reference/telemetry) — host-level telemetry
+  policy that the Extension Telemetry layer wraps.
+- [Debugging](/reference/debugging) — `bun run debug` subcommands,
+  including the `extensions` snapshot dump used in step 10.

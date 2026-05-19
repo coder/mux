@@ -36,7 +36,7 @@ fi
 REQUEST_COMMAND="/coder-agents-review"
 # Match both the app slug and GitHub's bot-login form.
 BOT_LOGIN_REGEX="${CODER_AGENTS_REVIEW_BOT_LOGIN_REGEX:-^coder-agents-review(\[bot\])?$}"
-CODER_AGENTS_BOT_APPROVAL_REGEX="^(no (issues|problems)( found)?[.]?|no major issues( found)?[.]?|didn.t find (any )?(major )?(issues|problems)[.]?|review complete(d)?[.]?|zero open findings[.]?|zero open findings across .* (coder-agents-review |review )?complete[.]?|Round [0-9]+[.] zero open findings[.] (coder-agents-review |review )?complete[.]?|Round [0-9]+[.] zero open findings across .* (coder-agents-review |review )?complete[.]?)$"
+CODER_AGENTS_BOT_APPROVAL_REGEX="^(no (issues|problems)( found)?[.]?|no major issues( found)?[.]?|didn.t find (any )?(major )?(issues|problems)[.]?|review complete(d)?[.]?|zero open findings[.]?|zero open findings across .* (coder-agents-review |review )?complete[.]?|Round [0-9]+[.] zero open findings[.] (coder-agents-review |review )?complete[.]?|Round [0-9]+[.] zero open findings across .* (coder-agents-review |review )?complete[.]?|.*approval stands[.]?.*)$"
 CODER_AGENTS_BOT_NEGATIVE_BEFORE_APPROVAL_REGEX="^(Round [0-9]+ is blocked|Review failed|Failed to review|Unable to review|Cannot review|Could not review|Review timed out|Request timed out|Review cancelled|Request cancelled)"
 CODER_AGENTS_BOT_PROGRESS_REGEX="^(queued|started|running|in progress|reviewing|will review)[[:space:][:punct:]]*$"
 POLL_INTERVAL_SECS=30
@@ -444,12 +444,23 @@ check_coder_agents_status_once() {
     return "$load_rc"
   fi
 
+  local comments_file
+  local reviews_file
+  local threads_file
+  comments_file=$(mktemp)
+  reviews_file=$(mktemp)
+  threads_file=$(mktemp)
+  trap 'rm -f "$comments_file" "$reviews_file" "$threads_file"; trap - RETURN' RETURN
+  printf '%s\n' "$COMMENTS_JSON" >"$comments_file"
+  printf '%s\n' "$REVIEWS_JSON" >"$reviews_file"
+  printf '%s\n' "$THREADS_JSON" >"$threads_file"
+
   request_at=$(jq -rn \
-    --argjson comments "$COMMENTS_JSON" \
+    --slurpfile comments "$comments_file" \
     --arg command "$REQUEST_COMMAND" \
     --arg bot_regex "$BOT_LOGIN_REGEX" '
       [
-        $comments[]
+        $comments[0][]
         | select((((.author.login // "") | test($bot_regex)) | not) and ((.body // "") | test("(?m)^\\s*/coder-agents-review\\s*$")))
       ]
       | sort_by(.createdAt)
@@ -464,22 +475,22 @@ check_coder_agents_status_once() {
   fi
 
   bot_activity_count=$(jq -rn \
-    --argjson comments "$COMMENTS_JSON" \
-    --argjson reviews "$REVIEWS_JSON" \
-    --argjson threads "$THREADS_JSON" \
+    --slurpfile comments "$comments_file" \
+    --slurpfile reviews "$reviews_file" \
+    --slurpfile threads "$threads_file" \
     --arg bot_regex "$BOT_LOGIN_REGEX" '
       ([
-        $comments[]
+        $comments[0][]
         | select((.author.login // "") | test($bot_regex))
       ] | length)
       +
       ([
-        $reviews[]
+        $reviews[0][]
         | select(((.author.login // "") | test($bot_regex)) and (.state != "DISMISSED"))
       ] | length)
       +
       ([
-        $threads[].comments.nodes[]?
+        $threads[0][].comments.nodes[]?
         | select((.author.login // "") | test($bot_regex))
       ] | length)
     ')
@@ -502,18 +513,18 @@ check_coder_agents_status_once() {
 
   if [[ -n "$request_at" ]]; then
     response_count=$(jq -rn \
-      --argjson comments "$COMMENTS_JSON" \
-      --argjson reviews "$REVIEWS_JSON" \
-      --argjson threads "$THREADS_JSON" \
+      --slurpfile comments "$comments_file" \
+      --slurpfile reviews "$reviews_file" \
+      --slurpfile threads "$threads_file" \
       --arg bot_regex "$BOT_LOGIN_REGEX" \
       --arg request_at "$request_at" '
         ([
-          $comments[]
+          $comments[0][]
           | select(((.author.login // "") | test($bot_regex)) and (.createdAt > $request_at))
         ] | length)
         +
         ([
-          $reviews[]
+          $reviews[0][]
           | select(
               ((.author.login // "") | test($bot_regex))
               and (.state != "DISMISSED")
@@ -522,7 +533,7 @@ check_coder_agents_status_once() {
         ] | length)
         +
         ([
-          $threads[].comments.nodes[]?
+          $threads[0][].comments.nodes[]?
           | select(((.author.login // "") | test($bot_regex)) and (.createdAt > $request_at))
         ] | length)
       ')
@@ -532,11 +543,11 @@ check_coder_agents_status_once() {
     fi
 
     latest_issue_comment_body=$(jq -rn \
-      --argjson comments "$COMMENTS_JSON" \
+      --slurpfile comments "$comments_file" \
       --arg bot_regex "$BOT_LOGIN_REGEX" \
       --arg request_at "$request_at" '
         [
-          $comments[]
+          $comments[0][]
           | select(((.author.login // "") | test($bot_regex)) and (.createdAt > $request_at))
         ]
         | sort_by(.createdAt)
@@ -544,11 +555,11 @@ check_coder_agents_status_once() {
         | .body // empty
       ')
     latest_issue_comment_at=$(jq -rn \
-      --argjson comments "$COMMENTS_JSON" \
+      --slurpfile comments "$comments_file" \
       --arg bot_regex "$BOT_LOGIN_REGEX" \
       --arg request_at "$request_at" '
         [
-          $comments[]
+          $comments[0][]
           | select(((.author.login // "") | test($bot_regex)) and (.createdAt > $request_at))
         ]
         | sort_by(.createdAt)
@@ -557,11 +568,11 @@ check_coder_agents_status_once() {
       ')
 
     latest_review_body=$(jq -rn \
-      --argjson reviews "$REVIEWS_JSON" \
+      --slurpfile reviews "$reviews_file" \
       --arg bot_regex "$BOT_LOGIN_REGEX" \
       --arg request_at "$request_at" '
         [
-          $reviews[]
+          $reviews[0][]
           | select(
               ((.author.login // "") | test($bot_regex))
               and (.state != "DISMISSED")
@@ -574,11 +585,11 @@ check_coder_agents_status_once() {
         | .body // empty
       ')
     latest_review_state=$(jq -rn \
-      --argjson reviews "$REVIEWS_JSON" \
+      --slurpfile reviews "$reviews_file" \
       --arg bot_regex "$BOT_LOGIN_REGEX" \
       --arg request_at "$request_at" '
         [
-          $reviews[]
+          $reviews[0][]
           | select(
               ((.author.login // "") | test($bot_regex))
               and (.state != "DISMISSED")
@@ -591,11 +602,11 @@ check_coder_agents_status_once() {
         | .state // empty
       ')
     latest_review_at=$(jq -rn \
-      --argjson reviews "$REVIEWS_JSON" \
+      --slurpfile reviews "$reviews_file" \
       --arg bot_regex "$BOT_LOGIN_REGEX" \
       --arg request_at "$request_at" '
         [
-          $reviews[]
+          $reviews[0][]
           | select(
               ((.author.login // "") | test($bot_regex))
               and (.state != "DISMISSED")
@@ -609,10 +620,10 @@ check_coder_agents_status_once() {
       ')
   else
     latest_issue_comment_body=$(jq -rn \
-      --argjson comments "$COMMENTS_JSON" \
+      --slurpfile comments "$comments_file" \
       --arg bot_regex "$BOT_LOGIN_REGEX" '
         [
-          $comments[]
+          $comments[0][]
           | select((.author.login // "") | test($bot_regex))
         ]
         | sort_by(.createdAt)
@@ -620,10 +631,10 @@ check_coder_agents_status_once() {
         | .body // empty
       ')
     latest_issue_comment_at=$(jq -rn \
-      --argjson comments "$COMMENTS_JSON" \
+      --slurpfile comments "$comments_file" \
       --arg bot_regex "$BOT_LOGIN_REGEX" '
         [
-          $comments[]
+          $comments[0][]
           | select((.author.login // "") | test($bot_regex))
         ]
         | sort_by(.createdAt)
@@ -632,10 +643,10 @@ check_coder_agents_status_once() {
       ')
 
     latest_review_body=$(jq -rn \
-      --argjson reviews "$REVIEWS_JSON" \
+      --slurpfile reviews "$reviews_file" \
       --arg bot_regex "$BOT_LOGIN_REGEX" '
         [
-          $reviews[]
+          $reviews[0][]
           | select(((.author.login // "") | test($bot_regex)) and (.state != "DISMISSED"))
           | . + {reviewedAt: (.submittedAt // .createdAt // "")}
         ]
@@ -644,10 +655,10 @@ check_coder_agents_status_once() {
         | .body // empty
       ')
     latest_review_state=$(jq -rn \
-      --argjson reviews "$REVIEWS_JSON" \
+      --slurpfile reviews "$reviews_file" \
       --arg bot_regex "$BOT_LOGIN_REGEX" '
         [
-          $reviews[]
+          $reviews[0][]
           | select(((.author.login // "") | test($bot_regex)) and (.state != "DISMISSED"))
           | . + {reviewedAt: (.submittedAt // .createdAt // "")}
         ]
@@ -656,10 +667,10 @@ check_coder_agents_status_once() {
         | .state // empty
       ')
     latest_review_at=$(jq -rn \
-      --argjson reviews "$REVIEWS_JSON" \
+      --slurpfile reviews "$reviews_file" \
       --arg bot_regex "$BOT_LOGIN_REGEX" '
         [
-          $reviews[]
+          $reviews[0][]
           | select(((.author.login // "") | test($bot_regex)) and (.state != "DISMISSED"))
           | . + {reviewedAt: (.submittedAt // .createdAt // "")}
         ]

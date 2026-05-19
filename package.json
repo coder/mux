@@ -250,6 +250,7 @@
     "dist/**/*.json",
     "dist/**/*.png",
     "dist/assets/**/*",
+    "build/extensions/**/*",
     "scripts/postinstall.sh",
     "npm-shrinkwrap.json",
     "README.md",
@@ -275,6 +276,15 @@
     },
     "files": [
       "dist/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "build/extensions",
+        "to": "extensions",
+        "filter": [
+          "**/*"
+        ]
+      }
     ],
     "asarUnpack": [
       "dist/**/*.wasm",

@@ -4,7 +4,7 @@ import { access, copyFile, readFile, rm, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { GlobalWindow } from "happy-dom";
+import { installDom } from "../../../tests/ui/dom";
 import { RPCLink as HTTPRPCLink } from "@orpc/client/fetch";
 import { createORPCClient } from "@orpc/client";
 import type { RouterClient } from "@orpc/server";
@@ -266,15 +266,14 @@ function requireAnalyticsServiceCalls(): AnalyticsServiceCalls {
 }
 
 describe("useAnalytics hooks", () => {
+  let cleanupDom: (() => void) | null = null;
   let server: OrpcServer | null = null;
 
   beforeEach(async () => {
     isolatedModulePaths = await importIsolatedAnalyticsModules();
     mock.restore();
     await ensureBuiltInSkillContentStub();
-
-    globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
-    globalThis.document = globalThis.window.document;
+    cleanupDom = installDom();
 
     const analyticsStub = createAnalyticsServiceStub(summaryFixture);
     analyticsServiceCalls = analyticsStub.calls;
@@ -302,8 +301,8 @@ describe("useAnalytics hooks", () => {
     analyticsServiceCalls = null;
     await server?.close();
     server = null;
-    globalThis.window = undefined as unknown as Window & typeof globalThis;
-    globalThis.document = undefined as unknown as Document;
+    cleanupDom?.();
+    cleanupDom = null;
 
     for (const modulePath of isolatedModulePaths) {
       await rm(modulePath, { force: true });

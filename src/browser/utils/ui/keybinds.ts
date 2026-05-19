@@ -515,6 +515,36 @@ export const KEYBINDS = {
   TOGGLE_PLAN_ANNOTATE: { key: "a", shift: true },
 
   TOGGLE_POWER_MODE: { key: "F12", shift: true },
+
+  /** Extensions section: reload all roots */
+  EXTENSIONS_RELOAD: { key: "r" },
+
+  /** Extensions section: focus next extension card */
+  EXTENSIONS_NAVIGATE_NEXT: { key: "j" },
+
+  /** Extensions section: focus previous extension card */
+  EXTENSIONS_NAVIGATE_PREV: { key: "k" },
+
+  /** Extensions section: expand the focused card (Enter alias) */
+  EXTENSIONS_EXPAND_ENTER: { key: "Enter" },
+
+  /** Extensions section: expand the focused card (Space alias) */
+  EXTENSIONS_EXPAND_SPACE: { key: " " },
+
+  /** Extensions section: enable/disable the focused extension */
+  EXTENSIONS_TOGGLE_ENABLE: { key: "e" },
+
+  /** Extensions section: open the grant flow for the focused extension */
+  EXTENSIONS_GRANT: { key: "g" },
+
+  /** Extensions section: trust the project-local Extensions root */
+  EXTENSIONS_TRUST_ROOT: { key: "t" },
+
+  /** Extensions section: scroll the focused card to its diagnostics block */
+  EXTENSIONS_DIAGNOSTICS: { key: "d" },
+
+  /** Extensions section: open the keyboard cheat sheet */
+  EXTENSIONS_CHEATSHEET: { key: "?", shift: true },
 } as const;
 
 /**

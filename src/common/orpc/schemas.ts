@@ -282,6 +282,7 @@ export {
   tasks,
   experiments,
   ExperimentValueSchema,
+  extensions,
   telemetry,
   TelemetryEventSchema,
   signing,

@@ -454,6 +454,8 @@ export class PolicyService {
 
         runtimes:
           parsed.runtimes && parsed.runtimes.length > 0 ? parsed.runtimes.map((r) => r.id) : null,
+
+        extensionPlatform: parsed.extensionPlatform ?? null,
       };
 
       this.updateState({ source: schemaSource, status: { state: "enforced" }, policy: effective });
