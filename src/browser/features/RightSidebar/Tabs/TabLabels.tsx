@@ -13,6 +13,7 @@ import {
   ExternalLink,
   Monitor,
   Globe,
+  Sparkles,
   Target,
   Terminal as TerminalIcon,
   X,
@@ -82,22 +83,56 @@ interface ReviewTabLabelProps {
   reviewStats: ReviewStats | null;
 }
 
-/** Review tab label with read/total badge */
-export const ReviewTabLabel: React.FC<ReviewTabLabelProps> = ({ reviewStats }) => (
-  <>
-    Review
-    {reviewStats !== null && reviewStats.total > 0 && (
-      <span
-        className={cn(
-          "text-[10px]",
-          reviewStats.read === reviewStats.total ? "text-muted" : "text-muted"
-        )}
-      >
-        {reviewStats.read}/{reviewStats.total}
-      </span>
-    )}
-  </>
-);
+/**
+ * Review tab label with two layered signals:
+ *
+ *   1. `read/total` badge — long-standing count of hunks the user has acked.
+ *   2. **Pizzazz indicator** — a Sparkles pill in `--color-review-accent`
+ *      that pulses while the agent's `review_pane_update` flags still have
+ *      unread hunks pending. Surfaces agent focus from outside the Review
+ *      pane so the user notices new flagged work without having to click
+ *      through. Pulse stops once everything assisted is marked read.
+ *
+ * The pulse uses Tailwind's `animate-pulse`. We deliberately keep the
+ * animation subtle (opacity ramp, no scale/translate) so it draws the eye
+ * without dominating the tab strip.
+ */
+export const ReviewTabLabel: React.FC<ReviewTabLabelProps> = ({ reviewStats }) => {
+  const unreadAssisted = reviewStats?.unreadAssisted ?? 0;
+  const hasUnreadAssisted = unreadAssisted > 0;
+  return (
+    <>
+      Review
+      {hasUnreadAssisted && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span
+              className="bg-review-accent/15 text-review-accent inline-flex animate-pulse items-center gap-0.5 rounded-sm px-1 py-px text-[10px] leading-none tabular-nums"
+              aria-label={`${unreadAssisted} unread agent-flagged hunk${unreadAssisted === 1 ? "" : "s"}`}
+              data-testid="review-tab-assisted-pizzazz"
+            >
+              <Sparkles className="h-2.5 w-2.5 shrink-0" aria-hidden="true" />
+              {unreadAssisted}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">
+            {unreadAssisted} agent-flagged hunk{unreadAssisted === 1 ? "" : "s"} pending review
+          </TooltipContent>
+        </Tooltip>
+      )}
+      {reviewStats !== null && reviewStats.total > 0 && (
+        <span
+          className={cn(
+            "text-[10px]",
+            reviewStats.read === reviewStats.total ? "text-muted" : "text-muted"
+          )}
+        >
+          {reviewStats.read}/{reviewStats.total}
+        </span>
+      )}
+    </>
+  );
+};
 
 /** Desktop tab label with monitor icon */
 export const DesktopTabLabel: React.FC = () => (

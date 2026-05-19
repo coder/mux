@@ -93,6 +93,8 @@ import { getErrorMessage } from "@/common/utils/errors";
 interface ReviewPanelStats {
   total: number;
   read: number;
+  /** Agent-flagged hunks in the current diff that the user hasn't read yet. */
+  unreadAssisted: number;
 }
 
 interface FileReadStatusSummary {
@@ -637,12 +639,28 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   );
   const hasAssistedHunks = assistedHunks.length > 0;
 
-  // Reset the Assisted toggle when the agent clears its hint set so the
-  // pane doesn't stay stuck on an empty filter.
+  // Auto-focus the Review pane on the agent's flagged hunks the first time
+  // they appear in a session: flip `assistedOnly` to true so the user lands
+  // directly on the critical changes. Subsequent manual toggles stick because
+  // the ref guards against re-arming until the agent clears + re-flags.
+  //
+  // - First rise (false → true): force-on, set the latch.
+  // - Subsequent flag updates while latched: do nothing (respect user choice).
+  // - Drop (true → false): reset the toggle AND re-arm the latch so the next
+  //   batch of flagged hunks gets focus again.
+  const hasAutoEnabledAssistedRef = useRef(false);
   useEffect(() => {
-    if (!hasAssistedHunks) {
-      setFilters((prev) => (prev.assistedOnly ? { ...prev, assistedOnly: false } : prev));
+    if (hasAssistedHunks) {
+      if (!hasAutoEnabledAssistedRef.current) {
+        hasAutoEnabledAssistedRef.current = true;
+        setFilters((prev) => (prev.assistedOnly ? prev : { ...prev, assistedOnly: true }));
+      }
+      return;
     }
+    // Agent cleared its hint set — drop the filter and re-arm auto-focus
+    // so the next round of flags re-triggers focus mode.
+    hasAutoEnabledAssistedRef.current = false;
+    setFilters((prev) => (prev.assistedOnly ? { ...prev, assistedOnly: false } : prev));
   }, [hasAssistedHunks]);
 
   const handleDiffBaseInteraction = useCallback(
@@ -1485,6 +1503,21 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     [hunks, markAsRead, filters.showReadHunks, selectedHunkId, setSelectedHunkId]
   );
 
+  // Count agent-flagged hunks the user hasn't acked. This feeds the
+  // Review tab's "pizzazz" indicator (Sparkles + count) so unread agent
+  // focus is visible from outside the Review pane. We walk the resolved
+  // match map (post path+range matching) rather than `assistedHunks` directly
+  // because filters that don't intersect the current diff shouldn't be
+  // counted as pending work.
+  const unreadAssistedCount = useMemo(() => {
+    if (assistedMatchByHunkId.size === 0) return 0;
+    let count = 0;
+    for (const hunkId of assistedMatchByHunkId.keys()) {
+      if (!isRead(hunkId)) count += 1;
+    }
+    return count;
+  }, [assistedMatchByHunkId, isRead]);
+
   // Calculate stats from the same precomputed read summaries so read toggles do one pass.
   const stats = useMemo(() => {
     const total = hunks.length;
@@ -1492,13 +1525,18 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
       total,
       read: readHunkCount,
       unread: total - readHunkCount,
+      unreadAssisted: unreadAssistedCount,
     };
-  }, [hunks.length, readHunkCount]);
+  }, [hunks.length, readHunkCount, unreadAssistedCount]);
 
   // Report stats to parent for tab badge
   useEffect(() => {
-    onStatsChange?.({ total: stats.total, read: stats.read });
-  }, [stats.total, stats.read, onStatsChange]);
+    onStatsChange?.({
+      total: stats.total,
+      read: stats.read,
+      unreadAssisted: stats.unreadAssisted,
+    });
+  }, [stats.total, stats.read, stats.unreadAssisted, onStatsChange]);
 
   // Scroll selected hunk into view
   useEffect(() => {
