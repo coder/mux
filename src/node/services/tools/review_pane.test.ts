@@ -180,6 +180,35 @@ describe("review_pane tool persistence", () => {
     ]);
   });
 
+  it("serializes concurrent add operations so no pinned hunks are lost", async () => {
+    // Regression guard for Codex P1: locking only the write lets sibling
+    // `add` calls all read the same baseline, then last-writer-wins drops
+    // earlier pins. The whole read/apply/write sequence must be one critical
+    // section so every add composes with the previous one.
+    using tempDir = new TestTempDir("review-pane-concurrent");
+    const config = createTestToolConfig(tempDir.path, {
+      workspaceId: "ws-concurrent",
+      sessionsDir: tempDir.path,
+    });
+    const update = createReviewPaneUpdateTool(config);
+    const get = createReviewPaneGetTool(config);
+
+    const count = 12;
+    await Promise.all(
+      Array.from({ length: count }, async (_, i) =>
+        runUpdate(update, {
+          operation: "add",
+          hunks: [{ path: `src/concurrent-${i}.ts`, comment: `pin ${i}` }],
+        })
+      )
+    );
+
+    const got = await runGet(get);
+    const paths = got.hunks.map((h) => h.path).sort();
+    expect(paths).toEqual(Array.from({ length: count }, (_, i) => `src/concurrent-${i}.ts`).sort());
+    expect(got.hunks).toHaveLength(count);
+  });
+
   it("removes the on-disk file when the agent clears its hint set", async () => {
     // A residual file would shadow a fresh start (the file would be re-read
     // and re-applied to dedup math), so a `replace` with no hunks must

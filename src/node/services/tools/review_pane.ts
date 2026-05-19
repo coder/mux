@@ -28,31 +28,47 @@ import { workspaceFileLocks } from "@/node/utils/concurrency/workspaceFileLocks"
  * across restarts so the agent never sees a silently-emptied list and then
  * accidentally truncates prior flagged regions.
  *
- * Writes go through `workspaceFileLocks` (same lock domain as `todo_write`)
- * so concurrent tool calls from sibling agents serialize correctly.
+ * The read/apply/write sequence (not just the write) goes through
+ * `workspaceFileLocks` so concurrent `operation: "add"` calls from sibling
+ * agents cannot both read the same baseline and clobber each other.
  */
-async function writeAssistedReviewToDisk(
-  workspaceId: string,
+async function writeAssistedReviewFile(
   workspaceSessionDir: string,
   hunks: AssistedReviewHunk[]
 ): Promise<void> {
-  await workspaceFileLocks.withLock(workspaceId, async () => {
-    const filePath = getAssistedReviewFilePath(workspaceSessionDir);
-    if (hunks.length === 0) {
-      // Clean up the file when the agent clears its hint set so a stale
-      // file can't shadow a fresh start.
-      try {
-        await fs.unlink(filePath);
-      } catch (error) {
-        if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
-          return;
-        }
-        throw error;
+  const filePath = getAssistedReviewFilePath(workspaceSessionDir);
+  if (hunks.length === 0) {
+    // Clean up the file when the agent clears its hint set so a stale
+    // file can't shadow a fresh start.
+    try {
+      await fs.unlink(filePath);
+    } catch (error) {
+      if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+        return;
       }
-      return;
+      throw error;
     }
-    await fs.mkdir(path.dirname(filePath), { recursive: true });
-    await writeFileAtomic(filePath, JSON.stringify(hunks, null, 2));
+    return;
+  }
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await writeFileAtomic(filePath, JSON.stringify(hunks, null, 2));
+}
+
+async function applyReviewPaneUpdateForSessionDir(
+  workspaceId: string,
+  workspaceSessionDir: string,
+  args: ReviewPaneUpdateArgs
+): Promise<{ hunks: AssistedReviewHunk[]; rejected: string[] }> {
+  return workspaceFileLocks.withLock(workspaceId, async () => {
+    // Read prior state from disk so `operation: "add"` sees the right
+    // baseline across app/backend restarts. The whole read-modify-write is
+    // locked so concurrent `add` calls compose instead of last-writer-wins.
+    const current = await readAssistedReviewForSessionDir(workspaceSessionDir);
+    const result = applyReviewPaneUpdate(current, args);
+    // Persist before returning so a successful tool result is always backed
+    // by durable state.
+    await writeAssistedReviewFile(workspaceSessionDir, result.hunks);
+    return result;
   });
 }
 
@@ -127,15 +143,11 @@ export const createReviewPaneUpdateTool: ToolFactory = (config) => {
         );
       }
 
-      // Read prior state from disk so `operation: "add"` sees the right
-      // baseline across app/backend restarts. The frontend rebuilds from
-      // transcript replay; this keeps the tool's view in sync.
-      const current = await readAssistedReviewForSessionDir(config.workspaceSessionDir);
-      const { hunks, rejected } = applyReviewPaneUpdate(current, args);
-      // Persist before returning so a successful tool result is always
-      // backed by durable state — a crash between write and return would
-      // already have committed the change.
-      await writeAssistedReviewToDisk(config.workspaceId, config.workspaceSessionDir, hunks);
+      const { hunks, rejected } = await applyReviewPaneUpdateForSessionDir(
+        config.workspaceId,
+        config.workspaceSessionDir,
+        args
+      );
 
       return {
         success: true as const,
