@@ -17,7 +17,6 @@ void mock.module("@/browser/components/Tooltip/Tooltip", () => ({
   TooltipContent: () => null,
 }));
 
-// Minimal message factory covering the three flag combinations we care about.
 function createAssistantMessage(overrides: {
   isStreaming?: boolean;
   isLastPartOfMessage?: boolean;
@@ -29,11 +28,24 @@ function createAssistantMessage(overrides: {
     historySequence: 1,
     parts: [],
     metadata: { model: "test-model", partial: overrides.isPartial ? true : undefined },
-    // The meta-row gate reads these fields off a DisplayedMessage-like object, but
-    // MessageWindow accepts the broader union. Cast is safe because the consumer
-    // only touches the fields we populate.
     ...(overrides as object),
   } as unknown as MuxMessage;
+}
+
+function renderAssistantWindow(overrides: Parameters<typeof createAssistantMessage>[0]) {
+  const message = createAssistantMessage(overrides);
+  return render(
+    <MessageWindow label="model" message={message} variant="assistant">
+      <div>content</div>
+    </MessageWindow>
+  );
+}
+
+function expectAssistantMeta(container: HTMLElement, visible: boolean) {
+  const block = container.querySelector("[data-message-block]");
+  expect(block).not.toBeNull();
+  expect(block?.querySelector("[data-message-meta]") !== null).toBe(visible);
+  expect(/\bmb-4\b/.test(block?.className ?? "")).toBe(visible);
 }
 
 describe("MessageWindow meta-row stability", () => {
@@ -49,87 +61,46 @@ describe("MessageWindow meta-row stability", () => {
     cleanupDom = null;
   });
 
-  test("hides the meta row while an assistant part is still streaming", () => {
-    // Before the fix, an actively streaming part with isLastPartOfMessage=true
-    // rendered the meta row — which then vanished the moment the part stopped
-    // being last (tool appended). Keeping the meta row hidden throughout active
-    // streaming removes the mid-turn tear.
-    const message = createAssistantMessage({
+  test("hides assistant meta while the stream-start part is still active", () => {
+    // Stream-start rows are often already marked as the last part; wait for the
+    // part to settle so the meta row does not flash in and then tear out.
+    const { container } = renderAssistantWindow({
       isStreaming: true,
       isLastPartOfMessage: true,
       isPartial: false,
     });
-    const { container } = render(
-      <MessageWindow label="model" message={message} variant="assistant">
-        <div>content</div>
-      </MessageWindow>
-    );
 
-    const block = container.querySelector("[data-message-block]");
-    expect(block).not.toBeNull();
-    expect(block?.querySelector("[data-message-meta]")).toBeNull();
-    expect(block?.className).not.toMatch(/\bmb-4\b/);
+    expectAssistantMeta(container, false);
   });
 
-  test("hides the meta row when the part is no longer last (another part displaced it)", () => {
-    // After a tool call appends to an assistant message, the previous text part's
-    // isLastPartOfMessage flips false. We must not keep (or re-render) a meta row
-    // on the displaced part, otherwise the later-arriving tool's own content
-    // would visually duplicate the meta information.
-    const message = createAssistantMessage({
+  test("hides assistant meta when another part displaces the current part", () => {
+    const { container } = renderAssistantWindow({
       isStreaming: false,
       isLastPartOfMessage: false,
       isPartial: false,
     });
-    const { container } = render(
-      <MessageWindow label="model" message={message} variant="assistant">
-        <div>content</div>
-      </MessageWindow>
-    );
 
-    const block = container.querySelector("[data-message-block]");
-    expect(block?.querySelector("[data-message-meta]")).toBeNull();
-    expect(block?.className).not.toMatch(/\bmb-4\b/);
+    expectAssistantMeta(container, false);
   });
 
-  test("shows the meta row and mb-4 only when the last part has settled", () => {
-    // Natural terminal state: stream ended, part is still last, and not a
-    // persisted partial. This is the single moment where the meta row and the
-    // larger bottom margin should appear — one controlled reveal at the end of
-    // the turn rather than a flicker during streaming.
-    const message = createAssistantMessage({
+  test("shows assistant meta only when the last part has settled", () => {
+    const { container } = renderAssistantWindow({
       isStreaming: false,
       isLastPartOfMessage: true,
       isPartial: false,
     });
-    const { container } = render(
-      <MessageWindow label="model" message={message} variant="assistant">
-        <div>content</div>
-      </MessageWindow>
-    );
 
-    const block = container.querySelector("[data-message-block]");
-    expect(block?.querySelector("[data-message-meta]")).not.toBeNull();
-    expect(block?.className).toMatch(/\bmb-4\b/);
+    expectAssistantMeta(container, true);
   });
 
-  test("treats interrupted (isPartial) parts as not-settled even with isLastPartOfMessage", () => {
-    // Partials remain answerable/rewriteable; they should not show the
-    // end-of-turn meta affordances that imply the response is done.
-    const message = createAssistantMessage({
+  test("treats interrupted parts as not-settled even with isLastPartOfMessage", () => {
+    const { container } = renderAssistantWindow({
       isStreaming: false,
       isLastPartOfMessage: true,
       isPartial: true,
     });
-    const { container } = render(
-      <MessageWindow label="model" message={message} variant="assistant">
-        <div>content</div>
-      </MessageWindow>
-    );
 
-    const block = container.querySelector("[data-message-block]");
-    expect(block?.querySelector("[data-message-meta]")).toBeNull();
-    expect(block?.className).not.toMatch(/\bmb-4\b/);
+    expectAssistantMeta(container, false);
   });
 
   test("user messages keep the meta row regardless of part flags", () => {

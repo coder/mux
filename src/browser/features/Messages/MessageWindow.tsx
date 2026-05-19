@@ -4,7 +4,7 @@ import { TranscriptQuoteRoot } from "./TranscriptQuoteBoundary";
 import { formatTimestamp } from "@/browser/utils/ui/dateTime";
 import { Code2Icon } from "lucide-react";
 import type { ReactNode } from "react";
-import React, { useMemo, useState } from "react";
+import React, { useState } from "react";
 import { useChatHostContext } from "@/browser/contexts/ChatHostContext";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
 import { Button } from "@/browser/components/Button/Button";
@@ -47,34 +47,20 @@ export const MessageWindow: React.FC<MessageWindowProps> = ({
   const canShowJson = uiSupport.jsonRawView === "supported";
   const isShowingJson = canShowJson && showJson;
 
-  // Get timestamp from message if available
   const timestamp =
     "timestamp" in message && typeof message.timestamp === "number" ? message.timestamp : null;
+  const formattedTimestamp = timestamp ? formatTimestamp(timestamp) : null;
 
-  // Memoize formatted timestamp to avoid recalculating on every render
-  const formattedTimestamp = useMemo(
-    () => (timestamp ? formatTimestamp(timestamp) : null),
-    [timestamp]
-  );
+  // Keep assistant meta chrome hidden until the terminal part is settled. Stream-start rows
+  // are usually both streaming and "last", so rendering the meta row immediately makes it
+  // tear out of the transcript when the next part arrives.
+  const showAssistantMetaRow =
+    "isLastPartOfMessage" in message &&
+    message.isLastPartOfMessage &&
+    !message.isPartial &&
+    !("isStreaming" in message && message.isStreaming);
 
-  // Meta-row visibility must be settled before we commit it, otherwise every new part
-  // arriving mid-turn (text -> tool, reasoning -> text, etc.) flips the previous part's
-  // `isLastPartOfMessage` from true to false and tears ~36-40px of meta-row + margin
-  // out of the transcript in a single commit. Require the part to have also stopped
-  // streaming — that flag flips in the same aggregator snapshot as `isLastPartOfMessage`,
-  // so checking both here keeps the meta row hidden throughout the turn and only reveals
-  // it once, on the genuine terminal part after the turn has completed.
-  const isSettledLastPart = useMemo(() => {
-    if (!("isLastPartOfMessage" in message)) return false;
-    if (!message.isLastPartOfMessage) return false;
-    if (message.isPartial) return false;
-    if ("isStreaming" in message && message.isStreaming) return false;
-    return true;
-  }, [message]);
-
-  // We do not want to display these on every message, otherwise it spams the UI
-  // with buttons and timestamps
-  const showMetaRow = variant === "user" || isSettledLastPart;
+  const showMetaRow = variant === "user" || showAssistantMetaRow;
 
   return (
     <div
@@ -85,7 +71,7 @@ export const MessageWindow: React.FC<MessageWindowProps> = ({
         // Pair the extra bottom margin with the meta row so the surrounding transcript
         // space only changes at the same (settled) moment as the meta row appearing,
         // avoiding a second separate tear step.
-        isSettledLastPart && "mb-4",
+        showAssistantMetaRow && "mb-4",
         // Caller-supplied class — used by side-question rendering to apply
         // the "side branch" left-accent treatment. Previously declared but
         // never spread onto the outer container, so callers couldn't theme
