@@ -318,6 +318,20 @@ function expectCommandMatching(
   return index;
 }
 
+function expectPartialWorkspaceCleanupOrder(
+  command: string,
+  workspacePath: string,
+  workspaceName: string
+): void {
+  const removeIndex = command.indexOf(`rm -rf "${workspacePath}"`);
+  const pruneIndex = command.indexOf("worktree prune");
+  const branchIndex = command.indexOf(`branch -D -- '${workspaceName}'`);
+
+  expect(removeIndex).toBeGreaterThanOrEqual(0);
+  expect(pruneIndex).toBeGreaterThan(removeIndex);
+  expect(branchIndex).toBeGreaterThan(pruneIndex);
+}
+
 function isTmpPackCleanupCommand(command: string): boolean {
   return command.startsWith("pack_dir=") && command.includes("tmp_pack_*");
 }
@@ -498,8 +512,11 @@ describe("SSHRuntime project sync retry orchestration", () => {
       (command) => command.includes("worktree prune") && command.includes("rm -rf")
     );
     expect(cleanupCommand).toBeDefined();
-    expect(cleanupCommand ?? "").toContain("branch -D -- 'feature-cancelled'");
-    expect(cleanupCommand ?? "").toContain('rm -rf "/remote/src/project/feature-cancelled"');
+    expectPartialWorkspaceCleanupOrder(
+      cleanupCommand ?? "",
+      "/remote/src/project/feature-cancelled",
+      "feature-cancelled"
+    );
   });
 
   it("cleans only partial state when slow worktree materialization fails", async () => {
@@ -516,8 +533,11 @@ describe("SSHRuntime project sync retry orchestration", () => {
       (command) => command.includes("worktree prune") && command.includes("rm -rf")
     );
     expect(cleanupCommand).toBeDefined();
-    expect(cleanupCommand ?? "").toContain("branch -D -- 'feature-materialize'");
-    expect(cleanupCommand ?? "").toContain('rm -rf "/remote/src/project/feature-materialize"');
+    expectPartialWorkspaceCleanupOrder(
+      cleanupCommand ?? "",
+      "/remote/src/project/feature-materialize",
+      "feature-materialize"
+    );
   });
 
   it("preserves materialized workspaces when submodule initialization fails", async () => {

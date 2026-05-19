@@ -2418,11 +2418,16 @@ export class SSHRuntime extends RemoteRuntime {
       const cleanupResult = await execBuffered(
         this,
         [
+          // Partial materialization cleanup is ordered by Git's ownership model:
+          // remove the path first, prune stale worktree metadata second, then
+          // delete the branch after Git no longer records it as checked out.
+          "cleanup_exit=0",
+          `${workspaceDirectoryCleanup} || cleanup_exit=$?`,
           `if test -d ${baseRepoPathArg}; then`,
           `  ${nhp}git -C ${baseRepoPathArg} worktree prune 2>/dev/null || true`,
           `  ${branchCleanup}`,
           "fi",
-          workspaceDirectoryCleanup,
+          'exit "$cleanup_exit"',
         ].join("\n"),
         { cwd: "/tmp", timeout: 30 }
       );
