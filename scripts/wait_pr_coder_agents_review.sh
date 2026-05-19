@@ -33,8 +33,8 @@ REQUEST_COMMAND="/coder-agents-review"
 # Match both the app slug and GitHub's bot-login form.
 BOT_LOGIN_REGEX="${CODER_AGENTS_REVIEW_BOT_LOGIN_REGEX:-^coder-agents-review(\[bot\])?$}"
 CODER_AGENTS_ISSUE_COMMENT_APPROVAL_REGEX="no (issues|problems)|no major issues|looks good|lgtm|didn.t find|(^|[[:space:][:punct:]])approved([[:space:][:punct:]]|$)"
-CODER_AGENTS_ISSUE_COMMENT_NEGATIVE_BEFORE_APPROVAL_REGEX="not approved|not yet approved"
-CODER_AGENTS_ISSUE_COMMENT_NEGATIVE_REGEX="review failed|failed to|unable to|cannot review|could not review|timed out|cancelled|blocked|needs changes|changes requested|without author response|unaddressed|to unblock"
+CODER_AGENTS_ISSUE_COMMENT_NEGATIVE_BEFORE_APPROVAL_REGEX="not approved|not yet approved|review failed|failed to review|unable to review|cannot review|could not review|timed out|cancelled|blocked|needs changes|changes requested|without author response|unaddressed|to unblock"
+CODER_AGENTS_ISSUE_COMMENT_NEGATIVE_REGEX="a^"
 CODER_AGENTS_ISSUE_COMMENT_PROGRESS_REGEX="queued|started|running|in progress|reviewing|will review|working"
 POLL_INTERVAL_SECS=30
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
