@@ -192,6 +192,8 @@ describe("Mermaid layout stability", () => {
       const svg = view.container.querySelector(".mermaid-container svg");
       expect(svg).not.toBeNull();
     });
+    const container = view.container.querySelector<HTMLElement>(".mermaid-container");
+    expect(container?.style.minHeight).toBe("300px");
     expect(view.container.querySelector("script")).toBeNull();
   });
 });

@@ -339,6 +339,7 @@ export function useAutoScroll() {
     if (!scrollContainer || !ResizeObserverCtor) return;
 
     const observer = new ResizeObserverCtor(() => {
+      stickToBottom();
       startBottomLockFrameLoop();
     });
     observer.observe(scrollContainer);
@@ -348,7 +349,7 @@ export function useAutoScroll() {
     }
 
     return () => observer.disconnect();
-  }, [autoScroll, startBottomLockFrameLoop]);
+  }, [autoScroll, startBottomLockFrameLoop, stickToBottom]);
 
   return {
     contentRef,

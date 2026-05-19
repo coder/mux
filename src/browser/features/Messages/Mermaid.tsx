@@ -425,9 +425,9 @@ export const Mermaid: React.FC<{ chart: string }> = ({ chart }) => {
             maxWidth: "70%",
             margin: "0 auto",
             ["--diagram-max-height" as string]: `${diagramMaxHeight}px`,
+            minHeight: `${MIN_HEIGHT}px`,
             ...(showPendingPlaceholder
               ? {
-                  minHeight: `${MIN_HEIGHT}px`,
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",

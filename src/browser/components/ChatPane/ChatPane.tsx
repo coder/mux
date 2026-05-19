@@ -801,20 +801,18 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     : null;
 
   const hasInterruptedStream = interruption?.hasInterruptedStream ?? false;
+  const shouldShowStreamingBarrier = isStreamStarting || canInterrupt;
   // Keep rendering cached transcript rows during incremental catch-up so workspace switches
-  // feel stable, but a brand-new chat should keep its starting barrier visible instead of
-  // flashing transcript placeholders before the first send reaches the workspace history.
+  // feel stable, but active stream-start/interrupt states should keep their barrier visible
+  // instead of flashing full-height transcript placeholders.
   const showTranscriptHydrationPlaceholder =
-    isHydratingTranscript && deferredMessages.length === 0 && !workspaceState.isStreamStarting;
+    isHydratingTranscript && deferredMessages.length === 0 && !shouldShowStreamingBarrier;
   const showEmptyTranscriptPlaceholder =
     deferredMessages.length === 0 &&
     !showTranscriptHydrationPlaceholder &&
-    !workspaceState.isStreamStarting;
+    !shouldShowStreamingBarrier;
   const showRetryBarrier =
-    !isHydratingTranscript &&
-    !workspaceState.canInterrupt &&
-    !workspaceState.isStreamStarting &&
-    hasInterruptedStream;
+    !isHydratingTranscript && !shouldShowStreamingBarrier && hasInterruptedStream;
   const isAutoRetryActive =
     workspaceState.autoRetryStatus?.type === "auto-retry-scheduled" ||
     workspaceState.autoRetryStatus?.type === "auto-retry-starting";
@@ -840,7 +838,6 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
       interruptedBarrierMessageIds.add(message.id);
     }
   }
-  const shouldShowStreamingBarrier = isStreamStarting || canInterrupt;
   const transcriptTailItems: LayoutStackItem[] = [];
   if (shouldMountRetryBarrier) {
     transcriptTailItems.push({
