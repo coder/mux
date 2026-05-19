@@ -74,6 +74,7 @@ const BASE_REPO_PROMISOR_CLEANUP_TIMEOUT_SECONDS = 10;
 const BASE_REPO_TMP_PACK_MIN_AGE_MINUTES = 30;
 const BASE_REPO_TMP_PACK_SWEEP_TIMEOUT_SECONDS = 10;
 const BASE_REPO_MIN_FREE_BYTES = 5 * 1024 * 1024 * 1024;
+const BASE_REPO_MIN_FREE_KIB = BASE_REPO_MIN_FREE_BYTES / 1024;
 /** Git config keys that announce a bare repo as a promisor remote to
  *  `repo_has_promisor_remote()`. Unsetting all three is what makes
  *  receive-pack's `check_connected()` skip the buggy partial-clone fast
@@ -2566,7 +2567,11 @@ export class SSHRuntime extends RemoteRuntime {
     //      the rare case where the user changed origin between syncs. Both
     //      `remote set-url` and the fallback `remote add` are idempotent and
     //      cost no network I/O.
-    //   2. Best-effort `git fetch origin +refs/heads/<trunk>:refs/remotes/origin/<trunk>`.
+    //   2. Gate the best-effort remote fetch on the same free-space invariant
+    //      as the slow-path origin prefetch. The warm path is deliberately
+    //      fused into one SSH command, so the headroom check lives beside the
+    //      fetch instead of adding a separate probe round-trip.
+    //   3. Best-effort `git fetch origin +refs/heads/<trunk>:refs/remotes/origin/<trunk>`.
     //      This mirrors `fetchOriginTrunk()` in the slow path: failure is
     //      tolerated (logged via `fo=0`) and the worktree falls back to the
     //      bundle ref, exactly like `resolveFreshWorkspaceSourceBase()` does
@@ -2576,7 +2581,9 @@ export class SSHRuntime extends RemoteRuntime {
     const originPreamble = originUrlArg
       ? [
           `git -C ${baseRepoPathArg} remote set-url origin ${originUrlArg} 2>/dev/null || git -C ${baseRepoPathArg} remote add origin ${originUrlArg} >/dev/null 2>&1 || true`,
-          `if ${nhp}git -C ${baseRepoPathArg} fetch --quiet origin ${trunkRefspecArg} 2>/dev/null; then fo=1; else fo=0; fi`,
+          `free_kib=$(df -Pk ${baseRepoPathArg} 2>/dev/null | awk 'NR==2 {print $4}')`,
+          `case "$free_kib" in ""|*[!0-9]*) can_fetch_origin=1 ;; *) [ "$free_kib" -ge ${BASE_REPO_MIN_FREE_KIB} ] && can_fetch_origin=1 || can_fetch_origin=0 ;; esac`,
+          `if [ "$can_fetch_origin" = "0" ]; then echo WARM_ORIGIN_FETCH_SKIPPED_LOW_DISK:$free_kib; fo=0; elif ${nhp}git -C ${baseRepoPathArg} fetch --quiet origin ${trunkRefspecArg} 2>/dev/null; then fo=1; else fo=0; fi`,
         ]
       : ["fo=0"];
 
@@ -2626,6 +2633,14 @@ export class SSHRuntime extends RemoteRuntime {
     }
 
     const stdout = result.stdout;
+    const lowDiskFetchSkipMatch = /WARM_ORIGIN_FETCH_SKIPPED_LOW_DISK:(\d+)/.exec(stdout);
+    if (lowDiskFetchSkipMatch) {
+      const freeBytes = Number.parseInt(lowDiskFetchSkipMatch[1], 10) * 1024;
+      initLogger.logStep(
+        `Skipping warm fast-path origin fetch: ${formatBytes(freeBytes)} free, need at least ${formatBytes(BASE_REPO_MIN_FREE_BYTES)}`
+      );
+    }
+
     if (!stdout.includes("WARM_OK")) {
       const missMatch = /WARM_MISS:(\S+)/.exec(stdout);
       const reason = missMatch ? missMatch[1] : "unknown";

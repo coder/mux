@@ -1,3 +1,6 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "bun:test";
 import type { ExecOptions, ExecStream, InitLogger, WorkspaceInitParams } from "./Runtime";
 import { SSHRuntime } from "./SSHRuntime";
@@ -229,6 +232,70 @@ class CleanupCommandSSHRuntime extends SSHRuntime {
     }
     return Promise.resolve(createExecStream(""));
   }
+}
+
+class WarmPathCommandSSHRuntime extends SSHRuntime {
+  readonly commands: string[] = [];
+  readonly steps: string[] = [];
+
+  constructor() {
+    const config: SSHRuntimeConfig = {
+      host: "example.test",
+      srcBaseDir: "/remote/src",
+    };
+    super(config, createMockTransport(config));
+  }
+
+  createInitParams(projectPath: string, workspaceName: string): WorkspaceInitParams {
+    return {
+      projectPath,
+      branchName: workspaceName,
+      trunkBranch: "main",
+      workspacePath: `/remote/src/project/${workspaceName}`,
+      initLogger: {
+        ...noopInitLogger,
+        logStep: (step) => {
+          this.steps.push(step);
+        },
+      },
+      trusted: true,
+    };
+  }
+
+  override exec(command: string, _options: ExecOptions): Promise<ExecStream> {
+    this.commands.push(command);
+
+    if (command.includes("WARM_MISS:")) {
+      return Promise.resolve(createExecStream("GITMODULES=missing\nWARM_OK\n"));
+    }
+
+    return Promise.resolve(createExecStream(""));
+  }
+}
+
+async function createLocalRepoWithOrigin(): Promise<string> {
+  const projectPath = await mkdtemp(path.join(os.tmpdir(), "mux-ssh-warm-path-"));
+  await mkdir(path.join(projectPath, ".git", "objects"), { recursive: true });
+  await mkdir(path.join(projectPath, ".git", "refs", "heads"), { recursive: true });
+  await writeFile(path.join(projectPath, ".git", "HEAD"), "ref: refs/heads/main\n");
+  await writeFile(
+    path.join(projectPath, ".git", "refs", "heads", "main"),
+    "1111111111111111111111111111111111111111\n"
+  );
+  await writeFile(
+    path.join(projectPath, ".git", "config"),
+    [
+      "[core]",
+      "\trepositoryformatversion = 0",
+      "\tfilemode = true",
+      "\tbare = false",
+      '[remote "origin"]',
+      "\turl = https://example.test/repo.git",
+      "\tfetch = +refs/heads/*:refs/remotes/origin/*",
+      "",
+    ].join("\n")
+  );
+  return projectPath;
 }
 
 class InitMaterializationSSHRuntime extends SSHRuntime {
@@ -495,6 +562,34 @@ describe("SSHRuntime project sync retry orchestration", () => {
     expect(runtime.steps[0]).toContain("running maintenance before sync");
     expect(isHealthProbeCommand(runtime.commands[0] ?? "")).toBe(true);
     expectMaintenanceCommands(runtime, baseRepoPathArg);
+  });
+
+  it("gates warm-path origin fetch on remote disk headroom", async () => {
+    const projectPath = await createLocalRepoWithOrigin();
+    try {
+      const runtime = new WarmPathCommandSSHRuntime();
+
+      const result = await runtime.initWorkspace(
+        runtime.createInitParams(projectPath, "feature-warm-headroom")
+      );
+
+      expect(result.success).toBe(true);
+      const warmCommand = runtime.commands.find((command) =>
+        command.includes("fetch --quiet origin")
+      );
+      expect(warmCommand).toBeDefined();
+      const command = warmCommand ?? "";
+      const diskCheckIndex = command.indexOf("df -Pk");
+      const lowDiskBranchIndex = command.indexOf('if [ "$can_fetch_origin" = "0" ]');
+      const fetchIndex = command.indexOf("fetch --quiet origin");
+
+      expect(diskCheckIndex).toBeGreaterThanOrEqual(0);
+      expect(lowDiskBranchIndex).toBeGreaterThan(diskCheckIndex);
+      expect(fetchIndex).toBeGreaterThan(lowDiskBranchIndex);
+      expect(command).toContain("WARM_ORIGIN_FETCH_SKIPPED_LOW_DISK");
+    } finally {
+      await rm(projectPath, { recursive: true, force: true });
+    }
   });
 
   it("cleans partial SSH workspace state when materialization cleanup is requested", async () => {
