@@ -36,7 +36,7 @@ fi
 REQUEST_COMMAND="/coder-agents-review"
 # Match both the app slug and GitHub's bot-login form.
 BOT_LOGIN_REGEX="${CODER_AGENTS_REVIEW_BOT_LOGIN_REGEX:-^coder-agents-review(\[bot\])?$}"
-CODER_AGENTS_BOT_APPROVAL_REGEX="^[[:space:]]*(no (issues|problems)( found)?[.]?|no major issues( found)?[.]?|didn.t find (any )?(major )?(issues|problems)[.]?|review complete(d)?[.]?)[[:space:]]*$|(^|[[:space:]])zero open findings([.]|[[:space:]]+across[[:space:]].*)?$"
+CODER_AGENTS_BOT_APPROVAL_REGEX="^[[:space:]]*(no (issues|problems)( found)?[.]?|no major issues( found)?[.]?|didn.t find (any )?(major )?(issues|problems)[.]?|review complete(d)?[.]?|zero open findings([.]|[[:space:]]+across[[:space:]].*)?)[[:space:]]*$"
 CODER_AGENTS_BOT_NEGATIVE_BEFORE_APPROVAL_REGEX="^[[:space:]]*(Round [0-9]+ is blocked|Review failed|Failed to review|Unable to review|Cannot review|Could not review|Review timed out|Request timed out|Review cancelled|Request cancelled)"
 CODER_AGENTS_BOT_PROGRESS_REGEX="^[[:space:]]*(queued|started|running|in progress|reviewing|will review)[[:space:][:punct:]]*$"
 POLL_INTERVAL_SECS=30
