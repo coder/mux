@@ -265,6 +265,14 @@ export function ImageGenerationExperimentConfig(props: ImageGenerationExperiment
     };
   }, [api, loaded, loadFailed]);
 
+  // NOTE: This blur handler resets invalid drafts back to a default. That
+  // interacts badly with naive Storybook play sequences like
+  // `userEvent.clear(...)` followed by `userEvent.type(...)`, because an
+  // interleaved blur can reset the field mid-sequence and produce flaky
+  // assertions (e.g. "42" instead of "2"). Story authors interacting with
+  // this input should use `replaceInputValue` from `storyPlayHelpers`, which
+  // overwrites via focus+select-all+type and never produces a transient
+  // empty/invalid value that this handler would clobber.
   const handleMaxImagesBlur = () => {
     const parsed = parseMaxImages(maxImagesDraft) ?? DEFAULT_IMAGE_GENERATION_MAX_IMAGES;
     setMaxImagesDraft(String(parsed));

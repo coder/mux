@@ -1,5 +1,6 @@
 import { expect, userEvent, waitFor, within } from "@storybook/test";
 import { lightweightMeta } from "@/browser/stories/meta.js";
+import { replaceInputValue } from "@/browser/stories/storyPlayHelpers.js";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { DEFAULT_IMAGE_GENERATION_MODEL } from "@/common/types/imageGeneration";
 import { DEFAULT_GOAL_DEFAULTS } from "@/constants/goals";
@@ -68,15 +69,17 @@ export const ImageGenerationEnabled: Story = {
     await waitFor(() => expect(uploadConsentSwitch).toHaveAttribute("aria-checked", "false"));
 
     const maxImagesInput = await canvas.findByDisplayValue("4");
-    await userEvent.clear(maxImagesInput);
-    await userEvent.type(maxImagesInput, "11");
+    // Use replaceInputValue (focus + select-all + type) instead of clear+type.
+    // The max-images input has an onBlur that normalizes invalid drafts back
+    // to the default; raw clear+type can interleave a spurious blur that
+    // resets the value and produces flaky assertions. See replaceInputValue
+    // for details.
+    await replaceInputValue(maxImagesInput, "11");
     await expect(
       canvas.findByText("Enter a whole number from 1 to 10.")
     ).resolves.toBeInTheDocument();
 
-    await userEvent.clear(maxImagesInput);
-    await userEvent.type(maxImagesInput, "2");
-    await waitFor(() => expect(maxImagesInput).toHaveValue("2"));
+    await replaceInputValue(maxImagesInput, "2");
   },
 };
 
