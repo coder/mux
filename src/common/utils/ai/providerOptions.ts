@@ -410,12 +410,12 @@ export function buildProviderOptions(
 
   // Build Google-specific options
   if (formatProvider === "google") {
-    const isGemini3 = capModelName.includes("gemini-3");
+    const usesGeminiThinkingLevelConfig = capModelName.includes("gemini-3");
     const isGeminiFlashThinkingModel = isGeminiFlashThinkingLevelModelName(capModelName);
     let thinkingConfig: GoogleGenerativeAIProviderOptions["thinkingConfig"];
 
     if (isGeminiFlashThinkingModel && effectiveThinking === "off") {
-      // Gemini 3.5 Flash defaults to medium and does not support true thinking-off;
+      // Gemini Flash chat models default to medium and do not support true thinking-off;
       // send minimal explicitly so Mux's "off" setting means lowest-effort behavior.
       thinkingConfig = { thinkingLevel: "minimal" };
     } else if (effectiveThinking !== "off") {
@@ -423,7 +423,7 @@ export function buildProviderOptions(
         includeThoughts: true,
       };
 
-      if (isGemini3) {
+      if (usesGeminiThinkingLevelConfig) {
         // Policy enforcement should clamp to valid Google levels before this adapter runs.
         // Avoid leaking xhigh/max to Google if a caller bypasses policy.
         thinkingConfig.thinkingLevel =

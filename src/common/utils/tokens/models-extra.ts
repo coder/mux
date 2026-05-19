@@ -268,7 +268,7 @@ export const modelsExtra: Record<string, ModelData> = {
     supports_video_input: true,
     supports_reasoning: true,
     supports_response_schema: true,
-    knowledge_cutoff: "2025-01",
+    knowledge_cutoff: "2026-01",
   },
 
   // Gemini 3.1 Pro Preview - Released February 19, 2026

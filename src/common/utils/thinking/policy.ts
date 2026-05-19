@@ -25,13 +25,18 @@ import {
  */
 export type ThinkingPolicy = readonly ThinkingLevel[];
 
-const GEMINI_FLASH_THINKING_LEVEL_MODEL_NAMES = new Set([
-  "gemini-3-flash-preview",
-  "gemini-3.5-flash",
-]);
+const GEMINI_FLASH_THINKING_LEVEL_MODEL_NAMES = new Set(["gemini-3-flash-preview"]);
 
+/**
+ * Bare provider model IDs for Gemini Flash chat variants that accept Google's
+ * thinkingLevel config (minimal/low/medium/high) instead of Gemini 2.x thinkingBudget.
+ */
 export function isGeminiFlashThinkingLevelModelName(modelName: string): boolean {
-  return GEMINI_FLASH_THINKING_LEVEL_MODEL_NAMES.has(modelName.trim().toLowerCase());
+  const normalized = modelName.trim().toLowerCase();
+  return (
+    GEMINI_FLASH_THINKING_LEVEL_MODEL_NAMES.has(normalized) ||
+    (normalized.startsWith("gemini-3.5-flash") && !normalized.startsWith("gemini-3.5-flash-lite"))
+  );
 }
 
 /**

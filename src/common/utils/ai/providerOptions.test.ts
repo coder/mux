@@ -760,6 +760,26 @@ describe("buildProviderOptions - Google", () => {
     });
   });
 
+  test("maps gateway Gemini 3.5 Flash off to minimal thinking without thoughts", () => {
+    expect(buildProviderOptions("mux-gateway:google/gemini-3.5-flash", "off")).toEqual({
+      google: {
+        thinkingConfig: {
+          thinkingLevel: "minimal",
+        },
+      },
+    });
+  });
+
+  test("maps versioned Gemini 3.5 Flash off to minimal thinking without thoughts", () => {
+    expect(buildProviderOptions("google:gemini-3.5-flash-001", "off")).toEqual({
+      google: {
+        thinkingConfig: {
+          thinkingLevel: "minimal",
+        },
+      },
+    });
+  });
+
   test("maps Gemini 3.5 Flash medium to thinkingLevel medium with thoughts", () => {
     expect(buildProviderOptions("mux-gateway:google/gemini-3.5-flash", "medium")).toEqual({
       google: {
@@ -807,13 +827,21 @@ describe("buildProviderOptions - Google", () => {
     });
   });
 
-  test("keeps Gemini 3.1 Pro off clamped to low-style behavior outside Flash mapping", () => {
+  test("passes Gemini 3.1 Pro low through as thinkingLevel low with thoughts", () => {
     expect(buildProviderOptions("google:gemini-3.1-pro-preview", "low")).toEqual({
       google: {
         thinkingConfig: {
           includeThoughts: true,
           thinkingLevel: "low",
         },
+      },
+    });
+  });
+
+  test("keeps Gemini 3.1 Pro off without provider thinking config", () => {
+    expect(buildProviderOptions("google:gemini-3.1-pro-preview", "off")).toEqual({
+      google: {
+        thinkingConfig: undefined,
       },
     });
   });

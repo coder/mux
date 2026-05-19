@@ -44,7 +44,7 @@ describe("getModelStats", () => {
   });
 
   test("resolves Gemini 3.5 Flash with published standard pricing and limits", () => {
-    const stats = expectStats(KNOWN_MODELS.GEMINI_3_FLASH.id);
+    const stats = expectStats(KNOWN_MODELS.GEMINI_FLASH.id);
     expect(stats.max_input_tokens).toBe(1048576);
     expect(stats.max_output_tokens).toBe(65536);
     expect(stats.input_cost_per_token).toBe(0.0000015);

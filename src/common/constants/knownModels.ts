@@ -116,7 +116,7 @@ const MODEL_DEFINITIONS = {
     tokenizerOverride: "google/gemini-2.5-pro",
   },
   // Gemini Flash alias tracks the latest stable Flash tier.
-  GEMINI_3_FLASH: {
+  GEMINI_FLASH: {
     provider: "google",
     providerModelId: "gemini-3.5-flash",
     aliases: ["gemini-flash"],

@@ -401,6 +401,16 @@ describe("getThinkingPolicyForModel", () => {
     ]);
   });
 
+  test("returns off/low/medium/high for versioned stable Gemini 3.5 Flash IDs", () => {
+    for (const model of [
+      "google:gemini-3.5-flash-001",
+      "google:gemini-3.5-flash-latest",
+      "google:gemini-3.5-flash-preview",
+    ]) {
+      expect(getThinkingPolicyForModel(model)).toEqual(["off", "low", "medium", "high"]);
+    }
+  });
+
   test("returns off/low/medium/high for stable Gemini 3.5 Flash behind OpenRouter", () => {
     expect(getThinkingPolicyForModel("openrouter:google/gemini-3.5-flash")).toEqual([
       "off",
