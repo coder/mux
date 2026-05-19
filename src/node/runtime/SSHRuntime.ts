@@ -2857,6 +2857,43 @@ export class SSHRuntime extends RemoteRuntime {
     });
   }
 
+  private async resolveRemoteGitCommonDir(
+    repoPath: string,
+    abortSignal?: AbortSignal
+  ): Promise<string> {
+    try {
+      const result = await execBuffered(
+        this,
+        `git -C ${this.quoteForRemote(repoPath)} rev-parse --path-format=absolute --git-common-dir`,
+        { cwd: "/tmp", timeout: 10, abortSignal }
+      );
+      const commonDir = result.stdout.trim();
+      if (result.exitCode === 0 && commonDir.length > 0) {
+        return commonDir;
+      }
+    } catch {
+      // Fall back to the requested repo path. The disk probe is best-effort and
+      // should not make origin freshness mandatory when Git metadata is odd.
+    }
+
+    return repoPath;
+  }
+
+  private async hasGitObjectStoreHeadroomForBestEffortTransfer(
+    repoPath: string,
+    operationName: string,
+    initLogger: InitLogger,
+    abortSignal?: AbortSignal
+  ): Promise<boolean> {
+    const gitCommonDir = await this.resolveRemoteGitCommonDir(repoPath, abortSignal);
+    return this.hasRemoteDiskHeadroomForBestEffortTransfer(
+      this.quoteForRemote(gitCommonDir),
+      operationName,
+      initLogger,
+      abortSignal
+    );
+  }
+
   /**
    * Fetch trunk branch from origin into its remote-tracking ref before checkout.
    * Returns true if fetch succeeded (origin is available for branching).
@@ -2868,6 +2905,18 @@ export class SSHRuntime extends RemoteRuntime {
     abortSignal?: AbortSignal,
     nhp = ""
   ): Promise<boolean> {
+    const operationName = `origin/${trunkBranch} fetch`;
+    if (
+      !(await this.hasGitObjectStoreHeadroomForBestEffortTransfer(
+        workspacePath,
+        operationName,
+        initLogger,
+        abortSignal
+      ))
+    ) {
+      return false;
+    }
+
     try {
       initLogger.logStep(`Fetching latest from origin/${trunkBranch}...`);
 

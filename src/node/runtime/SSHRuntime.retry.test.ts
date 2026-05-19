@@ -300,6 +300,8 @@ async function createLocalRepoWithOrigin(): Promise<string> {
 
 class InitMaterializationSSHRuntime extends SSHRuntime {
   readonly commands: string[] = [];
+  readonly steps: string[] = [];
+  remoteFreeBytes = 10 * 1024 * 1024 * 1024;
   worktreeAddExitCode = 0;
   worktreeAddStderr = "";
   gitmodulesPresent = false;
@@ -327,7 +329,12 @@ class InitMaterializationSSHRuntime extends SSHRuntime {
       branchName: workspaceName,
       trunkBranch: "main",
       workspacePath: `/remote/src/project/${workspaceName}`,
-      initLogger: noopInitLogger,
+      initLogger: {
+        ...noopInitLogger,
+        logStep: (step) => {
+          this.steps.push(step);
+        },
+      },
       trusted: true,
     };
   }
@@ -340,6 +347,16 @@ class InitMaterializationSSHRuntime extends SSHRuntime {
     }
     if (command.startsWith("test -d ")) {
       return Promise.resolve(createExecStream("", "", 1));
+    }
+    if (command.includes("rev-parse --path-format=absolute --git-common-dir")) {
+      return Promise.resolve(createExecStream("/remote/src/project/.mux-base.git\n"));
+    }
+    if (command.includes("count-objects -v")) {
+      return Promise.resolve(
+        createExecStream(
+          ["count: 0", "packs: 0", `MUX_HEALTH_FREE_BYTES=${this.remoteFreeBytes}`, ""].join("\n")
+        )
+      );
     }
     if (command.includes(" fetch origin ")) {
       return Promise.resolve(createExecStream("", "origin unavailable", 1));
@@ -590,6 +607,18 @@ describe("SSHRuntime project sync retry orchestration", () => {
     } finally {
       await rm(projectPath, { recursive: true, force: true });
     }
+  });
+
+  it("skips post-sync origin fetch when shared object store headroom is low", async () => {
+    const runtime = new InitMaterializationSSHRuntime();
+    runtime.remoteFreeBytes = 1024 * 1024;
+
+    const result = await runtime.initWorkspace(runtime.createInitParams("feature-low-disk-fetch"));
+
+    expect(result.success).toBe(true);
+    expect(runtime.commands.some((command) => command.includes(" fetch origin "))).toBe(false);
+    expect(runtime.commands.some((command) => command.includes("count-objects -v"))).toBe(true);
+    expect(runtime.steps.some((step) => step.includes("Skipping origin/main fetch"))).toBe(true);
   });
 
   it("cleans partial SSH workspace state when materialization cleanup is requested", async () => {
