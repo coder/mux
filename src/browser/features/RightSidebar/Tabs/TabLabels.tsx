@@ -84,45 +84,55 @@ interface ReviewTabLabelProps {
 }
 
 /**
- * Review tab label with two layered signals:
+ * Review tab label with two mutually-exclusive states:
  *
- *   1. `read/total` badge — long-standing count of hunks the user has acked.
- *   2. **Assisted-focus indicator** — when the agent has flagged hunks that
- *      the user hasn't read yet, the "Review" word + a Sparkles icon + the
- *      unread-assisted count all render in `--color-review-accent`. Mirrors
- *      the Goal tab's "tint the whole label" pattern (`text-success` /
- *      `text-warning`) so the attention cue is glanceable from across the
- *      tab strip without animation — pulsing was too noisy for a label
- *      that lives next to other tabs.
+ *   • **Assisted-focus state** — when the agent has flagged hunks the user
+ *     hasn't acked, the entire label renders as one `inline-flex
+ *     items-center` group (Review · Sparkles · count) tinted with
+ *     `--color-review-accent`. Same composition pattern as the Goal tab's
+ *     icon-plus-text label, which guarantees the digit and the icon share
+ *     a single alignment context — three separately-baselined siblings
+ *     (the previous shape) let the digit drift off the icon center.
  *
- * Alignment: the tab strip uses `items-baseline gap-1.5`, so each sibling
- * must keep its baseline on the parent's baseline. The Sparkles + count is
- * an inline-flex whose internal text baseline matches the parent line —
- * no padding, no background, so nothing pulls the baseline off.
+ *     The `read/total` badge is suppressed in this state on purpose: two
+ *     adjacent numbers (e.g. `Review ✦ 5 4/10`) are hard to parse, and
+ *     the assisted count is the user's primary cue. The read/total
+ *     badge returns once everything assisted has been read.
+ *
+ *   • **Default state** — plain "Review" plus the `read/total` badge,
+ *     unchanged from the long-standing label.
+ *
+ * No animation in either state — pulsing was too noisy next to the other
+ * static tab labels.
  */
 export const ReviewTabLabel: React.FC<ReviewTabLabelProps> = ({ reviewStats }) => {
   const unreadAssisted = reviewStats?.unreadAssisted ?? 0;
   const hasUnreadAssisted = unreadAssisted > 0;
+
+  if (hasUnreadAssisted) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className="text-review-accent inline-flex items-center gap-1"
+            aria-label={`Review — ${unreadAssisted} unread agent-flagged hunk${unreadAssisted === 1 ? "" : "s"}`}
+            data-testid="review-tab-assisted-pizzazz"
+          >
+            Review
+            <Sparkles className="h-3 w-3 shrink-0" aria-hidden="true" />
+            <span className="tabular-nums">{unreadAssisted}</span>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">
+          {unreadAssisted} agent-flagged hunk{unreadAssisted === 1 ? "" : "s"} pending review
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+
   return (
     <>
-      <span className={cn(hasUnreadAssisted && "text-review-accent")}>Review</span>
-      {hasUnreadAssisted && (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span
-              className="text-review-accent inline-flex items-center gap-0.5 text-[10px] tabular-nums"
-              aria-label={`${unreadAssisted} unread agent-flagged hunk${unreadAssisted === 1 ? "" : "s"}`}
-              data-testid="review-tab-assisted-pizzazz"
-            >
-              <Sparkles className="h-2.5 w-2.5 shrink-0" aria-hidden="true" />
-              {unreadAssisted}
-            </span>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">
-            {unreadAssisted} agent-flagged hunk{unreadAssisted === 1 ? "" : "s"} pending review
-          </TooltipContent>
-        </Tooltip>
-      )}
+      Review
       {reviewStats !== null && reviewStats.total > 0 && (
         <span className="text-muted text-[10px]">
           {reviewStats.read}/{reviewStats.total}

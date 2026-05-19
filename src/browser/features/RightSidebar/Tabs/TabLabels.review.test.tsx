@@ -47,54 +47,59 @@ describe("ReviewTabLabel pizzazz indicator", () => {
     expect(container.querySelector("[data-testid='review-tab-assisted-pizzazz']")).toBeNull();
   });
 
-  test("shows the assisted-focus indicator with the unread count when assisted hunks pending", () => {
-    // Behavioral: the Sparkles icon + count appears in --color-review-accent
-    // whenever there's at least one agent-flagged hunk the user hasn't
-    // marked read. The "Review" word is tinted in the same accent so the
-    // label reads as a single attention cue (mirrors Goal tab tinting).
-    // No animation — pulsing was too noisy next to other tabs.
-    const { container, getByText, getByTestId } = renderLabel(makeStats({ unreadAssisted: 3 }));
+  test("collapses the label into a single inline-flex group with the unread count", () => {
+    // Behavioral: in the assisted state, the entire label (Review +
+    // Sparkles + count) is one inline-flex items-center group tinted in
+    // --color-review-accent. Wrapping everything in one alignment context
+    // is what keeps the digit visually aligned with the icon — separately
+    // baselined siblings drift apart.
+    const { container, getByText, getByTestId, queryByText } = renderLabel(
+      makeStats({ unreadAssisted: 3 })
+    );
 
     const pill = getByTestId("review-tab-assisted-pizzazz");
     expect(pill).toBeTruthy();
-    // Accent color is the actual "pizzazz" — guard against accidental
-    // regression to muted / no-color.
+    // Single shared alignment context — items-center keeps the digit
+    // visually centered with the Sparkles icon. A regression to
+    // items-baseline would re-introduce the misalignment the user
+    // reported.
+    expect(pill.className).toContain("items-center");
+    expect(pill.className).toContain("inline-flex");
+    // Accent color tints the entire group via cascade.
     expect(pill.className).toContain("text-review-accent");
     // No animation — explicitly assert because the previous iteration
     // shipped `animate-pulse` and the user found it distracting.
     expect(pill.className).not.toContain("animate-pulse");
-    // No background chrome — the pill chrome (bg + padding) broke baseline
-    // alignment in the parent strip (`items-baseline gap-1.5`). Keep this
-    // assertion so a future "make it pop more" change doesn't regress
-    // alignment.
+    // No background chrome — chrome (bg + padding + rounded) broke the
+    // parent strip's baseline rhythm. Keep this assertion so a future
+    // "make it pop more" change can't quietly regress alignment.
     expect(pill.className).not.toContain("bg-review-accent");
     expect(pill.className).not.toContain("rounded");
-    // Count is visible inside the indicator.
+    // Review word + count both render inside the indicator.
+    expect(getByText("Review")).toBeTruthy();
     expect(pill.textContent ?? "").toContain("3");
-    // "Review" word itself is tinted accent so the whole label reads as
-    // one cue rather than label + decoration.
-    const reviewWord = getByText("Review");
-    expect(reviewWord.className).toContain("text-review-accent");
-    // Read/total still renders alongside.
-    expect(getByText("4/10")).toBeTruthy();
+    // Critical: the read/total backup badge is suppressed while there
+    // are unread assisted hunks. Two adjacent numbers ("Review ✦ 3 4/10")
+    // are hard to parse, so the assisted count owns the visual space.
+    expect(queryByText("4/10")).toBeNull();
     expect(container).toBeTruthy();
   });
 
   test("singular aria-label for exactly one unread assisted hunk", () => {
     // Pluralization is a small but real correctness branch — guard it
-    // explicitly so a regression like "1 unread agent-flagged hunks" doesn't
-    // slip through.
+    // explicitly so a regression like "Review — 1 unread agent-flagged
+    // hunks" doesn't slip through.
     const { getByTestId } = renderLabel(makeStats({ unreadAssisted: 1 }));
 
     const pill = getByTestId("review-tab-assisted-pizzazz");
-    expect(pill.getAttribute("aria-label")).toBe("1 unread agent-flagged hunk");
+    expect(pill.getAttribute("aria-label")).toBe("Review — 1 unread agent-flagged hunk");
   });
 
   test("plural aria-label for multiple unread assisted hunks", () => {
     const { getByTestId } = renderLabel(makeStats({ unreadAssisted: 5 }));
 
     const pill = getByTestId("review-tab-assisted-pizzazz");
-    expect(pill.getAttribute("aria-label")).toBe("5 unread agent-flagged hunks");
+    expect(pill.getAttribute("aria-label")).toBe("Review — 5 unread agent-flagged hunks");
   });
 
   test("hides read/total badge when no review stats are available yet", () => {
