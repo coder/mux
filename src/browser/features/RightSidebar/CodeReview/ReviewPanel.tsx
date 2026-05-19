@@ -1277,10 +1277,14 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   // Apply frontend filters (read state, search term) and sorting
   // Note: selectedFilePath is a git-level filter, applied when fetching hunks
   const filteredHunks = useMemo(() => {
-    const assistedPredicate =
-      filters.assistedOnly && assistedMatchByHunkId.size > 0
-        ? (hunk: DiffHunk) => assistedMatchByHunkId.has(hunk.id)
-        : undefined;
+    // Apply the predicate whenever the toggle is on, even when the match map
+    // is empty — otherwise enabling Assisted in a mismatch case (e.g. after
+    // rebase or file rename invalidated the agent's filters) would silently
+    // fall back to "show everything" instead of giving the user the empty
+    // state they need to notice the mismatch.
+    const assistedPredicate = filters.assistedOnly
+      ? (hunk: DiffHunk) => assistedMatchByHunkId.has(hunk.id)
+      : undefined;
 
     const filtered = applyFrontendFilters(hunks, {
       showReadHunks: filters.showReadHunks,
@@ -1822,7 +1826,11 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
                       ? `No hunks match "${debouncedSearchTerm}". Try a different search term.`
                       : selectedFilePath
                         ? `No hunks in ${selectedFilePath}. Try selecting a different file.`
-                        : "No hunks match the current filters. Try adjusting your filter settings."}
+                        : filters.assistedOnly
+                          ? assistedHunks.length === 0
+                            ? "The agent hasn't pinned any hunks. Turn off Assisted to see all hunks."
+                            : "None of the agent-flagged hunks match the current diff. Turn off Assisted, or try a different diff base."
+                          : "No hunks match the current filters. Try adjusting your filter settings."}
                   </div>
                 </div>
               ) : (
