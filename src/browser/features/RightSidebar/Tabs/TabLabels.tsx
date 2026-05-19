@@ -87,27 +87,30 @@ interface ReviewTabLabelProps {
  * Review tab label with two layered signals:
  *
  *   1. `read/total` badge — long-standing count of hunks the user has acked.
- *   2. **Pizzazz indicator** — a Sparkles pill in `--color-review-accent`
- *      that pulses while the agent's `review_pane_update` flags still have
- *      unread hunks pending. Surfaces agent focus from outside the Review
- *      pane so the user notices new flagged work without having to click
- *      through. Pulse stops once everything assisted is marked read.
+ *   2. **Assisted-focus indicator** — when the agent has flagged hunks that
+ *      the user hasn't read yet, the "Review" word + a Sparkles icon + the
+ *      unread-assisted count all render in `--color-review-accent`. Mirrors
+ *      the Goal tab's "tint the whole label" pattern (`text-success` /
+ *      `text-warning`) so the attention cue is glanceable from across the
+ *      tab strip without animation — pulsing was too noisy for a label
+ *      that lives next to other tabs.
  *
- * The pulse uses Tailwind's `animate-pulse`. We deliberately keep the
- * animation subtle (opacity ramp, no scale/translate) so it draws the eye
- * without dominating the tab strip.
+ * Alignment: the tab strip uses `items-baseline gap-1.5`, so each sibling
+ * must keep its baseline on the parent's baseline. The Sparkles + count is
+ * an inline-flex whose internal text baseline matches the parent line —
+ * no padding, no background, so nothing pulls the baseline off.
  */
 export const ReviewTabLabel: React.FC<ReviewTabLabelProps> = ({ reviewStats }) => {
   const unreadAssisted = reviewStats?.unreadAssisted ?? 0;
   const hasUnreadAssisted = unreadAssisted > 0;
   return (
     <>
-      Review
+      <span className={cn(hasUnreadAssisted && "text-review-accent")}>Review</span>
       {hasUnreadAssisted && (
         <Tooltip>
           <TooltipTrigger asChild>
             <span
-              className="bg-review-accent/15 text-review-accent inline-flex animate-pulse items-center gap-0.5 rounded-sm px-1 py-px text-[10px] leading-none tabular-nums"
+              className="text-review-accent inline-flex items-center gap-0.5 text-[10px] tabular-nums"
               aria-label={`${unreadAssisted} unread agent-flagged hunk${unreadAssisted === 1 ? "" : "s"}`}
               data-testid="review-tab-assisted-pizzazz"
             >
@@ -121,12 +124,7 @@ export const ReviewTabLabel: React.FC<ReviewTabLabelProps> = ({ reviewStats }) =
         </Tooltip>
       )}
       {reviewStats !== null && reviewStats.total > 0 && (
-        <span
-          className={cn(
-            "text-[10px]",
-            reviewStats.read === reviewStats.total ? "text-muted" : "text-muted"
-          )}
-        >
+        <span className="text-muted text-[10px]">
           {reviewStats.read}/{reviewStats.total}
         </span>
       )}

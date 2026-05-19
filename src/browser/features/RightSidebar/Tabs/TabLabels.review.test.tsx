@@ -47,22 +47,34 @@ describe("ReviewTabLabel pizzazz indicator", () => {
     expect(container.querySelector("[data-testid='review-tab-assisted-pizzazz']")).toBeNull();
   });
 
-  test("shows the pizzazz pill with the unread count when assisted hunks pending", () => {
-    // Behavioral: the pill (with Sparkles icon + count + animate-pulse)
-    // appears whenever there's at least one agent-flagged hunk the user
-    // hasn't marked read. This is the "look at me" cue surfaced from the
-    // Review pane onto the tab strip.
+  test("shows the assisted-focus indicator with the unread count when assisted hunks pending", () => {
+    // Behavioral: the Sparkles icon + count appears in --color-review-accent
+    // whenever there's at least one agent-flagged hunk the user hasn't
+    // marked read. The "Review" word is tinted in the same accent so the
+    // label reads as a single attention cue (mirrors Goal tab tinting).
+    // No animation — pulsing was too noisy next to other tabs.
     const { container, getByText, getByTestId } = renderLabel(makeStats({ unreadAssisted: 3 }));
 
     const pill = getByTestId("review-tab-assisted-pizzazz");
     expect(pill).toBeTruthy();
-    // Pulse animation must be present — that's the actual "pizzazz".
-    expect(pill.className).toContain("animate-pulse");
-    // Accent must be the review-accent color (matches the rest of the
-    // assisted-review surface).
+    // Accent color is the actual "pizzazz" — guard against accidental
+    // regression to muted / no-color.
     expect(pill.className).toContain("text-review-accent");
-    // Count is visible inside the pill.
+    // No animation — explicitly assert because the previous iteration
+    // shipped `animate-pulse` and the user found it distracting.
+    expect(pill.className).not.toContain("animate-pulse");
+    // No background chrome — the pill chrome (bg + padding) broke baseline
+    // alignment in the parent strip (`items-baseline gap-1.5`). Keep this
+    // assertion so a future "make it pop more" change doesn't regress
+    // alignment.
+    expect(pill.className).not.toContain("bg-review-accent");
+    expect(pill.className).not.toContain("rounded");
+    // Count is visible inside the indicator.
     expect(pill.textContent ?? "").toContain("3");
+    // "Review" word itself is tinted accent so the whole label reads as
+    // one cue rather than label + decoration.
+    const reviewWord = getByText("Review");
+    expect(reviewWord.className).toContain("text-review-accent");
     // Read/total still renders alongside.
     expect(getByText("4/10")).toBeTruthy();
     expect(container).toBeTruthy();
