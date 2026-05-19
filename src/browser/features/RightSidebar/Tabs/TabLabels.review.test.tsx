@@ -75,8 +75,13 @@ describe("ReviewTabLabel pizzazz indicator", () => {
     // "make it pop more" change can't quietly regress alignment.
     expect(pill.className).not.toContain("bg-review-accent");
     expect(pill.className).not.toContain("rounded");
-    // Review word + count both render inside the indicator.
+    // Review word + count both render inside the indicator. The changing
+    // numeric count must use the repo's semantic numeric utility, not raw
+    // tabular-nums, so it matches other counters.
     expect(getByText("Review")).toBeTruthy();
+    const count = getByText("3");
+    expect(count.className).toContain("counter-nums");
+    expect(count.className).not.toContain("tabular-nums");
     expect(pill.textContent ?? "").toContain("3");
     // Critical: the read/total backup badge is suppressed while there
     // are unread assisted hunks. Two adjacent numbers ("Review ✦ 3 4/10")

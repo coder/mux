@@ -120,7 +120,7 @@ export const ReviewTabLabel: React.FC<ReviewTabLabelProps> = ({ reviewStats }) =
           >
             Review
             <Sparkles className="h-3 w-3 shrink-0" aria-hidden="true" />
-            <span className="tabular-nums">{unreadAssisted}</span>
+            <span className="counter-nums">{unreadAssisted}</span>
           </span>
         </TooltipTrigger>
         <TooltipContent side="bottom">
