@@ -68,6 +68,7 @@ import { parseNumstat, buildFileTree, extractNewPath } from "@/common/utils/git/
 import { parseNameStatus } from "@/common/utils/git/nameStatusParser";
 import { isPlanFilePath } from "@/common/types/review";
 import type {
+  AssistedReviewHunk,
   DiffHunk,
   ReviewFilters as ReviewFiltersType,
   ReviewNoteData,
@@ -344,6 +345,198 @@ async function executeWorkspaceBashAndCache<T extends ReviewPanelCacheValue>(par
   reviewPanelCache.set(params.cacheKey, value);
   return value;
 }
+
+function parseReviewDiffCacheValue(params: {
+  result: ExecuteBashSuccess;
+  workspaceMetadata: ReturnType<typeof useWorkspaceMetadata>["workspaceMetadata"];
+  workspaceId: string;
+  repoRootProjectPath?: string | null;
+  diffCommand: string;
+  selectedFilePath?: string | null;
+  isImmersive: boolean;
+}): ReviewPanelDiffCacheValue {
+  const diffOutput = params.result.data.output ?? "";
+  const truncationInfo =
+    "truncated" in params.result.data ? params.result.data.truncated : undefined;
+
+  // Git diff always reports repo-relative paths from the checkout we executed in.
+  // Reproject them onto the shared container root so immersive/plain file reads can
+  // open the same files without having to know which project supplied the diff.
+  const fileDiffs = parseDiff(diffOutput).map((fileDiff) => ({
+    ...fileDiff,
+    filePath: reprojectRepoRootFilePath(
+      params.workspaceMetadata.get(params.workspaceId),
+      fileDiff.filePath,
+      params.repoRootProjectPath
+    ),
+    oldPath: fileDiff.oldPath
+      ? reprojectRepoRootFilePath(
+          params.workspaceMetadata.get(params.workspaceId),
+          fileDiff.oldPath,
+          params.repoRootProjectPath
+        )
+      : undefined,
+    hunks: fileDiff.hunks.map((hunk) => ({
+      ...hunk,
+      filePath: reprojectRepoRootFilePath(
+        params.workspaceMetadata.get(params.workspaceId),
+        hunk.filePath,
+        params.repoRootProjectPath
+      ),
+      oldPath: hunk.oldPath
+        ? reprojectRepoRootFilePath(
+            params.workspaceMetadata.get(params.workspaceId),
+            hunk.oldPath,
+            params.repoRootProjectPath
+          )
+        : undefined,
+    })),
+  }));
+  const allHunks = extractAllHunks(fileDiffs);
+
+  const diagnosticInfo: DiagnosticInfo = {
+    command: params.diffCommand,
+    outputLength: diffOutput.length,
+    fileDiffCount: fileDiffs.length,
+    hunkCount: allHunks.length,
+  };
+
+  const truncationWarning =
+    truncationInfo && (!params.selectedFilePath || params.isImmersive)
+      ? `Diff truncated (${truncationInfo.reason}). Filter by file to see more.`
+      : null;
+
+  return { hunks: allHunks, truncationWarning, diagnosticInfo };
+}
+
+export function countUnreadAssistedHunks(
+  hunks: readonly DiffHunk[],
+  assistedHunks: readonly AssistedReviewHunk[],
+  isRead: (hunkId: string) => boolean
+): number {
+  if (assistedHunks.length === 0) return 0;
+  let count = 0;
+  for (const hunk of hunks) {
+    if (findAssistedMatch(hunk, assistedHunks) && !isRead(hunk.id)) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+interface ReviewAssistedStatsReporterProps {
+  workspaceId: string;
+  workspacePath: string;
+  projectPath: string;
+  isCreating?: boolean;
+  onUnreadAssistedChange: (count: number) => void;
+}
+
+export const ReviewAssistedStatsReporter: React.FC<ReviewAssistedStatsReporterProps> = ({
+  workspaceId,
+  workspacePath,
+  projectPath,
+  isCreating = false,
+  onUnreadAssistedChange,
+}) => {
+  const { api } = useAPI();
+  const { workspaceMetadata } = useWorkspaceMetadata();
+  const originFetchRef = useRef<OriginFetchState | null>(null);
+  const { isRead } = useReviewState(workspaceId);
+
+  const rawWorkspaceStore = useWorkspaceStoreRaw();
+  const subscribeAssistedHunks = useCallback(
+    (callback: () => void) => rawWorkspaceStore.subscribeKey(workspaceId, callback),
+    [rawWorkspaceStore, workspaceId]
+  );
+  const assistedHunks = useSyncExternalStore(subscribeAssistedHunks, () =>
+    rawWorkspaceStore.getAssistedReviewHunks(workspaceId)
+  );
+
+  const projectDefaultBaseKey = STORAGE_KEYS.reviewDefaultBase(projectPath);
+  const workspaceDiffBaseKey = STORAGE_KEYS.reviewDiffBase(workspaceId);
+  const [defaultBase] = usePersistedState<string>(
+    projectDefaultBaseKey,
+    WORKSPACE_DEFAULTS.reviewBase,
+    { listener: true }
+  );
+  const [diffBase] = usePersistedState(workspaceDiffBaseKey, defaultBase, { listener: true });
+  const [includeUncommitted] = usePersistedState("review-include-uncommitted", false, {
+    listener: true,
+  });
+
+  useEffect(() => {
+    if (assistedHunks.length === 0) {
+      onUnreadAssistedChange(0);
+      return;
+    }
+    if (!api || isCreating) return;
+
+    let cancelled = false;
+    const diffCommand = buildGitDiffCommand(diffBase, includeUncommitted, "", "diff");
+
+    const loadUnreadAssisted = async () => {
+      try {
+        await ensureOriginFetched({
+          api,
+          workspaceId,
+          diffBase,
+          refreshToken: 0,
+          originFetchRef,
+          repoRootProjectPath: projectPath,
+        });
+        if (cancelled) return;
+
+        // Deliberately bypass `reviewPanelCache`: this reporter is mounted
+        // specifically so agent flags show up while the Review panel is not,
+        // and a stale panel cache would hide newly edited assisted hunks.
+        const result = await api.workspace.executeBash({
+          workspaceId,
+          script: diffCommand,
+          options: repoRootBashOptions(30, projectPath),
+        });
+        if (cancelled) return;
+        if (!result.success || !result.data.success) {
+          onUnreadAssistedChange(0);
+          return;
+        }
+
+        const data = parseReviewDiffCacheValue({
+          result,
+          workspaceMetadata,
+          workspaceId,
+          repoRootProjectPath: projectPath,
+          diffCommand,
+          selectedFilePath: null,
+          isImmersive: true,
+        });
+        onUnreadAssistedChange(countUnreadAssistedHunks(data.hunks, assistedHunks, isRead));
+      } catch {
+        if (!cancelled) onUnreadAssistedChange(0);
+      }
+    };
+
+    void loadUnreadAssisted();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    api,
+    workspaceId,
+    workspacePath,
+    projectPath,
+    workspaceMetadata,
+    diffBase,
+    includeUncommitted,
+    assistedHunks,
+    isRead,
+    isCreating,
+    onUnreadAssistedChange,
+  ]);
+
+  return null;
+};
 
 export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   workspaceId,
@@ -1092,60 +1285,16 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
           cacheKey,
           timeoutSecs: 30,
           repoRootProjectPath: diffRepoRootProjectPath,
-          parse: (result) => {
-            const diffOutput = result.data.output ?? "";
-            const truncationInfo = "truncated" in result.data ? result.data.truncated : undefined;
-
-            // Git diff always reports repo-relative paths from the checkout we executed in.
-            // Reproject them onto the shared container root so immersive/plain file reads can
-            // open the same files without having to know which project supplied the diff.
-            const fileDiffs = parseDiff(diffOutput).map((fileDiff) => ({
-              ...fileDiff,
-              filePath: reprojectRepoRootFilePath(
-                workspaceMetadata.get(workspaceId),
-                fileDiff.filePath,
-                diffRepoRootProjectPath
-              ),
-              oldPath: fileDiff.oldPath
-                ? reprojectRepoRootFilePath(
-                    workspaceMetadata.get(workspaceId),
-                    fileDiff.oldPath,
-                    diffRepoRootProjectPath
-                  )
-                : undefined,
-              hunks: fileDiff.hunks.map((hunk) => ({
-                ...hunk,
-                filePath: reprojectRepoRootFilePath(
-                  workspaceMetadata.get(workspaceId),
-                  hunk.filePath,
-                  diffRepoRootProjectPath
-                ),
-                oldPath: hunk.oldPath
-                  ? reprojectRepoRootFilePath(
-                      workspaceMetadata.get(workspaceId),
-                      hunk.oldPath,
-                      diffRepoRootProjectPath
-                    )
-                  : undefined,
-              })),
-            }));
-            const allHunks = extractAllHunks(fileDiffs);
-
-            const diagnosticInfo: DiagnosticInfo = {
-              command: diffCommand,
-              outputLength: diffOutput.length,
-              fileDiffCount: fileDiffs.length,
-              hunkCount: allHunks.length,
-            };
-
-            // Build truncation warning (only when not filtering by path)
-            const truncationWarning =
-              truncationInfo && (!selectedFilePath || isImmersive)
-                ? `Diff truncated (${truncationInfo.reason}). Filter by file to see more.`
-                : null;
-
-            return { hunks: allHunks, truncationWarning, diagnosticInfo };
-          },
+          parse: (result) =>
+            parseReviewDiffCacheValue({
+              result,
+              workspaceMetadata,
+              workspaceId,
+              repoRootProjectPath: diffRepoRootProjectPath,
+              diffCommand,
+              selectedFilePath,
+              isImmersive,
+            }),
         });
 
         if (cancelled) return;
@@ -1503,20 +1652,14 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     [hunks, markAsRead, filters.showReadHunks, selectedHunkId, setSelectedHunkId]
   );
 
-  // Count agent-flagged hunks the user hasn't acked. This feeds the
-  // Review tab's "pizzazz" indicator (Sparkles + count) so unread agent
-  // focus is visible from outside the Review pane. We walk the resolved
-  // match map (post path+range matching) rather than `assistedHunks` directly
-  // because filters that don't intersect the current diff shouldn't be
-  // counted as pending work.
-  const unreadAssistedCount = useMemo(() => {
-    if (assistedMatchByHunkId.size === 0) return 0;
-    let count = 0;
-    for (const hunkId of assistedMatchByHunkId.keys()) {
-      if (!isRead(hunkId)) count += 1;
-    }
-    return count;
-  }, [assistedMatchByHunkId, isRead]);
+  // Count agent-flagged hunks the user hasn't acked. The panel still reports
+  // it for local stats, while the always-mounted reporter below is the tab
+  // badge source when this panel is not selected. Both use the same helper so
+  // assisted filters that don't intersect the current diff aren't counted.
+  const unreadAssistedCount = useMemo(
+    () => countUnreadAssistedHunks(hunks, assistedHunks, isRead),
+    [hunks, assistedHunks, isRead]
+  );
 
   // Calculate stats from the same precomputed read summaries so read toggles do one pass.
   const stats = useMemo(() => {

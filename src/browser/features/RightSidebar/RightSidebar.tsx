@@ -91,6 +91,7 @@ import {
   openTerminalPopout,
   type TerminalSessionCreateOptions,
 } from "@/browser/utils/terminal";
+import { ReviewAssistedStatsReporter } from "@/browser/features/RightSidebar/CodeReview/ReviewPanel";
 import {
   TAB_REGISTRY,
   TerminalTabLabel,
@@ -624,8 +625,25 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   // Trigger for focusing Review panel (preserves hunk selection)
   const [focusTrigger, _setFocusTrigger] = React.useState(0);
 
-  // Review stats reported by ReviewPanel
-  const [reviewStats, setReviewStats] = React.useState<ReviewStats | null>(null);
+  // Review hunk totals are reported by the Review panel when mounted, while
+  // unread-assisted is reported by an always-mounted headless component so the
+  // tab attention cue updates even when the user is on another tab.
+  const [reviewPanelStats, setReviewPanelStats] = React.useState<Pick<
+    ReviewStats,
+    "total" | "read"
+  > | null>(null);
+  const [unreadAssisted, setUnreadAssisted] = React.useState(0);
+  const reviewStats = React.useMemo<ReviewStats | null>(() => {
+    if (reviewPanelStats === null && unreadAssisted === 0) return null;
+    return {
+      total: reviewPanelStats?.total ?? 0,
+      read: reviewPanelStats?.read ?? 0,
+      unreadAssisted,
+    };
+  }, [reviewPanelStats, unreadAssisted]);
+  const handleReviewStatsChange = React.useCallback((stats: ReviewStats | null) => {
+    setReviewPanelStats(stats ? { total: stats.total, read: stats.read } : null);
+  }, []);
 
   // Terminal session ID that should be auto-focused (new terminal or explicit tab focus).
   const [autoFocusTerminalSession, setAutoFocusTerminalSession] = React.useState<string | null>(
@@ -1585,7 +1603,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         focusTrigger={focusTrigger}
         onReviewNote={onReviewNote}
         reviewStats={reviewStats}
-        onReviewStatsChange={setReviewStats}
+        onReviewStatsChange={handleReviewStatsChange}
         isTouchReviewImmersive={isTouchReviewImmersive}
         onTouchReviewImmersiveChange={setIsTouchReviewImmersive}
         isDraggingTab={isDraggingTab}
@@ -1615,6 +1633,13 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
 
   return (
     <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+      <ReviewAssistedStatsReporter
+        workspaceId={workspaceId}
+        workspacePath={workspacePath}
+        projectPath={projectPath}
+        isCreating={Boolean(isCreating)}
+        onUnreadAssistedChange={setUnreadAssisted}
+      />
       <SidebarContainer
         collapsed={collapsed}
         isResizing={isResizing}
