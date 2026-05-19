@@ -32,7 +32,8 @@ fi
 REQUEST_COMMAND="/coder-agents-review"
 # Match both the app slug and GitHub's bot-login form.
 BOT_LOGIN_REGEX="${CODER_AGENTS_REVIEW_BOT_LOGIN_REGEX:-^coder-agents-review(\[bot\])?$}"
-CODER_AGENTS_ISSUE_COMMENT_APPROVAL_REGEX="no (issues|problems)|no major issues|looks good|lgtm|approved|didn.t find"
+CODER_AGENTS_ISSUE_COMMENT_APPROVAL_REGEX="no (issues|problems)|no major issues|looks good|lgtm|didn.t find|(^|[[:space:][:punct:]])approved([[:space:][:punct:]]|$)"
+CODER_AGENTS_ISSUE_COMMENT_NEGATIVE_REGEX="not approved|not yet approved|failed|failure|error|unable|cannot|could not|timed out|cancelled|blocked|needs changes|changes requested"
 CODER_AGENTS_ISSUE_COMMENT_PROGRESS_REGEX="queued|started|running|in progress|reviewing|will review|working"
 POLL_INTERVAL_SECS=30
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -459,6 +460,35 @@ load_pr_data() {
   esac
 }
 
+classify_issue_comment_response() {
+  local body="$1"
+  local created_at="$2"
+
+  if printf '%s\n' "$body" | grep -Eiq "$CODER_AGENTS_ISSUE_COMMENT_NEGATIVE_REGEX"; then
+    echo ""
+    echo "❌ coder-agents-review responded with a negative issue comment on PR #$PR_NUMBER."
+  elif printf '%s\n' "$body" | grep -Eiq "$CODER_AGENTS_ISSUE_COMMENT_APPROVAL_REGEX"; then
+    echo ""
+    echo "✅ coder-agents-review gate passed for PR #$PR_NUMBER via issue comment"
+    if [[ -n "$created_at" ]]; then
+      echo "Comment timestamp: $created_at"
+    fi
+    return 0
+  elif printf '%s\n' "$body" | grep -Eiq "$CODER_AGENTS_ISSUE_COMMENT_PROGRESS_REGEX"; then
+    return 10
+  else
+    echo ""
+    echo "❌ coder-agents-review responded with an unclassified issue comment on PR #$PR_NUMBER."
+  fi
+
+  if [[ -n "$created_at" ]]; then
+    echo "Comment timestamp: $created_at"
+  fi
+  echo ""
+  echo "$body"
+  return 1
+}
+
 LAST_REQUEST_AT="none"
 
 check_coder_agents_status_once() {
@@ -685,6 +715,11 @@ check_coder_agents_status_once() {
     return 20
   fi
 
+  if [[ -n "$latest_issue_comment_body" && (-z "$latest_review_at" || "$latest_issue_comment_at" > "$latest_review_at") ]]; then
+    classify_issue_comment_response "$latest_issue_comment_body" "$latest_issue_comment_at"
+    return $?
+  fi
+
   case "$latest_review_state" in
     APPROVED | COMMENTED)
       echo ""
@@ -695,33 +730,9 @@ check_coder_agents_status_once() {
       return 0
       ;;
     "")
-      if [[ -z "$latest_issue_comment_body" ]]; then
-        echo ""
-        echo "✅ coder-agents-review gate passed for PR #$PR_NUMBER"
-        return 0
-      fi
-
-      if printf '%s\n' "$latest_issue_comment_body" | grep -Eiq "$CODER_AGENTS_ISSUE_COMMENT_APPROVAL_REGEX"; then
-        echo ""
-        echo "✅ coder-agents-review gate passed for PR #$PR_NUMBER via issue comment"
-        if [[ -n "$latest_issue_comment_at" ]]; then
-          echo "Comment timestamp: $latest_issue_comment_at"
-        fi
-        return 0
-      fi
-
-      if printf '%s\n' "$latest_issue_comment_body" | grep -Eiq "$CODER_AGENTS_ISSUE_COMMENT_PROGRESS_REGEX"; then
-        return 10
-      fi
-
       echo ""
-      echo "❌ coder-agents-review responded with an unclassified issue comment on PR #$PR_NUMBER."
-      if [[ -n "$latest_issue_comment_at" ]]; then
-        echo "Comment timestamp: $latest_issue_comment_at"
-      fi
-      echo ""
-      echo "$latest_issue_comment_body"
-      return 1
+      echo "✅ coder-agents-review gate passed for PR #$PR_NUMBER"
+      return 0
       ;;
     CHANGES_REQUESTED)
       echo ""
