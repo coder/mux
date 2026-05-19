@@ -499,9 +499,15 @@ check_coder_agents_status_once() {
   fi
 
   bot_activity_count=$(jq -rn \
+    --argjson comments "$COMMENTS_JSON" \
     --argjson reviews "$REVIEWS_JSON" \
     --argjson threads "$THREADS_JSON" \
     --arg bot_regex "$BOT_LOGIN_REGEX" '
+      ([
+        $comments[]
+        | select((.author.login // "") | test($bot_regex))
+      ] | length)
+      +
       ([
         $reviews[]
         | select(((.author.login // "") | test($bot_regex)) and (.state != "DISMISSED"))
@@ -531,10 +537,16 @@ check_coder_agents_status_once() {
 
   if [[ -n "$request_at" ]]; then
     response_count=$(jq -rn \
+      --argjson comments "$COMMENTS_JSON" \
       --argjson reviews "$REVIEWS_JSON" \
       --argjson threads "$THREADS_JSON" \
       --arg bot_regex "$BOT_LOGIN_REGEX" \
       --arg request_at "$request_at" '
+        ([
+          $comments[]
+          | select(((.author.login // "") | test($bot_regex)) and (.createdAt > $request_at))
+        ] | length)
+        +
         ([
           $reviews[]
           | select(
