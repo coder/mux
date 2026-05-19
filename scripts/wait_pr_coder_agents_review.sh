@@ -36,9 +36,9 @@ fi
 REQUEST_COMMAND="/coder-agents-review"
 # Match both the app slug and GitHub's bot-login form.
 BOT_LOGIN_REGEX="${CODER_AGENTS_REVIEW_BOT_LOGIN_REGEX:-^coder-agents-review(\[bot\])?$}"
-CODER_AGENTS_BOT_APPROVAL_REGEX="^[[:space:]]*(no (issues|problems)( found)?[.]?|no major issues( found)?[.]?|didn.t find (any )?(major )?(issues|problems)[.]?|review complete(d)?[.]?|zero open findings([.]|[[:space:]]+across[[:space:]].*)?)[[:space:]]*$"
-CODER_AGENTS_BOT_NEGATIVE_BEFORE_APPROVAL_REGEX="^[[:space:]]*(Round [0-9]+ is blocked|Review failed|Failed to review|Unable to review|Cannot review|Could not review|Review timed out|Request timed out|Review cancelled|Request cancelled)"
-CODER_AGENTS_BOT_PROGRESS_REGEX="^[[:space:]]*(queued|started|running|in progress|reviewing|will review)[[:space:][:punct:]]*$"
+CODER_AGENTS_BOT_APPROVAL_REGEX="^(no (issues|problems)( found)?[.]?|no major issues( found)?[.]?|didn.t find (any )?(major )?(issues|problems)[.]?|review complete(d)?[.]?|zero open findings[.]?|.*zero open findings across .* review complete[.]?)$"
+CODER_AGENTS_BOT_NEGATIVE_BEFORE_APPROVAL_REGEX="^(Round [0-9]+ is blocked|Review failed|Failed to review|Unable to review|Cannot review|Could not review|Review timed out|Request timed out|Review cancelled|Request cancelled)"
+CODER_AGENTS_BOT_PROGRESS_REGEX="^(queued|started|running|in progress|reviewing|will review)[[:space:][:punct:]]*$"
 POLL_INTERVAL_SECS=30
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 SKIP_FETCH_SYNC="${MUX_SKIP_FETCH_SYNC:-0}"
@@ -388,18 +388,21 @@ classify_bot_text_response() {
   local body="$1"
   local created_at="$2"
   local source_label="$3"
+  local normalized_body
 
-  if printf '%s\n' "$body" | grep -Eiq "$CODER_AGENTS_BOT_NEGATIVE_BEFORE_APPROVAL_REGEX"; then
+  normalized_body=$(printf '%s' "$body" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')
+
+  if printf '%s\n' "$normalized_body" | grep -Eiq "$CODER_AGENTS_BOT_NEGATIVE_BEFORE_APPROVAL_REGEX"; then
     echo ""
     echo "❌ coder-agents-review responded with a negative ${source_label} on PR #$PR_NUMBER."
-  elif printf '%s\n' "$body" | grep -Eiq "$CODER_AGENTS_BOT_APPROVAL_REGEX"; then
+  elif printf '%s\n' "$normalized_body" | grep -Eiq "$CODER_AGENTS_BOT_APPROVAL_REGEX"; then
     echo ""
     echo "✅ coder-agents-review gate passed for PR #$PR_NUMBER via ${source_label}"
     if [[ -n "$created_at" ]]; then
       echo "Timestamp: $created_at"
     fi
     return 0
-  elif printf '%s\n' "$body" | grep -Eiq "$CODER_AGENTS_BOT_PROGRESS_REGEX"; then
+  elif printf '%s\n' "$normalized_body" | grep -Eiq "$CODER_AGENTS_BOT_PROGRESS_REGEX"; then
     return "$RC_PENDING"
   else
     echo ""
@@ -447,7 +450,7 @@ check_coder_agents_status_once() {
     --arg bot_regex "$BOT_LOGIN_REGEX" '
       [
         $comments[]
-        | select((((.author.login // "") | test($bot_regex)) | not) and ((.body // "") | contains($command)))
+        | select((((.author.login // "") | test($bot_regex)) | not) and ((.body // "") | test("(?m)^\\s*/coder-agents-review\\s*$")))
       ]
       | sort_by(.createdAt)
       | last
