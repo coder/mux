@@ -28,6 +28,13 @@ import type {
 
 export type BranchListResult = z.infer<typeof schemas.BranchListResultSchema>;
 export type SendMessageOptions = z.infer<typeof schemas.SendMessageOptionsSchema>;
+/**
+ * Canonical sub-types derived from {@link SendMessageOptions}. Kept in this
+ * shared module so the browser ChatInput, the node MessageQueue, and the
+ * AgentSession dispatcher all reach for the same alias instead of each
+ * privately re-deriving `NonNullable<SendMessageOptions["..."]>`.
+ */
+export type GoalInterventionPolicy = NonNullable<SendMessageOptions["goalInterventionPolicy"]>;
 
 // Provider types (single source of truth - derived from schemas)
 export type AWSCredentialStatus = z.infer<typeof schemas.AWSCredentialStatusSchema>;
