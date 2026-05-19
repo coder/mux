@@ -2881,7 +2881,18 @@ export class AgentSession {
 
   private getProvidersConfigForCompaction(): ProvidersConfigMap | null {
     try {
-      // Some unit tests provide a minimal Config mock without providers helpers.
+      // Prefer ProviderService's safe config view: it includes env/file API-key source
+      // metadata plus the Codex OAuth presence bit, which context-limit resolution needs
+      // to distinguish GPT-5.5 API-key requests from lower-cap OAuth-routed requests.
+      const maybeAIService = this.aiService as AIService & {
+        getProvidersConfig?: () => ProvidersConfigMap | null;
+      };
+      if (typeof maybeAIService.getProvidersConfig === "function") {
+        return maybeAIService.getProvidersConfig();
+      }
+
+      // Some unit tests provide minimal service mocks; fall back to raw config so custom
+      // provider model context overrides still work in those environments.
       const maybeConfig = this.config as Config & {
         loadProvidersConfig?: () => ProvidersConfigMap | null;
       };
@@ -2889,14 +2900,7 @@ export class AgentSession {
         return null;
       }
 
-      const providersConfig = maybeConfig.loadProvidersConfig();
-      if (!providersConfig) {
-        return null;
-      }
-
-      // Compaction limit resolution only reads provider model overrides (models[*].contextWindow*).
-      // Runtime config stores these in providers.jsonc, so the raw config shape is sufficient here.
-      return providersConfig as unknown as ProvidersConfigMap;
+      return maybeConfig.loadProvidersConfig() as unknown as ProvidersConfigMap | null;
     } catch {
       // Best-effort read: if config cannot be loaded, keep null and rely on
       // built-in model limits. This matches prior behavior without crashing.

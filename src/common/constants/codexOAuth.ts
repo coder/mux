@@ -113,6 +113,17 @@ export const CODEX_OAUTH_REQUIRED_MODELS = new Set<string>([
   "gpt-5.3-codex-spark",
 ]);
 
+/**
+ * Runtime context caps that differ when an otherwise public API model is routed through
+ * ChatGPT/Codex OAuth. Keep these separate from model metadata so API-key requests can
+ * still use the public OpenAI limits.
+ */
+const CODEX_OAUTH_CONTEXT_WINDOW_OVERRIDES: Record<string, number> = {
+  // User-reported routing limit: GPT-5.5's public API window is 1.05M, but the
+  // ChatGPT/Codex OAuth backend rejects prompts near that size and must compact at ~270K.
+  "gpt-5.5": 272_000,
+};
+
 function normalizeCodexOauthModelId(modelId: string): string {
   // Accept either provider:model or bare model ids and normalize to providerModelId.
   const colonIndex = modelId.indexOf(":");
@@ -129,4 +140,8 @@ export function isCodexOauthAllowedModelId(modelId: string): boolean {
 
 export function isCodexOauthRequiredModelId(modelId: string): boolean {
   return CODEX_OAUTH_REQUIRED_MODELS.has(normalizeCodexOauthModelId(modelId));
+}
+
+export function getCodexOauthContextWindowOverride(modelId: string): number | null {
+  return CODEX_OAUTH_CONTEXT_WINDOW_OVERRIDES[normalizeCodexOauthModelId(modelId)] ?? null;
 }

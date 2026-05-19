@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import { calculateTokenMeterData, formatTokens } from "./tokenMeterUtils";
 
@@ -74,6 +75,20 @@ describe("calculateTokenMeterData", () => {
 
     expect(result.maxTokens).toBe(1_000_000);
     expect(result.totalPercentage).toBeCloseTo(1.1);
+  });
+
+  test("uses the Codex OAuth cap for GPT-5.5 token meter percentages", () => {
+    const result = calculateTokenMeterData(SAMPLE_USAGE, KNOWN_MODELS.GPT.id, false, false, {
+      openai: {
+        apiKeySet: false,
+        isEnabled: true,
+        isConfigured: true,
+        codexOauthSet: true,
+      },
+    });
+
+    expect(result.maxTokens).toBe(272_000);
+    expect(result.totalPercentage).toBeCloseTo((11_000 / 272_000) * 100);
   });
 
   test("uses Claude Sonnet 4.6's native 1M context even when the beta toggle is off", () => {
