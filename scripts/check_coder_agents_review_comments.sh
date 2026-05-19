@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Check for unresolved coder-agents-review review comments.
+# Check for unresolved review comments from coder-agents-review.
 # Usage: ./scripts/check_coder_agents_review_comments.sh <pr_number>
 # Exits 0 if all bot-authored review threads are resolved, 1 otherwise.
 
@@ -119,9 +119,7 @@ if [ -n "$UNRESOLVED" ]; then
   coder_agents_print_unresolved_threads "$UNRESOLVED"
   echo ""
 
-  VIEW_OWNER="${OWNER:-${MUX_GH_OWNER:-coder}}"
-  VIEW_REPO="${REPO:-${MUX_GH_REPO:-mux}}"
-  echo "View PR: https://github.com/${VIEW_OWNER}/${VIEW_REPO}/pull/$PR_NUMBER"
+  echo "View PR: https://github.com/${OWNER}/${REPO}/pull/$PR_NUMBER"
   exit 1
 fi
 

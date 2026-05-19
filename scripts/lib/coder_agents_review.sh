@@ -4,6 +4,7 @@
 MAX_ATTEMPTS=${MAX_ATTEMPTS:-5}
 BACKOFF_SECS=${BACKOFF_SECS:-2}
 
+# Sets OWNER and REPO from MUX_GH_* or gh repo view.
 resolve_repo_context() {
   if [[ -n "${MUX_GH_OWNER:-}" || -n "${MUX_GH_REPO:-}" ]]; then
     if [[ -z "${MUX_GH_OWNER:-}" || -z "${MUX_GH_REPO:-}" ]]; then
@@ -30,6 +31,7 @@ resolve_repo_context() {
   fi
 }
 
+# Runs a PR GraphQL query with optional cursor using OWNER, REPO, and PR_NUMBER.
 graphql_with_retries() {
   local query="$1"
   local cursor="${2-}"
@@ -70,6 +72,7 @@ graphql_with_retries() {
   done
 }
 
+# Emits unresolved coder-agents-review thread records as newline-delimited JSON.
 coder_agents_unresolved_threads_from_json() {
   local threads_json="$1"
   local bot_regex="$2"
@@ -90,6 +93,7 @@ coder_agents_unresolved_threads_from_json() {
   '
 }
 
+# Prints records emitted by coder_agents_unresolved_threads_from_json.
 coder_agents_print_unresolved_threads() {
   local unresolved="$1"
 

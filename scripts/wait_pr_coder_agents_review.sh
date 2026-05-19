@@ -18,6 +18,10 @@ fi
 
 PR_NUMBER="$1"
 MODE="wait"
+RC_PASSED=0
+RC_FAILED=1
+RC_PENDING=10
+RC_SKIPPED=20
 
 if [ $# -eq 2 ]; then
   if [ "$2" = "--once" ]; then
@@ -32,10 +36,9 @@ fi
 REQUEST_COMMAND="/coder-agents-review"
 # Match both the app slug and GitHub's bot-login form.
 BOT_LOGIN_REGEX="${CODER_AGENTS_REVIEW_BOT_LOGIN_REGEX:-^coder-agents-review(\[bot\])?$}"
-CODER_AGENTS_ISSUE_COMMENT_APPROVAL_REGEX="no (issues|problems)|no major issues|looks good|lgtm|didn.t find|(^|[[:space:][:punct:]])approved([[:space:][:punct:]]|$)"
-CODER_AGENTS_ISSUE_COMMENT_NEGATIVE_BEFORE_APPROVAL_REGEX="not approved|not yet approved|review failed|failed to review|unable to review|cannot review|could not review|timed out|cancelled|blocked|needs changes|changes requested|without author response|unaddressed|to unblock"
-CODER_AGENTS_ISSUE_COMMENT_NEGATIVE_REGEX="a^"
-CODER_AGENTS_ISSUE_COMMENT_PROGRESS_REGEX="queued|started|running|in progress|reviewing|will review|working"
+CODER_AGENTS_BOT_APPROVAL_REGEX="no (issues|problems)|no major issues|looks good|lgtm|didn.t find|(^|[[:space:][:punct:]])approved([[:space:][:punct:]]|$)"
+CODER_AGENTS_BOT_NEGATIVE_BEFORE_APPROVAL_REGEX="not approved|not yet approved|review failed|failed to review|unable to review|cannot review|could not review|timed out|cancelled|blocked|needs changes|changes requested|without author response|unaddressed|to unblock"
+CODER_AGENTS_BOT_PROGRESS_REGEX="^[[:space:]]*(queued|started|running|in progress|reviewing|will review)[[:space:][:punct:]]*$"
 POLL_INTERVAL_SECS=30
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 SKIP_FETCH_SYNC="${MUX_SKIP_FETCH_SYNC:-0}"
@@ -320,7 +323,7 @@ load_pr_data() {
   case "$pr_state" in
     MERGED)
       echo "✅ PR #$PR_NUMBER has been merged!"
-      return 20
+      return "$RC_SKIPPED"
       ;;
     CLOSED)
       echo "❌ PR #$PR_NUMBER is closed (not merged)!"
@@ -386,24 +389,21 @@ classify_bot_text_response() {
   local created_at="$2"
   local source_label="$3"
 
-  if printf '%s\n' "$body" | grep -Eiq "$CODER_AGENTS_ISSUE_COMMENT_NEGATIVE_BEFORE_APPROVAL_REGEX"; then
+  if printf '%s\n' "$body" | grep -Eiq "$CODER_AGENTS_BOT_NEGATIVE_BEFORE_APPROVAL_REGEX"; then
     echo ""
     echo "❌ coder-agents-review responded with a negative ${source_label} on PR #$PR_NUMBER."
-  elif printf '%s\n' "$body" | grep -Eiq "$CODER_AGENTS_ISSUE_COMMENT_APPROVAL_REGEX"; then
+  elif printf '%s\n' "$body" | grep -Eiq "$CODER_AGENTS_BOT_APPROVAL_REGEX"; then
     echo ""
     echo "✅ coder-agents-review gate passed for PR #$PR_NUMBER via ${source_label}"
     if [[ -n "$created_at" ]]; then
       echo "Timestamp: $created_at"
     fi
     return 0
-  elif printf '%s\n' "$body" | grep -Eiq "$CODER_AGENTS_ISSUE_COMMENT_NEGATIVE_REGEX"; then
-    echo ""
-    echo "❌ coder-agents-review responded with a negative ${source_label} on PR #$PR_NUMBER."
-  elif printf '%s\n' "$body" | grep -Eiq "$CODER_AGENTS_ISSUE_COMMENT_PROGRESS_REGEX"; then
-    return 10
+  elif printf '%s\n' "$body" | grep -Eiq "$CODER_AGENTS_BOT_PROGRESS_REGEX"; then
+    return "$RC_PENDING"
   else
     echo ""
-    echo "❌ coder-agents-review responded with an unclassified ${source_label} on PR #$PR_NUMBER."
+    echo "❌ coder-agents-review responded with an unrecognized ${source_label} on PR #$PR_NUMBER."
   fi
 
   if [[ -n "$created_at" ]]; then
@@ -412,7 +412,7 @@ classify_bot_text_response() {
   echo ""
   echo "$body"
   echo ""
-  echo "Reply inline to the coder-agents-review finding(s), or leave a PR comment summarizing each response, before resolving/re-requesting review."
+  echo "Review the bot response, then reply inline or leave a PR comment summarizing each response before resolving/re-requesting review."
   return 1
 }
 
@@ -435,7 +435,7 @@ check_coder_agents_status_once() {
     :
   else
     local load_rc=$?
-    if [ "$load_rc" -eq 20 ]; then
+    if [ "$load_rc" -eq "$RC_SKIPPED" ]; then
       return 0
     fi
     return "$load_rc"
@@ -483,7 +483,7 @@ check_coder_agents_status_once() {
 
   if [[ -z "$request_at" && "$bot_activity_count" -eq 0 ]]; then
     echo "ℹ️ coder-agents-review gate skipped: no '$REQUEST_COMMAND' comment and no bot review activity found."
-    return 20
+    return "$RC_SKIPPED"
   fi
 
   unresolved_threads=$(coder_agents_unresolved_threads_from_json "$THREADS_JSON" "$BOT_LOGIN_REGEX")
@@ -525,7 +525,7 @@ check_coder_agents_status_once() {
       ')
 
     if [ "$response_count" -eq 0 ]; then
-      return 10
+      return "$RC_PENDING"
     fi
 
     latest_issue_comment_body=$(jq -rn \
@@ -667,9 +667,14 @@ check_coder_agents_status_once() {
       ')
   fi
 
-  if [ "$response_count" -eq 0 ]; then
-    echo "ℹ️ coder-agents-review gate skipped: no bot review activity found."
-    return 20
+  if [[ "$latest_review_state" = "CHANGES_REQUESTED" ]]; then
+    echo ""
+    echo "❌ coder-agents-review requested changes on PR #$PR_NUMBER."
+    if [[ -n "$latest_review_at" ]]; then
+      echo "Review timestamp: $latest_review_at"
+    fi
+    echo "Resolve/address the feedback and request another review with '$REQUEST_COMMAND'."
+    return "$RC_FAILED"
   fi
 
   if [[ -n "$latest_issue_comment_body" && (-z "$latest_review_at" || "$latest_issue_comment_at" > "$latest_review_at") ]]; then
@@ -696,17 +701,8 @@ check_coder_agents_status_once() {
       echo "✅ coder-agents-review gate passed for PR #$PR_NUMBER"
       return 0
       ;;
-    CHANGES_REQUESTED)
-      echo ""
-      echo "❌ coder-agents-review requested changes on PR #$PR_NUMBER."
-      if [[ -n "$latest_review_at" ]]; then
-        echo "Review timestamp: $latest_review_at"
-      fi
-      echo "Resolve/address the feedback and request another review with '$REQUEST_COMMAND'."
-      return 1
-      ;;
     PENDING)
-      return 10
+      return "$RC_PENDING"
       ;;
     DISMISSED)
       echo "❌ assertion failed: dismissed reviews should be filtered before state classification" >&2
@@ -727,7 +723,7 @@ if [ "$MODE" = "once" ]; then
   fi
 
   case "$rc" in
-    0 | 1 | 10 | 20)
+    "$RC_PASSED" | "$RC_FAILED" | "$RC_PENDING" | "$RC_SKIPPED")
       exit "$rc"
       ;;
     *)
@@ -751,17 +747,17 @@ while true; do
   fi
 
   case "$rc" in
-    0)
+    "$RC_PASSED")
       exit 0
       ;;
-    1)
+    "$RC_FAILED")
       exit 1
       ;;
-    10)
+    "$RC_PENDING")
       echo -ne "\r⏳ Waiting for coder-agents-review response... (requested at ${LAST_REQUEST_AT})  "
       sleep "$POLL_INTERVAL_SECS"
       ;;
-    20)
+    "$RC_SKIPPED")
       echo "ℹ️ Optional coder-agents-review gate is inactive; skipping."
       exit 0
       ;;
