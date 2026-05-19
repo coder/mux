@@ -34,7 +34,7 @@ REQUEST_COMMAND="/coder-agents-review"
 BOT_LOGIN_REGEX="${CODER_AGENTS_REVIEW_BOT_LOGIN_REGEX:-^coder-agents-review(\[bot\])?$}"
 CODER_AGENTS_ISSUE_COMMENT_APPROVAL_REGEX="no (issues|problems)|no major issues|looks good|lgtm|didn.t find|(^|[[:space:][:punct:]])approved([[:space:][:punct:]]|$)"
 CODER_AGENTS_ISSUE_COMMENT_NEGATIVE_BEFORE_APPROVAL_REGEX="not approved|not yet approved"
-CODER_AGENTS_ISSUE_COMMENT_NEGATIVE_REGEX="review failed|failed to|unable to|cannot review|could not review|timed out|cancelled|blocked|needs changes|changes requested"
+CODER_AGENTS_ISSUE_COMMENT_NEGATIVE_REGEX="review failed|failed to|unable to|cannot review|could not review|timed out|cancelled|blocked|needs changes|changes requested|without author response|unaddressed|to unblock"
 CODER_AGENTS_ISSUE_COMMENT_PROGRESS_REGEX="queued|started|running|in progress|reviewing|will review|working"
 POLL_INTERVAL_SECS=30
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -381,35 +381,38 @@ load_pr_data() {
   esac
 }
 
-classify_issue_comment_response() {
+classify_bot_text_response() {
   local body="$1"
   local created_at="$2"
+  local source_label="$3"
 
   if printf '%s\n' "$body" | grep -Eiq "$CODER_AGENTS_ISSUE_COMMENT_NEGATIVE_BEFORE_APPROVAL_REGEX"; then
     echo ""
-    echo "❌ coder-agents-review responded with a negative issue comment on PR #$PR_NUMBER."
+    echo "❌ coder-agents-review responded with a negative ${source_label} on PR #$PR_NUMBER."
   elif printf '%s\n' "$body" | grep -Eiq "$CODER_AGENTS_ISSUE_COMMENT_APPROVAL_REGEX"; then
     echo ""
-    echo "✅ coder-agents-review gate passed for PR #$PR_NUMBER via issue comment"
+    echo "✅ coder-agents-review gate passed for PR #$PR_NUMBER via ${source_label}"
     if [[ -n "$created_at" ]]; then
-      echo "Comment timestamp: $created_at"
+      echo "Timestamp: $created_at"
     fi
     return 0
   elif printf '%s\n' "$body" | grep -Eiq "$CODER_AGENTS_ISSUE_COMMENT_NEGATIVE_REGEX"; then
     echo ""
-    echo "❌ coder-agents-review responded with a negative issue comment on PR #$PR_NUMBER."
+    echo "❌ coder-agents-review responded with a negative ${source_label} on PR #$PR_NUMBER."
   elif printf '%s\n' "$body" | grep -Eiq "$CODER_AGENTS_ISSUE_COMMENT_PROGRESS_REGEX"; then
     return 10
   else
     echo ""
-    echo "❌ coder-agents-review responded with an unclassified issue comment on PR #$PR_NUMBER."
+    echo "❌ coder-agents-review responded with an unclassified ${source_label} on PR #$PR_NUMBER."
   fi
 
   if [[ -n "$created_at" ]]; then
-    echo "Comment timestamp: $created_at"
+    echo "Timestamp: $created_at"
   fi
   echo ""
   echo "$body"
+  echo ""
+  echo "Reply inline to the coder-agents-review finding(s), or leave a PR comment summarizing each response, before resolving/re-requesting review."
   return 1
 }
 
@@ -423,6 +426,7 @@ check_coder_agents_status_once() {
   local response_count
   local latest_review_state
   local latest_review_at
+  local latest_review_body
   local latest_issue_comment_body
   local latest_issue_comment_at
 
@@ -549,6 +553,23 @@ check_coder_agents_status_once() {
         | .createdAt // empty
       ')
 
+    latest_review_body=$(jq -rn \
+      --argjson reviews "$REVIEWS_JSON" \
+      --arg bot_regex "$BOT_LOGIN_REGEX" \
+      --arg request_at "$request_at" '
+        [
+          $reviews[]
+          | select(
+              ((.author.login // "") | test($bot_regex))
+              and (.state != "DISMISSED")
+              and ((.submittedAt // .createdAt // "") > $request_at)
+            )
+          | . + {reviewedAt: (.submittedAt // .createdAt // "")}
+        ]
+        | sort_by(.reviewedAt)
+        | last
+        | .body // empty
+      ')
     latest_review_state=$(jq -rn \
       --argjson reviews "$REVIEWS_JSON" \
       --arg bot_regex "$BOT_LOGIN_REGEX" \
@@ -608,6 +629,18 @@ check_coder_agents_status_once() {
         | .createdAt // empty
       ')
 
+    latest_review_body=$(jq -rn \
+      --argjson reviews "$REVIEWS_JSON" \
+      --arg bot_regex "$BOT_LOGIN_REGEX" '
+        [
+          $reviews[]
+          | select(((.author.login // "") | test($bot_regex)) and (.state != "DISMISSED"))
+          | . + {reviewedAt: (.submittedAt // .createdAt // "")}
+        ]
+        | sort_by(.reviewedAt)
+        | last
+        | .body // empty
+      ')
     latest_review_state=$(jq -rn \
       --argjson reviews "$REVIEWS_JSON" \
       --arg bot_regex "$BOT_LOGIN_REGEX" '
@@ -640,7 +673,12 @@ check_coder_agents_status_once() {
   fi
 
   if [[ -n "$latest_issue_comment_body" && (-z "$latest_review_at" || "$latest_issue_comment_at" > "$latest_review_at") ]]; then
-    classify_issue_comment_response "$latest_issue_comment_body" "$latest_issue_comment_at"
+    classify_bot_text_response "$latest_issue_comment_body" "$latest_issue_comment_at" "issue comment"
+    return $?
+  fi
+
+  if [[ "$latest_review_state" = "COMMENTED" && -n "$latest_review_body" ]]; then
+    classify_bot_text_response "$latest_review_body" "$latest_review_at" "review body"
     return $?
   fi
 

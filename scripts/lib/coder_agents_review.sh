@@ -96,6 +96,8 @@ coder_agents_print_unresolved_threads() {
   echo "❌ Unresolved coder-agents-review comments found:"
   echo "$unresolved" | jq -r '"  - [\(.created_at)] thread=\(.thread_id) \(.path):\(.line)\n    \(.user): \(.body)\n"'
   echo ""
+  echo "Reply inline to the finding(s), or leave a PR comment summarizing each response, before resolving."
+  echo ""
   echo "To resolve a comment thread, use:"
   echo "$unresolved" | jq -r '"  ./scripts/resolve_pr_comment.sh \(.thread_id)"'
 }

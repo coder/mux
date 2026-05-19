@@ -84,6 +84,18 @@ When a PR exists, stay in this loop until it is fully ready:
 4. Run `./scripts/wait_pr_ready.sh <pr_number>`.
 5. If Codex or checks fail, fix locally, push, and repeat.
 
+## Coder Agents Review Workflow
+
+When `/coder-agents-review` is used or the `coder-agents-review` bot has participated:
+
+1. Address each substantive finding.
+2. Reply to the bot before resolving threads: either inline on each finding or with a PR comment that explicitly lists the finding IDs and your response.
+3. Resolve addressed review threads.
+4. Re-request review with `/coder-agents-review`.
+5. Run `./scripts/wait_pr_ready.sh <pr_number>`.
+
+Do not silently resolve `coder-agents-review` threads. The bot treats resolved-but-unanswered findings as blocked review rounds.
+
 ## PR Title Conventions
 
 - Title prefixes: `perf|refactor|fix|feat|ci|tests|bench`
