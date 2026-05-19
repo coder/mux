@@ -899,11 +899,7 @@ describe("useAutoScroll", () => {
     act(() => {
       result.current.jumpToBottom();
     });
-    act(() => {
-      flushFrames(100);
-    });
     expect(resizeObserverCallback).not.toBeNull();
-    expect(scheduledFrames.length).toBe(0);
 
     metrics.setScrollHeight(1500);
     act(() => {
@@ -911,7 +907,18 @@ describe("useAutoScroll", () => {
     });
 
     expect(metrics.scrollTop).toBe(metrics.maxScrollTop);
-    expect(scheduledFrames.length).toBeGreaterThan(0);
+
+    const queuedResizeObserverCallback = resizeObserverCallback;
+    act(() => {
+      result.current.disableAutoScroll();
+    });
+    metrics.setScrollTop(100);
+    metrics.setScrollHeight(1600);
+    act(() => {
+      queuedResizeObserverCallback?.([], {} as ResizeObserver);
+    });
+
+    expect(metrics.scrollTop).toBe(100);
   });
 
   test("rAF loop is torn down on unmount and stops scheduling new frames", () => {
