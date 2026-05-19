@@ -8,7 +8,9 @@ set -euo pipefail
 #   1) wait_pr_codex.sh --once
 #   2) wait_pr_coder_agents_review.sh --once (skips unless explicitly requested/active)
 #   3) wait_pr_checks.sh --once
-#   4) check_codex_comments.sh (only when all active gates pass)
+#   4) wait_pr_coder_agents_review.sh --once after checks pass
+#   5) check_coder_agents_review_comments.sh (only when the optional gate is active)
+#   6) check_codex_comments.sh (only when all active gates pass)
 #
 # It exits immediately on the first terminal failure and succeeds only when
 # all required and active optional gates report success.
