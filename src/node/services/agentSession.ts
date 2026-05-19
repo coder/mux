@@ -19,6 +19,7 @@ import { computePriorHistoryFingerprint } from "@/common/orpc/onChatCursorFinger
 import type {
   WorkspaceChatMessage,
   SendMessageOptions,
+  GoalInterventionPolicy,
   FilePart,
   DeleteMessage,
   OnChatMode,
@@ -176,8 +177,6 @@ interface CompactionRequestMetadata {
     };
   };
 }
-
-type GoalInterventionPolicy = NonNullable<SendMessageOptions["goalInterventionPolicy"]>;
 
 interface AutoRetryResumeRequest {
   // Same-session auto-retry must preserve the full normalized request because
