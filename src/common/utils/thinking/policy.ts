@@ -25,6 +25,15 @@ import {
  */
 export type ThinkingPolicy = readonly ThinkingLevel[];
 
+const GEMINI_FLASH_THINKING_LEVEL_MODEL_NAMES = new Set([
+  "gemini-3-flash-preview",
+  "gemini-3.5-flash",
+]);
+
+export function isGeminiFlashThinkingLevelModelName(modelName: string): boolean {
+  return GEMINI_FLASH_THINKING_LEVEL_MODEL_NAMES.has(modelName.trim().toLowerCase());
+}
+
 /**
  * Returns the thinking policy for a given model.
  *
@@ -95,8 +104,8 @@ export function getThinkingPolicyForModel(modelString: string): ThinkingPolicy {
     return ["high"];
   }
 
-  // Gemini 3 Flash supports 4 levels: off (minimal), low, medium, high
-  if (withoutProviderNamespace.includes("gemini-3-flash")) {
+  // Gemini Flash chat models support minimal/low/medium/high. Mux exposes minimal as "off".
+  if (isGeminiFlashThinkingLevelModelName(withoutProviderNamespace)) {
     return ["off", "low", "medium", "high"];
   }
 

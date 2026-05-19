@@ -43,6 +43,15 @@ describe("getModelStats", () => {
     expect(stats.tiered_pricing_threshold_tokens).toBeUndefined();
   });
 
+  test("resolves Gemini 3.5 Flash with published standard pricing and limits", () => {
+    const stats = expectStats(KNOWN_MODELS.GEMINI_3_FLASH.id);
+    expect(stats.max_input_tokens).toBe(1048576);
+    expect(stats.max_output_tokens).toBe(65536);
+    expect(stats.input_cost_per_token).toBe(0.0000015);
+    expect(stats.output_cost_per_token).toBe(0.000009);
+    expect(stats.cache_read_input_token_cost).toBe(0.00000015);
+  });
+
   test("defaults tiered pricing threshold to 200K when metadata only ships *_above_200k rates", () => {
     const stats = expectStats("google:gemini-3.1-pro-preview");
     expect(stats.tiered_pricing_threshold_tokens).toBe(200000);

@@ -386,6 +386,30 @@ describe("getThinkingPolicyForModel", () => {
     expect(getThinkingPolicyForModel("google:gemini-3.1-pro-preview")).toEqual(["low", "high"]);
   });
 
+  test("returns off/low/medium/high for stable Gemini 3.5 Flash", () => {
+    expect(getThinkingPolicyForModel("google:gemini-3.5-flash")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+    ]);
+    expect(getThinkingPolicyForModel("mux-gateway:google/gemini-3.5-flash")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+    ]);
+  });
+
+  test("returns off/low/medium/high for stable Gemini 3.5 Flash behind OpenRouter", () => {
+    expect(getThinkingPolicyForModel("openrouter:google/gemini-3.5-flash")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+    ]);
+  });
+
   test("returns off/low/medium/high for Gemini 3 Flash", () => {
     expect(getThinkingPolicyForModel("google:gemini-3-flash-preview")).toEqual([
       "off",

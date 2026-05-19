@@ -29,6 +29,10 @@ describe("Known Models Integration", () => {
     }
   });
 
+  test("gemini-flash resolves to the stable Gemini 3.5 Flash model", () => {
+    expect(MODEL_ABBREVIATIONS["gemini-flash"]).toBe("google:gemini-3.5-flash");
+  });
+
   test("known model ids and aliases stay unique across the curated registry", () => {
     const seenIds = new Set<string>();
     const seenAliases = new Set<string>();

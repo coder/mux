@@ -27,6 +27,8 @@ interface ModelData {
   supports_function_calling?: boolean;
   supports_vision?: boolean;
   supports_pdf_input?: boolean;
+  supports_audio_input?: boolean;
+  supports_video_input?: boolean;
   max_pdf_size_mb?: number;
   supports_reasoning?: boolean;
   supports_response_schema?: boolean;
@@ -246,6 +248,27 @@ export const modelsExtra: Record<string, ModelData> = {
     supports_vision: true,
     supports_reasoning: true,
     supports_response_schema: true,
+  },
+
+  // Gemini 3.5 Flash - GA on May 19, 2026. Google AI docs list a stable
+  // `gemini-3.5-flash` model ID with 1M context, 65K max output, standard
+  // pricing of $1.50/M input, $9/M output, and $0.15/M cached input.
+  "gemini-3.5-flash": {
+    max_input_tokens: 1048576,
+    max_output_tokens: 65536,
+    input_cost_per_token: 0.0000015, // $1.50 per million input tokens
+    output_cost_per_token: 0.000009, // $9 per million output tokens, including thinking tokens
+    cache_read_input_token_cost: 0.00000015, // $0.15 per million cached input tokens
+    litellm_provider: "vertex_ai-language-models",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_vision: true,
+    supports_pdf_input: true,
+    supports_audio_input: true,
+    supports_video_input: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+    knowledge_cutoff: "2025-01",
   },
 
   // Gemini 3.1 Pro Preview - Released February 19, 2026
