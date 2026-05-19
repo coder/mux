@@ -4,7 +4,6 @@
  * Keyed by command name (without the leading "/").
  */
 export const SLASH_COMMAND_HINTS = {
-  truncate: "<0-100>",
   compact: "[-t <tokens>] [-m <model>] [continue message]",
   model: "<abbreviation|full-id>",
   fork: "[start message]",

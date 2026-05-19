@@ -364,11 +364,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const [commandSuggestions, setCommandSuggestions] = useState<SlashSuggestion[]>([]);
   const [agentSkillDescriptors, setAgentSkillDescriptors] = useState<AgentSkillDescriptor[]>([]);
   const [toast, setToast] = useState<Toast | null>(null);
-  // State for destructive command confirmation modal
-  const [pendingDestructiveCommand, setPendingDestructiveCommand] = useState<{
-    type: "clear" | "truncate";
-    percentage?: number;
-  } | null>(null);
+  // State for destructive command confirmation modal (currently only /clear).
+  const [pendingDestructiveCommand, setPendingDestructiveCommand] = useState(false);
   const pushToast = useCallback(
     (nextToast: Omit<Toast, "id" | "type"> & { type: Toast["type"] | "info" }) => {
       // Keep a dedicated "info" intent for callsites while rendering with the shared non-error toast style.
@@ -1925,13 +1922,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       return false;
     }
 
-    const isDestructive =
-      (parsed.type === "clear" && parsed.mode === "hard") || parsed.type === "truncate";
+    const isDestructive = parsed.type === "clear" && parsed.mode === "hard";
     if (isDestructive && variant === "workspace" && !options?.skipConfirmation) {
-      setPendingDestructiveCommand({
-        type: parsed.type,
-        percentage: parsed.type === "truncate" ? parsed.percentage : undefined,
-      });
+      setPendingDestructiveCommand(true);
       return true;
     }
 
@@ -2006,24 +1999,18 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     return true;
   };
 
-  // Handle destructive command confirmation
+  // Handle destructive command confirmation (currently only /clear).
   const handleDestructiveCommandConfirm = async () => {
     if (!pendingDestructiveCommand || variant !== "workspace") return;
 
-    const parsedCommand: ParsedCommand =
-      pendingDestructiveCommand.type === "clear"
-        ? { type: "clear", mode: "hard" }
-        : {
-            type: "truncate",
-            percentage: pendingDestructiveCommand.percentage ?? 0,
-          };
+    const parsedCommand: ParsedCommand = { type: "clear", mode: "hard" };
 
-    setPendingDestructiveCommand(null);
+    setPendingDestructiveCommand(false);
     await executeParsedCommand(parsedCommand, input, { skipConfirmation: true });
   };
 
   const handleDestructiveCommandCancel = useCallback(() => {
-    setPendingDestructiveCommand(null);
+    setPendingDestructiveCommand(false);
   }, []);
 
   // Handle drag over to allow drop
@@ -3128,21 +3115,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         </div>
       </div>
 
-      {/* Confirmation modal for destructive commands */}
+      {/* Confirmation modal for destructive commands (currently only /clear). */}
       <ConfirmationModal
-        isOpen={pendingDestructiveCommand !== null}
-        title={
-          pendingDestructiveCommand?.type === "clear"
-            ? "Clear Chat History?"
-            : `Truncate ${Math.round((pendingDestructiveCommand?.percentage ?? 0) * 100)}% of Chat History?`
-        }
-        description={
-          pendingDestructiveCommand?.type === "clear"
-            ? "This will remove all messages from the conversation."
-            : `This will remove approximately ${Math.round((pendingDestructiveCommand?.percentage ?? 0) * 100)}% of the oldest messages.`
-        }
+        isOpen={pendingDestructiveCommand}
+        title="Clear Chat History?"
+        description="This will remove all messages from the conversation."
         warning="This action cannot be undone."
-        confirmLabel={pendingDestructiveCommand?.type === "clear" ? "Clear" : "Truncate"}
+        confirmLabel="Clear"
         onConfirm={handleDestructiveCommandConfirm}
         onCancel={handleDestructiveCommandCancel}
       />

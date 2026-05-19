@@ -23,10 +23,10 @@ test("review scenario", async ({ ui, page }) => {
   await ui.chat.sendMessage(MOCK_REVIEW_PROMPTS.SHOW_ONBOARDING_DOC);
   await ui.chat.expectTranscriptContains("Found it. Here’s the quick-start summary:");
 
-  await ui.chat.sendMessage("/truncate 50");
+  await ui.chat.sendMessage("/clear");
   // Confirm the destructive action in the modal
-  await page.getByRole("button", { name: "Truncate" }).click();
-  await ui.chat.expectStatusMessageContains("Chat history truncated");
+  await page.getByRole("button", { name: "Clear" }).click();
+  await ui.chat.expectStatusMessageContains("Chat history cleared");
 
   await ui.metaSidebar.expectVisible();
   await ui.metaSidebar.selectTab("Review");
