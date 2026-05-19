@@ -667,7 +667,7 @@ check_coder_agents_status_once() {
       ')
   fi
 
-  if [[ "$latest_review_state" = "CHANGES_REQUESTED" ]]; then
+  if [[ "$latest_review_state" = "CHANGES_REQUESTED" && (-z "$latest_issue_comment_at" || ! "$latest_review_at" < "$latest_issue_comment_at") ]]; then
     echo ""
     echo "❌ coder-agents-review requested changes on PR #$PR_NUMBER."
     if [[ -n "$latest_review_at" ]]; then
