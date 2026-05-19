@@ -2789,6 +2789,33 @@ describe("WorkspaceGoalService", () => {
       expect(completed).toBeDefined();
     });
 
+    test("completeGoalFromSilentContinuation promotes the next upcoming goal", async () => {
+      // #3326 Codex P2 (PRRT_kwDOPxxmWM6DMh9j): silent-continuation
+      // completion must run the deferred auto-promote pass, otherwise
+      // the queued upcoming goal would stay stuck until some later
+      // manual mutation (because `maybeAutoPromoteOnComplete`'s inline
+      // pass races with the async `setStreaming(false)` listener).
+      const active = await setGoalOk(service, { workspaceId, objective: "First" });
+      const queued = await service.addUpcomingGoal({ workspaceId, objective: "Second" });
+
+      const result = await service.completeGoalFromSilentContinuation({
+        workspaceId,
+        completionSummary: "Looks done.",
+      });
+      expect(result?.goalId).toBe(active.goalId);
+      expect(result?.status).toBe("complete");
+
+      const board = await service.getGoalBoard(workspaceId);
+      const activeEntry = board.entries.find((e) => e.section === "active");
+      expect(activeEntry?.goal.goalId).toBe(queued.goalId);
+      expect(activeEntry?.goal.status).toBe("active");
+
+      const completedEntry = board.entries.find(
+        (e) => e.section === "complete" && e.goal.goalId === active.goalId
+      );
+      expect(completedEntry).toBeDefined();
+    });
+
     test("does NOT auto-promote when the upcoming list is empty (preserves single-goal UX)", async () => {
       const active = await setGoalOk(service, { workspaceId, objective: "Solo" });
       await setGoalOk(service, {
