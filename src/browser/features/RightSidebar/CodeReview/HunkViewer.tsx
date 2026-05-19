@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useMemo } from "react";
-import { Check, Circle } from "lucide-react";
+import { Check, Circle, Sparkles } from "lucide-react";
 import type { DiffHunk, Review, ReviewNoteData } from "@/common/types/review";
 import { SelectableDiffRenderer } from "../../Shared/DiffRenderer";
 import type { ReviewActionCallbacks } from "../../Shared/InlineReviewNote";
@@ -25,6 +25,7 @@ import { formatRelativeTime } from "@/browser/utils/ui/dateTime";
 import { cn } from "@/common/lib/utils";
 import { ContextCollapseIndicator } from "./ContextCollapseIndicator";
 import { useReadMore } from "./useReadMore";
+import { sliceHunkByNewLineRange } from "@/browser/utils/review/sliceHunkContent";
 
 interface HunkViewerProps {
   hunk: DiffHunk;
@@ -51,6 +52,25 @@ interface HunkViewerProps {
   reviewActions?: ReviewActionCallbacks;
   /** Prefer a collapsed default for huge reviews so opening Review doesn't mount every diff line. */
   preferCollapsed?: boolean;
+  /**
+   * Optional comment from the agent (via `review_pane_update`) explaining
+   * why this hunk was flagged for review. Rendered above the hunk's header
+   * row when present.
+   */
+  assistedComment?: string;
+  /**
+   * Whether this hunk was flagged by the agent. Used to surface a subtle
+   * accent indicator on the hunk header even when no comment was provided.
+   */
+  isAssisted?: boolean;
+  /**
+   * When set, the hunk body is trimmed to just these new-side line numbers
+   * (inclusive) by default. Lines before/after the range hide behind a
+   * "Show N lines …" affordance that reuses the existing context-collapse
+   * indicator. Pass a stable reference (e.g. memoized lookup) to keep
+   * `React.memo` working.
+   */
+  visibleNewLineRange?: { start: number; end: number };
 }
 
 function renderHighlightedFilePath(
@@ -129,6 +149,9 @@ export const HunkViewer = React.memo<HunkViewerProps>(
     reviewActions,
     includeUncommitted,
     preferCollapsed = false,
+    assistedComment,
+    isAssisted = false,
+    visibleNewLineRange,
   }) => {
     // Ref for the hunk container to track visibility
     const hunkRef = React.useRef<HTMLDivElement>(null);
@@ -192,6 +215,25 @@ export const HunkViewer = React.memo<HunkViewerProps>(
       [hunk.filePath, searchConfig]
     );
 
+    // Assisted-review trim: when the agent flagged a specific new-side range,
+    // render only those lines by default and hide the surrounding diff behind
+    // a "Show N lines …" affordance. The slicer returns null when trimming
+    // would be a no-op (range covers the whole hunk, pure deletions, etc.),
+    // so the existing single-renderer path still applies in those cases.
+    const hunkSlice = useMemo(
+      () => (visibleNewLineRange ? sliceHunkByNewLineRange(hunk, visibleNewLineRange) : null),
+      [hunk, visibleNewLineRange]
+    );
+    const [showSliceBefore, setShowSliceBefore] = useState(false);
+    const [showSliceAfter, setShowSliceAfter] = useState(false);
+    // Reset show-more state when the underlying slice changes (e.g. the agent
+    // updates the assisted range, or the user navigates to a different hunk
+    // that reuses this memoized component instance).
+    React.useEffect(() => {
+      setShowSliceBefore(false);
+      setShowSliceAfter(false);
+    }, [hunkSlice]);
+
     // Persist manual expand/collapse state across remounts per workspace
     // Maps hunkId -> isExpanded for user's manual preferences
     // Enable listener to synchronize updates across all HunkViewer instances
@@ -205,7 +247,13 @@ export const HunkViewer = React.memo<HunkViewerProps>(
     const hasManualState = hunkId in expandStateMap;
     const manualExpandState = expandStateMap[hunkId];
 
-    const shouldAutoExpand = !isRead && !isLargeHunk && (!preferCollapsed || Boolean(isSelected));
+    // Agent-flagged hunks should default to expanded even when they're "large"
+    // or in a heavy review where everything else is collapsed — otherwise the
+    // assisted-review focus signal gets buried.
+    const shouldAutoExpand =
+      !isRead &&
+      (!isLargeHunk || Boolean(visibleNewLineRange)) &&
+      (!preferCollapsed || Boolean(isSelected) || Boolean(visibleNewLineRange));
 
     // Determine initial expand state (priority: manual > read status > size/review scale)
     const [isExpanded, setIsExpanded] = useState(() => {
@@ -301,7 +349,25 @@ export const HunkViewer = React.memo<HunkViewerProps>(
         tabIndex={0}
         data-hunk-id={hunkId}
       >
-        <div className="border-border-light font-monospace flex items-center gap-1.5 border-b px-2 py-1 text-[11px]">
+        {(assistedComment ?? isAssisted) && (
+          <div
+            className="border-review-accent/40 bg-review-accent/5 text-foreground flex items-start gap-2 border-b px-2 py-1.5 text-[11px] leading-[1.4]"
+            data-testid="hunk-assisted-comment"
+          >
+            <Sparkles aria-hidden="true" className="text-review-accent mt-[2px] h-3 w-3 shrink-0" />
+            {assistedComment ? (
+              <span className="min-w-0 break-words whitespace-pre-wrap">{assistedComment}</span>
+            ) : (
+              <span className="text-muted italic">Flagged by agent for review</span>
+            )}
+          </div>
+        )}
+        <div
+          className={cn(
+            "border-border-light font-monospace flex items-center gap-1.5 border-b px-2 py-1 text-[11px]",
+            isAssisted && !assistedComment && "border-l-review-accent border-l-2"
+          )}
+        >
           {onToggleRead && (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -401,28 +467,104 @@ export const HunkViewer = React.memo<HunkViewerProps>(
               </>
             )}
 
-            {/* Original hunk content */}
-            <SelectableDiffRenderer
-              content={hunk.content}
-              filePath={hunk.filePath}
-              inlineReviews={inlineReviews}
-              oldStart={hunk.oldStart}
-              newStart={hunk.newStart}
-              fontSize="11px"
-              maxHeight="none"
-              className="rounded-none border-0 [&>div]:overflow-x-visible"
-              onReviewNote={onReviewNote}
-              onLineClick={() => {
-                const syntheticEvent = {
-                  currentTarget: { dataset: { hunkId } },
-                } as unknown as React.MouseEvent<HTMLElement>;
-                onClick?.(syntheticEvent);
-              }}
-              searchConfig={searchConfig}
-              enableHighlighting={isVisible}
-              onComposingChange={handleComposingChange}
-              reviewActions={reviewActions}
-            />
+            {/* Original hunk content (sliced when the agent flagged a range). */}
+            {(() => {
+              const renderBody = (content: string, oldStart: number, newStart: number) => (
+                <SelectableDiffRenderer
+                  content={content}
+                  filePath={hunk.filePath}
+                  inlineReviews={inlineReviews}
+                  oldStart={oldStart}
+                  newStart={newStart}
+                  fontSize="11px"
+                  maxHeight="none"
+                  className="rounded-none border-0 [&>div]:overflow-x-visible"
+                  onReviewNote={onReviewNote}
+                  onLineClick={() => {
+                    const syntheticEvent = {
+                      currentTarget: { dataset: { hunkId } },
+                    } as unknown as React.MouseEvent<HTMLElement>;
+                    onClick?.(syntheticEvent);
+                  }}
+                  searchConfig={searchConfig}
+                  enableHighlighting={isVisible}
+                  onComposingChange={handleComposingChange}
+                  reviewActions={reviewActions}
+                />
+              );
+
+              if (!hunkSlice) {
+                return renderBody(hunk.content, hunk.oldStart, hunk.newStart);
+              }
+
+              return (
+                <>
+                  {hunkSlice.beforeLineCount > 0 &&
+                    (showSliceBefore ? (
+                      <>
+                        {renderBody(
+                          hunkSlice.beforeContent,
+                          hunkSlice.beforeOldStart,
+                          hunkSlice.beforeNewStart
+                        )}
+                        <ContextCollapseIndicator
+                          lineCount={hunkSlice.beforeLineCount}
+                          onCollapse={(e) => {
+                            e.stopPropagation();
+                            setShowSliceBefore(false);
+                          }}
+                          position="above"
+                          mode="collapse"
+                        />
+                      </>
+                    ) : (
+                      <ContextCollapseIndicator
+                        lineCount={hunkSlice.beforeLineCount}
+                        onCollapse={(e) => {
+                          e.stopPropagation();
+                          setShowSliceBefore(true);
+                        }}
+                        position="above"
+                        mode="expand"
+                      />
+                    ))}
+                  {renderBody(
+                    hunkSlice.insideContent,
+                    hunkSlice.insideOldStart,
+                    hunkSlice.insideNewStart
+                  )}
+                  {hunkSlice.afterLineCount > 0 &&
+                    (showSliceAfter ? (
+                      <>
+                        <ContextCollapseIndicator
+                          lineCount={hunkSlice.afterLineCount}
+                          onCollapse={(e) => {
+                            e.stopPropagation();
+                            setShowSliceAfter(false);
+                          }}
+                          position="below"
+                          mode="collapse"
+                        />
+                        {renderBody(
+                          hunkSlice.afterContent,
+                          hunkSlice.afterOldStart,
+                          hunkSlice.afterNewStart
+                        )}
+                      </>
+                    ) : (
+                      <ContextCollapseIndicator
+                        lineCount={hunkSlice.afterLineCount}
+                        onCollapse={(e) => {
+                          e.stopPropagation();
+                          setShowSliceAfter(true);
+                        }}
+                        position="below"
+                        mode="expand"
+                      />
+                    ))}
+                </>
+              );
+            })()}
 
             {/* Expanded content below */}
             {downContent && (

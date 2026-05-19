@@ -50,6 +50,14 @@ export {
 export interface ReviewStats {
   total: number;
   read: number;
+  /**
+   * Number of agent-flagged ("assisted") hunks that resolve to a hunk in the
+   * current diff AND the user hasn't marked read yet. Used by the Review tab
+   * label to surface an attention indicator while there's still unread agent
+   * focus pending. 0 means either the agent flagged nothing or everything it
+   * flagged has been read (or no flag intersects the current diff).
+   */
+  unreadAssisted: number;
 }
 
 /** Props every tab label receives. Most tabs ignore most fields. */

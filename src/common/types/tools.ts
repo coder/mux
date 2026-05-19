@@ -318,6 +318,29 @@ export interface TodoWriteToolResult {
   count: number;
 }
 
+// Review Pane Tool Types, derived from schema (avoid drift)
+export type ReviewPaneUpdateToolArgs = z.infer<typeof TOOL_DEFINITIONS.review_pane_update.schema>;
+
+export interface ReviewPaneHunkEntry {
+  /** Hunk filter in `path[:range]` form (e.g. "src/foo.ts:10-20"). */
+  path: string;
+  /** Optional agent comment explaining what to look at. */
+  comment: string | null;
+}
+
+export interface ReviewPaneUpdateToolResult {
+  success: true;
+  operation: "add" | "replace";
+  /** Resulting pinned set (post-merge + dedup). */
+  hunks: ReviewPaneHunkEntry[];
+  /** Original filter strings that failed to parse and were dropped. */
+  rejected: string[];
+}
+
+export interface ReviewPaneGetToolResult {
+  hunks: ReviewPaneHunkEntry[];
+}
+
 export interface StatusSetToolArgs {
   emoji: string;
   message: string;

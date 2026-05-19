@@ -32,6 +32,8 @@ import type {
   NotifyToolResult,
   AgentSkillReadToolResult,
 } from "@/common/types/tools";
+import type { AssistedReviewHunk } from "@/common/types/review";
+import { parseAssistedFilter } from "@/common/utils/review/assistedReview";
 import { completeInProgressTodoItems } from "@/common/utils/todoList";
 import { AgentSkillReadToolResultSchema } from "@/common/utils/tools/toolDefinitions";
 import { getToolOutputUiOnly } from "@/common/utils/tools/toolOutputUiOnly";
@@ -110,6 +112,17 @@ const StatusSetSuccessResultSchema = z.object({
   message: z.string(),
   url: z.string().optional(),
 }) satisfies z.ZodType<Extract<StatusSetToolResult, { success: true }>>;
+
+const ReviewPaneUpdateSuccessResultSchema = z.object({
+  success: z.literal(true),
+  operation: z.enum(["add", "replace"]),
+  hunks: z.array(
+    z.object({
+      path: z.string(),
+      comment: z.string().nullable().optional(),
+    })
+  ),
+});
 
 const NotifySuccessResultSchema = z.object({
   success: z.literal(true),
@@ -488,6 +501,11 @@ export class StreamingMessageAggregator {
   // Unlike todos, this persists after stream completion to show last activity
   private agentStatus: AgentStatus | undefined = undefined;
 
+  // Agent-flagged "Assisted review" hunks (updated by review_pane_update).
+  // Reconstructed from chat history on reload via processToolResult so the
+  // pinned set survives restarts; not persisted to disk.
+  private assistedReviewHunks: AssistedReviewHunk[] = [];
+
   // Loaded skills (updated when agent_skill_read succeeds)
   // Persists after stream completion (like agentStatus) to show which skills were loaded
   // Keyed by skill name to avoid duplicates
@@ -804,6 +822,14 @@ export class StreamingMessageAggregator {
    */
   getCurrentTodos(): TodoItem[] {
     return this.currentTodos;
+  }
+
+  /**
+   * Get the current set of agent-flagged Assisted Review hunks.
+   * Updated whenever `review_pane_update` succeeds.
+   */
+  getAssistedReviewHunks(): AssistedReviewHunk[] {
+    return this.assistedReviewHunks;
   }
 
   /**
@@ -2465,6 +2491,28 @@ export class StreamingMessageAggregator {
         // Guard against malformed historical data and update only on real changes
         // to prevent flicker from equivalent-but-new todo array references.
         this.currentTodos = args.todos;
+      }
+    }
+
+    // Update Assisted Review state when review_pane_update succeeds.
+    // The tool returns the resulting list directly (already merged + deduped
+    // by the handler), so we just re-parse the formatted strings into our
+    // structured AssistedReviewHunk form. Re-running this across the entire
+    // history naturally reconstructs the final state on reload.
+    if (toolName === "review_pane_update") {
+      const parsed = ReviewPaneUpdateSuccessResultSchema.safeParse(output);
+      if (parsed.success) {
+        const next: AssistedReviewHunk[] = [];
+        for (const entry of parsed.data.hunks) {
+          const filter = parseAssistedFilter(entry.path);
+          if (!filter) continue;
+          next.push({
+            path: filter.path,
+            range: filter.range,
+            comment: entry.comment ?? undefined,
+          });
+        }
+        this.assistedReviewHunks = next;
       }
     }
 
