@@ -703,11 +703,13 @@ async function main(): Promise<number> {
       ...(opts.use1m && { anthropic: { use1MContext: true } }),
       ...(opts.serviceTier != null && { openai: { serviceTier: opts.serviceTier } }),
     },
-    // Disable UI-only tools that have no effect in CLI mode:
+    // Disable UI-only tools that either no-op or require UI interaction in CLI mode:
+    // - ask_user_question: waits for a desktop/mobile answer UI; headless `mux run` cannot answer it
     // - status_set: backend no-op, status indicator only visible in desktop UI
     // - todo_write/todo_read: TODO list only visible in desktop UI
     // - notify: sends OS notifications via Electron, silently swallowed in CLI
     toolPolicy: [
+      { regex_match: "ask_user_question", action: "disable" as const },
       { regex_match: "status_set", action: "disable" as const },
       { regex_match: "todo_write", action: "disable" as const },
       { regex_match: "todo_read", action: "disable" as const },
