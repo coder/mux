@@ -34,6 +34,22 @@ describe("buildBashCollapsedSummary", () => {
     ).toEqual({ kind: "command", command });
   });
 
+  test("falls back to the default summary mode for invalid display mode values", () => {
+    expect(
+      buildBashCollapsedSummary({
+        args: createArgs({ model_intent: "Waiting for the dev instance to start" }),
+        result: completedResult,
+        isBackground: false,
+        displayMode: "invalid",
+      })
+    ).toEqual({
+      kind: "intent-command",
+      intent: "Waiting for the dev instance to start",
+      command,
+      durationLabel: "30.1s",
+    });
+  });
+
   test("returns intent, command, and completed duration in intent-command mode", () => {
     expect(
       buildBashCollapsedSummary({

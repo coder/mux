@@ -301,6 +301,9 @@ describe("GeneralSection", () => {
       return button;
     });
     fireEvent.click(option);
+    await waitFor(() => {
+      expect(trigger.textContent).toContain(optionText);
+    });
   }
 
   function readToolCollapsedDisplayMode(): ToolCollapsedDisplayMode | null {

@@ -26,7 +26,7 @@ const TRAILING_USING_PATTERN = /^(?:(.*)\s+)?using\s+(.+?)\.?$/isu;
 /** Two passes catch nested patterns, for example "doing work using cmd for 5s for 3m". */
 const MAX_SANITIZE_PASSES = 2;
 
-/** User rationale: intent improves scanability, command lets users verify what ran. */
+/** Intent improves scanability, command lets users verify what ran. */
 export function buildBashCollapsedSummary(
   options: BuildBashCollapsedSummaryOptions
 ): BashCollapsedSummary {
@@ -108,5 +108,5 @@ function stripWrappingQuotes(value: string): string {
 }
 
 function normalizeForComparison(value: string): string {
-  return value.trim().replace(/\s+/gu, " ").toLocaleLowerCase();
+  return value.trim().replace(/\s+/gu, " ").toLowerCase();
 }
