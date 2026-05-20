@@ -17,7 +17,7 @@
  *
  * @param diffBase - Base reference ("main", "HEAD", "--staged")
  * @param includeUncommitted - Include uncommitted working directory changes
- * @param pathFilter - Optional path filter (e.g., ' -- "src/foo.ts"')
+ * @param pathFilter - Optional path filter (e.g., 'src/foo.ts')
  * @param command - "diff" (unified) or "numstat" (file stats)
  */
 export function buildGitDiffCommand(
@@ -25,18 +25,25 @@ export function buildGitDiffCommand(
   includeUncommitted: boolean,
   pathFilter: string,
   command: "diff" | "numstat"
-): string {
-  const flags = command === "numstat" ? " -M --numstat" : " -M";
+): string[] {
+  const flags = command === "numstat" ? ["-M", "--numstat"] : ["-M"];
 
   if (diffBase === "--staged") {
     // Staged changes, optionally with unstaged appended as separate diff
-    const base = `git diff --staged${flags}${pathFilter}`;
-    return includeUncommitted ? `${base} && git diff HEAD${flags}${pathFilter}` : base;
+    const base: string[] = ["git", "diff", "--staged", ...flags];
+    const withPath = pathFilter ? [...base, "--", pathFilter] : base;
+    if (includeUncommitted) {
+      const unstaged: string[] = ["git", "diff", "HEAD", ...flags];
+      const unstagedWithPath = pathFilter ? [...unstaged, "--", pathFilter] : unstaged;
+      return [...withPath, "&&", ...unstagedWithPath];
+    }
+    return withPath;
   }
 
   if (diffBase === "HEAD") {
     // Uncommitted changes only (working vs HEAD)
-    return `git diff HEAD${flags}${pathFilter}`;
+    const cmd: string[] = ["git", "diff", "HEAD", ...flags];
+    return pathFilter ? [...cmd, "--", pathFilter] : cmd;
   }
 
   // Branch diff: use three-dot for committed only, or merge-base for committed+uncommitted
@@ -45,9 +52,12 @@ export function buildGitDiffCommand(
     // This includes both committed changes on the branch AND uncommitted working changes
     // Single command avoids duplicate hunks from concatenation
     // Stable comparison point: merge-base doesn't change when diffBase ref moves forward
-    return `git diff $(git merge-base ${diffBase} HEAD)${flags}${pathFilter}`;
+    const mergeBaseCmd: string[] = ["git", "merge-base", diffBase, "HEAD"];
+    const diffCmd: string[] = ["git", "diff", ...mergeBaseCmd, ...flags];
+    return pathFilter ? [...diffCmd, "--", pathFilter] : diffCmd;
   } else {
     // Three-dot: committed changes only (merge-base to HEAD)
-    return `git diff ${diffBase}...HEAD${flags}${pathFilter}`;
+    const cmd: string[] = ["git", "diff", `${diffBase}...HEAD`, ...flags];
+    return pathFilter ? [...cmd, "--", pathFilter] : cmd;
   }
 }
