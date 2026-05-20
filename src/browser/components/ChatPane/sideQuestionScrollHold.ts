@@ -17,12 +17,76 @@ export interface ActiveSideQuestionScrollHoldResult {
   targetHistoryId?: string;
 }
 
+interface ScrollHoldViewportGeometry {
+  scrollTop: number;
+  scrollHeight: number;
+  clientHeight: number;
+  getBoundingClientRect(): Pick<DOMRectReadOnly, "top">;
+}
+
+interface ScrollHoldTargetGeometry {
+  getBoundingClientRect(): Pick<DOMRectReadOnly, "top">;
+}
+
+interface ScrollHoldBottomClampOptions {
+  scrollportStartTop?: number;
+}
+
+const BOTTOM_CLAMP_EPSILON_PX = 1;
+const TARGET_START_ALIGNMENT_EPSILON_PX = 2;
+
+function readCssPixelValue(value: string): number {
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+export function getSideQuestionScrollHoldScrollportStartTop(scrollContainer: HTMLElement): number {
+  const containerTop = scrollContainer.getBoundingClientRect().top;
+  const style = scrollContainer.ownerDocument.defaultView?.getComputedStyle(scrollContainer);
+  if (!style) {
+    return containerTop;
+  }
+
+  // scrollIntoView aligns to the scrollport's padding edge. The transcript
+  // scroller has padding, so comparing against the border box would mistake a
+  // correctly aligned /btw row for a bottom-clamped row and keep the hold alive.
+  return (
+    containerTop + readCssPixelValue(style.borderTopWidth) + readCssPixelValue(style.paddingTop)
+  );
+}
+
+/**
+ * `scrollIntoView({ block: "start" })` silently degrades to bottom-clamping when
+ * there is not yet enough transcript content below a /btw branch. Keep the
+ * short-lived hold only in that clamped state; once the target can actually sit
+ * at the transcript scrollport start, the side branch must stop owning scroll so
+ * it cannot become permanent bottom clutter.
+ */
+export function isSideQuestionScrollHoldBottomClamped(
+  scrollContainer: ScrollHoldViewportGeometry,
+  targetElement: ScrollHoldTargetGeometry,
+  options: ScrollHoldBottomClampOptions = {}
+): boolean {
+  const maxScrollTop = Math.max(0, scrollContainer.scrollHeight - scrollContainer.clientHeight);
+  const isAtScrollBottom = maxScrollTop - scrollContainer.scrollTop <= BOTTOM_CLAMP_EPSILON_PX;
+  if (!isAtScrollBottom) {
+    return false;
+  }
+
+  const scrollportStartTop =
+    options.scrollportStartTop ?? scrollContainer.getBoundingClientRect().top;
+  const targetTop = targetElement.getBoundingClientRect().top;
+  return targetTop > scrollportStartTop + TARGET_START_ALIGNMENT_EPSILON_PX;
+}
+
 /**
  * Continue aligning a side-question branch after the first hand-off from
  * bottom-lock. The first scroll can happen before there is enough content below
  * the branch for the browser to place it in a readable position, so active side
  * holds keep re-aligning on subsequent stream updates until the side answer has
- * produced one final settled render.
+ * produced one final settled render. If no answer row is currently rendered
+ * (model setup lag, retry, or failure), the ChatPane keeps that target alive
+ * only while DOM geometry says the attempted alignment is still bottom-clamped.
  */
 export function findActiveSideQuestionScrollHoldTarget(
   messages: readonly DisplayedMessage[],
@@ -39,7 +103,20 @@ export function findActiveSideQuestionScrollHoldTarget(
       message.historyId === activeTargetHistoryId
   );
   if (sideQuestionIndex === -1) {
-    return { keepActive: false };
+    const sideAnswer = messages.find(
+      (message): message is Extract<DisplayedMessage, { type: "assistant" }> =>
+        message.type === "assistant" &&
+        message.isSideAnswer === true &&
+        message.historyId === activeTargetHistoryId
+    );
+    if (!sideAnswer) {
+      return { keepActive: false };
+    }
+
+    return {
+      targetHistoryId: activeTargetHistoryId,
+      keepActive: sideAnswer.isStreaming === true,
+    };
   }
 
   const nextMessage = messages[sideQuestionIndex + 1];
@@ -50,7 +127,7 @@ export function findActiveSideQuestionScrollHoldTarget(
     };
   }
 
-  return { targetHistoryId: activeTargetHistoryId, keepActive: true };
+  return { targetHistoryId: activeTargetHistoryId, keepActive: false };
 }
 
 /**
