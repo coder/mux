@@ -4,7 +4,6 @@
  * Keyed by command name (without the leading "/").
  */
 export const SLASH_COMMAND_HINTS = {
-  truncate: "<0-100>",
   compact: "[-t <tokens>] [-m <model>] [continue message]",
   model: "<abbreviation|full-id>",
   fork: "[start message]",
@@ -12,4 +11,5 @@ export const SLASH_COMMAND_HINTS = {
   idle: "<hours>|off",
   heartbeat: "<minutes>|off",
   goal: "[-b <amount>] [--turns <n>] <objective>|budget <amount>|clear",
+  btw: "<question>",
 } as const satisfies Readonly<Record<string, string>>;

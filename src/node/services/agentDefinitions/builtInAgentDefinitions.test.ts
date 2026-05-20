@@ -66,6 +66,16 @@ describe("built-in agent definitions", () => {
     expect(plan?.frontmatter.tools?.remove ?? []).toContain("analytics_query");
   });
 
+  test("exec built-in allows ask_user_question", () => {
+    const pkgs = getBuiltInAgentDefinitions();
+    const byId = new Map(pkgs.map((pkg) => [pkg.id, pkg] as const));
+
+    const exec = byId.get("exec");
+    expect(exec).toBeTruthy();
+    expect(exec?.frontmatter.tools?.add ?? []).toContain(".*");
+    expect(exec?.frontmatter.tools?.remove ?? []).not.toContain("ask_user_question");
+  });
+
   test("task_apply_git_patch is restricted to exec", () => {
     const pkgs = getBuiltInAgentDefinitions();
     const byId = new Map(pkgs.map((pkg) => [pkg.id, pkg] as const));

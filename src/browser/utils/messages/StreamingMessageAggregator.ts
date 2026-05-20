@@ -32,6 +32,8 @@ import type {
   NotifyToolResult,
   AgentSkillReadToolResult,
 } from "@/common/types/tools";
+import type { AssistedReviewHunk } from "@/common/types/review";
+import { parseAssistedFilter } from "@/common/utils/review/assistedReview";
 import { completeInProgressTodoItems } from "@/common/utils/todoList";
 import { AgentSkillReadToolResultSchema } from "@/common/utils/tools/toolDefinitions";
 import { getToolOutputUiOnly } from "@/common/utils/tools/toolOutputUiOnly";
@@ -72,6 +74,11 @@ import {
   CONTEXT_BOUNDARY_KINDS,
   getContextBoundaryKind,
 } from "@/common/utils/messages/compactionBoundary";
+import {
+  SIDE_QUESTION_ANSWER_METADATA_TYPE,
+  isSideQuestionAnswerMessage as isSideQuestionAnswerMuxMessage,
+  isSideQuestionUserMessage as isSideQuestionUserMuxMessage,
+} from "@/common/utils/messages/sideQuestion";
 
 // Maximum number of messages to display in the DOM for performance
 // Full history is still maintained internally for token counting and stats
@@ -105,6 +112,17 @@ const StatusSetSuccessResultSchema = z.object({
   message: z.string(),
   url: z.string().optional(),
 }) satisfies z.ZodType<Extract<StatusSetToolResult, { success: true }>>;
+
+const ReviewPaneUpdateSuccessResultSchema = z.object({
+  success: z.literal(true),
+  operation: z.enum(["add", "replace"]),
+  hunks: z.array(
+    z.object({
+      path: z.string(),
+      comment: z.string().nullable().optional(),
+    })
+  ),
+});
 
 const NotifySuccessResultSchema = z.object({
   success: z.literal(true),
@@ -415,6 +433,18 @@ function deriveInlineSkillSnapshotDisplayState(
   };
 }
 
+interface MessagePartSplitCut {
+  textLength: number;
+  partIndex?: number;
+}
+
+interface SideQuestionInterrupt {
+  atTextLength: number;
+  atPartIndex?: number;
+  sideQuestionUserMsg: MuxMessage;
+  sideQuestionAnswerMsg?: MuxMessage;
+}
+
 export class StreamingMessageAggregator {
   private messages = new Map<string, MuxMessage>();
   private activeStreams = new Map<string, StreamingContext>();
@@ -470,6 +500,11 @@ export class StreamingMessageAggregator {
   // Current agent status (updated when status_set is called)
   // Unlike todos, this persists after stream completion to show last activity
   private agentStatus: AgentStatus | undefined = undefined;
+
+  // Agent-flagged "Assisted review" hunks (updated by review_pane_update).
+  // Reconstructed from chat history on reload via processToolResult so the
+  // pinned set survives restarts; not persisted to disk.
+  private assistedReviewHunks: AssistedReviewHunk[] = [];
 
   // Loaded skills (updated when agent_skill_read succeeds)
   // Persists after stream completion (like agentStatus) to show which skills were loaded
@@ -787,6 +822,14 @@ export class StreamingMessageAggregator {
    */
   getCurrentTodos(): TodoItem[] {
     return this.currentTodos;
+  }
+
+  /**
+   * Get the current set of agent-flagged Assisted Review hunks.
+   * Updated whenever `review_pane_update` succeeds.
+   */
+  getAssistedReviewHunks(): AssistedReviewHunk[] {
+    return this.assistedReviewHunks;
   }
 
   /**
@@ -1455,6 +1498,19 @@ export class StreamingMessageAggregator {
     }
   }
 
+  private getActiveMainStreamEntry(): [string, StreamingContext] | undefined {
+    for (const entry of this.activeStreams) {
+      const [messageId] = entry;
+      // /btw side-answer streams render through the same event channel but do
+      // not belong to StreamManager. Active-stream callers such as interrupt,
+      // live usage, and stats must keep pointing at the real main-agent stream.
+      if (!this.isSideQuestionAnswerMessage(messageId)) {
+        return entry;
+      }
+    }
+    return undefined;
+  }
+
   /**
    * Get timing statistics for the active stream (if any).
    * Returns null if no active stream exists.
@@ -1472,10 +1528,9 @@ export class StreamingMessageAggregator {
     /** Mode (plan/exec) for this stream */
     mode?: string;
   } | null {
-    // Get the first (and typically only) active stream
-    const entries = Array.from(this.activeStreams.entries());
-    if (entries.length === 0) return null;
-    const [messageId, context] = entries[0];
+    const activeMainStream = this.getActiveMainStreamEntry();
+    if (!activeMainStream) return null;
+    const [messageId, context] = activeMainStream;
 
     const now = Date.now();
 
@@ -1657,11 +1712,11 @@ export class StreamingMessageAggregator {
   }
 
   /**
-   * Get the messageId of the first active stream (for token tracking)
-   * Returns undefined if no streams are active
+   * Get the active main-agent stream id (for interrupt, live usage, and token tracking).
+   * Returns undefined when no interruptible main-agent stream is active.
    */
   getActiveStreamMessageId(): string | undefined {
-    return this.activeStreams.keys().next().value;
+    return this.getActiveMainStreamEntry()?.[0];
   }
 
   /**
@@ -1700,17 +1755,62 @@ export class StreamingMessageAggregator {
     return false;
   }
 
-  getCurrentModel(): string | undefined {
-    // If there's an active stream, return its model
-    for (const context of this.activeStreams.values()) {
-      return context.model;
+  /** Is the /btw side-question pipeline currently streaming an answer? */
+  isSideQuestionStreaming(): boolean {
+    for (const messageId of this.activeStreams.keys()) {
+      if (this.isSideQuestionAnswerMessage(messageId)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Active streams that can be interrupted via the backend StreamManager. */
+  hasInterruptibleActiveStream(): boolean {
+    return this.getActiveMainStreamEntry() !== undefined;
+  }
+
+  /** Is `messageId` a /btw side-question answer? */
+  isSideQuestionAnswerMessage(messageId: string): boolean {
+    const message = this.messages.get(messageId);
+    return message !== undefined && isSideQuestionAnswerMuxMessage(message);
+  }
+
+  private isSideQuestionAnswerStreamEvent(event: {
+    messageId: string;
+    metadata?: { muxMetadata?: unknown };
+  }): boolean {
+    if (this.isSideQuestionAnswerMessage(event.messageId)) {
+      return true;
     }
 
-    // Otherwise, return the model from the most recent assistant message
+    const muxMetadata = event.metadata?.muxMetadata;
+    return (
+      typeof muxMetadata === "object" &&
+      muxMetadata !== null &&
+      "type" in muxMetadata &&
+      muxMetadata.type === SIDE_QUESTION_ANSWER_METADATA_TYPE
+    );
+  }
+
+  getCurrentModel(): string | undefined {
+    // If there's an active main-agent stream, return its model. /btw streams
+    // are read-only asides and must not become the workspace's current model.
+    for (const [messageId, context] of this.activeStreams) {
+      if (!this.isSideQuestionAnswerMessage(messageId)) {
+        return context.model;
+      }
+    }
+
+    // Otherwise, return the model from the most recent non-side-answer assistant message.
     const messages = this.getAllMessages();
     for (let i = messages.length - 1; i >= 0; i--) {
       const message = messages[i];
-      if (message.role === "assistant" && message.metadata?.model) {
+      if (
+        message.role === "assistant" &&
+        !isSideQuestionAnswerMuxMessage(message) &&
+        message.metadata?.model
+      ) {
         return message.metadata.model;
       }
     }
@@ -1724,19 +1824,22 @@ export class StreamingMessageAggregator {
    * user-configured level.
    */
   getCurrentThinkingLevel(): string | undefined {
-    // If there's an active stream, return its thinking level
-    for (const context of this.activeStreams.values()) {
-      return context.thinkingLevel;
+    // If there's an active main-agent stream, return its thinking level.
+    // /btw streams are read-only asides and must not become workspace state.
+    for (const [messageId, context] of this.activeStreams) {
+      if (!this.isSideQuestionAnswerMessage(messageId)) {
+        return context.thinkingLevel;
+      }
     }
 
-    // Only check the most recent assistant message to avoid returning
-    // stale values from older turns where settings may have differed.
+    // Only check the most recent non-side-answer assistant message to avoid
+    // returning stale values from older turns where settings may have differed.
     // If it lacks thinkingLevel (e.g. error/abort), return undefined so
     // callers fall back to localStorage.
     const messages = this.getAllMessages();
     for (let i = messages.length - 1; i >= 0; i--) {
       const message = messages[i];
-      if (message.role === "assistant") {
+      if (message.role === "assistant" && !isSideQuestionAnswerMuxMessage(message)) {
         return message.metadata?.thinkingLevel;
       }
     }
@@ -1840,21 +1943,29 @@ export class StreamingMessageAggregator {
   handleStreamStart(data: StreamStartEvent): void {
     const { isCompacting, isIdleCompaction, hasCompactionContinue } =
       this.resolveStreamStartCompaction(data);
+    const isSideQuestionAnswerStream = this.isSideQuestionAnswerStreamEvent(data);
 
-    // Clear pending "starting..." UI now that the assistant turn is live.
-    this.clearPendingStreamLifecycleState();
-    this.lastAbortReason = null;
+    // Clear pending "starting..." UI once a main-agent turn is live. /btw
+    // side-answer streams can start while a normal turn is still waiting for
+    // its own stream-start, so they must not hide the main startup barrier.
+    if (!isSideQuestionAnswerStream) {
+      this.clearPendingStreamLifecycleState();
+      this.lastAbortReason = null;
+    }
 
     // NOTE: We do NOT clear agentStatus or currentTodos here.
     // They are cleared when a new user message arrives (see handleMessage),
     // ensuring consistent behavior whether loading from history or processing live events.
 
-    for (const activeStream of this.activeStreams.values()) {
-      // A queued follow-up belongs to the handoff into the next stream. Once that next
-      // stream starts, older contexts must not keep suppressing later completions.
-      activeStream.hasQueuedFollowUp = false;
+    if (!isSideQuestionAnswerStream) {
+      for (const activeStream of this.activeStreams.values()) {
+        // A queued follow-up belongs to the handoff into the next main stream.
+        // /btw side-answer streams are independent asides, so they must not
+        // clear the main stream's queued-follow-up suppression state.
+        activeStream.hasQueuedFollowUp = false;
+      }
+      this.backgroundHandoffCompletion = undefined;
     }
-    this.backgroundHandoffCompletion = undefined;
     const routeProvider = resolveRouteProvider(data.routeProvider, data.routedThroughGateway);
 
     const suppressNotification =
@@ -1920,6 +2031,16 @@ export class StreamingMessageAggregator {
     // If called twice, second call safely overwrites first
     this.activeStreams.set(data.messageId, context);
 
+    // Carry forward any muxMetadata that was attached when the message was
+    // first seen (e.g., the side-question pipeline emits a placeholder
+    // `message` event with `muxMetadata.type === "side-question-answer"`
+    // immediately before this stream-start). Without this, the fresh
+    // createMuxMessage below would silently drop the marker for the
+    // duration of the stream — breaking the "side answer" badge and the
+    // /btw split rendering, both of which key off this metadata when
+    // `buildDisplayedMessagesForMessage` runs.
+    const carriedMuxMetadata = existingMessage?.metadata?.muxMetadata;
+
     // Create initial streaming message with empty parts (deltas will append)
     const streamingMessage = createMuxMessage(data.messageId, "assistant", "", {
       historySequence: data.historySequence,
@@ -1929,6 +2050,7 @@ export class StreamingMessageAggregator {
       routeProvider,
       mode: data.mode,
       thinkingLevel: data.thinkingLevel,
+      ...(carriedMuxMetadata !== undefined ? { muxMetadata: carriedMuxMetadata } : {}),
     });
 
     this.messages.set(data.messageId, streamingMessage);
@@ -1975,9 +2097,14 @@ export class StreamingMessageAggregator {
   }
 
   handleStreamEnd(data: StreamEndEvent): void {
-    // A terminal event means any locally preserved "starting..." state is stale,
-    // even if reconnect delivered stream-end without the earlier stream-start.
-    this.clearPendingStreamLifecycleState();
+    const isSideQuestionAnswerStream = this.isSideQuestionAnswerStreamEvent(data);
+    // A terminal event for the main agent means any locally preserved
+    // "starting..." state is stale, even if reconnect delivered stream-end
+    // without the earlier stream-start. /btw side-answer streams are separate
+    // and must not hide a still-pending main startup barrier.
+    if (!isSideQuestionAnswerStream) {
+      this.clearPendingStreamLifecycleState();
+    }
 
     // Direct lookup by messageId - O(1) instead of O(n) find
     const activeStream = this.activeStreams.get(data.messageId);
@@ -2036,21 +2163,23 @@ export class StreamingMessageAggregator {
       // Clean up stream-scoped state for this stream.
       this.cleanupStreamState(data.messageId);
 
-      const isFinal = this.activeStreams.size === 0;
+      const isFinal = this.getActiveMainStreamEntry() === undefined;
 
-      // Completion timestamp for ALL final streams — the "stream ended" fact.
-      // Read-marking uses this to keep the active workspace current.
-      const completedAt = isFinal ? Date.now() : null;
+      // Completion timestamp for final main-agent streams — the "stream ended"
+      // fact. Side answers can overlap with the main stream but should not
+      // suppress the main final completion or emit replacement notifications.
+      const completedAt = isFinal && !isSideQuestionAnswerStream ? Date.now() : null;
 
-      // Recency policy: only non-compaction finals inflate lastResponseCompletedAt.
+      // Recency policy: only non-compaction main finals inflate lastResponseCompletedAt.
       // Compaction recency comes from the compacted summary's own timestamp.
       if (completedAt !== null && !activeStream.isCompacting) {
         this.lastResponseCompletedAt = completedAt;
       }
 
-      // Notify on normal stream completion (skip replay-only reconstruction)
-      // isFinal = true when this was the last active stream (assistant done with all work)
-      if (this.workspaceId && this.onResponseComplete) {
+      // Notify on normal stream completion (skip replay-only reconstruction and
+      // /btw side-answer streams).
+      // isFinal = true when the main agent is done with all work.
+      if (this.workspaceId && this.onResponseComplete && !isSideQuestionAnswerStream) {
         this.onResponseComplete({
           workspaceId: this.workspaceId,
           messageId: data.messageId,
@@ -2362,6 +2491,28 @@ export class StreamingMessageAggregator {
         // Guard against malformed historical data and update only on real changes
         // to prevent flicker from equivalent-but-new todo array references.
         this.currentTodos = args.todos;
+      }
+    }
+
+    // Update Assisted Review state when review_pane_update succeeds.
+    // The tool returns the resulting list directly (already merged + deduped
+    // by the handler), so we just re-parse the formatted strings into our
+    // structured AssistedReviewHunk form. Re-running this across the entire
+    // history naturally reconstructs the final state on reload.
+    if (toolName === "review_pane_update") {
+      const parsed = ReviewPaneUpdateSuccessResultSchema.safeParse(output);
+      if (parsed.success) {
+        const next: AssistedReviewHunk[] = [];
+        for (const entry of parsed.data.hunks) {
+          const filter = parseAssistedFilter(entry.path);
+          if (!filter) continue;
+          next.push({
+            path: filter.path,
+            range: filter.range,
+            comment: entry.comment ?? undefined,
+          });
+        }
+        this.assistedReviewHunks = next;
       }
     }
 
@@ -2721,7 +2872,7 @@ export class StreamingMessageAggregator {
     this.addMessage(incomingMessage);
     this.maybeTrackLoadedSkillFromAgentSkillSnapshot(incomingMessage.metadata?.agentSkillSnapshot);
 
-    if (incomingMessage.role !== "user") {
+    if (incomingMessage.role !== "user" || isSideQuestionUserMuxMessage(incomingMessage)) {
       return;
     }
 
@@ -2829,6 +2980,191 @@ export class StreamingMessageAggregator {
   }
 
   /**
+   * Split a list of message parts at one or more cumulative-text-length
+   * boundaries.
+   *
+   * Only `text` parts contribute to the cumulative length — reasoning and
+   * tool parts pass through to whichever segment is currently being filled.
+   * Non-text parts always land in the segment that owns the cumulative
+   * text position immediately before they appear in `parts`, which keeps
+   * "the reasoning that happened before the user fired /btw" anchored on
+   * the pre-aside side of the split.
+   *
+   * Returns `cutPoints.length + 1` segments. Each segment may be empty
+   * (no parts) if the boundaries coincide or the message has no content
+   * before/after a boundary.
+   */
+  private splitMessagePartsAtTextLengths(
+    parts: MuxMessage["parts"],
+    cutPoints: readonly MessagePartSplitCut[]
+  ): Array<MuxMessage["parts"]> {
+    const sortedCuts = [...cutPoints].sort(
+      (a, b) => a.textLength - b.textLength || (a.partIndex ?? Infinity) - (b.partIndex ?? Infinity)
+    );
+    const segments: Array<MuxMessage["parts"]> = sortedCuts.map(() => []);
+    segments.push([]);
+
+    let cumulativeText = 0;
+    let currentSegment = 0;
+
+    const advanceThroughCuts = (newCumulative: number, nextPartIndex: number): void => {
+      while (currentSegment < sortedCuts.length) {
+        const cut = sortedCuts[currentSegment];
+        if (newCumulative < cut.textLength) {
+          return;
+        }
+        if (cut.partIndex !== undefined && nextPartIndex < cut.partIndex) {
+          return;
+        }
+        currentSegment++;
+      }
+    };
+
+    for (let partIndex = 0; partIndex < parts.length; partIndex++) {
+      const part = parts[partIndex];
+      advanceThroughCuts(cumulativeText, partIndex);
+      if (part.type !== "text") {
+        // Reasoning / tool / file parts ride with the current segment.
+        // interruptedPartIndex keeps non-text parts already visible at the
+        // same cumulative text offset on the pre-aside side after reload.
+        segments[currentSegment].push(part);
+        advanceThroughCuts(cumulativeText, partIndex + 1);
+        continue;
+      }
+
+      // Walk this text part across as many boundaries as it crosses. Each
+      // boundary peels off a prefix into the current segment, advances
+      // currentSegment, and leaves the remainder to be considered against
+      // the next boundary.
+      let remaining = part.text;
+      while (currentSegment < sortedCuts.length) {
+        const cut = sortedCuts[currentSegment];
+        if (cut.partIndex !== undefined && partIndex + 1 < cut.partIndex) {
+          // This split point is after a later non-text part at the same text
+          // offset; keep this whole text part in the current segment for now.
+          break;
+        }
+        const charsLeftInCurrentSegment = cut.textLength - cumulativeText;
+        if (charsLeftInCurrentSegment >= remaining.length) {
+          // This part fits entirely inside the current segment.
+          break;
+        }
+        if (charsLeftInCurrentSegment <= 0) {
+          advanceThroughCuts(cumulativeText, partIndex + 1);
+          continue;
+        }
+        const prefix = remaining.slice(0, charsLeftInCurrentSegment);
+        if (prefix.length > 0) {
+          // Preserve part metadata (e.g. timestamp) on each half.
+          segments[currentSegment].push({ ...part, text: prefix });
+        }
+        cumulativeText = cut.textLength;
+        remaining = remaining.slice(charsLeftInCurrentSegment);
+        advanceThroughCuts(cumulativeText, partIndex + 1);
+      }
+
+      if (remaining.length > 0) {
+        segments[currentSegment].push({ ...part, text: remaining });
+        cumulativeText += remaining.length;
+        advanceThroughCuts(cumulativeText, partIndex + 1);
+      }
+    }
+
+    return segments;
+  }
+
+  /**
+   * Build displayed rows for a main-agent assistant message that was
+   * interrupted by one or more /btw side questions.
+   *
+   * The interrupted message is split at each captured text-length
+   * boundary; the side-question Q+A pair for each interrupt is inserted
+   * between the surrounding segments. The result is a continuous run of
+   * displayed rows that reads:
+   *
+   *   [M1 pre-aside]
+   *   [Q1]
+   *   [A1]
+   *   [M1 middle (if multiple /btw interrupted the same turn)]
+   *   ...
+   *   [M1 post-aside]
+   *
+   * The LAST segment keeps M1's original message id so an active stream
+   * lookup (`activeStreams.has(M1.id)`) still surfaces the streaming
+   * indicator on the right row. Earlier segments use `${M1.id}#seg<i>`
+   * suffixes for React key stability; their `historyId` is rewritten
+   * back to `M1.id` so action handlers (Copy / Start Here / etc.) still
+   * target the persisted message.
+   */
+  private buildInterruptedMessageDisplay(
+    message: MuxMessage,
+    interrupts: readonly SideQuestionInterrupt[],
+    agentSkillSnapshot?: { frontmatterYaml?: string; body?: string },
+    inlineSkillSnapshots?: InlineSkillSnapshotMap
+  ): DisplayedMessage[] {
+    const sorted = [...interrupts].sort((a, b) => a.atTextLength - b.atTextLength);
+    const segments = this.splitMessagePartsAtTextLengths(
+      message.parts,
+      sorted.map((interrupt) => ({
+        textLength: interrupt.atTextLength,
+        partIndex: interrupt.atPartIndex,
+      }))
+    );
+
+    const result: DisplayedMessage[] = [];
+
+    for (let i = 0; i < segments.length; i++) {
+      const isLastSegment = i === segments.length - 1;
+      const segParts = segments[i];
+
+      // Always render the last segment even if empty — it owns the
+      // streaming-indicator anchor and the meta row. Earlier segments
+      // skip when empty to avoid emitting hollow blocks.
+      if (segParts.length > 0 || isLastSegment) {
+        // Last segment keeps the original id so activeStreams lookup hits;
+        // earlier segments get a suffixed id for React key uniqueness.
+        const segMessageId = isLastSegment ? message.id : `${message.id}#seg${i}`;
+        const segMessage: MuxMessage = {
+          ...message,
+          id: segMessageId,
+          parts: segParts,
+        };
+
+        const segRows = this.buildDisplayedMessagesForMessage(
+          segMessage,
+          agentSkillSnapshot,
+          inlineSkillSnapshots
+        );
+
+        // Rewrite `historyId` on each emitted row back to the original
+        // message id. Without this rewrite, action handlers that resolve
+        // a row to its backend message (Start Here, Fork, etc.) would
+        // hit "message not found" because no real history row exists
+        // under the suffixed segment id.
+        if (!isLastSegment) {
+          for (const row of segRows) {
+            if ("historyId" in row && row.historyId === segMessageId) {
+              (row as { historyId: string }).historyId = message.id;
+            }
+          }
+        }
+
+        result.push(...segRows);
+      }
+
+      if (i < sorted.length) {
+        const interrupt = sorted[i];
+        result.push(...this.buildDisplayedMessagesForMessage(interrupt.sideQuestionUserMsg));
+        if (interrupt.sideQuestionAnswerMsg) {
+          result.push(...this.buildDisplayedMessagesForMessage(interrupt.sideQuestionAnswerMsg));
+        }
+      }
+    }
+
+    return result;
+  }
+
+  /**
    * After filtering older tool/reasoning parts, recompute which part is the
    * last visible block for each assistant message. This keeps meta rows and
    * interrupted barriers accurate after truncation.
@@ -2877,6 +3213,87 @@ export class StreamingMessageAggregator {
       // messages that reference skills via /{skillName} or inline $skillName tokens.
       const latestAgentSkillSnapshotByKey = new Map<string, AgentSkillSnapshotContent>();
 
+      // ---------------------------------------------------------------
+      // /btw side-question splitting:
+      //
+      // When a /btw fires WHILE a main-agent assistant message is mid-
+      // stream, the backend stamps the user `/btw` row with
+      // `interruptedMessageId` + `interruptedTextLength`. The frontend
+      // uses those anchors to visually split the interrupted message so
+      // the side branch appears between the pre-aside and post-aside
+      // halves of the main agent's reply — without this, sequence-order
+      // rendering would shove the side branch below the entire reply
+      // (lower historySequence => higher in the transcript), defeating
+      // the "main chat continues after the aside" UX.
+      //
+      // We pre-walk allMessages to build:
+      //   - interruptionsByInterruptedId: which main-agent messages get
+      //     split, and at which text offsets.
+      //   - emittedAsSplitChildren: side-question user + answer rows
+      //     that the split path will emit inline. The main walk must
+      //     SKIP these to avoid double-rendering.
+      // ---------------------------------------------------------------
+      const interruptionsByInterruptedId = new Map<string, SideQuestionInterrupt[]>();
+      const emittedAsSplitChildren = new Set<string>();
+
+      const isRenderableSideQuestionAnswer = (answer: MuxMessage): boolean =>
+        this.activeStreams.has(answer.id) || answer.parts.length > 0;
+      const linkedSideAnswerByQuestionId = new Map<string, MuxMessage>();
+      for (const message of allMessages) {
+        if (!isSideQuestionAnswerMuxMessage(message)) {
+          continue;
+        }
+        const questionMessageId = message.metadata.muxMetadata.questionMessageId;
+        if (typeof questionMessageId === "string") {
+          linkedSideAnswerByQuestionId.set(questionMessageId, message);
+        }
+      }
+
+      // A /btw answer (side-question-answer) normally follows its user
+      // /btw row in history, but model setup can lag behind the user row.
+      // Pair by the stable questionMessageId when present, falling back to
+      // adjacency only for legacy history rows that predate that link.
+      for (let i = 0; i < allMessages.length; i++) {
+        const msg = allMessages[i];
+        if (!isSideQuestionUserMuxMessage(msg)) {
+          continue;
+        }
+        const muxMeta = msg.metadata.muxMetadata;
+        if (
+          typeof muxMeta.interruptedMessageId !== "string" ||
+          typeof muxMeta.interruptedTextLength !== "number"
+        ) {
+          continue;
+        }
+
+        const linkedAnswer = linkedSideAnswerByQuestionId.get(msg.id);
+        const next = allMessages[i + 1];
+        const adjacentAnswer =
+          next !== undefined && isSideQuestionAnswerMuxMessage(next) ? next : undefined;
+        const adjacentAnswerQuestionId = adjacentAnswer?.metadata.muxMetadata.questionMessageId;
+        const legacyAdjacentAnswer =
+          adjacentAnswer !== undefined && adjacentAnswerQuestionId === undefined
+            ? adjacentAnswer
+            : undefined;
+        const answer = linkedAnswer ?? legacyAdjacentAnswer;
+        const answerIsRenderable = answer !== undefined && isRenderableSideQuestionAnswer(answer);
+        const existing = interruptionsByInterruptedId.get(muxMeta.interruptedMessageId);
+        const entry = {
+          atTextLength: muxMeta.interruptedTextLength,
+          atPartIndex:
+            typeof muxMeta.interruptedPartIndex === "number"
+              ? muxMeta.interruptedPartIndex
+              : undefined,
+          sideQuestionUserMsg: msg,
+          sideQuestionAnswerMsg: answerIsRenderable ? answer : undefined,
+        };
+        if (existing) {
+          existing.push(entry);
+        } else {
+          interruptionsByInterruptedId.set(muxMeta.interruptedMessageId, [entry]);
+        }
+      }
+
       for (const message of allMessages) {
         maybeCollectAgentSkillSnapshot(message, latestAgentSkillSnapshotByKey);
         const isSynthetic = message.metadata?.synthetic === true;
@@ -2914,6 +3331,40 @@ export class StreamingMessageAggregator {
               )
             : undefined;
         const inlineSkillSnapshotsCacheKey = inlineSkillSnapshotState?.cacheKey;
+
+        // Skip /btw rows that the split path is going to render INLINE
+        // inside the interrupted message's display block. Without this
+        // guard the side-question pair would render twice — once between
+        // the split halves and once at its natural sequence position
+        // (below the interrupted message).
+        if (emittedAsSplitChildren.has(message.id)) {
+          continue;
+        }
+
+        const interrupts = interruptionsByInterruptedId.get(message.id);
+        if (interrupts && message.role === "assistant") {
+          // Interrupted main-agent message: build its display rows with
+          // the /btw pair(s) interleaved in the middle. We bypass the
+          // displayedMessageCache here because the split output is a
+          // function of *multiple* messages' state — caching it under
+          // one message id would miss invalidations on the children.
+          const splitRows = this.buildInterruptedMessageDisplay(
+            message,
+            interrupts,
+            agentSkillSnapshotForDisplay,
+            inlineSkillSnapshotState?.snapshots
+          );
+          for (const interrupt of interrupts) {
+            emittedAsSplitChildren.add(interrupt.sideQuestionUserMsg.id);
+            if (interrupt.sideQuestionAnswerMsg) {
+              emittedAsSplitChildren.add(interrupt.sideQuestionAnswerMsg.id);
+            }
+          }
+          if (splitRows.length > 0) {
+            displayedMessages.push(...splitRows);
+          }
+          continue;
+        }
 
         const version = this.messageVersions.get(message.id) ?? 0;
         const cached = this.displayedMessageCache.get(message.id);

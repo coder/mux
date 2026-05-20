@@ -7,6 +7,30 @@ interface StorybookGlobal {
 
 const TWENTY_MIN_MS = 20 * 60 * 1000;
 
+describe("PLACEHOLDER_TIPS", () => {
+  test("every tip references a slash command", () => {
+    for (const tip of PLACEHOLDER_TIPS) {
+      expect(tip).toMatch(/\/[A-Za-z+]/);
+    }
+  });
+
+  test("tips are unique", () => {
+    const unique = new Set(PLACEHOLDER_TIPS);
+    expect(unique.size).toBe(PLACEHOLDER_TIPS.length);
+  });
+
+  test("leads with the /orchestrate tip so the pinned Storybook slot promotes the new skill", () => {
+    // /orchestrate is unadvertised in the system-prompt skill index, so the
+    // tip carousel is one of the few discovery surfaces users will see it on.
+    // Placing it at the lead slot has two consequences this assertion locks in:
+    //   1) It's the tip a user sees on degenerate-timer fallback.
+    //   2) It's the tip every Chromatic story renders via the Storybook pin.
+    // Demoting it from index 0 would silently regress both surfaces, so we
+    // assert the position rather than just the presence.
+    expect(PLACEHOLDER_TIPS[0]).toMatch(/\/orchestrate\b/);
+  });
+});
+
 describe("getPlaceholderTip", () => {
   afterEach(() => {
     // Always clear the storybook flag so one test's pin-mode doesn't leak
@@ -67,16 +91,5 @@ describe("getPlaceholderTip", () => {
     const before = getPlaceholderTip(bucketStart);
     const after = getPlaceholderTip(bucketStart + TWENTY_MIN_MS);
     expect(after).not.toBe(before);
-  });
-
-  test("leads with the /orchestrate tip so the pinned Storybook slot promotes the new skill", () => {
-    // /orchestrate is unadvertised in the system-prompt skill index, so the
-    // tip carousel is one of the few discovery surfaces users will see it on.
-    // Placing it at the lead slot has two consequences this assertion locks in:
-    //   1) It's the tip a user sees on degenerate-timer fallback.
-    //   2) It's the tip every Chromatic story renders via the Storybook pin.
-    // Demoting it from index 0 would silently regress both surfaces, so we
-    // assert the position rather than just the presence.
-    expect(PLACEHOLDER_TIPS[0]).toMatch(/\/orchestrate\b/);
   });
 });

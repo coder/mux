@@ -103,6 +103,26 @@ export const DisplayOnlyAudio: Story = {
   ),
 };
 
+export const DisplayOnlyMarkdown: Story = {
+  render: () => (
+    <ToolStoryShell>
+      <AttachFileToolCall
+        toolName="attach_file"
+        args={{ path: "release-notes.md" }}
+        result={createAttachFileResult(
+          createDisplayOnlyFilePart({
+            data: "IyBSZWxlYXNlIE5vdGVzCgotIEFkZGVkICoqbWFya2Rvd24qKiBwcmV2aWV3Lgo=",
+            mediaType: "text/markdown",
+            filename: "release-notes.md",
+            size: 47,
+          })
+        )}
+        status="completed"
+      />
+    </ToolStoryShell>
+  ),
+};
+
 export const DisplayOnlyGenericFile: Story = {
   render: () => (
     <ToolStoryShell>

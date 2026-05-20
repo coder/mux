@@ -16,7 +16,6 @@ export interface GoalToolAvailability {
 }
 
 export interface GoalToolAvailabilityContext {
-  goalsExperimentEnabled: boolean;
   goalStatus: GoalStatus | null;
   agentInheritanceChain: ReadonlyArray<ToolsConfigCarrier & { id: AgentId }>;
 }
@@ -26,7 +25,7 @@ const GOAL_TOOL_ACTIVE_STATUSES: ReadonlySet<GoalStatus> = new Set(["active", "b
 export function getGoalToolAvailability(
   context: GoalToolAvailabilityContext
 ): GoalToolAvailability {
-  if (!context.goalsExperimentEnabled || !context.goalStatus) {
+  if (!context.goalStatus) {
     return { getGoal: false, completeGoal: false };
   }
 

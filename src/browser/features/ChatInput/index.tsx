@@ -65,7 +65,6 @@ import {
   getWorkspaceLastReadKey,
 } from "@/common/constants/storage";
 import {
-  isGoalsExperimentEnabledForCommand,
   prepareCompactionMessage,
   processSlashCommand,
   type SlashCommandContext,
@@ -87,7 +86,6 @@ import {
   type SlashSuggestion,
 } from "@/browser/utils/slashCommands/suggestions";
 import { resolveSlashCommandExperimentValue } from "@/browser/utils/slashCommands/experimentVisibility";
-import { getPlaceholderTip } from "./placeholderTips";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
 import { AgentModePicker } from "@/browser/components/AgentModePicker/AgentModePicker";
 import { ContextUsageIndicatorButton } from "@/browser/components/ContextUsageIndicatorButton/ContextUsageIndicatorButton";
@@ -95,6 +93,7 @@ import {
   useOptionalWorkspaceSidebarState,
   useWorkspaceUsage,
 } from "@/browser/stores/WorkspaceStore";
+import { getPlaceholderTip } from "./placeholderTips";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { useAutoCompactionSettings } from "@/browser/hooks/useAutoCompactionSettings";
@@ -152,7 +151,12 @@ import type { FilePart, SendMessageOptions } from "@/common/orpc/types";
 
 import { CreationCenterContent } from "./CreationCenterContent";
 import { cn } from "@/common/lib/utils";
-import type { ChatInputProps, ChatInputAPI, QueueDispatchMode } from "./types";
+import type {
+  ChatInputProps,
+  ChatInputAPI,
+  GoalInterventionPolicy,
+  QueueDispatchMode,
+} from "./types";
 import { CreationControls } from "./CreationControls";
 import { SEND_DISPATCH_MODES } from "./sendDispatchModes";
 import { CodexOauthWarningBanner } from "./CodexOauthWarningBanner";
@@ -179,6 +183,7 @@ import {
   type SkillResolutionTarget,
 } from "./utils";
 import { normalizeAgentId } from "@/common/utils/agentIds";
+import { isGoalRunning } from "@/common/types/goal";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 // localStorage quotas are environment-dependent and relatively small.
@@ -237,12 +242,20 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const creationProject =
     variant === "creation" ? userProjects.get(creationParentProjectPath) : undefined;
   const [thinkingLevel] = useThinkingLevel();
-  const goalsExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.GOALS);
   const workspaceHeartbeatsExperimentEnabled = useExperimentValue(
     EXPERIMENT_IDS.WORKSPACE_HEARTBEATS
   );
   const atMentionProjectPath = variant === "creation" ? props.projectPath : null;
+  const asyncCommandScopeRef = useRef<{ variant: typeof variant; workspaceId: string | null }>({
+    variant,
+    workspaceId: variant === "workspace" ? props.workspaceId : null,
+  });
+  const asyncCommandTokenRef = useRef(0);
   const workspaceId = variant === "workspace" ? props.workspaceId : null;
+
+  useEffect(() => {
+    asyncCommandScopeRef.current = { variant, workspaceId };
+  }, [variant, workspaceId]);
 
   const workspaceSidebarState = useOptionalWorkspaceSidebarState(workspaceId);
   const workspaceGoal = workspaceSidebarState?.goal ?? null;
@@ -351,11 +364,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const [commandSuggestions, setCommandSuggestions] = useState<SlashSuggestion[]>([]);
   const [agentSkillDescriptors, setAgentSkillDescriptors] = useState<AgentSkillDescriptor[]>([]);
   const [toast, setToast] = useState<Toast | null>(null);
-  // State for destructive command confirmation modal
-  const [pendingDestructiveCommand, setPendingDestructiveCommand] = useState<{
-    type: "clear" | "truncate";
-    percentage?: number;
-  } | null>(null);
+  // State for destructive command confirmation modal (currently only /clear).
+  const [pendingDestructiveCommand, setPendingDestructiveCommand] = useState(false);
   const pushToast = useCallback(
     (nextToast: Omit<Toast, "id" | "type"> & { type: Toast["type"] | "info" }) => {
       // Keep a dedicated "info" intent for callsites while rendering with the shared non-error toast style.
@@ -981,6 +991,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     !sendInFlightBlocksInput &&
     !coderPresetsLoading &&
     !policyBlocksCreateSend;
+  const runningGoalActive =
+    variant === "workspace" && isGoalRunning(workspaceGoal?.status ?? "paused");
+  const shouldDefaultSteerGoal = runningGoalActive && !editingMessageForUi;
+
   // Send defaults to tool-end on click; advanced dispatch modes remain available via
   // right-click and touch long-press whenever there's a sendable workspace draft.
   const canChooseDispatchMode = variant === "workspace" && canSend;
@@ -1415,19 +1429,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       variant,
       isExperimentEnabled: (experimentId) =>
         resolveSlashCommandExperimentValue(experimentId, {
-          goals: goalsExperimentEnabled,
           workspaceHeartbeats: workspaceHeartbeatsExperimentEnabled,
         }),
     });
     setCommandSuggestions((prev) => replaceSuggestions(prev, suggestions));
     setShowCommandSuggestions(suggestions.length > 0);
-  }, [
-    input,
-    agentSkillDescriptors,
-    variant,
-    goalsExperimentEnabled,
-    workspaceHeartbeatsExperimentEnabled,
-  ]);
+  }, [input, agentSkillDescriptors, variant, workspaceHeartbeatsExperimentEnabled]);
 
   // Derive ghost hint for slash-command argument syntax.
   // Show only when suggestions are hidden and the input is exactly "/command " with no args yet.
@@ -1435,7 +1442,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     variant,
     isExperimentEnabled: (experimentId) =>
       resolveSlashCommandExperimentValue(experimentId, {
-        goals: goalsExperimentEnabled,
         workspaceHeartbeats: workspaceHeartbeatsExperimentEnabled,
       }),
   });
@@ -1892,7 +1898,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const executeParsedCommand = async (
     parsed: ParsedCommand | null,
     restoreInput: string,
-    options?: { skipConfirmation?: boolean; queueDispatchMode?: QueueDispatchMode }
+    options?: {
+      skipConfirmation?: boolean;
+      queueDispatchMode?: QueueDispatchMode;
+      goalInterventionPolicy?: GoalInterventionPolicy;
+    }
   ): Promise<boolean> => {
     if (!parsed) {
       return false;
@@ -1912,13 +1922,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       return false;
     }
 
-    const isDestructive =
-      (parsed.type === "clear" && parsed.mode === "hard") || parsed.type === "truncate";
+    const isDestructive = parsed.type === "clear" && parsed.mode === "hard";
     if (isDestructive && variant === "workspace" && !options?.skipConfirmation) {
-      setPendingDestructiveCommand({
-        type: parsed.type,
-        percentage: parsed.type === "truncate" ? parsed.percentage : undefined,
-      });
+      setPendingDestructiveCommand(true);
       return true;
     }
 
@@ -1927,10 +1933,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     // Thread dispatch mode into send options so queued command sends stay in sync with normal sends.
     const commandSendMessageOptions: SendMessageOptions = {
       ...sendMessageOptions,
+      ...(options?.goalInterventionPolicy
+        ? { goalInterventionPolicy: options.goalInterventionPolicy }
+        : {}),
       ...(dispatchMode === "tool-end" ? {} : { queueDispatchMode: dispatchMode }),
     };
     // Prepare file parts for commands that need to send messages with attachments
     const commandFileParts = chatAttachmentsToFileParts(attachments, { validate: true });
+    const asyncCommandToken = ++asyncCommandTokenRef.current;
     const commandContext: SlashCommandContext = {
       api,
       variant,
@@ -1939,12 +1949,22 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       openSettings: open,
       currentModel: workspaceSidebarState?.currentModel ?? null,
       sendMessageOptions: commandSendMessageOptions,
+      getInput: () => getDraft().text,
       setInput,
       setAttachments,
       setSendingState: (increment: boolean) => setSendingCount((c) => c + (increment ? 1 : -1)),
       setToast,
       setPreferredModel,
       setVimEnabled,
+      asyncCommandToken,
+      isAsyncCommandCurrent: (token, originWorkspaceId) => {
+        const scope = asyncCommandScopeRef.current;
+        return (
+          token === asyncCommandTokenRef.current &&
+          scope.variant === "workspace" &&
+          scope.workspaceId === originWorkspaceId
+        );
+      },
       onResetContext: variant === "workspace" ? props.onResetContext : undefined,
       onTruncateHistory: variant === "workspace" ? props.onTruncateHistory : undefined,
       resetInputHeight: () => {
@@ -1979,24 +1999,18 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     return true;
   };
 
-  // Handle destructive command confirmation
+  // Handle destructive command confirmation (currently only /clear).
   const handleDestructiveCommandConfirm = async () => {
     if (!pendingDestructiveCommand || variant !== "workspace") return;
 
-    const parsedCommand: ParsedCommand =
-      pendingDestructiveCommand.type === "clear"
-        ? { type: "clear", mode: "hard" }
-        : {
-            type: "truncate",
-            percentage: pendingDestructiveCommand.percentage ?? 0,
-          };
+    const parsedCommand: ParsedCommand = { type: "clear", mode: "hard" };
 
-    setPendingDestructiveCommand(null);
+    setPendingDestructiveCommand(false);
     await executeParsedCommand(parsedCommand, input, { skipConfirmation: true });
   };
 
   const handleDestructiveCommandCancel = useCallback(() => {
-    setPendingDestructiveCommand(null);
+    setPendingDestructiveCommand(false);
   }, []);
 
   // Handle drag over to allow drop
@@ -2121,7 +2135,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     [setInput]
   );
 
-  const handleSend = async (overrides?: { queueDispatchMode?: QueueDispatchMode }) => {
+  const handleSend = async (overrides?: {
+    queueDispatchMode?: QueueDispatchMode;
+    goalInterventionPolicy?: GoalInterventionPolicy;
+  }) => {
     if (!canSend) {
       return;
     }
@@ -2158,14 +2175,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     // Route to creation handler for creation variant
     if (variant === "creation") {
       const initialGoalCommand = parsed?.type === "goal-set" ? parsed : undefined;
-      if (initialGoalCommand && !(await isGoalsExperimentEnabledForCommand({ api }))) {
-        setToast({
-          id: Date.now().toString(),
-          type: "error",
-          message: "Goal commands require the Goals experiment to be enabled",
-        });
-        return;
-      }
       if (!initialGoalCommand) {
         const commandHandled = await executeParsedCommand(parsed, input);
         if (commandHandled) {
@@ -2243,11 +2252,19 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       const commandHandled = modelOneShot
         ? false
         : await executeParsedCommand(parsed, input, {
+            goalInterventionPolicy:
+              overrides?.goalInterventionPolicy ?? (shouldDefaultSteerGoal ? "steer" : undefined),
             queueDispatchMode: overrides?.queueDispatchMode,
           });
       if (commandHandled) {
         return;
       }
+
+      // A normal workspace send supersedes any pending fire-and-forget slash
+      // command completion (notably /btw). If that older async command fails
+      // after this send clears the composer, it must not restore stale command
+      // text over the newer turn.
+      asyncCommandTokenRef.current++;
 
       const modelOverride = modelOneShot?.modelString;
 
@@ -2427,12 +2444,16 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           rawThinkingOverride != null
             ? resolveThinkingInput(rawThinkingOverride, policyModel)
             : undefined;
+        const goalInterventionPolicy =
+          overrides?.goalInterventionPolicy ?? (shouldDefaultSteerGoal ? "steer" : undefined);
+
         const sendOptions = {
           ...sendMessageOptions,
           ...compactionOptions,
           ...(modelOverride ? { model: modelOverride } : {}),
           ...(thinkingOverride ? { thinkingLevel: thinkingOverride } : {}),
           ...(modelOneShot ? { skipAiSettingsPersistence: true } : {}),
+          ...(goalInterventionPolicy ? { goalInterventionPolicy } : {}),
           ...(overrides?.queueDispatchMode
             ? { queueDispatchMode: overrides.queueDispatchMode }
             : {}),
@@ -3034,6 +3055,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                           <br />
                           <br />
                           <strong>Right-click or long-press for advanced send modes:</strong>
+                          {runningGoalActive && !editingMessageForUi && (
+                            <>
+                              <br />
+                              Send and pause goal: right-click menu
+                            </>
+                          )}
                           {SEND_DISPATCH_MODES.map((entry) => (
                             <React.Fragment key={entry.mode}>
                               <br />
@@ -3067,6 +3094,18 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                           </kbd>
                         </button>
                       ))}
+                      {runningGoalActive && !editingMessageForUi && (
+                        <button
+                          type="button"
+                          className="hover:bg-hover focus-visible:bg-hover text-foreground flex w-full items-center justify-between gap-2 rounded-sm px-2.5 py-1 text-left text-xs"
+                          onClick={() => {
+                            closeSendModeMenu();
+                            void handleSend({ goalInterventionPolicy: "pause" });
+                          }}
+                        >
+                          <span className="whitespace-nowrap">Send and pause goal</span>
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
@@ -3076,21 +3115,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         </div>
       </div>
 
-      {/* Confirmation modal for destructive commands */}
+      {/* Confirmation modal for destructive commands (currently only /clear). */}
       <ConfirmationModal
-        isOpen={pendingDestructiveCommand !== null}
-        title={
-          pendingDestructiveCommand?.type === "clear"
-            ? "Clear Chat History?"
-            : `Truncate ${Math.round((pendingDestructiveCommand?.percentage ?? 0) * 100)}% of Chat History?`
-        }
-        description={
-          pendingDestructiveCommand?.type === "clear"
-            ? "This will remove all messages from the conversation."
-            : `This will remove approximately ${Math.round((pendingDestructiveCommand?.percentage ?? 0) * 100)}% of the oldest messages.`
-        }
+        isOpen={pendingDestructiveCommand}
+        title="Clear Chat History?"
+        description="This will remove all messages from the conversation."
         warning="This action cannot be undone."
-        confirmLabel={pendingDestructiveCommand?.type === "clear" ? "Clear" : "Truncate"}
+        confirmLabel="Clear"
         onConfirm={handleDestructiveCommandConfirm}
         onCancel={handleDestructiveCommandCancel}
       />

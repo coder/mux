@@ -272,6 +272,51 @@ describe("MessageQueue", () => {
     });
   });
 
+  describe("goal intervention policy", () => {
+    it("should preserve steering policy for queued user messages", () => {
+      queue.add("Steer next turn", {
+        model: "gpt-4",
+        agentId: "exec",
+        goalInterventionPolicy: "steer",
+      });
+
+      const { options } = queue.produceMessage();
+
+      expect(options?.goalInterventionPolicy).toBe("steer");
+    });
+
+    it("should keep explicit pause sticky when mixed with steering", () => {
+      queue.add("Pause this goal", {
+        model: "gpt-4",
+        agentId: "exec",
+        goalInterventionPolicy: "pause",
+      });
+      queue.add("Also steer", {
+        model: "gpt-4",
+        agentId: "exec",
+        goalInterventionPolicy: "steer",
+      });
+
+      const { options } = queue.produceMessage();
+
+      expect(options?.goalInterventionPolicy).toBe("pause");
+    });
+
+    it("should reset goal intervention policy when cleared", () => {
+      queue.add("Pause this goal", {
+        model: "gpt-4",
+        agentId: "exec",
+        goalInterventionPolicy: "pause",
+      });
+
+      queue.clear();
+      queue.add("Plain follow-up", { model: "gpt-4", agentId: "exec" });
+
+      const { options } = queue.produceMessage();
+      expect(options?.goalInterventionPolicy).toBeUndefined();
+    });
+  });
+
   describe("addOnce", () => {
     it("should dedupe repeated entries by key", () => {
       const image = { url: "data:image/png;base64,abc", mediaType: "image/png" };

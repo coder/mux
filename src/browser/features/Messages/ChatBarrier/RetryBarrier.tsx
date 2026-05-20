@@ -3,7 +3,7 @@ import { AlertTriangle, RefreshCw } from "lucide-react";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useAPI } from "@/browser/contexts/API";
 import { useWorkspaceState } from "@/browser/stores/WorkspaceStore";
-import { getLastNonDecorativeMessage } from "@/common/utils/messages/retryEligibility";
+import { getLastMainRetryCandidateMessage } from "@/common/utils/messages/retryEligibility";
 import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 import { VIM_ENABLED_KEY } from "@/common/constants/storage";
 import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
@@ -239,7 +239,7 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
     void api?.workspace.setAutoRetryEnabled?.({ workspaceId: props.workspaceId, enabled: false });
   };
 
-  const lastMessage = getLastNonDecorativeMessage(workspaceState.messages);
+  const lastMessage = getLastMainRetryCandidateMessage(workspaceState.messages);
   const lastStreamError = lastMessage?.type === "stream-error" ? lastMessage : null;
   const interruptionReason = lastStreamError?.errorType === "rate_limit" ? "Rate limited" : null;
   const isWaitingForInitialResponse =

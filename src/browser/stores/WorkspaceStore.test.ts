@@ -747,6 +747,52 @@ describe("WorkspaceStore", () => {
       expect(collapsed).toBe(true);
     });
 
+    it("does not collapse the pinned todo panel when an overlapping /btw answer ends", () => {
+      const workspaceId = "pinned-todo-side-answer-end";
+      const pinnedTodoKey = getPinnedTodoExpandedKey(workspaceId);
+
+      createAndAddWorkspace(store, workspaceId);
+      localStorageBacking.set(pinnedTodoKey, JSON.stringify(true));
+      seedPinnedTodos(store, workspaceId, pinnedTodos);
+
+      const rawStore = getInternal<{
+        handleChatMessage: (workspaceId: string, data: WorkspaceChatMessage) => void;
+      }>(store);
+      rawStore.handleChatMessage(workspaceId, {
+        type: "message",
+        id: "btw-answer-with-main-todos",
+        role: "assistant",
+        parts: [],
+        metadata: {
+          historySequence: 2,
+          timestamp: 2_000,
+          model: "claude-haiku-3.5",
+          muxMetadata: { type: "side-question-answer" },
+        },
+      });
+      rawStore.handleChatMessage(workspaceId, {
+        type: "stream-start",
+        workspaceId,
+        messageId: "btw-answer-with-main-todos",
+        model: "claude-haiku-3.5",
+        historySequence: 2,
+        startTime: 2_100,
+      });
+      rawStore.handleChatMessage(workspaceId, {
+        type: "stream-end",
+        workspaceId,
+        messageId: "btw-answer-with-main-todos",
+        parts: [{ type: "text", text: "side done" }],
+        metadata: {
+          model: "claude-haiku-3.5",
+          historySequence: 2,
+          muxMetadata: { type: "side-question-answer" },
+        },
+      });
+
+      expect(localStorageBacking.get(pinnedTodoKey)).toBe(JSON.stringify(true));
+    });
+
     it("persists a collapsed panel when an active workspace stream aborts with todos", async () => {
       const workspaceId = "pinned-todo-stream-abort";
       const pinnedTodoKey = getPinnedTodoExpandedKey(workspaceId);
@@ -5024,6 +5070,311 @@ describe("WorkspaceStore", () => {
       expect(usage.lastContextUsage?.input.tokens).toBe(42);
       expect(usage.lastContextUsage?.output.tokens).toBe(0);
       expect(usage.lastContextUsage?.model).toBe("claude-3-5-sonnet-20241022");
+    });
+  });
+
+  describe("/btw side-question interruption flow", () => {
+    /**
+     * The contract under test: while a /btw answer is streaming, the side
+     * branch stays at the captured interruption point instead of sticking to
+     * the transcript tail. Main-agent deltas keep flowing into the post-aside
+     * segment below the /btw pair.
+     */
+    it("renders main-agent stream-deltas below /btw while the side answer streams", async () => {
+      const workspaceId = "btw-tail-flow";
+      recreateStore();
+      await tick(0);
+      createAndAddWorkspace(store, workspaceId);
+
+      const rawStore = getInternal<{
+        handleChatMessage: (workspaceId: string, data: WorkspaceChatMessage) => void;
+      }>(store);
+
+      // Catch up so live events flow through processStreamEvent instead of
+      // queueing into pendingStreamEvents.
+      rawStore.handleChatMessage(workspaceId, { type: "caught-up" });
+
+      // Open a main agent stream and seed one delta as the baseline. After
+      // this, the visible text for `main-1` is "hi ".
+      rawStore.handleChatMessage(workspaceId, {
+        type: "stream-start",
+        workspaceId,
+        messageId: "main-1",
+        model: TEST_MODEL,
+        historySequence: 1,
+        startTime: 1_000,
+      });
+      rawStore.handleChatMessage(workspaceId, {
+        type: "stream-delta",
+        workspaceId,
+        messageId: "main-1",
+        delta: "hi ",
+        tokens: 1,
+        timestamp: 1_100,
+      });
+
+      const aggregator = store.getAggregator(workspaceId);
+      if (!aggregator) throw new Error("aggregator missing");
+
+      const readMainText = (): string => {
+        const msg = aggregator.getAllMessages().find((m: { id: string }) => m.id === "main-1");
+        if (!msg) return "";
+        const firstPart = (msg as { parts: Array<{ type: string; text?: string }> }).parts[0];
+        return firstPart?.type === "text" ? (firstPart.text ?? "") : "";
+      };
+      expect(readMainText()).toBe("hi ");
+
+      // /btw kicks off. The pipeline persists a user envelope (with the
+      // interruption snapshot — see sideQuestionService's `interruption`
+      // capture), a placeholder envelope, then opens stream-start.
+      rawStore.handleChatMessage(workspaceId, {
+        type: "message",
+        id: "btw-user-1",
+        role: "user",
+        parts: [{ type: "text", text: "/btw what's 2+2" }],
+        metadata: {
+          historySequence: 2,
+          timestamp: 1_200,
+          muxMetadata: {
+            type: "side-question",
+            rawCommand: "/btw what's 2+2",
+            // The pre-aside half ends at text length 3 ("hi ") — the renderer
+            // splits main-1's content there in the transcript.
+            interruptedMessageId: "main-1",
+            interruptedTextLength: 3,
+            interruptedHistorySequence: 1,
+          },
+        },
+      });
+      rawStore.handleChatMessage(workspaceId, {
+        type: "message",
+        id: "btw-ans-1",
+        role: "assistant",
+        parts: [],
+        metadata: {
+          historySequence: 3,
+          timestamp: 1_300,
+          model: "claude-haiku-3.5",
+          muxMetadata: { type: "side-question-answer" },
+        },
+      });
+      rawStore.handleChatMessage(workspaceId, {
+        type: "stream-start",
+        workspaceId,
+        messageId: "btw-ans-1",
+        model: "claude-haiku-3.5",
+        historySequence: 3,
+        startTime: 1_400,
+      });
+
+      // Main agent emits a delta while /btw is in flight. It should keep
+      // flowing into the interrupted main message so the side branch does
+      // not remain pinned to the transcript tail for the whole side stream.
+      rawStore.handleChatMessage(workspaceId, {
+        type: "stream-delta",
+        workspaceId,
+        messageId: "main-1",
+        delta: "there ",
+        tokens: 1,
+        timestamp: 1_500,
+      });
+      expect(readMainText()).toBe("hi there ");
+
+      // The side answer streams normally and lands on its own message.
+      rawStore.handleChatMessage(workspaceId, {
+        type: "stream-delta",
+        workspaceId,
+        messageId: "btw-ans-1",
+        delta: "four",
+        tokens: 1,
+        timestamp: 1_600,
+      });
+      const sideMsg = aggregator
+        .getAllMessages()
+        .find((m: { id: string }) => m.id === "btw-ans-1") as
+        | { parts: Array<{ type: string; text?: string }> }
+        | undefined;
+      const sidePart = sideMsg?.parts[0];
+      expect(sidePart?.type === "text" ? sidePart.text : undefined).toBe("four");
+
+      // While the side answer is still streaming, the /btw pair is already
+      // inserted at the interruption point with post-aside main content below.
+      const readVisibleHistoryIds = (): string[] =>
+        aggregator
+          .getDisplayedMessages()
+          .filter((m) => m.type === "assistant" || m.type === "user")
+          .map((m) => m.historyId);
+      expect(readVisibleHistoryIds()).toEqual(["main-1", "btw-user-1", "btw-ans-1", "main-1"]);
+
+      // After /btw settles, the underlying main message still has the full
+      // text and the displayed rows keep the same split order.
+      rawStore.handleChatMessage(workspaceId, {
+        type: "stream-end",
+        workspaceId,
+        messageId: "btw-ans-1",
+        parts: [{ type: "text", text: "four" }],
+        metadata: {
+          model: "claude-haiku-3.5",
+          timestamp: 1_700,
+          duration: 300,
+          historySequence: 3,
+        },
+      });
+      expect(readMainText()).toBe("hi there ");
+      expect(readVisibleHistoryIds()).toEqual(["main-1", "btw-user-1", "btw-ans-1", "main-1"]);
+      const mainRows = aggregator
+        .getDisplayedMessages()
+        .filter(
+          (m): m is Extract<typeof m, { type: "assistant"; content: string }> =>
+            m.type === "assistant" && m.historyId === "main-1"
+        );
+      expect(mainRows.map((m) => m.content)).toEqual(["hi ", "there "]);
+    });
+    it("keeps standalone /btw answer streams out of workspace interrupt state", async () => {
+      const workspaceId = "btw-standalone-not-busy";
+      recreateStore();
+      await tick(0);
+      createAndAddWorkspace(store, workspaceId);
+
+      const rawStore = getInternal<{
+        handleChatMessage: (workspaceId: string, data: WorkspaceChatMessage) => void;
+      }>(store);
+      rawStore.handleChatMessage(workspaceId, { type: "caught-up" });
+
+      rawStore.handleChatMessage(workspaceId, {
+        type: "message",
+        id: "btw-user-standalone",
+        role: "user",
+        parts: [{ type: "text", text: "/btw what's next?" }],
+        metadata: {
+          historySequence: 1,
+          timestamp: 1_000,
+          muxMetadata: {
+            type: "side-question",
+            rawCommand: "/btw what's next?",
+            commandPrefix: "/btw",
+          },
+        },
+      });
+      rawStore.handleChatMessage(workspaceId, {
+        type: "message",
+        id: "btw-answer-standalone",
+        role: "assistant",
+        parts: [],
+        metadata: {
+          historySequence: 2,
+          timestamp: 1_100,
+          model: "claude-haiku-3.5",
+          muxMetadata: { type: "side-question-answer" },
+        },
+      });
+      rawStore.handleChatMessage(workspaceId, {
+        type: "stream-start",
+        workspaceId,
+        messageId: "btw-answer-standalone",
+        model: "claude-haiku-3.5",
+        historySequence: 2,
+        startTime: 1_200,
+      });
+      rawStore.handleChatMessage(workspaceId, {
+        type: "stream-delta",
+        workspaceId,
+        messageId: "btw-answer-standalone",
+        delta: "side answer",
+        tokens: 1,
+        timestamp: 1_300,
+      });
+
+      const aggregator = store.getAggregator(workspaceId);
+      expect(aggregator?.isSideQuestionStreaming()).toBe(true);
+      const state = store.getWorkspaceState(workspaceId);
+      expect(state.canInterrupt).toBe(false);
+      expect(state.isStreamStarting).toBe(false);
+      expect(
+        aggregator
+          ?.getAllMessages()
+          .find((message) => message.id === "btw-answer-standalone")
+          ?.parts.some((part) => part.type === "text" && part.text === "side answer")
+      ).toBe(true);
+    });
+    it("keeps replayed /btw answer streams out of workspace interrupt state", async () => {
+      const workspaceId = "btw-replay-side-only-not-busy";
+      recreateStore();
+      await tick(0);
+      createAndAddWorkspace(store, workspaceId);
+
+      const rawStore = getInternal<{
+        handleChatMessage: (workspaceId: string, data: WorkspaceChatMessage) => void;
+      }>(store);
+
+      rawStore.handleChatMessage(workspaceId, {
+        type: "message",
+        id: "btw-answer-replay",
+        role: "assistant",
+        parts: [],
+        metadata: {
+          historySequence: 1,
+          timestamp: 1_000,
+          model: "claude-haiku-3.5",
+          muxMetadata: { type: "side-question-answer" },
+        },
+      });
+      rawStore.handleChatMessage(workspaceId, {
+        type: "stream-start",
+        workspaceId,
+        messageId: "btw-answer-replay",
+        model: "claude-haiku-3.5",
+        historySequence: 1,
+        startTime: 1_100,
+      });
+
+      const state = store.getWorkspaceState(workspaceId);
+      expect(state.canInterrupt).toBe(false);
+      expect(state.isStreamStarting).toBe(false);
+    });
+
+    it("preserves buffered main-stream interrupt state when /btw starts during replay", async () => {
+      const workspaceId = "btw-buffered-main-stays-busy";
+      recreateStore();
+      await tick(0);
+      createAndAddWorkspace(store, workspaceId);
+
+      const rawStore = getInternal<{
+        handleChatMessage: (workspaceId: string, data: WorkspaceChatMessage) => void;
+      }>(store);
+
+      rawStore.handleChatMessage(workspaceId, {
+        type: "stream-start",
+        workspaceId,
+        messageId: "main-buffered",
+        model: TEST_MODEL,
+        historySequence: 1,
+        startTime: 1_000,
+      });
+      expect(store.getWorkspaceState(workspaceId).canInterrupt).toBe(true);
+
+      rawStore.handleChatMessage(workspaceId, {
+        type: "message",
+        id: "btw-answer-buffered",
+        role: "assistant",
+        parts: [],
+        metadata: {
+          historySequence: 2,
+          timestamp: 1_100,
+          model: "claude-haiku-3.5",
+          muxMetadata: { type: "side-question-answer" },
+        },
+      });
+      rawStore.handleChatMessage(workspaceId, {
+        type: "stream-start",
+        workspaceId,
+        messageId: "btw-answer-buffered",
+        model: "claude-haiku-3.5",
+        historySequence: 2,
+        startTime: 1_200,
+      });
+
+      expect(store.getWorkspaceState(workspaceId).canInterrupt).toBe(true);
     });
   });
 });

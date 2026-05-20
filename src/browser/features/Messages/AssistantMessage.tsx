@@ -12,6 +12,11 @@ import {
   Moon,
   Package,
 } from "lucide-react";
+import { cn } from "@/common/lib/utils";
+import {
+  SIDE_QUESTION_ANSWER_BLOCK_CLASS,
+  SIDE_QUESTION_MESSAGE_WINDOW_CLASS,
+} from "./sideQuestionStyles";
 import { ShareMessagePopover } from "@/browser/components/ShareMessagePopover/ShareMessagePopover";
 import { PopoverError } from "@/browser/components/PopoverError/PopoverError";
 import { useAPI } from "@/browser/contexts/API";
@@ -56,6 +61,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
   const isCompacted = message.isCompacted;
   const isBeforeLatestContextBoundary = message.isBeforeLatestContextBoundary === true;
   const isStreamingCompaction = isStreaming && isCompacting;
+  const isSideAnswer = message.isSideAnswer === true;
 
   // Use Start Here hook for final assistant messages
   const {
@@ -110,7 +116,12 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
 
   const buttons: ButtonConfig[] = isStreaming ? [] : [copyButton];
 
-  if (!isStreaming) {
+  if (!isStreaming && !isSideAnswer) {
+    // Side answers intentionally show only Copy. The /btw side branch is
+    // meant to feel lightweight: Start Here / Fork / Share / Show Text
+    // would imply the message is a fork point in the main agent thread,
+    // which it isn't. Keeping the action set minimal also keeps the pair
+    // visually quiet against the main transcript.
     buttons.push({
       label: startHereLabel,
       onClick: openStartHereModal,
@@ -230,18 +241,35 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
     );
   };
 
+  const messageWindow = (
+    <MessageWindow
+      label={renderLabel()}
+      variant="assistant"
+      message={message}
+      buttons={buttons}
+      // For /btw answers the outer wrapper owns spacing around the pair.
+      className={cn(className, isSideAnswer && SIDE_QUESTION_MESSAGE_WINDOW_CLASS)}
+      backgroundEffect={isStreamingCompaction ? <CompactionBackground /> : undefined}
+    >
+      {renderContent()}
+    </MessageWindow>
+  );
+
+  // /btw side-answer: wrap the normal assistant bubble in the same
+  // thin-stripe block as the user question above it. Do not add another
+  // header here: the "Side question" label on the user row already marks
+  // the whole Q/A branch, and repeating it on the answer felt noisy.
+  const wrappedMessageWindow = isSideAnswer ? (
+    <div className={cn(SIDE_QUESTION_ANSWER_BLOCK_CLASS, className)} data-side-answer>
+      {messageWindow}
+    </div>
+  ) : (
+    messageWindow
+  );
+
   return (
     <>
-      <MessageWindow
-        label={renderLabel()}
-        variant="assistant"
-        message={message}
-        buttons={buttons}
-        className={className}
-        backgroundEffect={isStreamingCompaction ? <CompactionBackground /> : undefined}
-      >
-        {renderContent()}
-      </MessageWindow>
+      {wrappedMessageWindow}
 
       <PopoverError
         error={forkError.error}

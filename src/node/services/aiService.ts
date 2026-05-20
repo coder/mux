@@ -122,6 +122,7 @@ import {
 } from "./streamSimulation";
 import { applyToolPolicyAndExperiments, captureMcpToolTelemetry } from "./toolAssembly";
 import { getErrorMessage } from "@/common/utils/errors";
+import { filterSideQuestionMessages } from "@/common/utils/messages/sideQuestion";
 import { isProjectTrusted } from "@/node/utils/projectTrust";
 
 const STREAM_STARTUP_DIAGNOSTIC_THRESHOLD_MS = 1_000;
@@ -133,8 +134,19 @@ export function prepareProviderRequestMessages(
 ): {
   activeContextMessages: MuxMessage[];
   providerRequestMessages: MuxMessage[];
+  sideQuestionFilteredCount: number;
+  contextBoundarySlicedCount: number;
 } {
-  const activeContextMessages = sliceMessagesForProviderFromLatestContextBoundary(messages);
+  // /btw side questions are durable UI history, not main-agent context.
+  // Filter them before boundary slicing so future normal turns don't see
+  // side-question Q/A pairs and accidentally continue from an aside.
+  const messagesWithoutSideQuestions = filterSideQuestionMessages(messages);
+  const sideQuestionFilteredCount = messages.length - messagesWithoutSideQuestions.length;
+  const activeContextMessages = sliceMessagesForProviderFromLatestContextBoundary(
+    messagesWithoutSideQuestions
+  );
+  const contextBoundarySlicedCount =
+    messagesWithoutSideQuestions.length - activeContextMessages.length;
   const preserveReasoningOnly =
     canonicalProviderName === "anthropic" && effectiveThinkingLevel !== "off";
   return {
@@ -143,6 +155,8 @@ export function prepareProviderRequestMessages(
       activeContextMessages,
       preserveReasoningOnly
     ),
+    sideQuestionFilteredCount,
+    contextBoundarySlicedCount,
   };
 }
 
@@ -494,7 +508,7 @@ export class AIService extends EventEmitter {
             await this.historyService.deletePartial(data.workspaceId);
           } else {
             // Commit interrupted message to history with partial:true metadata
-            // This ensures /clear and /truncate can clean up interrupted messages
+            // This ensures /clear can clean up interrupted messages
             const partial = await this.historyService.readPartial(data.workspaceId);
             if (partial) {
               await this.historyService.commitPartial(data.workspaceId);
@@ -864,16 +878,19 @@ export class AIService extends EventEmitter {
 
       // Context Boundary request slicing happens before empty-assistant filtering so
       // provider-invisible reset rows can still bound the active context window.
-      const { activeContextMessages, providerRequestMessages } = prepareProviderRequestMessages(
-        messages,
-        canonicalProviderName,
-        effectiveThinkingLevel
-      );
-      if (activeContextMessages !== messages) {
-        log.debug("Sliced provider history from latest context boundary", {
+      const {
+        activeContextMessages,
+        providerRequestMessages,
+        sideQuestionFilteredCount,
+        contextBoundarySlicedCount,
+      } = prepareProviderRequestMessages(messages, canonicalProviderName, effectiveThinkingLevel);
+      if (sideQuestionFilteredCount > 0 || contextBoundarySlicedCount > 0) {
+        log.debug("Prepared provider history window", {
           workspaceId,
           originalCount: messages.length,
-          slicedCount: activeContextMessages.length,
+          sideQuestionFilteredCount,
+          contextBoundarySlicedCount,
+          activeContextCount: activeContextMessages.length,
         });
       }
       log.debug_obj(`${workspaceId}/1a_active_context_messages.json`, activeContextMessages);
@@ -1160,15 +1177,13 @@ export class AIService extends EventEmitter {
       const advisorToolEligible =
         advisorExperimentEnabled && agentAdvisorEnabled && advisorModelString.length > 0;
 
-      const goalsExperimentEnabled =
-        experiments?.goals ??
-        this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.GOALS) === true;
+      // Goals graduated to GA: tools are gated solely on the workspace's
+      // current goal status + agent capability, not on an experiment flag.
       let currentGoalForTools: GoalRecordV1 | null = null;
-      if (goalsExperimentEnabled && workspaceGoalService) {
+      if (workspaceGoalService) {
         currentGoalForTools = await workspaceGoalService.getGoal(workspaceId);
       }
       const goalToolAvailability = getGoalToolAvailability({
-        goalsExperimentEnabled,
         goalStatus: currentGoalForTools?.status ?? null,
         agentInheritanceChain,
       });

@@ -1031,7 +1031,7 @@ export const TOOL_DEFINITIONS = {
     description:
       "Attach a supported file from the filesystem so later model steps receive it as a real attachment instead of a huge base64 JSON blob. " +
       "Accepts absolute or relative paths, including files outside the workspace. " +
-      "Currently supports raster images, SVG, and PDF. Unsupported file types are shown to the user in chat when possible, but only a notice is sent to the model.",
+      "Currently supports raster images, SVG, and PDF as model attachments. Markdown files are shown to the user for preview/download only. Unsupported file types are shown to the user in chat when possible, but only a notice is sent to the model.",
     schema: z.preprocess(
       normalizeFilePath,
       z
@@ -1565,6 +1565,53 @@ export const TOOL_DEFINITIONS = {
   todo_read: {
     description: "Read the current todo list",
     schema: z.object({}),
+  },
+  review_pane_update: {
+    description:
+      "Flag specific code regions in the Review pane for the user to review next. " +
+      "Use this to draw the user's attention to critical changes you want reviewed first. " +
+      "Each hunk references a workspace-relative file path with an optional inclusive line " +
+      'range using familiar syntax: "src/foo.ts" (whole file), "src/foo.ts:42" (single line), ' +
+      'or "src/foo.ts:42-58" (range, new-file line numbers). Attach a short comment to each ' +
+      "hunk explaining what to look at and why.\n\n" +
+      "operation:\n" +
+      "  - 'replace' (default): overwrite the current assisted set\n" +
+      "  - 'add': append to the existing set, deduplicating exact path:range matches\n\n" +
+      "Flagged hunks appear pinned at the top of the Review pane; the user can toggle " +
+      "'Assisted' to hide everything else. Pass an empty hunks array with operation='replace' " +
+      "to clear the set when review is no longer needed.",
+    schema: z
+      .object({
+        operation: z
+          .enum(["add", "replace"])
+          .describe("'replace' overwrites the assisted set; 'add' appends to it."),
+        hunks: z
+          .array(
+            z
+              .object({
+                path: z
+                  .string()
+                  .min(1)
+                  .describe(
+                    'Filter in `path[:range]` form, e.g. "src/foo.ts" or "src/foo.ts:42-58". ' +
+                      "Path is workspace-relative; range uses new-file line numbers (inclusive)."
+                  ),
+                comment: z
+                  .string()
+                  .nullish()
+                  .describe("Short note (~1 sentence) telling the user what to look at and why."),
+              })
+              .strict()
+          )
+          .describe("List of hunks to flag for review."),
+      })
+      .strict(),
+  },
+  review_pane_get: {
+    description:
+      "Return the current set of agent-flagged hunks in the Review pane, in declared order. " +
+      "Use this to inspect what you've already pinned before adding more.",
+    schema: z.object({}).strict(),
   },
   bash_output: {
     description:
@@ -2297,6 +2344,8 @@ export function getAvailableTools(
     "complete_goal",
     "todo_write",
     "todo_read",
+    "review_pane_update",
+    "review_pane_get",
     "notify",
     ...(enableAnalyticsQuery ? ["analytics_query"] : []),
     "web_fetch",

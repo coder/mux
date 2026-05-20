@@ -202,6 +202,95 @@ describe("hasInterruptedStream", () => {
     expect(hasInterruptedStream(messages, null)).toBe(true);
   });
 
+  it("returns false for a trailing /btw side-question user row", () => {
+    const messages: DisplayedMessage[] = [
+      userMessage(),
+      assistantMessage(),
+      userMessage({
+        id: "side-question-1",
+        historyId: "side-question-1",
+        content: "what file were you editing?",
+        historySequence: 3,
+        isSideQuestion: true,
+      }),
+    ];
+
+    expect(hasInterruptedStream(messages, null)).toBe(false);
+    expect(isEligibleForAutoRetry(messages, null)).toBe(false);
+  });
+
+  it("returns false for a trailing partial /btw side-answer row", () => {
+    const messages: DisplayedMessage[] = [
+      userMessage({
+        id: "side-question-1",
+        historyId: "side-question-1",
+        content: "what file were you editing?",
+        historySequence: 1,
+        isSideQuestion: true,
+      }),
+      assistantMessage({
+        id: "side-answer-1-0",
+        historyId: "side-answer-1",
+        content: "src/config.ts",
+        historySequence: 2,
+        isPartial: true,
+        isStreaming: true,
+        isSideAnswer: true,
+      }),
+    ];
+
+    expect(hasInterruptedStream(messages, null)).toBe(false);
+    expect(isEligibleForAutoRetry(messages, null)).toBe(false);
+  });
+
+  it("ignores trailing /btw rows and still detects an earlier interrupted main response", () => {
+    const messages: DisplayedMessage[] = [
+      userMessage(),
+      assistantMessage({
+        id: "assistant-main-1",
+        historyId: "assistant-main-1",
+        content: "Partial main response",
+        historySequence: 2,
+        isPartial: true,
+        isStreaming: false,
+      }),
+      userMessage({
+        id: "side-question-1",
+        historyId: "side-question-1",
+        content: "what file were you editing?",
+        historySequence: 3,
+        isSideQuestion: true,
+      }),
+      assistantMessage({
+        id: "side-answer-1-0",
+        historyId: "side-answer-1",
+        content: "src/config.ts",
+        historySequence: 4,
+        isSideAnswer: true,
+      }),
+    ];
+
+    expect(hasInterruptedStream(messages, null)).toBe(true);
+    expect(isEligibleForAutoRetry(messages, null)).toBe(true);
+  });
+
+  it("preserves stream-error retry classification before trailing /btw rows", () => {
+    const messages: DisplayedMessage[] = [
+      userMessage(),
+      streamErrorMessage({ errorType: "context_exceeded" }),
+      userMessage({
+        id: "side-question-1",
+        historyId: "side-question-1",
+        content: "what file were you editing?",
+        historySequence: 3,
+        isSideQuestion: true,
+      }),
+    ];
+
+    expect(hasInterruptedStream(messages, null)).toBe(true);
+    expect(isEligibleForAutoRetry(messages, null)).toBe(false);
+  });
+
   it("suppresses retry while runtime startup is still in progress", () => {
     const messages: DisplayedMessage[] = [userMessage()];
 

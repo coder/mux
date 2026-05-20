@@ -58,7 +58,11 @@ export function useReviewState(workspaceId: string): UseReviewStateReturn {
       workspaceId,
       readState: {},
       lastUpdated: Date.now(),
-    }
+    },
+    // Multiple Review surfaces can read/write the same state: the panel marks
+    // hunks read, while the always-mounted sidebar reporter updates the Review
+    // tab badge. Listener mode keeps those hook instances synchronized.
+    { listener: true }
   );
 
   // Apply LRU eviction on initial load

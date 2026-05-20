@@ -23,18 +23,29 @@ export const ADVISOR_HANDOFF_MAX_TEXT_CHARS = 4000;
 export const ADVISOR_HANDOFF_MAX_REASONING_CHARS = 4000;
 
 /**
- * Shared guidance for when the advisor tool is appropriate.
- * Reused by the tool description now and future system-prompt wiring later.
+ * Shared guidance for when and how to use the advisor tool.
+ * Reused by the tool description and the system-prompt advisor-guidance section.
+ *
+ * The "no tools / supply context" sentences exist because calling agents
+ * frequently invoke the advisor with insufficient context, as if it could
+ * investigate on its own. The advisor only sees the existing transcript plus
+ * the `question`, so the caller is responsible for surfacing the relevant
+ * files, errors, and options before (or inside) the call.
  */
 export const ADVISOR_USAGE_GUIDANCE =
   "Use this when you need help with planning ambiguity or high-impact architectural decisions, " +
-  "when weighing tradeoffs between approaches, or after repeated failures when the strategy is unclear.";
+  "when weighing tradeoffs between approaches, or after repeated failures when the strategy is unclear. " +
+  "The advisor has no tools — it cannot read files, run commands, search code, or browse — and only " +
+  "sees the existing conversation transcript plus your `question`. Before calling, make sure the " +
+  "relevant files, errors, and options are already visible in the transcript (read them first) or paste " +
+  "the essential excerpts into `question`. Frame a specific decision or tradeoff; do not ask the advisor " +
+  "to investigate something it cannot see.";
 
 /** Description shown to the model when the advisor tool is registered. */
 export const ADVISOR_TOOL_DESCRIPTION =
   "Ask a stronger model for strategic advice based on the live conversation transcript. " +
   ADVISOR_USAGE_GUIDANCE +
-  " When you call this tool, pass a brief `question` summarizing the decision or ambiguity you need help with.";
+  " Pass a brief `question` summarizing the decision or ambiguity.";
 
 /**
  * System prompt for the nested advisor model call.

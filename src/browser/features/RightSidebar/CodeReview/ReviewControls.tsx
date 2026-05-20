@@ -3,7 +3,7 @@
  */
 
 import React from "react";
-import { ArrowLeft, Maximize2 } from "lucide-react";
+import { ArrowLeft, Maximize2, Sparkles } from "lucide-react";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useTutorial } from "@/browser/contexts/TutorialContext";
 import {
@@ -42,6 +42,12 @@ interface ReviewControlsProps {
   isImmersive?: boolean;
   /** Toggle immersive review mode */
   onToggleImmersive?: () => void;
+  /**
+   * Number of agent-flagged "Assisted" hunks the agent has pinned via
+   * the `review_pane_update` tool. When zero, the Assisted toggle is hidden
+   * so the control bar stays compact for normal review sessions.
+   */
+  assistedCount?: number;
 }
 
 export const ReviewControls: React.FC<ReviewControlsProps> = ({
@@ -57,6 +63,7 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
   lastRefreshFailure,
   isImmersive = false,
   onToggleImmersive,
+  assistedCount = 0,
 }) => {
   // Per-project default base (used for new workspaces in this project)
   const [defaultBase, setDefaultBase] = usePersistedState<string>(
@@ -87,6 +94,11 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
   const handleShowReadToggle = (e: React.ChangeEvent<HTMLInputElement>) => {
     const checked = e.target.checked;
     onFiltersChange((prev) => ({ ...prev, showReadHunks: checked }));
+  };
+
+  const handleAssistedToggle = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const checked = e.target.checked;
+    onFiltersChange((prev) => ({ ...prev, assistedOnly: checked }));
   };
 
   const handleSortChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -185,6 +197,29 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
           className="h-3 w-3 cursor-pointer"
         />
       </label>
+
+      {assistedCount > 0 && (
+        <>
+          <div className="bg-border-light h-3 w-px" />
+          <TooltipIfPresent
+            tooltip={`Show only the ${assistedCount} hunk${assistedCount === 1 ? "" : "s"} the agent flagged for review`}
+            side="bottom"
+          >
+            <label className="text-muted hover:text-foreground flex cursor-pointer items-center gap-1 whitespace-nowrap">
+              <Sparkles aria-hidden="true" className="text-review-accent h-3 w-3 shrink-0" />
+              <span>Assisted:</span>
+              <input
+                type="checkbox"
+                aria-label="Show only agent-flagged hunks"
+                checked={filters.assistedOnly}
+                onChange={handleAssistedToggle}
+                className="h-3 w-3 cursor-pointer"
+              />
+              <span className="text-dim text-[10px]">({assistedCount})</span>
+            </label>
+          </TooltipIfPresent>
+        </>
+      )}
 
       <div className="bg-border-light h-3 w-px" />
 

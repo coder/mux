@@ -9,7 +9,6 @@ import { fireEvent, waitFor } from "@testing-library/react";
 
 import { preloadTestModules } from "../../ipc/setup";
 import { createAppHarness } from "../harness";
-import { EXPERIMENT_IDS, getExperimentKey } from "@/common/constants/experiments";
 
 describe("Goal slash command", () => {
   beforeAll(async () => {
@@ -19,9 +18,6 @@ describe("Goal slash command", () => {
   test("sets a new goal from a completed goal when Enter follows a stale /goal suggestion", async () => {
     const app = await createAppHarness({
       branchPrefix: "goal-slash",
-      beforeRender: () => {
-        localStorage.setItem(getExperimentKey(EXPERIMENT_IDS.GOALS), JSON.stringify(true));
-      },
     });
 
     try {

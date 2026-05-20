@@ -22,7 +22,7 @@ import { DesktopPanel } from "@/browser/features/desktop/DesktopPanel";
 import { BrowserTab } from "@/browser/features/RightSidebar/BrowserTab";
 import { DevToolsTab } from "@/browser/features/RightSidebar/DevToolsTab";
 import { GoalTab, type GoalCreateIntent } from "@/browser/features/RightSidebar/GoalTab";
-import type { GoalHistoryEntry, GoalSnapshot, GoalStatus } from "@/common/types/goal";
+import type { GoalSnapshot, GoalStatus } from "@/common/types/goal";
 import type { ReviewNoteData } from "@/common/types/review";
 import { BASE_TAB_IDS, TAB_CONFIG, type BaseTabType, type TabConfig } from "./tabConfig";
 import {
@@ -50,6 +50,14 @@ export {
 export interface ReviewStats {
   total: number;
   read: number;
+  /**
+   * Number of agent-flagged ("assisted") hunks that resolve to a hunk in the
+   * current diff AND the user hasn't marked read yet. Used by the Review tab
+   * label to surface an attention indicator while there's still unread agent
+   * focus pending. 0 means either the agent flagged nothing or everything it
+   * flagged has been read (or no flag intersects the current diff).
+   */
+  unreadAssisted: number;
 }
 
 /** Props every tab label receives. Most tabs ignore most fields. */
@@ -78,7 +86,6 @@ export interface TabPanelContext {
   };
   goal: {
     snapshot: GoalSnapshot | null;
-    history: GoalHistoryEntry[];
     openCompleteInputRequest: number;
     onSetStatus: (
       status: Exclude<GoalStatus, "budget_limited">,
@@ -139,7 +146,6 @@ const TAB_RENDERERS = {
         <GoalTab
           workspaceId={ctx.workspaceId}
           goal={ctx.goal.snapshot}
-          history={ctx.goal.history}
           openCompleteInputRequest={ctx.goal.openCompleteInputRequest}
           onSetStatus={ctx.goal.onSetStatus}
           onUpdateObjective={ctx.goal.onUpdateObjective}

@@ -44,6 +44,7 @@ import type { BranchListResult } from "@/common/orpc/types";
 import type { WorkspaceState } from "@/browser/stores/WorkspaceStore";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { isGoalPendingPersistence, type GoalSetError, type GoalStatus } from "@/common/types/goal";
+import { GOAL_OBJECTIVE_PLACEHOLDER } from "@/constants/goals";
 import { getErrorMessage } from "@/common/utils/errors";
 import { parseGoalBudgetCents } from "@/browser/utils/slashCommands/registry";
 import { setGoalWithConflictRetry } from "@/browser/utils/goals/setGoalWithConflictRetry";
@@ -78,7 +79,6 @@ export interface BuildSourcesParams {
   onStartWorkspaceCreation: (projectPath: string) => void;
   onStartMultiProjectWorkspaceCreation: () => void;
   multiProjectWorkspacesEnabled: boolean;
-  goalsEnabled: boolean;
   onArchiveMergedWorkspacesInProject: (projectPath: string) => Promise<void>;
   getBranchesForProject: (projectPath: string) => Promise<BranchListResult>;
   onSelectWorkspace: (sel: {
@@ -819,11 +819,19 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
   // Goals
   actions.push(() => {
     const selected = p.selectedWorkspace;
-    if (!p.goalsEnabled || !selected) {
+    if (!selected) {
       return [];
     }
 
     const workspaceId = selected.workspaceId;
+    const selectedMetadata = p.workspaceMetadata.get(workspaceId);
+    // Goal writes are rejected for child task workspaces by
+    // WorkspaceGoalService.assertParentWorkspace(), so keep palette actions
+    // hidden there just like the Goal tab.
+    if (selectedMetadata?.parentWorkspaceId != null) {
+      return [];
+    }
+
     const api = p.api;
     const goal = p.selectedWorkspaceState?.goal ?? null;
     const list: CommandAction[] = [
@@ -840,7 +848,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
               type: "text",
               name: "objective",
               label: "Goal objective",
-              placeholder: "Describe the goal…",
+              placeholder: GOAL_OBJECTIVE_PLACEHOLDER,
               validate: (value) => (!value.trim() ? "Goal objective is required" : null),
             },
             {

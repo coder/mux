@@ -24,7 +24,15 @@
 
 import { LRUCache } from "lru-cache";
 import { AlertTriangle, Lightbulb, Loader2 } from "lucide-react";
-import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import React, {
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+  useRef,
+  useSyncExternalStore,
+} from "react";
+import { findAssistedMatch } from "@/common/utils/review/assistedReview";
 import { createPortal } from "react-dom";
 import { HunkViewer } from "./HunkViewer";
 import { InlineReviewNote, type ReviewActionCallbacks } from "../../Shared/InlineReviewNote";
@@ -60,6 +68,7 @@ import { parseNumstat, buildFileTree, extractNewPath } from "@/common/utils/git/
 import { parseNameStatus } from "@/common/utils/git/nameStatusParser";
 import { isPlanFilePath } from "@/common/types/review";
 import type {
+  AssistedReviewHunk,
   DiffHunk,
   ReviewFilters as ReviewFiltersType,
   ReviewNoteData,
@@ -77,7 +86,7 @@ import { findNextHunkId, findNextHunkIdAfterFileRemoval } from "@/browser/utils/
 import { cn } from "@/common/lib/utils";
 import { useAPI, type APIClient } from "@/browser/contexts/API";
 import { useWorkspaceMetadata } from "@/browser/contexts/WorkspaceContext";
-import { workspaceStore } from "@/browser/stores/WorkspaceStore";
+import { workspaceStore, useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { invalidateGitStatus } from "@/browser/stores/GitStatusStore";
 import { getErrorMessage } from "@/common/utils/errors";
 
@@ -85,6 +94,8 @@ import { getErrorMessage } from "@/common/utils/errors";
 interface ReviewPanelStats {
   total: number;
   read: number;
+  /** Agent-flagged hunks in the current diff that the user hasn't read yet. */
+  unreadAssisted: number;
 }
 
 interface FileReadStatusSummary {
@@ -334,6 +345,198 @@ async function executeWorkspaceBashAndCache<T extends ReviewPanelCacheValue>(par
   reviewPanelCache.set(params.cacheKey, value);
   return value;
 }
+
+function parseReviewDiffCacheValue(params: {
+  result: ExecuteBashSuccess;
+  workspaceMetadata: ReturnType<typeof useWorkspaceMetadata>["workspaceMetadata"];
+  workspaceId: string;
+  repoRootProjectPath?: string | null;
+  diffCommand: string;
+  selectedFilePath?: string | null;
+  isImmersive: boolean;
+}): ReviewPanelDiffCacheValue {
+  const diffOutput = params.result.data.output ?? "";
+  const truncationInfo =
+    "truncated" in params.result.data ? params.result.data.truncated : undefined;
+
+  // Git diff always reports repo-relative paths from the checkout we executed in.
+  // Reproject them onto the shared container root so immersive/plain file reads can
+  // open the same files without having to know which project supplied the diff.
+  const fileDiffs = parseDiff(diffOutput).map((fileDiff) => ({
+    ...fileDiff,
+    filePath: reprojectRepoRootFilePath(
+      params.workspaceMetadata.get(params.workspaceId),
+      fileDiff.filePath,
+      params.repoRootProjectPath
+    ),
+    oldPath: fileDiff.oldPath
+      ? reprojectRepoRootFilePath(
+          params.workspaceMetadata.get(params.workspaceId),
+          fileDiff.oldPath,
+          params.repoRootProjectPath
+        )
+      : undefined,
+    hunks: fileDiff.hunks.map((hunk) => ({
+      ...hunk,
+      filePath: reprojectRepoRootFilePath(
+        params.workspaceMetadata.get(params.workspaceId),
+        hunk.filePath,
+        params.repoRootProjectPath
+      ),
+      oldPath: hunk.oldPath
+        ? reprojectRepoRootFilePath(
+            params.workspaceMetadata.get(params.workspaceId),
+            hunk.oldPath,
+            params.repoRootProjectPath
+          )
+        : undefined,
+    })),
+  }));
+  const allHunks = extractAllHunks(fileDiffs);
+
+  const diagnosticInfo: DiagnosticInfo = {
+    command: params.diffCommand,
+    outputLength: diffOutput.length,
+    fileDiffCount: fileDiffs.length,
+    hunkCount: allHunks.length,
+  };
+
+  const truncationWarning =
+    truncationInfo && (!params.selectedFilePath || params.isImmersive)
+      ? `Diff truncated (${truncationInfo.reason}). Filter by file to see more.`
+      : null;
+
+  return { hunks: allHunks, truncationWarning, diagnosticInfo };
+}
+
+export function countUnreadAssistedHunks(
+  hunks: readonly DiffHunk[],
+  assistedHunks: readonly AssistedReviewHunk[],
+  isRead: (hunkId: string) => boolean
+): number {
+  if (assistedHunks.length === 0) return 0;
+  let count = 0;
+  for (const hunk of hunks) {
+    if (findAssistedMatch(hunk, assistedHunks) && !isRead(hunk.id)) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+interface ReviewAssistedStatsReporterProps {
+  workspaceId: string;
+  workspacePath: string;
+  projectPath: string;
+  isCreating?: boolean;
+  onUnreadAssistedChange: (count: number) => void;
+}
+
+export const ReviewAssistedStatsReporter: React.FC<ReviewAssistedStatsReporterProps> = ({
+  workspaceId,
+  workspacePath,
+  projectPath,
+  isCreating = false,
+  onUnreadAssistedChange,
+}) => {
+  const { api } = useAPI();
+  const { workspaceMetadata } = useWorkspaceMetadata();
+  const originFetchRef = useRef<OriginFetchState | null>(null);
+  const { isRead } = useReviewState(workspaceId);
+
+  const rawWorkspaceStore = useWorkspaceStoreRaw();
+  const subscribeAssistedHunks = useCallback(
+    (callback: () => void) => rawWorkspaceStore.subscribeKey(workspaceId, callback),
+    [rawWorkspaceStore, workspaceId]
+  );
+  const assistedHunks = useSyncExternalStore(subscribeAssistedHunks, () =>
+    rawWorkspaceStore.getAssistedReviewHunks(workspaceId)
+  );
+
+  const projectDefaultBaseKey = STORAGE_KEYS.reviewDefaultBase(projectPath);
+  const workspaceDiffBaseKey = STORAGE_KEYS.reviewDiffBase(workspaceId);
+  const [defaultBase] = usePersistedState<string>(
+    projectDefaultBaseKey,
+    WORKSPACE_DEFAULTS.reviewBase,
+    { listener: true }
+  );
+  const [diffBase] = usePersistedState(workspaceDiffBaseKey, defaultBase, { listener: true });
+  const [includeUncommitted] = usePersistedState("review-include-uncommitted", false, {
+    listener: true,
+  });
+
+  useEffect(() => {
+    if (assistedHunks.length === 0) {
+      onUnreadAssistedChange(0);
+      return;
+    }
+    if (!api || isCreating) return;
+
+    let cancelled = false;
+    const diffCommand = buildGitDiffCommand(diffBase, includeUncommitted, "", "diff");
+
+    const loadUnreadAssisted = async () => {
+      try {
+        await ensureOriginFetched({
+          api,
+          workspaceId,
+          diffBase,
+          refreshToken: 0,
+          originFetchRef,
+          repoRootProjectPath: projectPath,
+        });
+        if (cancelled) return;
+
+        // Deliberately bypass `reviewPanelCache`: this reporter is mounted
+        // specifically so agent flags show up while the Review panel is not,
+        // and a stale panel cache would hide newly edited assisted hunks.
+        const result = await api.workspace.executeBash({
+          workspaceId,
+          script: diffCommand,
+          options: repoRootBashOptions(30, projectPath),
+        });
+        if (cancelled) return;
+        if (!result.success || !result.data.success) {
+          onUnreadAssistedChange(0);
+          return;
+        }
+
+        const data = parseReviewDiffCacheValue({
+          result,
+          workspaceMetadata,
+          workspaceId,
+          repoRootProjectPath: projectPath,
+          diffCommand,
+          selectedFilePath: null,
+          isImmersive: true,
+        });
+        onUnreadAssistedChange(countUnreadAssistedHunks(data.hunks, assistedHunks, isRead));
+      } catch {
+        if (!cancelled) onUnreadAssistedChange(0);
+      }
+    };
+
+    void loadUnreadAssisted();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    api,
+    workspaceId,
+    workspacePath,
+    projectPath,
+    workspaceMetadata,
+    diffBase,
+    includeUncommitted,
+    assistedHunks,
+    isRead,
+    isCreating,
+    onUnreadAssistedChange,
+  ]);
+
+  return null;
+};
 
 export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   workspaceId,
@@ -613,7 +816,45 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     diffBase: diffBase,
     includeUncommitted: includeUncommitted,
     sortOrder: sortOrder,
+    assistedOnly: false,
   });
+
+  // Subscribe to the agent's Assisted Review hunks for this workspace. The
+  // aggregator returns a stable reference (only changes when review_pane_update
+  // succeeds), so this snapshot is safe to use in useSyncExternalStore.
+  const rawWorkspaceStore = useWorkspaceStoreRaw();
+  const subscribeAssistedHunks = useCallback(
+    (callback: () => void) => rawWorkspaceStore.subscribeKey(workspaceId, callback),
+    [rawWorkspaceStore, workspaceId]
+  );
+  const assistedHunks = useSyncExternalStore(subscribeAssistedHunks, () =>
+    rawWorkspaceStore.getAssistedReviewHunks(workspaceId)
+  );
+  const hasAssistedHunks = assistedHunks.length > 0;
+
+  // Auto-focus the Review pane on the agent's flagged hunks the first time
+  // they appear in a session: flip `assistedOnly` to true so the user lands
+  // directly on the critical changes. Subsequent manual toggles stick because
+  // the ref guards against re-arming until the agent clears + re-flags.
+  //
+  // - First rise (false → true): force-on, set the latch.
+  // - Subsequent flag updates while latched: do nothing (respect user choice).
+  // - Drop (true → false): reset the toggle AND re-arm the latch so the next
+  //   batch of flagged hunks gets focus again.
+  const hasAutoEnabledAssistedRef = useRef(false);
+  useEffect(() => {
+    if (hasAssistedHunks) {
+      if (!hasAutoEnabledAssistedRef.current) {
+        hasAutoEnabledAssistedRef.current = true;
+        setFilters((prev) => (prev.assistedOnly ? prev : { ...prev, assistedOnly: true }));
+      }
+      return;
+    }
+    // Agent cleared its hint set — drop the filter and re-arm auto-focus
+    // so the next round of flags re-triggers focus mode.
+    hasAutoEnabledAssistedRef.current = false;
+    setFilters((prev) => (prev.assistedOnly ? { ...prev, assistedOnly: false } : prev));
+  }, [hasAssistedHunks]);
 
   const handleDiffBaseInteraction = useCallback(
     (value: string) => {
@@ -1044,60 +1285,16 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
           cacheKey,
           timeoutSecs: 30,
           repoRootProjectPath: diffRepoRootProjectPath,
-          parse: (result) => {
-            const diffOutput = result.data.output ?? "";
-            const truncationInfo = "truncated" in result.data ? result.data.truncated : undefined;
-
-            // Git diff always reports repo-relative paths from the checkout we executed in.
-            // Reproject them onto the shared container root so immersive/plain file reads can
-            // open the same files without having to know which project supplied the diff.
-            const fileDiffs = parseDiff(diffOutput).map((fileDiff) => ({
-              ...fileDiff,
-              filePath: reprojectRepoRootFilePath(
-                workspaceMetadata.get(workspaceId),
-                fileDiff.filePath,
-                diffRepoRootProjectPath
-              ),
-              oldPath: fileDiff.oldPath
-                ? reprojectRepoRootFilePath(
-                    workspaceMetadata.get(workspaceId),
-                    fileDiff.oldPath,
-                    diffRepoRootProjectPath
-                  )
-                : undefined,
-              hunks: fileDiff.hunks.map((hunk) => ({
-                ...hunk,
-                filePath: reprojectRepoRootFilePath(
-                  workspaceMetadata.get(workspaceId),
-                  hunk.filePath,
-                  diffRepoRootProjectPath
-                ),
-                oldPath: hunk.oldPath
-                  ? reprojectRepoRootFilePath(
-                      workspaceMetadata.get(workspaceId),
-                      hunk.oldPath,
-                      diffRepoRootProjectPath
-                    )
-                  : undefined,
-              })),
-            }));
-            const allHunks = extractAllHunks(fileDiffs);
-
-            const diagnosticInfo: DiagnosticInfo = {
-              command: diffCommand,
-              outputLength: diffOutput.length,
-              fileDiffCount: fileDiffs.length,
-              hunkCount: allHunks.length,
-            };
-
-            // Build truncation warning (only when not filtering by path)
-            const truncationWarning =
-              truncationInfo && (!selectedFilePath || isImmersive)
-                ? `Diff truncated (${truncationInfo.reason}). Filter by file to see more.`
-                : null;
-
-            return { hunks: allHunks, truncationWarning, diagnosticInfo };
-          },
+          parse: (result) =>
+            parseReviewDiffCacheValue({
+              result,
+              workspaceMetadata,
+              workspaceId,
+              repoRootProjectPath: diffRepoRootProjectPath,
+              diffCommand,
+              selectedFilePath,
+              isImmersive,
+            }),
         });
 
         if (cancelled) return;
@@ -1209,35 +1406,104 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     [fileReadStatusByPath]
   );
 
+  // Compute per-hunk assisted-match index so we can both gate the Assisted
+  // filter AND pin matching hunks to the top (in agent-declared order).
+  // Comments are looked up off this same map by HunkViewer.
+  const assistedMatchByHunkId = useMemo(() => {
+    if (assistedHunks.length === 0)
+      return new Map<string, { entry: (typeof assistedHunks)[number]; index: number }>();
+    const map = new Map<string, { entry: (typeof assistedHunks)[number]; index: number }>();
+    for (const h of hunks) {
+      const match = findAssistedMatch(h, assistedHunks);
+      if (match) map.set(h.id, match);
+    }
+    return map;
+  }, [hunks, assistedHunks]);
+
+  const assistedCommentByHunkId = useMemo(() => {
+    if (assistedMatchByHunkId.size === 0) return new Map<string, string>();
+    const result = new Map<string, string>();
+    for (const [hunkId, match] of assistedMatchByHunkId) {
+      if (match.entry.comment) result.set(hunkId, match.entry.comment);
+    }
+    return result;
+  }, [assistedMatchByHunkId]);
+
+  // Mirror map of new-side ranges so HunkViewer can trim to just the
+  // agent-flagged lines. Built off the same matchByHunkId so identity is
+  // stable across renders (React.memo on HunkViewer relies on this).
+  const assistedRangeByHunkId = useMemo(() => {
+    if (assistedMatchByHunkId.size === 0) return new Map<string, { start: number; end: number }>();
+    const result = new Map<string, { start: number; end: number }>();
+    for (const [hunkId, match] of assistedMatchByHunkId) {
+      if (match.entry.range) result.set(hunkId, match.entry.range);
+    }
+    return result;
+  }, [assistedMatchByHunkId]);
+
   // Apply frontend filters (read state, search term) and sorting
   // Note: selectedFilePath is a git-level filter, applied when fetching hunks
   const filteredHunks = useMemo(() => {
+    // Apply the predicate whenever the toggle is on, even when the match map
+    // is empty — otherwise enabling Assisted in a mismatch case (e.g. after
+    // rebase or file rename invalidated the agent's filters) would silently
+    // fall back to "show everything" instead of giving the user the empty
+    // state they need to notice the mismatch.
+    const assistedPredicate = filters.assistedOnly
+      ? (hunk: DiffHunk) => assistedMatchByHunkId.has(hunk.id)
+      : undefined;
+
     const filtered = applyFrontendFilters(hunks, {
       showReadHunks: filters.showReadHunks,
       isRead,
       searchTerm: debouncedSearchTerm,
       useRegex: searchState.useRegex,
       matchCase: searchState.matchCase,
+      isAssisted: assistedPredicate,
     });
 
     // Apply sorting based on sortOrder
+    let ordered: DiffHunk[];
     if (filters.sortOrder === "last-edit") {
       // Sort by first-seen timestamp (newest first = LIFO)
       // Hunks without a first-seen record use current time (treated as newest)
       const now = Date.now();
-      return [...filtered].sort((a, b) => {
+      ordered = [...filtered].sort((a, b) => {
         const aTime = firstSeenMap[a.id] ?? now;
         const bTime = firstSeenMap[b.id] ?? now;
         return bTime - aTime; // Descending (newest first)
       });
+    } else {
+      // Default: file-order (maintain original order from git diff)
+      ordered = filtered;
     }
 
-    // Default: file-order (maintain original order from git diff)
-    return filtered;
+    // Pin assisted hunks to the top, preserving the agent's declared order.
+    // We do this regardless of the assistedOnly toggle so the agent's
+    // focus is always surfaced when present.
+    if (assistedMatchByHunkId.size === 0) return ordered;
+
+    const assistedBucket: DiffHunk[] = [];
+    const rest: DiffHunk[] = [];
+    for (const hunk of ordered) {
+      if (assistedMatchByHunkId.has(hunk.id)) {
+        assistedBucket.push(hunk);
+      } else {
+        rest.push(hunk);
+      }
+    }
+    assistedBucket.sort((a, b) => {
+      const ai = assistedMatchByHunkId.get(a.id)?.index ?? 0;
+      const bi = assistedMatchByHunkId.get(b.id)?.index ?? 0;
+      return ai - bi;
+    });
+    return [...assistedBucket, ...rest];
   }, [
     hunks,
     filters.showReadHunks,
     filters.sortOrder,
+    filters.assistedOnly,
+    assistedMatchByHunkId,
     isRead,
     debouncedSearchTerm,
     searchState.useRegex,
@@ -1386,6 +1652,15 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     [hunks, markAsRead, filters.showReadHunks, selectedHunkId, setSelectedHunkId]
   );
 
+  // Count agent-flagged hunks the user hasn't acked. The panel still reports
+  // it for local stats, while the always-mounted reporter below is the tab
+  // badge source when this panel is not selected. Both use the same helper so
+  // assisted filters that don't intersect the current diff aren't counted.
+  const unreadAssistedCount = useMemo(
+    () => countUnreadAssistedHunks(hunks, assistedHunks, isRead),
+    [hunks, assistedHunks, isRead]
+  );
+
   // Calculate stats from the same precomputed read summaries so read toggles do one pass.
   const stats = useMemo(() => {
     const total = hunks.length;
@@ -1393,13 +1668,18 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
       total,
       read: readHunkCount,
       unread: total - readHunkCount,
+      unreadAssisted: unreadAssistedCount,
     };
-  }, [hunks.length, readHunkCount]);
+  }, [hunks.length, readHunkCount, unreadAssistedCount]);
 
   // Report stats to parent for tab badge
   useEffect(() => {
-    onStatsChange?.({ total: stats.total, read: stats.read });
-  }, [stats.total, stats.read, onStatsChange]);
+    onStatsChange?.({
+      total: stats.total,
+      read: stats.read,
+      unreadAssisted: stats.unreadAssisted,
+    });
+  }, [stats.total, stats.read, stats.unreadAssisted, onStatsChange]);
 
   // Scroll selected hunk into view
   useEffect(() => {
@@ -1543,6 +1823,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         projectPath={projectPath}
         lastRefreshInfo={lastRefreshInfo}
         lastRefreshFailure={lastRefreshFailure}
+        assistedCount={assistedHunks.length}
       />
 
       {diffState.status === "error" ? (
@@ -1726,7 +2007,11 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
                       ? `No hunks match "${debouncedSearchTerm}". Try a different search term.`
                       : selectedFilePath
                         ? `No hunks in ${selectedFilePath}. Try selecting a different file.`
-                        : "No hunks match the current filters. Try adjusting your filter settings."}
+                        : filters.assistedOnly
+                          ? assistedHunks.length === 0
+                            ? "The agent hasn't pinned any hunks. Turn off Assisted to see all hunks."
+                            : "None of the agent-flagged hunks match the current diff. Turn off Assisted, or try a different diff base."
+                          : "No hunks match the current filters. Try adjusting your filter settings."}
                   </div>
                 </div>
               ) : (
@@ -1756,6 +2041,9 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
                       includeUncommitted={filters.includeUncommitted}
                       preferCollapsed={preferCollapsedHunks}
                       reviewActions={reviewActions}
+                      assistedComment={assistedCommentByHunkId.get(hunk.id)}
+                      isAssisted={assistedMatchByHunkId.has(hunk.id)}
+                      visibleNewLineRange={assistedRangeByHunkId.get(hunk.id)}
                     />
                   );
                 })

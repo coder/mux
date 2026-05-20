@@ -114,48 +114,6 @@ const clearCommandDefinition: SlashCommandDefinition = {
   },
 };
 
-const TRUNCATE_USAGE = `/truncate ${SLASH_COMMAND_HINTS.truncate} (percentage to remove)`;
-
-const truncateCommandDefinition: SlashCommandDefinition = {
-  key: "truncate",
-  description: "Truncate conversation history by percentage (0-100)",
-  inputHint: SLASH_COMMAND_HINTS.truncate,
-  handler: ({ cleanRemainingTokens }): ParsedCommand => {
-    if (cleanRemainingTokens.length === 0) {
-      return {
-        type: "command-missing-args",
-        command: "truncate",
-        usage: TRUNCATE_USAGE,
-      };
-    }
-
-    if (cleanRemainingTokens.length > 1) {
-      return {
-        type: "command-invalid-args",
-        command: "truncate",
-        input: cleanRemainingTokens.join(" "),
-        usage: TRUNCATE_USAGE,
-      };
-    }
-
-    // Parse percentage (0-100)
-    const pctStr = cleanRemainingTokens[0];
-    const pct = parseFloat(pctStr);
-
-    if (isNaN(pct) || pct < 0 || pct > 100) {
-      return {
-        type: "command-invalid-args",
-        command: "truncate",
-        input: pctStr,
-        usage: TRUNCATE_USAGE,
-      };
-    }
-
-    // Convert to 0.0-1.0
-    return { type: "truncate", percentage: pct / 100 };
-  },
-};
-
 const compactCommandDefinition: SlashCommandDefinition = {
   key: "compact",
   description:
@@ -530,7 +488,6 @@ const SIMPLE_GOAL_LIFECYCLE_TYPES: Record<string, SimpleGoalLifecycleType> = {
 
 const goalCommandDefinition: SlashCommandDefinition = {
   key: "goal",
-  experimentGate: EXPERIMENT_IDS.GOALS,
   description: `Create, view, or clear a workspace goal. Usage: ${GOAL_USAGE}`,
   inputHint: SLASH_COMMAND_HINTS.goal,
   appendSpace: false,
@@ -679,6 +636,27 @@ const goalCommandDefinition: SlashCommandDefinition = {
   },
 };
 
+const BTW_USAGE = `/btw ${SLASH_COMMAND_HINTS.btw}`;
+
+const btwCommandDefinition: SlashCommandDefinition = {
+  key: "btw",
+  description:
+    "Ask a quick side question about the current conversation. The inline answer is saved in chat but kept out of future agent context.",
+  inputHint: SLASH_COMMAND_HINTS.btw,
+  appendSpace: true,
+  handler: ({ rawInput }): ParsedCommand => {
+    const trimmed = rawInput.trim();
+    if (trimmed.length === 0) {
+      return {
+        type: "command-missing-args",
+        command: "btw",
+        usage: BTW_USAGE,
+      };
+    }
+    return { type: "side-question", question: trimmed };
+  },
+};
+
 const debugLlmRequestCommandDefinition: SlashCommandDefinition = {
   key: "debug-llm-request",
   description: "Show the last LLM request sent (debug)",
@@ -688,7 +666,6 @@ const debugLlmRequestCommandDefinition: SlashCommandDefinition = {
 
 export const SLASH_COMMAND_DEFINITIONS: readonly SlashCommandDefinition[] = [
   clearCommandDefinition,
-  truncateCommandDefinition,
   compactCommandDefinition,
   modelCommandDefinition,
   planCommandDefinition,
@@ -699,6 +676,7 @@ export const SLASH_COMMAND_DEFINITIONS: readonly SlashCommandDefinition[] = [
   idleCommandDefinition,
   heartbeatCommandDefinition,
   goalCommandDefinition,
+  btwCommandDefinition,
   debugLlmRequestCommandDefinition,
 ];
 

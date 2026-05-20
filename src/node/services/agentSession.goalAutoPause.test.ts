@@ -118,13 +118,33 @@ describe("AgentSession goal safety hooks", () => {
     }
   });
 
-  test("manual user messages auto-pause active goals before streaming", async () => {
+  test("manual user messages steer active goals by default", async () => {
+    const workspaceId = "manual-steers-active-goal";
+    const { session, goalService, analytics, cleanup } = await createSessionHarness(workspaceId);
+    cleanups.push(cleanup);
+    await setGoalOk(goalService, { workspaceId, objective: "Keep working" });
+
+    const result = await session.sendMessage("I need to steer this goal", SEND_OPTIONS);
+
+    expect(result.success).toBe(true);
+    expect(await goalService.getGoal(workspaceId)).toMatchObject({ status: "active" });
+    expect(analytics.recordGoalLifecycleEvent).not.toHaveBeenCalledWith(
+      "goal_paused",
+      expect.anything()
+    );
+    session.dispose();
+  });
+
+  test("manual user messages can explicitly pause active goals", async () => {
     const workspaceId = "manual-pauses-active-goal";
     const { session, goalService, analytics, cleanup } = await createSessionHarness(workspaceId);
     cleanups.push(cleanup);
     await setGoalOk(goalService, { workspaceId, objective: "Keep working" });
 
-    const result = await session.sendMessage("I need to intervene", SEND_OPTIONS);
+    const result = await session.sendMessage("I need to pause this goal", {
+      ...SEND_OPTIONS,
+      goalInterventionPolicy: "pause",
+    });
 
     expect(result.success).toBe(true);
     expect(await goalService.getGoal(workspaceId)).toMatchObject({ status: "paused" });
@@ -196,7 +216,7 @@ describe("AgentSession goal safety hooks", () => {
     session.dispose();
   });
 
-  test("manual user messages clear acknowledgment flags before auto-pausing", async () => {
+  test("manual user messages clear acknowledgment flags while steering by default", async () => {
     const workspaceId = "manual-clears-ack";
     const { session, goalService, cleanup } = await createSessionHarness(workspaceId);
     cleanups.push(cleanup);
@@ -207,7 +227,7 @@ describe("AgentSession goal safety hooks", () => {
 
     expect(result.success).toBe(true);
     expect(await goalService.getGoal(workspaceId)).toMatchObject({
-      status: "paused",
+      status: "active",
       requireUserAcknowledgmentSinceMs: null,
     });
     session.dispose();
@@ -239,7 +259,6 @@ describe("AgentSession goal safety hooks", () => {
       await createSessionHarness(workspaceId);
     cleanups.push(cleanup);
     goalService.registerGoalContinuationConsumer(new IdleDispatcher(), {
-      isGoalExperimentEnabled: () => true,
       hasActiveDescendantTasks: () => false,
       getRuntimeState: () => ({ isRuntimeCompatible: true }),
       executeGoalContinuation: () => Promise.resolve(true),
@@ -333,7 +352,7 @@ describe("AgentSession goal safety hooks", () => {
     session.dispose();
   });
 
-  test("manual acknowledgment plus explicit resume allows a gated continuation to fire after restart", async () => {
+  test("manual acknowledgment clears stale gated continuations after restart", async () => {
     const workspaceId = "restart-gated-continuation";
     const { session, goalService, historyService, cleanup } =
       await createSessionHarness(workspaceId);
@@ -355,7 +374,6 @@ describe("AgentSession goal safety hooks", () => {
     const dispatcher = new IdleDispatcher();
     const execute = mock(() => Promise.resolve(true));
     goalService.registerGoalContinuationConsumer(dispatcher, {
-      isGoalExperimentEnabled: () => true,
       hasActiveDescendantTasks: () => false,
       getRuntimeState: () => ({ isRuntimeCompatible: true }),
       executeGoalContinuation: execute,
@@ -371,14 +389,212 @@ describe("AgentSession goal safety hooks", () => {
     const manualResult = await session.sendMessage("I saw the recovered response", SEND_OPTIONS);
     expect(manualResult.success).toBe(true);
     expect(await goalService.getGoal(workspaceId)).toMatchObject({
-      status: "paused",
+      status: "active",
       requireUserAcknowledgmentSinceMs: null,
     });
 
-    await setGoalOk(goalService, { workspaceId, status: "active" });
     await dispatcher.requestDispatch(workspaceId, GOAL_CONTINUATION_IDLE_CONSUMER_NAME);
 
-    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).not.toHaveBeenCalled();
+    session.dispose();
+  });
+
+  // Auto-completion fallback for the "agent ended a goal-continuation turn
+  // with a text-only response (no tool calls)" bug. The continuation prompt
+  // asks the agent to call `complete_goal`, but real models sometimes finish
+  // with a plain "looks done" reply instead — without this fallback the
+  // continuation loop would re-fire on the same idle output until budget
+  // or cooldown gates intervene.
+
+  function emitStreamEnd(
+    aiService: AIService & EventEmitter,
+    workspaceId: string,
+    messageId: string,
+    parts: unknown[],
+    options?: { finishReason?: string }
+  ): void {
+    aiService.emit("stream-end", {
+      type: "stream-end",
+      workspaceId,
+      messageId,
+      parts,
+      metadata: {
+        model: "openai:gpt-4o",
+        contextUsage: { inputTokens: 5, outputTokens: 5, totalTokens: 10 },
+        providerMetadata: {},
+        // Default to a clean natural stop so the silent-continuation
+        // auto-complete gate matches; individual tests override to
+        // exercise truncated / non-stop paths.
+        finishReason: options?.finishReason ?? "stop",
+      },
+    });
+  }
+
+  test("text-only stream-end during a goal_continuation turn auto-completes the goal", async () => {
+    const workspaceId = "silent-continuation-completes";
+    const { session, goalService, aiService, analytics, cleanup } =
+      await createSessionHarness(workspaceId);
+    cleanups.push(cleanup);
+    await setGoalOk(goalService, { workspaceId, objective: "Wrap things up" });
+
+    aiService.streamMessage = mock(() => {
+      emitStreamEnd(aiService, workspaceId, "assistant-silent", [
+        { type: "text", text: "I believe everything is done already." },
+      ]);
+      return Promise.resolve(Ok(undefined));
+    }) as unknown as AIService["streamMessage"];
+
+    const result = await session.sendMessage("Synthetic continuation", SEND_OPTIONS, {
+      synthetic: true,
+      goalContinuation: true,
+    });
+    expect(result.success).toBe(true);
+
+    // Wait for the async stream-end handler to dispatch the synthesized
+    // `complete_goal` mutation. The analytics emission is synchronous
+    // relative to `setGoal` succeeding, so it's the cleanest sync flag
+    // for `waitForCondition`.
+    await waitForCondition(
+      () =>
+        analytics.recordGoalLifecycleEvent.mock.calls.some((call) => call[0] === "goal_completed"),
+      { timeoutMs: 1_000 }
+    );
+    expect(await goalService.getGoal(workspaceId)).toMatchObject({
+      status: "complete",
+      completionSummary: "I believe everything is done already.",
+    });
+    expect(analytics.recordGoalLifecycleEvent).toHaveBeenCalledWith(
+      "goal_completed",
+      expect.objectContaining({ initiator: "model" })
+    );
+    session.dispose();
+  });
+
+  test("stream-end with a dynamic-tool part leaves an active goal active", async () => {
+    const workspaceId = "tool-call-keeps-goal-active";
+    const { session, goalService, aiService, cleanup } = await createSessionHarness(workspaceId);
+    cleanups.push(cleanup);
+    await setGoalOk(goalService, { workspaceId, objective: "Keep working" });
+
+    aiService.streamMessage = mock(() => {
+      emitStreamEnd(aiService, workspaceId, "assistant-acted", [
+        { type: "text", text: "Let me check the file first." },
+        {
+          type: "dynamic-tool",
+          state: "output-available",
+          toolCallId: "tool-read",
+          toolName: "read_file",
+          input: { path: "src/index.ts" },
+          output: { ok: true },
+        },
+      ]);
+      return Promise.resolve(Ok(undefined));
+    }) as unknown as AIService["streamMessage"];
+
+    const result = await session.sendMessage("Synthetic continuation", SEND_OPTIONS, {
+      synthetic: true,
+      goalContinuation: true,
+    });
+    expect(result.success).toBe(true);
+
+    // Give the stream-end handler a tick to settle before asserting "no change".
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(await goalService.getGoal(workspaceId)).toMatchObject({ status: "active" });
+    session.dispose();
+  });
+
+  test("text-only stream-end on a manual user message does not auto-complete the goal", async () => {
+    const workspaceId = "manual-text-only-no-autocomplete";
+    const { session, goalService, aiService, cleanup } = await createSessionHarness(workspaceId);
+    cleanups.push(cleanup);
+    await setGoalOk(goalService, { workspaceId, objective: "Keep going" });
+
+    aiService.streamMessage = mock(() => {
+      emitStreamEnd(aiService, workspaceId, "assistant-text-only", [
+        { type: "text", text: "Just thinking out loud." },
+      ]);
+      return Promise.resolve(Ok(undefined));
+    }) as unknown as AIService["streamMessage"];
+
+    // Manual user messages steer active goals by default (#3319), so the
+    // goal stays `active` rather than auto-pausing. The point of this test
+    // is that the silent-continuation auto-completion does NOT fire on
+    // manual turns — `activeStreamContext.goalKind` is undefined on a
+    // manual send, so the silent-completion gate
+    // (`goalKind === GOAL_CONTINUATION_KIND`) short-circuits and status
+    // stays `active`, not `complete`.
+    const result = await session.sendMessage("Manual question", SEND_OPTIONS);
+    expect(result.success).toBe(true);
+
+    // Give the async stream-end handler a tick to run so any stray
+    // auto-completion would have a chance to corrupt the steering state.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(await goalService.getGoal(workspaceId)).toMatchObject({ status: "active" });
+    session.dispose();
+  });
+
+  test("length-truncated text-only stream-end does not auto-complete the goal", async () => {
+    // Codex review feedback (#3326 PRRT_kwDOPxxmWM6DAGFi): when the provider
+    // hits the output-token limit, the turn has text + no tools but was
+    // truncated, not finished. Marking it complete would lose work. The
+    // helper requires `finishReason === "stop"` so length-truncated turns
+    // keep the goal active and can resume on the next continuation.
+    const workspaceId = "length-truncated-stays-active";
+    const { session, goalService, aiService, cleanup } = await createSessionHarness(workspaceId);
+    cleanups.push(cleanup);
+    await setGoalOk(goalService, { workspaceId, objective: "Keep working" });
+
+    aiService.streamMessage = mock(() => {
+      emitStreamEnd(
+        aiService,
+        workspaceId,
+        "assistant-truncated",
+        [{ type: "text", text: "Mid-sentence, then cut off by the token limit" }],
+        { finishReason: "length" }
+      );
+      return Promise.resolve(Ok(undefined));
+    }) as unknown as AIService["streamMessage"];
+
+    const result = await session.sendMessage("Synthetic continuation", SEND_OPTIONS, {
+      synthetic: true,
+      goalContinuation: true,
+    });
+    expect(result.success).toBe(true);
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(await goalService.getGoal(workspaceId)).toMatchObject({ status: "active" });
+    session.dispose();
+  });
+
+  test("text-only stream-end during a goal_continuation turn does not affect paused goals", async () => {
+    const workspaceId = "silent-continuation-paused";
+    const { session, goalService, aiService, cleanup } = await createSessionHarness(workspaceId);
+    cleanups.push(cleanup);
+    const seeded = await setGoalOk(goalService, {
+      workspaceId,
+      objective: "Already paused",
+    });
+    await setGoalOk(goalService, {
+      workspaceId,
+      status: "paused",
+      expectedGoalId: seeded.goalId,
+    });
+
+    aiService.streamMessage = mock(() => {
+      emitStreamEnd(aiService, workspaceId, "assistant-paused-silent", [
+        { type: "text", text: "All wrapped up." },
+      ]);
+      return Promise.resolve(Ok(undefined));
+    }) as unknown as AIService["streamMessage"];
+
+    const result = await session.sendMessage("Synthetic continuation", SEND_OPTIONS, {
+      synthetic: true,
+      goalContinuation: true,
+    });
+    expect(result.success).toBe(true);
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(await goalService.getGoal(workspaceId)).toMatchObject({ status: "paused" });
     session.dispose();
   });
 });

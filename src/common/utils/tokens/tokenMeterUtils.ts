@@ -1,11 +1,6 @@
 import type { ProvidersConfigMap } from "@/common/orpc/types";
-import {
-  getModelContextWindowOverride,
-  resolveModelForMetadata,
-} from "@/common/utils/providers/modelEntries";
+import { getEffectiveContextLimit } from "@/common/utils/compaction/contextLimit";
 import type { ChatUsageDisplay } from "./usageAggregator";
-import { getModelStats } from "./modelStats";
-import { supports1MContext } from "../ai/models";
 
 // NOTE: Provide theme-matching fallbacks so token meters render consistently
 // even if a host environment doesn't define the CSS variables (e.g., an embedded UI).
@@ -69,13 +64,7 @@ export function calculateTokenMeterData(
 ): TokenMeterData {
   if (!usage) return { segments: [], totalTokens: 0, totalPercentage: 0 };
 
-  const metadataModel = resolveModelForMetadata(model, providersConfig);
-  const modelStats = getModelStats(metadataModel);
-  const customContextWindow = getModelContextWindowOverride(model, providersConfig);
-  const maxTokens =
-    use1M && supports1MContext(model)
-      ? 1_000_000
-      : (customContextWindow ?? modelStats?.max_input_tokens);
+  const maxTokens = getEffectiveContextLimit(model, use1M, providersConfig) ?? undefined;
 
   // Total tokens used in the request.
   // For Anthropic prompt caching, cacheCreate tokens are reported separately but still

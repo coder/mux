@@ -60,7 +60,6 @@ interface PaletteGroup {
 export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext }) => {
   const { api } = useAPI();
 
-  const goalsExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.GOALS);
   const workspaceHeartbeatsExperimentEnabled = useExperimentValue(
     EXPERIMENT_IDS.WORKSPACE_HEARTBEATS
   );
@@ -293,7 +292,6 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
         variant: ctx.workspaceId ? "workspace" : "creation",
         isExperimentEnabled: (experimentId) =>
           resolveSlashCommandExperimentValue(experimentId, {
-            goals: goalsExperimentEnabled,
             workspaceHeartbeats: workspaceHeartbeatsExperimentEnabled,
           }),
       });
@@ -368,7 +366,6 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
     recentIndex,
     getSlashContext,
     agentSkills,
-    goalsExperimentEnabled,
     workspaceHeartbeatsExperimentEnabled,
   ]);
 

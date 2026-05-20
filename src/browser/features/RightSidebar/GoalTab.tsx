@@ -1,13 +1,13 @@
-import { Pencil, Settings2, Target } from "lucide-react";
+import { CheckCircle2, Pause, Pencil, Play, RotateCcw, Settings2, Target } from "lucide-react";
 import { useContext, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import {
   goalActiveMode,
   isGoalLifecycleActive,
   isGoalPendingPersistence,
-  type GoalHistoryEntry,
   type GoalSnapshot,
   type GoalStatus,
 } from "@/common/types/goal";
+import { GOAL_OBJECTIVE_PLACEHOLDER } from "@/constants/goals";
 import { formatGoalCents } from "@/common/utils/goals/budgetPricing";
 import {
   parseGoalBudgetInputCents,
@@ -16,10 +16,8 @@ import {
 import { APIContext } from "@/browser/contexts/API";
 import { useGoalDefaults } from "@/browser/utils/goals/useGoalDefaults";
 import { cn } from "@/common/lib/utils";
-// Import shared formatters / status labels from goalToolUtils so the GoalTab
-// stays in sync with the tool-call cards (Coder-agents-review nits DEREM-28
-// + DEREM-29). Local copies drifted in case (`active` vs `Active`) and could
-// drift further as Goal status grows.
+// Import shared formatters / status labels so the GoalTab stays in sync with
+// the tool-call cards as goal status labels evolve.
 import { formatGoalElapsed, goalStatusLabel } from "@/browser/features/Tools/Goal/goalToolUtils";
 import { GoalDefaultsModal } from "@/browser/features/RightSidebar/GoalDefaultsModal";
 import { GoalBoardSections } from "@/browser/features/RightSidebar/GoalBoardSections";
@@ -47,17 +45,10 @@ interface GoalTabProps {
    */
   workspaceId?: string;
   goal: GoalSnapshot | null;
-  /**
-   * Completed / cleared / replaced goals for this workspace, newest first.
-   * Rendered as a compact "Completed goals" list under the present goal. Old
-   * goals are not resumable here — the user can expand a card to read details
-   * but the only action is "start a new goal" via the existing entry points.
-   */
-  history?: GoalHistoryEntry[];
   openCompleteInputRequest?: number;
   // GoalTab UI only invokes user-facing transitions (pause/resume/complete);
   // `budget_limited` is internal-only and is excluded from the public oRPC
-  // `setGoal` input shape (Coder-agents-review nit DEREM-53).
+  // `setGoal` input shape.
   onSetStatus?: (
     status: Exclude<GoalStatus, "budget_limited">,
     completionSummary?: string
@@ -81,15 +72,9 @@ interface GoalTabProps {
   onCreate?: (intent: GoalCreateIntent) => Promise<void> | void;
 }
 
-// `parseBudgetInput` is now a thin alias for the canonical parser shared
-// with the slash command and the command palette (Coder-agents-review P3
-// DEREM-21).
+// Aliases kept for callsite stability; canonical parsers live next to the
+// slash-command path so every entry point validates the same way.
 const parseBudgetInput = parseGoalBudgetInputCents;
-
-// Alias kept for callsite stability; canonical parser lives next to
-// `parseGoalBudgetInputCents` so every entry point validates the same way
-// (Codex P2 follow-up — partial-int inputs like `1.5` / `12abc` are
-// rejected here instead of silently truncating).
 const parseTurnCapInput = parseGoalTurnCapInput;
 
 type EditingField = "objective" | "budget" | "turnCap";
@@ -118,10 +103,7 @@ export function GoalTab(props: GoalTabProps) {
   // a queue/archive/revive/promote/reorder.
   //
   // `activeGoalKey` carries the parent's view of the active goal so the
-  // hook also re-fetches when setGoal/clearGoal mutates the active slot
-  // (Codex P2: 'Refresh the board after auto-promotion'). Without this,
-  // marking the active goal complete would update the header but leave
-  // the board's Upcoming list stale until another board mutation.
+  // hook re-fetches when setGoal/clearGoal mutates the active slot.
   const activeGoalKey = props.goal ? `${props.goal.goalId}:${props.goal.status}` : null;
   const { board, refresh: refreshBoard } = useGoalBoard(props.workspaceId, activeGoalKey);
   const editInputRef = useRef<HTMLInputElement | null>(null);
@@ -235,7 +217,7 @@ export function GoalTab(props: GoalTabProps) {
   // The inline objective editor *replaces* the Edit button in the header
   // while editing, so the `originRef` we captured in `openObjectiveEditor`
   // points to a detached DOM node by the time `closeEditor` calls
-  // `.focus()` — the focus restore silently no-ops. Defer focus to the
+  // `.focus` — the focus restore silently no-ops. Defer focus to the
   // re-rendered button by querying for it via aria-label once
   // `editingField` transitions back to null after an objective edit. The
   // budget / turn-cap editors don't have this problem because their
@@ -269,13 +251,6 @@ export function GoalTab(props: GoalTabProps) {
       );
     }
   }, [props.openCompleteInputRequest, props.goal]);
-
-  // The legacy `props.history` is still passed in for back-compat with
-  // older callers but is no longer rendered here — completed + archived
-  // goals are now sourced from the goal-board (`useGoalBoard` above),
-  // which reads the same `goal-history.jsonl`. We deliberately do
-  // nothing with `props.history` in this branch; remove from the
-  // `GoalTabProps` interface when no callers still pass it.
 
   if (!props.goal) {
     return (
@@ -403,16 +378,24 @@ export function GoalTab(props: GoalTabProps) {
     }
   };
 
-  // Accent-green styling when the goal is lifecycle-active: the panel
-  // header should communicate "this is the active goal" at a glance,
-  // visually distinct from the muted "Set a goal" empty-state form.
-  // Sub-status (paused / budget-limited) shifts the label text but keeps
-  // the green band so the user sees the lifecycle, not the mode.
+  // Header tone keys off `activeMode` (not just lifecycle) so the user
+  // can tell at a glance whether the active goal is actually progressing
+  // (`running` → success/green) or stalled waiting for them (`paused` /
+  // `budget_limited` → warning/amber). Complete + read-only fall back to
+  // the muted surface tone. Amber consistently means "lifecycle-active
+  // but not auto-running" across the header band, the lifecycle status
+  // badge (`GoalStatusBadge` in `goalToolUtils.tsx`), and the sidebar
+  // tab label accent so the cue is reinforced wherever the workspace's
+  // goal status surfaces.
+  const isStalledActive = activeMode === "paused" || activeMode === "budget_limited";
   const headerToneClass =
-    lifecycle === "active"
+    activeMode === "running"
       ? "border-success/40 bg-success/5"
-      : "border-border-light bg-surface-secondary";
-  const headerLabelClass = lifecycle === "active" ? "text-success" : "text-muted";
+      : isStalledActive
+        ? "border-warning/40 bg-warning-overlay"
+        : "border-border-light bg-surface-secondary";
+  const headerLabelClass =
+    activeMode === "running" ? "text-success" : isStalledActive ? "text-warning" : "text-muted";
 
   return (
     <section className="flex h-full flex-col gap-4 overflow-y-auto p-4" aria-label="Workspace goal">
@@ -554,10 +537,6 @@ export function GoalTab(props: GoalTabProps) {
         </div>
       </dl>
 
-      {/* Objective editing is now inline inside the header above; the
-          standalone editor panel was removed so the cursor stays where
-          the user clicked (Codex P3 UX review). */}
-
       {(editingField === "budget" || editingField === "turnCap") && (
         <div
           className="border-border-light bg-surface-secondary rounded-md border p-3"
@@ -621,20 +600,33 @@ export function GoalTab(props: GoalTabProps) {
           {canPause && (
             <button
               type="button"
-              className="border-border-light bg-surface-secondary text-foreground hover:bg-surface-tertiary rounded-md border px-3 py-1.5 text-sm"
+              className="border-border-light bg-surface-secondary text-foreground hover:bg-surface-tertiary inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm"
               aria-label="Pause goal"
               onClick={() => void setStatus("paused")}
             >
+              <Pause className="h-3.5 w-3.5" aria-hidden="true" />
               Pause
             </button>
           )}
           {canResume && (
+            // Resume / Reopen tints with the goal-green accent so the
+            // primary "get this goal running again" action is the
+            // obvious next step when the header is amber. The same
+            // styling covers both `paused → resume` and `complete →
+            // reopen`; the icon swaps (`Play` vs `RotateCcw`) to make
+            // the difference between resuming an in-flight goal and
+            // reviving a closed one explicit.
             <button
               type="button"
-              className="border-border-light bg-surface-secondary text-foreground hover:bg-surface-tertiary rounded-md border px-3 py-1.5 text-sm"
+              className="border-success/40 bg-success/10 text-success hover:bg-success/20 inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm"
               aria-label={lifecycle === "complete" ? "Reopen goal" : "Resume goal"}
               onClick={() => void setStatus("active")}
             >
+              {lifecycle === "complete" ? (
+                <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+              ) : (
+                <Play className="h-3.5 w-3.5" aria-hidden="true" />
+              )}
               {/* "Reopen" reads better than "Resume" when the goal was
                   marked complete — the user is reviving a goal the
                   agent decided was done, not resuming a paused one. */}
@@ -644,10 +636,11 @@ export function GoalTab(props: GoalTabProps) {
           {canComplete && (
             <button
               type="button"
-              className="border-border-light bg-surface-secondary text-foreground hover:bg-surface-tertiary rounded-md border px-3 py-1.5 text-sm"
+              className="border-border-light bg-surface-secondary text-foreground hover:bg-surface-tertiary inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm"
               aria-label="Mark goal complete"
               onClick={(event) => openSummaryInput(event.currentTarget)}
             >
+              <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
               Mark complete
             </button>
           )}
@@ -655,14 +648,10 @@ export function GoalTab(props: GoalTabProps) {
       )}
 
       {/*
-        Clear is intentionally de-emphasized: completed goals already flow into
-        the "Completed goals" list below via the backend's append-on-clear
-        behavior, so the primary action after wrapping up is to start a new
-        goal (via `/goal` or the command palette). The text link is kept for
-        users who want to discard the current goal without a completion
-        summary, but it must not compete visually with Pause / Resume / Mark
-        complete. Gated on `canEdit` so transcript-only / pending-persistence
-        goals do not expose a destructive action.
+        Clear is intentionally de-emphasized so it does not compete visually
+        with Pause / Resume / Mark complete. Gated on `canEdit` so
+        transcript-only / pending-persistence goals do not expose a
+        destructive action.
       */}
       {canEdit && (
         <div className="-mt-1 text-xs">
@@ -671,13 +660,13 @@ export function GoalTab(props: GoalTabProps) {
             className="text-muted hover:text-foreground underline"
             aria-label={lifecycle === "complete" ? "Archive goal" : "Clear goal"}
             onClick={() => {
-              // Codex P3: when the active goal is complete, the user-
+              // when the active goal is complete, the user-
               // visible "Archive this goal" label needs to land in the
-              // Archived board section. The legacy `clearGoal()` path
+              // Archived board section. The legacy `clearGoal` path
               // records an `endReason: "completed"` history entry, so
               // it would land in Completed instead. Route to the new
               // `archiveGoal` endpoint for complete goals; everything
-              // else still uses `clearGoal()`.
+              // else still uses `clearGoal`.
               if (lifecycle === "complete" && api && props.goal) {
                 void api.workspace
                   .archiveGoal({
@@ -742,13 +731,6 @@ export function GoalTab(props: GoalTabProps) {
 
       {error && <p className="text-danger-soft text-sm">{error}</p>}
 
-      {/*
-        The legacy filteredHistory list is no longer rendered here —
-        completed + archived goals show up inside the board's Completed
-        and Archived sections below. The board reads the same history
-        file, so nothing is lost.
-      */}
-
       {props.workspaceId != null && (
         <>
           <GoalBoardSections
@@ -812,27 +794,24 @@ interface BudgetTileProps {
  *   shows "no budget" — the tile is then a single-value Cost card.
  */
 function BudgetTile(props: BudgetTileProps) {
-  // `status` is intentionally unread — Codex P2: the lifecycle's
+  // `status` is intentionally unread — the lifecycle's
   // `budget_limited` state can be triggered by EITHER hitting the
-  // budget OR hitting the turn cap (see `hasReachedAnyLimit()` in
+  // budget OR hitting the turn cap (see `hasReachedAnyLimit` in
   // `workspaceGoalService.ts`). If we OR'd `status === "budget_limited"`
   // into `overBudget`, a goal like cost `$1.25 of $5.00` with turns
   // `10 / 10` would lie ("$0.00 over") about the money. Base the
   // budget-tile "over" branch strictly on the budget numbers.
   const { costCents, budgetCents, canEdit, onEdit } = props;
   const hasBudget = budgetCents != null;
-  // Codex P2 (round 3): reserve the "over" copy for STRICT inequality.
-  // At exact equality the goal is at the cap, not past it, so the
-  // surfaced text should be "$0.00 left" rather than "$0.00 over". The
-  // bar fill / danger color still uses `>=` so reaching the cap is
-  // visually flagged.
+  // Reserve the "over" copy for strict inequality. At exact equality,
+  // show "$0.00 left" while the bar fill / danger color still flags that
+  // the cap has been reached.
   const overBudget = hasBudget && costCents > budgetCents;
   const atOrOverBudget = hasBudget && costCents >= budgetCents;
   // Compute both deltas with `Math.max(0, …)` so each branch surfaces a
   // non-negative magnitude:
   //   • `leftCents`     — used by the at-or-under-budget branch
-  //   • `overByCents`   — used by the over-budget branch (Codex P2:
-  //                       the original code clamped a single
+  //   • `overByCents`   — used by the over-budget branch (  //                       the original code clamped a single
   //                       `remainingCents` to 0 and then rendered it
   //                       with the `over` suffix, so a 25¢ overspend
   //                       was reported as "$0.00 over". Reporting the
@@ -925,12 +904,8 @@ interface TurnsTileProps {
 function TurnsTile(props: TurnsTileProps) {
   const { turnsUsed, turnCap, canEdit, onEdit } = props;
   const hasCap = turnCap != null;
-  // Codex P2 (round 3): reserve "over" for STRICT inequality. At
-  // exact saturation (`turnsUsed === turnCap`, the normal cap-reached
-  // path used by `hasReachedTurnLimit()`) render "0 left" rather than
-  // a misleading "0 over". Children can still push `turnsUsed` past
-  // the cap before lifecycle re-evaluates, and that real-overage
-  // case is what the over branch is for.
+  // Reserve "over" for strict inequality. Exact saturation renders
+  // "0 left"; only real overage uses the over branch.
   const overCap = hasCap && turnsUsed > turnCap;
   const turnsLeft = hasCap ? Math.max(0, turnCap - turnsUsed) : 0;
   const turnsOverBy = hasCap ? Math.max(0, turnsUsed - turnCap) : 0;
@@ -997,7 +972,7 @@ function GoalCreateForm(props: GoalCreateFormProps) {
   const [isDefaultsModalOpen, setIsDefaultsModalOpen] = useState(false);
   // Pre-fill Budget / Turn cap with the workspace's effective defaults
   // (global config + per-workspace override) so the user can see what
-  // they'd get and edit only when they need to. `reload()` is wired
+  // they'd get and edit only when they need to. `reload` is wired
   // through the defaults modal so a saved change updates the placeholders
   // in real time.
   const { defaults, reload: reloadDefaults } = useGoalDefaults(props.workspaceId);
@@ -1013,7 +988,7 @@ function GoalCreateForm(props: GoalCreateFormProps) {
   // `defaultValue` rather than `value` so the user can clear them; the
   // placeholder mirrors what would be applied if the field is left blank.
   //
-  // Codex P2: when `alwaysRequireExplicitBudget` is OFF, a blank budget
+  // when `alwaysRequireExplicitBudget` is OFF, a blank budget
   // is intentionally resolved to `null` (no budget) by
   // `resolveGoalSetIntent`, not to `defaultBudgetCents`. The placeholder
   // must match that resolution or the form misrepresents what a blank
@@ -1105,15 +1080,19 @@ function GoalCreateForm(props: GoalCreateFormProps) {
         <textarea
           ref={objectiveRef}
           id="goal-create-objective"
-          className="border-border bg-surface-primary text-foreground focus:border-accent min-h-20 w-full rounded-md border p-2 text-sm outline-none"
+          // `min-h-28` (7rem) keeps the multi-sentence educational
+          // placeholder (`GOAL_OBJECTIVE_PLACEHOLDER`) fully visible at
+          // typical sidebar widths. Textareas don't scroll placeholder
+          // text, so dropping below ~5 lines starts truncating the
+          // example phrases the placeholder is meant to teach.
+          className="border-border bg-surface-primary text-foreground focus:border-accent min-h-28 w-full rounded-md border p-2 text-sm outline-none"
           aria-label="Goal objective"
-          placeholder="Ship the goal lifecycle slice"
+          placeholder={GOAL_OBJECTIVE_PLACEHOLDER}
           defaultValue=""
           onKeyDown={(event) => {
-            // Cmd/Ctrl+Enter mirrors the inline objective editor so users
-            // who already learned that gesture don't have to relearn it
-            // here. Plain Enter intentionally inserts a newline (Codex
-            // tip carousel says "Goals can be multiple lines").
+            // Cmd/Ctrl+Enter mirrors the inline objective editor. Plain
+            // Enter intentionally inserts a newline because goals can span
+            // multiple lines.
             if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
               event.preventDefault();
               void submit();
@@ -1198,10 +1177,3 @@ function GoalCreateForm(props: GoalCreateFormProps) {
     </form>
   );
 }
-
-// Completed-goal rendering moved into `GoalBoardSections` as part of the
-// multi-goal queue. The previous `GoalHistorySection` / `GoalHistoryItem`
-// / `formatTimestamp` helpers are no longer needed here — the board
-// reads the same `goal-history.jsonl` and surfaces completed goals
-// under its Completed section with consistent styling alongside
-// Upcoming and Archived.

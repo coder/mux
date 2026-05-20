@@ -299,7 +299,8 @@ export type TelemetryCommandType =
   | "mode"
   | "plan"
   | "providers"
-  | "goal";
+  | "goal"
+  | "btw";
 
 /**
  * Command usage event - tracks slash command usage patterns

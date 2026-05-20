@@ -4,7 +4,6 @@
 
 import * as os from "os";
 import * as path from "path";
-import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import type { Config } from "@/node/config";
 import { HistoryService } from "@/node/services/historyService";
 import { IdleDispatcher } from "@/node/services/idleDispatcher";
@@ -167,8 +166,6 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
   // also exposed so ServiceContainer can share it with HeartbeatService.
   const idleDispatcher = new IdleDispatcher();
   workspaceGoalService.registerGoalContinuationConsumer(idleDispatcher, {
-    isGoalExperimentEnabled: () =>
-      opts.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.GOALS) ?? false,
     hasActiveDescendantTasks: (workspaceId) =>
       taskService.hasActiveDescendantAgentTasksForWorkspace(workspaceId),
     getRuntimeState: (workspaceId) => workspaceService.getGoalContinuationRuntimeState(workspaceId),

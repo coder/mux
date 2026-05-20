@@ -42,18 +42,26 @@ describe("getCommandGhostHint", () => {
 
   it("returns null for experiment-gated command hints when disabled", () => {
     expect(
-      getCommandGhostHint("/goal ", false, {
+      getCommandGhostHint("/heartbeat ", false, {
         isExperimentEnabled: () => false,
       })
     ).toBeNull();
   });
 
   it("returns hints for experiment-gated commands when enabled", () => {
-    const enabledExperiments = new Set<ExperimentId>([EXPERIMENT_IDS.GOALS]);
+    const enabledExperiments = new Set<ExperimentId>([EXPERIMENT_IDS.WORKSPACE_HEARTBEATS]);
 
     expect(
-      getCommandGhostHint("/goal ", false, {
+      getCommandGhostHint("/heartbeat ", false, {
         isExperimentEnabled: (experimentId) => enabledExperiments.has(experimentId),
+      })
+    ).toBe(SLASH_COMMAND_HINTS.heartbeat);
+  });
+
+  it("returns goal hints regardless of experiment state after GA", () => {
+    expect(
+      getCommandGhostHint("/goal ", false, {
+        isExperimentEnabled: () => false,
       })
     ).toBe(SLASH_COMMAND_HINTS.goal);
   });

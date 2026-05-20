@@ -34,7 +34,7 @@ export async function executeSlashCommand(
 
   switch (parsed.type) {
     case "clear":
-      return handleTruncate(ctx, 1);
+      return handleClear(ctx);
     case "compact":
       return handleCompaction(ctx, parsed);
     case "model-set":
@@ -57,8 +57,6 @@ export async function executeSlashCommand(
       return true;
     case "new":
       return handleNew(ctx, parsed);
-    case "truncate":
-      return handleTruncate(ctx, parsed.percentage);
     case "idle-compaction":
       return handleIdleCompaction(ctx, parsed.hours);
     case "plan-show":
@@ -84,23 +82,18 @@ function ensureWorkspaceId(ctx: SlashCommandRunnerContext): string {
   return ctx.workspaceId;
 }
 
-async function handleTruncate(
-  ctx: SlashCommandRunnerContext,
-  percentage: number
-): Promise<boolean> {
+async function handleClear(ctx: SlashCommandRunnerContext): Promise<boolean> {
   try {
     const workspaceId = ensureWorkspaceId(ctx);
-    const result = await ctx.client.workspace.truncateHistory({ workspaceId, percentage });
+    // /clear maps to a 100% truncate at the backend.
+    const result = await ctx.client.workspace.truncateHistory({ workspaceId, percentage: 1 });
     if (!result.success) {
-      ctx.showError("History", result.error ?? "Failed to truncate history");
+      ctx.showError("History", result.error ?? "Failed to clear history");
       return true;
     }
     ctx.onClearTimeline();
     ctx.onCancelEdit();
-    ctx.showInfo(
-      "History",
-      percentage >= 1 ? "Cleared conversation" : `Truncated to ${(percentage * 100).toFixed(0)}%`
-    );
+    ctx.showInfo("History", "Cleared conversation");
     return true;
   } catch (error) {
     ctx.showError("History", getErrorMessage(error));

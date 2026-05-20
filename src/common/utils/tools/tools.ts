@@ -16,6 +16,10 @@ import { createImageEditTool } from "@/node/services/tools/image_edit";
 import { createAdvisorTool } from "@/node/services/tools/advisor";
 import { createProposePlanTool } from "@/node/services/tools/propose_plan";
 import { createTodoWriteTool, createTodoReadTool } from "@/node/services/tools/todo";
+import {
+  createReviewPaneUpdateTool,
+  createReviewPaneGetTool,
+} from "@/node/services/tools/review_pane";
 import { createGetGoalTool } from "@/node/services/tools/get_goal";
 import { createCompleteGoalTool } from "@/node/services/tools/complete_goal";
 import { createNotifyTool } from "@/node/services/tools/notify";
@@ -138,7 +142,7 @@ export interface ToolConfiguration {
   taskService?: TaskService;
   /** Workspace goal lifecycle service for model-facing goal tools. */
   goalService?: WorkspaceGoalService;
-  /** Per-request goal tool gates derived from experiment, goal status, and agent capabilities. */
+  /** Per-request goal tool gates derived from goal status and agent capabilities. */
   enableGoalTools?: {
     getGoal: boolean;
     completeGoal: boolean;
@@ -150,7 +154,6 @@ export interface ToolConfiguration {
     programmaticToolCalling?: boolean;
     programmaticToolCallingExclusive?: boolean;
     advisorTool?: boolean;
-    goals?: boolean;
     imageGenerationTool?: boolean;
     execSubagentHardRestart?: boolean;
   };
@@ -478,6 +481,8 @@ export async function getToolsForModel(
     switch_agent: createSwitchAgentTool(config),
     todo_write: createTodoWriteTool(config),
     todo_read: createTodoReadTool(config),
+    review_pane_update: createReviewPaneUpdateTool(config),
+    review_pane_get: createReviewPaneGetTool(config),
     notify: createNotifyTool(config),
     ...(config.analyticsService
       ? {

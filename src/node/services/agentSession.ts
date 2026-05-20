@@ -30,6 +30,8 @@ import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import {
   GOAL_BUDGET_LIMIT_KIND,
   GOAL_CONTINUATION_KIND,
+  SILENT_CONTINUATION_COMPLETION_SUMMARY_FALLBACK,
+  SILENT_CONTINUATION_COMPLETION_SUMMARY_MAX_LENGTH,
   type GoalSyntheticMessageKind,
 } from "@/constants/goals";
 import type { SendMessageError } from "@/common/types/errors";
@@ -175,6 +177,8 @@ interface CompactionRequestMetadata {
   };
 }
 
+type GoalInterventionPolicy = NonNullable<SendMessageOptions["goalInterventionPolicy"]>;
+
 interface AutoRetryResumeRequest {
   // Same-session auto-retry must preserve the full normalized request because
   // ACP correlation/delegation lives in transient send options that are
@@ -188,6 +192,12 @@ interface SwitchAgentResult {
   agentId: string;
   reason?: string;
   followUp?: string;
+}
+
+function stripGoalInterventionPolicy(options: SendMessageOptions): SendMessageOptions {
+  const streamOptions: SendMessageOptions = { ...options };
+  delete streamOptions.goalInterventionPolicy;
+  return streamOptions;
 }
 
 function getGoalStreamOriginKind(input: {
@@ -1161,16 +1171,26 @@ export class AgentSession {
     }
   }
 
-  private async applyManualUserMessageGoalSafety(): Promise<void> {
+  private async applyManualUserMessageGoalSafety(input: {
+    policy: GoalInterventionPolicy;
+  }): Promise<void> {
     const goalService = this.workspaceGoalService;
     if (!goalService) {
       return;
     }
 
-    // One real user turn acknowledges any /clear or crash-recovery gate, then
-    // pauses active goal automation so the user explicitly resumes after intervening.
+    assert(
+      input.policy === "steer" || input.policy === "pause",
+      `invalid goal intervention policy: ${input.policy}`
+    );
+
+    // Accepted manual user turns acknowledge /clear or crash-recovery gates. Steering
+    // is the default for normal sends: the agent should see the user's intervention
+    // and the active goal may continue afterward. Rejected sends use "pause" below
+    // because the model never saw the steering content.
+    goalService.clearPendingContinuationForManualUserMessage(this.workspaceId);
     const goal = await goalService.acknowledgeUser(this.workspaceId);
-    if (goal?.status !== "active") {
+    if (goal?.status !== "active" || input.policy !== "pause") {
       return;
     }
 
@@ -2198,7 +2218,7 @@ export class AgentSession {
           // payloads (Codex P2 PRRT_kwDOPxxmWM5_tUsx) would otherwise silently
           // disable goal continuation after a blank submit / invalid payload.
           if (persisted) {
-            await this.applyManualUserMessageGoalSafety();
+            await this.applyManualUserMessageGoalSafety({ policy: "pause" });
           }
         }
         return Err(pricingGate.error);
@@ -2216,6 +2236,10 @@ export class AgentSession {
     const trimmedMessage = message.trim();
     const fileParts = options?.fileParts;
     const editMessageId = options?.editMessageId;
+
+    const manualGoalInterventionPolicy: GoalInterventionPolicy | undefined = isManualUserMessage
+      ? (options?.goalInterventionPolicy ?? (editMessageId ? "pause" : "steer"))
+      : undefined;
 
     // Edits are implemented as truncate+replace. If the frontend omits fileParts,
     // preserve the original message's attachments.
@@ -2467,15 +2491,11 @@ export class AgentSession {
     let agentInitiated = internal?.agentInitiated === true;
 
     let modelForStream = options.model;
-    let optionsForStream: SendMessageOptions = {
+    let optionsForStream: SendMessageOptions = stripGoalInterventionPolicy({
       ...options,
       ...(acpPromptId != null ? { acpPromptId } : {}),
       ...(delegatedToolNames != null ? { delegatedToolNames } : {}),
-    };
-
-    if (isManualUserMessage) {
-      await this.applyManualUserMessageGoalSafety();
-    }
+    });
 
     const userMessage = createMuxMessage(
       messageId,
@@ -2601,10 +2621,10 @@ export class AgentSession {
         });
 
         modelForStream = autoCompactionRequest.sendOptions.model;
-        optionsForStream = {
+        optionsForStream = stripGoalInterventionPolicy({
           ...autoCompactionRequest.sendOptions,
           muxMetadata: autoCompactionRequest.metadata,
-        };
+        });
         agentInitiated = autoCompactionRequest.agentInitiated;
       }
     }
@@ -2645,6 +2665,10 @@ export class AgentSession {
         // the orphan via the truncation logic that removes preceding snapshots.
         return Err(createUnknownSendMessageError(appendResult.error));
       }
+    }
+
+    if (manualGoalInterventionPolicy != null) {
+      await this.applyManualUserMessageGoalSafety({ policy: manualGoalInterventionPolicy });
     }
 
     // Workspace may be tearing down while we await filesystem IO.
@@ -2857,7 +2881,18 @@ export class AgentSession {
 
   private getProvidersConfigForCompaction(): ProvidersConfigMap | null {
     try {
-      // Some unit tests provide a minimal Config mock without providers helpers.
+      // Prefer ProviderService's safe config view: it includes env/file API-key source
+      // metadata plus the Codex OAuth presence bit, which context-limit resolution needs
+      // to distinguish GPT-5.5 API-key requests from lower-cap OAuth-routed requests.
+      const maybeAIService = this.aiService as AIService & {
+        getProvidersConfig?: () => ProvidersConfigMap | null;
+      };
+      if (typeof maybeAIService.getProvidersConfig === "function") {
+        return maybeAIService.getProvidersConfig();
+      }
+
+      // Some unit tests provide minimal service mocks; fall back to raw config so custom
+      // provider model context overrides still work in those environments.
       const maybeConfig = this.config as Config & {
         loadProvidersConfig?: () => ProvidersConfigMap | null;
       };
@@ -2865,14 +2900,7 @@ export class AgentSession {
         return null;
       }
 
-      const providersConfig = maybeConfig.loadProvidersConfig();
-      if (!providersConfig) {
-        return null;
-      }
-
-      // Compaction limit resolution only reads provider model overrides (models[*].contextWindow*).
-      // Runtime config stores these in providers.jsonc, so the raw config shape is sufficient here.
-      return providersConfig as unknown as ProvidersConfigMap;
+      return maybeConfig.loadProvidersConfig() as unknown as ProvidersConfigMap | null;
     } catch {
       // Best-effort read: if config cannot be loaded, keep null and rely on
       // built-in model limits. This matches prior behavior without crashing.
@@ -4112,7 +4140,7 @@ export class AgentSession {
     metadataModel?: string;
     isCompaction?: boolean;
   }): Promise<void> {
-    if (this.workspaceGoalService?.isExperimentEnabled() !== true) {
+    if (!this.workspaceGoalService) {
       return;
     }
     const displayUsage = createDisplayUsage(
@@ -4138,7 +4166,7 @@ export class AgentSession {
   }
 
   private async restoreGoalAccountingSnapshot(): Promise<void> {
-    if (this.workspaceGoalService?.isExperimentEnabled() !== true) {
+    if (!this.workspaceGoalService) {
       return;
     }
 
@@ -4162,14 +4190,6 @@ export class AgentSession {
     agentInitiated?: boolean;
   }): Promise<void> {
     if (!this.workspaceGoalService) {
-      return;
-    }
-    // Hot-path gate: when the GOALS experiment is off, skip the goal-record
-    // disk I/O entirely so the off-experiment runtime really is identical to
-    // main (Coder-agents-review P3 DEREM-19). Without this short-circuit,
-    // every stream-end pays a goal.json read (ENOENT for users without
-    // goals) + an extensionMetadata write to push a null goal snapshot.
-    if (!this.workspaceGoalService.isExperimentEnabled()) {
       return;
     }
 
@@ -4613,6 +4633,21 @@ export class AgentSession {
             agentId: WORKSPACE_DEFAULTS.agentId,
           };
           if (sendOptions.agentId !== "plan" && sendOptions.agentId !== "compact") {
+            // If a `goal_continuation` turn ended without any tool calls,
+            // interpret the text-only finish as an implicit `complete_goal`.
+            // The continuation prompt asks the agent to call `complete_goal`
+            // explicitly, but real models sometimes finish with a plain
+            // "looks done" reply instead — without this fallback the
+            // continuation loop would re-fire on the same idle output until
+            // budget/cooldown gates intervene. We restrict to continuation
+            // turns (not user messages, not budget-limit wrap-ups) so a
+            // user's first manual turn answered with text is never
+            // mistaken for completion. `requestContinuationAfterStreamEnd`
+            // below safely no-ops once the goal flips to `complete`.
+            if (activeStreamGoalKind === GOAL_CONTINUATION_KIND) {
+              await this.maybeAutoCompleteGoalFromSilentContinuation(streamEndPayload);
+            }
+
             goalContinuationRequest = {
               sendOptions,
               streamEndedAtMs: Date.now(),
@@ -4872,6 +4907,71 @@ export class AgentSession {
           }
         });
     }
+  }
+
+  /**
+   * If a `goal_continuation` turn finished with no `dynamic-tool` parts,
+   * treat it as an implicit `complete_goal` call. The caller is expected
+   * to have already gated on `activeStreamGoalKind === GOAL_CONTINUATION_KIND`
+   * and on the standard plan/compact/queued-input exclusions; this helper
+   * owns the parts inspection + summary synthesis.
+   *
+   * Requires `finishReason === "stop"` so truncated turns
+   * (`"length"` / `"content-filter"` / unknown) keep the goal active and
+   * can resume on the next continuation. Matches the same conservatism
+   * `TaskService` uses for implicit task-report finalization (see
+   * `taskService.ts` comment at the `finishReason === "stop"` gate):
+   * partial assistant text must not prematurely finalize the goal.
+   */
+  private async maybeAutoCompleteGoalFromSilentContinuation(
+    payload: StreamEndEvent
+  ): Promise<void> {
+    if (!this.workspaceGoalService) {
+      return;
+    }
+    if (payload.metadata.finishReason !== "stop") {
+      return;
+    }
+    if (payload.parts.some((part) => part.type === "dynamic-tool")) {
+      return;
+    }
+    const summary = this.synthesizeSilentContinuationSummary(payload.parts);
+    try {
+      await this.workspaceGoalService.completeGoalFromSilentContinuation({
+        workspaceId: this.workspaceId,
+        completionSummary: summary,
+      });
+    } catch (error) {
+      // Best-effort: never let goal-completion bookkeeping break the
+      // stream-end cleanup path. The service already swallows typed
+      // `Result` errors; this catch is defense-in-depth for unexpected
+      // throws.
+      log.warn("Failed to auto-complete goal from silent continuation", {
+        workspaceId: this.workspaceId,
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
+  /** Last non-empty text part, trimmed and length-capped; falls back to a constant. */
+  private synthesizeSilentContinuationSummary(parts: StreamEndEvent["parts"]): string {
+    for (let index = parts.length - 1; index >= 0; index -= 1) {
+      const part = parts[index];
+      if (part.type !== "text") {
+        continue;
+      }
+      const trimmed = part.text.trim();
+      if (trimmed.length === 0) {
+        continue;
+      }
+      if (trimmed.length <= SILENT_CONTINUATION_COMPLETION_SUMMARY_MAX_LENGTH) {
+        return trimmed;
+      }
+      // Reserve one character for the ellipsis so the persisted summary
+      // stays under the configured cap.
+      return `${trimmed.slice(0, SILENT_CONTINUATION_COMPLETION_SUMMARY_MAX_LENGTH - 1)}…`;
+    }
+    return SILENT_CONTINUATION_COMPLETION_SUMMARY_FALLBACK;
   }
 
   /** Extract a successful switch_agent tool result from stream-end parts (latest wins). */

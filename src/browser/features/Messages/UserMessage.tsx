@@ -16,7 +16,20 @@ import {
 } from "@/browser/utils/chatEditing";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { VIM_ENABLED_KEY } from "@/common/constants/storage";
-import { ChevronLeft, ChevronRight, Clipboard, ClipboardCheck, Pencil, Target } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Clipboard,
+  ClipboardCheck,
+  MessageCircleQuestion,
+  Pencil,
+  Target,
+} from "lucide-react";
+import {
+  SIDE_QUESTION_HEADER_CLASS,
+  SIDE_QUESTION_MESSAGE_WINDOW_CLASS,
+  SIDE_QUESTION_USER_BLOCK_CLASS,
+} from "./sideQuestionStyles";
 
 /** Navigation info for navigating between user messages */
 export interface UserMessageNavigation {
@@ -162,6 +175,12 @@ export const UserMessage: React.FC<UserMessageProps> = ({
       </span>
     );
   }
+  // /btw side-question rows keep the normal user bubble (background,
+  // border, right-alignment) and add a small "Side question" header above
+  // it plus a thin left stripe on the wrapper. We deliberately do NOT
+  // bypass MessageWindow here — the user feedback was that an aside
+  // should read inline with the chat aesthetic, not as a distinct block.
+  const isSideQuestion = message.isSideQuestion === true;
   const syntheticClassName = cn(
     className,
     isSynthetic && "opacity-70",
@@ -192,15 +211,37 @@ export const UserMessage: React.FC<UserMessageProps> = ({
     );
   }
 
-  return (
+  const messageWindow = (
     <MessageWindow
       label={label}
       message={message}
       buttons={buttons}
-      className={syntheticClassName}
+      // For /btw rows the outer wrapper owns spacing around the pair.
+      className={cn(syntheticClassName, isSideQuestion && SIDE_QUESTION_MESSAGE_WINDOW_CLASS)}
       variant="user"
     >
       {renderedContent}
     </MessageWindow>
   );
+
+  // /btw side-question: wrap the normal user bubble in a thin-stripe block
+  // and prepend a small "Side question" header. The bubble's right-align
+  // and styling is unchanged — only the surrounding chrome differs.
+  if (isSideQuestion) {
+    return (
+      <div
+        className={cn(SIDE_QUESTION_USER_BLOCK_CLASS, className)}
+        data-message-block
+        data-side-question
+      >
+        <div className={SIDE_QUESTION_HEADER_CLASS}>
+          <MessageCircleQuestion aria-hidden="true" className="h-3 w-3" />
+          Side question
+        </div>
+        {messageWindow}
+      </div>
+    );
+  }
+
+  return messageWindow;
 };

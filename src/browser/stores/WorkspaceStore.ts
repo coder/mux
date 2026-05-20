@@ -12,6 +12,10 @@ import type {
 import type { RouterClient } from "@orpc/server";
 import type { AppRouter } from "@/node/orpc/router";
 import type { TodoItem } from "@/common/types/tools";
+import type { AssistedReviewHunk } from "@/common/types/review";
+
+/** Stable empty reference returned when a workspace has no assisted hunks; keeps useSyncExternalStore snapshot identity stable. */
+const EMPTY_ASSISTED_REVIEW: AssistedReviewHunk[] = [];
 import { applyWorkspaceChatEventToAggregator } from "@/browser/utils/messages/applyWorkspaceChatEventToAggregator";
 import {
   StreamingMessageAggregator,
@@ -63,6 +67,7 @@ import { getModelStats } from "@/common/utils/tokens/modelStats";
 import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import { computeProvidersConfigFingerprint } from "@/common/utils/providers/configFingerprint";
 import { isDurableCompactionBoundaryMarker } from "@/common/utils/messages/compactionBoundary";
+import { isSideQuestionAnswerMessage as isSideQuestionAnswerMuxMessage } from "@/common/utils/messages/sideQuestion";
 import { WorkspaceConsumerManager } from "./WorkspaceConsumerManager";
 import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import { sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
@@ -277,16 +282,35 @@ function createInitialHistoryPaginationState(): WorkspaceHistoryPaginationState 
 }
 
 function getBufferedActiveStreamStart(
-  events: WorkspaceChatMessage[]
+  events: WorkspaceChatMessage[],
+  historicalMessages: readonly MuxMessage[],
+  isSideQuestionAnswerMessageId: (messageId: string) => boolean
 ): Pick<StreamStartEvent, "model" | "thinkingLevel"> | null {
   let activeStreamStart: StreamStartEvent | null = null;
+  const sideQuestionAnswerMessageIds = new Set<string>();
+
+  for (const message of historicalMessages) {
+    if (isSideQuestionAnswerMuxMessage(message)) {
+      sideQuestionAnswerMessageIds.add(message.id);
+    }
+  }
 
   for (const event of events) {
+    if (isMuxMessage(event) && isSideQuestionAnswerMuxMessage(event)) {
+      sideQuestionAnswerMessageIds.add(event.id);
+    }
+
     if (!("type" in event)) {
       continue;
     }
 
     if (event.type === "stream-start") {
+      if (
+        sideQuestionAnswerMessageIds.has(event.messageId) ||
+        isSideQuestionAnswerMessageId(event.messageId)
+      ) {
+        continue;
+      }
       activeStreamStart = event;
       continue;
     }
@@ -754,7 +778,12 @@ export class WorkspaceStore {
         }
       }
 
-      collapsePinnedTodoOnStreamStop(workspaceId, aggregator.getCurrentTodos().length > 0);
+      const isSideQuestionAnswerStream = aggregator.isSideQuestionAnswerMessage(
+        streamEndData.messageId
+      );
+      if (!isSideQuestionAnswerStream) {
+        collapsePinnedTodoOnStreamStop(workspaceId, aggregator.getCurrentTodos().length > 0);
+      }
 
       // Flush any pending debounced bump before final bump to avoid double-bump
       this.cancelPendingIdleBump(workspaceId);
@@ -1714,7 +1743,7 @@ export class WorkspaceStore {
       const transient = this.assertChatTransientState(workspaceId);
       const historyPagination =
         this.historyPagination.get(workspaceId) ?? createInitialHistoryPaginationState();
-      const activeStreams = aggregator.getActiveStreams();
+      const hasInterruptibleActiveStream = aggregator.hasInterruptibleActiveStream();
       const activity = this.workspaceActivity.get(workspaceId);
       const isActiveWorkspace = this.activeOnChatWorkspaceId === workspaceId;
       const messages = aggregator.getAllMessages();
@@ -1723,7 +1752,11 @@ export class WorkspaceStore {
       const streamLifecycle = aggregator.getStreamLifecycle();
       const bufferedActiveStreamStart =
         isActiveWorkspace && !transient.caughtUp
-          ? getBufferedActiveStreamStart(transient.pendingStreamEvents)
+          ? getBufferedActiveStreamStart(
+              transient.pendingStreamEvents,
+              transient.historicalMessages,
+              (messageId) => aggregator.isSideQuestionAnswerMessage(messageId)
+            )
           : null;
       // Trust the live aggregator only when it is both active AND has finished
       // replaying historical events (caughtUp). During the replay window after a
@@ -1740,10 +1773,10 @@ export class WorkspaceStore {
       // subscription for all workspaces.
       const useAggregatorState = isActiveWorkspace && transient.caughtUp;
       const canInterrupt = useAggregatorState
-        ? activeStreams.length > 0
+        ? hasInterruptibleActiveStream
         : bufferedActiveStreamStart !== null
           ? true
-          : (activity?.streaming ?? activeStreams.length > 0);
+          : (activity?.streaming ?? hasInterruptibleActiveStream);
       const currentModel = useAggregatorState
         ? (aggregator.getCurrentModel() ?? null)
         : (bufferedActiveStreamStart?.model ??
@@ -2149,6 +2182,16 @@ export class WorkspaceStore {
   getTodos(workspaceId: string): TodoItem[] {
     const aggregator = this.aggregators.get(workspaceId);
     return aggregator ? aggregator.getCurrentTodos() : [];
+  }
+
+  /**
+   * Get current Assisted Review hunks (agent-flagged) for a workspace.
+   * Updated when `review_pane_update` tool succeeds; consumed by the
+   * Review pane and ReviewControls to power the Assisted toggle.
+   */
+  getAssistedReviewHunks(workspaceId: string): AssistedReviewHunk[] {
+    const aggregator = this.aggregators.get(workspaceId);
+    return aggregator ? aggregator.getAssistedReviewHunks() : EMPTY_ASSISTED_REVIEW;
   }
 
   /**
@@ -3751,11 +3794,15 @@ export class WorkspaceStore {
     if (isCaughtUpMessage(data)) {
       const replay = data.replay ?? "full";
 
-      // Check if there's an active stream in buffered events (reconnection scenario)
+      // Check if there's an active main-agent stream in buffered events
+      // (reconnection scenario). Side-answer markers may still be buffered in
+      // historicalMessages at this point, before loadHistoricalMessages teaches
+      // the aggregator about them, so use the historical-aware classifier.
       const pendingEvents = transient.pendingStreamEvents;
-      const hasActiveStream = pendingEvents.some(
-        (event) => "type" in event && event.type === "stream-start"
-      );
+      const hasActiveStream =
+        getBufferedActiveStreamStart(pendingEvents, transient.historicalMessages, (messageId) =>
+          aggregator.isSideQuestionAnswerMessage(messageId)
+        ) !== null;
 
       const serverActiveStreamMessageId = data.cursor?.stream?.messageId;
       const localActiveStreamMessageId = aggregator.getActiveStreamMessageId();
@@ -3944,7 +3991,7 @@ export class WorkspaceStore {
     aggregator: StreamingMessageAggregator,
     data: WorkspaceChatMessage
   ): void {
-    // Handle non-buffered special events first
+    // Handle special events first
     if (isStreamError(data)) {
       const transient = this.assertChatTransientState(workspaceId);
 

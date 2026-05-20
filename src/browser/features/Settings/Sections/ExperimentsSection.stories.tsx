@@ -1,5 +1,6 @@
 import { expect, userEvent, waitFor, within } from "@storybook/test";
 import { lightweightMeta } from "@/browser/stories/meta.js";
+import { replaceInputValue } from "@/browser/stories/storyPlayHelpers.js";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { DEFAULT_IMAGE_GENERATION_MODEL } from "@/common/types/imageGeneration";
 import { DEFAULT_GOAL_DEFAULTS } from "@/constants/goals";
@@ -68,30 +69,29 @@ export const ImageGenerationEnabled: Story = {
     await waitFor(() => expect(uploadConsentSwitch).toHaveAttribute("aria-checked", "false"));
 
     const maxImagesInput = await canvas.findByDisplayValue("4");
-    await userEvent.clear(maxImagesInput);
-    await userEvent.type(maxImagesInput, "11");
+    // Use replaceInputValue (focus + select-all + type) instead of clear+type.
+    // The max-images input has an onBlur that normalizes invalid drafts back
+    // to the default; raw clear+type can interleave a spurious blur that
+    // resets the value and produces flaky assertions. See replaceInputValue
+    // for details.
+    await replaceInputValue(maxImagesInput, "11");
     await expect(
       canvas.findByText("Enter a whole number from 1 to 10.")
     ).resolves.toBeInTheDocument();
 
-    await userEvent.clear(maxImagesInput);
-    await userEvent.type(maxImagesInput, "2");
-    await waitFor(() => expect(maxImagesInput).toHaveValue("2"));
+    await replaceInputValue(maxImagesInput, "2");
   },
 };
 
-export const GoalAndHeartbeatSettingsEnabled: Story = {
-  // Goal-defaults editing moved to the in-tab `GoalDefaultsSection` in
-  // the workspace sidebar (see `src/browser/features/RightSidebar/`),
-  // so the Experiments panel no longer mounts the budget / turn-cap
-  // inputs. Heartbeat defaults still render inline here. This story
-  // now asserts the new pointer copy + the heartbeat fields.
+export const HeartbeatSettingsEnabled: Story = {
+  // Goals graduated to GA, so they no longer appear in the Experiments
+  // panel at all (configuration lives in the Goal tab's
+  // `GoalDefaultsSection`). Heartbeat defaults still render inline here.
   render: () => (
     <SettingsSectionStory
       setup={() =>
         setupSettingsStory({
           experiments: {
-            [EXPERIMENT_IDS.GOALS]: true,
             [EXPERIMENT_IDS.WORKSPACE_HEARTBEATS]: true,
           },
           goalDefaults: {

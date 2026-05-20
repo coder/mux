@@ -8,11 +8,11 @@ import type { InitStateManager } from "./initStateManager";
 import { AgentSession } from "./agentSession";
 import { createTestHistoryService } from "./testHistoryService";
 import { WorkspaceGoalService } from "./workspaceGoalService";
-// Shared helper that registers a no-op goal-continuation consumer with
-// `isGoalExperimentEnabled: () => true` so the in-AS pricing gate fires
-// (DEREM-52). Extracted from a duplicate copy in `workspaceGoalService.test.ts`
-// per Coder-agents-review nit DEREM-55.
-import { enableGoalsExperimentForTest } from "./testDispatchHelpers";
+// Registers a no-op goal-continuation consumer so the in-AS pricing gate
+// path runs end-to-end (DEREM-52). Bridge registration alone is now
+// sufficient — goals graduated to GA, so there is no longer an experiment
+// flag to flip.
+import { registerNoopContinuationBridgeForTest } from "./testDispatchHelpers";
 import { Ok } from "@/common/types/result";
 import type { SendMessageOptions } from "@/common/orpc/types";
 import type { GoalRecordV1 } from "@/common/types/goal";
@@ -80,9 +80,9 @@ async function createSessionHarness(workspaceId: string): Promise<SessionHarness
     `${config.rootDir}/agent-session-budget-gate-extension-metadata.json`
   );
   const goalService = new WorkspaceGoalService(config, historyService, extensionMetadata);
-  // Enable the GOALS experiment via the shared helper so the in-AS pricing
-  // gate exercises the live path (DEREM-52 / DEREM-55).
-  enableGoalsExperimentForTest(goalService);
+  // Register a no-op continuation bridge so any continuation-bridge-dependent
+  // codepath has a registered consumer to talk to (DEREM-52).
+  registerNoopContinuationBridgeForTest(goalService);
   const initStateManager = Object.assign(new EventEmitter(), {
     replayInit: mock((_workspaceId: string) => Promise.resolve()),
   }) as unknown as InitStateManager;

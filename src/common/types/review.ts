@@ -92,6 +92,26 @@ export interface ReviewFilters {
   includeUncommitted: boolean;
   /** Sort order for hunks */
   sortOrder: ReviewSortOrder;
+  /**
+   * When true, only show hunks the agent flagged via `review_pane_update`.
+   * Independent of pin-first behavior, which always applies when any
+   * assisted hunks exist.
+   */
+  assistedOnly: boolean;
+}
+
+/**
+ * A single agent-flagged review hint targeting one file (and optionally a
+ * line range on the *new* side of the diff). Stored in-memory per workspace
+ * via the {@link review_pane_update} tool.
+ */
+export interface AssistedReviewHunk {
+  /** File path relative to workspace root, as the agent specified it. */
+  path: string;
+  /** Optional inclusive new-file line range, e.g. {start:10,end:24}. */
+  range?: { start: number; end: number };
+  /** Optional agent comment explaining why this area needs review. */
+  comment?: string;
 }
 
 /**

@@ -8,12 +8,12 @@
  */
 export const WORKSPACE_ONLY_COMMAND_KEYS: ReadonlySet<string> = new Set([
   "clear",
-  "truncate",
   "compact",
   "fork",
   "new",
   "plan",
   "heartbeat",
+  "btw",
 ]);
 
 /**
@@ -21,7 +21,6 @@ export const WORKSPACE_ONLY_COMMAND_KEYS: ReadonlySet<string> = new Set([
  */
 export const WORKSPACE_ONLY_COMMAND_TYPES: ReadonlySet<string> = new Set([
   "clear",
-  "truncate",
   "compact",
   "fork",
   "new",
@@ -35,4 +34,5 @@ export const WORKSPACE_ONLY_COMMAND_TYPES: ReadonlySet<string> = new Set([
   "goal-resume",
   "goal-complete",
   "goal-clear",
+  "side-question",
 ]);

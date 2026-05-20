@@ -9,15 +9,9 @@ import { createTestHistoryService } from "./testHistoryService";
 import type { HistoryService } from "./historyService";
 import type { GoalRecordV1, GoalStatus } from "@/common/types/goal";
 import { GOAL_BUDGET_LIMIT_KIND, GOAL_CONTINUATION_IDLE_CONSUMER_NAME } from "@/constants/goals";
-// Shared `drainPendingDispatches` + `waitForCondition` +
-// `enableGoalsExperimentForTest` helpers live in `./testDispatchHelpers`
-// (Coder-agents-review P3 DEREM-41 + nits DEREM-48 / DEREM-55) — import
-// instead of defining local copies so future callers cannot drift.
-import {
-  drainPendingDispatches,
-  enableGoalsExperimentForTest,
-  waitForCondition,
-} from "./testDispatchHelpers";
+// Shared dispatch helpers live in `./testDispatchHelpers` instead of local
+// copies so future callers cannot drift.
+import { drainPendingDispatches, waitForCondition } from "./testDispatchHelpers";
 
 function captureGoalActivity(service: WorkspaceGoalService) {
   const snapshots: Array<
@@ -62,7 +56,6 @@ function continuationBridge(
     Promise.resolve(true)
 ): GoalContinuationRuntimeBridge {
   return {
-    isGoalExperimentEnabled: () => true,
     hasActiveDescendantTasks: () => false,
     getRuntimeState: () => ({ isRuntimeCompatible: true }),
     executeGoalContinuation,
@@ -96,6 +89,19 @@ describe("WorkspaceGoalService", () => {
 
   afterEach(async () => {
     await cleanup();
+  });
+
+  test("does not write null activity snapshots for ordinary no-goal reads", async () => {
+    // Goals are GA, so tool availability asks for the current goal on every
+    // turn. No-goal reads must stay read-only; lifecycle paths that actually
+    // clear/corrupt-repair a goal still publish explicit null snapshots.
+    const setGoalSpy = spyOn(extensionMetadata, "setGoal");
+
+    const goal = await service.getGoal(workspaceId);
+
+    expect(goal).toBeNull();
+    expect(setGoalSpy).not.toHaveBeenCalled();
+    setGoalSpy.mockRestore();
   });
 
   test("creates, reads, and clears a goal while updating snapshots", async () => {
@@ -139,27 +145,7 @@ describe("WorkspaceGoalService", () => {
     );
   });
 
-  test("appends a history entry on clear and exposes it newest-first", async () => {
-    const first = await setGoalOk(service, { workspaceId, objective: "First archived goal" });
-    await service.clearGoal(workspaceId);
-
-    const second = await setGoalOk(service, { workspaceId, objective: "Second archived goal" });
-    await service.clearGoal(workspaceId);
-
-    const history = await service.getGoalHistory(workspaceId);
-    expect(history).toHaveLength(2);
-    // Newest first: the second clear must be at index 0.
-    expect(history[0]).toMatchObject({
-      endReason: "cleared",
-      goal: { goalId: second.goalId, objective: "Second archived goal" },
-    });
-    expect(history[1]).toMatchObject({
-      endReason: "cleared",
-      goal: { goalId: first.goalId },
-    });
-  });
-
-  test("clearing a completed goal records the history endReason as completed", async () => {
+  test("clearing a completed goal surfaces it on the completed board", async () => {
     const created = await setGoalOk(service, { workspaceId, objective: "Finishable goal" });
     await setGoalOk(service, {
       workspaceId,
@@ -169,13 +155,10 @@ describe("WorkspaceGoalService", () => {
     });
     await service.clearGoal(workspaceId);
 
-    const history = await service.getGoalHistory(workspaceId);
-    expect(history).toHaveLength(1);
-    // The goal's status at exit was "complete", so the history endReason
-    // should reflect that distinction in the right-sidebar UI (completed vs
-    // discarded-active).
-    expect(history[0]).toMatchObject({
-      endReason: "completed",
+    const board = await service.getGoalBoard(workspaceId);
+    expect(board.entries).toHaveLength(1);
+    expect(board.entries[0]).toMatchObject({
+      section: "complete",
       goal: {
         goalId: created.goalId,
         status: "complete",
@@ -184,44 +167,60 @@ describe("WorkspaceGoalService", () => {
     });
   });
 
-  test("getGoalHistory returns the latest entry first when endedAtMs ties", async () => {
-    // Two back-to-back clears in the same millisecond would otherwise rely
-    // on the stable sort preserving JSONL append order (oldest-first),
-    // violating the "newest first" contract (Codex P2 review:
-    // "Add a tie-breaker for goal history sorting"). The reader breaks ties
-    // by JSONL append index DESC instead, so the freshly-appended line wins.
+  test("getGoalBoard returns completed goals newest-first when endedAtMs ties", async () => {
     const ts = Date.now();
     const nowSpy = ts;
     const dateNow = spyOn(Date, "now").mockImplementation(() => nowSpy);
     try {
       const first = await setGoalOk(service, { workspaceId, objective: "First" });
+      await setGoalOk(service, {
+        workspaceId,
+        objective: first.objective,
+        status: "complete",
+        completionSummary: "First done.",
+      });
       await service.clearGoal(workspaceId);
       const second = await setGoalOk(service, { workspaceId, objective: "Second" });
+      await setGoalOk(service, {
+        workspaceId,
+        objective: second.objective,
+        status: "complete",
+        completionSummary: "Second done.",
+      });
       await service.clearGoal(workspaceId);
 
-      const history = await service.getGoalHistory(workspaceId);
-      expect(history).toHaveLength(2);
-      // Same-ms timestamps force the tie-breaker; the second append wins.
-      expect(history[0].goal.goalId).toBe(second.goalId);
-      expect(history[1].goal.goalId).toBe(first.goalId);
+      const completed = (await service.getGoalBoard(workspaceId)).entries.filter(
+        (entry) => entry.section === "complete"
+      );
+      expect(completed).toHaveLength(2);
+      // Same-ms timestamps force the append-index tie-breaker; the second append wins.
+      expect(completed[0].goal.goalId).toBe(second.goalId);
+      expect(completed[1].goal.goalId).toBe(first.goalId);
     } finally {
       dateNow.mockRestore();
     }
   });
 
-  test("getGoalHistory tolerates corrupt JSONL lines without bricking the workspace", async () => {
+  test("getGoalBoard tolerates corrupt JSONL lines without bricking completed goals", async () => {
     const created = await setGoalOk(service, { workspaceId, objective: "Good entry" });
+    await setGoalOk(service, {
+      workspaceId,
+      objective: created.objective,
+      status: "complete",
+      completionSummary: "Done.",
+    });
     await service.clearGoal(workspaceId);
 
-    // Simulate a partially-written line from a prior crash. The reader must
-    // skip it instead of throwing — otherwise one bad line would brick the
-    // right-sidebar's history list for the workspace.
+    // Simulate a partially-written line from a prior crash. The board reader
+    // must skip it instead of throwing.
     const historyPath = path.join(config.getSessionDir(workspaceId), "goal-history.jsonl");
     await fs.appendFile(historyPath, "{not-json}\n", "utf-8");
 
-    const history = await service.getGoalHistory(workspaceId);
-    expect(history).toHaveLength(1);
-    expect(history[0]).toMatchObject({ goal: { goalId: created.goalId } });
+    const completed = (await service.getGoalBoard(workspaceId)).entries.filter(
+      (entry) => entry.section === "complete"
+    );
+    expect(completed).toHaveLength(1);
+    expect(completed[0]).toMatchObject({ goal: { goalId: created.goalId } });
   });
 
   test("setGoal with editInPlace renames the current goal without resetting accounting", async () => {
@@ -245,22 +244,25 @@ describe("WorkspaceGoalService", () => {
     expect(renamed.objective).toBe("Refined objective");
     expect(renamed.costCents).toBeGreaterThan(0);
     expect(renamed.costCents).toBe(25);
-    // No history entry should be appended for in-place renames; that file
-    // is reserved for goals that *leave* the current slot.
-    expect(await service.getGoalHistory(workspaceId)).toHaveLength(0);
+    const boardEntries = (await service.getGoalBoard(workspaceId)).entries;
+    expect(boardEntries).toHaveLength(1);
+    expect(boardEntries[0]).toMatchObject({
+      section: "active",
+      goal: { goalId: created.goalId },
+    });
   });
 
   test("setGoal without editInPlace continues to archive + replace on objective change", async () => {
     const created = await setGoalOk(service, { workspaceId, objective: "Initial objective" });
     const replaced = await setGoalOk(service, { workspaceId, objective: "Different objective" });
 
-    // Replace flow: new goalId, prior goal archived to history.
+    // Replace flow: new goalId, with only the new active goal on the board.
     expect(replaced.goalId).not.toBe(created.goalId);
-    const history = await service.getGoalHistory(workspaceId);
-    expect(history).toHaveLength(1);
-    expect(history[0]).toMatchObject({
-      endReason: "replaced",
-      goal: { goalId: created.goalId, objective: "Initial objective" },
+    const boardEntries = (await service.getGoalBoard(workspaceId)).entries;
+    expect(boardEntries).toHaveLength(1);
+    expect(boardEntries[0]).toMatchObject({
+      section: "active",
+      goal: { goalId: replaced.goalId },
     });
   });
 
@@ -274,7 +276,7 @@ describe("WorkspaceGoalService", () => {
       editInPlace: true,
     });
     expect(created.objective).toBe("Fresh goal");
-    expect(await service.getGoalHistory(workspaceId)).toHaveLength(0);
+    expect((await service.getGoalBoard(workspaceId)).entries).toHaveLength(1);
   });
 
   test("treats zero-budget goals as unbudgeted even when kickoff model has no pricing", async () => {
@@ -319,7 +321,6 @@ describe("WorkspaceGoalService", () => {
     const dispatcher = new IdleDispatcher();
     const executed: Array<{ message: string; kind: string | undefined }> = [];
     service.registerGoalContinuationConsumer(dispatcher, {
-      isGoalExperimentEnabled: () => true,
       hasActiveDescendantTasks: () => false,
       getRuntimeState: () => ({ isRuntimeCompatible: true }),
       executeGoalContinuation: (input) => {
@@ -340,7 +341,6 @@ describe("WorkspaceGoalService", () => {
     const dispatcher = new IdleDispatcher();
     const executed: Array<{ message: string }> = [];
     service.registerGoalContinuationConsumer(dispatcher, {
-      isGoalExperimentEnabled: () => true,
       hasActiveDescendantTasks: () => false,
       getRuntimeState: () => ({ isRuntimeCompatible: true }),
       executeGoalContinuation: (input) => {
@@ -363,7 +363,6 @@ describe("WorkspaceGoalService", () => {
     const dispatcher = new IdleDispatcher();
     const executed: Array<{ message: string }> = [];
     service.registerGoalContinuationConsumer(dispatcher, {
-      isGoalExperimentEnabled: () => true,
       hasActiveDescendantTasks: () => false,
       getRuntimeState: () => ({ isRuntimeCompatible: true }),
       executeGoalContinuation: (input) => {
@@ -378,38 +377,6 @@ describe("WorkspaceGoalService", () => {
     await setGoalOk(service, { workspaceId, objective: "No kickoff defaults" });
 
     expect(executed).toHaveLength(0);
-  });
-
-  test("requestContinuationAfterStreamEnd is a no-op when the GOALS experiment is disabled", async () => {
-    // Coder-agents-review P3 DEREM-40 (sibling to DEREM-37 / DEREM-19):
-    // pin the experiment-off short-circuit so a regression that removed or
-    // inverted the gate would be caught. Without the gate, every
-    // non-compaction stream-end pays a `goal.json` ENOENT read +
-    // `extensionMetadata.json` write for users with the experiment off.
-    await setGoalOk(service, { workspaceId, objective: "Should never dispatch" });
-    const dispatcher = new IdleDispatcher();
-    const execute = mock(() => Promise.resolve(true));
-    const getGoalSpy = spyOn(service, "getGoal");
-    service.registerGoalContinuationConsumer(dispatcher, {
-      isGoalExperimentEnabled: () => false,
-      hasActiveDescendantTasks: () => false,
-      getRuntimeState: () => ({ isRuntimeCompatible: true }),
-      executeGoalContinuation: execute,
-    });
-
-    // Reset the spy *after* registration so we can prove the
-    // request-continuation call below does not read goal.json again.
-    getGoalSpy.mockClear();
-
-    await service.requestContinuationAfterStreamEnd({
-      workspaceId,
-      sendOptions: { model: "openai:gpt-4o", agentId: "exec" },
-      streamEndedAtMs: 10_000,
-    });
-
-    expect(getGoalSpy).not.toHaveBeenCalled();
-    expect(execute).not.toHaveBeenCalled();
-    getGoalSpy.mockRestore();
   });
 
   test("falls back to priced kickoff options when stream options are unpriced for budgeted goals", async () => {
@@ -778,7 +745,7 @@ describe("WorkspaceGoalService", () => {
   });
 
   test("recoverPendingDispatchAfterRestart re-arms a stranded budget_limited wrap-up", async () => {
-    // Regression for Coder-agents-review P2 DEREM-16. Simulates a process
+    // Regression: Simulates a process
     // restart by:
     //  1. Setting up a budgeted goal + recording a continuation-origin stream
     //     that exhausts the budget. This puts the goal in `budget_limited`
@@ -813,7 +780,6 @@ describe("WorkspaceGoalService", () => {
     const dispatcher = new IdleDispatcher();
     const executed: Array<{ kind: string | undefined; message: string }> = [];
     restartedService.registerGoalContinuationConsumer(dispatcher, {
-      isGoalExperimentEnabled: () => true,
       hasActiveDescendantTasks: () => false,
       getRuntimeState: () => ({ isRuntimeCompatible: true }),
       executeGoalContinuation: (input) => {
@@ -878,7 +844,7 @@ describe("WorkspaceGoalService", () => {
     });
   });
 
-  test("recoverPendingDispatchAfterRestart skips wrap-up when the budget hit was user-origin (DEREM-54)", async () => {
+  test("recoverPendingDispatchAfterRestart skips wrap-up when the budget hit was user-origin ()", async () => {
     // The pre-restart code suppressed wrap-ups when the originating stream
     // was user-origin (`checkGoalContinuationEligibility` returns
     // `budget_wrapup_suppressed`). After restart, in-memory
@@ -914,7 +880,6 @@ describe("WorkspaceGoalService", () => {
     const dispatcher = new IdleDispatcher();
     const execute = mock(() => Promise.resolve(true));
     restartedService.registerGoalContinuationConsumer(dispatcher, {
-      isGoalExperimentEnabled: () => true,
       hasActiveDescendantTasks: () => false,
       getRuntimeState: () => ({ isRuntimeCompatible: true }),
       executeGoalContinuation: execute,
@@ -964,7 +929,7 @@ describe("WorkspaceGoalService", () => {
   });
 
   test("recordUserStoppedStream drops queued goal mutations alongside continuation candidates", async () => {
-    // Regression for Coder-agents-review P2 DEREM-18: pendingGoalMutations
+    // Regression for pendingGoalMutations
     // were not cleared on user stop, so a setGoal racing with a stop would
     // leak into the NEXT stream's stream-end via applyPendingAfterStreamEnd
     // and bypass the lastUserStopAtMsByWorkspace gate. Auto-continuation
@@ -1336,7 +1301,7 @@ describe("WorkspaceGoalService", () => {
       parentWorkspaceId: workspaceId,
     });
 
-    // DEREM-36: setGoal now catches WorkspaceGoalChildWorkspaceError and
+    // setGoal now catches WorkspaceGoalChildWorkspaceError and
     // returns it as a typed Result error so the oRPC handler doesn't leak
     // it as an unhandled 500.
     const result = await service.setGoal({
@@ -1453,7 +1418,7 @@ describe("WorkspaceGoalService", () => {
   });
 
   test("applyPendingAfterStreamEnd swallows invalid-transition rejections instead of crashing the process", async () => {
-    // Coder-agents-review P2 DEREM-47: the stream-abort / stream-end /
+    // the stream-abort / stream-end /
     // error listeners in WorkspaceService invoke this method via `void`. If
     // a queued mutation triggered a transition error inside
     // setGoalImmediately, it would surface as an unhandled-rejection
@@ -1614,7 +1579,7 @@ describe("WorkspaceGoalService", () => {
   });
 
   test("mid-stream editInPlace rename returns an optimistic snapshot that preserves goalId + accounting", async () => {
-    // Codex P2: when an editInPlace rename arrives mid-stream, the
+    // When an editInPlace rename arrives mid-stream, the
     // projected snapshot returned to the UI is what the Goal tab reads
     // until stream end drains the queued mutation. Building it via
     // `createGoal` (the pre-fix behavior) would flash a brand-new id +
@@ -1653,11 +1618,9 @@ describe("WorkspaceGoalService", () => {
   });
 
   test("mid-stream editInPlace optimistic snapshot reflects budget_limited when new budget is below accrued cost", async () => {
-    // Codex P2 follow-up: a rename that lowers `budgetCents` below
-    // the already-accrued cost would otherwise publish a stale
-    // `active` snapshot until stream end. The fix mirrors the drain
-    // by running `applyMutableFields` (→ `applyBudgetDrivenStatus`)
-    // on the projection.
+    // A rename that lowers `budgetCents` below the already-accrued cost
+    // must publish the same budget-driven status the stream-end drain will
+    // persist.
     const created = await setGoalOk(service, {
       workspaceId,
       objective: "Original objective",
@@ -1707,16 +1670,17 @@ describe("WorkspaceGoalService", () => {
     await extensionMetadata.setStreaming(workspaceId, false);
     const drained = await service.applyPendingAfterStreamEnd(workspaceId);
 
-    // Codex P2 review: without forwarding `editInPlace` into the pending
-    // mutation, the drained mutation would take the archive+replace branch
-    // and lose goalId continuity / reset accounting. This guards against
-    // regression.
+    // The drained mutation must preserve goalId continuity and accounting;
+    // otherwise a deferred rename would behave like archive+replace.
     expect(drained?.goalId).toBe(created.goalId);
     expect(drained?.objective).toBe("Renamed objective");
     expect(drained?.costCents).toBe(25);
-    // No history entry should be appended for the in-place rename even when
-    // the rename was deferred through the streaming branch.
-    expect(await service.getGoalHistory(workspaceId)).toHaveLength(0);
+    const boardEntries = (await service.getGoalBoard(workspaceId)).entries;
+    expect(boardEntries).toHaveLength(1);
+    expect(boardEntries[0]).toMatchObject({
+      section: "active",
+      goal: { goalId: created.goalId },
+    });
   });
 
   test("queued mid-stream goal replacement preserves expectedGoalId at drain time", async () => {
@@ -1910,7 +1874,6 @@ describe("WorkspaceGoalService", () => {
     const dispatcher = new IdleDispatcher();
     const execute = mock(() => Promise.resolve(true));
     service.registerGoalContinuationConsumer(dispatcher, {
-      isGoalExperimentEnabled: () => true,
       hasActiveDescendantTasks: () => hasActiveDescendantTasks,
       getRuntimeState: () => ({ isRuntimeCompatible: true }),
       executeGoalContinuation: execute,
@@ -1937,7 +1900,7 @@ describe("WorkspaceGoalService", () => {
   });
 
   test("child attribution that flips to budget_limited arms a wrap-up dispatch", async () => {
-    // Coder-agents-review P2 DEREM-33: when child attribution drives the
+    // when child attribution drives the
     // goal into budget_limited, the wrap-up must fire. Previously the goal
     // would sit stuck because attribution never produced a stream-end
     // candidate/stamp that `checkGoalContinuationEligibility` could reserve.
@@ -1949,7 +1912,6 @@ describe("WorkspaceGoalService", () => {
     const dispatcher = new IdleDispatcher();
     const executed: Array<{ kind: string | undefined }> = [];
     service.registerGoalContinuationConsumer(dispatcher, {
-      isGoalExperimentEnabled: () => true,
       hasActiveDescendantTasks: () => false,
       getRuntimeState: () => ({ isRuntimeCompatible: true }),
       executeGoalContinuation: (input) => {
@@ -1990,7 +1952,6 @@ describe("WorkspaceGoalService", () => {
     const dispatcher = new IdleDispatcher();
     const executed: Array<{ kind: string | undefined }> = [];
     service.registerGoalContinuationConsumer(dispatcher, {
-      isGoalExperimentEnabled: () => true,
       hasActiveDescendantTasks: () => false,
       getRuntimeState: () => ({ isRuntimeCompatible: true }),
       executeGoalContinuation: (input) => {
@@ -2542,7 +2503,7 @@ describe("WorkspaceGoalService", () => {
   });
 
   test("rejects illegal user lifecycle transitions with typed errors", async () => {
-    // DEREM-36: setGoal now catches WorkspaceGoalTransitionError and returns
+    // setGoal now catches WorkspaceGoalTransitionError and returns
     // it as a typed `invalid_transition` Result error so the oRPC handler
     // doesn't leak it as an unhandled 500.
     async function expectSetGoalError(
@@ -2661,13 +2622,13 @@ describe("WorkspaceGoalService", () => {
   });
 
   test("budget-only mutation against a missing goal returns invalid_transition (no plain Error 500)", async () => {
-    // Coder-agents-review P2 DEREM-43: simulates the race where the user
+    // simulates the race where the user
     // clicks "Update budget" in the RightSidebar / GoalTab, another window
     // clears the goal concurrently, and `setGoalWithConflictRetry` then
     // calls `setGoal({ workspaceId, budgetCents: N })` against a now-empty
     // goal slot. With no objective, no status, and no current goal, this
     // path used to throw a plain `Error("Goal objective is required.")`
-    // that escaped the DEREM-36 wrapper as an unhandled 500. Now it throws
+    // that escaped the wrapper as an unhandled 500. Now it throws
     // `WorkspaceGoalTransitionError` so the wrapper turns it into a typed
     // `invalid_transition` Result.
     const result = await service.setGoal({ workspaceId, budgetCents: 500 });
@@ -2683,22 +2644,13 @@ describe("WorkspaceGoalService", () => {
   // AgentSession share one implementation; that's required because queued
   // messages dispatched via AgentSession.sendQueuedMessages() never re-enter
   // WorkspaceService, and a budgeted goal that becomes resumable while a
-  // queued unpriced-model message waits would otherwise bypass enforcement
-  // (Codex P1 PRRT_kwDOPxxmWM5_stnS).
+  // queued unpriced-model message waits would otherwise bypass enforcement.
   // -------------------------------------------------------------------------
   describe("assertPricedModelForBudgetedGoal", () => {
     const UNPRICED = "openai:not-priced-model";
     const PRICED = "openai:gpt-4o-mini";
 
-    // Coder-agents-review P3 DEREM-52: the gate now short-circuits when the
-    // GOALS experiment is off (default in headless tests). Use the shared
-    // `enableGoalsExperimentForTest` helper to register a no-op continuation
-    // consumer with `isGoalExperimentEnabled: () => true` per test so the
-    // gate exercises the live path (DEREM-55).
-    const enableGoalsExperiment = enableGoalsExperimentForTest;
-
     test("rejects unpriced model on a resumable budgeted goal", async () => {
-      enableGoalsExperiment(service);
       await setGoalOk(service, {
         workspaceId,
         objective: "ship",
@@ -2716,7 +2668,6 @@ describe("WorkspaceGoalService", () => {
     });
 
     test("rejects on paused budgeted goals (would resume on un-pause)", async () => {
-      enableGoalsExperiment(service);
       await setGoalOk(service, {
         workspaceId,
         objective: "ship",
@@ -2726,21 +2677,6 @@ describe("WorkspaceGoalService", () => {
 
       const result = await service.assertPricedModelForBudgetedGoal(workspaceId, UNPRICED);
       expect(result.success).toBe(false);
-    });
-
-    test("short-circuits when the GOALS experiment is disabled (no disk read)", async () => {
-      // DEREM-52: don't pay `getGoal`'s disk cost on every send/resume for
-      // users who never used the GOALS feature. With no bridge registered,
-      // `isExperimentEnabled` returns false and the gate returns Ok without
-      // consulting goal.json (which would crash because no goal exists in
-      // this test setup with an unpriced model).
-      const getGoalSpy = spyOn(service, "getGoal");
-
-      const result = await service.assertPricedModelForBudgetedGoal(workspaceId, UNPRICED);
-
-      expect(result.success).toBe(true);
-      expect(getGoalSpy).not.toHaveBeenCalled();
-      getGoalSpy.mockRestore();
     });
 
     test("priced models short-circuit before reading goal.json", async () => {
@@ -2853,6 +2789,33 @@ describe("WorkspaceGoalService", () => {
       expect(completed).toBeDefined();
     });
 
+    test("completeGoalFromSilentContinuation promotes the next upcoming goal", async () => {
+      // #3326 Codex P2 (PRRT_kwDOPxxmWM6DMh9j): silent-continuation
+      // completion must run the deferred auto-promote pass, otherwise
+      // the queued upcoming goal would stay stuck until some later
+      // manual mutation (because `maybeAutoPromoteOnComplete`'s inline
+      // pass races with the async `setStreaming(false)` listener).
+      const active = await setGoalOk(service, { workspaceId, objective: "First" });
+      const queued = await service.addUpcomingGoal({ workspaceId, objective: "Second" });
+
+      const result = await service.completeGoalFromSilentContinuation({
+        workspaceId,
+        completionSummary: "Looks done.",
+      });
+      expect(result?.goalId).toBe(active.goalId);
+      expect(result?.status).toBe("complete");
+
+      const board = await service.getGoalBoard(workspaceId);
+      const activeEntry = board.entries.find((e) => e.section === "active");
+      expect(activeEntry?.goal.goalId).toBe(queued.goalId);
+      expect(activeEntry?.goal.status).toBe("active");
+
+      const completedEntry = board.entries.find(
+        (e) => e.section === "complete" && e.goal.goalId === active.goalId
+      );
+      expect(completedEntry).toBeDefined();
+    });
+
     test("does NOT auto-promote when the upcoming list is empty (preserves single-goal UX)", async () => {
       const active = await setGoalOk(service, { workspaceId, objective: "Solo" });
       await setGoalOk(service, {
@@ -2940,7 +2903,7 @@ describe("WorkspaceGoalService", () => {
       expect(upcomingIds[0]).toBe(active.goalId);
     });
 
-    test("promoteUpcomingGoal archives a completed active goal instead of demoting to upcoming (Codex P2)", async () => {
+    test("promoteUpcomingGoal archives a completed active goal instead of demoting to upcoming", async () => {
       // Complete the active goal but leave it sitting in goal.json
       // (single-goal UX path — no auto-promote because upcoming is
       // empty at completion time). Then queue an upcoming goal and

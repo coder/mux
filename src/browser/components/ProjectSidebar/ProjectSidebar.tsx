@@ -1058,7 +1058,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
           const metadata = workspaceStore.getWorkspaceMetadata(workspaceId);
           const displayTitle = metadata?.title ?? metadata?.name ?? workspaceId;
           const aggregator = workspaceStore.getAggregator(workspaceId);
-          const hasActiveStreams = (aggregator?.getActiveStreams().length ?? 0) > 0;
+          const hasActiveStreams = aggregator?.hasInterruptibleActiveStream() ?? false;
           const pendingStreamStartTime = aggregator?.getPendingStreamStartTime();
           const isStarting = pendingStreamStartTime != null && !hasActiveStreams;
           const awaitingUserQuestion = aggregator?.hasAwaitingUserQuestion() ?? false;
@@ -1095,7 +1095,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                   isStreaming: (() => {
                     const aggregator = workspaceStore.getAggregator(workspaceId);
                     if (!aggregator) return false;
-                    const hasActiveStreams = aggregator.getActiveStreams().length > 0;
+                    const hasActiveStreams = aggregator.hasInterruptibleActiveStream();
                     const isStarting =
                       aggregator.getPendingStreamStartTime() !== null && !hasActiveStreams;
                     const awaitingUserQuestion = aggregator.hasAwaitingUserQuestion();
@@ -1130,7 +1130,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     (workspaceId: string) => {
       const aggregator = workspaceStore.getAggregator(workspaceId);
       if (!aggregator) return false;
-      const hasActiveStreams = aggregator.getActiveStreams().length > 0;
+      const hasActiveStreams = aggregator.hasInterruptibleActiveStream();
       const isStarting = aggregator.getPendingStreamStartTime() !== null && !hasActiveStreams;
       const awaitingUserQuestion = aggregator.hasAwaitingUserQuestion();
       return (hasActiveStreams || isStarting) && !awaitingUserQuestion;
@@ -1142,7 +1142,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     (workspace: FrontendWorkspaceMetadata) => {
       const workspaceId = workspace.id;
       const aggregator = workspaceStore.getAggregator(workspaceId);
-      const hasActiveStreams = aggregator ? aggregator.getActiveStreams().length > 0 : false;
+      const hasActiveStreams = aggregator?.hasInterruptibleActiveStream() ?? false;
       const isStarting = aggregator?.getPendingStreamStartTime() != null && !hasActiveStreams;
       const awaitingUserQuestion = aggregator?.hasAwaitingUserQuestion() ?? false;
       const isWorking = (hasActiveStreams || isStarting) && !awaitingUserQuestion;

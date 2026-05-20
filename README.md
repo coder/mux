@@ -74,13 +74,9 @@ macOS and Linux.
 </td>
 </tr>
 <tr>
-<td align="center" width="50%">
-<img src="./docs/img/context-management.webp" alt="Screenshot of context management dialog" width="100%" /><br>
+<td align="center" colspan="2">
+<img src="./docs/img/context-management.webp" alt="Screenshot of context management dialog" width="50%" /><br>
 <sub>Context management dialog keeps compaction controls in one place</sub>
-</td>
-<td align="center" width="50%">
-<img src="./docs/img/orchestrate-agents.webp" alt="Screenshot of orchestrate agents" width="100%" /><br>
-<sub>Orchestrate parallel agent tasks with plan mode</sub>
 </td>
 </tr>
 <tr>

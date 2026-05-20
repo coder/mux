@@ -25,7 +25,6 @@ export type ParsedCommand =
     }
   | { type: "model-help" }
   | { type: "clear"; mode: "hard" | "soft" }
-  | { type: "truncate"; percentage: number }
   | { type: "compact"; maxOutputTokens?: number; continueMessage?: string; model?: string }
   | { type: "fork"; startMessage?: string }
   | { type: "new"; startMessage?: string }
@@ -46,6 +45,7 @@ export type ParsedCommand =
   | { type: "goal-resume" }
   | { type: "goal-complete"; summary?: string }
   | { type: "goal-clear" }
+  | { type: "side-question"; question: string }
   | null;
 
 export interface SuggestionsHandlerArgs {

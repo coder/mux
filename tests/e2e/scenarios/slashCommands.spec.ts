@@ -35,37 +35,6 @@ test.describe("slash command flows", () => {
     await expect(transcript).not.toContainText("Directory listing:");
   });
 
-  test("slash command /truncate 50 removes earlier context", async ({ ui, page }) => {
-    await ui.projects.openFirstWorkspace();
-
-    // Build a conversation with five distinct turns
-    const prompts = [
-      MOCK_TOOL_FLOW_PROMPTS.FILE_READ,
-      MOCK_TOOL_FLOW_PROMPTS.LIST_DIRECTORY,
-      MOCK_TOOL_FLOW_PROMPTS.CREATE_TEST_FILE,
-      MOCK_TOOL_FLOW_PROMPTS.READ_TEST_FILE,
-      MOCK_TOOL_FLOW_PROMPTS.RECALL_TEST_FILE,
-    ];
-
-    for (const prompt of prompts) {
-      await ui.chat.captureStreamTimeline(async () => {
-        await ui.chat.sendMessage(prompt);
-      });
-    }
-
-    const transcript = page.getByRole("log", { name: "Conversation transcript" });
-    await expect(transcript).toContainText("Mock README content");
-    await expect(transcript).toContainText("hello");
-
-    await ui.chat.sendMessage("/truncate 50");
-    // Confirm the destructive action in the modal
-    await page.getByRole("button", { name: "Truncate" }).click();
-    await ui.chat.expectStatusMessageContains("Chat history truncated by 50%");
-
-    await expect(transcript).not.toContainText("Mock README content");
-    await expect(transcript).toContainText("hello");
-  });
-
   test("slash command /compact produces compacted summary", async ({ ui, page }) => {
     await ui.projects.openFirstWorkspace();
 

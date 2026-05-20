@@ -617,7 +617,6 @@ export function ExperimentsSection() {
   const { api } = useAPI();
   const advisorToolEnabled = useExperimentValue(EXPERIMENT_IDS.ADVISOR_TOOL);
   const imageGenerationToolEnabled = useExperimentValue(EXPERIMENT_IDS.IMAGE_GENERATION_TOOL);
-  const goalsEnabled = useExperimentValue(EXPERIMENT_IDS.GOALS);
   const workspaceHeartbeatsEnabled = useExperimentValue(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS);
   const settingsConfigRequestRef = useRef<{
     api: APIClient;
@@ -714,20 +713,6 @@ export function ExperimentsSection() {
                   <HeartbeatDefaultsControls
                     loadConfig={api ? loadExperimentSettingsConfig : undefined}
                   />
-                </ExperimentSettingsPanel>
-              )}
-              {exp.id === EXPERIMENT_IDS.GOALS && goalsEnabled && (
-                // Goal-defaults editing has moved to the Goal tab — see
-                // `src/browser/features/RightSidebar/GoalDefaultsSection.tsx`.
-                // The tab is the long-lived home for goal configuration
-                // (workspace overrides + global defaults), so we no longer
-                // duplicate the controls here. Leaving a tiny pointer in the
-                // experiment panel for users who learned the old location.
-                <ExperimentSettingsPanel>
-                  <p className="text-muted text-xs">
-                    Configure goal defaults (budget, turn cap, explicit-budget) from the{" "}
-                    <span className="text-foreground">Goal</span> tab in the workspace sidebar.
-                  </p>
                 </ExperimentSettingsPanel>
               )}
               {exp.id === EXPERIMENT_IDS.PORTABLE_DESKTOP && <PortableDesktopExperimentWarning />}

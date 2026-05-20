@@ -77,6 +77,7 @@ import { trackCommandUsed } from "@/common/telemetry";
 import { addEphemeralMessage } from "@/browser/stores/WorkspaceStore";
 import { setGoalWithConflictRetry } from "@/browser/utils/goals/setGoalWithConflictRetry";
 import { loadGoalDefaults, resolveGoalSetIntent } from "@/browser/utils/goals/resolveGoalSetIntent";
+import { SIDE_QUESTION_COMMAND } from "@/common/utils/messages/sideQuestion";
 
 const BUILT_IN_MODEL_SET = new Set<string>(Object.values(KNOWN_MODELS).map((model) => model.id));
 
@@ -165,6 +166,12 @@ export interface SlashCommandContext extends Omit<CommandHandlerContext, "worksp
   onResetContext?: () => Promise<"reset" | "noop">;
   onTruncateHistory?: (percentage?: number) => Promise<void>;
   resetInputHeight: () => void;
+  /** Read the latest composer text so async command failures don't overwrite newer drafts. */
+  getInput?: () => string;
+  /** Token identifying the command invocation that launched async follow-up work. */
+  asyncCommandToken?: number;
+  /** Return false when an async command completion belongs to a stale workspace/input. */
+  isAsyncCommandCurrent?: (token: number, workspaceId: string) => boolean;
   /** Callback to trigger message-sent side effects (auto-scroll, auto-background) */
   onMessageSent?: (dispatchMode: QueueDispatchMode) => void;
   /** Callback to detach review context from the composer without marking it checked */
@@ -501,8 +508,6 @@ export async function processSlashCommand(
     switch (parsed.type) {
       case "clear":
         return handleClearCommand(parsed, context);
-      case "truncate":
-        return handleTruncateCommand(parsed, context);
       case "compact":
         // handleCompactCommand expects workspaceId in context
         if (!context.workspaceId) throw new Error("Workspace ID required");
@@ -568,6 +573,63 @@ export async function processSlashCommand(
           api: client,
           workspaceId: context.workspaceId,
         } as CommandHandlerContext);
+      case "side-question": {
+        // /btw: forked, single-turn, read-only side question.
+        //
+        // The backend persists both the question and the answer to chat
+        // history with side-question metadata, and streams the answer
+        // through the normal onChat events — so the rendered output uses
+        // the standard TypewriterMarkdown / smooth-text path. The RPC
+        // itself only resolves once the side question is fully streamed,
+        // but we don't await it inline: the chat events drive the UI in
+        // parallel, and a long-running side question shouldn't pin the
+        // chat input handler.
+        if (!context.workspaceId) throw new Error("Workspace ID required");
+        const activeClient = requireClient();
+        if (!activeClient) {
+          return { clearInput: false, toastShown: true };
+        }
+        const workspaceId = context.workspaceId;
+        const rawCommand = `${SIDE_QUESTION_COMMAND} ${parsed.question}`;
+        const asyncCommandToken = context.asyncCommandToken;
+        const isCurrentSideQuestion = (): boolean =>
+          asyncCommandToken === undefined ||
+          context.isAsyncCommandCurrent?.(asyncCommandToken, workspaceId) !== false;
+        const showSideQuestionError = (message: string): void => {
+          if (!isCurrentSideQuestion()) {
+            return;
+          }
+          const currentInput = context.getInput?.();
+          // Restore the consumed command text only if the composer is still
+          // empty. /btw runs asynchronously; if the user typed a new draft while
+          // it was pending, surfacing the error must not overwrite that draft.
+          if (currentInput === undefined || currentInput.trim().length === 0) {
+            setInput(rawCommand);
+          }
+          setToast({
+            id: Date.now().toString(),
+            type: "error",
+            message,
+          });
+        };
+        setInput("");
+        context.setAttachments([]);
+        context.onDetachAllReviews?.();
+        void activeClient.workspace
+          .sideQuestion({ workspaceId, question: parsed.question })
+          .then((result) => {
+            if (!result.success) {
+              showSideQuestionError(`Side question failed: ${result.error}`);
+            }
+          })
+          .catch((err: unknown) => {
+            showSideQuestionError(
+              err instanceof Error ? err.message : "Side question failed unexpectedly"
+            );
+          });
+        trackCommandUsed("btw");
+        return { clearInput: true, toastShown: false };
+      }
     }
   }
 
@@ -642,32 +704,9 @@ function resolveSlashGoalSetIntent(
   );
 }
 
-export async function isGoalsExperimentEnabledForCommand(context: {
-  api: CommandHandlerContext["api"] | SlashCommandContext["api"];
-}): Promise<boolean> {
-  const localOverride = isExperimentEnabled(EXPERIMENT_IDS.GOALS);
-  if (localOverride != null) {
-    return localOverride;
-  }
-
-  if (!context.api) {
-    return false;
-  }
-
-  try {
-    const allExperiments = await context.api.experiments.getAll();
-    return allExperiments[EXPERIMENT_IDS.GOALS]?.value === true;
-  } catch {
-    return false;
-  }
-}
-
 async function hasBudgetedResumableGoalForWorkspaceModelSwitch(
   context: SlashCommandContext
 ): Promise<boolean> {
-  if (!(await isGoalsExperimentEnabledForCommand(context))) {
-    return false;
-  }
   if (context.variant !== "workspace" || !context.api || !context.workspaceId) {
     return false;
   }
@@ -736,15 +775,6 @@ async function handleGoalCommand(
   context: CommandHandlerContext
 ): Promise<CommandHandlerResult> {
   const { api, workspaceId, setInput, setToast } = context;
-
-  if (!(await isGoalsExperimentEnabledForCommand(context))) {
-    setToast({
-      id: Date.now().toString(),
-      type: "error",
-      message: "Goal commands require the Goals experiment to be enabled",
-    });
-    return { clearInput: false, toastShown: true };
-  }
 
   setInput("");
 
@@ -941,37 +971,6 @@ async function handleClearCommand(
   } catch (error) {
     const normalized = error instanceof Error ? error : new Error("Failed to clear history");
     console.error("Failed to clear history:", normalized);
-    setToast({
-      id: Date.now().toString(),
-      type: "error",
-      message: normalized.message,
-    });
-    return { clearInput: false, toastShown: true };
-  }
-}
-
-async function handleTruncateCommand(
-  parsed: Extract<ParsedCommand, { type: "truncate" }>,
-  context: SlashCommandContext
-): Promise<CommandHandlerResult> {
-  const { setInput, onTruncateHistory, resetInputHeight, setToast } = context;
-
-  setInput("");
-  resetInputHeight();
-
-  if (!onTruncateHistory) return { clearInput: true, toastShown: false };
-
-  try {
-    await onTruncateHistory(parsed.percentage);
-    setToast({
-      id: Date.now().toString(),
-      type: "success",
-      message: `Chat history truncated by ${Math.round(parsed.percentage * 100)}%`,
-    });
-    return { clearInput: true, toastShown: true };
-  } catch (error) {
-    const normalized = error instanceof Error ? error : new Error("Failed to truncate history");
-    console.error("Failed to truncate history:", normalized);
     setToast({
       id: Date.now().toString(),
       type: "error",

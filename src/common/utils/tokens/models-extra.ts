@@ -131,8 +131,8 @@ export const modelsExtra: Record<string, ModelData> = {
 
   // GPT-5.5 - Released April 23, 2026
   // Public API support covers Responses, Chat Completions, and Batch with a native
-  // 1.05M context window and 128K max output. When routed through Codex OAuth, the
-  // effective per-request cap remains 400K because of a routing-layer constraint.
+  // 1.05M context window and 128K max output. When routed through Codex OAuth, Mux
+  // caps the effective window separately at 272K because the ChatGPT routing layer is lower.
   // Base pricing: $5/M input, $30/M output, $0.50/M cached input.
   // Above 272K prompt tokens: $10/M input, $45/M output, $1/M cached input.
   "gpt-5.5": {

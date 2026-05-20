@@ -13,6 +13,7 @@ import {
   ExternalLink,
   Monitor,
   Globe,
+  Sparkles,
   Target,
   Terminal as TerminalIcon,
   X,
@@ -31,7 +32,7 @@ import {
   useOptionalWorkspaceSidebarState,
   useWorkspaceUsage,
 } from "@/browser/stores/WorkspaceStore";
-import { isGoalPendingPersistence } from "@/common/types/goal";
+import { goalActiveMode, isGoalPendingPersistence } from "@/common/types/goal";
 import { sumUsageHistory, type ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 
 interface StatsTabLabelProps {
@@ -82,22 +83,64 @@ interface ReviewTabLabelProps {
   reviewStats: ReviewStats | null;
 }
 
-/** Review tab label with read/total badge */
-export const ReviewTabLabel: React.FC<ReviewTabLabelProps> = ({ reviewStats }) => (
-  <>
-    Review
-    {reviewStats !== null && reviewStats.total > 0 && (
-      <span
-        className={cn(
-          "text-[10px]",
-          reviewStats.read === reviewStats.total ? "text-muted" : "text-muted"
-        )}
-      >
-        {reviewStats.read}/{reviewStats.total}
-      </span>
-    )}
-  </>
-);
+/**
+ * Review tab label with two mutually-exclusive states:
+ *
+ *   • **Assisted-focus state** — when the agent has flagged hunks the user
+ *     hasn't acked, the entire label renders as one `inline-flex
+ *     items-center` group (Review · Sparkles · count) tinted with
+ *     `--color-review-accent`. Same composition pattern as the Goal tab's
+ *     icon-plus-text label, which guarantees the digit and the icon share
+ *     a single alignment context — three separately-baselined siblings
+ *     (the previous shape) let the digit drift off the icon center.
+ *
+ *     The `read/total` badge is suppressed in this state on purpose: two
+ *     adjacent numbers (e.g. `Review ✦ 5 4/10`) are hard to parse, and
+ *     the assisted count is the user's primary cue. The read/total
+ *     badge returns once everything assisted has been read.
+ *
+ *   • **Default state** — plain "Review" plus the `read/total` badge,
+ *     unchanged from the long-standing label.
+ *
+ * No animation in either state — pulsing was too noisy next to the other
+ * static tab labels.
+ */
+export const ReviewTabLabel: React.FC<ReviewTabLabelProps> = ({ reviewStats }) => {
+  const unreadAssisted = reviewStats?.unreadAssisted ?? 0;
+  const hasUnreadAssisted = unreadAssisted > 0;
+
+  if (hasUnreadAssisted) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className="text-review-accent inline-flex items-center gap-1"
+            aria-label={`Review — ${unreadAssisted} unread agent-flagged hunk${unreadAssisted === 1 ? "" : "s"}`}
+            data-testid="review-tab-assisted-pizzazz"
+          >
+            Review
+            <Sparkles className="h-3 w-3 shrink-0" aria-hidden="true" />
+            <span className="counter-nums">{unreadAssisted}</span>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">
+          {unreadAssisted} agent-flagged hunk{unreadAssisted === 1 ? "" : "s"} pending review
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  return (
+    <>
+      Review
+      {reviewStats !== null && reviewStats.total > 0 && (
+        <span className="text-muted text-[10px]">
+          {reviewStats.read}/{reviewStats.total}
+        </span>
+      )}
+    </>
+  );
+};
 
 /** Desktop tab label with monitor icon */
 export const DesktopTabLabel: React.FC = () => (
@@ -131,24 +174,46 @@ interface GoalTabLabelProps {
  * Goal tab label.
  *
  * Subscribes directly to the workspace's sidebar state so the label can apply
- * the canonical goal-green accent (`text-success`, the same token used by
- * `CompleteGoalToolCall` and the TodoList completion cue) when the workspace
- * has a *live* goal in chat. The accent is intentionally restricted to the
- * `status === "active"` && non-pending case so paused, complete, history-only,
- * and mid-stream pending goals don't claim the success cue. This mirrors the
- * `useActiveGoalCount` / `ActiveGoalsWarningToast` predicate, so a workspace
- * that contributes to the global "active goals" toast is also the one that
- * lights up its Goal tab.
+ * a semantic accent (`text-success` or `text-warning`) when the workspace
+ * has a *live* goal in chat:
+ *
+ *   • `text-success` — the goal is running (`status === "active"` &&
+ *     non-pending). Mirrors the `useActiveGoalCount` /
+ *     `ActiveGoalsWarningToast` predicate so a workspace that contributes
+ *     to the global "active goals" toast is also the one that lights up
+ *     green here.
+ *   • `text-warning` — the goal is lifecycle-active but stalled (paused
+ *     or budget-limited). Surfaces a glanceable cue that the workspace
+ *     needs the user's attention even though no agent is currently
+ *     burning turns. This mirrors the amber tinting on the Goals-tab
+ *     header band and the `GoalStatusBadge` paused/budget-limited
+ *     color.
+ *
+ * Pending-persistence goals (mid-stream / unsaved) stay unaccented so
+ * the accent doesn't flicker during a stream — same gating as before.
  */
 export const GoalTabLabel: React.FC<GoalTabLabelProps> = ({ workspaceId }) => {
   const sidebarState = useOptionalWorkspaceSidebarState(workspaceId);
   const goal = sidebarState?.goal ?? null;
-  const isGoalActive = goal?.status === "active" && !isGoalPendingPersistence(goal);
+  const activeMode = goal && !isGoalPendingPersistence(goal) ? goalActiveMode(goal.status) : null;
+  const isRunning = activeMode === "running";
+  const isStalled = activeMode === "paused" || activeMode === "budget_limited";
+  const ariaLabel = isRunning
+    ? "Goal (active)"
+    : activeMode === "paused"
+      ? "Goal (paused)"
+      : activeMode === "budget_limited"
+        ? "Goal (budget limited)"
+        : "Goal";
 
   return (
     <span
-      className={cn("inline-flex items-center gap-1", isGoalActive && "text-success")}
-      aria-label={isGoalActive ? "Goal (active)" : "Goal"}
+      className={cn(
+        "inline-flex items-center gap-1",
+        isRunning && "text-success",
+        isStalled && "text-warning"
+      )}
+      aria-label={ariaLabel}
     >
       <Target className="h-3 w-3 shrink-0" />
       Goal

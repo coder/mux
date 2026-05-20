@@ -11,6 +11,7 @@ import {
   MuxTextPartSchema,
   MuxToolPartSchema,
 } from "./message";
+import type { MuxMessageMetadata } from "../../types/message";
 import { MuxProviderOptionsSchema } from "./providerOptions";
 import { RuntimeModeSchema } from "./runtime";
 
@@ -244,6 +245,7 @@ export const StreamEndEventSchema = z.object({
       duration: z.number().optional(),
       ttftMs: z.number().optional(),
       systemMessageTokens: z.number().optional(),
+      muxMetadata: z.custom<MuxMessageMetadata>().optional(),
       historySequence: z.number().optional().meta({
         description: "Present when loading from history",
       }),
@@ -659,15 +661,20 @@ export const ToolPolicySchema = z.array(ToolPolicyFilterSchema).meta({
     "Tool policy - array of filters applied in order. Default behavior is allow all tools.",
 });
 
-// Experiments schema for feature gating
+// Experiments schema for feature gating.
+//
+// Unknown keys (e.g. `goals` from older persisted send-options written
+// before the Goals experiment graduated to GA) are stripped by Zod's
+// default behavior, so we do not need to retain a deprecated field.
 export const ExperimentsSchema = z.object({
   programmaticToolCalling: z.boolean().optional(),
   programmaticToolCallingExclusive: z.boolean().optional(),
   advisorTool: z.boolean().optional(),
-  goals: z.boolean().optional(),
   execSubagentHardRestart: z.boolean().optional(),
   imageGenerationTool: z.boolean().optional(),
 });
+
+export const GoalInterventionPolicySchema = z.enum(["steer", "pause"]);
 
 // SendMessage options
 export const SendMessageOptionsSchema = z.object({
@@ -706,6 +713,7 @@ export const SendMessageOptionsSchema = z.object({
    * iterating on agent files - a broken agent in the worktree won't affect message sending.
    */
   disableWorkspaceAgents: z.boolean().optional(),
+  goalInterventionPolicy: GoalInterventionPolicySchema.nullish(),
   queueDispatchMode: z.enum(["tool-end", "turn-end"]).nullish(),
 });
 
