@@ -770,6 +770,16 @@ describe("buildProviderOptions - Google", () => {
     });
   });
 
+  test("maps namespaced Gemini 3.5 Flash off to minimal thinking without thoughts", () => {
+    expect(buildProviderOptions("google:models/gemini-3.5-flash", "off")).toEqual({
+      google: {
+        thinkingConfig: {
+          thinkingLevel: "minimal",
+        },
+      },
+    });
+  });
+
   test("maps versioned Gemini 3.5 Flash off to minimal thinking without thoughts", () => {
     expect(buildProviderOptions("google:gemini-3.5-flash-001", "off")).toEqual({
       google: {

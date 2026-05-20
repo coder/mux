@@ -410,8 +410,9 @@ export function buildProviderOptions(
 
   // Build Google-specific options
   if (formatProvider === "google") {
-    const usesGeminiThinkingLevelConfig = capModelName.includes("gemini-3");
-    const isGeminiFlashThinkingModel = isGeminiFlashThinkingLevelModelName(capModelName);
+    const capBareModelName = capModelName.split("/").at(-1) ?? capModelName;
+    const usesGeminiThinkingLevelConfig = capBareModelName.includes("gemini-3");
+    const isGeminiFlashThinkingModel = isGeminiFlashThinkingLevelModelName(capBareModelName);
     let thinkingConfig: GoogleGenerativeAIProviderOptions["thinkingConfig"];
 
     if (isGeminiFlashThinkingModel && effectiveThinking === "off") {
