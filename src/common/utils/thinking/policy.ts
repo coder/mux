@@ -33,8 +33,8 @@ export type ThinkingPolicy = readonly ThinkingLevel[];
 export function isGeminiFlashThinkingLevelModelName(modelName: string): boolean {
   const normalized = modelName.trim().toLowerCase();
   return (
-    normalized === "gemini-3-flash-preview" ||
-    normalized.startsWith("gemini-3-flash-preview-") ||
+    ((normalized === "gemini-3-flash" || normalized.startsWith("gemini-3-flash-")) &&
+      !normalized.startsWith("gemini-3-flash-lite")) ||
     (normalized.startsWith("gemini-3.5-flash") && !normalized.startsWith("gemini-3.5-flash-lite"))
   );
 }
