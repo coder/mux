@@ -47,6 +47,7 @@ import { PlatformPaths } from "@/common/utils/paths";
 import {
   partitionWorkspacesByAge,
   partitionWorkspacesBySection,
+  partitionWorkspacesBySnooze,
   formatDaysThreshold,
   AGE_THRESHOLDS_DAYS,
   computeWorkspaceDepthMap,
@@ -88,6 +89,10 @@ import {
   Folder,
   FolderOpen,
   KeyRound,
+  // Moon is the canonical SVG stand-in for the 💤 (Z) emoji per the
+  // sidebar styling rules — same icon EmojiIcon maps 💤 to, but used inline
+  // here since this is a fixed UI label, not tool-emitted output.
+  Moon,
   Palette,
   Pencil,
   Trash,
@@ -840,6 +845,13 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const [expandedOldWorkspaces, setExpandedOldWorkspaces] = usePersistedState<
     Record<string, boolean>
   >("expandedOldWorkspaces", {});
+
+  // Track which projects/sections have their 💤 Snoozed section expanded.
+  // Keyed by the same `tierKeyPrefix` used for age tiers so each project and
+  // sub-project section gets its own collapsed state, persisted across reloads.
+  const [expandedSnoozeSections, setExpandedSnoozeSections] = usePersistedState<
+    Record<string, boolean>
+  >("expandedSnoozeSections", {});
 
   // Track which sections are expanded
   const [expandedSections, setExpandedSections] = usePersistedState<Record<string, boolean>>(
@@ -2464,15 +2476,24 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 );
                               };
 
-                              // Render age tiers for a list of workspaces
+                              // Render age tiers for a list of workspaces.
+                              //
+                              // Snoozed workspaces are peeled off first so they don't muddle the
+                              // age tiers. They render as a dedicated 💤 collapsible section
+                              // appended after the last age tier, mirroring how the "Older than X"
+                              // tiers work but with their own expansion state.
                               const renderAgeTiers = (
                                 workspaces: FrontendWorkspaceMetadata[],
                                 tierKeyPrefix: string,
                                 sectionId?: string,
                                 allRowsForTaskGroupCoalescing: FrontendWorkspaceMetadata[] = workspaces
                               ): React.ReactNode => {
+                                const { active: activeWorkspaces, snoozed: snoozedWorkspaces } =
+                                  partitionWorkspacesBySnooze(workspaces);
                                 const { recent: topVisibleRows, buckets } =
-                                  partitionWorkspacesByAge(workspaces, workspaceRecency);
+                                  partitionWorkspacesByAge(activeWorkspaces, workspaceRecency);
+                                const isSnoozeSectionExpanded =
+                                  expandedSnoozeSections[tierKeyPrefix] ?? false;
 
                                 const expandedTierVisibleIds = new Set<string>();
                                 const markExpandedTierRowsVisible = (tierIndex: number): void => {
@@ -2506,10 +2527,14 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 }
 
                                 // Connector geometry should match the rows users can currently see,
-                                // not hidden siblings parked behind collapsed age tiers.
+                                // not hidden siblings parked behind collapsed age tiers (or behind
+                                // a collapsed snooze section).
                                 const visibleRowIds = new Set<string>([
                                   ...topVisibleRows.map((workspace) => workspace.id),
                                   ...expandedTierVisibleIds,
+                                  ...(isSnoozeSectionExpanded
+                                    ? snoozedWorkspaces.map((workspace) => workspace.id)
+                                    : []),
                                 ]);
                                 const visibleRows = workspaces.filter((workspace) =>
                                   visibleRowIds.has(workspace.id)
@@ -2695,6 +2720,55 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   );
                                 };
 
+                                const renderSnoozeSection = (): React.ReactNode => {
+                                  if (snoozedWorkspaces.length === 0) return null;
+                                  return (
+                                    <React.Fragment key={`${tierKeyPrefix}:snoozed`}>
+                                      <button
+                                        onClick={() => {
+                                          setExpandedSnoozeSections((prev) => ({
+                                            ...prev,
+                                            [tierKeyPrefix]: !prev[tierKeyPrefix],
+                                          }));
+                                        }}
+                                        aria-label={
+                                          isSnoozeSectionExpanded
+                                            ? "Collapse snoozed workspaces"
+                                            : "Expand snoozed workspaces"
+                                        }
+                                        aria-expanded={isSnoozeSectionExpanded}
+                                        className="text-muted border-hover hover:text-label [&:hover_.arrow]:text-label flex w-full cursor-pointer items-center gap-1 border-t border-none bg-transparent px-3 py-2 pl-7 text-xs font-medium transition-all duration-150 hover:bg-white/3"
+                                      >
+                                        <span
+                                          className="arrow text-dim text-[11px] transition-transform duration-200 ease-in-out"
+                                          style={{
+                                            transform: isSnoozeSectionExpanded
+                                              ? "rotate(90deg)"
+                                              : "rotate(0deg)",
+                                          }}
+                                        >
+                                          <ChevronRight className="h-4 w-4" />
+                                        </span>
+                                        <div className="flex items-center gap-1.5">
+                                          {/* Moon stands in for 💤 (Z emoji) — see lucide import note above. */}
+                                          <Moon className="h-3 w-3 shrink-0" aria-hidden="true" />
+                                          <span>Snoozed</span>
+                                          <span className="text-dim font-normal">
+                                            ({snoozedWorkspaces.length})
+                                          </span>
+                                        </div>
+                                      </button>
+                                      {isSnoozeSectionExpanded &&
+                                        renderWorkspaceRowsWithTaskGroupCoalescing({
+                                          rows: snoozedWorkspaces,
+                                          allRows: allRowsForTaskGroupCoalescing,
+                                          sectionId,
+                                          rowMetaByWorkspaceId: rowMetaByVisibleWorkspaceId,
+                                        })}
+                                    </React.Fragment>
+                                  );
+                                };
+
                                 return (
                                   <>
                                     {renderWorkspaceRowsWithTaskGroupCoalescing({
@@ -2704,6 +2778,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                       rowMetaByWorkspaceId: rowMetaByVisibleWorkspaceId,
                                     })}
                                     {firstTier !== -1 && renderTier(firstTier)}
+                                    {renderSnoozeSection()}
                                   </>
                                 );
                               };

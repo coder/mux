@@ -1099,6 +1099,18 @@ export const workspace = {
     input: z.object({ workspaceId: z.string() }),
     output: ResultSchema(z.void(), z.string()),
   },
+  /**
+   * Snooze (or unsnooze) a workspace. `snoozedUntil` is an ISO 8601 timestamp
+   * in the future; passing `null` clears the snooze. The frontend uses the
+   * single mutating route since the value carries the intent.
+   */
+  snooze: {
+    input: z.object({
+      workspaceId: z.string(),
+      snoozedUntil: z.string().nullable(),
+    }),
+    output: ResultSchema(z.void(), z.string()),
+  },
   deleteWorktree: {
     input: z.object({ workspaceId: z.string() }),
     output: ResultSchema(z.void(), z.string()),

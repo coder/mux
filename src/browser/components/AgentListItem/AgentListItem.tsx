@@ -62,6 +62,7 @@ import { useLinkSharingEnabled } from "@/browser/contexts/TelemetryEnabledContex
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { ShareTranscriptDialog } from "../ShareTranscriptDialog/ShareTranscriptDialog";
 import { WorkspaceHeartbeatModal } from "../WorkspaceHeartbeatModal";
+import { WorkspaceSnoozeModal } from "../WorkspaceSnoozeModal";
 import { WorkspaceActionsMenuContent } from "../WorkspaceActionsMenuContent/WorkspaceActionsMenuContent";
 import { useAPI } from "@/browser/contexts/API";
 
@@ -484,6 +485,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
   const linkSharingEnabled = useLinkSharingEnabled();
   const [shareTranscriptOpen, setShareTranscriptOpen] = useState(false);
   const [heartbeatModalOpen, setHeartbeatModalOpen] = useState(false);
+  const [snoozeModalOpen, setSnoozeModalOpen] = useState(false);
   const overflowMenuButtonRef = useRef<HTMLButtonElement | null>(null);
   const overflowMenuFrameRef = useRef<number | null>(null);
 
@@ -925,6 +927,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                       void onForkWorkspace(workspaceId, anchorEl);
                     }}
                     onShareTranscript={() => setShareTranscriptOpen(true)}
+                    onSnoozeChat={() => setSnoozeModalOpen(true)}
                     onArchiveChat={(anchorEl) => {
                       void onArchiveWorkspace(workspaceId, anchorEl);
                     }}
@@ -982,6 +985,15 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                   workspaceId={workspaceId}
                   open={heartbeatModalOpen}
                   onOpenChange={setHeartbeatModalOpen}
+                />
+              )}
+              {/* Lazy-mount so tests that render AgentListItem without the
+                  full WorkspaceProvider tree don't pay the modal hook cost. */}
+              {snoozeModalOpen && (
+                <WorkspaceSnoozeModal
+                  workspaceId={workspaceId}
+                  open={snoozeModalOpen}
+                  onOpenChange={setSnoozeModalOpen}
                 />
               )}
               {/* Share transcript dialog – rendered as a sibling to the overflow menu.

@@ -20,6 +20,7 @@ import { normalizeModelInput } from "@/browser/utils/models/normalizeModelInput"
 import { parseGoalBudgetInputCents } from "@/common/utils/goals/budgetParser";
 import { HEARTBEAT_MAX_INTERVAL_MS, HEARTBEAT_MIN_INTERVAL_MS } from "@/constants/heartbeat";
 import { WORKSPACE_ONLY_COMMAND_KEYS } from "@/constants/slashCommands";
+import { parseHumanDurationMs } from "@/common/utils/snooze";
 
 function tokenizeCommandLine(input: string): string[] {
   return (input.match(/(?:[^\s"]+|"[^"]*")+/g) ?? []).map((token) =>
@@ -432,6 +433,51 @@ const heartbeatCommandDefinition: SlashCommandDefinition = {
   },
 };
 
+const SNOOZE_USAGE = `/snooze ${SLASH_COMMAND_HINTS.snooze}`;
+
+const snoozeCommandDefinition: SlashCommandDefinition = {
+  key: "snooze",
+  description: `Hide this chat under the Snoozed sidebar section for a duration. Usage: ${SNOOZE_USAGE}`,
+  inputHint: SLASH_COMMAND_HINTS.snooze,
+  appendSpace: false,
+  handler: ({ cleanRemainingTokens }): ParsedCommand => {
+    if (cleanRemainingTokens.length === 0) {
+      return {
+        type: "command-missing-args",
+        command: "snooze",
+        usage: SNOOZE_USAGE,
+      };
+    }
+
+    const input = cleanRemainingTokens.join(" ");
+    if (cleanRemainingTokens.length !== 1) {
+      return {
+        type: "command-invalid-args",
+        command: "snooze",
+        input,
+        usage: SNOOZE_USAGE,
+      };
+    }
+
+    const arg = cleanRemainingTokens[0].toLowerCase();
+    if (arg === "off" || arg === "disable" || arg === "0") {
+      return { type: "snooze-set", durationMs: null };
+    }
+
+    const durationMs = parseHumanDurationMs(arg);
+    if (durationMs == null) {
+      return {
+        type: "command-invalid-args",
+        command: "snooze",
+        input,
+        usage: SNOOZE_USAGE,
+      };
+    }
+
+    return { type: "snooze-set", durationMs };
+  },
+};
+
 /**
  * Slash-command-shaped wrapper around the canonical
  * `parseGoalBudgetInputCents` parser. Returns `null` for both "no budget"
@@ -675,6 +721,7 @@ export const SLASH_COMMAND_DEFINITIONS: readonly SlashCommandDefinition[] = [
   vimCommandDefinition,
   idleCommandDefinition,
   heartbeatCommandDefinition,
+  snoozeCommandDefinition,
   goalCommandDefinition,
   btwCommandDefinition,
   debugLlmRequestCommandDefinition,

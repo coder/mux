@@ -15,6 +15,7 @@ import { MultiProjectGitStatusIndicator } from "../GitStatusIndicator/MultiProje
 import { RuntimeBadge } from "../RuntimeBadge/RuntimeBadge";
 import { BranchSelector } from "../BranchSelector/BranchSelector";
 import { WorkspaceHeartbeatModal } from "../WorkspaceHeartbeatModal";
+import { WorkspaceSnoozeModal } from "../WorkspaceSnoozeModal";
 import { WorkspaceMCPModal } from "../WorkspaceMCPModal/WorkspaceMCPModal";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 import { Popover, PopoverTrigger, PopoverContent } from "../Popover/Popover";
@@ -122,6 +123,7 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
   const [debugLlmRequestOpen, setDebugLlmRequestOpen] = useState(false);
   const [mcpModalOpen, setMcpModalOpen] = useState(false);
   const [heartbeatModalOpen, setHeartbeatModalOpen] = useState(false);
+  const [snoozeModalOpen, setSnoozeModalOpen] = useState(false);
   const [availableSkills, setAvailableSkills] = useState<AgentSkillDescriptor[]>([]);
   const [invalidSkills, setInvalidSkills] = useState<AgentSkillIssue[]>([]);
   const isSkillsMountedRef = useRef(true);
@@ -437,6 +439,20 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [workspaceHeartbeatsEnabled]);
+
+  // Keybind for opening the snooze modal. Lives here (not on AgentListItem)
+  // so the shortcut still resolves when the left sidebar is collapsed and
+  // workspace rows are unmounted — same pattern as SHARE_TRANSCRIPT.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (matchesKeybind(e, KEYBINDS.SNOOZE_WORKSPACE)) {
+        e.preventDefault();
+        setSnoozeModalOpen(true);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
 
   // Keybind for sharing transcript — lives here (not AgentListItem) so it
   // works even when the left sidebar is collapsed and list items are unmounted.
@@ -767,6 +783,7 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
                 void handleForkChat(anchorEl);
               }}
               onShareTranscript={() => setShareTranscriptOpen(true)}
+              onSnoozeChat={() => setSnoozeModalOpen(true)}
               onArchiveChat={(anchorEl) => {
                 // handleArchiveChat runs preflight and opens a confirmation dialog
                 // when streaming or untracked files are detected.
@@ -785,6 +802,15 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
           workspaceId={workspaceId}
           open={heartbeatModalOpen}
           onOpenChange={setHeartbeatModalOpen}
+        />
+      )}
+      {/* Lazy-mount so WorkspaceMenuBar tests that don't stub the full
+          WorkspaceProvider tree aren't forced to provide snooze context. */}
+      {snoozeModalOpen && (
+        <WorkspaceSnoozeModal
+          workspaceId={workspaceId}
+          open={snoozeModalOpen}
+          onOpenChange={setSnoozeModalOpen}
         />
       )}
       <WorkspaceMCPModal

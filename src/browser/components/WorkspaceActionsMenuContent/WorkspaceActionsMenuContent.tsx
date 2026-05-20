@@ -1,6 +1,15 @@
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { ArchiveIcon } from "../icons/ArchiveIcon/ArchiveIcon";
-import { GitBranch, HeartPulse, Link2, Maximize2, Pencil, Server, Square } from "lucide-react";
+import {
+  GitBranch,
+  HeartPulse,
+  Link2,
+  Maximize2,
+  Moon,
+  Pencil,
+  Server,
+  Square,
+} from "lucide-react";
 import React from "react";
 
 interface WorkspaceActionButtonProps {
@@ -46,6 +55,12 @@ interface WorkspaceActionsMenuContentProps {
   onStopRuntime?: (() => void) | null;
   onForkChat?: ((anchorEl: HTMLElement) => void) | null;
   onShareTranscript?: (() => void) | null;
+  /**
+   * Open the workspace snooze modal. The same backing action is reachable via
+   * the `/snooze <duration>` slash command and the SNOOZE_WORKSPACE keybind;
+   * this menu entry is the primary discovery surface.
+   */
+  onSnoozeChat?: (() => void) | null;
   onArchiveChat?: ((anchorEl: HTMLElement) => void) | null;
   onCloseMenu: () => void;
   linkSharingEnabled: boolean;
@@ -156,6 +171,19 @@ export const WorkspaceActionsMenuContent: React.FC<WorkspaceActionsMenuContentPr
             e.stopPropagation();
             props.onCloseMenu();
             props.onShareTranscript?.();
+          }}
+        />
+      )}
+      {props.onSnoozeChat && (
+        <WorkspaceActionButton
+          label="Snooze chat…"
+          shortcut={formatKeybind(KEYBINDS.SNOOZE_WORKSPACE)}
+          shortcutClassName={props.shortcutClassName}
+          icon={<Moon className="h-3 w-3 shrink-0" />}
+          onClick={(e) => {
+            e.stopPropagation();
+            props.onCloseMenu();
+            props.onSnoozeChat?.();
           }}
         />
       )}
