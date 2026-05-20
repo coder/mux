@@ -12,6 +12,10 @@ import {
   DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR,
   type WorktreeArchiveBehavior,
 } from "@/common/config/worktreeArchiveBehavior";
+import {
+  TOOL_COLLAPSED_DISPLAY_MODE_KEY,
+  type ToolCollapsedDisplayMode,
+} from "@/common/constants/storage";
 
 interface MockConfig {
   coderWorkspaceArchiveBehavior: CoderWorkspaceArchiveBehavior;
@@ -287,6 +291,33 @@ describe("GeneralSection", () => {
     const portalRoot = view.baseElement.ownerDocument.body;
     fireEvent.click(within(portalRoot).getByText(optionText));
   }
+
+  function readToolCollapsedDisplayMode(): ToolCollapsedDisplayMode | null {
+    const rawValue = window.localStorage.getItem(TOOL_COLLAPSED_DISPLAY_MODE_KEY);
+    return rawValue ? (JSON.parse(rawValue) as ToolCollapsedDisplayMode) : null;
+  }
+
+  test("persists the selected collapsed tool summary mode", () => {
+    const { view } = renderGeneralSection();
+
+    expect(getSelectTrigger(view, "Collapsed tool summaries").textContent).toContain(
+      "Intent and command"
+    );
+
+    chooseSelectOption(view, "Collapsed tool summaries", "Command");
+
+    expect(readToolCollapsedDisplayMode()).toBe("command");
+  });
+
+  test("falls back to the default collapsed tool summary mode for invalid storage", () => {
+    window.localStorage.setItem(TOOL_COLLAPSED_DISPLAY_MODE_KEY, JSON.stringify("invalid"));
+
+    const { view } = renderGeneralSection();
+
+    expect(getSelectTrigger(view, "Collapsed tool summaries").textContent).toContain(
+      "Intent and command"
+    );
+  });
 
   test("renders the worktree archive behavior copy and loads the saved value", async () => {
     const { view } = renderGeneralSection({

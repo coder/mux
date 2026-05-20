@@ -127,6 +127,35 @@ describe("TOOL_DEFINITIONS", () => {
     }
   });
 
+  it("accepts bash tool calls with model_intent", () => {
+    const parsed = TOOL_DEFINITIONS.bash.schema.safeParse({
+      script: "ls",
+      model_intent: "Checking repository state",
+      timeout_secs: 60,
+      run_in_background: false,
+      display_name: "Test",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.model_intent).toBe("Checking repository state");
+    }
+  });
+
+  it("accepts bash tool calls without model_intent", () => {
+    const parsed = TOOL_DEFINITIONS.bash.schema.safeParse({
+      script: "ls",
+      timeout_secs: 60,
+      run_in_background: false,
+      display_name: "Test",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.model_intent).toBeUndefined();
+    }
+  });
+
   it("prefers script when both script and command are provided", () => {
     const parsed = TOOL_DEFINITIONS.bash.schema.safeParse({
       script: "echo hi",
