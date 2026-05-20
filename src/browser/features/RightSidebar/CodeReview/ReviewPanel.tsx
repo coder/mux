@@ -75,6 +75,7 @@ import type {
   ReviewSortOrder,
 } from "@/common/types/review";
 import type { FileTreeNode } from "@/common/utils/git/numstatParser";
+import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import {
   matchesKeybind,
   KEYBINDS,
@@ -424,6 +425,58 @@ export function countUnreadAssistedHunks(
   return count;
 }
 
+export function buildReviewDiffPathFilter(params: {
+  isImmersive: boolean;
+  assistedOnly: boolean;
+  assistedHunks: readonly AssistedReviewHunk[];
+  selectedFilePath: string | null;
+  selectedDiffPath: string;
+  workspaceMetadata: Pick<FrontendWorkspaceMetadata, "projects"> | null | undefined;
+  repoRootProjectPath: string | null | undefined;
+}): string {
+  if (params.isImmersive) {
+    return "";
+  }
+
+  const pathspecs = params.assistedOnly
+    ? params.assistedHunks.map((hunk) =>
+        normalizeRepoRootFilePath(params.workspaceMetadata, hunk.path, params.repoRootProjectPath)
+      )
+    : params.selectedFilePath
+      ? [params.selectedDiffPath]
+      : [];
+
+  const uniquePathspecs = Array.from(new Set(pathspecs.filter((pathspec) => pathspec.length > 0)));
+  return uniquePathspecs.length > 0
+    ? ` -- ${uniquePathspecs.map((pathspec) => shellQuote(pathspec)).join(" ")}`
+    : "";
+}
+
+export function getEffectiveReviewIncludeUncommitted(params: {
+  assistedOnly: boolean;
+  includeUncommitted: boolean;
+}): boolean {
+  // Agent-pinned regions commonly point at the agent's latest working-tree edits.
+  // Assisted mode opts into uncommitted changes so accepted pins cannot disappear
+  // solely because the user's review toggle was left off.
+  return params.assistedOnly ? true : params.includeUncommitted;
+}
+
+export function getEffectiveReviewFrontendFilters(params: {
+  assistedOnly: boolean;
+  showReadHunks: boolean;
+  searchTerm: string;
+}): { showReadHunks: boolean; searchTerm: string } {
+  if (params.assistedOnly) {
+    // An agent pin is an explicit request to put that hunk in front of the user.
+    // Ignore stale user-side visibility filters while Assisted is on so a
+    // successful `review_pane_update` cannot be hidden by search/read state.
+    return { showReadHunks: true, searchTerm: "" };
+  }
+
+  return { showReadHunks: params.showReadHunks, searchTerm: params.searchTerm };
+}
+
 interface ReviewAssistedStatsReporterProps {
   workspaceId: string;
   workspacePath: string;
@@ -473,7 +526,21 @@ export const ReviewAssistedStatsReporter: React.FC<ReviewAssistedStatsReporterPr
     if (!api || isCreating) return;
 
     let cancelled = false;
-    const diffCommand = buildGitDiffCommand(diffBase, includeUncommitted, "", "diff");
+    const pathFilter = buildReviewDiffPathFilter({
+      isImmersive: false,
+      assistedOnly: true,
+      assistedHunks,
+      selectedFilePath: null,
+      selectedDiffPath: "",
+      workspaceMetadata: workspaceMetadata.get(workspaceId),
+      repoRootProjectPath: projectPath,
+    });
+    const diffCommand = buildGitDiffCommand(
+      diffBase,
+      getEffectiveReviewIncludeUncommitted({ assistedOnly: true, includeUncommitted }),
+      pathFilter,
+      "diff"
+    );
 
     const loadUnreadAssisted = async () => {
       try {
@@ -1203,14 +1270,28 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     lastDiffRefreshTriggerRef.current = refreshTrigger;
     const isManualRefresh = refreshTrigger !== 0 && prevRefreshTrigger !== refreshTrigger;
 
-    const pathFilter = selectedFilePath && !isImmersive ? ` -- "${selectedDiffPath}"` : "";
-    const diffRepoRootProjectPath = !isImmersive
-      ? (selectedRepoRootProjectPath ?? projectPath)
-      : projectPath;
+    const diffRepoRootProjectPath =
+      !isImmersive && selectedFilePath && !filters.assistedOnly
+        ? (selectedRepoRootProjectPath ?? projectPath)
+        : projectPath;
+    const pathFilter = buildReviewDiffPathFilter({
+      isImmersive,
+      assistedOnly: filters.assistedOnly,
+      assistedHunks,
+      selectedFilePath,
+      selectedDiffPath,
+      workspaceMetadata: workspaceMetadata.get(workspaceId),
+      repoRootProjectPath: diffRepoRootProjectPath,
+    });
+
+    const effectiveIncludeUncommitted = getEffectiveReviewIncludeUncommitted({
+      assistedOnly: filters.assistedOnly,
+      includeUncommitted: filters.includeUncommitted,
+    });
 
     const diffCommand = buildGitDiffCommand(
       filters.diffBase,
-      filters.includeUncommitted,
+      effectiveIncludeUncommitted,
       pathFilter,
       "diff"
     );
@@ -1336,6 +1417,8 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     workspaceMetadata,
     filters.diffBase,
     filters.includeUncommitted,
+    filters.assistedOnly,
+    assistedHunks,
     selectedFilePath,
     selectedRepoRootProjectPath,
     selectedDiffPath,
@@ -1453,10 +1536,16 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
       ? (hunk: DiffHunk) => assistedMatchByHunkId.has(hunk.id)
       : undefined;
 
-    const filtered = applyFrontendFilters(hunks, {
+    const effectiveFrontendFilters = getEffectiveReviewFrontendFilters({
+      assistedOnly: filters.assistedOnly,
       showReadHunks: filters.showReadHunks,
-      isRead,
       searchTerm: debouncedSearchTerm,
+    });
+
+    const filtered = applyFrontendFilters(hunks, {
+      showReadHunks: effectiveFrontendFilters.showReadHunks,
+      isRead,
+      searchTerm: effectiveFrontendFilters.searchTerm,
       useRegex: searchState.useRegex,
       matchCase: searchState.matchCase,
       isAssisted: assistedPredicate,
@@ -2003,14 +2092,14 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
               ) : filteredHunks.length === 0 ? (
                 <div className="text-muted flex flex-col items-center justify-start gap-3 px-6 pt-12 pb-6 text-center">
                   <div className="text-[13px] leading-[1.5]">
-                    {debouncedSearchTerm.trim()
-                      ? `No hunks match "${debouncedSearchTerm}". Try a different search term.`
-                      : selectedFilePath
-                        ? `No hunks in ${selectedFilePath}. Try selecting a different file.`
-                        : filters.assistedOnly
-                          ? assistedHunks.length === 0
-                            ? "The agent hasn't pinned any hunks. Turn off Assisted to see all hunks."
-                            : "None of the agent-flagged hunks match the current diff. Turn off Assisted, or try a different diff base."
+                    {filters.assistedOnly
+                      ? assistedHunks.length === 0
+                        ? "The agent hasn't pinned any hunks. Turn off Assisted to see all hunks."
+                        : "None of the agent-flagged hunks match the current diff. Turn off Assisted, or try a different diff base."
+                      : debouncedSearchTerm.trim()
+                        ? `No hunks match "${debouncedSearchTerm}". Try a different search term.`
+                        : selectedFilePath
+                          ? `No hunks in ${selectedFilePath}. Try selecting a different file.`
                           : "No hunks match the current filters. Try adjusting your filter settings."}
                   </div>
                 </div>

@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test";
 
 import type { AssistedReviewHunk, DiffHunk } from "@/common/types/review";
-import { countUnreadAssistedHunks } from "./ReviewPanel";
+import {
+  buildReviewDiffPathFilter,
+  countUnreadAssistedHunks,
+  getEffectiveReviewFrontendFilters,
+  getEffectiveReviewIncludeUncommitted,
+} from "./ReviewPanel";
 
 function hunk(overrides: Partial<DiffHunk>): DiffHunk {
   return {
@@ -41,5 +46,74 @@ describe("countUnreadAssistedHunks", () => {
     const assisted: AssistedReviewHunk[] = [{ path: "src/a.ts", range: { start: 10, end: 12 } }];
 
     expect(countUnreadAssistedHunks(hunks, assisted, () => false)).toBe(1);
+  });
+});
+
+describe("buildReviewDiffPathFilter", () => {
+  test("assisted mode fetches agent-pinned files instead of the stale selected file", () => {
+    const pathFilter = buildReviewDiffPathFilter({
+      isImmersive: false,
+      assistedOnly: true,
+      assistedHunks: [
+        { path: "src/agent.ts" },
+        { path: "src/agent.ts", range: { start: 3, end: 4 } },
+      ],
+      selectedFilePath: "src/user-selected.ts",
+      selectedDiffPath: "src/user-selected.ts",
+      workspaceMetadata: null,
+      repoRootProjectPath: "/repo",
+    });
+
+    expect(pathFilter).toBe(" -- 'src/agent.ts'");
+  });
+
+  test("non-assisted mode preserves the selected file pathspec", () => {
+    const pathFilter = buildReviewDiffPathFilter({
+      isImmersive: false,
+      assistedOnly: false,
+      assistedHunks: [{ path: "src/agent.ts" }],
+      selectedFilePath: "src/user-selected.ts",
+      selectedDiffPath: "src/user-selected.ts",
+      workspaceMetadata: null,
+      repoRootProjectPath: "/repo",
+    });
+
+    expect(pathFilter).toBe(" -- 'src/user-selected.ts'");
+  });
+});
+
+describe("getEffectiveReviewIncludeUncommitted", () => {
+  test("assisted mode includes working-tree edits even when the user toggle is off", () => {
+    expect(
+      getEffectiveReviewIncludeUncommitted({ assistedOnly: true, includeUncommitted: false })
+    ).toBe(true);
+  });
+
+  test("non-assisted mode keeps the user include-uncommitted toggle", () => {
+    expect(
+      getEffectiveReviewIncludeUncommitted({ assistedOnly: false, includeUncommitted: false })
+    ).toBe(false);
+  });
+});
+
+describe("getEffectiveReviewFrontendFilters", () => {
+  test("assisted mode bypasses user filters that could hide accepted pins", () => {
+    expect(
+      getEffectiveReviewFrontendFilters({
+        assistedOnly: true,
+        showReadHunks: false,
+        searchTerm: "does-not-match",
+      })
+    ).toEqual({ showReadHunks: true, searchTerm: "" });
+  });
+
+  test("non-assisted mode keeps user filters", () => {
+    expect(
+      getEffectiveReviewFrontendFilters({
+        assistedOnly: false,
+        showReadHunks: false,
+        searchTerm: "needle",
+      })
+    ).toEqual({ showReadHunks: false, searchTerm: "needle" });
   });
 });

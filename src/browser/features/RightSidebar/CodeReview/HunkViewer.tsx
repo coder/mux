@@ -247,11 +247,11 @@ export const HunkViewer = React.memo<HunkViewerProps>(
     const hasManualState = hunkId in expandStateMap;
     const manualExpandState = expandStateMap[hunkId];
 
-    // Agent-flagged hunks should default to expanded even when they're "large"
-    // or in a heavy review where everything else is collapsed — otherwise the
-    // assisted-review focus signal gets buried.
+    // Agent-flagged hunks should default to expanded even when they're already
+    // read, "large", or in a heavy review where everything else is collapsed —
+    // otherwise the assisted-review focus signal gets buried.
     const shouldAutoExpand =
-      !isRead &&
+      (!isRead || isAssisted) &&
       (!isLargeHunk || Boolean(visibleNewLineRange)) &&
       (!preferCollapsed || Boolean(isSelected) || Boolean(visibleNewLineRange));
 
