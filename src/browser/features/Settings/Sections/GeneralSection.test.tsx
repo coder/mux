@@ -297,7 +297,7 @@ describe("GeneralSection", () => {
     return rawValue ? (JSON.parse(rawValue) as ToolCollapsedDisplayMode) : null;
   }
 
-  test("persists the selected collapsed tool summary mode", () => {
+  test("persists the selected collapsed tool summary mode", async () => {
     const { view } = renderGeneralSection();
 
     expect(getSelectTrigger(view, "Collapsed bash summaries").textContent).toContain(
@@ -307,9 +307,14 @@ describe("GeneralSection", () => {
     chooseSelectOption(view, "Collapsed bash summaries", "Command");
 
     expect(readToolCollapsedDisplayMode()).toBe("command");
+    await waitFor(() => {
+      expect(getSelectTrigger(view, "Worktree archive behavior").textContent).toContain(
+        "Keep checkout"
+      );
+    });
   });
 
-  test("falls back to the default collapsed tool summary mode for invalid storage", () => {
+  test("falls back to the default collapsed tool summary mode for invalid storage", async () => {
     window.localStorage.setItem(TOOL_COLLAPSED_DISPLAY_MODE_KEY, JSON.stringify("invalid"));
 
     const { view } = renderGeneralSection();
@@ -317,6 +322,11 @@ describe("GeneralSection", () => {
     expect(getSelectTrigger(view, "Collapsed bash summaries").textContent).toContain(
       "Intent and command"
     );
+    await waitFor(() => {
+      expect(getSelectTrigger(view, "Worktree archive behavior").textContent).toContain(
+        "Keep checkout"
+      );
+    });
   });
 
   test("renders the worktree archive behavior copy and loads the saved value", async () => {
