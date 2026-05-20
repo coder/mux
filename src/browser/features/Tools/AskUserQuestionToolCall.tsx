@@ -179,6 +179,23 @@ function getDescriptionsForLabels(question: AskUserQuestionQuestion, labels: str
     .filter((d): d is string => d !== undefined);
 }
 
+/**
+ * Shared class string for the section-selector pills in the executing UI
+ * (one pill per question plus the Summary pill). Both pills paint with the
+ * same three visual states: selected (accent), complete (success-tinted),
+ * or pending (neutral).
+ */
+function getSectionPillClassName(isSelected: boolean, isComplete: boolean): string {
+  return cn(
+    "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-colors",
+    isSelected
+      ? "border-accent bg-accent text-accent-foreground shadow-sm"
+      : isComplete
+        ? "border-success/40 bg-success/10 text-success hover:bg-success/20"
+        : "border-white/10 bg-white/5 text-secondary hover:border-white/20 hover:text-foreground"
+  );
+}
+
 /** Auto-resizing textarea for "Other" text input. */
 function AutoResizeTextarea(props: {
   value: string;
@@ -592,14 +609,7 @@ export function AskUserQuestionToolCall(props: {
                       <button
                         key={q.question}
                         type="button"
-                        className={cn(
-                          "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-colors",
-                          isActive
-                            ? "border-accent bg-accent text-accent-foreground shadow-sm"
-                            : answered
-                              ? "border-success/40 bg-success/10 text-success hover:bg-success/20"
-                              : "border-white/10 bg-white/5 text-secondary hover:border-white/20 hover:text-foreground"
-                        )}
+                        className={getSectionPillClassName(isActive, answered)}
                         onClick={() => setActiveIndex(idx)}
                       >
                         {q.header}
@@ -609,14 +619,7 @@ export function AskUserQuestionToolCall(props: {
                   })}
                   <button
                     type="button"
-                    className={cn(
-                      "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-colors",
-                      isOnSummary
-                        ? "border-accent bg-accent text-accent-foreground shadow-sm"
-                        : isComplete
-                          ? "border-success/40 bg-success/10 text-success hover:bg-success/20"
-                          : "border-white/10 bg-white/5 text-secondary hover:border-white/20 hover:text-foreground"
-                    )}
+                    className={getSectionPillClassName(isOnSummary, isComplete)}
                     onClick={() => setActiveIndex(summaryIndex)}
                   >
                     Summary
