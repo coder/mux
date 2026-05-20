@@ -1895,6 +1895,32 @@ export class Config {
   }
 
   /**
+   * Watch providers.jsonc for external edits. Fires callback (debounced 300 ms)
+   * on any create/modify/delete event. Returns a cleanup function.
+   *
+   * We watch the parent directory rather than the file directly so that
+   * creates (first-time manual edit) are also detected on all platforms.
+   */
+  watchProvidersFile(callback: () => void): () => void {
+    const filename = path.basename(this.providersFile);
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const watcher = fs.watch(this.rootDir, (_eventType, changedFilename) => {
+      if (changedFilename !== filename) return;
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null;
+        callback();
+      }, 300);
+    });
+
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      watcher.close();
+    };
+  }
+
+  /**
    * Save providers configuration to JSONC file
    * @param config The providers configuration to save
    */
