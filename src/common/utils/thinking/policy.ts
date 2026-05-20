@@ -35,6 +35,7 @@ export function isGeminiFlashThinkingLevelModelName(modelName: string): boolean 
   const normalized = modelName.trim().toLowerCase();
   return (
     GEMINI_FLASH_THINKING_LEVEL_MODEL_NAMES.has(normalized) ||
+    normalized.startsWith("gemini-3-flash-preview-") ||
     (normalized.startsWith("gemini-3.5-flash") && !normalized.startsWith("gemini-3.5-flash-lite"))
   );
 }

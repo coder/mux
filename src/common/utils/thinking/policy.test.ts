@@ -420,6 +420,15 @@ describe("getThinkingPolicyForModel", () => {
     ]);
   });
 
+  test("returns off/low/medium/high for versioned Gemini 3 Flash Preview IDs", () => {
+    for (const model of [
+      "google:gemini-3-flash-preview-20251217",
+      "google:gemini-3-flash-preview-latest",
+    ]) {
+      expect(getThinkingPolicyForModel(model)).toEqual(["off", "low", "medium", "high"]);
+    }
+  });
+
   test("returns off/low/medium/high for Gemini 3 Flash", () => {
     expect(getThinkingPolicyForModel("google:gemini-3-flash-preview")).toEqual([
       "off",

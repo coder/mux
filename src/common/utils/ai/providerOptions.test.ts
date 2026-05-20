@@ -816,6 +816,16 @@ describe("buildProviderOptions - Google", () => {
     });
   });
 
+  test("maps versioned Gemini 3 Flash Preview off to minimal thinking without thoughts", () => {
+    expect(buildProviderOptions("google:gemini-3-flash-preview-latest", "off")).toEqual({
+      google: {
+        thinkingConfig: {
+          thinkingLevel: "minimal",
+        },
+      },
+    });
+  });
+
   test("defensively maps unsupported Gemini 3.5 Flash xhigh to high", () => {
     expect(buildProviderOptions("google:gemini-3.5-flash", "xhigh")).toEqual({
       google: {
