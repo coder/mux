@@ -754,6 +754,19 @@ async function main(): Promise<number> {
 
   const experiments = buildExperimentsObject(opts.experiment);
 
+  // Tools disabled for `mux run`: either no-op or require UI interaction in headless mode.
+  // - ask_user_question: waits for a desktop/mobile answer UI; headless `mux run` cannot answer it
+  // - status_set: backend no-op, status indicator only visible in desktop UI
+  // - todo_write/todo_read: TODO list only visible in desktop UI
+  // - notify: sends OS notifications via Electron, silently swallowed in CLI
+  const CLI_DISABLED_TOOL_NAMES = [
+    "ask_user_question",
+    "status_set",
+    "todo_write",
+    "todo_read",
+    "notify",
+  ] as const;
+
   const buildSendOptions = (cliMode: CLIMode): SendMessageOptions => ({
     model,
     thinkingLevel,
@@ -763,18 +776,10 @@ async function main(): Promise<number> {
       ...(opts.use1m && { anthropic: { use1MContext: true } }),
       ...(opts.serviceTier != null && { openai: { serviceTier: opts.serviceTier } }),
     },
-    // Disable UI-only tools that either no-op or require UI interaction in CLI mode:
-    // - ask_user_question: waits for a desktop/mobile answer UI; headless `mux run` cannot answer it
-    // - status_set: backend no-op, status indicator only visible in desktop UI
-    // - todo_write/todo_read: TODO list only visible in desktop UI
-    // - notify: sends OS notifications via Electron, silently swallowed in CLI
-    toolPolicy: [
-      { regex_match: "ask_user_question", action: "disable" as const },
-      { regex_match: "status_set", action: "disable" as const },
-      { regex_match: "todo_write", action: "disable" as const },
-      { regex_match: "todo_read", action: "disable" as const },
-      { regex_match: "notify", action: "disable" as const },
-    ],
+    toolPolicy: CLI_DISABLED_TOOL_NAMES.map((name) => ({
+      regex_match: name,
+      action: "disable" as const,
+    })),
     // Plan agent instructions are handled by the backend (has access to plan file path)
   });
 
