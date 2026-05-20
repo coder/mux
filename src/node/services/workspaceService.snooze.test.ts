@@ -46,10 +46,13 @@ describe("WorkspaceService.setSnooze", () => {
         projectPath: TEST_PROJECT_PATH,
       })),
       // setSnooze uses editConfig (matches archive), so we mimic that hook.
+      // Return Promise.resolve() explicitly instead of marking the mock
+      // `async` — lint flags async mocks without an `await` expression.
       editConfig: mock(
-        async (mutate: (config: ProjectsConfig) => ProjectsConfig | undefined): Promise<void> => {
+        (mutate: (config: ProjectsConfig) => ProjectsConfig | undefined): Promise<void> => {
           const next = mutate(currentProjectsConfig);
           if (next) currentProjectsConfig = next;
+          return Promise.resolve();
         }
       ),
       saveConfig: mock((nextConfig: ProjectsConfig) => {
