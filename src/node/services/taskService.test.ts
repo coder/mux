@@ -4837,82 +4837,90 @@ describe("TaskService", () => {
     expect(serializedOutput).toContain('"label":"backend"');
   });
 
-  test("agent_report finalizes interrupted best-of parent output after partial best-of spawn failure", async () => {
-    const parentId = "parent-best-of-partial-spawn";
-    const childOneId = "child-best-of-partial-1";
-    const childTwoId = "child-best-of-partial-2";
-    const bestOf = { groupId: "best-of-partial-group", index: 0, total: 3 } as const;
+  // Test exercises real config + history + partial-on-disk I/O across many
+  // sequential awaits. Under CI parallel-test contention this can momentarily
+  // exceed Bun's default 5s per-test timeout even though it completes in
+  // ~250ms locally; bump the budget for headroom.
+  test(
+    "agent_report finalizes interrupted best-of parent output after partial best-of spawn failure",
+    async () => {
+      const parentId = "parent-best-of-partial-spawn";
+      const childOneId = "child-best-of-partial-1";
+      const childTwoId = "child-best-of-partial-2";
+      const bestOf = { groupId: "best-of-partial-group", index: 0, total: 3 } as const;
 
-    const { config, historyService, partialService, taskService, remove } =
-      await createBestOfTaskServiceTestHarness({
+      const { config, historyService, partialService, taskService, remove } =
+        await createBestOfTaskServiceTestHarness({
+          parentId,
+          children: [
+            {
+              id: childOneId,
+              name: "agent_explore_child_1",
+              taskStatus: "running",
+              bestOf,
+            },
+            {
+              id: childTwoId,
+              name: "agent_explore_child_2",
+              taskStatus: "running",
+              bestOf: { ...bestOf, index: 1 },
+            },
+          ],
+        });
+
+      await writePendingBestOfParentPartial({
+        partialService,
         parentId,
-        children: [
-          {
-            id: childOneId,
-            name: "agent_explore_child_1",
-            taskStatus: "running",
-            bestOf,
-          },
-          {
-            id: childTwoId,
-            name: "agent_explore_child_2",
-            taskStatus: "running",
-            bestOf: { ...bestOf, index: 1 },
-          },
-        ],
+        messageId: "assistant-parent-best-of-partial-spawn",
+        toolCallId: "task-best-of-partial-call",
+        title: "Best of 3",
+        n: 3,
+        timestamp: Date.now(),
       });
 
-    await writePendingBestOfParentPartial({
-      partialService,
-      parentId,
-      messageId: "assistant-parent-best-of-partial-spawn",
-      toolCallId: "task-best-of-partial-call",
-      title: "Best of 3",
-      n: 3,
-      timestamp: Date.now(),
-    });
+      await finalizeReportedChildTaskForTest({
+        historyService,
+        partialService,
+        taskService,
+        childId: childOneId,
+        reportMarkdown: "Report from child one",
+        title: "Option one",
+      });
 
-    await finalizeReportedChildTaskForTest({
-      historyService,
-      partialService,
-      taskService,
-      childId: childOneId,
-      reportMarkdown: "Report from child one",
-      title: "Option one",
-    });
+      const parentHistoryAfterFirst = await collectFullHistory(historyService, parentId);
+      expect(JSON.stringify(parentHistoryAfterFirst)).not.toContain("Report from child one");
 
-    const parentHistoryAfterFirst = await collectFullHistory(historyService, parentId);
-    expect(JSON.stringify(parentHistoryAfterFirst)).not.toContain("Report from child one");
+      const afterFirstParentPartial = await partialService.readPartial(parentId);
+      expect(afterFirstParentPartial).not.toBeNull();
+      expect(getTaskToolPart(afterFirstParentPartial)?.state).toBe("input-available");
+      expect(remove).not.toHaveBeenCalled();
 
-    const afterFirstParentPartial = await partialService.readPartial(parentId);
-    expect(afterFirstParentPartial).not.toBeNull();
-    expect(getTaskToolPart(afterFirstParentPartial)?.state).toBe("input-available");
-    expect(remove).not.toHaveBeenCalled();
+      await finalizeReportedChildTaskForTest({
+        historyService,
+        partialService,
+        taskService,
+        childId: childTwoId,
+        reportMarkdown: "Report from child two",
+        title: "Option two",
+      });
 
-    await finalizeReportedChildTaskForTest({
-      historyService,
-      partialService,
-      taskService,
-      childId: childTwoId,
-      reportMarkdown: "Report from child two",
-      title: "Option two",
-    });
+      const afterSecondParentPartial = await partialService.readPartial(parentId);
+      expect(afterSecondParentPartial).not.toBeNull();
+      const toolPart = getTaskToolPart(afterSecondParentPartial);
+      expect(toolPart?.state).toBe("output-available");
+      expect(toolPart?.output && typeof toolPart.output === "object").toBe(true);
+      const serializedOutput = JSON.stringify(toolPart?.output);
+      expect(serializedOutput).toContain(childOneId);
+      expect(serializedOutput).toContain(childTwoId);
+      expect(serializedOutput).toContain("Report from child one");
+      expect(serializedOutput).toContain("Report from child two");
 
-    const afterSecondParentPartial = await partialService.readPartial(parentId);
-    expect(afterSecondParentPartial).not.toBeNull();
-    const toolPart = getTaskToolPart(afterSecondParentPartial);
-    expect(toolPart?.state).toBe("output-available");
-    expect(toolPart?.output && typeof toolPart.output === "object").toBe(true);
-    const serializedOutput = JSON.stringify(toolPart?.output);
-    expect(serializedOutput).toContain(childOneId);
-    expect(serializedOutput).toContain(childTwoId);
-    expect(serializedOutput).toContain("Report from child one");
-    expect(serializedOutput).toContain("Report from child two");
-
-    const remainingTaskIds = getConfiguredWorkspaceIds(config);
-    expect(remainingTaskIds).not.toContain(childOneId);
-    expect(remainingTaskIds).not.toContain(childTwoId);
-  });
+      const remainingTaskIds = getConfiguredWorkspaceIds(config);
+      expect(remainingTaskIds).not.toContain(childOneId);
+      expect(remainingTaskIds).not.toContain(childTwoId);
+    },
+    { timeout: 15_000 }
+  );
 
   test("agent_report avoids duplicate synthetic parent reports after grouped partial finalization", async () => {
     const parentId = "parent-best-of-no-duplicate";
