@@ -253,7 +253,7 @@ export const modelsExtra: Record<string, ModelData> = {
   // Gemini 3.5 Flash - GA on May 19, 2026. Google AI docs list a stable
   // `gemini-3.5-flash` model ID with 1M context, 65K max output, standard
   // pricing of $1.50/M input, $9/M output, and $0.15/M cached input.
-  // Source: Google Gemini API pricing/model docs as of 2026-05-19.
+  // Source: Google DeepMind Gemini 3.5 Flash model info and Gemini API pricing docs as of 2026-05-20.
   "gemini-3.5-flash": {
     max_input_tokens: 1048576,
     max_output_tokens: 65536,
@@ -269,7 +269,7 @@ export const modelsExtra: Record<string, ModelData> = {
     supports_video_input: true,
     supports_reasoning: true,
     supports_response_schema: true,
-    knowledge_cutoff: "2026-01",
+    knowledge_cutoff: "2025-01",
   },
 
   // Gemini 3.1 Pro Preview - Released February 19, 2026

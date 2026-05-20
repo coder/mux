@@ -49,7 +49,8 @@ export function isGeminiFlashThinkingLevelModelName(modelName: string): boolean 
  * - openai:gpt-5.2 / openai:gpt-5.5 → ["off", "low", "medium", "high", "xhigh"]
  * - openai:gpt-5.2-pro / openai:gpt-5.5-pro → ["medium", "high", "xhigh"] (3 levels)
  * - openai:gpt-5-pro → ["high"] (only supported level, legacy)
- * - gemini-3 → ["low", "high"] (thinking level only)
+ * - gemini-3 Flash chat variants → ["off", "low", "medium", "high"]
+ * - gemini-3 Pro variants → ["low", "high"] (thinking level only)
  * - default → ["off", "low", "medium", "high"] (standard 4 levels; xhigh is opt-in per model)
  *
  * Tolerates version suffixes (e.g., gpt-5-pro-2025-10-06).
