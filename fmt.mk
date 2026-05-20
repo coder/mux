@@ -82,13 +82,9 @@ else ifeq ($(wildcard flake.nix),)
 	@echo "flake.nix not found; skipping Nix format check"
 else
 	@echo "Checking flake.nix formatting..."
-	@tmp_dir=$$(mktemp -d "$${TMPDIR:-/tmp}/fmt-nix-check.XXXXXX"); \
-	trap "rm -rf $$tmp_dir" EXIT; \
-	cp flake.nix "$$tmp_dir/flake.nix"; \
-	(cd "$$tmp_dir" && nix fmt -- flake.nix >/dev/null 2>&1); \
-	if ! cmp -s flake.nix "$$tmp_dir/flake.nix"; then \
+	@# Check from the repo flake instead of a temp copy; `nix fmt` evaluates flake metadata.
+	@if ! nix fmt -- --check flake.nix; then \
 		echo "flake.nix is not formatted correctly. Run 'make fmt-nix' to fix."; \
-		diff -u flake.nix "$$tmp_dir/flake.nix" || true; \
 		exit 1; \
 	fi
 endif

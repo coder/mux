@@ -206,7 +206,7 @@
               # Documentation
               mdbook
               mdbook-mermaid
-              mdbook-linkcheck
+              mdbook-linkcheck2
               mdbook-pagetoc
 
               # Terminal bench + browser recording

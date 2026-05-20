@@ -1,6 +1,12 @@
-import { ChevronRight, Layers3 } from "lucide-react";
+import { ChevronRight, EllipsisVertical, Layers3, Trash } from "lucide-react";
 
 import { getSidebarItemPaddingLeft } from "@/browser/components/sidebarItemLayout";
+import {
+  PositionedMenu,
+  PositionedMenuItem,
+} from "@/browser/components/PositionedMenu/PositionedMenu";
+import { useContextMenuPosition } from "@/browser/hooks/useContextMenuPosition";
+import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { cn } from "@/common/lib/utils";
 import {
   formatTaskGroupHeader,
@@ -22,11 +28,20 @@ interface TaskGroupListItemProps {
   interruptedCount: number;
   isExpanded: boolean;
   isSelected: boolean;
+  isDeleting?: boolean;
   onToggle: () => void;
+  onDeleteAll?: (buttonElement: HTMLElement) => void | Promise<void>;
 }
 
 export function TaskGroupListItem(props: TaskGroupListItemProps) {
   const paddingLeft = getSidebarItemPaddingLeft(props.depth);
+  const hasActionMenu = props.onDeleteAll != null;
+  const actionMenu = useContextMenuPosition({
+    longPress: hasActionMenu,
+    canOpen: () => hasActionMenu && props.isDeleting !== true,
+  });
+  const itemLabel = formatTaskGroupItemsLabel(props.kind).toLowerCase();
+  const deleteAllLabel = `Delete all ${itemLabel}`;
   const statusParts: string[] = [];
   if (props.runningCount > 0) {
     statusParts.push(`${props.runningCount} running`);
@@ -52,14 +67,19 @@ export function TaskGroupListItem(props: TaskGroupListItemProps) {
       aria-label={`${props.isExpanded ? "Collapse" : "Expand"} task group ${props.title}`}
       data-testid={`task-group-${props.groupId}`}
       className={cn(
-        "bg-surface-primary relative flex items-start gap-1.5 rounded-l-sm py-2 pr-2 pl-1 select-none transition-all duration-150 hover:bg-surface-secondary",
+        "bg-surface-primary group/task-group relative flex items-start gap-1.5 rounded-l-sm py-2 pr-2 pl-1 select-none transition-all duration-150 hover:bg-surface-secondary",
         props.sectionId != null ? "ml-2" : "ml-0",
         props.isSelected && "bg-surface-secondary"
       )}
       style={{ paddingLeft }}
       onClick={() => {
+        if (actionMenu.suppressClickIfLongPress()) {
+          return;
+        }
         props.onToggle();
       }}
+      onContextMenu={hasActionMenu ? actionMenu.onContextMenu : undefined}
+      {...(hasActionMenu ? actionMenu.touchHandlers : {})}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
@@ -84,7 +104,13 @@ export function TaskGroupListItem(props: TaskGroupListItemProps) {
           <span className="text-foreground min-w-0 truncate text-left text-[14px] leading-6">
             {formatTaskGroupHeader(props.kind, props.totalCount, props.title)}
           </span>
-          <span className="text-muted text-[11px]">
+          <span
+            className={cn(
+              "text-muted text-[11px] transition-opacity duration-200",
+              hasActionMenu &&
+                "group-focus-within/task-group:opacity-0 group-hover/task-group:opacity-0"
+            )}
+          >
             {props.completedCount}/{props.totalCount}
           </span>
         </div>
@@ -98,6 +124,45 @@ export function TaskGroupListItem(props: TaskGroupListItemProps) {
           )}
         </div>
       </div>
+      {hasActionMenu && (
+        <button
+          type="button"
+          aria-label={`Task group actions for ${props.title}`}
+          aria-haspopup="menu"
+          aria-expanded={actionMenu.isOpen}
+          data-testid={`task-group-actions-${props.groupId}`}
+          disabled={props.isDeleting === true}
+          className={cn(
+            "text-muted hover:text-foreground absolute top-2.5 right-2 inline-flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center border-none bg-transparent p-0 opacity-0 transition-[color,opacity] duration-200 group-focus-within/task-group:pointer-events-auto group-focus-within/task-group:opacity-100 group-hover/task-group:pointer-events-auto group-hover/task-group:opacity-100",
+            actionMenu.isOpen ? "pointer-events-auto opacity-100" : "pointer-events-none",
+            props.isDeleting === true && "cursor-default opacity-50"
+          )}
+          onKeyDown={stopKeyboardPropagation}
+          onClick={(event) => {
+            event.stopPropagation();
+            actionMenu.onContextMenu(event);
+          }}
+        >
+          <EllipsisVertical className="h-4 w-4 shrink-0" strokeWidth={1.8} />
+        </button>
+      )}
+      <PositionedMenu
+        open={hasActionMenu && actionMenu.isOpen}
+        onOpenChange={actionMenu.onOpenChange}
+        position={actionMenu.position}
+        className="w-[180px]"
+      >
+        <PositionedMenuItem
+          icon={<Trash className="h-4 w-4 shrink-0" strokeWidth={1.8} />}
+          label={deleteAllLabel}
+          variant="destructive"
+          disabled={props.isDeleting === true}
+          onClick={(event) => {
+            actionMenu.close();
+            void props.onDeleteAll?.(event.currentTarget);
+          }}
+        />
+      </PositionedMenu>
     </div>
   );
 }
