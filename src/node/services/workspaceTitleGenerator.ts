@@ -225,9 +225,21 @@ export async function generateWorkspaceIdentity(
       // which the StreamManager enforces via stopWhen for full agent sessions.
       // For this direct streamText path, the candidate retry loop handles the
       // (rare) case where the model ignores the instruction.
+      // 15 s deadline per candidate — prevents indefinite hangs when a custom
+      // OpenAI-compatible provider stalls or doesn't support tool calls and
+      // never closes the stream.
+      //
+      // toolChoice "required": name generation is a structured extraction task,
+      // not an open-ended conversation. Without it, small or thinking-mode models
+      // (e.g. Qwen3 via LiteLLM) often reply in plain text and never call the
+      // tool. The original omission was to preserve compatibility with extended-
+      // thinking models in the main chat stream, but this call is separate and
+      // does not use thinking — forcing the tool call is safe here.
       const currentStream = streamText({
         model: modelResult.data,
         prompt: buildWorkspaceIdentityPrompt(message, conversationContext, latestUserMessage),
+        abortSignal: AbortSignal.timeout(15_000),
+        toolChoice: "required",
         tools: {
           // Defined inline so TypeScript preserves full schema inference on
           // toolResult.output (the propose_name tool is only used here).
