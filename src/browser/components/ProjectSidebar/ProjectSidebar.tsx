@@ -2482,6 +2482,15 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               // age tiers. They render as a dedicated 💤 collapsible section
                               // appended after the last age tier, mirroring how the "Older than X"
                               // tiers work but with their own expansion state.
+                              // Pre-build the project-wide id→metadata map once per project
+                              // render so each section's `partitionWorkspacesBySnooze` call can
+                              // walk parents that live in sibling sections / the unsectioned
+                              // bucket — otherwise descendants would silently slip back into the
+                              // active list when their snoozed parent is in a different slice.
+                              const projectParentLookup = new Map(
+                                projectWorkspaces.map((workspace) => [workspace.id, workspace])
+                              );
+
                               const renderAgeTiers = (
                                 workspaces: FrontendWorkspaceMetadata[],
                                 tierKeyPrefix: string,
@@ -2489,7 +2498,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 allRowsForTaskGroupCoalescing: FrontendWorkspaceMetadata[] = workspaces
                               ): React.ReactNode => {
                                 const { active: activeWorkspaces, snoozed: snoozedWorkspaces } =
-                                  partitionWorkspacesBySnooze(workspaces);
+                                  partitionWorkspacesBySnooze(workspaces, {
+                                    parentLookup: projectParentLookup,
+                                  });
                                 const { recent: topVisibleRows, buckets } =
                                   partitionWorkspacesByAge(activeWorkspaces, workspaceRecency);
                                 const isSnoozeSectionExpanded =

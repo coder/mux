@@ -978,7 +978,7 @@ describe("partitionWorkspacesBySnooze", () => {
       snoozedUntil: past(60 * 60_000),
     };
 
-    const result = partitionWorkspacesBySnooze([active, snoozed, expired], NOW);
+    const result = partitionWorkspacesBySnooze([active, snoozed, expired], { nowMs: NOW });
     expect(result.snoozed.map((w) => w.id)).toEqual(["snoozed"]);
     expect(result.active.map((w) => w.id)).toEqual(["active", "expired"]);
   });
@@ -991,8 +991,27 @@ describe("partitionWorkspacesBySnooze", () => {
     const child = createWorkspace("child", { parentWorkspaceId: "parent" });
     const standalone = createWorkspace("standalone");
 
-    const result = partitionWorkspacesBySnooze([parent, child, standalone], NOW);
+    const result = partitionWorkspacesBySnooze([parent, child, standalone], { nowMs: NOW });
     expect(result.snoozed.map((w) => w.id).sort()).toEqual(["child", "parent"]);
     expect(result.active.map((w) => w.id)).toEqual(["standalone"]);
+  });
+
+  it("walks the parentLookup when the parent lives outside the partition slice", () => {
+    // Reproduces the cross-section case: the section being rendered only
+    // contains the child, but the snoozed parent lives in another section
+    // (or the unsectioned bucket).
+    const parent: FrontendWorkspaceMetadata = {
+      ...createWorkspace("parent"),
+      snoozedUntil: future(60 * 60_000),
+    };
+    const child = createWorkspace("child", { parentWorkspaceId: "parent" });
+    const parentLookup = new Map([
+      [parent.id, parent],
+      [child.id, child],
+    ]);
+
+    const result = partitionWorkspacesBySnooze([child], { nowMs: NOW, parentLookup });
+    expect(result.snoozed.map((w) => w.id)).toEqual(["child"]);
+    expect(result.active.map((w) => w.id)).toEqual([]);
   });
 });

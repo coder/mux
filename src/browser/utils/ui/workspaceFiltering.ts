@@ -447,19 +447,38 @@ export interface SnoozePartitionResult {
  * Defined as a separate partitioner (instead of folding into
  * `partitionWorkspacesByAge`) so the existing age contract stays stable and
  * tests around recency/age inheritance don't churn. Call site walks:
- *  1. `partitionWorkspacesBySnooze(list)` → `{ active, snoozed }`
+ *  1. `partitionWorkspacesBySnooze(list, { parentLookup })` → `{ active, snoozed }`
  *  2. `partitionWorkspacesByAge(active, recency)` → existing age tiers
  *  3. Render a sibling 💤 Snoozed section using `snoozed`.
+ *
+ * `parentLookup` is an optional project-wide id→metadata map used to walk
+ * the parent chain. When the caller renders a **subset** of the project's
+ * workspaces (e.g. a single sub-project section where a child's parent lives
+ * in a sibling section or in the unsectioned bucket), the section-local
+ * `byId` would miss that parent and the inheritance silently dropped — so a
+ * sub-agent could stay visible while its parent was snoozed. Passing the
+ * full project workspaces here keeps the "descendants follow parent snooze
+ * state" contract intact regardless of which slice is being rendered.
  */
 export function partitionWorkspacesBySnooze(
   workspaces: FrontendWorkspaceMetadata[],
-  nowMs?: number
+  options?: {
+    nowMs?: number;
+    parentLookup?: ReadonlyMap<string, FrontendWorkspaceMetadata>;
+  }
 ): SnoozePartitionResult {
   if (workspaces.length === 0) {
     return { active: [], snoozed: [] };
   }
 
-  const byId = new Map(workspaces.map((workspace) => [workspace.id, workspace] as const));
+  const nowMs = options?.nowMs;
+  // Local lookup first (cheap + handles tests that only pass a single list),
+  // then fall back to the project-wide parentLookup so cross-section parents
+  // still resolve.
+  const localById = new Map(workspaces.map((workspace) => [workspace.id, workspace] as const));
+  const parentLookup = options?.parentLookup;
+  const resolveById = (id: string): FrontendWorkspaceMetadata | undefined =>
+    localById.get(id) ?? parentLookup?.get(id);
   const snoozedById = new Map<string, boolean>();
   const visiting = new Set<string>();
 
@@ -477,7 +496,7 @@ export function partitionWorkspacesBySnooze(
 
     let result = isWorkspaceSnoozed(workspace.snoozedUntil, nowMs);
     if (!result && workspace.parentWorkspaceId) {
-      const parent = byId.get(workspace.parentWorkspaceId);
+      const parent = resolveById(workspace.parentWorkspaceId);
       if (parent) {
         result = resolveSnoozed(parent);
       }
