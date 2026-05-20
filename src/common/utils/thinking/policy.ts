@@ -28,6 +28,7 @@ export type ThinkingPolicy = readonly ThinkingLevel[];
 /**
  * True when modelName is a bare Gemini Flash chat model ID using Google's
  * thinkingLevel config (minimal/low/medium/high) instead of Gemini 2.x thinkingBudget.
+ * @param modelName Provider model ID without the provider prefix (e.g. "gemini-3.5-flash", not "google:gemini-3.5-flash").
  */
 export function isGeminiFlashThinkingLevelModelName(modelName: string): boolean {
   const normalized = modelName.trim().toLowerCase();
@@ -49,7 +50,7 @@ export function isGeminiFlashThinkingLevelModelName(modelName: string): boolean 
  * - openai:gpt-5.2 / openai:gpt-5.5 → ["off", "low", "medium", "high", "xhigh"]
  * - openai:gpt-5.2-pro / openai:gpt-5.5-pro → ["medium", "high", "xhigh"] (3 levels)
  * - openai:gpt-5-pro → ["high"] (only supported level, legacy)
- * - gemini-3 Flash chat variants → ["off", "low", "medium", "high"]
+ * - Gemini Flash chat variants → ["off", "low", "medium", "high"]
  * - gemini-3 Pro variants → ["low", "high"] (thinking level only)
  * - default → ["off", "low", "medium", "high"] (standard 4 levels; xhigh is opt-in per model)
  *

@@ -858,6 +858,17 @@ describe("buildProviderOptions - Google", () => {
     });
   });
 
+  test("defensively maps unsupported Gemini 3.5 Flash max to high", () => {
+    expect(buildProviderOptions("google:gemini-3.5-flash", "max")).toEqual({
+      google: {
+        thinkingConfig: {
+          includeThoughts: true,
+          thinkingLevel: "high",
+        },
+      },
+    });
+  });
+
   test("keeps Gemini 3.1 Pro off without provider thinking config", () => {
     expect(buildProviderOptions("google:gemini-3.1-pro-preview", "off")).toEqual({
       google: {
