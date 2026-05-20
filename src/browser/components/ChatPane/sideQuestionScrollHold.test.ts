@@ -3,6 +3,7 @@ import type { DisplayedMessage } from "@/common/types/message";
 import {
   findActiveSideQuestionScrollHoldTarget,
   findSideQuestionScrollHoldTarget,
+  isSideQuestionScrollHoldBottomClamped,
 } from "./sideQuestionScrollHold";
 
 function userMessage(
@@ -203,12 +204,12 @@ describe("findSideQuestionScrollHoldTarget", () => {
     expect(result.targetHistoryId).toBeUndefined();
   });
 
-  test("keeps an active side-question hold aligned while its answer grows", () => {
+  test("keeps an active side-question hold aligned while its answer streams", () => {
     const withoutAnswer = findActiveSideQuestionScrollHoldTarget(
       [assistantMessage("main-1"), userMessage("btw-q", { isSideQuestion: true })],
       "btw-q"
     );
-    expect(withoutAnswer).toEqual({ targetHistoryId: "btw-q", keepActive: true });
+    expect(withoutAnswer).toEqual({ targetHistoryId: "btw-q", keepActive: false });
 
     const streamingAnswer = findActiveSideQuestionScrollHoldTarget(
       [
@@ -231,6 +232,91 @@ describe("findSideQuestionScrollHoldTarget", () => {
       "btw-q"
     );
     expect(settledAnswer).toEqual({ targetHistoryId: "btw-q", keepActive: false });
+  });
+
+  test("keeps an active fallback answer-row hold while the side answer streams", () => {
+    const streamingAnswer = findActiveSideQuestionScrollHoldTarget(
+      [
+        assistantMessage("main-1"),
+        assistantMessage("btw-a", { isSideAnswer: true, isStreaming: true }),
+        assistantMessage("main-1-post"),
+      ],
+      "btw-a"
+    );
+    expect(streamingAnswer).toEqual({ targetHistoryId: "btw-a", keepActive: true });
+
+    const settledAnswer = findActiveSideQuestionScrollHoldTarget(
+      [
+        assistantMessage("main-1"),
+        assistantMessage("btw-a", { isSideAnswer: true, isStreaming: false }),
+        assistantMessage("main-1-post"),
+      ],
+      "btw-a"
+    );
+    expect(settledAnswer).toEqual({ targetHistoryId: "btw-a", keepActive: false });
+  });
+
+  test("detects a side-question alignment that is still clamped to transcript bottom", () => {
+    const scrollContainer: Parameters<typeof isSideQuestionScrollHoldBottomClamped>[0] = {
+      scrollTop: 500,
+      scrollHeight: 900,
+      clientHeight: 400,
+      getBoundingClientRect: () => ({ top: 100 }),
+    };
+    const targetElement: Parameters<typeof isSideQuestionScrollHoldBottomClamped>[1] = {
+      getBoundingClientRect: () => ({ top: 280 }),
+    };
+
+    expect(isSideQuestionScrollHoldBottomClamped(scrollContainer, targetElement)).toBe(true);
+  });
+
+  test("accounts for transcript padding when detecting a clamped side-question alignment", () => {
+    const scrollContainer: Parameters<typeof isSideQuestionScrollHoldBottomClamped>[0] = {
+      scrollTop: 500,
+      scrollHeight: 900,
+      clientHeight: 400,
+      getBoundingClientRect: () => ({ top: 100 }),
+    };
+    const targetElement: Parameters<typeof isSideQuestionScrollHoldBottomClamped>[1] = {
+      getBoundingClientRect: () => ({ top: 115 }),
+    };
+
+    expect(
+      isSideQuestionScrollHoldBottomClamped(scrollContainer, targetElement, {
+        scrollportStartTop: 115,
+      })
+    ).toBe(false);
+  });
+
+  test("releases settled side-question holds once the target can align at transcript start", () => {
+    const scrollContainer: Parameters<typeof isSideQuestionScrollHoldBottomClamped>[0] = {
+      // This can still be max scrollTop when the target itself is at the top of
+      // the scrollport; geometry, not scrollTop alone, distinguishes the safe
+      // release from the bottom-clamped clutter case.
+      scrollTop: 500,
+      scrollHeight: 900,
+      clientHeight: 400,
+      getBoundingClientRect: () => ({ top: 100 }),
+    };
+    const targetElement: Parameters<typeof isSideQuestionScrollHoldBottomClamped>[1] = {
+      getBoundingClientRect: () => ({ top: 101 }),
+    };
+
+    expect(isSideQuestionScrollHoldBottomClamped(scrollContainer, targetElement)).toBe(false);
+  });
+
+  test("does not treat manual reading positions as bottom-clamped side-question holds", () => {
+    const scrollContainer: Parameters<typeof isSideQuestionScrollHoldBottomClamped>[0] = {
+      scrollTop: 300,
+      scrollHeight: 900,
+      clientHeight: 400,
+      getBoundingClientRect: () => ({ top: 100 }),
+    };
+    const targetElement: Parameters<typeof isSideQuestionScrollHoldBottomClamped>[1] = {
+      getBoundingClientRect: () => ({ top: 280 }),
+    };
+
+    expect(isSideQuestionScrollHoldBottomClamped(scrollContainer, targetElement)).toBe(false);
   });
 
   test("falls back to the answer row when the side-question user row is unavailable", () => {
