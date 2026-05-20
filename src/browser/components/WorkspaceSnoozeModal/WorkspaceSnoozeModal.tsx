@@ -14,6 +14,7 @@ import { cn } from "@/common/lib/utils";
 import {
   formatDurationShort,
   isWorkspaceSnoozed,
+  MAX_SNOOZE_MS,
   parseHumanDurationMs,
 } from "@/common/utils/snooze";
 
@@ -75,7 +76,18 @@ export function WorkspaceSnoozeModal(props: WorkspaceSnoozeModalProps) {
   // Derive the active duration token (preset or custom). When the custom
   // field has content we prefer it so the live `/snooze <X>` hint reflects
   // what the user is actually about to submit.
-  const customDurationMs = customDuration.trim() ? parseHumanDurationMs(customDuration) : null;
+  //
+  // Durations above MAX_SNOOZE_MS are treated as invalid in-modal so they
+  // never reach `new Date(Date.now() + ms).toISOString()`. Very large inputs
+  // can produce an invalid Date and a RangeError, which would bypass the
+  // normal error UI and strand the modal in an `isSaving` state. The backend
+  // also enforces the same cap as a defense-in-depth check.
+  const rawCustomDurationMs = customDuration.trim() ? parseHumanDurationMs(customDuration) : null;
+  const customDurationMs =
+    rawCustomDurationMs != null && rawCustomDurationMs <= MAX_SNOOZE_MS
+      ? rawCustomDurationMs
+      : null;
+  const customExceedsMax = rawCustomDurationMs != null && rawCustomDurationMs > MAX_SNOOZE_MS;
   const effectiveDurationToken = (() => {
     if (customDuration.trim().length > 0) {
       return customDurationMs != null ? formatDurationShort(customDurationMs) : null;
@@ -90,22 +102,42 @@ export function WorkspaceSnoozeModal(props: WorkspaceSnoozeModalProps) {
     ? `/snooze ${effectiveDurationToken}`
     : "/snooze <duration>";
   const hasInvalidCustom = customDuration.trim().length > 0 && customDurationMs == null;
-  const canSnooze = !isSaving && !hasInvalidCustom && effectiveDurationMs != null && api != null;
+  const canSnooze =
+    !isSaving &&
+    !hasInvalidCustom &&
+    effectiveDurationMs != null &&
+    Number.isFinite(effectiveDurationMs) &&
+    effectiveDurationMs > 0 &&
+    effectiveDurationMs <= MAX_SNOOZE_MS &&
+    api != null;
 
   const handleSnooze = async () => {
-    if (!effectiveDurationMs || !api) {
+    if (
+      effectiveDurationMs == null ||
+      !Number.isFinite(effectiveDurationMs) ||
+      effectiveDurationMs <= 0 ||
+      effectiveDurationMs > MAX_SNOOZE_MS ||
+      !api
+    ) {
       return;
     }
     setIsSaving(true);
     setError(null);
-    const deadline = new Date(Date.now() + effectiveDurationMs).toISOString();
-    const result = await snoozeWorkspace(props.workspaceId, deadline);
-    if (result.success) {
-      props.onOpenChange(false);
-    } else {
-      setError(result.error ?? "Failed to snooze workspace");
+    try {
+      const deadline = new Date(Date.now() + effectiveDurationMs).toISOString();
+      const result = await snoozeWorkspace(props.workspaceId, deadline);
+      if (result.success) {
+        props.onOpenChange(false);
+      } else {
+        setError(result.error ?? "Failed to snooze workspace");
+      }
+    } catch (err) {
+      // Defense-in-depth: even with the clamp above, surface any toISOString
+      // failure to the user rather than leaving `isSaving` stuck.
+      setError(err instanceof Error ? err.message : "Failed to snooze workspace");
+    } finally {
+      setIsSaving(false);
     }
-    setIsSaving(false);
   };
 
   const handleUnsnooze = async () => {
@@ -196,8 +228,14 @@ export function WorkspaceSnoozeModal(props: WorkspaceSnoozeModalProps) {
             />
             {hasInvalidCustom && (
               <p className="text-danger-soft text-xs">
-                Could not parse that duration — try a value like <code>15m</code>, <code>2h</code>,{" "}
-                <code>3d</code>, or <code>1w</code>.
+                {customExceedsMax ? (
+                  <>Snooze durations cap out at 52 weeks. Use archive for longer hides.</>
+                ) : (
+                  <>
+                    Could not parse that duration — try a value like <code>15m</code>,{" "}
+                    <code>2h</code>, <code>3d</code>, or <code>1w</code>.
+                  </>
+                )}
               </p>
             )}
           </div>

@@ -375,9 +375,11 @@ export const KEYBINDS = {
   CONFIGURE_HEARTBEAT: { key: "H", ctrl: true, shift: true },
 
   /** Open snooze modal for current workspace */
-  // macOS: Cmd+Shift+Z, Win/Linux: Ctrl+Shift+Z
-  // "Z" mnemonic for Zzz / sleep — no existing collision.
-  SNOOZE_WORKSPACE: { key: "Z", ctrl: true, shift: true },
+  // macOS: Cmd+Shift+X, Win/Linux: Ctrl+Shift+X
+  // "X" as in "eXclude from the main sidebar until later". The natural "Z =
+  // Zzz" mnemonic collides with the platform-standard Redo shortcut on macOS
+  // (Cmd+Shift+Z), and a global preventDefault would hijack Redo in editors.
+  SNOOZE_WORKSPACE: { key: "X", ctrl: true, shift: true },
 
   /** Open Command Palette */
   // VS Code-style palette
