@@ -14,7 +14,7 @@ interface BuildBashCollapsedSummaryOptions {
   args: BashToolArgs;
   result?: BashToolResult;
   isBackground: boolean;
-  mode: unknown;
+  displayMode: unknown;
 }
 
 const DURATION_TOKEN_PATTERN = String.raw`\d+(?:\.\d+)?\s*(?:ms|milliseconds?|s|secs?|seconds?|m|mins?|minutes?|h|hrs?|hours?)`;
@@ -26,19 +26,16 @@ const TRAILING_USING_PATTERN = /^(?:(.*)\s+)?using\s+(.+?)\.?$/isu;
 /** Two passes catch nested patterns, for example "doing work using cmd for 5s for 3m". */
 const MAX_SANITIZE_PASSES = 2;
 
-/**
- * Builds the collapsed bash header model without losing the raw command.
- * User rationale: the intent improves scanability, while the command lets users verify what ran.
- */
+/** User rationale: intent improves scanability, command lets users verify what ran. */
 export function buildBashCollapsedSummary(
   options: BuildBashCollapsedSummaryOptions
 ): BashCollapsedSummary {
   const command = typeof options.args.script === "string" ? options.args.script : "";
-  const mode = isToolCollapsedDisplayMode(options.mode)
-    ? options.mode
+  const displayMode = isToolCollapsedDisplayMode(options.displayMode)
+    ? options.displayMode
     : DEFAULT_TOOL_COLLAPSED_DISPLAY_MODE;
 
-  if (mode === "command") {
+  if (displayMode === "command") {
     return { kind: "command", command };
   }
 
@@ -56,11 +53,7 @@ export function buildBashCollapsedSummary(
   return { kind: "intent-command", intent, command, durationLabel };
 }
 
-/**
- * Normalizes model-supplied intent for display and removes suffixes Mux appends itself.
- * Models may parrot the UI pattern despite the schema guidance, so strip trailing
- * `using <command>` and `for <duration>` before React renders those pieces.
- */
+/** Models may echo `using <command>` and `for <duration>` despite schema guidance, so strip those since Mux appends them. */
 export function sanitizeModelIntent(rawIntent: unknown, command: string): string | undefined {
   if (typeof rawIntent !== "string") {
     return undefined;

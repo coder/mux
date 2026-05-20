@@ -971,7 +971,7 @@ export const TOOL_DEFINITIONS = {
           .string()
           .nullish()
           .describe(
-            "Short user-facing purpose for this command, shown next to the command in collapsed chat. " +
+            "Optional. Short user-facing purpose for this command, shown next to the command in collapsed chat. " +
               "Use a present-participle phrase in plain English, under 100 characters. " +
               "Do not repeat the command or include duration, because Mux appends those. " +
               "Examples: 'Running the unit tests', 'Checking repository state', 'Inspecting build output'."

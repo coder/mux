@@ -29,7 +29,7 @@ describe("buildBashCollapsedSummary", () => {
         args: createArgs({ model_intent: "Waiting for the dev instance to start" }),
         result: completedResult,
         isBackground: false,
-        mode: "command",
+        displayMode: "command",
       })
     ).toEqual({ kind: "command", command });
   });
@@ -40,7 +40,7 @@ describe("buildBashCollapsedSummary", () => {
         args: createArgs({ model_intent: "waiting for the dev instance to start" }),
         result: completedResult,
         isBackground: false,
-        mode: "intent-command",
+        displayMode: "intent-command",
       })
     ).toEqual({
       kind: "intent-command",
@@ -55,7 +55,7 @@ describe("buildBashCollapsedSummary", () => {
       buildBashCollapsedSummary({
         args: createArgs(),
         isBackground: false,
-        mode: "intent-command",
+        displayMode: "intent-command",
       })
     ).toEqual({ kind: "command", command });
 
@@ -63,7 +63,15 @@ describe("buildBashCollapsedSummary", () => {
       buildBashCollapsedSummary({
         args: createArgs({ model_intent: "   " }),
         isBackground: false,
-        mode: "intent-command",
+        displayMode: "intent-command",
+      })
+    ).toEqual({ kind: "command", command });
+
+    expect(
+      buildBashCollapsedSummary({
+        args: createArgs({ model_intent: null }),
+        isBackground: false,
+        displayMode: "intent-command",
       })
     ).toEqual({ kind: "command", command });
 
@@ -71,7 +79,7 @@ describe("buildBashCollapsedSummary", () => {
       buildBashCollapsedSummary({
         args: createArgs({ model_intent: command.toUpperCase() }),
         isBackground: false,
-        mode: "intent-command",
+        displayMode: "intent-command",
       })
     ).toEqual({ kind: "command", command });
   });
@@ -89,7 +97,7 @@ describe("buildBashCollapsedSummary", () => {
           backgroundProcessId: "proc-1",
         },
         isBackground: true,
-        mode: "intent-command",
+        displayMode: "intent-command",
       })
     ).toEqual({
       kind: "intent-command",

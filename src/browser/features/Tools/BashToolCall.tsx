@@ -122,7 +122,7 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
     args,
     result,
     isBackground,
-    mode: rawToolCollapsedDisplayMode,
+    displayMode: rawToolCollapsedDisplayMode,
   });
   const isIntentCommandSummary = bashCollapsedSummary.kind === "intent-command";
 
@@ -169,9 +169,12 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
         <ExpandIcon expanded={expanded}>▶</ExpandIcon>
         <ToolIcon toolName="bash" />
         {bashCollapsedSummary.kind === "intent-command" ? (
-          <span className="text-text max-w-96 min-w-0 truncate">
-            {bashCollapsedSummary.intent} <span className="text-muted">using</span>{" "}
-            <span className="font-monospace">{bashCollapsedSummary.command}</span>
+          <span className="text-text flex max-w-96 min-w-0 items-baseline gap-1">
+            <span className="max-w-48 min-w-0 truncate">{bashCollapsedSummary.intent}</span>
+            <span className="text-muted shrink-0">using</span>
+            <span className="font-monospace max-w-48 min-w-0 truncate">
+              {bashCollapsedSummary.command}
+            </span>
           </span>
         ) : (
           <span className="text-text font-monospace max-w-96 truncate">

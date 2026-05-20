@@ -281,15 +281,26 @@ describe("GeneralSection", () => {
     return trigger;
   }
 
-  function chooseSelectOption(
+  async function chooseSelectOption(
     view: ReturnType<typeof render>,
     label: string,
     optionText: string
-  ): void {
+  ): Promise<void> {
     const trigger = getSelectTrigger(view, label);
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
     const portalRoot = view.baseElement.ownerDocument.body;
-    fireEvent.click(within(portalRoot).getByText(optionText));
+    const option = await waitFor(() => {
+      const button = within(portalRoot)
+        .getAllByText(optionText)
+        .find(
+          (element): element is HTMLButtonElement => element instanceof window.HTMLButtonElement
+        );
+      if (!button) {
+        throw new Error(`Could not find select option ${optionText}`);
+      }
+      return button;
+    });
+    fireEvent.click(option);
   }
 
   function readToolCollapsedDisplayMode(): ToolCollapsedDisplayMode | null {
@@ -304,9 +315,11 @@ describe("GeneralSection", () => {
       "Intent and command"
     );
 
-    chooseSelectOption(view, "Collapsed bash summaries", "Command");
+    await chooseSelectOption(view, "Collapsed bash summaries", "Command");
 
-    expect(readToolCollapsedDisplayMode()).toBe("command");
+    await waitFor(() => {
+      expect(readToolCollapsedDisplayMode()).toBe("command");
+    });
     await waitFor(() => {
       expect(getSelectTrigger(view, "Worktree archive behavior").textContent).toContain(
         "Keep checkout"
@@ -357,7 +370,7 @@ describe("GeneralSection", () => {
       );
     });
 
-    chooseSelectOption(view, "Worktree archive behavior", "Snapshot and delete");
+    await chooseSelectOption(view, "Worktree archive behavior", "Snapshot and delete");
 
     await waitFor(() => {
       expect(updateCoderPrefsMock).toHaveBeenCalledWith({
@@ -403,7 +416,7 @@ describe("GeneralSection", () => {
       );
     });
 
-    chooseSelectOption(view, "Worktree archive behavior", "Delete checkout");
+    await chooseSelectOption(view, "Worktree archive behavior", "Delete checkout");
 
     await waitFor(() => {
       expect(updateCoderPrefsMock).toHaveBeenCalledTimes(1);
@@ -413,7 +426,7 @@ describe("GeneralSection", () => {
       });
     });
 
-    chooseSelectOption(view, "Worktree archive behavior", "Snapshot and delete");
+    await chooseSelectOption(view, "Worktree archive behavior", "Snapshot and delete");
     expect(updateCoderPrefsMock).toHaveBeenCalledTimes(1);
 
     resolveFirstUpdate?.();
@@ -461,7 +474,7 @@ describe("GeneralSection", () => {
       expect(trigger.hasAttribute("disabled")).toBe(false);
     });
 
-    chooseSelectOption(view, "Worktree archive behavior", "Delete checkout");
+    await chooseSelectOption(view, "Worktree archive behavior", "Delete checkout");
 
     await waitFor(() => {
       expect(updateCoderPrefsMock).toHaveBeenCalledWith({
