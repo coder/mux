@@ -466,7 +466,8 @@ describe("getThinkingPolicyForModel", () => {
 });
 
 describe("isGeminiFlashThinkingLevelModelName", () => {
-  test("does not classify Gemini 3.5 Flash Lite as a Flash thinking-level chat model", () => {
+  test("does not classify Gemini Flash Lite variants as Flash thinking-level chat models", () => {
+    expect(isGeminiFlashThinkingLevelModelName("gemini-3-flash-lite")).toBe(false);
     expect(isGeminiFlashThinkingLevelModelName("gemini-3.5-flash-lite")).toBe(false);
   });
 });
