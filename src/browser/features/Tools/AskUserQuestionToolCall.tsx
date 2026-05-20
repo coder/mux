@@ -623,7 +623,7 @@ export function AskUserQuestionToolCall(props: {
                     {isComplete && !isOnSummary && <Check aria-hidden="true" className="h-3 w-3" />}
                   </button>
                   {totalCount > 0 && (
-                    <span className="text-muted ml-auto text-[10px] tabular-nums">
+                    <span className="text-muted counter-nums ml-auto text-[10px]">
                       {answeredCount}/{totalCount} answered
                     </span>
                   )}
