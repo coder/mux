@@ -528,7 +528,7 @@ export function GeneralSection() {
 
           <div className="flex items-center justify-between gap-4">
             <div className="flex-1">
-              <div className="text-foreground text-sm">Collapsed tool summaries</div>
+              <div className="text-foreground text-sm">Collapsed bash summaries</div>
               <div className="text-muted text-xs">
                 Choose whether collapsed bash tools show the raw command or the model&apos;s intent
                 plus the command.

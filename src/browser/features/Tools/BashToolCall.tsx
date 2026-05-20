@@ -172,25 +172,27 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
           <span className="text-text max-w-96 min-w-0 truncate">
             {bashCollapsedSummary.intent} <span className="text-muted">using</span>{" "}
             <span className="font-monospace">{bashCollapsedSummary.command}</span>
-            {bashCollapsedSummary.durationLabel ? (
-              <>
-                {" "}
-                <span className="text-muted">for</span> {bashCollapsedSummary.durationLabel}
-              </>
-            ) : (
-              !isBackground && (
-                <ElapsedTimeDisplay
-                  startedAt={startedAt}
-                  isActive={isPending}
-                  prefix="for "
-                  separator=" "
-                />
-              )
-            )}
           </span>
         ) : (
           <span className="text-text font-monospace max-w-96 truncate">
             {bashCollapsedSummary.command}
+          </span>
+        )}
+        {!isBackground && isIntentCommandSummary && (
+          <span
+            className={cn(
+              "ml-2 text-[10px] tabular-nums whitespace-nowrap [@container(max-width:500px)]:hidden",
+              isPending ? "text-pending" : "text-text-secondary"
+            )}
+          >
+            {bashCollapsedSummary.durationLabel ? (
+              <>for {bashCollapsedSummary.durationLabel}</>
+            ) : (
+              <>
+                timeout: {args.timeout_secs ?? BASH_DEFAULT_TIMEOUT_SECS}s
+                <ElapsedTimeDisplay startedAt={startedAt} isActive={isPending} prefix="for " />
+              </>
+            )}
           </span>
         )}
         {isBackground && backgroundProcessId && workspaceId && (

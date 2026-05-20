@@ -3,6 +3,7 @@ import {
   DEFAULT_TOOL_COLLAPSED_DISPLAY_MODE,
   isToolCollapsedDisplayMode,
 } from "@/common/constants/storage";
+import { capitalize } from "@/common/utils/capitalize";
 import { formatDuration } from "@/common/utils/formatDuration";
 
 export type BashCollapsedSummary =
@@ -21,8 +22,14 @@ const TRAILING_DURATION_PATTERN = new RegExp(
   String.raw`\s+for\s+${DURATION_TOKEN_PATTERN}(?:\s+${DURATION_TOKEN_PATTERN})?\.?$`,
   "iu"
 );
-const TRAILING_USING_PATTERN = /\s+using\s+(.+?)\.?$/iu;
+const TRAILING_USING_PATTERN = /^(?:(.*)\s+)?using\s+(.+?)\.?$/isu;
+/** Two passes catch nested patterns, for example "doing work using cmd for 5s for 3m". */
+const MAX_SANITIZE_PASSES = 2;
 
+/**
+ * Builds the collapsed bash header model without losing the raw command.
+ * User rationale: the intent improves scanability, while the command lets users verify what ran.
+ */
 export function buildBashCollapsedSummary(
   options: BuildBashCollapsedSummaryOptions
 ): BashCollapsedSummary {
@@ -36,7 +43,7 @@ export function buildBashCollapsedSummary(
   }
 
   const intent = sanitizeModelIntent(options.args.model_intent, command);
-  if (!intent) {
+  if (!intent || normalizeForComparison(intent) === normalizeForComparison(command)) {
     return { kind: "command", command };
   }
 
@@ -45,10 +52,15 @@ export function buildBashCollapsedSummary(
       ? formatDuration(options.result.wall_duration_ms, "decimal")
       : undefined;
 
-  // Keep the raw command in the summary so users can audit what actually ran.
+  // So users can verify what ran.
   return { kind: "intent-command", intent, command, durationLabel };
 }
 
+/**
+ * Normalizes model-supplied intent for display and removes suffixes Mux appends itself.
+ * Models may parrot the UI pattern despite the schema guidance, so strip trailing
+ * `using <command>` and `for <duration>` before React renders those pieces.
+ */
 export function sanitizeModelIntent(rawIntent: unknown, command: string): string | undefined {
   if (typeof rawIntent !== "string") {
     return undefined;
@@ -59,7 +71,7 @@ export function sanitizeModelIntent(rawIntent: unknown, command: string): string
     return undefined;
   }
 
-  for (let i = 0; i < 2; i++) {
+  for (let i = 0; i < MAX_SANITIZE_PASSES; i++) {
     const before = intent;
     intent = stripTrailingDuration(intent);
     intent = stripTrailingUsingCommand(intent, command);
@@ -74,7 +86,7 @@ export function sanitizeModelIntent(rawIntent: unknown, command: string): string
     return undefined;
   }
 
-  return capitalizeFirstCharacter(intent);
+  return capitalize(intent);
 }
 
 function stripTrailingDuration(intent: string): string {
@@ -87,12 +99,13 @@ function stripTrailingUsingCommand(intent: string, command: string): string {
     return intent;
   }
 
-  const candidate = stripWrappingQuotes(match[1] ?? "");
+  const prefix = match[1]?.trim() ?? "";
+  const candidate = stripWrappingQuotes(match[2] ?? "");
   if (normalizeForComparison(candidate) !== normalizeForComparison(command)) {
     return intent;
   }
 
-  return intent.slice(0, match.index).trim();
+  return prefix;
 }
 
 function stripWrappingQuotes(value: string): string {
@@ -103,8 +116,4 @@ function stripWrappingQuotes(value: string): string {
 
 function normalizeForComparison(value: string): string {
   return value.trim().replace(/\s+/gu, " ").toLocaleLowerCase();
-}
-
-function capitalizeFirstCharacter(value: string): string {
-  return value.length > 0 ? value[0].toLocaleUpperCase() + value.slice(1) : value;
 }

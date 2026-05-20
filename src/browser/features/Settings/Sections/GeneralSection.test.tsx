@@ -300,11 +300,11 @@ describe("GeneralSection", () => {
   test("persists the selected collapsed tool summary mode", () => {
     const { view } = renderGeneralSection();
 
-    expect(getSelectTrigger(view, "Collapsed tool summaries").textContent).toContain(
+    expect(getSelectTrigger(view, "Collapsed bash summaries").textContent).toContain(
       "Intent and command"
     );
 
-    chooseSelectOption(view, "Collapsed tool summaries", "Command");
+    chooseSelectOption(view, "Collapsed bash summaries", "Command");
 
     expect(readToolCollapsedDisplayMode()).toBe("command");
   });
@@ -314,7 +314,7 @@ describe("GeneralSection", () => {
 
     const { view } = renderGeneralSection();
 
-    expect(getSelectTrigger(view, "Collapsed tool summaries").textContent).toContain(
+    expect(getSelectTrigger(view, "Collapsed bash summaries").textContent).toContain(
       "Intent and command"
     );
   });

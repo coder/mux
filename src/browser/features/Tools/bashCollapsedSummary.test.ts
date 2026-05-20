@@ -50,7 +50,7 @@ describe("buildBashCollapsedSummary", () => {
     });
   });
 
-  test("falls back to the command when intent is missing or blank", () => {
+  test("falls back to the command when intent is missing, blank, or repeats the command", () => {
     expect(
       buildBashCollapsedSummary({
         args: createArgs(),
@@ -62,6 +62,14 @@ describe("buildBashCollapsedSummary", () => {
     expect(
       buildBashCollapsedSummary({
         args: createArgs({ model_intent: "   " }),
+        isBackground: false,
+        mode: "intent-command",
+      })
+    ).toEqual({ kind: "command", command });
+
+    expect(
+      buildBashCollapsedSummary({
+        args: createArgs({ model_intent: command.toUpperCase() }),
         isBackground: false,
         mode: "intent-command",
       })
@@ -105,5 +113,22 @@ describe("sanitizeModelIntent", () => {
     expect(sanitizeModelIntent("Checking output using cat /tmp/develop.log", command)).toBe(
       "Checking output using cat /tmp/develop.log"
     );
+  });
+
+  test("strips the last redundant using clause when intent text also contains using", () => {
+    expect(
+      sanitizeModelIntent(
+        "checking health using the API using curl localhost:8080/health",
+        "curl localhost:8080/health"
+      )
+    ).toBe("Checking health using the API");
+  });
+
+  test("returns undefined when suffix stripping removes the whole intent", () => {
+    expect(sanitizeModelIntent("using `ls`", "ls")).toBeUndefined();
+  });
+
+  test("runs a second sanitize pass when one strip exposes another suffix", () => {
+    expect(sanitizeModelIntent("doing work using ls for 5s for 10s", "ls")).toBe("Doing work");
   });
 });

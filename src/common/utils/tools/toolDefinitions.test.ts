@@ -156,6 +156,21 @@ describe("TOOL_DEFINITIONS", () => {
     }
   });
 
+  it("accepts bash tool calls with null model_intent", () => {
+    const parsed = TOOL_DEFINITIONS.bash.schema.safeParse({
+      script: "ls",
+      model_intent: null,
+      timeout_secs: 60,
+      run_in_background: false,
+      display_name: "Test",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.model_intent).toBeNull();
+    }
+  });
+
   it("prefers script when both script and command are provided", () => {
     const parsed = TOOL_DEFINITIONS.bash.schema.safeParse({
       script: "echo hi",
