@@ -468,6 +468,69 @@ export async function processSlashCommand(
     }
   }
 
+  if (parsed.type === "snooze-set") {
+    const activeClient = requireClient();
+    if (!activeClient) {
+      return { clearInput: false, toastShown: true };
+    }
+
+    if (!context.workspaceId) {
+      setToast({
+        id: Date.now().toString(),
+        type: "error",
+        message: "No workspace selected",
+      });
+      return { clearInput: false, toastShown: true };
+    }
+
+    setInput("");
+
+    try {
+      // Convert duration→deadline at command time so the persisted ISO
+      // timestamp can drive the sidebar's snooze partition uniformly across
+      // restarts (server compute the same `Date.now() + duration` clock).
+      //
+      // The slash registry already rejects unparseable + over-MAX_SNOOZE_MS
+      // values; this redundant guard prevents a RangeError from
+      // `toISOString()` if a future code path ever hands us a stale value.
+      const snoozedUntil =
+        parsed.durationMs == null || !Number.isFinite(parsed.durationMs)
+          ? null
+          : new Date(Date.now() + parsed.durationMs).toISOString();
+      const result = await activeClient.workspace.snooze({
+        workspaceId: context.workspaceId,
+        snoozedUntil,
+      });
+
+      if (!result.success) {
+        setToast({
+          id: Date.now().toString(),
+          type: "error",
+          message: result.error ?? "Failed to update snooze",
+        });
+        return { clearInput: false, toastShown: true };
+      }
+
+      trackCommandUsed("snooze");
+      setToast({
+        id: Date.now().toString(),
+        type: "success",
+        message:
+          parsed.durationMs == null
+            ? "Snooze cleared"
+            : "Workspace snoozed — find it under the Snoozed section",
+      });
+      return { clearInput: true, toastShown: true };
+    } catch (error) {
+      setToast({
+        id: Date.now().toString(),
+        type: "error",
+        message: error instanceof Error ? error.message : "Failed to update snooze",
+      });
+      return { clearInput: false, toastShown: true };
+    }
+  }
+
   if (parsed.type === "vim-toggle") {
     setInput("");
     setVimEnabled((prev) => !prev);
