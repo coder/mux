@@ -167,7 +167,7 @@ export function queueAdditionalSystemContextSave(
  * soon as it mounts, and the focus request remains visible because we replay
  * it with a small generation counter.
  */
-let pendingFocusGeneration = new Map<string, number>();
+const pendingFocusGeneration = new Map<string, number>();
 
 export function requestAdditionalSystemContextFocus(workspaceId: string): void {
   const next = (pendingFocusGeneration.get(workspaceId) ?? 0) + 1;
@@ -198,11 +198,6 @@ export function subscribeAdditionalSystemContextFocus(
 
 export function getAdditionalSystemContextFocusGeneration(workspaceId: string): number {
   return pendingFocusGeneration.get(workspaceId) ?? 0;
-}
-
-/** Test-only: reset focus generation counters between scenarios. */
-export function __resetAdditionalSystemContextFocusForTests(): void {
-  pendingFocusGeneration = new Map();
 }
 
 export function useAdditionalSystemContextHydrated(workspaceId: string): boolean {
