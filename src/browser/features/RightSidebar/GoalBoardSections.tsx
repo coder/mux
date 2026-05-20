@@ -128,6 +128,44 @@ function SectionShell(props: SectionShellProps) {
   );
 }
 
+/**
+ * Bordered chip-style button for per-row actions (Edit / Promote / Remove /
+ * Archive / Revive). Matches the visual weight of the Cancel / Queue-goal
+ * controls below so each row reads as a real button row, not a strip of
+ * text links — and so the affordance is obvious on first glance without
+ * relying on hover state. Tone tints the hover color/background:
+ *   • neutral     — Edit / Archive / Revive (Inbox-style moves)
+ *   • positive    — Promote (upcoming → active)
+ *   • destructive — Remove (drops the goal from the board)
+ */
+type RowActionTone = "neutral" | "positive" | "destructive";
+
+interface RowActionButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+  tone?: RowActionTone;
+}
+
+const ROW_ACTION_TONE_CLASS: Record<RowActionTone, string> = {
+  neutral: "text-muted hover:text-foreground hover:bg-surface-tertiary",
+  positive: "text-muted hover:text-success hover:bg-success/10 hover:border-success/40",
+  destructive:
+    "text-muted hover:text-danger-soft hover:bg-danger-soft/10 hover:border-danger-soft/40",
+};
+
+function RowActionButton(props: RowActionButtonProps) {
+  const { tone = "neutral", className, type, ...rest } = props;
+  return (
+    <button
+      type={type ?? "button"}
+      className={cn(
+        "border-border-light inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs transition-colors",
+        ROW_ACTION_TONE_CLASS[tone],
+        className
+      )}
+      {...rest}
+    />
+  );
+}
+
 interface UpcomingSectionProps {
   workspaceId: string;
   entries: GoalBoardEntry[];
@@ -317,32 +355,28 @@ function UpcomingRow(props: UpcomingRowProps) {
       <span className="text-muted counter-nums shrink-0 text-xs">
         {props.goal.budgetCents == null ? "no budget" : formatGoalCents(props.goal.budgetCents)}
       </span>
-      <div className="flex items-center gap-1">
-        <button
-          type="button"
-          className="text-muted hover:text-foreground inline-flex items-center gap-0.5 text-xs"
+      <div className="flex items-center gap-1.5">
+        <RowActionButton
           aria-label={`Edit ${props.goal.objective}`}
           onClick={() => setIsEditing(true)}
         >
           <Pencil className="h-3 w-3" aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          className="text-muted hover:text-success inline-flex items-center gap-0.5 text-xs"
+        </RowActionButton>
+        <RowActionButton
+          tone="positive"
           aria-label={`Promote ${props.goal.objective}`}
           onClick={() => void props.onPromote()}
         >
           <Play className="h-3 w-3" aria-hidden="true" />
           Promote
-        </button>
-        <button
-          type="button"
-          className="text-muted hover:text-danger-soft inline-flex items-center gap-0.5 text-xs"
+        </RowActionButton>
+        <RowActionButton
+          tone="destructive"
           aria-label={`Remove ${props.goal.objective}`}
           onClick={() => void props.onArchive()}
         >
           <Trash2 className="h-3 w-3" aria-hidden="true" />
-        </button>
+        </RowActionButton>
       </div>
     </div>
   );
@@ -510,15 +544,13 @@ function CompletedSection(props: CompletedSectionProps) {
             <span className="text-muted counter-nums shrink-0 text-xs">
               {formatGoalCents(entry.goal.costCents)}
             </span>
-            <button
-              type="button"
-              className="text-muted hover:text-foreground inline-flex items-center gap-0.5 text-xs"
+            <RowActionButton
               aria-label={`Archive ${entry.goal.objective}`}
               onClick={() => void archive(entry.goal.goalId)}
             >
               <Inbox className="h-3 w-3" aria-hidden="true" />
               Archive
-            </button>
+            </RowActionButton>
           </div>
         ))}
         {error && (
@@ -562,15 +594,13 @@ function ArchivedSection(props: ArchivedSectionProps) {
             className="border-border-light bg-surface-primary flex items-center gap-2 rounded-md border px-2 py-1.5 text-sm"
           >
             <span className="text-foreground line-clamp-1 flex-1">{entry.goal.objective}</span>
-            <button
-              type="button"
-              className="text-muted hover:text-foreground inline-flex items-center gap-0.5 text-xs"
+            <RowActionButton
               aria-label={`Revive ${entry.goal.objective}`}
               onClick={() => void revive(entry.goal.goalId)}
             >
               <ArchiveRestore className="h-3 w-3" aria-hidden="true" />
               Revive
-            </button>
+            </RowActionButton>
           </div>
         ))}
         {error && (
