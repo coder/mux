@@ -9,6 +9,10 @@ import {
   AGENT_STATUS_MAX_MESSAGE_CHARS,
   AGENT_STATUS_MAX_TRAILING_MESSAGES,
   AGENT_STATUS_MAX_TRANSCRIPT_TOKENS,
+  AGENT_STATUS_PROVIDER_FAILURE_ACTIVE_COOLDOWN_MS,
+  AGENT_STATUS_PROVIDER_FAILURE_IDLE_COOLDOWN_MS,
+  AGENT_STATUS_PROVIDER_FAILURE_MAX_COOLDOWN_MS,
+  AGENT_STATUS_PROVIDER_FAILURE_RETRY_ATTEMPTS,
   AGENT_STATUS_TICK_INTERVAL_MS,
 } from "@/constants/agentStatus";
 import type { Config } from "@/node/config";
@@ -41,8 +45,6 @@ interface State {
    * changes. That covers:
    *   - successful persists (Ok result, status written),
    *   - post-generation placeholder rejection,
-   *   - generation failures that reached the provider (model refused tool,
-   *     rate limit, persistent provider error, etc.).
    *
    * Pre-provider failures (no API key, OAuth not connected, provider
    * disabled, model not available, policy denied — anything that fails
@@ -70,6 +72,12 @@ interface State {
    * normal idle/active cadence has not elapsed yet.
    */
   lastObservedRecency: number | null;
+  /** Transcript+streaming hash that last hit a retryable provider-side failure. */
+  lastProviderFailureHash: string | null;
+  /** Number of consecutive provider-side failures for lastProviderFailureHash. */
+  providerFailureCount: number;
+  /** Earliest wall-clock time to retry lastProviderFailureHash after cooldown. */
+  providerFailureRetryAfter: number | null;
   /** Whether a generation is currently in flight. */
   inFlight: boolean;
 }
@@ -260,6 +268,7 @@ export class AgentStatusService {
       const settleOnTranscript = () => {
         markRecencyObserved();
         state.lastInputHash = dedupHash;
+        resetProviderFailureTracking(state);
       };
 
       if (
@@ -306,9 +315,23 @@ export class AgentStatusService {
         markRecencyObserved();
         return;
       }
+      if (isWaitingForProviderFailureCooldown(state, dedupHash, this.clock())) {
+        // Provider-side failures are not permanently settled: after the
+        // immediate retry budget, retry on a cost-aware cooldown so transient
+        // outages can still recover without a new chat turn.
+        markRecencyObserved();
+        return;
+      }
 
       const candidates = await this.workspaceService.getWorkspaceTitleModelCandidates(workspaceId);
-      if (candidates.length === 0) return;
+      if (candidates.length === 0) {
+        // No configured small-model path is a config state, not a transcript result.
+        // Consume recency priority so one workspace cannot starve the scheduler, but
+        // keep the dedup hash open so a later config/provider change can recover.
+        resetProviderFailureTracking(state);
+        markRecencyObserved();
+        return;
+      }
 
       // Skip the expensive provider call if stop() fired during any of the
       // earlier awaits (transcript build, candidates fetch). The generator
@@ -322,22 +345,33 @@ export class AgentStatusService {
       // await boundary.
       if (this.stopped) return;
       if (!result.success) {
-        // Only advance the dedup hash when at least one candidate actually
-        // reached the provider. If every candidate failed during model
-        // construction (no API key, OAuth not connected, provider disabled,
-        // model not available, policy denied, etc.), the failure is about
-        // the user's *config* rather than the transcript — caching it would
-        // permanently skip this workspace until they happen to send another
-        // message, even after they fix credentials. Post-provider failures
-        // (model refused tool, rate limit, persistent provider error) are
-        // properties of the transcript and should defer until the chat
-        // changes.
+        // Do not let provider-side misses freeze the sidebar until the next
+        // chat turn. Models occasionally ignore propose_status or hit transient
+        // provider failures for an otherwise valid transcript. Retry a small
+        // number of times immediately, then switch to a cost-aware cooldown so
+        // the same transcript still eventually recovers.
         if (result.error.reachedProvider) {
-          log.debug(
-            "AgentStatusService: status generation failed at provider; deferring until transcript changes",
-            { workspaceId, error: result.error.error }
-          );
-          settleOnTranscript();
+          const failureAttempt = recordProviderFailureAttempt(state, dedupHash);
+          if (hasProviderFailureRetryBudget(failureAttempt)) {
+            log.debug(
+              "AgentStatusService: status generation failed at provider; will retry on cadence",
+              {
+                workspaceId,
+                error: result.error.error,
+                failureAttempt,
+                retryBudget: AGENT_STATUS_PROVIDER_FAILURE_RETRY_ATTEMPTS,
+              }
+            );
+            markRecencyObserved();
+          } else {
+            const retryDelayMs = computeProviderFailureRetryDelayMs(failureAttempt, streaming);
+            state.providerFailureRetryAfter = this.clock() + retryDelayMs;
+            log.debug(
+              "AgentStatusService: status generation failed at provider; cooling down before retry",
+              { workspaceId, error: result.error.error, failureAttempt, retryDelayMs }
+            );
+            markRecencyObserved();
+          }
         } else {
           log.debug(
             "AgentStatusService: status generation failed before reaching provider; will retry on cadence",
@@ -347,6 +381,7 @@ export class AgentStatusService {
           // fixes should still retry the same transcript, but a misconfigured
           // workspace must not retain permanent recency-advanced priority and
           // starve other workspaces under max concurrency 1.
+          resetProviderFailureTracking(state);
           markRecencyObserved();
         }
         return;
@@ -414,6 +449,9 @@ export class AgentStatusService {
         lastInputHash: null,
         lastSeenInputHash: null,
         lastObservedRecency: null,
+        lastProviderFailureHash: null,
+        providerFailureCount: 0,
+        providerFailureRetryAfter: null,
         inFlight: false,
       };
       this.tracked.set(id, state);
@@ -595,6 +633,50 @@ function isRecentRecencyAheadOfHistory(
     (state.lastSeenInputHash === null || state.lastSeenInputHash === inputHash) &&
     observedRecency !== null &&
     now - observedRecency < historyCatchupWindowMs
+  );
+}
+
+function resetProviderFailureTracking(state: State): void {
+  state.lastProviderFailureHash = null;
+  state.providerFailureCount = 0;
+  state.providerFailureRetryAfter = null;
+}
+
+function recordProviderFailureAttempt(state: State, inputHash: string): number {
+  if (state.lastProviderFailureHash !== inputHash) {
+    state.lastProviderFailureHash = inputHash;
+    state.providerFailureCount = 0;
+    state.providerFailureRetryAfter = null;
+  }
+  state.providerFailureCount += 1;
+  state.providerFailureRetryAfter = null;
+  return state.providerFailureCount;
+}
+
+function hasProviderFailureRetryBudget(attempt: number): boolean {
+  return attempt <= AGENT_STATUS_PROVIDER_FAILURE_RETRY_ATTEMPTS;
+}
+
+function isWaitingForProviderFailureCooldown(
+  state: State,
+  inputHash: string,
+  now: number
+): boolean {
+  return (
+    state.lastProviderFailureHash === inputHash &&
+    state.providerFailureRetryAfter !== null &&
+    now < state.providerFailureRetryAfter
+  );
+}
+
+function computeProviderFailureRetryDelayMs(attempt: number, streaming: boolean): number {
+  const baseDelay = streaming
+    ? AGENT_STATUS_PROVIDER_FAILURE_ACTIVE_COOLDOWN_MS
+    : AGENT_STATUS_PROVIDER_FAILURE_IDLE_COOLDOWN_MS;
+  const exhaustedAttempts = Math.max(0, attempt - AGENT_STATUS_PROVIDER_FAILURE_RETRY_ATTEMPTS - 1);
+  return Math.min(
+    baseDelay * 2 ** exhaustedAttempts,
+    AGENT_STATUS_PROVIDER_FAILURE_MAX_COOLDOWN_MS
   );
 }
 

@@ -28,6 +28,24 @@ export const AGENT_STATUS_IDLE_UNFOCUSED_INTERVAL_MS = 2 * 60 * 1000;
  */
 export const AGENT_STATUS_TICK_INTERVAL_MS = 10 * 1000;
 
+/**
+ * Retry budget for provider-side status generation failures on an unchanged
+ * transcript. A single missed tool call or transient provider hiccup should not
+ * freeze the sidebar until the next chat turn. After that, retry on a bounded
+ * cooldown so transient provider outages still recover without hammering the
+ * small-model path indefinitely.
+ */
+export const AGENT_STATUS_PROVIDER_FAILURE_RETRY_ATTEMPTS = 2;
+
+/**
+ * Cooldowns after the immediate provider-failure retry budget is exhausted.
+ * Active streams recover faster because visible status freshness matters most;
+ * idle workspaces back off harder because the transcript is not changing.
+ */
+export const AGENT_STATUS_PROVIDER_FAILURE_ACTIVE_COOLDOWN_MS = 60 * 1000;
+export const AGENT_STATUS_PROVIDER_FAILURE_IDLE_COOLDOWN_MS = 5 * 60 * 1000;
+export const AGENT_STATUS_PROVIDER_FAILURE_MAX_COOLDOWN_MS = 30 * 60 * 1000;
+
 /** Token budget for the trailing chat-transcript window we feed the model. */
 export const AGENT_STATUS_MAX_TRANSCRIPT_TOKENS = 8000;
 
