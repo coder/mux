@@ -220,8 +220,32 @@ export function PortableDesktopExperimentWarning() {
   );
 }
 
-type BindHostMode = "localhost" | "all" | "custom";
+const TAILSCALE_BIND_HOST_MODE_PREFIX = "tailscale:";
+
+type BindHostMode =
+  | "localhost"
+  | "all"
+  | "custom"
+  | `${typeof TAILSCALE_BIND_HOST_MODE_PREFIX}${string}`;
 type PortMode = "random" | "fixed";
+
+function getTailscaleBindHostMode(address: string): BindHostMode {
+  return `${TAILSCALE_BIND_HOST_MODE_PREFIX}${address}`;
+}
+
+function getTailscaleBindHostAddress(mode: BindHostMode): string | null {
+  if (!mode.startsWith(TAILSCALE_BIND_HOST_MODE_PREFIX)) {
+    return null;
+  }
+
+  const address = mode.slice(TAILSCALE_BIND_HOST_MODE_PREFIX.length).trim();
+  return address ? address : null;
+}
+
+function formatTailscaleBindHostLabel(host: ApiServerStatus["tailscaleBindHosts"][number]): string {
+  const protocol = host.family === "IPv6" ? "IPv6" : "IPv4";
+  return `Tailscale ${host.interfaceName} (${host.address}, ${protocol})`;
+}
 
 function ConfigurableBindUrlControls() {
   const enabled = useExperimentValue(EXPERIMENT_IDS.CONFIGURABLE_BIND_URL);
@@ -250,8 +274,14 @@ function ConfigurableBindUrlControls() {
       setHostMode("all");
       setCustomHost("");
     } else {
-      setHostMode("custom");
-      setCustomHost(configuredHost);
+      const tailscaleHost = next.tailscaleBindHosts.find((host) => host.address === configuredHost);
+      if (tailscaleHost) {
+        setHostMode(getTailscaleBindHostMode(tailscaleHost.address));
+        setCustomHost("");
+      } else {
+        setHostMode("custom");
+        setCustomHost(configuredHost);
+      }
     }
 
     setServeWebUi(next.configuredServeWebUi);
@@ -315,10 +345,13 @@ function ConfigurableBindUrlControls() {
     setError(null);
 
     let bindHost: string | null;
+    const tailscaleBindHost = getTailscaleBindHostAddress(hostMode);
     if (hostMode === "localhost") {
       bindHost = null;
     } else if (hostMode === "all") {
       bindHost = "0.0.0.0";
+    } else if (tailscaleBindHost) {
+      bindHost = tailscaleBindHost;
     } else {
       const trimmed = customHost.trim();
       if (!trimmed) {
@@ -381,6 +414,7 @@ function ConfigurableBindUrlControls() {
     );
   }
 
+  const tailscaleBindHosts = status?.tailscaleBindHosts ?? [];
   const encodedToken = status?.token ? encodeURIComponent(status.token) : null;
   const localWebUiUrl = status?.baseUrl ? `${status.baseUrl}/` : null;
   const localWebUiUrlWithToken =
@@ -413,6 +447,20 @@ function ConfigurableBindUrlControls() {
             <SelectContent>
               <SelectItem value="localhost">Localhost only (127.0.0.1)</SelectItem>
               <SelectItem value="all">All interfaces (0.0.0.0)</SelectItem>
+              {tailscaleBindHosts.length > 0 ? (
+                tailscaleBindHosts.map((host) => (
+                  <SelectItem
+                    key={`${host.family}:${host.address}`}
+                    value={getTailscaleBindHostMode(host.address)}
+                  >
+                    {formatTailscaleBindHostLabel(host)}
+                  </SelectItem>
+                ))
+              ) : (
+                <SelectItem value="tailscale-unavailable" disabled>
+                  {loading ? "Loading Tailscale devices…" : "Tailscale device not detected"}
+                </SelectItem>
+              )}
               <SelectItem value="custom">Custom…</SelectItem>
             </SelectContent>
           </Select>

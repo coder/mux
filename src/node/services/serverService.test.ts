@@ -3,7 +3,7 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import * as os from "os";
 import * as net from "net";
-import { ServerService, computeNetworkBaseUrls } from "./serverService";
+import { ServerService, computeNetworkBaseUrls, getTailscaleBindHosts } from "./serverService";
 import type { ORPCContext } from "@/node/orpc/context";
 import { Config } from "@/node/config";
 import { ServerLockDataSchema } from "./serverLockfile";
@@ -222,6 +222,102 @@ test("supports non-CLI allow-http-origin opt-in via MUX_SERVER_ALLOW_HTTP_ORIGIN
 
     await fs.rm(tempDir, { recursive: true, force: true });
   }
+});
+
+describe("getTailscaleBindHosts", () => {
+  test("detects Tailscale bind addresses from interface names and Tailscale CLI output", () => {
+    const networkInterfaces: ReturnType<typeof os.networkInterfaces> = {
+      lo0: [
+        {
+          address: "100.64.0.1",
+          netmask: "255.192.0.0",
+          family: "IPv4",
+          mac: "00:00:00:00:00:00",
+          internal: true,
+          cidr: "100.64.0.1/10",
+        },
+      ],
+      en0: [
+        {
+          address: "192.168.1.10",
+          netmask: "255.255.255.0",
+          family: "IPv4",
+          mac: "aa:bb:cc:dd:ee:ff",
+          internal: false,
+          cidr: "192.168.1.10/24",
+        },
+        {
+          address: "100.80.0.2",
+          netmask: "255.192.0.0",
+          family: "IPv4",
+          mac: "aa:bb:cc:dd:ee:ff",
+          internal: false,
+          cidr: "100.80.0.2/10",
+        },
+      ],
+      tailscale0: [
+        {
+          address: "100.64.0.2",
+          netmask: "255.192.0.0",
+          family: "IPv4",
+          mac: "aa:bb:cc:dd:ee:01",
+          internal: false,
+          cidr: "100.64.0.2/10",
+        },
+        {
+          address: "fd7a:115c:a1e0::2",
+          netmask: "ffff:ffff:ffff::",
+          family: "IPv6",
+          mac: "aa:bb:cc:dd:ee:01",
+          internal: false,
+          cidr: "fd7a:115c:a1e0::2/48",
+          scopeid: 0,
+        },
+        {
+          address: "fe80::1",
+          netmask: "ffff:ffff:ffff:ffff::",
+          family: "IPv6",
+          mac: "aa:bb:cc:dd:ee:01",
+          internal: false,
+          cidr: "fe80::1/64",
+          scopeid: 0,
+        },
+      ],
+      utun5: [
+        {
+          address: "100.100.10.20",
+          netmask: "255.192.0.0",
+          family: "IPv4",
+          mac: "aa:bb:cc:dd:ee:02",
+          internal: false,
+          cidr: "100.100.10.20/10",
+        },
+      ],
+    };
+
+    expect(getTailscaleBindHosts(networkInterfaces, new Set(["100.100.10.20"]))).toEqual([
+      { interfaceName: "tailscale0", address: "100.64.0.2", family: "IPv4" },
+      { interfaceName: "utun5", address: "100.100.10.20", family: "IPv4" },
+      { interfaceName: "tailscale0", address: "fd7a:115c:a1e0::2", family: "IPv6" },
+    ]);
+  });
+
+  test("does not label generic CGNAT addresses as Tailscale without proof", () => {
+    const networkInterfaces: ReturnType<typeof os.networkInterfaces> = {
+      en0: [
+        {
+          address: "100.80.0.2",
+          netmask: "255.192.0.0",
+          family: "IPv4",
+          mac: "aa:bb:cc:dd:ee:ff",
+          internal: false,
+          cidr: "100.80.0.2/10",
+        },
+      ],
+    };
+
+    expect(getTailscaleBindHosts(networkInterfaces, new Set())).toEqual([]);
+  });
 });
 
 describe("computeNetworkBaseUrls", () => {

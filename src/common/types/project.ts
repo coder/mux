@@ -37,6 +37,7 @@ export interface ProjectsConfig {
    *
    * When unset, mux binds to 127.0.0.1 (localhost only).
    * When set to 0.0.0.0 or ::, mux can be reachable from other devices on your LAN/VPN.
+   * When set to a Tailscale interface address, mux listens only on that tailnet device.
    */
   apiServerBindHost?: string;
   /**

@@ -1854,6 +1854,12 @@ export const terminal = {
 
 // Server
 
+export const TailscaleBindHostSchema = z.object({
+  interfaceName: z.string(),
+  address: z.string(),
+  family: z.enum(["IPv4", "IPv6"]),
+});
+
 export const ApiServerStatusSchema = z.object({
   running: z.boolean(),
   /** Base URL that is always connectable from the local machine (loopback for wildcard binds). */
@@ -1864,6 +1870,8 @@ export const ApiServerStatusSchema = z.object({
   port: z.number().int().min(0).max(65535).nullable(),
   /** Additional base URLs that may be reachable from other devices (LAN/VPN). */
   networkBaseUrls: z.array(z.url()),
+  /** Local Tailscale interface addresses that can be selected as bind hosts. */
+  tailscaleBindHosts: z.array(TailscaleBindHostSchema),
   /** Auth token required for HTTP/WS API access. */
   token: z.string().nullable(),
   /** Configured bind host from ~/.mux/config.json (if set). */

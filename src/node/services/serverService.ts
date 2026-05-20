@@ -5,6 +5,7 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import { log } from "./log";
 import * as os from "os";
+import * as childProcess from "node:child_process";
 import { VERSION } from "@/version";
 import { buildMuxMdnsServiceOptions, MdnsAdvertiserService } from "./mdnsAdvertiserService";
 import type { AppRouter } from "@/node/orpc/router";
@@ -46,6 +47,14 @@ export interface StartServerOptions {
 }
 
 type NetworkInterfaces = NodeJS.Dict<os.NetworkInterfaceInfo[]>;
+
+export interface TailscaleBindHost {
+  interfaceName: string;
+  address: string;
+  family: "IPv4" | "IPv6";
+}
+
+const TAILSCALE_IP_COMMAND_TIMEOUT_MS = 1_000;
 
 function isLoopbackHost(host: string): boolean {
   const normalized = host.trim().toLowerCase();
@@ -122,6 +131,124 @@ function getNonInternalInterfaceAddresses(
   }
 
   return Array.from(new Set(addresses)).sort();
+}
+
+function parseIpv4Octets(address: string): [number, number, number, number] | null {
+  const parts = address.split(".");
+  if (parts.length !== 4) {
+    return null;
+  }
+
+  if (parts.some((part) => !/^\d+$/.test(part))) {
+    return null;
+  }
+
+  const octets: [number, number, number, number] = [
+    Number.parseInt(parts[0] ?? "", 10),
+    Number.parseInt(parts[1] ?? "", 10),
+    Number.parseInt(parts[2] ?? "", 10),
+    Number.parseInt(parts[3] ?? "", 10),
+  ];
+  if (octets.some((octet) => octet < 0 || octet > 255)) {
+    return null;
+  }
+
+  return octets;
+}
+
+function isTailscaleIpv4Address(address: string): boolean {
+  const octets = parseIpv4Octets(address);
+  if (!octets) {
+    return false;
+  }
+
+  // Tailscale IPv4 addresses live in 100.64.0.0/10. This lets macOS utun devices show
+  // as a Tailscale choice even when the OS exposes only a generic interface name.
+  return octets[0] === 100 && octets[1] >= 64 && octets[1] <= 127;
+}
+
+function isTailscaleIpv6Address(address: string): boolean {
+  const normalized = address.toLowerCase();
+  return normalized === "fd7a:115c:a1e0::" || normalized.startsWith("fd7a:115c:a1e0:");
+}
+
+function isTailscaleInterfaceName(interfaceName: string): boolean {
+  return interfaceName.toLowerCase().includes("tailscale");
+}
+
+function isLinkLocalAddress(address: string, family: "IPv4" | "IPv6"): boolean {
+  if (family === "IPv4") {
+    return address.startsWith("169.254.");
+  }
+
+  return address.toLowerCase().startsWith("fe80:");
+}
+
+function getTailscaleCliAddresses(): ReadonlySet<string> {
+  try {
+    const output = childProcess.execFileSync("tailscale", ["ip"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: TAILSCALE_IP_COMMAND_TIMEOUT_MS,
+    });
+
+    return new Set(
+      output
+        .split(/\s+/)
+        .map((address) => address.trim())
+        .filter((address) => isTailscaleIpv4Address(address) || isTailscaleIpv6Address(address))
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+export function getTailscaleBindHosts(
+  networkInterfaces: NetworkInterfaces = os.networkInterfaces(),
+  tailscaleAddresses: ReadonlySet<string> = getTailscaleCliAddresses()
+): TailscaleBindHost[] {
+  const hostsByAddress = new Map<string, TailscaleBindHost>();
+  const emptyInfos: os.NetworkInterfaceInfo[] = [];
+
+  for (const interfaceName of Object.keys(networkInterfaces)) {
+    const infos = networkInterfaces[interfaceName] ?? emptyInfos;
+    for (const info of infos) {
+      const family = info.family;
+      if (family !== "IPv4" && family !== "IPv6") {
+        continue;
+      }
+
+      const address = info.address.trim();
+      if (!address || info.internal || isLinkLocalAddress(address, family)) {
+        continue;
+      }
+
+      // A 100.64.0.0/10 address alone can be ordinary RFC6598 CGNAT, so only generic
+      // interface names become Tailscale choices when the Tailscale CLI proves the address.
+      if (!isTailscaleInterfaceName(interfaceName) && !tailscaleAddresses.has(address)) {
+        continue;
+      }
+
+      hostsByAddress.set(`${family}:${address}`, {
+        interfaceName,
+        address,
+        family,
+      });
+    }
+  }
+
+  return Array.from(hostsByAddress.values()).sort((a, b) => {
+    if (a.family !== b.family) {
+      return a.family === "IPv4" ? -1 : 1;
+    }
+
+    const addressComparison = a.address.localeCompare(b.address, undefined, { numeric: true });
+    if (addressComparison !== 0) {
+      return addressComparison;
+    }
+
+    return a.interfaceName.localeCompare(b.interfaceName, undefined, { numeric: true });
+  });
 }
 
 /**
@@ -328,7 +455,7 @@ export class ServerService {
     } else if (mdnsAdvertisementEnabled === true && isLoopbackHost(bindHost)) {
       log.warn(
         "mDNS advertisement requested, but the API server is loopback-only. " +
-          "Set apiServerBindHost to 0.0.0.0 (or a LAN IP) to enable LAN discovery."
+          "Set apiServerBindHost to 0.0.0.0 (or a LAN/Tailscale IP) to enable LAN discovery."
       );
     }
 
@@ -354,6 +481,11 @@ export class ServerService {
       this.server = null;
     }
     this.serverInfo = null;
+  }
+
+  /** Return Tailscale-backed local addresses users can bind the remote-access server to. */
+  getTailscaleBindHosts(): TailscaleBindHost[] {
+    return getTailscaleBindHosts();
   }
 
   /**
