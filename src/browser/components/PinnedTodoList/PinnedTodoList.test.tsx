@@ -124,12 +124,13 @@ describe("PinnedTodoList", () => {
     workspaceSubscribers.clear();
   });
 
-  test("renders expanded by default when todos exist", () => {
-    seedWorkspaceState("ws-expanded", { todos: defaultTodos });
+  test("renders collapsed by default when todos exist", () => {
+    seedWorkspaceState("ws-collapsed-default", { todos: defaultTodos });
 
-    const renderResult = renderPinnedTodoList("ws-expanded");
+    const renderResult = renderPinnedTodoList("ws-collapsed-default");
 
-    expect(renderResult.getByText("Add tests")).toBeTruthy();
+    expect(getHeader(renderResult)).toBeTruthy();
+    expect(renderResult.queryByText("Add tests")).toBeNull();
   });
 
   test("renders nothing when there are no todos", () => {
@@ -140,29 +141,29 @@ describe("PinnedTodoList", () => {
     expect(renderResult.container.firstChild).toBeNull();
   });
 
-  test("reads a persisted collapsed state on mount", () => {
-    const workspaceId = "ws-collapsed";
+  test("reads a persisted expanded state on mount", () => {
+    const workspaceId = "ws-expanded";
     seedWorkspaceState(workspaceId, { todos: defaultTodos });
-    globalThis.localStorage.setItem(getPinnedTodoExpandedKey(workspaceId), JSON.stringify(false));
+    globalThis.localStorage.setItem(getPinnedTodoExpandedKey(workspaceId), JSON.stringify(true));
 
     const renderResult = renderPinnedTodoList(workspaceId);
 
-    expect(renderResult.queryByText("Add tests")).toBeNull();
+    expect(renderResult.getByText("Add tests")).toBeTruthy();
   });
 
-  test("manual header click collapses and re-expands while persisting state", () => {
+  test("manual header click expands and re-collapses while persisting state", () => {
     const workspaceId = "ws-toggle";
     seedWorkspaceState(workspaceId, { todos: defaultTodos });
 
     const renderResult = renderPinnedTodoList(workspaceId);
 
     fireEvent.click(getHeader(renderResult));
-    expect(renderResult.queryByText("Add tests")).toBeNull();
-    expect(readPersistedState(getPinnedTodoExpandedKey(workspaceId), true)).toBe(false);
-
-    fireEvent.click(getHeader(renderResult));
     expect(renderResult.getByText("Add tests")).toBeTruthy();
     expect(readPersistedState(getPinnedTodoExpandedKey(workspaceId), false)).toBe(true);
+
+    fireEvent.click(getHeader(renderResult));
+    expect(renderResult.queryByText("Add tests")).toBeNull();
+    expect(readPersistedState(getPinnedTodoExpandedKey(workspaceId), true)).toBe(false);
   });
 
   test("persists expansion state per workspace instead of globally", () => {
@@ -172,13 +173,13 @@ describe("PinnedTodoList", () => {
     const firstRender = renderPinnedTodoList("ws-a");
     fireEvent.click(getHeader(firstRender));
 
-    expect(firstRender.queryByText("Add tests")).toBeNull();
-    expect(readPersistedState(getPinnedTodoExpandedKey("ws-a"), true)).toBe(false);
-    expect(readPersistedState(getPinnedTodoExpandedKey("ws-b"), true)).toBe(true);
+    expect(firstRender.getByText("Add tests")).toBeTruthy();
+    expect(readPersistedState(getPinnedTodoExpandedKey("ws-a"), false)).toBe(true);
+    expect(readPersistedState(getPinnedTodoExpandedKey("ws-b"), false)).toBe(false);
 
     firstRender.unmount();
     const secondRender = renderPinnedTodoList("ws-b");
 
-    expect(secondRender.getByText("Add tests")).toBeTruthy();
+    expect(secondRender.queryByText("Add tests")).toBeNull();
   });
 });
