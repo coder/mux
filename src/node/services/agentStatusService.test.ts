@@ -5,6 +5,10 @@ import { join } from "path";
 import type { ProjectsConfig, ProjectConfig, Workspace } from "@/common/types/project";
 import { Ok, Err } from "@/common/types/result";
 import { createMuxMessage } from "@/common/types/message";
+import {
+  AGENT_STATUS_PROVIDER_FAILURE_IDLE_COOLDOWN_MS,
+  AGENT_STATUS_PROVIDER_FAILURE_RETRY_ATTEMPTS,
+} from "@/constants/agentStatus";
 import type { Config } from "@/node/config";
 import type { AIService } from "./aiService";
 import { ExtensionMetadataService } from "./ExtensionMetadataService";
@@ -973,48 +977,60 @@ describe("AgentStatusService", () => {
     expect(emitWorkspaceActivityMock).toHaveBeenCalledTimes(1);
   });
 
-  test("post-provider failure advances dedup so we don't resend the same transcript every tick", async () => {
-    // Codex review: when status generation fails AFTER reaching the
-    // provider (e.g., the chosen model refuses to call propose_status, or
-    // hits a persistent provider error), leaving lastInputHash unchanged
-    // would let the scheduler resend the exact same trailing transcript on
-    // every focused/idle interval, burning tokens against a workspace that
-    // is stuck. Once we've attempted generation against the provider, the
-    // only retry signal that matters is a real transcript change.
+  test("provider failures retry the same transcript on cooldown until recovery", async () => {
+    // User rationale: sidebar status updates felt flaky when a small model
+    // occasionally ignored propose_status. A single provider-side miss should
+    // retry on the same transcript instead of freezing until the next chat turn,
+    // and even repeated transient provider misses must eventually recover.
     await historyHandle.historyService.appendToHistory(
       workspaceId,
       createMuxMessage("u1", "user", "kick off a task")
     );
 
-    generateSpy.mockResolvedValueOnce(
-      Err({
-        error: { type: "unknown", raw: "model did not call propose_status" },
-        reachedProvider: true,
+    generateSpy.mockReset();
+    generateSpy.mockResolvedValue(
+      Ok({
+        status: { emoji: "🛠️", message: "Editing source" },
+        modelUsed: "anthropic:claude-haiku-4-5",
       })
     );
+    for (let i = 0; i < AGENT_STATUS_PROVIDER_FAILURE_RETRY_ATTEMPTS + 1; i += 1) {
+      generateSpy.mockResolvedValueOnce(
+        Err({
+          error: { type: "unknown", raw: "model did not call propose_status" },
+          reachedProvider: true,
+        })
+      );
+    }
 
-    const service = createService();
-    await getInternals(service).runForWorkspace(workspaceId);
+    let now = 1_000_000;
+    const service = createService({ clock: () => now });
+    const internals = getInternals(service);
 
-    // Generator was called and failed; nothing reached the sidebar.
-    expect(generateSpy).toHaveBeenCalledTimes(1);
+    // First failures call the provider because the immediate same-input retry
+    // budget is not exhausted yet.
+    for (let i = 0; i < AGENT_STATUS_PROVIDER_FAILURE_RETRY_ATTEMPTS; i += 1) {
+      await internals.runForWorkspace(workspaceId);
+    }
+    expect(generateSpy).toHaveBeenCalledTimes(AGENT_STATUS_PROVIDER_FAILURE_RETRY_ATTEMPTS);
     expect(setSidebarStatusMock).not.toHaveBeenCalled();
     expect(emitWorkspaceActivityMock).not.toHaveBeenCalled();
 
-    // Same transcript again: dedup must skip — we already learned that this
-    // input fails, no point retrying until something changes.
-    await getInternals(service).runForWorkspace(workspaceId);
-    expect(generateSpy).toHaveBeenCalledTimes(1);
-    expect(setSidebarStatusMock).not.toHaveBeenCalled();
+    // One more provider-side failure starts a cooldown. Same-input attempts
+    // before the cooldown expires are skipped to avoid hammering the provider.
+    await internals.runForWorkspace(workspaceId);
+    expect(generateSpy).toHaveBeenCalledTimes(AGENT_STATUS_PROVIDER_FAILURE_RETRY_ATTEMPTS + 1);
+    await internals.runForWorkspace(workspaceId);
+    expect(generateSpy).toHaveBeenCalledTimes(AGENT_STATUS_PROVIDER_FAILURE_RETRY_ATTEMPTS + 1);
+    now += AGENT_STATUS_PROVIDER_FAILURE_IDLE_COOLDOWN_MS - 1;
+    await internals.runForWorkspace(workspaceId);
+    expect(generateSpy).toHaveBeenCalledTimes(AGENT_STATUS_PROVIDER_FAILURE_RETRY_ATTEMPTS + 1);
 
-    // After a genuine transcript change, we try again. This time the
-    // generator returns a fresh result and it gets persisted normally.
-    await historyHandle.historyService.appendToHistory(
-      workspaceId,
-      createMuxMessage("u2", "user", "follow-up message")
-    );
-    await getInternals(service).runForWorkspace(workspaceId);
-    expect(generateSpy).toHaveBeenCalledTimes(2);
+    // Once the cooldown expires, the same unchanged transcript is retried and
+    // can recover without requiring the user to send another message.
+    now += 1;
+    await internals.runForWorkspace(workspaceId);
+    expect(generateSpy).toHaveBeenCalledTimes(AGENT_STATUS_PROVIDER_FAILURE_RETRY_ATTEMPTS + 2);
     expect(setSidebarStatusMock).toHaveBeenCalledTimes(1);
     expect(emitWorkspaceActivityMock).toHaveBeenCalledTimes(1);
   });
