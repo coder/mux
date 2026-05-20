@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import type { AssistedReviewHunk, DiffHunk } from "@/common/types/review";
 import {
   buildReviewDiffPathFilter,
+  buildReviewDiffPathFilterSpecs,
   countUnreadAssistedHunks,
   getEffectiveReviewFrontendFilters,
   getEffectiveReviewIncludeUncommitted,
@@ -79,6 +80,62 @@ describe("buildReviewDiffPathFilter", () => {
     });
 
     expect(pathFilter).toBe(" -- 'src/user-selected.ts'");
+  });
+});
+
+describe("buildReviewDiffPathFilterSpecs", () => {
+  const workspaceMetadata = {
+    projects: [
+      { projectName: "project-a", projectPath: "/repo/project-a" },
+      { projectName: "project-b", projectPath: "/repo/project-b" },
+    ],
+  };
+
+  test("assisted mode roots each multi-project pathspec in the pinned file's repository", () => {
+    const specs = buildReviewDiffPathFilterSpecs({
+      isImmersive: false,
+      assistedOnly: true,
+      assistedHunks: [{ path: "project-b/src/agent.ts" }, { path: "project-a/src/main.ts" }],
+      selectedFilePath: "project-b/src/stale-selection.ts",
+      selectedDiffPath: "src/stale-selection.ts",
+      selectedRepoRootProjectPath: "/repo/project-b",
+      workspaceMetadata,
+      projectPath: "/repo/project-a",
+    });
+
+    expect(specs).toEqual([
+      {
+        repoRootProjectPath: "/repo/project-b",
+        pathFilter: " -- 'src/agent.ts'",
+        selectedFilePath: "src/agent.ts",
+      },
+      {
+        repoRootProjectPath: "/repo/project-a",
+        pathFilter: " -- 'src/main.ts'",
+        selectedFilePath: "src/main.ts",
+      },
+    ]);
+  });
+
+  test("non-assisted mode keeps selected file rooting for truncation recovery", () => {
+    const specs = buildReviewDiffPathFilterSpecs({
+      isImmersive: false,
+      assistedOnly: false,
+      assistedHunks: [{ path: "project-a/src/main.ts" }],
+      selectedFilePath: "project-b/src/user-selected.ts",
+      selectedDiffPath: "src/user-selected.ts",
+      selectedRepoRootProjectPath: "/repo/project-b",
+      workspaceMetadata,
+      projectPath: "/repo/project-a",
+    });
+
+    expect(specs).toEqual([
+      {
+        repoRootProjectPath: "/repo/project-b",
+        pathFilter: " -- 'src/user-selected.ts'",
+        selectedFilePath: "project-b/src/user-selected.ts",
+      },
+    ]);
   });
 });
 

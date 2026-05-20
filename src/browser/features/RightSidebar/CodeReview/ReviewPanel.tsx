@@ -410,6 +410,32 @@ function parseReviewDiffCacheValue(params: {
   return { hunks: allHunks, truncationWarning, diagnosticInfo };
 }
 
+function mergeReviewDiffCacheValues(
+  values: readonly ReviewPanelDiffCacheValue[]
+): ReviewPanelDiffCacheValue {
+  const hunks = values.flatMap((value) => value.hunks);
+  const truncationWarnings = values.flatMap((value) =>
+    value.truncationWarning ? [value.truncationWarning] : []
+  );
+  const diagnostics = values.flatMap((value) =>
+    value.diagnosticInfo ? [value.diagnosticInfo] : []
+  );
+
+  return {
+    hunks,
+    truncationWarning: truncationWarnings.length > 0 ? truncationWarnings.join("\n") : null,
+    diagnosticInfo:
+      diagnostics.length > 0
+        ? {
+            command: diagnostics.map((info) => info.command).join("\n\n"),
+            outputLength: diagnostics.reduce((sum, info) => sum + info.outputLength, 0),
+            fileDiffCount: diagnostics.reduce((sum, info) => sum + info.fileDiffCount, 0),
+            hunkCount: diagnostics.reduce((sum, info) => sum + info.hunkCount, 0),
+          }
+        : null,
+  };
+}
+
 export function countUnreadAssistedHunks(
   hunks: readonly DiffHunk[],
   assistedHunks: readonly AssistedReviewHunk[],
@@ -425,6 +451,84 @@ export function countUnreadAssistedHunks(
   return count;
 }
 
+interface ReviewDiffPathFilterSpec {
+  repoRootProjectPath: string | null | undefined;
+  pathFilter: string;
+  /** Truthy when this request is path-filtered enough to suppress full-diff truncation messaging. */
+  selectedFilePath: string | null;
+}
+
+function toPathFilter(pathspecs: readonly string[]): string {
+  const uniquePathspecs = Array.from(new Set(pathspecs.filter((pathspec) => pathspec.length > 0)));
+  return uniquePathspecs.length > 0
+    ? ` -- ${uniquePathspecs.map((pathspec) => shellQuote(pathspec)).join(" ")}`
+    : "";
+}
+
+export function buildReviewDiffPathFilterSpecs(params: {
+  isImmersive: boolean;
+  assistedOnly: boolean;
+  assistedHunks: readonly AssistedReviewHunk[];
+  selectedFilePath: string | null;
+  selectedDiffPath: string;
+  selectedRepoRootProjectPath?: string | null;
+  workspaceMetadata: Pick<FrontendWorkspaceMetadata, "projects"> | null | undefined;
+  projectPath: string;
+}): ReviewDiffPathFilterSpec[] {
+  if (!params.assistedOnly) {
+    return [
+      {
+        repoRootProjectPath:
+          params.selectedFilePath && !params.isImmersive
+            ? (params.selectedRepoRootProjectPath ?? params.projectPath)
+            : params.projectPath,
+        pathFilter:
+          params.selectedFilePath && !params.isImmersive
+            ? toPathFilter([params.selectedDiffPath])
+            : "",
+        selectedFilePath:
+          params.selectedFilePath && !params.isImmersive ? params.selectedFilePath : null,
+      },
+    ];
+  }
+
+  const pathspecsByRepoRoot = new Map<
+    string,
+    { repoRootProjectPath: string | null | undefined; pathspecs: string[] }
+  >();
+
+  for (const hunk of params.assistedHunks) {
+    // In multi-project workspaces, assisted pins use workspace-relative paths
+    // like `project-b/src/file.ts`. Fetch each repo-root group from the owning
+    // checkout so an accepted pin cannot disappear just because the Review pane
+    // was currently rooted to another project.
+    const repoRootProjectPath =
+      resolveRepoRootProjectPath(params.workspaceMetadata, hunk.path) ?? params.projectPath;
+    const key = repoRootProjectPath ?? "";
+    const pathspec = normalizeRepoRootFilePath(
+      params.workspaceMetadata,
+      hunk.path,
+      repoRootProjectPath
+    );
+    const existing = pathspecsByRepoRoot.get(key);
+    if (existing) {
+      existing.pathspecs.push(pathspec);
+    } else {
+      pathspecsByRepoRoot.set(key, { repoRootProjectPath, pathspecs: [pathspec] });
+    }
+  }
+
+  if (pathspecsByRepoRoot.size === 0) {
+    return [{ repoRootProjectPath: params.projectPath, pathFilter: "", selectedFilePath: null }];
+  }
+
+  return Array.from(pathspecsByRepoRoot.values()).map((spec) => ({
+    repoRootProjectPath: spec.repoRootProjectPath,
+    pathFilter: toPathFilter(spec.pathspecs),
+    selectedFilePath: spec.pathspecs.length > 0 ? spec.pathspecs[0] : null,
+  }));
+}
+
 export function buildReviewDiffPathFilter(params: {
   isImmersive: boolean;
   assistedOnly: boolean;
@@ -434,22 +538,12 @@ export function buildReviewDiffPathFilter(params: {
   workspaceMetadata: Pick<FrontendWorkspaceMetadata, "projects"> | null | undefined;
   repoRootProjectPath: string | null | undefined;
 }): string {
-  if (params.isImmersive) {
-    return "";
-  }
-
-  const pathspecs = params.assistedOnly
-    ? params.assistedHunks.map((hunk) =>
-        normalizeRepoRootFilePath(params.workspaceMetadata, hunk.path, params.repoRootProjectPath)
-      )
-    : params.selectedFilePath
-      ? [params.selectedDiffPath]
-      : [];
-
-  const uniquePathspecs = Array.from(new Set(pathspecs.filter((pathspec) => pathspec.length > 0)));
-  return uniquePathspecs.length > 0
-    ? ` -- ${uniquePathspecs.map((pathspec) => shellQuote(pathspec)).join(" ")}`
-    : "";
+  return (
+    buildReviewDiffPathFilterSpecs({
+      ...params,
+      projectPath: params.repoRootProjectPath ?? "",
+    })[0]?.pathFilter ?? ""
+  );
 }
 
 export function getEffectiveReviewIncludeUncommitted(params: {
@@ -526,57 +620,67 @@ export const ReviewAssistedStatsReporter: React.FC<ReviewAssistedStatsReporterPr
     if (!api || isCreating) return;
 
     let cancelled = false;
-    const pathFilter = buildReviewDiffPathFilter({
+    const effectiveIncludeUncommitted = getEffectiveReviewIncludeUncommitted({
+      assistedOnly: true,
+      includeUncommitted,
+    });
+    const diffRequests = buildReviewDiffPathFilterSpecs({
       isImmersive: false,
       assistedOnly: true,
       assistedHunks,
       selectedFilePath: null,
       selectedDiffPath: "",
       workspaceMetadata: workspaceMetadata.get(workspaceId),
-      repoRootProjectPath: projectPath,
-    });
-    const diffCommand = buildGitDiffCommand(
-      diffBase,
-      getEffectiveReviewIncludeUncommitted({ assistedOnly: true, includeUncommitted }),
-      pathFilter,
-      "diff"
-    );
+      projectPath,
+    }).map((spec) => ({
+      ...spec,
+      diffCommand: buildGitDiffCommand(
+        diffBase,
+        effectiveIncludeUncommitted,
+        spec.pathFilter,
+        "diff"
+      ),
+    }));
 
     const loadUnreadAssisted = async () => {
       try {
-        await ensureOriginFetched({
-          api,
-          workspaceId,
-          diffBase,
-          refreshToken: 0,
-          originFetchRef,
-          repoRootProjectPath: projectPath,
-        });
-        if (cancelled) return;
+        const values = await Promise.all(
+          diffRequests.map(async (request) => {
+            await ensureOriginFetched({
+              api,
+              workspaceId,
+              diffBase,
+              refreshToken: 0,
+              originFetchRef,
+              repoRootProjectPath: request.repoRootProjectPath,
+            });
+            if (cancelled) return null;
 
-        // Deliberately bypass `reviewPanelCache`: this reporter is mounted
-        // specifically so agent flags show up while the Review panel is not,
-        // and a stale panel cache would hide newly edited assisted hunks.
-        const result = await api.workspace.executeBash({
-          workspaceId,
-          script: diffCommand,
-          options: repoRootBashOptions(30, projectPath),
-        });
-        if (cancelled) return;
-        if (!result.success || !result.data.success) {
-          onUnreadAssistedChange(0);
-          return;
-        }
+            // Deliberately bypass `reviewPanelCache`: this reporter is mounted
+            // specifically so agent flags show up while the Review panel is not,
+            // and a stale panel cache would hide newly edited assisted hunks.
+            const result = await api.workspace.executeBash({
+              workspaceId,
+              script: request.diffCommand,
+              options: repoRootBashOptions(30, request.repoRootProjectPath),
+            });
+            if (cancelled || !result.success || !result.data.success) {
+              return null;
+            }
 
-        const data = parseReviewDiffCacheValue({
-          result,
-          workspaceMetadata,
-          workspaceId,
-          repoRootProjectPath: projectPath,
-          diffCommand,
-          selectedFilePath: null,
-          isImmersive: true,
-        });
+            return parseReviewDiffCacheValue({
+              result,
+              workspaceMetadata,
+              workspaceId,
+              repoRootProjectPath: request.repoRootProjectPath,
+              diffCommand: request.diffCommand,
+              selectedFilePath: request.selectedFilePath,
+              isImmersive: true,
+            });
+          })
+        );
+        if (cancelled) return;
+        const data = mergeReviewDiffCacheValues(values.filter((value) => value !== null));
         onUnreadAssistedChange(countUnreadAssistedHunks(data.hunks, assistedHunks, isRead));
       } catch {
         if (!cancelled) onUnreadAssistedChange(0);
@@ -1270,44 +1374,57 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     lastDiffRefreshTriggerRef.current = refreshTrigger;
     const isManualRefresh = refreshTrigger !== 0 && prevRefreshTrigger !== refreshTrigger;
 
-    const diffRepoRootProjectPath =
-      !isImmersive && selectedFilePath && !filters.assistedOnly
-        ? (selectedRepoRootProjectPath ?? projectPath)
-        : projectPath;
-    const pathFilter = buildReviewDiffPathFilter({
-      isImmersive,
-      assistedOnly: filters.assistedOnly,
-      assistedHunks,
-      selectedFilePath,
-      selectedDiffPath,
-      workspaceMetadata: workspaceMetadata.get(workspaceId),
-      repoRootProjectPath: diffRepoRootProjectPath,
-    });
-
     const effectiveIncludeUncommitted = getEffectiveReviewIncludeUncommitted({
       assistedOnly: filters.assistedOnly,
       includeUncommitted: filters.includeUncommitted,
     });
 
-    const diffCommand = buildGitDiffCommand(
-      filters.diffBase,
-      effectiveIncludeUncommitted,
-      pathFilter,
-      "diff"
-    );
-
-    const cacheKey = makeReviewPanelCacheKey({
-      workspaceId,
-      workspacePath,
-      gitCommand: diffCommand,
-      repoRootProjectPath: diffRepoRootProjectPath,
+    const diffRequests = buildReviewDiffPathFilterSpecs({
+      isImmersive,
+      assistedOnly: filters.assistedOnly,
+      assistedHunks,
+      selectedFilePath,
+      selectedDiffPath,
+      selectedRepoRootProjectPath,
+      workspaceMetadata: workspaceMetadata.get(workspaceId),
+      projectPath,
+    }).map((spec) => {
+      const diffCommand = buildGitDiffCommand(
+        filters.diffBase,
+        effectiveIncludeUncommitted,
+        spec.pathFilter,
+        "diff"
+      );
+      return {
+        ...spec,
+        diffCommand,
+        cacheKey: makeReviewPanelCacheKey({
+          workspaceId,
+          workspacePath,
+          gitCommand: diffCommand,
+          repoRootProjectPath: spec.repoRootProjectPath,
+        }),
+      };
     });
 
     // Fast path: use cached diff when switching workspaces (unless user explicitly refreshed
     // or tools completed while we were unmounted).
     if (!isManualRefresh && !skipCacheOnMountRef.current) {
-      const cached = reviewPanelCache.get(cacheKey) as ReviewPanelDiffCacheValue | undefined;
-      if (cached) {
+      const cachedValues: ReviewPanelDiffCacheValue[] = [];
+      let allRequestsCached = true;
+      for (const request of diffRequests) {
+        const cached = reviewPanelCache.get(request.cacheKey) as
+          | ReviewPanelDiffCacheValue
+          | undefined;
+        if (!cached) {
+          allRequestsCached = false;
+          break;
+        }
+        cachedValues.push(cached);
+      }
+
+      if (allRequestsCached) {
+        const cached = mergeReviewDiffCacheValues(cachedValues);
         setDiagnosticInfo(cached.diagnosticInfo);
         setDiffState({
           status: "loaded",
@@ -1344,39 +1461,44 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
 
     const loadDiff = async () => {
       try {
-        await ensureOriginFetched({
-          api,
-          workspaceId,
-          diffBase: filters.diffBase,
-          refreshToken: refreshTrigger,
-          originFetchRef,
-          repoRootProjectPath: diffRepoRootProjectPath,
-        });
-        if (cancelled) return;
-
-        // Git-level filters (affect what data is fetched):
-        // - diffBase: what to diff against
-        // - includeUncommitted: include working directory changes
-        // - selectedFilePath: ESSENTIAL for truncation - if full diff is cut off,
-        //   path filter lets us retrieve specific file's hunks
-        const data = await executeWorkspaceBashAndCache({
-          api,
-          workspaceId,
-          script: diffCommand,
-          cacheKey,
-          timeoutSecs: 30,
-          repoRootProjectPath: diffRepoRootProjectPath,
-          parse: (result) =>
-            parseReviewDiffCacheValue({
-              result,
-              workspaceMetadata,
+        const values = await Promise.all(
+          diffRequests.map(async (request) => {
+            await ensureOriginFetched({
+              api,
               workspaceId,
-              repoRootProjectPath: diffRepoRootProjectPath,
-              diffCommand,
-              selectedFilePath,
-              isImmersive,
-            }),
-        });
+              diffBase: filters.diffBase,
+              refreshToken: refreshTrigger,
+              originFetchRef,
+              repoRootProjectPath: request.repoRootProjectPath,
+            });
+            if (cancelled) return null;
+
+            // Git-level filters (affect what data is fetched):
+            // - diffBase: what to diff against
+            // - includeUncommitted: include working directory changes
+            // - selectedFilePath / assisted pins: ESSENTIAL for truncation and
+            //   multi-project parity; path filters retrieve specific files' hunks.
+            return executeWorkspaceBashAndCache({
+              api,
+              workspaceId,
+              script: request.diffCommand,
+              cacheKey: request.cacheKey,
+              timeoutSecs: 30,
+              repoRootProjectPath: request.repoRootProjectPath,
+              parse: (result) =>
+                parseReviewDiffCacheValue({
+                  result,
+                  workspaceMetadata,
+                  workspaceId,
+                  repoRootProjectPath: request.repoRootProjectPath,
+                  diffCommand: request.diffCommand,
+                  selectedFilePath: request.selectedFilePath,
+                  isImmersive,
+                }),
+            });
+          })
+        );
+        const data = mergeReviewDiffCacheValues(values.filter((value) => value !== null));
 
         if (cancelled) return;
 
