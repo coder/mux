@@ -97,14 +97,23 @@ describe("SigningService", () => {
   });
 
   describe("with Ed25519 key", () => {
-    it("should load key and return capabilities", () =>
-      withoutSshAgent(async () => {
-        const service = new SigningService([ed25519KeyPath]);
-        const capabilities = await service.getCapabilities();
+    it(
+      "should load key and return capabilities",
+      () =>
+        withoutSshAgent(async () => {
+          const service = new SigningService([ed25519KeyPath]);
+          const capabilities = await service.getCapabilities();
 
-        expect(capabilities.publicKey).toBeDefined();
-        expect(capabilities.publicKey).toStartWith("ssh-ed25519 ");
-      }));
+          expect(capabilities.publicKey).toBeDefined();
+          expect(capabilities.publicKey).toStartWith("ssh-ed25519 ");
+        }),
+      // SigningService.getCapabilities() shells out to `gh auth status` to detect
+      // GitHub identity. `gh` can take several seconds (network/credential lookup),
+      // so under CI load this comfortably exceeds Bun's default 5s per-test
+      // timeout even though the actual key-loading work is fast. See PR for the
+      // discovery context; production-side timeout is a follow-up.
+      { timeout: 15_000 }
+    );
 
     it("should sign messages", () =>
       withoutSshAgent(async () => {
