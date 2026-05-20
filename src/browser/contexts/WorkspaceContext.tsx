@@ -457,6 +457,17 @@ export interface WorkspaceContext extends WorkspaceMetadataContextValue {
     options?: { acknowledgedUntrackedPaths?: string[] }
   ) => Promise<{ success: boolean; error?: string; data?: ArchiveWorkspaceResult }>;
   unarchiveWorkspace: (workspaceId: string) => Promise<{ success: boolean; error?: string }>;
+  /**
+   * Snooze (or unsnooze) a workspace.
+   *
+   * `snoozedUntil` is an ISO 8601 timestamp in the future. Passing `null`
+   * clears the snooze. The backend persists the absolute deadline so the
+   * sidebar's "Snoozed" section drains naturally without a backend timer.
+   */
+  snoozeWorkspace: (
+    workspaceId: string,
+    snoozedUntil: string | null
+  ) => Promise<{ success: boolean; error?: string }>;
   refreshWorkspaceMetadata: () => Promise<void>;
   setWorkspaceMetadata: React.Dispatch<
     React.SetStateAction<Map<string, FrontendWorkspaceMetadata>>
@@ -1519,6 +1530,30 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     [api]
   );
 
+  const snoozeWorkspace = useCallback(
+    async (
+      workspaceId: string,
+      snoozedUntil: string | null
+    ): Promise<{ success: boolean; error?: string }> => {
+      if (!api) return { success: false, error: "API not connected" };
+      try {
+        // Rely on the backend metadata subscription to refresh the sidebar
+        // partition; this matches archive/unarchive's "fire-and-forget" style.
+        const result = await api.workspace.snooze({ workspaceId, snoozedUntil });
+        if (result.success) {
+          return { success: true };
+        }
+        console.error("Failed to snooze workspace:", result.error);
+        return { success: false, error: result.error };
+      } catch (error) {
+        const errorMessage = getErrorMessage(error);
+        console.error("Failed to snooze workspace:", errorMessage);
+        return { success: false, error: errorMessage };
+      }
+    },
+    [api]
+  );
+
   const refreshWorkspaceMetadata = useCallback(async () => {
     await loadWorkspaceMetadata();
   }, [loadWorkspaceMetadata]);
@@ -1815,6 +1850,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       preflightArchiveWorkspace,
       archiveWorkspace,
       unarchiveWorkspace,
+      snoozeWorkspace,
       refreshWorkspaceMetadata,
       setWorkspaceMetadata,
       selectedWorkspace,
@@ -1839,6 +1875,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       preflightArchiveWorkspace,
       archiveWorkspace,
       unarchiveWorkspace,
+      snoozeWorkspace,
       refreshWorkspaceMetadata,
       setWorkspaceMetadata,
       selectedWorkspace,

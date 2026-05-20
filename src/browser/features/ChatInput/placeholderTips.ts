@@ -48,6 +48,7 @@ export const PLACEHOLDER_TIPS: readonly string[] = [
   "Try /fork <start> to branch this chat into a new workspace",
   "Try /plan to view or edit the current plan inline",
   "Try /clear --soft to reset context while keeping the chat visible",
+  "Try /snooze 1d to hide this chat under the Snoozed section until tomorrow",
   "Try /new <start> to start a fresh workspace from the trunk branch",
   "Try /vim to toggle vim keybindings in the chat input",
 ];

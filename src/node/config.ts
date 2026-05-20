@@ -1527,6 +1527,7 @@ export class Config {
               taskTrunkBranch: workspace.taskTrunkBranch,
               archivedAt: workspace.archivedAt,
               unarchivedAt: workspace.unarchivedAt,
+              snoozedUntil: workspace.snoozedUntil,
               projects: workspaceProjects,
               subProjectPath: workspace.subProjectPath,
             };
@@ -1626,6 +1627,7 @@ export class Config {
             // Preserve archived timestamps from config
             metadata.archivedAt ??= workspace.archivedAt;
             metadata.unarchivedAt ??= workspace.unarchivedAt;
+            metadata.snoozedUntil ??= workspace.snoozedUntil;
             // Preserve sub-project assignment from config.
             metadata.subProjectPath ??= workspace.subProjectPath;
             metadata.forkFamilyBaseName ??= workspace.forkFamilyBaseName;
@@ -1694,6 +1696,7 @@ export class Config {
               taskTrunkBranch: workspace.taskTrunkBranch,
               archivedAt: workspace.archivedAt,
               unarchivedAt: workspace.unarchivedAt,
+              snoozedUntil: workspace.snoozedUntil,
               projects: workspaceProjects,
               subProjectPath: workspace.subProjectPath,
             };
@@ -1814,6 +1817,7 @@ export class Config {
         taskTrunkBranch: metadata.taskTrunkBranch,
         archivedAt: metadata.archivedAt,
         unarchivedAt: metadata.unarchivedAt,
+        snoozedUntil: metadata.snoozedUntil,
         projects: metadata.projects,
         subProjectPath: metadata.subProjectPath,
       };

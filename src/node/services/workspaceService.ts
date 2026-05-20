@@ -5,6 +5,7 @@ import assert from "@/common/utils/assert";
 import { DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR } from "@/common/config/worktreeArchiveBehavior";
 import type { WorktreeArchiveSnapshot } from "@/common/schemas/project";
 import { isWorkspaceArchived } from "@/common/utils/archive";
+import { MAX_SNOOZE_MS } from "@/common/utils/snooze";
 import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import type { Config } from "@/node/config";
 import type { Result } from "@/common/types/result";
@@ -4344,6 +4345,75 @@ export class WorkspaceService extends EventEmitter {
       return Ok({ kind: "ready" as const });
     } catch (error) {
       return Err(`Failed to preflight archive: ${getErrorMessage(error)}`);
+    }
+  }
+
+  /**
+   * Snooze (or unsnooze) a workspace by setting its `snoozedUntil` ISO
+   * timestamp. Snoozed workspaces are hidden under a dedicated "Snoozed"
+   * section in the sidebar until the timestamp passes; passing `null` clears
+   * the field entirely.
+   *
+   * We persist the absolute deadline (not a duration) so the section drains
+   * naturally at the wall-clock expiry without needing a backend timer or
+   * scheduled job. The metadata-driven UI uses `isWorkspaceSnoozed` to derive
+   * the live state, mirroring how `isWorkspaceArchived` derives the archived
+   * state from `archivedAt`/`unarchivedAt`.
+   */
+  async setSnooze(workspaceId: string, snoozedUntil: string | null): Promise<Result<void, string>> {
+    try {
+      const normalizedWorkspaceId = workspaceId.trim();
+      assert(normalizedWorkspaceId.length > 0, "setSnooze requires a non-empty workspaceId");
+
+      let normalizedSnoozedUntil: string | undefined;
+      if (snoozedUntil != null) {
+        const parsed = Date.parse(snoozedUntil);
+        if (!Number.isFinite(parsed)) {
+          return Err("Snooze timestamp must be a valid ISO 8601 string");
+        }
+        const now = Date.now();
+        if (parsed <= now) {
+          // Setting a deadline in the past would render the workspace as
+          // not-snoozed anyway; treat that as an explicit unsnooze so the
+          // persisted state stays clean.
+          normalizedSnoozedUntil = undefined;
+        } else if (parsed - now > MAX_SNOOZE_MS) {
+          return Err("Snooze duration exceeds the maximum supported horizon (52 weeks)");
+        } else {
+          normalizedSnoozedUntil = new Date(parsed).toISOString();
+        }
+      }
+
+      const found = this.config.findWorkspace(normalizedWorkspaceId);
+      if (!found) {
+        return Err("Workspace not found");
+      }
+
+      const { projectPath, workspacePath } = found;
+
+      await this.config.editConfig((config) => {
+        const projectConfig = config.projects.get(projectPath);
+        if (!projectConfig) return config;
+        const workspaceEntry =
+          projectConfig.workspaces.find((w) => w.id === normalizedWorkspaceId) ??
+          projectConfig.workspaces.find((w) => w.path === workspacePath);
+        if (!workspaceEntry) return config;
+
+        if (normalizedSnoozedUntil) {
+          workspaceEntry.snoozedUntil = normalizedSnoozedUntil;
+        } else {
+          // Clearing via `delete` rather than writing `null` keeps the
+          // persisted config minimal and matches how archive/unarchive uses
+          // the absence of an `archivedAt` field.
+          delete workspaceEntry.snoozedUntil;
+        }
+        return config;
+      });
+
+      await this.emitCurrentWorkspaceMetadata(normalizedWorkspaceId);
+      return Ok(undefined);
+    } catch (error) {
+      return Err(`Failed to set snooze: ${getErrorMessage(error)}`);
     }
   }
 
