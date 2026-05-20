@@ -81,6 +81,16 @@ const KEYBIND_LABELS: Record<keyof typeof KEYBINDS, string> = {
   TOGGLE_PLAN_ANNOTATE: "Toggle plan annotate mode",
   // Easter egg keybind; intentionally omitted from KEYBIND_GROUPS.
   TOGGLE_POWER_MODE: "",
+  EXTENSIONS_RELOAD: "Reload extensions",
+  EXTENSIONS_NAVIGATE_NEXT: "Focus next extension",
+  EXTENSIONS_NAVIGATE_PREV: "Focus previous extension",
+  EXTENSIONS_EXPAND_ENTER: "Expand focused extension",
+  EXTENSIONS_EXPAND_SPACE: "Expand focused extension (alt)",
+  EXTENSIONS_TOGGLE_ENABLE: "Enable / disable focused extension",
+  EXTENSIONS_GRANT: "Approve focused extension capabilities",
+  EXTENSIONS_TRUST_ROOT: "Trust project-local root",
+  EXTENSIONS_DIAGNOSTICS: "Show focused extension diagnostics",
+  EXTENSIONS_CHEATSHEET: "Show extensions cheat sheet",
 };
 
 /** Groups for organizing keybinds in the UI */
@@ -183,13 +193,30 @@ const KEYBIND_GROUPS: Array<{ label: string; keys: Array<keyof typeof KEYBINDS> 
     label: "External",
     keys: ["OPEN_TERMINAL", "OPEN_IN_EDITOR"],
   },
+  {
+    label: "Extensions",
+    keys: [
+      "EXTENSIONS_RELOAD",
+      "EXTENSIONS_NAVIGATE_NEXT",
+      "EXTENSIONS_NAVIGATE_PREV",
+      "EXTENSIONS_EXPAND_ENTER",
+      "EXTENSIONS_TOGGLE_ENABLE",
+      "EXTENSIONS_GRANT",
+      "EXTENSIONS_TRUST_ROOT",
+      "EXTENSIONS_DIAGNOSTICS",
+      "EXTENSIONS_CHEATSHEET",
+    ],
+  },
 ];
+
+const EXTENSIONS_KEYBIND_ALTERNATES: Array<keyof typeof KEYBINDS> = ["EXTENSIONS_EXPAND_SPACE"];
 
 // Some actions have multiple equivalent shortcuts; render alternates on the same row.
 const KEYBIND_DISPLAY_ALTERNATES: Partial<
   Record<keyof typeof KEYBINDS, Array<keyof typeof KEYBINDS>>
 > = {
   OPEN_COMMAND_PALETTE: ["OPEN_COMMAND_PALETTE_ACTIONS"],
+  EXTENSIONS_EXPAND_ENTER: EXTENSIONS_KEYBIND_ALTERNATES,
 };
 
 export function KeybindsSection() {

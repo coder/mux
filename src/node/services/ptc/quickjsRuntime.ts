@@ -8,6 +8,7 @@
 import {
   newQuickJSAsyncWASMModuleFromVariant,
   type QuickJSAsyncContext,
+  type QuickJSAsyncWASMModule,
   type QuickJSHandle,
 } from "quickjs-emscripten-core";
 import { QuickJSAsyncFFI } from "@jitl/quickjs-wasmfile-release-asyncify/ffi";
@@ -41,28 +42,47 @@ export class QuickJSRuntime implements IJSRuntime {
   private toolCalls: PTCToolCallRecord[] = [];
   private consoleOutput: PTCConsoleRecord[] = [];
 
+  // The asyncify QuickJS module supports only one suspended execution at a
+  // time. We intentionally reuse the WASM module to avoid repeated
+  // instantiation crashes under Bun coverage, and serialize evals to preserve
+  // asyncify's single-flight invariant across contexts.
+  private static evalQueue: Promise<unknown> = Promise.resolve();
+  private static modulePromise: Promise<QuickJSAsyncWASMModule> | undefined;
+
   private constructor(private readonly ctx: QuickJSAsyncContext) {}
 
   static async create(): Promise<QuickJSRuntime> {
-    // Create the async variant manually due to bun's package export resolution issues.
-    // The self-referential import in the variant package doesn't resolve correctly.
-    const variant = {
-      type: "async" as const,
-      importFFI: () => Promise.resolve(QuickJSAsyncFFI),
-      // eslint-disable-next-line @typescript-eslint/require-await -- sync require wrapped for interface
-      importModuleLoader: async () => {
-        // Use require() with the named export path since bun's dynamic import()
-        // doesn't resolve package exports correctly from within node_modules
-        // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment
-        const mod = require("@jitl/quickjs-wasmfile-release-asyncify/emscripten-module");
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return
-        return mod.default ?? mod;
-      },
-    };
-
-    const QuickJS = await newQuickJSAsyncWASMModuleFromVariant(variant);
+    const QuickJS = await QuickJSRuntime.getModule();
     const ctx = QuickJS.newContext();
     return new QuickJSRuntime(ctx);
+  }
+
+  private static getModule(): Promise<QuickJSAsyncWASMModule> {
+    if (!QuickJSRuntime.modulePromise) {
+      // Create the async variant manually due to bun's package export resolution
+      // issues. Reuse the WASM module so coverage-heavy tests and extension
+      // reloads don't repeatedly instantiate QuickJS and stress Bun's WASM GC.
+      const variant = {
+        type: "async" as const,
+        importFFI: () => Promise.resolve(QuickJSAsyncFFI),
+        // eslint-disable-next-line @typescript-eslint/require-await -- sync require wrapped for interface
+        importModuleLoader: async () => {
+          // Use require() with the named export path since bun's dynamic import()
+          // doesn't resolve package exports correctly from within node_modules
+          // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment
+          const mod = require("@jitl/quickjs-wasmfile-release-asyncify/emscripten-module");
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return
+          return mod.default ?? mod;
+        },
+      };
+      QuickJSRuntime.modulePromise = newQuickJSAsyncWASMModuleFromVariant(variant).catch(
+        (error) => {
+          QuickJSRuntime.modulePromise = undefined;
+          throw error;
+        }
+      );
+    }
+    return QuickJSRuntime.modulePromise;
   }
 
   setLimits(limits: RuntimeLimits): void {
@@ -241,7 +261,57 @@ export class QuickJSRuntime implements IJSRuntime {
 
   async eval(code: string): Promise<PTCExecutionResult> {
     this.assertNotDisposed("eval");
+    const queuedAt = Date.now();
+    const timeoutMs = this.limits.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    let timeoutId: NodeJS.Timeout | undefined;
+    let cancelledBeforeStart = false;
+    let started = false;
 
+    return new Promise<PTCExecutionResult>((resolve, reject) => {
+      timeoutId = setTimeout(() => {
+        if (started) return;
+        cancelledBeforeStart = true;
+        resolve(this.timeoutResult(timeoutMs, queuedAt));
+      }, timeoutMs);
+
+      const run = async () => {
+        if (cancelledBeforeStart) return;
+        started = true;
+        if (timeoutId !== undefined) clearTimeout(timeoutId);
+        const waitedMs = Date.now() - queuedAt;
+        const remainingTimeoutMs = timeoutMs - waitedMs;
+        if (remainingTimeoutMs <= 0) {
+          resolve(this.timeoutResult(timeoutMs, queuedAt));
+          return;
+        }
+        const previousLimits = this.limits;
+        this.limits = { ...this.limits, timeoutMs: remainingTimeoutMs };
+        try {
+          resolve(await this.evalInner(code));
+        } catch (error) {
+          reject(error instanceof Error ? error : new Error(String(error)));
+        } finally {
+          this.limits = previousLimits;
+        }
+      };
+
+      const next = QuickJSRuntime.evalQueue.then(run, run);
+      QuickJSRuntime.evalQueue = next.catch(() => undefined);
+    });
+  }
+
+  private timeoutResult(timeoutMs: number, startedAt: number): PTCExecutionResult {
+    return {
+      success: false,
+      error: `Execution timeout (${timeoutMs}ms exceeded)`,
+      toolCalls: [],
+      consoleOutput: [],
+      duration_ms: Date.now() - startedAt,
+    };
+  }
+
+  private async evalInner(code: string): Promise<PTCExecutionResult> {
+    this.assertNotDisposed("eval");
     const execStartTime = Date.now();
     this.abortController = new AbortController();
     this.toolCalls = [];
@@ -305,10 +375,44 @@ export class QuickJSRuntime implements IJSRuntime {
         };
       }
 
-      // With asyncify, evalCodeAsync suspends until async host functions complete.
-      // The result is already resolved - no need to resolve the promise.
-      const value: unknown = this.ctx.dump(evalResult.value) as unknown;
+      // Resolve promise-like results from async functions inside QuickJS. Asyncify
+      // makes host calls suspend, but guest async functions still enqueue QuickJS
+      // promise jobs that must be executed before their returned value is safe to
+      // inspect.
+      const resolvedPromise = this.ctx.resolvePromise(evalResult.value);
+      const jobsResult = this.ctx.runtime.executePendingJobs();
+      if (jobsResult.error) {
+        const errObj: unknown = jobsResult.error.context.dump(jobsResult.error) as unknown;
+        jobsResult.dispose();
+        evalResult.value.dispose();
+        const duration_ms = Date.now() - execStartTime;
+        return {
+          success: false,
+          error: this.getErrorMessage(errObj, deadline, timeoutMs),
+          toolCalls: this.toolCalls,
+          consoleOutput: this.consoleOutput,
+          duration_ms,
+        };
+      }
+      jobsResult.dispose();
+
+      const promiseResult = await resolvedPromise;
       evalResult.value.dispose();
+      if (promiseResult.error) {
+        const errObj: unknown = this.ctx.dump(promiseResult.error) as unknown;
+        promiseResult.error.dispose();
+        const duration_ms = Date.now() - execStartTime;
+        return {
+          success: false,
+          error: this.getErrorMessage(errObj, deadline, timeoutMs),
+          toolCalls: this.toolCalls,
+          consoleOutput: this.consoleOutput,
+          duration_ms,
+        };
+      }
+
+      const value: unknown = this.ctx.dump(promiseResult.value) as unknown;
+      promiseResult.value.dispose();
 
       return {
         success: true,

@@ -132,6 +132,10 @@ export const AppConfigOnDiskSchema = z
     runtimeEnablement: RuntimeEnablementOverridesSchema.optional(),
     defaultRuntime: RuntimeEnablementIdSchema.optional(),
     onePasswordAccountName: z.string().optional(),
+    // Raw extensions block. The Global Extension State Store (US-008) owns
+    // schema validation + self-healing for this block; Config persists the
+    // value verbatim so unknown future schemaVersions are preserved on disk.
+    extensions: z.unknown().optional(),
   })
   .passthrough();
 

@@ -72,6 +72,7 @@ export const EnrolledWithPolicy: Story = {
             providerAccess: [{ id: "anthropic", allowedModels: ["claude-sonnet-4-20250514"] }],
             mcp: { allowUserDefined: { stdio: false, remote: true } },
             runtimes: ["local", "worktree", "ssh"],
+            extensionPlatform: null,
           },
         },
       })
@@ -107,6 +108,7 @@ export const EnrolledEnvOverride: Story = {
             providerAccess: [{ id: "anthropic", allowedModels: null }],
             mcp: { allowUserDefined: { stdio: true, remote: true } },
             runtimes: null,
+            extensionPlatform: null,
           },
         },
       })
@@ -127,6 +129,7 @@ export const PolicyBlocked: Story = {
             providerAccess: [],
             mcp: { allowUserDefined: { stdio: false, remote: false } },
             runtimes: ["local"],
+            extensionPlatform: null,
           },
         },
       })
@@ -159,6 +162,7 @@ export const RichPolicy: Story = {
             ],
             mcp: { allowUserDefined: { stdio: true, remote: false } },
             runtimes: ["local", "worktree"],
+            extensionPlatform: null,
           },
         },
       })

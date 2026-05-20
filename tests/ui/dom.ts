@@ -27,6 +27,23 @@ interface DomGlobalsSnapshot {
 // Some Radix internals decide at module-eval time whether to enable useLayoutEffect based
 // on `globalThis.document`. See the bootstrap at the bottom of this module.
 
+export function ensureDomInstalled(): void {
+  if (globalThis.window !== undefined && globalThis.document?.body !== undefined) return;
+  // Some older hook tests still clear window/document after importing this module.
+  // Reinstall a process baseline instead of relying on module bootstrap to run again.
+  installDom();
+}
+
+function installBaselineDomWhenPreviousWasMissing(previous: DomGlobalsSnapshot): boolean {
+  if (previous.window !== undefined && previous.document !== undefined) return false;
+  // tests/ui/dom is imported once for the whole Bun process. If an earlier
+  // non-UI test cleared the DOM globals, restoring that missing snapshot would
+  // leave later UI tests with no document even though this module's bootstrap has
+  // already run. Keep a baseline Happy DOM alive after this helper is imported.
+  installDom();
+  return true;
+}
+
 export function installDom(): () => void {
   const previous: DomGlobalsSnapshot = {
     window: globalThis.window,
@@ -201,6 +218,8 @@ export function installDom(): () => void {
 
   return () => {
     domWindow.close();
+
+    if (installBaselineDomWhenPreviousWasMissing(previous)) return;
 
     (globalThis as unknown as { Element?: unknown }).Element = previous.Element;
     globalThis.window = previous.window;

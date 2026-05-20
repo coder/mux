@@ -81,6 +81,7 @@ async function buildSystemContextForTest(args: {
   isSubagentWorkspace: boolean;
   effectiveAdditionalInstructions?: string;
   planFilePath?: string;
+  extensionSkills?: Parameters<typeof buildStreamSystemContext>[0]["extensionSkills"];
   imageGenerationToolAvailable?: boolean;
 }) {
   return buildStreamSystemContext({
@@ -96,6 +97,7 @@ async function buildSystemContextForTest(args: {
     modelString: "openai:gpt-5.2",
     cfg: args.cfg,
     providersConfig: null,
+    extensionSkills: args.extensionSkills,
     mcpServers: {},
     imageGenerationToolAvailable: args.imageGenerationToolAvailable,
   });
@@ -415,6 +417,46 @@ describe("buildStreamSystemContext", () => {
     expect(result.systemMessage.indexOf(childPlanPath)).toBeLessThan(
       result.systemMessage.indexOf(parentPlanPath)
     );
+  });
+
+  test("includes extension skills in available skill tool context", async () => {
+    using tempRoot = new DisposableTempDir("stream-system-context");
+
+    const projectPath = path.join(tempRoot.path, "project");
+    const muxHome = path.join(tempRoot.path, "mux-home");
+    await fs.mkdir(projectPath, { recursive: true });
+    await fs.mkdir(muxHome, { recursive: true });
+
+    const metadata = createWorkspaceMetadata({
+      id: "top-level-ws",
+      name: "top-level-workspace",
+      projectName: "project",
+      projectPath,
+    });
+    const cfg = createProjectsConfig({
+      projectPath,
+      workspaces: [{ id: metadata.id, name: metadata.name }],
+    });
+
+    const result = await buildSystemContextForTest({
+      runtime: new TestRuntime(projectPath, muxHome),
+      metadata,
+      workspacePath: projectPath,
+      cfg,
+      isSubagentWorkspace: false,
+      extensionSkills: [
+        {
+          name: "mux-extensions",
+          displayName: "Mux Extensions",
+          description: "Demo extension skill",
+          advertise: true,
+          bodyAbsolutePath: path.join(tempRoot.path, "SKILL.md"),
+          extensionId: "mux.platformdemo",
+        },
+      ],
+    });
+
+    expect(result.availableSkills?.some((skill) => skill.name === "mux-extensions")).toBe(true);
   });
 
   test("omits ancestor plan paths for top-level workspaces", async () => {

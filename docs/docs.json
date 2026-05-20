@@ -114,6 +114,14 @@
             "pages": ["integrations/vscode-extension", "integrations/acp"]
           },
           {
+            "group": "Extensions",
+            "pages": [
+              "extensions/authoring",
+              "extensions/telemetry",
+              "extensions/release-checklist"
+            ]
+          },
+          {
             "group": "Reference",
             "pages": [
               "reference/debugging",

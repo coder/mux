@@ -1,0 +1,12 @@
+{
+  "name": "@coder/mux-extension-platform-demo",
+  "version": "0.25.0",
+  "private": true,
+  "description": "Bundled Platform Demo Extension — canonical reference implementation for the Mux Extension Platform.",
+  "license": "AGPL-3.0-only",
+  "files": [
+    "extension.ts",
+    "SKILL.md",
+    "README.md"
+  ]
+}

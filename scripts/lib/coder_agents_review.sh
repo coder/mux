@@ -76,9 +76,13 @@ graphql_with_retries() {
 coder_agents_unresolved_threads_from_json() {
   local threads_json="$1"
   local bot_regex="$2"
+  local threads_file
+  local output
+  threads_file=$(mktemp)
+  printf '%s\n' "$threads_json" >"$threads_file"
 
-  jq -rn --argjson threads "$threads_json" --arg bot_regex "$bot_regex" '
-    $threads[]
+  if output=$(jq -rn --slurpfile threads "$threads_file" --arg bot_regex "$bot_regex" '
+    $threads[0][]
     | select(.isResolved == false and any(.comments.nodes[]?; ((.author.login // "") | test($bot_regex))))
     | . as $thread
     | ([.comments.nodes[]? | select((.author.login // "") | test($bot_regex))] | first) as $bot_comment
@@ -90,7 +94,15 @@ coder_agents_unresolved_threads_from_json() {
         line: ($bot_comment.line // ""),
         created_at: ($bot_comment.createdAt // "")
       }
-  '
+  '); then
+    rm -f "$threads_file"
+    printf '%s\n' "$output"
+    return 0
+  else
+    local rc=$?
+    rm -f "$threads_file"
+    return "$rc"
+  fi
 }
 
 # Prints records emitted by coder_agents_unresolved_threads_from_json.

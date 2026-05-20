@@ -1,3 +1,5 @@
+import { constants as fsConstants } from "node:fs";
+import * as fs from "node:fs/promises";
 import { tool } from "ai";
 
 import type { AgentSkillReadFileToolResult } from "@/common/types/tools";
@@ -16,7 +18,8 @@ import { readBuiltInSkillFile } from "@/node/services/agentSkills/builtInSkillDe
 import { RemoteRuntime } from "@/node/runtime/RemoteRuntime";
 import { RuntimeError } from "@/node/runtime/Runtime";
 import { readFileString } from "@/node/utils/runtime/helpers";
-import { resolveContainedSkillFilePath } from "./skillFileUtils";
+import { realpathOpenedFile } from "@/node/utils/openedFileRealpath";
+import { isPathInsideRoot, resolveContainedSkillFilePath } from "./skillFileUtils";
 import { resolveContainedSkillFilePathOnRuntime } from "./runtimeSkillPathUtils";
 
 function readContentWithFileReadLimits(input: {
@@ -95,6 +98,51 @@ function readContentWithFileReadLimits(input: {
   };
 }
 
+async function readContainedExtensionSkillFile(input: {
+  skillDir: string;
+  filePath: string;
+}): Promise<{ content: string; size: number; modifiedTime: Date; isDirectory: boolean }> {
+  const { resolvedPath } = await resolveContainedSkillFilePath(input.skillDir, input.filePath);
+  // Revalidate via realpath after any preflight stat so a writable extension root
+  // cannot swap the file to an escaping symlink between containment and read.
+  await fs.stat(resolvedPath);
+  const [rootRealPath, targetRealPath] = await Promise.all([
+    fs.realpath(input.skillDir),
+    fs.realpath(resolvedPath),
+  ]);
+  if (!isPathInsideRoot(rootRealPath, targetRealPath)) {
+    throw new Error(
+      "Path resolves outside the extension skill directory after symlink resolution."
+    );
+  }
+
+  const noFollow = fsConstants.O_NOFOLLOW ?? 0;
+  const handle = await fs.open(targetRealPath, fsConstants.O_RDONLY | noFollow);
+  try {
+    const openedRealPath = await realpathOpenedFile(handle, targetRealPath);
+    if (!isPathInsideRoot(rootRealPath, openedRealPath)) {
+      throw new Error("Opened file resolves outside the extension skill directory.");
+    }
+    const stat = await handle.stat();
+    if (stat.isDirectory()) {
+      throw new Error(`Path is a directory, not a file: ${input.filePath}`);
+    }
+    if (!stat.isFile()) {
+      throw new Error(`Path is not a regular file: ${input.filePath}`);
+    }
+    const sizeValidation = validateFileSize({
+      size: stat.size,
+      modifiedTime: stat.mtime,
+      isDirectory: false,
+    });
+    if (sizeValidation) throw new Error(sizeValidation.error);
+    const content = await handle.readFile("utf8");
+    return { content, size: stat.size, modifiedTime: stat.mtime, isDirectory: false };
+  } finally {
+    await handle.close();
+  }
+}
+
 /**
  * Agent Skill read_file tool factory.
  * Reads a file within a skill directory with the same output limits as file_read.
@@ -142,6 +190,7 @@ export const createAgentSkillReadFileTool: ToolFactory = (config: ToolConfigurat
           {
             roots: skillCtx.roots,
             containment: skillCtx.containment,
+            extensionSkills: config.extensionSkills,
           }
         );
 
@@ -167,6 +216,32 @@ export const createAgentSkillReadFileTool: ToolFactory = (config: ToolConfigurat
             offset,
             limit,
           });
+        }
+
+        if (resolvedSkill.package.scope === "extension") {
+          try {
+            const file = await readContainedExtensionSkillFile({
+              skillDir: resolvedSkill.skillDir,
+              filePath,
+            });
+            const sizeValidation = validateFileSize({
+              size: file.size,
+              modifiedTime: file.modifiedTime,
+              isDirectory: file.isDirectory,
+            });
+            if (sizeValidation) {
+              return { success: false, error: sizeValidation.error };
+            }
+            return readContentWithFileReadLimits({
+              fullContent: file.content,
+              fileSize: file.size,
+              modifiedTime: file.modifiedTime.toISOString(),
+              offset,
+              limit,
+            });
+          } catch (error) {
+            return { success: false, error: getErrorMessage(error) };
+          }
         }
 
         const skillRuntime = resolvedSkill.sourceRuntime;

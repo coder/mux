@@ -79,16 +79,25 @@ graphql_with_retries() {
 compute_codex_sets_from_arrays() {
   local comments_json="$1"
   local threads_json="$2"
+  local comments_file
+  local threads_file
+  comments_file=$(mktemp)
+  threads_file=$(mktemp)
+  trap 'rm -f "$comments_file" "$threads_file"' RETURN
+  printf '%s\n' "$comments_json" >"$comments_file"
+  printf '%s\n' "$threads_json" >"$threads_file"
 
-  REGULAR_COMMENTS=$(jq -cn --argjson comments "$comments_json" --arg bot "$BOT_LOGIN_GRAPHQL" '[
-    $comments[]
+  REGULAR_COMMENTS=$(jq -cn --slurpfile comments "$comments_file" --arg bot "$BOT_LOGIN_GRAPHQL" '[
+    $comments[0][]
     | select(.author.login == $bot and .isMinimized == false and (.body | test("Didn.t find any major issues|usage limits have been reached|create a Codex account") | not))
   ]')
 
-  UNRESOLVED_THREADS=$(jq -cn --argjson threads "$threads_json" --arg bot "$BOT_LOGIN_GRAPHQL" '[
-    $threads[]
+  UNRESOLVED_THREADS=$(jq -cn --slurpfile threads "$threads_file" --arg bot "$BOT_LOGIN_GRAPHQL" '[
+    $threads[0][]
     | select(.isResolved == false and .comments.nodes[0].author.login == $bot)
   ]')
+  rm -f "$comments_file" "$threads_file"
+  trap - RETURN
 }
 
 load_result_from_cache() {

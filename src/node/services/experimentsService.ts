@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import assert from "@/common/utils/assert";
 import {
   EXPERIMENTS,
@@ -15,6 +16,8 @@ import * as path from "path";
 import { getErrorMessage } from "@/common/utils/errors";
 
 export type { ExperimentValue };
+
+type ExperimentChangedCallback = (experimentId: ExperimentId) => void;
 
 interface CachedVariant {
   value: string | boolean;
@@ -54,6 +57,7 @@ export class ExperimentsService {
   private readonly cacheTtlMs: number;
   private readonly platform: NodeJS.Platform;
 
+  private readonly emitter = new EventEmitter();
   private readonly cachedVariants = new Map<ExperimentId, CachedVariant>();
   private readonly overrides = new Map<ExperimentId, boolean>();
   private readonly refreshInFlight = new Map<ExperimentId, Promise<void>>();
@@ -71,6 +75,15 @@ export class ExperimentsService {
     this.cacheFilePath = path.join(this.muxHome, CACHE_FILE_NAME);
     this.cacheTtlMs = options.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS;
     this.platform = options.platform ?? process.platform;
+  }
+
+  onExperimentChanged(callback: ExperimentChangedCallback): () => void {
+    this.emitter.on("experimentChanged", callback);
+    return () => this.emitter.off("experimentChanged", callback);
+  }
+
+  private emitExperimentChanged(experimentId: ExperimentId): void {
+    this.emitter.emit("experimentChanged", experimentId);
   }
 
   private isExperimentSupported(experimentId: ExperimentId): boolean {
@@ -156,6 +169,7 @@ export class ExperimentsService {
       this.overrides.delete(experimentId);
       this.telemetryService.setFeatureFlagVariant(this.getFlagKey(experimentId), null);
       await this.writeCacheToDisk();
+      this.emitExperimentChanged(experimentId);
       return;
     }
 
@@ -172,6 +186,7 @@ export class ExperimentsService {
     }
 
     await this.writeCacheToDisk();
+    this.emitExperimentChanged(experimentId);
   }
 
   getExperimentValue(experimentId: ExperimentId): ExperimentValue {
@@ -208,22 +223,26 @@ export class ExperimentsService {
    * Convert an experiment assignment to a boolean gate.
    *
    * NOTE: This intentionally does not block on network calls.
+   *
+   * When neither an explicit override nor a remote assignment is available
+   * (telemetry disabled, cold cache, or unsupported platform), fall back to
+   * `enabledByDefault` — mirroring the renderer's `useExperimentValue` in
+   * dev-server / `MUX_E2E=1` builds where PostHog never resolves.
    */
   isExperimentEnabled(experimentId: ExperimentId): boolean {
     const value = this.getExperimentValue(experimentId).value;
 
-    // PostHog can return either boolean flags or string variants.
     if (typeof value === "boolean") {
       return value;
     }
 
     if (typeof value === "string") {
-      // For now, treat variant "test" as enabled for experiments with control/test variants.
-      // If we add experiments with different variant semantics, add a mapping per experiment.
+      // Variant flags map "test" → enabled. Add per-experiment mappings here
+      // when an experiment ships with non-control/test variants.
       return value === "test";
     }
 
-    return false;
+    return EXPERIMENTS[experimentId]?.enabledByDefault ?? false;
   }
 
   async refreshAll(): Promise<void> {
@@ -275,6 +294,7 @@ export class ExperimentsService {
         return;
       }
 
+      const previous = this.cachedVariants.get(experimentId)?.value;
       const cached: CachedVariant = {
         value,
         fetchedAtMs: Date.now(),
@@ -287,6 +307,9 @@ export class ExperimentsService {
       }
 
       await this.writeCacheToDisk();
+      if (previous !== value && !this.overrides.has(experimentId)) {
+        this.emitExperimentChanged(experimentId);
+      }
     } catch (error) {
       log.debug("Failed to refresh experiment from PostHog", {
         experimentId,

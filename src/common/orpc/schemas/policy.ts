@@ -73,6 +73,11 @@ export const PolicyFileSchema = z
 
     // Empty/undefined means "allow all".
     runtimes: z.array(PolicyRuntimeAccessSchema).optional(),
+
+    // Deprecated compatibility field. Extension Platform is always initialized;
+    // older policies that still include this key continue to parse, but the
+    // value is ignored by clients.
+    extensionPlatform: z.boolean().optional(),
   })
   .strict();
 export type PolicyFile = z.infer<typeof PolicyFileSchema>;
@@ -114,6 +119,9 @@ export const EffectivePolicySchema = z
 
     // null means "allow all runtimes".
     runtimes: z.array(PolicyRuntimeIdSchema).nullable(),
+
+    // Deprecated compatibility field. Always ignored by clients.
+    extensionPlatform: z.boolean().nullable(),
   })
   .strict();
 export type EffectivePolicy = z.infer<typeof EffectivePolicySchema>;

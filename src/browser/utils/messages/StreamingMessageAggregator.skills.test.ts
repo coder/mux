@@ -522,6 +522,47 @@ describe("Agent skill snapshot association", () => {
     });
   });
 
+  // Regression: the local AgentSkillSnapshotMetadataSchema once narrowed
+  // scope to ["project","global","built-in"], silently dropping every
+  // extension-scope snapshot at parse time. UserMessageContent then saw no
+  // agentSkillSnapshot and rendered the slash command as plain text without
+  // the AgentSkillBadge or hover preview. Keep this test passing whenever
+  // the snapshot scope enum widens.
+  it("attaches agentSkillSnapshot for extension-scope skills", () => {
+    const aggregator = createAggregator();
+    const snapshot = createSkillSnapshotMessage({
+      skillName: "mux-extensions",
+      scope: "extension",
+      historySequence: 1,
+      body: "# Body",
+      frontmatterYaml: "name: mux-extensions\ndescription: Demo extension skill",
+    });
+    const invocation = createSkillInvocationMessage({
+      skillName: "mux-extensions",
+      scope: "extension",
+      historySequence: 2,
+    });
+
+    aggregator.loadHistoricalMessages([snapshot, invocation]);
+
+    const displayed = aggregator.getDisplayedMessages();
+    expect(displayed).toHaveLength(1);
+
+    const message = displayed[0];
+    if (message?.type !== "user") {
+      throw new Error("Expected displayed user message");
+    }
+
+    expect(message.agentSkill).toEqual({
+      skillName: "mux-extensions",
+      scope: "extension",
+      snapshot: {
+        frontmatterYaml: "name: mux-extensions\ndescription: Demo extension skill",
+        body: "# Body",
+      },
+    });
+  });
+
   it("uses the latest snapshot available at each invocation turn", () => {
     const aggregator = createAggregator();
     const firstFrontmatter = "name: pull-requests\ndescription: First";

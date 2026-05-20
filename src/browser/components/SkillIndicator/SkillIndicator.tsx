@@ -29,6 +29,7 @@ interface SkillIndicatorProps {
 const SCOPE_CONFIG: Array<{ scope: AgentSkillScope; label: string }> = [
   { scope: "project", label: "Project" },
   { scope: "global", label: "Global" },
+  { scope: "extension", label: "Extension" },
   { scope: "built-in", label: "Built-in" },
 ];
 

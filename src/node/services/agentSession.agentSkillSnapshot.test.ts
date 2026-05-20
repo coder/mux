@@ -3,6 +3,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
+import type { ExtensionSkillSource } from "@/common/extensions/extensionSkillSource";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import { Ok } from "@/common/types/result";
@@ -47,6 +48,7 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
     workspacePath: string;
     workspaceId?: string;
     runtimeConfig?: FrontendWorkspaceMetadata["runtimeConfig"];
+    getExtensionSkillSources?: (projectPath: string) => readonly ExtensionSkillSource[];
   }) {
     const workspaceId = args.workspaceId ?? "ws-test";
     const workspaceMeta: FrontendWorkspaceMetadata = {
@@ -59,6 +61,7 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
     } as unknown as FrontendWorkspaceMetadata;
     const { session, historyService, cleanup } = await createAgentSessionHarness({
       workspaceId,
+      getExtensionSkillSources: args.getExtensionSkillSources,
       aiServiceOverrides: {
         getWorkspaceMetadata: mock((_workspaceId: string) => Promise.resolve(Ok(workspaceMeta))),
       },
@@ -463,6 +466,57 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
 
     expect(result.success).toBe(false);
     expect(appendToHistory.mock.calls).toHaveLength(0);
+  });
+
+  // Regression for the user-reported bug: `/mux-extensions` returned
+  // "Agent skill not found" because agentSession's slash dispatch called
+  // readAgentSkill without the extensionSkills source list, even though the
+  // agentSkills.list IPC merge happily surfaced the skill in the slash menu.
+  it("resolves a slash invocation against an extension-contributed skill", async () => {
+    const { workspacePath } = await createTestWorkspaceWithSkills({ skills: [] });
+
+    // Stand up a fake extension skill body on disk; the ServiceContainer
+    // wires getExtensionSkillSources from ExtensionRegistry.getSkillSources(),
+    // which returns absolute body paths in this same shape.
+    const extPkgDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-ext-skill-"));
+    const bodyPath = path.join(extPkgDir, "SKILL.md");
+    await fs.writeFile(
+      bodyPath,
+      "---\nname: mux-extensions\ndescription: Test extension skill\n---\n\nFollow the extension skill body.\n",
+      "utf-8"
+    );
+
+    const { session, appendToHistory, messages } = await createSessionHarness({
+      workspacePath,
+      getExtensionSkillSources: () => [
+        {
+          name: "mux-extensions",
+          displayName: "Mux Extensions",
+          description: "Test extension skill",
+          advertise: true,
+          bodyAbsolutePath: bodyPath,
+          extensionId: "mux.platformdemo",
+        },
+      ],
+    });
+
+    const result = await session.sendMessage("explain extensions", {
+      model: "anthropic:claude-3-5-sonnet-latest",
+      agentId: "exec",
+      muxMetadata: {
+        type: "agent-skill",
+        rawCommand: "/mux-extensions explain extensions",
+        skillName: "mux-extensions",
+        scope: "extension",
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(appendToHistory.mock.calls).toHaveLength(2);
+    const [snapshotMessage] = messages;
+    expect(snapshotMessage.metadata?.agentSkillSnapshot?.skillName).toBe("mux-extensions");
+    const snapshotText = snapshotMessage.parts.find((p) => p.type === "text")?.text;
+    expect(snapshotText).toContain("Follow the extension skill body.");
   });
 
   it("dedupes against recent history per-skill", async () => {

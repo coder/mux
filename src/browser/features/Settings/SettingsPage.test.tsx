@@ -8,6 +8,7 @@ describe("SettingsPage", () => {
 
     expect(labels).not.toContain("Goals");
     expect(labels).not.toContain("Heartbeat");
+    expect(labels).toContain("Extensions");
     expect(labels).toContain("Experiments");
   });
 

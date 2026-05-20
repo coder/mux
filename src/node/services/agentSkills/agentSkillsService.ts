@@ -1,3 +1,5 @@
+import * as path from "node:path";
+import { constants as fsConstants } from "node:fs";
 import * as fs from "node:fs/promises";
 
 import type { Runtime } from "@/node/runtime/Runtime";
@@ -19,10 +21,12 @@ import type {
   AgentSkillScope,
   SkillName,
 } from "@/common/types/agentSkill";
+import type { ExtensionSkillSource } from "@/common/extensions/extensionSkillSource";
 import { log } from "@/node/services/log";
 import { validateFileSize } from "@/node/services/tools/fileCommon";
 import { ensureRuntimePathWithinWorkspace } from "@/node/services/tools/runtimeSkillPathUtils";
 import { ensurePathContained, hasErrorCode } from "@/node/services/tools/skillFileUtils";
+import { realpathOpenedFile } from "@/node/utils/openedFileRealpath";
 import { AgentSkillParseError, parseSkillMarkdown } from "./parseSkillMarkdown";
 import { getBuiltInSkillByName, getBuiltInSkillDescriptors } from "./builtInSkillDefinitions";
 import type { ProjectSkillContainment } from "./skillStorageContext";
@@ -333,6 +337,7 @@ export async function discoverAgentSkills(
     containment?: ProjectSkillContainment;
     projectContainmentRoot?: string | null;
     dedupeByName?: boolean;
+    extensionSkills?: readonly ExtensionSkillSource[];
   }
 ): Promise<AgentSkillDescriptor[]> {
   if (!workspacePath) {
@@ -416,9 +421,38 @@ export async function discoverAgentSkills(
     }
   }
 
+  // Extensions sit between user-authored (project/global) and built-in: a
+  // project skill can shadow an extension skill of the same name (so users
+  // keep editorial control), and an extension can shadow a built-in.
+  for (const ext of options?.extensionSkills ?? []) {
+    const parsed = SkillNameSchema.safeParse(ext.name);
+    if (!parsed.success) {
+      log.warn(`Skipping invalid extension skill name '${ext.name}'`);
+      continue;
+    }
+    const descriptor: AgentSkillDescriptor = {
+      name: parsed.data,
+      description: ext.description || ext.name,
+      scope: "extension",
+      advertise: ext.advertise,
+    };
+    const validated = AgentSkillDescriptorSchema.safeParse(descriptor);
+    if (!validated.success) {
+      log.warn(`Invalid extension skill descriptor '${ext.name}': ${validated.error.message}`);
+      continue;
+    }
+    if (dedupeByName) {
+      if (!byName.has(validated.data.name)) {
+        byName.set(validated.data.name, validated.data);
+      }
+      continue;
+    }
+    discoveredSkills.push(validated.data);
+  }
+
   for (const builtIn of getBuiltInSkillDescriptors()) {
     if (dedupeByName) {
-      // Built-ins are lowest precedence and are omitted when overridden by project/global skills.
+      // Built-ins are lowest precedence and are omitted when overridden by project/global/extension skills.
       if (!byName.has(builtIn.name)) {
         byName.set(builtIn.name, builtIn);
       }
@@ -444,6 +478,7 @@ export async function discoverAgentSkillsDiagnostics(
     roots?: AgentSkillsRoots;
     containment?: ProjectSkillContainment;
     projectContainmentRoot?: string | null;
+    extensionSkills?: readonly ExtensionSkillSource[];
   }
 ): Promise<DiscoverAgentSkillsDiagnosticsResult> {
   if (!workspacePath) {
@@ -536,7 +571,21 @@ export async function discoverAgentSkillsDiagnostics(
     }
   }
 
-  // Add built-in skills (lowest precedence - only if not overridden by project/global)
+  for (const ext of options?.extensionSkills ?? []) {
+    const parsed = SkillNameSchema.safeParse(ext.name);
+    if (!parsed.success) continue;
+    if (byName.has(parsed.data)) continue;
+    const descriptor: AgentSkillDescriptor = {
+      name: parsed.data,
+      description: ext.description || ext.name,
+      scope: "extension",
+      advertise: ext.advertise,
+    };
+    const validated = AgentSkillDescriptorSchema.safeParse(descriptor);
+    if (validated.success) byName.set(validated.data.name, validated.data);
+  }
+
+  // Add built-in skills (lowest precedence - only if not overridden by project/global/extension)
   for (const builtIn of getBuiltInSkillDescriptors()) {
     if (!byName.has(builtIn.name)) {
       byName.set(builtIn.name, builtIn);
@@ -548,7 +597,8 @@ export async function discoverAgentSkillsDiagnostics(
   const scopeOrder: Readonly<Record<AgentSkillScope, number>> = {
     project: 0,
     global: 1,
-    "built-in": 2,
+    extension: 2,
+    "built-in": 3,
   };
 
   invalidSkills.sort((a, b) => {
@@ -615,6 +665,59 @@ async function readAgentSkillFromDir(
   };
 }
 
+async function readExtensionSkillBody(bodyAbsolutePath: string): Promise<{
+  content: string;
+  byteSize: number;
+}> {
+  const linkStat = await fs.lstat(bodyAbsolutePath);
+  if (linkStat.isSymbolicLink()) {
+    throw new Error(`Extension skill body cannot be a symlink: ${bodyAbsolutePath}`);
+  }
+
+  const realPath = await fs.realpath(bodyAbsolutePath);
+  if (path.normalize(realPath) !== path.normalize(bodyAbsolutePath)) {
+    throw new Error(`Extension skill body escaped its validated path: ${bodyAbsolutePath}`);
+  }
+
+  const noFollow = fsConstants.O_NOFOLLOW ?? 0;
+  const handle = await fs.open(realPath, fsConstants.O_RDONLY | noFollow);
+  try {
+    const openedRealPath = await realpathOpenedFile(handle, realPath);
+    if (path.normalize(openedRealPath) !== path.normalize(realPath)) {
+      throw new Error(
+        `Extension skill body opened outside its validated path: ${bodyAbsolutePath}`
+      );
+    }
+
+    const stat = await handle.stat();
+    if (stat.isDirectory()) {
+      throw new Error(`Extension skill body is a directory: ${bodyAbsolutePath}`);
+    }
+    const sizeValidation = validateFileSize({
+      size: stat.size,
+      modifiedTime: stat.mtime,
+      isDirectory: stat.isDirectory(),
+    });
+    if (sizeValidation) {
+      throw new Error(sizeValidation.error);
+    }
+
+    const content = await handle.readFile("utf8");
+    const byteSize = Buffer.byteLength(content, "utf8");
+    const readSizeValidation = validateFileSize({
+      size: byteSize,
+      modifiedTime: stat.mtime,
+      isDirectory: false,
+    });
+    if (readSizeValidation) {
+      throw new Error(readSizeValidation.error);
+    }
+    return { content, byteSize };
+  } finally {
+    await handle.close();
+  }
+}
+
 export async function readAgentSkill(
   runtime: Runtime,
   workspacePath: string,
@@ -623,6 +726,7 @@ export async function readAgentSkill(
     roots?: AgentSkillsRoots;
     containment?: ProjectSkillContainment;
     projectContainmentRoot?: string | null;
+    extensionSkills?: readonly ExtensionSkillSource[];
   }
 ): Promise<ResolvedAgentSkill> {
   if (!workspacePath) {
@@ -673,6 +777,54 @@ export async function readAgentSkill(
       return await readAgentSkillFromDir(candidate.runtime, skillDir, name, candidate.scope);
     } catch {
       continue;
+    }
+  }
+
+  // Extension-contributed skills sit between user-authored and built-in:
+  // checked only after no project/global skill of the same name resolved.
+  // The body lives on the host filesystem (extensions live alongside the
+  // app, not inside the workspace runtime), so we read it directly via
+  // node:fs and bypass the workspace runtime's containment rules.
+  const extensionSkill = (options?.extensionSkills ?? []).find((s) => s.name === name);
+  if (extensionSkill) {
+    try {
+      const { content, byteSize } = await readExtensionSkillBody(extensionSkill.bodyAbsolutePath);
+      const parsed = content.startsWith("---")
+        ? parseSkillMarkdown({
+            content,
+            byteSize,
+            directoryName: name,
+          })
+        : {
+            frontmatter: {
+              name,
+              description:
+                extensionSkill.description.trim() ||
+                extensionSkill.displayName.trim() ||
+                extensionSkill.name,
+              advertise: extensionSkill.advertise,
+            },
+            body: content,
+          };
+      const pkg: AgentSkillPackage = {
+        scope: "extension",
+        directoryName: name,
+        frontmatter: parsed.frontmatter,
+        body: parsed.body,
+      };
+      const validated = AgentSkillPackageSchema.safeParse(pkg);
+      if (!validated.success) {
+        throw new Error(
+          `Invalid extension skill package for '${name}': ${validated.error.message}`
+        );
+      }
+      return {
+        package: validated.data,
+        skillDir: path.dirname(extensionSkill.bodyAbsolutePath),
+        sourceRuntime: null,
+      };
+    } catch (error) {
+      log.warn(`Skipping unavailable extension skill '${name}': ${getErrorMessage(error)}`);
     }
   }
 

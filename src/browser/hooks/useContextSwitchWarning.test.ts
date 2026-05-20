@@ -72,6 +72,7 @@ const createPolicyChurnClient = () => {
             providerAccess: null,
             mcp: { allowUserDefined: { stdio: true, remote: true } },
             runtimes: null,
+            extensionPlatform: null,
           },
         }),
       onChanged: () => Promise.resolve(policyEvents()),

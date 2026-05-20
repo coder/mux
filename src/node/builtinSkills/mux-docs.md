@@ -100,6 +100,10 @@ Use this index to find a page's:
   - **Integrations**
     - VS Code Extension (`/integrations/vscode-extension`) → `references/docs/integrations/vscode-extension.mdx` — Pair Mux workspaces with VS Code and Cursor editors
     - ACP (Editor Integrations) (`/integrations/acp`) → `references/docs/integrations/acp.mdx` — Connect Mux to Zed, Neovim, and JetBrains via the Agent Client Protocol
+  - **Extensions**
+    - Authoring an Extension Module (`/extensions/authoring`) → `references/docs/extensions/authoring.mdx` — Quickstart for authoring a Mux Extension Module with a static manifest and skill registration.
+    - Extension Telemetry (`/extensions/telemetry`) → `references/docs/extensions/telemetry.mdx` — Full v1 events catalog for the Mux Extension Platform, including the provenance gate that blocks third-party identifiers from leaving your machine.
+    - Extension Platform Release Checklist (`/extensions/release-checklist`) → `references/docs/extensions/release-checklist.mdx` — Pre-release dogfood checklist for the Mux Extension Platform with screenshot/video evidence requirements.
   - **Reference**
     - Debugging (`/reference/debugging`) → `references/docs/reference/debugging.mdx` — View live backend logs and diagnose issues
     - Telemetry (`/reference/telemetry`) → `references/docs/reference/telemetry.mdx` — What Mux collects, what it doesn’t, and how to disable it
