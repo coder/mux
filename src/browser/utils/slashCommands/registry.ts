@@ -20,7 +20,7 @@ import { normalizeModelInput } from "@/browser/utils/models/normalizeModelInput"
 import { parseGoalBudgetInputCents } from "@/common/utils/goals/budgetParser";
 import { HEARTBEAT_MAX_INTERVAL_MS, HEARTBEAT_MIN_INTERVAL_MS } from "@/constants/heartbeat";
 import { WORKSPACE_ONLY_COMMAND_KEYS } from "@/constants/slashCommands";
-import { parseHumanDurationMs } from "@/common/utils/snooze";
+import { MAX_SNOOZE_MS, parseHumanDurationMs } from "@/common/utils/snooze";
 
 function tokenizeCommandLine(input: string): string[] {
   return (input.match(/(?:[^\s"]+|"[^"]*")+/g) ?? []).map((token) =>
@@ -465,7 +465,10 @@ const snoozeCommandDefinition: SlashCommandDefinition = {
     }
 
     const durationMs = parseHumanDurationMs(arg);
-    if (durationMs == null) {
+    // Reject unparseable and over-the-horizon durations here so callers don't
+    // hand them to `new Date(Date.now() + durationMs).toISOString()` — that
+    // can RangeError on extreme inputs and bypass our normal toast UI.
+    if (durationMs == null || durationMs > MAX_SNOOZE_MS) {
       return {
         type: "command-invalid-args",
         command: "snooze",

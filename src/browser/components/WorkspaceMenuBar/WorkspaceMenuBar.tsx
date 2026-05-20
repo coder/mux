@@ -20,7 +20,12 @@ import { WorkspaceMCPModal } from "../WorkspaceMCPModal/WorkspaceMCPModal";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 import { Popover, PopoverTrigger, PopoverContent } from "../Popover/Popover";
 import { Checkbox } from "../Checkbox/Checkbox";
-import { formatKeybind, KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keybinds";
+import {
+  formatKeybind,
+  isEditableElement,
+  KEYBINDS,
+  matchesKeybind,
+} from "@/browser/utils/ui/keybinds";
 import { getDevcontainerStatusChip } from "@/browser/utils/runtimeUi";
 import { useGitStatus } from "@/browser/stores/GitStatusStore";
 import { useRuntimeStatus, useRuntimeStatusStoreRaw } from "@/browser/stores/RuntimeStatusStore";
@@ -443,9 +448,13 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
   // Keybind for opening the snooze modal. Lives here (not on AgentListItem)
   // so the shortcut still resolves when the left sidebar is collapsed and
   // workspace rows are unmounted — same pattern as SHARE_TRANSCRIPT.
+  //
+  // Skip when focus is in an editable element so we never preventDefault a
+  // legitimate editor shortcut (e.g. Cmd/Ctrl+Shift+X = cut in some editors)
+  // and the user can still type the key normally inside inputs.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (matchesKeybind(e, KEYBINDS.SNOOZE_WORKSPACE)) {
+      if (matchesKeybind(e, KEYBINDS.SNOOZE_WORKSPACE) && !isEditableElement(e.target)) {
         e.preventDefault();
         setSnoozeModalOpen(true);
       }

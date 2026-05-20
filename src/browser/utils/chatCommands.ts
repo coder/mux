@@ -489,8 +489,14 @@ export async function processSlashCommand(
       // Convert duration→deadline at command time so the persisted ISO
       // timestamp can drive the sidebar's snooze partition uniformly across
       // restarts (server compute the same `Date.now() + duration` clock).
+      //
+      // The slash registry already rejects unparseable + over-MAX_SNOOZE_MS
+      // values; this redundant guard prevents a RangeError from
+      // `toISOString()` if a future code path ever hands us a stale value.
       const snoozedUntil =
-        parsed.durationMs == null ? null : new Date(Date.now() + parsed.durationMs).toISOString();
+        parsed.durationMs == null || !Number.isFinite(parsed.durationMs)
+          ? null
+          : new Date(Date.now() + parsed.durationMs).toISOString();
       const result = await activeClient.workspace.snooze({
         workspaceId: context.workspaceId,
         snoozedUntil,
