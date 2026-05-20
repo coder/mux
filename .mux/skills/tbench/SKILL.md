@@ -225,12 +225,33 @@ api.upload_folder(
 
 The PR will be automatically validated by the leaderboard bot. Once merged, results appear on the leaderboard.
 
+**⚠️ CRITICAL: Do not spam the maintainer with duplicate PRs.**
+
+Uploads often timeout even when they succeed server-side. **Before retrying
+or creating a new PR**, always check for existing open PRs first:
+
+```python
+import requests
+resp = requests.get(
+    "https://huggingface.co/api/datasets/alexgshaw/terminal-bench-2-leaderboard/discussions",
+    params={"status": "open"},
+).json()
+for d in resp.get("discussions", []):
+    print(f'PR #{d["num"]}: {d["title"]} — {d["status"]}')
+```
+
+If a timed-out upload already created a PR, push corrections to that PR using
+`revision="refs/pr/<N>"` — never call `create_pr=True` again for the same
+submission. If duplicate PRs are discovered, **stop and ask the User** which
+to keep/close before taking any action.
+
 **Tips from past submissions:**
 
 - The prepare script already strips `*.log` files (they trigger HF LFS and cause timeouts)
 - `--artifacts-dir` accepts raw job folders directly (e.g., an extracted tarball root)
 - To update an existing PR, pass `revision="refs/pr/<N>"` instead of `create_pr=True`
 - To remove stale files from a PR, use `api.delete_folder(..., revision="refs/pr/<N>")`
+- Do **not** coalesce multiple runs into a single job folder — the validator checks that each trial's `config.job_id` matches its parent job's `id`. Keep one job folder per run.
 
 ## Files
 
