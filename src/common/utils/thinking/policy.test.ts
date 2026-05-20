@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { getThinkingPolicyForModel, enforceThinkingPolicy, resolveThinkingInput } from "./policy";
+import {
+  getThinkingPolicyForModel,
+  enforceThinkingPolicy,
+  resolveThinkingInput,
+  isGeminiFlashThinkingLevelModelName,
+} from "./policy";
 
 describe("getThinkingPolicyForModel", () => {
   test("returns 5 levels including xhigh for gpt-5.1-codex-max", () => {
@@ -451,6 +456,12 @@ describe("getThinkingPolicyForModel", () => {
       "medium",
       "high",
     ]);
+  });
+});
+
+describe("isGeminiFlashThinkingLevelModelName", () => {
+  test("does not classify Gemini 3.5 Flash Lite as a Flash thinking-level chat model", () => {
+    expect(isGeminiFlashThinkingLevelModelName("gemini-3.5-flash-lite")).toBe(false);
   });
 });
 
