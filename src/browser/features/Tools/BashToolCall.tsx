@@ -24,6 +24,12 @@ import { useBashToolLiveOutput, useLatestStreamingBashId } from "@/browser/store
 import { useForegroundBashToolCallIds } from "@/browser/stores/BackgroundBashStore";
 import { useBackgroundBashActions } from "@/browser/contexts/BackgroundBashContext";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
+import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import {
+  DEFAULT_TOOL_COLLAPSED_DISPLAY_MODE,
+  TOOL_COLLAPSED_DISPLAY_MODE_KEY,
+} from "@/common/constants/storage";
+import { buildBashCollapsedSummary } from "./bashCollapsedSummary";
 import { BackgroundBashOutputDialog } from "@/browser/components/BackgroundBashOutputDialog/BackgroundBashOutputDialog";
 
 interface BashToolCallProps {
@@ -107,6 +113,19 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
     result && "backgroundProcessId" in result ? result.backgroundProcessId : null;
   const isBackground = args.run_in_background ?? Boolean(backgroundProcessId);
 
+  const [rawToolCollapsedDisplayMode] = usePersistedState<unknown>(
+    TOOL_COLLAPSED_DISPLAY_MODE_KEY,
+    DEFAULT_TOOL_COLLAPSED_DISPLAY_MODE,
+    { listener: true }
+  );
+  const bashCollapsedSummary = buildBashCollapsedSummary({
+    args,
+    result,
+    isBackground,
+    displayMode: rawToolCollapsedDisplayMode,
+  });
+  const isIntentCommandSummary = bashCollapsedSummary.kind === "intent-command";
+
   // Override status for backgrounded processes: the aggregator sees success=true and marks "completed",
   // but for a foreground→background migration we want to show "backgrounded"
   const effectiveStatus: ToolStatus =
@@ -149,7 +168,36 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
       <ToolHeader onClick={handleToggle}>
         <ExpandIcon expanded={expanded}>▶</ExpandIcon>
         <ToolIcon toolName="bash" />
-        <span className="text-text font-monospace max-w-96 truncate">{args.script}</span>
+        {bashCollapsedSummary.kind === "intent-command" ? (
+          <span className="text-text flex max-w-96 min-w-0 items-baseline gap-1">
+            <span className="max-w-48 min-w-0 truncate">{bashCollapsedSummary.intent}</span>
+            <span className="text-muted shrink-0">using</span>
+            <span className="font-monospace max-w-48 min-w-0 truncate">
+              {bashCollapsedSummary.command}
+            </span>
+          </span>
+        ) : (
+          <span className="text-text font-monospace max-w-96 truncate">
+            {bashCollapsedSummary.command}
+          </span>
+        )}
+        {!isBackground && isIntentCommandSummary && (
+          <span
+            className={cn(
+              "ml-2 text-[10px] tabular-nums whitespace-nowrap [@container(max-width:500px)]:hidden",
+              isPending ? "text-pending" : "text-text-secondary"
+            )}
+          >
+            {bashCollapsedSummary.durationLabel ? (
+              <>for {bashCollapsedSummary.durationLabel}</>
+            ) : (
+              <>
+                timeout: {args.timeout_secs ?? BASH_DEFAULT_TIMEOUT_SECS}s
+                <ElapsedTimeDisplay startedAt={startedAt} isActive={isPending} prefix="for " />
+              </>
+            )}
+          </span>
+        )}
         {isBackground && backgroundProcessId && workspaceId && (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -174,22 +222,20 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
             {args.display_name}
           </span>
         )}
-        {!isBackground && (
+        {!isBackground && !isIntentCommandSummary && (
           // Normal mode: show timeout and duration
-          <>
-            <span
-              className={cn(
-                "ml-2 text-[10px] tabular-nums whitespace-nowrap [@container(max-width:500px)]:hidden",
-                isPending ? "text-pending" : "text-text-secondary"
-              )}
-            >
-              timeout: {args.timeout_secs ?? BASH_DEFAULT_TIMEOUT_SECS}s
-              {result && ` • took ${formatDuration(result.wall_duration_ms)}`}
-              {!result && <ElapsedTimeDisplay startedAt={startedAt} isActive={isPending} />}
-            </span>
-            {result && <ExitCodeBadge exitCode={result.exitCode} className="ml-2" />}
-          </>
+          <span
+            className={cn(
+              "ml-2 text-[10px] tabular-nums whitespace-nowrap [@container(max-width:500px)]:hidden",
+              isPending ? "text-pending" : "text-text-secondary"
+            )}
+          >
+            timeout: {args.timeout_secs ?? BASH_DEFAULT_TIMEOUT_SECS}s
+            {result && ` • took ${formatDuration(result.wall_duration_ms)}`}
+            {!result && <ElapsedTimeDisplay startedAt={startedAt} isActive={isPending} />}
+          </span>
         )}
+        {!isBackground && result && <ExitCodeBadge exitCode={result.exitCode} className="ml-2" />}
         <StatusIndicator status={effectiveStatus}>
           {getStatusDisplay(effectiveStatus)}
         </StatusIndicator>

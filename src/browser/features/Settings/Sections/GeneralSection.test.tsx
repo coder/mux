@@ -12,6 +12,7 @@ import {
   DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR,
   type WorktreeArchiveBehavior,
 } from "@/common/config/worktreeArchiveBehavior";
+import { TOOL_COLLAPSED_DISPLAY_MODE_KEY } from "@/common/constants/storage";
 
 interface MockConfig {
   coderWorkspaceArchiveBehavior: CoderWorkspaceArchiveBehavior;
@@ -277,16 +278,61 @@ describe("GeneralSection", () => {
     return trigger;
   }
 
-  function chooseSelectOption(
+  async function chooseSelectOption(
     view: ReturnType<typeof render>,
     label: string,
     optionText: string
-  ): void {
+  ): Promise<void> {
     const trigger = getSelectTrigger(view, label);
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
     const portalRoot = view.baseElement.ownerDocument.body;
-    fireEvent.click(within(portalRoot).getByText(optionText));
+    const option = await waitFor(() => {
+      const button = within(portalRoot)
+        .getAllByText(optionText)
+        .find(
+          (element): element is HTMLButtonElement => element instanceof window.HTMLButtonElement
+        );
+      if (!button) {
+        throw new Error(`Could not find select option ${optionText}`);
+      }
+      return button;
+    });
+    fireEvent.click(option);
+    await waitFor(() => {
+      expect(trigger.textContent).toContain(optionText);
+    });
   }
+
+  async function waitForArchiveSettingsLoad(view: ReturnType<typeof render>): Promise<void> {
+    // Storage-only tests still need the async backend config load to settle before cleanup.
+    await waitFor(() => {
+      expect(getSelectTrigger(view, "Worktree archive behavior").textContent).toContain(
+        "Keep checkout"
+      );
+    });
+  }
+
+  test("updates the collapsed tool summary mode selection", async () => {
+    const { view } = renderGeneralSection();
+
+    expect(getSelectTrigger(view, "Collapsed bash summaries").textContent).toContain(
+      "Intent and command"
+    );
+
+    await chooseSelectOption(view, "Collapsed bash summaries", "Command");
+    await waitForArchiveSettingsLoad(view);
+  });
+
+  test("falls back to the default collapsed tool summary mode for invalid storage", async () => {
+    window.localStorage.setItem(TOOL_COLLAPSED_DISPLAY_MODE_KEY, JSON.stringify("invalid"));
+
+    const { view } = renderGeneralSection();
+
+    expect(getSelectTrigger(view, "Collapsed bash summaries").textContent).toContain(
+      "Intent and command"
+    );
+    await waitForArchiveSettingsLoad(view);
+  });
 
   test("renders the worktree archive behavior copy and loads the saved value", async () => {
     const { view } = renderGeneralSection({
@@ -316,7 +362,7 @@ describe("GeneralSection", () => {
       );
     });
 
-    chooseSelectOption(view, "Worktree archive behavior", "Snapshot and delete");
+    await chooseSelectOption(view, "Worktree archive behavior", "Snapshot and delete");
 
     await waitFor(() => {
       expect(updateCoderPrefsMock).toHaveBeenCalledWith({
@@ -362,7 +408,7 @@ describe("GeneralSection", () => {
       );
     });
 
-    chooseSelectOption(view, "Worktree archive behavior", "Delete checkout");
+    await chooseSelectOption(view, "Worktree archive behavior", "Delete checkout");
 
     await waitFor(() => {
       expect(updateCoderPrefsMock).toHaveBeenCalledTimes(1);
@@ -372,7 +418,7 @@ describe("GeneralSection", () => {
       });
     });
 
-    chooseSelectOption(view, "Worktree archive behavior", "Snapshot and delete");
+    await chooseSelectOption(view, "Worktree archive behavior", "Snapshot and delete");
     expect(updateCoderPrefsMock).toHaveBeenCalledTimes(1);
 
     resolveFirstUpdate?.();
@@ -420,7 +466,7 @@ describe("GeneralSection", () => {
       expect(trigger.hasAttribute("disabled")).toBe(false);
     });
 
-    chooseSelectOption(view, "Worktree archive behavior", "Delete checkout");
+    await chooseSelectOption(view, "Worktree archive behavior", "Delete checkout");
 
     await waitFor(() => {
       expect(updateCoderPrefsMock).toHaveBeenCalledWith({

@@ -967,6 +967,15 @@ export const TOOL_DEFINITIONS = {
       },
       z.object({
         script: z.string().describe("The bash script/command to execute"),
+        model_intent: z
+          .string()
+          .nullish()
+          .describe(
+            "Optional. Short user-facing purpose for this command, shown next to the command in collapsed chat. " +
+              "Use a present-participle phrase in plain English, under 100 characters. " +
+              "Do not repeat the command or include duration, because Mux appends those. " +
+              "Examples: 'Running the unit tests', 'Checking repository state', 'Inspecting build output'."
+          ),
         timeout_secs: z
           .number()
           .positive()
